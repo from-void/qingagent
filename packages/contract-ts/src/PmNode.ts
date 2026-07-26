@@ -100,6 +100,8 @@ export type PmDiagramNodeStyleOverride = {
   textColor?: string | null;
   strokeWidth?: number | null;
   fontSize?: number | null;
+  width?: number | null;
+  height?: number | null;
 };
 export type PmDiagramEdgeStyleOverride = {
   stroke?: string | null;

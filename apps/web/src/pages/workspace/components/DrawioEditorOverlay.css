@@ -5,6 +5,8 @@
   isolation: isolate;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  padding: 16px;
   background: var(--bg-paper-deep);
   color: var(--ink-1);
   font-family: var(--font-zh-serif);
@@ -12,14 +14,7 @@
 }
 
 .drawio-editor-overlay__topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 48px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line-2);
-  background: var(--bg-paper-deep);
+  min-width: 0;
 }
 
 .drawio-editor-overlay__heading {
@@ -31,8 +26,6 @@
 
 .drawio-editor-overlay__heading strong {
   flex: 0 0 auto;
-  font-size: 16px;
-  font-weight: 650;
 }
 
 .drawio-editor-overlay__heading span {
@@ -48,29 +41,11 @@
   color: var(--mark);
 }
 
-.drawio-editor-overlay__cancel {
-  flex: 0 0 auto;
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--line-2);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink-2);
-  font-family: var(--font-zh-serif);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.drawio-editor-overlay__cancel:hover {
-  border-color: var(--line-3);
-  background: var(--bg-hover);
-  color: var(--ink-1);
-}
-
 .drawio-editor-overlay__stage {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  border: 1px solid var(--line-2);
   background: var(--bg-paper-deep);
 }
 
@@ -118,7 +93,10 @@
 @media (max-width: 640px) {
   .drawio-editor-overlay__topbar {
     gap: 8px;
-    padding-inline: 10px;
+  }
+
+  .drawio-editor-overlay {
+    padding: 10px;
   }
 
   .drawio-editor-overlay__heading {

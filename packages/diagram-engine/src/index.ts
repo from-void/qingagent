@@ -209,6 +209,8 @@ export interface NodeStyleOverride {
   strokeWidth?: number;
   fontSize?: number;
   dashArray?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface EdgeStyleOverride {
@@ -853,6 +855,12 @@ function parseClassDefinitionStyle(source: string): NodeStyleOverride | undefine
     } else if (property === "font-size") {
       const size = Number.parseFloat(rawValue);
       if (Number.isFinite(size) && size > 0) style.fontSize = Math.max(9, Math.min(48, size));
+    } else if (property === "width") {
+      const width = Number.parseFloat(rawValue);
+      if (Number.isFinite(width) && width > 0) style.width = clampNodeWidth(width);
+    } else if (property === "height") {
+      const height = Number.parseFloat(rawValue);
+      if (Number.isFinite(height) && height > 0) style.height = clampNodeHeight(height);
     } else if (property === "stroke-dasharray") {
       const dashArray = sanitizeDashArray(rawValue);
       if (dashArray) style.dashArray = dashArray;
@@ -3575,6 +3583,10 @@ function intersectSets(a: Set<string>, b: Set<string>): Set<string> {
 
 export const GRAPH_LAYOUT_NODE_WIDTH = 160;
 export const GRAPH_LAYOUT_NODE_HEIGHT = 72;
+export const GRAPH_LAYOUT_NODE_MIN_WIDTH = 96;
+export const GRAPH_LAYOUT_NODE_MIN_HEIGHT = 48;
+export const GRAPH_LAYOUT_NODE_MAX_WIDTH = 640;
+export const GRAPH_LAYOUT_NODE_MAX_HEIGHT = 480;
 
 const GRAPH_LAYOUT_NODE_GAP = 70;
 const GRAPH_LAYOUT_LAYER_GAP = 86;
@@ -3593,22 +3605,44 @@ type LayoutItem = {
 };
 type LayoutLink = { source: string; target: string; minLength: number };
 
+function clampNodeWidth(width: number): number {
+  return Math.max(GRAPH_LAYOUT_NODE_MIN_WIDTH, Math.min(GRAPH_LAYOUT_NODE_MAX_WIDTH, Math.round(width)));
+}
+
+function clampNodeHeight(height: number): number {
+  return Math.max(GRAPH_LAYOUT_NODE_MIN_HEIGHT, Math.min(GRAPH_LAYOUT_NODE_MAX_HEIGHT, Math.round(height)));
+}
+
+function graphLayoutNodeSize(
+  sourceStyle: NodeStyleOverride | undefined,
+  overlayStyle: NodeStyleOverride | undefined,
+): { width: number; height: number } {
+  return {
+    width: clampNodeWidth(overlayStyle?.width ?? sourceStyle?.width ?? GRAPH_LAYOUT_NODE_WIDTH),
+    height: clampNodeHeight(overlayStyle?.height ?? sourceStyle?.height ?? GRAPH_LAYOUT_NODE_HEIGHT),
+  };
+}
+
 export function layoutDiagramGraph(
   model: DiagramModel,
   overlay: DiagramOverlay | null | undefined = undefined,
 ): DiagramGraphLayout {
   const nodes = modelNodes(model);
   const edges = modelEdges(model);
+  const nodeSize = (nodeId: string) => graphLayoutNodeSize(model.perNodeStyles?.[nodeId], overlay?.styles?.[nodeId]);
   if (model.type !== "flowchart" || model.subgraphs.length === 0) {
-    const items = nodes.map((node): LayoutItem => ({
-      id: node.id,
-      width: GRAPH_LAYOUT_NODE_WIDTH,
-      height: GRAPH_LAYOUT_NODE_HEIGHT,
-      nodeRects: {
-        [node.id]: { x: 0, y: 0, width: GRAPH_LAYOUT_NODE_WIDTH, height: GRAPH_LAYOUT_NODE_HEIGHT },
-      },
-      clusters: [],
-    }));
+    const items = nodes.map((node): LayoutItem => {
+      const size = nodeSize(node.id);
+      return {
+        id: node.id,
+        width: size.width,
+        height: size.height,
+        nodeRects: {
+          [node.id]: { x: 0, y: 0, width: size.width, height: size.height },
+        },
+        clusters: [],
+      };
+    });
     const arranged = arrangeLayoutItems(
       items,
       edges.map((edge) => ({ source: edge.source, target: edge.target, minLength: edge.minLength ?? 1 })),
@@ -3656,15 +3690,18 @@ export function layoutDiagramGraph(
   const buildGroup = (scopePath: string[], direction: LayoutDirection): LayoutItem[] => {
     const directNodes = model.nodes.filter((node) => samePath(node.scopePath, scopePath));
     const directSubgraphs = model.subgraphs.filter((subgraph) => samePath(subgraph.scopePath, scopePath));
-    const items: LayoutItem[] = directNodes.map((node) => ({
-      id: node.id,
-      width: GRAPH_LAYOUT_NODE_WIDTH,
-      height: GRAPH_LAYOUT_NODE_HEIGHT,
-      nodeRects: {
-        [node.id]: { x: 0, y: 0, width: GRAPH_LAYOUT_NODE_WIDTH, height: GRAPH_LAYOUT_NODE_HEIGHT },
-      },
-      clusters: [],
-    }));
+    const items: LayoutItem[] = directNodes.map((node) => {
+      const size = nodeSize(node.id);
+      return {
+        id: node.id,
+        width: size.width,
+        height: size.height,
+        nodeRects: {
+          [node.id]: { x: 0, y: 0, width: size.width, height: size.height },
+        },
+        clusters: [],
+      };
+    });
     for (const subgraph of directSubgraphs) {
       const ownDirection = subgraphDirection(subgraph.id, direction);
       const childScope = [...scopePath, subgraph.id];
@@ -3902,8 +3939,8 @@ function textWidth(text: string, fontSize: number): number {
   return Array.from(text).reduce((width, char) => width + (/[\u0000-\u00ff]/.test(char) ? fontSize * (char === " " ? 0.35 : 0.62) : fontSize), 0);
 }
 
-function wrapNodeLabel(label: string, fontSize: number): string[] {
-  const maxWidth = SVG_NODE_WIDTH - 16;
+function wrapNodeLabel(label: string, fontSize: number, nodeWidth = SVG_NODE_WIDTH): string[] {
+  const maxWidth = Math.max(32, nodeWidth - 16);
   const lines: string[] = [];
   let line = "";
   for (const char of Array.from(label)) {
@@ -4027,16 +4064,17 @@ function renderSvgNode(
   const strokeWidth = typeof strokeWidthSource === "number" ? Math.max(1, Math.min(8, strokeWidthSource)) : 1.5;
   const fontSizeSource = overlayStyle?.fontSize ?? sourceStyle?.fontSize;
   const fontSize = typeof fontSizeSource === "number" ? Math.max(9, Math.min(28, fontSizeSource)) : 14;
-  const lines = wrapNodeLabel(node.label, fontSize);
-  const firstBaseline = pos.y + (lines.length === 1 ? 41 : 30);
-  const text = lines.map((line, index) => `<tspan x="${pos.x + pos.width / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
+  const lines = wrapNodeLabel(node.label, fontSize, pos.width);
+  const lineHeight = Math.max(16, Math.round(fontSize * 1.3));
+  const firstBaseline = pos.y + pos.height / 2 - ((lines.length - 1) * lineHeight) / 2 + fontSize * 0.36;
+  const text = lines.map((line, index) => `<tspan x="${pos.x + pos.width / 2}" y="${firstBaseline + index * lineHeight}">${escapeXml(line)}</tspan>`).join("");
   const geometry = getFlowShapeGeometry((node as BaseNode & { shape?: string }).shape);
   const normalizedShape = normalizeFlowShapeName((node as BaseNode & { shape?: string }).shape);
   const dashArray = overlayStyle?.dashArray ?? sourceStyle?.dashArray;
   const layoutAttributes = ` data-layout-x="${pos.x}" data-layout-y="${pos.y}" data-layout-width="${pos.width}" data-layout-height="${pos.height}"`;
   const shape = normalizedShape === "rect"
     ? `<rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${layoutAttributes}${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>`
-    : `<g transform="translate(${pos.x} ${pos.y})"${layoutAttributes}><path d="${geometry.outlinePath}" fill="${geometry.open ? "none" : fill}" stroke="${geometry.outlineVisible === false ? "none" : stroke}" stroke-width="${strokeWidth}"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"/>`).join("")}</g>`;
+    : `<g transform="translate(${pos.x} ${pos.y}) scale(${pos.width / SVG_NODE_WIDTH} ${pos.height / SVG_NODE_HEIGHT})"${layoutAttributes}><path d="${geometry.outlinePath}" fill="${geometry.open ? "none" : fill}" stroke="${geometry.outlineVisible === false ? "none" : stroke}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"/>`).join("")}</g>`;
   return `<g data-node-id="${escapeXml(node.id)}">${shape}<text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
 }
 

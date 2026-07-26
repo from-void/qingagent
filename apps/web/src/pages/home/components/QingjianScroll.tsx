@@ -2247,7 +2247,7 @@ export function QingjianScroll({
           );
         })()}
         <div className="qj-dock-bar">
-          <div className="qj-dock-prog" ref={dockProgRef} title="时间轴进度 · 点击跳转">
+          <div className="qj-dock-prog" ref={dockProgRef} title="点击跳转">
             <div className="qj-dp-track">
               <div className="qj-dp-fill" ref={dockFillRef} />
               <div className="qj-dp-cursor" ref={dockCursorRef} />

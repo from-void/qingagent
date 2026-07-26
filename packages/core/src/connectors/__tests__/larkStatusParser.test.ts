@@ -74,7 +74,7 @@ describe("LarkCliRunner", () => {
       shimPath: "/missing",
       execFile: async () => { throw Object.assign(new Error("timeout"), { killed: true }); },
     });
-    await expect(timeout.run(["config", "show"])).resolves.toMatchObject({ ok: false, reasonCode: "LARK_CLI_TIMEOUT" });
+    await expect(timeout.run(["config", "show"])).resolves.toMatchObject({ ok: false, reasonCode: "LARK_CLI_VERSION_TIMEOUT" });
 
     const unknown = new LarkCliRunner({
       shimPath: "/missing",

@@ -1000,6 +1000,109 @@ describe("WorkspacePage review controls", () => {
     expect(saveAfterSync?.data.baseContentHash).toBe(getPmContentHash(remoteDoc));
   }, 60_000);
 
+  it("客户端持空稿旧基线推送遇 agent 已写版本时静默 reconcile 到权威正文", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const staleEmptyDoc = pmDoc([pmParagraph("p-empty-local", "")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "空白会话" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(staleEmptyDoc, 0) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+
+    const agentDoc = pmDoc([
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-agent",
+          lang: "mermaid",
+          source: "flowchart LR\nA --> B",
+          title: "Agent 流程图",
+        },
+      } as unknown as PmBlockNode,
+    ]);
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: false,
+          clientMutationId: command.data.clientMutationId,
+          conflict: {
+            expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
+            actualDocumentSnapshot: 1,
+          },
+        },
+      });
+    });
+    stream.startSession.mockClear();
+    stream.startSession.mockImplementation(async () => {
+      for (const frame of [
+        {
+          kind: "restoreReset",
+          data: { epoch: 1, snapshotSeq: 10 },
+        },
+        { kind: "sessionMeta", data: { sessionId: "s-1", title: "空白会话" } },
+        {
+          kind: "documentSnapshotWritten",
+          data: { doc: wireSnapshotFromPmDoc(agentDoc, 1) },
+        },
+        {
+          kind: "docStateChanged",
+          data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+        },
+        { kind: "sessionRestoreCompleted", data: { sessionId: "s-1" } },
+      ] satisfies BridgeFrame[]) {
+        stream.emit(frame);
+      }
+      return "s-1";
+    });
+
+    // 模拟 debounce 中保存项产生于版本 0，但真正发包时服务端 agent 已推进到版本 1。
+    await act(async () => {
+      await captured.current!.handleEditorChange(staleEmptyDoc, {
+        expectedDocumentSnapshot: 0,
+        baseContentHash: getPmContentHash(staleEmptyDoc),
+        baseHasSubstantiveContent: false,
+      });
+    });
+    await flushMicrotasks(5);
+
+    const staleWrite = updateDocCommands(stream)[0];
+    expect(staleWrite?.data.expectedDocumentSnapshot).toBe(0);
+    expect(staleWrite?.data.baseContentHash).toBe(
+      getPmContentHash(staleEmptyDoc),
+    );
+    expect(captured.current?.state.version).toBe(1);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(agentDoc);
+    expect(JSON.stringify(editor!.getJSON())).toContain("flowchart LR");
+    expect(captured.current?.state.streamError).toBeNull();
+    expect(stream.startSession).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
   it("单标签保存仍由本标签 docWriteResult 正常推进版本", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");

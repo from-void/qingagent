@@ -3,6 +3,7 @@ import type { Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import { DEFAULT_DRAWIO_SOURCE } from "@qingagent/pm-schema";
+import type { DrawioEditorResult } from "./drawioEmbedProtocol";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
@@ -10,6 +11,10 @@ import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
 import { CheckIcon } from "./icons";
 import { openDrawioEditor } from "./drawioEditorLauncher";
+import {
+  createDrawioBlockId,
+  writeDrawioResultByBlockId,
+} from "./drawioDocumentWriteback";
 import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
   resolveCenteredFloatingPosition,
@@ -27,6 +32,10 @@ import {
   resolveToolbarUnlockConfig,
 } from "../data/toolbarUnlock";
 import { useToolbarLinkEditor } from "./doc/ToolbarLinkEditor";
+import {
+  createDefaultColumnListNode,
+  insertStructureNodeAfterBlock,
+} from "./doc/structureNodes";
 
 interface ToolbarPos {
   top: number;
@@ -768,18 +777,26 @@ export function DocToolbar({
         }
         case "insertDrawio": {
           try {
-            const result = await openDrawioEditor(DEFAULT_DRAWIO_SOURCE, "新建 drawio 工程图");
-            if (!result || !editor.isEditable) break;
-            // 打开编辑器前不落临时节点；保存后才用既有 insertDiagram 命令写 source+svg，
-            // 因而取消不会产生文档更新或审查记录。
-            run("插入 drawio 工程图", () =>
-              editor
-                .chain()
-                .focus()
-                .insertDiagram({ lang: "drawio", source: result.source, svg: result.svg })
-                .run(),
+            const blockId = createDrawioBlockId();
+            const inserted = run("插入 drawio 工程图", () =>
+              editor.chain().focus().insertDiagram({
+                blockId,
+                lang: "drawio",
+                source: DEFAULT_DRAWIO_SOURCE,
+                svg: null,
+              }).run(),
             );
-            if (result.warning) onToast?.(result.warning);
+            if (!inserted) break;
+            const writeBack = (result: DrawioEditorResult) => {
+              if (!editor.isEditable) return;
+              writeDrawioResultByBlockId(editor, blockId, result);
+            };
+            const result = await openDrawioEditor(
+              DEFAULT_DRAWIO_SOURCE,
+              "新建 drawio 工程图",
+              writeBack,
+            );
+            if (result) writeBack(result);
           } catch (drawioError) {
             onToast?.(drawioError instanceof Error ? drawioError.message : String(drawioError));
           }
@@ -791,17 +808,9 @@ export function DocToolbar({
         case "insertColumns": {
           // 在当前顶层块之后插入,不能用 insertContent(会替换选区:全选时清空正文,e2e V1-c1)。
           const $from = editor.state.selection.$from;
-          const afterBlock = $from.depth >= 1 ? $from.after(1) : editor.state.selection.to;
+          const blockPos = $from.depth >= 1 ? $from.before(1) : 0;
           run("插入分栏", () =>
-            chain
-              .insertContentAt(afterBlock, {
-                type: "columnList",
-                content: [
-                  { type: "column", attrs: { widthRatio: 0.5 }, content: [{ type: "paragraph" }] },
-                  { type: "column", attrs: { widthRatio: 0.5 }, content: [{ type: "paragraph" }] },
-                ],
-              })
-              .run(),
+            insertStructureNodeAfterBlock(editor, blockPos, createDefaultColumnListNode()),
           );
           break;
         }
@@ -991,7 +1000,6 @@ export function DocToolbar({
           type="button"
           className="dt-btn dt-ai dt-block-ai"
           aria-label={`让 AI 修改这个${blockSel.label}`}
-          title={`把这个${blockSel.label}作为引用加入对话,让 AI 修改`}
           disabled={!editorEditable}
           onClick={handleAiModify}
         >
@@ -1201,7 +1209,7 @@ export function DocToolbar({
         type="button"
         className="dt-btn dt-ai"
         aria-label="AI 修改"
-        title="把选中段作为引用插入对话"
+        title="作为引用加入对话"
         disabled={!editorEditable}
         onClick={handleAiModify}
       >

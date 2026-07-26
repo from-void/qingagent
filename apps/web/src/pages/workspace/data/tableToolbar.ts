@@ -188,9 +188,26 @@ export function insertTableAxisAtBoundary(
   if (offset == null) return false;
   const cellPos = located.pos + 1 + offset;
   editor.view.dispatch(editor.state.tr.setSelection(CellSelection.create(editor.state.doc, cellPos)));
-  const chain = editor.chain().focus();
-  if (axis === "column") return atEnd ? chain.addColumnAfter().run() : chain.addColumnBefore().run();
-  return atEnd ? chain.addRowAfter().run() : chain.addRowBefore().run();
+  // 控制条 mousedown 已阻止浏览器夺走编辑器焦点；这里不再调用 focus()，避免它先按
+  // 临时 CellSelection 滚动并触发文字工具栏，再由最终光标事务纠正。
+  const chain = editor.chain();
+  const inserted = axis === "column"
+    ? atEnd ? chain.addColumnAfter().run() : chain.addColumnBefore().run()
+    : atEnd ? chain.addRowAfter().run() : chain.addRowBefore().run();
+  if (!inserted) return false;
+
+  // 原生 addRow/addColumn 会保留或扩展 CellSelection。插入完成后统一把焦点收敛到
+  // 新轴首格的文本光标，避免矩形选区与表格文字工具栏被意外唤起。
+  const nextLocated = findTableByBlockId(editor, tableBlockId);
+  if (!nextLocated) return true;
+  const nextMap = TableMap.get(nextLocated.table);
+  const row = axis === "row" ? boundary : 0;
+  const column = axis === "column" ? boundary : 0;
+  if (row >= nextMap.height || column >= nextMap.width) return true;
+  const nextCellPos = nextLocated.pos + 1 + nextMap.positionAt(row, column, nextLocated.table);
+  const cursor = TextSelection.near(editor.state.doc.resolve(nextCellPos + 1), 1);
+  editor.view.dispatch(editor.state.tr.setSelection(cursor));
+  return true;
 }
 
 /** TableControls 的 active 状态只从当前 PM 选区投影，不另存一份真源。 */

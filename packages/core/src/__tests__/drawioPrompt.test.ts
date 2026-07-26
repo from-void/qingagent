@@ -104,7 +104,7 @@ describe("图表技能静态提示词契约", () => {
     }
   });
 
-  it("image-gen 母技能检测 Codex、按需反问，并把执行细则下沉到两个子技能", () => {
+  it("image-gen 母技能覆盖从零生成与修改现有图片，并把执行细则下沉到子技能", () => {
     const parent = readSkillFile("image-gen/SKILL.md");
     const svg = readSkillFile("image-gen/svg/SKILL.md");
     const codexImage = readSkillFile("image-gen/codex-image/SKILL.md");
@@ -117,6 +117,11 @@ describe("图表技能静态提示词契约", () => {
     expect(parent).toContain("调度本机 codex 生图");
     expect(parent).toContain("用户配置的自定义生图模型");
     expect(parent).not.toContain("照片级写实图当前未接入");
+    expect(parent).toContain("修改现有图片：桌面 Codex 确认路线");
+    expect(parent).toContain("当前环境未配置这项本机能力");
+    expect(parent).toContain("image-edit-codex-confirm");
+    expect(parent).toContain("是否使用本机 Codex 修改这张图片");
+    expect(parent).not.toContain("我没有编辑图片的能力");
 
     expect(svg).toContain("本子技能只负责**生成式 SVG 插画资产**");
     expect(svg).toContain("generateSvg");
@@ -127,6 +132,11 @@ describe("图表技能静态提示词契约", () => {
     expect(codexImage).toContain("background:true");
     expect(codexImage).toContain("mastra_workspace_get_process_output");
     expect(codexImage).toContain("importGeneratedImage");
+    expect(codexImage).toContain("prepareImageEditSource");
+    expect(codexImage).toContain("这是修改现有图片，不是从零生成");
+    expect(codexImage).toContain("不要覆盖源图");
+    expect(codexImage).toContain("replaceBlock");
+    expect(codexImage).toContain("Markdown 图片地址回给用户");
     expect(codexImage).toContain("readDiff");
     expect(codexImage).toContain("禁止复制整段对话");
   });

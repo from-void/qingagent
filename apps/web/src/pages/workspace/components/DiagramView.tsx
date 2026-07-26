@@ -264,7 +264,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
       if (drawioEditorOpening) return;
       setDrawioEditorOpening(true);
       setError(null);
-      void openDrawioEditor(source, "drawio 图编辑", (result) => {
+      void openDrawioEditor(source, "Drawio 编辑", (result) => {
         if (!result || !mountedRef.current) return;
         // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
         // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。
@@ -276,9 +276,6 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
           { source: result.source, svg: result.svg },
           { visualWrite: true },
         );
-        if (result.warning) {
-          toast.show({ message: result.warning, tone: "warn" });
-        }
       })
         .catch((openError) => {
           if (!mountedRef.current) return;
@@ -572,7 +569,12 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     diagram: {
       /** 在当前位置插入一个图表块(默认 mermaid 流程图模板)。 */
-      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string; svg?: string | null }) => ReturnType;
+      insertDiagram: (attrs?: {
+        blockId?: string;
+        lang?: PmDiagramLang;
+        source?: string;
+        svg?: string | null;
+      }) => ReturnType;
     };
   }
 }
@@ -679,7 +681,12 @@ export const DiagramCM = Node.create({
             const source = attrs?.source ?? (lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE);
             return commands.insertContent({
               type: "diagram",
-              attrs: { lang, source, svg: attrs?.svg ?? null },
+              attrs: {
+                ...(attrs?.blockId ? { blockId: attrs.blockId } : {}),
+                lang,
+                source,
+                svg: attrs?.svg ?? null,
+              },
             });
           },
     };

@@ -90,7 +90,7 @@ describe("SecurityPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("每类一行使用暗墨自定义下拉，说明无重复状态且采用 ink-2 可读色", async () => {
+  it("每类一行使用暗墨自定义下拉，说明无重复状态且采用暗底说明色", async () => {
     await renderPanel();
 
     const selects = [...host!.querySelectorAll<HTMLElement>(".security-select")];
@@ -115,8 +115,8 @@ describe("SecurityPanel", () => {
       resolve(process.cwd(), "src/overlays/settings/settings.css"),
       "utf8",
     );
-    expect(css).toMatch(/\.security-description\{[^}]*color:var\(--ink-2\)/);
-    expect(css).not.toMatch(/\.security-description\{[^}]*color:var\(--ink-4\)/);
+    expect(css).toMatch(/\.security-description\{[^}]*color:var\(--ink-desc\)/);
+    expect(css).toMatch(/\.security-description\{[^}]*font-size:13px/);
   });
 
   it("改回每次询问调用 revoke 语义并给出轻提示", async () => {

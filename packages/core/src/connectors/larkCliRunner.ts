@@ -23,6 +23,8 @@ export const LARK_DEVICE_CODE = Symbol("lark-device-code");
 
 export type LarkCliReasonCode =
   | "LARK_CLI_MISSING"
+  | "LARK_CLI_SPAWN_FAILED"
+  | "LARK_CLI_VERSION_TIMEOUT"
   | "LARK_CLI_TIMEOUT"
   | "LARK_CLI_OUTPUT_LIMIT"
   | "LARK_CLI_FAILED"
@@ -35,7 +37,7 @@ export type LarkCliRunResult =
       stdout: string;
       stderr: string;
       cliVersion: string | null;
-      source: "shim" | "path";
+      source: "bundle" | "shim" | "path";
       [LARK_DEVICE_CODE]?: string;
     }
   | {
@@ -43,7 +45,7 @@ export type LarkCliRunResult =
       reasonCode: LarkCliReasonCode;
       message: string;
       cliVersion: string | null;
-      source: "shim" | "path" | null;
+      source: "bundle" | "shim" | "path" | null;
     };
 
 export interface LarkCliBackgroundRun {
@@ -59,7 +61,13 @@ interface ExecResult {
 type ExecFile = (
   file: string,
   args: readonly string[],
-  options: { timeout: number; maxBuffer: number; windowsHide: boolean; signal?: AbortSignal },
+  options: {
+    timeout: number;
+    maxBuffer: number;
+    windowsHide: boolean;
+    signal?: AbortSignal;
+    env?: NodeJS.ProcessEnv;
+  },
 ) => Promise<ExecResult>;
 
 export interface LarkCliRunnerOptions {
@@ -67,6 +75,19 @@ export interface LarkCliRunnerOptions {
   shimPath?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  platform?: NodeJS.Platform;
+  bundledRunJsPath?: string;
+  nodePath?: string;
+  nodeOptions?: string;
+  electronAsNode?: boolean;
+  exists?: (path: string) => boolean;
+}
+
+interface LarkCliInvocation {
+  file: string;
+  argsPrefix: string[];
+  source: "bundle" | "shim" | "path";
+  env?: NodeJS.ProcessEnv;
 }
 
 const ALLOWED_COMMANDS = new Set([
@@ -90,7 +111,13 @@ function isAllowedCommand(command: LarkCliCommand): boolean {
 function defaultExecFile(
   file: string,
   args: readonly string[],
-  options: { timeout: number; maxBuffer: number; windowsHide: boolean; signal?: AbortSignal },
+  options: {
+    timeout: number;
+    maxBuffer: number;
+    windowsHide: boolean;
+    signal?: AbortSignal;
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     execFileCallback(file, [...args], { ...options, encoding: "utf8" }, (error, stdout, stderr) => {
@@ -132,15 +159,67 @@ function safeErrorMessage(error: unknown): string {
   return redactLarkCliOutput(message).replace(/\s+/g, " ").slice(0, 240);
 }
 
+function isSpawnErrorCode(code: string | undefined): boolean {
+  return code === "EACCES" || code === "EINVAL" || code === "ENOEXEC" || code === "EPERM";
+}
+
+export function resolveLarkCliInvocation(options: {
+  platform?: NodeJS.Platform;
+  shimPath: string;
+  bundledRunJsPath?: string;
+  nodePath?: string;
+  nodeOptions?: string;
+  electronAsNode?: boolean;
+  exists?: (path: string) => boolean;
+}): LarkCliInvocation {
+  const platform = options.platform ?? process.platform;
+  const pathExists = options.exists ?? existsSync;
+  // Windows 的 Node 20+ 不允许 execFile 直接启动 .cmd/.bat。打包桌面端因此绕过
+  // PATH shim，以 Electron-as-Node + 随包 run.js 的固定 argv 直接启动官方 Node CLI。
+  if (
+    platform === "win32" &&
+    options.bundledRunJsPath &&
+    options.nodePath &&
+    pathExists(options.bundledRunJsPath) &&
+    pathExists(options.nodePath)
+  ) {
+    return {
+      file: options.nodePath,
+      argsPrefix: [options.bundledRunJsPath],
+      source: "bundle",
+      env: {
+        ...process.env,
+        ...(options.electronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+        ...(options.nodeOptions ? { NODE_OPTIONS: options.nodeOptions } : {}),
+      },
+    };
+  }
+  if (pathExists(options.shimPath)) {
+    return { file: options.shimPath, argsPrefix: [], source: "shim" };
+  }
+  return { file: "lark-cli", argsPrefix: [], source: "path" };
+}
+
 export class LarkCliRunner {
   private readonly execFile: ExecFile;
-  private readonly shimPath: string;
   private readonly timeoutMs: number;
   private readonly maxOutputBytes: number;
+  private readonly invocation: LarkCliInvocation;
 
   constructor(options: LarkCliRunnerOptions = {}) {
     this.execFile = options.execFile ?? defaultExecFile;
-    this.shimPath = options.shimPath ?? join(SANDBOX_BIN_DIR, process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
+    const platform = options.platform ?? process.platform;
+    const shimPath = options.shimPath ?? join(SANDBOX_BIN_DIR, platform === "win32" ? "lark-cli.cmd" : "lark-cli");
+    this.invocation = resolveLarkCliInvocation({
+      platform,
+      shimPath,
+      bundledRunJsPath: options.bundledRunJsPath ?? process.env.QINGAGENT_LARK_CLI_RUN_JS,
+      nodePath: options.nodePath ?? process.env.QINGAGENT_LARK_CLI_NODE_PATH,
+      nodeOptions: options.nodeOptions ?? process.env.QINGAGENT_LARK_CLI_NODE_OPTIONS,
+      electronAsNode: options.electronAsNode ??
+        process.env.QINGAGENT_LARK_CLI_ELECTRON_AS_NODE === "1",
+      exists: options.exists,
+    });
     this.timeoutMs = options.timeoutMs ?? LARK_CLI_TIMEOUT_MS;
     this.maxOutputBytes = options.maxOutputBytes ?? LARK_CLI_MAX_OUTPUT_BYTES;
   }
@@ -150,11 +229,11 @@ export class LarkCliRunner {
       throw new Error("lark-cli 命令不在固定白名单");
     }
 
-    const source = existsSync(this.shimPath) ? "shim" as const : "path" as const;
-    const executable = source === "shim" ? this.shimPath : "lark-cli";
+    const { file: executable, argsPrefix, source, env } = this.invocation;
     let cliVersion: string | null = null;
+    let probingVersion = true;
     try {
-      const versionResult = await this.execFile(executable, ["--version"], this.options());
+      const versionResult = await this.execFile(executable, [...argsPrefix, "--version"], this.options({}, env));
       cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
       if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
         return {
@@ -165,7 +244,8 @@ export class LarkCliRunner {
           source,
         };
       }
-      const result = await this.execFile(executable, command, this.options(runOptions));
+      probingVersion = false;
+      const result = await this.execFile(executable, [...argsPrefix, ...command], this.options(runOptions, env));
       const deviceCode = command[0] === "auth" && command[1] === "login" && command.includes("--no-wait")
         ? extractDeviceCode(result.stdout)
         : null;
@@ -183,10 +263,12 @@ export class LarkCliRunner {
       const reasonCode: LarkCliReasonCode =
         code === "ENOENT"
           ? "LARK_CLI_MISSING"
-          : errorKilled(error) || code === "ETIMEDOUT"
-            ? "LARK_CLI_TIMEOUT"
+          : errorKilled(error) || code === "ETIMEDOUT" || code === "ABORT_ERR"
+            ? probingVersion ? "LARK_CLI_VERSION_TIMEOUT" : "LARK_CLI_TIMEOUT"
             : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
               ? "LARK_CLI_OUTPUT_LIMIT"
+              : isSpawnErrorCode(code)
+                ? "LARK_CLI_SPAWN_FAILED"
               : "LARK_CLI_FAILED";
       return {
         ok: false,
@@ -201,18 +283,21 @@ export class LarkCliRunner {
   /** config init 专用后台进程：首段 stdout 用于立即出创建卡，completion 负责生命周期收尾。 */
   async startConfigInit(signal: AbortSignal): Promise<LarkCliBackgroundRun> {
     const command = ["config", "init", "--new", "--brand", "feishu", "--lang", "zh"] as const;
-    const source = existsSync(this.shimPath) ? "shim" as const : "path" as const;
-    const executable = source === "shim" ? this.shimPath : "lark-cli";
+    const { file: executable, argsPrefix, source, env } = this.invocation;
     let cliVersion: string | null = null;
     try {
-      const versionResult = await this.execFile(executable, ["--version"], this.options({ signal }));
+      const versionResult = await this.execFile(
+        executable,
+        [...argsPrefix, "--version"],
+        this.options({ signal }, env),
+      );
       cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
       if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
         const failed: LarkCliRunResult = { ok: false, reasonCode: "LARK_CLI_VERSION_UNSUPPORTED", message: "lark-cli 版本无法确认或暂未验证", cliVersion, source };
         return { initial: Promise.resolve(failed), completion: Promise.resolve(failed) };
       }
     } catch (error) {
-      const failed = this.failure(error, cliVersion, source);
+      const failed = this.failure(error, cliVersion, source, true);
       return { initial: Promise.resolve(failed), completion: Promise.resolve(failed) };
     }
 
@@ -220,7 +305,12 @@ export class LarkCliRunner {
     let initialSettled = false;
     const initial = new Promise<LarkCliRunResult>((resolve) => { resolveInitial = resolve; });
     const completion = new Promise<LarkCliRunResult>((resolve) => {
-      const child = spawnChild(executable, [...command], { windowsHide: true, signal, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawnChild(executable, [...argsPrefix, ...command], {
+        windowsHide: true,
+        signal,
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(env ? { env } : {}),
+      });
       let stdout = "";
       let stderr = "";
       let overflow = false;
@@ -255,21 +345,37 @@ export class LarkCliRunner {
     return { initial, completion };
   }
 
-  private failure(error: unknown, cliVersion: string | null, source: "shim" | "path"): LarkCliRunResult {
+  private failure(
+    error: unknown,
+    cliVersion: string | null,
+    source: "bundle" | "shim" | "path",
+    probingVersion = false,
+  ): LarkCliRunResult {
     const code = errorCode(error);
     return {
-      ok: false,
-      reasonCode: code === "ENOENT" ? "LARK_CLI_MISSING" : errorKilled(error) || code === "ETIMEDOUT" || code === "ABORT_ERR" ? "LARK_CLI_TIMEOUT" : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "LARK_CLI_OUTPUT_LIMIT" : "LARK_CLI_FAILED",
+      ok: false, reasonCode: code === "ENOENT"
+        ? "LARK_CLI_MISSING"
+        : errorKilled(error) || code === "ETIMEDOUT" || code === "ABORT_ERR"
+          ? probingVersion ? "LARK_CLI_VERSION_TIMEOUT" : "LARK_CLI_TIMEOUT"
+          : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+            ? "LARK_CLI_OUTPUT_LIMIT"
+            : isSpawnErrorCode(code)
+              ? "LARK_CLI_SPAWN_FAILED"
+              : "LARK_CLI_FAILED",
       message: safeErrorMessage(error), cliVersion, source,
     };
   }
 
-  private options(runOptions: { signal?: AbortSignal; timeoutMs?: number } = {}) {
+  private options(
+    runOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    env?: NodeJS.ProcessEnv,
+  ) {
     return {
       timeout: runOptions.timeoutMs ?? this.timeoutMs,
       maxBuffer: this.maxOutputBytes,
       windowsHide: true,
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
+      ...(env ? { env } : {}),
     };
   }
 }

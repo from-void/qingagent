@@ -35,6 +35,7 @@ import { fetchArticleTool } from "../tools/fetchArticle.js";
 import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
 import { importGeneratedImageTool } from "../tools/importGeneratedImage.js";
+import { prepareImageEditSourceTool } from "../tools/prepareImageEditSource.js";
 import { readImageTool } from "../tools/readImage.js";
 import { runJsTool } from "../tools/runJs.js";
 import { showQrTool } from "../tools/showQr.js";
@@ -192,6 +193,7 @@ const CAPABILITY_TOOLS = {
   "web-search": { webSearch: webSearchTool, fetchArticle: fetchArticleTool },
   "image-gen": {
     generateSvg: generateSvgTool,
+    prepareImageEditSource: prepareImageEditSourceTool,
     importGeneratedImage: importGeneratedImageTool,
   },
   "image-reading": { readImage: readImageTool },
@@ -229,7 +231,7 @@ const MATERIAL_TOOL_SEARCH_TOOLS = {
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "web-search": ["webSearch"],
-  "image-gen": ["generateSvg", "importGeneratedImage"],
+  "image-gen": ["generateSvg", "prepareImageEditSource", "importGeneratedImage"],
   "image-reading": ["readImage"],
   "materials": ["parseFile"],
   "doc-calc": ["run_js"],
@@ -440,6 +442,11 @@ export function missingGenericToolResultFields(
       requireString("src");
       if (result.width !== undefined) requireNumber("width");
       if (result.height !== undefined) requireNumber("height");
+      break;
+    case "prepareImageEditSource":
+      requireString("path");
+      requireString("mimeType");
+      requireNumber("bytes");
       break;
     default:
       break;

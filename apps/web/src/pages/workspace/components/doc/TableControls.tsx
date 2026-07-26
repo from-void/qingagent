@@ -23,6 +23,7 @@ import {
   normalizeToolbarHighlightColor,
   normalizeToolbarTextColor,
   resolveToolbarUnlockConfig,
+  TABLE_CELL_BACKGROUND_COLORS,
   TOOLBAR_HIGHLIGHT_COLORS,
   TOOLBAR_TEXT_COLORS,
   TOOLBAR_THEME_COLORS,
@@ -728,7 +729,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
           <div className="dt-divider" />
           <button
             className="dt-btn dt-ai"
-            title="发送到对话"
+            title="作为引用加入对话"
             disabled={!hasAxisSelection}
             onClick={() => { void doAiModify(); }}
           >
@@ -838,11 +839,12 @@ function TableColorGrid({
   kind: "text" | "highlight" | "cell";
   onPick: (color: ToolbarThemeColorKey | "transparent") => void;
 }) {
+  const colors = kind === "cell" ? TABLE_CELL_BACKGROUND_COLORS : TOOLBAR_THEME_COLORS;
   return (
     <div className="dt-color-menu dt-color-menu-compact">
       <div className="dt-color-label">{kind === "text" ? "文字颜色" : kind === "highlight" ? "背景高亮" : "单元格底色"}</div>
       <div className="dt-swatch-grid">
-        {TOOLBAR_THEME_COLORS.map((color) => (
+        {colors.map((color) => (
           <button
             key={`${kind}-${color.key}`}
             type="button"
@@ -854,7 +856,9 @@ function TableColorGrid({
             <span
               className="dt-swatch-chip"
               style={{
-                background: kind === "text" ? TOOLBAR_TEXT_COLORS[color.key] : TOOLBAR_HIGHLIGHT_COLORS[color.key],
+                background: kind === "text"
+                  ? TOOLBAR_TEXT_COLORS[color.key]
+                  : kind === "cell" ? color.highlight : TOOLBAR_HIGHLIGHT_COLORS[color.key],
                 borderColor: kind === "text" ? TOOLBAR_TEXT_COLORS[color.key] : color.border,
               }}
             />

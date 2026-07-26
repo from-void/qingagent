@@ -32,13 +32,13 @@ import { ConnectionsPanel, mapConnectorStart } from "./ConnectionsPanel";
 let host: HTMLDivElement;
 let root: Root;
 
-function connector(state: ConnectorState): ConnectorInfo {
+function connector(state: ConnectorState, reasonCode: string | null = null): ConnectorInfo {
   return {
     id: "feishu", name: "飞书", icon: "feishu", official: true, riskNote: null,
     authPresentation: "scan",
     usedBySkills: ["feishu"],
     status: {
-      state, reasonCode: null, account: null, scopes: [], lastCheckedAt: null,
+      state, reasonCode, account: null, scopes: [], lastCheckedAt: null,
       statusFreshness: "fresh", canProbe: state === "connected" || state === "needs_reauth",
     },
   };
@@ -88,6 +88,18 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).toContain("扫码授权");
     expect(host.textContent).not.toContain("立即检查");
     expect(host.textContent).not.toContain("设置页不直接发起授权");
+  });
+
+  it.each([
+    ["LARK_CLI_MISSING", "未找到飞书连接组件"],
+    ["LARK_CLI_SPAWN_FAILED", "飞书连接组件未能启动"],
+    ["LARK_CLI_VERSION_TIMEOUT", "飞书连接组件版本检查超时"],
+  ])("飞书不可用详情按 reasonCode=%s 展示中性说明", (reasonCode, copy) => {
+    h.connectors = [connector("unavailable", reasonCode)];
+    act(() => root.render(<ConnectionsPanel selectedId="feishu" />));
+    expect(host.textContent).toContain(copy);
+    expect(host.textContent).not.toContain(reasonCode);
+    expect(host.textContent).not.toContain("EINVAL");
   });
 
   it("飞书 start 传完整非空授权域，返回列表后仍显示等待授权", async () => {

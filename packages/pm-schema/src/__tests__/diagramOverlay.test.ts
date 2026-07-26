@@ -24,7 +24,7 @@ function docWithOverlay(): PmDoc {
               ORPHAN: { x: 999, y: 999 },
             },
             styles: {
-              A: { fill: "#fff3a3", fontSize: 16 },
+              A: { fill: "#fff3a3", fontSize: 16, width: 240, height: 112 },
               ORPHAN: { fill: "#000000" },
             },
             edgeHandles: {
@@ -106,7 +106,7 @@ describe("diagram overlay 数据域", () => {
     expect(block.attrs.overlay?.positions?.A).toEqual({ x: 10, y: 20 });
     expect(block.attrs.overlay?.positions?.B).toEqual({ x: 210, y: 20 });
     expect(block.attrs.overlay?.positions?.ORPHAN).toBeUndefined();
-    expect(block.attrs.overlay?.styles?.A).toEqual({ fill: "#fff3a3", fontSize: 16 });
+    expect(block.attrs.overlay?.styles?.A).toEqual({ fill: "#fff3a3", fontSize: 16, width: 240, height: 112 });
     expect(block.attrs.overlay?.styles?.ORPHAN).toBeUndefined();
     const edgeId = stableEdgeId("flow", { source: "A", target: "B", syntaxKind: "-->" }, 0);
     expect(block.attrs.overlay?.edgeHandles?.[edgeId]).toEqual({ sourceHandle: "r", targetHandle: "l" });

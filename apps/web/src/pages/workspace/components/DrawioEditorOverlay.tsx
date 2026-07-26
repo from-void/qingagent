@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  DRAWIO_AUTOSAVE_DEBOUNCE_MS,
   DRAWIO_EMBED_PATH,
   DRAWIO_EXPORT_TIMEOUT_MS,
   DRAWIO_FALLBACK_TIMEOUT_MS,
@@ -14,6 +15,7 @@ import {
 } from "./drawioEmbedProtocol";
 import { renderDrawio } from "./drawioRender";
 import "./DrawioEditorOverlay.css";
+import "./diagramEditorChrome.css";
 
 export interface DrawioEditorOverlayProps {
   source: string;
@@ -24,7 +26,7 @@ export interface DrawioEditorOverlayProps {
 
 export function DrawioEditorOverlay({
   source,
-  title = "drawio 可视化编辑",
+  title = "Drawio 编辑",
   onSave,
   onClose,
 }: DrawioEditorOverlayProps) {
@@ -32,15 +34,20 @@ export function DrawioEditorOverlay({
   const settledRef = useRef(false);
   const pendingSourceRef = useRef<string | null>(null);
   const pendingSaveIdRef = useRef<number | null>(null);
-  const pendingExitRef = useRef(false);
+  const queuedSourceRef = useRef<string | null>(null);
+  const queuedForceRef = useRef(false);
+  const closeRequestedRef = useRef(false);
   const latestResultRef = useRef<DrawioEditorResult | null>(null);
   const latestHighFidelityResultRef = useRef<DrawioEditorResult | null>(null);
+  const lastWrittenSourceRef = useRef(source);
   const saveSequenceRef = useRef(0);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestCloseRef = useRef<() => void>(() => undefined);
   const [saving, setSaving] = useState(false);
   const [frameReady, setFrameReady] = useState(false);
   const [status, setStatus] = useState("正在启动离线编辑器…");
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -65,36 +72,68 @@ export function DrawioEditorOverlay({
       clearTimeout(exportTimerRef.current);
       exportTimerRef.current = null;
     };
+    const clearAutosaveTimer = () => {
+      if (autosaveTimerRef.current === null) return;
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    };
+    const clearRetryTimer = () => {
+      if (retryTimerRef.current === null) return;
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    };
     const finish = (result: DrawioEditorResult | null) => {
       if (settledRef.current) return;
       settledRef.current = true;
       clearExportTimer();
+      clearAutosaveTimer();
+      clearRetryTimer();
       setSaving(false);
       onClose(result);
     };
     const clearPendingSave = () => {
       pendingSourceRef.current = null;
       pendingSaveIdRef.current = null;
-      pendingExitRef.current = false;
+    };
+
+    let startQueuedSave: () => void = () => undefined;
+    const scheduleRetry = (retrySource: string) => {
+      if (settledRef.current || closeRequestedRef.current) return;
+      queuedSourceRef.current = retrySource;
+      queuedForceRef.current = true;
+      clearRetryTimer();
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        startQueuedSave();
+      }, DRAWIO_AUTOSAVE_DEBOUNCE_MS);
     };
     const completeSave = (result: DrawioEditorResult, saveId: number) => {
       if (settledRef.current || pendingSaveIdRef.current !== saveId) return;
-      const shouldExit = pendingExitRef.current;
       clearExportTimer();
       clearPendingSave();
       latestResultRef.current = result;
-      onSave?.(result);
-      if (shouldExit) {
-        finish(result);
-        return;
+      lastWrittenSourceRef.current = result.source;
+      try {
+        onSave?.(result);
+      } catch {
+        if (queuedSourceRef.current === null) scheduleRetry(result.source);
       }
-      // keepmodified=1 配合保存前显式 status(true)，让 v31 snapshot 能看到脏状态；
-      // 保存落盘后再按原生 status action 复位，下一轮真实编辑会重新置脏。
+      // keepmodified=1 配合写回前显式 status(true)，让 v31 snapshot 能看到脏状态；
+      // 落盘后复位，下一次真实编辑仍会由 autosave 事件重新进入写回。
       postAction(createDrawioStatusAction(false));
       setSaving(false);
-      setStatus(result.warning ? "保存完成（已使用降级渲染），可继续编辑" : "保存完成，可继续编辑");
-      setError(null);
+      setStatus(result.warning ? "已实时写入，正在补全预览缓存…" : "所有更改均已实时写入");
       iframeRef.current?.focus();
+      if (
+        queuedSourceRef.current !== null &&
+        autosaveTimerRef.current === null &&
+        retryTimerRef.current === null
+      ) {
+        startQueuedSave();
+        return;
+      }
+      if (result.warning) scheduleRetry(result.source);
+      if (closeRequestedRef.current) finish(result);
     };
     const fallbackToLocalRender = async (
       fallbackSource: string,
@@ -108,8 +147,7 @@ export function DrawioEditorOverlay({
       ) {
         return;
       }
-      setStatus(`${reason}，正在使用本地渲染…`);
-      setError(null);
+      setStatus("正在实时写入…");
       try {
         const svg = await withTimeout(
           renderDrawio(fallbackSource),
@@ -157,6 +195,84 @@ export function DrawioEditorOverlay({
         }, saveId);
       }
     };
+
+    startQueuedSave = () => {
+      if (
+        settledRef.current ||
+        pendingSaveIdRef.current !== null ||
+        queuedSourceRef.current === null
+      ) {
+        return;
+      }
+      clearAutosaveTimer();
+      clearRetryTimer();
+      const rawSource = queuedSourceRef.current;
+      const force = queuedForceRef.current;
+      queuedSourceRef.current = null;
+      queuedForceRef.current = false;
+      try {
+        const request = createDrawioSnapshotRequest(rawSource);
+        if (
+          !force &&
+          request.source === lastWrittenSourceRef.current &&
+          !latestResultRef.current?.warning
+        ) {
+          if (closeRequestedRef.current) finish(latestResultRef.current);
+          return;
+        }
+        const saveId = ++saveSequenceRef.current;
+        pendingSourceRef.current = request.source;
+        pendingSaveIdRef.current = saveId;
+        if (latestHighFidelityResultRef.current?.source === request.source) {
+          completeSave(latestHighFidelityResultRef.current, saveId);
+          return;
+        }
+        setSaving(true);
+        setStatus("正在实时写入…");
+        iframeRef.current?.blur();
+        postAction(createDrawioStatusAction(true));
+        postAction(request.action);
+        clearExportTimer();
+        exportTimerRef.current = setTimeout(() => {
+          exportTimerRef.current = null;
+          void fallbackToLocalRender(request.source, saveId);
+        }, DRAWIO_EXPORT_TIMEOUT_MS);
+      } catch {
+        queuedSourceRef.current = rawSource;
+        queuedForceRef.current = true;
+        scheduleRetry(rawSource);
+        setStatus("更改将在后台继续同步");
+      }
+    };
+    const queueSave = (rawSource: string, immediate: boolean) => {
+      queuedSourceRef.current = rawSource;
+      queuedForceRef.current = false;
+      clearAutosaveTimer();
+      if (immediate) {
+        startQueuedSave();
+        return;
+      }
+      autosaveTimerRef.current = setTimeout(() => {
+        autosaveTimerRef.current = null;
+        startQueuedSave();
+      }, DRAWIO_AUTOSAVE_DEBOUNCE_MS);
+      setStatus("更改待实时写入…");
+    };
+    const requestClose = () => {
+      if (settledRef.current) return;
+      closeRequestedRef.current = true;
+      clearAutosaveTimer();
+      if (queuedSourceRef.current !== null) {
+        setStatus("正在落定最后更改…");
+        startQueuedSave();
+      } else if (pendingSaveIdRef.current === null) {
+        finish(latestResultRef.current);
+      } else {
+        setStatus("正在落定最后更改…");
+      }
+    };
+    requestCloseRef.current = requestClose;
+
     const onMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow;
       if (!frameWindow || event.source !== frameWindow || event.origin !== expectedOrigin) return;
@@ -165,59 +281,36 @@ export function DrawioEditorOverlay({
 
       if (message.event === "init") {
         try {
-          restoreDrawioEmbedButtons(iframeRef.current);
+          configureDrawioEmbedButtons(iframeRef.current);
           postAction(createDrawioLoadAction(source, title));
           setStatus("离线编辑器已就绪");
-          setError(null);
           iframeRef.current?.focus();
-        } catch (loadError) {
-          setError(errorMessage(loadError));
+        } catch {
+          setStatus("编辑器暂未就绪");
           setFrameReady(true);
         }
         return;
       }
       if (message.event === "load") {
-        restoreDrawioEmbedButtons(iframeRef.current);
-        setStatus("图表已加载");
+        configureDrawioEmbedButtons(iframeRef.current);
+        setStatus("图表已加载，所有更改将实时写入");
         setFrameReady(true);
         return;
       }
+      if (message.event === "autosave") {
+        queueSave(message.xml, false);
+        return;
+      }
       if (message.event === "save") {
-        if (pendingSaveIdRef.current !== null) return;
-        try {
-          const request = createDrawioSnapshotRequest(message.xml);
-          const saveId = ++saveSequenceRef.current;
-          pendingSourceRef.current = request.source;
-          pendingSaveIdRef.current = saveId;
-          pendingExitRef.current = message.exit === true;
-          if (latestHighFidelityResultRef.current?.source === request.source) {
-            completeSave(latestHighFidelityResultRef.current, saveId);
-            return;
-          }
-          setSaving(true);
-          setStatus("正在生成安全 SVG 缓存…");
-          setError(null);
-          iframeRef.current?.blur();
-          // v31 的 snapshot 在 modified=false 时会静默不回；先通过原生 status
-          // action 强制置脏，导出完成后 completeSave 再按既有流程复位。
-          postAction(createDrawioStatusAction(true));
-          postAction(request.action);
-          clearExportTimer();
-          exportTimerRef.current = setTimeout(() => {
-            exportTimerRef.current = null;
-            void fallbackToLocalRender(request.source, saveId);
-          }, DRAWIO_EXPORT_TIMEOUT_MS);
-        } catch (saveError) {
-          setError(errorMessage(saveError));
-          setFrameReady(true);
-        }
+        if (message.exit === true) closeRequestedRef.current = true;
+        queueSave(message.xml, true);
         return;
       }
       if (message.event === "export") {
         const pendingSource = pendingSourceRef.current;
         const saveId = pendingSaveIdRef.current;
-        // v31 的 snapshot export 不回显 message/nonce，只能在可信 iframe 的 pending
-        // 保存窗口内接收；origin 与 event.source 校验仍是第一道边界。
+        // v31 的 snapshot export 不回显 message/nonce，只在可信 iframe 的 pending
+        // 窗口内接收；origin 与 event.source 校验仍是第一道边界。
         if (!pendingSource || saveId === null) return;
         try {
           const result = finalizeDrawioEdit(pendingSource, message.data);
@@ -233,56 +326,43 @@ export function DrawioEditorOverlay({
         }
         return;
       }
-      // saveAndExit 的 save 与 exit 可能相邻到达；已经开始导出时必须等 SVG
-      // 加固完成，不能让 exit 抢先把一次有效保存当成取消。
-      if (message.event === "exit") {
-        if (pendingSourceRef.current !== null) {
-          pendingExitRef.current = true;
-        } else {
-          finish(latestResultRef.current);
-        }
-      }
+      if (message.event === "exit") requestClose();
       // openLink 在 suppressNewWindows + 离线模式下故意不转交系统浏览器。
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      finish(latestResultRef.current);
+      requestClose();
     };
 
     window.addEventListener("message", onMessage);
     window.addEventListener("keydown", onKeyDown);
     return () => {
       clearExportTimer();
+      clearAutosaveTimer();
+      clearRetryTimer();
+      requestCloseRef.current = () => undefined;
       window.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [onClose, onSave, source, title]);
 
-  const cancel = () => {
-    if (settledRef.current) return;
-    settledRef.current = true;
-    if (exportTimerRef.current !== null) {
-      clearTimeout(exportTimerRef.current);
-      exportTimerRef.current = null;
-    }
-    pendingSourceRef.current = null;
-    pendingSaveIdRef.current = null;
-    pendingExitRef.current = false;
-    onClose(latestResultRef.current);
-  };
-
   return (
-    <div className="drawio-editor-overlay" role="dialog" aria-modal="true" aria-label={title}>
-      <header className="drawio-editor-overlay__topbar">
+    <div className="drawio-editor-overlay diagram-editor-chrome" role="dialog" aria-modal="true" aria-label="Drawio 编辑">
+      <header className="drawio-editor-overlay__topbar diagram-editor-chrome__topbar">
         <div className="drawio-editor-overlay__heading">
-          <strong>{title}</strong>
-          <span className={error ? "is-error" : undefined} role={error ? "alert" : "status"}>
-            {error ?? status}
-          </span>
+          <strong className="diagram-editor-chrome__title">Drawio 编辑</strong>
+          <span role="status">{status}</span>
         </div>
-        <button type="button" className="drawio-editor-overlay__cancel" onClick={cancel}>
-          取消
+        {/* 实时保存语义:✕ = flush 最后一笔后关闭(requestClose),不是丢弃 */}
+        <button
+          type="button"
+          className="drawio-editor-overlay__cancel diagram-editor-chrome__close"
+          aria-label="关闭"
+          title="关闭"
+          onClick={() => requestCloseRef.current()}
+        >
+          ✕
         </button>
       </header>
       <div className="drawio-editor-overlay__stage">
@@ -296,7 +376,7 @@ export function DrawioEditorOverlay({
           referrerPolicy="no-referrer"
           onLoad={(event) => {
             setFrameReady(false);
-            restoreDrawioEmbedButtons(event.currentTarget);
+            configureDrawioEmbedButtons(event.currentTarget);
             setStatus("正在等待编辑器初始化…");
           }}
         />
@@ -313,7 +393,7 @@ export function DrawioEditorOverlay({
 
 const DRAWIO_EMBED_STYLE_ID = "qingagent-drawio-embed-fixes";
 
-function restoreDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
+function configureDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
   try {
     const frameDocument = iframe?.contentDocument;
     if (!frameDocument?.head) return;
@@ -321,14 +401,27 @@ function restoreDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
       const style = frameDocument.createElement("style");
       style.id = DRAWIO_EMBED_STYLE_ID;
       style.textContent = [
-        "/* offline=1 会让 v31 误把 embed 当 standalone 并写入 display:none。 */",
+        "/* 实时写回后只保留退出入口；offline=1 的 display:none 由宿主精确覆盖。 */",
         ".geToolbarContainer > .geButtonContainer { display: inline-flex !important; }",
+        ".geToolbarContainer > .geButtonContainer > :not(:last-child) { display: none !important; }",
       ].join("\n");
       frameDocument.head.appendChild(style);
     }
     frameDocument
       .querySelectorAll<HTMLElement>(".geToolbarContainer > .geButtonContainer")
-      .forEach((container) => container.style.setProperty("display", "inline-flex", "important"));
+      .forEach((container) => {
+        container.style.setProperty("display", "inline-flex", "important");
+        const buttons = Array.from(container.children) as HTMLElement[];
+        buttons.slice(0, -1).forEach((button) => {
+          button.style.setProperty("display", "none", "important");
+        });
+        const completeButton = buttons.at(-1);
+        if (completeButton) {
+          completeButton.style.removeProperty("display");
+          completeButton.textContent = "完成";
+          completeButton.setAttribute("aria-label", "完成");
+        }
+      });
   } catch {
     // iframe 尚未切到同源文档时等待下一次 load/init，不放宽消息来源校验。
   }

@@ -226,6 +226,21 @@ function detailStatus(connector: ConnectorInfo): string | null {
   if (connector.id === "github" && connector.status.reasonCode === "INSUFFICIENT_SCOPE") {
     return "当前授权范围不足，重新授权即可扩展；失败不会影响现有连接。";
   }
+  if (connector.id === "feishu" && connector.status.state === "unavailable") {
+    const copy: Record<string, string> = {
+      LARK_CLI_MISSING: "未找到飞书连接组件。当前安装包可能未包含该组件，请重新安装完整桌面客户端。",
+      LARK_CLI_SPAWN_FAILED: "飞书连接组件未能启动。请重启客户端；若仍未恢复，请重新安装完整桌面客户端。",
+      LARK_CLI_VERSION_TIMEOUT: "飞书连接组件版本检查超时。请稍后重试或重启客户端。",
+      LARK_CLI_TIMEOUT: "飞书连接组件响应超时。请稍后重试。",
+      LARK_CLI_VERSION_UNSUPPORTED: "飞书连接组件版本暂不兼容。请更新桌面客户端。",
+      LARK_CLI_OUTPUT_LIMIT: "飞书连接组件返回内容异常。请重启客户端后重试。",
+      LARK_CLI_DIRTY_OUTPUT: "飞书连接状态暂时无法确认。请重启客户端后重试。",
+      LARK_CLI_FAILED: "飞书连接组件未能正常完成检查。请重启客户端后重试。",
+    };
+    return connector.status.reasonCode
+      ? copy[connector.status.reasonCode] ?? STATE_COPY.feishu.unavailable!
+      : STATE_COPY.feishu.unavailable!;
+  }
   // 已连接的账号句放在页面底部断开区,这里不重复;未连接/未配置由徽标表达,同样不占一行。
   if (["connected", "disconnected", "unconfigured"].includes(connector.status.state)) return null;
   return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];

@@ -46,7 +46,6 @@ export function PatchNav({
             type="button"
             className="pn-jump"
             onClick={onJumpPrev}
-            title="跳到上一处改动"
             disabled={activePatchIndex <= 0}
           >
             <span>↑</span>上一处
@@ -55,7 +54,7 @@ export function PatchNav({
             type="button"
             className="pn-jump"
             onClick={onJumpNext}
-            title="跳到下一处改动 · J"
+            title="快捷键：J"
             disabled={activePatchIndex >= totalCount - 1}
           >
             <span>↓</span>下一处
@@ -69,7 +68,7 @@ export function PatchNav({
         className="pn-commit"
         onClick={onCommit}
         disabled={isSubmitting}
-        title="提交剩余全部改动"
+        title="提交剩余改动"
       >
         提交 ↵
       </button>
@@ -79,7 +78,6 @@ export function PatchNav({
           className="pn-ghost"
           onClick={() => setConfirmOpen(true)}
           disabled={isSubmitting}
-          title="放弃全部剩余改动"
         >
           放弃全部
         </button>

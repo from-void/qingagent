@@ -9,6 +9,7 @@ export const DRAWIO_EMBED_PATH =
 
 export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
 export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;
+export const DRAWIO_AUTOSAVE_DEBOUNCE_MS = 1_000;
 const MAX_SVG_DATA_URI_CHARS = INLINE_SVG_MAX_BYTES * 4 + 256;
 
 export type DrawioEditorResult = {
@@ -20,6 +21,7 @@ export type DrawioEditorResult = {
 export type DrawioEmbedEvent =
   | { event: "init" }
   | { event: "load" }
+  | { event: "autosave"; xml: string }
   | { event: "save"; xml: string; exit?: boolean }
   | { event: "export"; data: string; exit?: boolean }
   | { event: "exit"; modified?: boolean }
@@ -30,6 +32,7 @@ export type DrawioLoadAction = {
   xml: string;
   title: string;
   saveAndExit: true;
+  autosave: true;
 };
 
 export type DrawioSnapshotAction = {
@@ -61,6 +64,10 @@ export function parseDrawioEmbedMessage(raw: unknown): DrawioEmbedEvent | null {
     case "init":
     case "load":
       return { event: value.event };
+    case "autosave":
+      return typeof value.xml === "string"
+        ? { event: "autosave", xml: value.xml }
+        : null;
     case "save":
       return typeof value.xml === "string"
         ? { event: "save", xml: value.xml, ...(value.exit === true ? { exit: true } : {}) }
@@ -94,6 +101,7 @@ export function createDrawioLoadAction(source: string, title: string): DrawioLoa
     xml: normalizeDrawioSource(source),
     title,
     saveAndExit: true,
+    autosave: true,
   };
 }
 

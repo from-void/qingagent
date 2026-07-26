@@ -48,6 +48,7 @@ describe("ToolSearch bridge", () => {
       "generateSvg",
       "importGeneratedImage",
       "parseFile",
+      "prepareImageEditSource",
       "readImage",
       "run_js",
       "webSearch",
@@ -58,6 +59,7 @@ describe("ToolSearch bridge", () => {
       "generateSvg",
       "importGeneratedImage",
       "parseFile",
+      "prepareImageEditSource",
     ]);
   });
 
@@ -118,6 +120,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(tools)).not.toContain("webSearch");
     expect(Object.keys(tools)).not.toContain("fetchArticle");
     expect(Object.keys(tools)).toContain("generateSvg");
+    expect(Object.keys(tools)).toContain("prepareImageEditSource");
     expect(Object.keys(tools)).toContain("importGeneratedImage");
     expect(Object.keys(tools)).toContain("run_js");
 
@@ -265,10 +268,10 @@ describe("ToolSearch bridge", () => {
       requestContext,
       messages: [],
       toolNames: bridge.preloadToolNames,
-    })).resolves.toEqual(["generateSvg", "importGeneratedImage"]);
+    })).resolves.toEqual(["generateSvg", "prepareImageEditSource", "importGeneratedImage"]);
 
     const loaded = await processor.getLoadedToolsForRequestContext({ requestContext });
-    expect(Object.keys(loaded)).toEqual(["generateSvg", "importGeneratedImage"]);
+    expect(Object.keys(loaded)).toEqual(["generateSvg", "prepareImageEditSource", "importGeneratedImage"]);
   });
 
   it("ToolSearch preload 在 pro 档使用 pro router model", async () => {

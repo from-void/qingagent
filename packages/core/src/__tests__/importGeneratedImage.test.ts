@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   IMPORT_GENERATED_IMAGE_MAX_BYTES,
+  importGeneratedImageTool,
   importGeneratedImageFromPath,
 } from "../tools/importGeneratedImage.js";
 
@@ -42,6 +43,10 @@ afterEach(async () => {
 });
 
 describe("importGeneratedImage", () => {
+  it("工具契约允许导入 Codex 生成或修改的图片产物", () => {
+    expect(importGeneratedImageTool.description).toContain("生成或修改图片");
+  });
+
   it("导入当前会话工作区内的合法 PNG，并返回真实尺寸与公开 src", async () => {
     const { workspaceRoot, uploadsRoot } = await fixture();
     const sourcePath = join(workspaceRoot, "codex-output.png");

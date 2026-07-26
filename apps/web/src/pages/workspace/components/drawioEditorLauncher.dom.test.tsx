@@ -6,16 +6,16 @@ import { DEFAULT_DRAWIO_SOURCE } from "@qingagent/pm-schema";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 
 afterEach(async () => {
-  const cancel = document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__cancel");
-  if (cancel) {
-    await act(async () => cancel.click());
+  const close = document.querySelector<HTMLButtonElement>('button[aria-label="关闭"]');
+  if (close) {
+    await act(async () => close.click());
   }
   await act(async () => undefined);
   document.querySelectorAll("[data-drawio-editor-host]").forEach((host) => host.remove());
 });
 
 describe("drawio 编辑器 launcher", () => {
-  it("连续打开并取消三次，每轮都创建新 iframe 且完整清理 host", async () => {
+  it("连续打开并关闭三次，每轮都创建新 iframe 且完整清理 host", async () => {
     for (let cycle = 0; cycle < 3; cycle += 1) {
       let resultPromise!: Promise<unknown>;
       await act(async () => {
@@ -25,7 +25,7 @@ describe("drawio 编辑器 launcher", () => {
       expect(document.querySelector(".drawio-editor-overlay__frame")).not.toBeNull();
 
       await act(async () => {
-        document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__cancel")?.click();
+        requireCloseButton().click();
         await resultPromise;
       });
       expect(await resultPromise).toBeNull();
@@ -50,9 +50,15 @@ describe("drawio 编辑器 launcher", () => {
     expect(document.querySelector(".drawio-editor-overlay__frame")).not.toBeNull();
 
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__cancel")?.click();
+      requireCloseButton().click();
       await nextPromise;
     });
     expect(await nextPromise).toBeNull();
   });
 });
+
+function requireCloseButton(): HTMLButtonElement {
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="关闭"]');
+  if (!button) throw new Error("drawio 关闭按钮缺失");
+  return button;
+}

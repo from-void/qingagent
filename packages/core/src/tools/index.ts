@@ -51,6 +51,16 @@ export type {
   ImportGeneratedImageOptions,
   ImportGeneratedImageResult,
 } from "./importGeneratedImage.js";
+export {
+  prepareImageEditSourceTool,
+  prepareImageEditSourceFromReference,
+} from "./prepareImageEditSource.js";
+export type {
+  PrepareImageEditSourceInput,
+  PrepareImageEditSourceOptions,
+  PrepareImageEditSourceResult,
+  SupportedImageEditSourceMimeType,
+} from "./prepareImageEditSource.js";
 export { readImageTool } from "./readImage.js";
 export { runJsTool, runJsInWorker } from "./runJs.js";
 export type { RunJsInput, RunJsResult } from "./runJs.js";

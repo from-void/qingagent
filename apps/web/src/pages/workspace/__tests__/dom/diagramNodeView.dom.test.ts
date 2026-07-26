@@ -1146,7 +1146,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await flush(4);
       expect(openDrawioEditor).toHaveBeenCalledWith(
         DEFAULT_DRAWIO_SOURCE,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
@@ -1166,7 +1166,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(openDrawioEditor).toHaveBeenNthCalledWith(
         2,
         nextSource,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
@@ -1180,7 +1180,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(openDrawioEditor).toHaveBeenNthCalledWith(
         3,
         secondSource,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
@@ -1209,7 +1209,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("flowchart 外层双击进入可视化全屏,右上角同时提供可视化编辑和 Mermaid 源码编辑", async () => {
+  it("flowchart 外层双击进入可视化全屏，编辑 chrome 使用左标题、右关闭与沉底操作栏", async () => {
     const editor = await mountEditor(diagramDoc(`flowchart TD
   A[开始] --> B[结束]
 `));
@@ -1231,9 +1231,10 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*z-index:\s*2147483000;[^}]*pointer-events:\s*auto;/s);
       expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*rgba\(246,\s*241,\s*231,\s*0\.98\);/s);
 
-      const doneButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".graph-diagram-editor button"))
-        .find((button) => button.textContent?.trim() === "完成");
-      expect(doneButton).not.toBeNull();
+      const doneButton = document.body.querySelector<HTMLButtonElement>(
+        ".graph-diagram-editor .diagram-editor-chrome__close",
+      );
+      expect(doneButton?.textContent?.trim()).toBe("✕");
       await act(async () => {
         doneButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
@@ -1323,16 +1324,23 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("预览态右上角统一工具栏:分区/对齐/缩放/适配/全屏图标齐全,点对齐回写 node.attrs.align", async () => {
+  it("流程图外部工具栏与图片结构一致，仅保留左中右全屏，点对齐回写 node.attrs.align", async () => {
     const editor = await mountEditor(diagramDoc(`flowchart TD
   A[开始] --> B[结束]
 `));
     try {
       await waitForSelector(".graph-diagram", editor.view.dom);
       const viewbar = await waitForSelector(".graph-diagram-viewbar", editor.view.dom) as HTMLElement;
-      const labels = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).map((b) => b.getAttribute("aria-label"));
-      expect(labels).toEqual(["新增分区", "左对齐", "居中对齐", "右对齐", "缩小", "放大", "适配视图", "全屏编辑"]);
-      expect(viewbar.querySelectorAll(".graph-diagram-canvas-tool-icon")).toHaveLength(8);
+      expect(viewbar.classList.contains("pm-image-toolbar")).toBe(true);
+      expect(viewbar.classList.contains("pm-image-chrome")).toBe(true);
+      expect(Array.from(viewbar.children).every((child) => child.tagName === "BUTTON")).toBe(true);
+      const buttons = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
+      expect(buttons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "全屏"]);
+      expect(viewbar.querySelector(".pm-diagram-tool")).toBeNull();
+      expect(viewbar.textContent).not.toContain("新增分区");
+      expect(viewbar.textContent).not.toContain("适配视图");
+      expect(viewbar.textContent).not.toContain("＋");
+      expect(viewbar.textContent).not.toContain("−");
       const rightBtn = viewbar.querySelector<HTMLButtonElement>("[aria-label='右对齐']")!;
       await act(async () => {
         rightBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
@@ -1387,23 +1395,40 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("SVG 图表(时序图/饼图等)同样有右上角统一工具栏:对齐+缩放+全屏,点对齐回写 align", async () => {
+  it("SVG Mermaid 路径同样复用图片款外部工具栏，仅保留左中右全屏", async () => {
     // 提供 cachedSvg 让 MermaidPreview 直接渲染(不走 mermaid 异步),source 检测为非图(时序图)→ SVG 路径。
     const editor = await mountEditor(
       diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/><text>hi</text></svg>"),
     );
     try {
       const viewbar = await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom) as HTMLElement;
-      const labels = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).map((b) => b.textContent?.trim());
-      expect(labels).toEqual(expect.arrayContaining(["左", "中", "右", "−", "＋", "⛶ 全屏"]));
-      expect(labels).not.toContain("⤢");
-      const leftBtn = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).find((b) => b.textContent?.trim() === "左")!;
+      expect(viewbar.classList.contains("pm-image-toolbar")).toBe(true);
+      expect(Array.from(viewbar.children).every((child) => child.tagName === "BUTTON")).toBe(true);
+      const labels = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool")).map((b) => b.textContent?.trim());
+      expect(labels).toEqual(["左", "中", "右", "全屏"]);
+      expect(viewbar.querySelector(".pm-diagram-tool")).toBeNull();
+      const leftBtn = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool")).find((b) => b.textContent?.trim() === "左")!;
       await act(async () => {
         leftBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       });
       await flush(8);
       const json = editor.getJSON() as { content?: Array<{ type?: string; attrs?: Record<string, unknown> }> };
       expect(json.content?.find((n) => n.type === "diagram")?.attrs?.align).toBe("left");
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("drawio 外部工具栏同样只有图片款左中右全屏文字按钮", async () => {
+    const editor = await mountEditor(
+      drawioDoc("<svg viewBox='0 0 100 100'><rect x='10' y='10' width='80' height='80'/></svg>"),
+    );
+    try {
+      const viewbar = await waitForSelector(".pm-diagram-svg-viewbar.pm-image-toolbar.pm-image-chrome", editor.view.dom) as HTMLElement;
+      expect(Array.from(viewbar.children).every((child) => child.tagName === "BUTTON")).toBe(true);
+      expect(Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool")).map((button) => button.textContent?.trim()))
+        .toEqual(["左", "中", "右", "全屏"]);
+      expect(viewbar.querySelector(".pm-diagram-tool")).toBeNull();
     } finally {
       await unmount(editor);
     }
@@ -1417,14 +1442,10 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     );
     try {
       const box = (await waitForSelector(".pm-diagram-svg", editor.view.dom)) as HTMLElement;
-      const viewbar = (await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom)) as HTMLElement;
-      const plus = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).find(
-        (b) => b.textContent?.trim() === "＋",
-      )!;
-      // 放大两次:scale>1 才进入拖拽平移路径。
+      await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom);
+      // 外部栏不再提供缩放；用仍保留的触控板捏合语义(ctrl+wheel)进入放大态。
       await act(async () => {
-        plus.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-        plus.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        box.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: 200, clientY: 120 }));
       });
       await flush(8);
       // jsdom 没有 PointerEvent;用 MouseEvent 冒充对应类型即可(React 按事件 type 分发,
@@ -1460,13 +1481,13 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     );
     try {
       const viewbar = (await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom)) as HTMLElement;
-      const plus = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).find(
-        (b) => b.textContent?.trim() === "＋",
+      const center = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool")).find(
+        (b) => b.textContent?.trim() === "中",
       )!;
       // 在工具栏按钮上双击:不应冒泡触发图表块的双击进编辑。
       await act(async () => {
-        plus.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
-        plus.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+        center.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+        center.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
       });
       await flush(20);
       expect(editor.view.dom.querySelector(".pm-diagram-source")).toBeNull();
@@ -1483,13 +1504,9 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     try {
       const box = (await waitForSelector(".pm-diagram-svg", editor.view.dom)) as HTMLElement;
       const inner = box.querySelector<HTMLElement>(".pm-diagram-svg-inner")!;
-      const viewbar = (await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom)) as HTMLElement;
-      const plus = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).find(
-        (b) => b.textContent?.trim() === "＋",
-      )!;
+      await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom);
       await act(async () => {
-        plus.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-        plus.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        box.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: 200, clientY: 120 }));
       });
       await flush(8);
       const me = (type: string, x: number) =>

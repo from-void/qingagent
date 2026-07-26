@@ -151,6 +151,7 @@
   --line-2: rgba(184, 169, 140, 0.28);
   --line-3: rgba(184, 169, 140, 0.42);
   --ink-1: #ece3d0;
+  --ink-desc: #d9ccb2;
   --ink-2: rgba(236, 227, 208, 0.66);
   --ink-3: rgba(236, 227, 208, 0.46);
   --ink-4: rgba(236, 227, 208, 0.32);
@@ -587,6 +588,11 @@
 .uk-image-demo .pm-image-resize-handle,
 .uk-image-demo .pm-image-upload-overlay {
   opacity: 1;
+}
+.uk-media-toolbar-demo.pm-image-toolbar {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* 图表块编辑件:左下入口 + 图编辑器上下文条 */

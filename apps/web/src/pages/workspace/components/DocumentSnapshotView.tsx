@@ -13,12 +13,12 @@ import { getMarkRange } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
-import { NodeSelection, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, getPmContentHash, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
@@ -77,6 +77,11 @@ import {
   docKeyWithoutBlockIds,
   pushPendingSelfDocKey,
 } from "../data/docSyncClassify";
+import type {
+  DocWriteBaseline,
+  EditorDocChange,
+} from "../data/docWriteBaseline";
+import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import {
   isAbnormalDocumentCollapse,
   measureDocumentShape,
@@ -145,6 +150,80 @@ import type { PatchMeta } from "../data/patchMeta";
 export type { PatchMeta, PatchMetaChange } from "../data/patchMeta";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
+/**
+ * 飞书式正文末尾点击：纸面 padding 是明确的功能热区例外，不受“hover 只认可视本体”
+ * 的通用约束；仍只接管末个顶层块底边以下、且事件直接落在正文根上的空白。
+ */
+export function handleClickBelowLastDocumentBlock(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!isPrimaryPointerBelowLastDocumentBlock(view, event)) return false;
+  if (!view.state.selection.empty) return false;
+
+  const { doc } = view.state;
+  const lastBlock = doc.lastChild;
+  const lastIsEmptyParagraph =
+    lastBlock?.type.name === "paragraph" && lastBlock.content.size === 0;
+
+  // 真空文档只有 schema 兜底的一个空段，点击纸底不产生任何动作。
+  if (doc.childCount === 1 && lastIsEmptyParagraph) {
+    event.preventDefault();
+    return true;
+  }
+
+  event.preventDefault();
+  if (lastIsEmptyParagraph) {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    );
+  } else {
+    const paragraph = view.state.schema.nodes.paragraph?.create();
+    if (!paragraph) return false;
+    const tr = view.state.tr.insert(doc.content.size, paragraph);
+    view.dispatch(tr.setSelection(TextSelection.atEnd(tr.doc)).scrollIntoView());
+  }
+  view.focus();
+  return true;
+}
+
+function preventEmptyDocumentPaperFocus(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!isPrimaryPointerBelowLastDocumentBlock(view, event)) return false;
+  const onlyBlock = view.state.doc.firstChild;
+  if (
+    view.state.doc.childCount !== 1 ||
+    onlyBlock?.type.name !== "paragraph" ||
+    onlyBlock.content.size !== 0
+  ) {
+    return false;
+  }
+  // contenteditable 的原生聚焦发生在 mousedown；此处只压住真空纸底，保证飞书式“无反应”。
+  event.preventDefault();
+  return true;
+}
+
+function isPrimaryPointerBelowLastDocumentBlock(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!view.editable || event.button !== 0 || event.target !== view.dom) {
+    return false;
+  }
+  const paperRect = view.dom.getBoundingClientRect();
+  const lastBlockDom = view.dom.lastElementChild;
+  return Boolean(
+    lastBlockDom &&
+    event.clientX >= paperRect.left &&
+    event.clientX <= paperRect.right &&
+    event.clientY >= paperRect.top &&
+    event.clientY <= paperRect.bottom &&
+    event.clientY > lastBlockDom.getBoundingClientRect().bottom,
+  );
+}
+
 export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;
   getLastPresentationRun: () => NativePresentationRun | null;
@@ -182,7 +261,7 @@ export interface DocumentSnapshotViewProps {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady?: (editor: Editor | null) => void;
-  onEditorChange?: (doc: PmDoc) => void | Promise<void>;
+  onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
@@ -366,7 +445,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady: (editor: Editor | null) => void;
-  onEditorChange?: (doc: PmDoc) => void | Promise<void>;
+  onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
@@ -423,6 +502,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     resolve: (time: number) => void;
   } | null>(null);
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 与 debounce 正文同寿命的写入基线；第一笔本地事务产生时冻结，后续远端版本
+  // 即使先抵达也绝不能把这份旧正文“升级”为新基线。
+  const pendingUpdateBaselineRef = useRef<DocWriteBaseline | null>(null);
   const initialValidEditorDoc = useMemo(
     () => normalizePmDoc(viewDocToPm(doc)),
     [], // eslint-disable-line react-hooks/exhaustive-deps
@@ -433,6 +515,14 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   const latestDocVersionRef = useRef(doc.version);
   latestCanonicalDocRef.current = doc;
   latestDocVersionRef.current = doc.version;
+  const currentDocWriteBaseline = useCallback((): DocWriteBaseline => {
+    const canonical = normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current));
+    return {
+      expectedDocumentSnapshot: latestCanonicalDocRef.current.version,
+      baseContentHash: getPmContentHash(canonical),
+      baseHasSubstantiveContent: pmDocHasSubstantiveContent(canonical),
+    };
+  }, []);
   const beginApplyingRemote = useCallback(() => {
     remoteApplyDepthRef.current += 1;
     isApplyingRemoteRef.current = true;
@@ -500,10 +590,11 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       handleDOMEvents: {
         copy: (view, event) => writeSelectionToClipboard(view, event, false),
         cut: (view, event) => writeSelectionToClipboard(view, event, true),
-        // 拦截文档内部锚点链接点击(href="#anchor-id"),做页内平滑滚动。
-        // TipTap Link 扩展 openOnClick:false 导致普通点击只弹气泡，不跳转；
-        // 此处直接检测 #href 并 scrollIntoView，无需修改 Link 扩展配置。
-        click: (_view, event) => {
+        mousedown: (view, event) =>
+          preventEmptyDocumentPaperFocus(view, event),
+        // 正文根上的末尾空白先走追加行；其余点击继续按既有页内锚点语义处理。
+        click: (view, event) => {
+          if (handleClickBelowLastDocumentBlock(view, event)) return true;
           const target = event.target as HTMLElement;
           const a = target.closest("a[href]") as HTMLAnchorElement | null;
           if (!a) return false;
@@ -604,19 +695,35 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     }
     const normalized = readValidEditorDocOrRecover();
     if (!normalized) return;
+    const baseline =
+      pendingUpdateBaselineRef.current ?? currentDocWriteBaseline();
+    pendingUpdateBaselineRef.current = null;
     // 记录这次 forward 的内容键,供 doc-sync 把它的回声识别为"自我保存"(即便之后又打了字)。
     pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
       pendingSelfDocKeysRef.current,
       JSON.stringify(normalized),
     );
-    await onEditorChange(normalized);
-  }, [editor, onEditorChange, readValidEditorDocOrRecover]);
+    await onEditorChange(normalized, baseline);
+  }, [
+    currentDocWriteBaseline,
+    editor,
+    onEditorChange,
+    readValidEditorDocOrRecover,
+  ]);
 
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
       hasLocalDocumentChanges() {
         if (!editor || editor.isDestroyed) return false;
+        // debounce 已登记就是真实本地事务；不能因远端版本先进入 React props 而把它
+        // 误判为“canonical 正在回灌”，否则旧稿会被放行并重绑到新版本。
+        if (
+          updateTimerRef.current !== null ||
+          pendingUpdateBaselineRef.current !== null
+        ) {
+          return true;
+        }
         // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
         if (latestDocVersionRef.current !== lastVersionRef.current) return false;
         try {
@@ -712,7 +819,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
 
   useEffect(() => {
     if (!editor || !onEditorChange) return;
-    const handleUpdate = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
+    const handleUpdate = ({
+      transaction,
+    }: {
+      transaction: {
+        docChanged: boolean;
+        getMeta: (key: string) => unknown;
+      };
+    }) => {
+      // TipTap 的 update 事件也可能来自 editable/placeholder/选区等只改视图的事务。
+      // 只有 PM 正文真的变化才允许登记 dirty 与自动保存；否则空稿会凭空发 updateDoc。
+      if (!transaction.docChanged) return;
       if (
         !shouldForwardEditorUpdate({
           isApplyingRemote: isApplyingRemoteRef.current,
@@ -724,6 +841,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       // update 当拍就做完整性门，不能等 400ms 保存定时器：旧 BlockHandle / page-exit
       // 都可能在这段窗口内消费已经坍缩的 doc。
       if (!readValidEditorDocOrRecover()) return;
+      pendingUpdateBaselineRef.current ??= currentDocWriteBaseline();
       if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
       if (transaction.getMeta(DIAGRAM_VISUAL_WRITE_META) === true) {
         updateTimerRef.current = null;
@@ -754,6 +872,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     };
   }, [
     editor,
+    currentDocWriteBaseline,
     forwardCurrentEditorDoc,
     onEditorChange,
     readValidEditorDocOrRecover,
@@ -915,7 +1034,13 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           pendingSelfDocKeysRef.current,
           JSON.stringify(repairedDoc),
         );
-        void Promise.resolve(onEditorChange(repairedDoc)).catch((error: unknown) => {
+        void Promise.resolve(onEditorChange(repairedDoc, {
+          expectedDocumentSnapshot: targetVersion,
+          baseContentHash: getPmContentHash(normalizePmDoc(viewDocToPm(doc))),
+          baseHasSubstantiveContent: pmDocHasSubstantiveContent(
+            normalizePmDoc(viewDocToPm(doc)),
+          ),
+        })).catch((error: unknown) => {
           repairedBlockIdVersionRef.current = null;
           console.error("[doc] 存量 blockId 自愈保存失败", error);
           onToast?.("文档标识修复未保存，请刷新后重试");

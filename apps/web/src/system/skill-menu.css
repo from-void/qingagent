@@ -14,8 +14,8 @@
   bottom: calc(100% + 6px);
   width: 268px;
   max-width: calc(100vw - 48px);
-  /* 最多约 8 行且不超过视口 60%；仍沿用 bottom 锚定向上展开。 */
-  max-height: min(60vh, 274px);
+  box-sizing: border-box;
+  /* 长列表的精确限高由 SkillMenu 按 7.5 行写入；短列表不设限高，不留半行空白。 */
   padding: 5px;
   z-index: 90;
   overflow-y: auto;

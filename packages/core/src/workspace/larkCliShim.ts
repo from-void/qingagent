@@ -13,7 +13,7 @@ import { posixSingleQuote, writeIfChanged } from "./nodeRuntimeShim.js";
  * (沙箱透传),lark-cli 写真实 ~/.lark-cli,与用户电脑上已有飞书登录共用(用户已选此口径)。
  */
 export interface LarkCliShimOptions {
-  /** 随包 @larksuite/cli 的 scripts/run.js 绝对路径(打包后:Resources/lark-cli/scripts/run.js)。 */
+  /** 随包入口绝对路径(打包后:Resources/lark-cli/node_modules/@larksuite/cli/scripts/run.js)。 */
   runJsPath: string;
   /** node 运行时绝对路径:桌面传 ensureNodeRuntimeShim 写出的 node shim(它会设 ELECTRON_RUN_AS_NODE)。 */
   nodePath: string;

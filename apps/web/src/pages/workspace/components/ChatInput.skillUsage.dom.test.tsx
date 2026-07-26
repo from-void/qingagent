@@ -91,9 +91,9 @@ describe("技能菜单自适应排序", () => {
   });
 });
 
-describe("技能菜单滚动约束", () => {
-  it("约 8 行、60vh 限高并预留稳定细滚动条", () => {
-    expect(skillMenuCss).toContain("max-height: min(60vh, 274px)");
+describe("技能菜单滚动样式", () => {
+  it("预留稳定细滚动条并以 border-box 精确计算限高", () => {
+    expect(skillMenuCss).toContain("box-sizing: border-box");
     expect(skillMenuCss).toContain("overflow-y: auto");
     expect(skillMenuCss).toContain("scrollbar-gutter: stable");
     expect(skillMenuCss).toContain("scrollbar-width: thin");

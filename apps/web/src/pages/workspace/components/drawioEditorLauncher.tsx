@@ -16,7 +16,7 @@ let activeEditorSession: ActiveEditorSession | null = null;
  */
 export function openDrawioEditor(
   rawSource: string,
-  title = "drawio 可视化编辑",
+  title = "Drawio 编辑",
   onSave?: (result: DrawioEditorResult) => void,
 ): Promise<DrawioEditorResult | null> {
   if (typeof document === "undefined") return Promise.reject(new Error("drawio 编辑器只能在浏览器中打开"));

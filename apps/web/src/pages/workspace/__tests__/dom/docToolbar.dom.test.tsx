@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
@@ -453,7 +453,7 @@ describe("DocToolbar round-1 regressions", () => {
     expect(onToast).toHaveBeenCalledWith("无法执行：引用");
   });
 
-  it("工具栏新建 drawio 保存后插入 source+svg，取消时不写文档", async () => {
+  it("工具栏新建 drawio 会先插入默认块，再把实时回调绑定到该块", async () => {
     const fakeEditor = createCommandEditor(true);
     const insertDiagram = vi.mocked(fakeEditor.chain().insertDiagram);
     const onToast = vi.fn();
@@ -469,21 +469,30 @@ describe("DocToolbar round-1 regressions", () => {
 
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).not.toHaveBeenCalled();
+    expect(insertDiagram).toHaveBeenCalledWith(expect.objectContaining({
+      blockId: expect.stringMatching(/^drawio-/),
+      lang: "drawio",
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: null,
+    }));
+    expect(openDrawioEditor).toHaveBeenCalledWith(
+      DEFAULT_DRAWIO_SOURCE,
+      "新建 drawio 工程图",
+      expect.any(Function),
+    );
 
     const source = "<mxGraphModel><root><mxCell id=\"0\"/></root></mxGraphModel>";
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>';
     vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg });
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenCalledWith({ lang: "drawio", source, svg });
-
-    const warning = "drawio 原生 SVG 导出超时，已改用本地渲染保存";
-    vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg: null, warning });
-    await act(async () => getButtonByText("插入").click());
-    await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenLastCalledWith({ lang: "drawio", source, svg: null });
-    expect(onToast).toHaveBeenCalledWith(warning);
+    expect(insertDiagram).toHaveBeenLastCalledWith(expect.objectContaining({
+      blockId: expect.stringMatching(/^drawio-/),
+      lang: "drawio",
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: null,
+    }));
+    expect(onToast).not.toHaveBeenCalled();
   });
 
   it("工具栏插入分栏会写入 columnList 节点", async () => {
@@ -515,6 +524,11 @@ describe("DocToolbar round-1 regressions", () => {
     // 空段只允许出现在列内作为必需占位内容。e2e v09/v15/v16 三次把"空列视觉"误报成"多余空段")。
     expect(doc.content).toHaveLength(2);
     expect(doc.content.filter((n) => n.type === "paragraph" && !((n as { content?: unknown[] }).content?.length))).toHaveLength(0);
+    expect(editor.state.selection).toBeInstanceOf(TextSelection);
+    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+    expect(editor.state.selection.$from.node(-1).type.name).toBe("column");
+    expect(editor.state.selection.$from.index(-2)).toBe(0);
+    expect(editor.view.hasFocus()).toBe(true);
   });
 
   it("工具栏可以切换有序列表序号样式", async () => {
@@ -605,6 +619,39 @@ function createSelectedEditor() {
 }
 
 describe("DocToolbar 块节点选中(原子块走 AI 引用,不出文本工具栏)", () => {
+  it("图片/图表 AI 修改按钮不再用 title 复述可见文案，aria-label 保留", async () => {
+    editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          { type: "diagram", attrs: { blockId: "d-tooltip", lang: "mermaid", source: "graph TD;A-->B;", svg: null } },
+        ],
+      } satisfies PmDoc,
+    });
+    document.body.appendChild(editor.view.dom);
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+    await act(async () => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    const aiButton = document.querySelector<HTMLButtonElement>(".dt-block-ai");
+    expect(aiButton?.textContent).toContain("让 AI 修改这个图表");
+    expect(aiButton?.hasAttribute("title")).toBe(false);
+    expect(aiButton?.getAttribute("aria-label")).toBe("让 AI 修改这个图表");
+  });
+
   it("选中图表(原子块)→ resolveSelectedBlockNode 给出 图表 标签 + 单原子块范围放行", () => {
     const element = document.createElement("div");
     document.body.appendChild(element);
@@ -769,7 +816,11 @@ function createCommandEditor(runResult: boolean): Editor {
     chain: () => chain,
     state: {
       selection: { from: 0, to: 0, empty: true },
-      doc: { textBetween: () => "", content: { size: 0 } },
+      doc: {
+        textBetween: () => "",
+        descendants: () => undefined,
+        content: { size: 0 },
+      },
     },
     view: {
       dom: document.createElement("div"),

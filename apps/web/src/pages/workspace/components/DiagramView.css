@@ -137,7 +137,7 @@
   max-height: 220px;
   overflow: auto;
 }
-/* 统一工具栏按钮样式(图表 react-flow 路径 / SVG 路径共用,观感与图片块工具栏一致)。 */
+/* 全屏编辑器内部按钮；外部预览工具栏统一复用图片块的 .pm-image-tool。 */
 .pm-diagram-tool {
   min-width: 26px;
   height: 26px;
@@ -185,23 +185,10 @@
   margin: 0 2px;
   background: rgba(55, 45, 32, 0.14);
 }
-/* SVG 图表(时序图/饼图/柱状图等)右上角工具栏容器:与图表路径的 react-flow Panel 视觉统一。 */
+/* SVG 图表外部工具栏只负责显隐，结构/视觉来自图片块共享组件。 */
 .pm-diagram-svg-viewbar {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid rgba(55, 45, 32, 0.12);
-  border-radius:0;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 6px 22px rgba(55, 45, 32, 0.14);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
 }
 .pm-diagram:hover .pm-diagram-svg-viewbar,
 .pm-diagram.is-selected .pm-diagram-svg-viewbar,
@@ -235,27 +222,27 @@
   padding: 0 12px;
   border: 1px solid rgba(47, 42, 34, 0.18);
   border-radius:0;
-  background: rgba(47, 79, 111, 0.96);
+  background: rgba(143, 109, 48, 0.96);
   color: #fff;
   font-size: 12px;
   cursor: pointer;
   box-shadow: 0 6px 18px rgba(47, 42, 34, 0.08);
 }
 .pm-diagram-view-btn:hover {
-  background: #243e58;
+  background: #755821;
 }
 .pm-diagram-view-btn:disabled {
   opacity: 0.58;
   cursor: wait;
 }
 .pm-diagram-view-btn--ghost {
-  background: rgba(255, 250, 240, 0.94);
-  color: var(--ink-1);
+  background: rgba(143, 109, 48, 0.96);
+  color: #fff;
 }
 .pm-diagram-view-btn--ghost:hover {
-  border-color: rgba(53, 97, 157, 0.45);
-  background: #fffaf0;
-  color: #1d4f91;
+  border-color: rgba(143, 109, 48, 0.72);
+  background: #755821;
+  color: #fff;
 }
 /* 全屏覆盖层(legacy,已不再由图表使用) */
 .pm-diagram-fullscreen {

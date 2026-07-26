@@ -3,6 +3,7 @@ import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
+import { MediaBlockToolbar } from "./MediaBlockToolbar";
 import "./DiagramView.css";
 
 const MAX_DIAGRAM_SCALE = 5;
@@ -33,14 +34,6 @@ export function DiagramSvgView({
   const boxRef = useRef<HTMLDivElement>(null);
   const pinchRef = useRef<{ dist: number } | null>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number; captured: boolean } | null>(null);
-
-  // 工具栏「放大/缩小」按钮:以容器中心为锚点缩放(与 ctrl+滚轮/捏合同一套 zoomAround)。
-  const zoomByButton = (factor: number) => {
-    const el = boxRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    zoomAround(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
-  };
 
   // 以 (clientX,clientY) 为锚点缩放,保持光标/捏合中心下的内容不漂移。
   const zoomAround = (clientX: number, clientY: number, factor: number) => {
@@ -164,47 +157,15 @@ export function DiagramSvgView({
         }}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-      {showToolbar && (
-        <div
+      {showToolbar && onFullscreen && (
+        <MediaBlockToolbar
+          align={align ?? "center"}
+          onAlignChange={onAlignChange}
+          onFullscreen={onFullscreen}
+          ariaLabel="图表操作"
+          fullscreenAriaLabel="全屏查看图表"
           className="pm-diagram-svg-viewbar pm-diagram-chrome"
-          // 工具栏点击/双击不冒泡:不触发图表块双击进编辑,也不触发画布平移。
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-        >
-          {onAlignChange &&
-            (["left", "center", "right"] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                className={`pm-diagram-tool${align === opt ? " is-active" : ""}`}
-                aria-pressed={align === opt}
-                title={opt === "left" ? "左对齐" : opt === "center" ? "居中" : "右对齐"}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onAlignChange(opt);
-                }}
-              >
-                {opt === "left" ? "左" : opt === "center" ? "中" : "右"}
-              </button>
-            ))}
-          {onAlignChange && <span className="pm-diagram-tool-sep" aria-hidden="true" />}
-          <button type="button" className="pm-diagram-tool" title="缩小" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); zoomByButton(1 / 1.25); }}>
-            −
-          </button>
-          <button type="button" className="pm-diagram-tool" title="放大" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); zoomByButton(1.25); }}>
-            ＋
-          </button>
-          {onFullscreen && (
-            <>
-              <span className="pm-diagram-tool-sep" aria-hidden="true" />
-              <button type="button" className="pm-diagram-tool pm-diagram-tool--wide" title="全屏查看" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); onFullscreen(); }}>
-                ⛶ 全屏
-              </button>
-            </>
-          )}
-        </div>
+        />
       )}
     </div>
   );

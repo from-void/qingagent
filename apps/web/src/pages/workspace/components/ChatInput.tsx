@@ -559,6 +559,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         e.preventDefault();
         return;
       }
+      // 中文/日文 IME 的 Enter 用于选字：composition 生命周期、原生 isComposing 与
+      // Safari/旧浏览器常见的 keyCode 229 任一命中时都交还给输入法。
+      if (
+        e.key === "Enter" &&
+        (composingRef.current ||
+          e.nativeEvent.isComposing ||
+          e.nativeEvent.keyCode === 229)
+      ) {
+        return;
+      }
       // 技能菜单开着:↑/↓ 选行、Enter 选中、Esc/Backspace 关、其它字符键关并放行。
       if (skillMenuOpen) {
         const n = orderedSkillActions.length;
@@ -572,7 +582,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           if (n) setSkillIndex((i) => (i - 1 + n) % n);
           return;
         }
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           const action = orderedSkillActions[skillIndex];
           if (action) addSkill(action);
@@ -620,14 +630,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         onOpenSkillMenu?.();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      // Enter 发送；Shift+Enter 保留 contenteditable 默认换行。Ctrl/Cmd+Enter
+      // 自然落入同一发送分支，继续兼容旧快捷键。
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        // 未配置模型 key:快捷键与置灰的发送按钮一样不放行,改成强弹引导气泡。
+        // 未配置模型 key:键盘发送与置灰的发送按钮一样不放行,改成强弹引导气泡。
         if (noModelKey) {
           flashKeyTip();
           return;
         }
-        onSubmit();
+        if (!isEmpty) onSubmit();
         return;
       }
       if (e.key === "Backspace") {
@@ -705,7 +717,20 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         }
       }
     },
-    [disabled, onSubmit, reportChange, skillMenuOpen, orderedSkillActions, skillIndex, addSkill, freezeSkillMenuOrder, onOpenSkillMenu],
+    [
+      disabled,
+      onSubmit,
+      reportChange,
+      skillMenuOpen,
+      orderedSkillActions,
+      skillIndex,
+      addSkill,
+      freezeSkillMenuOrder,
+      onOpenSkillMenu,
+      noModelKey,
+      flashKeyTip,
+      isEmpty,
+    ],
   );
 
   const removeAttachment = useCallback(
@@ -1127,7 +1152,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onClick={onStop}
               disabled={!onStop}
               data-wf="WsStopBtn"
-              title="停止输出"
             >
               停止
             </Button>
@@ -1141,7 +1165,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                   if (!noModelKey) onSubmit();
                 }}
                 disabled={sendDisabled || noModelKey}
-                title={noModelKey ? "还没配置模型 key" : "发送 · ⌘ / Ctrl + Enter"}
+                title={noModelKey ? "还没配置模型 key" : "Enter 发送 · Shift+Enter 换行"}
               >
                 发送 →
               </Button>

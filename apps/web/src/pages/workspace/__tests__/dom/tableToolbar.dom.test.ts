@@ -2,13 +2,15 @@ import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc, type PmMark } from "@qingagent/pm-schema";
 import { describe, expect, it, vi } from "vitest";
-import { CellSelection } from "@tiptap/pm/tables";
+import { CellSelection, TableMap } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import {
   applyTableToolbarFormat,
   applyTableToolbarStructure,
   canApplyTableToolbarStructure,
   isSingleTableCellTextSelection,
+  insertTableAxisAtBoundary,
   readTableAxisSelection,
   selectTableColumns,
   selectTableRows,
@@ -130,6 +132,36 @@ function rowCellTexts(editor: Editor, rowIndex: number): string[] {
 }
 
 describe("tableToolbar PM-010", () => {
+  it.each([
+    ["column", 1],
+    ["row", 1],
+  ] as const)("插入%s后收敛到新轴首格的折叠 TextSelection", (axis, boundary) => {
+    const editor = createTableEditor();
+    try {
+      expect(insertTableAxisAtBoundary(editor, "table-1", axis, boundary)).toBe(true);
+      expect(editor.state.selection).toBeInstanceOf(TextSelection);
+      expect(editor.state.selection.empty).toBe(true);
+
+      const $cursor = editor.state.selection.$from;
+      let cellDepth = -1;
+      for (let depth = $cursor.depth; depth >= 0; depth -= 1) {
+        if (["tableCell", "tableHeader"].includes($cursor.node(depth).type.name)) {
+          cellDepth = depth;
+          break;
+        }
+      }
+      expect(cellDepth).toBeGreaterThan(0);
+      const table = $cursor.node(cellDepth - 2);
+      const tableStart = $cursor.before(cellDepth - 2) + 1;
+      const cellOffset = $cursor.before(cellDepth) - tableStart;
+      const rect = TableMap.get(table).findCell(cellOffset);
+      expect(axis === "column" ? rect.left : rect.top).toBe(boundary);
+      expect(axis === "column" ? rect.top : rect.left).toBe(0);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("merge/split 仅在原生命令满足选区前置条件时可用", () => {
     const editor = createTableEditor();
     try {

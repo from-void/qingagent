@@ -38,6 +38,32 @@ export const TOOLBAR_THEME_COLORS = [
 
 export type ToolbarThemeColorKey = (typeof TOOLBAR_THEME_COLORS)[number]["key"];
 
+/**
+ * 单元格底色只提供与暖纸皮肤协调的低饱和色。
+ * 完整主题色表仍保留给文字、高亮和存量文档渲染；这里仅约束新选择，不迁移旧值。
+ */
+export const TABLE_CELL_BACKGROUND_COLORS = [
+  { key: "ink", label: "米纸", text: "#2f2a22", highlight: "#eee4cf", border: "#cdbb92" },
+  { key: "gray", label: "米灰", text: "#5f625c", highlight: "#e7e1d4", border: "#c7c0ae" },
+  { key: "sand", label: "细沙", text: "#836d4a", highlight: "#eadfc8", border: "#cdbd95" },
+  { key: "brown", label: "茶褐", text: "#7a5234", highlight: "#e5d4c3", border: "#c5aa90" },
+  { key: "amber", label: "麦秆", text: "#927016", highlight: "#ead9ae", border: "#c7b276" },
+  { key: "orange", label: "浅赭", text: "#a65d1f", highlight: "#e6ceb4", border: "#c6a27e" },
+  { key: "red", label: "赭红", text: "#a33a2a", highlight: "#e4c9bf", border: "#c7a096" },
+  { key: "yellow", label: "稻纸", text: "#7f7418", highlight: "#eee4bd", border: "#cfc389" },
+  { key: "lime", label: "苔黄", text: "#627a22", highlight: "#dde1c2", border: "#b8be8e" },
+  { key: "sage", label: "艾绿", text: "#57745c", highlight: "#d6dfcf", border: "#aab9a2" },
+  { key: "green", label: "黛绿", text: "#3f7a42", highlight: "#cad9c8", border: "#9eb39d" },
+  { key: "teal", label: "苍绿", text: "#24777a", highlight: "#cadbd2", border: "#9eb8aa" },
+  { key: "slate", label: "黛灰", text: "#44555c", highlight: "#d3d9d5", border: "#a8b2ad" },
+] as const satisfies ReadonlyArray<{
+  key: ToolbarThemeColorKey;
+  label: string;
+  text: string;
+  highlight: string;
+  border: string;
+}>;
+
 export const TOOLBAR_TEXT_COLORS = Object.fromEntries(
   TOOLBAR_THEME_COLORS.map((color) => [color.key, color.text]),
 ) as Record<ToolbarThemeColorKey, string>;

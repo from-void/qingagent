@@ -30,6 +30,22 @@ export const WORKSPACE_PAPER_CSS_VARIABLES = Object.freeze({
   "--ws-paper-radius": `${WORKSPACE_PAPER_GEOMETRY.paperRadius}px`,
 });
 
+/**
+ * 工作区真 DOM 与转场测量探针共用的骨架标识。
+ * 生产组件和探针都只能从这里取 id/class/data-wf，避免出现“长得像工作区”的第二套类名。
+ */
+export const WORKSPACE_PAPER_DOM = Object.freeze({
+  viewId: "view-workspace",
+  viewDataWf: "WorkspacePage",
+  bodyClass: "ws-body",
+  chatColumnClass: "ws-left",
+  paperColumnClass: "ws-right",
+  paperShellClass: "ws-paper-shell",
+  paperShellDataWf: "WorkspacePaperShell",
+  documentContentClass: "ws-document-content",
+  documentClass: "wf-doc",
+});
+
 function rectFromElement(element: Element | null): WorkspacePaperRect | null {
   if (!element) return null;
   const rect = element.getBoundingClientRect();
@@ -51,43 +67,100 @@ function rectFromElement(element: Element | null): WorkspacePaperRect | null {
   };
 }
 
+function findMountedPaper(view: HTMLElement): Element | null {
+  // 真正文已经挂出时以用户实际看到的 `.wf-doc` 为准；hydration 首帧只有壳时，
+  // shell 与 wf-doc 命中同一份纸面 CSS 声明，可直接接住交接。
+  return (
+    view.querySelector(`.${WORKSPACE_PAPER_DOM.documentClass}`) ??
+    view.querySelector(
+      `[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"]`,
+    )
+  );
+}
+
+function createWorkspacePaperMeasurementView(): {
+  view: HTMLElement;
+  paper: HTMLElement;
+} {
+  const view = document.createElement("section");
+  view.id = WORKSPACE_PAPER_DOM.viewId;
+  view.dataset.view = "workspace";
+  view.dataset.wf = WORKSPACE_PAPER_DOM.viewDataWf;
+  view.dataset.content = "editing";
+  view.dataset.tool = "none";
+  view.setAttribute("aria-hidden", "true");
+  Object.assign(view.style, {
+    // 与 WorkspacePage 根节点的首帧布局相同；fixed/inset/visibility 只负责把探针
+    // 放进视口且不绘制，不另写任何纸列几何。
+    position: "fixed",
+    inset: "0",
+    zIndex: "-2147483647",
+    visibility: "hidden",
+    pointerEvents: "none",
+    flex: "1",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: "0",
+    overflow: "hidden",
+  });
+  for (const [property, value] of Object.entries(
+    WORKSPACE_PAPER_CSS_VARIABLES,
+  )) {
+    view.style.setProperty(property, value);
+  }
+
+  const body = document.createElement("div");
+  body.className = WORKSPACE_PAPER_DOM.bodyClass;
+  body.dataset.hydration = "waiting";
+
+  const chatColumn = document.createElement("div");
+  chatColumn.className = WORKSPACE_PAPER_DOM.chatColumnClass;
+
+  const paperColumn = document.createElement("div");
+  paperColumn.className = WORKSPACE_PAPER_DOM.paperColumnClass;
+
+  const shell = document.createElement("div");
+  shell.className = WORKSPACE_PAPER_DOM.paperShellClass;
+  shell.dataset.wf = WORKSPACE_PAPER_DOM.paperShellDataWf;
+  shell.setAttribute("aria-hidden", "true");
+
+  const documentContent = document.createElement("div");
+  documentContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+  documentContent.dataset.wf = "WorkspaceHydrationDocumentContent";
+
+  const paper = document.createElement("article");
+  paper.className = WORKSPACE_PAPER_DOM.documentClass;
+  paper.setAttribute("aria-hidden", "true");
+
+  documentContent.appendChild(paper);
+  paperColumn.append(shell, documentContent);
+  body.append(chatColumn, paperColumn);
+  view.appendChild(body);
+  return { view, paper };
+}
+
 /**
  * 实测工作区纸壳的首帧矩形。
  *
- * 已在工作区时直接读真实 `.ws-paper-shell`；首页转场时挂一个不可见、与工作区
- * 使用同一 CSS 变量和 scrollbar-gutter 规则的 DOM 探针，让浏览器亲自计算滚动槽。
- * 探针只参与布局，不参与绘制，也没有 transition/animation。
+ * 已在工作区时优先读真实 `.wf-doc`，尚未挂正文时读 `.ws-paper-shell`。
+ * 首页转场时挂一个不可见的真实工作区骨架：同一个 `#view-workspace`、`.ws-body`、
+ * `.ws-left`、`.ws-right`、`.ws-paper-shell`、`.wf-doc`，让生产样式表原样命中。
+ * 探针只参与布局，不参与绘制，也不创建任何仿制 CSS。
  */
 export function measureWorkspacePaperRect(): WorkspacePaperRect | null {
   if (typeof document === "undefined") return null;
 
-  const mountedPaper = document.querySelector(
-    '#view-workspace [data-wf="WorkspacePaperShell"]',
-  );
-  const mountedRect = rectFromElement(mountedPaper);
-  if (mountedRect) return mountedRect;
-
-  const probe = document.createElement("div");
-  probe.className = "ws-paper-geometry-probe";
-  probe.setAttribute("aria-hidden", "true");
-  for (const [property, value] of Object.entries(
-    WORKSPACE_PAPER_CSS_VARIABLES,
-  )) {
-    probe.style.setProperty(property, value);
+  const mountedView = document.getElementById(WORKSPACE_PAPER_DOM.viewId);
+  if (mountedView) {
+    // 绝不在已有真工作区时创建第二个同 id 探针。
+    return rectFromElement(findMountedPaper(mountedView));
   }
-  probe.innerHTML =
-    '<div class="ws-paper-geometry-probe__body">' +
-    '<div class="ws-paper-geometry-probe__chat"></div>' +
-    '<div class="ws-paper-geometry-probe__column">' +
-    '<div class="ws-paper-geometry-probe__paper"></div>' +
-    "</div></div>";
 
-  document.body.appendChild(probe);
+  const { view, paper } = createWorkspacePaperMeasurementView();
+  document.body.appendChild(view);
   try {
-    return rectFromElement(
-      probe.querySelector(".ws-paper-geometry-probe__paper"),
-    );
+    return rectFromElement(paper);
   } finally {
-    probe.remove();
+    view.remove();
   }
 }

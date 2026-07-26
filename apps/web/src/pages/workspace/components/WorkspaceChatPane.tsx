@@ -1,4 +1,5 @@
 import { goConfigureModel } from "../../../system/modelKeyGate";
+import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageList, shouldShowPreTokenLoading } from "./ChatMessageList";
@@ -63,7 +64,7 @@ export function WorkspaceChatPane({
   const inputHidden = inputHandedOff || Boolean(inlineConfirm);
 
   return (
-    <div className="ws-left">
+    <div className={WORKSPACE_PAPER_DOM.chatColumnClass}>
       <div
         className="ws-chat-content"
         data-wf="WorkspaceHydrationChatContent"

@@ -1,5 +1,6 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -275,16 +276,16 @@ export function WorkspaceDocumentPane({
         />
       ) : null}
       <div
-        className={`ws-right${previewExit.source ? " is-previewing" : ""}`}
+        className={`${WORKSPACE_PAPER_DOM.paperColumnClass}${previewExit.source ? " is-previewing" : ""}`}
         ref={docScrollRef}
       >
         <div
-          className="ws-paper-shell"
-          data-wf="WorkspacePaperShell"
+          className={WORKSPACE_PAPER_DOM.paperShellClass}
+          data-wf={WORKSPACE_PAPER_DOM.paperShellDataWf}
           aria-hidden="true"
         />
         <div
-          className="ws-document-content"
+          className={WORKSPACE_PAPER_DOM.documentContentClass}
           data-wf="WorkspaceHydrationDocumentContent"
         >
           {dim.content.kind === "empty" && derivatives.length === 0 ? null : (

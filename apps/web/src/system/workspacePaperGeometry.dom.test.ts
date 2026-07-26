@@ -5,6 +5,7 @@ import { createHomeTransitionStage } from "../pages/new-session/transition/homeS
 import {
   measureWorkspacePaperRect,
   WORKSPACE_PAPER_CSS_VARIABLES,
+  WORKSPACE_PAPER_DOM,
 } from "./workspacePaperGeometry";
 
 function domRect(input: {
@@ -26,20 +27,42 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     document.body.innerHTML = "";
   });
 
-  it("无目标页 DOM 时以同构探针实测浏览器滚动槽后的纸壳 rect", () => {
+  it("同源真类名探针与真实挂载两路测量完全一致，且全程只有一个 #view-workspace", () => {
     const expected = {
-      left: 736,
+      left: 492,
       top: 52,
       width: 792,
-      height: 848,
+      height: 525,
     };
+    let measuredProbe = false;
     const nativeGetRect = Element.prototype.getBoundingClientRect;
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
       function getBoundingClientRect(this: Element) {
-        if (this.classList.contains("ws-paper-geometry-probe__paper")) {
-          const probe = this.closest<HTMLElement>(".ws-paper-geometry-probe");
+        if (this.classList.contains(WORKSPACE_PAPER_DOM.documentClass)) {
+          const view = this.closest<HTMLElement>(
+            `#${WORKSPACE_PAPER_DOM.viewId}`,
+          );
+          if (view?.style.visibility === "hidden") {
+            measuredProbe = true;
+            expect(view.tagName).toBe("SECTION");
+            expect(view.dataset.wf).toBe(WORKSPACE_PAPER_DOM.viewDataWf);
+            expect(view.style.pointerEvents).toBe("none");
+            expect(
+              view.querySelector(
+                `.${WORKSPACE_PAPER_DOM.bodyClass} > .${WORKSPACE_PAPER_DOM.chatColumnClass} + .${WORKSPACE_PAPER_DOM.paperColumnClass}`,
+              ),
+            ).not.toBeNull();
+            expect(
+              view.querySelector(
+                `.${WORKSPACE_PAPER_DOM.paperColumnClass} > .${WORKSPACE_PAPER_DOM.paperShellClass}[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"] + .${WORKSPACE_PAPER_DOM.documentContentClass} > .${WORKSPACE_PAPER_DOM.documentClass}`,
+              ),
+            ).toBe(this);
+            expect(
+              document.querySelectorAll(`#${WORKSPACE_PAPER_DOM.viewId}`),
+            ).toHaveLength(1);
+          }
           expect(
-            probe?.style.getPropertyValue("--ws-paper-column-width"),
+            view?.style.getPropertyValue("--ws-paper-column-width"),
           ).toBe(WORKSPACE_PAPER_CSS_VARIABLES["--ws-paper-column-width"]);
           return domRect(expected);
         }
@@ -47,8 +70,41 @@ describe("首页转场纸与工作区真纸几何交接", () => {
       },
     );
 
-    expect(measureWorkspacePaperRect()).toEqual(expected);
-    expect(document.querySelector(".ws-paper-geometry-probe")).toBeNull();
+    const probedRect = measureWorkspacePaperRect();
+    expect(probedRect).toEqual(expected);
+    expect(measuredProbe).toBe(true);
+    expect(document.getElementById(WORKSPACE_PAPER_DOM.viewId)).toBeNull();
+
+    // 第二路模拟 WorkspacePage 已真实挂载：measure 必须复用现有根节点，
+    // 优先读取真 `.wf-doc`，绝不能再插入一个同 id 探针。
+    const mountedView = document.createElement("section");
+    mountedView.id = WORKSPACE_PAPER_DOM.viewId;
+    mountedView.dataset.wf = WORKSPACE_PAPER_DOM.viewDataWf;
+    const mountedBody = document.createElement("div");
+    mountedBody.className = WORKSPACE_PAPER_DOM.bodyClass;
+    const mountedChatColumn = document.createElement("div");
+    mountedChatColumn.className = WORKSPACE_PAPER_DOM.chatColumnClass;
+    const mountedPaperColumn = document.createElement("div");
+    mountedPaperColumn.className = WORKSPACE_PAPER_DOM.paperColumnClass;
+    const mountedShell = document.createElement("div");
+    mountedShell.className = WORKSPACE_PAPER_DOM.paperShellClass;
+    mountedShell.dataset.wf = WORKSPACE_PAPER_DOM.paperShellDataWf;
+    const mountedContent = document.createElement("div");
+    mountedContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const mountedPaper = document.createElement("article");
+    mountedPaper.className = WORKSPACE_PAPER_DOM.documentClass;
+    mountedPaper.getBoundingClientRect = () => domRect(expected);
+    mountedContent.appendChild(mountedPaper);
+    mountedPaperColumn.append(mountedShell, mountedContent);
+    mountedBody.append(mountedChatColumn, mountedPaperColumn);
+    mountedView.appendChild(mountedBody);
+    document.body.appendChild(mountedView);
+
+    const mountedRect = measureWorkspacePaperRect();
+    expect(mountedRect).toEqual(probedRect);
+    expect(
+      document.querySelectorAll(`#${WORKSPACE_PAPER_DOM.viewId}`),
+    ).toHaveLength(1);
   });
 
   it("真实转场 DOM 的纸面层在落定帧重取目标，终帧与工作区首帧误差不超过 1px", async () => {
@@ -76,10 +132,9 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     let resized = false;
 
     const workspace = document.createElement("section");
-    workspace.id = "view-workspace";
+    workspace.id = WORKSPACE_PAPER_DOM.viewId;
     const paper = document.createElement("div");
-    paper.className = "wf-doc";
-    paper.dataset.wf = "WorkspacePaperShell";
+    paper.className = WORKSPACE_PAPER_DOM.documentClass;
     paper.getBoundingClientRect = () =>
       domRect(resized ? workspaceFirstFrame : beforeResize);
     workspace.appendChild(paper);
@@ -177,9 +232,6 @@ describe("首页转场纸与工作区真纸几何交接", () => {
       "utf8",
     );
 
-    const probePaperRule = appCss.match(
-      /\.ws-paper-geometry-probe__paper\s*\{[^}]*\}/,
-    )?.[0];
     const paperRule = skinCss.match(
       /#view-workspace \.wf-doc,\s*#view-workspace \.ws-paper-shell\s*\{[^}]*\}/,
     )?.[0];
@@ -194,7 +246,7 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     )?.[0];
 
     expect(WORKSPACE_PAPER_CSS_VARIABLES["--ws-paper-radius"]).toBe("0px");
-    expect(probePaperRule).toContain("border-radius: var(--ws-paper-radius)");
+    expect(appCss).not.toContain("ws-paper-geometry-probe");
     expect(paperRule).toContain("border-radius: var(--ws-paper-radius)");
     expect(morphFaceRule).toContain(
       "border-radius: var(--ws-paper-radius)",
@@ -205,7 +257,6 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     expect(morphRule).toContain("overflow: visible");
     expect(morphRule).not.toMatch(/\b(?:background|box-shadow|border-radius)\s*:/);
     for (const rule of [
-      probePaperRule,
       paperRule,
       morphFaceRule,
       newSessionMorphFaceRule,

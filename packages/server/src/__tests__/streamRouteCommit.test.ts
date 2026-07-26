@@ -381,4 +381,50 @@ describe("POST /api/v1/commit", () => {
       error: { code, message },
     });
   });
+
+  it("draftTemplate deadline 失败返回 422，并携带失败帧 reason 与 requestId", async () => {
+    const failureFrame: LoggedFrame = {
+      seq: 8,
+      epoch: 1,
+      generation: 3,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "error",
+            reason: "操作未能完成，请刷新页面后重试",
+            retriable: true,
+          },
+        },
+      },
+    };
+    vi.spyOn(sessionManager, "submitQueued").mockResolvedValueOnce({
+      completion: Promise.reject(new SessionActorCommandError(
+        "Session actor command failed",
+        new DOMException("draftTemplate timed out after 85000ms", "TimeoutError"),
+        [failureFrame],
+      )),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await request("POST", "/api/v1/commands", {
+      kind: "draftTemplate",
+      data: {
+        sessionId: "command-runtime-failure-test",
+        requestId: "request-template-timeout",
+        scene: { kind: "review", type: "role", label: "角色审查" },
+        intent: { name: "", prompt: "" },
+      },
+    });
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "操作未能完成，请刷新页面后重试",
+      },
+      requestId: "request-template-timeout",
+    });
+  });
 });

@@ -3,6 +3,7 @@ import type {
   BridgeFrame,
   CancelConfirmedCommand,
   Command,
+  CommandFailedResponse,
   ReviewType,
   SubmitConfirmDecision,
 } from "@qingagent/contract-ts";
@@ -66,55 +67,22 @@ interface LoggedBridgeFrame {
   frame: BridgeFrame;
 }
 
-class CancelAskUserCommandError extends Error {
-  readonly cancelAskUserServerFailure = true;
+/** Web 比服务端 85 秒 deadline 多留 5 秒，用于接收失败帧和 422 响应。 */
+const DRAFT_TEMPLATE_WAIT_TIMEOUT_MS = 90_000;
 
-  constructor(message: string) {
+class CommandRequestError extends Error {
+  readonly cancelAskUserServerFailure?: true;
+
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+    readonly requestId: string | undefined,
+    commandKind: Command["kind"],
+  ) {
     super(message);
-    this.name = "CancelAskUserCommandError";
-  }
-}
-
-function assertCancelAskUserResponse(result: unknown): void {
-  if (!Array.isArray(result)) {
-    throw new CancelAskUserCommandError(
-      "cancelAskUser failed: invalid command response",
-    );
-  }
-  for (const value of result) {
-    try {
-      validateBridgeFrame(value as BridgeFrame);
-    } catch {
-      throw new CancelAskUserCommandError(
-        "cancelAskUser failed: invalid response frame",
-      );
-    }
-    const frame = value as BridgeFrame;
-    if (frame.kind !== "stream") continue;
-    const streamFrame = frame.data as {
-      kind?: unknown;
-      data?: unknown;
-    };
-    if (
-      !["start", "end", "draftingFailed"].includes(
-        String(streamFrame.kind),
-      ) ||
-      streamFrame.data === null ||
-      typeof streamFrame.data !== "object"
-    ) {
-      throw new CancelAskUserCommandError(
-        "cancelAskUser failed: invalid response frame",
-      );
-    }
-    if (streamFrame.kind === "draftingFailed") {
-      const failure = streamFrame.data as { reason?: unknown };
-      throw new CancelAskUserCommandError(
-        `cancelAskUser failed: ${
-          typeof failure.reason === "string"
-            ? failure.reason
-            : "invalid failure frame"
-        }`,
-      );
+    this.name = "CommandRequestError";
+    if (commandKind === "cancelAskUser") {
+      this.cancelAskUserServerFailure = true;
     }
   }
 }
@@ -182,6 +150,13 @@ async function responseErrorMessage(
   const body = await response.json().catch(() => null) as {
     error?: string | { message?: unknown };
   } | null;
+  return responseErrorBodyMessage(body, fallback);
+}
+
+function responseErrorBodyMessage(
+  body: { error?: string | { message?: unknown } } | null,
+  fallback: string,
+): string {
   if (typeof body?.error === "string") return body.error;
   if (
     body?.error &&
@@ -407,16 +382,13 @@ export class ServerStream {
           )),
       "ignoreAnnotationGroups completed without receiving authoritative annotationGroupsReady frame",
     );
-    try {
-      await this.sendCommand({
+    await this.sendCommandAndWaitFrame(
+      {
         kind: "ignoreAnnotationGroups",
         data: { sessionId, reason, ...options },
-      });
-      await framePromise;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+      },
+      framePromise,
+    );
   }
 
   async updateMaterialSummary(
@@ -432,16 +404,13 @@ export class ServerStream {
         (frame.data.summary ?? "") === summary,
       "updateMaterialSummary completed without receiving authoritative resourceUpdated frame",
     );
-    try {
-      await this.sendCommand({
+    await this.sendCommandAndWaitFrame(
+      {
         kind: "updateMaterialSummary",
         data: { sessionId, materialId, summary },
-      });
-      await framePromise;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+      },
+      framePromise,
+    );
   }
 
   async listLexicons(sessionId: string): Promise<Extract<BridgeFrame, { kind: "lexiconsListed" }>["data"]["lexicons"]> {
@@ -449,15 +418,12 @@ export class ServerStream {
       (frame) => frame.kind === "lexiconsListed",
       "listLexicons completed without receiving lexiconsListed frame",
     );
-    try {
-      await this.sendCommand({ kind: "listLexicons", data: { sessionId } });
-      const frame = await framePromise;
-      if (frame.kind !== "lexiconsListed") throw new Error("词库列表响应类型错误");
-      return frame.data.lexicons;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+    const frame = await this.sendCommandAndWaitFrame(
+      { kind: "listLexicons", data: { sessionId } },
+      framePromise,
+    );
+    if (frame.kind !== "lexiconsListed") throw new Error("词库列表响应类型错误");
+    return frame.data.lexicons;
   }
 
   async listLexiconEntries(sessionId: string, resourceId: string): Promise<Extract<BridgeFrame, { kind: "lexiconEntriesListed" }>["data"]["entries"]> {
@@ -465,15 +431,12 @@ export class ServerStream {
       (frame) => frame.kind === "lexiconEntriesListed" && frame.data.resourceId === resourceId,
       "listLexiconEntries completed without receiving lexiconEntriesListed frame",
     );
-    try {
-      await this.sendCommand({ kind: "listLexiconEntries", data: { sessionId, resourceId } });
-      const frame = await framePromise;
-      if (frame.kind !== "lexiconEntriesListed") throw new Error("词条列表响应类型错误");
-      return frame.data.entries;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+    const frame = await this.sendCommandAndWaitFrame(
+      { kind: "listLexiconEntries", data: { sessionId, resourceId } },
+      framePromise,
+    );
+    if (frame.kind !== "lexiconEntriesListed") throw new Error("词条列表响应类型错误");
+    return frame.data.entries;
   }
 
   async renameSession(sessionId: string, title: string): Promise<void> {
@@ -485,19 +448,23 @@ export class ServerStream {
     abortSignal?: AbortSignal,
   ): Promise<Extract<BridgeFrame, { kind: "templateDrafted" }>["data"]> {
     const requestId = crypto.randomUUID();
+    const requestController = new AbortController();
     const framePromise = this.waitForFrame(
       (frame) => frame.kind === "templateDrafted" && frame.data.requestId === requestId,
       "draftTemplate completed without receiving templateDrafted frame",
+      DRAFT_TEMPLATE_WAIT_TIMEOUT_MS,
+      (timeoutError) => requestController.abort(timeoutError),
     );
-    try {
-      await this.sendCommandInternal({ kind: "draftTemplate", data: { ...data, requestId } }, undefined, abortSignal);
-      const frame = await framePromise;
-      if (frame.kind !== "templateDrafted") throw new Error("AI 起草响应类型错误");
-      return frame.data;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+    const requestSignal = abortSignal
+      ? AbortSignal.any([abortSignal, requestController.signal])
+      : requestController.signal;
+    const frame = await this.sendCommandAndWaitFrame(
+      { kind: "draftTemplate", data: { ...data, requestId } },
+      framePromise,
+      requestSignal,
+    );
+    if (frame.kind !== "templateDrafted") throw new Error("AI 起草响应类型错误");
+    return frame.data;
   }
 
   private async derivativeFrame<K extends "derivativesListed" | "derivativeCreated" | "derivativeParamsUpdated" | "derivativeDeleted" | "derivativeDocLoaded" | "styleTemplatesListed" | "styleTemplateLoaded" | "styleTemplateSaved" | "styleTemplateDeleted" | "reviewTemplatesListed" | "reviewTemplateSaved" | "reviewTemplateDeleted" | "reviewTemplateSelected" | "reviewSupplementLoaded" | "reviewSupplementSaved">(
@@ -508,13 +475,7 @@ export class ServerStream {
       (frame) => frame.kind === kind && frame.data.requestId === command.data.requestId,
       `${kind} response missing`,
     );
-    try {
-      await this.sendCommand(command);
-      return await framePromise as Extract<BridgeFrame, { kind: K }>;
-    } catch (error) {
-      this.rejectWaiter(framePromise);
-      throw error;
-    }
+    return await this.sendCommandAndWaitFrame(command, framePromise) as Extract<BridgeFrame, { kind: K }>;
   }
 
   async listDerivatives(sessionId: string) {
@@ -612,6 +573,27 @@ export class ServerStream {
     ) as Promise<string>;
   }
 
+  private async sendCommandAndWaitFrame(
+    command: Command,
+    framePromise: Promise<BridgeFrame>,
+    abortSignal?: AbortSignal,
+  ): Promise<BridgeFrame> {
+    try {
+      const [, frame] = await Promise.all([
+        this.sendCommandInternal(command, undefined, abortSignal),
+        framePromise,
+      ]);
+      return frame;
+    } catch (error) {
+      const waiterError = error instanceof Error
+        ? error
+        : new Error(String(error));
+      // HTTP 失败与对应帧 waiter 使用同一个错误结算，避免留下 30 秒幽灵等待。
+      this.rejectWaiter(framePromise, waiterError);
+      throw error;
+    }
+  }
+
   private async sendCommandInternal(
     command: Command,
     /** When set, resolve with the sessionId from the first matching frame kind. */
@@ -664,10 +646,23 @@ export class ServerStream {
       });
 
       if (!response.ok) {
-        const message = await responseErrorMessage(
-          response,
+        const body = await response.json().catch(() => null) as (
+          Partial<CommandFailedResponse> & {
+            error?: string | { code?: unknown; message?: unknown };
+          }
+        ) | null;
+        const message = responseErrorBodyMessage(
+          body,
           `Stream request failed: ${response.status}`,
         );
+        const code = body?.error &&
+            typeof body.error === "object" &&
+            typeof body.error.code === "string"
+          ? body.error.code
+          : undefined;
+        const requestId = typeof body?.requestId === "string"
+          ? body.requestId
+          : undefined;
         this.dispatchLocal?.({
           kind: "streamErrorSet",
           error: response.status === 409 || response.status === 410
@@ -682,7 +677,12 @@ export class ServerStream {
               }
             : streamErrorForHttpStatus(response.status),
         });
-        throw new Error(message);
+        throw new CommandRequestError(
+          message,
+          code,
+          requestId,
+          command.kind,
+        );
       }
 
       const result = await response.json().catch(() => ({})) as {
@@ -690,13 +690,6 @@ export class ServerStream {
         sessionId?: string;
         epoch?: number;
       };
-
-      // cancelAskUser 是前台事务命令：actor 抛错时路由为了保留错误帧会返回
-      // HTTP 200 + draftingFailed[]。只看 response.ok 会把失败误报成成功，并让
-      // 前端清掉唯一作答入口、后端却继续持有 suspension。
-      if (command.kind === "cancelAskUser") {
-        assertCancelAskUserResponse(result);
-      }
 
       if (command.kind === "startSession") {
         const sessionId =
@@ -729,14 +722,17 @@ export class ServerStream {
       return result;
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
-        this.rejectWaiter(docWritePromise);
+        this.rejectWaiter(docWritePromise, e);
         if (abortSignal) throw e;
         if (interceptKind) {
           throw new Error("startSession aborted before sessionMeta received");
         }
         return;
       }
-      this.rejectWaiter(docWritePromise);
+      this.rejectWaiter(
+        docWritePromise,
+        e instanceof Error ? e : new Error(String(e)),
+      );
       throw e;
     } finally {
       abortSignal?.removeEventListener("abort", abortFromCaller);
@@ -1153,6 +1149,7 @@ export class ServerStream {
     predicate: (frame: BridgeFrame) => boolean,
     timeoutMessage: string,
     timeoutMs = 30_000,
+    onTimeout?: (error: Error) => void,
   ): Promise<BridgeFrame> {
     let waiter: {
       predicate: (frame: BridgeFrame) => boolean;
@@ -1167,7 +1164,9 @@ export class ServerStream {
         reject,
         timer: setTimeout(() => {
           this.waiters.delete(waiter);
-          reject(new Error(timeoutMessage));
+          const error = new Error(timeoutMessage);
+          reject(error);
+          onTimeout?.(error);
         }, timeoutMs),
       };
       this.waiters.add(waiter);
@@ -1176,14 +1175,17 @@ export class ServerStream {
     return promise;
   }
 
-  private rejectWaiter(promise: Promise<unknown> | null): void {
+  private rejectWaiter(
+    promise: Promise<unknown> | null,
+    error = new Error("Frame waiter cancelled"),
+  ): void {
     if (!promise) return;
     const waiter = this.waiterByPromise.get(promise);
     if (waiter) {
       clearTimeout(waiter.timer);
       this.waiters.delete(waiter);
       this.waiterByPromise.delete(promise);
-      waiter.reject(new Error("Frame waiter cancelled"));
+      waiter.reject(error);
     }
     // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。
     promise.catch(() => undefined);

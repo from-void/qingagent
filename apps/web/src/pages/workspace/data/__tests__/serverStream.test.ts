@@ -385,6 +385,33 @@ describe("ServerStream", () => {
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  it("draftTemplate 等待 90 秒后会中止对应 HTTP 请求", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const stream = new ServerStream();
+    const pending = stream.draftTemplate({
+      sessionId: "s-1",
+      scene: { kind: "review", type: "role", label: "角色审查" },
+      intent: { name: "", prompt: "" },
+    });
+    const rejection = expect(pending).rejects.toThrow(
+      "draftTemplate completed without receiving templateDrafted frame",
+    );
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(requestSignal?.aborted).toBe(true);
+    await rejection;
+  });
+
   it("stop() dispatches local stream termination", () => {
     const localActions: WorkspaceLocalAction[] = [];
     const stream = new ServerStream((action) => localActions.push(action));
@@ -565,68 +592,57 @@ describe("ServerStream", () => {
     expect(parsed.data.fileIds).toEqual(["file-abc-123"]);
   });
 
-  it("sendCommand 返回前台命令的 frame 数组，供 material retry 识别 busy", async () => {
-    const busyFrame: BridgeFrame = {
-      kind: "stream",
-      data: {
-        kind: "draftingFailed",
-        data: {
-          streamId: "active-stream",
-          reason: "生成中，请稍后再试",
-          retriable: false,
-        },
+  it("renameSession 等不依赖成功帧的命令遇到 422 时不再误判成功", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "名称未能保存，请稍后重试",
       },
-    };
-    globalThis.fetch = commandResponse([busyFrame]);
-
+    }, 422);
     const stream = new ServerStream();
-    const result = await stream.sendCommand({
-      kind: "reparseMaterial",
-      data: {
-        sessionId: "s-1",
-        fileId: "33333333-3333-4333-8333-333333333333",
-      },
+
+    await expect(stream.renameSession("s-1", "新名称")).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      message: "名称未能保存，请稍后重试",
     });
-
-    expect(result).toEqual([busyFrame]);
   });
 
-  it("P1-11: cancelAskUser 即使 HTTP 200，只要响应含 actor 错误帧也必须 reject", async () => {
-    const errorFrame: BridgeFrame = {
-      kind: "stream",
-      data: {
-        kind: "draftingFailed",
-        data: {
-          streamId: "error",
-          reason: "模型服务暂时不可用，请稍后重试",
-          retriable: true,
-        },
+  it("derivative 类命令遇到业务失败时立即 reject，不再等待成功帧超时", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "衍生稿不存在或不属于当前会话",
       },
-    };
-    globalThis.fetch = commandResponse([errorFrame]);
-
+      requestId: "request-derivative-failure",
+    }, 422);
     const stream = new ServerStream();
-    await expect(
-      stream.sendCommand({
-        kind: "cancelAskUser",
-        data: { sessionId: "s-1", toolCallId: "ask-1" },
-      }),
-    ).rejects.toThrow("cancelAskUser failed");
+
+    await expect(stream.getDerivativeDoc("s-1", "missing-doc")).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      message: "衍生稿不存在或不属于当前会话",
+      requestId: "request-derivative-failure",
+    });
   });
 
-  it.each([
-    { label: "非数组响应", body: { accepted: true } },
-    { label: "非法 frame", body: [{ kind: "stream", data: {} }] },
-  ])("P1-11: cancelAskUser 防御性拒绝$label", async ({ body }) => {
-    globalThis.fetch = commandResponse(body);
-    const stream = new ServerStream();
+  it("cancelAskUser 的专项失败标记由统一 422 协议保留", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "模型服务暂时不可用，请稍后重试",
+      },
+    }, 422);
 
+    const stream = new ServerStream();
     await expect(
       stream.sendCommand({
         kind: "cancelAskUser",
         data: { sessionId: "s-1", toolCallId: "ask-1" },
       }),
-    ).rejects.toThrow("cancelAskUser failed");
+    ).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      cancelAskUserServerFailure: true,
+      message: "模型服务暂时不可用，请稍后重试",
+    });
   });
 
   it("P1-11: cancelAskUser 空帧数组表示幂等成功", async () => {

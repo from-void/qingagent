@@ -21,6 +21,7 @@ export * from "./ClientCapabilities";
 export * from "./Connector";
 export * from "./CodePatch";
 export * from "./Command";
+export * from "./CommandResponse";
 export * from "./CommitPatches";
 export * from "./CommitReviewGroups";
 export * from "./Confirm";

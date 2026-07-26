@@ -1,7 +1,11 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import type { Command, BridgeFrame } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  Command,
+  CommandFailedResponse,
+} from "@qingagent/contract-ts";
 import { safeParsePmDoc } from "@qingagent/pm-schema";
 import {
   parseOrigin,
@@ -177,6 +181,44 @@ function commandFrames(entries: LoggedFrame[]): BridgeFrame[] {
   return entries.map((entry) => entry.frame);
 }
 
+function firstCommandRequestId(commands: readonly Command[]): string | undefined {
+  for (const command of commands) {
+    const requestId = (command.data as { requestId?: unknown }).requestId;
+    if (typeof requestId === "string" && requestId.length > 0) return requestId;
+  }
+  return undefined;
+}
+
+function commandFailureReason(error: SessionActorCommandError): string {
+  // Actor 的 draftingFailed 已按命令类别脱敏；HTTP 与 SSE 复用同一诚实文案，
+  // 不能把 originalError 的内部路径、密钥或上游原文暴露给前端。
+  for (let index = error.frames.length - 1; index >= 0; index -= 1) {
+    const frame = error.frames[index]?.frame;
+    if (
+      frame?.kind === "stream" &&
+      frame.data.kind === "draftingFailed" &&
+      frame.data.data.reason
+    ) {
+      return frame.data.data.reason;
+    }
+  }
+  return publicStreamErrorReason();
+}
+
+function commandFailedResponse(
+  command: Command,
+  error: SessionActorCommandError,
+): CommandFailedResponse {
+  const requestId = firstCommandRequestId([command]);
+  return {
+    error: {
+      code: "COMMAND_FAILED",
+      message: commandFailureReason(error),
+    },
+    ...(requestId ? { requestId } : {}),
+  };
+}
+
 function loggedCommandFrames(entries: LoggedFrame[]): Array<{ seq: number; frame: BridgeFrame }> {
   return entries.map(({ seq, frame }) => ({ seq, frame }));
 }
@@ -295,8 +337,8 @@ async function handleCommandPost(c: Context) {
     console.error("[commands] command failed:", redactStreamErrorForLog(error));
     const deletionResponse = sessionDeletionErrorResponse(c, error);
     if (deletionResponse) return deletionResponse;
-    if (error instanceof SessionActorCommandError && error.frames.length > 0) {
-      return c.json(commandFrames(error.frames));
+    if (error instanceof SessionActorCommandError) {
+      return c.json(commandFailedResponse(prepared.command, error), 422);
     }
     return c.json({ error: publicStreamErrorReason() }, 500);
   }

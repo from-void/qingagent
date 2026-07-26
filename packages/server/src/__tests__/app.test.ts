@@ -791,7 +791,11 @@ describe("POST /api/v1/stream", () => {
       },
     };
     const res = await request("POST", "/api/v1/stream", command);
-    expect(res.status).toBe(200);
+    // 结构校验已通过；不存在的会话进入 Actor 后按统一业务失败协议返回 422。
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "COMMAND_FAILED" },
+    });
   });
 
   it("rejects updateDoc with missing sessionId", async () => {

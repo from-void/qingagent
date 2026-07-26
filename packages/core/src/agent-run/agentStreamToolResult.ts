@@ -16,6 +16,16 @@ import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 import { isRecord } from "./redaction.js";
 import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
 import { normalizeKillProcessResult } from "./backgroundCommandLifecycle.js";
+import {
+  DUPLICATE_AUTH_CARD_NOOP,
+  showQrDuplicatesTrustedAuthCard,
+} from "./authCardDedup.js";
+
+const CONNECTOR_AUTH_START_TOOL_NAMES = new Set([
+  "github_auth_start",
+  "feishu_auth_start",
+  "wechat_auth_start",
+]);
 
 export async function* handleToolResultEvent(
   turn: AgentStreamTurnContext,
@@ -31,6 +41,13 @@ export async function* handleToolResultEvent(
   const args = { ...(turn.toolCallArgsById.get(toolCallId) ?? {}), ...rawArgs };
   turn.toolCallNameById.set(toolCallId, toolName);
   turn.toolCallArgsById.set(toolCallId, args);
+  if (
+    toolName === "show_qr" &&
+    !args.completedCardId &&
+    showQrDuplicatesTrustedAuthCard(args, turn.trustedAuthCards)
+  ) {
+    turn.suppressedShowQrCallIds.add(toolCallId);
+  }
   const payload = chunk.payload as Record<string, unknown>;
   const rawToolResult =
     Object.prototype.hasOwnProperty.call(payload, "result")
@@ -85,11 +102,12 @@ export async function* handleToolResultEvent(
   if (!isQuestionnaireTool(toolName) && !PURE_UI_TOOL_NAMES.has(toolName)) {
     outcome.sawSideEffectToolCall = true;
   }
-  const transcriptResult =
-    toolName === "wechat_auth_start" && isRecord(rawToolResult)
+  const transcriptResult = turn.suppressedShowQrCallIds.has(toolCallId)
+    ? { ok: true, ignored: true, message: DUPLICATE_AUTH_CARD_NOOP }
+    : CONNECTOR_AUTH_START_TOOL_NAMES.has(toolName) && isRecord(rawToolResult)
       ? {
           ok: toolResult.ok ?? true,
-          note: "二维码已展示给用户,等其扫码后点『我已扫码完成』",
+          note: "授权卡已展示给用户；不要再调用 show_qr，也不要复述授权链接或配对码。连接器会自动完成后续状态复核。",
         }
       : rawToolResult;
   appendToolTranscriptMessage(state, {

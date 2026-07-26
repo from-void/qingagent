@@ -24,20 +24,21 @@ import {
 } from "../session/sessionState.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
-  feishuAuthCardToolCallSpec,
+  authCardToolCallSpec,
   generateSvgProgressFromResult,
   generateSvgToolCallSpec,
-  githubAuthCardToolCallSpec,
   latestGenerateSvgProgress,
-  qrCardToolCallSpec,
   readImageToolCallSpec,
   researchCardToolCallSpec,
-  wechatAuthQrToolCallSpec,
 } from "./toolCards.js";
 import type {
   ToolResultContext,
   ToolResultHandlerResult,
 } from "./agentStreamToolResultTypes.js";
+import {
+  trustedAuthCardSignal,
+} from "./authCardDedup.js";
+import { getConnectorDefinition } from "../connectors/registry.js";
 
 const logger = mastra.getLogger();
 
@@ -52,6 +53,10 @@ export async function* handleSpecialToolResult(
   const { state, agentMessageId, outcome } = turn;
 
   if (toolName === "show_qr") {
+    if (turn.suppressedShowQrCallIds.has(toolCallId)) {
+      turn.streamingPlaceholders.delete(toolCallId);
+      return "handled";
+    }
     const completedCardId =
       typeof args.completedCardId === "string" && args.completedCardId.trim()
         ? args.completedCardId.trim()
@@ -127,11 +132,16 @@ export async function* handleSpecialToolResult(
       // 罕见路径:流中没渲染过这张卡,从 rawArgs 重建——同样要做出码前验真(见 qrContentResolver)
       const qrRaw = rawArgs as Record<string, unknown>;
       const resolved = qrRaw.imageDataUri ? null : await resolveQrContent(qrRaw.content);
-      const spec = qrCardToolCallSpec(
+      const resolvedArgs = resolved ? { ...qrRaw, content: resolved } : rawArgs;
+      const spec = authCardToolCallSpec({
+        ...resolvedArgs,
         toolCallId,
-        resolved ? { ...qrRaw, content: resolved } : rawArgs,
-        { kind: "done" },
-      );
+        toolName,
+        presentation: resolvedArgs.imageDataUri ? "scan" : "link",
+        status: { kind: "done" },
+        sourceArgs: resolvedArgs,
+        invalidText: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
+      });
       const seq = nextSeq(state, agentMessageId);
       const toolCallPart: MessagePart = { kind: "toolCall", data: spec };
       yield chatMessageAppended(agentMessageId, seq, toolCallPart);
@@ -145,7 +155,26 @@ export async function* handleSpecialToolResult(
   }
 
   if (toolName === "wechat_auth_start") {
-    const doneSpec = wechatAuthQrToolCallSpec(toolCallId, toolResult, { kind: "done" });
+    const doneSpec = authCardToolCallSpec({
+      toolCallId,
+      toolName,
+      presentation: getConnectorDefinition("wechat-mp").authPresentation,
+      status: { kind: "done" },
+      content: "",
+      imageDataUri: toolResult.imageDataUri,
+      title: "扫码登录微信公众号",
+      code: null,
+      note: "用你**公众号管理员**的那个微信扫码,扫完手机上点「登录」,再点下方按钮",
+      expiresInSec: toolResult.expiresInSec,
+      fallbackExpiresInSec: 240,
+      refreshQuery: "微信登录二维码过期了,请帮我重新生成",
+      confirmQuery: "我已扫完码,请继续",
+      confirmLabel: "我已扫码完成",
+      connectorId: toolResult.connectorId === "wechat-mp" ? "wechat-mp" : undefined,
+      pendingId: toolResult.pendingId,
+      pendingText: "正在生成微信登录二维码…",
+      invalidText: "微信登录二维码生成失败,请重试",
+    });
     const originalMessage = state.chatHistory.find((message) =>
       message.parts.some(
         (part) => part.kind === "toolCall" && part.data.id === toolCallId,
@@ -163,6 +192,8 @@ export async function* handleSpecialToolResult(
       yield toolCallUpdated(agentMessageId, toolCallId, doneSpec);
       updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
     }
+    const signal = trustedAuthCardSignal(doneSpec);
+    if (signal) turn.trustedAuthCards.push(signal);
     outcome.producedVisibleFrame = true;
     return "handled";
   }
@@ -359,15 +390,27 @@ export async function* handleSpecialToolResult(
   }
 
   if (toolName === "github_auth_start" && isRecord(toolResult)) {
-    const spec = githubAuthCardToolCallSpec(toolCallId, {
-      pendingId: typeof toolResult.pendingId === "string" ? toolResult.pendingId : "",
-      userCode: typeof toolResult.user_code === "string" ? toolResult.user_code : "",
-      verificationUri:
-        typeof toolResult.verification_uri === "string" ? toolResult.verification_uri : "",
+    const spec = authCardToolCallSpec({
+      toolCallId,
+      toolName,
+      presentation: getConnectorDefinition("github").authPresentation,
+      status: { kind: "done" },
+      content: toolResult.verification_uri,
+      imageDataUri: null,
+      title: "连接 GitHub",
+      code: toolResult.user_code,
+      note: "复制用户码并在 GitHub 完成授权。",
       expiresAt: toolResult.expiresAt,
+      fallbackExpiresInSec: 15 * 60,
+      refreshQuery: "GitHub 授权已中断，请重新发起连接",
+      confirmQuery: null,
+      connectorId: "github",
+      pendingId: toolResult.pendingId,
     });
     yield toolCallUpdated(agentMessageId, toolCallId, spec);
     updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+    const signal = trustedAuthCardSignal(spec);
+    if (signal) turn.trustedAuthCards.push(signal);
     outcome.producedVisibleFrame = true;
     return "handled";
   }
@@ -382,15 +425,32 @@ export async function* handleSpecialToolResult(
         : typeof toolResult.verification_url === "string"
           ? toolResult.verification_url
           : "";
-    const spec = feishuAuthCardToolCallSpec(toolCallId, {
-      mode,
-      pendingId: typeof toolResult.pendingId === "string" ? toolResult.pendingId : "",
-      url,
-      userCode: typeof toolResult.user_code === "string" ? toolResult.user_code : undefined,
+    const configuration = mode === "configuration";
+    const spec = authCardToolCallSpec({
+      toolCallId,
+      toolName,
+      presentation: getConnectorDefinition("feishu").authPresentation,
+      status: { kind: "done" },
+      content: url,
+      imageDataUri: null,
+      title: configuration ? "创建你的飞书应用" : "扫码授权飞书",
+      code: toolResult.user_code,
+      note: configuration
+        ? `用飞书扫码，或 [点此打开创建向导](${url})，完成后连接器会自动继续。`
+        : `用飞书 App 扫码，或 [点此在浏览器授权](${url})。`,
       expiresAt: toolResult.expiresAt,
+      fallbackExpiresInSec: 10 * 60,
+      refreshQuery: configuration
+        ? "创建应用的链接过期了，请重新发起"
+        : "飞书授权二维码过期了，请重新生成",
+      confirmQuery: null,
+      connectorId: "feishu",
+      pendingId: toolResult.pendingId,
     });
     yield toolCallUpdated(agentMessageId, toolCallId, spec);
     updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+    const signal = trustedAuthCardSignal(spec);
+    if (signal) turn.trustedAuthCards.push(signal);
     outcome.producedVisibleFrame = true;
     return "handled";
   }

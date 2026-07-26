@@ -11,7 +11,7 @@ export const feishuAuthDomainSchema = z.enum([
 
 export const feishuAuthStartTool = createTool({
   id: "feishu_auth_start",
-  description: "发起飞书应用配置或用户授权卡。按本次意图选择最小 domains；连接器自动完成扫码收尾与状态复核。",
+  description: "发起飞书应用配置或用户授权；流层会自动展示扫码授权卡，连接器自动完成扫码收尾与状态复核，不要再调用 show_qr 或复述配对码。按本次意图选择最小 domains。",
   inputSchema: z.object({ domains: z.array(feishuAuthDomainSchema).min(1).max(12) }).strict(),
   execute: async (input, context) => {
     const stop = startToolHeartbeat(context, { tool: "feishu_auth_start" });

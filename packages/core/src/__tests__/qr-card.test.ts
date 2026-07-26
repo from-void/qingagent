@@ -151,6 +151,7 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(final?.body.kind).toBe("qrCard");
     if (final?.body.kind === "qrCard") {
       expect(final.body.data.content).toBe("https://example.com/auth");
+      expect(final.body.data.presentation).toBe("link");
       expect(typeof final.body.data.expiresAt).toBe("number");
       expect(final.body.data.expiresAt).toBeGreaterThanOrEqual(startedAt + 300_000);
       expect(final.body.data.expiresAt).toBeLessThanOrEqual(Date.now() + 300_000);
@@ -210,6 +211,7 @@ describe("show_qr 二维码卡帧协议", () => {
     if (final?.body.kind === "qrCard") {
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.content).toBe("");
+      expect(final.body.data.presentation).toBe("scan");
     }
   });
 
@@ -239,6 +241,7 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(final?.status.kind).toBe("done");
     expect(final?.body.kind).toBe("qrCard");
     if (final?.body.kind === "qrCard") {
+      expect(final.body.data.presentation).toBe("scan");
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
       expect(typeof final.body.data.expiresAt).toBe("number");
@@ -253,7 +256,8 @@ describe("show_qr 二维码卡帧协议", () => {
       .join("\n");
     expect(transcript).not.toContain("data:image");
     expect(transcript).not.toContain(img);
-    expect(transcript).toContain("二维码已展示给用户");
+    expect(transcript).toContain("授权卡已展示给用户");
+    expect(transcript).toContain("不要再调用 show_qr");
   });
 
   it("github_auth_start 透传 number 绝对时间戳到二维码卡", async () => {
@@ -295,9 +299,63 @@ describe("show_qr 二维码卡帧协议", () => {
     const final = toolSpecs(frames, "ga1").at(-1);
     expect(final?.body.kind).toBe("qrCard");
     if (final?.body.kind === "qrCard") {
+      expect(final.body.data.presentation).toBe("device-code");
+      expect(final.body.data.imageDataUri).toBeNull();
       expect(typeof final.body.data.expiresAt).toBe("number");
       expect(final.body.data.expiresAt).toBe(expiresAt);
     }
+  });
+
+  it("同 turn 已有可信授权卡时吞掉命中链接/配对码的 show_qr", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("github-auth-dedup");
+    const authResult = {
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://github.example/device",
+      expiresAt: Date.now() + 15 * 60_000,
+      pendingId: "github-pending-dedup",
+      reused: false,
+    };
+    const duplicateUriArgs = {
+      content: authResult.verification_uri,
+      title: "GitHub 授权",
+    };
+    const duplicateCodeArgs = {
+      content: authResult.user_code,
+      title: "GitHub 配对码",
+    };
+
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          {
+            type: "tool-call",
+            payload: { toolName: "github_auth_start", toolCallId: "ga-dedup", args: { scope: "repo" } },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "github_auth_start",
+              toolCallId: "ga-dedup",
+              args: { scope: "repo" },
+              result: authResult,
+            },
+          },
+          showQrCall("qr-duplicate-uri", duplicateUriArgs),
+          showQrResult("qr-duplicate-uri", duplicateUriArgs),
+          showQrCall("qr-duplicate-code", duplicateCodeArgs),
+          showQrResult("qr-duplicate-code", duplicateCodeArgs),
+        ),
+        { state, agentMessageId: "m", streamId: "s", runId: "r" },
+      ),
+    );
+
+    for (const id of ["qr-duplicate-uri", "qr-duplicate-code"]) {
+      expect(appendedToolCallCount(frames, id)).toBe(0);
+      expect(toolSpecs(frames, id)).toHaveLength(0);
+      expect(JSON.stringify(state.chatHistory)).not.toContain(id);
+    }
+    expect(JSON.stringify(state.messages).match(/已有授权卡,已忽略/g)).toHaveLength(2);
   });
 
   it("show_qr-only 回合结束等待用户时不发 draftingFailed", async () => {

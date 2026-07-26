@@ -30,6 +30,11 @@ describe("connector registry", () => {
       ["feishu"],
       ["wechat-official-account"],
     ]);
+    expect(CONNECTOR_REGISTRY.map((entry) => entry.authPresentation)).toEqual([
+      "device-code",
+      "scan",
+      "scan",
+    ]);
     const wechat = CONNECTOR_REGISTRY.find(
       (entry): entry is Extract<(typeof CONNECTOR_REGISTRY)[number], { id: "wechat-mp" }> =>
         entry.id === "wechat-mp",

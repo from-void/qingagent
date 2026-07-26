@@ -35,6 +35,7 @@ let root: Root;
 function connector(state: ConnectorState): ConnectorInfo {
   return {
     id: "feishu", name: "飞书", icon: "feishu", official: true, riskNote: null,
+    authPresentation: "scan",
     usedBySkills: ["feishu"],
     status: {
       state, reasonCode: null, account: null, scopes: [], lastCheckedAt: null,
@@ -44,7 +45,7 @@ function connector(state: ConnectorState): ConnectorInfo {
 }
 
 function github(state: ConnectorState, reasonCode: string | null = null): ConnectorInfo {
-  return { ...connector(state), id: "github", name: "GitHub", icon: "github", usedBySkills: ["github-materials"], status: { ...connector(state).status, reasonCode, account: state === "connected" ? { id: "1", displayName: "@octo" } : null, scopes: state === "connected" ? ["public_repo"] : [] } } as ConnectorInfo;
+  return { ...connector(state), id: "github", name: "GitHub", icon: "github", authPresentation: "device-code", usedBySkills: ["github-materials"], status: { ...connector(state).status, reasonCode, account: state === "connected" ? { id: "1", displayName: "@octo" } : null, scopes: state === "connected" ? ["public_repo"] : [] } } as ConnectorInfo;
 }
 
 beforeEach(() => {
@@ -169,7 +170,7 @@ describe("ConnectionsPanel", () => {
   });
 
   it("映射 GitHub 授权为 number 绝对过期时间", () => {
-    const mapped = mapConnectorStart("github", {
+    const mapped = mapConnectorStart("github", "device-code", {
       user_code: "ABCD-EFGH",
       verification_uri: "https://github.test/device",
       expiresAt: "2026-07-12T10:00:00.000Z",
@@ -177,19 +178,20 @@ describe("ConnectionsPanel", () => {
     });
 
     expect(typeof mapped.expiresAt).toBe("number");
+    expect(mapped.presentation).toBe("device-code");
     expect(mapped.expiresAt).toBe(Date.parse("2026-07-12T10:00:00.000Z"));
   });
 
   it("映射飞书授权与配置 union 两分支，并统一 ISO 过期时间", () => {
-    const authorization = mapConnectorStart("feishu", {
+    const authorization = mapConnectorStart("feishu", "scan", {
       mode: "authorization", verification_url: "https://feishu.test/auth", user_code: "LARK-CODE",
       expiresAt: "2026-07-12T10:00:00.000Z", pendingId: "fs-auth",
     });
-    expect(authorization).toMatchObject({ content: "https://feishu.test/auth", code: "LARK-CODE", pendingId: "fs-auth", confirmQuery: null });
+    expect(authorization).toMatchObject({ presentation: "scan", content: "https://feishu.test/auth", code: "LARK-CODE", pendingId: "fs-auth", confirmQuery: null });
     expect(typeof authorization.expiresAt).toBe("number");
     expect(authorization.expiresAt).toBe(Date.parse("2026-07-12T10:00:00.000Z"));
 
-    const configuration = mapConnectorStart("feishu", {
+    const configuration = mapConnectorStart("feishu", "scan", {
       mode: "configuration", configuration_url: "https://feishu.test/config",
       expiresAt: "2026-07-12T11:00:00.000Z", pendingId: "fs-config",
     });
@@ -200,17 +202,19 @@ describe("ConnectionsPanel", () => {
   });
 
   it("拒绝脏 start DTO，而不是生成无效授权卡", () => {
-    expect(() => mapConnectorStart("github", { pendingId: "only-id" })).toThrow("verification_uri");
-    expect(() => mapConnectorStart("wechat-mp", { imageDataUri: "data:image/png;base64,AA", expiresInSec: 0, pendingId: "wx" })).toThrow("expiresInSec");
+    expect(() => mapConnectorStart("github", "device-code", { pendingId: "only-id" })).toThrow("verification_uri");
+    expect(() => mapConnectorStart("wechat-mp", "scan", { imageDataUri: "data:image/png;base64,AA", expiresInSec: 0, pendingId: "wx" })).toThrow("expiresInSec");
   });
 
   it("映射微信图片与相对过期秒数", () => {
     const mapped = mapConnectorStart(
       "wechat-mp",
+      "scan",
       { imageDataUri: "data:image/png;base64,AA", expiresInSec: 180, pendingId: "wx-1" },
       1_000,
     );
     expect(mapped).toMatchObject({
+      presentation: "scan",
       content: "",
       imageDataUri: "data:image/png;base64,AA",
       expiresAt: 181_000,

@@ -23,6 +23,10 @@ export interface AuthCardProps {
 }
 
 export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
+  // v1 历史帧没有 presentation：GitHub 旧卡按纯配对码恢复，其余旧 qrCard 保持二维码形态。
+  const presentation = data.presentation ??
+    (data.connectorId === "github" && !data.imageDataUri ? "device-code" : "scan");
+  const rendersQr = presentation === "scan";
   const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">(
     () => data.success ? "connected" : "polling",
   );
@@ -83,6 +87,10 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   // 否则编码模式:把 content 字符串(自产 URL,安全)编码成二维码图。
   useEffect(() => {
     let alive = true;
+    if (!rendersQr) {
+      setQrUrl(null);
+      return () => { alive = false; };
+    }
     if (data.imageDataUri) {
       setQrUrl(data.imageDataUri);
       return () => { alive = false; };
@@ -91,7 +99,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
       .then((u) => { if (alive) setQrUrl(u); })
       .catch(() => { if (alive) setQrUrl(null); });
     return () => { alive = false; };
-  }, [data.content, data.imageDataUri]);
+  }, [data.content, data.imageDataUri, rendersQr]);
 
   // 按绝对过期时间戳倒计时(每秒刷新;到点即作废)。
   useEffect(() => {
@@ -126,9 +134,9 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         ? `已连接为 ${connectedAccount ?? "GitHub 账号"}`
         : "授权已完成";
   const completionText = normalizeQrCompletionText(data.success?.message, defaultCompletionText);
-  // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
-  // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
-  const codeFirst = data.connectorId === "github" && !data.imageDataUri;
+  const codeFirst = presentation === "device-code";
+  const linkFirst = presentation === "link";
+  const linkHref = linkFirst ? sanitizeToolbarLinkHref(data.content) : null;
   const expiryLabel = remain === null
     ? null
     : remain >= 60
@@ -170,7 +178,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
       ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
-      {!codeFirst && <div className={`qr-card__frame${completed ? " is-completed" : expired ? " is-expired" : ""}`}>
+      {rendersQr && <div className={`qr-card__frame${completed ? " is-completed" : expired ? " is-expired" : ""}`}>
         {qrUrl ? (
           <img className="qr-card__img" src={qrUrl} alt={data.title ?? "二维码"} draggable={false} />
         ) : (
@@ -192,6 +200,16 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           </button>
         )}
       </div>}
+      {linkFirst && !completed && !expired && linkHref && (
+        <a
+          className="qr-card__confirm"
+          href={linkHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          打开链接
+        </a>
+      )}
       {codeFirst && completed && (
         <div className="qr-card__code-stage is-completed">
           {data.code && (
@@ -215,7 +233,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
       {!completed && data.code && !(codeFirst && expired) && (
         <div className={`qr-card__usercode${codeFirst ? " is-hero" : ""}`}>
           配对码 <b>{data.code}</b>
-          {data.connectorId === "github" && (
+          {codeFirst && (
             <button type="button" className="qr-card__confirm" onClick={() => {
               void navigator.clipboard?.writeText(data.code ?? "");
               const href = sanitizeToolbarLinkHref(data.content);
@@ -231,7 +249,13 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         </div>
       )}
       {!completed && expiryLabel !== null && <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
-        {expired ? "二维码已失效" : `${expiryLabel}后过期`}
+        {expired
+          ? presentation === "device-code"
+            ? "配对码已失效"
+            : presentation === "link"
+              ? "链接已失效"
+              : "二维码已失效"
+          : `${expiryLabel}后过期`}
       </div>}
       {!completed && noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。

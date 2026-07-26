@@ -1,12 +1,18 @@
 import { listConnectorDefinitions } from "./registry.js";
 import { createConnectorAdapters } from "./registryCore.js";
-import type { ConnectorAdapter, ConnectorId, ConnectorStatusDto } from "./types.js";
+import type {
+  ConnectorAdapter,
+  ConnectorAuthPresentation,
+  ConnectorId,
+  ConnectorStatusDto,
+} from "./types.js";
 
 export interface ConnectorInfoDto {
   id: ConnectorId;
   name: string;
   icon: string;
   official: boolean;
+  authPresentation: ConnectorAuthPresentation;
   riskNote: string | null;
   usedBySkills: string[];
   status: ConnectorStatusDto;
@@ -30,6 +36,7 @@ export class ConnectorService {
       name: definition.name,
       icon: definition.icon,
       official: definition.official,
+      authPresentation: definition.authPresentation,
       riskNote: definition.riskNote ?? null,
       usedBySkills: [...definition.usedBySkills],
       status: await this.adapters[id].status(pendingId),
@@ -51,6 +58,7 @@ export class ConnectorService {
       name: definition.name,
       icon: definition.icon,
       official: definition.official,
+      authPresentation: definition.authPresentation,
       riskNote: definition.riskNote ?? null,
       usedBySkills: [...definition.usedBySkills],
       status,
@@ -65,6 +73,7 @@ export class ConnectorService {
       name: definition.name,
       icon: definition.icon,
       official: definition.official,
+      authPresentation: definition.authPresentation,
       riskNote: definition.riskNote ?? null,
       usedBySkills: [...definition.usedBySkills],
       status,

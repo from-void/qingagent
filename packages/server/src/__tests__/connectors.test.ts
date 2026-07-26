@@ -11,6 +11,7 @@ const connector: ConnectorInfoDto = {
   name: "微信公众号",
   icon: "wechat",
   official: false,
+  authPresentation: "scan",
   riskNote: "risk",
   usedBySkills: ["wechat-official-account"],
   status: {

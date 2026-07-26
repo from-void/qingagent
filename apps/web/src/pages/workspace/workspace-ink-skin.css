@@ -1838,16 +1838,30 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 
 /* —— 右侧:玄青桌面留白,正文为奶白文档纸 —— */
-#view-workspace .ws-right {
-  /* 透明露出深墨:纸张上方 padding 形成顶部留白间隔(顶部空间感);
-     底部靠 .wf-doc min-height:100% 铺满到底,不再留黑空隙 */
+/* 画布贯通契约:从横向工作区到纸面内容之间不允许任何中间层另刷底色。
+   尤其 .ws-right 的 stable both-edges gutter 属于滚动容器绘制区；整条父链透明后，
+   左右预留槽会按原坐标直接露出 #view-workspace 的玄青色斑与暗角。 */
+#view-workspace .ws-body,
+#view-workspace .ws-right,
+#view-workspace .ws-document-content,
+#view-workspace .native-presentation-shell,
+#view-workspace .ws-paper-surface {
   background: transparent !important;
+}
+/* 纸壳仍是唯一不透明层，但外投影会落入两侧透明 gutter，并被滚动容器裁成贯穿
+   全高的窄黑条。纸张与桌面的分界已由明暗材质本身建立，不再向纸外绘制阴影。 */
+#view-workspace .wf-doc,
+#view-workspace .ws-paper-shell,
+#view-workspace .ws-deriv-view,
+#view-workspace .fd-right-preview,
+#view-workspace .doc-empty,
+#view-workspace .bigplan-panel {
+  box-shadow: none !important;
 }
 #view-workspace .wf-doc,
 #view-workspace .ws-paper-shell {
   /* !important:覆盖 editing/pendingReview 等态把纸改成 transparent 的规则,任何态都保持奶白 */
   background: var(--bg-paper-deep) !important;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
   padding: 52px 64px !important;
   border-radius: 0;
   /* 纸宽 = 右列可用内容宽(上限 800)。竖向滚动条出现时(占 ~8px),纸自动收 8px 刚好填满,
@@ -3321,7 +3335,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
 /* 审阅态 diff 当前定位只保留 workspace.css 的绿色加深;不再加赭金描边 / 外发光。 */
 
 /* —— 文末落款:正文末尾续奶白纸,竖排两列「作于{干支年月初几} | 成文{中文数字}字+印章」——
-   position + z-index:1 盖住正文纸(.wf-doc)向下投的那道阴影,消除接缝丑阴影,正文+落款连成一张纸。 */
+   position + z-index:1 保持纸内兄弟层级连续,正文+落款连成一张纸。 */
 #view-workspace .ws-colophon {
   --ws-colophon-ease: cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
@@ -3471,8 +3485,8 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
    浮层)之上,浮层只要向下溢出到落款带就被切断。
    非放映态根本没有 vignette,这个 z-index:1 纯属多余的"陷阱"。这里仅在
    非 active(无 vignette)时把纸的 z-index 还原为 auto:纸不再成层叠上下文,
-   浮层 z-index:20 直接压过落款 z-index:1;落款(定位+z-index:1)依旧盖住纸向下
-   投的阴影接缝(实测接缝仍被遮、浮层不再被切)。放映态(.native-presentation-active)
+   浮层 z-index:20 直接压过落款 z-index:1;落款(定位+z-index:1)继续维持纸内层级,
+   放映态(.native-presentation-active)
    维持原 z-index:1,vignette 叠放不受影响。 */
 #view-workspace
   .native-presentation-shell:not(.native-presentation-active)
@@ -3595,25 +3609,21 @@ body[data-patch-revealing="1"] #view-workspace .ws-paper-surface > .ws-editor-gl
   0%,
   100% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 42px 6px rgba(181, 154, 99, 0.32),
       inset 0 0 100px 20px rgba(181, 154, 99, 0.16);
   }
   28% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 54px 11px rgba(203, 170, 108, 0.44),
       inset 0 0 118px 26px rgba(203, 170, 108, 0.2);
   }
   55% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 54px 11px rgba(120, 156, 142, 0.4),
       inset 0 0 118px 26px rgba(120, 156, 142, 0.18);
   }
   80% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 48px 9px rgba(178, 128, 104, 0.4),
       inset 0 0 110px 22px rgba(178, 128, 104, 0.17);
   }

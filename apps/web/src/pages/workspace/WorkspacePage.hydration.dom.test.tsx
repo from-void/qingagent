@@ -41,9 +41,13 @@ vi.mock("./components/WorkspaceDocumentPane", () => ({
         className="ws-document-content"
         data-wf="WorkspaceHydrationDocumentContent"
       >
-        <article className="wf-doc" data-testid="document-paper">
-          <p data-testid="document-content">既有正文</p>
-        </article>
+        <div className="native-presentation-shell">
+          <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+            <article className="wf-doc" data-testid="document-paper">
+              <p data-testid="document-content">既有正文</p>
+            </article>
+          </div>
+        </div>
       </div>
     </main>
   ),
@@ -166,6 +170,67 @@ describe("WorkspacePage hydration DOM gate", () => {
     expect(workspaceCss).not.toContain(".ws-hydration-canvas");
     expect(workspaceCss).not.toContain(".ws-hydration-left");
     expect(workspaceCss).not.toContain(".ws-hydration-right");
+  });
+
+  it("文档纸之外的父链与双边滚动槽保持透明，玄青画布不中断", async () => {
+    mocks.controller = controller("ready");
+    await act(async () => root.render(<WorkspacePage />));
+
+    const paper = host.querySelector<HTMLElement>('[data-testid="document-paper"]');
+    const wsRight = paper?.closest<HTMLElement>(".ws-right");
+    const transparentAncestors: HTMLElement[] = [];
+    for (let node = paper?.parentElement ?? null; node; node = node.parentElement) {
+      transparentAncestors.push(node);
+      if (node === wsRight?.parentElement) break;
+    }
+
+    expect(transparentAncestors.map((node) => node.className)).toEqual([
+      "ws-paper-surface",
+      "native-presentation-shell",
+      "ws-document-content",
+      "ws-right",
+      "ws-body",
+    ]);
+
+    const transparentChainRule = workspaceInkSkinCss.match(
+      /#view-workspace \.ws-body,\s*#view-workspace \.ws-right,\s*#view-workspace \.ws-document-content,\s*#view-workspace \.native-presentation-shell,\s*#view-workspace \.ws-paper-surface\s*\{[^}]*\}/,
+    )?.[0];
+    const paperShadowRule = workspaceInkSkinCss.match(
+      /#view-workspace \.wf-doc,\s*#view-workspace \.ws-paper-shell,\s*#view-workspace \.ws-deriv-view,\s*#view-workspace \.fd-right-preview,\s*#view-workspace \.doc-empty,\s*#view-workspace \.bigplan-panel\s*\{[^}]*\}/,
+    )?.[0];
+    const gutterRule = workspaceInkSkinCss.match(
+      /#view-workspace \.ws-right\s*\{[^}]*scrollbar-gutter:\s*stable both-edges;[^}]*\}/,
+    )?.[0];
+    const trackRule = workspaceInkSkinCss.match(
+      /#view-workspace \.ws-chat::?-webkit-scrollbar-track,\s*#view-workspace \.ws-right::?-webkit-scrollbar-track\s*\{[^}]*\}/,
+    )?.[0];
+
+    expect(transparentChainRule).toContain("background: transparent !important");
+    expect(paperShadowRule).toContain("box-shadow: none !important");
+    expect(gutterRule).toContain("scrollbar-gutter: stable both-edges");
+    expect(trackRule).toContain("background: transparent");
+
+    const transparentSelectorSet = new Set([
+      "#view-workspace .ws-body",
+      "#view-workspace .ws-right",
+      "#view-workspace .ws-document-content",
+      "#view-workspace .native-presentation-shell",
+      "#view-workspace .ws-paper-surface",
+    ]);
+    const uncommentedInkSkinCss = workspaceInkSkinCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const chainBackgrounds = [...uncommentedInkSkinCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .flatMap(([, selectorList = "", declarations = ""]) => {
+        const touchesTransparentChain = selectorList
+          .split(",")
+          .some((selector) => transparentSelectorSet.has(selector.trim()));
+        if (!touchesTransparentChain) return [];
+        return [...declarations.matchAll(/(?:^|;)\s*background:\s*([^;]+)/g)]
+          .map((match) => match[1]?.trim());
+      });
+    expect(chainBackgrounds).toEqual(["transparent !important"]);
+    expect(
+      workspaceInkSkinCss.match(/@keyframes ws-paper-breathe\s*\{[\s\S]*?\n\}/)?.[0],
+    ).not.toContain("0 30px 80px");
   });
 
   it("首页新建路径立即挂载纸壳、空白内容与对话 chrome", async () => {

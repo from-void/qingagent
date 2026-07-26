@@ -32,8 +32,27 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 const dayRows = [
-  usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.001),
-  usageRow("2026-06-25", "deepseek-v4-pro", 2000, 800, 0.002),
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.001),
+    documentId: "doc-a",
+    documentTitle: "文档甲",
+  },
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-pro", 600, 300, 0.001),
+    callSite: "writeDraft",
+    documentId: "doc-a",
+    documentTitle: "文档甲",
+  },
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-flash", 400, 200, 0.001),
+    documentId: "doc-b",
+    documentTitle: "文档乙",
+  },
+  {
+    ...usageRow("2026-06-25", "deepseek-v4-pro", 2000, 800, 0.002),
+    documentId: "doc-c",
+    documentTitle: "文档丙",
+  },
 ];
 
 describe("Settings Track B", () => {
@@ -633,6 +652,39 @@ describe("Settings Track B", () => {
 
     await click(groupToggle!);
     expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+  });
+
+  it("专家按天视图按天→文档→调用点三层展开，且各层默认收起", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    await flush();
+
+    expect(getTable().querySelectorAll('[data-wf="UsageGroupRow"]')).toHaveLength(2);
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(0);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+
+    const dayToggle = getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle");
+    expect(dayToggle?.textContent).toContain("2026-06-24");
+    await click(dayToggle!);
+
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(2);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    const documentToggle = getTable().querySelector<HTMLButtonElement>(
+      ".md-usage-group-toggle--document",
+    );
+    expect(documentToggle?.textContent).toContain("文档甲");
+    expect(documentToggle?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(documentToggle!);
+    expect(documentToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(2);
+    expect(getTable().textContent).toContain("writeDraft");
+
+    await click(documentToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    await click(dayToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(0);
   });
 
   it("用量明细模式持久化到本地并在重新挂载后恢复", async () => {

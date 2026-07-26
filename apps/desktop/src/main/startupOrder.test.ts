@@ -151,6 +151,7 @@ test("desktop PDF 导出使用私有临时目录、随机文件名和最小文�
 
 test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文且不可用时 fail-closed", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const secretStoreSource = readFileSync(path.join(__dirname, "clientSecretStore.ts"), "utf8");
 
   for (const key of [
     "qingagent.deepseek_api_key",
@@ -159,18 +160,21 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
   ]) {
     assert.ok(source.includes(`"${key}"`), `缺少桌面模型敏感配置项：${key}`);
   }
-  assert.match(source, /safeStorage\.encryptString\(value\)/);
-  assert.match(source, /safeStorage\.decryptString\(Buffer\.from\(value, "base64"\)\)/);
+  assert.match(secretStoreSource, /options\.safeStorage\.encryptString\(value\)/);
+  assert.match(
+    secretStoreSource,
+    /options\.safeStorage\.decryptString\(Buffer\.from\(ciphertext, "base64"\)\)/,
+  );
   assert.match(source, /getSelectedStorageBackend\(\) !== "basic_text"/);
 
   const migrationStart = source.indexOf("function migratePlaintextClientSecrets()");
-  const encryptedWrite = source.indexOf("writeEncryptedClientSecrets(encrypted);", migrationStart);
+  const encryptedWrite = source.indexOf("desktopClientSecretStore.writeMany(plaintextEntries);", migrationStart);
   const plaintextClear = source.indexOf("writeClientConfig(sanitized);", migrationStart);
   assert.ok(encryptedWrite > migrationStart && plaintextClear > encryptedWrite, "迁移必须先落密文再清明文");
 
   const rendererReadStart = source.indexOf("function readClientConfigValueForRenderer(");
   const unavailableReturn = source.indexOf("if (!isDesktopModelEncryptionAvailable()) return null;", rendererReadStart);
-  const singleSecretRead = source.indexOf("readEncryptedClientSecrets()[key]", rendererReadStart);
+  const singleSecretRead = source.indexOf("desktopClientSecretStore.read(key)", rendererReadStart);
   assert.ok(
     unavailableReturn > rendererReadStart && singleSecretRead > unavailableReturn,
     "加密不可用时必须 fail-closed，且 renderer 只能按单项 key 解密",
@@ -181,9 +185,9 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
     "不得向 renderer 返回整份配置",
   );
   assert.match(source, /isSecret && nextValue !== null && !encryptionAvailable\) return false/);
-  assert.match(source, /writeEncryptedClientSecrets\(encrypted\)/);
+  assert.match(source, /desktopClientSecretStore\.write\(key, nextValue\)/);
   assert.match(source, /delete cfg\[key\]/);
-  assert.match(source, /delete encrypted\[key\]/);
+  assert.match(secretStoreSource, /delete ciphertexts\[key\]/);
   assert.match(source, /\^client-config\\\.json\\\.\\d\+\\\.tmp\$/);
   assert.match(source, /cleanupClientConfigTempFiles\(\)/);
 });

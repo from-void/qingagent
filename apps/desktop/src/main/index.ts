@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
+import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
@@ -623,10 +624,6 @@ ipcMain.handle("qingagent:third-party-notices-get", async (event) => {
 function clientConfigPath(): string {
   return path.join(app.getPath("userData"), "client-config.json");
 }
-function clientSecretConfigPath(): string {
-  return path.join(app.getPath("userData"), "client-config.secrets.json");
-}
-
 function cleanupClientConfigTempFiles(): void {
   try {
     for (const entry of readdirSync(app.getPath("userData"), { withFileTypes: true })) {
@@ -667,6 +664,12 @@ const DESKTOP_MODEL_SECRET_KEYS = new Set([
   "qingagent.kimi_custom_provider",
 ]);
 
+const desktopClientSecretStore = createDesktopClientSecretStore({
+  filePath: path.join(app.getPath("userData"), "client-config.secrets.json"),
+  secretKeys: DESKTOP_MODEL_SECRET_KEYS,
+  safeStorage,
+});
+
 function isDesktopModelEncryptionAvailable(): boolean {
   try {
     if (!safeStorage.isEncryptionAvailable()) return false;
@@ -690,41 +693,16 @@ function readClientConfig(): Record<string, string> {
     return {}; // 文件不存在/损坏都当空,绝不让读配置阻断启动。
   }
 }
-function writePrivateJson(file: string, value: Record<string, string>): void {
-  // 临时文件 + rename 原子落盘,避免读到截断的半成品 JSON。
+function writeClientConfig(cfg: Record<string, string>): void {
+  const file = clientConfigPath();
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
+  writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
     flag: "w",
   });
   renameSync(tmp, file);
   chmodSync(file, 0o600);
-}
-function writeClientConfig(cfg: Record<string, string>): void {
-  writePrivateJson(clientConfigPath(), cfg);
-}
-function readEncryptedClientSecrets(): Record<string, string> {
-  try {
-    const parsed = JSON.parse(readFileSync(clientSecretConfigPath(), "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (DESKTOP_MODEL_SECRET_KEYS.has(key) && typeof value === "string") out[key] = value;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-function writeEncryptedClientSecrets(secrets: Record<string, string>): void {
-  writePrivateJson(clientSecretConfigPath(), secrets);
-}
-function encryptClientSecret(value: string): string {
-  return safeStorage.encryptString(value).toString("base64");
-}
-function decryptClientSecret(value: string): string {
-  return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
 
 /**
@@ -737,9 +715,7 @@ function migratePlaintextClientSecrets(): void {
   const plaintextEntries = Object.entries(cfg).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
   if (plaintextEntries.length === 0) return;
 
-  const encrypted = readEncryptedClientSecrets();
-  for (const [key, value] of plaintextEntries) encrypted[key] = encryptClientSecret(value);
-  writeEncryptedClientSecrets(encrypted);
+  desktopClientSecretStore.writeMany(plaintextEntries);
 
   const sanitized = { ...cfg };
   for (const [key] of plaintextEntries) delete sanitized[key];
@@ -761,8 +737,7 @@ function readClientConfigValueForRenderer(key: unknown): string | null {
   if (!isDesktopModelEncryptionAvailable()) return null;
   try {
     migratePlaintextClientSecrets();
-    const encrypted = readEncryptedClientSecrets()[key];
-    return encrypted ? decryptClientSecret(encrypted) : null;
+    return desktopClientSecretStore.read(key);
   } catch (err) {
     console.warn(`[client-config] ${key} 迁移/解密失败，已按未配置处理:`, err);
     return null;
@@ -780,12 +755,9 @@ function writeClientConfigValue(key: unknown, value: unknown): boolean {
     if (encryptionAvailable) migratePlaintextClientSecrets();
 
     const cfg = readClientConfig();
-    const encrypted = readEncryptedClientSecrets();
     if (isSecret) {
       delete cfg[key];
-      if (nextValue === null) delete encrypted[key];
-      else encrypted[key] = encryptClientSecret(nextValue);
-      writeEncryptedClientSecrets(encrypted);
+      desktopClientSecretStore.write(key, nextValue);
     } else if (nextValue === null) {
       delete cfg[key];
     } else {

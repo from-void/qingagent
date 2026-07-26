@@ -143,12 +143,30 @@ export function ModelSettingsPanel() {
   const customTestControllerRef = useRef<AbortController | null>(null);
   const kimiVerifyRevisionRef = useRef(0);
   const kimiVerifyControllerRef = useRef<AbortController | null>(null);
+  const kimiVerificationInputRef = useRef({
+    provider: modelProvider,
+    key: keyInput.trim(),
+    tier: modelTier,
+  });
   const persistRevisionRef = useRef(0);
+  kimiVerificationInputRef.current = {
+    provider: modelProvider,
+    key: keyInput.trim(),
+    tier: modelTier,
+  };
 
   const invalidatePersistence = () => {
     persistRevisionRef.current += 1;
     setPersisting(false);
   };
+
+  const invalidateKimiVerification = useCallback(() => {
+    kimiVerifyRevisionRef.current += 1;
+    kimiVerifyControllerRef.current?.abort();
+    kimiVerifyControllerRef.current = null;
+    setVerifyStatus("idle");
+    setVerifyMsg("");
+  }, []);
 
   const invalidateCustomTest = () => {
     invalidatePersistence();
@@ -164,9 +182,7 @@ export function ModelSettingsPanel() {
     balanceControllerRef.current?.abort();
     balanceControllerRef.current = null;
     setBalanceLoading(false);
-    kimiVerifyRevisionRef.current += 1;
-    kimiVerifyControllerRef.current?.abort();
-    kimiVerifyControllerRef.current = null;
+    invalidateKimiVerification();
     setSelectedModelProvider(provider);
     const custom = readCustomProvider(provider);
     const official = readOfficialModelOverride(provider);
@@ -182,8 +198,6 @@ export function ModelSettingsPanel() {
     setOfficialFlash(official?.flash ?? "");
     setOfficialPro(official?.pro ?? "");
     setKeyInput("");
-    setVerifyStatus("idle");
-    setVerifyMsg("");
     setBalance(null);
     setForceSetup(false);
     setEditing(false);
@@ -393,6 +407,11 @@ export function ModelSettingsPanel() {
   const handleVerifyKimiKey = async () => {
     const trimmed = keyInput.trim();
     if (!trimmed || verifyStatus === "verifying") return;
+    const requestSnapshot = {
+      provider: modelProvider,
+      key: trimmed,
+      tier: modelTier,
+    };
     kimiVerifyRevisionRef.current += 1;
     const revision = kimiVerifyRevisionRef.current;
     kimiVerifyControllerRef.current?.abort();
@@ -401,7 +420,10 @@ export function ModelSettingsPanel() {
     const canCommit = () =>
       mountedRef.current &&
       !controller.signal.aborted &&
-      kimiVerifyRevisionRef.current === revision;
+      kimiVerifyRevisionRef.current === revision &&
+      kimiVerificationInputRef.current.provider === requestSnapshot.provider &&
+      kimiVerificationInputRef.current.key === requestSnapshot.key &&
+      kimiVerificationInputRef.current.tier === requestSnapshot.tier;
     setVerifyStatus("verifying");
     setVerifyMsg("");
     try {
@@ -545,6 +567,7 @@ export function ModelSettingsPanel() {
 
   const handleModelTierChange = useCallback((tier: ModelTier) => {
     if (tier === modelTier) return;
+    invalidateKimiVerification();
     setSelectedModelTier(tier);
     setModelTier(tier);
     toast.show({
@@ -552,7 +575,7 @@ export function ModelSettingsPanel() {
       tone: "success",
       dedupeKey: "model-tier",
     });
-  }, [modelTier, toast]);
+  }, [invalidateKimiVerification, modelTier, toast]);
 
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
@@ -744,6 +767,7 @@ export function ModelSettingsPanel() {
           disabled={persisting}
           onChange={(e) => {
             invalidatePersistence();
+            invalidateKimiVerification();
             setKeyInput(e.target.value);
           }}
           data-wf="ModelKeyInput"

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import {
   assertTrustedRenderer,
   UntrustedRendererIpcError,
@@ -94,6 +96,58 @@ test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", ()
       main.slice(secretSetStart, secretSetEnd).includes(`"${secretKey}"`),
       `Kimi 敏感配置必须经 safeStorage 加密：${secretKey}`,
     );
+  }
+});
+
+test("Kimi 敏感配置经主进程密文存储写入磁盘并可解密读回", () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "qingagent-kimi-secrets-"));
+  const secretsFile = path.join(tempDir, "client-config.secrets.json");
+  const encryptedPlaintexts: string[] = [];
+  const decryptedCiphertexts: Buffer[] = [];
+  const safeStorage = {
+    encryptString(plaintext: string): Buffer {
+      encryptedPlaintexts.push(plaintext);
+      return Buffer.from(Buffer.from(plaintext, "utf8").map((byte) => byte ^ 0xa5));
+    },
+    decryptString(ciphertext: Buffer): string {
+      decryptedCiphertexts.push(ciphertext);
+      return Buffer.from(ciphertext.map((byte) => byte ^ 0xa5)).toString("utf8");
+    },
+  };
+  const secretKeys = new Set([
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+  ]);
+  const store = createDesktopClientSecretStore({
+    filePath: secretsFile,
+    secretKeys,
+    safeStorage,
+  });
+  const values = {
+    "qingagent.kimi_api_key": "kimi-plaintext-key",
+    "qingagent.kimi_custom_provider": JSON.stringify({
+      apiKey: "kimi-custom-plaintext-key",
+      baseUrl: "https://kimi.example/v1",
+    }),
+  };
+
+  try {
+    for (const [key, value] of Object.entries(values)) store.write(key, value);
+
+    const diskSource = readFileSync(secretsFile, "utf8");
+    const diskValues = JSON.parse(diskSource) as Record<string, string>;
+    assert.deepEqual(Object.keys(diskValues).sort(), Object.keys(values).sort());
+    for (const [key, plaintext] of Object.entries(values)) {
+      assert.notEqual(diskValues[key], plaintext, `${key} 不得以明文落盘`);
+      assert.ok(!diskSource.includes(plaintext), `${key} 的明文不得出现在密文文件`);
+      assert.equal(store.read(key), plaintext);
+    }
+    assert.ok(!diskSource.includes("kimi-plaintext-key"));
+    assert.ok(!diskSource.includes("kimi-custom-plaintext-key"));
+    assert.deepEqual(encryptedPlaintexts, Object.values(values));
+    assert.equal(decryptedCiphertexts.length, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

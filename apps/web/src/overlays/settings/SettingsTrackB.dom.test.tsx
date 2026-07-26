@@ -373,6 +373,70 @@ describe("Settings Track B", () => {
     expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
   });
 
+  it("Kimi 测试连接在途修改 key 时作废旧请求并丢弃迟到成功", async () => {
+    setSelectedModelProvider("kimi");
+    let resolveVerify!: (response: Response) => void;
+    const deferredVerify = new Promise<Response>((resolve) => {
+      resolveVerify = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredVerify
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "kimi-key-a");
+    await click(getButtonByText("测试连接"));
+    setInput(getInputByWf("ModelKeyInput"), "kimi-key-b");
+
+    await act(async () => {
+      resolveVerify(json({ ok: true }));
+      await deferredVerify;
+    });
+    await flush();
+    expect(getInputByWf("ModelKeyInput").value).toBe("kimi-key-b");
+    expect(getButtonByText("测试连接").hasAttribute("disabled")).toBe(false);
+    expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
+  });
+
+  it("Kimi 测试连接在途切换档位时作废旧请求并丢弃迟到成功", async () => {
+    setSelectedModelProvider("kimi");
+    let resolveVerify!: (response: Response) => void;
+    const deferredVerify = new Promise<Response>((resolve) => {
+      resolveVerify = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredVerify
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "kimi-tier-key");
+    await click(getButtonByText("测试连接"));
+    await click(getButtonByWf("ModelTierPro"));
+
+    await act(async () => {
+      resolveVerify(json({ ok: true }));
+      await deferredVerify;
+    });
+    await flush();
+    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("true");
+    expect(getButtonByText("测试连接").hasAttribute("disabled")).toBe(false);
+    expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
+  });
+
   it.each([
     [false, "未配置"],
     [true, "自动启用"],

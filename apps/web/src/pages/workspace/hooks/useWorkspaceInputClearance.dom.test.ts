@@ -48,21 +48,57 @@ describe("workspace 对话流底部留白", () => {
     },
   );
 
-  it("技能菜单展开后按菜单真实顶边扩展留白", () => {
-    const { chat, wrap } = createLayout({
-      occupantClass: "wf-input",
-      wrapTop: 668,
-      occupantTop: 682,
-      occupantHeight: 100,
+  it("技能菜单开合前后 --ws-input-clearance 不变（浮层不占位）", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(RaceHarness, {
+        getChatHeight: () => CHAT_BOTTOM,
+        menuOpen: false,
+      }));
+      await waitForLayout();
     });
-    const menu = document.createElement("div");
-    menu.className = "qa-skill-menu";
-    setRect(menu, { top: 300, bottom: 560, width: 268, height: 260 });
-    wrap.appendChild(menu);
+    const left = host.querySelector<HTMLElement>(".ws-left")!;
+    const before = left.style.getPropertyValue("--ws-input-clearance");
+    expect(before).toBe("179px");
 
-    expect(measureWorkspaceInputClearance(chat, wrap)).toBe(
-      CHAT_BOTTOM - 300 + DESIGN_GAP,
-    );
+    await act(async () => {
+      root?.render(createElement(RaceHarness, {
+        getChatHeight: () => CHAT_BOTTOM,
+        menuOpen: true,
+      }));
+      await waitForLayout();
+    });
+    expect(host.querySelector(".qa-skill-menu")).not.toBeNull();
+    expect(left.style.getPropertyValue("--ws-input-clearance")).toBe(before);
+
+    await act(async () => {
+      root?.render(createElement(RaceHarness, {
+        getChatHeight: () => CHAT_BOTTOM,
+        menuOpen: false,
+      }));
+      await waitForLayout();
+    });
+    expect(host.querySelector(".qa-skill-menu")).toBeNull();
+    expect(left.style.getPropertyValue("--ws-input-clearance")).toBe(before);
+  });
+
+  it("任务明细浮层不占位，任务胶囊本体仍占位", () => {
+    const { chat, wrap } = createLayout({
+      occupantClass: "ws-taskpill-host",
+      wrapTop: 668,
+      occupantTop: 630,
+      occupantHeight: 30,
+    });
+    const before = measureWorkspaceInputClearance(chat, wrap);
+    const flyout = document.createElement("div");
+    flyout.className = "ws-taskpill-flyout";
+    setRect(flyout, { top: 300, bottom: 618, width: 300, height: 318 });
+    wrap.appendChild(flyout);
+
+    expect(before).toBe(CHAT_BOTTOM - 630 + DESIGN_GAP);
+    expect(measureWorkspaceInputClearance(chat, wrap)).toBe(before);
   });
 
   it("wrap paddingTop 大于显式 gap 时取较大值且不双份相加", () => {
@@ -146,7 +182,13 @@ describe("workspace 对话流底部留白", () => {
   });
 });
 
-function RaceHarness({ getChatHeight }: { getChatHeight: () => number }) {
+function RaceHarness({
+  getChatHeight,
+  menuOpen = false,
+}: {
+  getChatHeight: () => number;
+  menuOpen?: boolean;
+}) {
   const viewRef = useRef<HTMLElement | null>(null);
   const docScrollRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -216,9 +258,28 @@ function RaceHarness({ getChatHeight }: { getChatHeight: () => number }) {
             }
           },
         }),
+        menuOpen
+          ? createElement("div", {
+              className: "qa-skill-menu",
+              ref: (element: HTMLDivElement | null): void => {
+                if (element) {
+                  setRect(element, {
+                    top: 300,
+                    bottom: 560,
+                    width: 268,
+                    height: 260,
+                  });
+                }
+              },
+            })
+          : null,
       ),
     ),
   );
+}
+
+async function waitForLayout(): Promise<void> {
+  await new Promise((resolve) => window.setTimeout(resolve, 32));
 }
 
 function setDynamicRect(

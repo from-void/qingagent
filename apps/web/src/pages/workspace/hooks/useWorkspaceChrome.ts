@@ -14,14 +14,18 @@ import {
 } from "../../new-session/transition/origin";
 import { workspaceSessionIdFromHash } from "../data/workspacePageView";
 
+/**
+ * 用户铁律「浮层不占位」：
+ * - 计入：输入区本体，以及替换/变形输入区本体的 askUser、确认条、任务胶囊。
+ * - 不计入：悬浮其上的 popover；`.qa-skill-menu`（技能/素材菜单）和
+ *   `.ws-taskpill-flyout` 开合时绝不能改变对话流底部留白。
+ */
 const INPUT_OCCUPANT_SELECTOR = [
   ".wf-input",
   ".askuser-overlay",
   ".cf-overlay",
   ".cf-record",
-  ".qa-skill-menu",
   ".ws-taskpill-host",
-  ".ws-taskpill-flyout",
 ].join(",");
 
 const CHAT_BOTTOM_THRESHOLD = 50;

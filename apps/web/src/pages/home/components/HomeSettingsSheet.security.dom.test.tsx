@@ -77,10 +77,15 @@ describe("HomeSettingsSheet 安全页", () => {
     expect(securityTab?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-wf="SecurityPanel"]')).not.toBeNull();
 
-    const command = host.querySelector<HTMLSelectElement>('select[aria-label="同类操作的确认方式"]')!;
+    const command = host.querySelector<HTMLButtonElement>('button[aria-label="同类操作的确认方式"]')!;
     await act(async () => {
-      command.value = "ask";
-      command.dispatchEvent(new Event("change", { bubbles: true }));
+      command.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const askOption = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((button) => button.textContent?.includes("每次询问"));
+    expect(askOption).toBeDefined();
+    await act(async () => {
+      askOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/command",

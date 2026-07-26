@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SkinSelect } from "../../../system/SkinSelect";
 import {
   STARTER_INDUSTRIES,
   findStarterTemplate,
@@ -162,20 +163,16 @@ export function StarterPanel({ onFill, onCreateBlank }: StarterPanelProps) {
             </div>
             {activeTab === "recommend" && (
               <div className="starter-sel">
-                <select
+                <SkinSelect
                   value={industryId}
-                  onChange={(e) => setIndustryId(e.target.value)}
-                  aria-label="选择行业"
-                >
-                  {STARTER_INDUSTRIES.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="starter-sel-caret" aria-hidden>
-                  &#9662;
-                </span>
+                  onChange={setIndustryId}
+                  ariaLabel="选择行业"
+                  skin="paper"
+                  options={STARTER_INDUSTRIES.map((industry) => ({
+                    value: industry.id,
+                    label: industry.name,
+                  }))}
+                />
               </div>
             )}
           </div>

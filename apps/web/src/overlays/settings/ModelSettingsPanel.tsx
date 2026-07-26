@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UsageSummaryResponse, UsageSummaryRow } from "@qingagent/contract-ts";
 import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
+import { CalendarDatePicker } from "../../system/CalendarDatePicker";
+import { SkinSelect } from "../../system/SkinSelect";
 import "./modelDashboard.css";
 import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
@@ -869,18 +871,23 @@ export function ModelSettingsPanel() {
           </p>
           <div className="sm-field">
             <span className="sm-field-label">API 协议类型</span>
-            <select
-              className="sm-field-input"
+            <SkinSelect
+              className="sm-field-select"
               value={modelProvider === "kimi" ? "openai" : customProtocol}
               disabled={persisting || modelProvider === "kimi"}
-              onChange={(e) => {
+              ariaLabel="API 协议类型"
+              skin="ink"
+              options={[
+                { value: "openai", label: "OpenAI 兼容" },
+                ...(modelProvider === "deepseek"
+                  ? [{ value: "anthropic", label: "Anthropic 兼容" }]
+                  : []),
+              ]}
+              onChange={(value) => {
                 invalidateCustomTest();
-                setCustomProtocol(e.target.value);
+                setCustomProtocol(value);
               }}
-            >
-              <option value="openai">OpenAI 兼容</option>
-              {modelProvider === "deepseek" && <option value="anthropic">Anthropic 兼容</option>}
-            </select>
+            />
           </div>
           <div className="sm-field">
             <span className="sm-field-label">API 地址(Base URL)</span>
@@ -1286,13 +1293,14 @@ export function ModelSettingsPanel() {
               <span className="md-detail-filters">
                 <label className="md-date-filter">
                   <span>日期</span>
-                  <input
-                    type="date"
+                  <CalendarDatePicker
                     value={usageDate}
                     max={todayYmd}
                     disabled={usageView !== "day"}
                     title={usageView === "day" ? "仅筛选已加载的按天用量" : "日期筛选仅支持按天视图"}
-                    onChange={(e) => setUsageDate(e.target.value)}
+                    ariaLabel="筛选用量日期"
+                    skin="ink"
+                    onChange={setUsageDate}
                   />
                 </label>
                 {usageDate && (

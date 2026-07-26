@@ -573,7 +573,9 @@ describe("Settings Track B", () => {
     expect(tableBefore.textContent).toContain("2026-06-24");
     expect(tableBefore.textContent).toContain("2026-06-25");
 
-    setInput(getDateInput(), "2026-06-24");
+    await click(getDateTrigger());
+    await click(getButtonByLabel("上个月"));
+    await click(getButtonByLabel("2026-06-24"));
     const filteredTable = getTable();
     expect(filteredTable.textContent).toContain("2026-06-24");
     expect(filteredTable.textContent).not.toContain("2026-06-25");
@@ -1041,10 +1043,16 @@ function getInputByPlaceholder(placeholder: string): HTMLInputElement {
   return input;
 }
 
-function getDateInput(): HTMLInputElement {
-  const input = host?.querySelector<HTMLInputElement>('input[type="date"]');
-  if (!input) throw new Error("date input not found");
-  return input;
+function getDateTrigger(): HTMLButtonElement {
+  const button = host?.querySelector<HTMLButtonElement>('button[aria-label="筛选用量日期"]');
+  if (!button) throw new Error("date trigger not found");
+  return button;
+}
+
+function getButtonByLabel(label: string): HTMLButtonElement {
+  const button = document.body.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`${label} button not found`);
+  return button;
 }
 
 function getTable(): HTMLTableElement {

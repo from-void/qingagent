@@ -63,15 +63,21 @@ async function renderWithFetch(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>
   });
 }
 
-async function choose(select: HTMLSelectElement, value: "ask" | "always") {
+async function choose(select: HTMLButtonElement, value: "ask" | "always") {
   await act(async () => {
-    select.value = value;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    select.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  const label = value === "always" ? "总是允许" : "每次询问";
+  const option = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find((node) => node.textContent?.includes(label));
+  expect(option).toBeDefined();
+  await act(async () => {
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 }
 
-function categorySelect(label: string): HTMLSelectElement {
-  return host!.querySelector<HTMLSelectElement>(`select[aria-label="${label}的确认方式"]`)!;
+function categorySelect(label: string): HTMLButtonElement {
+  return host!.querySelector<HTMLButtonElement>(`button[aria-label="${label}的确认方式"]`)!;
 }
 
 describe("SecurityPanel", () => {
@@ -84,21 +90,17 @@ describe("SecurityPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("每类一行使用真实档位下拉，说明无重复状态且采用 ink-2 可读色", async () => {
+  it("每类一行使用暗墨自定义下拉，说明无重复状态且采用 ink-2 可读色", async () => {
     await renderPanel();
 
-    const selects = [...host!.querySelectorAll<HTMLSelectElement>(".security-select")];
+    const selects = [...host!.querySelectorAll<HTMLElement>(".security-select")];
     expect(selects).toHaveLength(4);
-    expect(selects.map((select) => select.value)).toEqual(["ask", "always", "ask", "ask"]);
-    expect([...categorySelect("安装").options].map((option) => option.text)).toEqual([
-      "每次询问",
-      "总是允许",
-    ]);
+    expect(selects.every((select) => select.classList.contains("skin-select--ink"))).toBe(true);
+    expect(categorySelect("安装").textContent).toContain("每次询问");
+    expect(categorySelect("同类操作").textContent).toContain("总是允许");
     expect(categorySelect("向外发送内容").disabled).toBe(true);
-    expect([...categorySelect("向外发送内容").options].map((option) => option.text)).toEqual([
-      "每次询问",
-    ]);
     expect(categorySelect("连接账号").disabled).toBe(true);
+    expect(host!.querySelector("select")).toBeNull();
 
     const copies = [...host!.querySelectorAll<HTMLElement>(".security-copy")];
     expect(copies.every((copy) => !copy.textContent?.includes("每次询问"))).toBe(true);
@@ -126,7 +128,7 @@ describe("SecurityPanel", () => {
       "/api/v1/settings/security/command",
       expect.objectContaining({ body: JSON.stringify({ grantMode: "ask" }) }),
     );
-    expect(command.value).toBe("ask");
+    expect(command.textContent).toContain("每次询问");
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       tone: "success",
       message: "同类操作已恢复每次询问。已在执行的不受影响。",
@@ -142,7 +144,7 @@ describe("SecurityPanel", () => {
       "/api/v1/settings/security/install",
       expect.objectContaining({ body: JSON.stringify({ grantMode: "always" }) }),
     );
-    expect(install.value).toBe("always");
+    expect(install.textContent).toContain("总是允许");
     expect(host!.querySelector("#security-install-effect")?.textContent).toContain(
       "已记住，之后同类操作直接执行；可随时改回。",
     );
@@ -155,7 +157,7 @@ describe("SecurityPanel", () => {
   it("卡侧状态事件按版本立即更新已打开的下拉", async () => {
     await renderPanel();
     const install = categorySelect("安装");
-    expect(install.value).toBe("ask");
+    expect(install.textContent).toContain("每次询问");
 
     await act(async () => {
       publishRememberGrantState({
@@ -165,7 +167,7 @@ describe("SecurityPanel", () => {
         version: 3,
       });
     });
-    expect(install.value).toBe("always");
+    expect(install.textContent).toContain("总是允许");
   });
 
   it("窗口重获焦点时重读 canonical 状态", async () => {
@@ -183,7 +185,7 @@ describe("SecurityPanel", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(categorySelect("安装").value).toBe("always");
+    expect(categorySelect("安装").textContent).toContain("总是允许");
   });
 
   it("设置加载失败使用统一提示", async () => {
@@ -213,7 +215,7 @@ describe("SecurityPanel", () => {
       message: "设置保存失败，请再试一次",
       tone: "error",
     });
-    expect(categorySelect("安装").value).toBe("always");
+    expect(categorySelect("安装").textContent).toContain("总是允许");
 
     await act(async () => {
       publishRememberGrantState({
@@ -229,6 +231,6 @@ describe("SecurityPanel", () => {
         version: 6,
       });
     });
-    expect(categorySelect("安装").value).toBe("ask");
+    expect(categorySelect("安装").textContent).toContain("每次询问");
   });
 });

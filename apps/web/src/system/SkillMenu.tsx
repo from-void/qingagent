@@ -90,6 +90,13 @@ export function SkillMenuIcon({ icon }: { icon: string }) {
  */
 /** 菜单宽度(与 skill-menu.css 的 width 一致),调用方夹紧 left 时用。 */
 export const SKILL_MENU_WIDTH = 268;
+/** 一行 = 13.5px × 1.4 行高 + 上下各 7px 内边距。 */
+export const SKILL_MENU_ROW_HEIGHT = 32.9;
+/** 7 行完整展示；更多项目时再露出下一行的一半，提示菜单可滚动。 */
+export const SKILL_MENU_FULL_ROWS = 7;
+const SKILL_MENU_CHROME_HEIGHT = 12; // 上下内边距 10px + 边框 2px
+export const SKILL_MENU_PEEK_HEIGHT =
+  SKILL_MENU_ROW_HEIGHT * (SKILL_MENU_FULL_ROWS + 0.5) + SKILL_MENU_CHROME_HEIGHT;
 
 export function SkillMenu({
   actions,
@@ -115,9 +122,17 @@ export function SkillMenu({
   anchor?: { left: number; bottom: number } | null;
   dataWf?: string;
 }) {
-  const style: CSSProperties | undefined = anchor
-    ? { left: anchor.left, bottom: anchor.bottom, top: "auto", right: "auto" }
-    : undefined;
+  const style: CSSProperties | undefined =
+    anchor || actions.length > SKILL_MENU_FULL_ROWS
+      ? {
+          ...(anchor
+            ? { left: anchor.left, bottom: anchor.bottom, top: "auto", right: "auto" }
+            : {}),
+          ...(actions.length > SKILL_MENU_FULL_ROWS
+            ? { maxHeight: `min(60vh, ${SKILL_MENU_PEEK_HEIGHT}px)` }
+            : {}),
+        }
+      : undefined;
   return (
     <div className="qa-skill-menu" style={style} data-wf={dataWf} role="menu">
       {actions.length === 0 ? (

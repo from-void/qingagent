@@ -159,6 +159,12 @@ import {
   selectPatches,
   workspaceReducer,
 } from "../data/workspaceState";
+import {
+  initialWorkspaceHydration,
+  WORKSPACE_DOCUMENT_LEAD_MS,
+  WORKSPACE_HYDRATION_TIMEOUT_MS,
+  workspaceHydrationReducer,
+} from "../data/workspaceHydration";
 import { useAutoScroll } from "../useAutoScroll";
 import { useAssetPreviewState } from "./useAssetPreviewState";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -258,6 +264,23 @@ export function useWorkspacePageController() {
   const { previewExit, previewSource, setPreviewSource } =
     useAssetPreviewState();
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
+  const initialHydrationSessionIdRef = useRef<string | null>(
+    typeof window === "undefined"
+      ? null
+      : workspaceSessionIdFromHash(window.location.hash),
+  );
+  const [hydration, dispatchHydration] = useReducer(
+    workspaceHydrationReducer,
+    initialHydrationSessionIdRef.current,
+    initialWorkspaceHydration,
+  );
+  const hydrationRef = useRef(hydration);
+  const hydrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const hydrationDocumentLeadRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [derivatives, setDerivatives] = useState<DerivativeItem[]>([]);
   const [derivativeCreateOpen, setDerivativeCreateOpen] = useState(false);
   const [derivativeCreateDtype, setDerivativeCreateDtype] =
@@ -338,6 +361,74 @@ export function useWorkspacePageController() {
   const startSessionPromisesBySessionRef = useRef<Map<string, Promise<string>>>(
     new Map(),
   );
+  const clearHydrationTimers = useCallback(() => {
+    if (hydrationTimeoutRef.current !== null) {
+      clearTimeout(hydrationTimeoutRef.current);
+      hydrationTimeoutRef.current = null;
+    }
+    if (hydrationDocumentLeadRef.current !== null) {
+      clearTimeout(hydrationDocumentLeadRef.current);
+      hydrationDocumentLeadRef.current = null;
+    }
+  }, []);
+  const beginWorkspaceHydration = useCallback(
+    (sessionId: string | null) => {
+      clearHydrationTimers();
+      hydrationRef.current = initialWorkspaceHydration(sessionId);
+      dispatchHydration({ kind: "begin", sessionId });
+      if (!sessionId) return;
+      hydrationTimeoutRef.current = setTimeout(() => {
+        hydrationTimeoutRef.current = null;
+        if (hydrationDocumentLeadRef.current !== null) {
+          clearTimeout(hydrationDocumentLeadRef.current);
+          hydrationDocumentLeadRef.current = null;
+        }
+        dispatchHydration({ kind: "timeout", sessionId });
+      }, WORKSPACE_HYDRATION_TIMEOUT_MS);
+    },
+    [clearHydrationTimers],
+  );
+  const observeHydrationFrame = useCallback(
+    (frame: BridgeFrame, fallbackSessionId: string | null) => {
+      if (frame.kind === "restoreReset") {
+        const current = hydrationRef.current;
+        // startWorkspaceStream 已在请求发出时启动绝对 4s 门限；初次 restoreReset
+        // 不得把弱网预算重新计时。只有已稳定呈现后的重连才开启新一轮门控。
+        if (
+          current.sessionId === fallbackSessionId &&
+          (current.phase !== "ready" || current.timedOut)
+        ) {
+          return;
+        }
+        beginWorkspaceHydration(fallbackSessionId);
+        return;
+      }
+      if (frame.kind === "documentSnapshotWritten" && fallbackSessionId) {
+        dispatchHydration({
+          kind: "documentObserved",
+          sessionId: fallbackSessionId,
+        });
+        if (hydrationDocumentLeadRef.current === null) {
+          hydrationDocumentLeadRef.current = setTimeout(() => {
+            hydrationDocumentLeadRef.current = null;
+            dispatchHydration({
+              kind: "documentLeadElapsed",
+              sessionId: fallbackSessionId,
+            });
+          }, WORKSPACE_DOCUMENT_LEAD_MS);
+        }
+        return;
+      }
+      if (frame.kind === "sessionRestoreCompleted") {
+        clearHydrationTimers();
+        dispatchHydration({
+          kind: "restoreCompleted",
+          sessionId: frame.data.sessionId,
+        });
+      }
+    },
+    [beginWorkspaceHydration, clearHydrationTimers],
+  );
   const restoreExistingSessionIdRef = useRef<string | null>(null);
   const lastRetriableSendRef = useRef<Extract<
     Command,
@@ -395,6 +486,7 @@ export function useWorkspacePageController() {
   );
   const reducedMotionRef = useRef(false);
   stateRef.current = state;
+  hydrationRef.current = hydration;
   sessionIdRef.current = state.sessionId ?? sessionIdRef.current;
   docVersionRef.current = state.version;
   if (state.version === 0) {
@@ -1467,6 +1559,10 @@ export function useWorkspacePageController() {
       ) {
         return;
       }
+      observeHydrationFrame(
+        frame,
+        streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+      );
 
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
@@ -1732,6 +1828,7 @@ export function useWorkspacePageController() {
       startNewSessionPromiseRef.current = null;
       pendingBrowserAttachRef.current = null;
       setSendPending(false);
+      beginWorkspaceHydration(targetSessionId);
 
       if (options.resetSessionState && targetSessionId) {
         setTitle("");
@@ -2025,8 +2122,11 @@ export function useWorkspacePageController() {
       }, 75);
     };
   }, [
+    beginWorkspaceHydration,
+    clearHydrationTimers,
     rejectPendingDocSaveDrain,
     markMaterialParsing,
+    observeHydrationFrame,
     resolvePendingDocSaveDrain,
     restoreExistingSession,
     sendAttachFolderSelection,
@@ -2038,12 +2138,13 @@ export function useWorkspacePageController() {
   // 组件卸载时清掉在排的瞬态保存重试定时器,防孤儿定时器卸载后用旧态杂散重发。
   useEffect(() => {
     return () => {
+      clearHydrationTimers();
       if (docSaveRetryTimerRef.current !== null) {
         clearTimeout(docSaveRetryTimerRef.current);
         docSaveRetryTimerRef.current = null;
       }
     };
-  }, []);
+  }, [clearHydrationTimers]);
 
   // Mirror content and tool dimensions onto <body> for CSS state hooks.
   useEffect(() => {
@@ -2850,6 +2951,7 @@ export function useWorkspacePageController() {
   return {
     viewRef,
     dataAttrs,
+    hydration,
     title,
     setTitle,
     handleBackHome,

@@ -846,6 +846,11 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
         fail("RestoreReset.snapshotSeq must be a non-negative integer");
       }
       return;
+    case "sessionRestoreCompleted":
+      if (!frame.data.sessionId) {
+        fail("SessionRestoreCompleted.sessionId must be non-empty");
+      }
+      return;
     case "sessionMeta":
       return;
     case "confirmRequested":

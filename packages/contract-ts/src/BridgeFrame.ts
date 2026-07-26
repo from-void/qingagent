@@ -43,6 +43,7 @@ export type BridgeFrame =
   | { kind: "lexiconsListed"; data: { lexicons: LexiconResourceSummary[] } }
   | { kind: "lexiconEntriesListed"; data: { resourceId: string; entries: LexiconEntrySummary[] } }
   | { kind: "restoreReset"; data: { epoch: number; snapshotSeq: number } }
+  | { kind: "sessionRestoreCompleted"; data: { sessionId: string } }
   | { kind: "sessionMeta"; data: { title: string; sessionId: string } }
   | { kind: "chatMessageAdded"; data: { message: ChatMessage; appendSeq?: number } }
   | { kind: "chatMessageAppended"; data: { messageId: string; seq: number; part: MessagePart } }

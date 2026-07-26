@@ -164,6 +164,8 @@ export function bridgeFrameSessionId(frame: BridgeFrame): string | null {
   switch (frame.kind) {
     case "sessionMeta":
       return frame.data.sessionId;
+    case "sessionRestoreCompleted":
+      return frame.data.sessionId;
     case "docCommitted":
       return frame.data.sessionId;
     case "folderSourcesChanged":

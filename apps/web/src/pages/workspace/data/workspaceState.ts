@@ -246,6 +246,9 @@ function workspaceReducerMut(
       resetSessionScopedStateMut(draft);
       resources.reset();
       return;
+    case "sessionRestoreCompleted":
+      // 仅供呈现层结束首批水合门控；业务 state 已由此前的恢复帧完整重建。
+      return;
     case "sessionMeta": {
       // Only reset session-scoped state when switching between two real
       // sessions (e.g. navigating from one existing session to another).

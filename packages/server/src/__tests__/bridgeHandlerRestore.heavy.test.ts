@@ -680,9 +680,13 @@ describe("handleCommand existing-session restore", () => {
     const addedIdxs = frames
       .map((frame, i) => (frame.kind === "chatMessageAdded" ? i : -1))
       .filter((i) => i >= 0);
+    const completedIdx = frames.findIndex(
+      (frame) => frame.kind === "sessionRestoreCompleted",
+    );
     expect(resetIdx).toBeGreaterThanOrEqual(0);
     expect(addedIdxs.length).toBe(2);
     expect(resetIdx).toBeLessThan(addedIdxs[0]!);
+    expect(completedIdx).toBeGreaterThan(addedIdxs.at(-1)!);
 
     // 还原按 chatHistory 顺序:user 在前、agent 在后(修复前只发 agent 帧,user 会被挤到后面)
     const addedRoles = frames

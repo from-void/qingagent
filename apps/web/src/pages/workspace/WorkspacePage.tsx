@@ -10,6 +10,8 @@ export * from "./hooks/useWorkspacePageController";
 
 export function WorkspacePage() {
   const controller = useWorkspacePageController();
+  const showDocument = controller.hydration.phase !== "waiting";
+  const showChat = controller.hydration.phase === "ready";
 
   return (
     <section
@@ -28,9 +30,36 @@ export function WorkspacePage() {
       }}
     >
       <WorkspaceTopbar controller={controller} />
-      <div className="ws-body">
-        <WorkspaceChatPane controller={controller} />
-        <WorkspaceDocumentPane controller={controller} />
+      <div
+        className="ws-body"
+        data-hydration={controller.hydration.phase}
+        data-hydration-reveal={controller.hydration.revealMode}
+      >
+        {showChat ? (
+          <WorkspaceChatPane controller={controller} />
+        ) : (
+          <div
+            className="ws-hydration-left"
+            data-wf="WorkspaceHydrationChat"
+            aria-hidden="true"
+          />
+        )}
+        {showDocument ? (
+          <WorkspaceDocumentPane controller={controller} />
+        ) : (
+          <div
+            className="ws-hydration-right"
+            data-wf="WorkspaceHydrationDocument"
+            aria-hidden="true"
+          />
+        )}
+        {!showChat && !showDocument ? (
+          <div
+            className="ws-hydration-canvas"
+            data-wf="WorkspaceHydrationCanvas"
+            aria-hidden="true"
+          />
+        ) : null}
       </div>
       <WorkspaceOverlays controller={controller} />
     </section>

@@ -17,6 +17,7 @@ import {
   type ObservabilityTraceRetentionStore,
   type RetentionConnection,
 } from "./observabilityRetention.js";
+import { registerObservabilityStore } from "./observabilityStore.js";
 
 /**
  * Bootstrap observability for the server process.
@@ -32,11 +33,12 @@ const libsqlStore = new LibSQLStore({
   url: process.env.DATABASE_URL ?? "file:./qingagent.db",
 });
 
+const duckdbPath = process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb";
 const duckdbStore = new DuckDBStore({
   id: "qingagent-observability",
   // 默认 ./observability.duckdb；允许 env 覆盖，便于临时实例（崩溃验证等）用独立
   // DB 文件，避免与正在跑的主实例抢 DuckDB 单写锁。
-  path: process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb",
+  path: duckdbPath,
 });
 
 const compositeStorage = new MastraCompositeStore({
@@ -78,6 +80,10 @@ const duckStoreDb = (duckdbStore as unknown as {
     closeConnection(connection: RetentionConnection): void;
   };
 }).db;
+
+registerObservabilityStore(duckdbPath, duckdbStore as unknown as {
+  db: typeof duckStoreDb;
+});
 
 const retentionStore: ObservabilityTraceRetentionStore = {
   getConnection: () => duckStoreDb.getConnection(),

@@ -9,6 +9,11 @@ import {
   truncateField,
 } from "@qingagent/core";
 import { aggregateFrameLogEntries, type FrameLogExportEntry } from "./frameAggregate.js";
+import {
+  getObservabilityStore,
+  type ObservabilityDuckDbConnection,
+  type ObservabilityDuckDbStore,
+} from "../observabilityStore.js";
 import { redactDiagnosticText, redactValueDeep } from "./redact.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,15 +34,7 @@ export interface CollectedFrameLogFile {
   mtime: number;
 }
 
-interface DuckDbConnection {
-  runAndReadAll(sql: string): Promise<{ getRowObjects(): Array<Record<string, unknown>> }>;
-}
-
-interface DuckDbStoreLike {
-  db: {
-    getConnection(): Promise<DuckDbConnection>;
-    closeConnection(connection: DuckDbConnection): void;
-  };
+interface DuckDbStoreLike extends ObservabilityDuckDbStore {
   close?: () => Promise<void> | void;
 }
 
@@ -105,6 +102,10 @@ async function collectSpansRaw(
   if (process.env.QINGAGENT_RUNTIME === "desktop") return [];
 
   const duckdbPath = duckdbPathOverride ?? process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb";
+  const runtimeStore = getObservabilityStore(duckdbPath);
+  if (runtimeStore) {
+    return collectSpansFromDuckDb(duckdbPath, spanDays, runtimeStore);
+  }
   if (!(await fileExists(duckdbPath))) return [];
   return collectSpansFromDuckDb(duckdbPath, spanDays);
 }
@@ -235,26 +236,53 @@ async function collectSpansFromJsonl(logsDir: string, spanDays: number): Promise
   return spans.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 }
 
-async function collectSpansFromDuckDb(duckdbPath: string, spanDays: number): Promise<DiagSpan[]> {
-  const { DuckDBStore } = await importDuckDbStore();
-  const store = new DuckDBStore({
-    id: "qingagent-diagnostics-export",
-    path: duckdbPath,
-  }) as unknown as DuckDbStoreLike;
-  const connection = await store.db.getConnection();
+async function collectSpansFromDuckDb(
+  duckdbPath: string,
+  spanDays: number,
+  runtimeStore?: ObservabilityDuckDbStore,
+): Promise<DiagSpan[]> {
+  let store: DuckDbStoreLike | null = runtimeStore ?? null;
+  let connection: ObservabilityDuckDbConnection | null = null;
+  const ownsStore = runtimeStore === undefined;
   try {
+    if (!store) {
+      const { DuckDBStore } = await importDuckDbStore();
+      store = new DuckDBStore({
+        id: "qingagent-diagnostics-export",
+        path: duckdbPath,
+      }) as unknown as DuckDbStoreLike;
+    }
+    connection = await store.db.getConnection();
     const rows = await connection.runAndReadAll(buildDuckSpanQuery(spanDays));
     return rows.getRowObjects()
       .map(rowToDuckSpanRow)
       .filter((row): row is DuckSpanRow => row !== null)
       .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
       .map(duckSpanMapper());
-  } catch {
+  } catch (error) {
+    warnSpansUnavailable(error);
     return [];
   } finally {
-    store.db.closeConnection(connection);
-    await store.close?.();
+    if (store && connection) {
+      try {
+        store.db.closeConnection(connection);
+      } catch {
+        // 连接可能已处于半关闭状态；不能让清理异常破坏诊断包导出。
+      }
+    }
+    if (ownsStore && store) {
+      try {
+        await store.close?.();
+      } catch {
+        // 临时实例即使关闭失败，也不能让可选 spans 阻断整个诊断包。
+      }
+    }
   }
+}
+
+function warnSpansUnavailable(error: unknown): void {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.warn(`[diagnostics] spans 采集失败，已降级为空：${reason}`);
 }
 
 async function importDuckDbStore(): Promise<{

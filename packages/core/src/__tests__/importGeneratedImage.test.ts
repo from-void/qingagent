@@ -11,6 +11,11 @@ const ONE_PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const ONE_PIXEL_JPEG = Buffer.from([
+  0xff, 0xd8,
+  0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+  0xff, 0xd9,
+]);
 const tempDirs: string[] = [];
 
 async function fixture(): Promise<{
@@ -52,10 +57,53 @@ describe("importGeneratedImage", () => {
       src: `/api/v1/files/${result.imageId}/generated-image.png`,
       width: 1,
       height: 1,
+      alt: "单像素测试图",
     });
     await expect(
       readFile(join(uploadsRoot, result.imageId, "generated-image.png")),
     ).resolves.toEqual(ONE_PIXEL_PNG);
+  });
+
+  it("未传 alt 时结果不包含 alt 字段", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "without-alt.png");
+    await writeFile(sourcePath, ONE_PIXEL_PNG);
+
+    const result = await importGeneratedImageFromPath(
+      { path: sourcePath },
+      { workspaceRoot, uploadsRoot },
+    );
+
+    expect(result).not.toHaveProperty("alt");
+  });
+
+  it("接受 EOI 后带尾随字节的 JPEG", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "trailing-bytes.jpg");
+    const jpegWithTrailingBytes = Buffer.concat([ONE_PIXEL_JPEG, Buffer.from([0x00, 0x01])]);
+    await writeFile(sourcePath, jpegWithTrailingBytes);
+
+    const result = await importGeneratedImageFromPath(
+      { path: sourcePath },
+      { workspaceRoot, uploadsRoot },
+    );
+
+    expect(result).toMatchObject({ width: 1, height: 1 });
+    await expect(
+      readFile(join(uploadsRoot, result.imageId, "generated-image.jpg")),
+    ).resolves.toEqual(jpegWithTrailingBytes);
+  });
+
+  it("拒绝 SOI 错误的伪 JPEG", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "wrong-soi.jpg");
+    const wrongSoi = Buffer.from(ONE_PIXEL_JPEG);
+    wrongSoi[1] = 0xd7;
+    await writeFile(sourcePath, wrongSoi);
+
+    await expect(
+      importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 文件头无效");
   });
 
   it("拒绝图片白名单之外的扩展名", async () => {

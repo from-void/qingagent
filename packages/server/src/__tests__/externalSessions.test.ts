@@ -108,6 +108,24 @@ describe("external sessions", () => {
     sessions.set(memoryOnlyId, memoryOnlySession);
     vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([memoryOnlyId]);
 
+    // 先走真实查询确认孤儿行已被过滤，再冻结持久会话快照。全量测试中其他
+    // 用例的 thread 可能在下方三次请求之间落盘，不能让它改变本用例的 offset。
+    const persistedSnapshot = await documentRepo.listWithExistingThreads({
+      resourceId: QINGAGENT_RESOURCE_ID,
+      perPage: Number.MAX_SAFE_INTEGER,
+      offset: 0,
+    });
+    expect(persistedSnapshot.rows.map((row) => row.id)).not.toContain(orphanId);
+    expect(persistedSnapshot.rows).toHaveLength(persistedSnapshot.total);
+    vi.spyOn(documentRepo, "listWithExistingThreads").mockImplementation(async (opts) => {
+      const perPage = opts.perPage ?? 50;
+      const offset = opts.offset ?? (opts.page ?? 0) * perPage;
+      return {
+        rows: persistedSnapshot.rows.slice(offset, offset + perPage),
+        total: persistedSnapshot.total,
+      };
+    });
+
     const all = await app.request("/api/v1/external/sessions?limit=500", {
       headers: authHeaders(),
     });

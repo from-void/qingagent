@@ -36,6 +36,7 @@ import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import { loadSessionFromThread } from "../gateway/bridgeCore";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
@@ -103,8 +104,35 @@ externalRoutes.get("/sessions", async (c) => {
     state: ContentDocState["kind"];
     updatedAt: string;
   }> = [];
-  for (const sessionId of sessionManager.listSessionIds(50)) {
-    if (await documentRepo.load(sessionId)) continue;
+  const memorySessionIds = sessionManager.listSessionIds(50);
+  // 当前页之外的真实落盘会话也不能作为内存会话重复出现；但仅有 documents
+  // 孤儿行不算落盘列表会话，必须经同一条 thread 恢复路径确认。
+  const persistedSessionIds = new Set(sessions.map((session) => session.id));
+  const unresolvedMemoryIds = memorySessionIds.filter(
+    (sessionId) => !persistedSessionIds.has(sessionId),
+  );
+  if (unresolvedMemoryIds.length > 0 && rows.length < total) {
+    const { rows: allRows } = await documentRepo.list({
+      resourceId: QINGAGENT_RESOURCE_ID,
+      perPage: total,
+      offset: 0,
+    });
+    const unresolvedMemoryIdSet = new Set(unresolvedMemoryIds);
+    const offPageDocumentIds = new Set(
+      allRows
+        .map((row) => row.id)
+        .filter((sessionId) =>
+          unresolvedMemoryIdSet.has(sessionId) && !persistedSessionIds.has(sessionId)
+        ),
+    );
+    for (const sessionId of offPageDocumentIds) {
+      if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
+        persistedSessionIds.add(sessionId);
+      }
+    }
+  }
+  for (const sessionId of memorySessionIds) {
+    if (persistedSessionIds.has(sessionId)) continue;
     const session = await getOrRestoreSessionReadOnly(sessionId);
     if (!session) continue;
     memoryOnlySessions.push({

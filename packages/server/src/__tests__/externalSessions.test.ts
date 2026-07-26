@@ -81,30 +81,32 @@ describe("external sessions", () => {
 
   it("list 补充仅存在于内存的会话并对已落盘会话去重", async () => {
     const memoryOnlyId = `memory-only-${Date.now()}`;
-    const persistedId = `persisted-${Date.now()}`;
-    const updatedAt = "2026-07-26T00:00:00.000Z";
-    for (const id of [memoryOnlyId, persistedId]) {
-      const session = createSession(id, updatedAt);
-      session.title = id === memoryOnlyId ? "仅内存会话" : "已落盘会话";
-      sessions.set(id, session);
-      syntheticSessionIds.push(id);
-    }
-    await documentRepo.save({
-      id: persistedId,
-      threadId: persistedId,
-      resourceId: QINGAGENT_RESOURCE_ID,
-      title: "已落盘会话",
-      docState: "empty",
-      docVersion: 0,
-      lastSyncedVersion: 0,
-      pmDoc: normalizePmDoc(markdownToPm("")),
-      createdAt: updatedAt,
-      updatedAt,
+    const memoryOnlySession = createSession(memoryOnlyId, new Date().toISOString());
+    memoryOnlySession.title = "仅内存会话";
+    sessions.set(memoryOnlyId, memoryOnlySession);
+    syntheticSessionIds.push(memoryOnlyId);
+
+    const created = await app.request("/api/v1/external/sessions", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({}),
     });
+    expect(created.status).toBe(200);
+    const { sessionId: persistedId } = await created.json() as { sessionId: string };
+    syntheticSessionIds.push(persistedId);
+    const persistedSession = getSession(persistedId);
+    expect(persistedSession).toBeDefined();
+    if (!persistedSession) return;
+    await persistedSession.threadCreatePromise;
+    persistedSession.title = "已落盘会话";
+    await persistSessionMetadata(persistedSession, "test:list-persisted");
+
     const listSessionIds = vi.spyOn(sessionManager, "listSessionIds")
       .mockReturnValue([persistedId, memoryOnlyId]);
 
-    const listed = await app.request("/api/v1/external/sessions", { headers: authHeaders() });
+    const listed = await app.request("/api/v1/external/sessions?limit=500", {
+      headers: authHeaders(),
+    });
 
     expect(listed.status).toBe(200);
     const body = await listed.json() as {

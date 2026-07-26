@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { DerivativeItem } from "./types";
 import { DTYPE_REGISTRY, type DerivativeDtype } from "./dtypeRegistry";
 
+const UNTITLED_DOCUMENT_LABEL = "未命名文档";
+
 export function DerivTabBar(props: {
   title: string; items: DerivativeItem[]; activeTab: "main" | string;
   onActivate: (id: "main" | string) => void; onCreate: (dtype: DerivativeDtype) => void;
@@ -25,9 +27,10 @@ export function DerivTabBar(props: {
     if (editing) inputRef.current?.select();
   }, [editing]);
   const beginRename = () => {
-    setDraftTitle(props.title || "主文档");
+    setDraftTitle(props.title || UNTITLED_DOCUMENT_LABEL);
     setEditing(true);
   };
+  const isSingleUntitled = !props.title.trim() && props.items.length === 0;
   const availableDescriptors = Object.values(DTYPE_REGISTRY).filter(
     (descriptor) => !props.items.some((item) => item.dtype === descriptor.dtype),
   );
@@ -40,14 +43,14 @@ export function DerivTabBar(props: {
     if (title && title !== props.title) void props.onRename(title);
   };
   // 顺序:主文档标题 → 衍生 Tab 向右铺开 → 最右「＋」线框(新 Tab 开在标题右侧、＋左侧)。
-  return <div className="ws-deriv-tabs" role="tablist">
+  return <div className={`ws-deriv-tabs${isSingleUntitled ? " is-single-untitled" : ""}`} role="tablist">
     <div className={`ws-deriv-tab is-main${props.activeTab === "main" ? " is-active" : ""}`} role="tab" tabIndex={0} onClick={() => props.onActivate("main")} onKeyDown={(event) => {
       if (!editing && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); props.onActivate("main"); }
     }}>
-      {editing ? <input ref={inputRef} className="ws-deriv-title-input" value={draftTitle} maxLength={48} aria-label="修改主文档标题" onClick={(event) => event.stopPropagation()} onChange={(event) => setDraftTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => {
+      {editing ? <input ref={inputRef} className="ws-deriv-title-input" value={draftTitle} maxLength={48} aria-label="修改文档标题" onClick={(event) => event.stopPropagation()} onChange={(event) => setDraftTitle(event.target.value)} onBlur={submitRename} onKeyDown={(event) => {
         if (event.key === "Enter") { event.preventDefault(); submitRename(); }
         if (event.key === "Escape") { event.preventDefault(); setEditing(false); }
-      }} /> : <><span>{props.title || "主文档"}</span><button type="button" className="ws-deriv-rename" aria-label="修改标题" title="修改标题" onClick={(event) => { event.stopPropagation(); beginRename(); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.1 2.9a1.75 1.75 0 0 1 2.47 2.47L6 12.9l-3.2.77.77-3.2Z"/><path d="m9.7 4.3 2.47 2.47"/></svg></button></>}
+      }} /> : <><span>{props.title || UNTITLED_DOCUMENT_LABEL}</span><button type="button" className="ws-deriv-rename" aria-label="修改标题" title="修改标题" onClick={(event) => { event.stopPropagation(); beginRename(); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.1 2.9a1.75 1.75 0 0 1 2.47 2.47L6 12.9l-3.2.77.77-3.2Z"/><path d="m9.7 4.3 2.47 2.47"/></svg></button></>}
     </div>
     {regularItems.map((item) => <button key={item.docId} className={`ws-deriv-tab${props.activeTab === item.docId ? " is-active" : ""}`} role="tab" onClick={() => props.onActivate(item.docId)}>
       <span>{DTYPE_REGISTRY[item.dtype as DerivativeDtype]?.tabLabel ?? item.templateName}</span>{hasVisibleStale(item) ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}

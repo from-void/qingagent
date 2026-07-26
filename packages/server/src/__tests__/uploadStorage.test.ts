@@ -58,7 +58,7 @@ describe("uploadStorage", () => {
     }
   });
 
-  it("deletes only the directory for a valid upload UUID", async () => {
+  it("keeps a valid but unindexed upload directory because its reference count is unknown", async () => {
     const storage = await loadStorage();
     const fileId = crypto.randomUUID();
     const uploadDir = path.join(storage.UPLOAD_DIR, fileId);
@@ -67,11 +67,11 @@ describe("uploadStorage", () => {
 
     expect(storage.isValidUploadId(fileId)).toBe(true);
     await expect(storage.deleteUploadedFile(fileId)).resolves.toBe(true);
-    await expect(pathExists(uploadDir)).resolves.toBe(false);
+    await expect(pathExists(uploadDir)).resolves.toBe(true);
     await expect(pathExists(storage.UPLOAD_DIR)).resolves.toBe(true);
   });
 
-  it("deletes indexed uploads, prunes the content index, and reuploads same content with a new id", async () => {
+  it("decrements shared upload references and deletes the physical file only after the last release", async () => {
     const storage = await loadStorage();
     const buffer = Buffer.from("same bytes");
     const first = await storage.findOrStoreUploadedFile({
@@ -79,25 +79,86 @@ describe("uploadStorage", () => {
       mimeType: "application/pdf",
       buffer,
     });
-    const firstUploadDir = path.join(storage.UPLOAD_DIR, first.record.fileId);
-
-    await expect(storage.deleteUploadedFile(first.record.fileId)).resolves.toBe(true);
-    await expect(pathExists(firstUploadDir)).resolves.toBe(false);
-
-    const rawIndex = await fs.readFile(path.join(storage.UPLOAD_DIR, ".content-index.json"), "utf8");
-    const index = JSON.parse(rawIndex) as {
-      records: Record<string, { fileId: string }>;
-    };
-    expect(Object.values(index.records).some((record) => record.fileId === first.record.fileId)).toBe(false);
-
     const second = await storage.findOrStoreUploadedFile({
       filename: "report.pdf",
       mimeType: "application/pdf",
       buffer,
     });
+    const firstUploadDir = path.join(storage.UPLOAD_DIR, first.record.fileId);
 
-    expect(second.deduped).toBe(false);
-    expect(second.record.fileId).not.toBe(first.record.fileId);
-    await expect(pathExists(path.join(storage.UPLOAD_DIR, second.record.fileId, "report.pdf"))).resolves.toBe(true);
+    expect(second).toMatchObject({
+      deduped: true,
+      record: { fileId: first.record.fileId, refCount: 2 },
+    });
+    await expect(storage.deleteUploadedFile(first.record.fileId)).resolves.toBe(true);
+    await expect(pathExists(firstUploadDir)).resolves.toBe(true);
+
+    let rawIndex = await fs.readFile(path.join(storage.UPLOAD_DIR, ".content-index.json"), "utf8");
+    let index = JSON.parse(rawIndex) as {
+      records: Record<string, { fileId: string; refCount?: number }>;
+    };
+    expect(Object.values(index.records)).toContainEqual(
+      expect.objectContaining({ fileId: first.record.fileId, refCount: 1 }),
+    );
+
+    await expect(storage.deleteUploadedFile(second.record.fileId)).resolves.toBe(true);
+    await expect(pathExists(firstUploadDir)).resolves.toBe(false);
+
+    rawIndex = await fs.readFile(path.join(storage.UPLOAD_DIR, ".content-index.json"), "utf8");
+    index = JSON.parse(rawIndex) as {
+      records: Record<string, { fileId: string; refCount?: number }>;
+    };
+    expect(Object.values(index.records).some((record) => record.fileId === first.record.fileId)).toBe(false);
+
+    const reuploaded = await storage.findOrStoreUploadedFile({
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      buffer,
+    });
+
+    expect(reuploaded.deduped).toBe(false);
+    expect(reuploaded.record.fileId).not.toBe(first.record.fileId);
+    expect(reuploaded.record.refCount).toBe(1);
+    await expect(pathExists(path.join(storage.UPLOAD_DIR, reuploaded.record.fileId, "report.pdf"))).resolves.toBe(true);
+  });
+
+  it("removes a legacy index record without refCount but keeps its physical file", async () => {
+    const storage = await loadStorage();
+    const fileId = crypto.randomUUID();
+    const filename = "legacy.pdf";
+    const content = Buffer.from("legacy bytes");
+    const contentHash = storage.contentHashOf(content);
+    const uploadDir = path.join(storage.UPLOAD_DIR, fileId);
+    const indexPath = path.join(storage.UPLOAD_DIR, ".content-index.json");
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(path.join(uploadDir, filename), content);
+    await fs.writeFile(
+      indexPath,
+      JSON.stringify({
+        version: 1,
+        complete: true,
+        records: {
+          [contentHash]: {
+            fileId,
+            filename,
+            mimeType: "application/pdf",
+            size: content.length,
+            contentHash,
+          },
+        },
+      }),
+    );
+
+    await expect(storage.deleteUploadedFile(fileId)).resolves.toBe(true);
+
+    await expect(pathExists(uploadDir)).resolves.toBe(true);
+    const index = JSON.parse(await fs.readFile(indexPath, "utf8")) as {
+      records: Record<string, { fileId: string }>;
+    };
+    expect(Object.values(index.records).some((record) => record.fileId === fileId)).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(
+      "[uploadStorage] Upload refCount is unknown; removed index record but kept physical file for manual or GC cleanup",
+      { fileId },
+    );
   });
 });

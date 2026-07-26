@@ -16,7 +16,7 @@ async function createUploadApp() {
   ]);
   const app = new Hono();
   app.route("/api/v1", uploadRoutes);
-  return { app, uploadDir: storage.UPLOAD_DIR };
+  return { app, uploadDir: storage.UPLOAD_DIR, storage };
 }
 
 async function seedUploadedFile(uploadDir: string, filename: string, content = "x") {
@@ -138,6 +138,37 @@ describe("uploadRoutes 下载响应头", () => {
     expect(second.body.fileId).toBe(first.body.fileId);
     expect(second.body.filename).toBe("逐宁简历.pdf");
     expect(await uploadDirs(uploadDir)).toEqual([first.body.fileId]);
+  });
+
+  it("两个会话共享同一 fileId 时，首个会话删除后另一个仍可下载，最后删除才移除文件", async () => {
+    const { app, storage } = await createUploadApp();
+    const firstSessionUpload = await postUpload(app, {
+      filename: "共享报告.pdf",
+      mimeType: "application/pdf",
+      content: "shared session bytes",
+    });
+    const secondSessionUpload = await postUpload(app, {
+      filename: "共享报告.pdf",
+      mimeType: "application/pdf",
+      content: "shared session bytes",
+    });
+
+    expect(secondSessionUpload.body.fileId).toBe(firstSessionUpload.body.fileId);
+
+    await expect(
+      storage.deleteUploadedFile(firstSessionUpload.body.fileId),
+    ).resolves.toBe(true);
+    const stillDownloadable = await app.request(
+      `/api/v1/files/${secondSessionUpload.body.fileId}`,
+    );
+    expect(stillDownloadable.status).toBe(200);
+    await expect(stillDownloadable.text()).resolves.toBe("shared session bytes");
+
+    await expect(
+      storage.deleteUploadedFile(secondSessionUpload.body.fileId),
+    ).resolves.toBe(true);
+    const deleted = await app.request(`/api/v1/files/${secondSessionUpload.body.fileId}`);
+    expect(deleted.status).toBe(404);
   });
 
   it("同 content 但文件名或 MIME 不同时不复用旧 record，避免解析类型被旧文件污染", async () => {

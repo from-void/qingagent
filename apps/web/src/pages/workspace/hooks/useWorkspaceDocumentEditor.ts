@@ -49,6 +49,7 @@ import {
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
 import type { ServerStream } from "../data/serverStream";
 import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
+import type { DocWriteBaseline } from "../data/docWriteBaseline";
 
 export interface DocWriteTarget {
   sessionId: string;
@@ -58,11 +59,13 @@ export interface DocWriteTarget {
 
 export interface QueuedDocWrite extends DocWriteTarget {
   pmDoc: PmDoc;
+  baseline: DocWriteBaseline;
 }
 
 export type SendDocWrite = (
   pmDoc: PmDoc,
   target?: DocWriteTarget,
+  baseline?: DocWriteBaseline,
 ) => Promise<void>;
 
 function buildBlankStarterDoc(): PmDoc {
@@ -108,6 +111,7 @@ export function useWorkspaceDocumentEditor(input: {
   scheduledDocWriteRef: MutableRefObject<boolean>;
   latestDocMutationIdRef: MutableRefObject<string | null>;
   lastSentPmDocRef: MutableRefObject<PmDoc | null>;
+  lastSentDocWriteBaselineRef: MutableRefObject<DocWriteBaseline | null>;
   docWriteAckRef: MutableRefObject<Map<string, PendingDocSaveWaiter>>;
   docSaveRetryTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>;
   sendDocWriteRef: MutableRefObject<SendDocWrite>;
@@ -139,6 +143,7 @@ export function useWorkspaceDocumentEditor(input: {
     scheduledDocWriteRef,
     latestDocMutationIdRef,
     lastSentPmDocRef,
+    lastSentDocWriteBaselineRef,
     docWriteAckRef,
     docSaveRetryTimerRef,
     sendDocWriteRef,
@@ -158,7 +163,11 @@ export function useWorkspaceDocumentEditor(input: {
   const failedTransientDocWriteRef = useRef<QueuedDocWrite | null>(null);
 
   const sendDocWrite = useCallback(
-    (pmDoc: PmDoc, explicitTarget?: DocWriteTarget): Promise<void> => {
+    (
+      pmDoc: PmDoc,
+      explicitTarget?: DocWriteTarget,
+      explicitBaseline?: DocWriteBaseline,
+    ): Promise<void> => {
       const stream = explicitTarget?.stream ?? streamRef.current;
       const sessionId = explicitTarget?.sessionId ?? sessionIdRef.current;
       const streamGeneration =
@@ -176,8 +185,18 @@ export function useWorkspaceDocumentEditor(input: {
         pmDoc,
       ) as unknown as LegacySection[];
       const clientMutationId = createClientMutationId();
-      const expectedDocumentSnapshot = docVersionRef.current;
-      const baseContentHash = baseContentHashRef.current;
+      const baseline = explicitBaseline ?? {
+        expectedDocumentSnapshot: docVersionRef.current,
+        baseContentHash: baseContentHashRef.current,
+        baseHasSubstantiveContent: Boolean(
+          stateRef.current.doc?.pmDoc &&
+          pmDocHasSubstantiveContent(stateRef.current.doc.pmDoc),
+        ),
+      };
+      const {
+        expectedDocumentSnapshot,
+        baseContentHash,
+      } = baseline;
       const command: Command = {
         kind: "updateDoc",
         data: {
@@ -205,6 +224,7 @@ export function useWorkspaceDocumentEditor(input: {
       pendingDocWriteRef.current = true;
       latestDocMutationIdRef.current = clientMutationId;
       lastSentPmDocRef.current = pmDoc;
+      lastSentDocWriteBaselineRef.current = baseline;
       // 新编辑或 online 重发一旦开始，以本次发送为最新待落库内容，淘汰旧失败快照。
       failedTransientDocWriteRef.current = null;
 
@@ -285,7 +305,7 @@ export function useWorkspaceDocumentEditor(input: {
                 queued.stream === stream &&
                 queued.streamGeneration === streamGeneration
                   ? queued
-                  : { pmDoc, sessionId, stream, streamGeneration };
+                  : { pmDoc, sessionId, stream, streamGeneration, baseline };
             }
             console.error("[workspace] updateDoc failed", e);
             failAck(error);
@@ -318,7 +338,7 @@ export function useWorkspaceDocumentEditor(input: {
       }
       if (pendingDocWriteRef.current || scheduledDocWriteRef.current) return;
       failedTransientDocWriteRef.current = null;
-      sendDocWriteRef.current(failed.pmDoc, failed).catch((error) => {
+      sendDocWriteRef.current(failed.pmDoc, failed, failed.baseline).catch((error) => {
         // sendDocWrite 会重新登记仍属瞬态的失败快照；这里仅避免 online 事件产生未处理拒绝。
         console.error("[workspace] online updateDoc retry failed", error);
       });
@@ -411,7 +431,7 @@ export function useWorkspaceDocumentEditor(input: {
   );
 
   const handleEditorChange = useCallback(
-    (pmDoc: PmDoc): Promise<void> => {
+    (pmDoc: PmDoc, explicitBaseline?: DocWriteBaseline): Promise<void> => {
       const current = stateRef.current;
       if (
         !canEditDocument(
@@ -462,11 +482,19 @@ export function useWorkspaceDocumentEditor(input: {
           stream,
           streamGeneration: streamGenerationRef.current,
         };
+        const baseline = explicitBaseline ?? {
+          expectedDocumentSnapshot: docVersionRef.current,
+          baseContentHash: baseContentHashRef.current,
+          baseHasSubstantiveContent: Boolean(
+            current.doc?.pmDoc &&
+            pmDocHasSubstantiveContent(current.doc.pmDoc),
+          ),
+        };
         if (pendingDocWriteRef.current || scheduledDocWriteRef.current) {
-          queuedPmDocRef.current = { pmDoc, ...target };
+          queuedPmDocRef.current = { pmDoc, ...target, baseline };
           return waitForPendingDocSaveDrain();
         }
-        return sendDocWriteRef.current(pmDoc, target);
+        return sendDocWriteRef.current(pmDoc, target, baseline);
       };
 
       if (!current.sessionId) {

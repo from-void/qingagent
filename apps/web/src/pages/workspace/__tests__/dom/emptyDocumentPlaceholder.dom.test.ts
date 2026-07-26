@@ -1,16 +1,20 @@
 import { Editor, type JSONContent } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const PLACEHOLDER = "输入正文,或点左侧 + 插入其他块";
 const editors: Editor[] = [];
 
-function createEditor(content?: JSONContent): Editor {
+function createEditor(
+  content?: JSONContent,
+  onUpdate?: () => void,
+): Editor {
   const element = document.createElement("div");
   document.body.append(element);
   const editor = new Editor({
     element,
     extensions: createQingagentExtensions(),
+    ...(onUpdate ? { onUpdate } : {}),
     ...(content ? { content } : {}),
   });
   editors.push(editor);
@@ -32,9 +36,11 @@ afterEach(() => {
 
 describe("空文档正文占位", () => {
   it("全文只有一个空段落时仅显示一条", () => {
-    const editor = createEditor();
+    const onUpdate = vi.fn();
+    const editor = createEditor(undefined, onUpdate);
 
     expect(placeholderCount(editor)).toBe(1);
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 
   it("连续回车形成多个空段落时一条都不显示", () => {

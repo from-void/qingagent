@@ -87,7 +87,10 @@ function tableDoc(): PmDoc {
   } as PmDoc;
 }
 
-async function mountEditor(doc: PmDoc): Promise<Editor> {
+async function mountEditor(
+  doc: PmDoc,
+  onEditorChange?: (doc: PmDoc) => void,
+): Promise<Editor> {
   let editor: Editor | null = null;
   act(() => {
     root.render(
@@ -101,6 +104,7 @@ async function mountEditor(doc: PmDoc): Promise<Editor> {
         onEditorReady={(readyEditor) => {
           editor = readyEditor;
         }}
+        onEditorChange={onEditorChange}
       />,
     );
   });
@@ -227,7 +231,8 @@ describe("正文末块下方点击追加行", () => {
   });
 
   it("真空文档点击末行下方无动作", async () => {
-    const editor = await mountEditor(paragraphDoc(""));
+    const onEditorChange = vi.fn();
+    const editor = await mountEditor(paragraphDoc(""), onEditorChange);
     const before = editor.state.doc.toJSON();
 
     mockPaperLayout(editor);
@@ -239,6 +244,10 @@ describe("正文末块下方点击追加行", () => {
     expect(editor.state.doc.toJSON()).toEqual(before);
     expect(editor.state.doc.childCount).toBe(1);
     expect(document.activeElement).not.toBe(editor.view.dom);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    });
+    expect(onEditorChange).not.toHaveBeenCalled();
   });
 
   it("末块已是空段时只把光标落入该段，不再新增", async () => {

@@ -18,7 +18,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, getPmContentHash, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
@@ -77,6 +77,11 @@ import {
   docKeyWithoutBlockIds,
   pushPendingSelfDocKey,
 } from "../data/docSyncClassify";
+import type {
+  DocWriteBaseline,
+  EditorDocChange,
+} from "../data/docWriteBaseline";
+import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import {
   isAbnormalDocumentCollapse,
   measureDocumentShape,
@@ -256,7 +261,7 @@ export interface DocumentSnapshotViewProps {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady?: (editor: Editor | null) => void;
-  onEditorChange?: (doc: PmDoc) => void | Promise<void>;
+  onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
@@ -440,7 +445,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady: (editor: Editor | null) => void;
-  onEditorChange?: (doc: PmDoc) => void | Promise<void>;
+  onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
@@ -497,6 +502,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     resolve: (time: number) => void;
   } | null>(null);
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 与 debounce 正文同寿命的写入基线；第一笔本地事务产生时冻结，后续远端版本
+  // 即使先抵达也绝不能把这份旧正文“升级”为新基线。
+  const pendingUpdateBaselineRef = useRef<DocWriteBaseline | null>(null);
   const initialValidEditorDoc = useMemo(
     () => normalizePmDoc(viewDocToPm(doc)),
     [], // eslint-disable-line react-hooks/exhaustive-deps
@@ -507,6 +515,14 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   const latestDocVersionRef = useRef(doc.version);
   latestCanonicalDocRef.current = doc;
   latestDocVersionRef.current = doc.version;
+  const currentDocWriteBaseline = useCallback((): DocWriteBaseline => {
+    const canonical = normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current));
+    return {
+      expectedDocumentSnapshot: latestCanonicalDocRef.current.version,
+      baseContentHash: getPmContentHash(canonical),
+      baseHasSubstantiveContent: pmDocHasSubstantiveContent(canonical),
+    };
+  }, []);
   const beginApplyingRemote = useCallback(() => {
     remoteApplyDepthRef.current += 1;
     isApplyingRemoteRef.current = true;
@@ -679,19 +695,35 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     }
     const normalized = readValidEditorDocOrRecover();
     if (!normalized) return;
+    const baseline =
+      pendingUpdateBaselineRef.current ?? currentDocWriteBaseline();
+    pendingUpdateBaselineRef.current = null;
     // 记录这次 forward 的内容键,供 doc-sync 把它的回声识别为"自我保存"(即便之后又打了字)。
     pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
       pendingSelfDocKeysRef.current,
       JSON.stringify(normalized),
     );
-    await onEditorChange(normalized);
-  }, [editor, onEditorChange, readValidEditorDocOrRecover]);
+    await onEditorChange(normalized, baseline);
+  }, [
+    currentDocWriteBaseline,
+    editor,
+    onEditorChange,
+    readValidEditorDocOrRecover,
+  ]);
 
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
       hasLocalDocumentChanges() {
         if (!editor || editor.isDestroyed) return false;
+        // debounce 已登记就是真实本地事务；不能因远端版本先进入 React props 而把它
+        // 误判为“canonical 正在回灌”，否则旧稿会被放行并重绑到新版本。
+        if (
+          updateTimerRef.current !== null ||
+          pendingUpdateBaselineRef.current !== null
+        ) {
+          return true;
+        }
         // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
         if (latestDocVersionRef.current !== lastVersionRef.current) return false;
         try {
@@ -787,7 +819,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
 
   useEffect(() => {
     if (!editor || !onEditorChange) return;
-    const handleUpdate = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
+    const handleUpdate = ({
+      transaction,
+    }: {
+      transaction: {
+        docChanged: boolean;
+        getMeta: (key: string) => unknown;
+      };
+    }) => {
+      // TipTap 的 update 事件也可能来自 editable/placeholder/选区等只改视图的事务。
+      // 只有 PM 正文真的变化才允许登记 dirty 与自动保存；否则空稿会凭空发 updateDoc。
+      if (!transaction.docChanged) return;
       if (
         !shouldForwardEditorUpdate({
           isApplyingRemote: isApplyingRemoteRef.current,
@@ -799,6 +841,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       // update 当拍就做完整性门，不能等 400ms 保存定时器：旧 BlockHandle / page-exit
       // 都可能在这段窗口内消费已经坍缩的 doc。
       if (!readValidEditorDocOrRecover()) return;
+      pendingUpdateBaselineRef.current ??= currentDocWriteBaseline();
       if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
       if (transaction.getMeta(DIAGRAM_VISUAL_WRITE_META) === true) {
         updateTimerRef.current = null;
@@ -829,6 +872,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     };
   }, [
     editor,
+    currentDocWriteBaseline,
     forwardCurrentEditorDoc,
     onEditorChange,
     readValidEditorDocOrRecover,
@@ -990,7 +1034,13 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           pendingSelfDocKeysRef.current,
           JSON.stringify(repairedDoc),
         );
-        void Promise.resolve(onEditorChange(repairedDoc)).catch((error: unknown) => {
+        void Promise.resolve(onEditorChange(repairedDoc, {
+          expectedDocumentSnapshot: targetVersion,
+          baseContentHash: getPmContentHash(normalizePmDoc(viewDocToPm(doc))),
+          baseHasSubstantiveContent: pmDocHasSubstantiveContent(
+            normalizePmDoc(viewDocToPm(doc)),
+          ),
+        })).catch((error: unknown) => {
           repairedBlockIdVersionRef.current = null;
           console.error("[doc] 存量 blockId 自愈保存失败", error);
           onToast?.("文档标识修复未保存，请刷新后重试");

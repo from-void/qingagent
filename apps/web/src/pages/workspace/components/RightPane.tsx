@@ -29,6 +29,7 @@ import type {
 } from "../data/protocol";
 import type { ServerStream } from "../data/serverStream";
 import type { StarterTemplate } from "../data/starterTemplates";
+import type { EditorDocChange } from "../data/docWriteBaseline";
 import { canEditDocument, generationDraftHasContent, selectRenderDoc } from "../data/workspacePageView";
 
 function extractAskUser(tc: ToolCallSpec) {
@@ -96,7 +97,7 @@ interface RightPaneProps {
   onCancelAskUser: (toolCall: ToolCallSpec) => void;
   onCloseViewingVersion: () => void;
   onEditorReady: (editor: Editor | null) => void;
-  onEditorChange: (doc: PmDoc) => void;
+  onEditorChange: EditorDocChange;
   onPresentationFinish: () => void;
   onPresentationCancel: () => void;
 }

@@ -99,6 +99,9 @@ import {
   shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
 } from "../data/docWriteResultOwnership";
+import { isEmptyScaffoldConflict } from "../data/docWriteBaseline";
+import type { DocWriteBaseline } from "../data/docWriteBaseline";
+import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import type {
   BlockPatchInput,
   PatchOverlayInput,
@@ -488,6 +491,10 @@ export function useWorkspacePageController() {
   const pageExitDocSaveFingerprintRef = useRef<string | null>(null);
   // 诊断 p01:记住最近一次发出的手动保存文档,保存成功后同步进 state.doc。
   const lastSentPmDocRef = useRef<PmDoc | null>(null);
+  const lastSentDocWriteBaselineRef = useRef<DocWriteBaseline | null>(null);
+  // 空脚手架旧写冲突后，临时允许 startSession(existing) 的权威恢复帧覆盖该空稿。
+  // 非空用户输入不进入此通道，继续沿用 dirty 冲突保留路径。
+  const docConflictReconcileSessionRef = useRef<string | null>(null);
   const presentationRunSeqRef = useRef(0);
   const sawDraftingRef = useRef(false);
   const presentedDocumentSnapshotRef = useRef<number | null>(null);
@@ -1641,6 +1648,8 @@ export function useWorkspacePageController() {
           frame.kind === "documentSnapshotWritten" &&
           reviewCloseInFlightRef.current !== null;
         const hasLocalDocumentChanges =
+          docConflictReconcileSessionRef.current !==
+            (streamSessionId ?? activeWorkspaceSessionTargetRef.current) &&
           !locallyOwnedReviewSnapshot &&
           (
             docViewRef.current?.hasLocalDocumentChanges() === true ||
@@ -1657,6 +1666,12 @@ export function useWorkspacePageController() {
       }
       if (frame.kind === "documentSnapshotWritten") {
         stagePresentationRunForDocFrame(frame.data.doc);
+      }
+      if (
+        frame.kind === "sessionRestoreCompleted" &&
+        docConflictReconcileSessionRef.current === frame.data.sessionId
+      ) {
+        docConflictReconcileSessionRef.current = null;
       }
       if (frame.kind === "derivativeGenFinished") {
         const stream = streamRef.current;
@@ -1732,6 +1747,8 @@ export function useWorkspacePageController() {
           frame.data.clientMutationId === latestDocMutationIdRef.current;
         const ack = docWriteAckRef.current.get(frame.data.clientMutationId);
         const savedPmDoc = lastSentPmDocRef.current;
+        const savedBaseline = lastSentDocWriteBaselineRef.current;
+        const queuedBeforeResult = queuedPmDocRef.current;
         if (!shouldHandleDocWriteResult({
           isLatestOwnMutation,
           hasMatchingWaiter: ack !== undefined,
@@ -1747,9 +1764,48 @@ export function useWorkspacePageController() {
             if (savedPmDoc) {
               baseContentHashRef.current = getPmContentHash(savedPmDoc);
             }
-          } else {
+          } else if (!("conflict" in frame.data)) {
             queuedPmDocRef.current = null;
           }
+        }
+        const writeConflict =
+          !frame.data.ok && "conflict" in frame.data
+            ? frame.data.conflict
+            : null;
+        const silentlyReconcileEmptyConflict =
+          writeConflict !== null &&
+          isEmptyScaffoldConflict({
+            baseline: savedBaseline,
+            submittedDoc: savedPmDoc,
+            queuedDoc: queuedBeforeResult?.pmDoc ?? null,
+          });
+        if (silentlyReconcileEmptyConflict) {
+          queuedPmDocRef.current = null;
+          lastSentPmDocRef.current = null;
+          lastSentDocWriteBaselineRef.current = null;
+          ack?.resolve();
+          resolvePendingDocSaveDrain();
+          const sessionId =
+            streamSessionId ??
+            stateRef.current.sessionId ??
+            sessionIdRef.current;
+          if (
+            sessionId &&
+            writeConflict.actualDocumentSnapshot >
+              stateRef.current.version
+          ) {
+            docConflictReconcileSessionRef.current = sessionId;
+            void restoreExistingSession(sessionId).catch((error) => {
+              if (docConflictReconcileSessionRef.current === sessionId) {
+                docConflictReconcileSessionRef.current = null;
+              }
+              console.error(
+                "[workspace] conflict 后权威文档恢复失败",
+                error,
+              );
+            });
+          }
+          return;
         }
         dispatch(frame);
         // 诊断 p01:手动保存成功后把已保存文档同步进 canonical state.doc——
@@ -1784,13 +1840,27 @@ export function useWorkspacePageController() {
         if (isLatestOwnMutation && frame.data.ok && queuedPmDocRef.current) {
           const queued = queuedPmDocRef.current;
           queuedPmDocRef.current = null;
+          // 仅本标签上一笔成功回执可安全把同一条本地编辑链推进到新基线；
+          // 外部 agent/标签快照没有这个因果保证，绝不能如此 rebase。
+          const rebasedQueued: QueuedDocWrite = {
+            ...queued,
+            baseline: {
+              expectedDocumentSnapshot: frame.data.docVersion,
+              baseContentHash: savedPmDoc
+                ? getPmContentHash(savedPmDoc)
+                : baseContentHashRef.current,
+              baseHasSubstantiveContent: Boolean(
+                savedPmDoc && pmDocHasSubstantiveContent(savedPmDoc),
+              ),
+            },
+          };
           scheduledDocWriteRef.current = true;
           window.setTimeout(() => {
             scheduledDocWriteRef.current = false;
             if (
-              streamGenerationRef.current !== queued.streamGeneration ||
-              sessionIdRef.current !== queued.sessionId ||
-              streamRef.current !== queued.stream
+              streamGenerationRef.current !== rebasedQueued.streamGeneration ||
+              sessionIdRef.current !== rebasedQueued.sessionId ||
+              streamRef.current !== rebasedQueued.stream
             ) {
               console.warn(
                 "[workspace] discarded queued updateDoc after session boundary",
@@ -1798,7 +1868,11 @@ export function useWorkspacePageController() {
               resolvePendingDocSaveDrain();
               return;
             }
-            sendDocWriteRef.current(queued.pmDoc, queued).catch((error) => {
+            sendDocWriteRef.current(
+              rebasedQueued.pmDoc,
+              rebasedQueued,
+              rebasedQueued.baseline,
+            ).catch((error) => {
               console.error("[workspace] queued updateDoc failed", error);
             });
           }, 0);
@@ -1852,6 +1926,9 @@ export function useWorkspacePageController() {
       activeWorkspaceSessionTargetRef.current = targetSessionId;
       sessionIdRef.current = targetSessionId;
       restoreExistingSessionIdRef.current = targetSessionId;
+      docConflictReconcileSessionRef.current = null;
+      lastSentPmDocRef.current = null;
+      lastSentDocWriteBaselineRef.current = null;
       startSessionPromisesBySessionRef.current.clear();
       startNewSessionPromiseRef.current = null;
       pendingBrowserAttachRef.current = null;
@@ -2433,6 +2510,7 @@ export function useWorkspacePageController() {
     scheduledDocWriteRef,
     latestDocMutationIdRef,
     lastSentPmDocRef,
+    lastSentDocWriteBaselineRef,
     docWriteAckRef,
     docSaveRetryTimerRef,
     sendDocWriteRef,

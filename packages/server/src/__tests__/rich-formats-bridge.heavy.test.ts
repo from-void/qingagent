@@ -187,6 +187,63 @@ describe("rich formats HTTP bridge E2E", () => {
     ]);
   });
 
+  it("agent 插入后拒绝持旧空稿基线的 updateDoc，权威正文不被空稿覆盖", async () => {
+    const emptyClientDoc = doc([paragraph("empty-client-p", [])]);
+    const sessionId = `agent-empty-race-${randomUUID()}`;
+    const created = await postStream({
+      kind: "startSession",
+      data: { mode: { kind: "new", data: { sessionId, template: null } } },
+    });
+    expect(created.frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "sessionMeta",
+        data: expect.objectContaining({ sessionId }),
+      }),
+    ]));
+    const agentMutationId = `agent-${randomUUID()}`;
+    const agentWrite = await postStream({
+      kind: "externalPropose",
+      data: {
+        sessionId,
+        expectedDocVersion: 0,
+        clientMutationId: agentMutationId,
+        ops: [{
+          kind: "fullDraft",
+          markdown: "Agent 已插入流程图正文",
+        }],
+      },
+    });
+    expect(findDocWriteFrame(agentWrite.frames, agentMutationId).data).toEqual({
+      ok: true,
+      clientMutationId: agentMutationId,
+      docVersion: 1,
+    });
+    const agentPersisted = await core.documentRepo.load(sessionId);
+    expect(agentPersisted?.docVersion).toBe(1);
+    expect(JSON.stringify(agentPersisted?.pmDoc)).toContain("Agent 已插入流程图正文");
+
+    const mutationId = `mutation-${randomUUID()}`;
+    const stale = await postStream(updateDocCommand({
+      sessionId,
+      expectedDocumentSnapshot: 0,
+      clientMutationId: mutationId,
+      doc: emptyClientDoc,
+    }));
+
+    expect(findDocWriteFrame(stale.frames, mutationId).data).toEqual({
+      ok: false,
+      clientMutationId: mutationId,
+      conflict: {
+        expectedDocumentSnapshot: 0,
+        actualDocumentSnapshot: 1,
+      },
+    });
+    await expect(core.documentRepo.load(sessionId)).resolves.toMatchObject({
+      docVersion: 1,
+      pmDoc: agentPersisted?.pmDoc,
+    });
+  });
+
   it("同版本号但基线正文哈希不同的 updateDoc 被拒绝且不覆盖先写内容", async () => {
     const baselineDoc = baseDoc("bridge-same-version-base");
     const sessionId = await seedRestoredSession("同号异容冲突桥接", baselineDoc);

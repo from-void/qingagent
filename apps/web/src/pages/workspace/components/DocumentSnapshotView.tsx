@@ -13,7 +13,7 @@ import { getMarkRange } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
-import { NodeSelection, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -144,6 +144,80 @@ import type { AiModifyTarget } from "../data/aiModifyTarget";
 import type { PatchMeta } from "../data/patchMeta";
 export type { PatchMeta, PatchMetaChange } from "../data/patchMeta";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
+
+/**
+ * 飞书式正文末尾点击：纸面 padding 是明确的功能热区例外，不受“hover 只认可视本体”
+ * 的通用约束；仍只接管末个顶层块底边以下、且事件直接落在正文根上的空白。
+ */
+export function handleClickBelowLastDocumentBlock(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!isPrimaryPointerBelowLastDocumentBlock(view, event)) return false;
+  if (!view.state.selection.empty) return false;
+
+  const { doc } = view.state;
+  const lastBlock = doc.lastChild;
+  const lastIsEmptyParagraph =
+    lastBlock?.type.name === "paragraph" && lastBlock.content.size === 0;
+
+  // 真空文档只有 schema 兜底的一个空段，点击纸底不产生任何动作。
+  if (doc.childCount === 1 && lastIsEmptyParagraph) {
+    event.preventDefault();
+    return true;
+  }
+
+  event.preventDefault();
+  if (lastIsEmptyParagraph) {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    );
+  } else {
+    const paragraph = view.state.schema.nodes.paragraph?.create();
+    if (!paragraph) return false;
+    const tr = view.state.tr.insert(doc.content.size, paragraph);
+    view.dispatch(tr.setSelection(TextSelection.atEnd(tr.doc)).scrollIntoView());
+  }
+  view.focus();
+  return true;
+}
+
+function preventEmptyDocumentPaperFocus(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!isPrimaryPointerBelowLastDocumentBlock(view, event)) return false;
+  const onlyBlock = view.state.doc.firstChild;
+  if (
+    view.state.doc.childCount !== 1 ||
+    onlyBlock?.type.name !== "paragraph" ||
+    onlyBlock.content.size !== 0
+  ) {
+    return false;
+  }
+  // contenteditable 的原生聚焦发生在 mousedown；此处只压住真空纸底，保证飞书式“无反应”。
+  event.preventDefault();
+  return true;
+}
+
+function isPrimaryPointerBelowLastDocumentBlock(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (!view.editable || event.button !== 0 || event.target !== view.dom) {
+    return false;
+  }
+  const paperRect = view.dom.getBoundingClientRect();
+  const lastBlockDom = view.dom.lastElementChild;
+  return Boolean(
+    lastBlockDom &&
+    event.clientX >= paperRect.left &&
+    event.clientX <= paperRect.right &&
+    event.clientY >= paperRect.top &&
+    event.clientY <= paperRect.bottom &&
+    event.clientY > lastBlockDom.getBoundingClientRect().bottom,
+  );
+}
 
 export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;
@@ -500,10 +574,11 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       handleDOMEvents: {
         copy: (view, event) => writeSelectionToClipboard(view, event, false),
         cut: (view, event) => writeSelectionToClipboard(view, event, true),
-        // 拦截文档内部锚点链接点击(href="#anchor-id"),做页内平滑滚动。
-        // TipTap Link 扩展 openOnClick:false 导致普通点击只弹气泡，不跳转；
-        // 此处直接检测 #href 并 scrollIntoView，无需修改 Link 扩展配置。
-        click: (_view, event) => {
+        mousedown: (view, event) =>
+          preventEmptyDocumentPaperFocus(view, event),
+        // 正文根上的末尾空白先走追加行；其余点击继续按既有页内锚点语义处理。
+        click: (view, event) => {
+          if (handleClickBelowLastDocumentBlock(view, event)) return true;
           const target = event.target as HTMLElement;
           const a = target.closest("a[href]") as HTMLAnchorElement | null;
           if (!a) return false;

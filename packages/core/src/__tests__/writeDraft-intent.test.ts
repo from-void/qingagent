@@ -38,6 +38,9 @@ describe("diagram-viz 写作意图识别", () => {
     ["生成 ER 图", ["mermaid"]],
     ["用 mermaid 画时序图", ["mermaid"]],
     ["请画系统架构图", ["drawio"]],
+    ["请画系统架构", ["drawio"]],
+    ["请画流程", ["mermaid"]],
+    ["把服务时序可视化", ["mermaid"]],
   ])("%s 会激活对应图表语言", (text, expected) => {
     expect(inferDiagramVizLanguages(text)).toEqual(expected);
   });
@@ -47,6 +50,8 @@ describe("diagram-viz 写作意图识别", () => {
     "write a user onboarding guide",
     "a quarterly report for the leadership team",
     "写一篇关于登录状态管理的技术博客",
+    "帮我优化审批流程",
+    "状态管理最佳实践",
   ])("%s 不会误激活图表技能", (text) => {
     expect(inferDiagramVizLanguages(text)).toEqual([]);
   });

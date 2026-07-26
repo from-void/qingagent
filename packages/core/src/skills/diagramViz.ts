@@ -33,6 +33,11 @@ const DRAWIO_INTENT_RE =
   /\b(?:draw\.?io|mxgraph|mxcell|mxgraphmodel)\b|网络拓扑|部署图|系统架构图|架构图|工程框图|容器分组|精确坐标|复杂连线/iu;
 const MERMAID_INTENT_RE =
   /\bmermaid\b|流程图|时序图|序列图|状态图|类图|\bER\s*图|甘特图|饼图|脑图|思维导图|图表/iu;
+// 完整图名之外，只召回近距的明确绘图动作；后置“可视化”用于“把服务时序可视化”这类把字句。
+const DRAWIO_ACTION_INTENT_RE =
+  /(?:画(?:一张|个)?|绘制|可视化)[^，。！？；\n]{0,6}(?:架构|拓扑)|(?:架构|拓扑)\s*可视化/iu;
+const MERMAID_ACTION_INTENT_RE =
+  /(?:画(?:一张|个)?|绘制|可视化)[^，。！？；\n]{0,6}(?:流程|时序|状态机|\bER\b)|(?:流程|时序|状态机|\bER\b)\s*可视化/iu;
 
 let cachedResources: DiagramVizResources | null = null;
 
@@ -75,8 +80,12 @@ function uniqueLanguages(languages: Iterable<DiagramVizLanguage>): DiagramVizLan
 
 export function inferDiagramVizLanguages(text: string): DiagramVizLanguage[] {
   const languages: DiagramVizLanguage[] = [];
-  if (MERMAID_INTENT_RE.test(text)) languages.push("mermaid");
-  if (DRAWIO_INTENT_RE.test(text)) languages.push("drawio");
+  if (MERMAID_INTENT_RE.test(text) || MERMAID_ACTION_INTENT_RE.test(text)) {
+    languages.push("mermaid");
+  }
+  if (DRAWIO_INTENT_RE.test(text) || DRAWIO_ACTION_INTENT_RE.test(text)) {
+    languages.push("drawio");
+  }
   return languages;
 }
 

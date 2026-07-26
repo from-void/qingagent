@@ -83,13 +83,20 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   const inkCanvas = document.createElement("canvas");
   inkCanvas.className = "ccx-ink";
   // —— morph 飞卡(与新建页 .ccx-morph 同构) ——
+  // .ccx-morph 只负责承载装饰；真正可见的纸边界由 face 独占。几何只写 face，
+  // 避免外盒的光晕/边衬盒模型混进工作区纸壳的交接矩形。
   const morph = document.createElement("div");
   morph.className = "ccx-morph";
   morph.innerHTML =
+    `<div class="ccx-morph-face" data-wf="TransitionPaperFace">` +
     `<div class="ccx-morph-noise"></div>` +
     `<div class="ccx-morph-frame"></div>` +
     `<i class="ccx-morph-corner tl"></i>` +
-    `<i class="ccx-morph-corner br"></i>`;
+    `<i class="ccx-morph-corner br"></i>` +
+    `</div>`;
+  const faceElement = morph.querySelector<HTMLElement>(".ccx-morph-face");
+  if (!faceElement) throw new Error("转场纸面层创建失败");
+  const face: HTMLElement = faceElement;
   const noiseEl = morph.querySelector<HTMLElement>(".ccx-morph-noise");
   if (noiseEl) noiseEl.style.background = `${textures.noise} repeat`;
 
@@ -122,11 +129,11 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   }
 
   function setMorphRect(r: StageRect, lift = 0, extra = "") {
-    morph.style.transition = "none";
-    morph.style.width = r.width + "px";
-    morph.style.height = r.height + "px";
-    morph.style.transform = `translate(${r.left}px,${r.top + lift}px)${extra}`;
-    morph.style.opacity = "1";
+    face.style.transition = "none";
+    face.style.width = r.width + "px";
+    face.style.height = r.height + "px";
+    face.style.transform = `translate(${r.left}px,${r.top + lift}px)${extra}`;
+    face.style.opacity = "1";
   }
 
   // morph 飞行补间(与新建页 runMorph 同款弧线:升起 + 透视微转 + skew)
@@ -136,10 +143,10 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     dur: number,
     onDone?: () => void,
   ) {
-    morph.style.transition = "none";
-    morph.style.width = from.width + "px";
-    morph.style.height = from.height + "px";
-    morph.style.opacity = "1";
+    face.style.transition = "none";
+    face.style.width = from.width + "px";
+    face.style.height = from.height + "px";
+    face.style.opacity = "1";
     const t0 = performance.now();
     const tick = (now: number) => {
       let p = (now - t0) / dur;
@@ -155,7 +162,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
       const rotY = arc * (to.left > from.left ? 14 : -14);
       const skY = arc * -3.5;
       const lift = -arc * 46;
-      morph.style.transform =
+      face.style.transform =
         `translate(${x}px,${y + lift}px) scale(${sx},${sy}) ` +
         `perspective(1100px) rotateX(4deg) rotateY(${rotY}deg) skewY(${skY}deg)`;
       if (p < 1) requestAnimationFrame(tick);
@@ -233,7 +240,8 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
         if (morphDone && inkDone) {
           cancelDarkFallback();
           // 卡落定 + 背景已深的静止帧:重新实测目标纸壳，确保 resize 后仍与
-          // 工作区首帧逐像素同位；setMorphRect 保持 transition:none，不靠动画糊对齐。
+          // 工作区首帧逐像素同位；setMorphRect 直接写纸面 face 且保持
+          // transition:none，不靠动画糊对齐。
           const settledTarget = readTarget();
           setMorphRect(settledTarget);
           resolve(settledTarget);
@@ -310,14 +318,14 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
         // 正常路径由 snapArrived(rect, true) 在到达态首帧就切好,这里只兜「没走 snapArrived」。
         morph.classList.add("ccx-morph-plain");
         setMorphRect(from);
-        void morph.offsetWidth; // setMorphRect 写了 transition:none,强制回流让下面的过渡真的生效
-        morph.style.transition =
+        void face.offsetWidth; // setMorphRect 写了 transition:none,强制回流让下面的过渡真的生效
+        face.style.transition =
           `transform ${RETURN_SLIDE_MS}ms cubic-bezier(0.32, 0, 0.67, 0),` +
           ` opacity ${RETURN_SLIDE_FADE_MS}ms ease`;
         requestAnimationFrame(() => {
           // 纸顶滑到视口下沿 = 整张纸滑出屏幕;与 darkOff() 的背景转浅同时进行。
-          morph.style.transform = `translate(${from.left}px,${window.innerHeight}px)`;
-          morph.style.opacity = "0";
+          face.style.transform = `translate(${from.left}px,${window.innerHeight}px)`;
+          face.style.opacity = "0";
         });
         window.setTimeout(resolve, RETURN_SLIDE_MS + 20);
         return;
@@ -326,9 +334,9 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
       // 新建页返回:卡从落点飞回新建卡固定位(与去程同款弧线),落定后淡出。
       tweenMorph(from, to, 760, () => {
         setMorphRect(to); // 精确停在新建卡位(去弧线残留)
-        morph.style.transition = "opacity 0.34s ease";
+        face.style.transition = "opacity 0.34s ease";
         requestAnimationFrame(() => {
-          morph.style.opacity = "0";
+          face.style.opacity = "0";
         });
         window.setTimeout(resolve, 360);
       });

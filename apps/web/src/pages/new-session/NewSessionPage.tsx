@@ -801,14 +801,21 @@ export function NewSessionPage() {
       <canvas className="ccx-ink" ref={inkCanvasRef} />
 
       {/* 共享元素 morph 飞卡 */}
-      <div className="ccx-morph" ref={morphRef}>
+      <div className="ccx-morph">
+        {/* face 是用户看到的唯一纸边；ref 的几何写入不得落到装饰外盒。 */}
         <div
-          className="ccx-morph-noise"
-          style={{ background: `${textures.noise} repeat` }}
-        />
-        <div className="ccx-morph-frame" />
-        <i className="ccx-morph-corner tl" />
-        <i className="ccx-morph-corner br" />
+          className="ccx-morph-face"
+          data-wf="TransitionPaperFace"
+          ref={morphRef}
+        >
+          <div
+            className="ccx-morph-noise"
+            style={{ background: `${textures.noise} repeat` }}
+          />
+          <div className="ccx-morph-frame" />
+          <i className="ccx-morph-corner tl" />
+          <i className="ccx-morph-corner br" />
+        </div>
       </div>
 
       {/* 返回按钮 */}

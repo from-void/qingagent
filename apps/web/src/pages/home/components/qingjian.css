@@ -1796,13 +1796,23 @@ transform 平移内层) */
 .qj-root .ccx-ink.active {
   opacity: 1;
 }
-/* morph 飞卡(同 new-session-qing.css .ccx-morph) */
+/* morph 飞卡(同 new-session-qing.css .ccx-morph)。
+外盒只做全屏承载，不能再把阴影/边衬盒模型算进纸面交接矩形。 */
 .qj-root .ccx-morph {
   position: fixed;
+  inset: 0;
   z-index: 60;
+  pointer-events: none;
+  overflow: visible;
+}
+/* 用户看到的唯一纸边界：转场几何只写这一层，终帧 rect 对齐工作区纸壳。 */
+.qj-root .ccx-morph-face {
+  position: absolute;
   top: 0;
   left: 0;
-  pointer-events: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
   will-change: transform;
   transform-origin: top left;
   overflow: hidden;
@@ -1850,7 +1860,7 @@ transform 平移内层) */
 .qj-root .ccx-morph.ccx-morph-plain .ccx-morph-corner {
   opacity: 0;
 }
-.qj-root .ccx-morph.ccx-morph-plain {
+.qj-root .ccx-morph.ccx-morph-plain .ccx-morph-face {
   background: var(--bg-paper-deep);
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }

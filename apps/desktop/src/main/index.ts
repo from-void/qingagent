@@ -244,6 +244,16 @@ if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
     );
     if (existsSync(larkRunJs)) {
       try {
+        // 连接器 runner 在 Windows 不能 execFile(.cmd)，显式传入随包入口与 Electron Node
+        // 运行时，改为 qingagent.exe + run.js 固定 argv。Unix/mac 仍走现有 PATH shim。
+        process.env.QINGAGENT_LARK_CLI_RUN_JS = larkRunJs;
+        process.env.QINGAGENT_LARK_CLI_NODE_PATH = process.execPath;
+        process.env.QINGAGENT_LARK_CLI_ELECTRON_AS_NODE = electronRuntime ? "1" : "0";
+        if (process.platform === "win32" && electronRuntime) {
+          process.env.QINGAGENT_LARK_CLI_NODE_OPTIONS = renderWindowsNodeOptions(
+            path.dirname(nodeShimPath),
+          );
+        }
         ensureLarkCliShim({ runJsPath: larkRunJs, nodePath: nodeShimPath });
       } catch (err) {
         console.warn("[lark-cli] shim 写入失败,飞书命令可能不可用:", err);

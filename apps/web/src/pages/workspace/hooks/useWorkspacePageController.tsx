@@ -42,6 +42,7 @@ import { validateCommand } from "../../../system/validators";
 import type { ChatInputHandle } from "../data/chatInputTypes";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
+import { buildActiveDerivativeTurnContext } from "../components/derivatives/derivativeTurnContext";
 import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
@@ -273,6 +274,10 @@ export function useWorkspacePageController() {
     ) => void
   >(() => undefined);
   const [activeTab, setActiveTab] = useState<"main" | string>("main");
+  const derivativeTurnContext = useMemo(
+    () => buildActiveDerivativeTurnContext(activeTab, derivatives),
+    [activeTab, derivatives],
+  );
   useEffect(() => {
     // 批注预览是转瞬态：切 tab 不恢复、不保留。
     dispatch({ kind: "annotationPreviewCleared", data: {} });
@@ -2583,6 +2588,7 @@ export function useWorkspacePageController() {
       toast,
       handleBackHome,
       restoreExistingSession,
+      turnContext: derivativeTurnContext,
     });
 
   const sendDerivativeQuery = useCallback(

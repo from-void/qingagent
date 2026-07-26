@@ -130,6 +130,8 @@ export interface RunAgentTurnControl {
 }
 
 export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
+  /** 仅追加到模型侧当轮 user message，不进入可见用户气泡或 system prompt 前缀。 */
+  turnContext?: string;
   /** idle-timeout 自动重试上限；只供已消费一次额度的恢复链路收紧为 0。 */
   idleTimeoutRetryLimit?: number;
   /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
@@ -373,6 +375,9 @@ export async function* runAgentTurn(
   // 时间锚只进当轮 user message,不写 system prompt；放在靠前位置。
   // 历史上 writeDraft 截断拍平对话上下文时会丢时效信息；现在保留完整 messages,这里仍恒开。
   fullUserText = `${currentDateTimeContext()}${fullUserText}`;
+  if (runtimeOptions.turnContext?.trim()) {
+    fullUserText += `\n\n${runtimeOptions.turnContext.trim()}`;
+  }
   if (runtimeOptions.preemptedByNewMessage) {
     fullUserText += PREEMPTED_TURN_GUIDANCE;
   }

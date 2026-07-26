@@ -865,7 +865,11 @@ externalRoutes.get("/sessions/:id/events", async (c) => {
     };
     try {
       unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, enqueue);
-      if (cleaned) unsubscribe();
+      if (cleaned) {
+        unsubscribe();
+      } else {
+        sessionManager.subscriberConnected(sessionId);
+      }
       if (!cleaned) {
         heartbeat = setInterval(() => {
           pump.enqueue({ event: "ping", data: "{}" }, { dropOnOverflow: true });

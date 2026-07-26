@@ -1089,7 +1089,7 @@ export class ServerStream {
       if (this.eventSource !== source) return;
       source.close();
       this.eventSource = null;
-      void this.scheduleEventReconnect(sessionId, url);
+      void this.scheduleEventReconnect(sessionId);
     };
     this.eventSource = source;
   }
@@ -1110,25 +1110,20 @@ export class ServerStream {
     }
   }
 
-  private async scheduleEventReconnect(sessionId: string, failedUrl: string): Promise<void> {
+  private async scheduleEventReconnect(sessionId: string): Promise<void> {
     if (this.activeSessionId !== sessionId || this.eventReconnectTimer) return;
     this.eventReconnectAttempt += 1;
-    let retryAfterMs = 0;
     const probe = new AbortController();
     this.eventProbeController?.abort();
     this.eventProbeController = probe;
     try {
-      const response = await fetch(failedUrl, {
-        headers: { Accept: "text/event-stream" },
-        signal: probe.signal,
+      await fetch("/health", {
+        method: "HEAD",
+        signal: AbortSignal.any([
+          probe.signal,
+          AbortSignal.timeout(3_000),
+        ]),
       });
-      retryAfterMs = retryAfterHeaderMs(response.headers.get("retry-after"));
-      if (response.status === 429 && typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("qa-sse-rate-limited", {
-          detail: { retryAfterMs },
-        }));
-      }
-      await response.body?.cancel().catch(() => undefined);
     } catch {
       // 断网时探测也会失败；仍按应用级指数退避重连。
     } finally {
@@ -1136,13 +1131,12 @@ export class ServerStream {
     }
     if (probe.signal.aborted || this.activeSessionId !== sessionId) return;
     const exponentialMs = Math.min(30_000, 1_000 * 2 ** Math.min(this.eventReconnectAttempt - 1, 5));
-    const delayMs = Math.max(exponentialMs, retryAfterMs);
     this.eventReconnectTimer = setTimeout(() => {
       this.eventReconnectTimer = null;
       if (this.activeSessionId === sessionId && !this.eventSource) {
         this.openEventSource(sessionId);
       }
-    }, delayMs);
+    }, exponentialMs);
   }
 
   private waitForFrame(
@@ -1204,12 +1198,4 @@ export class ServerStream {
       ...(streamIds ? { streamIds } : {}),
     });
   }
-}
-
-function retryAfterHeaderMs(value: string | null): number {
-  if (!value) return 0;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
 }

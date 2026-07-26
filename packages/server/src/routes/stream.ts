@@ -422,7 +422,11 @@ streamRoutes.get("/events", async (c) => {
           });
         },
       );
-      if (cleaned) unsubscribe();
+      if (cleaned) {
+        unsubscribe();
+      } else {
+        sessionManager.subscriberConnected(sessionId);
+      }
 
       if (!cleaned) {
         heartbeat = setInterval(() => {

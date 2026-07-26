@@ -62,6 +62,12 @@ async function readSseUntil(
 // Health
 // -----------------------------------------------------------------------
 describe("GET /health", () => {
+  it("支持 SSE 重连用 HEAD 探活且不返回响应体", async () => {
+    const res = await request("HEAD", "/health");
+    expect(res.status).toBe(200);
+    await expect(res.text()).resolves.toBe("");
+  });
+
   it("返回服务状态与浏览器/PDF 能力状态", async () => {
     const res = await request("GET", "/health");
     expect(res.status).toBe(200);

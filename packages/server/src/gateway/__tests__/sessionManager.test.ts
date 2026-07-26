@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { InMemoryFrameLog } from "../frameLog";
 import { SessionManager } from "../sessionManager";
@@ -20,7 +20,11 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
-  it("最后一个 SSE 订阅断开时取消 active turn；仍有订阅者时不误停", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("最后一个 SSE 订阅断开后 15 秒内重连，不取消 active turn", async () => {
     const frameLog = new InMemoryFrameLog();
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
@@ -44,18 +48,97 @@ describe("SessionManager", () => {
       expect(frameLog.readFrom("disconnect-running", 0).activeRunner).toBe(true);
     });
     const unsubscribe = frameLog.subscribe("disconnect-running", 0, () => undefined);
-
-    await expect(
-      manager.cancelRunningTurnAfterDisconnect("disconnect-running"),
-    ).resolves.toBe(false);
-    expect(abortSession).not.toHaveBeenCalled();
-
     unsubscribe();
+    vi.useFakeTimers();
     await expect(
       manager.cancelRunningTurnAfterDisconnect("disconnect-running"),
     ).resolves.toBe(true);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    const reconnectUnsubscribe = frameLog.subscribe(
+      "disconnect-running",
+      0,
+      () => undefined,
+    );
+    manager.subscriberConnected("disconnect-running");
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(abortSession).not.toHaveBeenCalled();
+    release();
     await running;
-    expect(abortSession).toHaveBeenCalledWith("disconnect-running", "globalStop");
+    reconnectUnsubscribe();
+  });
+
+  it("最后一个 SSE 订阅断开满 15 秒且未重连，取消 active turn", async () => {
+    const frameLog = new InMemoryFrameLog();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const abortSession = vi.fn(() => release());
+    const manager = new SessionManager({
+      frameLog,
+      handleCommand: async function* (command) {
+        if (command.kind !== "cancelStream") await blocked;
+        yield frame("disconnect-timeout");
+      },
+      abortSession,
+      cleanupSession: vi.fn(),
+    });
+
+    const running = manager.submit("disconnect-timeout", {
+      command: startExisting("disconnect-timeout"),
+    });
+    await vi.waitFor(() => {
+      expect(frameLog.readFrom("disconnect-timeout", 0).activeRunner).toBe(true);
+    });
+    vi.useFakeTimers();
+
+    await expect(
+      manager.cancelRunningTurnAfterDisconnect("disconnect-timeout"),
+    ).resolves.toBe(true);
+    await expect(
+      manager.cancelRunningTurnAfterDisconnect("disconnect-timeout"),
+    ).resolves.toBe(true);
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(abortSession).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+    expect(abortSession).toHaveBeenCalledWith("disconnect-timeout", "globalStop");
+  });
+
+  it("disposeSession 清理断连宽限定时器，不在会话销毁后再次取消", async () => {
+    const frameLog = new InMemoryFrameLog();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const abortSession = vi.fn(() => release());
+    const manager = new SessionManager({
+      frameLog,
+      handleCommand: async function* () {
+        await blocked;
+      },
+      abortSession,
+      cleanupSession: vi.fn(),
+    });
+
+    const running = manager.submit("disconnect-dispose", {
+      command: startExisting("disconnect-dispose"),
+    });
+    await vi.waitFor(() => {
+      expect(frameLog.readFrom("disconnect-dispose", 0).activeRunner).toBe(true);
+    });
+    vi.useFakeTimers();
+    await manager.cancelRunningTurnAfterDisconnect("disconnect-dispose");
+
+    await manager.disposeSession("disconnect-dispose");
+    await expect(running).rejects.toThrow("Session actor disposed");
+    expect(abortSession).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(abortSession).toHaveBeenCalledTimes(1);
   });
 
   it("RF5: 启动只加载 pending，completed 首次命令按主键惰性查询并缓存", async () => {

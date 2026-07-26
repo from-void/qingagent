@@ -2102,20 +2102,9 @@ export function useWorkspacePageController() {
     );
   }, [activeTab, refreshDerivatives]);
 
-  // 对话工具可在弹框之外完成衍生稿重生成；活动衍生视图持续观察 generatedAt，
-  // 新时间戳进入 props 后 DerivativeView 会自行重取正文，避免必须切 Tab 才看到改稿。
-  useEffect(() => {
-    if (activeTab === "main" || activeTab === "translate" || !state.sessionId)
-      return;
-    const timer = window.setInterval(
-      () =>
-        void refreshDerivatives().catch((error) =>
-          console.error("[workspace] poll derivative generation failed", error),
-        ),
-      2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [activeTab, refreshDerivatives, state.sessionId]);
+  // 衍生稿元数据不做常驻轮询：正常完成由 derivativeGenFinished 帧刷新，切换 Tab
+  // 也会刷新一次。生成中的活动视图仅在 DerivativeView 内按 2s 轮询单稿正文，
+  // 完成、视图卸载/切换或 3 分钟兜底超时即停止，避免 listDerivatives 泄漏。
 
   const handleCreateDerivative = useCallback(
     async (params: DerivativeGenerateParams) => {

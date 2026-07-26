@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   SecurityGrantCategory,
   SecurityGrantKind,
@@ -7,6 +7,7 @@ import type {
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
 import { useToast } from "../../system/ToastProvider";
+import { SkinSelect } from "../../system/SkinSelect";
 import {
   publishRememberGrantState,
   subscribeRememberGrantState,
@@ -158,9 +159,8 @@ export function SecurityPanel() {
 
   const updateGrantMode = async (
     category: SecurityGrantCategory,
-    event: ChangeEvent<HTMLSelectElement>,
+    grantMode: SecurityGrantMode,
   ) => {
-    const grantMode = event.target.value as SecurityGrantMode;
     if (
       grantMode === category.grantMode ||
       !category.grantModes.includes(grantMode) ||
@@ -232,19 +232,20 @@ export function SecurityPanel() {
                   </span>
                 )}
               </div>
-              <select
+              <SkinSelect
                 className="security-select"
-                aria-label={`${category.label}的确认方式`}
-                aria-describedby={[descriptionId, effectId].filter(Boolean).join(" ")}
-                aria-busy={phase === "updating"}
+                ariaLabel={`${category.label}的确认方式`}
+                ariaDescribedBy={[descriptionId, effectId].filter(Boolean).join(" ")}
+                ariaBusy={phase === "updating"}
                 value={category.grantMode}
                 disabled={!mutable || phase === "updating"}
-                onChange={(event) => void updateGrantMode(category, event)}
-              >
-                {category.grantModes.map((mode) => (
-                  <option key={mode} value={mode}>{modeLabels[mode]}</option>
-                ))}
-              </select>
+                onChange={(value) => void updateGrantMode(category, value as SecurityGrantMode)}
+                skin="ink"
+                options={category.grantModes.map((mode) => ({
+                  value: mode,
+                  label: modeLabels[mode],
+                }))}
+              />
             </div>
           );
         }) ?? <p className="security-loading">正在加载…</p>}

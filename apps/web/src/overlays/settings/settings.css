@@ -191,13 +191,9 @@
 .security-effect{color:var(--qj-cinnabar-lite);font-size:10.5px;line-height:1.55}
 .security-effect::before{content:"※";margin-right:5px;color:var(--qj-cinnabar)}
 .security-select{
-  width:128px;height:32px;padding:0 28px 0 10px;border:1px solid var(--qj-switch-border);
-  border-radius:0;background:var(--qj-switch-bg);color:var(--qj-switch-text);
-  font:700 11.5px/1 var(--font-zh-serif);cursor:pointer;outline:none;
-  transition:border-color .18s,background .18s;
+  width:128px;
 }
-.security-select:hover:not(:disabled),.security-select:focus-visible{border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg)}
-.security-select:disabled{cursor:default;color:var(--ink-2);opacity:1}
+.security-select .skin-select__trigger:disabled{opacity:1}
 .security-loading{margin:0;padding:16px 0;color:var(--ink-2);font-size:11.5px;line-height:1.6}
 
 /* —— 外观 tab:明暗 / 字体 / 进场 / 动效 / 入口 纵向分组 —— */

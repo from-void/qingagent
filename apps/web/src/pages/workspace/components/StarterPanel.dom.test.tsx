@@ -110,14 +110,17 @@ describe("StarterPanel hover 预览残留", () => {
     hoverFirstCard();
     expect(previewVisible()).toBe(true);
 
-    const select = host!.querySelector<HTMLSelectElement>(".starter-sel select");
+    const select = host!.querySelector<HTMLButtonElement>('.starter-sel [role="combobox"]');
     expect(select).not.toBeNull();
     const otherIndustry = STARTER_INDUSTRIES[1]!;
     act(() => {
-      select!.value = otherIndustry.id;
-      select!.dispatchEvent(new Event("change", { bubbles: true }));
+      select!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    act(() => {
+      select!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
 
+    expect(select!.textContent).toContain(otherIndustry.name);
     expect(previewVisible()).toBe(false);
     expect(blankEntryVisible()).toBe(true);
   });

@@ -427,6 +427,8 @@ export async function* finalizeAgentStream(
     ),
   });
 
+  outcome.finishReason = context.lastStepFinishReason;
+  outcome.finalText = context.accumulatedText;
   if (context.accumulatedText) {
     state.messages.push({ role: "assistant", content: context.accumulatedText });
   }

@@ -114,8 +114,13 @@ import {
   turnRetryDelayMs,
 } from "./streamErrors.js";
 import { formatTurnLog, processAgentStream } from "./processAgentStream.js";
+import type { ProcessOutcome } from "./processAgentStream.js";
 import { resumeConfirmDecision } from "./confirmResume.js";
 import { confirmService } from "../confirm/confirmService.js";
+import {
+  PROMISE_CONTINUATION_SYSTEM_MESSAGE,
+  shouldContinuePromisedAction,
+} from "./promiseContinuation.js";
 
 const logger = mastra.getLogger();
 
@@ -694,10 +699,12 @@ export async function* runAgentTurn(
     const makeStream = async (
       attempt: number,
       scopedPrefixGuardContext: typeof prefixGuardContext,
+      modelMessages: typeof messagesForModel,
+      useMemory: boolean,
     ) => {
       abortController.signal.throwIfAborted();
       return guardContext.run(scopedPrefixGuardContext, () =>
-        qingagentAgent.stream(messagesForModel, {
+        qingagentAgent.stream(modelMessages, {
           maxSteps: AGENT_MAX_STEPS,
           // 代理偶发抖动(other side closed)时多扛几次:指数退避 1s/2s/4s/8s,共 5 次尝试。
           // Mastra 默认 maxRetries=2(只 1s/2s)对走代理的 deepseek 偏少。maxRetries 在 modelSettings 里。
@@ -712,7 +719,7 @@ export async function* runAgentTurn(
           ...(resolveProtocol(requestContext) === "anthropic"
             ? { providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: 2048 } } } }
             : {}),
-          ...(attempt === 0 && !omSidecarEnabled
+          ...(useMemory && !omSidecarEnabled
             ? {
                 memory: {
                   thread: state.threadId ?? state.sessionId,
@@ -742,48 +749,111 @@ export async function* runAgentTurn(
       );
     };
 
+    let promiseContinuationCount = 0;
     for (let attempt = 0; attempt <= maxTurnRetries; attempt += 1) {
       abortController.signal.throwIfAborted();
-      const scopedPrefixGuardContext = {
-        ...prefixGuardContext,
-        scopeId: attempt === 0 ? streamId : `${streamId}:retry:${attempt}`,
-      };
-      const result = await makeStream(attempt, scopedPrefixGuardContext);
-      const runId = result.runId ?? "unknown";
-      activeRunId = runId;
-      console.info(formatTurnLog("start", {
-        session: state.sessionId,
-        run: runId,
-      }));
-      requestContext.set("runId", result.runId);
-      const outcome = yield* withPrefixCacheGuardContext(scopedPrefixGuardContext, () =>
-        processAgentStream(result.fullStream, {
-          state,
-          agentMessageId,
-          streamId,
-          runId: result.runId,
-          userText,
-          fileIds,
-          requestContext,
-          abortController,
-          idleTimeoutMs: runtimeOptions.idleTimeoutMs,
-          firstChunkTimeoutMs: runtimeOptions.firstChunkTimeoutMs,
-          deferRetryableIdleTimeout:
-            idleTimeoutRetryCount < idleTimeoutRetryLimit && attempt < maxTurnRetries,
-        }),
-      );
-      turnWasUserAborted ||= outcome.streamWasUserAborted;
-      for (const stored of outcome.storedGrantApprovals) {
-        yield* resumeConfirmDecision({
-          session: state,
-          pending: stored.pending,
-          decisionId: stored.decisionId,
-          accepted: true,
-          resolution: "accepted",
-          service: confirmService,
-          agent: qingagentAgent,
-          emitResolvedFrame: false,
-        });
+      let modelMessages = messagesForModel;
+      let outcome: ProcessOutcome;
+      let isPromiseContinuationStream = false;
+      while (true) {
+        const baseScopeId =
+          attempt === 0 ? streamId : `${streamId}:retry:${attempt}`;
+        const scopedPrefixGuardContext = {
+          ...prefixGuardContext,
+          scopeId:
+            isPromiseContinuationStream
+              ? `${baseScopeId}:promise-continuation`
+              : baseScopeId,
+        };
+        const result = await makeStream(
+          attempt,
+          scopedPrefixGuardContext,
+          modelMessages,
+          attempt === 0 && !isPromiseContinuationStream,
+        );
+        const runId = result.runId ?? "unknown";
+        activeRunId = runId;
+        console.info(formatTurnLog("start", {
+          session: state.sessionId,
+          run: runId,
+        }));
+        requestContext.set("runId", result.runId);
+        outcome = yield* withPrefixCacheGuardContext(scopedPrefixGuardContext, () =>
+          processAgentStream(result.fullStream, {
+            state,
+            agentMessageId,
+            streamId,
+            runId: result.runId,
+            userText,
+            fileIds,
+            requestContext,
+            abortController,
+            idleTimeoutMs: runtimeOptions.idleTimeoutMs,
+            firstChunkTimeoutMs: runtimeOptions.firstChunkTimeoutMs,
+            deferRetryableIdleTimeout:
+              idleTimeoutRetryCount < idleTimeoutRetryLimit && attempt < maxTurnRetries,
+          }),
+        );
+        turnWasUserAborted ||= outcome.streamWasUserAborted;
+        for (const stored of outcome.storedGrantApprovals) {
+          yield* resumeConfirmDecision({
+            session: state,
+            pending: stored.pending,
+            decisionId: stored.decisionId,
+            accepted: true,
+            resolution: "accepted",
+            service: confirmService,
+            agent: qingagentAgent,
+            emitResolvedFrame: false,
+          });
+        }
+        if (
+          shouldContinuePromisedAction({
+            finishReason: outcome.finishReason,
+            sawToolCall: outcome.sawToolCall,
+            streamWasUserAborted: outcome.streamWasUserAborted,
+            finalText: outcome.finalText,
+            continuationCount: promiseContinuationCount,
+          })
+        ) {
+          promiseContinuationCount += 1;
+          isPromiseContinuationStream = true;
+          const lastModelMessage = messagesForModel.at(-1);
+          const promiseAlreadyAppended =
+            lastModelMessage?.role === "assistant" &&
+            lastModelMessage.content === outcome.finalText;
+          modelMessages = [
+            ...messagesForModel,
+            ...(promiseAlreadyAppended
+              ? []
+              : [{ role: "assistant" as const, content: outcome.finalText }]),
+            {
+              role: "system" as const,
+              content: PROMISE_CONTINUATION_SYSTEM_MESSAGE,
+            },
+          ];
+          requestContext.set(
+            "messages",
+            omContextForTurn.tailObservationPrompt
+              ? [
+                  ...modelMessages,
+                  {
+                    role: "user" as const,
+                    content: omContextForTurn.tailObservationPrompt,
+                  },
+                ]
+              : modelMessages,
+          );
+          logger.warn("Continuing agent turn after promised-action stop", {
+            sessionId: state.sessionId,
+            streamId,
+            attempt,
+            continuationCount: promiseContinuationCount,
+            finishReason: outcome.finishReason,
+          });
+          continue;
+        }
+        break;
       }
       if (outcome.streamWasUserAborted) turnOutcome = "cancelled";
       const retryableIdleTimeout = outcome.retryableIdleTimeoutChunk !== undefined;

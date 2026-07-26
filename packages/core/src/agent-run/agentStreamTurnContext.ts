@@ -59,6 +59,10 @@ export interface ProcessOutcome {
   producedVisibleFrame: boolean;
   sawToolCall: boolean;
   streamWasUserAborted: boolean;
+  /** 正常收口时的最后一步 finish reason，供 runAgentTurn 做窄范围续推判定。 */
+  finishReason: string | null;
+  /** 本段模型正文；只在进程内续接上下文，不写入日志。 */
+  finalText: string;
   /** askUser 重放不算副作用，供瞬态错误重试守卫区分。 */
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
@@ -203,6 +207,8 @@ export async function createAgentStreamTurnContext(
       sawToolCall: false,
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
+      finishReason: null,
+      finalText: "",
       storedGrantApprovals: [],
     },
     previousStreamId,

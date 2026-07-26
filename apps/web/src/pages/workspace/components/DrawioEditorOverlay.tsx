@@ -15,6 +15,7 @@ import {
 } from "./drawioEmbedProtocol";
 import { renderDrawio } from "./drawioRender";
 import "./DrawioEditorOverlay.css";
+import "./diagramEditorChrome.css";
 
 export interface DrawioEditorOverlayProps {
   source: string;
@@ -25,7 +26,7 @@ export interface DrawioEditorOverlayProps {
 
 export function DrawioEditorOverlay({
   source,
-  title = "drawio 可视化编辑",
+  title = "Drawio 编辑",
   onSave,
   onClose,
 }: DrawioEditorOverlayProps) {
@@ -347,18 +348,23 @@ export function DrawioEditorOverlay({
   }, [onClose, onSave, source, title]);
 
   return (
-    <div className="drawio-editor-overlay" role="dialog" aria-modal="true" aria-label={title}>
-      <header className="drawio-editor-overlay__topbar">
+    <div className="drawio-editor-overlay diagram-editor-chrome" role="dialog" aria-modal="true" aria-label="Drawio 编辑">
+      <header className="drawio-editor-overlay__topbar diagram-editor-chrome__topbar">
         <div className="drawio-editor-overlay__heading">
-          <strong>{title}</strong>
-          <span role="status">{status}</span>
+          <strong className="diagram-editor-chrome__title">Drawio 编辑</strong>
+          <span className={error ? "is-error" : undefined} role={error ? "alert" : "status"}>
+            {error ?? status}
+          </span>
         </div>
+        {/* 实时保存语义:✕ = flush 最后一笔后关闭(requestClose),不是丢弃 */}
         <button
           type="button"
-          className="drawio-editor-overlay__complete"
+          className="drawio-editor-overlay__cancel diagram-editor-chrome__close"
+          aria-label="关闭"
+          title="关闭"
           onClick={() => requestCloseRef.current()}
         >
-          完成
+          ✕
         </button>
       </header>
       <div className="drawio-editor-overlay__stage">

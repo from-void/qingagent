@@ -1,0 +1,94 @@
+.diagram-editor-chrome {
+  color: var(--ink-1);
+  font-family: var(--font-zh-serif);
+}
+
+.diagram-editor-chrome__topbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+}
+
+.diagram-editor-chrome__title {
+  color: var(--ink-1);
+  font-family: var(--font-zh-serif);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.diagram-editor-chrome__close {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: var(--bg-canvas);
+  color: var(--ink-2);
+  font: 400 18px/1 var(--font-zh-serif);
+  cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.diagram-editor-chrome__close:hover {
+  border-color: var(--line-3);
+  background: var(--bg-hover);
+  color: var(--ink-1);
+}
+
+.diagram-editor-chrome__close:focus-visible {
+  outline: 1px solid var(--mark);
+  outline-offset: 2px;
+}
+
+.diagram-editor-chrome__toolbar {
+  position: absolute;
+  z-index: 12;
+  bottom: 24px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg-canvas) 94%, transparent);
+  box-shadow: 0 10px 28px rgba(47, 42, 34, 0.16);
+  transform: translateX(-50%);
+}
+
+.diagram-editor-chrome__toolbar .pm-diagram-tool {
+  width: auto;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 10px;
+  gap: 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-zh-serif);
+}
+
+.diagram-editor-chrome__toolbar .pm-diagram-tool:hover:not(:disabled) {
+  border-color: var(--line-2);
+  background: var(--mark-soft);
+  color: var(--ink-1);
+}
+
+.diagram-editor-chrome__toolbar .pm-diagram-tool.is-active {
+  border-color: var(--mark);
+  background: var(--mark-soft);
+  color: var(--mark);
+}
+
+@media (max-width: 640px) {
+  .diagram-editor-chrome__toolbar {
+    bottom: 16px;
+    max-width: calc(100vw - 32px);
+  }
+}

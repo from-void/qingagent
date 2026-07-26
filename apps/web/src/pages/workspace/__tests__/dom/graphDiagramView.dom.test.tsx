@@ -520,11 +520,23 @@ flowchart LR
     const editor = await openEditor();
     expect(document.body.querySelector("select")).toBeNull();
     expect(editor.textContent).not.toContain("点击节点或连线编辑");
+    expect(editor.querySelector(".diagram-editor-chrome__title")?.textContent).toBe("Mermaid 编辑");
+    const closeButton = editor.querySelector<HTMLButtonElement>(".diagram-editor-chrome__close");
+    expect(closeButton?.textContent?.trim()).toBe("✕");
+    expect(closeButton?.getAttribute("aria-label")).toBe("关闭");
+    const bottomToolbar = editor.querySelector<HTMLElement>("[aria-label='图表编辑操作']");
+    expect(bottomToolbar).not.toBeNull();
+    expect(
+      Array.from(bottomToolbar!.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["新增分区", "解散分区", "新增节点"]);
+    expect(graphDiagramCss).not.toContain(".graph-diagram-editor__topbar-actions");
+    expect(graphDiagramCss).not.toContain(".graph-diagram-primary-action");
     await click(findButton("新增节点", editor));
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("新节点"));
   });
 
-  it("编辑态节点有四面 handle，默认弱化并在选中/hover/连接态实显", async () => {
+  it("编辑态节点有四面 handle，默认隐藏且仅在选中/hover/连接态显形并启用命中", async () => {
     await render(
       <EditableDiagramHarness
         source={`flowchart LR
@@ -548,7 +560,7 @@ flowchart LR
       "target:t",
     ]);
     expect(handles.map((handle) => handle.dataset.handlepos).sort()).toEqual(["bottom", "bottom", "left", "left", "right", "right", "top", "top"]);
-    expect(handles.every((handle) => handle.title === "建立连线")).toBe(true);
+    expect(handles.every((handle) => handle.title === "拖拽到目标节点连线")).toBe(true);
     expect(handles.every((handle) => handle.getAttribute("aria-label")?.includes("连线"))).toBe(true);
     // Loose 模式下 source/target 把手重叠；松手实际命中 DOM 上层 source，
     // source 也必须允许作为连接终点，否则真机拖拽会被 React Flow 静默拒绝。
@@ -558,13 +570,21 @@ flowchart LR
         .every((handle) => handle.classList.contains("connectableend")),
     ).toBe(true);
     expect(editor.querySelectorAll(".react-flow__handle")).toHaveLength(16);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0\.28;/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle");
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle");
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor.is-connecting .react-flow__handle.connectionindicator");
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__node:hover \.react-flow__handle,[\s\S]*pointer-events:\s*auto;/);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle:hover\s*\{[^}]*transform:\s*scale\(1\.35\);/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-slot\s*\{[^}]*pointer-events:\s*none;/s);
+    expect(graphDiagramCss).not.toContain(".graph-diagram-handle-slot::before");
     expect(graphDiagramCss).toMatch(/\.graph-diagram .react-flow__handle,[\s\S]*cursor:\s*crosshair;/);
+    expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .graph-diagram-handle-add");
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-add\s*\{[^}]*cursor:\s*copy;[^}]*pointer-events:\s*none;/s);
+    expect(
+      Array.from(startNode.querySelectorAll<HTMLButtonElement>(".graph-diagram-handle-add"))
+        .every((button) => button.title === "点击新建相邻节点"),
+    ).toBe(true);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__handle\s*\{[^}]*display:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__node:hover");
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__edge:hover .react-flow__edge-path");
@@ -658,7 +678,7 @@ flowchart LR
     const startNode = findNode("开始", editor);
     const addButton = startNode.querySelector<HTMLButtonElement>("button[aria-label='从右侧新增连接节点']");
     expect(addButton).not.toBeNull();
-    expect(addButton?.title).toBe("从右侧新增连接节点");
+    expect(addButton?.title).toBe("点击新建相邻节点");
     expect(addButton?.querySelector(".graph-diagram-canvas-tool-icon")).not.toBeNull();
     await click(addButton!);
 
@@ -1534,7 +1554,7 @@ flowchart LR
     expect(graphDiagramCss).toMatch(/\.graph-diagram-editor \.react-flow__node\.selected\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*none;/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-editor \.react-flow__node\.is-selected\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram-editor .react-flow__node.is-selected .graph-diagram-node-selection-ring");
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-node-selection-ring[\s\S]*opacity:\s*1;[\s\S]*drop-shadow\(0 0 5px rgba\(53,\s*97,\s*157,\s*0\.45\)\)/);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-node-selection-ring[\s\S]*opacity:\s*1;[\s\S]*drop-shadow\(0 0 5px rgba\(168,\s*130,\s*63,\s*0\.45\)\)/);
     expect(graphDiagramCss).toContain(".graph-diagram-editor .react-flow__node.is-selected:hover .graph-diagram-node-hover-ring");
     expect(selected.querySelector(".graph-diagram-node-shape-fill")?.getAttribute("style")).toContain("var(--graph-node-stroke)");
     expect(graphDiagramCss).not.toContain("--graph-node-hover-stroke");
@@ -1553,7 +1573,7 @@ flowchart LR
       const editor = await openEditor();
       expect(document.body.querySelectorAll(".graph-diagram-editor")).toHaveLength(1);
       expect(document.body.querySelectorAll(".graph-diagram-editor .react-flow__pane")).toHaveLength(1);
-      await click(findButton("完成", editor));
+      await click(editor.querySelector<HTMLButtonElement>(".diagram-editor-chrome__close")!);
       expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
       expect(document.body.querySelector(".graph-diagram-editor .react-flow__pane")).toBeNull();
     }

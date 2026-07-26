@@ -83,6 +83,7 @@ import { useToast } from "../../../../system";
 import { MediaBlockToolbar } from "../MediaBlockToolbar";
 import type { DiagramVisualChange } from "./DiagramRenderer";
 import "./graphDiagram.css";
+import "../diagramEditorChrome.css";
 
 interface GraphDiagramViewProps {
   source: string;
@@ -471,7 +472,7 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectableStart={false}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线目标`}
-            title="建立连线"
+            title="拖拽到目标节点连线"
           />
           <Handle
             id={handle.id}
@@ -480,14 +481,14 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectable={isConnectable}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线起点`}
-            title="建立连线"
+            title="拖拽到目标节点连线"
           />
           {data.canQuickAdd ? (
             <button
               type="button"
               className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} nodrag nopan`}
               aria-label={`从${handleLabel(handle.id)}新增连接节点`}
-              title={`从${handleLabel(handle.id)}新增连接节点`}
+              title="点击新建相邻节点"
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
@@ -827,14 +828,18 @@ function CanvasToolButton({
   active = false,
   pressed,
   disabled = false,
+  showLabel = false,
   onMouseDown,
+  onClick,
 }: {
   label: string;
   icon: CanvasToolIconName;
   active?: boolean;
   pressed?: boolean;
   disabled?: boolean;
+  showLabel?: boolean;
   onMouseDown: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onClick?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
@@ -845,8 +850,10 @@ function CanvasToolButton({
       aria-pressed={pressed}
       disabled={disabled}
       onMouseDown={onMouseDown}
+      onClick={onClick}
     >
       <CanvasToolIcon name={icon} />
+      {showLabel ? <span>{label}</span> : null}
     </button>
   );
 }
@@ -2520,7 +2527,7 @@ export function GraphDiagramView({
     ? createPortal(
         <div
           ref={editorRef}
-          className="graph-diagram-editor"
+          className="graph-diagram-editor diagram-editor-chrome"
           role="dialog"
           aria-modal="true"
           aria-label="图表编辑器"
@@ -2533,43 +2540,62 @@ export function GraphDiagramView({
             else if (!isEditableKeyboardTarget(event.target)) editorRef.current?.focus({ preventScroll: true });
           }}
         >
-          <div className="graph-diagram-editor__topbar">
-            <div>
-              <div className="graph-diagram-editor__title">图编辑</div>
-            </div>
-            <div className="graph-diagram-editor__topbar-actions">
-              {parsed.model.type === "flowchart" && (
-                <div className="graph-diagram-editor__canvas-tools" role="toolbar" aria-label="分区操作">
-                  <CanvasToolButton
-                    label="新增分区"
-                    icon="subgraph"
-                    active={subgraphDrawMode}
-                    pressed={subgraphDrawMode}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      beginSubgraphDrawing();
-                    }}
-                  />
-                  <CanvasToolButton
-                    label="解散分区"
-                    icon="dissolve"
-                    disabled={!selectedSubgraph}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      dissolveSelectedSubgraph();
-                    }}
-                  />
-                </div>
-              )}
-              <button type="button" className="graph-diagram-primary-action" disabled={!canAddNodeFromToolbar} onClick={addNode}>
-                新增节点
-              </button>
-              <button type="button" className="graph-diagram-editor__close" onClick={closeEditor}>
-                完成
-              </button>
-            </div>
+          <div className="graph-diagram-editor__topbar diagram-editor-chrome__topbar">
+            <div className="graph-diagram-editor__title diagram-editor-chrome__title">Mermaid 编辑</div>
+            <button
+              type="button"
+              className="graph-diagram-editor__close diagram-editor-chrome__close"
+              aria-label="关闭"
+              title="关闭"
+              onClick={closeEditor}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="graph-diagram-editor__bottom-toolbar diagram-editor-chrome__toolbar" role="toolbar" aria-label="图表编辑操作">
+            {parsed.model.type === "flowchart" && (
+              <>
+                <CanvasToolButton
+                  label="新增分区"
+                  icon="subgraph"
+                  active={subgraphDrawMode}
+                  pressed={subgraphDrawMode}
+                  showLabel
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginSubgraphDrawing();
+                  }}
+                />
+                <CanvasToolButton
+                  label="解散分区"
+                  icon="dissolve"
+                  disabled={!selectedSubgraph}
+                  showLabel
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    dissolveSelectedSubgraph();
+                  }}
+                />
+                <span className="pm-diagram-tool-sep" aria-hidden="true" />
+              </>
+            )}
+            <CanvasToolButton
+              label="新增节点"
+              icon="plus"
+              disabled={!canAddNodeFromToolbar}
+              showLabel
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                addNode();
+              }}
+            />
           </div>
           {error && <div className="graph-diagram-error graph-diagram-error--floating">{error}</div>}
           <div

@@ -47,6 +47,7 @@ import {
   streamStart,
   toolCallUpdated,
 } from "./frames.js";
+import { normalizeClientMessageId } from "./clientMessageId.js";
 import { currentDateTimeContext } from "../session/timeProvider.js";
 import {
   buildAgentTracingMetadata,
@@ -519,12 +520,7 @@ export async function* runAgentTurn(
   // - 普通 sendMessage 前端有乐观气泡,靠 clientMessageId 同 id 去重合一;
   // - 命令式发送(如审核结果回流的 userDisplayParts 路径)本就没有乐观气泡,直播帧让缩略卡当轮即可见。
   // id 优先用客户端传来的 clientMessageId,缺省回退服务端生成;做长度/类型防御,不信任裸输入。
-  const safeClientMessageId =
-    typeof clientMessageId === "string" &&
-    clientMessageId.trim().length > 0 &&
-    clientMessageId.length <= 64
-      ? clientMessageId.trim()
-      : null;
+  const safeClientMessageId = normalizeClientMessageId(clientMessageId);
   // 气泡体优先级:userDisplayParts(审核结果缩略卡等展示覆盖)> richText({{chip:N}} 原位,
   // 直播/重放/冷还原全 WYSIWYG)> 纯文本。模型侧 state.messages 已收 fullUserText 全文,展示与模型上下文解耦。
   const userChatMessage: ChatMessage = {

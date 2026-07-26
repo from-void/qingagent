@@ -75,6 +75,7 @@ import {
   getChatInputBlockReason,
 } from "../data/chatInputBlockReason";
 import { logClientEvent } from "../data/clientLog";
+import { newClientMessageId } from "../data/clientMessageId";
 import { cloneViewSections } from "../data/cloneViewDoc";
 import { installAnnotationGroupDecorations } from "../data/annotationDecorations";
 import { deriveDocDimensions } from "../data/docDimensions";
@@ -248,9 +249,30 @@ export async function sendMaterialParseCommandWithStream(
   return stream.sendCommand(command);
 }
 
+function hydratedSessionTitle(value: string | null | undefined): string | null {
+  if (!value || value.trim().length === 0 || value === "未命名草稿") {
+    return null;
+  }
+  return value;
+}
+
+function sessionTitleFromStore(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  const title = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.title;
+  return hydratedSessionTitle(title);
+}
+
 export function useWorkspacePageController() {
-  // 初始化不带标题(空),真实会话标题加载后再 setTitle 覆盖。
-  const [title, setTitle] = useState("");
+  const initialSessionId =
+    typeof window === "undefined"
+      ? null
+      : workspaceSessionIdFromHash(window.location.hash);
+  // 已有会话先沿用列表中的标题，避免恢复帧到达前把 store 短暂写空。
+  const [title, setTitle] = useState(
+    () => sessionTitleFromStore(initialSessionId) ?? "",
+  );
   const {
     debugMode,
     demoBarKind,
@@ -268,11 +290,7 @@ export function useWorkspacePageController() {
   const { previewExit, previewSource, setPreviewSource } =
     useAssetPreviewState();
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
-  const initialHydrationSessionIdRef = useRef<string | null>(
-    typeof window === "undefined"
-      ? null
-      : workspaceSessionIdFromHash(window.location.hash),
-  );
+  const initialHydrationSessionIdRef = useRef<string | null>(initialSessionId);
   const [hydration, setHydration] = useState(() =>
     initialWorkspaceHydration(initialHydrationSessionIdRef.current),
   );
@@ -1936,10 +1954,14 @@ export function useWorkspacePageController() {
       beginWorkspaceHydration(targetSessionId);
 
       if (options.resetSessionState && targetSessionId) {
-        setTitle("");
+        const storedTitle = sessionTitleFromStore(targetSessionId);
+        setTitle(storedTitle ?? "");
         dispatch({
           kind: "sessionMeta",
-          data: { sessionId: targetSessionId, title: "未命名草稿" },
+          data: {
+            sessionId: targetSessionId,
+            title: storedTitle ?? "未命名草稿",
+          },
         });
       }
 
@@ -2040,7 +2062,7 @@ export function useWorkspacePageController() {
         // e2e-loop-0704 R15 回归:气泡必须在建会话/传文件 await **之前**先落地——此前放在
         // await 之后,新建页跳转后的头 1-2 秒(带附件更久)工作区完全空白、用户消息无影,
         // 自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息其实已在跑)。
-        const clientMessageId = `m-user-${Date.now()}`;
+        const clientMessageId = newClientMessageId();
         if (messageText.length > 0 || pendingChips.length > 0) {
           const displayBody =
             pendingChips.length > 0 && pendingRichText
@@ -2383,8 +2405,13 @@ export function useWorkspacePageController() {
   );
 
   useEffect(() => {
-    setCurrentSession(state.sessionId, title);
-    if (state.sessionId) updateSessionTitle(state.sessionId, title);
+    const hydratedTitle = hydratedSessionTitle(title);
+    const currentTitle =
+      hydratedTitle ?? sessionTitleFromStore(state.sessionId);
+    setCurrentSession(state.sessionId, currentTitle);
+    if (state.sessionId && hydratedTitle) {
+      updateSessionTitle(state.sessionId, hydratedTitle);
+    }
     return () => setCurrentSession(null);
   }, [setCurrentSession, state.sessionId, title, updateSessionTitle]);
 
@@ -2807,7 +2834,7 @@ export function useWorkspacePageController() {
       const dispatchGeneration = beginWorkspaceTurnDispatch(
         turnDispatchGateRef.current,
       );
-      const clientMessageId = `m-user-${Date.now()}`;
+      const clientMessageId = newClientMessageId();
       dispatch({
         kind: "chatMessageAdded",
         data: {

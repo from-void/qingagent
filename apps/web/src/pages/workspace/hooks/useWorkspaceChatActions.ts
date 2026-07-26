@@ -22,6 +22,7 @@ import {
 } from "../components/streamErrorPresenter";
 import type { DocDimensions } from "../data/docDimensions";
 import { getChatInputBlockReason } from "../data/chatInputBlockReason";
+import { newClientMessageId } from "../data/clientMessageId";
 import { buildCancelStreamCommands } from "../data/workspacePageView";
 import { runAfterPendingDocSave } from "../data/pendingDocSave";
 import {
@@ -233,7 +234,7 @@ export function useWorkspaceChatActions(input: {
       snap.chips.length > 0 && snap.richText ? snap.richText : snap.text;
     // 乐观气泡与服务端直播 user 帧共用同一 id(经 clientMessageId 传给后端):
     // reducer 按 id 去重合一,且重进重放(after=0)时 FrameLog 里有用户帧,气泡不消失。
-    const clientMessageId = `m-user-${Date.now()}`;
+    const clientMessageId = newClientMessageId();
     dispatch({
       kind: "chatMessageAdded",
       data: {

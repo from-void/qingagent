@@ -2317,6 +2317,70 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
+  it("B7 放弃全部不终止在途请求，pending 问卷卡保持可作答", async () => {
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试审阅" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            baseDocForReviewSpecs([textReviewToolCall("p-1", "batch-a", 0)]),
+            1,
+          ),
+        },
+      },
+      docStateFrame("pendingReview"),
+      toolCallUpdatedFrame(textReviewToolCall("p-1", "batch-a", 0)),
+    ]);
+    const pendingCommit = mockPendingCommit(stream);
+    await emitFrames(stream, [
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-ask",
+          toolCallId: "ask-1",
+          spec: inlineAskUserToolCall("ask-1"),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "pendingReview" },
+          activeOverlay: "askUser",
+          agentBusy: false,
+        },
+      },
+    ]);
+    expect(captured.current?.state.toolCalls.get("ask-1")?.status.kind).toBe(
+      "pending",
+    );
+
+    act(() => captured.current?.handleRejectAll());
+    await flushMicrotasks();
+
+    // stop 会 abort updateDoc/恢复等共享请求，并把 pending 工具卡统一终结为 aborted。
+    expect(stream.stop).not.toHaveBeenCalled();
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(captured.current?.state.toolCalls.get("ask-1")?.status.kind).toBe(
+      "pending",
+    );
+
+    await act(async () => {
+      pendingCommit.resolve([docStateFrame("editing")]);
+      await pendingCommit.promise;
+    });
+  });
+
   it("C11 放弃后收到 stale pendingReview 回帧时仍由 fallback 解锁", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
@@ -3801,6 +3865,85 @@ describe("WorkspacePage optimistic send rollback", () => {
     expect(showToast).toHaveBeenCalledWith(
       "发送失败，请重试",
     );
+  });
+});
+
+describe("WorkspacePage existing session title hydration", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    serverStreamMock.instances.length = 0;
+    window.location.hash = "#/workspace?session=s-existing";
+    sessionStorage.clear();
+    localStorage.setItem("qingagent.deepseek_api_key", "test-key");
+    restoreWorkspaceDomMocks = installWorkspaceDomMocks();
+  });
+
+  afterEach(() => {
+    serverStreamMock.startSessionImpl = null;
+    restoreWorkspaceDomMocks?.();
+    restoreWorkspaceDomMocks = null;
+    localStorage.removeItem("qingagent.deepseek_api_key");
+    vi.useRealTimers();
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  it("B14 进入已有会话时，恢复完成前不清空 store 标题", async () => {
+    const { useSessionStore } = await import("../../stores/sessionStore");
+    useSessionStore.setState({
+      sessions: [{
+        id: "s-existing",
+        title: "已有标题",
+        created_at: "2026-07-27T00:00:00.000Z",
+        summary: "",
+        status: { kind: "Active" },
+      }],
+      currentSessionId: null,
+      currentSessionTitle: null,
+    });
+    serverStreamMock.startSessionImpl = () => new Promise<string>(() => undefined);
+
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    await flushMicrotasks(5);
+
+    expect(useSessionStore.getState().sessions[0]?.title).toBe("已有标题");
+    expect(useSessionStore.getState().currentSessionTitle).toBe("已有标题");
+  });
+
+  it("B14 已有会话恢复失败后，store 标题保持原值", async () => {
+    vi.useFakeTimers();
+    const { useSessionStore } = await import("../../stores/sessionStore");
+    useSessionStore.setState({
+      sessions: [{
+        id: "s-existing",
+        title: "恢复前标题",
+        created_at: "2026-07-27T00:00:00.000Z",
+        summary: "",
+        status: { kind: "Active" },
+      }],
+      currentSessionId: null,
+      currentSessionTitle: null,
+    });
+    serverStreamMock.startSessionImpl = async () => {
+      throw new Error("Stream request failed: 503");
+    };
+
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_500);
+    });
+    await flushMicrotasks(5);
+
+    expect(latestServerStream().startSession).toHaveBeenCalledTimes(4);
+    expect(useSessionStore.getState().sessions[0]?.title).toBe("恢复前标题");
+    expect(useSessionStore.getState().currentSessionTitle).toBe("恢复前标题");
+    expect(host?.textContent).toContain("恢复失败");
   });
 });
 

@@ -182,10 +182,9 @@ export function useWorkspaceReviewActions(input: {
     )
       return;
 
-    // Cancel any in-flight SSE connections (same rationale as handleCommit).
-    stream.stop();
-
     const send = async () => {
+      // commitReviewGroups 走独立 REST，并会自行保持当前 session 的 EventSource。
+      // 这里只结算审阅，不能终止同一工作区的在途保存、恢复或问卷工具卡。
       await stream
         .commitReviewGroups(currentSessionId, {
           acceptReviewBatchIds,

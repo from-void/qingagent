@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import type {
+  SecurityGrantCategory,
+  SecurityGrantKind,
+  SecurityGrantMode,
+  SecuritySettingsResponse,
+  UpdateSecurityGrantResponse,
+} from "@qingagent/contract-ts";
 import { useToast } from "../../system/ToastProvider";
 import {
   publishRememberGrantState,
@@ -6,38 +13,35 @@ import {
   type RememberGrantCanonical,
 } from "../../system/confirmGrantState";
 
-type SecurityKind = "install" | "command" | "send" | "connect";
 type UpdatePhase = "idle" | "updating" | "settled";
 
-interface SecurityCategory {
-  kind: SecurityKind;
-  label: string;
-  needConfirmation: boolean;
-  mutable: boolean;
-  present: boolean;
-  grantId: string | null;
-  version: number;
-}
-
-interface SecuritySettingsResponse {
-  categories: SecurityCategory[];
-  insecureRememberAllowed: boolean;
-}
-
 const POST_TIMEOUT_MS = 8_000;
-const fixedCategoryReasons: Partial<Record<SecurityKind, string>> = {
-  send: "发出后不能撤回，所以每次都会询问。",
-  connect: "连接会改变可访问的内容，所以每次连接前都会询问。",
+const modeLabels: Record<SecurityGrantMode, string> = {
+  ask: "每次询问",
+  always: "总是允许",
+};
+const categoryDescriptions: Record<SecurityGrantKind, string> = {
+  install: "安装软件或依赖前先询问，避免在不知情时改变本机环境。",
+  command: "仅影响会删除、移动或产生多种影响的同类操作，普通命令不受影响。",
+  send: "内容发出后不能撤回，因此每次都会询问。",
+  connect: "连接会改变可访问的内容，因此每次连接前都会询问。",
 };
 
-function isCategory(value: unknown): value is SecurityCategory {
+function isGrantMode(value: unknown): value is SecurityGrantMode {
+  return value === "ask" || value === "always";
+}
+
+function isCategory(value: unknown): value is SecurityGrantCategory {
   if (!value || typeof value !== "object") return false;
   const input = value as Record<string, unknown>;
   return (
     (input.kind === "install" || input.kind === "command" || input.kind === "send" || input.kind === "connect") &&
     typeof input.label === "string" &&
-    typeof input.needConfirmation === "boolean" &&
-    typeof input.mutable === "boolean" &&
+    isGrantMode(input.grantMode) &&
+    Array.isArray(input.grantModes) &&
+    input.grantModes.length > 0 &&
+    input.grantModes.every(isGrantMode) &&
+    input.grantModes.includes(input.grantMode) &&
     typeof input.present === "boolean" &&
     (input.grantId === null || typeof input.grantId === "string") &&
     Number.isSafeInteger(input.version) &&
@@ -51,28 +55,28 @@ function parseSettings(value: unknown): SecuritySettingsResponse {
   if (!Array.isArray(input.categories) || !input.categories.every(isCategory)) {
     throw new Error("invalid security settings");
   }
-  if (typeof input.insecureRememberAllowed !== "boolean") {
-    throw new Error("invalid security settings");
-  }
-  return {
-    categories: input.categories,
-    insecureRememberAllowed: input.insecureRememberAllowed,
-  };
+  return { categories: input.categories };
 }
 
-function parseCanonical(kind: SecurityKind, value: unknown): RememberGrantCanonical {
+function parseCanonical(
+  kind: SecurityGrantKind,
+  value: unknown,
+): UpdateSecurityGrantResponse {
   if (kind !== "install" && kind !== "command") throw new Error("invalid grant kind");
   if (!value || typeof value !== "object") throw new Error("invalid grant state");
   const input = value as Record<string, unknown>;
   if (
-    input.present === undefined || typeof input.present !== "boolean" ||
+    !isGrantMode(input.grantMode) ||
+    typeof input.present !== "boolean" ||
     (input.grantId !== null && typeof input.grantId !== "string") ||
-    !Number.isSafeInteger(input.version) || Number(input.version) < 0
+    !Number.isSafeInteger(input.version) ||
+    Number(input.version) < 0
   ) {
     throw new Error("invalid grant state");
   }
   return {
     kind,
+    grantMode: input.grantMode,
     present: input.present,
     grantId: input.grantId as string | null,
     version: Number(input.version),
@@ -86,7 +90,6 @@ function mergeSettings(
   if (!current) return incoming;
   const currentByKind = new Map(current.categories.map((item) => [item.kind, item]));
   return {
-    ...incoming,
     categories: incoming.categories.map((item) => {
       const previous = currentByKind.get(item.kind);
       return previous && previous.version > item.version ? previous : item;
@@ -97,19 +100,17 @@ function mergeSettings(
 export function SecurityPanel() {
   const toast = useToast();
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
-  const [updatePhases, setUpdatePhases] = useState<Partial<Record<SecurityKind, UpdatePhase>>>({});
-  const desktopRememberAvailable = Boolean(window.electron?.requestSettingsRememberGrant);
-  const insecureWebRememberAvailable = settings?.insecureRememberAllowed === true;
-  const rememberConfigurationAvailable = desktopRememberAvailable || insecureWebRememberAvailable;
+  const [updatePhases, setUpdatePhases] = useState<
+    Partial<Record<SecurityGrantKind, UpdatePhase>>
+  >({});
 
   const applyCanonical = useCallback((state: RememberGrantCanonical) => {
     setSettings((current) => current ? {
-      ...current,
       categories: current.categories.map((item) => {
         if (item.kind !== state.kind || item.version > state.version) return item;
         return {
           ...item,
-          needConfirmation: !state.present,
+          grantMode: state.present ? "always" : "ask",
           present: state.present,
           grantId: state.grantId,
           version: state.version,
@@ -151,53 +152,31 @@ export function SecurityPanel() {
     return () => window.removeEventListener("focus", revalidate);
   }, [readSettings, toast]);
 
-  const setUpdatePhase = (kind: SecurityKind, phase: UpdatePhase) => {
+  const setUpdatePhase = (kind: SecurityGrantKind, phase: UpdatePhase) => {
     setUpdatePhases((current) => ({ ...current, [kind]: phase }));
   };
 
-  const toggle = async (
-    category: SecurityCategory,
-    event: MouseEvent<HTMLButtonElement>,
+  const updateGrantMode = async (
+    category: SecurityGrantCategory,
+    event: ChangeEvent<HTMLSelectElement>,
   ) => {
-    const rememberable = category.kind === "install" || category.kind === "command";
+    const grantMode = event.target.value as SecurityGrantMode;
     if (
-      !category.mutable ||
-      (rememberable && !rememberConfigurationAvailable) ||
+      grantMode === category.grantMode ||
+      !category.grantModes.includes(grantMode) ||
+      category.grantModes.length === 1 ||
       updatePhases[category.kind] === "updating"
     ) return;
-    setUpdatePhase(category.kind, "updating");
-    const needConfirmation = !category.needConfirmation;
-    let uiGrantNonce: string | undefined;
-    try {
-      if (!needConfirmation) {
-        const requestGrant = window.electron?.requestSettingsRememberGrant;
-        if (requestGrant) {
-          try {
-            uiGrantNonce = await requestGrant({
-              kind: category.kind as "install" | "command",
-              trustedGesture: event.isTrusted,
-            }) ?? undefined;
-          } catch {
-            toast.show({ message: "没有完成确认，设置未更改。", tone: "warn" });
-            return;
-          }
-          if (!uiGrantNonce) {
-            toast.show({ message: "没有完成确认，设置未更改。", tone: "warn" });
-            return;
-          }
-        } else if (!settings?.insecureRememberAllowed) {
-          toast.show({ message: "开启记忆需要在桌面应用中完成确认。", tone: "warn" });
-          return;
-        }
-      }
 
+    setUpdatePhase(category.kind, "updating");
+    try {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
       try {
         const response = await fetch(`/api/v1/settings/security/${category.kind}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ needConfirmation, ...(uiGrantNonce ? { uiGrantNonce } : {}) }),
+          body: JSON.stringify({ grantMode }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(String(response.status));
@@ -205,9 +184,9 @@ export function SecurityPanel() {
         applyCanonical(canonical);
         publishRememberGrantState(canonical);
         toast.show({
-          message: needConfirmation
-            ? `${category.label}已恢复每次询问。已在执行的不受影响。`
-            : `${category.label}之后不再询问。`,
+          message: canonical.grantMode === "always"
+            ? `${category.label}已设为总是允许。`
+            : `${category.label}已恢复每次询问。已在执行的不受影响。`,
           tone: "success",
         });
       } finally {
@@ -225,88 +204,51 @@ export function SecurityPanel() {
     <div className="security-panel" data-wf="SecurityPanel">
       <header className="security-head">
         <h2>操作确认</h2>
-        <p>这里可以选择哪些操作需要每次询问。记住后，之后会直接进行；随时可以恢复每次询问。</p>
-        <p className="security-scope-note">按操作类别分别生效，改一类不影响其他。</p>
+        <p>按操作类别选择确认方式。授权会立即生效，也可以随时改回。</p>
       </header>
       <div className="security-list" aria-busy={settings === null}>
         {settings?.categories.map((category) => {
           const phase = updatePhases[category.kind] ?? "idle";
-          const rememberable = category.kind === "install" || category.kind === "command";
-          const clientMutable = category.mutable && (
-            !rememberable || rememberConfigurationAvailable
-          );
-          const fixedReason = fixedCategoryReasons[category.kind];
-          const reasonId = fixedReason ? `security-${category.kind}-reason` : undefined;
-          const commandScopeId = category.kind === "command" ? "security-command-scope" : undefined;
-          const describedBy = [
-            reasonId,
-            commandScopeId,
-            rememberable && !clientMutable ? "security-desktop-note" : undefined,
-          ].filter((value): value is string => Boolean(value)).join(" ") || undefined;
-          const toggleLabel = category.needConfirmation
-            ? `${category.label}：每次询问，点击后改为之后不再询问`
-            : `${category.label}：之后不再询问，点击后恢复每次询问`;
+          const mutable = category.grantModes.length > 1;
+          const descriptionId = `security-${category.kind}-description`;
+          const effectId = category.grantMode === "always"
+            ? `security-${category.kind}-effect`
+            : undefined;
           return (
             <div
               className="security-row"
               key={category.kind}
               data-update-state={phase}
-              data-capability={clientMutable ? "mutable" : "readonly"}
+              data-capability={mutable ? "mutable" : "readonly"}
             >
               <div className="security-copy">
                 <span className="security-label">{category.label}</span>
-                <span className="security-meta">
-                  {phase === "updating"
-                    ? "正在保存…"
-                    : category.needConfirmation ? "每次询问" : "之后不再询问"}
+                <span className="security-description" id={descriptionId}>
+                  {categoryDescriptions[category.kind]}
                 </span>
-                {commandScopeId && (
-                  <span className="security-reason" id={commandScopeId}>
-                    仅影响会删除、移动或产生多种影响的操作，普通命令不受影响。
-                  </span>
-                )}
-                {fixedReason && (
-                  <span className="security-reason" id={reasonId}>
-                    {fixedReason}
+                {effectId && (
+                  <span className="security-effect" id={effectId}>
+                    已记住，之后同类操作直接执行；可随时改回。
                   </span>
                 )}
               </div>
-              {category.mutable ? (
-                <button
-                  type="button"
-                  className={`security-toggle${category.needConfirmation ? " is-on" : ""}`}
-                  aria-label={toggleLabel}
-                  aria-pressed={category.needConfirmation}
-                  aria-busy={phase === "updating"}
-                  aria-describedby={describedBy}
-                  disabled={!clientMutable || phase === "updating"}
-                  onClick={(event) => void toggle(category, event)}
-                >
-                  <span className="security-toggle-dot" aria-hidden="true" />
-                  {phase === "updating"
-                    ? "正在保存…"
-                    : category.needConfirmation ? "每次询问" : "之后不再询问"}
-                </button>
-              ) : (
-                <span
-                  className="security-fixed-state"
-                  role="status"
-                  aria-label={`${category.label}：每次询问`}
-                  aria-describedby={describedBy}
-                >
-                  <span aria-hidden="true" />
-                  每次询问
-                </span>
-              )}
+              <select
+                className="security-select"
+                aria-label={`${category.label}的确认方式`}
+                aria-describedby={[descriptionId, effectId].filter(Boolean).join(" ")}
+                aria-busy={phase === "updating"}
+                value={category.grantMode}
+                disabled={!mutable || phase === "updating"}
+                onChange={(event) => void updateGrantMode(category, event)}
+              >
+                {category.grantModes.map((mode) => (
+                  <option key={mode} value={mode}>{modeLabels[mode]}</option>
+                ))}
+              </select>
             </div>
           );
         }) ?? <p className="security-loading">正在加载…</p>}
       </div>
-      {settings && !rememberConfigurationAvailable && (
-        <p className="security-capability-note" id="security-desktop-note">
-          开启记忆需要在桌面应用中完成确认。
-        </p>
-      )}
     </div>
   );
 }

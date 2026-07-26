@@ -6,16 +6,13 @@ import type {
   ConfirmGrantSource,
   ConfirmGrantState,
 } from "@qingagent/db";
-import { ConfirmUiGrantStore } from "../lib/confirmUiGrant";
 import { createSecuritySettingsRoutes } from "../routes/securitySettings";
 
 function makeHarness(initial: ConfirmGrant[] = []) {
   const stored = new Map<ConfirmGrantKind, ConfirmGrant>(initial.map((grant) => [grant.kind, grant]));
-  const created: ConfirmGrantKind[] = [];
+  const created: Array<{ kind: ConfirmGrantKind; source: ConfirmGrantSource }> = [];
   const revoked: ConfirmGrantKind[] = [];
   const versions = new Map<ConfirmGrantKind, number>([["install", 0], ["command", 0]]);
-  let sequence = 0;
-  const nonces = new ConfirmUiGrantStore({ createNonce: () => `settings-nonce-${sequence++}` });
   const app = new Hono();
   app.route("/api/v1", createSecuritySettingsRoutes({
     listGrantStates: async () => (["install", "command"] as const).map((kind): ConfirmGrantState => {
@@ -30,7 +27,7 @@ function makeHarness(initial: ConfirmGrant[] = []) {
       };
     }),
     createGrant: async ({ kind, source }) => {
-      created.push(kind);
+      created.push({ kind, source });
       const grant = {
         grantId: `grant-${kind}`,
         kind,
@@ -72,16 +69,14 @@ function makeHarness(initial: ConfirmGrant[] = []) {
         },
       };
     },
-    consumeUiGrant: (input) => nonces.consume(input),
-    insecureRememberAllowed: () => false,
   }));
-  return { app, stored, created, revoked, nonces };
+  return { app, stored, created, revoked };
 }
 
 async function post(
   app: Hono,
   kind: string,
-  body: { needConfirmation: boolean; uiGrantNonce?: string },
+  body: { grantMode: "ask" | "always" },
 ) {
   return app.request(`/api/v1/settings/security/${kind}`, {
     method: "POST",
@@ -91,7 +86,7 @@ async function post(
 }
 
 describe("安全设置路由", () => {
-  it("读取统一类别文案，send/connect 固定为每次询问", async () => {
+  it("读取真实授权档位，send/connect 只有每次询问", async () => {
     const harness = makeHarness([{
       grantId: "grant-command",
       kind: "command",
@@ -102,32 +97,40 @@ describe("安全设置路由", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       categories: [
-        { kind: "install", label: "安装", needConfirmation: true, mutable: true },
-        { kind: "command", label: "同类操作", needConfirmation: false, mutable: true },
-        { kind: "send", label: "向外发送内容", needConfirmation: true, mutable: false },
-        { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false },
+        { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"] },
+        { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"] },
+        { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask"] },
+        { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask"] },
       ],
     });
   });
 
-  it("关闭确认必须消费 settings+kind 绑定 nonce，重放拒绝", async () => {
+  it("未走过确认卡也能从可信设置端点直接创建 settings grant", async () => {
     const harness = makeHarness();
-    const missingDesktopConfirmation = await post(harness.app, "command", { needConfirmation: false });
-    expect(missingDesktopConfirmation.status).toBe(403);
-    expect(await missingDesktopConfirmation.json()).toEqual({
-      error: "开启记忆需要在桌面应用中完成确认。",
-    });
-    const nonce = harness.nonces.register({ purpose: "settings", kind: "command" });
     const response = await post(harness.app, "command", {
-      needConfirmation: false,
-      uiGrantNonce: nonce,
+      grantMode: "always",
     });
     expect(response.status).toBe(200);
-    expect(harness.created).toEqual(["command"]);
-    expect((await post(harness.app, "command", {
-      needConfirmation: false,
-      uiGrantNonce: nonce,
-    })).status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      kind: "command",
+      grantMode: "always",
+      present: true,
+    });
+    expect(harness.created).toEqual([{ kind: "command", source: "settings" }]);
+  });
+
+  it("不受信 Origin 不能借设置端点创建 grant", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security/install", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example",
+      },
+      body: JSON.stringify({ grantMode: "always" }),
+    });
+    expect(response.status).toBe(403);
+    expect(harness.created).toHaveLength(0);
   });
 
   it("恢复需要确认属于收紧方向，不需要 nonce 即撤销", async () => {
@@ -137,7 +140,7 @@ describe("安全设置路由", () => {
       source: "card",
       createdAt: new Date().toISOString(),
     }]);
-    const response = await post(harness.app, "install", { needConfirmation: true });
+    const response = await post(harness.app, "install", { grantMode: "ask" });
     expect(response.status).toBe(200);
     expect(harness.revoked).toEqual(["install"]);
     expect(harness.stored.has("install")).toBe(false);
@@ -145,7 +148,7 @@ describe("安全设置路由", () => {
 
   it.each(["send", "connect"])("%s 设置写入始终 hard reject", async (kind) => {
     const harness = makeHarness();
-    const response = await post(harness.app, kind, { needConfirmation: false });
+    const response = await post(harness.app, kind, { grantMode: "always" });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: "这类操作只能每次询问，不能改为自动进行。",
@@ -167,7 +170,7 @@ describe("安全设置路由", () => {
     });
   });
 
-  it("不安全开发开关显式开启时才允许无 nonce 创建", async () => {
+  it("创建返回数据库 canonical 状态", async () => {
     const createGrant = vi.fn(async ({ kind, source }: {
       kind: ConfirmGrantKind;
       source: ConfirmGrantSource;
@@ -198,9 +201,8 @@ describe("安全设置路由", () => {
           },
         };
       },
-      insecureRememberAllowed: () => true,
     }));
-    expect((await post(app, "command", { needConfirmation: false })).status).toBe(200);
+    expect((await post(app, "command", { grantMode: "always" })).status).toBe(200);
     expect(createGrant).toHaveBeenCalledOnce();
   });
 });

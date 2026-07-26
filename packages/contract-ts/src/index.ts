@@ -73,6 +73,7 @@ export * from "./ReviewTemplates";
 export * from "./ReviewRoleSeeds";
 export * from "./Role";
 export * from "./SendMessage";
+export * from "./SecuritySettings";
 export * from "./SubmitReviewOutcome";
 export * from "./SessionMeta";
 export * from "./SessionMode";

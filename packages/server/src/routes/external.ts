@@ -97,11 +97,41 @@ externalRoutes.get("/sessions", async (c) => {
       updatedAt: row.updatedAt,
     });
   }
-  const hasMore = offset + rows.length < total;
-  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: sessions.length, total, hasMore });
+  const memoryOnlySessions: Array<{
+    id: string;
+    title: string;
+    state: ContentDocState["kind"];
+    updatedAt: string;
+  }> = [];
+  for (const sessionId of sessionManager.listSessionIds(50)) {
+    if (await documentRepo.load(sessionId)) continue;
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) continue;
+    memoryOnlySessions.push({
+      id: sessionId,
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  const memoryOffset = Math.max(0, offset - total);
+  const memoryPage = memoryOnlySessions.slice(
+    memoryOffset,
+    memoryOffset + Math.max(0, limit - rows.length),
+  );
+  sessions.push(...memoryPage);
+  const mergedTotal = total + memoryOnlySessions.length;
+  const hasMore = offset + rows.length + memoryPage.length < mergedTotal;
+  externalLog("sessions", {
+    ms: elapsed(startedAt),
+    result: "ok",
+    count: sessions.length,
+    total: mergedTotal,
+    hasMore,
+  });
   return c.json({
     sessions,
-    total,
+    total: mergedTotal,
     hasMore,
   });
 });
@@ -326,12 +356,20 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
   const command: Command = body.verdict === "accepted"
     ? { kind: "acceptPatch", data: { id: body.patchId } }
     : { kind: "rejectPatch", data: { id: body.patchId } };
-  const frames = await sessionManager.submit(sessionId, {
-    command,
-    origin: "external",
-    client: parseExternalClient(c.req.header("x-qa-client")),
-    modelOverrides: await resolveRequestModelOverrides({}),
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   if (session.docVersion !== body.expectedDocVersion) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
   }
@@ -409,12 +447,20 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
   };
   const modelOverrides = await resolveRequestModelOverrides({});
   const client = parseExternalClient(c.req.header("x-qa-client"));
-  const frames = await sessionManager.submit(sessionId, {
-    command,
-    origin: "external",
-    client,
-    modelOverrides,
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command,
+      origin: "external",
+      client,
+      modelOverrides,
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   const seq = maxSeq(frames);
   if (session.docVersion !== body.expectedDocVersion && !hasFrame(frames, "docCommitted")) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, seq);
@@ -518,12 +564,20 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   if (!parsed.success || parsed.data.kind !== "ignoreAnnotationGroups") {
     return externalError(c, 400, "VALIDATION", "批注忽略请求不合法");
   }
-  const frames = await sessionManager.submit(sessionId, {
-    command: parsed.data,
-    origin: "external",
-    client: parseExternalClient(c.req.header("x-qa-client")),
-    modelOverrides: await resolveRequestModelOverrides({}),
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   if (session.docVersion !== body.expectedDocVersion) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
   }

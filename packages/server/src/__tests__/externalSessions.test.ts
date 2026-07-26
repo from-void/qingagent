@@ -6,7 +6,7 @@ import { markdownToPm, normalizePmDoc } from "@qingagent/pm-schema";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import { sessions } from "../gateway/sessionRegistry";
@@ -28,6 +28,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await stopExternalInstance();
   await sessionManager.disposeAll();
   const ids = syntheticSessionIds.splice(0);
@@ -78,6 +79,48 @@ describe("external sessions", () => {
     expect(body.sessions.map((session) => session.id)).not.toContain("orphan-doc-row");
   });
 
+  it("list 补充仅存在于内存的会话并对已落盘会话去重", async () => {
+    const memoryOnlyId = `memory-only-${Date.now()}`;
+    const persistedId = `persisted-${Date.now()}`;
+    const updatedAt = "2026-07-26T00:00:00.000Z";
+    for (const id of [memoryOnlyId, persistedId]) {
+      const session = createSession(id, updatedAt);
+      session.title = id === memoryOnlyId ? "仅内存会话" : "已落盘会话";
+      sessions.set(id, session);
+      syntheticSessionIds.push(id);
+    }
+    await documentRepo.save({
+      id: persistedId,
+      threadId: persistedId,
+      resourceId: QINGAGENT_RESOURCE_ID,
+      title: "已落盘会话",
+      docState: "empty",
+      docVersion: 0,
+      lastSyncedVersion: 0,
+      pmDoc: normalizePmDoc(markdownToPm("")),
+      createdAt: updatedAt,
+      updatedAt,
+    });
+    const listSessionIds = vi.spyOn(sessionManager, "listSessionIds")
+      .mockReturnValue([persistedId, memoryOnlyId]);
+
+    const listed = await app.request("/api/v1/external/sessions", { headers: authHeaders() });
+
+    expect(listed.status).toBe(200);
+    const body = await listed.json() as {
+      sessions: Array<{ id: string; title: string }>;
+      total: number;
+    };
+    expect(listSessionIds).toHaveBeenCalledWith(50);
+    expect(body.sessions.filter((session) => session.id === persistedId)).toHaveLength(1);
+    expect(body.sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: memoryOnlyId, title: "仅内存会话" }),
+    ]));
+    expect(body.sessions.findIndex((session) => session.id === persistedId))
+      .toBeLessThan(body.sessions.findIndex((session) => session.id === memoryOnlyId));
+    expect(body.total).toBeGreaterThanOrEqual(2);
+  });
+
   it("纯改标题后 list 从权威 thread 派生并返回新标题", async () => {
     const created = await app.request("/api/v1/external/sessions", {
       method: "POST",
@@ -108,16 +151,9 @@ describe("external sessions", () => {
   });
 
   it("文档超过默认上限时可分页读取后续会话并返回正确 hasMore", async () => {
-    const beforeSummary = await documentRepo.list({
-      resourceId: QINGAGENT_RESOURCE_ID,
-      perPage: 1,
-    });
-    const before = await documentRepo.list({
-      resourceId: QINGAGENT_RESOURCE_ID,
-      perPage: Math.max(1, beforeSummary.total),
-    });
-    const earliestTime = Date.parse(before.rows.at(-1)?.updatedAt ?? "");
-    const updatedAt = new Date(Number.isFinite(earliestTime) ? earliestTime - 1_000 : 0).toISOString();
+    vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([]);
+    // 固定为最晚时间，避免并行测试新建会话改变本用例的分页边界。
+    const updatedAt = "9999-12-31T23:59:59.999Z";
     const prefix = `pagination-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const ids = Array.from({ length: 102 }, (_, index) => `${prefix}-${String(index).padStart(3, "0")}`).sort();
 
@@ -147,12 +183,11 @@ describe("external sessions", () => {
       total: number;
       hasMore: boolean;
     };
-    expect(firstBody.total).toBe(before.total + ids.length);
+    expect(firstBody.sessions.map((session) => session.id)).toEqual(ids.slice(0, 100));
+    expect(firstBody.total).toBeGreaterThanOrEqual(ids.length);
     expect(firstBody.hasMore).toBe(true);
 
-    const targetOffset = Math.max(100, before.total);
-    const targetIndex = targetOffset - before.total;
-    const second = await app.request(`/api/v1/external/sessions?limit=2&offset=${targetOffset}`, {
+    const second = await app.request("/api/v1/external/sessions?limit=2&offset=100", {
       headers: authHeaders(),
     });
     expect(second.status).toBe(200);
@@ -161,9 +196,9 @@ describe("external sessions", () => {
       total: number;
       hasMore: boolean;
     };
-    expect(secondBody.sessions.map((session) => session.id)).toEqual(ids.slice(targetIndex, targetIndex + 2));
-    expect(secondBody.total).toBe(before.total + ids.length);
-    expect(secondBody.hasMore).toBe(targetOffset + 2 < before.total + ids.length);
+    expect(secondBody.sessions.map((session) => session.id)).toEqual(ids.slice(100, 102));
+    expect(secondBody.total).toBeGreaterThanOrEqual(ids.length);
+    expect(secondBody.hasMore).toBe(102 < secondBody.total);
   });
 });
 

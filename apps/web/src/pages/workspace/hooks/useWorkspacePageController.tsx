@@ -186,6 +186,7 @@ import { useWorkspaceDebugControls } from "./useWorkspaceDebugControls";
 import {
   useWorkspaceDocumentEditor,
   type QueuedDocWrite,
+  type PreparedPageExitDocSave,
   type SendDocWrite,
 } from "./useWorkspaceDocumentEditor";
 import { useWorkspaceFind } from "./useWorkspaceFind";
@@ -197,7 +198,9 @@ import {
 export { RightPane } from "../components/RightPane";
 export {
   buildPageExitDocSaveCommand,
+  flushDocSaveInBackground,
   flushDocSaveOnPageExit,
+  PageExitDocSaveError,
   pageExitDocSaveFingerprint,
   shouldFlushDocSaveOnPageExit,
 } from "../data/pageExitSave";
@@ -522,7 +525,7 @@ export function useWorkspacePageController() {
   const flushPendingDocSaveRef = useRef<() => Promise<void>>(() =>
     Promise.resolve(),
   );
-  const preparePageExitDocSaveRef = useRef<() => (() => void) | null>(
+  const preparePageExitDocSaveRef = useRef<() => PreparedPageExitDocSave | null>(
     () => null,
   );
   const reducedMotionRef = useRef(false);
@@ -1911,7 +1914,10 @@ export function useWorkspacePageController() {
 
     const startWorkspaceStream = (
       targetSessionId: string | null,
-      options: { resetSessionState: boolean },
+      options: {
+        resetSessionState: boolean;
+        preservePreviousStream?: ServerStream | null;
+      },
     ): ServerStream => {
       const previousStream = streamRef.current;
       const abandoningDocSave =
@@ -1965,7 +1971,9 @@ export function useWorkspacePageController() {
         });
       }
 
-      previousStream?.dispose();
+      if (previousStream !== options.preservePreviousStream) {
+        previousStream?.dispose();
+      }
       // 资源注册表是模块级单例,切换会话会残留上一个会话的素材("串了")。
       // 建立新 stream 前先清空;本会话的素材随后由 restore/实时 resourceUpserted 帧重建。
       resources.reset();
@@ -2170,8 +2178,9 @@ export function useWorkspacePageController() {
       )
         return;
       // hash/popstate 切换不会触发组件 cleanup；先以旧 sessionId 捕获当前编辑器正文，
-      // 正常 flush 超时/失败时复用退出页的 beacon/keepalive 兜底，再清旧会话队列。
+      // 正常 flush 超时/失败时把最新正文和旧 stream 转交后台链，再立即切换会话。
       const fallbackDocSave = preparePageExitDocSaveRef.current();
+      let preservedPreviousStream: ServerStream | null = null;
       try {
         await new Promise<void>((resolve, reject) => {
           const timer = window.setTimeout(
@@ -2194,9 +2203,14 @@ export function useWorkspacePageController() {
           "[workspace] failed to flush updateDoc before session switch",
           error,
         );
-        fallbackDocSave?.();
+        preservedPreviousStream =
+          fallbackDocSave?.({ deferUntilPendingSettles: true })
+            ?.preservedStream ?? null;
       }
-      startWorkspaceStream(nextSessionId, { resetSessionState: true });
+      startWorkspaceStream(nextSessionId, {
+        resetSessionState: true,
+        preservePreviousStream: preservedPreviousStream,
+      });
     };
 
     // hashchange:用户改地址栏 hash(含 session 参数)即重切会话。
@@ -2224,6 +2238,7 @@ export function useWorkspacePageController() {
         }
         void (async () => {
           let timeout: ReturnType<typeof setTimeout> | null = null;
+          let handoffOwnsStream = false;
           try {
             await Promise.race([
               flushPendingDocSaveRef.current(),
@@ -2239,11 +2254,19 @@ export function useWorkspacePageController() {
               "[workspace] failed to flush updateDoc before workspace exit",
               error,
             );
-            fallbackDocSave();
+            const handoff = fallbackDocSave({
+              deferUntilPendingSettles: true,
+            });
+            handoffOwnsStream =
+              handoff?.preservedStream === streamToDispose;
           } finally {
             if (timeout !== null) clearTimeout(timeout);
-            streamToDispose.dispose();
-            if (streamRef.current === streamToDispose) streamRef.current = null;
+            if (!handoffOwnsStream) {
+              streamToDispose.dispose();
+              if (streamRef.current === streamToDispose) {
+                streamRef.current = null;
+              }
+            }
           }
         })();
       }, 75);
@@ -2551,6 +2574,7 @@ export function useWorkspacePageController() {
     showToast,
     showBackgroundDocSaveFailure,
     rejectPendingDocSaveDrain,
+    resolvePendingDocSaveDrain,
     waitForPendingDocSaveDrain,
   });
   flushPendingDocSaveRef.current = flushPendingDocSave;

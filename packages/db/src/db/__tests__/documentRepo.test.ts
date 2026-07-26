@@ -247,22 +247,31 @@ describe("documentRepo", () => {
     await documentRepo.saveMany([
       input("exists-a"),
       input("exists-b"),
+      input("other-resource", { resourceId: "other-user" }),
+      input("derivative"),
     ]);
     const client = getDocumentsClient();
+    await client.execute({
+      sql: "UPDATE documents SET role = 'derivative' WHERE id = ?",
+      args: ["derivative"],
+    });
     const execute = vi.spyOn(client, "execute");
 
-    const existing = await documentRepo.existsByIds([
+    const existing = await documentRepo.existsByIds("qingagent-user", [
       "exists-a",
       "missing",
       "exists-b",
       "exists-a",
+      "other-resource",
+      "derivative",
     ]);
 
     expect(existing).toEqual(new Set(["exists-a", "exists-b"]));
     const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
-    expect(sql).toMatch(/^\s*SELECT id FROM documents WHERE id IN/i);
+    expect(sql).toMatch(/resource_id = \? AND role = 'main' AND id IN/i);
     expect(sql).not.toContain("*");
     await expect(documentRepo.existsByIds(
+      "qingagent-user",
       Array.from({ length: 51 }, (_, index) => `id-${index}`),
     )).rejects.toThrow("最多查询 50 个 id");
   });

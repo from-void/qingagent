@@ -53,7 +53,7 @@ export interface DocumentSaveInput {
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
   findIdByThreadId(threadId: string): Promise<string | null>;
-  existsByIds(ids: string[]): Promise<Set<string>>;
+  existsByIds(resourceId: string, ids: string[]): Promise<Set<string>>;
   save(input: DocumentSaveInput): Promise<void>;
   saveMany(inputs: DocumentSaveInput[]): Promise<void>;
   list(opts: {
@@ -422,7 +422,7 @@ export const documentRepo: DocumentRepo = {
     return result.rows[0]?.id == null ? null : String(result.rows[0].id);
   },
 
-  async existsByIds(ids) {
+  async existsByIds(resourceId, ids) {
     const uniqueIds = [...new Set(ids)];
     if (uniqueIds.length === 0) return new Set();
     if (uniqueIds.length > MAX_EXISTS_BY_IDS) {
@@ -431,9 +431,10 @@ export const documentRepo: DocumentRepo = {
     const client = await readyClient();
     const placeholders = uniqueIds.map(() => "?").join(", ");
     const result = await client.execute({
-      // 只取主键，供小集合存在性判断；禁止退化成 documents 全行扫描。
-      sql: `SELECT id FROM documents WHERE id IN (${placeholders})`,
-      args: uniqueIds,
+      // 只取指定资源的主文档主键，供小集合存在性判断；禁止退化成 documents 全行扫描。
+      sql: `SELECT id FROM documents
+        WHERE resource_id = ? AND role = 'main' AND id IN (${placeholders})`,
+      args: [resourceId, ...uniqueIds],
     });
     return new Set(result.rows.map((row) => valueAsString(row.id)));
   },

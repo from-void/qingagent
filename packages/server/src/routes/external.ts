@@ -113,7 +113,10 @@ externalRoutes.get("/sessions", async (c) => {
     (sessionId) => !persistedSessionIds.has(sessionId),
   );
   if (unresolvedMemoryIds.length > 0) {
-    const offPageDocumentIds = await documentRepo.existsByIds(unresolvedMemoryIds);
+    const offPageDocumentIds = await documentRepo.existsByIds(
+      QINGAGENT_RESOURCE_ID,
+      unresolvedMemoryIds,
+    );
     for (const sessionId of offPageDocumentIds) {
       if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
         persistedSessionIds.add(sessionId);

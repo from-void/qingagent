@@ -96,6 +96,131 @@ describe("ChatInput", () => {
     expect(onChange).toHaveBeenLastCalledWith("hello", 0);
   });
 
+  it("Enter 发送，多行编辑中间也不插入换行", async () => {
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "第一行\n第二行");
+
+    const event = keyboardEvent("Enter");
+    act(() => {
+      edit.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("Shift+Enter 交还 contenteditable 执行换行，不发送", async () => {
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "需要换行");
+
+    const event = keyboardEvent("Enter", { shiftKey: true });
+    act(() => {
+      edit.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("IME 组合态 Enter 与 keyCode 229 只选字，compositionend 后首个独立 Enter 才发送", async () => {
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    bindInnerText(edit);
+
+    act(() => {
+      edit.dispatchEvent(compositionEvent("compositionstart"));
+      edit.innerText = "ni";
+      edit.dispatchEvent(inputEvent(true));
+    });
+
+    const composingEnter = keyboardEvent("Enter", { isComposing: true });
+    const legacyComposingEnter = keyboardEvent("Enter", { keyCode: 229 });
+    act(() => {
+      edit.dispatchEvent(composingEnter);
+      edit.dispatchEvent(legacyComposingEnter);
+    });
+
+    expect(composingEnter.defaultPrevented).toBe(false);
+    expect(legacyComposingEnter.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    act(() => {
+      edit.innerText = "你";
+      edit.dispatchEvent(compositionEvent("compositionend"));
+    });
+    const independentEnter = keyboardEvent("Enter");
+    act(() => {
+      edit.dispatchEvent(independentEnter);
+    });
+
+    expect(independentEnter.defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("空内容 Enter 阻止默认换行且不发送", async () => {
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const event = keyboardEvent("Enter");
+    act(() => {
+      getEditor().dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl/Cmd+Enter 仍是发送别名，发送按钮提示同步展示新键位", async () => {
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "保留肌肉记忆");
+
+    act(() => {
+      edit.dispatchEvent(keyboardEvent("Enter", { ctrlKey: true }));
+      edit.dispatchEvent(keyboardEvent("Enter", { metaKey: true }));
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(host?.querySelector<HTMLButtonElement>("button[title*='Enter 发送']")?.title)
+      .toBe("Enter 发送 · Shift+Enter 换行");
+  });
+
   it("会话内文件 input 启用多选，一次选择的文件全部生成 attach chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
@@ -1088,6 +1213,33 @@ function bindInnerText(element: HTMLElement): void {
       element.textContent = value;
     },
   });
+}
+
+function setEditorText(element: HTMLElement, text: string): void {
+  bindInnerText(element);
+  act(() => {
+    element.innerText = text;
+    element.dispatchEvent(inputEvent(false));
+  });
+}
+
+function keyboardEvent(
+  key: string,
+  init: KeyboardEventInit & { keyCode?: number } = {},
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  if (init.keyCode !== undefined && event.keyCode !== init.keyCode) {
+    Object.defineProperty(event, "keyCode", {
+      configurable: true,
+      value: init.keyCode,
+    });
+  }
+  return event;
 }
 
 function compositionEvent(type: "compositionstart" | "compositionend"): Event {

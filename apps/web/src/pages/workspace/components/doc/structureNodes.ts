@@ -29,14 +29,21 @@ export function createDefaultTableNode(rows = 3, cols = 3, withHeaderRow = false
 }
 
 export function insertStructureNodeAfterBlock(
-  editor: Pick<Editor, "state" | "chain">,
+  editor: Pick<Editor, "state" | "chain" | "view">,
   blockPos: number,
   node: Record<string, unknown>,
 ): boolean {
   const current = editor.state.doc.nodeAt(blockPos);
   if (!current) return false;
   const after = blockPos + current.nodeSize;
-  return editor.chain().focus().insertContentAt(after, node).run();
+  const chain = editor.chain().focus().insertContentAt(after, node);
+  if (node.type === "columnList") {
+    // columnList(+1) → 第一栏 column(+1) → 首个文本块(+1)，插入后即可直接输入。
+    const inserted = chain.setTextSelection(after + 3).run();
+    if (inserted) editor.view.focus();
+    return inserted;
+  }
+  return chain.run();
 }
 
 export function createBlockDragPayload(

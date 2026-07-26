@@ -515,6 +515,11 @@ describe("DocToolbar round-1 regressions", () => {
     // 空段只允许出现在列内作为必需占位内容。e2e v09/v15/v16 三次把"空列视觉"误报成"多余空段")。
     expect(doc.content).toHaveLength(2);
     expect(doc.content.filter((n) => n.type === "paragraph" && !((n as { content?: unknown[] }).content?.length))).toHaveLength(0);
+    expect(editor.state.selection).toBeInstanceOf(TextSelection);
+    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+    expect(editor.state.selection.$from.node(-1).type.name).toBe("column");
+    expect(editor.state.selection.$from.index(-2)).toBe(0);
+    expect(editor.view.hasFocus()).toBe(true);
   });
 
   it("工具栏可以切换有序列表序号样式", async () => {

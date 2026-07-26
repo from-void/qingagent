@@ -53,13 +53,6 @@ export function WorkspacePage() {
             aria-hidden="true"
           />
         )}
-        {!showChat && !showDocument ? (
-          <div
-            className="ws-hydration-canvas"
-            data-wf="WorkspaceHydrationCanvas"
-            aria-hidden="true"
-          />
-        ) : null}
       </div>
       <WorkspaceOverlays controller={controller} />
     </section>

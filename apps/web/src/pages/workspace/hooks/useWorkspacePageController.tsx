@@ -162,8 +162,8 @@ import {
 } from "../data/workspaceState";
 import {
   initialWorkspaceHydration,
-  WORKSPACE_DOCUMENT_LEAD_MS,
   WORKSPACE_HYDRATION_TIMEOUT_MS,
+  type WorkspaceHydrationAction,
   workspaceHydrationReducer,
 } from "../data/workspaceHydration";
 import { useAutoScroll } from "../useAutoScroll";
@@ -270,16 +270,11 @@ export function useWorkspacePageController() {
       ? null
       : workspaceSessionIdFromHash(window.location.hash),
   );
-  const [hydration, dispatchHydration] = useReducer(
-    workspaceHydrationReducer,
-    initialHydrationSessionIdRef.current,
-    initialWorkspaceHydration,
+  const [hydration, setHydration] = useState(() =>
+    initialWorkspaceHydration(initialHydrationSessionIdRef.current),
   );
   const hydrationRef = useRef(hydration);
   const hydrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const hydrationDocumentLeadRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const [derivatives, setDerivatives] = useState<DerivativeItem[]>([]);
@@ -366,73 +361,89 @@ export function useWorkspacePageController() {
   const startSessionPromisesBySessionRef = useRef<Map<string, Promise<string>>>(
     new Map(),
   );
+  const applyWorkspaceHydrationAction = useCallback(
+    (action: WorkspaceHydrationAction) => {
+      const current = hydrationRef.current;
+      const next = workspaceHydrationReducer(current, action);
+      if (next !== current) {
+        // 同步推进 ref，避免同一事件循环内的 restoreReset/startSession 看见旧相位，
+        // 在 React 下一次 render 前把 ready 误重置为 waiting。
+        hydrationRef.current = next;
+        setHydration(next);
+      }
+      return next;
+    },
+    [],
+  );
   const clearHydrationTimers = useCallback(() => {
     if (hydrationTimeoutRef.current !== null) {
       clearTimeout(hydrationTimeoutRef.current);
       hydrationTimeoutRef.current = null;
     }
-    if (hydrationDocumentLeadRef.current !== null) {
-      clearTimeout(hydrationDocumentLeadRef.current);
-      hydrationDocumentLeadRef.current = null;
-    }
   }, []);
   const beginWorkspaceHydration = useCallback(
     (sessionId: string | null) => {
+      const current = hydrationRef.current;
+      if (current.sessionId === sessionId) {
+        // 初始 hash 已把门设为 waiting；第一次真正发起恢复时只补上绝对超时，
+        // 同会话之后的重连/重复 effect 一律不重开门、也不重置 4s 预算。
+        if (
+          sessionId &&
+          current.phase === "waiting" &&
+          hydrationTimeoutRef.current === null
+        ) {
+          hydrationTimeoutRef.current = setTimeout(() => {
+            hydrationTimeoutRef.current = null;
+            applyWorkspaceHydrationAction({ kind: "timeout", sessionId });
+          }, WORKSPACE_HYDRATION_TIMEOUT_MS);
+        }
+        return;
+      }
       clearHydrationTimers();
-      hydrationRef.current = initialWorkspaceHydration(sessionId);
-      dispatchHydration({ kind: "begin", sessionId });
+      applyWorkspaceHydrationAction({ kind: "begin", sessionId });
       if (!sessionId) return;
       hydrationTimeoutRef.current = setTimeout(() => {
         hydrationTimeoutRef.current = null;
-        if (hydrationDocumentLeadRef.current !== null) {
-          clearTimeout(hydrationDocumentLeadRef.current);
-          hydrationDocumentLeadRef.current = null;
-        }
-        dispatchHydration({ kind: "timeout", sessionId });
+        applyWorkspaceHydrationAction({ kind: "timeout", sessionId });
       }, WORKSPACE_HYDRATION_TIMEOUT_MS);
     },
-    [clearHydrationTimers],
+    [applyWorkspaceHydrationAction, clearHydrationTimers],
   );
   const observeHydrationFrame = useCallback(
     (frame: BridgeFrame, fallbackSessionId: string | null) => {
       if (frame.kind === "restoreReset") {
-        const current = hydrationRef.current;
-        // startWorkspaceStream 已在请求发出时启动绝对 4s 门限；初次 restoreReset
-        // 不得把弱网预算重新计时。只有已稳定呈现后的重连才开启新一轮门控。
-        if (
-          current.sessionId === fallbackSessionId &&
-          (current.phase !== "ready" || current.timedOut)
-        ) {
-          return;
-        }
+        // begin 对同会话是幂等的：既不 ready→waiting，也不重启弱网预算；
+        // waiting 内的新恢复批次另行清掉上一批的半完成信号。
         beginWorkspaceHydration(fallbackSessionId);
+        if (fallbackSessionId) {
+          applyWorkspaceHydrationAction({
+            kind: "restoreReset",
+            sessionId: fallbackSessionId,
+          });
+        }
         return;
       }
       if (frame.kind === "documentSnapshotWritten" && fallbackSessionId) {
-        dispatchHydration({
+        applyWorkspaceHydrationAction({
           kind: "documentObserved",
           sessionId: fallbackSessionId,
         });
-        if (hydrationDocumentLeadRef.current === null) {
-          hydrationDocumentLeadRef.current = setTimeout(() => {
-            hydrationDocumentLeadRef.current = null;
-            dispatchHydration({
-              kind: "documentLeadElapsed",
-              sessionId: fallbackSessionId,
-            });
-          }, WORKSPACE_DOCUMENT_LEAD_MS);
-        }
         return;
       }
       if (frame.kind === "sessionRestoreCompleted") {
-        clearHydrationTimers();
-        dispatchHydration({
+        const next = applyWorkspaceHydrationAction({
           kind: "restoreCompleted",
           sessionId: frame.data.sessionId,
         });
+        // 有正文时完成帧只代表协议首批结束；编辑器首帧尚未可画就继续守门。
+        if (next.phase === "ready") clearHydrationTimers();
       }
     },
-    [beginWorkspaceHydration, clearHydrationTimers],
+    [
+      applyWorkspaceHydrationAction,
+      beginWorkspaceHydration,
+      clearHydrationTimers,
+    ],
   );
   const restoreExistingSessionIdRef = useRef<string | null>(null);
   const lastRetriableSendRef = useRef<Extract<
@@ -504,6 +515,18 @@ export function useWorkspacePageController() {
   }
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
+  const markDocumentSurfaceReady = useCallback(
+    () => {
+      const sessionId = hydrationRef.current.sessionId;
+      if (!sessionId) return;
+      const next = applyWorkspaceHydrationAction({
+        kind: "documentSurfaceReady",
+        sessionId,
+      });
+      if (next.phase === "ready") clearHydrationTimers();
+    },
+    [applyWorkspaceHydrationAction, clearHydrationTimers],
+  );
   const toast = useToast();
   const confirm = useConfirm();
   const showToast = useCallback(
@@ -729,6 +752,7 @@ export function useWorkspacePageController() {
     docScrollRef,
     chatScrollRef,
     sessionId: state.sessionId,
+    hydrationReady: hydration.phase === "ready",
     reducedMotion,
     flushPendingDocSave: flushPendingDocSaveBeforeNavigation,
   });
@@ -3060,6 +3084,7 @@ export function useWorkspacePageController() {
     handlePatchVerdict,
     closeViewingVersion,
     setTiptapEditor,
+    markDocumentSurfaceReady,
     handleEditorChange,
     clearPresentationRun,
     findOpen,

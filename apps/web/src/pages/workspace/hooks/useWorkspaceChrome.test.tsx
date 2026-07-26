@@ -2,7 +2,11 @@
 import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { peekHomeArrive } from "../../new-session/transition/origin";
+import {
+  peekHomeArrive,
+  peekWorkspaceArrive,
+  setWorkspaceArrive,
+} from "../../new-session/transition/origin";
 import { useWorkspaceChrome } from "./useWorkspaceChrome";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,9 +57,70 @@ describe("useWorkspaceChrome 返回首页", () => {
     });
     expect(peekHomeArrive()?.sessionId).toBeUndefined();
   });
+
+  it("到场态持续等 hydration ready，随后只启动一次揭示", async () => {
+    setWorkspaceArrive({
+      rect: { left: 20, top: 52, width: 800, height: 600 },
+      x: 420,
+      y: 120,
+      sessionId: "session-existing",
+    });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(createElement(Harness, { hydrationReady: false }));
+    });
+    const view = host.querySelector("#view-workspace");
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
+
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+    expect(peekWorkspaceArrive()).not.toBeNull();
+
+    await act(async () => {
+      root?.render(createElement(Harness, { hydrationReady: true }));
+    });
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+
+    act(() => vi.advanceTimersByTime(16));
+    expect(view?.classList.contains("ws-arriving")).toBe(false);
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(true);
+    expect(peekWorkspaceArrive()).toBeNull();
+
+    act(() => vi.advanceTimersByTime(760));
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
+  });
+
+  it("直接打开既有会话也等 ready 后复用同一揭示，新建 ready 不受拖慢", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(createElement(Harness, { hydrationReady: false }));
+    });
+    const view = host.querySelector("#view-workspace");
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+
+    await act(async () => {
+      root?.render(createElement(Harness, { hydrationReady: true }));
+    });
+    act(() => vi.advanceTimersByTime(16));
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(true);
+
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(Harness, { hydrationReady: true }));
+    });
+    expect(host.querySelector("#view-workspace")?.className).toBe("");
+  });
 });
 
-function Harness() {
+function Harness({ hydrationReady = true }: { hydrationReady?: boolean }) {
   const viewRef = useRef<HTMLElement>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -64,6 +129,7 @@ function Harness() {
     docScrollRef,
     chatScrollRef,
     sessionId: null,
+    hydrationReady,
     reducedMotion: false,
     flushPendingDocSave: async () => undefined,
   });

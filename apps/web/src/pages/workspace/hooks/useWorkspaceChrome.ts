@@ -19,11 +19,19 @@ export function useWorkspaceChrome(input: {
   docScrollRef: RefObject<HTMLDivElement | null>;
   chatScrollRef: RefObject<HTMLDivElement | null>;
   sessionId: string | null;
+  hydrationReady: boolean;
   reducedMotion: boolean;
   flushPendingDocSave: () => Promise<void>;
 }) {
   const homeReturnTransitionRef = useRef(false);
   const homeReturnTimerRef = useRef<number | null>(null);
+  const workspaceArrivePendingRef = useRef<boolean | null>(null);
+  if (workspaceArrivePendingRef.current === null) {
+    // 首页交接与“直接打开既有会话”共用同一场揭示：前者有 arrive
+    // 载荷，后者以 hydration waiting 本身作为待揭示信号；新建空白两者皆无。
+    workspaceArrivePendingRef.current =
+      Boolean(peekWorkspaceArrive()) || !input.hydrationReady;
+  }
 
   useLayoutEffect(() => {
     const element = input.viewRef.current;
@@ -90,31 +98,45 @@ export function useWorkspaceChrome(input: {
   }, [input.viewRef]);
 
   useLayoutEffect(() => {
-    if (!peekWorkspaceArrive()) return;
+    if (!workspaceArrivePendingRef.current) return;
     const view = input.viewRef.current;
     if (!view) return;
     view.classList.add("ws-arriving");
-    let firstFrame = 0;
-    let secondFrame = 0;
-    let timer = 0;
-    firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        clearWorkspaceArrive();
-        view.classList.remove("ws-arriving");
-        view.classList.add("ws-arrive-revealing");
-        timer = window.setTimeout(
-          () => view.classList.remove("ws-arrive-revealing"),
-          760,
-        );
-      });
-    });
     return () => {
-      cancelAnimationFrame(firstFrame);
-      cancelAnimationFrame(secondFrame);
-      if (timer) window.clearTimeout(timer);
       view.classList.remove("ws-arriving", "ws-arrive-revealing");
     };
   }, [input.viewRef]);
+
+  useLayoutEffect(() => {
+    if (!workspaceArrivePendingRef.current || !input.hydrationReady) return;
+    const view = input.viewRef.current;
+    if (!view) return;
+
+    let revealFrame = 0;
+    let revealTimer = 0;
+    const reveal = () => {
+      clearWorkspaceArrive();
+      workspaceArrivePendingRef.current = false;
+      view.classList.remove("ws-arriving");
+      if (input.reducedMotion) return;
+      view.classList.add("ws-arrive-revealing");
+      revealTimer = window.setTimeout(
+        () => view.classList.remove("ws-arrive-revealing"),
+        760,
+      );
+    };
+
+    // waiting 已经作为稳定首帧画过；ready 后只跨一个 rAF 开始唯一一次揭示。
+    // 不再独立跑“2 rAF + 固定时刻”的自启动编舞。
+    if (input.reducedMotion) reveal();
+    else revealFrame = requestAnimationFrame(reveal);
+
+    return () => {
+      if (revealFrame) cancelAnimationFrame(revealFrame);
+      if (revealTimer) window.clearTimeout(revealTimer);
+      view.classList.remove("ws-arrive-revealing");
+    };
+  }, [input.hydrationReady, input.reducedMotion, input.viewRef]);
 
   useEffect(() => {
     const doc = input.docScrollRef.current;

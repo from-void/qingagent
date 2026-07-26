@@ -2,10 +2,15 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import { DEFAULT_DRAWIO_SOURCE, pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
+import type { DrawioEditorResult } from "../drawioEmbedProtocol";
 import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
 import { findDraggableListItem, LIST_ITEM_DND_MIME, resolveListItemByBlockId, type DraggableListItem } from "../ListItemDnD";
 import { getBlockCollapseInfo, qingagentCollapseKey, toggleBlockCollapse } from "../BlockCollapse";
 import { openDrawioEditor } from "../drawioEditorLauncher";
+import {
+  createDrawioBlockId,
+  writeDrawioResultByBlockId,
+} from "../drawioDocumentWriteback";
 import { insertFileAsset, insertImageAsset } from "../../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../../data/uploadAsset";
 import { pickFile } from "./pickFile";
@@ -612,17 +617,31 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           return;
         case "drawio": {
           try {
-            const result = await openDrawioEditor(DEFAULT_DRAWIO_SOURCE, "新建 drawio 工程图");
-            if (!result || !editor.isEditable) return;
-            insertStructureBlockAfter(
+            const blockId = createDrawioBlockId();
+            const inserted = insertStructureBlockAfter(
               h,
               {
                 type: "diagram",
-                attrs: { lang: "drawio", source: result.source, svg: result.svg },
+                attrs: {
+                  blockId,
+                  lang: "drawio",
+                  source: DEFAULT_DRAWIO_SOURCE,
+                  svg: null,
+                },
               },
               "插入 drawio 工程图",
             );
-            if (result.warning) onToast?.(result.warning);
+            if (!inserted) return;
+            const writeBack = (result: DrawioEditorResult) => {
+              if (!editor.isEditable) return;
+              writeDrawioResultByBlockId(editor, blockId, result);
+            };
+            const result = await openDrawioEditor(
+              DEFAULT_DRAWIO_SOURCE,
+              "新建 drawio 工程图",
+              writeBack,
+            );
+            if (result) writeBack(result);
           } catch (drawioError) {
             onToast?.(drawioError instanceof Error ? drawioError.message : String(drawioError));
           }

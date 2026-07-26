@@ -276,9 +276,6 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
           { source: result.source, svg: result.svg },
           { visualWrite: true },
         );
-        if (result.warning) {
-          toast.show({ message: result.warning, tone: "warn" });
-        }
       })
         .catch((openError) => {
           if (!mountedRef.current) return;
@@ -572,7 +569,12 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     diagram: {
       /** 在当前位置插入一个图表块(默认 mermaid 流程图模板)。 */
-      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string; svg?: string | null }) => ReturnType;
+      insertDiagram: (attrs?: {
+        blockId?: string;
+        lang?: PmDiagramLang;
+        source?: string;
+        svg?: string | null;
+      }) => ReturnType;
     };
   }
 }
@@ -679,7 +681,12 @@ export const DiagramCM = Node.create({
             const source = attrs?.source ?? (lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE);
             return commands.insertContent({
               type: "diagram",
-              attrs: { lang, source, svg: attrs?.svg ?? null },
+              attrs: {
+                ...(attrs?.blockId ? { blockId: attrs.blockId } : {}),
+                lang,
+                source,
+                svg: attrs?.svg ?? null,
+              },
             });
           },
     };

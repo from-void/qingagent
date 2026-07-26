@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDrawioEditor } from "../../components/drawioEditorLauncher";
 import { BlockHandle } from "../../components/doc/BlockHandle";
@@ -59,6 +59,12 @@ describe("BlockHandle 表格专属菜单", () => {
     await act(async () => insertDrawio?.click());
 
     expect(onToast).toHaveBeenCalledWith("已有 drawio 编辑器正在打开");
+    expect(editor.getJSON().content?.find((node) => node.type === "diagram")?.attrs).toMatchObject({
+      blockId: expect.stringMatching(/^drawio-/),
+      lang: "drawio",
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: null,
+    });
   });
 
   it("空表仍显示完整表格菜单，且隐藏转换格式", async () => {

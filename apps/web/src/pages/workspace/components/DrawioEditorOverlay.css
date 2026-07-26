@@ -44,11 +44,7 @@
   white-space: nowrap;
 }
 
-.drawio-editor-overlay__heading span.is-error {
-  color: var(--mark);
-}
-
-.drawio-editor-overlay__cancel {
+.drawio-editor-overlay__complete {
   flex: 0 0 auto;
   height: 30px;
   padding: 0 14px;
@@ -61,7 +57,7 @@
   cursor: pointer;
 }
 
-.drawio-editor-overlay__cancel:hover {
+.drawio-editor-overlay__complete:hover {
   border-color: var(--line-3);
   background: var(--bg-hover);
   color: var(--ink-1);

@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
@@ -453,7 +453,7 @@ describe("DocToolbar round-1 regressions", () => {
     expect(onToast).toHaveBeenCalledWith("无法执行：引用");
   });
 
-  it("工具栏新建 drawio 保存后插入 source+svg，取消时不写文档", async () => {
+  it("工具栏新建 drawio 会先插入默认块，再把实时回调绑定到该块", async () => {
     const fakeEditor = createCommandEditor(true);
     const insertDiagram = vi.mocked(fakeEditor.chain().insertDiagram);
     const onToast = vi.fn();
@@ -469,21 +469,30 @@ describe("DocToolbar round-1 regressions", () => {
 
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).not.toHaveBeenCalled();
+    expect(insertDiagram).toHaveBeenCalledWith(expect.objectContaining({
+      blockId: expect.stringMatching(/^drawio-/),
+      lang: "drawio",
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: null,
+    }));
+    expect(openDrawioEditor).toHaveBeenCalledWith(
+      DEFAULT_DRAWIO_SOURCE,
+      "新建 drawio 工程图",
+      expect.any(Function),
+    );
 
     const source = "<mxGraphModel><root><mxCell id=\"0\"/></root></mxGraphModel>";
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>';
     vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg });
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenCalledWith({ lang: "drawio", source, svg });
-
-    const warning = "drawio 原生 SVG 导出超时，已改用本地渲染保存";
-    vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg: null, warning });
-    await act(async () => getButtonByText("插入").click());
-    await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenLastCalledWith({ lang: "drawio", source, svg: null });
-    expect(onToast).toHaveBeenCalledWith(warning);
+    expect(insertDiagram).toHaveBeenLastCalledWith(expect.objectContaining({
+      blockId: expect.stringMatching(/^drawio-/),
+      lang: "drawio",
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: null,
+    }));
+    expect(onToast).not.toHaveBeenCalled();
   });
 
   it("工具栏插入分栏会写入 columnList 节点", async () => {
@@ -807,7 +816,11 @@ function createCommandEditor(runResult: boolean): Editor {
     chain: () => chain,
     state: {
       selection: { from: 0, to: 0, empty: true },
-      doc: { textBetween: () => "", content: { size: 0 } },
+      doc: {
+        textBetween: () => "",
+        descendants: () => undefined,
+        content: { size: 0 },
+      },
     },
     view: {
       dom: document.createElement("div"),

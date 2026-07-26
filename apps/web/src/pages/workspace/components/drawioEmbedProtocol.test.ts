@@ -25,6 +25,13 @@ describe("drawio JSON embed 协议", () => {
   it("只接收白名单事件与正确字段", () => {
     expect(parseDrawioEmbedMessage('{"event":"init"}')).toEqual({ event: "init" });
     expect(parseDrawioEmbedMessage({ event: "load" })).toEqual({ event: "load" });
+    expect(parseDrawioEmbedMessage({
+      event: "autosave",
+      xml: DEFAULT_DRAWIO_SOURCE,
+    })).toEqual({
+      event: "autosave",
+      xml: DEFAULT_DRAWIO_SOURCE,
+    });
     expect(parseDrawioEmbedMessage({ event: "save", xml: DEFAULT_DRAWIO_SOURCE, exit: true })).toEqual({
       event: "save",
       xml: DEFAULT_DRAWIO_SOURCE,
@@ -54,6 +61,7 @@ describe("drawio JSON embed 协议", () => {
       action: "load",
       title: "工程图",
       saveAndExit: true,
+      autosave: true,
       xml: DEFAULT_DRAWIO_SOURCE,
     });
     const request = createDrawioSnapshotRequest(DEFAULT_DRAWIO_SOURCE);

@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DRAWIO_AUTOSAVE_DEBOUNCE_MS,
   DRAWIO_EXPORT_TIMEOUT_MS,
   DRAWIO_FALLBACK_TIMEOUT_MS,
   type DrawioEditorResult,
@@ -65,7 +66,7 @@ describe("drawio 全屏编辑面板", () => {
     expect(fake.postMessage.mock.calls[0]?.[1]).toBe(window.location.origin);
   });
 
-  it("offline 模式仍精确恢复三个 embed 保存按钮", async () => {
+  it("offline 模式隐藏保存语义，只保留「完成」出口", async () => {
     const fake = await createFakeV31Embed(vi.fn(), vi.fn());
     const frameDocument = fake.iframe.contentDocument;
     if (!frameDocument) throw new Error("iframe contentDocument 缺失");
@@ -95,11 +96,96 @@ describe("drawio 全屏编辑面板", () => {
       frameDocument.getElementById("qingagent-drawio-embed-fixes")?.textContent,
     ).toContain(".geToolbarContainer > .geButtonContainer");
     expect(fake.frameWindow.getComputedStyle(buttonContainer).display).toBe("inline-flex");
-    expect(Array.from(buttonContainer.children).map((button) => button.textContent)).toEqual([
-      "保存",
-      "保存并退出",
-      "退出",
+    expect(Array.from(buttonContainer.children).map((button) => ({
+      label: button.textContent,
+      display: fake.frameWindow.getComputedStyle(button).display,
+    }))).toEqual([
+      { label: "保存", display: "none" },
+      { label: "保存并退出", display: "none" },
+      { label: "完成", display: expect.not.stringMatching(/^none$/) },
     ]);
+  });
+
+  it("autosave 事件约一秒防抖，只为最后一版启动 snapshot 写回", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const fake = await createFakeV31Embed(onSave, vi.fn());
+    await fake.init();
+    const first = drawioSource("防抖第一版");
+    const latest = drawioSource("防抖最后版");
+
+    await fake.autosave(first);
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS / 2));
+    await fake.autosave(latest);
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS - 1));
+    expect(fake.postedActions().map((action) => action.action)).toEqual(["load"]);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fake.postedActions().slice(-2)).toEqual([
+      { action: "status", modified: true },
+      { action: "snapshot" },
+    ]);
+    await fake.exportSvg(svgDataUri("防抖最后版"));
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave).toHaveBeenCalledWith({
+      source: latest,
+      svg: expect.stringContaining("防抖最后版"),
+    });
+  });
+
+  it("上一笔 snapshot 未完成时不并发，完成后串行写回排队的最后一版", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const fake = await createFakeV31Embed(onSave, vi.fn());
+    await fake.init();
+    const first = drawioSource("串行第一版");
+    const latest = drawioSource("串行最后版");
+
+    await fake.autosave(first);
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS));
+    await fake.autosave(latest);
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS - 1));
+    expect(fake.postedActions().filter((action) => action.action === "snapshot")).toHaveLength(1);
+
+    await fake.exportSvg(svgDataUri("串行第一版"));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(fake.postedActions().filter((action) => action.action === "snapshot")).toHaveLength(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fake.postedActions().filter((action) => action.action === "snapshot")).toHaveLength(2);
+
+    await fake.exportSvg(svgDataUri("串行最后版"));
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[1]?.[0]).toMatchObject({
+      source: latest,
+      svg: expect.stringContaining("串行最后版"),
+    });
+  });
+
+  it("点击完成会跳过剩余防抖时间，flush 最后一版后才关闭", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+    const latest = drawioSource("关闭前最后一版");
+
+    await fake.autosave(latest);
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
+    });
+    expect(fake.postedActions().slice(-2)).toEqual([
+      { action: "status", modified: true },
+      { action: "snapshot" },
+    ]);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await fake.exportSvg(svgDataUri("关闭前最后一版"));
+    expect(onSave).toHaveBeenCalledWith({
+      source: latest,
+      svg: expect.stringContaining("关闭前最后一版"),
+    });
+    expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
   });
 
   it("保存不退出时按 snapshot 握手立即回写，并保持编辑器打开", async () => {
@@ -156,6 +242,7 @@ describe("drawio 全屏编辑面板", () => {
       expect.objectContaining({ action: "load" }),
       { action: "status", modified: true },
       { action: "snapshot" },
+      { action: "status", modified: false },
     ]);
   });
 
@@ -180,31 +267,23 @@ describe("drawio 全屏编辑面板", () => {
     expect(onClose).toHaveBeenCalledWith(expected);
   });
 
-  it("无改动保存也会先置脏再请求 snapshot，避免 v31 静默不回", async () => {
+  it("无改动关闭不触发 snapshot 或降级覆盖高保真", async () => {
+    vi.useFakeTimers();
     const onSave = vi.fn();
     const onClose = vi.fn();
     const fake = await createFakeV31Embed(onSave, onClose);
     await fake.init();
 
-    await fake.save(DEFAULT_DRAWIO_SOURCE, false);
-
-    expect(fake.postedActions()).toEqual([
-      expect.objectContaining({ action: "load" }),
-      { action: "status", modified: true },
-      { action: "snapshot" },
-    ]);
-
-    await fake.exportSvg(svgDataUri("无改动保存"));
-
-    expect(onSave).toHaveBeenCalledWith({
-      source: DEFAULT_DRAWIO_SOURCE,
-      svg: expect.stringContaining("无改动保存"),
+    await fake.autosave(DEFAULT_DRAWIO_SOURCE);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS);
+      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
     });
-    expect(onClose).not.toHaveBeenCalled();
-    expect(postedAction(fake.postMessage, 3)).toEqual({
-      action: "status",
-      modified: false,
-    });
+
+    expect(fake.postedActions()).toEqual([expect.objectContaining({ action: "load" })]);
+    expect(renderDrawio).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith(null);
   });
 
   it("保存后立即保存并退出会复用上一轮高保真结果", async () => {
@@ -225,8 +304,7 @@ describe("drawio 全屏编辑面板", () => {
     });
 
     expect(renderDrawio).not.toHaveBeenCalled();
-    expect(onSave).toHaveBeenCalledTimes(2);
-    expect(onSave.mock.calls[1]?.[0]).toBe(firstResult);
+    expect(onSave).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(firstResult);
     expect(fake.postedActions().map((action) => action.action)).toEqual([
       "load",
@@ -459,11 +537,11 @@ describe("drawio 全屏编辑面板", () => {
     expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
   });
 
-  it("取消按钮和 Escape 从未保存时都返回 null", async () => {
+  it("完成按钮和 Escape 在无改动时都返回 null", async () => {
     const firstClose = vi.fn();
     await renderOverlay(vi.fn(), firstClose);
-    const cancel = document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__cancel");
-    await act(async () => cancel?.click());
+    const complete = document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete");
+    await act(async () => complete?.click());
     expect(firstClose).toHaveBeenCalledWith(null);
 
     act(() => root?.unmount());
@@ -478,7 +556,7 @@ describe("drawio 全屏编辑面板", () => {
     expect(secondClose).toHaveBeenCalledWith(null);
   });
 
-  it("保存导出等待期间取消不回写，且不会启动超时降级", async () => {
+  it("写回等待期间点击完成会等待降级落盘后再关闭", async () => {
     vi.useFakeTimers();
     vi.mocked(renderDrawio).mockResolvedValue(
       '<svg xmlns="http://www.w3.org/2000/svg"><text>不应写入</text></svg>',
@@ -490,14 +568,17 @@ describe("drawio 全屏编辑面板", () => {
     await fake.save(drawioSource("取消修改"), true);
 
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__cancel")?.click();
+      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
       await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onClose).toHaveBeenCalledWith(null);
-    expect(onSave).not.toHaveBeenCalled();
-    expect(renderDrawio).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      source: drawioSource("取消修改"),
+      svg: expect.stringContaining("不应写入"),
+    }));
+    expect(renderDrawio).toHaveBeenCalledOnce();
   });
 });
 
@@ -507,6 +588,7 @@ type FakeV31Embed = {
   postMessage: ReturnType<typeof vi.spyOn>;
   init: () => Promise<void>;
   save: (source: string, exit?: boolean) => Promise<void>;
+  autosave: (source: string) => Promise<void>;
   exportSvg: (data: string) => Promise<void>;
   exit: () => Promise<void>;
   dispatch: (origin: string, data: unknown) => Promise<void>;
@@ -536,6 +618,11 @@ async function createFakeV31Embed(
         bounds: { x: 0, y: 0, width: 120, height: 80 },
         xml: source,
         ...(exit ? { exit: true } : {}),
+      }),
+    autosave: (source) =>
+      dispatch(window.location.origin, {
+        event: "autosave",
+        xml: source,
       }),
     exportSvg: (data) =>
       dispatch(window.location.origin, {

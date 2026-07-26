@@ -220,7 +220,7 @@ describe("SkillsPanel 导入门控", () => {
     h.skills = sampleSkills();
     await render();
 
-    expect(host?.textContent).toContain("停用后模型不再使用该技能；点击卡片查看详情或子技能。");
+    expect(host?.textContent).toContain("停用后模型不再使用该技能；点击卡片查看详情。");
     expect(host?.textContent).toContain("联网搜");
     expect(host?.textContent).toContain("搜资料、核事实、找出处");
     expect(host?.textContent).toContain("读资料");
@@ -262,7 +262,7 @@ describe("SkillsPanel 导入门控", () => {
     expect(q('[data-wf="SkillLabelSave"]')).toBeNull();
   });
 
-  it("母技能同时提供详情与子技能入口，分别可达且子技能页可返回", async () => {
+  it("母技能外层只有单一进入动作，详情内嵌子技能并保持逐级返回与统一启停", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [
       {
@@ -309,46 +309,67 @@ describe("SkillsPanel 导入门控", () => {
     });
     await render();
 
-    expect(q('[data-wf="SkillChildrenEntry"]')?.textContent).toContain("子技能 · 2");
-    const detailButton = q('[data-wf="SkillDetailEntry"]');
-    const childrenButton = q('[data-wf="SkillChildrenEntry"]');
-    if (!detailButton || !childrenButton) throw new Error("parent skill entries not found");
+    const parentEntry = q('[data-wf="SkillEntry"]');
+    expect(host?.querySelectorAll('[data-wf="SkillEntry"]')).toHaveLength(1);
+    expect(q('[data-wf="SkillDetailEntry"]')).toBeNull();
+    expect(q('[data-wf="SkillChildrenEntry"]')).toBeNull();
+    expect(q('[data-wf="SkillChildrenBadge"]')?.textContent).toContain("含 2 项子技能");
+    expect(q('[data-wf="SkillChildrenBadge"]')?.tagName).toBe("SPAN");
+    if (!parentEntry) throw new Error("parent skill entry not found");
     await act(async () => {
-      detailButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      parentEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
     });
+
     expect(h.getSkillDetail).toHaveBeenCalledWith("diagram-viz");
     expect(host?.textContent).toContain("母技能正文");
-
-    const backFromDetail = q(".sk-back");
-    if (!backFromDetail) throw new Error("detail back button not found");
-    await act(async () => {
-      backFromDetail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    const childrenEntry = q('[data-wf="SkillChildrenEntry"]');
-    if (!childrenEntry) throw new Error("children entry not found after detail back");
-    await act(async () => {
-      childrenEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
     expect(q('[data-wf="SkillChildren"]')).not.toBeNull();
-    expect(host?.textContent).toContain("图表可视化 · 子技能");
+    expect(host?.textContent).toContain("随母技能「图表可视化」统一启用或停用");
     expect(host?.textContent).toContain("draw.io 图表");
     expect(host?.textContent).toContain("生成精确排版的可编辑画布");
     expect(host?.textContent).toContain("Mermaid 图表");
     expect(host?.querySelectorAll(".sk-child-item .sk-card-icon")).toHaveLength(2);
-    expect(q(".sk-toggle")).toBeNull();
+    expect(host?.querySelectorAll('[data-wf="SkillChildEntry"]')).toHaveLength(2);
 
-    const back = q(".sk-back");
-    if (!back) throw new Error("back button not found");
+    const parentToggle = q(".sk-toggle");
+    if (!parentToggle) throw new Error("parent toggle not found");
     await act(async () => {
-      back.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      parentToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
     });
+    expect(h.setSkillEnabled).toHaveBeenCalledWith("diagram-viz", false);
 
-    expect(q('[data-wf="SkillChildren"]')).toBeNull();
-    expect(q('[data-wf="SkillChildrenEntry"]')?.textContent).toContain("子技能 · 2");
+    const childEntry = Array.from(host?.querySelectorAll<HTMLElement>('[data-wf="SkillChildEntry"]') ?? [])
+      .find((node) => node.textContent?.includes("draw.io 图表"));
+    if (!childEntry) throw new Error("child skill entry not found");
+    await act(async () => {
+      childEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q('[data-wf="SkillChildDetail"]')).not.toBeNull();
+    expect(host?.textContent).toContain("子技能详情");
+    expect(host?.textContent).toContain("随母技能停用");
+    expect(host?.textContent).toContain("此子技能不单独启停");
+    expect(q(".sk-toggle")).toBeNull();
+    expect(q(".sk-back")?.textContent).toContain("返回母技能");
+
+    const backToParent = q(".sk-back");
+    if (!backToParent) throw new Error("child back button not found");
+    await act(async () => {
+      backToParent.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q('[data-wf="SkillChildDetail"]')).toBeNull();
+    expect(q('[data-wf="SkillChildren"]')).not.toBeNull();
+    expect(host?.textContent).toContain("母技能正文");
     expect(q(".sk-toggle")).not.toBeNull();
+
+    const backToList = q(".sk-back");
+    if (!backToList) throw new Error("parent back button not found");
+    await act(async () => {
+      backToList.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q('[data-wf="SkillChildren"]')).toBeNull();
+    expect(q('[data-wf="SkillEntry"]')).not.toBeNull();
+    expect(q('[data-wf="SkillChildrenBadge"]')?.textContent).toContain("含 2 项子技能");
   });
 
   it("自定义技能可从 hero 标题进入编辑并保存超长中文显示名，底层 slug 不变", async () => {

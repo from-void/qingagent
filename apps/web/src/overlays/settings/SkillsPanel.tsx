@@ -136,7 +136,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   const [message, setMessage] = useState<string | null>(null);
   const toast = useToast();
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [childrenParentName, setChildrenParentName] = useState<string | null>(null);
+  const [selectedChildName, setSelectedChildName] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -314,11 +314,8 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   };
 
   const openSkill = (skill: SkillInfo) => {
+    setSelectedChildName(null);
     setSelectedName(skill.name);
-  };
-
-  const openChildren = (skill: SkillInfo) => {
-    setChildrenParentName(skill.name);
   };
 
   const openSkillByKey = (e: KeyboardEvent<HTMLDivElement>, skill: SkillInfo) => {
@@ -328,69 +325,89 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     openSkill(skill);
   };
 
-  const childrenParent = childrenParentName
-    ? skills.find((skill) => skill.name === childrenParentName) ?? null
-    : null;
   const selectedFromList = selectedName ? skills.find((skill) => skill.name === selectedName) ?? null : null;
   const selectedSkill = detail ?? selectedFromList;
-
-  if (childrenParent) {
-    return (
-      <div className="settings-skills" data-wf="SkillsPanel">
-        <div className="sk-subhead">
-          <button type="button" className="sk-back" onClick={() => setChildrenParentName(null)}>
-            <span className="sk-back-arrow" aria-hidden="true">
-              ‹
-            </span>
-            返回技能
-          </button>
-          <span className="sk-subtitle">{childrenParent.label} · 子技能</span>
-        </div>
-
-        <p className="sm-note" style={{ marginTop: 0 }}>
-          子技能由「{childrenParent.label}」统一启用或停用，此处仅展示各自职责。
-        </p>
-        <div className="sk-child-list" data-wf="SkillChildren">
-          {childSkills(childrenParent).map((child) => (
-            <div className="sk-child-item" key={child.name}>
-              <SkIcon icon={child.icon} />
-              <div className="sk-child-copy">
-                <span className="sk-child-title">{child.label}</span>
-                <p className="sk-child-summary">{child.summary || child.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const selectedChildren = selectedFromList ? childSkills(selectedFromList) : [];
+  const selectedParent = selectedFromList && selectedSkill
+    ? { ...selectedFromList, enabled: selectedSkill.enabled }
+    : selectedFromList;
+  const selectedChild = selectedChildName
+    ? selectedChildren.find((child) => child.name === selectedChildName) ?? null
+    : null;
 
   if (selectedName) {
     return (
       <div className="settings-skills" data-wf="SkillsPanel">
         <div className="sk-subhead">
-          <button type="button" className="sk-back" onClick={() => setSelectedName(null)}>
+          <button
+            type="button"
+            className="sk-back"
+            onClick={() => {
+              if (selectedChild) {
+                setSelectedChildName(null);
+                return;
+              }
+              setSelectedName(null);
+            }}
+          >
             <span className="sk-back-arrow" aria-hidden="true">
               ‹
             </span>
-            返回技能
+            {selectedChild ? "返回母技能" : "返回技能"}
           </button>
-          <span className="sk-subtitle">技能详情</span>
+          <span className="sk-subtitle">{selectedChild ? "子技能详情" : "技能详情"}</span>
         </div>
 
-        {selectedSkill ? (
-          <SkillDetail
-            skill={selectedSkill}
-            body={detail?.body ?? ""}
-            bodyLoading={detailLoading}
-            bodyError={detailError}
-            busy={busy === selectedSkill.name}
-            canMutate={canMutate}
-            onToggle={(enabled) => void toggle(selectedSkill.name, enabled)}
-            onSaveLabel={(label) => void saveLabel(selectedSkill.name, label)}
-            onDelete={() => void confirmDelete(selectedSkill.name, selectedSkill.label, selectedSkill.source === "builtin")}
-            onOpenConnector={onOpenConnector}
-          />
+        {selectedChild && selectedParent ? (
+          <ChildSkillDetail child={selectedChild} parent={selectedParent} />
+        ) : selectedSkill ? (
+          <>
+            <SkillDetail
+              skill={selectedSkill}
+              body={detail?.body ?? ""}
+              bodyLoading={detailLoading}
+              bodyError={detailError}
+              busy={busy === selectedSkill.name}
+              canMutate={canMutate}
+              onToggle={(enabled) => void toggle(selectedSkill.name, enabled)}
+              onSaveLabel={(label) => void saveLabel(selectedSkill.name, label)}
+              onDelete={() => void confirmDelete(
+                selectedSkill.name,
+                selectedSkill.label,
+                selectedSkill.source === "builtin",
+              )}
+              onOpenConnector={onOpenConnector}
+            />
+            {selectedFromList && selectedChildren.length > 0 && (
+              <section className="sk-children-section" data-wf="SkillChildren">
+                <div className="sk-children-heading">
+                  <div>
+                    <h3>子技能</h3>
+                    <p>随母技能「{selectedFromList.label}」统一启用或停用</p>
+                  </div>
+                  <span className="sk-card-tag">{selectedChildren.length} 项</span>
+                </div>
+                <div className="sk-child-list">
+                  {selectedChildren.map((child) => (
+                    <button
+                      type="button"
+                      className="sk-child-item"
+                      data-wf="SkillChildEntry"
+                      key={child.name}
+                      onClick={() => setSelectedChildName(child.name)}
+                    >
+                      <SkIcon icon={child.icon} />
+                      <span className="sk-child-copy">
+                        <span className="sk-child-title">{child.label}</span>
+                        <span className="sk-child-summary">{child.summary || child.description}</span>
+                      </span>
+                      <span className="sk-child-go" aria-hidden="true">›</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
         ) : detailLoading ? (
           <p className="sm-empty">加载中…</p>
         ) : (
@@ -403,7 +420,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   return (
     <div className="settings-skills" data-wf="SkillsPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>
-        停用后模型不再使用该技能；点击卡片查看详情或子技能。
+        停用后模型不再使用该技能；点击卡片查看详情。
         {canMutate ? "可导入 .zip 技能包或 .md 文件。" : "技能的导入与删除仅在桌面客户端开放。"}
       </p>
 
@@ -426,6 +443,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
           <div
             key={s.name}
             className={`sk-card${s.enabled ? "" : " sk-off"}`}
+            data-wf="SkillEntry"
             role="button"
             tabIndex={0}
             onClick={() => openSkill(s)}
@@ -453,28 +471,9 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             <p className="sk-card-summary">{s.summary}</p>
             {childSkills(s).length > 0 && (
               <div className="sk-card-foot">
-                <button
-                  type="button"
-                  className="sk-card-action"
-                  data-wf="SkillDetailEntry"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openSkill(s);
-                  }}
-                >
-                  详情
-                </button>
-                <button
-                  type="button"
-                  className="sk-card-action"
-                  data-wf="SkillChildrenEntry"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openChildren(s);
-                  }}
-                >
-                  子技能 · {childSkills(s).length}
-                </button>
+                <span className="sk-card-tag" data-wf="SkillChildrenBadge">
+                  含 {childSkills(s).length} 项子技能
+                </span>
               </div>
             )}
             {/* 依赖连接行只在技能详情页展示,列表卡保持轻。 */}
@@ -535,6 +534,29 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
 function childSkills(skill: SkillInfo): SkillInfo[] {
   // 兼容升级期间旧服务响应，正式 API 始终返回 children 数组。
   return Array.isArray(skill.children) ? skill.children : [];
+}
+
+function ChildSkillDetail({ child, parent }: { child: SkillInfo; parent: SkillInfo }) {
+  return (
+    <div data-wf="SkillChildDetail">
+      <div className="sk-detail-hero">
+        <SkIcon icon={child.icon} />
+        <span className="sk-detail-name">{child.label}</span>
+      </div>
+      <p className="sk-detail-meta">
+        <span className="k">隶属：</span>{parent.label}
+        {" · "}
+        <span className="k">状态：</span>随母技能{parent.enabled ? "启用" : "停用"}
+      </p>
+      <h3 className="sk-detail-sec-title">职责说明</h3>
+      <div className="sk-md-body">
+        <p>{child.description || child.summary}</p>
+      </div>
+      <p className="sm-note sk-child-inherited-note">
+        此子技能不单独启停，由母技能「{parent.label}」统一控制。
+      </p>
+    </div>
+  );
 }
 
 function SkillDetail({

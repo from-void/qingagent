@@ -1697,19 +1697,19 @@
   #view-workspace .wf-doc mark[data-color="rose"]{background:#f3d3d9}
   #view-workspace .wf-doc mark[data-color="sand"]{background:#eadfc8}
   #view-workspace .wf-doc mark[data-color="lavender"]{background:#e5ddf0}
-  #view-workspace .wf-doc td[data-bg-color="ink"],#view-workspace .wf-doc th[data-bg-color="ink"]{background:#eee2c6}
-  #view-workspace .wf-doc td[data-bg-color="gray"],#view-workspace .wf-doc th[data-bg-color="gray"]{background:#e8e5dc}
-  #view-workspace .wf-doc td[data-bg-color="slate"],#view-workspace .wf-doc th[data-bg-color="slate"]{background:#dbe7e9}
-  #view-workspace .wf-doc td[data-bg-color="brown"],#view-workspace .wf-doc th[data-bg-color="brown"]{background:#ead8c7}
-  #view-workspace .wf-doc td[data-bg-color="red"],#view-workspace .wf-doc th[data-bg-color="red"]{background:#f4d2ca}
-  #view-workspace .wf-doc td[data-bg-color="orange"],#view-workspace .wf-doc th[data-bg-color="orange"]{background:#f2d9bd}
-  #view-workspace .wf-doc td[data-bg-color="amber"],#view-workspace .wf-doc th[data-bg-color="amber"]{background:#f0e0ad}
-  #view-workspace .wf-doc td[data-bg-color="yellow"],#view-workspace .wf-doc th[data-bg-color="yellow"]{background:#fff3a3}
-  #view-workspace .wf-doc td[data-bg-color="lime"],#view-workspace .wf-doc th[data-bg-color="lime"]{background:#e5efba}
-  #view-workspace .wf-doc td[data-bg-color="green"],#view-workspace .wf-doc th[data-bg-color="green"]{background:#d4edd4}
-  #view-workspace .wf-doc td[data-bg-color="sage"],#view-workspace .wf-doc th[data-bg-color="sage"]{background:#dce9d7}
+  #view-workspace .wf-doc td[data-bg-color="ink"],#view-workspace .wf-doc th[data-bg-color="ink"]{background:#eee4cf}
+  #view-workspace .wf-doc td[data-bg-color="gray"],#view-workspace .wf-doc th[data-bg-color="gray"]{background:#e7e1d4}
+  #view-workspace .wf-doc td[data-bg-color="slate"],#view-workspace .wf-doc th[data-bg-color="slate"]{background:#d3d9d5}
+  #view-workspace .wf-doc td[data-bg-color="brown"],#view-workspace .wf-doc th[data-bg-color="brown"]{background:#e5d4c3}
+  #view-workspace .wf-doc td[data-bg-color="red"],#view-workspace .wf-doc th[data-bg-color="red"]{background:#e4c9bf}
+  #view-workspace .wf-doc td[data-bg-color="orange"],#view-workspace .wf-doc th[data-bg-color="orange"]{background:#e6ceb4}
+  #view-workspace .wf-doc td[data-bg-color="amber"],#view-workspace .wf-doc th[data-bg-color="amber"]{background:#ead9ae}
+  #view-workspace .wf-doc td[data-bg-color="yellow"],#view-workspace .wf-doc th[data-bg-color="yellow"]{background:#eee4bd}
+  #view-workspace .wf-doc td[data-bg-color="lime"],#view-workspace .wf-doc th[data-bg-color="lime"]{background:#dde1c2}
+  #view-workspace .wf-doc td[data-bg-color="green"],#view-workspace .wf-doc th[data-bg-color="green"]{background:#cad9c8}
+  #view-workspace .wf-doc td[data-bg-color="sage"],#view-workspace .wf-doc th[data-bg-color="sage"]{background:#d6dfcf}
   #view-workspace .wf-doc td[data-bg-color="mint"],#view-workspace .wf-doc th[data-bg-color="mint"]{background:#cfebe0}
-  #view-workspace .wf-doc td[data-bg-color="teal"],#view-workspace .wf-doc th[data-bg-color="teal"]{background:#cce8e7}
+  #view-workspace .wf-doc td[data-bg-color="teal"],#view-workspace .wf-doc th[data-bg-color="teal"]{background:#cadbd2}
   #view-workspace .wf-doc td[data-bg-color="cyan"],#view-workspace .wf-doc th[data-bg-color="cyan"]{background:#cde8f0}
   #view-workspace .wf-doc td[data-bg-color="sky"],#view-workspace .wf-doc th[data-bg-color="sky"]{background:#d7e7f6}
   #view-workspace .wf-doc td[data-bg-color="blue"],#view-workspace .wf-doc th[data-bg-color="blue"]{background:#cfe0f5}

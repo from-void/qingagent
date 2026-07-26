@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { CellSelection } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -380,6 +381,22 @@ describe("TableControls 真选区与 chrome", () => {
       portal.querySelector<HTMLButtonElement>('[data-table-insert="row-before"]')?.click();
     });
     expect(editor.state.doc.firstChild?.childCount).toBe(3);
+  });
+
+  it("从行列控制条插入后只保留新首格光标，文字工具栏关闭", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    expect(selectTableColumns(editor, "table-1", 0, 0)).toBe(true);
+    await renderControls(editor);
+    expect(portal.querySelector(".tbl-sel-toolbar")).not.toBeNull();
+
+    await act(async () => {
+      portal.querySelectorAll<HTMLButtonElement>(".tbl-dot-row")[1]?.click();
+      flushAnimationFrames();
+    });
+
+    expect(editor.state.selection).toBeInstanceOf(TextSelection);
+    expect(editor.state.selection.empty).toBe(true);
+    expect(portal.querySelector(".tbl-sel-toolbar")).toBeNull();
   });
 
   it("所有行列头和插入圆点均位于裁剪 viewport 内", async () => {

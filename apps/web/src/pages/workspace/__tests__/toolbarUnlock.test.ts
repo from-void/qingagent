@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  TABLE_CELL_BACKGROUND_COLORS,
   isTableToolbarCommandEnabled,
   isToolbarCommandEnabled,
   normalizeToolbarHighlightColor,
@@ -9,6 +10,19 @@ import {
 } from "../data/toolbarUnlock";
 
 describe("toolbarUnlock", () => {
+  it("单元格新底色盘只提供两排暖纸色，旧主题色仍可规范化", () => {
+    expect(TABLE_CELL_BACKGROUND_COLORS).toHaveLength(13);
+    expect(TABLE_CELL_BACKGROUND_COLORS.map((color) => color.key)).not.toEqual(
+      expect.arrayContaining(["blue", "indigo", "violet", "purple", "magenta", "pink", "rose", "lavender"]),
+    );
+    expect(TABLE_CELL_BACKGROUND_COLORS.map((color) => color.label).join("")).not.toMatch(/蓝|紫|粉|藤/);
+
+    // 存量文档仍可携带并渲染旧主题键；只是新底色盘不再提供这些选项。
+    expect(normalizeToolbarHighlightColor("blue")).toBe("blue");
+    expect(normalizeToolbarHighlightColor("purple")).toBe("purple");
+    expect(normalizeToolbarHighlightColor("pink")).toBe("pink");
+  });
+
   it("默认解禁 Phase E 目标命令执行层", () => {
     const config = resolveToolbarUnlockConfig();
     const commands: Array<[string, string | null | undefined]> = [

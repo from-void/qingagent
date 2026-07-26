@@ -20,6 +20,14 @@ type ElectronBridge = {
   setOfficialModel?: (value: string | null) => Promise<boolean>;
   getModelTier?: () => string | null;
   setModelTier?: (value: string | null) => Promise<boolean>;
+  getKimiApiKey?: () => string | null;
+  setKimiApiKey?: (value: string | null) => Promise<boolean>;
+  getKimiCustomProvider?: () => string | null;
+  setKimiCustomProvider?: (value: string | null) => Promise<boolean>;
+  getKimiOfficialModel?: () => string | null;
+  setKimiOfficialModel?: (value: string | null) => Promise<boolean>;
+  getModelProvider?: () => string | null;
+  setModelProvider?: (value: string | null) => Promise<boolean>;
 };
 const DEEPSEEK_KEY = "qingagent.deepseek_api_key";
 const OFFICIAL_MODEL_KEY = "qingagent.official_model";
@@ -41,6 +49,14 @@ function desktopBridge(
     setOfficialModel: (value) => write(OFFICIAL_MODEL_KEY, value),
     getModelTier: () => initial[MODEL_TIER_KEY] ?? null,
     setModelTier: (value) => write(MODEL_TIER_KEY, value),
+    getKimiApiKey: () => initial["qingagent.kimi_api_key"] ?? null,
+    setKimiApiKey: (value) => write("qingagent.kimi_api_key", value),
+    getKimiCustomProvider: () => initial["qingagent.kimi_custom_provider"] ?? null,
+    setKimiCustomProvider: (value) => write("qingagent.kimi_custom_provider", value),
+    getKimiOfficialModel: () => initial["qingagent.kimi_official_model"] ?? null,
+    setKimiOfficialModel: (value) => write("qingagent.kimi_official_model", value),
+    getModelProvider: () => initial["qingagent.model_provider"] ?? null,
+    setModelProvider: (value) => write("qingagent.model_provider", value),
   };
 }
 
@@ -91,6 +107,23 @@ describe("clientPersist", () => {
     it("没有已保存值时仍判定为桌面持久化", () => {
       setElectron(desktopBridge());
       expect(isDesktopPersist()).toBe(true);
+    });
+
+    it.each([
+      "qingagent.kimi_api_key",
+      "qingagent.kimi_custom_provider",
+      "qingagent.kimi_official_model",
+      "qingagent.model_provider",
+    ])("%s 走桌面 userData 而非随机端口 localStorage", (key) => {
+      const write = vi.fn(async () => true);
+      setElectron(desktopBridge({ [key]: "old" }, write));
+
+      expect(readPersisted(key)).toBe("old");
+      writePersisted(key, "new");
+
+      expect(write).toHaveBeenCalledWith(key, "new");
+      expect(readPersisted(key)).toBe("new");
+      expect(window.localStorage.getItem(key)).toBeNull();
     });
 
     it("敏感写入可等待，IPC 失败后恢复写入前的内存镜像", async () => {

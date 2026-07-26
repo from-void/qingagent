@@ -141,6 +141,8 @@ export function ModelSettingsPanel() {
   const balanceControllerRef = useRef<AbortController | null>(null);
   const customTestRevisionRef = useRef(0);
   const customTestControllerRef = useRef<AbortController | null>(null);
+  const kimiVerifyRevisionRef = useRef(0);
+  const kimiVerifyControllerRef = useRef<AbortController | null>(null);
   const persistRevisionRef = useRef(0);
 
   const invalidatePersistence = () => {
@@ -159,6 +161,12 @@ export function ModelSettingsPanel() {
   const handleProviderChange = (provider: ModelProvider) => {
     if (provider === modelProvider) return;
     invalidateCustomTest();
+    balanceControllerRef.current?.abort();
+    balanceControllerRef.current = null;
+    setBalanceLoading(false);
+    kimiVerifyRevisionRef.current += 1;
+    kimiVerifyControllerRef.current?.abort();
+    kimiVerifyControllerRef.current = null;
     setSelectedModelProvider(provider);
     const custom = readCustomProvider(provider);
     const official = readOfficialModelOverride(provider);
@@ -300,6 +308,9 @@ export function ModelSettingsPanel() {
       customTestRevisionRef.current += 1;
       customTestControllerRef.current?.abort();
       customTestControllerRef.current = null;
+      kimiVerifyRevisionRef.current += 1;
+      kimiVerifyControllerRef.current?.abort();
+      kimiVerifyControllerRef.current = null;
     };
   }, []);
 
@@ -371,13 +382,26 @@ export function ModelSettingsPanel() {
   useEffect(() => {
     if (!dashboardVisible || usingCustom || modelProvider === "kimi") return;
     const controller = new AbortController();
+    balanceControllerRef.current = controller;
     void checkBalance(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (balanceControllerRef.current === controller) balanceControllerRef.current = null;
+    };
   }, [dashboardVisible, usingCustom, checkBalance, visitorKey, modelProvider]);
 
   const handleVerifyKimiKey = async () => {
     const trimmed = keyInput.trim();
     if (!trimmed || verifyStatus === "verifying") return;
+    kimiVerifyRevisionRef.current += 1;
+    const revision = kimiVerifyRevisionRef.current;
+    kimiVerifyControllerRef.current?.abort();
+    const controller = new AbortController();
+    kimiVerifyControllerRef.current = controller;
+    const canCommit = () =>
+      mountedRef.current &&
+      !controller.signal.aborted &&
+      kimiVerifyRevisionRef.current === revision;
     setVerifyStatus("verifying");
     setVerifyMsg("");
     try {
@@ -387,8 +411,10 @@ export function ModelSettingsPanel() {
           "x-model-key": trimmed,
           "x-model-tier": modelTier,
         },
+        signal: controller.signal,
       });
       const body = (await res.json()) as BalanceState;
+      if (!canCommit()) return;
       if (body.ok) {
         setVerifyStatus("ok");
         setVerifyMsg("Kimi 短对话测试已连通");
@@ -401,8 +427,12 @@ export function ModelSettingsPanel() {
         );
       }
     } catch {
-      setVerifyStatus("fail");
-      setVerifyMsg("验证失败:网络错误");
+      if (canCommit()) {
+        setVerifyStatus("fail");
+        setVerifyMsg("验证失败:网络错误");
+      }
+    } finally {
+      if (canCommit()) kimiVerifyControllerRef.current = null;
     }
   };
 

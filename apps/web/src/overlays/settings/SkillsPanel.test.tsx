@@ -262,7 +262,7 @@ describe("SkillsPanel 导入门控", () => {
     expect(q('[data-wf="SkillLabelSave"]')).toBeNull();
   });
 
-  it("母技能显示子技能数量，点击下钻纯展示子技能并可返回上层", async () => {
+  it("母技能同时提供详情与子技能入口，分别可达且子技能页可返回", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [
       {
@@ -303,16 +303,35 @@ describe("SkillsPanel 导入门控", () => {
         ],
       },
     ];
+    h.details.set("diagram-viz", {
+      ...h.skills[0]!,
+      body: "# 图表可视化\n\n母技能正文。",
+    });
     await render();
 
-    expect(q(".sk-card-tag")?.textContent).toContain("含 2 个子技能");
-    const parentCard = q(".sk-card");
-    if (!parentCard) throw new Error("parent skill card not found");
+    expect(q('[data-wf="SkillChildrenEntry"]')?.textContent).toContain("子技能 · 2");
+    const detailButton = q('[data-wf="SkillDetailEntry"]');
+    const childrenButton = q('[data-wf="SkillChildrenEntry"]');
+    if (!detailButton || !childrenButton) throw new Error("parent skill entries not found");
     await act(async () => {
-      parentCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      detailButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(h.getSkillDetail).toHaveBeenCalledWith("diagram-viz");
+    expect(host?.textContent).toContain("母技能正文");
+
+    const backFromDetail = q(".sk-back");
+    if (!backFromDetail) throw new Error("detail back button not found");
+    await act(async () => {
+      backFromDetail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(h.getSkillDetail).not.toHaveBeenCalled();
+    const childrenEntry = q('[data-wf="SkillChildrenEntry"]');
+    if (!childrenEntry) throw new Error("children entry not found after detail back");
+    await act(async () => {
+      childrenEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
     expect(q('[data-wf="SkillChildren"]')).not.toBeNull();
     expect(host?.textContent).toContain("图表可视化 · 子技能");
     expect(host?.textContent).toContain("draw.io 图表");
@@ -328,7 +347,7 @@ describe("SkillsPanel 导入门控", () => {
     });
 
     expect(q('[data-wf="SkillChildren"]')).toBeNull();
-    expect(q(".sk-card-tag")?.textContent).toContain("含 2 个子技能");
+    expect(q('[data-wf="SkillChildrenEntry"]')?.textContent).toContain("子技能 · 2");
     expect(q(".sk-toggle")).not.toBeNull();
   });
 

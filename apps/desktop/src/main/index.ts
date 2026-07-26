@@ -650,6 +650,11 @@ const DESKTOP_CLIENT_CONFIG_KEYS = new Set([
   "qingagent.vision_provider",
   "qingagent.official_model",
   "qingagent.model_tier",
+  // 与 web clientPersist.ts、preload/index.ts 的具名 API 保持同步。
+  "qingagent.kimi_api_key",
+  "qingagent.kimi_custom_provider",
+  "qingagent.kimi_official_model",
+  "qingagent.model_provider",
 ]);
 
 // 这些值会直接或嵌套携带桌面模型 API Key。主进程只在单项 IPC 边界解密/加密；
@@ -658,6 +663,8 @@ const DESKTOP_MODEL_SECRET_KEYS = new Set([
   "qingagent.deepseek_api_key",
   "qingagent.custom_provider",
   "qingagent.vision_provider",
+  "qingagent.kimi_api_key",
+  "qingagent.kimi_custom_provider",
 ]);
 
 function isDesktopModelEncryptionAvailable(): boolean {

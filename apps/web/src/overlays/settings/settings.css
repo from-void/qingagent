@@ -256,6 +256,12 @@
 /* 标签:移到描述下方(卡片底部) */
 .qj-sheet-body .sk-card-foot{display:flex;gap:6px;margin-top:auto;padding-top:2px}
 .qj-sheet-body .sk-card-foot .sk-card-tag{align-self:flex-start}
+.qj-sheet-body .sk-card-action{
+  padding:2px 7px;border:1px solid var(--qj-switch-border);border-radius:0;
+  background:rgba(236,227,208,.06);color:var(--qj-header-sub);cursor:pointer;
+  font:700 10px/1.4 var(--font-zh-serif);
+}
+.qj-sheet-body .sk-card-action:hover{border-color:var(--qj-cinnabar);color:var(--qj-ink)}
 /* 子技能二级页:复用技能卡的纸墨边框语言，只展示职责，不提供独立开关 */
 .qj-sheet-body .sk-child-list{display:flex;flex-direction:column;gap:8px;padding:2px 6px 0 0}
 .qj-sheet-body .sk-child-item{

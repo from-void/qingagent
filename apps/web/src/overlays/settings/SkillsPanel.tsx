@@ -314,11 +314,11 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   };
 
   const openSkill = (skill: SkillInfo) => {
-    if (childSkills(skill).length > 0) {
-      setChildrenParentName(skill.name);
-      return;
-    }
     setSelectedName(skill.name);
+  };
+
+  const openChildren = (skill: SkillInfo) => {
+    setChildrenParentName(skill.name);
   };
 
   const openSkillByKey = (e: KeyboardEvent<HTMLDivElement>, skill: SkillInfo) => {
@@ -453,7 +453,28 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             <p className="sk-card-summary">{s.summary}</p>
             {childSkills(s).length > 0 && (
               <div className="sk-card-foot">
-                <span className="sk-card-tag">含 {childSkills(s).length} 个子技能</span>
+                <button
+                  type="button"
+                  className="sk-card-action"
+                  data-wf="SkillDetailEntry"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openSkill(s);
+                  }}
+                >
+                  详情
+                </button>
+                <button
+                  type="button"
+                  className="sk-card-action"
+                  data-wf="SkillChildrenEntry"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openChildren(s);
+                  }}
+                >
+                  子技能 · {childSkills(s).length}
+                </button>
               </div>
             )}
             {/* 依赖连接行只在技能详情页展示,列表卡保持轻。 */}

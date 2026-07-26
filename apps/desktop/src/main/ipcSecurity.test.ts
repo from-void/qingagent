@@ -56,8 +56,44 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
     "setOfficialModel",
     "getModelTier",
     "setModelTier",
+    "getKimiApiKey",
+    "setKimiApiKey",
+    "getKimiCustomProvider",
+    "setKimiCustomProvider",
+    "getKimiOfficialModel",
+    "setKimiOfficialModel",
+    "getModelProvider",
+    "setModelProvider",
   ]) {
     assert.match(preload, new RegExp(`\\b${api}\\b`), `缺少具名 preload API: ${api}`);
+  }
+});
+
+test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", () => {
+  const main = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
+  const configSetStart = main.indexOf("const DESKTOP_CLIENT_CONFIG_KEYS");
+  const configSetEnd = main.indexOf("]);", configSetStart);
+  const configSetSource = main.slice(configSetStart, configSetEnd);
+  for (const key of [
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+    "qingagent.kimi_official_model",
+    "qingagent.model_provider",
+  ]) {
+    assert.ok(configSetSource.includes(`"${key}"`), `主进程白名单缺少：${key}`);
+    assert.ok(preload.includes(`"${key}"`), `preload 白名单缺少：${key}`);
+  }
+  for (const secretKey of [
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+  ]) {
+    const secretSetStart = main.indexOf("const DESKTOP_MODEL_SECRET_KEYS");
+    const secretSetEnd = main.indexOf("]);", secretSetStart);
+    assert.ok(
+      main.slice(secretSetStart, secretSetEnd).includes(`"${secretKey}"`),
+      `Kimi 敏感配置必须经 safeStorage 加密：${secretKey}`,
+    );
   }
 });
 

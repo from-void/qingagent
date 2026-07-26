@@ -272,6 +272,12 @@ function pmInlineText(content: readonly { type: string; text?: string }[]): stri
 // ============ 图表 / 图片 ============
 
 function diagramFallbackHtml(lang: string, source: string, oversized: boolean): string {
+  if (lang === "drawio") {
+    const message = oversized
+      ? "draw.io 图表过大，以下数据已按安全边界归一化，可能与原图有差异（可复制到 draw.io 查看）"
+      : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）";
+    return `<div class="pm-diagram-fallback">${message}</div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+  }
   const typeLabel = lang === "drawio" ? "draw.io" : "Mermaid";
   const viewerAction = lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
   const message = oversized

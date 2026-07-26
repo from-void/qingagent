@@ -1,6 +1,7 @@
 import type { PmDoc } from "@qingagent/pm-schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderedDiagrams } from "../export/mermaidServer.js";
+import { toHtml } from "../export/toHtml.js";
 
 const { getBrowserMock, withBrowserContextSlotMock } = vi.hoisted(() => ({
   getBrowserMock: vi.fn(),
@@ -75,6 +76,20 @@ describe("Mermaid 无文字毒缓存导出自愈", () => {
     expect(withBrowserContextSlotMock).toHaveBeenCalledOnce();
     expect(mermaid.render).toHaveBeenCalledWith("exp-0", SOURCE);
     expect(block?.type === "diagram" ? block.attrs.svg : null).toBe(FRESH_SVG);
+    expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.svg : null).toBe(POISONED_SVG);
+  });
+
+  it("无文字毒缓存重渲染失败时清空缓存并回退源码", async () => {
+    getBrowserMock.mockRejectedValue(new Error("Chromium unavailable"));
+    const input = mermaidDoc(POISONED_SVG);
+
+    const prepared = await withRenderedDiagrams(input) as PmDoc;
+    const html = toHtml(prepared);
+
+    expect(prepared.content[0]?.type === "diagram" ? prepared.content[0].attrs.svg : "unexpected").toBeNull();
+    expect(html).toContain("Mermaid 图表源码（未能生成预览，可复制到 Mermaid 编辑器查看）");
+    expect(html).toContain("flowchart TD");
+    expect(html).not.toContain('<div class="pm-diagram"><svg');
     expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.svg : null).toBe(POISONED_SVG);
   });
 

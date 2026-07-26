@@ -634,9 +634,13 @@ async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | 
       const viewerAction = section.data.lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
       const fallbackNotice = (oversized: boolean) => new Paragraph({
         children: [new TextRun({
-          text: oversized
-            ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
-            : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,
+          text: section.data.lang === "drawio"
+            ? oversized
+              ? "draw.io 图表过大，以下数据已按安全边界归一化，可能与原图有差异（可复制到 draw.io 查看）"
+              : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）"
+            : oversized
+              ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
+              : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,
           font: FONT,
           size: 18,
           color: "666666",

@@ -101,7 +101,7 @@ function diagramTypeOf(source: string): string {
   return firstLine?.split(/\s+/)[0] ?? "unknown";
 }
 
-function summarizeMermaidSource(source: string): string {
+function summarizeDiagramSource(source: string): string {
   const normalized = source.trim().replace(/\s+/g, " ");
   return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
 }
@@ -111,7 +111,7 @@ function renderInputForSource(source: string): MermaidRenderInput {
     source,
     normalizedSource: normalizeMermaidQuotes(source),
     diagramType: diagramTypeOf(source),
-    sourceSummary: summarizeMermaidSource(source),
+    sourceSummary: summarizeDiagramSource(source),
   };
 }
 
@@ -316,9 +316,10 @@ async function renderDiagramSvgsInSlot(
 
 interface DiagramRef {
   lang: "mermaid" | "drawio";
+  blockId: string | null;
   source: string;
   overlay?: DiagramOverlay | null;
-  assign: (svg: string) => void;
+  assign: (svg: string | null) => void;
   assignSource: (source: string) => void;
 }
 
@@ -338,6 +339,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     if (source.trim() && !hasUsableCache) {
       acc.push({
         lang,
+        blockId: typeof attrs.blockId === "string" ? attrs.blockId : null,
         source,
         overlay: readOverlay(attrs.overlay),
         assign: (svg) => { attrs.svg = svg; },
@@ -356,6 +358,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     if (source.trim() && !hasUsableCache) {
       acc.push({
         lang,
+        blockId: typeof data.blockId === "string" ? data.blockId : null,
         source,
         assign: (svg) => { data.svg = svg; },
         assignSource: (source) => { data.source = source; },
@@ -393,17 +396,20 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
         // 单页 mxGraphModel 和压缩 diagram 则可安全替换为准备后的明文模型。
         const prepared = prepareDrawioModelXmlForRender(ref.source);
         if (!ref.source.trimStart().startsWith("<mxfile")) {
-          ref.source = prepared.modelXml;
           ref.assignSource(prepared.modelXml);
         }
       } catch (error) {
         getDocRenderLogger().warn("Drawio export source normalization failed; preserving original source", {
           reason: error instanceof Error ? error.message : String(error),
+          blockId: ref.blockId,
           sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+          sourceSummary: summarizeDiagramSource(ref.source),
         });
       }
       getDocRenderLogger().warn("Drawio export cache missing; open the diagram in the client before exporting", {
+        blockId: ref.blockId,
         sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+        sourceSummary: summarizeDiagramSource(ref.source),
       });
       continue;
     }
@@ -414,7 +420,11 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
   const mermaidSvgs = await renderDiagramSvgs(mermaidRefs.map((ref) => ref.source));
   mermaidRefs.forEach((ref, index) => {
     const mermaidSvg = mermaidSvgs[index];
-    if (!mermaidSvg) return;
+    if (!mermaidSvg) {
+      // 旧缓存可能只有框线没有文字；补渲染失败时必须清空，强制导出回退源码。
+      ref.assign(null);
+      return;
+    }
     if (hasOverlay(ref.overlay)) {
       const svg = graphToSvg(ref.source, ref.overlay);
       if (svg && isRenderableSvg(svg)) {

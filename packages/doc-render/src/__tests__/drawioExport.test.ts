@@ -46,11 +46,41 @@ describe("drawio 导出缓存与服务端兜底", () => {
     expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.svg : "unexpected").toBeNull();
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("Drawio export cache missing"),
-      expect.objectContaining({ sourceBytes: expect.any(Number) }),
+      expect.objectContaining({
+        blockId: "drawio-1",
+        sourceBytes: expect.any(Number),
+        sourceSummary: expect.stringContaining("<mxGraphModel>"),
+      }),
     );
     const html = toHtml(prepared);
-    expect(html).toContain("draw.io 图表源码（未能生成预览，可复制到 draw.io 查看）");
+    expect(html).toContain("draw.io 图表数据已按安全边界归一化，可能与原图有差异");
     expect(html).toContain("&lt;mxGraphModel&gt;");
+  });
+
+  it("drawio 源码归一化失败与缺缓存日志均包含块和源码摘要", async () => {
+    const warn = vi.fn();
+    setDocRenderLogger({ warn });
+    const input = drawioDoc(null);
+    if (input.content[0]?.type === "diagram") {
+      input.content[0].attrs.source = "<mxGraphModel><broken>";
+    }
+
+    await withRenderedDiagrams(input);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Drawio export source normalization failed"),
+      expect.objectContaining({
+        blockId: "drawio-1",
+        sourceSummary: "<mxGraphModel><broken>",
+      }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Drawio export cache missing"),
+      expect.objectContaining({
+        blockId: "drawio-1",
+        sourceSummary: "<mxGraphModel><broken>",
+      }),
+    );
   });
 
   it("服务端缺缓存回退也复用共享归一化，真实百分号颜色源码可复制使用", async () => {
@@ -83,7 +113,7 @@ describe("drawio 导出缓存与服务端兜底", () => {
       .loadAsync(await toDocx(drawioDoc(null)))
       .then((zip) => zip.file("word/document.xml")!.async("string"));
 
-    expect(xml).toContain("draw.io 图表源码（未能生成预览，可复制到 draw.io 查看）");
+    expect(xml).toContain("draw.io 图表数据已按安全边界归一化，可能与原图有差异");
     expect(xml).toContain("&lt;mxGraphModel&gt;");
   });
 });

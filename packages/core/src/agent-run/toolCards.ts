@@ -173,7 +173,7 @@ export function commandCardFromResult(
 export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
   if (spec.body.kind !== "commandCard") return spec;
   const status = spec.status;
-  const phase = status.kind === "failed"
+  const phase = status.kind === "failed" || status.kind === "aborted"
     ? "failed"
     : status.kind === "done"
       ? "done"
@@ -184,7 +184,9 @@ export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
   const existingTerminalKind = spec.body.data.terminalKind;
   const terminalKind: CommandTerminalKind | undefined = phase === "running"
     ? undefined
-    : phase === "done"
+    : status.kind === "aborted"
+      ? "aborted"
+      : phase === "done"
       ? "succeeded"
       : existingTerminalKind && existingTerminalKind !== "succeeded"
         ? existingTerminalKind
@@ -214,7 +216,7 @@ export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
   return (
     spec.body.kind === "commandCard" &&
     spec.body.data.terminalKind !== undefined &&
-    (spec.status.kind === "done" || spec.status.kind === "failed")
+    (spec.status.kind === "done" || spec.status.kind === "failed" || spec.status.kind === "aborted")
   );
 }
 

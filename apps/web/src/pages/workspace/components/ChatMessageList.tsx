@@ -493,7 +493,10 @@ const MessageRow = memo(function MessageRow({
   // patchSummary(已修改N处)一样,把它放到**最终回复之后**展示;原位只留一条简单工具条
   // (生成二维码·已完成,走 UnifiedToolCall),跟着过程正常折叠。要后置哪些 = 看工具(白名单)。
   const artifacts = visibleParts.filter(
-    (vp) => vp.part.kind === "toolCall" && ARTIFACT_BODY_KINDS.has(vp.part.data.body.kind),
+    (vp) =>
+      vp.part.kind === "toolCall" &&
+      vp.part.data.status.kind === "done" &&
+      ARTIFACT_BODY_KINDS.has(vp.part.data.body.kind),
   );
   const renderArtifact = (vp: { part: MessagePart; key: number }) => {
     if (vp.part.kind !== "toolCall") return null;
@@ -510,6 +513,7 @@ const MessageRow = memo(function MessageRow({
     if (vp.part.kind !== "toolCall") return [];
     const b = vp.part.data.body;
     if (b.kind !== "generateSvg") return [];
+    if (vp.part.data.status.kind !== "done") return [];
     const src = b.data.progress?.src;
     return src ? [{ src, prompt: b.data.prompt }] : [];
   });
@@ -1647,9 +1651,12 @@ function ToolCallRow({
   const b = spec.body;
   const isRunning = spec.status.kind === "running";
   const isDone = spec.status.kind === "done";
+  const isAborted = spec.status.kind === "aborted";
   // —— 保留生产组件(下一阶段单独定制) ——
   // 草稿迷你卡:流式摘录+字数,完成定格验收。
-  if (b.kind === "writeDraftCard") return <DraftMiniCard body={b.data} />;
+  if (b.kind === "writeDraftCard") {
+    return <DraftMiniCard body={b.data} status={spec.status.kind} />;
+  }
   // 二维码卡:产出物后置 —— 原位只渲简单条(生成二维码·已完成,走 UnifiedToolCall),
   // 真正的二维码由 MessageRow 后置到最终回复之后、圆角展示(不再在这里内联整张卡)。
   // ⚠️【勿删·铁律】docSuggestion **不是死代码**:它是右侧补丁审阅系统的**数据骨架**——
@@ -1671,11 +1678,13 @@ function ToolCallRow({
       ? `已修改"${truncated}"`
       : isRejected
         ? `已拒绝"${truncated}"`
-        : isReviewing
-          ? `修改"${truncated}" · 待审阅`
-          : isFailed
-            ? "修改已失效,未应用"
-            : `修改"${truncated}"中`;
+          : isReviewing
+            ? `修改"${truncated}" · 待审阅`
+            : isAborted
+              ? "修改已中止"
+              : isFailed
+                ? "修改未完成"
+                : `修改"${truncated}"中`;
     return (
       <div
         className="wf-msg tool"
@@ -1686,8 +1695,8 @@ function ToolCallRow({
         {patchDone && <span style={{ color: "var(--ink-2)", display: "inline-flex" }}><CheckIcon size={12} /></span>}
         {isRejected && <span style={{ color: "var(--ink-3)" }}>{"✗"}</span>}
         {isReviewing && <span style={{ color: "var(--mark)" }}>{"●"}</span>}
-        {isFailed && <span style={{ color: "var(--danger, #b42318)" }}>{"!"}</span>}
-        {!isRunning && !patchDone && !isRejected && !isReviewing && !isFailed && <span style={{ color: "var(--ink-3)" }}>{"·"}</span>}
+        {(isFailed || isAborted) && <span style={{ color: "var(--ink-3)" }}>{"■"}</span>}
+        {!isRunning && !patchDone && !isRejected && !isReviewing && !isFailed && !isAborted && <span style={{ color: "var(--ink-3)" }}>{"·"}</span>}
         {patchLabel}
       </div>
     );
@@ -1741,7 +1750,15 @@ function ToolCallRow({
         </div>
       );
     }
-    const fullpageLabel = isPending ? "等待您的确认" : isRunning ? "正在准备问题" : (b.data.source ?? "确认方向");
+    const fullpageLabel = isAborted
+      ? "已中止"
+      : spec.status.kind === "failed"
+        ? "未完成"
+        : isPending
+          ? "等待您的确认"
+          : isRunning
+            ? "正在准备问题"
+            : (b.data.source ?? "确认方向");
     return (
       <div className="wf-msg tool" style={{ color: "var(--ink-3)", fontSize: 13, cursor: "default", display: "flex", alignItems: "center", gap: 6 }} data-wf="ToolCall">
         {isRunning && <span className="chat-loading-dots"><span /><span /><span /></span>}

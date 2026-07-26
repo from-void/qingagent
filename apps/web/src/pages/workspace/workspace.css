@@ -109,12 +109,12 @@
   #view-workspace .ws-translate-segmented button{display:inline-flex;align-items:center;gap:7px}
   #view-workspace .ws-translate-status{display:inline-block;width:7px;height:7px;border-radius:var(--r-pill);background:var(--line-3)}
   #view-workspace .ws-translate-status.is-streaming{background:var(--mark);animation:ws-translate-status-breathe 1.2s ease-in-out infinite}
-  #view-workspace .ws-translate-status.is-failed{background:var(--danger)}
+  #view-workspace .ws-translate-status.is-failed,#view-workspace .ws-translate-status.is-aborted{background:var(--ink-3)}
   #view-workspace .ws-deriv-streaming-paper{position:relative;isolation:isolate;min-height:420px;max-height:calc(100vh - 210px);overflow-y:auto;padding:24px 20px}
   #view-workspace .ws-translate-stream-text{display:grid;gap:14px;color:var(--ink-1);font:16px/1.85 var(--font-zh-serif);white-space:pre-wrap}
   #view-workspace .ws-translate-stream-text p{margin:0}
   #view-workspace .ws-translate-failed{min-height:420px;display:grid;place-content:center;justify-items:center;gap:12px;text-align:center;color:var(--ink-2)}
-  #view-workspace .ws-translate-failed p{margin:0;color:var(--danger)}
+  #view-workspace .ws-translate-failed p{margin:0;color:var(--ink-3)}
   #view-workspace .ws-export-item:disabled{cursor:not-allowed;opacity:.45}
   @keyframes ws-translate-status-breathe{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
   @media (prefers-reduced-motion:reduce){#view-workspace .ws-translate-status.is-streaming{animation:none;opacity:1}}

@@ -111,7 +111,7 @@ export interface WorkspaceState {
   annotationGroups: AnnotationGroup[];
   previewGroups: Array<Extract<BridgeFrame, { kind: "annotationPreview" }>["data"]>;
   translationGen: Map<string, {
-    status: "streaming" | "failed";
+    status: "streaming" | "failed" | "aborted";
     text: string;
     reason?: string;
   }>;
@@ -342,7 +342,9 @@ function workspaceReducerMut(
             prevSpec.status.kind === "running");
         if (
           s.body.kind === "askUser" &&
-          (s.status.kind === "done" || s.status.kind === "failed") &&
+          (s.status.kind === "done" ||
+            s.status.kind === "failed" ||
+            s.status.kind === "aborted") &&
           wasOpen &&
           draft.activeOverlay === "askUser"
         ) {
@@ -539,6 +541,7 @@ function workspaceReducerMut(
       draft.streamError = action.error;
       draft.streamActive = false;
       draft.activeStreamIds = [];
+      terminalizeInFlightToolCallsMut(draft, "failed");
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       return;
     case "retryDrafting":
@@ -838,13 +841,16 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
       markStreamInactiveMut(draft, s.data.streamId);
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       if (s.data.reason.kind === "cancelled") {
+        terminalizeInFlightToolCallsMut(draft, "aborted");
         draft.streamError = { kind: "cancelled", reason: "" };
       } else if (s.data.reason.kind === "error") {
+        terminalizeInFlightToolCallsMut(draft, "failed");
         draft.streamError = { kind: "failed", reason: s.data.reason.data };
       }
       return;
     case "draftingFailed":
       markStreamInactiveMut(draft, s.data.streamId);
+      terminalizeInFlightToolCallsMut(draft, "failed");
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       draft.generationDraft = null;
       draft.streamError = {
@@ -875,8 +881,14 @@ function markStreamInactiveMut(draft: WorkspaceState, streamId: string): void {
 function reduceStreamTerminatedMut(
   draft: WorkspaceState,
   streamIds: string[] | undefined,
-  _reason: "stop" | "abort" | "error" | "completed",
+  reason: "stop" | "abort" | "error" | "completed",
 ): void {
+  if (reason !== "completed") {
+    terminalizeInFlightToolCallsMut(
+      draft,
+      reason === "error" ? "failed" : "aborted",
+    );
+  }
   if (!streamIds || streamIds.length === 0) {
     draft.activeStreamIds = [];
     draft.streamActive = false;
@@ -893,6 +905,44 @@ function reduceStreamTerminatedMut(
     draft.generationDraft = null;
   }
   reduceAgentBusyMut(draft, { kind: "turnTerminated" });
+}
+
+/** 本地断线/停止兜底：即使终态帧尚未抵达，也不能让任何工具卡继续 loading。 */
+function terminalizeInFlightToolCallsMut(
+  draft: WorkspaceState,
+  terminal: "aborted" | "failed",
+): void {
+  const settle = (spec: ToolCallSpec): ToolCallSpec => {
+    if (spec.status.kind !== "pending" && spec.status.kind !== "running") return spec;
+    return {
+      ...spec,
+      status: terminal === "aborted"
+        ? { kind: "aborted" }
+        : { kind: "failed", data: { retriable: true, reason: "未完成" } },
+    };
+  };
+
+  for (const [id, spec] of draft.toolCalls.entries()) {
+    draft.toolCalls.set(id, settle(spec));
+  }
+  for (const [docId, state] of draft.translationGen.entries()) {
+    if (state.status !== "streaming") continue;
+    draft.translationGen.set(docId, {
+      status: terminal,
+      text: state.text,
+    });
+  }
+  for (const message of draft.messages) {
+    for (let index = 0; index < message.parts.length; index += 1) {
+      const part = message.parts[index]!;
+      if (part.kind !== "toolCall") continue;
+      const settled = settle(part.data);
+      if (settled !== part.data) {
+        message.parts[index] = { kind: "toolCall", data: settled };
+        draft.toolCalls.set(settled.id, settled);
+      }
+    }
+  }
 }
 
 /* ───────────── helpers ───────────── */
@@ -1238,7 +1288,7 @@ export function selectOpenAskUser(state: WorkspaceState): ToolCallSpec | null {
   for (const tc of state.toolCalls.values()) {
     if (tc.body.kind !== "askUser") continue;
     const s = tc.status.kind;
-    if (s === "done" || s === "failed") continue;
+    if (s === "done" || s === "failed" || s === "aborted") continue;
     // running = 正在流式产题(逐题渐进展示;此刻尚未 suspend、后端 overlay 还不是 askUser),
     // 必须显示以保留"边输出边展示"的问卷流式效果;
     // overlay==="askUser" = 已 suspend 待用户作答。此处不再要求 questions>0:
@@ -1404,7 +1454,7 @@ export function selectSubAgents(state: WorkspaceState): Array<{
           ? "running"
           : tc.status.kind === "done"
             ? "done"
-            : tc.status.kind === "failed"
+            : tc.status.kind === "failed" || tc.status.kind === "aborted"
               ? "failed"
               : (() => {
                   throw new Error(

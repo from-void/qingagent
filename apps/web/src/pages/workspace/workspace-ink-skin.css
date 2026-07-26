@@ -2898,7 +2898,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: #8a7350;
 }
 #view-workspace .ws-draft-fail {
-  color: #b42318;
+  color: var(--ink-3);
 }
 
 /* —— 聊天行内代码:玄青暗底描金,不再白块 —— */

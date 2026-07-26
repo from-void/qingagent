@@ -460,7 +460,7 @@ describe("公众号稿生成体验", () => {
       generateTranslations,
       deleteDerivative: vi.fn(async () => {}),
     };
-    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed"; text: string; reason?: string }>) => root.render(
+    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed" | "aborted"; text: string; reason?: string }>) => root.render(
       <ConfirmProvider><DerivativeView
         sessionId="session-1"
         item={english}
@@ -477,7 +477,7 @@ describe("公众号稿生成体验", () => {
 
     await act(async () => renderView(new Map([
       [english.docId, { status: "streaming" as const, text: "" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
     ])));
     expect(host.querySelector('.ws-deriv-streaming-paper [data-wf="QingLoading"]')).not.toBeNull();
     const streamingView = host.querySelector(".ws-deriv-view")!;
@@ -491,7 +491,7 @@ describe("公众号稿生成体验", () => {
 
     await act(async () => renderView(new Map([
       [english.docId, { status: "streaming" as const, text: "<p>Hello &amp; <mark>world</mark></p><p>Second &#x1F44B;</p>" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
     ])));
     expect(host.querySelector(".ws-translate-stream-text")?.textContent).toBe("Hello & worldSecond 👋");
     expect(host.querySelector(".ws-translate-stream-text mark")).toBeNull();
@@ -501,7 +501,8 @@ describe("公众号稿生成体验", () => {
     expect(deleteButton.title).toBe("生成中不可删除");
 
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("译文生成失败，请重试");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("翻译未完成");
+    expect(host.textContent).not.toContain("Rendered page is a hollow shell");
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "重试")!.click());
     expect(generateTranslations).toHaveBeenCalledWith("session-1", [japanese.docId]);
   });

@@ -30,6 +30,48 @@ describe("workspaceCssContract", () => {
     expect(css.split("\n").length - (css.endsWith("\n") ? 1 : 0)).toBe(skinContract.skinLineCount);
   });
 
+  it("工具行与工具卡禁止红色失败态，内部错误只能留在诊断链路", () => {
+    // UI Iron Rule 契约：任何工具失败/中止/超时都只能使用中性灰短文案。
+    // 从底层选择器与状态映射同时卡死 danger/红色及原始 reason/error 上屏回归。
+    const unifiedCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/chatUnified.css"),
+      "utf8",
+    );
+    const unifiedView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/chatUnified.tsx"),
+      "utf8",
+    );
+    const chatView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/ChatMessageList.tsx"),
+      "utf8",
+    );
+    const workspaceCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/workspace.css"),
+      "utf8",
+    );
+    const derivativeView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/derivatives/DerivativeView.tsx"),
+      "utf8",
+    );
+    const skinContract = contract as typeof contract & { skinFile: string };
+    const skinCss = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
+    const draftRules = [...skinCss.matchAll(/#view-workspace [^{]*\.ws-draft-[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+    const translationRules = [...workspaceCss.matchAll(/#view-workspace [^{]*\.ws-translate-[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+
+    expect(unifiedCss).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(draftRules).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(translationRules).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(unifiedView).not.toContain("spec.status.data.reason");
+    expect(unifiedView).not.toContain("body.progress?.error");
+    expect(unifiedView).not.toMatch(/className=.*is-error/);
+    expect(chatView).not.toMatch(/isFailed[^\\n]*var\(--danger/);
+    expect(derivativeView).not.toMatch(/<p>\{translationState\.reason/);
+  });
+
   it("keeps annotation hover card light, anchored, and token-safe", () => {
     const skinContract = contract as typeof contract & { skinFile: string };
     const css = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");

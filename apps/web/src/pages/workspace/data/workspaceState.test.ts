@@ -276,6 +276,16 @@ describe("workspaceReducer", () => {
     });
     expect(finished.translationGen.has("en")).toBe(false);
     expect(finished.translationGen.get("ja")?.status).toBe("failed");
+
+    const aborted = workspaceReducer(streaming, {
+      kind: "streamTerminated",
+      reason: "stop",
+    });
+    expect(aborted.translationGen.get("en")).toEqual({
+      status: "aborted",
+      text: "<p>Hello world</p>",
+    });
+    expect(aborted.translationGen.get("ja")?.status).toBe("failed");
   });
 
 describe("annotationGroupsReady 来源增量", () => {
@@ -1528,8 +1538,68 @@ describe("annotationGroupsReady 来源增量", () => {
         expect(stopped.streamActive).toBe(false);
         expect(stopped.activeStreamIds).toEqual([]);
         expect(stopped.agentBusy).toBe(false);
+        expect(stopped.toolCalls.get(runningCommandToolCall.id)?.status.kind).toBe(
+          reason === "completed" ? "running" : reason === "error" ? "failed" : "aborted",
+        );
       },
     );
+
+    it("wire cancelled end 同时收敛 pending/running 工具缓存与消息帧", () => {
+      const running = {
+        ...runningCommandToolCall,
+        id: "running-on-cancel",
+      };
+      const pending: ToolCallSpec = {
+        id: "pending-on-cancel",
+        name: "fetchArticle",
+        render: { kind: "chatInline" },
+        status: { kind: "pending" },
+        body: { kind: "generic", data: { argsJson: "{}" } },
+        result: null,
+      };
+      const started = reduce(
+        {
+          kind: "chatMessageAdded",
+          data: {
+            message: {
+              ...baseMessage,
+              id: "cancel-tools",
+              parts: [
+                { kind: "toolCall", data: running },
+                { kind: "toolCall", data: pending },
+              ],
+            },
+          },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: { messageId: "cancel-tools", toolCallId: running.id, spec: running },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: { messageId: "cancel-tools", toolCallId: pending.id, spec: pending },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "cancel-stream" } },
+        },
+      );
+
+      const cancelled = workspaceReducer(started, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: { streamId: "cancel-stream", reason: { kind: "cancelled" } },
+        },
+      });
+
+      expect([...cancelled.toolCalls.values()].map((spec) => spec.status.kind))
+        .toEqual(["aborted", "aborted"]);
+      const messageStatuses = cancelled.messages[0]?.parts
+        .filter((part) => part.kind === "toolCall")
+        .map((part) => part.data.status.kind);
+      expect(messageStatuses).toEqual(["aborted", "aborted"]);
+    });
 
     it("R2-22 stop 终止流时立即清除 agentBusy，按钮可恢复为发送", () => {
       const busy = workspaceReducer(initialWorkspaceState, {

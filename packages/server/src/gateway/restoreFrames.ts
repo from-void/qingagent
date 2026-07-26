@@ -46,8 +46,7 @@ function liveRestoreStatus(
     (spec.status.kind === "pending" || spec.status.kind === "running")
   ) {
     return {
-      kind: "failed",
-      data: { retriable: false, reason: "上次的确认已结束，请重新发起。" },
+      kind: "aborted",
     };
   }
 

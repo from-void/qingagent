@@ -31,7 +31,6 @@
   background: var(--u-bg); font-size: var(--u-fs); color: var(--u-ink-soft); margin: var(--u-mar) 0;
 }
 .u-scope .u-ico { flex: none; width: var(--u-ico); height: var(--u-ico); display: inline-flex; align-items: center; justify-content: center; color: var(--u-ink-soft); }
-.u-scope .u-ico.is-error { color: var(--danger, #b42318); }
 .u-scope .u-ico svg { width: 100%; height: 100%; }
 .u-scope .u-lbl { flex: none; font-weight: var(--u-lbl-weight); color: var(--u-ink); }
 /* 参数段可压缩省略(0702):flex:none 会让长参数把右侧状态字顶出容器裁掉;
@@ -40,7 +39,6 @@
 .u-scope .u-seg::before { content: "·"; color: var(--u-ink-faint); margin-right: 6px; }
 .u-scope .u-spacer { flex: 1 1 auto; min-width: 8px; }
 .u-scope .u-meta { flex: none; color: var(--u-ink-soft); font-size: var(--u-fs-meta); }
-.u-scope .u-meta.is-error { color: var(--danger, #b42318); }
 
 /* —— 占位/进行中:三点 loading + 「正在准备 <工具名>」流光扫光,无边框(对齐"思考中") —— */
 .u-scope .u-prep {

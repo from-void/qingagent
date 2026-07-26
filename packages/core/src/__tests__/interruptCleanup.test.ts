@@ -161,14 +161,11 @@ describe("abortAndCleanupTurn", () => {
   it.each([
     ["仍有运行卡", true],
     ["旧进程已退出且无运行卡", false],
-  ])("新消息抢占%s时都给旧轮追加诚实可见收尾", async (_label, withRunningCard) => {
+  ])("新消息抢占%s时不追加写死的用户可见正文", async (_label, withRunningCard) => {
     const {
       abortAndCleanupTurn,
       createSession,
     } = await import("../bridge/index.js");
-    const {
-      PREEMPTED_BY_NEW_MESSAGE_NOTICE,
-    } = await import("../agent-run/turnCleanup.js");
     const state = createSession(`preempt-notice-${withRunningCard}`);
     state._activeAgentMessageId = "old-agent-message";
     state.chatHistory.push({
@@ -188,23 +185,11 @@ describe("abortAndCleanupTurn", () => {
       }),
     );
 
-    expect(frames).toContainEqual({
-      kind: "chatMessageAppended",
-      data: {
-        messageId: "old-agent-message",
-        seq: 1,
-        part: {
-          kind: "text",
-          data: { body: PREEMPTED_BY_NEW_MESSAGE_NOTICE },
-        },
-      },
-    });
-    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("没有被自动终止");
-    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("状态仍待确认");
-    expect(state.messages.at(-1)).toEqual({
-      role: "assistant",
-      content: PREEMPTED_BY_NEW_MESSAGE_NOTICE,
-    });
+    expect(frames.some((frame) => frame.kind === "chatMessageAdded")).toBe(false);
+    expect(frames.some((frame) => frame.kind === "chatMessageAppended")).toBe(false);
+    expect(state.messages).toEqual([]);
+    const oldMessage = state.chatHistory.find((message) => message.id === "old-agent-message");
+    expect(oldMessage?.parts.some((part) => part.kind === "text")).toBe(false);
     expect(state._activeAgentMessageId).toBeNull();
   });
 
@@ -268,10 +253,7 @@ describe("abortAndCleanupTurn", () => {
       data: {
         toolCallId: "draft-1",
         spec: {
-          status: {
-            kind: "failed",
-            data: { retriable: false, reason: "本轮生成已中断" },
-          },
+          status: { kind: "aborted" },
         },
       },
     });
@@ -318,7 +300,7 @@ describe("abortAndCleanupTurn", () => {
     });
   });
 
-  it("运行命令取消并切回会话时 status 与 commandCard 都持久收敛为 failed", async () => {
+  it("运行命令取消并切回会话时 status 与 commandCard 都持久收敛为 aborted", async () => {
     const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
     const state = createSession("abort-running-command-card");
     state.streamId = "stream-running-command";
@@ -329,16 +311,12 @@ describe("abortAndCleanupTurn", () => {
     const persisted = findToolCallSpec(state, "command-sleep");
 
     expect(persisted).toMatchObject({
-      status: {
-        kind: "failed",
-        data: { retriable: false, reason: "本轮生成已中断" },
-      },
+      status: { kind: "aborted" },
       body: {
         kind: "commandCard",
         data: expect.objectContaining({
           phase: "failed",
-          exitCode: -1,
-          outputTail: expect.stringContaining("本轮生成已中断"),
+          terminalKind: "aborted",
         }),
       },
     });
@@ -347,7 +325,7 @@ describe("abortAndCleanupTurn", () => {
       data: expect.objectContaining({
         toolCallId: "command-sleep",
         spec: expect.objectContaining({
-          status: expect.objectContaining({ kind: "failed" }),
+          status: expect.objectContaining({ kind: "aborted" }),
           body: expect.objectContaining({
             kind: "commandCard",
             data: expect.objectContaining({ phase: "failed" }),
@@ -389,23 +367,14 @@ describe("abortAndCleanupTurn", () => {
     }));
 
     const owner = findToolCallSpec(state, "background-owner");
-    expect(owner?.status).toEqual({
-      kind: "failed",
-      data: {
-        retriable: false,
-        reason: "已中止，结果可能未知；进程状态未确认",
-      },
-    });
+    expect(owner?.status).toEqual({ kind: "aborted" });
     expect(owner?.body).toMatchObject({
       kind: "commandCard",
       data: { terminalKind: "aborted", pid: "7373" },
     });
     expect(JSON.stringify(owner)).not.toContain("killed");
     expect(findToolCallSpec(state, "background-read")).toMatchObject({
-      status: {
-        kind: "failed",
-        data: { retriable: false },
-      },
+      status: { kind: "aborted" },
       body: {
         kind: "generic",
         data: { terminalKind: "aborted" },
@@ -473,17 +442,11 @@ describe("abortAndCleanupTurn", () => {
         messageId: expect.any(String),
         toolCallId: "tc-real-abort",
         spec: expect.objectContaining({
-          status: {
-            kind: "failed",
-            data: { retriable: false, reason: "本轮生成已中断" },
-          },
+          status: { kind: "aborted" },
         }),
       },
     });
-    expect(findToolCallSpec(state, "tc-real-abort")?.status).toEqual({
-      kind: "failed",
-      data: { retriable: false, reason: "本轮生成已中断" },
-    });
+    expect(findToolCallSpec(state, "tc-real-abort")?.status).toEqual({ kind: "aborted" });
   });
 
   it("真实 runAgentTurn 中止后 fullStream 抛 AbortError 时仍不发失败帧也不补 done", async () => {
@@ -552,17 +515,11 @@ describe("abortAndCleanupTurn", () => {
         messageId: expect.any(String),
         toolCallId: "tc-real-abort-reject",
         spec: expect.objectContaining({
-          status: {
-            kind: "failed",
-            data: { retriable: false, reason: "本轮生成已中断" },
-          },
+          status: { kind: "aborted" },
         }),
       },
     });
-    expect(findToolCallSpec(state, "tc-real-abort-reject")?.status).toEqual({
-      kind: "failed",
-      data: { retriable: false, reason: "本轮生成已中断" },
-    });
+    expect(findToolCallSpec(state, "tc-real-abort-reject")?.status).toEqual({ kind: "aborted" });
   });
 });
 

@@ -392,6 +392,47 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     }
   });
 
+  it.each(["globalStop", "preemptedByNewMessage"])(
+    "父级 %s 会终止所有来源抓取且不再写 done 进度",
+    async (reason) => {
+      mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+      mockSearchDeps.fallbackSearch.mockResolvedValue([
+        fallbackResult,
+        { ...fallbackResult, url: "https://fallback.example/second" },
+      ]);
+      const controller = new AbortController();
+      const writes: Array<{ type?: string; progress?: ResearchCardBody }> = [];
+      const writer = { write: vi.fn((chunk) => writes.push(chunk)) };
+      const childSignals: AbortSignal[] = [];
+      mockFetchDeps.fetchArticleExecute.mockImplementation(
+        (_input: unknown, fetchContext: { abortSignal?: AbortSignal } | undefined) => {
+          const signal = fetchContext?.abortSignal;
+          if (signal) childSignals.push(signal);
+          return new Promise((_resolve, reject) => {
+            const onAbort = () => reject(signal?.reason ?? new Error("aborted"));
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort, { once: true });
+          });
+        },
+      );
+
+      const pending = executeWebSearch(
+        { query: "cancel all sources", count: 2 },
+        { abortSignal: controller.signal, writer },
+      );
+      await vi.waitFor(() => expect(childSignals.length).toBeGreaterThan(0));
+      controller.abort(reason);
+
+      await expect(pending).rejects.toBe(reason);
+      expect(childSignals.every((signal) => signal.aborted)).toBe(true);
+      expect(
+        writes.some(
+          (write) => write.type === "research-progress" && write.progress?.phase === "done",
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("并发抓取保持搜索顺序,区分 done/browser/skipped 并写出抓取进度", async () => {
     const results: SearchResult[] = [
       { title: "一", url: "https://example.com/static", snippet: "s1" },

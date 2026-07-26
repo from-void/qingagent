@@ -1,5 +1,5 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -110,6 +110,7 @@ export function WorkspaceDocumentPane({
     handleCancelAskUser,
     closeViewingVersion,
     setTiptapEditor,
+    markDocumentSurfaceReady,
     handleEditorChange,
     clearPresentationRun,
     findOpen,
@@ -156,6 +157,34 @@ export function WorkspaceDocumentPane({
     chatInputEditorDisabled,
     chatInputRef,
   } = controller;
+
+  useEffect(() => {
+    if (
+      controller.hydration.phase !== "waiting" ||
+      !controller.hydration.documentSeen
+    ) {
+      return;
+    }
+    const pane = docScrollRef.current;
+    if (!pane) return;
+    const markWhenPaintable = () => {
+      if (!pane.querySelector(".wf-doc")) return false;
+      markDocumentSurfaceReady();
+      return true;
+    };
+    if (markWhenPaintable()) return;
+    const observer = new MutationObserver(() => {
+      if (!markWhenPaintable()) return;
+      observer.disconnect();
+    });
+    observer.observe(pane, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [
+    controller.hydration.documentSeen,
+    controller.hydration.phase,
+    docScrollRef,
+    markDocumentSurfaceReady,
+  ]);
 
   const derivativeActive = activeTab !== "main";
   const translationItems = derivatives.filter(

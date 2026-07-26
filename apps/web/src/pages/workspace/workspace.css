@@ -36,29 +36,12 @@
   #view-workspace .ws-body{
     flex:1 1 auto;min-height:0;display:flex;overflow:hidden;position:relative;
   }
-  /* 既有会话首批恢复期间只保留布局与分隔线，不挂空编辑器或空聊天树。
-     占位必须透明，始终透出 #view-workspace 已有的玄青桌面，不能继承全局浅色 --bg-canvas。
-     完成帧抵达后内容一次淡入；若文档领先 180ms，正文先显、对话随后补齐。 */
-  #view-workspace .ws-hydration-left{
-    flex:0 0 440px;width:440px;border-right:1px solid var(--line-1);
-    background:transparent;
-  }
-  #view-workspace .ws-hydration-right{
-    flex:1 1 auto;min-width:0;background:transparent;
-  }
-  #view-workspace .ws-body[data-hydration-reveal="together"] > .ws-left,
-  #view-workspace .ws-body[data-hydration-reveal="together"] > .ws-right,
-  #view-workspace .ws-body[data-hydration-reveal="document-then-chat"] > .ws-left,
-  #view-workspace .ws-body[data-hydration-reveal="document-then-chat"] > .ws-right{
-    animation:ws-hydration-reveal 180ms ease-out both;
-  }
-  @keyframes ws-hydration-reveal{
-    from{opacity:0}
-    to{opacity:1}
-  }
-  @media (prefers-reduced-motion:reduce){
-    #view-workspace .ws-body[data-hydration-reveal] > .ws-left,
-    #view-workspace .ws-body[data-hydration-reveal] > .ws-right{animation:none}
+  /* 既有会话恢复时，真实左右树只挂一次以便编辑器在暗场内完成首帧，但等待期完全不可见。
+     visibility:hidden 不绘制任何浅色面，透出的始终是 #view-workspace 的玄青桌面；
+     ready 后的唯一揭示由 ws-arriving → ws-arrive-revealing 接管。 */
+  #view-workspace .ws-body[data-hydration="waiting"] > .ws-left,
+  #view-workspace .ws-body[data-hydration="waiting"] > .ws-right{
+    visibility:hidden;pointer-events:none;
   }
   /* bigplan 态 · 右侧文档区被替换成 plan 面板, 左侧对话保持不变 */
   body[data-ws-state="bigplan"] #view-workspace .ws-right > article.wf-doc,

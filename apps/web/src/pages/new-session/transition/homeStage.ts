@@ -19,6 +19,8 @@ export interface StageRect {
   height: number;
 }
 
+export type StageRectTarget = StageRect | (() => StageRect);
+
 export interface HomeTransitionStage {
   /**
    * forward:首页跑核心动效(墨渗 + 卡从 from 飞到 to + 背景变深),
@@ -26,11 +28,11 @@ export interface HomeTransitionStage {
    */
   playForward: (
     from: StageRect,
-    to: StageRect,
+    to: StageRectTarget,
     inkOrigin: { x: number; y: number },
     // plain=true:点击瞬间先把飞卡切成纯净(去噪点/边框/角标),与工作区文档纸一致,再形变
     plain?: boolean,
-  ) => Promise<void>;
+  ) => Promise<StageRect>;
   /**
    * return:首页挂载即「到达态」(卡在 from=落点、背景已深),跑反向核心动效
    * (卡飞回 to=新建卡固定位 + 墨退回宣纸),到达正常首页静止帧时 resolve。
@@ -204,10 +206,10 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
 
   function playForward(
     from: StageRect,
-    to: StageRect,
+    to: StageRectTarget,
     inkOrigin: { x: number; y: number },
     plain = false,
-  ): Promise<void> {
+  ): Promise<StageRect> {
     return new Promise((resolve) => {
       // plain:点击那一瞬间先把飞卡切成纯净(无噪点/边框/角标),和工作区文档纸一致,再开始形变
       morph.classList.toggle("ccx-morph-plain", plain);
@@ -218,6 +220,9 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
 
       let morphDone = false;
       let inkDone = false;
+      const readTarget = () => (typeof to === "function" ? to() : to);
+      // 起飞前先实测一次。终帧还会再测一次，覆盖 1100ms 转场期间的 resize。
+      const initialTarget = readTarget();
       // 到点无条件置深,与墨渗进度触发取先到者(详见 DARK_FALLBACK_MS)。
       cancelDarkFallback();
       darkFallbackTimer = window.setTimeout(() => {
@@ -227,9 +232,11 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
       const tryResolve = () => {
         if (morphDone && inkDone) {
           cancelDarkFallback();
-          // 卡落定 + 背景已深的静止帧:确保 morph 精确停在落点(去掉弧线残留)
-          setMorphRect(to);
-          resolve();
+          // 卡落定 + 背景已深的静止帧:重新实测目标纸壳，确保 resize 后仍与
+          // 工作区首帧逐像素同位；setMorphRect 保持 transition:none，不靠动画糊对齐。
+          const settledTarget = readTarget();
+          setMorphRect(settledTarget);
+          resolve(settledTarget);
         }
       };
 
@@ -257,7 +264,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
         inkDone = true;
       }
 
-      tweenMorph(from, to, 1100, () => {
+      tweenMorph(from, initialTarget, 1100, () => {
         morphDone = true;
         tryResolve();
       });

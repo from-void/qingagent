@@ -25,6 +25,7 @@ const INPUT_OCCUPANT_SELECTOR = [
 ].join(",");
 
 const CHAT_BOTTOM_THRESHOLD = 50;
+const DEFAULT_INPUT_CLEARANCE_GAP = 24;
 
 function isVisibleInputOccupant(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
@@ -37,9 +38,9 @@ function isVisibleInputOccupant(element: HTMLElement): boolean {
 }
 
 /**
- * 输入区所需留白 = 最上方可见输入控件到滚动区底边的距离 + wrap 的设计上留白。
- * 对普通输入框而言，这与「wrap 顶边到滚动区底边」等价；绝对定位的问卷、确认卡、
- * 技能/素材菜单和任务浮层则按自身真实顶边扩展占位。
+ * 输入区所需留白 = 最上方可见输入控件到滚动区底边的距离 + 显式呼吸间距。
+ * 呼吸间距至少为 --ws-input-clearance-gap；若 wrap 自身上 padding 更大则取其值，
+ * 避免把两份设计间距重复相加。
  */
 export function measureWorkspaceInputClearance(
   chat: HTMLElement,
@@ -47,8 +48,13 @@ export function measureWorkspaceInputClearance(
 ): number {
   const chatRect = chat.getBoundingClientRect();
   const wrapRect = wrap.getBoundingClientRect();
-  const paddingTop = parseFloat(getComputedStyle(wrap).paddingTop) || 0;
-  let occupantTop = wrapRect.top + paddingTop;
+  const wrapStyle = getComputedStyle(wrap);
+  const paddingTop = parseFloat(wrapStyle.paddingTop) || 0;
+  const configuredGap =
+    parseFloat(wrapStyle.getPropertyValue("--ws-input-clearance-gap"))
+    || DEFAULT_INPUT_CLEARANCE_GAP;
+  const breathingGap = Math.max(configuredGap, paddingTop);
+  let occupantTop = Number.POSITIVE_INFINITY;
 
   for (const occupant of wrap.querySelectorAll<HTMLElement>(
     INPUT_OCCUPANT_SELECTOR,
@@ -56,8 +62,11 @@ export function measureWorkspaceInputClearance(
     if (!isVisibleInputOccupant(occupant)) continue;
     occupantTop = Math.min(occupantTop, occupant.getBoundingClientRect().top);
   }
+  if (!Number.isFinite(occupantTop)) {
+    occupantTop = wrapRect.top + paddingTop;
+  }
 
-  return Math.max(0, Math.ceil(chatRect.bottom - occupantTop + paddingTop));
+  return Math.max(0, Math.ceil(chatRect.bottom - occupantTop + breathingGap));
 }
 
 export function useWorkspaceChrome(input: {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { measureWorkspaceInputClearance } from "./useWorkspaceChrome";
 
 const CHAT_BOTTOM = 800;
-const DESIGN_GAP = 14;
+const DESIGN_GAP = 24;
 
 describe("workspace 对话流底部留白", () => {
   afterEach(() => {
@@ -15,7 +15,7 @@ describe("workspace 对话流底部留白", () => {
     ["askUser 面板", "askuser-overlay", 668, 350, 438],
     ["确认条", "cf-overlay", 668, 420, 362],
   ])(
-    "%s 下末条消息不与输入区重叠，且间距等于设计上留白",
+    "%s 下末条消息不与输入区重叠，且留白减实际占用不小于显式 gap",
     (_shape, occupantClass, wrapTop, occupantTop, occupantHeight) => {
       const { chat, wrap, occupant } = createLayout({
         occupantClass,
@@ -25,9 +25,11 @@ describe("workspace 对话流底部留白", () => {
       });
 
       const clearance = measureWorkspaceInputClearance(chat, wrap);
+      const actualOccupied = CHAT_BOTTOM - occupantTop;
       const lastMessageBottomAtScrollEnd = CHAT_BOTTOM - clearance;
 
-      expect(occupantTop - lastMessageBottomAtScrollEnd).toBe(DESIGN_GAP);
+      expect(clearance - actualOccupied).toBeGreaterThanOrEqual(DESIGN_GAP);
+      expect(clearance - actualOccupied).toBe(DESIGN_GAP);
       expect(lastMessageBottomAtScrollEnd).toBeLessThan(occupantTop);
       expect(occupant.getBoundingClientRect().top).toBe(occupantTop);
     },
@@ -49,6 +51,20 @@ describe("workspace 对话流底部留白", () => {
       CHAT_BOTTOM - 300 + DESIGN_GAP,
     );
   });
+
+  it("wrap paddingTop 大于显式 gap 时取较大值且不双份相加", () => {
+    const { chat, wrap } = createLayout({
+      occupantClass: "wf-input",
+      wrapTop: 650,
+      occupantTop: 682,
+      occupantHeight: 100,
+      paddingTop: 32,
+    });
+
+    const clearance = measureWorkspaceInputClearance(chat, wrap);
+    const actualOccupied = CHAT_BOTTOM - 682;
+    expect(clearance - actualOccupied).toBe(32);
+  });
 });
 
 function createLayout(input: {
@@ -56,11 +72,13 @@ function createLayout(input: {
   wrapTop: number;
   occupantTop: number;
   occupantHeight: number;
+  paddingTop?: number;
 }) {
   const chat = document.createElement("div");
   const wrap = document.createElement("div");
   const occupant = document.createElement("div");
-  wrap.style.paddingTop = `${DESIGN_GAP}px`;
+  wrap.style.paddingTop = `${input.paddingTop ?? 0}px`;
+  wrap.style.setProperty("--ws-input-clearance-gap", `${DESIGN_GAP}px`);
   occupant.className = input.occupantClass;
   wrap.appendChild(occupant);
   document.body.append(chat, wrap);

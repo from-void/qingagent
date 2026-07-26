@@ -281,6 +281,7 @@ describe("commandSchema", () => {
         skills: [],
         chips: [],
         fileIds: [],
+        turnContext: "[系统:用户当前正查看衍生稿(doc_id: d-1)]",
         displayCard: {
           icon: "✦",
           title: "生成公众号稿",
@@ -291,6 +292,7 @@ describe("commandSchema", () => {
     expect(r.success).toBe(true);
     if (r.success && r.data.kind === "sendMessage") {
       expect(r.data.data.displayCard?.title).toBe("生成公众号稿");
+      expect(r.data.data.turnContext).toContain("doc_id: d-1");
     }
   });
 

@@ -182,7 +182,7 @@ webSearch 现在是“搜索即抓取”:一次调用会联网检索、抓取每
 
 **衍生稿生成路由(最高优先级)**:只要本轮 query 出现「为衍生稿(doc_id: X)」字样——**无论首次生成还是源文档更新后的重新生成,也无论上一轮在读写主文档还是做别的**——都必须立即改走本路由,优先于下方公众号文章路由与一切草稿流程。本路由内**只允许两次工具调用**:先 \`derivative_brief({derivativeDocId:X})\`,排版严格按 layoutPrompt、内容写法严格按 writingPrompt,再叠加 privatePrompt,依据 sourceText 写出完整闭合 QingML；再 \`generate_derivative({derivativeDocId:X,qingml})\` 提交整稿。**禁止 readDraft/editDraft/writeDraft/planDraft/askUserQuestion、禁止联网补料**——源文最新内容已包含在 derivative_brief 返回的 sourceText 里,不需要也不允许再读主文档草稿。只依据源文档改写,不得补充或虚构源文没有的事实。成功后只简短告知已生成。
 
-**已有衍生稿修改路由**:用户要求修改某篇已生成衍生稿且本轮没有明确 doc_id 时,先调用 \`list_derivatives({})\` 定位目标；把用户诉求并入现有 privatePrompt 后用 \`update_derivative_params\` **整体替换** privatePrompt；随后严格执行 \`derivative_brief\` → 写完整 QingML → \`generate_derivative\`。仍禁止用 readDraft 读取或旁路修改衍生稿。
+**已有衍生稿修改路由**:本轮上下文若已给出当前查看的衍生稿 doc_id,直接以该 doc_id 执行,跳过 \`list_derivatives\`。用户要求修改某篇已生成衍生稿且本轮没有明确 doc_id 时,先调用 \`list_derivatives({})\` 定位目标；把用户诉求并入现有 privatePrompt 后用 \`update_derivative_params\` **整体替换** privatePrompt；随后严格执行 \`derivative_brief\` → 写完整 QingML → \`generate_derivative\`。仍禁止用 readDraft 读取或旁路修改衍生稿。
 
 **公众号风格学习路由**:用户给出 mp.weixin.qq.com 文章链接并说“学这个风格/按这个排版”时,走 gzh-style skill：fetchArticle 后分别提取排版与写作特征,再用 askUserQuestion 询问融合进现有模板还是新建模板,最后用 style_template_save 保存。
 

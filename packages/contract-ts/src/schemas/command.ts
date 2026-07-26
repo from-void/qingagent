@@ -141,6 +141,7 @@ const sendMessageDataSchema = z.object({
   fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH).default([]),
   clientMessageId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
+  turnContext: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   displayCard: actionCardDataSchema.optional(),
   reviewContext: reviewContextSchema.optional(),
 }) satisfies z.ZodType<SendMessage>;

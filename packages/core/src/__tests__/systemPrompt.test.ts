@@ -189,6 +189,22 @@ describe("system prompt S3", () => {
     }
   });
 
+  it("已有衍生稿修改路由允许当前查看的 doc_id 直通", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const start = prompt.indexOf("**已有衍生稿修改路由**");
+    const end = prompt.indexOf("**公众号文章路由", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const route = prompt.slice(start, end);
+    expect(route).toContain(
+      "本轮上下文若已给出当前查看的衍生稿 doc_id,直接以该 doc_id 执行,跳过 `list_derivatives`",
+    );
+    expect(route.indexOf("跳过 `list_derivatives`")).toBeLessThan(
+      route.indexOf("本轮没有明确 doc_id 时"),
+    );
+  });
+
   it("QingML prompt 不泄漏旧编辑协议词", () => {
     const prompt = buildSystemPrompt();
     for (const forbidden of [

@@ -361,6 +361,21 @@ describe("validateBridgeFrame", () => {
     ).toThrow(BridgeFrameValidationError);
   });
 
+  it("accepts sessionRestoreCompleted and rejects an empty session id", () => {
+    expect(() =>
+      validateBridgeFrame({
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "session-1" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateBridgeFrame({
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "" },
+      }),
+    ).toThrow(/sessionId/);
+  });
+
   it("accepts chatMessageAdded.appendSeq only when it is a non-negative integer", () => {
     const frame: BridgeFrame = {
       kind: "chatMessageAdded",

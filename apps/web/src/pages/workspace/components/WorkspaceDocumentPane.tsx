@@ -1,5 +1,5 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -29,6 +29,7 @@ import {
 } from "../data/revisionedMutation";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
+import type { DerivativeDocument } from "./derivatives/types";
 
 function staleDismissKey(item: DerivativeItem): string {
   return `${item.docId}:${item.currentSourceVersion}`;
@@ -42,6 +43,10 @@ export function WorkspaceDocumentPane({
   const [dismissedStaleKeys, setDismissedStaleKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [derivativeDocCache, setDerivativeDocCache] = useState<
+    Map<string, DerivativeDocument>
+  >(() => new Map());
+  const derivativeTabRequestRef = useRef(0);
   const isStaleDismissed = useCallback(
     (item: DerivativeItem) => dismissedStaleKeys.has(staleDismissKey(item)),
     [dismissedStaleKeys],
@@ -160,6 +165,68 @@ export function WorkspaceDocumentPane({
     activeTab === "translate"
       ? translationItems[0]
       : derivatives.find((item) => item.docId === activeTab);
+  const activeDerivativeCacheKey =
+    state.sessionId && activeDerivative
+      ? `${state.sessionId}:${activeDerivative.docId}:${activeDerivative.generatedAt ?? ""}`
+      : null;
+  const activateDocumentTab = useCallback(
+    (nextTab: "main" | string) => {
+      const requestId = derivativeTabRequestRef.current + 1;
+      derivativeTabRequestRef.current = requestId;
+      if (nextTab === "main" || !state.sessionId || !streamRef.current) {
+        setActiveTab(nextTab);
+        return;
+      }
+      const target =
+        nextTab === "translate"
+          ? translationItems[0]
+          : derivatives.find((item) => item.docId === nextTab);
+      if (!target) return;
+      const cacheKey = `${state.sessionId}:${target.docId}:${target.generatedAt ?? ""}`;
+      if (
+        derivativeDocCache.has(cacheKey) ||
+        pendingDerivativeGeneration === target.docId ||
+        state.translationGen.has(target.docId)
+      ) {
+        setActiveTab(nextTab);
+        return;
+      }
+
+      // 既有衍生稿先取正文再换 tab：网络等待期保留当前稳定纸面，避免先挂空纸再替换。
+      void streamRef.current
+        .getDerivativeDoc(state.sessionId, target.docId)
+        .then((document) => {
+          if (
+            derivativeTabRequestRef.current !== requestId ||
+            document?.meta.docId !== target.docId
+          ) {
+            return;
+          }
+          setDerivativeDocCache((current) => {
+            const next = new Map(current);
+            next.set(cacheKey, document);
+            return next;
+          });
+          setActiveTab(nextTab);
+        })
+        .catch((error) => {
+          if (derivativeTabRequestRef.current !== requestId) return;
+          console.error("[workspace] preload derivative tab failed", error);
+          showToast("稿件打开失败 · 请重试");
+        });
+    },
+    [
+      derivativeDocCache,
+      derivatives,
+      pendingDerivativeGeneration,
+      setActiveTab,
+      showToast,
+      state.sessionId,
+      state.translationGen,
+      streamRef,
+      translationItems,
+    ],
+  );
 
   return (
     <>
@@ -187,7 +254,7 @@ export function WorkspaceDocumentPane({
             title={title}
             items={derivatives}
             activeTab={activeTab}
-            onActivate={setActiveTab}
+            onActivate={activateDocumentTab}
             onCreate={(dtype) => {
               setDerivativeCreateDtype(dtype);
               setDerivativeCreateOpen(true);
@@ -363,6 +430,11 @@ export function WorkspaceDocumentPane({
             }
             sessionId={state.sessionId}
             item={activeDerivative}
+            initialDocument={
+              activeDerivativeCacheKey
+                ? derivativeDocCache.get(activeDerivativeCacheKey) ?? null
+                : null
+            }
             items={activeTab === "translate" ? translationItems : undefined}
             stream={streamRef.current}
             streamActive={agentActive}

@@ -43,6 +43,51 @@ describe("公众号稿生成体验", () => {
   beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
+  it("既有衍生稿用预取正文首帧成画，不先挂空纸等待二次请求", async () => {
+    const generated = { ...item, sourceVersion: 1, generatedAt: "now" };
+    const initialDocument = {
+      meta: generated,
+      docPm: JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "prefetched" },
+            content: [{ type: "text", text: "预取正文首帧可见" }],
+          },
+        ],
+      }),
+      docVersion: 1,
+      title: "预取稿",
+    };
+    const stream = {
+      getDerivativeDoc: vi.fn(
+        () => new Promise<typeof initialDocument>(() => undefined),
+      ),
+    };
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={generated}
+            initialDocument={initialDocument}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={vi.fn()}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+    });
+
+    expect(host.textContent).toContain("预取正文首帧可见");
+  });
+
   it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
     const legacyBrokenTable = JSON.stringify({
       type: "doc", attrs: { schemaVersion: 1 }, content: [{

@@ -3351,6 +3351,10 @@ describe("WorkspacePage review controls", () => {
         kind: "docStateChanged",
         data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: false },
       },
+      {
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "s-1" },
+      },
     ]);
 
     expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();

@@ -61,6 +61,7 @@ const EMPTY_TRANSLATION_GEN = new Map<string, TranslationGenerationState>();
 
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
+  initialDocument?: DerivativeDocument | null;
   translationGen?: ReadonlyMap<string, TranslationGenerationState>;
   onRefresh: () => Promise<void>; onDeleted: () => void; onToast: (text: string) => void;
   onSendQuery: (text: string, displayCard: ActionCardData) => void;
@@ -74,7 +75,9 @@ export function DerivativeView(props: {
   const isTranslation = descriptor.dtype === "translate";
   const translationGen = props.translationGen ?? EMPTY_TRANSLATION_GEN;
   const translationState = translationGen.get(item.docId);
-  const [document, setDocument] = useState<DerivativeDocument | null>(null);
+  const [document, setDocument] = useState<DerivativeDocument | null>(
+    props.initialDocument ?? null,
+  );
   const [mode, setMode] = useState<"phone" | "desktop">("phone");
   const [generating, setGenerating] = useState(Boolean(props.generatingInitially));
   const [generationBefore, setGenerationBefore] = useState<string | null>(item.generatedAt);
@@ -96,12 +99,22 @@ export function DerivativeView(props: {
   }, [props.items, selectedDocId]);
   useEffect(() => {
     let current = true;
-    setDocument(null);
+    if (props.initialDocument?.meta.docId === item.docId) {
+      setDocument(props.initialDocument);
+    } else {
+      setDocument(null);
+    }
     void props.stream.getDerivativeDoc(props.sessionId, item.docId).then((next) => {
       if (current && next?.meta.docId === item.docId) setDocument(next);
     });
     return () => { current = false; };
-  }, [item.docId, item.generatedAt, props.sessionId, props.stream]);
+  }, [
+    item.docId,
+    item.generatedAt,
+    props.initialDocument,
+    props.sessionId,
+    props.stream,
+  ]);
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
   useEffect(() => { if (generating && generationComplete && !props.streamActive) setGenerating(false); }, [generating, generationComplete, props.streamActive]);
   useEffect(() => { if (item.generatedAt != null || item.sourceVersion != null) setAbortedEmpty(false); }, [item.generatedAt, item.sourceVersion]);

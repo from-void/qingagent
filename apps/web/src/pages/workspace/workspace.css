@@ -34,7 +34,34 @@
 
   /* ---------- 主体 ---------- */
   #view-workspace .ws-body{
-    flex:1 1 auto;min-height:0;display:flex;overflow:hidden;
+    flex:1 1 auto;min-height:0;display:flex;overflow:hidden;position:relative;
+  }
+  /* 既有会话首批恢复期间只保留稳定的墨色/纸底分区，不挂空编辑器或空聊天树。
+     完成帧抵达后内容一次淡入；若文档领先 180ms，正文先显、对话随后补齐。 */
+  #view-workspace .ws-hydration-left{
+    flex:0 0 440px;width:440px;border-right:1px solid var(--line-1);
+    background:var(--bg-canvas);
+  }
+  #view-workspace .ws-hydration-right{
+    flex:1 1 auto;min-width:0;background:var(--bg-canvas);
+  }
+  #view-workspace .ws-hydration-canvas{
+    position:absolute;inset:0;pointer-events:none;
+    background:var(--bg-canvas);
+  }
+  #view-workspace .ws-body[data-hydration-reveal="together"] > .ws-left,
+  #view-workspace .ws-body[data-hydration-reveal="together"] > .ws-right,
+  #view-workspace .ws-body[data-hydration-reveal="document-then-chat"] > .ws-left,
+  #view-workspace .ws-body[data-hydration-reveal="document-then-chat"] > .ws-right{
+    animation:ws-hydration-reveal 180ms ease-out both;
+  }
+  @keyframes ws-hydration-reveal{
+    from{opacity:0}
+    to{opacity:1}
+  }
+  @media (prefers-reduced-motion:reduce){
+    #view-workspace .ws-body[data-hydration-reveal] > .ws-left,
+    #view-workspace .ws-body[data-hydration-reveal] > .ws-right{animation:none}
   }
   /* bigplan 态 · 右侧文档区被替换成 plan 面板, 左侧对话保持不变 */
   body[data-ws-state="bigplan"] #view-workspace .ws-right > article.wf-doc,

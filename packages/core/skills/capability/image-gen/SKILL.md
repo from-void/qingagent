@@ -1,6 +1,6 @@
 ---
 name: image-gen
-label: 生成或修改图片
+label: 画配图
 summary: 路由内置 SVG、本机 Codex 生图与现有图片修改
 icon: image
 description: 统一接收图片生成与修改意图，转诊结构化图表，检测桌面端本机 Codex，并按场景、可用能力和用户确认路由到 SVG 或 Codex 图片子技能。
@@ -11,7 +11,7 @@ metadata:
   category: capability
 ---
 
-# 生成或修改图片
+# 画配图
 
 本技能是图片母技能，只负责意图接收、能力检测、必要反问和子技能路由。实际生成或修改前只读取被选中的一个子技能 `SKILL.md`，不要把两套执行细则同时塞进上下文。
 

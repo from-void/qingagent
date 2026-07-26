@@ -174,7 +174,7 @@ describe("drawio 全屏编辑面板", () => {
     });
   });
 
-  it("点击完成会跳过剩余防抖时间，flush 最后一版后才关闭", async () => {
+  it("点击关闭会跳过剩余防抖时间，flush 最后一版后才关闭", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     const onClose = vi.fn();
@@ -184,7 +184,7 @@ describe("drawio 全屏编辑面板", () => {
 
     await fake.autosave(latest);
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
+      requireCloseButton().click();
     });
     expect(fake.postedActions().slice(-2)).toEqual([
       { action: "status", modified: true },
@@ -289,7 +289,7 @@ describe("drawio 全屏编辑面板", () => {
     await fake.autosave(DEFAULT_DRAWIO_SOURCE);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS);
-      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
+      requireCloseButton().click();
     });
 
     expect(fake.postedActions()).toEqual([expect.objectContaining({ action: "load" })]);
@@ -549,11 +549,10 @@ describe("drawio 全屏编辑面板", () => {
     expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
   });
 
-  it("完成按钮和 Escape 在无改动时都返回 null", async () => {
+  it("关闭按钮和 Escape 在无改动时都返回 null", async () => {
     const firstClose = vi.fn();
     await renderOverlay(vi.fn(), firstClose);
-    const complete = document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete");
-    await act(async () => complete?.click());
+    await act(async () => requireCloseButton().click());
     expect(firstClose).toHaveBeenCalledWith(null);
 
     act(() => root?.unmount());
@@ -568,7 +567,7 @@ describe("drawio 全屏编辑面板", () => {
     expect(secondClose).toHaveBeenCalledWith(null);
   });
 
-  it("写回等待期间点击完成会等待降级落盘后再关闭", async () => {
+  it("写回等待期间点击关闭会等待降级落盘后再关闭", async () => {
     vi.useFakeTimers();
     vi.mocked(renderDrawio).mockResolvedValue(
       '<svg xmlns="http://www.w3.org/2000/svg"><text>不应写入</text></svg>',
@@ -580,7 +579,7 @@ describe("drawio 全屏编辑面板", () => {
     await fake.save(drawioSource("取消修改"), true);
 
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(".drawio-editor-overlay__complete")?.click();
+      requireCloseButton().click();
       await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
     });
 
@@ -672,6 +671,12 @@ function requireIframe(): HTMLIFrameElement {
   const iframe = document.querySelector<HTMLIFrameElement>(".drawio-editor-overlay__frame");
   if (!iframe) throw new Error("drawio iframe 缺失");
   return iframe;
+}
+
+function requireCloseButton(): HTMLButtonElement {
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="关闭"]');
+  if (!button) throw new Error("drawio 关闭按钮缺失");
+  return button;
 }
 
 async function dispatchV31(source: MessageEventSource, origin: string, data: unknown) {

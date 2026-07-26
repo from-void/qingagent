@@ -264,7 +264,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
       if (drawioEditorOpening) return;
       setDrawioEditorOpening(true);
       setError(null);
-      void openDrawioEditor(source, "drawio 图编辑", (result) => {
+      void openDrawioEditor(source, "Drawio 编辑", (result) => {
         if (!result || !mountedRef.current) return;
         // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
         // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。

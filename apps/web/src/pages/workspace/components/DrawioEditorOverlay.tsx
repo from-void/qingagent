@@ -14,6 +14,7 @@ import {
 } from "./drawioEmbedProtocol";
 import { renderDrawio } from "./drawioRender";
 import "./DrawioEditorOverlay.css";
+import "./diagramEditorChrome.css";
 
 export interface DrawioEditorOverlayProps {
   source: string;
@@ -24,7 +25,7 @@ export interface DrawioEditorOverlayProps {
 
 export function DrawioEditorOverlay({
   source,
-  title = "drawio 可视化编辑",
+  title = "Drawio 编辑",
   onSave,
   onClose,
 }: DrawioEditorOverlayProps) {
@@ -273,16 +274,22 @@ export function DrawioEditorOverlay({
   };
 
   return (
-    <div className="drawio-editor-overlay" role="dialog" aria-modal="true" aria-label={title}>
-      <header className="drawio-editor-overlay__topbar">
+    <div className="drawio-editor-overlay diagram-editor-chrome" role="dialog" aria-modal="true" aria-label="Drawio 编辑">
+      <header className="drawio-editor-overlay__topbar diagram-editor-chrome__topbar">
         <div className="drawio-editor-overlay__heading">
-          <strong>{title}</strong>
+          <strong className="diagram-editor-chrome__title">Drawio 编辑</strong>
           <span className={error ? "is-error" : undefined} role={error ? "alert" : "status"}>
             {error ?? status}
           </span>
         </div>
-        <button type="button" className="drawio-editor-overlay__cancel" onClick={cancel}>
-          取消
+        <button
+          type="button"
+          className="drawio-editor-overlay__cancel diagram-editor-chrome__close"
+          aria-label="关闭"
+          title="关闭"
+          onClick={cancel}
+        >
+          ✕
         </button>
       </header>
       <div className="drawio-editor-overlay__stage">

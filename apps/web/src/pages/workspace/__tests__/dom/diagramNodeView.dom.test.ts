@@ -1146,7 +1146,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await flush(4);
       expect(openDrawioEditor).toHaveBeenCalledWith(
         DEFAULT_DRAWIO_SOURCE,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
@@ -1166,7 +1166,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(openDrawioEditor).toHaveBeenNthCalledWith(
         2,
         nextSource,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
@@ -1180,7 +1180,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(openDrawioEditor).toHaveBeenNthCalledWith(
         3,
         secondSource,
-        "drawio 图编辑",
+        "Drawio 编辑",
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
@@ -1209,7 +1209,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("flowchart 外层双击进入可视化全屏,右上角同时提供可视化编辑和 Mermaid 源码编辑", async () => {
+  it("flowchart 外层双击进入可视化全屏，编辑 chrome 使用左标题、右关闭与沉底操作栏", async () => {
     const editor = await mountEditor(diagramDoc(`flowchart TD
   A[开始] --> B[结束]
 `));
@@ -1231,9 +1231,10 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*z-index:\s*2147483000;[^}]*pointer-events:\s*auto;/s);
       expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*rgba\(246,\s*241,\s*231,\s*0\.98\);/s);
 
-      const doneButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".graph-diagram-editor button"))
-        .find((button) => button.textContent?.trim() === "完成");
-      expect(doneButton).not.toBeNull();
+      const doneButton = document.body.querySelector<HTMLButtonElement>(
+        ".graph-diagram-editor .diagram-editor-chrome__close",
+      );
+      expect(doneButton?.textContent?.trim()).toBe("✕");
       await act(async () => {
         doneButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });

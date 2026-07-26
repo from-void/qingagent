@@ -9,6 +9,20 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "../../../../../..");
 
 describe("workspaceCssContract", () => {
+  it("Mermaid 与 Drawio 共用直角金墨编辑器 chrome，主操作栏脱离文档流沉底居中", () => {
+    const chromeCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/diagramEditorChrome.css"),
+      "utf8",
+    );
+    expect(chromeCss).toMatch(/\.diagram-editor-chrome\s*\{[^}]*font-family:\s*var\(--font-zh-serif\);/s);
+    expect(chromeCss).toMatch(/\.diagram-editor-chrome__close\s*\{[^}]*border-radius:\s*0;/s);
+    expect(chromeCss).toMatch(
+      /\.diagram-editor-chrome__toolbar\s*\{[^}]*position:\s*absolute;[^}]*bottom:\s*24px;[^}]*left:\s*50%;[^}]*transform:\s*translateX\(-50%\);/s,
+    );
+    expect(chromeCss).toContain("background: var(--mark-soft)");
+    expect(chromeCss).not.toMatch(/#(?:1d4f91|35619d|2f4f6f|243e58|9e2b25)/i);
+  });
+
   it("keeps workspace.css byte-identical during Phase 0-D2", () => {
     const filePath = path.join(repoRoot, contract.file);
     const css = readFileSync(filePath, "utf8");

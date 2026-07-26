@@ -30,6 +30,18 @@ afterEach(() => {
 });
 
 describe("drawio 全屏编辑面板", () => {
+  it("与 Mermaid 共用标题和关闭 chrome，右上角只显示关闭符号", async () => {
+    await renderOverlay(vi.fn(), vi.fn());
+    const overlay = document.querySelector<HTMLElement>(".drawio-editor-overlay");
+    expect(overlay?.classList.contains("diagram-editor-chrome")).toBe(true);
+    expect(overlay?.getAttribute("aria-label")).toBe("Drawio 编辑");
+    expect(overlay?.querySelector(".diagram-editor-chrome__title")?.textContent).toBe("Drawio 编辑");
+    const closeButton = overlay?.querySelector<HTMLButtonElement>(".diagram-editor-chrome__close");
+    expect(closeButton?.textContent?.trim()).toBe("✕");
+    expect(closeButton?.getAttribute("aria-label")).toBe("关闭");
+    expect(overlay?.querySelectorAll(".diagram-editor-chrome__close")).toHaveLength(1);
+  });
+
   it("启动期盖住 vendor 首屏，图表加载后揭开，自愈重载时重新盖住", async () => {
     const fake = await createFakeV31Embed(vi.fn(), vi.fn());
 

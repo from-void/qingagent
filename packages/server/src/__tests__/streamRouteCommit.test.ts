@@ -15,6 +15,10 @@ import {
   SessionActorCommandError,
   type HandleCommandFn,
 } from "../gateway/sessionActor";
+import {
+  SessionDeletedError,
+  SessionDeletionInProgressError,
+} from "../gateway/sessionErrors";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -344,5 +348,37 @@ describe("POST /api/v1/commit", () => {
     expect(body).toEqual({ error: "模型服务暂时不可用，请稍后重试" });
     expect(JSON.stringify(body)).not.toContain("private-key");
     expect(JSON.stringify(body)).not.toContain("supersecret");
+  });
+
+  it.each([
+    [new SessionDeletedError(), 410, "SESSION_DELETED", "会话已删除，无法继续操作"],
+    [new SessionDeletionInProgressError(), 409, "SESSION_DELETION_IN_PROGRESS", "会话正在删除，请稍后再试"],
+  ])("commit 将删除领域错误映射为明确状态（case %#）", async (error, status, code, message) => {
+    vi.spyOn(sessionManager, "submit").mockRejectedValueOnce(error);
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "deleted-commit-session",
+      acceptReviewBatchIds: ["batch"],
+    });
+
+    expect(res.status).toBe(status);
+    await expect(res.json()).resolves.toEqual({
+      error: { code, message },
+    });
+  });
+
+  it.each([
+    [new SessionDeletedError(), 410, "SESSION_DELETED", "会话已删除，无法继续操作"],
+    [new SessionDeletionInProgressError(), 409, "SESSION_DELETION_IN_PROGRESS", "会话正在删除，请稍后再试"],
+  ])("commands 将删除领域错误映射为明确状态（case %#）", async (error, status, code, message) => {
+    vi.spyOn(sessionManager, "submitQueued").mockRejectedValueOnce(error);
+    const res = await request("POST", "/api/v1/commands", {
+      kind: "startSession",
+      data: { mode: { kind: "existing", data: { id: "deleted-command-session" } } },
+    });
+
+    expect(res.status).toBe(status);
+    await expect(res.json()).resolves.toEqual({
+      error: { code, message },
+    });
   });
 });

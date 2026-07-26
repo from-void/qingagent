@@ -13,6 +13,10 @@ import {
   type HandleCommandFn,
   type TurnPreemptionReason,
 } from "./sessionActor";
+import {
+  SessionDeletedError,
+  SessionDeletionInProgressError,
+} from "./sessionErrors";
 
 export interface SessionManagerOptions {
   handleCommand: HandleCommandFn;
@@ -398,10 +402,10 @@ export class SessionManager {
 
   private assertSessionAcceptsCommands(sessionId: string): void {
     if (this.deletingSessions.has(sessionId)) {
-      throw new Error("Session deletion is in progress");
+      throw new SessionDeletionInProgressError();
     }
     if (this.deletionLookupCache.get(sessionId) === "completed") {
-      throw new Error("Session has been deleted");
+      throw new SessionDeletedError();
     }
   }
 

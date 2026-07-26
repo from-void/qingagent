@@ -175,6 +175,24 @@ function streamErrorForHttpStatus(status: number): StreamError {
   };
 }
 
+async function responseErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  const body = await response.json().catch(() => null) as {
+    error?: string | { message?: unknown };
+  } | null;
+  if (typeof body?.error === "string") return body.error;
+  if (
+    body?.error &&
+    typeof body.error === "object" &&
+    typeof body.error.message === "string"
+  ) {
+    return body.error.message;
+  }
+  return fallback;
+}
+
 function summarizeCommitResponseBody(body: string): string {
   const normalized = body.replace(/\s+/g, " ").trim();
   if (!normalized) return "<empty>";
@@ -646,11 +664,25 @@ export class ServerStream {
       });
 
       if (!response.ok) {
+        const message = await responseErrorMessage(
+          response,
+          `Stream request failed: ${response.status}`,
+        );
         this.dispatchLocal?.({
           kind: "streamErrorSet",
-          error: streamErrorForHttpStatus(response.status),
+          error: response.status === 409 || response.status === 410
+            ? {
+                kind: "failed",
+                reason: message,
+                retriable: false,
+                statusCode: response.status,
+                category: "unknown",
+                userMessage: message,
+                action: "none",
+              }
+            : streamErrorForHttpStatus(response.status),
         });
-        throw new Error(`Stream request failed: ${response.status}`);
+        throw new Error(message);
       }
 
       const result = await response.json().catch(() => ({})) as {
@@ -830,10 +862,7 @@ export class ServerStream {
     });
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as { error?: string }).error ?? `commit failed: ${res.status}`,
-      );
+      throw new Error(await responseErrorMessage(res, `commit failed: ${res.status}`));
     }
 
     const loggedFrames = await this.readLoggedCommitFrames(res);
@@ -873,10 +902,7 @@ export class ServerStream {
     });
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as { error?: string }).error ?? `commit failed: ${res.status}`,
-      );
+      throw new Error(await responseErrorMessage(res, `commit failed: ${res.status}`));
     }
 
     const loggedFrames = await this.readLoggedCommitFrames(res);

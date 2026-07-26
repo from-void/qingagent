@@ -13,6 +13,10 @@ import {
 import type { LoggedFrame } from "../gateway/frameLog";
 import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import {
+  SessionDeletedError,
+  SessionDeletionInProgressError,
+} from "../gateway/sessionErrors";
+import {
   commandSchema,
   MAX_COMMAND_ARRAY_LENGTH,
   MAX_COMMAND_STRING_LENGTH,
@@ -46,6 +50,20 @@ export function redactStreamErrorForLog(error: unknown): string {
 
 export function publicStreamErrorReason(): string {
   return PUBLIC_STREAM_ERROR_REASON;
+}
+
+function sessionDeletionErrorResponse(c: Context, error: unknown): Response | null {
+  if (error instanceof SessionDeletedError) {
+    return c.json({
+      error: { code: "SESSION_DELETED", message: "会话已删除，无法继续操作" },
+    }, 410);
+  }
+  if (error instanceof SessionDeletionInProgressError) {
+    return c.json({
+      error: { code: "SESSION_DELETION_IN_PROGRESS", message: "会话正在删除，请稍后再试" },
+    }, 409);
+  }
+  return null;
 }
 
 function validateLegacySections(value: unknown, field: string): string | null {
@@ -251,6 +269,8 @@ async function handleCommandPost(c: Context) {
       abortSignal: c.req.raw.signal,
     }));
   } catch (error) {
+    const deletionResponse = sessionDeletionErrorResponse(c, error);
+    if (deletionResponse) return deletionResponse;
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "Session command queue is full" }, 429);
     }
@@ -273,6 +293,8 @@ async function handleCommandPost(c: Context) {
     return c.json(commandFrames(frames));
   } catch (error) {
     console.error("[commands] command failed:", redactStreamErrorForLog(error));
+    const deletionResponse = sessionDeletionErrorResponse(c, error);
+    if (deletionResponse) return deletionResponse;
     if (error instanceof SessionActorCommandError && error.frames.length > 0) {
       return c.json(commandFrames(error.frames));
     }
@@ -543,6 +565,8 @@ streamRoutes.post("/commit", async (c) => {
     return c.json(loggedCommandFrames(await promise));
   } catch (error) {
     console.error("[commit] command failed:", redactStreamErrorForLog(error));
+    const deletionResponse = sessionDeletionErrorResponse(c, error);
+    if (deletionResponse) return deletionResponse;
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "Session command queue is full" }, 429);
     }

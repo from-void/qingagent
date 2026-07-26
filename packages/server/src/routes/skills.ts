@@ -22,6 +22,20 @@ import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 type SkillSourceLabel = "builtin" | "installed";
 
+export interface SkillMarkdownInstallOperations {
+  mkdtemp: typeof mkdtemp;
+  rename: typeof rename;
+  rm: typeof rm;
+  writeFile: typeof writeFile;
+}
+
+const defaultSkillMarkdownInstallOperations: SkillMarkdownInstallOperations = {
+  mkdtemp,
+  rename,
+  rm,
+  writeFile,
+};
+
 export interface SkillListItem extends ParsedSkillFrontmatter {
   path: string;
   source: SkillSourceLabel;
@@ -156,14 +170,13 @@ skillsRoutes.post("/skills/install", async (c) => {
     // to avoid shadowing/duplicate-name ambiguity in skill resolution.
     if (await findSkillOnDisk(name)) return c.json({ error: "这个技能已存在" }, 409);
 
-    await createSkillDirectory(dest);
-    await writeFile(join(dest, "SKILL.md"), body.skillMd, "utf8");
+    await installSkillMarkdown(dest, body.skillMd);
     await refreshSkills();
     return c.json({ installed: true, name });
   } catch (error) {
     const message = error instanceof Error ? error.message : "install failed";
     const status = message === "skill already exists" ? 409 : 400;
-    return c.json({ error: message }, status);
+    return c.json({ error: status === 409 ? "这个技能已存在" : message }, status);
   }
 });
 
@@ -400,9 +413,26 @@ async function writeAll(
   }
 }
 
-async function createSkillDirectory(dest: string): Promise<void> {
+export async function installSkillMarkdown(
+  dest: string,
+  skillMd: string,
+  operations: SkillMarkdownInstallOperations = defaultSkillMarkdownInstallOperations,
+): Promise<void> {
   await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
-  await mkdir(dest, { recursive: true });
+  const staging = await operations.mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  try {
+    await operations.writeFile(join(staging, "SKILL.md"), skillMd, "utf8");
+    await operations.rename(staging, dest);
+  } catch (error) {
+    await operations.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    if (isDestinationExistsError(error)) throw new Error("skill already exists");
+    throw error;
+  }
+}
+
+function isDestinationExistsError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
 }
 
 function sanitizeZipPath(path: string): string {

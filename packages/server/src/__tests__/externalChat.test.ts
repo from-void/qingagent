@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../gateway/bridgeHandler";
+import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
@@ -67,6 +67,48 @@ describe("external chat", () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ code: "SESSION_NOT_FOUND" });
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it.each(["abc", "Infinity", "0", "-1"])(
+    "GET chat 拒绝非法 limit=%s",
+    async (limit) => {
+      const sessionId = await createSession();
+      const res = await app.request(
+        `/api/v1/external/sessions/${sessionId}/chat?limit=${encodeURIComponent(limit)}`,
+        { headers: authHeaders() },
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        code: "VALIDATION",
+        error: "limit 必须是正整数",
+      });
+    },
+  );
+
+  it("GET chat 的合法 limit 保留最后 N 条消息", async () => {
+    const sessionId = await createSession();
+    const session = getSession(sessionId);
+    if (!session) throw new Error("missing session");
+    session.chatHistory = ["一", "二", "三"].map((text, index) => ({
+      id: `message-${index}`,
+      role: { kind: "user" as const },
+      ts: `2026-07-27T00:00:0${index}.000Z`,
+      parts: [{ kind: "text" as const, data: { body: text } }],
+      chips: null,
+    }));
+
+    const res = await app.request(
+      `/api/v1/external/sessions/${sessionId}/chat?limit=2`,
+      { headers: authHeaders() },
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      messages: [
+        { id: "message-1", text: "二" },
+        { id: "message-2", text: "三" },
+      ],
+    });
   });
 
   it("复用 commandSchema 拒绝超过 64KB 的 text", async () => {

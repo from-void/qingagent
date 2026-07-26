@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { InMemoryFrameLog } from "../frameLog";
 import { SessionManager } from "../sessionManager";
+import {
+  SessionDeletedError,
+  SessionDeletionInProgressError,
+} from "../sessionErrors";
 import type { HandleCommandFn } from "../sessionActor";
 
 function startExisting(sessionId: string): Command {
@@ -89,11 +93,11 @@ describe("SessionManager", () => {
     expect(get).not.toHaveBeenCalled();
     await expect(manager.submit("pending-startup", {
       command: startExisting("pending-startup"),
-    })).rejects.toThrow("Session deletion is in progress");
+    })).rejects.toBeInstanceOf(SessionDeletionInProgressError);
 
     await expect(manager.submit("completed-lazy", {
       command: startExisting("completed-lazy"),
-    })).rejects.toThrow("Session has been deleted");
+    })).rejects.toBeInstanceOf(SessionDeletedError);
     await expect(manager.submit("completed-lazy", {
       command: startExisting("completed-lazy"),
     })).rejects.toThrow("Session has been deleted");

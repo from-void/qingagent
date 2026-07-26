@@ -908,6 +908,53 @@ describe("ServerStream", () => {
     ).rejects.toThrow("Stream request failed: 500");
   });
 
+  it("commands 的删除领域错误直接透传服务端 message", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "SESSION_DELETED",
+        message: "会话已删除，无法继续操作",
+      },
+    }, 410);
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await expect(
+      stream.sendCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s-1",
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      }),
+    ).rejects.toThrow("会话已删除，无法继续操作");
+    expect(localActions).toContainEqual({
+      kind: "streamErrorSet",
+      error: expect.objectContaining({
+        reason: "会话已删除，无法继续操作",
+        retriable: false,
+        userMessage: "会话已删除，无法继续操作",
+      }),
+    });
+  });
+
+  it("commit 的删除中领域错误直接透传服务端 message", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "SESSION_DELETION_IN_PROGRESS",
+        message: "会话正在删除，请稍后再试",
+      },
+    }, 409);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.commitReviewGroups("s-1", { acceptReviewBatchIds: ["review-1"] }),
+    ).rejects.toThrow("会话正在删除，请稍后再试");
+  });
+
   it("commitReviewGroups 对 502 HTML 响应报清晰 status 错误,不冒出 JSON.parse 原始错误", async () => {
     globalThis.fetch = mockCommitFetch(
       "<html><body>Bad gateway sk-abcdefghijklmnopqrstuvwxyz</body></html>",

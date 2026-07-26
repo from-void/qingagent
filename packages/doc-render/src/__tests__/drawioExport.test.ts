@@ -12,6 +12,11 @@ const MULTI_PAGE_DRAWIO_SOURCE = `<mxfile>
   <diagram id="page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram>
   <diagram id="page-2"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram>
 </mxfile>`;
+const DECLARED_MULTI_PAGE_DRAWIO_SOURCE = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- draw.io 多页导出 -->
+${MULTI_PAGE_DRAWIO_SOURCE}`;
+const COMPRESSED_DRAWIO_SOURCE =
+  "UzV2zq1wL0osyPDNT0nNUTV2VTV2LsrPL4GwciucU3NyVI0MMlNUjV1UjYwMVI2MVI3ccMgagmUNChKLUvNKsGhQNXJDmK1q5IZmNQA=";
 const DRAWIO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60"><rect width="120" height="60"/><text x="10" y="30">架构</text></svg>';
 // 线上真实回归样本：document_suggestions/diff-hunk-e15b1cdd0d280391 的完整 draw.io source。
 const REAL_PERCENT_ENCODED_COLOR_XML = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="zone-wan" value="外网区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23EDF2F7;strokeColor=%234A6FA5;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="600" height="120" as="geometry"/></mxCell><mxCell id="zone-app" value="应用区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23D4E0ED;strokeColor=%234A6FA5;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="600" height="120" as="geometry"/></mxCell><mxCell id="zone-data" value="数据区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23E8EDF3;strokeColor=%235A7B9A;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="360" width="600" height="120" as="geometry"/></mxCell><mxCell id="client" value="客户端" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%234A6FA5;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-wan"><mxGeometry x="80" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="app-server" value="应用服务器" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%235A7B9A;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-app"><mxGeometry x="220" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="db-server" value="数据库服务器" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%238895A7;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-data"><mxGeometry x="360" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="edge-c2a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=%23718BAE;strokeWidth=2;labelBackgroundColor=%23FFFFFF;fontColor=%235E6C7B;fontSize=13;" edge="1" parent="1" source="client" target="app-server"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="-12" as="offset"/></mxGeometry></mxCell><mxCell id="edge-a2d" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=%23718BAE;strokeWidth=2;labelBackgroundColor=%23FFFFFF;fontColor=%235E6C7B;fontSize=13;" edge="1" parent="1" source="app-server" target="db-server"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="-12" as="offset"/></mxGeometry></mxCell></root></mxGraphModel>';
@@ -139,6 +144,44 @@ describe("drawio 导出缓存与服务端兜底", () => {
     expect(html).toContain("以下为图表源码（可复制到 draw.io 查看）");
     expect(html).not.toContain("已按安全边界归一化");
     expect(html).toContain("page-2");
+  });
+
+  it("带 XML 声明和前导注释的 mxfile 多页导出副本保留两页，并使用保留原件文案", async () => {
+    setDocRenderLogger({ warn: vi.fn() });
+    const input = drawioDoc(null);
+    if (input.content[0]?.type === "diagram") {
+      input.content[0].attrs.source = DECLARED_MULTI_PAGE_DRAWIO_SOURCE;
+    }
+
+    const prepared = await withRenderedDiagrams(input) as PmDoc;
+    const block = prepared.content[0];
+    expect(block?.type === "diagram" ? block.attrs.source : "").toBe(DECLARED_MULTI_PAGE_DRAWIO_SOURCE);
+    expect(block?.type === "diagram" && isDrawioExportSourceNormalized(block.attrs)).toBe(false);
+    expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.source : "").toBe(
+      DECLARED_MULTI_PAGE_DRAWIO_SOURCE,
+    );
+
+    const html = toHtml(prepared);
+    expect(html).toContain("以下为图表源码（可复制到 draw.io 查看）");
+    expect(html).not.toContain("已按安全边界归一化");
+    expect(html).toContain("page-1");
+    expect(html).toContain("page-2");
+  });
+
+  it("压缩 diagram 仍展开为单页 mxGraphModel 并标记归一化", async () => {
+    setDocRenderLogger({ warn: vi.fn() });
+    const input = drawioDoc(null);
+    if (input.content[0]?.type === "diagram") {
+      input.content[0].attrs.source = COMPRESSED_DRAWIO_SOURCE;
+    }
+
+    const prepared = await withRenderedDiagrams(input) as PmDoc;
+    const block = prepared.content[0];
+    expect(block?.type === "diagram" ? block.attrs.source : "").toContain("<mxGraphModel");
+    expect(block?.type === "diagram" && isDrawioExportSourceNormalized(block.attrs)).toBe(true);
+    expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.source : "").toBe(
+      COMPRESSED_DRAWIO_SOURCE,
+    );
   });
 
   it("DOCX 已归一化分支沿用安全边界提示", async () => {

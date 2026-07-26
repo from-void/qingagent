@@ -328,6 +328,14 @@ interface DiagramRef {
   markSourceNormalized: () => void;
 }
 
+/**
+ * 判断 draw.io 源码的根元素是否为 mxfile。
+ * XML 声明和前导注释不属于根元素，不能让多页容器误走单页归一化分支。
+ */
+function hasMxfileRoot(source: string): boolean {
+  return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<mxfile[\s>]/i.test(source);
+}
+
 /** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
 function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   if (!value || typeof value !== "object") return;
@@ -406,7 +414,7 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
         // mxfile 可能含多页，不能用首个 modelXml 覆盖整个容器；AI 常规产出的
         // 单页 mxGraphModel 和压缩 diagram 则可安全替换为准备后的明文模型。
         const prepared = prepareDrawioModelXmlForRender(ref.source);
-        if (!ref.source.trimStart().startsWith("<mxfile")) {
+        if (!hasMxfileRoot(ref.source)) {
           ref.assignSource(prepared.modelXml);
           ref.markSourceNormalized();
         }

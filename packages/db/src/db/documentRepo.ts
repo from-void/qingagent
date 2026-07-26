@@ -73,6 +73,31 @@ export interface DocumentRepo {
 
 const MAX_EXISTS_BY_IDS = 50;
 
+/**
+ * Mastra 的 memory domain 会在首次存储调用时创建 threads 表。新库初始化完成前，
+ * documents 读路径应把缺表视为“还没有任何 thread”，不能吞掉其他 SQL 错误。
+ */
+export function isMissingMastraThreadsTableError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current != null && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error
+      ? current.message
+      : typeof current === "string"
+        ? current
+        : "";
+    if (/no such table:\s*(?:[\w-]+\.)?mastra_threads\b/i.test(message)) {
+      return true;
+    }
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : null;
+  }
+  return false;
+}
+
 function valueAsString(value: unknown): string {
   return value == null ? "" : String(value);
 }
@@ -430,13 +455,19 @@ export const documentRepo: DocumentRepo = {
     }
     const client = await readyClient();
     const placeholders = uniqueIds.map(() => "?").join(", ");
-    const result = await client.execute({
-      // 只取指定资源的主文档主键，供小集合存在性判断；禁止退化成 documents 全行扫描。
-      sql: `SELECT id FROM documents
-        WHERE resource_id = ? AND role = 'main' AND id IN (${placeholders})`,
-      args: [resourceId, ...uniqueIds],
-    });
-    return new Set(result.rows.map((row) => valueAsString(row.id)));
+    try {
+      const result = await client.execute({
+        // 只取指定资源且 thread 仍存在的主文档主键；禁止退化成 documents 全行扫描。
+        sql: `SELECT d.id FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ? AND d.role = 'main' AND d.id IN (${placeholders})`,
+        args: [resourceId, ...uniqueIds],
+      });
+      return new Set(result.rows.map((row) => valueAsString(row.id)));
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) return new Set();
+      throw error;
+    }
   },
 
   async save(input) {
@@ -505,27 +536,34 @@ export const documentRepo: DocumentRepo = {
     const page = opts.page ?? 0;
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
-    const [countResult, rowsResult] = await Promise.all([
-      client.execute({
-        sql: `SELECT COUNT(*) AS total
-          FROM documents d
-          INNER JOIN mastra_threads t ON t.id = d.thread_id
-          WHERE d.resource_id = ? AND d.role = 'main'`,
-        args: [opts.resourceId],
-      }),
-      client.execute({
-        sql: `SELECT d.* FROM documents d
-          INNER JOIN mastra_threads t ON t.id = d.thread_id
-          WHERE d.resource_id = ? AND d.role = 'main'
-          ORDER BY d.updated_at DESC, d.id ASC
-          LIMIT ? OFFSET ?`,
-        args: [opts.resourceId, perPage, offset],
-      }),
-    ]);
-    return {
-      rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
-      total: valueAsNumber(countResult.rows[0]?.total),
-    };
+    try {
+      const [countResult, rowsResult] = await Promise.all([
+        client.execute({
+          sql: `SELECT COUNT(*) AS total
+            FROM documents d
+            INNER JOIN mastra_threads t ON t.id = d.thread_id
+            WHERE d.resource_id = ? AND d.role = 'main'`,
+          args: [opts.resourceId],
+        }),
+        client.execute({
+          sql: `SELECT d.* FROM documents d
+            INNER JOIN mastra_threads t ON t.id = d.thread_id
+            WHERE d.resource_id = ? AND d.role = 'main'
+            ORDER BY d.updated_at DESC, d.id ASC
+            LIMIT ? OFFSET ?`,
+          args: [opts.resourceId, perPage, offset],
+        }),
+      ]);
+      return {
+        rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
+        total: valueAsNumber(countResult.rows[0]?.total),
+      };
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) {
+        return { rows: [], total: 0 };
+      }
+      throw error;
+    }
   },
 
   async countByResourceId(resourceId) {

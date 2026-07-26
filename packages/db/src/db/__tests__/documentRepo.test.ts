@@ -9,7 +9,12 @@ import {
   getDocumentsClient,
 } from "../documentsClient.js";
 import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
-import { documentRepo, repairStoredDocumentRows, type DocumentSaveInput } from "../documentRepo.js";
+import {
+  documentRepo,
+  isMissingMastraThreadsTableError,
+  repairStoredDocumentRows,
+  type DocumentSaveInput,
+} from "../documentRepo.js";
 import { insertVersion } from "../documentVersionRepo.js";
 
 let tempDir: string;
@@ -255,6 +260,10 @@ describe("documentRepo", () => {
       sql: "UPDATE documents SET role = 'derivative' WHERE id = ?",
       args: ["derivative"],
     });
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute(
+      "INSERT INTO mastra_threads (id) VALUES ('exists-a'), ('exists-b'), ('other-resource'), ('derivative')",
+    );
     const execute = vi.spyOn(client, "execute");
 
     const existing = await documentRepo.existsByIds("qingagent-user", [
@@ -268,12 +277,33 @@ describe("documentRepo", () => {
 
     expect(existing).toEqual(new Set(["exists-a", "exists-b"]));
     const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
-    expect(sql).toMatch(/resource_id = \? AND role = 'main' AND id IN/i);
+    expect(sql).toMatch(/INNER JOIN mastra_threads/i);
+    expect(sql).toMatch(/resource_id = \? AND d\.role = 'main' AND d\.id IN/i);
     expect(sql).not.toContain("*");
     await expect(documentRepo.existsByIds(
       "qingagent-user",
       Array.from({ length: 51 }, (_, index) => `id-${index}`),
     )).rejects.toThrow("最多查询 50 个 id");
+  });
+
+  it("Mastra threads 表尚未创建时按无持久 thread 处理", async () => {
+    await documentRepo.save(input("pre-init-document"));
+
+    await expect(documentRepo.existsByIds(
+      "qingagent-user",
+      ["pre-init-document"],
+    )).resolves.toEqual(new Set());
+    await expect(documentRepo.listWithExistingThreads({
+      resourceId: "qingagent-user",
+    })).resolves.toEqual({ rows: [], total: 0 });
+    expect(isMissingMastraThreadsTableError(
+      new Error("外层", {
+        cause: new Error("SQLITE_ERROR: no such table: mastra_threads"),
+      }),
+    )).toBe(true);
+    expect(isMissingMastraThreadsTableError(
+      new Error("SQLITE_ERROR: no such table: documents"),
+    )).toBe(false);
   });
 
   it("只按存在 thread 的 documents 计算 total 与分页位移", async () => {

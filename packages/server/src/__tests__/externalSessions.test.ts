@@ -22,6 +22,15 @@ const syntheticSessionIds: string[] = [];
 const originalDatabaseUrl = process.env.DATABASE_URL;
 let token = "";
 
+async function markThreadExistsInDocumentsDb(threadId: string): Promise<void> {
+  const client = getDocumentsClient();
+  await client.execute("CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY)");
+  await client.execute({
+    sql: "INSERT OR IGNORE INTO mastra_threads (id) VALUES (?)",
+    args: [threadId],
+  });
+}
+
 beforeEach(async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "qa-sessions-test-"));
   dirs.push(dir);
@@ -83,6 +92,36 @@ describe("external sessions", () => {
     expect(listed.status).toBe(200);
     const body = await listed.json() as { sessions: Array<{ id: string }> };
     expect(body.sessions.map((session) => session.id)).not.toContain("orphan-doc-row");
+  });
+
+  it("threads 表不存在时 list 仍返回 200 并列出内存会话", async () => {
+    const memoryOnlyId = `memory-before-threads-${Date.now()}`;
+    const memoryOnlySession = createSession(memoryOnlyId, new Date().toISOString());
+    memoryOnlySession.title = "初始化前内存会话";
+    sessions.set(memoryOnlyId, memoryOnlySession);
+    syntheticSessionIds.push(memoryOnlyId);
+    vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([memoryOnlyId]);
+
+    const threadTable = await getDocumentsClient().execute(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mastra_threads'",
+    );
+    expect(threadTable.rows).toHaveLength(0);
+
+    const listed = await app.request("/api/v1/external/sessions", {
+      headers: authHeaders(),
+    });
+    expect(listed.status).toBe(200);
+    const body = await listed.json() as {
+      sessions: Array<{ id: string; title: string }>;
+      total: number;
+    };
+    expect(body.sessions).toEqual([
+      expect.objectContaining({
+        id: memoryOnlyId,
+        title: "初始化前内存会话",
+      }),
+    ]);
+    expect(body.total).toBe(1);
   });
 
   it("孤儿行不占 total 与 offset，内存会话跨页不重复", async () => {
@@ -188,6 +227,9 @@ describe("external sessions", () => {
     await persistedSession.threadCreatePromise;
     persistedSession.title = "已落盘会话";
     await persistSessionMetadata(persistedSession, "test:list-persisted");
+    // 测试的 documents 临时库与模块加载时已绑定的 Mastra 库不同；
+    // 显式镜像存在性，确保本用例仍覆盖“落盘页 + 内存页”的去重。
+    await markThreadExistsInDocumentsDb(persistedId);
 
     const listSessionIds = vi.spyOn(sessionManager, "listSessionIds")
       .mockReturnValue([persistedId, memoryOnlyId]);
@@ -233,6 +275,8 @@ describe("external sessions", () => {
       title: "故障窗口中的旧标题",
       pmDoc: stored.pmDoc,
     });
+    // 这里只镜像 thread 的存在性，标题仍必须从真实 Mastra thread 冷恢复。
+    await markThreadExistsInDocumentsDb(sessionId);
     await sessionManager.disposeAll();
 
     const listed = await app.request("/api/v1/external/sessions", { headers: authHeaders() });

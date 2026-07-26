@@ -31,6 +31,7 @@ import {
   QINGAGENT_RESOURCE_ID,
 } from "@qingagent/core";
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
+import { isMissingMastraThreadsTableError } from "@qingagent/db";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
@@ -118,8 +119,13 @@ externalRoutes.get("/sessions", async (c) => {
       unresolvedMemoryIds,
     );
     for (const sessionId of offPageDocumentIds) {
-      if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
-        persistedSessionIds.add(sessionId);
+      try {
+        if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
+          persistedSessionIds.add(sessionId);
+        }
+      } catch (error) {
+        // Mastra memory domain 尚未建表时，该候选仍按内存会话处理；其他错误照常暴露。
+        if (!isMissingMastraThreadsTableError(error)) throw error;
       }
     }
   }

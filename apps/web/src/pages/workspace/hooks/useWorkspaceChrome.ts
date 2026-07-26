@@ -45,8 +45,9 @@ function isVisibleInputOccupant(element: HTMLElement): boolean {
 export function measureWorkspaceInputClearance(
   chat: HTMLElement,
   wrap: HTMLElement,
-): number {
+): number | null {
   const chatRect = chat.getBoundingClientRect();
+  if (chatRect.height <= 0) return null;
   const wrapRect = wrap.getBoundingClientRect();
   const wrapStyle = getComputedStyle(wrap);
   const paddingTop = parseFloat(wrapStyle.paddingTop) || 0;
@@ -153,7 +154,7 @@ export function useWorkspaceChrome(input: {
     };
     const apply = () => {
       const clearance = measureWorkspaceInputClearance(chat, wrap);
-      if (clearance === lastClearance) return;
+      if (clearance === null || clearance === lastClearance) return;
       const shouldStick = stickToBottom;
       lastClearance = clearance;
       left.style.setProperty("--ws-input-clearance", `${clearance}px`);
@@ -190,6 +191,7 @@ export function useWorkspaceChrome(input: {
     apply();
     chat.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", scheduleApply);
+    window.addEventListener("load", scheduleApply);
     wrap.addEventListener("transitionrun", handleMotionStart, true);
     wrap.addEventListener("transitionend", handleMotionEnd, true);
     wrap.addEventListener("transitioncancel", handleMotionEnd, true);
@@ -204,6 +206,7 @@ export function useWorkspaceChrome(input: {
     const observeOccupants = () => {
       if (!resizeObserver) return;
       for (const target of [
+        chat,
         wrap,
         ...wrap.querySelectorAll<HTMLElement>(INPUT_OCCUPANT_SELECTOR),
       ]) {
@@ -227,9 +230,18 @@ export function useWorkspaceChrome(input: {
       attributeFilter: ["class", "style", "hidden", "data-portal"],
     });
 
+    // layout effect 可能早于桌面包内容区成画；跨过首帧后无条件再测一次。
+    let readyFrame = window.requestAnimationFrame(() => {
+      readyFrame = window.requestAnimationFrame(() => {
+        readyFrame = 0;
+        apply();
+      });
+    });
+
     return () => {
       chat.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", scheduleApply);
+      window.removeEventListener("load", scheduleApply);
       wrap.removeEventListener("transitionrun", handleMotionStart, true);
       wrap.removeEventListener("transitionend", handleMotionEnd, true);
       wrap.removeEventListener("transitioncancel", handleMotionEnd, true);
@@ -239,6 +251,7 @@ export function useWorkspaceChrome(input: {
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
+      if (readyFrame) window.cancelAnimationFrame(readyFrame);
       left.style.removeProperty("--ws-input-clearance");
     };
   }, [input.chatScrollRef, input.viewRef]);

@@ -716,7 +716,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ws-chat {
   /* 满高滚动 + 底部留白:JS 直接测量「最上方可见输入控件 → 滚动区底边」
      并计入独立的呼吸间距；普通/多行/问卷/确认卡/展开菜单共用同一实测值。 */
-  padding-bottom: var(--ws-input-clearance, 0px) !important;
+  padding-bottom: var(--ws-input-clearance, 148px) !important;
 }
 #view-workspace .ws-input-wrap {
   position: absolute !important;

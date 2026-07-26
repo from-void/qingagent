@@ -7,6 +7,7 @@ import {
   readDrawioModel,
   validateDrawioSource,
 } from "../drawio/drawioXml";
+import { aiIrToPm } from "../ai-ir/aiIrToPm";
 import { normalizePmDoc, safeParsePmDoc } from "../validators";
 
 // 线上真实回归样本：packages/server/qingagent.db / document_suggestions /
@@ -22,6 +23,39 @@ function compressDrawio(xml: string): string {
 }
 
 describe("drawio XML 明文归一化与安全边界", () => {
+  it.each([
+    ["截断 XML", '<mxGraphModel><root><mxCell id="0"'],
+    ["缺少根图层的非法 XML", '<mxGraphModel><root><mxCell id="0"/></root></mxGraphModel>'],
+  ])("AI-IR diagram 的%s降级为源码代码块而不抛错", (_label, source) => {
+    let doc: ReturnType<typeof aiIrToPm> | undefined;
+
+    expect(() => {
+      doc = aiIrToPm({
+        blocks: [{ type: "diagram", lang: "drawio", source }],
+      });
+    }).not.toThrow();
+    expect(doc?.content[0]).toMatchObject({
+      type: "codeBlock",
+      attrs: { language: "drawio" },
+      content: [{ type: "text", text: source }],
+    });
+  });
+
+  it("AI-IR diagram 的合法 drawio 仍归一化为活图", () => {
+    const doc = aiIrToPm({
+      blocks: [{ type: "diagram", lang: "drawio", source: DEFAULT_DRAWIO_SOURCE }],
+    });
+
+    expect(doc.content[0]).toMatchObject({
+      type: "diagram",
+      attrs: {
+        lang: "drawio",
+        source: DEFAULT_DRAWIO_SOURCE,
+        svg: null,
+      },
+    });
+  });
+
   it("默认模板是合法、可读、含节点与边的未压缩 mxGraphModel", () => {
     const parsed = readDrawioModel(DEFAULT_DRAWIO_SOURCE);
     expect(parsed.source).toBe(DEFAULT_DRAWIO_SOURCE);

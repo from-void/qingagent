@@ -2574,7 +2574,7 @@ export function UIKitPage() {
                   <div className="qj-sheet-body">
                     <div className="qj-sheet-content">
                       <div className="qj-sheet-ink-stage" />
-                      <p style={{ fontSize: 13, color: "var(--ink-2)" }}>模型:deepseek-v4-flash · 密钥:已配置</p>
+                      <p style={{ fontSize: 13, color: "var(--ink-desc)" }}>模型:deepseek-v4-flash · 密钥:已配置</p>
                     </div>
                   </div>
                 </div>

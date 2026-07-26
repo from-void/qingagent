@@ -1806,7 +1806,7 @@ transform 平移内层) */
   will-change: transform;
   transform-origin: top left;
   overflow: hidden;
-  border-radius: 0;
+  border-radius: var(--ws-paper-radius);
   opacity: 0;
   background: #efe9dd;
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);

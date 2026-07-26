@@ -122,28 +122,28 @@
      safe center:放得下时居中,放不下时回退到 start(靠左)以保证能滚到左侧、不被裁掉。 */
   justify-content: safe center !important;
   align-items: stretch !important;
-  gap: 48px !important;
-  padding: 0 40px !important;
+  gap: var(--ws-paper-column-gap) !important;
+  padding: 0 var(--ws-paper-body-padding-inline) !important;
   overflow-x: auto !important;
   overflow-y: hidden !important;
 }
 /* 左对话区:定宽 400(不再随 vw 收窄),放不下走 .ws-body 的横向滚动 */
 #view-workspace .ws-left {
   --ws-chat-scrollbar-outset: 14px;
-  flex: 0 0 400px !important;
-  max-width: 400px !important;
+  flex: 0 0 var(--ws-paper-chat-column-width) !important;
+  max-width: var(--ws-paper-chat-column-width) !important;
 }
-/* 右文档列:定宽 800(纸宽,不再随窗口收窄)。几何与 computeWorkspaceDocRect 严格对齐
-   (该函数已同步改成 chatW=400/docW=800 + max(0,...) 的 safe-center 居中),使新建页翻转落点
-   = 编辑页这张纸的真实 rect;窗口放不下时两者都回退靠左、由 .ws-body 横向滚动承接。 */
+/* 右文档列:定宽上限与首页探针共用 --ws-paper-* 几何变量。转场通过同构 DOM 实测
+   safe-center + scrollbar-gutter 后的真实 rect；窗口放不下时两端都回退靠左，
+   由 .ws-body 横向滚动承接。 */
 #view-workspace .ws-right {
-  --ws-paper-min-height: calc(100vh - 52px);
+  --ws-paper-min-height: calc(100vh - var(--ws-paper-top-offset));
   /* 纸内功能区(.ws-docfns)绝对定位的锚:相对滚动容器定位,随内容一起滚。 */
   position: relative;
-  flex: 0 0 800px !important;
+  flex: 0 0 var(--ws-paper-column-width) !important;
   width: auto !important;
-  max-width: 800px !important;
-  padding: 52px 0 0 !important;
+  max-width: var(--ws-paper-column-width) !important;
+  padding: var(--ws-paper-top-offset) 0 0 !important;
   overflow-y: auto;
   /* 内容变长出滚动条时,经典占位滚动条(自定义 4px)会吃掉内容区宽,居中的纸右边被挤、
      视觉上「往左缩一点」。both-edges 让两侧恒留同宽的滚动槽 → 滚动条出不出,内容区宽度
@@ -1863,11 +1863,11 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   /* !important:覆盖 editing/pendingReview 等态把纸改成 transparent 的规则,任何态都保持奶白 */
   background: var(--bg-paper-deep) !important;
   padding: 52px 64px !important;
-  border-radius: 0;
-  /* 纸宽 = 右列可用内容宽(上限 800)。竖向滚动条出现时(占 ~8px),纸自动收 8px 刚好填满,
-     不再比容器宽 → 消除底部横向滚动条(不是隐藏,是让内容刚好放下)。 */
+  border-radius: var(--ws-paper-radius);
+  /* 纸宽 = 右列扣除浏览器实际双侧 scrollbar-gutter 后的内容宽。首页探针复刻同一规则，
+     转场终帧直接采用实测值，不再把列宽上限误当成纸壳真实宽度。 */
   width: 100% !important;
-  max-width: 800px !important;
+  max-width: var(--ws-paper-column-width) !important;
   box-sizing: border-box !important;
   /* 铺满滚动容器内容区:短文档也撑到底、底部不露深墨黑;长文档随内容向下延伸。
      顶部留白由 ws-right 的 padding-top 提供(深墨间隔),底部由 padding-bottom:0 贴到底 */
@@ -1876,7 +1876,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 #view-workspace .ws-paper-shell {
   position: absolute;
-  top: 52px;
+  top: var(--ws-paper-top-offset);
   left: 0;
   z-index: 0;
   pointer-events: none;
@@ -1884,7 +1884,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ws-paper-surface {
   position: relative;
   width: 100%;
-  max-width: 800px;
+  max-width: var(--ws-paper-column-width);
   min-height: var(--ws-paper-min-height);
   /* 审阅态纸面是 .ws-right(列 flex 容器)的直接弹性子项;默认 flex-shrink:1 会把纸面
      从内容真实高压缩到 min-height(一屏),正文靠 overflow 溢出照常滚,但发光层 inset:0

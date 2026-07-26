@@ -180,6 +180,59 @@
   min-height: 0;
 }
 
+/*
+ * 首页→工作区转场的目标纸壳测量探针。
+ * 几何值由 App 写入的 --ws-paper-* 变量提供；工作区真实列也消费同一组变量。
+ * 这里必须保留与 `.ws-body > .ws-left + .ws-right` 相同的 flex / safe-center /
+ * scrollbar-gutter 规则，才能把浏览器实际滚动槽宽计入终帧 rect。
+ */
+.ws-paper-geometry-probe {
+  position: fixed;
+  inset: 0;
+  z-index: -2147483647;
+  visibility: hidden;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.ws-paper-geometry-probe__body {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  justify-content: safe center;
+  align-items: stretch;
+  gap: var(--ws-paper-column-gap);
+  padding: 0 var(--ws-paper-body-padding-inline);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.ws-paper-geometry-probe__chat {
+  flex: 0 0 var(--ws-paper-chat-column-width);
+  max-width: var(--ws-paper-chat-column-width);
+}
+.ws-paper-geometry-probe__column {
+  position: relative;
+  flex: 0 0 var(--ws-paper-column-width);
+  width: auto;
+  max-width: var(--ws-paper-column-width);
+  padding: var(--ws-paper-top-offset) 0 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+.ws-paper-geometry-probe__column::-webkit-scrollbar {
+  width: 4px;
+}
+.ws-paper-geometry-probe__paper {
+  position: absolute;
+  top: var(--ws-paper-top-offset);
+  left: 0;
+  width: 100%;
+  max-width: var(--ws-paper-column-width);
+  min-height: calc(100vh - var(--ws-paper-top-offset));
+  border-radius: var(--ws-paper-radius);
+}
+
 /* 编辑页底色兜底(主包)。真值由 workspace-ink-skin.css 覆盖成同一玄青,这里只负责
    「皮肤 CSS 还没落地的那几帧」不露错色 —— 那份 CSS 随 lazy chunk 才到(见
    system/awaitStyles.ts 的 preload seen 竞态),旧值 --bg-canvas 会把整屏刷成亮底,

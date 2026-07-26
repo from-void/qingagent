@@ -5,8 +5,9 @@ import { AuthTokenGate } from "./system/AuthTokenGate";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
+import { WORKSPACE_PAPER_CSS_VARIABLES } from "./system/workspacePaperGeometry";
 import { lazy, Suspense, useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
 // 各页都抽成命名工厂,既给 lazy 用,也给「空闲预热」用 —— 同一个 import 工厂只会拉一次 chunk。
 //
@@ -143,7 +144,10 @@ function AppShell() {
 
   return (
     <div data-wf="AppShell" id="web-app-shell" className="web-app-shell">
-      <main className={pageFrameClass}>
+      <main
+        className={pageFrameClass}
+        style={WORKSPACE_PAPER_CSS_VARIABLES as CSSProperties}
+      >
         <Suspense
           fallback={
             <div

@@ -22,7 +22,7 @@ import {
   useFolderSourceActions,
   type FolderCapability,
 } from "../../../system";
-import { truncateLabel } from "../textUtils";
+import { truncateFilenameMiddle, truncateLabel } from "../textUtils";
 import { NoKeyTip } from "../../../system/modelKeyGate";
 import {
   buildLongTextChip,
@@ -1190,7 +1190,11 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   }
 
   // Display text: for selection chips, truncate for compact display
-  const displayLabel = spec.kind === "sel" ? truncateLabel(spec.label) : spec.label;
+  const displayLabel = spec.kind === "sel"
+    ? truncateLabel(spec.label)
+    : spec.kind === "attach"
+      ? truncateFilenameMiddle(spec.label)
+      : spec.label;
 
   // 统一样式:左侧 kind 图标 + 主标签 +(可选)后缀小标签 + 移除。去掉原来括号 + 等宽字体那套
   // 低对比小字渲染(图片/附件 chip 在暖纸面上几乎看不清)。
@@ -1216,6 +1220,7 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   const labelEl = document.createElement("span");
   labelEl.className = "c-label";
   labelEl.textContent = displayLabel;
+  if (spec.kind === "attach") labelEl.title = spec.label;
   chip.appendChild(labelEl);
 
   if (spec.suffix) {

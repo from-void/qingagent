@@ -1,0 +1,105 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { measureWorkspaceInputClearance } from "./useWorkspaceChrome";
+
+const CHAT_BOTTOM = 800;
+const DESIGN_GAP = 14;
+
+describe("workspace 对话流底部留白", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it.each([
+    ["普通输入框", "wf-input", 668, 682, 100],
+    ["多行长文", "wf-input", 568, 582, 200],
+    ["askUser 面板", "askuser-overlay", 668, 350, 438],
+    ["确认条", "cf-overlay", 668, 420, 362],
+  ])(
+    "%s 下末条消息不与输入区重叠，且间距等于设计上留白",
+    (_shape, occupantClass, wrapTop, occupantTop, occupantHeight) => {
+      const { chat, wrap, occupant } = createLayout({
+        occupantClass,
+        wrapTop,
+        occupantTop,
+        occupantHeight,
+      });
+
+      const clearance = measureWorkspaceInputClearance(chat, wrap);
+      const lastMessageBottomAtScrollEnd = CHAT_BOTTOM - clearance;
+
+      expect(occupantTop - lastMessageBottomAtScrollEnd).toBe(DESIGN_GAP);
+      expect(lastMessageBottomAtScrollEnd).toBeLessThan(occupantTop);
+      expect(occupant.getBoundingClientRect().top).toBe(occupantTop);
+    },
+  );
+
+  it("技能菜单展开后按菜单真实顶边扩展留白", () => {
+    const { chat, wrap } = createLayout({
+      occupantClass: "wf-input",
+      wrapTop: 668,
+      occupantTop: 682,
+      occupantHeight: 100,
+    });
+    const menu = document.createElement("div");
+    menu.className = "qa-skill-menu";
+    setRect(menu, { top: 300, bottom: 560, width: 268, height: 260 });
+    wrap.appendChild(menu);
+
+    expect(measureWorkspaceInputClearance(chat, wrap)).toBe(
+      CHAT_BOTTOM - 300 + DESIGN_GAP,
+    );
+  });
+});
+
+function createLayout(input: {
+  occupantClass: string;
+  wrapTop: number;
+  occupantTop: number;
+  occupantHeight: number;
+}) {
+  const chat = document.createElement("div");
+  const wrap = document.createElement("div");
+  const occupant = document.createElement("div");
+  wrap.style.paddingTop = `${DESIGN_GAP}px`;
+  occupant.className = input.occupantClass;
+  wrap.appendChild(occupant);
+  document.body.append(chat, wrap);
+
+  setRect(chat, {
+    top: 0,
+    bottom: CHAT_BOTTOM,
+    width: 440,
+    height: CHAT_BOTTOM,
+  });
+  setRect(wrap, {
+    top: input.wrapTop,
+    bottom: CHAT_BOTTOM,
+    width: 440,
+    height: CHAT_BOTTOM - input.wrapTop,
+  });
+  setRect(occupant, {
+    top: input.occupantTop,
+    bottom: input.occupantTop + input.occupantHeight,
+    width: 422,
+    height: input.occupantHeight,
+  });
+
+  return { chat, wrap, occupant };
+}
+
+function setRect(
+  element: HTMLElement,
+  rect: Pick<DOMRect, "top" | "bottom" | "width" | "height">,
+) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      ...rect,
+      x: 0,
+      y: rect.top,
+      left: 0,
+      right: rect.width,
+      toJSON: () => ({}),
+    }),
+  });
+}

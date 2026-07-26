@@ -565,11 +565,100 @@ describe("Settings Track B", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.includes("date="))).toBe(false);
   });
 
+  it("用量明细默认小白模式只展示聚合列", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    const headers = Array.from(getTable().querySelectorAll("th")).map(
+      (cell) => cell.textContent?.replace(/\?/g, "").replace(/\s+/g, " ").trim(),
+    );
+    expect(headers).toEqual(["日期", "输入", "输出", "缓存命中率", "估算费用"]);
+    expect(getTable().textContent).not.toContain("调用点");
+    expect(getTable().textContent).not.toContain("请求覆盖");
+    expect(getButtonByWf("UsageModeToggle").textContent).toContain("小白");
+  });
+
+  it("点击用量明细标题切换专家模式并披露完整列", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    const toggle = getButtonByWf("UsageModeToggle");
+    await click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.textContent).toContain("专家");
+    const headerText = Array.from(getTable().querySelectorAll("th"))
+      .map((cell) => cell.textContent ?? "")
+      .join(" ");
+    expect(headerText).toContain("模型");
+    expect(headerText).toContain("调用点");
+    expect(headerText).toContain("请求覆盖");
+  });
+
+  it("专家模式按文档分组，默认收起且可展开收起调用点", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=session")) {
+        return json({
+          rows: [
+            { ...usageRow("session-1", "deepseek-v4-flash", 1200, 500, 0.001), label: "测试文档" },
+            {
+              ...usageRow("session-1", "deepseek-v4-pro", 800, 300, 0.002),
+              callSite: "writeDraft",
+              label: "测试文档",
+            },
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    await click(getButtonByText("按文档"));
+    await flush();
+
+    expect(getTable().querySelectorAll('[data-wf="UsageGroupRow"]')).toHaveLength(1);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    const groupToggle = getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle");
+    expect(groupToggle?.textContent).toContain("测试文档");
+    expect(groupToggle?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(groupToggle!);
+    expect(groupToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(2);
+    expect(getTable().textContent).toContain("writeDraft");
+
+    await click(groupToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+  });
+
+  it("用量明细模式持久化到本地并在重新挂载后恢复", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    expect(window.localStorage.getItem("qingagent:model-usage-mode")).toBe("expert");
+
+    await act(async () => root?.unmount());
+    root = null;
+    host?.remove();
+    host = null;
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    expect(getButtonByWf("UsageModeToggle").getAttribute("aria-pressed")).toBe("true");
+    expect(getButtonByWf("UsageModeToggle").textContent).toContain("专家");
+  });
+
   it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByText("总计"));
+    await click(getButtonByWf("UsageModeToggle"));
     await flush();
+    await click(getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle")!);
     expect(getTable().textContent).toContain("未知");
     expect(getTable().textContent).toContain("100% · 1/1");
   });

@@ -1842,7 +1842,8 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
      底部靠 .wf-doc min-height:100% 铺满到底,不再留黑空隙 */
   background: transparent !important;
 }
-#view-workspace .wf-doc {
+#view-workspace .wf-doc,
+#view-workspace .ws-paper-shell {
   /* !important:覆盖 editing/pendingReview 等态把纸改成 transparent 的规则,任何态都保持奶白 */
   background: var(--bg-paper-deep) !important;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
@@ -1857,6 +1858,13 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
      顶部留白由 ws-right 的 padding-top 提供(深墨间隔),底部由 padding-bottom:0 贴到底 */
   min-height: var(--ws-paper-min-height);
   margin: 0;
+}
+#view-workspace .ws-paper-shell {
+  position: absolute;
+  top: 52px;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
 }
 #view-workspace .ws-paper-surface {
   position: relative;

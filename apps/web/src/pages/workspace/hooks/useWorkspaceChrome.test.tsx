@@ -58,7 +58,7 @@ describe("useWorkspaceChrome 返回首页", () => {
     expect(peekHomeArrive()?.sessionId).toBeUndefined();
   });
 
-  it("到场态持续等 hydration ready，随后只启动一次揭示", async () => {
+  it("到场态与 hydration 解耦，纸壳首帧在场并按原两帧时序揭示 chrome", async () => {
     setWorkspaceArrive({
       rect: { left: 20, top: 52, width: 800, height: 600 },
       x: 420,
@@ -70,20 +70,16 @@ describe("useWorkspaceChrome 返回首页", () => {
     root = createRoot(host);
 
     await act(async () => {
-      root?.render(createElement(Harness, { hydrationReady: false }));
+      root?.render(createElement(Harness));
     });
     const view = host.querySelector("#view-workspace");
+    expect(host.querySelector('[data-wf="WorkspacePaperShell"]')).not.toBeNull();
     expect(view?.classList.contains("ws-arriving")).toBe(true);
     expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
 
-    act(() => vi.advanceTimersByTime(1_000));
+    act(() => vi.advanceTimersByTime(16));
     expect(view?.classList.contains("ws-arriving")).toBe(true);
     expect(peekWorkspaceArrive()).not.toBeNull();
-
-    await act(async () => {
-      root?.render(createElement(Harness, { hydrationReady: true }));
-    });
-    expect(view?.classList.contains("ws-arriving")).toBe(true);
 
     act(() => vi.advanceTimersByTime(16));
     expect(view?.classList.contains("ws-arriving")).toBe(false);
@@ -94,33 +90,22 @@ describe("useWorkspaceChrome 返回首页", () => {
     expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
   });
 
-  it("直接打开既有会话也等 ready 后复用同一揭示，新建 ready 不受拖慢", async () => {
+  it("没有首页交接载荷时不自造到场编舞，新建与直接打开均立即呈现 chrome", async () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
 
     await act(async () => {
-      root?.render(createElement(Harness, { hydrationReady: false }));
+      root?.render(createElement(Harness));
     });
     const view = host.querySelector("#view-workspace");
-    expect(view?.classList.contains("ws-arriving")).toBe(true);
-
-    await act(async () => {
-      root?.render(createElement(Harness, { hydrationReady: true }));
-    });
-    act(() => vi.advanceTimersByTime(16));
-    expect(view?.classList.contains("ws-arrive-revealing")).toBe(true);
-
-    act(() => root?.unmount());
-    root = createRoot(host);
-    await act(async () => {
-      root?.render(createElement(Harness, { hydrationReady: true }));
-    });
-    expect(host.querySelector("#view-workspace")?.className).toBe("");
+    expect(view?.className).toBe("");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(view?.className).toBe("");
   });
 });
 
-function Harness({ hydrationReady = true }: { hydrationReady?: boolean }) {
+function Harness() {
   const viewRef = useRef<HTMLElement>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -129,7 +114,6 @@ function Harness({ hydrationReady = true }: { hydrationReady?: boolean }) {
     docScrollRef,
     chatScrollRef,
     sessionId: null,
-    hydrationReady,
     reducedMotion: false,
     flushPendingDocSave: async () => undefined,
   });
@@ -137,7 +121,11 @@ function Harness({ hydrationReady = true }: { hydrationReady?: boolean }) {
   return createElement(
     "section",
     { id: "view-workspace", ref: viewRef },
-    createElement("div", { ref: docScrollRef }),
+    createElement(
+      "div",
+      { ref: docScrollRef },
+      createElement("div", { "data-wf": "WorkspacePaperShell" }),
+    ),
     createElement("div", { ref: chatScrollRef }),
   );
 }

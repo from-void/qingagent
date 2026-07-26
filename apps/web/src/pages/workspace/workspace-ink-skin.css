@@ -711,11 +711,12 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 /* 左列:对话区满列高滚动,输入框悬浮在内容之上,内容从其下方滚过(被输入框毛玻璃模糊) */
 #view-workspace .ws-left {
   position: relative;
+  --ws-input-clearance-gap: 24px;
 }
 #view-workspace .ws-chat {
-  /* 满高滚动 + 底部留白(下半区):留白 = 悬浮输入框实际高度(JS 测量写入 --ws-input-h)+ 余量,
-     保证任何状态(禁用态/多行)最后的消息都能完整滚到输入框上方、不被挡。 */
-  padding-bottom: calc(var(--ws-input-h, 120px) + 28px) !important;
+  /* 满高滚动 + 底部留白:JS 直接测量「最上方可见输入控件 → 滚动区底边」
+     并计入独立的呼吸间距；普通/多行/问卷/确认卡/展开菜单共用同一实测值。 */
+  padding-bottom: var(--ws-input-clearance, 0px) !important;
 }
 #view-workspace .ws-input-wrap {
   position: absolute !important;

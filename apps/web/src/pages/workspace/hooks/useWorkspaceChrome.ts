@@ -14,6 +14,61 @@ import {
 } from "../../new-session/transition/origin";
 import { workspaceSessionIdFromHash } from "../data/workspacePageView";
 
+const INPUT_OCCUPANT_SELECTOR = [
+  ".wf-input",
+  ".askuser-overlay",
+  ".cf-overlay",
+  ".cf-record",
+  ".qa-skill-menu",
+  ".ws-taskpill-host",
+  ".ws-taskpill-flyout",
+].join(",");
+
+const CHAT_BOTTOM_THRESHOLD = 50;
+const DEFAULT_INPUT_CLEARANCE_GAP = 24;
+
+function isVisibleInputOccupant(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const style = getComputedStyle(element);
+  const opacity = parseFloat(style.opacity);
+  return style.display !== "none"
+    && style.visibility !== "hidden"
+    && (!Number.isFinite(opacity) || opacity > 0);
+}
+
+/**
+ * 输入区所需留白 = 最上方可见输入控件到滚动区底边的距离 + 显式呼吸间距。
+ * 呼吸间距至少为 --ws-input-clearance-gap；若 wrap 自身上 padding 更大则取其值，
+ * 避免把两份设计间距重复相加。
+ */
+export function measureWorkspaceInputClearance(
+  chat: HTMLElement,
+  wrap: HTMLElement,
+): number {
+  const chatRect = chat.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const wrapStyle = getComputedStyle(wrap);
+  const paddingTop = parseFloat(wrapStyle.paddingTop) || 0;
+  const configuredGap =
+    parseFloat(wrapStyle.getPropertyValue("--ws-input-clearance-gap"))
+    || DEFAULT_INPUT_CLEARANCE_GAP;
+  const breathingGap = Math.max(configuredGap, paddingTop);
+  let occupantTop = Number.POSITIVE_INFINITY;
+
+  for (const occupant of wrap.querySelectorAll<HTMLElement>(
+    INPUT_OCCUPANT_SELECTOR,
+  )) {
+    if (!isVisibleInputOccupant(occupant)) continue;
+    occupantTop = Math.min(occupantTop, occupant.getBoundingClientRect().top);
+  }
+  if (!Number.isFinite(occupantTop)) {
+    occupantTop = wrapRect.top + paddingTop;
+  }
+
+  return Math.max(0, Math.ceil(chatRect.bottom - occupantTop + breathingGap));
+}
+
 export function useWorkspaceChrome(input: {
   viewRef: RefObject<HTMLElement | null>;
   docScrollRef: RefObject<HTMLDivElement | null>;
@@ -75,19 +130,118 @@ export function useWorkspaceChrome(input: {
     };
   }, [input.docScrollRef, input.viewRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = input.viewRef.current;
     const left = element?.querySelector<HTMLElement>(".ws-left");
     const wrap = element?.querySelector<HTMLElement>(".ws-input-wrap");
-    if (!left || !wrap) return;
-    const apply = () =>
-      left.style.setProperty("--ws-input-h", `${wrap.offsetHeight}px`);
+    const chat = input.chatScrollRef.current;
+    if (!left || !wrap || !chat) return;
+
+    let stickToBottom =
+      chat.scrollHeight - chat.scrollTop - chat.clientHeight
+        < CHAT_BOTTOM_THRESHOLD;
+    let lastClearance = -1;
+    let frame = 0;
+    let activeMotionCount = 0;
+
+    const scrollToBottom = () => {
+      if (typeof chat.scrollTo === "function") {
+        chat.scrollTo({ top: chat.scrollHeight, behavior: "instant" });
+      } else {
+        chat.scrollTop = chat.scrollHeight;
+      }
+    };
+    const apply = () => {
+      const clearance = measureWorkspaceInputClearance(chat, wrap);
+      if (clearance === lastClearance) return;
+      const shouldStick = stickToBottom;
+      lastClearance = clearance;
+      left.style.setProperty("--ws-input-clearance", `${clearance}px`);
+      if (shouldStick) scrollToBottom();
+    };
+    const scheduleApply = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        apply();
+        if (activeMotionCount > 0) scheduleApply();
+      });
+    };
+    const handleScroll = () => {
+      stickToBottom =
+        chat.scrollHeight - chat.scrollTop - chat.clientHeight
+          < CHAT_BOTTOM_THRESHOLD;
+    };
+    const isMeasuredMotion = (event: Event) =>
+      event.target instanceof HTMLElement
+      && (event.target === wrap
+        || event.target.matches(INPUT_OCCUPANT_SELECTOR));
+    const handleMotionStart = (event: Event) => {
+      if (!isMeasuredMotion(event)) return;
+      activeMotionCount += 1;
+      scheduleApply();
+    };
+    const handleMotionEnd = (event: Event) => {
+      if (!isMeasuredMotion(event)) return;
+      activeMotionCount = Math.max(0, activeMotionCount - 1);
+      scheduleApply();
+    };
+
     apply();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(apply);
-    observer.observe(wrap);
-    return () => observer.disconnect();
-  }, [input.viewRef]);
+    chat.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", scheduleApply);
+    wrap.addEventListener("transitionrun", handleMotionStart, true);
+    wrap.addEventListener("transitionend", handleMotionEnd, true);
+    wrap.addEventListener("transitioncancel", handleMotionEnd, true);
+    wrap.addEventListener("animationstart", handleMotionStart, true);
+    wrap.addEventListener("animationend", handleMotionEnd, true);
+    wrap.addEventListener("animationcancel", handleMotionEnd, true);
+
+    const observed = new Set<HTMLElement>();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(scheduleApply);
+    const observeOccupants = () => {
+      if (!resizeObserver) return;
+      for (const target of [
+        wrap,
+        ...wrap.querySelectorAll<HTMLElement>(INPUT_OCCUPANT_SELECTOR),
+      ]) {
+        if (observed.has(target)) continue;
+        observed.add(target);
+        resizeObserver.observe(target);
+      }
+    };
+    observeOccupants();
+
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => {
+          observeOccupants();
+          scheduleApply();
+        });
+    mutationObserver?.observe(wrap, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "data-portal"],
+    });
+
+    return () => {
+      chat.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", scheduleApply);
+      wrap.removeEventListener("transitionrun", handleMotionStart, true);
+      wrap.removeEventListener("transitionend", handleMotionEnd, true);
+      wrap.removeEventListener("transitioncancel", handleMotionEnd, true);
+      wrap.removeEventListener("animationstart", handleMotionStart, true);
+      wrap.removeEventListener("animationend", handleMotionEnd, true);
+      wrap.removeEventListener("animationcancel", handleMotionEnd, true);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+      left.style.removeProperty("--ws-input-clearance");
+    };
+  }, [input.chatScrollRef, input.viewRef]);
 
   useLayoutEffect(() => {
     if (!peekWorkspaceArrive()) return;

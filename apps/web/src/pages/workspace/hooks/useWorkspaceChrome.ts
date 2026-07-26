@@ -19,7 +19,6 @@ export function useWorkspaceChrome(input: {
   docScrollRef: RefObject<HTMLDivElement | null>;
   chatScrollRef: RefObject<HTMLDivElement | null>;
   sessionId: string | null;
-  hydrationReady: boolean;
   reducedMotion: boolean;
   flushPendingDocSave: () => Promise<void>;
 }) {
@@ -27,10 +26,7 @@ export function useWorkspaceChrome(input: {
   const homeReturnTimerRef = useRef<number | null>(null);
   const workspaceArrivePendingRef = useRef<boolean | null>(null);
   if (workspaceArrivePendingRef.current === null) {
-    // 首页交接与“直接打开既有会话”共用同一场揭示：前者有 arrive
-    // 载荷，后者以 hydration waiting 本身作为待揭示信号；新建空白两者皆无。
-    workspaceArrivePendingRef.current =
-      Boolean(peekWorkspaceArrive()) || !input.hydrationReady;
+    workspaceArrivePendingRef.current = Boolean(peekWorkspaceArrive());
   }
 
   useLayoutEffect(() => {
@@ -108,10 +104,11 @@ export function useWorkspaceChrome(input: {
   }, [input.viewRef]);
 
   useLayoutEffect(() => {
-    if (!workspaceArrivePendingRef.current || !input.hydrationReady) return;
+    if (!workspaceArrivePendingRef.current) return;
     const view = input.viewRef.current;
     if (!view) return;
 
+    let settleFrame = 0;
     let revealFrame = 0;
     let revealTimer = 0;
     const reveal = () => {
@@ -126,17 +123,22 @@ export function useWorkspaceChrome(input: {
       );
     };
 
-    // waiting 已经作为稳定首帧画过；ready 后只跨一个 rAF 开始唯一一次揭示。
-    // 不再独立跑“2 rAF + 固定时刻”的自启动编舞。
+    // 到场编舞只负责把首页交接帧落到真实工作区，和数据水合门解耦。
+    // 纸壳已在首帧就位；两帧后按原时序揭示 chrome，内容仍由自己的门单独放行。
     if (input.reducedMotion) reveal();
-    else revealFrame = requestAnimationFrame(reveal);
+    else {
+      settleFrame = requestAnimationFrame(() => {
+        revealFrame = requestAnimationFrame(reveal);
+      });
+    }
 
     return () => {
+      if (settleFrame) cancelAnimationFrame(settleFrame);
       if (revealFrame) cancelAnimationFrame(revealFrame);
       if (revealTimer) window.clearTimeout(revealTimer);
       view.classList.remove("ws-arrive-revealing");
     };
-  }, [input.hydrationReady, input.reducedMotion, input.viewRef]);
+  }, [input.reducedMotion, input.viewRef]);
 
   useEffect(() => {
     const doc = input.docScrollRef.current;

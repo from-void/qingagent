@@ -278,33 +278,42 @@ export function WorkspaceDocumentPane({
         className={`ws-right${previewExit.source ? " is-previewing" : ""}`}
         ref={docScrollRef}
       >
-        {dim.content.kind === "empty" && derivatives.length === 0 ? null : (
-          <DerivTabBar
-            title={title}
-            items={derivatives}
-            activeTab={activeTab}
-            onActivate={activateDocumentTab}
-            onCreate={(dtype) => {
-              setDerivativeCreateDtype(dtype);
-              setDerivativeCreateOpen(true);
-            }}
-            createDisabledReason={derivativeCreateDisabledReason}
-            isStaleDismissed={isStaleDismissed}
-            onRename={async (nextTitle) => {
-              const previousTitle = title;
-              setTitle(nextTitle);
-              try {
-                const stream = streamRef.current;
-                if (!stream || !state.sessionId) throw new Error("会话未就绪");
-                await stream.renameSession(state.sessionId, nextTitle);
-              } catch (error) {
-                setTitle(previousTitle);
-                console.error("[workspace] rename session failed", error);
-                showToast("标题修改失败 · 请重试");
-              }
-            }}
-          />
-        )}
+        <div
+          className="ws-paper-shell"
+          data-wf="WorkspacePaperShell"
+          aria-hidden="true"
+        />
+        <div
+          className="ws-document-content"
+          data-wf="WorkspaceHydrationDocumentContent"
+        >
+          {dim.content.kind === "empty" && derivatives.length === 0 ? null : (
+            <DerivTabBar
+              title={title}
+              items={derivatives}
+              activeTab={activeTab}
+              onActivate={activateDocumentTab}
+              onCreate={(dtype) => {
+                setDerivativeCreateDtype(dtype);
+                setDerivativeCreateOpen(true);
+              }}
+              createDisabledReason={derivativeCreateDisabledReason}
+              isStaleDismissed={isStaleDismissed}
+              onRename={async (nextTitle) => {
+                const previousTitle = title;
+                setTitle(nextTitle);
+                try {
+                  const stream = streamRef.current;
+                  if (!stream || !state.sessionId) throw new Error("会话未就绪");
+                  await stream.renameSession(state.sessionId, nextTitle);
+                } catch (error) {
+                  setTitle(previousTitle);
+                  console.error("[workspace] rename session failed", error);
+                  showToast("标题修改失败 · 请重试");
+                }
+              }}
+            />
+          )}
 
         {!derivativeActive && dim.content.kind !== "empty" ? (
           <div className="ws-docfns" data-wf="WorkspaceDocFunctions">
@@ -650,6 +659,7 @@ export function WorkspaceDocumentPane({
             closing={previewExit.closing}
           />
         )}
+        </div>
       </div>
     </>
   );

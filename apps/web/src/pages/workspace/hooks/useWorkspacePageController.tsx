@@ -747,7 +747,6 @@ export function useWorkspacePageController() {
     docScrollRef,
     chatScrollRef,
     sessionId: state.sessionId,
-    hydrationReady: hydration.phase === "ready",
     reducedMotion,
     flushPendingDocSave: flushPendingDocSaveBeforeNavigation,
   });

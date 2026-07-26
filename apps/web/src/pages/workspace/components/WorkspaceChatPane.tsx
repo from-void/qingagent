@@ -64,22 +64,27 @@ export function WorkspaceChatPane({
 
   return (
     <div className="ws-left">
-      <ChatMessageList
-        messages={state.messages}
-        streamActive={state.streamActive}
-        showLoading={shouldShowPreTokenLoading(
-          state.messages,
-          state.streamActive,
-        )}
-        patchRevealing={effectivePatchRevealing}
-        livePatchCount={reviewUiState.livePatchCount}
-        liveHunkKey={liveHunkKey}
-        sessionId={state.sessionId}
-        wholeDocReview={wholeDocReview}
-        wholeDocReviewKeys={wholeDocReviewKeysRef.current}
-        scrollRef={chatScrollRef}
-        debugMode={debugMode}
-      />
+      <div
+        className="ws-chat-content"
+        data-wf="WorkspaceHydrationChatContent"
+      >
+        <ChatMessageList
+          messages={state.messages}
+          streamActive={state.streamActive}
+          showLoading={shouldShowPreTokenLoading(
+            state.messages,
+            state.streamActive,
+          )}
+          patchRevealing={effectivePatchRevealing}
+          livePatchCount={reviewUiState.livePatchCount}
+          liveHunkKey={liveHunkKey}
+          sessionId={state.sessionId}
+          wholeDocReview={wholeDocReview}
+          wholeDocReviewKeys={wholeDocReviewKeysRef.current}
+          scrollRef={chatScrollRef}
+          debugMode={debugMode}
+        />
+      </div>
       <div className="ws-input-wrap">
         {confirmRecord && !inlineConfirm && (
           <ConfirmRecordBar record={confirmRecord} />

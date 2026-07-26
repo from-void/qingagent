@@ -36,16 +36,55 @@
   #view-workspace .ws-body{
     flex:1 1 auto;min-height:0;display:flex;overflow:hidden;position:relative;
   }
-  /* 既有会话恢复时，真实左右树只挂一次以便编辑器在暗场内完成首帧，但等待期完全不可见。
-     visibility:hidden 不绘制任何浅色面，透出的始终是 #view-workspace 的玄青桌面；
-     ready 后的唯一揭示由 ws-arriving → ws-arrive-revealing 接管。 */
-  #view-workspace .ws-body[data-hydration="waiting"] > .ws-left,
-  #view-workspace .ws-body[data-hydration="waiting"] > .ws-right{
-    visibility:hidden;pointer-events:none;
+  /* 既有会话恢复只扣“墨迹”，不扣舞台：
+     左栏 chrome、输入框和右侧奶白纸壳首帧恒在，接住首页交接帧；
+     消息/正文在 ready 后只做一次 180ms 淡入。transition 无 fill 残留，
+     且从不作用于 .ws-left/.ws-right，避免给输入毛玻璃制造祖先 stacking context。 */
+  #view-workspace .ws-chat-content{
+    flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-document-content{display:contents}
+  #view-workspace .ws-document-content > *{
+    position:relative;z-index:1;
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-document-content .wf-doc > *,
+  #view-workspace .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+  #view-workspace .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-chat-content,
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content > *{
+    opacity:0;visibility:hidden;pointer-events:none;
+  }
+  /* 数据树内一旦已有真纸，就让它无缝接管同源纸壳；等待期仍只藏纸上的字和附属浮层。
+     shell 节点不卸载，换手前后背景/尺寸/阴影完全共用 .wf-doc 的声明。 */
+  #view-workspace .ws-right:has(.ws-document-content .wf-doc) > .ws-paper-shell{
+    visibility:hidden;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content > :is(.wf-doc,:has(.wf-doc)){
+    opacity:1;visibility:visible;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .wf-doc > *,
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){
+    opacity:0;visibility:hidden;pointer-events:none;
+  }
+  @media (prefers-reduced-motion:reduce){
+    #view-workspace .ws-chat-content,
+    #view-workspace .ws-document-content > *,
+    #view-workspace .ws-document-content .wf-doc > *,
+    #view-workspace .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+    #view-workspace .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){transition:none}
   }
   /* bigplan 态 · 右侧文档区被替换成 plan 面板, 左侧对话保持不变 */
-  body[data-ws-state="bigplan"] #view-workspace .ws-right > article.wf-doc,
-  body[data-ws-state="bigplan"] #view-workspace .ws-right > #patch-nav{display:none !important}
+  body[data-ws-state="bigplan"] #view-workspace .ws-paper-shell,
+  body[data-ws-state="bigplan"] #view-workspace .ws-document-content > article.wf-doc,
+  body[data-ws-state="bigplan"] #view-workspace .ws-document-content > #patch-nav{display:none !important}
   /* bigplan 时, ws-right 让 plan 面板自己管滚动 · 去掉外层 padding */
   body[data-ws-state="bigplan"] #view-workspace .ws-right{padding:0;overflow:hidden;display:flex;flex-direction:column}
 
@@ -662,7 +701,8 @@
   }
   /* 预览态:把文档区的其余直接子节点(正文/工具条/审批条等)藏掉,让预览真正"替换"
      文档内容而非盖在上面。用 display:none 而非卸载,保住 tiptap 实例/滚动/review 态。 */
-  #view-workspace .ws-right.is-previewing > :not(.fd-right-preview){display:none !important}
+  #view-workspace .ws-right.is-previewing > .ws-paper-shell{display:none !important}
+  #view-workspace .ws-right.is-previewing > .ws-document-content > :not(.fd-right-preview){display:none !important}
   /* 头部:文件类型图标 + 标题 + 关闭。顶部留白由 .ws-right 的 36px padding 负责。 */
   #view-workspace .fd-rp-head{
     flex:0 0 auto;display:flex;align-items:center;gap:12px;

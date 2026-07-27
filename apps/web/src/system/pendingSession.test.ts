@@ -11,7 +11,10 @@ import {
   type PendingSessionStorage,
   type PendingSubmissionInput,
 } from "./pendingSession";
-import type { CrossTabLockManager } from "./crossTabLock";
+import {
+  createLocalStorageLeaseLockManager,
+  type CrossTabLockManager,
+} from "./crossTabLock";
 
 function createStorage(): PendingSessionStorage & {
   values: Map<string, string>;
@@ -536,6 +539,51 @@ describe("pending submission 持久化与归属", () => {
     await expect(
       loser.claim("submission-cloned", null, ["queued"]),
     ).resolves.toBe(false);
+  });
+
+  it("无 Web Locks 时通过 localStorage 租约互斥且首提仍可发送", async () => {
+    const originalStorage = createStorage();
+    const claimStorage = createStorage();
+    const payloadStore = createPayloadStore();
+    const original = createPendingSubmissionManager({
+      storage: originalStorage,
+      claimStorage,
+      lockManager: createLocalStorageLeaseLockManager({
+        storage: claimStorage,
+        settleMs: 0,
+        retryMs: 1,
+        createOwnerId: () => "lease-original",
+      }),
+      claimOwnerId: "tab-original",
+      payloadStore,
+      now: () => 1_000,
+    });
+    await original.create(submissionInput("submission-lease"));
+
+    const clonedStorage = createStorage();
+    for (const [key, value] of originalStorage.values) {
+      clonedStorage.setItem(key, value);
+    }
+    const cloned = createPendingSubmissionManager({
+      storage: clonedStorage,
+      claimStorage,
+      lockManager: createLocalStorageLeaseLockManager({
+        storage: claimStorage,
+        settleMs: 0,
+        retryMs: 1,
+        createOwnerId: () => "lease-cloned",
+      }),
+      claimOwnerId: "tab-cloned",
+      payloadStore,
+      now: () => 1_000,
+    });
+
+    const claims = await Promise.all([
+      original.claim("submission-lease", null, ["queued"]),
+      cloned.claim("submission-lease", null, ["queued"]),
+    ]);
+
+    expect(claims.filter(Boolean)).toHaveLength(1);
   });
 
   it.each([

@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { app } from "../app";
 import {
@@ -7,7 +14,10 @@ import {
   getSession,
   sessionManager,
 } from "../gateway/bridgeHandler";
-import { clientMessageIdempotency } from "../gateway/clientMessageIdempotency";
+import {
+  clientMessageIdempotency,
+  type ClientMessageIdempotencyStore,
+} from "../gateway/clientMessageIdempotency";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);
@@ -153,8 +163,47 @@ describe("POST /api/v1/commands startSession(new) 覆写防护", () => {
 });
 
 describe("POST /api/v1/commands sendMessage 幂等", () => {
+  let restoreStore: (() => void) | null = null;
+
+  beforeEach(() => {
+    const records = new Map<string, {
+      id: string;
+      sessionId: string;
+      messageId: string;
+      createdAt: number;
+    }>();
+    const store: ClientMessageIdempotencyStore = {
+      async claim(input) {
+        const current = records.get(input.id);
+        if (current) return { claimed: false, record: current };
+        const record = {
+          id: input.id,
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          createdAt: input.now,
+        };
+        records.set(input.id, record);
+        return { claimed: true, record };
+      },
+      async release(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt
+        ) {
+          return false;
+        }
+        records.delete(input.id);
+        return true;
+      },
+    };
+    restoreStore = clientMessageIdempotency.useStoreForTest(store);
+  });
+
   afterEach(() => {
-    clientMessageIdempotency.clear();
+    restoreStore?.();
+    restoreStore = null;
     vi.restoreAllMocks();
   });
 
@@ -186,6 +235,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         accepted: boolean;
         duplicate?: boolean;
         sessionId?: string;
+        messageId?: string;
       }>>,
     );
 
@@ -197,5 +247,8 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     ).toBe(
       submitQueued.mock.calls[0]?.[0],
     );
+    expect(
+      bodies.find((body) => body.duplicate === true)?.messageId,
+    ).toBe("cloned-first-message");
   });
 });

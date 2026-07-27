@@ -375,7 +375,7 @@ export function createPendingSubmissionManager(input: {
   const lockManager =
     input.lockManager === undefined
       ? input.claimStorage
-        ? browserCrossTabLockManager()
+        ? browserCrossTabLockManager({ leaseStorage: claimStorage })
         : createSingleContextLockManager()
       : input.lockManager;
   const claimOwnerId = input.claimOwnerId ?? createClaimOwnerId();
@@ -725,46 +725,48 @@ export function createPendingSubmissionManager(input: {
     },
 
     async claim(submissionId, workspaceSessionId, allowedStates) {
-      // localStorage 只承载可观察所有权，原子性由 Web Locks 的 exclusive
-      // 临界区保证；缺少真锁时宁可不自动首提，也不退回可双赢的伪 CAS。
+      const claim = () => {
+        const metadata = currentMetadata();
+        if (
+          !metadata ||
+          metadata.submissionId !== submissionId ||
+          !allowedStates.includes(metadata.state)
+        ) {
+          return false;
+        }
+        if (
+          metadata.targetSessionId !== null
+            ? metadata.targetSessionId !== workspaceSessionId
+            : workspaceSessionId !== null
+        ) {
+          return false;
+        }
+        const claims = readClaims().filter(
+          (item) => item.expiresAt > now(),
+        );
+        if (claims.some(
+          (item) => item.submissionId === submissionId,
+        )) {
+          return false;
+        }
+        if (!writeClaims([...claims, {
+          submissionId,
+          ownerId: claimOwnerId,
+          expiresAt: now() + PENDING_SUBMISSION_CLAIM_LEASE_MS,
+        }])) {
+          return false;
+        }
+        writeMetadata({ ...metadata, state: "dispatching" });
+        return true;
+      };
+      // Web Locks 缺失时 browserCrossTabLockManager 会使用 localStorage
+      // 租约；localStorage 也受限时仍执行当前标签的首提，由服务端持久幂等兜底。
+      if (!lockManager) return claim();
       return withCrossTabLock({
         name: PENDING_SUBMISSION_CLAIM_LOCK_NAME,
         lockManager,
         unavailable: false,
-        run: () => {
-          const metadata = currentMetadata();
-          if (
-            !metadata ||
-            metadata.submissionId !== submissionId ||
-            !allowedStates.includes(metadata.state)
-          ) {
-            return false;
-          }
-          if (
-            metadata.targetSessionId !== null
-              ? metadata.targetSessionId !== workspaceSessionId
-              : workspaceSessionId !== null
-          ) {
-            return false;
-          }
-          const claims = readClaims().filter(
-            (claim) => claim.expiresAt > now(),
-          );
-          if (claims.some(
-            (claim) => claim.submissionId === submissionId,
-          )) {
-            return false;
-          }
-          if (!writeClaims([...claims, {
-            submissionId,
-            ownerId: claimOwnerId,
-            expiresAt: now() + PENDING_SUBMISSION_CLAIM_LEASE_MS,
-          }])) {
-            return false;
-          }
-          writeMetadata({ ...metadata, state: "dispatching" });
-          return true;
-        },
+        run: claim,
       });
     },
 

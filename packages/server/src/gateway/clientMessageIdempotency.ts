@@ -1,21 +1,47 @@
-const CLIENT_MESSAGE_ID_TTL_MS = 30 * 60 * 1_000;
+import {
+  claimClientMessageIdempotency,
+  releaseClientMessageIdempotency,
+  CLIENT_MESSAGE_IDEMPOTENCY_TTL_MS,
+  type ClientMessageIdempotencyClaim as PersistentClaim,
+} from "@qingagent/db";
+
 const CLIENT_MESSAGE_ID_MAX_ENTRIES = 4_096;
 
 interface ClientMessageClaim {
   sessionId: string;
-  token: string;
+  messageId: string;
+  token: string | null;
+  createdAt: number;
   expiresAt: number;
+}
+
+export interface ClientMessageIdempotencyStore {
+  claim(input: {
+    id: string;
+    sessionId: string;
+    messageId: string;
+    now: number;
+  }): Promise<PersistentClaim>;
+  release(input: {
+    id: string;
+    sessionId: string;
+    messageId: string;
+    createdAt: number;
+  }): Promise<boolean>;
 }
 
 export type ClientMessageClaimResult =
   | {
       kind: "claimed";
       sessionId: string;
+      messageId: string;
       token: string;
+      createdAt: number;
     }
   | {
       kind: "duplicate";
       sessionId: string;
+      messageId: string;
     };
 
 export function normalizeIdempotencyClientMessageId(
@@ -30,39 +56,98 @@ export function normalizeIdempotencyClientMessageId(
 export class ClientMessageIdempotencyRegistry {
   private readonly claims = new Map<string, ClientMessageClaim>();
   private tokenSequence = 0;
+  private store: ClientMessageIdempotencyStore;
 
   constructor(
     private readonly now: () => number = Date.now,
-  ) {}
+    store: ClientMessageIdempotencyStore = sqliteClientMessageIdempotencyStore,
+  ) {
+    this.store = store;
+  }
 
-  claim(clientMessageId: string, sessionId: string): ClientMessageClaimResult {
+  async claim(
+    clientMessageId: string,
+    sessionId: string,
+    messageId = clientMessageId,
+  ): Promise<ClientMessageClaimResult> {
     this.prune();
     const current = this.claims.get(clientMessageId);
     if (current && current.expiresAt > this.now()) {
       return {
         kind: "duplicate",
         sessionId: current.sessionId,
+        messageId: current.messageId,
       };
     }
-    const token = `${this.now()}:${this.tokenSequence += 1}`;
-    this.claims.set(clientMessageId, {
+    const claim = await this.store.claim({
+      id: clientMessageId,
       sessionId,
+      messageId,
+      now: this.now(),
+    });
+    const raced = this.claims.get(clientMessageId);
+    if (raced && raced.expiresAt > this.now()) {
+      return {
+        kind: "duplicate",
+        sessionId: raced.sessionId,
+        messageId: raced.messageId,
+      };
+    }
+    const token = claim.claimed
+      ? `${claim.record.createdAt}:${this.tokenSequence += 1}`
+      : null;
+    this.claims.set(clientMessageId, {
+      sessionId: claim.record.sessionId,
+      messageId: claim.record.messageId,
       token,
-      expiresAt: this.now() + CLIENT_MESSAGE_ID_TTL_MS,
+      createdAt: claim.record.createdAt,
+      expiresAt:
+        claim.record.createdAt + CLIENT_MESSAGE_IDEMPOTENCY_TTL_MS,
     });
     this.trim();
-    return { kind: "claimed", sessionId, token };
+    return claim.claimed
+      ? {
+          kind: "claimed",
+          sessionId: claim.record.sessionId,
+          messageId: claim.record.messageId,
+          token: token!,
+          createdAt: claim.record.createdAt,
+        }
+      : {
+          kind: "duplicate",
+          sessionId: claim.record.sessionId,
+          messageId: claim.record.messageId,
+        };
   }
 
-  release(clientMessageId: string, token: string): void {
+  async release(
+    clientMessageId: string,
+    token: string,
+  ): Promise<void> {
     const current = this.claims.get(clientMessageId);
     if (current?.token === token) {
       this.claims.delete(clientMessageId);
+      await this.store.release({
+        id: clientMessageId,
+        sessionId: current.sessionId,
+        messageId: current.messageId,
+        createdAt: current.createdAt,
+      });
     }
   }
 
   clear(): void {
     this.claims.clear();
+  }
+
+  useStoreForTest(store: ClientMessageIdempotencyStore): () => void {
+    const previous = this.store;
+    this.store = store;
+    this.clear();
+    return () => {
+      this.store = previous;
+      this.clear();
+    };
   }
 
   private prune(): void {
@@ -82,6 +167,11 @@ export class ClientMessageIdempotencyRegistry {
     }
   }
 }
+
+const sqliteClientMessageIdempotencyStore: ClientMessageIdempotencyStore = {
+  claim: claimClientMessageIdempotency,
+  release: releaseClientMessageIdempotency,
+};
 
 export const clientMessageIdempotency =
   new ClientMessageIdempotencyRegistry();

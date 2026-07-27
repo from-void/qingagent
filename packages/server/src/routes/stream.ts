@@ -316,7 +316,7 @@ async function handleCommandPost(c: Context) {
       prepared.command.data.clientMessageId,
     );
     if (clientMessageId) {
-      const claim = clientMessageIdempotency.claim(
+      const claim = await clientMessageIdempotency.claim(
         clientMessageId,
         prepared.sessionId,
       );
@@ -325,6 +325,7 @@ async function handleCommandPost(c: Context) {
           accepted: true,
           duplicate: true,
           sessionId: claim.sessionId,
+          messageId: claim.messageId,
           epoch: sessionManager.frameLog.getEpoch(claim.sessionId),
         });
       }
@@ -343,7 +344,7 @@ async function handleCommandPost(c: Context) {
     }));
   } catch (error) {
     if (clientMessageClaim) {
-      clientMessageIdempotency.release(
+      await clientMessageIdempotency.release(
         clientMessageClaim.clientMessageId,
         clientMessageClaim.token,
       );

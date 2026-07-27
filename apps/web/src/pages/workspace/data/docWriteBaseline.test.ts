@@ -1,8 +1,60 @@
 import { describe, expect, it } from "vitest";
 import { getPmContentHash, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
-import { canonicalDocWriteBaseline } from "./docWriteBaseline";
+import { canonicalDocWriteBaseline, isEmptyScaffoldConflict, type DocWriteBaseline } from "./docWriteBaseline";
 import { pmDocToViewDocumentSnapshot } from "./protocol";
 import { viewDocToPm } from "./viewDocHtml";
+
+const emptyDoc: PmDoc = {
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content: [],
+};
+const textDoc: PmDoc = {
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content: [{
+    type: "paragraph",
+    attrs: { blockId: "p-1" },
+    content: [{ type: "text", text: "用户输入" }],
+  }],
+};
+const emptyBaseline: DocWriteBaseline = {
+  expectedDocumentSnapshot: 0,
+  baseContentHash: "pmv1-empty",
+  baseHasSubstantiveContent: false,
+};
+
+describe("isEmptyScaffoldConflict", () => {
+  it("空基线的空脚手架冲突可静默拉取权威快照", () => {
+    expect(isEmptyScaffoldConflict({
+      baseline: emptyBaseline,
+      submittedDoc: emptyDoc,
+      queuedDoc: null,
+    })).toBe(true);
+  });
+
+  it("提交或排队中含用户正文时绝不进入静默覆盖路径", () => {
+    expect(isEmptyScaffoldConflict({
+      baseline: emptyBaseline,
+      submittedDoc: textDoc,
+      queuedDoc: null,
+    })).toBe(false);
+    expect(isEmptyScaffoldConflict({
+      baseline: emptyBaseline,
+      submittedDoc: emptyDoc,
+      queuedDoc: textDoc,
+    })).toBe(false);
+  });
+
+  it("从有正文基线删除到空也保留为用户冲突", () => {
+    expect(isEmptyScaffoldConflict({
+      baseline: { ...emptyBaseline, baseHasSubstantiveContent: true },
+      submittedDoc: emptyDoc,
+      queuedDoc: null,
+    })).toBe(false);
+  });
+});
+
 
 // 回归:乐观锁基线必须按服务端 canonical 原样计算。装载侧安全网(mermaid 代码块升级为图表块、
 // 嵌套表格展平)只改编辑器里看到的正文;若拿变换后的正文算 baseContentHash,该文档的任何一次

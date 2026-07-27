@@ -811,7 +811,7 @@ flowchart LR
     expect(fixedHandle).toEqual({ sourceHandle: "r", targetHandle: "l" });
   });
 
-  it("画框松手即用默认名建区并全选标题，失焦保留，Escape 撤销本次创建", async () => {
+  it("画框松手即用默认名建区并全选标题，pending 态 Escape 撤销且不关闭编辑器", async () => {
     const onSourceChange = vi.fn();
     await render(
       <EditableDiagramHarness
@@ -835,9 +835,10 @@ flowchart LR
     expect(firstInput.selectionEnd).toBe(firstInput.value.length);
     const defaultSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
     expect((parseDiagram(defaultSource).model as FlowGraph).subgraphs[0]?.label).toBe("新分区");
-    await keyDown(firstInput, { key: "Escape" });
+    await keyDown(document, { key: "Escape" });
     const cancelledSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
     expect((parseDiagram(cancelledSource).model as FlowGraph).subgraphs).toHaveLength(0);
+    expect(document.body.querySelector(".graph-diagram-editor")).toBe(editor);
 
     await dispatchGraphTestAction(editor, {
       kind: "drawSubgraph",
@@ -867,6 +868,35 @@ flowchart LR
     const emptyModel = parseDiagram(onSourceChange.mock.calls.at(-1)?.[0] as string).model as FlowGraph;
     expect(emptyModel.subgraphs.find((subgraph) => subgraph.label === "空分区")).toBeTruthy();
     expect(emptyModel.nodes.every((node) => !node.scopePath.includes("subgraph_空分区"))).toBe(true);
+  });
+
+  it("新建分区标题失焦时保留默认名并完成创建", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[甲]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 } } }}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: { x: 20, y: 20, width: 220, height: 140 },
+    });
+    const input = findInput("分区名称", editor);
+    expect(document.activeElement).toBe(input);
+    await act(async () => input.blur());
+    await flush();
+
+    const latestSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const model = parseDiagram(latestSource).model as FlowGraph;
+    expect(model.subgraphs).toHaveLength(1);
+    expect(model.subgraphs[0]?.label).toBe("新分区");
+    expect(editor.querySelector("input[aria-label='分区名称']")).toBeNull();
+    expect(document.body.querySelector(".graph-diagram-editor")).toBe(editor);
   });
 
   it("分区内画框创建嵌套子分区，跨越已有边界时拒绝并走全局 toast", async () => {

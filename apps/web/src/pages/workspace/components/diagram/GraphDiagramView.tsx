@@ -648,10 +648,13 @@ function GraphCluster({ data, selected }: NodeProps<GraphClusterNode>) {
 
   useEffect(() => {
     if (!data.isRenaming) return;
-    const input = inputRef.current;
-    if (!input) return;
-    input.focus();
-    input.select();
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [data.isRenaming]);
 
   useEffect(() => {
@@ -1512,60 +1515,9 @@ export function GraphDiagramView({
 
   useEffect(() => {
     if (!inEdit) return;
-    requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }));
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const key = event.key.toLowerCase();
-      if (
-        event.code === "Space" &&
-        !event.repeat &&
-        !target?.closest("input, textarea, [contenteditable='true']")
-      ) {
-        event.preventDefault();
-        setSpacePanning(true);
-        return;
-      }
-      const hasMod = event.ctrlKey || event.metaKey;
-      const isUndo = hasMod && !event.shiftKey && key === "z";
-      const isRedo = hasMod && (
-        (event.shiftKey && key === "z") ||
-        (!event.shiftKey && key === "y")
-      );
-      if (
-        ((isUndo && onUndo) || (isRedo && onRedo)) &&
-        !target?.closest("input, textarea, [contenteditable='true']")
-      ) {
-        event.preventDefault();
-        if (isUndo) onUndo?.();
-        else onRedo?.();
-        return;
-      }
-      if (event.key !== "Escape") return;
-      if (subgraphDrawMode) {
-        event.preventDefault();
-        setSubgraphDrawMode(false);
-        setSubgraphPreview(null);
-        subgraphDrawStartRef.current = null;
-        return;
-      }
-      closeEditor();
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.code === "Space") setSpacePanning(false);
-    };
-    const handleWindowBlur = () => setSpacePanning(false);
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("keyup", handleKeyUp);
-    window.addEventListener("blur", handleWindowBlur);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("keyup", handleKeyUp);
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, [closeEditor, inEdit, onRedo, onUndo, subgraphDrawMode]);
+    const frame = requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [inEdit]);
 
   const emitOverlay = useCallback(
     (next: DiagramOverlay, extraIds?: { nodes?: string[]; edges?: string[] }) => {
@@ -2041,6 +1993,7 @@ export function GraphDiagramView({
   }, [parsed, renamingSubgraphId, runRewrite]);
 
   const cancelSubgraphRename = useCallback(() => {
+    if (subgraphRenameCommittedRef.current) return;
     subgraphRenameCommittedRef.current = true;
     const createdId = newSubgraphId && newSubgraphId === renamingSubgraphId ? newSubgraphId : null;
     setRenamingSubgraphId(null);
@@ -2049,6 +2002,76 @@ export function GraphDiagramView({
     const result = runRewrite((baseSource) => dissolveSubgraph(baseSource, createdId));
     if (result?.ok) clearSelection();
   }, [clearSelection, newSubgraphId, renamingSubgraphId, runRewrite]);
+
+  useEffect(() => {
+    if (!inEdit) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const key = event.key.toLowerCase();
+      if (
+        event.code === "Space" &&
+        !event.repeat &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        setSpacePanning(true);
+        return;
+      }
+      const hasMod = event.ctrlKey || event.metaKey;
+      const isUndo = hasMod && !event.shiftKey && key === "z";
+      const isRedo = hasMod && (
+        (event.shiftKey && key === "z") ||
+        (!event.shiftKey && key === "y")
+      );
+      if (
+        ((isUndo && onUndo) || (isRedo && onRedo)) &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        if (isUndo) onUndo?.();
+        else onRedo?.();
+        return;
+      }
+      if (event.key !== "Escape") return;
+      if (newSubgraphId && newSubgraphId === renamingSubgraphId) {
+        event.preventDefault();
+        cancelSubgraphRename();
+        return;
+      }
+      if (subgraphDrawMode) {
+        event.preventDefault();
+        setSubgraphDrawMode(false);
+        setSubgraphPreview(null);
+        subgraphDrawStartRef.current = null;
+        return;
+      }
+      closeEditor();
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpacePanning(false);
+    };
+    const handleWindowBlur = () => setSpacePanning(false);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [
+    cancelSubgraphRename,
+    closeEditor,
+    inEdit,
+    newSubgraphId,
+    onRedo,
+    onUndo,
+    renamingSubgraphId,
+    subgraphDrawMode,
+  ]);
 
   const dissolveSelectedSubgraph = useCallback(() => {
     if (!selectedSubgraphId) return;

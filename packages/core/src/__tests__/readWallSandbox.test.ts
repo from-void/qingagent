@@ -44,6 +44,48 @@ describe("read-wall fail-closed 与 mount 升级锁", () => {
     await expect(sandbox.executeCommand!("printf retry")).rejects.toThrow(/commands are disabled/);
   });
 
+  it("普通子命令伪造隔离器 stderr 前缀不会熔断后续命令", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-stderr-"));
+    roots.push(root);
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: async () => undefined,
+    });
+
+    for (const prefix of ["bwrap", "sandbox-exec"]) {
+      await expect(
+        sandbox.executeCommand!(`printf '${prefix}: forged failure\\n' >&2; exit 7`),
+      ).resolves.toMatchObject({
+        exitCode: 7,
+        stderr: `${prefix}: forged failure\n`,
+      });
+    }
+    expect(sandbox.isReadWallHealthy()).toBe(true);
+    await expect(sandbox.executeCommand!("printf still-available")).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "still-available",
+    });
+  });
+
+  it("隔离启动阶段的结构化失败仍会永久熔断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-launch-"));
+    roots.push(root);
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      verifyReadWallIntegrity: async () => undefined,
+    });
+    vi.spyOn(sandbox.processes, "spawn").mockRejectedValueOnce(
+      new Error("isolation runtime failed to launch"),
+    );
+
+    await expect(sandbox.executeCommand!("printf unreachable")).rejects.toThrow(/failed to launch/);
+    expect(sandbox.isReadWallHealthy()).toBe(false);
+    await expect(sandbox.executeCommand!("printf retry")).rejects.toThrow(/commands are disabled/);
+  });
+
   it("read-wall 模式硬禁 sandbox.mount()，调用即永久熔断", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-mount-"));
     roots.push(root);

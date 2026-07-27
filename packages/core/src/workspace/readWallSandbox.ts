@@ -116,10 +116,9 @@ export interface ReadWallLocalSandboxOptions extends LocalSandboxOptions {
   verifyReadWallIntegrity: () => Promise<void>;
 }
 
-function isIsolationRuntimeFailure(result: CommandResult): boolean {
-  if (result.exitCode === 0) return false;
-  const stderr = result.stderr.trimStart();
-  return /(^|\n)(bwrap|sandbox-exec):/.test(stderr);
+function shellQuoteCommandArg(arg: string): string {
+  if (/^[a-zA-Z0-9._\-/=:@]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -134,8 +133,6 @@ export class ReadWallLocalSandbox extends LocalSandbox {
     const { verifyReadWallIntegrity, ...sandboxOptions } = options;
     super(sandboxOptions);
     this.verifyReadWallIntegrity = verifyReadWallIntegrity;
-    const execute = this.executeCommand?.bind(this);
-    if (!execute) throw new Error("LocalSandbox does not expose executeCommand");
     this.executeCommand = async (
       command: string,
       args?: string[],
@@ -144,13 +141,27 @@ export class ReadWallLocalSandbox extends LocalSandbox {
       this.assertReadWallHealthy();
       try {
         await this.verifyReadWallIntegrity();
-        const result = await execute(command, args, executeOptions);
-        if (isIsolationRuntimeFailure(result)) this.markReadWallUnhealthy();
-        return result;
       } catch (error) {
         this.markReadWallUnhealthy();
         throw error;
       }
+
+      const fullCommand = args?.length
+        ? `${command} ${args.map(shellQuoteCommandArg).join(" ")}`
+        : command;
+      let handle;
+      try {
+        // spawn 返回即表示隔离器已完成启动阶段；只有此前的结构化启动/拉起失败才熔断。
+        handle = await this.processes.spawn(fullCommand, {
+          ...executeOptions,
+          maxRetainedBytes: executeOptions?.maxRetainedBytes ?? Infinity,
+        });
+      } catch (error) {
+        this.markReadWallUnhealthy();
+        throw error;
+      }
+      const result = await handle.wait();
+      return { ...result, command: fullCommand };
     };
   }
 

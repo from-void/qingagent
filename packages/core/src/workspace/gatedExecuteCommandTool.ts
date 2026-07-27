@@ -323,7 +323,13 @@ export function createGatedExecuteCommandTool({
           return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持后台进程");
         }
         return await withBackgroundSpawnLock(sessionId, async () => {
+          if (context?.abortSignal?.aborted) {
+            return cancelledCommandResult("命令已取消: 等待后台启动锁期间请求已被取消");
+          }
           const processes = await sandbox.processes!.list();
+          if (context?.abortSignal?.aborted) {
+            return cancelledCommandResult("命令已取消: 后台进程检查期间请求已被取消");
+          }
           const runningCount = processes.filter((process) => process.running).length;
           if (runningCount >= SANDBOX_MAX_BACKGROUND_PROCESSES) {
             return rejectedCommandResult(
@@ -341,6 +347,9 @@ export function createGatedExecuteCommandTool({
             maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
             abortSignal: context?.abortSignal,
           });
+          if (context?.abortSignal?.aborted) {
+            return cancelledCommandResult("命令已取消: 后台进程启动期间请求已被取消");
+          }
           const clampedLabel = backgroundTimeoutClamped ? "，已按后台上限钳制" : "";
           return commandResult({
             success: true,

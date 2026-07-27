@@ -78,6 +78,7 @@ function createToolHarness(
     sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
     runningProcesses?: number;
     simulateBackgroundTimeout?: boolean;
+    firstListGate?: Promise<void>;
     commandResult?: {
       success: boolean;
       exitCode: number;
@@ -92,6 +93,7 @@ function createToolHarness(
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
   let spawnedRunning = 0;
+  let listCalls = 0;
   const mockedCommandResult = options.commandResult;
   const workspace = {
     ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
@@ -112,16 +114,20 @@ function createToolHarness(
         };
       },
       processes: {
-        list: async () => [
-          ...Array.from({ length: options.runningProcesses ?? 0 }, (_, index) => ({
-            pid: `existing-${index}`,
-            running: true,
-          })),
-          ...Array.from({ length: spawnedRunning }, (_, index) => ({
-            pid: `spawned-${index}`,
-            running: true,
-          })),
-        ],
+        list: async () => {
+          listCalls += 1;
+          if (listCalls === 1) await options.firstListGate;
+          return [
+            ...Array.from({ length: options.runningProcesses ?? 0 }, (_, index) => ({
+              pid: `existing-${index}`,
+              running: true,
+            })),
+            ...Array.from({ length: spawnedRunning }, (_, index) => ({
+              pid: `spawned-${index}`,
+              running: true,
+            })),
+          ];
+        },
         spawn: async (_command: string, spawnOptions: SandboxSpawnOptions) => {
           spawnCalls.push(spawnOptions);
           spawnedRunning += 1;
@@ -146,6 +152,7 @@ function createToolHarness(
     tool,
     executeCalls,
     spawnCalls,
+    listCallCount: () => listCalls,
     runningProcessCount: () => (options.runningProcesses ?? 0) + spawnedRunning,
   };
 }
@@ -729,6 +736,74 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(results.filter((result) => result.startsWith("Started background process"))).toHaveLength(1);
     expect(results.filter((result) => result.includes("后台进程已达上限"))).toHaveLength(1);
     expect(spawnCalls).toHaveLength(1);
+  });
+
+  it("后台命令等待会话锁期间取消后不再 list 或 spawn", async () => {
+    let releaseFirstList!: () => void;
+    const firstListGate = new Promise<void>((resolve) => {
+      releaseFirstList = resolve;
+    });
+    const { tool, spawnCalls, listCallCount } = createToolHarness(
+      "gated-background-lock-cancel",
+      { firstListGate },
+    );
+    const input = {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    };
+    const first = executeToolResult(tool, input);
+    await vi.waitFor(() => expect(listCallCount()).toBe(1));
+
+    const abortController = new AbortController();
+    const second = executeToolResult(tool, input, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    abortController.abort("user_abort");
+    releaseFirstList();
+
+    await expect(first).resolves.toMatchObject({ success: true, background: true });
+    const secondResult = await second;
+    expect(secondResult).toMatchObject({
+      success: false,
+      cancelled: true,
+    });
+    expect(secondResult).not.toHaveProperty("background");
+    expect(listCallCount()).toBe(1);
+    expect(spawnCalls).toHaveLength(1);
+  });
+
+  it("后台进程 list 期间取消后不再 spawn", async () => {
+    let releaseList!: () => void;
+    const firstListGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    const { tool, spawnCalls, listCallCount } = createToolHarness(
+      "gated-background-list-cancel",
+      { firstListGate },
+    );
+    const abortController = new AbortController();
+    const command = executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    }, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    await vi.waitFor(() => expect(listCallCount()).toBe(1));
+
+    abortController.abort("user_abort");
+    releaseList();
+
+    await expect(command).resolves.toMatchObject({
+      success: false,
+      cancelled: true,
+    });
+    expect(spawnCalls).toHaveLength(0);
   });
 });
 

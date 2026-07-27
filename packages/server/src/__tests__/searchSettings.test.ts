@@ -112,6 +112,11 @@ const mockCore = vi.hoisted(() => {
     }),
     parsePrimarySearchConfig,
     parseSearchProviderConfig,
+    setAppSettingJsonField: vi.fn(async (key: string, field: string, value: unknown) => {
+      const current = parseSearchProviderConfig(store.get(key) ?? null);
+      current[field] = value;
+      store.set(key, JSON.stringify(current));
+    }),
     setAppSetting: vi.fn(async (key: string, value: string) => {
       store.set(key, value);
     }),
@@ -237,6 +242,39 @@ describe("searchSettingsRoutes", () => {
     expect(mockCore.health.has("tavily")).toBe(false);
     expect(mockCore.clearManagedSearchProviderHealth).toHaveBeenCalledOnce();
     expect(mockCore.clearManagedSearchProviderHealth).toHaveBeenCalledWith("tavily");
+  });
+
+  it("并发保存不同 provider 时以字段级原子更新保留两份配置", async () => {
+    const app = await loadApp();
+    let initialReads = 0;
+    mockCore.getAppSetting.mockImplementation(async (key: string) => {
+      if (key === mockCore.SETTING_SEARCH_PROVIDER_CONFIG && initialReads < 2) {
+        initialReads += 1;
+        return null;
+      }
+      return mockCore.store.get(key) ?? null;
+    });
+
+    const [tavily, searxng] = await Promise.all([
+      app.request("/api/v1/settings/search/tavily", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, apiKey: "tvly-concurrent-1234" }),
+      }),
+      app.request("/api/v1/settings/search/searxng", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, url: "https://search.example.com" }),
+      }),
+    ]);
+
+    expect(tavily.status).toBe(200);
+    expect(searxng.status).toBe(200);
+    expect(mockCore.setAppSettingJsonField).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(mockCore.store.get(mockCore.SETTING_SEARCH_PROVIDER_CONFIG)!)).toEqual({
+      tavily: { enabled: true, apiKey: "tvly-concurrent-1234" },
+      searxng: { enabled: true, url: "https://search.example.com/" },
+    });
   });
 
   it("GET primary 只返回脱敏 key 与 db source", async () => {

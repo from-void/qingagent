@@ -16,6 +16,7 @@ import {
   parseSearchProviderConfig,
   recordSearchProviderError,
   setAppSetting,
+  setAppSettingJsonField,
   type SearchProviderConfig,
   type SearchProviderConfigMap,
   type SearchProviderErrorKind,
@@ -215,8 +216,7 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
     else delete current.url;
   }
 
-  config[id] = current;
-  await setAppSetting(SETTING_SEARCH_PROVIDER_CONFIG, JSON.stringify(config));
+  await setAppSettingJsonField(SETTING_SEARCH_PROVIDER_CONFIG, id, current);
   if (configValueFor(entry, current) !== previousCredential) {
     clearManagedSearchProviderHealth(id);
   }

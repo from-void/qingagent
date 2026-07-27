@@ -314,6 +314,7 @@ export {
   saveStyleTemplate,
   selectReviewTemplate,
   setAppSetting,
+  setAppSettingJsonField,
   updateParams,
   upsertReviewDocSupplement,
 } from "@qingagent/db";

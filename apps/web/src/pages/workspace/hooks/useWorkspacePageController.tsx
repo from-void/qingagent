@@ -208,6 +208,7 @@ import {
 export { RightPane } from "../components/RightPane";
 export {
   buildPageExitDocSaveCommand,
+  drainPageExitDocSaveOutbox,
   flushDocSaveInBackground,
   flushDocSaveOnPageExit,
   PageExitDocSaveError,

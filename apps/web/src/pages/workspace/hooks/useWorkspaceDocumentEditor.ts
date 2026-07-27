@@ -32,6 +32,7 @@ import {
 } from "../data/pendingDocSave";
 import {
   createClientMutationId,
+  drainPageExitDocSaveOutbox,
   flushDocSaveInBackground,
   flushDocSaveOnPageExit,
   PageExitDocSaveError,
@@ -725,6 +726,17 @@ export function useWorkspaceDocumentEditor(input: {
   }, []);
 
   useEffect(() => {
+    let outboxDrain: Promise<unknown> | null = null;
+    const recoverPageExitSaves = () => {
+      if (outboxDrain) return;
+      outboxDrain = drainPageExitDocSaveOutbox()
+        .catch((error) => {
+          console.error("[workspace] page-exit outbox recovery failed", error);
+        })
+        .finally(() => {
+          outboxDrain = null;
+        });
+    };
     const pageExitFlush = () => {
       preparePageExitDocSave()?.();
     };
@@ -736,12 +748,17 @@ export function useWorkspaceDocumentEditor(input: {
       });
     };
 
+    recoverPageExitSaves();
     window.addEventListener("pagehide", pageExitFlush);
     window.addEventListener("beforeunload", pageExitFlush);
+    window.addEventListener("pageshow", recoverPageExitSaves);
+    window.addEventListener("online", recoverPageExitSaves);
     document.addEventListener("visibilitychange", visibilityFlush);
     return () => {
       window.removeEventListener("pagehide", pageExitFlush);
       window.removeEventListener("beforeunload", pageExitFlush);
+      window.removeEventListener("pageshow", recoverPageExitSaves);
+      window.removeEventListener("online", recoverPageExitSaves);
       document.removeEventListener("visibilitychange", visibilityFlush);
     };
   }, [flushPendingDocSave, preparePageExitDocSave]);

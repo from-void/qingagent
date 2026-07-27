@@ -680,6 +680,7 @@ describe("WorkspacePage review controls", () => {
     serverStreamMock.instances.length = 0;
     window.location.hash = "";
     sessionStorage.clear();
+    localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
     restoreWorkspaceDomMocks = installWorkspaceDomMocks();
   });
@@ -688,6 +689,7 @@ describe("WorkspacePage review controls", () => {
     restoreWorkspaceDomMocks?.();
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
+    localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
     vi.unstubAllEnvs();
     vi.useRealTimers();
     if (root) {
@@ -4387,9 +4389,9 @@ describe("WorkspacePage page-exit doc save", () => {
         expectedDocumentSnapshot: 7,
         baseContentHash,
         clientMutationId: "exit-1",
-        legacySections: [{ kind: "p", data: { text: "新正文" } }],
       },
     });
+    expect(command?.data.legacySections).toBeUndefined();
   });
 
   it("page-exit flush 优先 sendBeacon,失败时回退 keepalive fetch", async () => {

@@ -147,6 +147,14 @@ describe("GenService", () => {
     })]);
   });
 
+  it("前导散文小数组不阻断后随问卷负载", () => {
+    expect(parseGeneratedQuestions(
+      '默认值为 [true]，正式结果：[{"label":"补充？","kind":"text","options":[]}]',
+    )).toEqual([
+      expect.objectContaining({ id: "q1", label: "补充？", kind: "text" }),
+    ]);
+  });
+
   it("顶层问卷数组截断时不把 options 子数组正规化成问题", () => {
     expect(parseGeneratedQuestions(
       '[{"id":"q1","label":"选择？","kind":"single","options":[{"value":"a","label":"甲"}]}',

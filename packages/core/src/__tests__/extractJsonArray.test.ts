@@ -4,7 +4,7 @@ import {
   extractJsonArray,
 } from "../utils/extractJsonArray.js";
 
-describe("extractJsonArray 首个顶层数组边界", () => {
+describe("extractJsonArray 顶层数组候选边界", () => {
   it("顶层数组截断时不把完整 options 子数组冒充结果", () => {
     const truncated =
       '[{"id":"q1","label":"选择？","kind":"single","options":[{"value":"a","label":"甲"}]}';
@@ -21,12 +21,33 @@ describe("extractJsonArray 首个顶层数组边界", () => {
     expect(extractFirstBalancedArray(raw)).toBe(expected);
   });
 
-  it("跳过前导散文后，真正的顶层数组截断仍然失败", () => {
+  it.each([
+    "[true]",
+    "[1]",
+    '["注"]',
+  ])("前导散文小数组 %s 不截胡后随对象数组", (decoy) => {
+    const expected = '[{"label":"问题","options":[]}]';
+    const raw = `默认值为 ${decoy}，结果：${expected}`;
+
+    expect(extractJsonArray(raw)).toBe(expected);
+    expect(extractFirstBalancedArray(raw)).toBe(expected);
+  });
+
+  it("对象数组截断时不退回前导散文小数组", () => {
     const raw =
-      '说明[草稿]：\n```json\n[{"id":"q1","options":[{"value":"a"}]}\n```\n以上是结果。';
+      '默认值为 [true]。说明[草稿]：\n```json\n[{"id":"q1","options":[{"value":"a"}]}\n```';
 
     expect(extractJsonArray(raw)).toBeNull();
     expect(extractFirstBalancedArray(raw)).toBeNull();
+  });
+
+  it("组合处理散文方括号、小数组、fence 与尾随文本", () => {
+    const expected = '[{"label":"问题","options":[]}]';
+    const raw =
+      `说明[草稿]，默认值为 [true]。\n\`\`\`json\n${expected}\n\`\`\`\n以上是结果。`;
+
+    expect(extractJsonArray(raw)).toBe(expected);
+    expect(extractFirstBalancedArray(raw)).toBe(expected);
   });
 
   it.each([

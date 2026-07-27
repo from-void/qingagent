@@ -337,8 +337,16 @@ function hasMxfileRoot(source: string): boolean {
   return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<mxfile[\s>]/i.test(source);
 }
 
-/** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
-function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
+interface CollectDiagramOptions {
+  includeCached?: boolean;
+}
+
+/** 递归收集文档里的图表节点(PmDoc 节点 + Legacy 段都覆盖)，渲染路径默认只取缺可用 SVG 的节点。 */
+function collectDiagrams(
+  value: unknown,
+  acc: DiagramRef[],
+  options: CollectDiagramOptions = {},
+): void {
   if (!value || typeof value !== "object") return;
   const obj = value as Record<string, unknown>;
 
@@ -352,7 +360,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const svg = attrs.svg as string | null;
     const hasUsableCache = isRenderableSvg(svg)
       && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
-    if (source.trim() && !hasUsableCache) {
+    if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,
         blockId: typeof attrs.blockId === "string" ? attrs.blockId : null,
@@ -374,7 +382,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const svg = data.svg as string | null;
     const hasUsableCache = isRenderableSvg(svg)
       && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
-    if (source.trim() && !hasUsableCache) {
+    if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,
         blockId: typeof data.blockId === "string" ? data.blockId : null,
@@ -388,9 +396,9 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
 
   for (const v of Object.values(obj)) {
     if (Array.isArray(v)) {
-      for (const item of v) collectDiagrams(item, acc);
+      for (const item of v) collectDiagrams(item, acc, options);
     } else if (v && typeof v === "object") {
-      collectDiagrams(v, acc);
+      collectDiagrams(v, acc, options);
     }
   }
 }
@@ -403,7 +411,7 @@ function requiresOfficialMermaidLayout(ref: DiagramRef): boolean {
 /** 导出响应据此提示：专有语义图保留官方 Mermaid 语义，但不会应用不兼容的画布 overlay。 */
 export function hasSpecializedDiagramOverlayFallback(document: ExportDocument): boolean {
   const refs: DiagramRef[] = [];
-  collectDiagrams(structuredClone(document), refs);
+  collectDiagrams(structuredClone(document), refs, { includeCached: true });
   return refs.some(requiresOfficialMermaidLayout);
 }
 
@@ -488,6 +496,7 @@ function hasOverlay(overlay: DiagramOverlay | null | undefined): overlay is Diag
   return !!overlay && (
     Object.keys(overlay.positions ?? {}).length > 0 ||
     Object.keys(overlay.styles ?? {}).length > 0 ||
-    Object.keys(overlay.edgeStyles ?? {}).length > 0
+    Object.keys(overlay.edgeStyles ?? {}).length > 0 ||
+    Object.keys(overlay.edgeHandles ?? {}).length > 0
   );
 }

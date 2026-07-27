@@ -169,7 +169,8 @@ describe("mermaidServer 引号 normalization", () => {
       }],
     } as unknown as PmDoc;
 
-    expect(hasSpecializedDiagramOverlayFallback(document)).toBe(true);
+    // 语法无效的 flowchart 会直接回退源码，不属于“专有图保留官方 SVG、仅跳过布局”的提示范围。
+    expect(hasSpecializedDiagramOverlayFallback(document)).toBe(false);
     const prepared = await withRenderedDiagrams(document) as PmDoc;
     const diagram = prepared.content[0] as { attrs: { svg: string | null } };
     expect(diagram.attrs.svg).toBeNull();
@@ -227,6 +228,54 @@ describe("mermaidServer 引号 normalization", () => {
         diagramType: "erDiagram",
       }),
     );
+  });
+
+  it("专有语义图已有可用 SVG 缓存时仍提示 overlay 未应用", () => {
+    const cachedSvg = '<svg viewBox="0 0 320 180"><text>缓存语义图</text></svg>';
+    const document = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "cached-state",
+          lang: "mermaid",
+          source: "stateDiagram-v2\n  [*] --> Active\n",
+          svg: cachedSvg,
+          overlay: { positions: { Active: { x: 120, y: 80 } } },
+        },
+      }],
+    } as unknown as PmDoc;
+
+    expect(hasSpecializedDiagramOverlayFallback(document)).toBe(true);
+    expect((document.content[0] as { attrs: { svg: string } }).attrs.svg).toBe(cachedSvg);
+    expect(getBrowserMock).not.toHaveBeenCalled();
+  });
+
+  it("专有语义图仅有 edgeHandles overlay 时仍提示未应用", () => {
+    const document = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "edge-handles-only",
+          lang: "mermaid",
+          source: "classDiagram\n  Customer <|-- VipCustomer\n",
+          svg: null,
+          overlay: {
+            edgeHandles: {
+              "Customer->VipCustomer": {
+                sourceHandle: "r",
+                targetHandle: "l",
+              },
+            },
+          },
+        },
+      }],
+    } as unknown as PmDoc;
+
+    expect(hasSpecializedDiagramOverlayFallback(document)).toBe(true);
   });
 
   it("合法 flowchart/sequence 原文 parse 成功时不改写引号正文", async () => {

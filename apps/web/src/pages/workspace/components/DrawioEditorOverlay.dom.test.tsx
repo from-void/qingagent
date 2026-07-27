@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { DEFAULT_DRAWIO_SOURCE } from "@qingagent/pm-schema";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +14,9 @@ import {
 } from "./drawioEmbedProtocol";
 import { DrawioEditorOverlay } from "./DrawioEditorOverlay";
 import { renderDrawio } from "./drawioRender";
+
+const diagramEditorChromeCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagramEditorChrome.css"), "utf8");
+const drawioEditorCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/DrawioEditorOverlay.css"), "utf8");
 
 vi.mock("./drawioRender", () => ({
   renderDrawio: vi.fn(),
@@ -41,6 +46,8 @@ describe("drawio 全屏编辑面板", () => {
     expect(closeButton?.textContent?.trim()).toBe("✕");
     expect(closeButton?.getAttribute("aria-label")).toBe("关闭");
     expect(overlay?.querySelectorAll(".diagram-editor-chrome__close")).toHaveLength(1);
+    expect(diagramEditorChromeCss).toMatch(/\.diagram-editor-chrome__topbar\s*\{[^}]*background:\s*var\(--bg-paper-deep,\s*#f6f1e7\);/s);
+    expect(drawioEditorCss).toMatch(/\.drawio-editor-overlay\s*\{[^}]*background:\s*var\(--bg-paper-deep\);/s);
   });
 
   it("启动期盖住 vendor 首屏，图表加载后揭开，自愈重载时重新盖住", async () => {

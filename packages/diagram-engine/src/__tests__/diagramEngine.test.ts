@@ -14,6 +14,7 @@ import {
   parseDiagram,
   renameSubgraph,
   safeMermaid,
+  setSubgraphStyle,
   wrapNodesInSubgraph,
   type BaseEdge,
   type ClassGraph,
@@ -1260,6 +1261,36 @@ flowchart TD
     });
     expect(model.perEdgeStyles?.[model.edges[0]!.id]).toMatchObject({
       stroke: "#445566",
+      strokeWidth: 3,
+    });
+  });
+
+  it("flowchart 分区支持 classDef/class 与 style，并可保留其它声明安全改色", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Zone["业务区"]',
+      "    A[开始]",
+      "  end",
+      "  classDef paper fill:#f3ecdd,stroke:#8f6d30",
+      "  class Zone paper",
+      "  style Zone stroke-width:3px,fill:#efe3cc %% 分区样式",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    expect((parsed.model as FlowGraph).perSubgraphStyles?.Zone).toMatchObject({
+      fill: "#efe3cc",
+      stroke: "#8f6d30",
+      strokeWidth: 3,
+    });
+    expect(graphToSvg(source)).toMatch(/data-cluster-id="Zone"[\s\S]*?<rect[^>]+fill="#efe3cc"[^>]+stroke="#8f6d30"/);
+
+    const rewritten = setSubgraphStyle(source, "Zone", { fill: "#f8e7a1", stroke: "#6a6256" });
+    expect(rewritten.ok).toBe(true);
+    expect(rewritten.source).toContain("style Zone stroke-width:3px,fill:#f8e7a1,stroke:#6a6256 %% 分区样式");
+    expect((parseDiagram(rewritten.source).model as FlowGraph).perSubgraphStyles?.Zone).toMatchObject({
+      fill: "#f8e7a1",
+      stroke: "#6a6256",
       strokeWidth: 3,
     });
   });

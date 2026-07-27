@@ -1229,7 +1229,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
       expect(editor.view.dom.querySelector(".pm-diagram-source")).toBeNull();
       expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*z-index:\s*2147483000;[^}]*pointer-events:\s*auto;/s);
-      expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*rgba\(246,\s*241,\s*231,\s*0\.98\);/s);
+      expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*var\(--bg-paper-deep,\s*#f6f1e7\);/s);
 
       const doneButton = document.body.querySelector<HTMLButtonElement>(
         ".graph-diagram-editor .diagram-editor-chrome__close",

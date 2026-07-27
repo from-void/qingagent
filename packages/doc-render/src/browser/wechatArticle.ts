@@ -313,6 +313,26 @@ function normalizeInline(value: string): string {
 }
 
 function cleanupMarkdown(markdown: string): string {
+  const regions: string[] = [];
+  const fencedCode = /^```[^\n]*\n[\s\S]*?^```[ \t]*(?=\n|$)/gm;
+  let cursor = 0;
+
+  for (const match of markdown.matchAll(fencedCode)) {
+    const index = match.index;
+    if (index > cursor) {
+      const prose = cleanupMarkdownProse(markdown.slice(cursor, index));
+      if (prose) regions.push(prose);
+    }
+    regions.push(match[0].trim());
+    cursor = index + match[0].length;
+  }
+
+  const tail = cleanupMarkdownProse(markdown.slice(cursor));
+  if (tail) regions.push(tail);
+  return regions.join("\n\n").trim();
+}
+
+function cleanupMarkdownProse(markdown: string): string {
   return markdown
     .split(/\n{2,}/)
     .map((block) => block.trim())

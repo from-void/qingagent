@@ -67,6 +67,17 @@ describe("wechatArticle", () => {
     expect(result.markdown).toContain("const a = 1;\nconst b = 2;\nreturn a + b;");
   });
 
+  it("保留 fenced code block 内的空行与纯标点末段", () => {
+    const html = `<div id="js_content">
+      <pre>function run() {<br>  call();<br><br>});</pre>
+      <p>代码之后的正文</p>
+    </div>`;
+    const result = extractWechatArticle(html, "https://mp.weixin.qq.com/s/fenced-code");
+
+    expect(result.markdown).toContain("```\nfunction run() {\n  call();\n\n});\n```");
+    expect(result.markdown).toContain("```\n\n代码之后的正文");
+  });
+
   it("正文内漏网的 <script> 不吐成正文(review #8)", () => {
     const html = `<div id="js_content"><p>正文段落。</p><script>alert('x'); var secret=1;</script></div>`;
     const result = extractWechatArticle(html, "https://mp.weixin.qq.com/s/sc");

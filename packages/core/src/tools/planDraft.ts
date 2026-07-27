@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
 import { z } from "zod";
-import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
+import { extractJsonArray } from "../utils/extractJsonArray.js";
 import { generateQuestions } from "../services/genService.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
@@ -394,55 +394,13 @@ export function extractQuestionsJson(raw: string): string {
   const firstArrayStart = text.indexOf("[");
   if (firstArrayStart === -1) return text;
 
-  return extractFirstBalancedArray(raw) ?? text.slice(firstArrayStart);
+  return text.slice(firstArrayStart);
 }
 
 function extractQuestionArrayJson(raw: string): string | null {
-  let text = raw.trim();
-  text = text.replace(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n?/i, "");
-  text = text.replace(/\r?\n?```\s*$/i, "");
-  text = text.trim();
-
-  let start = text.indexOf("[");
-  while (start !== -1) {
-    const end = findMatchingBracket(text, start);
-    if (end === -1) {
-      start = text.indexOf("[", start + 1);
-      continue;
-    }
-    const candidate = text.slice(start, end + 1);
-    try {
-      const parsed = JSON.parse(candidate);
-      if (
-        Array.isArray(parsed) &&
-        parsed.length > 0 &&
-        parsed.every((item) => normalizeParsedQuestion(item) !== null)
-      ) {
-        return candidate;
-      }
-    } catch {
-      /* try the next candidate */
-    }
-    start = text.indexOf("[", start + 1);
-  }
-
-  return extractJsonArray(raw);
-}
-
-function findMatchingBracket(text: string, start: number): number {
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]!;
-    if (escape) { escape = false; continue; }
-    if (ch === "\\") { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === "[") depth++;
-    if (ch === "]") { depth--; if (depth === 0) return i; }
-  }
-  return -1;
+  return extractJsonArray(raw, (questions) =>
+    questions.every((question) => askUserQuestionSchema.safeParse(question).success)
+  );
 }
 
 // ---------------------------------------------------------------------------

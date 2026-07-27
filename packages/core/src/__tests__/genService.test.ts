@@ -155,6 +155,27 @@ describe("GenService", () => {
     ]);
   });
 
+  it("用问卷 schema 预校验并选择最后一个通过的对象数组", () => {
+    const example =
+      '[{"label":"前置示例？","kind":"text","options":[]}]';
+    const invalid = '[{"title":"后置说明对象"}]';
+
+    expect(parseGeneratedQuestions(`${example}\n${invalid}`)).toEqual([
+      expect.objectContaining({ id: "q1", label: "前置示例？", kind: "text" }),
+    ]);
+  });
+
+  it("前置示例和终答均通过问卷校验时选择终答", () => {
+    const example =
+      '[{"label":"前置示例？","kind":"text","options":[]}]';
+    const expected =
+      '[{"label":"最终问题？","kind":"single","options":[{"value":"a","label":"甲"}]}]';
+
+    expect(parseGeneratedQuestions(`${example}\n最终答案：${expected}`)).toEqual([
+      expect.objectContaining({ id: "q1", label: "最终问题？", kind: "single" }),
+    ]);
+  });
+
   it("顶层问卷数组截断时不把 options 子数组正规化成问题", () => {
     expect(parseGeneratedQuestions(
       '[{"id":"q1","label":"选择？","kind":"single","options":[{"value":"a","label":"甲"}]}',

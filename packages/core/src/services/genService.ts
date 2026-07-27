@@ -117,7 +117,13 @@ function normalizeQuestion(raw: unknown, index = 0): GeneratedQuestion | null {
 }
 
 export function parseGeneratedQuestions(raw: string): GeneratedQuestion[] | null {
-  const extracted = extractJsonArray(raw);
+  const extracted = extractJsonArray(raw, (questions) =>
+    questions.every((question, index) =>
+      isRecord(question) &&
+      Array.isArray(question.options) &&
+      normalizeQuestion(question, index) !== null
+    )
+  );
   if (!extracted) return null;
   const repaired = repairModelJson(extracted);
   try {

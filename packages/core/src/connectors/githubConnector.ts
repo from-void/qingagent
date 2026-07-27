@@ -140,10 +140,23 @@ export class GithubConnector implements ConnectorAdapter {
 
   private async startInternal(scope: "public_repo" | "repo"): Promise<GithubStartResult> {
     if (this.currentPendingId) {
+      const pendingId = this.currentPendingId;
+      const currentScope = this.scopeByPending.get(pendingId);
       try {
-        const existing = this.pending.get(this.currentPendingId, "github", this.pendingScope(scope));
-        return this.publicStart(existing.value.device, existing.value.providerExpiresAt, existing.pendingId, true);
-      } catch { this.currentPendingId = null; }
+        if (!currentScope) throw new PendingStoreError("授权上下文已丢失，请重新发起", "PENDING_LOST", 410);
+        const existing = this.pending.get(pendingId, "github", this.pendingScope(currentScope));
+        if (currentScope === scope) {
+          return this.publicStart(existing.value.device, existing.value.providerExpiresAt, existing.pendingId, true);
+        }
+        this.generation += 1;
+        this.pending.disconnect("github", this.pendingScope(currentScope));
+        this.scopeByPending.delete(pendingId);
+        this.currentPendingId = null;
+      } catch (error) {
+        if (!(error instanceof PendingStoreError)) throw error;
+        this.scopeByPending.delete(pendingId);
+        this.currentPendingId = null;
+      }
     }
     const device = await this.auth.start(scope);
     const providerExpiresAt = Date.now() + device.expires_in * 1000;

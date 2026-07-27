@@ -2351,7 +2351,7 @@ describe("WorkspacePage review controls", () => {
     expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
 
-  it("C11 放弃全部确认后不等待 commit 返回就解锁输入", async () => {
+  it("放弃全部在服务端确认前保持锁定，成功后才清理候选并解锁", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2363,12 +2363,16 @@ describe("WorkspacePage review controls", () => {
     await clickButton("确认放弃全部");
 
     expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
-    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
 
     await act(async () => {
       pendingCommit.resolve([docStateFrame("editing")]);
       await pendingCommit.promise;
     });
+    await flushMicrotasks();
+
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
   it("B7 放弃全部不终止在途请求，pending 问卷卡保持可作答", async () => {
@@ -2419,7 +2423,9 @@ describe("WorkspacePage review controls", () => {
       "pending",
     );
 
-    act(() => captured.current?.handleRejectAll());
+    act(() => {
+      void captured.current?.handleRejectAll();
+    });
     await flushMicrotasks();
 
     // stop 会 abort updateDoc/恢复等共享请求，并把 pending 工具卡统一终结为 aborted。
@@ -2435,7 +2441,7 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
-  it("C11 放弃后收到 stale pendingReview 回帧时仍由 fallback 解锁", async () => {
+  it("放弃全部只收到 stale pendingReview 时保留候选和重试入口", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2443,7 +2449,7 @@ describe("WorkspacePage review controls", () => {
 
     await clickButton("放弃全部");
     await clickButton("确认放弃全部");
-    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
 
     await emitFrames(stream, [docStateFrame("pendingReview")]);
     expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
@@ -2454,6 +2460,72 @@ describe("WorkspacePage review controls", () => {
     });
     await flushMicrotasks();
 
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("候选已保留，请重试");
+  });
+
+  it("放弃全部请求失败后保留原候选，可再次确认并成功结算", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-reject-retry", "batch-reject-retry", 0),
+    ]);
+    stream.commitReviewGroups.mockRejectedValueOnce(new Error("network down"));
+
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    await flushMicrotasks(5);
+
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("剩余 · 1 处");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+
+    mockCommitWithFrames(stream, [docStateFrame("editing")]);
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(2);
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+  });
+
+  it("逐处审阅自动提交失败后显示显式重试入口，重试成功再解锁", async () => {
+    const patch = textReviewToolCall(
+      "p-auto-retry",
+      "batch-auto-retry",
+      0,
+      "reviewing",
+    );
+    const stream = await renderWorkspaceWithReview([patch]);
+    stream.commitReviewGroups.mockRejectedValueOnce(new Error("network down"));
+
+    await emitFrames(stream, [
+      toolCallUpdatedFrame({ ...patch, status: { kind: "accepted" } }),
+    ]);
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("提交失败，候选待重试");
+
+    mockCommitWithFrames(stream, [
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      docStateFrame("editing"),
+    ]);
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(2);
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
@@ -2509,7 +2581,7 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
-  it("C11 放弃后立刻追问时 sendMessage 等关闭审阅完成后再发送", async () => {
+  it("放弃全部成功解锁后可继续追问", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2518,20 +2590,22 @@ describe("WorkspacePage review controls", () => {
     await clickButton("放弃全部");
     await clickButton("确认放弃全部");
 
-    const editor = getChatEditor();
-    bindInnerText(editor);
-    await act(async () => {
-      editor.innerText = "继续追问";
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
-    await clickButton("发送 →");
-    expect(sendMessageCommands(stream)).toHaveLength(0);
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
 
     await act(async () => {
       pendingCommit.resolve([docStateFrame("editing")]);
       await pendingCommit.promise;
     });
+    await flushMicrotasks(5);
+
+    const editor = getChatEditor();
+    expect(editor.getAttribute("contenteditable")).toBe("true");
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "继续追问";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("发送 →");
     await flushMicrotasks(5);
 
     const sends = sendMessageCommands(stream);

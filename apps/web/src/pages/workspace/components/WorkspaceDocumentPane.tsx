@@ -83,6 +83,7 @@ export function WorkspaceDocumentPane({
     unrenderablePatchCount,
     inlinePatchReview,
     isReviewSubmitting,
+    reviewSettlementRetryPending,
     awaitingWholeDocReviewMaterial,
     fullpageAsk,
     submittingAskUserId,
@@ -446,9 +447,10 @@ export function WorkspaceDocumentPane({
             remainingCount={remainingPatches}
             activePatchIndex={activePatchIndex}
             isReviewSubmitting={isReviewSubmitting}
+            reviewSettlementRetryPending={reviewSettlementRetryPending}
             visiblePatchCount={visiblePatchCount}
             unrenderablePatchCount={unrenderablePatchCount}
-            effectiveReview={inlinePatchReview}
+            effectiveReview={inlinePatchReview || reviewSettlementRetryPending}
             reviewMaterializing={awaitingWholeDocReviewMaterial}
             fullpageAsk={fullpageAsk}
             submittingAskUserId={submittingAskUserId}

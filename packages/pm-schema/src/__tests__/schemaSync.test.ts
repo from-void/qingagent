@@ -469,6 +469,59 @@ describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", 
     }
   });
 
+  it("剪贴板 HTML 往返保留列表样式、文本对齐与链接 title", async () => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const html = pmToClipboardHtml({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { blockId: "aligned-heading", level: 2, textAlign: "center" },
+          content: [{
+            type: "text",
+            text: "标题",
+            marks: [{ type: "link", attrs: { href: "https://example.com", title: "站点提示" } }],
+          }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "aligned-p", textAlign: "justify" },
+          content: [{ type: "text", text: "两端对齐" }],
+        },
+        {
+          type: "orderedList",
+          attrs: { blockId: "styled-list", start: 3, listStyle: "upper-roman" },
+          content: [{
+            type: "listItem",
+            attrs: { blockId: "styled-list-item" },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: "styled-list-p" },
+              content: [{ type: "text", text: "第三项" }],
+            }],
+          }],
+        },
+      ],
+    });
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: html,
+    });
+
+    try {
+      const content = editor.getJSON().content ?? [];
+      expect(content[0]?.attrs?.textAlign).toBe("center");
+      expect(content[0]?.content?.[0]?.marks?.[0]?.attrs?.title).toBe("站点提示");
+      expect(content[1]?.attrs?.textAlign).toBe("justify");
+      expect(content[2]?.attrs).toMatchObject({ start: 3, listStyle: "upper-roman" });
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("含 penNote 的 PM 文档可被 runtime schema 装载", async () => {
     const { getSchema } = await import("@tiptap/core");
     const { Node: PMNode } = await import("@tiptap/pm/model");

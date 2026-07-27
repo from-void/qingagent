@@ -5,7 +5,13 @@
 // aside 等),外部应用兼容性差。这里只输出白名单语义标签。
 
 import type { PmDoc, PmInlineNode, PmMark, PmNode, PmThemeColor } from "../types";
-import { PM_IMAGE_ALIGN_VALUES, PM_THEME_HIGHLIGHT_COLOR_VALUES, PM_THEME_TEXT_COLOR_VALUES } from "../spec";
+import {
+  PM_IMAGE_ALIGN_VALUES,
+  PM_ORDERED_LIST_STYLES,
+  PM_TEXT_ALIGN_VALUES,
+  PM_THEME_HIGHLIGHT_COLOR_VALUES,
+  PM_THEME_TEXT_COLOR_VALUES,
+} from "../spec";
 import { isAllowedImageSrc, isAllowedLinkHref, isAllowedThemeColor } from "../validators";
 
 function escapeHtml(text: string): string {
@@ -76,8 +82,27 @@ function boolAttr(name: string, value: boolean | undefined): string {
 }
 
 function orderedListAttrsToHtml(node: PmNode): string {
-  const start = positiveIntAttr((node as { attrs?: { start?: unknown } }).attrs?.start);
-  return start && start !== 1 ? ` start="${start}"` : "";
+  const attrs = (node as { attrs?: { start?: unknown; listStyle?: unknown } }).attrs;
+  const start = positiveIntAttr(attrs?.start);
+  const listStyle = PM_ORDERED_LIST_STYLES.includes(
+    attrs?.listStyle as (typeof PM_ORDERED_LIST_STYLES)[number],
+  )
+    ? attrs?.listStyle as (typeof PM_ORDERED_LIST_STYLES)[number]
+    : null;
+  const parts: string[] = [];
+  if (start && start !== 1) parts.push(`start="${start}"`);
+  if (listStyle) {
+    parts.push(`data-list-style="${listStyle}"`);
+    parts.push(`style="list-style-type:${listStyle}"`);
+  }
+  return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
+function textAlignAttrToHtml(node: PmNode): string {
+  const textAlign = (node as { attrs?: { textAlign?: unknown } }).attrs?.textAlign;
+  return PM_TEXT_ALIGN_VALUES.includes(textAlign as (typeof PM_TEXT_ALIGN_VALUES)[number])
+    ? ` style="text-align:${textAlign}"`
+    : "";
 }
 
 function markToTag(mark: PmMark): { open: string; close: string } | null {
@@ -112,7 +137,9 @@ function markToTag(mark: PmMark): { open: string; close: string } | null {
       const href = stringAttr((mark as { attrs?: { href?: unknown } }).attrs?.href).trim();
       // 非白名单协议的 href 不输出链接,只留文字(防 javascript: 等)。
       if (!href || !isAllowedLinkHref(href)) return null;
-      return { open: `<a href="${escapeHtml(href)}">`, close: "</a>" };
+      const title = (mark as { attrs?: { title?: unknown } }).attrs?.title;
+      const titleAttr = typeof title === "string" ? ` title="${escapeHtml(title)}"` : "";
+      return { open: `<a href="${escapeHtml(href)}"${titleAttr}>`, close: "</a>" };
     }
     default:
       return null;
@@ -144,10 +171,10 @@ function inlinesToHtml(content: PmInlineNode[] | undefined): string {
 function nodeToHtml(node: PmNode): string {
   switch (node.type) {
     case "paragraph":
-      return `<p>${inlinesToHtml(node.content as PmInlineNode[])}</p>`;
+      return `<p${textAlignAttrToHtml(node)}>${inlinesToHtml(node.content as PmInlineNode[])}</p>`;
     case "heading": {
       const level = Math.min(6, Math.max(1, Number((node as { attrs?: { level?: number } }).attrs?.level ?? 1)));
-      return `<h${level}>${inlinesToHtml(node.content as PmInlineNode[])}</h${level}>`;
+      return `<h${level}${textAlignAttrToHtml(node)}>${inlinesToHtml(node.content as PmInlineNode[])}</h${level}>`;
     }
     case "blockquote":
       return `<blockquote>${(node.content ?? []).map(nodeToHtml).join("")}</blockquote>`;

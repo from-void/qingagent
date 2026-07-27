@@ -28,6 +28,11 @@ export interface ChatChipSpec {
    */
   skillId?: string;
   /**
+   * 本地待上传附件的对象级身份，仅用于输入框把 chip 与 File 精确关联。
+   * 文件名仍只负责展示，不参与去重或删除定位。
+   */
+  attachmentId?: string;
+  /**
    * 长文本折叠卡片(kind="longtext")承载完整原文；批注标记(kind="annotation")承载完整修改指令。
    * 发送时由 snapshot() 原位展开回 text 进入模型上下文；卡片本身只是输入区/气泡的短展示。
    */

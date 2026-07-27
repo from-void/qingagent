@@ -734,11 +734,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   );
 
   const removeAttachment = useCallback(
-    (filename: string) => {
-      setAttachedFiles((prev) => prev.filter((f) => attachmentFileKey(f) !== filename));
+    (attachmentId: string) => {
+      setAttachedFiles((prev) =>
+        prev.filter((file) => attachmentFileKey(file) !== attachmentId),
+      );
       const edit = editRef.current;
       if (!edit) return;
-      removeAttachChips(edit, filename);
+      removeAttachChips(edit, attachmentId);
       reportChange();
     },
     [reportChange],
@@ -777,8 +779,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           e.preventDefault();
           e.stopPropagation();
           if (chip.dataset.kind === "attach" && chip.dataset.label) {
-            removeAttachment(chip.dataset.label);
-            return;
+            const attachmentId = chip.dataset.attachmentId;
+            if (attachmentId) {
+              removeAttachment(attachmentId);
+              return;
+            }
           }
           chip.remove();
           reportChange();
@@ -812,9 +817,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         return next;
       });
       for (const f of accepted) {
-        const key = attachmentFileKey(f);
-        if (hasAttachChip(edit, key)) continue;
-        const chip = makeChatChipNode({ kind: "attach", label: key });
+        const attachmentId = attachmentFileKey(f);
+        if (hasLocalAttachChip(edit, attachmentId)) continue;
+        const chip = makeChatChipNode({
+          kind: "attach",
+          label: f.name,
+          attachmentId,
+        });
         const hasContent = !!(edit.textContent && edit.textContent.trim().length > 0);
         if (hasContent) edit.appendChild(document.createElement("br"));
         edit.appendChild(chip);
@@ -914,8 +923,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       setAttachedFiles((prev) => {
         const next = [...prev];
         for (const file of acceptedFiles) {
-          const key = attachmentFileKey(file);
-          if (!next.some((existing) => attachmentFileKey(existing) === key)) {
+          const attachmentId = attachmentFileKey(file);
+          if (!next.some((existing) => attachmentFileKey(existing) === attachmentId)) {
             next.push(file);
           }
         }
@@ -927,11 +936,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       if (!edit) return;
       edit.focus();
       for (const file of acceptedFiles) {
-        const key = attachmentFileKey(file);
-        if (hasAttachChip(edit, key)) continue;
+        const attachmentId = attachmentFileKey(file);
+        if (hasLocalAttachChip(edit, attachmentId)) continue;
         const r = restoreOrEndRange();
         r.deleteContents();
-        const chip = makeChatChipNode({ kind: "attach", label: key });
+        const chip = makeChatChipNode({
+          kind: "attach",
+          label: file.name,
+          attachmentId,
+        });
         r.insertNode(chip);
         const space = document.createTextNode(" ");
         chip.after(space);
@@ -954,7 +967,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       const edit = editRef.current;
       if (!edit || disabled) return;
       // 同名 attach chip 已存在则不重复插(避免「引用」多次留下重复 chip)。
-      if (hasAttachChip(edit, label)) {
+      if (hasReferencedAttachChip(edit, label)) {
         edit.focus();
         reportChange();
         return;
@@ -1234,6 +1247,9 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   if (spec.to !== undefined) chip.dataset.to = String(spec.to);
   if (spec.blockId !== undefined) chip.dataset.blockId = spec.blockId;
   if (spec.skillId !== undefined) chip.dataset.skillId = spec.skillId;
+  if (spec.attachmentId !== undefined) {
+    chip.dataset.attachmentId = spec.attachmentId;
+  }
   if (spec.text !== undefined) chip.dataset.text = spec.text;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) {
     chip.dataset.selectionRefs = JSON.stringify(spec.selectionRefs);
@@ -1319,20 +1335,42 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   return chip;
 }
 
+const attachmentFileIds = new WeakMap<File, string>();
+let attachmentFileIdSequence = 0;
+
 function attachmentFileKey(file: File): string {
-  return file.name;
+  const existing = attachmentFileIds.get(file);
+  if (existing) return existing;
+  attachmentFileIdSequence += 1;
+  const id = `local-attachment-${attachmentFileIdSequence}`;
+  attachmentFileIds.set(file, id);
+  return id;
 }
 
-function hasAttachChip(edit: HTMLElement, label: string): boolean {
+function hasLocalAttachChip(edit: HTMLElement, attachmentId: string): boolean {
   return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).some(
-    (chip) => chip.dataset.kind === "attach" && chip.dataset.label === label,
+    (chip) =>
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === attachmentId,
   );
 }
 
-function removeAttachChips(edit: HTMLElement, label: string): void {
+function hasReferencedAttachChip(edit: HTMLElement, label: string): boolean {
+  return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).some(
+    (chip) =>
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === undefined &&
+      chip.dataset.label === label,
+  );
+}
+
+function removeAttachChips(edit: HTMLElement, attachmentId: string): void {
   const chips = edit.querySelectorAll<HTMLElement>(".chat-chip");
   for (const chip of chips) {
-    if (chip.dataset.kind === "attach" && chip.dataset.label === label) {
+    if (
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === attachmentId
+    ) {
       chip.remove();
     }
   }
@@ -1438,6 +1476,9 @@ function readChipNode(el: HTMLElement): ChatChipSpec {
   if (el.dataset.to !== undefined) spec.to = parseInt(el.dataset.to, 10);
   if (el.dataset.blockId !== undefined) spec.blockId = el.dataset.blockId;
   if (el.dataset.skillId !== undefined) spec.skillId = el.dataset.skillId;
+  if (el.dataset.attachmentId !== undefined) {
+    spec.attachmentId = el.dataset.attachmentId;
+  }
   if (el.dataset.text !== undefined) spec.text = el.dataset.text;
   const selectionRefs = parseSelectionRefs(el.dataset.selectionRefs);
   if (selectionRefs) spec.selectionRefs = selectionRefs;

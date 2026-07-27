@@ -470,7 +470,7 @@ describe("qa cli", () => {
     await expect(
       main(["doc", "events", "-s", "s1", "--after", "41", "--until", "reviewed"]),
     ).rejects.toMatchObject({
-      code: "NO_INSTANCE",
+      code: "EVENT_TARGET_NOT_REACHED",
       message: "事件流提前结束，目标 reviewed 尚未到达",
     });
 

@@ -367,7 +367,7 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   if (reason) process.stderr.write(`[qa] events exited reason=${reason} received=${received}\n`);
   if (reason === "eof") {
     throw new QaCliError(
-      "NO_INSTANCE",
+      "EVENT_TARGET_NOT_REACHED",
       `事件流提前结束，目标 ${options.until} 尚未到达`,
     );
   }

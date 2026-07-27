@@ -1084,6 +1084,18 @@ describe("diagram-engine", () => {
     expect(after2.nodes.map((n) => n.label).sort()).toEqual(["孤立", "开始"]);
   });
 
+  it("flowchart 删除嵌入式标签边的一端时保留仅在该边声明的另一端", () => {
+    const source = "flowchart TD\n  A[开始] -- 通过 --> B{判断}\n";
+    const deleted = applyEdit(source, { kind: "deleteNode", nodeId: "B" });
+
+    expect(deleted.ok).toBe(true);
+    const after = parseDiagram(deleted.source).model as FlowGraph;
+    expect(after.edges).toHaveLength(0);
+    expect(after.nodes.map((node) => [node.id, node.label, node.shape])).toEqual([
+      ["A", "开始", "["],
+    ]);
+  });
+
   it("mindmap 形状语法剥离显示文本(根节点不再显示 root((中心)) 字面量),relabel 保留形状", () => {
     const source = "mindmap\n  root((中心))\n    分支1\n    子项[方形]\n    云((圆))";
     const parsed = parseDiagram(source).model as MindmapTree;

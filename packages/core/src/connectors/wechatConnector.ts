@@ -92,8 +92,13 @@ export class WechatConnector implements ConnectorAdapter {
 
   async disconnect(): Promise<ConnectorStatusDto> {
     wechatAuthService.disconnectPending();
-    const bundle = await this.deps.readBundle();
-    await this.deps.deleteBundle(bundle?.revision ?? null);
+    let revision: number | null = null;
+    try {
+      revision = (await this.deps.readBundle())?.revision ?? null;
+    } catch {
+      // 损坏行没有可信 revision；仓储会在事务内仅删除仍然损坏的原始行。
+    }
+    await this.deps.deleteBundle(revision);
     clearWechatSessionIssue();
     return createConnectorStatus("disconnected", { reasonCode: "USER_DISCONNECTED", lastCheckedAt: this.deps.now().toISOString(), statusFreshness: "fresh", canProbe: false });
   }

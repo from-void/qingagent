@@ -56,4 +56,19 @@ describe("WechatConnector", () => {
     await expect(connector.disconnect()).resolves.toMatchObject({ state: "disconnected" });
     expect(deleteBundle).toHaveBeenCalledWith(7);
   });
+
+  it("bundle 损坏时 disconnect 仍按无有效 revision 删除原始行", async () => {
+    const deleteBundle = vi.fn(async () => undefined);
+    const connector = new WechatConnector({
+      readBundle: async () => { throw new Error("密文损坏"); },
+      deleteBundle,
+      now,
+    });
+
+    await expect(connector.disconnect()).resolves.toMatchObject({
+      state: "disconnected",
+      reasonCode: "USER_DISCONNECTED",
+    });
+    expect(deleteBundle).toHaveBeenCalledWith(null);
+  });
 });

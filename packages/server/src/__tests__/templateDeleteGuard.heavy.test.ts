@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
+import {
+  createDerivativeDoc,
+  documentRepo,
+  saveStyleTemplate,
+} from "@qingagent/db";
+import {
+  documentInput,
+  prepareTempDocumentsDb,
+  type TempDocumentsDb,
+} from "@qingagent/db/testing";
 import { handleCommand } from "../gateway/bridgeHandler";
 
 async function collectFrames(generator: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
@@ -99,6 +108,24 @@ describe("模板删除保底 bridge 路径", () => {
       },
     });
 
+    for (const [id, name] of [
+      ["gzh-layout-classic", "经典排版"],
+      ["gzh-layout-minimal", "极简排版"],
+    ] as const) {
+      await collectFrames(handleCommand({
+        kind: "saveStyleTemplate",
+        data: {
+          sessionId,
+          requestId: `request-style-save-${id}`,
+          id,
+          dtype: "gzh",
+          slot: "layout",
+          name,
+          prompt: "用户自定义排版",
+        },
+      }));
+    }
+
     const firstStyleDelete = await collectFrames(handleCommand({
       kind: "deleteStyleTemplate",
       data: { sessionId, requestId: "request-style-delete-first", id: "gzh-layout-classic" },
@@ -115,6 +142,45 @@ describe("模板删除保底 bridge 路径", () => {
     expect(lastStyleDelete).toContainEqual({
       kind: "styleTemplateDeleted",
       data: { requestId: "request-style-delete-last", id: "gzh-layout-minimal", error: "每类至少保留一个模板" },
+    });
+  });
+
+  it("删除被衍生稿引用的风格模板时返回明确稿件数", async () => {
+    const sessionId = await createSession();
+    const template = await saveStyleTemplate({
+      dtype: "gzh",
+      slot: "writing",
+      name: "在用写法",
+      prompt: "写作规则",
+    });
+    await documentRepo.save(documentInput("source", {
+      threadId: sessionId,
+      docVersion: 1,
+    }));
+    await createDerivativeDoc({
+      threadId: sessionId,
+      sourceDocId: "source",
+      dtype: "gzh",
+      writingStyleId: template.id,
+      privatePrompt: "",
+    });
+
+    const frames = await collectFrames(handleCommand({
+      kind: "deleteStyleTemplate",
+      data: {
+        sessionId,
+        requestId: "request-style-delete-in-use",
+        id: template.id,
+      },
+    }));
+
+    expect(frames).toContainEqual({
+      kind: "styleTemplateDeleted",
+      data: {
+        requestId: "request-style-delete-in-use",
+        id: template.id,
+        error: "仍有 1 篇稿件使用该模板，无法删除",
+      },
     });
   });
 });

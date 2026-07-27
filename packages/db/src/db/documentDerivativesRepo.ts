@@ -82,11 +82,21 @@ export async function createDerivativeDoc(input: {
   await ensureMigrated();
   const targetLang = input.targetLang?.trim() || null;
   if (input.dtype === "translate" && !targetLang) throw new Error("翻译稿必须指定目标语言");
-  const writing = input.writingStyleId ? await getStyleTemplate(input.writingStyleId) : input.templateId ? await getStyleTemplate(input.templateId) : await getDefaultStyleTemplate(input.dtype, "writing");
-  const layout = input.layoutStyleId === null ? null : input.layoutStyleId ? await getStyleTemplate(input.layoutStyleId) : await getDefaultStyleTemplate(input.dtype, "layout");
-  if (!writing || writing.dtype !== input.dtype || writing.slot !== "writing") throw new Error("未知的写作风格模板");
-  if (layout && (layout.dtype !== input.dtype || layout.slot !== "layout")) throw new Error("未知的排版风格模板");
   return withTransaction(async (client) => {
+    // 模板校验与衍生稿引用写入必须和删除保护串行，否则“先校验、后删模板、再写引用”
+    // 会在并发窗口中重新制造悬空 template_id。
+    const writing = input.writingStyleId
+      ? await getStyleTemplate(input.writingStyleId, client)
+      : input.templateId
+        ? await getStyleTemplate(input.templateId, client)
+        : await getDefaultStyleTemplate(input.dtype, "writing", client);
+    const layout = input.layoutStyleId === null
+      ? null
+      : input.layoutStyleId
+        ? await getStyleTemplate(input.layoutStyleId, client)
+        : await getDefaultStyleTemplate(input.dtype, "layout", client);
+    if (!writing || writing.dtype !== input.dtype || writing.slot !== "writing") throw new Error("未知的写作风格模板");
+    if (layout && (layout.dtype !== input.dtype || layout.slot !== "layout")) throw new Error("未知的排版风格模板");
     assertDocumentWriteAllowed({
       docId: input.sourceDocId,
       threadId: input.threadId,

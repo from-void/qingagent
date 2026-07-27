@@ -4,6 +4,7 @@ import {
   MASTRA_THREAD_ID_KEY,
   RequestContext,
 } from "@mastra/core/request-context";
+import { StyleTemplateInUseError } from "@qingagent/db";
 import {
   deleteReviewTemplate,
   deleteStyleTemplate,
@@ -123,7 +124,10 @@ export async function* handleTemplateCommand(
         if (!await deleteStyleTemplate(command.data.id)) throw new Error("模板不存在");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message !== "每类至少保留一个模板") throw error;
+        if (
+          message !== "每类至少保留一个模板" &&
+          !(error instanceof StyleTemplateInUseError)
+        ) throw error;
         yield { kind: "styleTemplateDeleted", data: { id: command.data.id, error: message, requestId: command.data.requestId } };
         return;
       }

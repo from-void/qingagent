@@ -279,7 +279,6 @@ const EDGE_LINE_STYLE_OPTIONS: Array<{ lineStyle: EdgeLineStyle; label: string; 
   { lineStyle: "dotted", label: "点线", icon: "line-dotted" },
   { lineStyle: "thick", label: "粗线", icon: "line-thick" },
 ];
-const NODE_STROKE_WIDTH_RANGE = { min: 1, max: 8, step: 0.5 };
 const EDGE_STROKE_WIDTH_RANGE = { min: 1, max: 8, step: 0.5 };
 const NODE_FONT_SIZE_RANGE = { min: 10, max: 48, step: 1 };
 const DEFAULT_NODE_FONT_SIZE = 13;

@@ -195,6 +195,7 @@ server {
 | `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许 agent 在本机执行未隔离命令;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
 | `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。会把凭据注入执行环境;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
 | `QINGAGENT_ALLOW_SKILL_MUTATION` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许安装/删除技能;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
+| `QINGAGENT_ALLOW_TEMPLATE_MUTATION` | 关闭;仅显式真值开启 | 开启;未设置时主进程补 `1` | 允许 external API 创建、修改、删除、选择审查模板及写入文档级补充。内置模板始终只读。 |
 
 安全建议（本单仅披露现状,不改代码默认值）:`QINGAGENT_OM_SIDECAR` / `QINGAGENT_OM_COMPRESS` 缺省开启会在没有独立授权步骤时产生额外模型调用与费用,建议后续改为显式 opt-in；桌面形态缺省开启三项高危能力虽服务于本机单用户体验,仍建议按最小权限重新评估,尤其不要沿用到外部可达部署。
 

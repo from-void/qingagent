@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage, ReviewTemplateItem } from "@qingagent/contract-ts";
 import { ReviewMenu } from "./ReviewMenu";
 import { buildReviewActionCard, buildReviewContext, buildReviewQuery, ReviewLaunchModal } from "./ReviewLaunchModal";
+import { assembleReviewQuery } from "@qingagent/contract-ts";
 import { ChatMessageList } from "./ChatMessageList";
 import { ROLE_REVIEW_PROFILES } from "./roleReview";
 
@@ -213,6 +214,7 @@ describe("ReviewLaunchModal", () => {
     const card = buildReviewActionCard("source", template.name, "重点核对月活\n不要联网");
     const reviewContext = buildReviewContext("source", template);
     expect(query).toContain(template.prompt);
+    expect(query).toBe(assembleReviewQuery("source", template, "重点核对月活"));
     expect(query).toContain("文档级补充要求（只适用于当前文档）：重点核对月活");
     expect(card).toEqual({ title: "来源核查", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }] });
     expect(reviewContext).toEqual({ type: "source", templateId: "source-default", templateName: "标准来源核查" });

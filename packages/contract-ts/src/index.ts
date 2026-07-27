@@ -71,6 +71,7 @@ export * from "./ResumeAskUser";
 export * from "./ResourceRef";
 export * from "./ReviewOutcome";
 export * from "./ReviewTemplates";
+export * from "./ReviewQuery";
 export * from "./ReviewRoleSeeds";
 export * from "./Role";
 export * from "./SendMessage";

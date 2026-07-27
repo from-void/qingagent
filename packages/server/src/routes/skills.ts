@@ -20,7 +20,11 @@ import {
 import type { ParsedSkillFrontmatter } from "@qingagent/core";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
-type SkillSourceLabel = "builtin" | "installed";
+export type SkillSourceLabel = "builtin" | "installed";
+export interface SkillFileInput {
+  path: string;
+  content: string;
+}
 
 export interface SkillMarkdownInstallOperations {
   mkdtemp: typeof mkdtemp;
@@ -91,7 +95,7 @@ skillsRoutes.get("/skills", async (c) => {
   const disabled = await readDisabledSet();
   const skills = await listAllSkillItems(disabled);
   return c.json({
-    skills: await Promise.all(skills.map(serializeSkillListItem)),
+    skills: await Promise.all(skills.map((skill) => serializeSkillListItem(skill))),
   });
 });
 
@@ -200,7 +204,7 @@ skillsRoutes.post("/skills/install", async (c) => {
     // to avoid shadowing/duplicate-name ambiguity in skill resolution.
     if (await findSkillOnDisk(name)) return c.json({ error: "这个技能已存在" }, 409);
 
-    await installSkillMarkdown(dest, body.skillMd);
+    await installSkillFiles([{ path: "SKILL.md", content: body.skillMd }]);
     await refreshSkills();
     return c.json({ installed: true, name });
   } catch (error) {
@@ -284,7 +288,7 @@ skillsRoutes.delete("/skills/:name", async (c) => {
   }
 });
 
-async function refreshSkills(): Promise<void> {
+export async function refreshSkills(): Promise<void> {
   try {
     const skills = await getQingagentSkills();
     await skills.refresh();
@@ -460,6 +464,203 @@ export async function installSkillMarkdown(
   }
 }
 
+/**
+ * JSON 技能安装与更新共用的文件级校验。只接受普通相对路径，
+ * 不允许调用方通过绝对路径、盘符或 `..` 逃出 staging。
+ */
+export function validateSkillFiles(input: unknown): {
+  files: SkillFileInput[];
+  root: ParsedSkillFrontmatter;
+} {
+  if (!Array.isArray(input) || input.length === 0 || input.length > MAX_ZIP_ENTRIES) {
+    throw new Error("files 必须是非空数组");
+  }
+  const files: SkillFileInput[] = [];
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  for (const value of input) {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof (value as { path?: unknown }).path !== "string" ||
+      typeof (value as { content?: unknown }).content !== "string"
+    ) {
+      throw new Error("files.path/content 不合法");
+    }
+    const path = sanitizeSkillPath((value as { path: string }).path);
+    if (seen.has(path)) throw new Error(`技能文件路径重复: ${path}`);
+    seen.add(path);
+    const content = (value as { content: string }).content;
+    totalBytes += Buffer.byteLength(content, "utf8");
+    if (totalBytes > MAX_UNZIPPED_BYTES) throw new Error("skill files are too large");
+    files.push({ path, content });
+  }
+  const rootSource = files.find((file) => file.path === "SKILL.md")?.content;
+  const root = rootSource ? parseSkillFrontmatter(rootSource) : null;
+  if (!root) throw new Error("SKILL.md missing valid frontmatter");
+  for (const file of files) {
+    if (file.path !== "SKILL.md" && file.path.endsWith("/SKILL.md")) {
+      if (!parseSkillFrontmatter(file.content)) {
+        throw new Error(`${file.path} missing valid frontmatter`);
+      }
+    }
+  }
+  return { files, root };
+}
+
+export async function installSkillFiles(
+  input: unknown,
+): Promise<{ name: string }> {
+  const validated = validateSkillFiles(input);
+  const name = validated.root.name;
+  const dest = resolve(SKILLS_INSTALL_DIR, name);
+  if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) throw new Error("invalid skill name");
+  if (existsSync(dest) || isReservedSkillName(name) || await findSkillOnDisk(name)) {
+    throw new Error("skill already exists");
+  }
+  await writeSkillFilesToNewDestination(dest, validated.files);
+  await refreshSkills();
+  return { name };
+}
+
+export async function replaceInstalledSkillFiles(
+  name: string,
+  input: unknown,
+): Promise<{ name: string }> {
+  if (!isValidSkillName(name)) throw new Error("not found");
+  const skill = await findSkillOnDisk(name);
+  if (!skill) throw new Error("not found");
+  if (skill.source !== "installed") throw new Error("builtin skill is read only");
+
+  const validated = validateSkillFiles(input);
+  if (validated.root.name !== name) throw new Error("技能名称与路径参数不一致");
+
+  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".update-"));
+  const backup = `${skill.path}.backup-${randomSuffix()}`;
+  try {
+    await writeSkillFilesInto(staging, validated.files);
+    await rename(skill.path, backup);
+    try {
+      await rename(staging, skill.path);
+    } catch (error) {
+      await rename(backup, skill.path).catch(() => undefined);
+      throw error;
+    }
+    try {
+      await rm(backup, { recursive: true, force: true });
+    } catch (cleanupError) {
+      // 备份清理也属于整体替换的一部分：清理失败就把旧版换回，
+      // 避免磁盘上同时出现两个同名可发现技能。
+      const failedNew = `${skill.path}.failed-${randomSuffix()}`;
+      await rename(skill.path, failedNew);
+      try {
+        await rename(backup, skill.path);
+      } catch (restoreError) {
+        await rename(failedNew, skill.path).catch(() => undefined);
+        throw restoreError;
+      }
+      await rm(failedNew, { recursive: true, force: true }).catch(() => undefined);
+      throw cleanupError;
+    }
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    if (existsSync(backup) && !existsSync(skill.path)) {
+      await rename(backup, skill.path).catch(() => undefined);
+    }
+    throw error;
+  }
+  await refreshSkills();
+  return { name };
+}
+
+export async function deleteInstalledSkill(name: string): Promise<boolean> {
+  if (!isValidSkillName(name)) return false;
+  const skill = await findSkillOnDisk(name);
+  if (!skill) return false;
+  if (skill.source !== "installed") throw new Error("builtin skill is read only");
+  await rm(skill.path, { recursive: true, force: true });
+  await refreshSkills();
+  return true;
+}
+
+export async function setSkillEnabledByName(
+  name: string,
+  enabled: boolean,
+): Promise<boolean> {
+  if (!await skillExists(name)) return false;
+  await setEnabled(name, enabled);
+  await refreshSkills();
+  return true;
+}
+
+export async function listSerializedSkills(
+  includeBody = false,
+): Promise<Array<Record<string, unknown>>> {
+  const disabled = await readDisabledSet();
+  const skills = await listAllSkillItems(disabled);
+  return Promise.all(skills.map((skill) => serializeSkillListItem(skill, includeBody)));
+}
+
+export async function getSerializedSkill(
+  name: string,
+  includeBody = true,
+): Promise<Record<string, unknown> | null> {
+  if (!isValidSkillName(name)) return null;
+  const skill = await findSkillOnDisk(name);
+  return skill ? serializeSkillListItem(skill, includeBody) : null;
+}
+
+async function writeSkillFilesToNewDestination(
+  dest: string,
+  files: readonly SkillFileInput[],
+): Promise<void> {
+  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  try {
+    await writeSkillFilesInto(staging, files);
+    await rename(staging, dest);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    if (isDestinationExistsError(error)) throw new Error("skill already exists");
+    throw error;
+  }
+}
+
+async function writeSkillFilesInto(
+  root: string,
+  files: readonly SkillFileInput[],
+): Promise<void> {
+  for (const file of files) {
+    const outputPath = resolve(root, file.path);
+    if (!isInside(root, outputPath)) throw new Error("invalid skill path");
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, file.content, { encoding: "utf8", flag: "wx" });
+  }
+}
+
+function sanitizeSkillPath(path: string): string {
+  const slashed = path.replace(/\\/g, "/");
+  const rawParts = slashed.split("/");
+  if (
+    !slashed ||
+    isAbsolute(path) ||
+    /^[A-Za-z]:/.test(path) ||
+    rawParts.some((part) => part === ".." || part === "" || part === ".")
+  ) {
+    throw new Error("invalid skill path");
+  }
+  const normalized = normalize(slashed).replace(/\\/g, "/");
+  if (!normalized || normalized === "." || normalized.startsWith("../")) {
+    throw new Error("invalid skill path");
+  }
+  return normalized;
+}
+
+function randomSuffix(): string {
+  return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function isDestinationExistsError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code;
   return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
@@ -479,15 +680,15 @@ function sanitizeZipPath(path: string): string {
   return normalized.replace(/\\/g, "/");
 }
 
-function stripSkillFrontmatter(source: string): string {
+export function stripSkillFrontmatter(source: string): string {
   return source.replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 }
 
-function isValidSkillName(name: string): boolean {
+export function isValidSkillName(name: string): boolean {
   return NAME_RE.test(name);
 }
 
-function isReservedSkillName(name: string): boolean {
+export function isReservedSkillName(name: string): boolean {
   return ARCHIVED_BUILTIN_SKILLS.has(name);
 }
 
@@ -514,7 +715,10 @@ export async function listAllSkillItems(disabled: Set<string>): Promise<SkillLis
   return items.sort(compareSkillItems);
 }
 
-async function serializeSkillListItem(skill: SkillListItem): Promise<Record<string, unknown>> {
+export async function serializeSkillListItem(
+  skill: SkillListItem,
+  includeBody = false,
+): Promise<Record<string, unknown>> {
   const discoveredChildren = await listChildSkills(skill.path).catch(() => []);
   const children = discoveredChildren.map<SkillListItem>((child) => ({
     ...child.metadata,
@@ -528,6 +732,9 @@ async function serializeSkillListItem(skill: SkillListItem): Promise<Record<stri
     mtimeMs: child.mtimeMs,
   }));
 
+  const body = includeBody
+    ? stripSkillFrontmatter(await readFile(join(skill.path, "SKILL.md"), "utf8"))
+    : undefined;
   return {
     name: skill.name,
     description: skill.description,
@@ -541,11 +748,14 @@ async function serializeSkillListItem(skill: SkillListItem): Promise<Record<stri
     tools: skill.tools,
     enabled: skill.enabled,
     connectorId: connectorIdForSkill(skill.name),
-    children: await Promise.all(children.map(serializeSkillListItem)),
+    ...(body !== undefined ? { body } : {}),
+    children: await Promise.all(children.map((child) =>
+      serializeSkillListItem(child, includeBody)
+    )),
   };
 }
 
-async function skillExists(name: string): Promise<boolean> {
+export async function skillExists(name: string): Promise<boolean> {
   if (ARCHIVED_BUILTIN_SKILLS.has(name)) return false;
   try {
     const skills = await getQingagentSkills();
@@ -556,7 +766,7 @@ async function skillExists(name: string): Promise<boolean> {
   return (await findSkillOnDisk(name)) !== null;
 }
 
-async function findSkillOnDisk(name: string): Promise<SkillListItem | null> {
+export async function findSkillOnDisk(name: string): Promise<SkillListItem | null> {
   const disabled = await readDisabledSet();
   return (await listAllSkillItems(disabled)).find((skill) => skill.name === name) ?? null;
 }
@@ -604,7 +814,7 @@ function builtinOrder(name: string): number {
   return index === -1 ? BUILTIN_SKILL_ORDER.length : index;
 }
 
-function isInside(root: string, child: string): boolean {
+export function isInside(root: string, child: string): boolean {
   const rel = relative(root, child);
   return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
 }

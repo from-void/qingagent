@@ -4,6 +4,7 @@ export type QaErrorCode =
   | "AUTH_FAILED"
   | "AGENT_BUSY"
   | "REVIEW_PENDING"
+  | "CONFLICT"
   | "VERSION_CONFLICT"
   | "VALIDATION"
   | "NOT_FOUND"
@@ -13,6 +14,7 @@ export type QaErrorCode =
 
 export const NEXT_STEP: Record<QaErrorCode, string> = {
   REVIEW_PENDING: "用 `qa review list -s <id>` 查看待审修改,再用 `qa review accept|reject|commit` 完成审查",
+  CONFLICT: "远端资源已变化,请重新读取最新版本后再提交",
   AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
   VERSION_CONFLICT: "文档已被改过,请 `qa doc read` 重读,基于新版本重做提案,绝不原样重发",
   AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",

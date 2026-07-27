@@ -3,6 +3,7 @@ import { getDocumentsClient } from "../documentsClient.js";
 import {
   deleteReviewTemplate,
   getReviewDocSupplement,
+  getReviewTemplate,
   getSelectedReviewTemplate,
   listReviewTemplates,
   saveReviewTemplate,
@@ -16,25 +17,40 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-review-template-repo-"); });
 afterEach(() => db.cleanup());
 
 describe("reviewTemplateRepo", () => {
-  it("内置模板可删、每类保底一个，删除选中项后回退到剩余首项", async () => {
+  it("内置模板只读，自定义模板可改删且删除选中项后回退内置项", async () => {
     const builtins = await listReviewTemplates("source");
     expect(builtins).toHaveLength(1);
-    await expect(deleteReviewTemplate(builtins[0]!.id)).rejects.toThrow("每类至少保留一个模板");
-    const downgraded = await saveReviewTemplate({ ...builtins[0]!, prompt: "覆盖" });
-    expect(downgraded).toMatchObject({ id: builtins[0]!.id, prompt: "覆盖", builtin: false });
+    await expect(deleteReviewTemplate(builtins[0]!.id)).rejects.toThrow("内置审查模板不能删除");
+    await expect(
+      saveReviewTemplate({ ...builtins[0]!, prompt: "覆盖" }),
+    ).rejects.toThrow("内置审查模板不能修改");
 
     const created = await saveReviewTemplate({ type: "source", name: "我的来源核查", prompt: "核对所有金额" });
-    await selectReviewTemplate("source", builtins[0]!.id);
-    expect(await deleteReviewTemplate(builtins[0]!.id)).toBe(true);
-    expect((await getSelectedReviewTemplate("source"))?.id).toBe(created.id);
-    await expect(deleteReviewTemplate(created.id)).rejects.toThrow("每类至少保留一个模板");
-
-    const backup = await saveReviewTemplate({ type: "source", name: "备用来源核查", prompt: "核对所有日期" });
     await selectReviewTemplate("source", created.id);
     const changed = await saveReviewTemplate({ ...created, name: "严格来源核查", prompt: "金额逐字核对" });
     expect(changed.name).toBe("严格来源核查");
     expect(await deleteReviewTemplate(created.id)).toBe(true);
-    expect((await getSelectedReviewTemplate("source"))?.id).toBe(backup.id);
+    expect((await getSelectedReviewTemplate("source"))?.id).toBe(builtins[0]!.id);
+  });
+
+  it("expectedUpdatedAt 在仓储层执行原子乐观锁", async () => {
+    const created = await saveReviewTemplate({
+      type: "custom",
+      name: "乐观锁模板",
+      prompt: "第一版",
+    });
+    const changed = await saveReviewTemplate({
+      ...created,
+      prompt: "第二版",
+      expectedUpdatedAt: created.updatedAt,
+    });
+    expect(changed.prompt).toBe("第二版");
+    await expect(saveReviewTemplate({
+      ...created,
+      prompt: "过期写入",
+      expectedUpdatedAt: created.updatedAt,
+    })).rejects.toThrow("审查模板已被修改");
+    expect((await getReviewTemplate(created.id))?.prompt).toBe("第二版");
   });
 
   it("按 docId 与审查类型隔离补充提示词并可清空", async () => {

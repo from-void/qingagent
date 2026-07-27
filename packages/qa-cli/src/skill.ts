@@ -104,6 +104,30 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 \`qa doc state -s <id> --json\` 对账最终版本和状态；已连接的 events 订阅也会收到
 \`docCommitted\`/状态退出帧。
 
+### 3.6 发起模板审查
+
+用户明确要求让青简按模板审查当前文档时:
+
+- \`qa template list [--type <t>] --json\`:查看完整模板和当前选中项;
+- \`qa template show <id> --json\`:核对模板全文;
+- \`qa review run -s <id> --type <t> [--template <id>] [--supplement <text>] [--wait]\`:复用青简菜单同一指令与 chat 管线发起审查。
+
+省略 \`--template\` 时使用该类型当前选中模板；\`--wait\` 复用 events 等待审查闭环。
+需要维护自定义模板时，用 \`qa template pull <id> --out <file.md>\` 拉取，在本地保留
+\`id/type/updatedAt\` 后编辑，再用 \`qa template push <file.md>\` 乐观锁推回。内置模板只读，
+只能 \`qa template select <id>\` 选用，不能改删。
+
+### 3.7 管理已安装技能
+
+- \`qa skills list [--json]\` / \`qa skills show <name> [--json]\`:查看技能与子技能;
+- \`qa skills validate <dir> [--json]\`:纯本地校验技能目录，不连接青简;
+- \`qa skills install <dir|file.md> [--json]\`:校验后安装;
+- \`qa skills update <name> <dir> [--json]\`:整体替换已安装技能;
+- \`qa skills rm <name> [--json]\`:删除已安装技能;
+- \`qa skills enable|disable <name> [--json]\`:启停内置或已安装技能。
+
+不得尝试覆盖或删除内置技能；目录中不能带符号链接、绝对路径或 \`..\` 路径。
+
 ## 4. 状态机应对(条件反射,不要即兴发挥)
 
 | 返回 | 含义 | 你的动作 |

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApiClient } from "./apiClient.js";
@@ -8,6 +8,11 @@ import { discoverInstance } from "./discovery.js";
 import { NEXT_STEP, QaCliError } from "./errors.js";
 import { hasFlag, optionValue, optionValues, printJson } from "./output.js";
 import { installPointerSkill, writerSkillMarkdown, type SkillInstallTarget } from "./skill.js";
+import {
+  validateSkillDirectory,
+  validateSkillMarkdownFile,
+} from "./skillFiles.js";
+import { readTemplateMarkdown, writeTemplateMarkdown } from "./templateFile.js";
 import type {
   ExternalAnnotationResponse,
   ExternalChatLogResponse,
@@ -19,8 +24,14 @@ import type {
   ExternalProposeOp,
   ExternalReviewListResponse,
   ExternalReviewPatchResponse,
+  ExternalReviewRunResponse,
+  ExternalReviewTemplateResponse,
+  ExternalReviewTemplatesResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
+  ExternalSkillMutationResponse,
+  ExternalSkillResponse,
+  ExternalSkillsResponse,
 } from "./generated/externalApi.js";
 
 interface EventOptions {
@@ -40,11 +51,158 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   if (group === "skills" && command === "install") {
     const target = args[2];
-    if (target !== "claude" && target !== "codex") throw new QaCliError("VALIDATION", "skills install 只支持 claude|codex");
-    const filePath = await installPointerSkill(target as SkillInstallTarget);
-    return output({ installed: true, path: filePath }, hasFlag(args, "--json"));
+    if (target === "claude" || target === "codex") {
+      const filePath = await installPointerSkill(target as SkillInstallTarget);
+      return output({ installed: true, path: filePath }, hasFlag(args, "--json"));
+    }
+  }
+  if (group === "skills" && command === "validate") {
+    const directory = requireArgument(args, 2, "缺少技能目录");
+    const validated = await validateSkillDirectory(directory);
+    return output(
+      { valid: true, name: validated.name, files: validated.files.map((file) => file.path) },
+      hasFlag(args, "--json"),
+    );
   }
   const client = await ApiClient.create();
+  if (group === "template" && command === "list") {
+    const type = optionValue(args, "--type");
+    const query = type ? `?type=${encodeURIComponent(type)}` : "";
+    const data = await client.request<ExternalReviewTemplatesResponse>(
+      `/review-templates${query}`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    for (const template of data.templates) {
+      process.stdout.write(
+        `${template.selected ? "*" : " "} ${template.id}  [${template.type}] ${template.name}${template.builtin ? " (内置)" : ""}\n`,
+      );
+    }
+    return;
+  }
+  if (group === "template" && command === "show") {
+    const id = requireArgument(args, 2, "缺少模板 id");
+    const data = await client.request<ExternalReviewTemplateResponse>(
+      `/review-templates/${encodeURIComponent(id)}`,
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "template" && command === "pull") {
+    const id = requireArgument(args, 2, "缺少模板 id");
+    const filePath = requireOption(args, "--out");
+    const data = await client.request<ExternalReviewTemplateResponse>(
+      `/review-templates/${encodeURIComponent(id)}`,
+    );
+    await writeTemplateMarkdown(filePath, data.template);
+    return output({ pulled: true, id, path: filePath }, hasFlag(args, "--json"));
+  }
+  if (group === "template" && command === "push") {
+    const filePath = requireArgument(args, 2, "缺少模板 Markdown 文件");
+    const source = await readTemplateMarkdown(filePath);
+    const data = source.id
+      ? await client.request<ExternalReviewTemplateResponse>(
+          `/review-templates/${encodeURIComponent(source.id)}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              name: source.name,
+              prompt: source.prompt,
+              expectedUpdatedAt: source.updatedAt,
+            }),
+          },
+        )
+      : await client.request<ExternalReviewTemplateResponse>("/review-templates", {
+          method: "POST",
+          body: JSON.stringify({
+            type: source.type,
+            name: source.name,
+            prompt: source.prompt,
+          }),
+        });
+    await writeTemplateMarkdown(filePath, data.template);
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "template" && command === "create") {
+    const type = requireOption(args, "--type");
+    const name = requireOption(args, "--name");
+    const filePath = requireOption(args, "--file");
+    const prompt = await readFile(filePath, "utf8");
+    const data = await client.request<ExternalReviewTemplateResponse>(
+      "/review-templates",
+      { method: "POST", body: JSON.stringify({ type, name, prompt }) },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "template" && command === "select") {
+    const id = requireArgument(args, 2, "缺少模板 id");
+    const data = await client.request(
+      `/review-templates/${encodeURIComponent(id)}/select`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "template" && command === "rm") {
+    const id = requireArgument(args, 2, "缺少模板 id");
+    const data = await client.request(
+      `/review-templates/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "skills" && command === "list") {
+    const data = await client.request<ExternalSkillsResponse>("/skills");
+    if (hasFlag(args, "--json")) return printJson(data);
+    printSkills(data.skills);
+    return;
+  }
+  if (group === "skills" && command === "show") {
+    const name = requireArgument(args, 2, "缺少技能名称");
+    const data = await client.request<ExternalSkillResponse>(
+      `/skills/${encodeURIComponent(name)}`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    process.stdout.write(`${data.skill.name} [${data.skill.source}] ${data.skill.enabled ? "enabled" : "disabled"}\n`);
+    process.stdout.write(`${data.skill.description}\n\n${data.skill.body ?? ""}`);
+    if (data.skill.body && !data.skill.body.endsWith("\n")) process.stdout.write("\n");
+    return;
+  }
+  if (group === "skills" && command === "install") {
+    const target = requireArgument(args, 2, "缺少技能目录或 Markdown 文件");
+    const payload = await localSkillPayload(target);
+    const data = await client.request<ExternalSkillMutationResponse>("/skills", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "skills" && command === "update") {
+    const name = requireArgument(args, 2, "缺少技能名称");
+    const directory = requireArgument(args, 3, "缺少技能目录");
+    const validated = await validateSkillDirectory(directory);
+    if (validated.name !== name) {
+      throw new QaCliError("VALIDATION", "技能目录中的 name 与命令参数不一致");
+    }
+    const data = await client.request<ExternalSkillMutationResponse>(
+      `/skills/${encodeURIComponent(name)}`,
+      { method: "PUT", body: JSON.stringify({ files: validated.files }) },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "skills" && command === "rm") {
+    const name = requireArgument(args, 2, "缺少技能名称");
+    const data = await client.request<ExternalSkillMutationResponse>(
+      `/skills/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "skills" && (command === "enable" || command === "disable")) {
+    const name = requireArgument(args, 2, "缺少技能名称");
+    const data = await client.request<ExternalSkillMutationResponse>(
+      `/skills/${encodeURIComponent(name)}/${command}`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return output(data, hasFlag(args, "--json"));
+  }
   if (group === "sessions" && command === "list") {
     const json = hasFlag(args, "--json");
     const all = hasFlag(args, "--all");
@@ -107,6 +265,33 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     );
     if (hasFlag(args, "--json")) return printJson(data);
     printReviewList(data);
+    return;
+  }
+  if (group === "review" && command === "run") {
+    const sessionId = requireOption(args, "-s");
+    const type = requireOption(args, "--type");
+    const templateId = optionValue(args, "--template");
+    const supplement = optionValue(args, "--supplement");
+    const data = await client.request<ExternalReviewRunResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/run`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          type,
+          ...(templateId ? { templateId } : {}),
+          ...(supplement !== undefined ? { supplement } : {}),
+        }),
+      },
+    );
+    output(data, hasFlag(args, "--json"));
+    if (hasFlag(args, "--wait")) {
+      await events(client, sessionId, {
+        follow: false,
+        after: "tip",
+        timeoutMs: null,
+        until: "reviewed",
+      });
+    }
     return;
   }
   if (group === "review" && command === "show") {
@@ -442,6 +627,25 @@ function requireOption(args: string[], name: string): string {
   return value;
 }
 
+function requireArgument(args: string[], index: number, message: string): string {
+  const value = args[index];
+  if (!value || value.startsWith("-")) throw new QaCliError("VALIDATION", message);
+  return value;
+}
+
+async function localSkillPayload(
+  target: string,
+): Promise<{ skillMd: string } | { files: Array<{ path: string; content: string }> }> {
+  const info = await lstat(target).catch(() => null);
+  if (info?.isDirectory()) {
+    return { files: (await validateSkillDirectory(target)).files };
+  }
+  if (info?.isFile()) {
+    return { skillMd: (await validateSkillMarkdownFile(target)).skillMd };
+  }
+  throw new QaCliError("VALIDATION", "技能路径不存在");
+}
+
 function parseSessionsLimit(raw: string | undefined): number {
   if (raw === undefined) return 100;
   const limit = Number(raw);
@@ -647,6 +851,15 @@ function printAnnotation(data: ExternalAnnotationResponse): void {
   }
 }
 
+function printSkills(skills: ExternalSkillsResponse["skills"], indent = ""): void {
+  for (const skill of skills) {
+    process.stdout.write(
+      `${indent}${skill.enabled ? "*" : " "} ${skill.name}  [${skill.source}] ${skill.description}\n`,
+    );
+    printSkills(skill.children, `${indent}  `);
+  }
+}
+
 function compactText(value: string, maxChars: number): string {
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > maxChars ? `${singleLine.slice(0, maxChars)}...` : singleLine;
@@ -663,6 +876,7 @@ qa doc state -s <id>
 qa doc propose -s <id> --expect-version N (--full draft.md | --str-replace <old> <new> | --append section.md | --ops ops.json)
 qa doc events -s <id> [--follow] [--after <seq>] [--until reviewed|committed|review] [--timeout 10m]
 qa review list -s <id> [--json]
+qa review run -s <id> --type <t> [--template <id>] [--supplement <text>] [--wait] [--json]
 qa review show -s <id> (--patch <id> | --annotation <id>) [--json]
 qa review accept -s <id> --expect-version N (--patch <id> | --all) [--json]
 qa review reject -s <id> --expect-version N (--patch <id> | --all) [--json]
@@ -675,6 +889,21 @@ qa files list -s <id> [--json]
 qa files read -s <id> --material <id> [--max-bytes N] [--json]
 qa skills read writer
 qa skills install claude|codex
+qa template list [--type <t>] [--json]
+qa template show <id> [--json]
+qa template pull <id> --out <file.md>
+qa template push <file.md> [--json]
+qa template create --type <t> --name <n> --file <prompt.md> [--json]
+qa template select <id> [--json]
+qa template rm <id> [--json]
+qa skills list [--json]
+qa skills show <name> [--json]
+qa skills validate <dir> [--json]
+qa skills install <dir|file.md> [--json]
+qa skills update <name> <dir> [--json]
+qa skills rm <name> [--json]
+qa skills enable <name> [--json]
+qa skills disable <name> [--json]
 `);
 }
 

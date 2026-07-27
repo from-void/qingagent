@@ -194,6 +194,69 @@ describe("generateDoc QingML helpers", () => {
     expect(ctx).toBe("素材: 照片.png\n【图像识别摘要】图中是一张活动签到表。\n图片素材正文占位");
   });
 
+  it("materialContextFrom 超预算时优先注入任务相关分块且始终受硬上限约束", () => {
+    const baseMeta = { pages: null, wordCount: 1_000, title: null };
+    const materials = new Map<string, Material>([
+      ["noise", {
+        id: "noise",
+        filename: "无关会议记录.txt",
+        mimeType: "text/plain",
+        text: Array.from({ length: 8 }, (_, index) =>
+          `无关段落${index}：讨论办公区绿植采购、座位安排和茶歇品类。${"甲".repeat(80)}`
+        ).join("\n\n"),
+        summary: null,
+        fileId: null,
+        metadata: baseMeta,
+        createdAt: "",
+        updatedAt: "",
+      }],
+      ["battery", {
+        id: "battery",
+        filename: "技术报告.txt",
+        mimeType: "text/plain",
+        text: [
+          `背景资料：${"乙".repeat(180)}`,
+          "关键结论：固态电池的能量密度提升到 500Wh/kg，量产节点为 2028 年。",
+          `附录数据：${"丙".repeat(180)}`,
+        ].join("\n\n"),
+        summary: null,
+        fileId: null,
+        metadata: baseMeta,
+        createdAt: "",
+        updatedAt: "",
+      }],
+    ]);
+
+    const ctx = materialContextFrom(materials, {
+      relevanceText: "请提炼固态电池能量密度和量产节点",
+      maxChars: 180,
+      chunkChars: 120,
+    });
+
+    expect(ctx.length).toBeLessThanOrEqual(180);
+    expect(ctx).toContain("固态电池的能量密度");
+    expect(ctx).toContain("量产节点");
+    expect(ctx).not.toContain("办公区绿植采购");
+  });
+
+  it("materialContextFrom 在连素材标题都超过预算的极端输入下仍截断而不越界", () => {
+    const materials = new Map<string, Material>([
+      ["oversized", {
+        id: "oversized",
+        filename: `${"超长标题".repeat(30)}.txt`,
+        mimeType: "text/plain",
+        text: "正文",
+        summary: null,
+        fileId: null,
+        metadata: { pages: null, wordCount: 2, title: null },
+        createdAt: "",
+        updatedAt: "",
+      }],
+    ]);
+
+    expect(materialContextFrom(materials, { relevanceText: "正文", maxChars: 64 })).toHaveLength(64);
+  });
+
   it("writeDraft 尾巴只带素材、任务与输出扭转，不复制 QingML 总规", () => {
     const tail = buildQingmlSteeringTail(
       "素材: 报告\n正文",

@@ -40,6 +40,19 @@ export interface RetryAiBlockContext {
 
 export type RetryAiBlock = (context: RetryAiBlockContext) => Promise<unknown>;
 
+// deepseek-v4-flash 上下文虽为 393216 tokens，写稿还需给 65k 输出、主 system、
+// 对话历史与技能注入留余量。素材单独封顶，避免大文件把每条赛道一起顶出窗口。
+export const MATERIAL_CONTEXT_MAX_CHARS = 120_000;
+const MATERIAL_CONTEXT_CHUNK_CHARS = 4_000;
+
+export interface MaterialContextOptions {
+  /** 标题、提纲与当前任务等，用于超预算后的确定性分块选取。 */
+  relevanceText?: string;
+  maxChars?: number;
+  /** 仅供确定性调优与测试覆盖；生产使用集中定义的默认块大小。 */
+  chunkChars?: number;
+}
+
 export type AiDocumentParseFailureKind =
   | "length_truncated"
   | "qingml_bad_block"
@@ -164,21 +177,151 @@ export async function compileAiDocumentWithBlockRetry(
   return { success: false, error: "AI-IR block retry exhausted" };
 }
 
-export function materialContextFrom(materials: Map<string, Material> | undefined): string {
-  return materials
-    ? Array.from(materials.values())
-        .map((m) => {
-          // 抓取类素材带来源 URL 时,把 URL 一并喂给生成模型——否则『检索来源引用范本』要求
-          // 模型用 url 原值挂 link mark,模型却看不到 url,只能省略或瞎猜(回归 search-ref-not-citation-block)。
-          const url = m.metadata?.sourceUrl;
-          const head = url ? `素材: ${m.filename}（来源URL: ${url}）` : `素材: ${m.filename}`;
-          const body = m.visionSummary
-            ? `【图像识别摘要】${m.visionSummary}\n${m.text}`
-            : m.text;
-          return `${head}\n${body}`;
-        })
-        .join("\n\n")
-    : "";
+function materialHead(material: Material): string {
+  // 抓取类素材带来源 URL 时,把 URL 一并喂给生成模型——否则『检索来源引用范本』要求
+  // 模型用 url 原值挂 link mark,模型却看不到 url,只能省略或瞎猜(回归 search-ref-not-citation-block)。
+  const url = material.metadata?.sourceUrl;
+  return url
+    ? `素材: ${material.filename}（来源URL: ${url}）`
+    : `素材: ${material.filename}`;
+}
+
+function materialBody(material: Material): string {
+  return material.visionSummary
+    ? `【图像识别摘要】${material.visionSummary}\n${material.text}`
+    : material.text;
+}
+
+function splitMaterialText(text: string, maxChars: number): string[] {
+  if (!text) return [""];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(text.length, start + maxChars);
+    if (end < text.length) {
+      const minBreak = start + Math.floor(maxChars / 2);
+      const candidates = [
+        text.lastIndexOf("\n\n", end),
+        text.lastIndexOf("\n", end),
+        text.lastIndexOf("。", end),
+        text.lastIndexOf("！", end),
+        text.lastIndexOf("？", end),
+      ].filter((index) => index >= minBreak);
+      if (candidates.length > 0) end = Math.max(...candidates) + 1;
+    }
+    const chunk = text.slice(start, end).trim();
+    if (chunk) chunks.push(chunk);
+    start = end;
+    while (start < text.length && /\s/u.test(text[start] ?? "")) start += 1;
+  }
+  return chunks.length > 0 ? chunks : [""];
+}
+
+function relevanceTerms(value: string): string[] {
+  const normalized = value.toLowerCase();
+  const terms = new Set(
+    normalized.match(/[a-z0-9][a-z0-9._+-]{1,}/g) ?? [],
+  );
+  for (const cjk of normalized.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu) ?? []) {
+    if (cjk.length <= 12) terms.add(cjk);
+    const chars = Array.from(cjk);
+    for (let index = 0; index < chars.length - 1; index += 1) {
+      terms.add(`${chars[index]}${chars[index + 1]}`);
+    }
+  }
+  return [...terms];
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let offset = 0;
+  while (offset < haystack.length) {
+    const index = haystack.indexOf(needle, offset);
+    if (index < 0) break;
+    count += 1;
+    offset = index + needle.length;
+  }
+  return count;
+}
+
+function scoreMaterialChunk(
+  material: Material,
+  chunk: string,
+  terms: readonly string[],
+): number {
+  if (terms.length === 0) return 0;
+  const body = chunk.toLowerCase();
+  const metadata = [
+    material.filename,
+    material.metadata.title,
+    material.summary,
+    material.visionSummary,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join("\n")
+    .toLowerCase();
+  return terms.reduce((score, term) => {
+    const bodyHits = countOccurrences(body, term);
+    const metadataHit = metadata.includes(term) ? 1 : 0;
+    return score + bodyHits * Math.max(2, term.length) + metadataHit;
+  }, 0);
+}
+
+export function materialContextFrom(
+  materials: Map<string, Material> | undefined,
+  options: MaterialContextOptions = {},
+): string {
+  if (!materials || materials.size === 0) return "";
+  const maxChars = Math.max(
+    0,
+    Math.floor(options.maxChars ?? MATERIAL_CONTEXT_MAX_CHARS),
+  );
+  if (maxChars === 0) return "";
+
+  const materialList = Array.from(materials.values());
+  const fullContext = materialList
+    .map((material) => `${materialHead(material)}\n${materialBody(material)}`)
+    .join("\n\n");
+  if (fullContext.length <= maxChars) return fullContext;
+
+  const chunkChars = Math.max(
+    32,
+    Math.floor(options.chunkChars ?? MATERIAL_CONTEXT_CHUNK_CHARS),
+  );
+  const terms = relevanceTerms(options.relevanceText ?? "");
+  const candidates = materialList.flatMap((material, materialIndex) => {
+    const chunks = splitMaterialText(materialBody(material), chunkChars);
+    return chunks.map((chunk, chunkIndex) => ({
+      materialIndex,
+      chunkIndex,
+      score: scoreMaterialChunk(material, chunk, terms),
+      rendered: `${materialHead(material)}（节选 ${chunkIndex + 1}/${chunks.length}）\n${chunk}`,
+    }));
+  }).sort((left, right) =>
+    right.score - left.score ||
+    left.materialIndex - right.materialIndex ||
+    left.chunkIndex - right.chunkIndex
+  );
+
+  const selected: typeof candidates = [];
+  let selectedLength = 0;
+  for (const candidate of candidates) {
+    const separatorLength = selected.length > 0 ? 2 : 0;
+    if (selectedLength + separatorLength + candidate.rendered.length > maxChars) continue;
+    selected.push(candidate);
+    selectedLength += separatorLength + candidate.rendered.length;
+  }
+
+  // 极端情况下连一个片段的标题/URL 都装不下，也必须返回有界文本而非让请求失败。
+  if (selected.length === 0) return (candidates[0]?.rendered ?? fullContext).slice(0, maxChars);
+
+  return selected
+    .sort((left, right) =>
+      left.materialIndex - right.materialIndex ||
+      left.chunkIndex - right.chunkIndex
+    )
+    .map((candidate) => candidate.rendered)
+    .join("\n\n")
+    .slice(0, maxChars);
 }
 
 /** writeDraft 追加任务、素材与按需技能；未激活技能时仍不复制主 system 的 QingML 总规。 */

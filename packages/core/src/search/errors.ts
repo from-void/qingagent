@@ -22,7 +22,7 @@ export class SearchProviderError extends Error {
 }
 
 export function classifySearchHttpStatus(status: number): SearchProviderErrorKind {
-  // 422:Brave 对格式无效的 Subscription Token 返回 422,语义上等同 key 无效。
+  // 仍统一归类为 auth 供上层展示；健康状态会按原始 status 将 401 与 403/422 分级。
   if (status === 401 || status === 403 || status === 422) return "auth";
   if (status === 402 || status === 429) return "quota";
   return "network";

@@ -12,10 +12,9 @@ import {
   invalidateManagedSearchConfig,
   invalidatePrimarySearchConfig,
   isSearchProviderId,
-  markSearchProviderAuthFailed,
-  markSearchProviderQuota,
   parsePrimarySearchConfig,
   parseSearchProviderConfig,
+  recordSearchProviderError,
   setAppSetting,
   type SearchProviderConfig,
   type SearchProviderConfigMap,
@@ -188,6 +187,7 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
 
   const config = await readStoredConfig();
   const current: SearchProviderConfig = { ...(config[id] ?? {}) };
+  const previousCredential = configValueFor(entry, current);
 
   let warning: string | undefined;
   if (typeof parsed.body.enabled === "boolean") {
@@ -217,17 +217,14 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
 
   config[id] = current;
   await setAppSetting(SETTING_SEARCH_PROVIDER_CONFIG, JSON.stringify(config));
-  clearManagedSearchProviderHealth(id);
+  if (configValueFor(entry, current) !== previousCredential) {
+    clearManagedSearchProviderHealth(id);
+  }
   invalidateManagedSearchConfig();
   clearSearchCache();
   const response = await readSearchSettingsResponse();
   return c.json(warning ? { ...response, warning } : response);
 });
-
-function markHealthFromTest(id: SearchProviderId, kind: SearchProviderErrorKind): void {
-  if (kind === "auth") markSearchProviderAuthFailed(id);
-  if (kind === "quota") markSearchProviderQuota(id);
-}
 
 searchSettingsRoutes.post("/settings/search/:id/test", async (c) => {
   const rejected = requireTrustedOrigin(c);
@@ -254,7 +251,11 @@ searchSettingsRoutes.post("/settings/search/:id/test", async (c) => {
   } catch (err) {
     const errorKind: SearchProviderErrorKind =
       err instanceof SearchProviderError ? err.kind : "network";
-    markHealthFromTest(id, errorKind);
+    recordSearchProviderError(
+      id,
+      errorKind,
+      err instanceof SearchProviderError ? err.status : undefined,
+    );
     return c.json({ ok: false, errorKind, resultCount: 0 });
   } finally {
     invalidateManagedSearchConfig();

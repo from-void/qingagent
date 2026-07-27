@@ -358,8 +358,8 @@ td.wf-page-cell {
   max-width: 100%;
   height: auto;
 }
-.wf-doc .pm-diagram.align-left { margin-left: 0; margin-right: auto; }
-.wf-doc .pm-diagram.align-right { margin-left: auto; margin-right: 0; }
+.wf-doc .pm-diagram.align-left { margin-left: 0; margin-right: auto; text-align: left; }
+.wf-doc .pm-diagram.align-right { margin-left: auto; margin-right: 0; text-align: right; }
 .wf-doc .pm-diagram.has-custom-width svg { width: 100%; }
 .wf-doc .pm-diagram.has-custom-height svg {
   width: 100%;

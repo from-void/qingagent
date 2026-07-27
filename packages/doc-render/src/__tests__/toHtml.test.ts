@@ -332,6 +332,26 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain(".wf-doc .pm-diagram.has-custom-height svg");
   });
 
+  it.each(["left", "right"] as const)("图表仅设置 %s 对齐时移动内部 SVG", (align) => {
+    const html = toHtml(doc([{
+      type: "diagram",
+      attrs: {
+        blockId: `diagram-align-${align}`,
+        lang: "mermaid",
+        source: "flowchart TD\n A-->B",
+        svg: GOOD_SVG,
+        align,
+      },
+    }] as never));
+
+    expect(html).toContain(`<div class="pm-diagram align-${align}"><svg`);
+    expect(html).toContain(
+      `.wf-doc .pm-diagram.align-${align} { margin-left: ${
+        align === "left" ? "0" : "auto"
+      }; margin-right: ${align === "right" ? "0" : "auto"}; text-align: ${align}; }`,
+    );
+  });
+
   it("无缓存 SVG 图表显示类型化说明并回退源码代码块", () => {
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: null } }] as never));
     expect(html).toContain('<div class="pm-diagram-fallback">');

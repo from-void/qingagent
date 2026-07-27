@@ -377,6 +377,127 @@ describe("documentRepo", () => {
     )).rows[0]?.n)).toBe(1);
   });
 
+  it("JSON 合法的深层坏 PM 随所访问页面隔离，total 单调收敛", async () => {
+    await documentRepo.saveMany([
+      input("deep-valid-a", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-06T00:00:00.000Z",
+      }),
+      input("deep-invalid-first", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-05T00:00:00.000Z",
+      }),
+      input("deep-valid-b", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-04T00:00:00.000Z",
+      }),
+      input("deep-invalid-second", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("deep-valid-c", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("deep-valid-d", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    const deepInvalidPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{ type: "unknownBlock" }],
+    });
+    await client.execute({
+      sql: `UPDATE documents SET doc_pm = ?
+        WHERE id IN ('deep-invalid-first', 'deep-invalid-second')`,
+      args: [deepInvalidPm],
+    });
+
+    const first = await documentRepo.list({
+      resourceId: "deep-dirty-pages",
+      page: 0,
+      perPage: 2,
+    });
+    const second = await documentRepo.list({
+      resourceId: "deep-dirty-pages",
+      page: 1,
+      perPage: 2,
+    });
+
+    expect(first).toMatchObject({
+      total: 5,
+      rows: [{ id: "deep-valid-a" }, { id: "deep-valid-b" }],
+    });
+    expect(second).toMatchObject({
+      total: 4,
+      rows: [{ id: "deep-valid-c" }, { id: "deep-valid-d" }],
+    });
+    expect((await client.execute(
+      `SELECT id FROM documents_quarantine_invalid_pm
+        WHERE id IN ('deep-invalid-first', 'deep-invalid-second')
+        ORDER BY id`,
+    )).rows).toMatchObject([
+      { id: "deep-invalid-first" },
+      { id: "deep-invalid-second" },
+    ]);
+  });
+
+  it("页内深层坏 PM 最多补取一轮，第二轮隔离后直接返回短页", async () => {
+    await documentRepo.saveMany([
+      ...Array.from({ length: 4 }, (_, index) => input(
+        `bounded-invalid-${index}`,
+        {
+          resourceId: "bounded-dirty-page",
+          updatedAt: `2026-01-0${5 - index}T00:00:00.000Z`,
+        },
+      )),
+      input("bounded-valid", {
+        resourceId: "bounded-dirty-page",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: `UPDATE documents SET doc_pm = ?
+        WHERE resource_id = 'bounded-dirty-page' AND id <> 'bounded-valid'`,
+      args: [JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{ type: "unknownBlock" }],
+      })],
+    });
+    const execute = vi.spyOn(client, "execute");
+    const transactionExecute = vi.spyOn(getTxnClient(), "execute");
+
+    const result = await documentRepo.list({
+      resourceId: "bounded-dirty-page",
+      perPage: 2,
+    });
+
+    expect(result).toEqual({ rows: [], total: 1 });
+    const sql = execute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(sql.filter((statement) => (
+      /SELECT\s+d\.\*\s+FROM\s+documents d/i.test(statement)
+    ))).toHaveLength(2);
+    expect(sql.filter((statement) => (
+      /SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+documents d/i.test(statement)
+    ))).toHaveLength(2);
+    const transactionSql = transactionExecute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(transactionSql.filter((statement) => statement === "BEGIN IMMEDIATE")).toHaveLength(2);
+    expect(transactionSql.filter((statement) => /^\s*COMMIT\s*$/i.test(statement))).toHaveLength(2);
+    expect(Number((await client.execute(
+      `SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm
+        WHERE id LIKE 'bounded-invalid-%'`,
+    )).rows[0]?.n)).toBe(4);
+  });
+
   it("同一资源域的多条坏 PM 合并到一次隔离事务", async () => {
     await documentRepo.saveMany([
       input("batch-valid", { resourceId: "dirty-batch" }),

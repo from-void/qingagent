@@ -212,6 +212,7 @@ interface InvalidPmCandidate {
 }
 
 const QUARANTINE_BATCH_SIZE = 200;
+const MAX_LIST_PAGE_FETCH_ROUNDS = 2;
 
 function invalidPmCandidate(row: Row): InvalidPmCandidate {
   return {
@@ -375,6 +376,12 @@ interface DocumentListScope {
   args: string[];
 }
 
+/**
+ * 列表 total 对深层坏 PM 采用“单调收敛”契约：隔离是搬迁式的，坏行一经页面读取发现，
+ * 就永久移出 documents 查询域；尚未访问到的深层坏行可瞬时计入 total，之后会随对应
+ * 页面被访问而自动收敛。这样设计是因为 SQL 可廉价预筛空值和非法 JSON，却无法廉价
+ * 判定完整 PM 结构是否合法。
+ */
 async function listDocumentPage(
   client: Awaited<ReturnType<typeof readyClient>>,
   scope: DocumentListScope,
@@ -390,7 +397,7 @@ async function listDocumentPage(
   });
   await quarantineInvalidPmRows(invalidResult.rows);
 
-  while (true) {
+  for (let round = 0; round < MAX_LIST_PAGE_FETCH_ROUNDS; round += 1) {
     const [countResult, rowsResult] = await Promise.all([
       client.execute({
         sql: `SELECT COUNT(*) AS total
@@ -410,13 +417,21 @@ async function listDocumentPage(
       }),
     ]);
     const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
-    if (mapped.quarantined === 0) {
+    const total = Math.max(
+      0,
+      valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined,
+    );
+    const shouldRefill = mapped.quarantined > 0 &&
+      round + 1 < MAX_LIST_PAGE_FETCH_ROUNDS;
+    if (!shouldRefill) {
       return {
         rows: mapped.rows,
-        total: valueAsNumber(countResult.rows[0]?.total),
+        total,
       };
     }
   }
+
+  throw new Error("Unreachable document list fetch round");
 }
 
 function upsertStatement(input: DocumentSaveInput): InStatement {

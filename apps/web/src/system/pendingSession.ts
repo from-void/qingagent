@@ -409,32 +409,12 @@ export function createPendingSubmissionManager(input: {
   return {
     async create(submissionInput) {
       const previous = readMetadata();
-      if (
-        previous &&
-        previous.submissionId !== submissionInput.submissionId
-      ) {
-        await removePayload(previous.submissionId);
-      }
-
       const payload: PendingPayload = {
         attachments: submissionInput.attachments,
         folderSource: submissionInput.folderSource,
       };
       memoryPayloads.clear();
       memoryPayloads.set(submissionInput.submissionId, payload);
-
-      let persisted: PendingPayloadSaveResult = {
-        attachments: submissionInput.attachments.length === 0,
-        folder: submissionInput.folderSource === null,
-      };
-      try {
-        persisted = await payloadStore.save(
-          submissionInput.submissionId,
-          payload,
-        );
-      } catch {
-        // 同一 SPA 内继续使用内存载荷；刷新后 load() 会进入 degraded。
-      }
 
       const createdAt = now();
       const metadata: StoredPendingSubmission = {
@@ -450,14 +430,45 @@ export function createPendingSubmissionManager(input: {
         chips: submissionInput.chips,
         skills: submissionInput.skills,
         attachments: submissionInput.attachments.map(attachmentDescriptor),
-        attachmentsPersisted: persisted.attachments,
+        // 元数据必须在任何 await 前同步落盘。刷新若发生在 IDB 写入窗口，
+        // 新页面仍能恢复文字与缺失描述，并进入明确 degraded 交接。
+        attachmentsPersisted: submissionInput.attachments.length === 0,
         uploadedAssets: [],
         folderExpected: submissionInput.folderSource !== null,
-        folderPersisted: persisted.folder,
+        folderPersisted: submissionInput.folderSource === null,
         folderAttached: false,
       };
       const metadataPersisted = writeMetadata(metadata);
       removeLegacyStorage();
+
+      if (
+        previous &&
+        previous.submissionId !== submissionInput.submissionId
+      ) {
+        await removePayload(previous.submissionId);
+      }
+
+      let persisted: PendingPayloadSaveResult = {
+        attachments: submissionInput.attachments.length === 0,
+        folder: submissionInput.folderSource === null,
+      };
+      try {
+        persisted = await payloadStore.save(
+          submissionInput.submissionId,
+          payload,
+        );
+      } catch {
+        // 同一 SPA 内继续使用内存载荷；刷新后 load() 会进入 degraded。
+      }
+
+      const latest = readMetadata();
+      if (latest?.submissionId === submissionInput.submissionId) {
+        writeMetadata({
+          ...latest,
+          attachmentsPersisted: persisted.attachments,
+          folderPersisted: persisted.folder,
+        });
+      }
       return {
         durable:
           metadataPersisted &&
@@ -549,7 +560,6 @@ export function createPendingSubmissionManager(input: {
       );
       const degradedMetadata: StoredPendingSubmission = {
         ...metadata,
-        state: "retryable",
         richText: sanitized.richText,
         chips: sanitized.chips,
         attachments: metadata.attachments.filter(
@@ -561,15 +571,6 @@ export function createPendingSubmissionManager(input: {
         folderExpected: folderMissing ? false : metadata.folderExpected,
         folderPersisted: folderMissing ? true : metadata.folderPersisted,
       };
-      writeMetadata(degradedMetadata);
-      memoryPayloads.set(metadata.submissionId, {
-        attachments: remainingAttachments.flatMap((attachment) =>
-          attachment.file
-            ? [{ id: attachment.id, file: attachment.file }]
-            : [],
-        ),
-        folderSource,
-      });
 
       return {
         kind: "degraded",

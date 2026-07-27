@@ -3239,6 +3239,125 @@ describe("WorkspacePage review controls", () => {
     }
   });
 
+  it("IDB 写入窗口刷新后经真实路由移交文字与缺失清单，不静默发送无附件首提", async () => {
+    window.location.hash = "#/new";
+    const { PENDING_SUBMISSION_STORAGE_KEY } = await import("../../system");
+    sessionStorage.setItem(PENDING_SUBMISSION_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      submissionId: "submission-idb-writing",
+      clientMessageId: "message-idb-writing",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1_000,
+      state: "queued",
+      targetSessionId: null,
+      text: "刷新后必须移交到输入框的文字",
+      richText: "刷新后必须移交到输入框的文字{{chip:0}}",
+      chips: [{
+        kind: { kind: "attach" },
+        resourceRef: {
+          id: "attachment-writing",
+          domain: { kind: "file" },
+        },
+        prefix: null,
+        label: "写入中的附件.txt",
+        suffix: null,
+      }],
+      skills: [],
+      attachments: [{
+        id: "attachment-writing",
+        name: "写入中的附件.txt",
+        type: "text/plain",
+        size: 8,
+        lastModified: 123,
+      }],
+      attachmentsPersisted: false,
+      uploadedAssets: [],
+      folderExpected: false,
+      folderPersisted: true,
+      folderAttached: false,
+    }));
+
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const originalToDataUrl = HTMLCanvasElement.prototype.toDataURL;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () =>
+        new Proxy(
+          {},
+          {
+            get: (_target, prop) => {
+              if (prop === "createImageData") {
+                return (width: number, height: number) => ({
+                  width,
+                  height,
+                  data: new Uint8ClampedArray(
+                    Math.max(0, width) * Math.max(0, height) * 4,
+                  ),
+                  colorSpace: "srgb",
+                });
+              }
+              if (prop === "measureText") {
+                return () => ({ width: 0 });
+              }
+              return () => undefined;
+            },
+            set: () => true,
+          },
+        ),
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
+      configurable: true,
+      value: () => "data:image/png;base64,",
+    });
+    try {
+      const [
+        { Router },
+        { NewSessionPage },
+        { WorkspacePage },
+      ] = await Promise.all([
+        import("../../shell/Router"),
+        import("../new-session/NewSessionPage"),
+        import("./WorkspacePage"),
+      ]);
+      await render(
+        <Router
+          routes={{
+            "new-session": <NewSessionPage />,
+            workspace: <WorkspacePage />,
+          }}
+        />,
+      );
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      });
+      await flushMicrotasks(10);
+
+      expect(window.location.hash).toBe("#/workspace");
+      expect(getChatEditor().textContent).toContain(
+        "刷新后必须移交到输入框的文字",
+      );
+      expect(host?.textContent).toContain("1 个附件无法恢复");
+      expect(host?.textContent).toContain("请重新添加");
+      expect(
+        serverStreamMock.instances.flatMap((stream) =>
+          sendMessageCommands(stream),
+        ),
+      ).toHaveLength(0);
+      expect(
+        sessionStorage.getItem(PENDING_SUBMISSION_STORAGE_KEY),
+      ).toBeNull();
+    } finally {
+      Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value: originalGetContext,
+      });
+      Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
+        configurable: true,
+        value: originalToDataUrl,
+      });
+    }
+  }, 60_000);
+
   it("e2e-0723 停止门二轮:建会话中的规划 turn 停止后不再晚发 sendMessage/问卷", async () => {
     let resolveStart: ((sessionId: string) => void) | null = null;
     serverStreamMock.startSessionImpl = () =>

@@ -2420,12 +2420,21 @@ export function useWorkspacePageController() {
           return;
         }
         if (result.kind === "degraded") {
-          const chatInput = chatInputRef.current;
+          let chatInput = chatInputRef.current;
+          for (let attempt = 0; !chatInput && attempt < 4; attempt += 1) {
+            await new Promise<void>((resolve) => {
+              requestAnimationFrame(() => resolve());
+            });
+            if (!effectActive) return;
+            chatInput = chatInputRef.current;
+          }
           if (!chatInput) {
-            offerPendingRetry(
-              submission.submissionId,
-              "部分素材无法恢复，请返回新建页重新添加",
-            );
+            toast.show({
+              message: "部分素材无法恢复；文字仍已保留，请刷新工作区后重新添加素材",
+              tone: "warn",
+              sticky: true,
+              dedupeKey: "workspace-pending-submission",
+            });
             return;
           }
           chatInput.restore(

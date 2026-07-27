@@ -113,6 +113,58 @@ function submissionInput(
 }
 
 describe("pending submission 持久化与归属", () => {
+  it("在 IDB 写入完成前同步落下文字元数据，刷新后明确进入 degraded", async () => {
+    const storage = createStorage();
+    let finishSave!: (result: {
+      attachments: boolean;
+      folder: boolean;
+    }) => void;
+    const payloadStore: PendingPayloadStore = {
+      save: () =>
+        new Promise((resolve) => {
+          finishSave = resolve;
+        }),
+      load: async () => null,
+      remove: async () => undefined,
+    };
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+
+    const creating = beforeRefresh.create(
+      submissionInput("submission-writing", {
+        text: "IDB 写入中也不能丢的文字",
+      }),
+    );
+    const storedWhileWriting = JSON.parse(
+      storage.getItem(PENDING_SUBMISSION_STORAGE_KEY) ?? "null",
+    );
+    expect(storedWhileWriting).toMatchObject({
+      submissionId: "submission-writing",
+      text: "IDB 写入中也不能丢的文字",
+      state: "queued",
+      attachmentsPersisted: false,
+    });
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const degraded = await afterRefresh.load();
+    expect(degraded.kind).toBe("degraded");
+    if (degraded.kind === "degraded") {
+      expect(degraded.submission.text).toBe("IDB 写入中也不能丢的文字");
+      expect(degraded.missingAttachmentCount).toBe(1);
+      expect(degraded.submission.state).toBe("queued");
+    }
+
+    finishSave({ attachments: true, folder: true });
+    await expect(creating).resolves.toMatchObject({ durable: true });
+  });
+
   it("跨模块实例从持久层恢复 File 内容，不留下只有 chip 的假附件", async () => {
     const storage = createStorage();
     const payloadStore = createPayloadStore();
@@ -223,7 +275,14 @@ describe("pending submission 持久化与归属", () => {
       skillChip("skill-research"),
     ]);
     expect(result.submission.richText).toBe("前文后文{{chip:0}}");
-    expect(result.submission.state).toBe("retryable");
+    expect(result.submission.state).toBe("queued");
+
+    const repeated = await afterRefresh.load();
+    expect(repeated.kind).toBe("degraded");
+    if (repeated.kind === "degraded") {
+      expect(repeated.missingAttachmentCount).toBe(1);
+      expect(repeated.submission.text).toBe("前文后文");
+    }
   });
 
   it("目录句柄不可持久化时仍恢复普通文件，并明确标记文件夹缺失", async () => {

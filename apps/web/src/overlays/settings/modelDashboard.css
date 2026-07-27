@@ -1168,3 +1168,24 @@
     animation: none;
   }
 }
+
+/* 厂商 logo:卡头名字左侧,与名字/档位 chip/配置钮同一行 */
+.qj-sheet-body .vd-logo {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+/* Kimi 是深底方块图标,切个小圆角贴合暗卡 */
+.qj-sheet-body .vd-logo--boxed {
+  border-radius: 2px;
+}
+/* 让「logo + 名字 + 档位 chip + 配 置」稳稳一行:名字比看板标题小半档、不换行 */
+.qj-sheet-body .vd-card .md-card-title {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.qj-sheet-body .vd-head {
+  flex-wrap: nowrap;
+}

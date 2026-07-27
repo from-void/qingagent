@@ -1193,6 +1193,12 @@ export function ModelSettingsPanel() {
         data-wf={`ModelVendorCard${wf}`}
       >
         <div className="vd-head">
+          <img
+            className={`vd-logo${meta.logoBoxed ? " vd-logo--boxed" : ""}`}
+            src={meta.logo}
+            alt=""
+            aria-hidden="true"
+          />
           <span className="md-card-title">{meta.name}</span>
           {configuredVendor ? (
             <ModelTierChip

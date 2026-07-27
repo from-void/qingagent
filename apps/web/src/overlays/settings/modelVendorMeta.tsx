@@ -1,6 +1,8 @@
 // 厂商卡文案与档位元数据。两家厂商并列成卡,档位挂在厂商名右侧 chip。
 // 一律不写具体单价:厂商随时调价,写死的数字会过期误导;只给定性特点与相对贵贱。
 import type { ReactNode } from "react";
+import deepseekLogo from "../../assets/vendor/deepseek.png";
+import kimiLogo from "../../assets/vendor/kimi.png";
 import type { ModelProvider, ModelTier } from "./visitorKeyStore";
 
 export const MODEL_VENDORS: readonly ModelProvider[] = ["deepseek", "kimi"] as const;
@@ -14,6 +16,10 @@ interface VendorTierMeta {
 interface VendorMeta {
   /** 卡片标题与文案里出现的厂商名 */
   name: string;
+  /** 官方 logo(卡头厂商名左侧) */
+  logo: string;
+  /** 深底方块型 logo 需要切个小圆角,透明底的不需要 */
+  logoBoxed: boolean;
   /** 零配置态是否带「推 荐」标 */
   recommended: boolean;
   /** 是否有余额体系(只有 DeepSeek 有,卡内才显示余额) */
@@ -24,6 +30,8 @@ interface VendorMeta {
 export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
   deepseek: {
     name: "DeepSeek",
+    logo: deepseekLogo,
+    logoBoxed: false,
     recommended: true,
     hasBalance: true,
     tiers: {
@@ -33,6 +41,8 @@ export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
   },
   kimi: {
     name: "Kimi",
+    logo: kimiLogo,
+    logoBoxed: true,
     recommended: false,
     hasBalance: false,
     tiers: {

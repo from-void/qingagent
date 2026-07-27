@@ -234,6 +234,84 @@ export interface DiagramOverlay {
   styles?: Record<string, NodeStyleOverride>;
   edgeStyles?: Record<string, EdgeStyleOverride>;
   edgeHandles?: Record<string, EdgeHandleOverride>;
+  /** 元素层级(越大越靠上)。Mermaid 没有 z 语义,只存视觉层。 */
+  zOrders?: Record<string, number>;
+}
+
+/** 层级重排的四种动作(与画布右键/溢出菜单一一对应)。 */
+export type ZOrderCommand = "raise" | "lower" | "front" | "back";
+
+/**
+ * 计算层级重排后的 zOrders。语义:
+ * - 只在"可排序元素"之间比较(分区始终垫在节点之下,由渲染层保证,不进这套序);
+ * - 上/下移一层 = 与相邻一层交换;移到顶/底层 = 排到序列两端;
+ * - 多选按同向整体移动,保持它们彼此的相对次序;
+ * - 返回结果只保留与默认次序不同的项,overlay 不堆无意义数据。
+ */
+export function applyZOrderCommand(input: {
+  order: string[];
+  selected: string[];
+  command: ZOrderCommand;
+  zOrders?: Record<string, number> | undefined;
+}): Record<string, number> {
+  const base = [...input.order].sort(
+    (left, right) => zOrderValue(input.zOrders, input.order, left) - zOrderValue(input.zOrders, input.order, right),
+  );
+  const selected = new Set(input.selected.filter((id) => base.includes(id)));
+  if (selected.size === 0) return { ...(input.zOrders ?? {}) };
+  const moving = base.filter((id) => selected.has(id));
+  const rest = base.filter((id) => !selected.has(id));
+  let next: string[];
+  if (input.command === "front") {
+    next = [...rest, ...moving];
+  } else if (input.command === "back") {
+    next = [...moving, ...rest];
+  } else {
+    next = [...base];
+    const step = input.command === "raise" ? 1 : -1;
+    // 上移从后往前处理、下移从前往后处理,避免同一批元素互相顶掉。
+    const indexes = base
+      .map((id, index) => ({ id, index }))
+      .filter((item) => selected.has(item.id))
+      .sort((left, right) => (step > 0 ? right.index - left.index : left.index - right.index));
+    for (const item of indexes) {
+      const from = next.indexOf(item.id);
+      const to = from + step;
+      if (to < 0 || to >= next.length) continue;
+      if (selected.has(next[to]!)) continue; // 同批元素之间不互换
+      const swapped = next[to]!;
+      next[to] = item.id;
+      next[from] = swapped;
+    }
+  }
+  const result: Record<string, number> = {};
+  next.forEach((id, index) => {
+    if (input.order[index] !== id) result[id] = index;
+  });
+  // 一旦有元素排序变了,整串都要落下来,否则默认次序会把它顶回去。
+  if (Object.keys(result).length > 0) {
+    next.forEach((id, index) => {
+      result[id] = index;
+    });
+  }
+  return result;
+}
+
+function zOrderValue(
+  zOrders: Record<string, number> | undefined,
+  order: string[],
+  id: string,
+): number {
+  const explicit = zOrders?.[id];
+  if (typeof explicit === "number" && Number.isFinite(explicit)) return explicit;
+  return order.indexOf(id);
+}
+
+/** 按层级排序一组元素 id(默认次序 = 传入次序)。 */
+export function sortIdsByZOrder(order: string[], zOrders?: Record<string, number> | undefined): string[] {
+  return [...order].sort(
+    (left, right) => zOrderValue(zOrders, order, left) - zOrderValue(zOrders, order, right),
+  );
 }
 
 export interface GraphLayoutRect {
@@ -618,9 +696,10 @@ export function filterStableOverlay(source: string, overlay: DiagramOverlay | nu
   const ids = getStableElementIds(parsed.model);
   const positions = filterRecord(overlay.positions, ids.nodes);
   const styles = filterRecord(overlay.styles, ids.nodes);
+  const zOrders = filterRecord(overlay.zOrders, ids.nodes);
   const edgeStyles = filterRecord(overlay.edgeStyles, ids.edges);
   const edgeHandles = filterRecord(overlay.edgeHandles, ids.edges);
-  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
+  return compactOverlay({ positions, styles, zOrders, edgeStyles, edgeHandles });
 }
 
 export function carryOverDiagramOverlay(
@@ -639,15 +718,17 @@ export function carryOverDiagramOverlay(
   const edges = intersectSets(oldIds.edges, newIds.edges);
   const positions = remapRecord(oldOverlay.positions, newIds.nodes, nodes, idMap?.nodes);
   const styles = remapRecord(oldOverlay.styles, newIds.nodes, nodes, idMap?.nodes);
+  const zOrders = remapRecord(oldOverlay.zOrders, newIds.nodes, nodes, idMap?.nodes);
   const edgeStyles = remapRecord(oldOverlay.edgeStyles, newIds.edges, edges, idMap?.edges);
   const edgeHandles = remapRecord(oldOverlay.edgeHandles, newIds.edges, edges, idMap?.edges);
-  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
+  return compactOverlay({ positions, styles, zOrders, edgeStyles, edgeHandles });
 }
 
 function compactOverlay(overlay: DiagramOverlay): DiagramOverlay | undefined {
   const compacted: DiagramOverlay = {
     ...(overlay.positions ? { positions: overlay.positions } : {}),
     ...(overlay.styles ? { styles: overlay.styles } : {}),
+    ...(overlay.zOrders ? { zOrders: overlay.zOrders } : {}),
     ...(overlay.edgeStyles ? { edgeStyles: overlay.edgeStyles } : {}),
     ...(overlay.edgeHandles ? { edgeHandles: overlay.edgeHandles } : {}),
   };
@@ -700,7 +781,12 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
       parsed.model.type === "flowchart" ? parsed.model.perSubgraphStyles?.[cluster.id] : undefined,
     ))
     .join("");
-  const nodeSvg = flattened
+  // 节点绘制顺序 = 层级顺序(后画的盖前面的),与画布 z 轴一致。
+  const nodeOrder = new Map(
+    sortIdsByZOrder(flattened.map((node) => node.id), overlay?.zOrders).map((id, index) => [id, index]),
+  );
+  const nodeSvg = [...flattened]
+    .sort((left, right) => (nodeOrder.get(left.id) ?? 0) - (nodeOrder.get(right.id) ?? 0))
     .map((node) =>
       renderSvgNode(
         node,
@@ -3829,7 +3915,7 @@ function remapRecord<T>(
 }
 
 function emptyOverlay(overlay: DiagramOverlay): boolean {
-  return !overlay.positions && !overlay.styles && !overlay.edgeStyles && !overlay.edgeHandles;
+  return !overlay.positions && !overlay.styles && !overlay.zOrders && !overlay.edgeStyles && !overlay.edgeHandles;
 }
 
 function intersectSets(a: Set<string>, b: Set<string>): Set<string> {

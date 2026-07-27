@@ -52,6 +52,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   applyEdit,
+  applyZOrderCommand,
   carryOverDiagramOverlay,
   dissolveSubgraph,
   getFlowShapeGeometry,
@@ -64,6 +65,7 @@ import {
   parseDiagram,
   renameSubgraph,
   setSubgraphStyle,
+  sortIdsByZOrder,
   wrapNodesInSubgraph,
   type BaseEdge as DiagramBaseEdge,
   type BaseNode,
@@ -80,6 +82,7 @@ import {
   type MindNode,
   type NodeStyleOverride,
   type RewriteResult,
+  type ZOrderCommand,
 } from "@qingagent/diagram-engine";
 import { useToast } from "../../../../system";
 import { MediaBlockToolbar } from "../MediaBlockToolbar";
@@ -2248,6 +2251,26 @@ export function GraphDiagramView({
     selectedNodeId,
   ]);
 
+  // 元素层级(z 轴):只在节点之间排序;分区始终垫在节点之下(zIndex 用负数),
+  // 层级值存进视觉 overlay,与位置/样式同一套,撤销重做走既有画布历史。
+  const applyZOrder = useCallback((command: ZOrderCommand) => {
+    if (!inEdit) return;
+    const selected = selectedNodeIds.length > 0 ? selectedNodeIds : selectedNodeId ? [selectedNodeId] : [];
+    const targets = selected.filter((id) => ids.nodes.has(id));
+    if (targets.length === 0) return;
+    const order = graphNodes.map((node) => node.id).filter((id) => ids.nodes.has(id));
+    const zOrders = applyZOrderCommand({
+      order,
+      selected: targets,
+      command,
+      zOrders: overlayRef.current?.zOrders,
+    });
+    emitOverlay({
+      ...(overlayRef.current ?? {}),
+      zOrders: Object.keys(zOrders).length > 0 ? zOrders : undefined,
+    });
+  }, [emitOverlay, graphNodes, ids.nodes, inEdit, selectedNodeId, selectedNodeIds]);
+
   const deleteSelectedNode = useCallback(() => {
     if (!selectedNodeId || !capEnabled(selectedNodeCaps, "deleteNode")) return;
     runEdit({ kind: "deleteNode", nodeId: selectedNodeId });
@@ -2790,6 +2813,11 @@ export function GraphDiagramView({
             : {}),
         },
       }));
+    // 层级序:overlay 里排过的按 overlay,没排过的按声明次序;分区一律垫底(负 zIndex)。
+    const zOrderIndex = new Map(
+      sortIdsByZOrder(graphNodes.map((item) => item.id), overlay?.zOrders).map((id, index) => [id, index]),
+    );
+    const nodeZIndex = (nodeId: string): number => 1 + (zOrderIndex.get(nodeId) ?? 0);
     const regularNodes = graphNodes.map((node) => {
       const sourceStyle = parsed.model.perNodeStyles?.[node.id];
       const overlayStyle = overlay?.styles?.[node.id];
@@ -2842,6 +2870,9 @@ export function GraphDiagramView({
         draggable: inEdit && !isRenaming,
         selectable: inEdit,
         selected: isSelected,
+        // 持久层级 → React Flow zIndex;选中态由 React Flow 自己临时抬高,不写进这里,
+        // 所以取消选中后层级会回到用户设定的那一层。
+        zIndex: nodeZIndex(node.id),
         className: classNames(isSelected && "is-selected", isMoveTarget && "is-parent-target"),
         style: {
           width: nodeWidth,
@@ -3590,6 +3621,16 @@ export function GraphDiagramView({
       }
       const hasMod = event.ctrlKey || event.metaKey;
       if (!hasMod || event.altKey) return;
+      // 层级重排:Ctrl/Cmd+] 上移、+[ 下移,加 Shift 直达顶/底(与撤销重做、复制粘贴不冲突)。
+      if (event.key === "]" || event.key === "[") {
+        const command: ZOrderCommand = event.key === "]"
+          ? (event.shiftKey ? "front" : "raise")
+          : (event.shiftKey ? "back" : "lower");
+        event.preventDefault();
+        event.stopPropagation();
+        applyZOrder(command);
+        return;
+      }
       const key = event.key.toLowerCase();
       // Ctrl/Cmd+C 复制选中节点集(含互连边),Ctrl/Cmd+V 粘贴为整体偏移的副本。
       if (key === "c" && copySelection()) {
@@ -3602,7 +3643,7 @@ export function GraphDiagramView({
         event.stopPropagation();
       }
     },
-    [copySelection, deleteSelection, pasteClipboard],
+    [applyZOrder, copySelection, deleteSelection, pasteClipboard],
   );
 
   if (!parsed.ok) {
@@ -3931,6 +3972,10 @@ export function GraphDiagramView({
                       {/* flowchart 的"新增节点"与把手加号、底部工具栏重复,菜单里不再重复出;
                           mindmap 无等价把手路径,保留"加子节点"。 */}
                       {isMindmap && <MenuActionButton label="加子节点" shortcut="Tab" disabled={!selectedNodeCanAdd} onClick={addNode} />}
+                      <MenuActionButton label="上移一层" shortcut="Ctrl+]" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("raise")} />
+                      <MenuActionButton label="下移一层" shortcut="Ctrl+[" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("lower")} />
+                      <MenuActionButton label="移到顶层" shortcut="Ctrl+⇧+]" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("front")} />
+                      <MenuActionButton label="移到底层" shortcut="Ctrl+⇧+[" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("back")} />
                       {isMindmap && <MenuActionButton label="改父" shortcut="M" disabled={!selectedNodeCanMove} onClick={beginParentPicker} />}
                       <MenuActionButton label="重置样式" shortcut="⌥R" disabled={!selectedNodeCanStyle} onClick={resetNodeStyle} />
                       <MenuActionButton label="删除节点" shortcut="Del" disabled={!selectedNodeCanDelete} danger onClick={deleteSelectedNode} />
@@ -5304,11 +5349,13 @@ function remapSelectedId(id: string | null, idMap: Record<string, string> | unde
 function cleanOverlay(overlay: DiagramOverlay, nodeIds: Set<string>, edgeIds: Set<string>): DiagramOverlay {
   const positions = filterRecord(overlay.positions, nodeIds);
   const styles = filterRecord(overlay.styles, nodeIds);
+  const zOrders = filterRecord(overlay.zOrders, nodeIds);
   const edgeStyles = filterRecord(overlay.edgeStyles, edgeIds);
   const edgeHandles = filterRecord(overlay.edgeHandles, edgeIds);
   return {
     ...(positions ? { positions } : {}),
     ...(styles ? { styles } : {}),
+    ...(zOrders ? { zOrders } : {}),
     ...(edgeStyles ? { edgeStyles } : {}),
     ...(edgeHandles ? { edgeHandles } : {}),
   };
@@ -5324,5 +5371,5 @@ function filterRecord<T>(record: Record<string, T> | undefined, allowed: Set<str
 }
 
 function isOverlayEmpty(overlay: DiagramOverlay): boolean {
-  return !overlay.positions && !overlay.styles && !overlay.edgeStyles && !overlay.edgeHandles;
+  return !overlay.positions && !overlay.styles && !overlay.zOrders && !overlay.edgeStyles && !overlay.edgeHandles;
 }

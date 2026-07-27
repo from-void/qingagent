@@ -2210,7 +2210,7 @@ flowchart LR
     await click(findNode("开始", editor));
     const menu = await openToolbarMenu("…更多", editor);
     expect(Array.from(menu.querySelectorAll(".graph-diagram-menu-item")).map((item) => item.textContent))
-      .toEqual(["重置样式⌥R", "删除节点Del"]);
+      .toEqual(["上移一层Ctrl+]", "下移一层Ctrl+[", "移到顶层Ctrl+⇧+]", "移到底层Ctrl+⇧+[", "重置样式⌥R", "删除节点Del"]);
     expect(menu.textContent).not.toContain("新增节点");
     // 底部工具栏与把手加号仍是新增节点的入口
     expect(findButton("新增节点", editor)).not.toBeNull();
@@ -2711,6 +2711,76 @@ flowchart LR
     }
     const selected = editor.querySelector(".react-flow__node.selected");
     expect(selected?.getAttribute("data-id")).toBe(createdId);
+  });
+
+  it("节点层级:菜单四项与快捷键改 zOrders,渲染 zIndex 与导出顺序跟随", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[甲]
+  B[乙]
+  C[丙]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 40 }, B: { x: 80, y: 60 }, C: { x: 120, y: 80 } } }}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findNode("甲", editor));
+    const menu = await openToolbarMenu("…更多", editor);
+    expect(Array.from(menu.querySelectorAll(".graph-diagram-menu-item")).map((item) => item.textContent)).toEqual([
+      "上移一层Ctrl+]",
+      "下移一层Ctrl+[",
+      "移到顶层Ctrl+⇧+]",
+      "移到底层Ctrl+⇧+[",
+      "重置样式⌥R",
+      "删除节点Del",
+    ]);
+
+    await click(findMenuButton("移到顶层", menu));
+    const overlay = onOverlayChange.mock.calls.at(-1)?.[0] as { zOrders?: Record<string, number> } | null;
+    expect(overlay?.zOrders).toBeDefined();
+    // 甲 被排到最上层
+    const zOrders = overlay!.zOrders!;
+    expect(zOrders.A).toBeGreaterThan(zOrders.B!);
+    expect(zOrders.A).toBeGreaterThan(zOrders.C!);
+    // 渲染:zIndex 跟随持久层级
+    const nodeA = findNode("甲", editor);
+    const nodeB = findNode("乙", editor);
+    expect(Number(nodeA.style.zIndex)).toBeGreaterThan(Number(nodeB.style.zIndex));
+    // 导出:后画的盖前面的
+    const exported = container?.querySelector(".graph-diagram-export")?.innerHTML ?? "";
+    expect(exported.indexOf('data-node-id="B"')).toBeLessThan(exported.indexOf('data-node-id="A"'));
+
+    // 快捷键:Ctrl+[ 下移一层
+    await keyDown(editor, { key: "[", ctrlKey: true });
+    const lowered = (onOverlayChange.mock.calls.at(-1)?.[0] as { zOrders?: Record<string, number> }).zOrders!;
+    expect(lowered.A).toBeLessThan(zOrders.A!);
+  });
+
+  it("多选批量同向移动层级,保持彼此相对次序", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[甲]
+  B[乙]
+  C[丙]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 40 }, B: { x: 80, y: 60 }, C: { x: 120, y: 80 } } }}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"] });
+    await keyDown(editor, { key: "]", ctrlKey: true, shiftKey: true });
+    const zOrders = (onOverlayChange.mock.calls.at(-1)?.[0] as { zOrders?: Record<string, number> }).zOrders!;
+    expect(zOrders.A).toBeGreaterThan(zOrders.C!);
+    expect(zOrders.B).toBeGreaterThan(zOrders.C!);
+    expect(zOrders.A).toBeLessThan(zOrders.B!);
   });
 
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {

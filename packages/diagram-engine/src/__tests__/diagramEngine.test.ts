@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
+  applyZOrderCommand,
   carryOverDiagramOverlay,
   dissolveSubgraph,
   filterStableOverlay,
@@ -15,6 +16,7 @@ import {
   renameSubgraph,
   safeMermaid,
   setSubgraphStyle,
+  sortIdsByZOrder,
   wrapNodesInSubgraph,
   type BaseEdge,
   type ClassGraph,
@@ -1932,5 +1934,58 @@ flowchart TD
       dashArray: "6 4",
       fontSize: 18,
     });
+  });
+});
+
+describe("元素层级(z 轴)", () => {
+  const order = ["A", "B", "C"];
+
+  it("上移一层与下移一层只和相邻一层交换", () => {
+    expect(applyZOrderCommand({ order, selected: ["A"], command: "raise" })).toMatchObject({ A: 1, B: 0 });
+    expect(applyZOrderCommand({ order, selected: ["C"], command: "lower" })).toMatchObject({ B: 2, C: 1 });
+  });
+
+  it("移到顶层/底层排到序列两端", () => {
+    const front = applyZOrderCommand({ order, selected: ["A"], command: "front" });
+    expect(sortIdsByZOrder(order, front)).toEqual(["B", "C", "A"]);
+    const back = applyZOrderCommand({ order, selected: ["C"], command: "back" });
+    expect(sortIdsByZOrder(order, back)).toEqual(["C", "A", "B"]);
+  });
+
+  it("多选整体同向移动并保持彼此相对次序", () => {
+    const next = applyZOrderCommand({ order: ["A", "B", "C", "D"], selected: ["A", "B"], command: "front" });
+    expect(sortIdsByZOrder(["A", "B", "C", "D"], next)).toEqual(["C", "D", "A", "B"]);
+    const raised = applyZOrderCommand({ order: ["A", "B", "C", "D"], selected: ["A", "B"], command: "raise" });
+    expect(sortIdsByZOrder(["A", "B", "C", "D"], raised)).toEqual(["C", "A", "B", "D"]);
+  });
+
+  it("到顶/到底后再移动不越界,层级保持稳定", () => {
+    const atTop = applyZOrderCommand({ order, selected: ["C"], command: "raise" });
+    expect(sortIdsByZOrder(order, atTop)).toEqual(["A", "B", "C"]);
+    const atBottom = applyZOrderCommand({ order, selected: ["A"], command: "lower" });
+    expect(sortIdsByZOrder(order, atBottom)).toEqual(["A", "B", "C"]);
+  });
+
+  it("在既有层级之上继续重排(以 overlay 现值为准而非声明次序)", () => {
+    const first = applyZOrderCommand({ order, selected: ["A"], command: "front" });
+    const second = applyZOrderCommand({ order, selected: ["B"], command: "front", zOrders: first });
+    expect(sortIdsByZOrder(order, second)).toEqual(["C", "A", "B"]);
+  });
+
+  it("导出 SVG 的节点绘制顺序跟随层级", () => {
+    const source = "flowchart TD\n  A[甲]\n  B[乙]\n";
+    const zOrders = applyZOrderCommand({ order: ["A", "B"], selected: ["A"], command: "front" });
+    const svg = graphToSvg(source, { zOrders })!;
+    expect(svg).toContain('data-node-id="A"');
+    expect(svg.indexOf('data-node-id="B"')).toBeLessThan(svg.indexOf('data-node-id="A"'));
+    // 默认次序下 A 先画
+    const plain = graphToSvg(source)!;
+    expect(plain.indexOf('data-node-id="A"')).toBeLessThan(plain.indexOf('data-node-id="B"'));
+  });
+
+  it("层级随 overlay 一起做稳定过滤与改名迁移", () => {
+    const source = "flowchart TD\n  A[甲]\n  B[乙]\n";
+    const filtered = filterStableOverlay(source, { zOrders: { A: 1, B: 0, Ghost: 9 } });
+    expect(filtered?.zOrders).toEqual({ A: 1, B: 0 });
   });
 });

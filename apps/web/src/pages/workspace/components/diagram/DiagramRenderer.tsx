@@ -23,6 +23,8 @@ type RendererOverlay = {
     sourceHandle?: string | null;
     targetHandle?: string | null;
   }> | null;
+  /** 元素层级(越大越靠上);与位置/样式同属视觉 overlay。 */
+  zOrders?: Record<string, number> | null;
 };
 
 export interface DiagramRendererProps {
@@ -108,10 +110,19 @@ function normalizeOverlay(overlay: RendererOverlay | null | undefined): DiagramO
   const out: DiagramOverlay = {
     ...(overlay.positions ? { positions: overlay.positions } : {}),
     ...(overlay.styles ? { styles: mapStyleRecord(overlay.styles) } : {}),
+    ...(overlay.zOrders ? { zOrders: mapNumberRecord(overlay.zOrders) } : {}),
     ...(overlay.edgeStyles ? { edgeStyles: mapStyleRecord(overlay.edgeStyles) } : {}),
     ...(overlay.edgeHandles ? { edgeHandles: mapHandleRecord(overlay.edgeHandles) } : {}),
   };
-  return out.positions || out.styles || out.edgeStyles || out.edgeHandles ? out : null;
+  return out.positions || out.styles || out.zOrders || out.edgeStyles || out.edgeHandles ? out : null;
+}
+
+function mapNumberRecord(record: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, value] of Object.entries(record)) {
+    if (typeof value === "number" && Number.isFinite(value)) out[id] = value;
+  }
+  return out;
 }
 
 function mapStyleRecord<T extends Record<string, string | number | null | undefined>>(

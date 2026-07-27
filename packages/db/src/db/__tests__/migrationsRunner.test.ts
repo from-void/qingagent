@@ -268,4 +268,28 @@ describe("迁移前自动备份", () => {
     expect(baks.some((f) => f.includes("20260101000001"))).toBe(false);
     void client;
   });
+
+  it("跨版本位数时按时间裁剪且保留本次迁移前备份", async () => {
+    const dir = db.tempDir;
+    const migrations: Migration[] = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      name: `migration_${index + 1}`,
+      up: async () => {},
+    }));
+    await runMigrations(migrations.slice(0, 9));
+    const dbBase = "documents.db";
+    for (const ts of ["20250101000001", "20250101000002", "20250101000003"]) {
+      writeFileSync(join(dir, `${dbBase}.bak-pre-v9-${ts}`), "old");
+    }
+
+    const result = await runMigrations(migrations);
+
+    expect(result.backupPath).toMatch(/\.bak-pre-v10-\d{14}$/);
+    expect(existsSync(result.backupPath as string)).toBe(true);
+    const baks = readdirSync(dir)
+      .filter((name) => name.startsWith(`${dbBase}.bak-pre-v`))
+      .filter((name) => !name.endsWith("-wal") && !name.endsWith("-shm"));
+    expect(baks).toHaveLength(3);
+    expect(baks.some((name) => name.endsWith("20250101000001"))).toBe(false);
+  });
 });

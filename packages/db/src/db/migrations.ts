@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Client } from "@libsql/client";
@@ -177,17 +177,37 @@ async function backupBeforeMigrate(
     if (existsSync(side)) copyFileSync(side, `${backupPath}${ext}`);
   }
   pruneOldBackups(dir, base);
+  if (!existsSync(backupPath)) {
+    throw new Error(`迁移前备份裁剪异常：本次备份未保留（${path.basename(backupPath)}）`);
+  }
   return backupPath;
 }
 
-/** 只保留最近 BACKUP_RETAIN 份备份(按文件名内时间戳字典序),连同 -wal/-shm 一起删。 */
+/** 只保留最近 BACKUP_RETAIN 份备份(按时间戳、版本、mtime 排序),连同 -wal/-shm 一起删。 */
 function pruneOldBackups(dir: string, base: string): void {
   const prefix = `${base}.bak-pre-v`;
   const mains = readdirSync(dir)
-    .filter((f) => f.startsWith(prefix) && !f.endsWith("-wal") && !f.endsWith("-shm"))
-    .sort(); // yyyyMMddHHmmss 字典序即时间序
+    .flatMap((name) => {
+      const match = name.slice(prefix.length).match(/^(\d+)-(\d{14})$/);
+      if (!name.startsWith(prefix) || !match) return [];
+      const versionText = match[1];
+      const timestamp = match[2];
+      if (!versionText || !timestamp) return [];
+      return [{
+        name,
+        version: Number(versionText),
+        timestamp,
+        mtimeMs: statSync(path.join(dir, name)).mtimeMs,
+      }];
+    })
+    .sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp) ||
+      a.version - b.version ||
+      a.mtimeMs - b.mtimeMs ||
+      a.name.localeCompare(b.name),
+    );
   const stale = mains.slice(0, Math.max(0, mains.length - BACKUP_RETAIN));
-  for (const name of stale) {
+  for (const { name } of stale) {
     for (const ext of ["", "-wal", "-shm"]) {
       const target = path.join(dir, `${name}${ext}`);
       if (existsSync(target)) rmSync(target, { force: true });

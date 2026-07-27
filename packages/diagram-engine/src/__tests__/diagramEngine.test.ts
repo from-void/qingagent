@@ -831,6 +831,80 @@ describe("diagram-engine", () => {
     expect(Object.keys(filtered ?? {})).toEqual(["edgeHandles"]);
   });
 
+  it("flowchart 边标签、箭头或端点变化后迁移 edgeStyles 与 edgeHandles", () => {
+    const cases: Array<{
+      source: string;
+      op: (edgeId: string) => Parameters<typeof applyEdit>[1];
+    }> = [
+      {
+        source: "flowchart TD\n  A --> B\n",
+        op: (edgeId) => ({ kind: "setEdgeLabel", edgeId, label: "通过" }),
+      },
+      {
+        source: "flowchart TD\n  A --> B\n",
+        op: (edgeId) => ({ kind: "setEdgeArrow", edgeId, direction: "both", lineStyle: "dotted" }),
+      },
+      {
+        source: "flowchart TD\n  A --> B\n  C\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "C" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const beforeEdge = edge(parseDiagram(item.source).model as FlowGraph);
+      const overlay = {
+        edgeStyles: { [beforeEdge.id]: { stroke: "#d14", strokeWidth: 3 } },
+        edgeHandles: { [beforeEdge.id]: { sourceHandle: "r", targetHandle: "l" } },
+      };
+      const changed = applyEdit(item.source, item.op(beforeEdge.id));
+      expect(changed.ok).toBe(true);
+      const afterEdge = edge(parseDiagram(changed.source).model as FlowGraph);
+      expect(afterEdge.id).not.toBe(beforeEdge.id);
+      expect(changed.idMap?.edges?.[beforeEdge.id]).toBe(afterEdge.id);
+      expect(carryOverDiagramOverlay(item.source, overlay, changed.source, changed.idMap)).toEqual({
+        edgeStyles: { [afterEdge.id]: { stroke: "#d14", strokeWidth: 3 } },
+        edgeHandles: { [afterEdge.id]: { sourceHandle: "r", targetHandle: "l" } },
+      });
+    }
+  });
+
+  it("state、ER、class 边重连后返回身份映射并保留 overlay", () => {
+    const cases: Array<{
+      source: string;
+      op: (edgeId: string) => Parameters<typeof applyEdit>[1];
+    }> = [
+      {
+        source: "stateDiagram-v2\n  Open --> Closed : close\n  Done\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "Done" }),
+      },
+      {
+        source: "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ARCHIVE\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "ARCHIVE" }),
+      },
+      {
+        source: "classDiagram\n  Animal <|-- Duck\n  class Bird\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newSource: "Bird" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const beforeEdge = edge(parseDiagram(item.source).model as StateGraph | ErGraph | ClassGraph);
+      const overlay = {
+        edgeStyles: { [beforeEdge.id]: { stroke: "#d14" } },
+        edgeHandles: { [beforeEdge.id]: { sourceHandle: "b", targetHandle: "t" } },
+      };
+      const changed = applyEdit(item.source, item.op(beforeEdge.id));
+      expect(changed.ok).toBe(true);
+      const afterEdge = edge(parseDiagram(changed.source).model as StateGraph | ErGraph | ClassGraph);
+      expect(afterEdge.id).not.toBe(beforeEdge.id);
+      expect(changed.idMap?.edges?.[beforeEdge.id]).toBe(afterEdge.id);
+      expect(carryOverDiagramOverlay(item.source, overlay, changed.source, changed.idMap)).toEqual({
+        edgeStyles: { [afterEdge.id]: { stroke: "#d14" } },
+        edgeHandles: { [afterEdge.id]: { sourceHandle: "b", targetHandle: "t" } },
+      });
+    }
+  });
+
   it("flowchart 平行边 id 稳定且可区分", () => {
     const source = "flowchart TD\n  X --> Y\n  A --> B\n  A --> B\n";
     const parsed = parseDiagram(source).model as FlowGraph;

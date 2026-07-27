@@ -1614,7 +1614,12 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     const nextSource = op.newSource ?? edge.source;
     const nextTarget = op.newTarget ?? edge.target;
     const replacement = `  ${nextSource} ${edge.syntaxKind}${edge.label ? `|${safeMermaidLabel(edge.label)}|` : ""} ${nextTarget}${line.endsWith("\n") ? "\n" : ""}`;
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: replacement }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: replacement }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "setEdgeLabel") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
@@ -1622,13 +1627,18 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     const validationError = validateFlowEdgeLabel(nextLabel);
     if (validationError) return { ok: false, source, error: validationError };
     const rewrite = rewriteFlowEdgeLabel(source, edge, nextLabel);
-    return rewrite ? { ok: true, source: rewrite } : { ok: false, source, error: "边标签无法干净回写" };
+    return rewrite ? edgeRewriteResult(source, rewrite, model.type, edge) : { ok: false, source, error: "边标签无法干净回写" };
   }
   if (op.kind === "setEdgeArrow") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
     if (!edge.syntaxSpan) return { ok: false, source, error: "边箭头无法干净回写" };
     const nextToken = flowArrowToken(op.direction, op.lineStyle ?? edge.lineStyle ?? "solid");
-    return { ok: true, source: applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label));
@@ -2150,7 +2160,12 @@ function rewriteState(source: string, p: ParseResult, op: EditOp): RewriteResult
     const endpointError = reconnectEndpointError(model.nodes.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} --> ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} --> ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label, "state"));
@@ -2305,7 +2320,12 @@ function rewriteEr(source: string, p: ParseResult, op: EditOp): RewriteResult {
     const endpointError = reconnectEndpointError(model.entities.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.entities.map((n) => n.id), safeMermaidId(op.label, "entity").toUpperCase());
@@ -2436,7 +2456,12 @@ function rewriteClass(source: string, p: ParseResult, op: EditOp): RewriteResult
     const endpointError = reconnectEndpointError(model.classes.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.classes.map((n) => n.id), safeMermaidId(op.label, "Class"));
@@ -3469,6 +3494,23 @@ function insertBeforeSourceEnd(source: string, text: string): string {
 
 function unsupportedRewrite(source: string, op: string): RewriteResult {
   return { ok: false, source, error: `${op} 不支持当前图类型` };
+}
+
+function edgeRewriteResult(
+  originalSource: string,
+  nextSource: string,
+  diagramType: DiagramType,
+  oldEdge: BaseEdge,
+): RewriteResult {
+  const reparsed = parseDiagram(nextSource);
+  if (!reparsed.ok || reparsed.model.type !== diagramType) {
+    return { ok: false, source: originalSource, error: reparsed.error ?? "边改写后无法重新解析" };
+  }
+  const nextEdge = modelEdges(reparsed.model).find((edge) => edge.orderIndex === oldEdge.orderIndex);
+  if (!nextEdge) return { ok: false, source: originalSource, error: "边改写后无法重新定位" };
+  return nextEdge.id === oldEdge.id
+    ? { ok: true, source: nextSource }
+    : { ok: true, source: nextSource, idMap: { edges: { [oldEdge.id]: nextEdge.id } } };
 }
 
 function createEdgeIdFactory(prefix: string): EdgeIdFactory {

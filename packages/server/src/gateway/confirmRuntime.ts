@@ -36,6 +36,7 @@ export interface ConfirmRuntimeDependencies {
   persistTimeoutMs?: number;
   /** 决策完成上下文校验后执行；失败只放弃记忆，不能吞掉用户本次决策。 */
   onAccepted?: (pending: PendingConfirm) => Promise<ConfirmGrant | null>;
+  buildResumeTools?: typeof buildResumeTools;
   declineTimeoutMs?: number;
 }
 
@@ -344,23 +345,91 @@ export async function* handleConfirmDecision(
   const session = await (dependencies.getSession ?? defaultGetSession)(submission.sessionId);
   if (!session) throw new ConfirmDecisionError("not_found", "没有可处理的确认请求");
 
-  const begun = await service.beginDecision(session, submission);
+  // beginDecision 会先把确认持久化为 resuming；记忆授权也可能访问外部存储。
+  // controller 必须在这些等待之前挂到 session，才能让 stop/删除打断 Actor。
+  const preparationController = new AbortController();
+  const previousPreparationAbortController = session._abortController;
+  const previousPreparationActiveTurnPromise = session._activeTurnPromise;
+  const preparationCompletion = createCompletion();
+  session._abortController = preparationController;
+  session._activeTurnPromise = preparationCompletion.promise;
+
+  let begun: Awaited<ReturnType<ConfirmService["beginDecision"]>>;
+  try {
+    begun = await withWallClockTimeout(
+      Promise.resolve().then(() => service.beginDecision(session, submission)),
+      preparationController,
+      resumeTimeoutMs,
+      "confirm beginDecision",
+    );
+    if (!begun.idempotent && submission.decision.accepted && dependencies.onAccepted) {
+      try {
+        const grant = await withWallClockTimeout(
+          Promise.resolve().then(() => dependencies.onAccepted!(begun.pending)),
+          preparationController,
+          resumeTimeoutMs,
+          "confirm onAccepted",
+        );
+        if (grant) service.attachRememberedGrant(begun.pending, grant);
+      } catch (error) {
+        if (preparationController.signal.aborted) throw error;
+        console.error("[confirm] remember grant persistence failed; decision continues", {
+          sessionId: session.sessionId,
+          confirmId: begun.pending.confirmId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } catch (error) {
+    const interruptedPending = session.pendingConfirms.get(submission.toolCallId);
+    if (
+      interruptedPending?.status === "resuming" &&
+      interruptedPending.decisionId === submission.decisionId
+    ) {
+      service.failDecisionInMemory(session, interruptedPending);
+      const reason = "确认恢复失败，命令未执行";
+      const failed = failConfirmedToolCall(session, interruptedPending.toolCallId, reason);
+      if (failed) {
+        yield {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: failed.messageId,
+            toolCallId: interruptedPending.toolCallId,
+            spec: failed.spec,
+          },
+        };
+      }
+      yield service.resolvedFrame(interruptedPending, "failed", reason);
+      await Promise.all([
+        persistWithDeadline(
+          session,
+          "confirm:failed:preparation",
+          () => service.persistDecisionState(session, "confirm:failed"),
+          persistTimeoutMs,
+        ),
+        settleOnceWithDeadline(
+          () => service.recordDecisionFailed(session, interruptedPending),
+          persistTimeoutMs,
+          "confirm:audit:failed:preparation",
+        ),
+      ]);
+      return;
+    }
+    throw error;
+  } finally {
+    preparationCompletion.resolve();
+    if (session._activeTurnPromise === preparationCompletion.promise) {
+      session._activeTurnPromise = previousPreparationActiveTurnPromise;
+    }
+    if (session._abortController === preparationController) {
+      session._abortController = previousPreparationAbortController;
+    }
+  }
+
   if (begun.idempotent) return;
   const { pending, resolution } = begun;
   if (resolution !== "accepted" && resolution !== "rejected") {
     throw new ConfirmDecisionError("invalid", "确认决策结果无效");
-  }
-  if (submission.decision.accepted && dependencies.onAccepted) {
-    try {
-      const grant = await dependencies.onAccepted(pending);
-      if (grant) service.attachRememberedGrant(pending, grant);
-    } catch (error) {
-      console.error("[confirm] remember grant persistence failed; decision continues", {
-        sessionId: session.sessionId,
-        confirmId: pending.confirmId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   const streamId = crypto.randomUUID();
@@ -410,7 +479,14 @@ export async function* handleConfirmDecision(
 
   try {
     yield { kind: "stream", data: { kind: "start", data: { streamId } } };
-    const toolsets = await buildResumeTools(session);
+    const toolsets = await withWallClockTimeout(
+      Promise.resolve().then(
+        () => (dependencies.buildResumeTools ?? buildResumeTools)(session),
+      ),
+      abortController,
+      resumeTimeoutMs,
+      "confirm buildResumeTools",
+    );
     if (
       submission.decision.accepted &&
       pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND

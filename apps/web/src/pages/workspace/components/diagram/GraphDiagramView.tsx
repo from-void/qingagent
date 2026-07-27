@@ -3862,7 +3862,8 @@ function ToolbarDropdownButton({
     >
       {iconNode ?? <GraphIcon name={icon} color={swatchColor} />}
       {valueLabel ? <span className="graph-diagram-toolbar__value">{valueLabel}</span> : null}
-      <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
+      {/* 「…」溢出钮本身就是"更多"的语义,再挂一个下拉尖角是重复噪点。 */}
+      {icon === "more" ? null : <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>}
     </button>
   );
 }
@@ -4052,40 +4053,42 @@ function SwatchPalette({
 }) {
   const opaqueValue = toOpaqueHex(value);
   const isNone = colorOpacityPercent(value) === 0;
+  // 色样直接复用正文工具栏的 dt-swatch 体系(正圆色块 + 22px 网格 + 同一套 hover/焦点态),
+  // 图表这边只补"当前选中"的描边,不再自造一套色样样式。
   return (
     <div className="graph-diagram-swatch-panel" aria-label={`${label}色板`}>
       {rows.map((row, rowIndex) => (
-        <div className="graph-diagram-swatch-row" key={`row-${rowIndex}`}>
+        <div className="dt-swatch-grid" key={`row-${rowIndex}`}>
           {rowIndex === 0 && noneLabel && onSelectNone ? (
             <button
               type="button"
-              className={classNames("graph-diagram-swatch graph-diagram-swatch--none", isNone && "is-active")}
+              className={classNames("dt-swatch dt-swatch-clear", isNone && "is-active")}
               disabled={disabled}
               aria-label={noneLabel}
               aria-pressed={isNone}
               title={noneLabel}
               onClick={onSelectNone}
             >
-              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M3 13 13 3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-              </svg>
+              <span className="dt-color-none" />
             </button>
           ) : null}
           {row.map((color) => (
             <button
               key={color}
               type="button"
-              className={classNames("graph-diagram-swatch", !isNone && opaqueValue === color && "is-active")}
-              style={{ background: color }}
+              className={classNames("dt-swatch", !isNone && opaqueValue === color && "is-active")}
               disabled={disabled}
               aria-label={`${label} ${color}`}
               aria-pressed={!isNone && opaqueValue === color}
+              title={color}
               onClick={() => onSelect(color)}
-            />
+            >
+              <span className="dt-swatch-chip" style={{ background: color, borderColor: color }} />
+            </button>
           ))}
           {rowIndex === rows.length - 1 ? (
-            <label className="graph-diagram-swatch graph-diagram-swatch--custom" title="自定义颜色">
-              <span aria-hidden="true">+</span>
+            <label className="dt-swatch graph-diagram-swatch-custom" title="自定义颜色">
+              <span className="dt-swatch-chip" aria-hidden="true">+</span>
               <input
                 type="color"
                 aria-label={label}
@@ -4320,17 +4323,26 @@ function ColorControl({
             onChange={(event) => applyColor(event.currentTarget.value)}
           />
         </label>
-        <div className="graph-diagram-swatch-group">
+        {/* 分区/连线/文字弹层的色样同样走 dt-swatch 体系,全站只维护一套色样样式。 */}
+        <div className="dt-swatch-grid">
           {swatches.map((color) => (
             <button
               key={color}
               type="button"
-              className="graph-diagram-swatch"
-              style={{ background: withColorOpacity(color, opacityLabel ? opacityPercent : 100) }}
+              className={classNames("dt-swatch", toOpaqueHex(value) === color && "is-active")}
               disabled={disabled}
               aria-label={`${label} ${color}`}
+              title={color}
               onClick={() => applyColor(color)}
-            />
+            >
+              <span
+                className="dt-swatch-chip"
+                style={{
+                  background: withColorOpacity(color, opacityLabel ? opacityPercent : 100),
+                  borderColor: color,
+                }}
+              />
+            </button>
           ))}
         </div>
       </div>

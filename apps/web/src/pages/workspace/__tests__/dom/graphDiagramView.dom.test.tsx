@@ -13,6 +13,7 @@ import { ToastProvider } from "../../../../system/ToastProvider";
 import { DiagramRenderer } from "../../components/diagram/DiagramRenderer";
 const graphDiagramCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/graphDiagram.css"), "utf8");
 const graphDiagramSource = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/GraphDiagramView.tsx"), "utf8");
+const workspaceCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
 const diagramViewCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/DiagramView.css"), "utf8");
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1887,7 +1888,7 @@ flowchart LR
       .map((button) => button.getAttribute("aria-label"))).toEqual(["无边框", "实线", "虚线", "点线"]);
     expect(Array.from(borderPopover.querySelectorAll<HTMLElement>("[aria-label='边框粗细'] .graph-diagram-option-btn"))
       .map((button) => button.getAttribute("aria-label"))).toEqual(["边框粗细 1px", "边框粗细 2px", "边框粗细 3px", "边框粗细 4px"]);
-    expect(borderPopover.querySelectorAll("[aria-label='边框色色板'] .graph-diagram-swatch-row")).toHaveLength(2);
+    expect(borderPopover.querySelectorAll("[aria-label='边框色色板'] .dt-swatch-grid")).toHaveLength(2);
     expect(borderPopover.querySelector(".graph-diagram-popover__divider")).not.toBeNull();
     expect(borderPopover.querySelector("input[aria-label='边框粗细(px)']")).toBeNull();
     await click(borderPopover.querySelector<HTMLButtonElement>("[aria-label='边框粗细 4px']")!);
@@ -1932,7 +1933,7 @@ flowchart LR
     const editor = await openEditor();
     await click(findNode("开始", editor));
     const popover = await openToolbarMenu("填充", editor);
-    const rows = popover.querySelectorAll("[aria-label='填充色色板'] .graph-diagram-swatch-row");
+    const rows = popover.querySelectorAll("[aria-label='填充色色板'] .dt-swatch-grid");
     expect(rows).toHaveLength(2);
     // 首格是"无填充"(斜杠图标),末位是"+"自定义色
     expect(rows[0]!.firstElementChild?.getAttribute("aria-label")).toBe("无填充");
@@ -2425,6 +2426,70 @@ flowchart LR
     await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"], edgeIds: [edgeId] });
     await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"], edgeIds: [edgeId] });
     expect(editor.querySelectorAll(".graph-diagram-context").length).toBe(before);
+  });
+
+  it("弹层色样复用正文工具栏 dt-swatch 体系,不再自造一套色样样式", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findNode("开始", editor));
+    const popover = await openToolbarMenu("填充", editor);
+    const swatches = Array.from(popover.querySelectorAll<HTMLElement>(".dt-swatch"));
+    // 每行 7 格:首行「无填充」+6 色,次行 6 色 + 自定义
+    expect(popover.querySelectorAll(".dt-swatch-grid")).toHaveLength(2);
+    expect(swatches.length).toBe(14);
+    expect(swatches.every((item) => !!item.querySelector(".dt-swatch-chip, .dt-color-none"))).toBe(true);
+    expect(popover.querySelector("[aria-label='无填充'] .dt-color-none")).not.toBeNull();
+    expect(popover.querySelector(".graph-diagram-swatch-custom input[type='color']")).not.toBeNull();
+    // 图表侧不再重复定义色样几何,只补选中描边;基础规格在 workspace.css 单点维护
+    expect(graphDiagramCss).not.toMatch(/^\.graph-diagram-swatch\s*\{/m);
+    expect(graphDiagramCss).not.toContain(".graph-diagram-swatch--none");
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-editor \.dt-swatch\.is-active \.dt-swatch-chip/);
+    expect(workspaceCss).toMatch(/\.graph-diagram-editor \.dt-swatch\{/);
+    expect(workspaceCss).toMatch(/\.graph-diagram-editor \.dt-swatch-chip\{/);
+  });
+
+  it("resize/hover 全程无红色分量:阴影色不参与会越色域的插值", () => {
+    // filter 过渡按 oklab 插值,端点若是 color-mix(..., transparent),中间帧会算出越出 sRGB 的值
+    // (实测 oklab(1 3.82 1.89)),渲染成粉红外发光,松手即消失。阴影色一律写显式 rgba。
+    const dropShadows = graphDiagramCss.match(/drop-shadow\([^;]*\)/g) ?? [];
+    expect(dropShadows.length).toBeGreaterThan(0);
+    expect(dropShadows.some((item) => item.includes("color-mix"))).toBe(false);
+    for (const shadow of dropShadows) {
+      const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(shadow);
+      if (!rgb) continue;
+      const [r, g, b] = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+      // 金墨阴影:红分量不得显著压过绿蓝(排除任何红/粉系)
+      expect(r - g).toBeLessThan(60);
+      expect(r - b).toBeLessThan(140);
+    }
+  });
+
+  it("工具栏三处打磨:色样触发钮放大、溢出钮无尖角、形状钮图形居中", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findNode("开始", editor));
+    const more = findToolbarButton("…更多", editor);
+    expect(more.querySelector(".graph-diagram-toolbar__caret")).toBeNull();
+    expect(findToolbarButton("填充", editor).querySelector(".graph-diagram-toolbar__caret")).not.toBeNull();
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram-toolbar__button \.graph-diagram-icon:has\(\.graph-diagram-icon__color-sample\)\s*\{[^}]*width:\s*20px;/s,
+    );
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-icon__color-sample--fill\s*\{\s*r:\s*9;/s);
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram-toolbar__button:has\(\.graph-diagram-shape-glyph\)\s*\{[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s,
+    );
   });
 
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {

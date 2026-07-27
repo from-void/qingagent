@@ -1,7 +1,7 @@
 {
   "file": "apps/web/src/pages/workspace/workspace.css",
-  "sha256": "49436ac87f23b7c3e9c5f717388e00e9d98360dd7514d3eb6a3ef8022bcd06e3",
-  "lineCount": 3592,
+  "sha256": "cc0947f797a1dfa19fb5e9cab152c3981d71197248fa2c8a8b3375b9646d4cc8",
+  "lineCount": 3599,
   "selectors": [
     ".wf-doc",
     ".dt-btn",

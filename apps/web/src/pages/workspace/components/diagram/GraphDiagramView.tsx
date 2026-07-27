@@ -355,6 +355,9 @@ const DIRECTION_HANDLES: Record<GraphDirection, {
 };
 
 const NODE_SHAPE_VIEWBOX = `0 0 ${NODE_WIDTH} ${NODE_HEIGHT}`;
+// 手型钮提示条与按钮的间距,以及靠边内收时与视口的最小间距。
+const PAN_TIP_GAP = 10;
+const PAN_TIP_EDGE_GAP = 12;
 // 粘贴副本相对原件的整体偏移。
 const PASTE_OFFSET = 16;
 // 工具栏与元素的常态间距:只让开外侧圆点/加号那一圈。
@@ -1092,6 +1095,50 @@ function GraphViewportControls({
     event.stopPropagation();
   };
   const fit = () => void rf.fitView({ padding: 0.15, maxZoom: 1, duration: 160 });
+  // 手型钮提示条:控件组为了做圆角药丸带 overflow:hidden,提示条挂在组里必被裁掉(真机不可见)。
+  // 改成挂 body 的定位浮层,向上展开并按视口收边。
+  const panButtonRef = useRef<HTMLButtonElement | null>(null);
+  const panTipRef = useRef<HTMLDivElement | null>(null);
+  const [panTipAnchor, setPanTipAnchor] = useState<{ left: number; top: number } | null>(null);
+  const showPanTip = () => {
+    const rect = panButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPanTipAnchor({ left: rect.left + rect.width / 2, top: rect.top - PAN_TIP_GAP });
+  };
+  const hidePanTip = () => setPanTipAnchor(null);
+  useEffect(() => {
+    if (!panTipAnchor) return;
+    const tip = panTipRef.current;
+    if (!tip || typeof window === "undefined") return;
+    // 靠边自动内收:提示条以自身中心对齐按钮,越界时把中心点拉回视口内。
+    const half = tip.offsetWidth / 2;
+    const min = PAN_TIP_EDGE_GAP + half;
+    const max = window.innerWidth - PAN_TIP_EDGE_GAP - half;
+    const clamped = clamp(panTipAnchor.left, Math.min(min, max), Math.max(min, max));
+    if (Math.abs(clamped - panTipAnchor.left) > 0.5) {
+      setPanTipAnchor({ left: clamped, top: panTipAnchor.top });
+    }
+  }, [panTipAnchor]);
+  const panTip = panTipAnchor && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={panTipRef}
+          className="graph-diagram-pan-tip"
+          role="tooltip"
+          style={{ left: panTipAnchor.left, top: panTipAnchor.top }}
+        >
+          移动画布
+          <kbd>H</kbd>
+          <span className="graph-diagram-pan-tip__sep">·</span>
+          <kbd>空格</kbd>
+          <span className="graph-diagram-pan-tip__plus">+</span>
+          拖拽
+          <span className="graph-diagram-pan-tip__sep">·</span>
+          右键拖拽
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <div className="graph-diagram-viewport-controls" aria-label="画布视图控件">
@@ -1121,30 +1168,22 @@ function GraphViewportControls({
       ) : null}
       <div className="graph-diagram-viewport-controls__group" role="group" aria-label="缩放与平移">
         {onPanModeChange ? (
-          <div className="graph-diagram-viewport-controls__tipwrap">
-            <button
-              type="button"
-              className={classNames(panMode && "is-active")}
-              aria-label="移动画布"
-              aria-pressed={panMode}
-              aria-keyshortcuts="H"
-              onMouseDown={stop}
-              onClick={() => onPanModeChange(!panMode)}
-            >
-              <CanvasToolIcon name="hand" />
-            </button>
-            {/* 悬浮提示条:黑底 + 键帽,替代原生 title(原生 tooltip 延迟长、样式不可控)。 */}
-            <span className="graph-diagram-pan-tip" role="tooltip">
-              移动画布
-              <kbd>H</kbd>
-              <span className="graph-diagram-pan-tip__sep">·</span>
-              <kbd>空格</kbd>
-              <span className="graph-diagram-pan-tip__plus">+</span>
-              拖拽
-              <span className="graph-diagram-pan-tip__sep">·</span>
-              右键拖拽
-            </span>
-          </div>
+          <button
+            ref={panButtonRef}
+            type="button"
+            className={classNames(panMode && "is-active")}
+            aria-label="移动画布"
+            aria-pressed={panMode}
+            aria-keyshortcuts="H"
+            onMouseDown={stop}
+            onMouseEnter={showPanTip}
+            onMouseLeave={hidePanTip}
+            onFocus={showPanTip}
+            onBlur={hidePanTip}
+            onClick={() => onPanModeChange(!panMode)}
+          >
+            <CanvasToolIcon name="hand" />
+          </button>
         ) : null}
         <button
           type="button"
@@ -1175,6 +1214,7 @@ function GraphViewportControls({
           <CanvasToolIcon name="zoom-in" />
         </button>
       </div>
+      {panTip}
     </div>
   );
 }

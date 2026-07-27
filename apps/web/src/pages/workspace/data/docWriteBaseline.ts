@@ -81,3 +81,26 @@ export function isEmptyScaffoldConflict(input: {
     (!input.queuedDoc || !pmDocHasSubstantiveContent(input.queuedDoc)),
   );
 }
+
+/**
+ * 这次文档冲突是不是"被自己上一笔写入推进的"。
+ * 图表可视化写回(立即发)与正文防抖保存(400ms)会互相追尾:后发的那笔基线取自更早的版本,
+ * 服务端现版本恰好等于本标签自己刚拿到回执的版本。这种自冲突只是基线取早了,
+ * 用自己上一笔的内容当基线重发即可,不该弹"文档已被更新"打断用户;
+ * 服务端版本若是本标签从未产出过的,才是真外部并发,保留原有提示。
+ */
+export function isSelfCausedDocWriteConflict(input: {
+  conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } | null;
+  isLatestOwnMutation: boolean;
+  hasSubmittedDoc: boolean;
+  lastSelfAckedDocVersion: number | null;
+  lastSelfAckedDocPresent: boolean;
+  alreadyReplayed: boolean;
+}): boolean {
+  const { conflict } = input;
+  if (!conflict || !input.isLatestOwnMutation || input.alreadyReplayed) return false;
+  if (!input.hasSubmittedDoc || !input.lastSelfAckedDocPresent) return false;
+  if (input.lastSelfAckedDocVersion === null) return false;
+  if (conflict.actualDocumentSnapshot !== input.lastSelfAckedDocVersion) return false;
+  return conflict.expectedDocumentSnapshot < conflict.actualDocumentSnapshot;
+}

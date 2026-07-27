@@ -4,6 +4,7 @@ import {
   EMPTY_PM_DOC_CONTENT_HASH,
   canonicalDocWriteBaseline,
   isEmptyScaffoldConflict,
+  isSelfCausedDocWriteConflict,
   type DocWriteBaseline,
 } from "./docWriteBaseline";
 import { pmDocToViewDocumentSnapshot } from "./protocol";
@@ -146,5 +147,44 @@ describe("canonicalDocWriteBaseline", () => {
     );
     expect(baseline.expectedDocumentSnapshot).toBe(2);
     expect(baseline.baseHasSubstantiveContent).toBe(false);
+  });
+});
+
+describe("isSelfCausedDocWriteConflict", () => {
+  const base = {
+    conflict: { expectedDocumentSnapshot: 7, actualDocumentSnapshot: 8 },
+    isLatestOwnMutation: true,
+    hasSubmittedDoc: true,
+    lastSelfAckedDocVersion: 8,
+    lastSelfAckedDocPresent: true,
+    alreadyReplayed: false,
+  };
+
+  it("服务端现版本正是自己上一笔写出的版本时判为自冲突(静默重放)", () => {
+    // 图表可视化写回立即发、正文防抖保存 400ms 后发,后者基线取自更早版本→追尾。
+    expect(isSelfCausedDocWriteConflict(base)).toBe(true);
+  });
+
+  it("服务端版本不是自己产出的(真外部并发)时保留原有提示", () => {
+    expect(isSelfCausedDocWriteConflict({ ...base, lastSelfAckedDocVersion: 6 })).toBe(false);
+    expect(isSelfCausedDocWriteConflict({ ...base, lastSelfAckedDocVersion: null })).toBe(false);
+  });
+
+  it("同一笔只重放一次,不打转", () => {
+    expect(isSelfCausedDocWriteConflict({ ...base, alreadyReplayed: true })).toBe(false);
+  });
+
+  it("缺少可重放内容或不是本标签最新一笔时不重放", () => {
+    expect(isSelfCausedDocWriteConflict({ ...base, hasSubmittedDoc: false })).toBe(false);
+    expect(isSelfCausedDocWriteConflict({ ...base, lastSelfAckedDocPresent: false })).toBe(false);
+    expect(isSelfCausedDocWriteConflict({ ...base, isLatestOwnMutation: false })).toBe(false);
+    expect(isSelfCausedDocWriteConflict({ ...base, conflict: null })).toBe(false);
+  });
+
+  it("基线版本不低于服务端版本(非追尾)不走重放", () => {
+    expect(isSelfCausedDocWriteConflict({
+      ...base,
+      conflict: { expectedDocumentSnapshot: 8, actualDocumentSnapshot: 8 },
+    })).toBe(false);
   });
 });

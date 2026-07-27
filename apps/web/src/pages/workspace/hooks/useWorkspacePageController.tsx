@@ -109,7 +109,11 @@ import {
   shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
 } from "../data/docWriteResultOwnership";
-import { EMPTY_PM_DOC_CONTENT_HASH, isEmptyScaffoldConflict } from "../data/docWriteBaseline";
+import {
+  EMPTY_PM_DOC_CONTENT_HASH,
+  isEmptyScaffoldConflict,
+  isSelfCausedDocWriteConflict,
+} from "../data/docWriteBaseline";
 import type { DocWriteBaseline } from "../data/docWriteBaseline";
 import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import type {
@@ -591,6 +595,11 @@ export function useWorkspacePageController() {
   // 空脚手架旧写冲突后，临时允许 startSession(existing) 的权威恢复帧覆盖该空稿。
   // 非空用户输入不进入此通道，继续沿用 dirty 冲突保留路径。
   const docConflictReconcileSessionRef = useRef<string | null>(null);
+  // 本标签自己写出来的最新版本与内容:用于识别"冲突其实是被自己上一笔推进的",
+  // 这种自冲突(图表可视化写回与正文防抖保存互相追尾)可以静默改基线重放,不该打扰用户。
+  const lastSelfAckedDocVersionRef = useRef<number | null>(null);
+  const lastSelfAckedPmDocRef = useRef<PmDoc | null>(null);
+  const selfRebasedMutationIdsRef = useRef<Set<string>>(new Set());
   const presentationRunSeqRef = useRef(0);
   const sawDraftingRef = useRef(false);
   const presentedDocumentSnapshotRef = useRef<number | null>(null);
@@ -1880,8 +1889,10 @@ export function useWorkspacePageController() {
           latestDocMutationIdRef.current = null;
           if (frame.data.ok) {
             docVersionRef.current = frame.data.docVersion;
+            lastSelfAckedDocVersionRef.current = frame.data.docVersion;
             if (savedPmDoc) {
               baseContentHashRef.current = getPmContentHash(savedPmDoc);
+              lastSelfAckedPmDocRef.current = savedPmDoc;
             }
           } else if (!("conflict" in frame.data)) {
             queuedPmDocRef.current = null;
@@ -1898,6 +1909,34 @@ export function useWorkspacePageController() {
             submittedDoc: savedPmDoc,
             queuedDoc: queuedBeforeResult?.pmDoc ?? null,
           });
+        // 自冲突静默重放:服务端现版本正是本标签自己上一笔写出来的那一版,说明这笔只是
+        // 基线取早了(可视化写回与防抖保存互相追尾),不是别人在改。用自己上一笔的内容当基线
+        // 重发一次即可,用户不该看到"文档已被更新"。只重放一次,避免打转。
+        const selfCausedConflict = isSelfCausedDocWriteConflict({
+          conflict: writeConflict,
+          isLatestOwnMutation,
+          hasSubmittedDoc: savedPmDoc !== null,
+          lastSelfAckedDocVersion: lastSelfAckedDocVersionRef.current,
+          lastSelfAckedDocPresent: lastSelfAckedPmDocRef.current !== null,
+          alreadyReplayed: selfRebasedMutationIdsRef.current.has(frame.data.clientMutationId),
+        });
+        if (selfCausedConflict && writeConflict) {
+          selfRebasedMutationIdsRef.current.add(frame.data.clientMutationId);
+          const replayPmDoc = savedPmDoc!;
+          const canonical = lastSelfAckedPmDocRef.current!;
+          const replayBaseline: DocWriteBaseline = {
+            expectedDocumentSnapshot: writeConflict.actualDocumentSnapshot,
+            baseContentHash: getPmContentHash(canonical),
+            baseHasSubstantiveContent: pmDocHasSubstantiveContent(canonical),
+          };
+          ack?.resolve();
+          window.setTimeout(() => {
+            sendDocWriteRef.current(replayPmDoc, undefined, replayBaseline).catch((error) => {
+              console.error("[workspace] 自冲突重放失败", error);
+            });
+          }, 0);
+          return;
+        }
         if (silentlyReconcileEmptyConflict) {
           queuedPmDocRef.current = null;
           lastSentPmDocRef.current = null;

@@ -895,22 +895,15 @@
   cursor: pointer;
 }
 
-.graph-diagram-viewport-controls button + button,
-.graph-diagram-viewport-controls__tipwrap + button {
+.graph-diagram-viewport-controls button + button {
   border-left-color: var(--line-1);
 }
 
-.graph-diagram-viewport-controls__tipwrap {
-  position: relative;
-  display: inline-flex;
-}
-
-/* 手型按钮悬浮提示:黑底提示条 + 键帽,不占布局(绝对定位 + 不吃指针)。 */
+/* 手型按钮悬浮提示:黑底提示条 + 键帽。控件组为了圆角药丸带 overflow:hidden,提示条只能挂在
+   body 上用定位浮层,否则必被裁掉(真机不可见);层级压过全屏编辑层,不吃指针、不占布局。 */
 .graph-diagram-pan-tip {
-  position: absolute;
-  z-index: 2;
-  bottom: calc(100% + 9px);
-  left: 50%;
+  position: fixed;
+  z-index: 2147483020;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -920,10 +913,8 @@
   color: var(--ink-on-dark);
   font: 12px/1 var(--font-zh-serif);
   white-space: nowrap;
-  opacity: 0;
   pointer-events: none;
-  transform: translateX(-50%);
-  transition: opacity 0.12s ease;
+  transform: translate(-50%, -100%);
   box-shadow: 0 10px 28px rgba(20, 18, 16, 0.28);
 }
 
@@ -939,11 +930,6 @@
 .graph-diagram-pan-tip__sep,
 .graph-diagram-pan-tip__plus {
   color: rgba(255, 250, 240, 0.5);
-}
-
-.graph-diagram-viewport-controls__tipwrap:hover .graph-diagram-pan-tip,
-.graph-diagram-viewport-controls__tipwrap:focus-within .graph-diagram-pan-tip {
-  opacity: 1;
 }
 
 .graph-diagram-viewport-controls button:hover:not(:disabled),

@@ -663,9 +663,19 @@ flowchart LR
     const handButton = viewportControls.querySelector<HTMLButtonElement>("[aria-label='移动画布']")!;
     expect(handButton.getAttribute("aria-keyshortcuts")).toBe("H");
     expect(handButton.getAttribute("title")).toBeNull();
-    const panTip = viewportControls.querySelector<HTMLElement>(".graph-diagram-pan-tip")!;
+    // 提示条挂 body:控件组为了圆角药丸带 overflow:hidden,挂在组里必被裁掉(真机不可见)。
+    expect(viewportControls.querySelector(".graph-diagram-pan-tip")).toBeNull();
+    expect(document.querySelector(".graph-diagram-pan-tip")).toBeNull();
+    await mouseEvent(handButton, "mouseover");
+    const panTip = document.body.querySelector<HTMLElement>(".graph-diagram-pan-tip")!;
+    expect(panTip).not.toBeNull();
+    expect(panTip.parentElement).toBe(document.body);
     expect(panTip.textContent?.replace(/\s+/g, "")).toBe("移动画布H·空格+拖拽·右键拖拽");
     expect(Array.from(panTip.querySelectorAll("kbd")).map((item) => item.textContent)).toEqual(["H", "空格"]);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-pan-tip\s*\{[^}]*position:\s*fixed;/s);
+    expect(graphDiagramCss).not.toMatch(/\.graph-diagram-pan-tip\s*\{[^}]*opacity:\s*0;/s);
+    await mouseEvent(handButton, "mouseout");
+    expect(document.body.querySelector(".graph-diagram-pan-tip")).toBeNull();
     expect(handButton.getAttribute("aria-pressed")).toBe("false");
     await click(handButton);
     expect(handButton.getAttribute("aria-pressed")).toBe("true");

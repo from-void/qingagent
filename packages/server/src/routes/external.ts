@@ -58,8 +58,47 @@ const DEFAULT_SESSIONS_LIMIT = 100;
 const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
+const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
+
+type ReviewOutcomeCompletionResult =
+  | { status: "completed" }
+  | { status: "failed"; error: unknown }
+  | { status: "timed_out" }
+  | { status: "disconnected" };
+
+function waitForReviewOutcomeCompletion(
+  completion: Promise<LoggedFrame[]>,
+  requestSignal: AbortSignal,
+): Promise<ReviewOutcomeCompletionResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => finish({ status: "disconnected" });
+    const finish = (result: ReviewOutcomeCompletionResult) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      requestSignal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    void completion.then(
+      () => finish({ status: "completed" }),
+      (error) => finish({ status: "failed", error }),
+    );
+    if (requestSignal.aborted) {
+      finish({ status: "disconnected" });
+      return;
+    }
+    requestSignal.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(
+      () => finish({ status: "timed_out" }),
+      REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS,
+    );
+  });
+}
 
 externalRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
@@ -519,7 +558,6 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
         client,
         modelOverrides,
       }));
-      await completion;
     } catch (error) {
       if (error instanceof SessionActorQueueFullError) {
         return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
@@ -534,6 +572,32 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
         "AGENT_BUSY",
         "审查结果反馈未完成，请稍后重试",
       );
+    }
+    const completionResult = await waitForReviewOutcomeCompletion(
+      completion,
+      c.req.raw.signal,
+    );
+    if (completionResult.status === "failed") {
+      const error = completionResult.error;
+      console.warn("[external] evt=review_outcome result=failed", {
+        sessionId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      return externalError(
+        c,
+        409,
+        "AGENT_BUSY",
+        "审查结果反馈未完成，请稍后重试",
+      );
+    }
+    if (
+      completionResult.status === "timed_out" ||
+      completionResult.status === "disconnected"
+    ) {
+      console.warn("[external] evt=review_outcome result=pending", {
+        sessionId,
+        reason: completionResult.status,
+      });
     }
     outcomeQueued = true;
   }

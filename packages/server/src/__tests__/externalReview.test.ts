@@ -225,6 +225,96 @@ describe("external review", () => {
     });
   });
 
+  it("拒绝反馈 completion 永不结束时限时返回已入队回执", async () => {
+    const { sessionId } = await createPendingReview();
+    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
+    let markSubmitted!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      markSubmitted = resolve;
+    });
+    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
+      async (targetSessionId, input) => {
+        if (input.command.kind === "submitReviewOutcome") {
+          markSubmitted();
+          return { completion: new Promise<never>(() => undefined) };
+        }
+        return originalSubmitQueued(targetSessionId, input);
+      },
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    vi.useFakeTimers();
+    try {
+      const responsePromise = request(`/sessions/${sessionId}/review/commit`, {
+        method: "POST",
+        body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+      });
+      await submitted;
+      await Promise.resolve();
+      await Promise.resolve();
+      let settled = false;
+      void responsePromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "reviewed",
+        outcomeQueued: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("拒绝反馈等待期间请求断连后立即返回已入队回执", async () => {
+    const { sessionId } = await createPendingReview();
+    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
+    let markSubmitted!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      markSubmitted = resolve;
+    });
+    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
+      async (targetSessionId, input) => {
+        if (input.command.kind === "submitReviewOutcome") {
+          markSubmitted();
+          return { completion: new Promise<never>(() => undefined) };
+        }
+        return originalSubmitQueued(targetSessionId, input);
+      },
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const abortController = new AbortController();
+
+    vi.useFakeTimers();
+    try {
+      const responsePromise = request(`/sessions/${sessionId}/review/commit`, {
+        method: "POST",
+        body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+        signal: abortController.signal,
+      });
+      await submitted;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      abortController.abort("client_disconnected");
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "reviewed",
+        outcomeQueued: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("版本冲突、agent busy、无待审查和缺失 patch 都返回内建错误码", async () => {
     const { sessionId, patchIds } = await createPendingReview();
 

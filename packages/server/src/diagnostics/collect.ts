@@ -451,7 +451,130 @@ function redactLines(raw: string): string {
 }
 
 function redactFrameEntry(entry: unknown, privacyLevel: "L1" | "L2"): unknown {
+  if (privacyLevel === "L1") return projectL1FrameEntry(entry);
   return redactFrameValue(entry, privacyLevel, "");
+}
+
+const BRIDGE_FRAME_KINDS = {
+  templateDrafted: true,
+  reviewTemplatesListed: true,
+  reviewTemplateSaved: true,
+  reviewTemplateDeleted: true,
+  reviewTemplateSelected: true,
+  reviewSupplementLoaded: true,
+  reviewSupplementSaved: true,
+  styleTemplatesListed: true,
+  styleTemplateLoaded: true,
+  styleTemplateSaved: true,
+  styleTemplateDeleted: true,
+  derivativeParamsUpdated: true,
+  derivativesListed: true,
+  derivativeCreated: true,
+  derivativeGenStarted: true,
+  derivativeGenDelta: true,
+  derivativeGenFinished: true,
+  derivativeGenFailed: true,
+  derivativeDeleted: true,
+  derivativeDocLoaded: true,
+  lexiconsListed: true,
+  lexiconEntriesListed: true,
+  restoreReset: true,
+  sessionRestoreCompleted: true,
+  sessionMeta: true,
+  chatMessageAdded: true,
+  chatMessageAppended: true,
+  confirmRequested: true,
+  confirmResolved: true,
+  toolCallUpdated: true,
+  documentSnapshotWritten: true,
+  docGenerationEvent: true,
+  docCommitted: true,
+  docDiffReady: true,
+  annotationGroupsReady: true,
+  annotationPreview: true,
+  annotationPreviewCleared: true,
+  docWriteResult: true,
+  docStateChanged: true,
+  todosChanged: true,
+  resourceUpserted: true,
+  resourceUpdated: true,
+  resourceRemoved: true,
+  folderSourcesChanged: true,
+  folderSourceOperationResult: true,
+  stream: true,
+} as const satisfies Record<BridgeFrame["kind"], true>;
+
+const AGGREGATED_FRAME_KINDS = new Set([
+  "chatMessageAppended@merged",
+  "documentSnapshotWritten@merged",
+  "docGenerationEvent@merged",
+]);
+
+function projectL1FrameEntry(entry: unknown): unknown {
+  const source = recordValue(entry);
+  const frame = recordValue(source?.frame);
+  const kind = stringValue(frame?.kind);
+  if (!source || !frame || !kind) return summarizeUnknownFramePayload(entry);
+
+  const projected: Record<string, unknown> = {};
+  for (const key of ["seq", "epoch", "generation"] as const) {
+    if (typeof source[key] === "number") projected[key] = source[key];
+  }
+
+  if (isBridgeFrameKind(kind)) {
+    projected.frame = {
+      kind,
+      data: redactKnownFramePayload(frame.data, ""),
+    };
+  } else if (AGGREGATED_FRAME_KINDS.has(kind)) {
+    projected.frame = {
+      kind,
+      data: redactKnownFramePayload(frame.data, ""),
+    };
+  } else {
+    projected.frame = {
+      kind: redactDiagnosticText(kind),
+      data: summarizeUnknownFramePayload(frame.data),
+    };
+  }
+  return projected;
+}
+
+function isBridgeFrameKind(kind: string): kind is BridgeFrame["kind"] {
+  return Object.prototype.hasOwnProperty.call(BRIDGE_FRAME_KINDS, kind);
+}
+
+function redactKnownFramePayload(value: unknown, key: string): unknown {
+  if (typeof value === "string") {
+    if (isFrameStructuralStringKey(key)) return redactDiagnosticText(value);
+    return `[redacted:len=${value.length}]`;
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => redactKnownFramePayload(item, key));
+  const out: Record<string, unknown> = {};
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    out[childKey] = redactKnownFramePayload(childValue, childKey);
+  }
+  return out;
+}
+
+function isFrameStructuralStringKey(key: string): boolean {
+  return /^(kind|type|status|resolution|action|category|domain|mime|lang|dtype|slot|role)$/i.test(key)
+    || /^(?:.*Ids?|.*Hash)$/i.test(key)
+    || /(?:At|_at|^ts)$/i.test(key);
+}
+
+function summarizeUnknownFramePayload(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) return { omitted: true, type: "array", items: value.length };
+  if (value !== null && typeof value === "object") {
+    return {
+      omitted: true,
+      type: "object",
+      fields: Object.keys(value as Record<string, unknown>).length,
+    };
+  }
+  if (typeof value === "string") return { omitted: true, type: "string", chars: value.length };
+  return { omitted: true, type: value === null ? "null" : typeof value };
 }
 
 interface FrameLogContentSummary {

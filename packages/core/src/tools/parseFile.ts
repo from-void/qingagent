@@ -6,7 +6,10 @@ import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { statOpenedFileIdentity, verifyOpenedFilePath } from "./openedFilePath.js";
-import { resolveFileIds } from "../session/uploadFileResolver.js";
+import {
+  inferMimeTypeFromFilename,
+  resolveFileIds,
+} from "../session/uploadFileResolver.js";
 import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
 
@@ -1761,9 +1764,12 @@ export const parseFileTool = createTool({
         };
       }
 
+      if (filename && !mimeType) {
+        mimeType = inferMimeTypeFromFilename(filename) ?? undefined;
+      }
       if (!filename || !mimeType) {
         return {
-          text: "[Error] filename 与 mimeType 不能为空（传 filePath/content 时必填）",
+          text: "[Error] filename 与 mimeType 不能为空（扩展名未知时需显式传入 mimeType）",
           metadata: { pages: null, wordCount: 0, title: null },
         };
       }

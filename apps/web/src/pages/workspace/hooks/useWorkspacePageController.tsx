@@ -2154,13 +2154,22 @@ export function useWorkspacePageController() {
         !pendingSubmissionMatchesWorkspace(
           submission,
           workspaceSessionId,
-        ) ||
-        !claimPendingSubmission(
+        )
+      ) {
+        return;
+      }
+      if (
+        !(await claimPendingSubmission(
           submission.submissionId,
           workspaceSessionId,
           automatic ? ["queued"] : ["retryable", "dispatching"],
-        )
+        ))
       ) {
+        toast.show({
+          message: "这条内容暂未取得安全发送权，可能已由另一个标签页接管",
+          tone: "warn",
+          dedupeKey: "workspace-pending-submission-owned",
+        });
         return;
       }
       pendingSubmissionAttemptRef.current = submission.submissionId;
@@ -2337,11 +2346,9 @@ export function useWorkspacePageController() {
 
         if (outcome === "cancelled") {
           setSendPending(false);
-          if (
-            !markPendingSubmissionRetryable(
-              submission.submissionId,
-            )
-          ) {
+          if (!(await markPendingSubmissionRetryable(
+            submission.submissionId,
+          ))) {
             return;
           }
           offerPendingRetry(
@@ -2353,9 +2360,9 @@ export function useWorkspacePageController() {
         await clearPendingSubmission(submission.submissionId);
       } catch (error) {
         setSendPending(false);
-        if (
-          !markPendingSubmissionRetryable(submission.submissionId)
-        ) {
+        if (!(await markPendingSubmissionRetryable(
+          submission.submissionId,
+        ))) {
           return;
         }
         const stillCurrent = isWorkspaceTurnDispatchCurrent(

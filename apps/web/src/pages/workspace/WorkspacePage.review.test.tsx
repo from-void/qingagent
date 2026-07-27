@@ -681,6 +681,7 @@ describe("WorkspacePage review controls", () => {
     window.location.hash = "";
     sessionStorage.clear();
     localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
+    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
     restoreWorkspaceDomMocks = installWorkspaceDomMocks();
   });
@@ -690,6 +691,7 @@ describe("WorkspacePage review controls", () => {
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
     localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
+    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     vi.unstubAllEnvs();
     vi.useRealTimers();
     if (root) {
@@ -4762,6 +4764,7 @@ function installWorkspaceDomMocks(): () => void {
   const originalGlobalCancelRaf = globalThis.cancelAnimationFrame;
   const originalWindowFetch = window.fetch;
   const originalGlobalFetch = globalThis.fetch;
+  const originalNavigatorLocks = navigator.locks;
   const originalScrollIntoView = Element.prototype.scrollIntoView;
   const originalScrollTo = Element.prototype.scrollTo;
   const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerText");
@@ -4802,6 +4805,16 @@ function installWorkspaceDomMocks(): () => void {
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: cancelRaf });
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (
+        name: string,
+        _options: LockOptions,
+        callback: (lock: Lock | null) => unknown,
+      ) => callback({ name, mode: "exclusive" }),
+    },
+  });
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -4828,6 +4841,7 @@ function installWorkspaceDomMocks(): () => void {
     restoreProperty(globalThis, "cancelAnimationFrame", originalGlobalCancelRaf);
     restoreProperty(window, "fetch", originalWindowFetch);
     restoreProperty(globalThis, "fetch", originalGlobalFetch);
+    restoreProperty(navigator, "locks", originalNavigatorLocks);
     restoreProperty(Element.prototype, "scrollIntoView", originalScrollIntoView);
     restoreProperty(Element.prototype, "scrollTo", originalScrollTo);
     restoreDescriptor(HTMLElement.prototype, "innerText", originalInnerText);

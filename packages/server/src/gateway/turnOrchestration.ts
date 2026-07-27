@@ -59,6 +59,7 @@ import {
   withPrefixCacheGuardContext,
   type SessionState,
 } from "./bridgeCore";
+import { normalizeIdempotencyClientMessageId } from "./clientMessageIdempotency";
 import { bindClientTraceId, deriveSessionTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { findSessionByStream, getOrRestoreSession } from "./sessionLifecycle";
@@ -812,6 +813,19 @@ export async function* handleTurnCommand(
         );
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      const clientMessageId = normalizeIdempotencyClientMessageId(
+        command.data.clientMessageId,
+      );
+      if (
+        clientMessageId &&
+        session.chatHistory.some(
+          (message) =>
+            message.role.kind === "user" &&
+            message.id === clientMessageId,
+        )
+      ) {
+        return;
+      }
       const preemptedByNewMessage =
         context.preemptionReason === "preemptedByNewMessage";
       if (preemptedByNewMessage) {

@@ -1,4 +1,9 @@
 import type { ChatChip, SkillRef } from "@qingagent/contract-ts";
+import {
+  browserCrossTabLockManager,
+  withCrossTabLock,
+  type CrossTabLockManager,
+} from "./crossTabLock";
 
 /**
  * 新建页与工作区之间的首提载荷。
@@ -11,8 +16,14 @@ export const PENDING_SUBMISSION_ID_STORAGE_KEY =
   "qingagent:pending-submission-id";
 export const PENDING_SUBMISSION_STORAGE_KEY =
   "qingagent:pending-submission-v2";
+export const PENDING_SUBMISSION_CLAIM_STORAGE_KEY =
+  "qingagent:pending-submission-claim-v1";
 export const PENDING_SUBMISSION_TTL_MS = 30 * 60 * 1_000;
 export const PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS = 110_000;
+
+const PENDING_SUBMISSION_CLAIM_LOCK_NAME =
+  "qingagent:pending-submission-claim";
+const PENDING_SUBMISSION_CLAIM_LEASE_MS = 2 * 60 * 1_000;
 
 const LEGACY_STORAGE_KEYS = [
   "qingagent:pending-message",
@@ -177,9 +188,9 @@ export interface PendingSubmissionManager {
     submissionId: string,
     workspaceSessionId: string | null,
     allowedStates: readonly PendingSubmissionState[],
-  ): boolean;
+  ): Promise<boolean>;
   bindToSession(submissionId: string, sessionId: string): boolean;
-  markRetryable(submissionId: string): boolean;
+  markRetryable(submissionId: string): Promise<boolean>;
   updateProgress(
     submissionId: string,
     update: {
@@ -188,6 +199,17 @@ export interface PendingSubmissionManager {
     },
   ): boolean;
   clear(submissionId?: string): Promise<boolean>;
+}
+
+interface PendingSubmissionClaim {
+  submissionId: string;
+  ownerId: string;
+  expiresAt: number;
+}
+
+interface PendingSubmissionClaimRegistry {
+  version: 1;
+  claims: PendingSubmissionClaim[];
 }
 
 function attachmentDescriptor(
@@ -254,6 +276,39 @@ function parseMetadata(raw: string | null): StoredPendingSubmission | null {
   }
 }
 
+function parseSubmissionClaims(raw: string | null): PendingSubmissionClaim[] {
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw) as Partial<PendingSubmissionClaimRegistry>;
+    if (
+      value.version !== 1 ||
+      !Array.isArray(value.claims)
+    ) {
+      return [];
+    }
+    return value.claims.filter(
+      (claim): claim is PendingSubmissionClaim =>
+        claim !== null &&
+        typeof claim === "object" &&
+        typeof claim.submissionId === "string" &&
+        typeof claim.ownerId === "string" &&
+        typeof claim.expiresAt === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function createClaimOwnerId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function sanitizeMissingAttachmentChips(
   chips: readonly ChatChip[],
   richText: string | null,
@@ -310,9 +365,20 @@ function toSubmission(
 export function createPendingSubmissionManager(input: {
   storage: PendingSessionStorage;
   payloadStore: PendingPayloadStore;
+  claimStorage?: PendingSessionStorage;
+  lockManager?: CrossTabLockManager | null;
+  claimOwnerId?: string;
   now?: () => number;
 }): PendingSubmissionManager {
   const { storage, payloadStore } = input;
+  const claimStorage = input.claimStorage ?? storage;
+  const lockManager =
+    input.lockManager === undefined
+      ? input.claimStorage
+        ? browserCrossTabLockManager()
+        : createSingleContextLockManager()
+      : input.lockManager;
+  const claimOwnerId = input.claimOwnerId ?? createClaimOwnerId();
   const now = input.now ?? Date.now;
   let memoryMetadata: StoredPendingSubmission | null = null;
   const memoryPayloads = new Map<string, PendingPayload>();
@@ -384,6 +450,62 @@ export function createPendingSubmissionManager(input: {
     }
   };
 
+  const readClaims = (): PendingSubmissionClaim[] => {
+    try {
+      return parseSubmissionClaims(
+        claimStorage.getItem(PENDING_SUBMISSION_CLAIM_STORAGE_KEY),
+      );
+    } catch {
+      return [];
+    }
+  };
+
+  const writeClaims = (claims: PendingSubmissionClaim[]): boolean => {
+    try {
+      claimStorage.setItem(
+        PENDING_SUBMISSION_CLAIM_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          claims: claims
+            .sort((left, right) => left.expiresAt - right.expiresAt)
+            .slice(-32),
+        } satisfies PendingSubmissionClaimRegistry),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const releaseOwnedClaim = (submissionId: string): void => {
+    const claims = readClaims();
+    const next = claims.filter(
+      (claim) =>
+        claim.submissionId !== submissionId ||
+        claim.ownerId !== claimOwnerId,
+    );
+    if (next.length !== claims.length) writeClaims(next);
+  };
+
+  const completeOwnedClaim = (
+    submissionId: string,
+    expiresAt: number,
+  ): void => {
+    const claims = readClaims();
+    let updated = false;
+    const next = claims.map((claim) => {
+      if (
+        claim.submissionId !== submissionId ||
+        claim.ownerId !== claimOwnerId
+      ) {
+        return claim;
+      }
+      updated = true;
+      return { ...claim, expiresAt: Math.max(claim.expiresAt, expiresAt) };
+    });
+    if (updated) writeClaims(next);
+  };
+
   const clear = async (submissionId?: string): Promise<boolean> => {
     const current = readMetadata();
     if (
@@ -393,6 +515,14 @@ export function createPendingSubmissionManager(input: {
       return false;
     }
     const ownedId = current?.submissionId ?? submissionId;
+    if (ownedId && current) {
+      await withCrossTabLock({
+        name: PENDING_SUBMISSION_CLAIM_LOCK_NAME,
+        lockManager,
+        unavailable: undefined,
+        run: () => completeOwnedClaim(ownedId, current.expiresAt),
+      });
+    }
     if (!clearMetadata(submissionId)) return false;
     if (ownedId) await removePayload(ownedId);
     return true;
@@ -594,24 +724,48 @@ export function createPendingSubmissionManager(input: {
         : null;
     },
 
-    claim(submissionId, workspaceSessionId, allowedStates) {
-      const metadata = currentMetadata();
-      if (
-        !metadata ||
-        metadata.submissionId !== submissionId ||
-        !allowedStates.includes(metadata.state)
-      ) {
-        return false;
-      }
-      if (
-        metadata.targetSessionId !== null
-          ? metadata.targetSessionId !== workspaceSessionId
-          : workspaceSessionId !== null
-      ) {
-        return false;
-      }
-      writeMetadata({ ...metadata, state: "dispatching" });
-      return true;
+    async claim(submissionId, workspaceSessionId, allowedStates) {
+      // localStorage 只承载可观察所有权，原子性由 Web Locks 的 exclusive
+      // 临界区保证；缺少真锁时宁可不自动首提，也不退回可双赢的伪 CAS。
+      return withCrossTabLock({
+        name: PENDING_SUBMISSION_CLAIM_LOCK_NAME,
+        lockManager,
+        unavailable: false,
+        run: () => {
+          const metadata = currentMetadata();
+          if (
+            !metadata ||
+            metadata.submissionId !== submissionId ||
+            !allowedStates.includes(metadata.state)
+          ) {
+            return false;
+          }
+          if (
+            metadata.targetSessionId !== null
+              ? metadata.targetSessionId !== workspaceSessionId
+              : workspaceSessionId !== null
+          ) {
+            return false;
+          }
+          const claims = readClaims().filter(
+            (claim) => claim.expiresAt > now(),
+          );
+          if (claims.some(
+            (claim) => claim.submissionId === submissionId,
+          )) {
+            return false;
+          }
+          if (!writeClaims([...claims, {
+            submissionId,
+            ownerId: claimOwnerId,
+            expiresAt: now() + PENDING_SUBMISSION_CLAIM_LEASE_MS,
+          }])) {
+            return false;
+          }
+          writeMetadata({ ...metadata, state: "dispatching" });
+          return true;
+        },
+      });
     },
 
     bindToSession(submissionId, sessionId) {
@@ -628,10 +782,16 @@ export function createPendingSubmissionManager(input: {
       return true;
     },
 
-    markRetryable(submissionId) {
+    async markRetryable(submissionId) {
       const metadata = currentMetadata();
       if (!metadata || metadata.submissionId !== submissionId) return false;
       writeMetadata({ ...metadata, state: "retryable" });
+      await withCrossTabLock({
+        name: PENDING_SUBMISSION_CLAIM_LOCK_NAME,
+        lockManager,
+        unavailable: undefined,
+        run: () => releaseOwnedClaim(submissionId),
+      });
       return true;
     },
 
@@ -651,6 +811,34 @@ export function createPendingSubmissionManager(input: {
     },
 
     clear,
+  };
+}
+
+function createSingleContextLockManager(): CrossTabLockManager {
+  let tail = Promise.resolve();
+  return {
+    async request<T>(
+      _name: string,
+      _options: { mode: "exclusive"; ifAvailable?: boolean },
+      callback: (
+        lock: { name: string; mode: "exclusive" | "shared" } | null,
+      ) => T | PromiseLike<T>,
+    ): Promise<T> {
+      const previous = tail;
+      let release!: () => void;
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await callback({
+          name: PENDING_SUBMISSION_CLAIM_LOCK_NAME,
+          mode: "exclusive",
+        });
+      } finally {
+        release();
+      }
+    },
   };
 }
 
@@ -794,9 +982,29 @@ const browserSessionStorage: PendingSessionStorage = {
   },
 };
 
+const browserLocalStorage: PendingSessionStorage = {
+  getItem(key) {
+    return typeof localStorage === "undefined"
+      ? null
+      : localStorage.getItem(key);
+  },
+  setItem(key, value) {
+    if (typeof localStorage === "undefined") {
+      throw new Error("localStorage unavailable");
+    }
+    localStorage.setItem(key, value);
+  },
+  removeItem(key) {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(key);
+    }
+  },
+};
+
 const pendingSubmissionManager = createPendingSubmissionManager({
   storage: browserSessionStorage,
   payloadStore: indexedDbPayloadStore,
+  claimStorage: browserLocalStorage,
 });
 
 export const createPendingSubmission =

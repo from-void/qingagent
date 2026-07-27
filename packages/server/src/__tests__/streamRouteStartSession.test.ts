@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { app } from "../app";
 import {
@@ -7,6 +7,7 @@ import {
   getSession,
   sessionManager,
 } from "../gateway/bridgeHandler";
+import { clientMessageIdempotency } from "../gateway/clientMessageIdempotency";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);
@@ -148,5 +149,53 @@ describe("POST /api/v1/commands startSession(new) 覆写防护", () => {
       ),
     ).rejects.toThrow(/already exists/);
     expect(getSession(sessionId)).toBe(original);
+  });
+});
+
+describe("POST /api/v1/commands sendMessage 幂等", () => {
+  afterEach(() => {
+    clientMessageIdempotency.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("两个会话并发提交同一 clientMessageId 时只入队一次", async () => {
+    const completion = new Promise<never>(() => undefined);
+    const submitQueued = vi
+      .spyOn(sessionManager, "submitQueued")
+      .mockResolvedValue({ completion });
+    const send = (sessionId: string) =>
+      request({
+        kind: "sendMessage",
+        data: {
+          sessionId,
+          text: "克隆标签的同一首提",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+          clientMessageId: "cloned-first-message",
+        },
+      });
+
+    const responses = await Promise.all([
+      send("cloned-session-a"),
+      send("cloned-session-b"),
+    ]);
+    const bodies = await Promise.all(
+      responses.map((response) => response.json()) as Array<Promise<{
+        accepted: boolean;
+        duplicate?: boolean;
+        sessionId?: string;
+      }>>,
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(submitQueued).toHaveBeenCalledTimes(1);
+    expect(bodies.filter((body) => body.duplicate === true)).toHaveLength(1);
+    expect(
+      bodies.find((body) => body.duplicate === true)?.sessionId,
+    ).toBe(
+      submitQueued.mock.calls[0]?.[0],
+    );
   });
 });

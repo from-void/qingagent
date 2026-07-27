@@ -1,6 +1,7 @@
 import type { ChatChip } from "@qingagent/contract-ts";
 import { describe, expect, it } from "vitest";
 import {
+  PENDING_SUBMISSION_CLAIM_STORAGE_KEY,
   PENDING_SUBMISSION_STORAGE_KEY,
   PENDING_SUBMISSION_TTL_MS,
   PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS,
@@ -10,6 +11,7 @@ import {
   type PendingSessionStorage,
   type PendingSubmissionInput,
 } from "./pendingSession";
+import type { CrossTabLockManager } from "./crossTabLock";
 
 function createStorage(): PendingSessionStorage & {
   values: Map<string, string>;
@@ -62,6 +64,34 @@ function createPayloadStore(options?: {
     },
     async remove(submissionId) {
       payloads.delete(submissionId);
+    },
+  };
+}
+
+function createLockManager(): CrossTabLockManager {
+  let tail = Promise.resolve();
+  return {
+    async request<T>(
+      _name: string,
+      _options: { mode: "exclusive"; ifAvailable?: boolean },
+      callback: (
+        lock: { name: string; mode: "exclusive" | "shared" } | null,
+      ) => T | PromiseLike<T>,
+    ): Promise<T> {
+      const previous = tail;
+      let release!: () => void;
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await callback({
+          name: "pending-test",
+          mode: "exclusive",
+        });
+      } finally {
+        release();
+      }
     },
   };
 }
@@ -206,13 +236,15 @@ describe("pending submission 持久化与归属", () => {
     });
     await manager.create(submissionInput("submission-owned"));
 
-    expect(
+    await expect(
       manager.claim("submission-owned", null, ["queued"]),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(
       manager.bindToSession("submission-owned", "session-a"),
     ).toBe(true);
-    expect(manager.markRetryable("submission-owned")).toBe(true);
+    await expect(
+      manager.markRetryable("submission-owned"),
+    ).resolves.toBe(true);
 
     const afterRefresh = createPendingSubmissionManager({
       storage,
@@ -224,16 +256,16 @@ describe("pending submission 持久化与归属", () => {
     if (loaded.kind !== "ready") return;
     expect(loaded.submission.state).toBe("retryable");
     expect(loaded.submission.targetSessionId).toBe("session-a");
-    expect(
+    await expect(
       afterRefresh.claim("submission-owned", "session-b", [
         "retryable",
       ]),
-    ).toBe(false);
-    expect(
+    ).resolves.toBe(false);
+    await expect(
       afterRefresh.claim("submission-owned", "session-a", [
         "retryable",
       ]),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
   it("IndexedDB 无法恢复附件时移除对应 chip、重排 richText，并保留文字", async () => {
@@ -376,7 +408,7 @@ describe("pending submission 持久化与归属", () => {
       now: () => 1_000,
     });
     await manager.create(submissionInput("submission-uploaded"));
-    manager.claim("submission-uploaded", null, ["queued"]);
+    await manager.claim("submission-uploaded", null, ["queued"]);
     manager.bindToSession("submission-uploaded", "session-a");
     manager.updateProgress("submission-uploaded", {
       uploadedAssets: [
@@ -389,7 +421,7 @@ describe("pending submission 持久化与归属", () => {
         },
       ],
     });
-    manager.markRetryable("submission-uploaded");
+    await manager.markRetryable("submission-uploaded");
 
     const afterRefresh = createPendingSubmissionManager({
       storage,
@@ -434,8 +466,8 @@ describe("pending submission 持久化与归属", () => {
       now: () => 1_000,
     });
     await manager.create(submissionInput("submission-old"));
-    manager.claim("submission-old", null, ["queued"]);
-    manager.markRetryable("submission-old");
+    await manager.claim("submission-old", null, ["queued"]);
+    await manager.markRetryable("submission-old");
     await manager.create(
       submissionInput("submission-new", {
         text: "新的首提",
@@ -451,6 +483,59 @@ describe("pending submission 持久化与归属", () => {
     if (result.kind !== "ready") return;
     expect(result.submission.submissionId).toBe("submission-new");
     expect(result.submission.text).toBe("新的首提");
+  });
+
+  it("克隆标签共享 queued submission 时仅一个标签取得跨标签所有权", async () => {
+    const originalStorage = createStorage();
+    const claimStorage = createStorage();
+    const payloadStore = createPayloadStore();
+    const lockManager = createLockManager();
+    const original = createPendingSubmissionManager({
+      storage: originalStorage,
+      claimStorage,
+      lockManager,
+      claimOwnerId: "tab-original",
+      payloadStore,
+      now: () => 1_000,
+    });
+    await original.create(submissionInput("submission-cloned"));
+
+    const clonedStorage = createStorage();
+    for (const [key, value] of originalStorage.values) {
+      clonedStorage.setItem(key, value);
+    }
+    const cloned = createPendingSubmissionManager({
+      storage: clonedStorage,
+      claimStorage,
+      lockManager,
+      claimOwnerId: "tab-cloned",
+      payloadStore,
+      now: () => 1_000,
+    });
+
+    const claims = await Promise.all([
+      original.claim("submission-cloned", null, ["queued"]),
+      cloned.claim("submission-cloned", null, ["queued"]),
+    ]);
+
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(
+      JSON.parse(
+        claimStorage.getItem(PENDING_SUBMISSION_CLAIM_STORAGE_KEY) ?? "null",
+      ),
+    ).toMatchObject({
+      claims: [{
+        submissionId: "submission-cloned",
+        ownerId: claims[0] ? "tab-original" : "tab-cloned",
+      }],
+    });
+
+    const winner = claims[0] ? original : cloned;
+    const loser = claims[0] ? cloned : original;
+    await winner.clear("submission-cloned");
+    await expect(
+      loser.claim("submission-cloned", null, ["queued"]),
+    ).resolves.toBe(false);
   });
 
   it.each([

@@ -254,6 +254,134 @@ describe("用户手打块的候选审阅提交", () => {
     )).toBe(false);
   });
 
+  it("审阅批注映射失败时正文、版本与 suggestion 结算一起回滚", async () => {
+    const state = createSession("review-annotation-atomic");
+    const base = doc(paragraph("review-annotation-block", "旧正文"));
+    const initial = await commitDocumentOp({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      resourceId: state.resourceId,
+      expectedDocumentSnapshot: 0,
+      opId: "seed-review-annotation-atomic",
+      opKind: "replace_doc",
+      actorType: "agent",
+      createIfMissing: {
+        title: state.title,
+        docState: "editing",
+        lastSyncedVersion: 0,
+      },
+      apply: () => ({ nextDoc: base }),
+    });
+    expect(initial.status).toBe("committed");
+    if (initial.status !== "committed") throw new Error(initial.status);
+    state.doc = initial.doc;
+    state.legacySections = pmToLegacySections(initial.doc) as unknown as LegacySection[];
+    state.docVersion = initial.docVersion;
+    state.docState = { kind: "editing" };
+
+    const tools = createSessionScopedTools(state);
+    expect(await tools.editDraft.execute?.({
+      ops: [{ action: "replaceText", find: "旧正文", replace: "新正文" }],
+    }, {} as never)).toMatchObject({ ok: true, changed: true });
+    await collectFrames(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-message-review-annotation",
+      streamId: "agent-stream-review-annotation",
+      runId: "agent-run-review-annotation",
+      wholeDocument: false,
+    }));
+    const suggestionIds = [...state.suggestions.keys()];
+    expect(suggestionIds).toHaveLength(1);
+    state.patchVerdicts.set(suggestionIds[0]!, "accepted");
+    state.annotationGroups = [{
+      id: "annotation-review-atomic",
+      summary: "核对正文",
+      note: "正文批注",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{
+        blockId: "review-annotation-block",
+        pmFrom: 1,
+        pmTo: 4,
+        quote: "旧正文",
+        textHash: "hash-review-annotation",
+      }],
+    }];
+    const versionsBefore = await listVersions(state.docId);
+    await getDocumentsClient().execute("DROP TABLE document_suggestions");
+
+    const frames: BridgeFrame[] = [];
+    try {
+      frames.push(...await collectFrames(commitPatches(state, suggestionIds)));
+    } catch {
+      // 修复前映射异常会从已提交正文之后冒泡；断言以持久化原子性为准。
+    }
+
+    expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("旧正文");
+    expect(await listVersions(state.docId)).toHaveLength(versionsBefore.length);
+    expect(frames.some((frame) =>
+      frame.kind === "documentSnapshotWritten" || frame.kind === "docCommitted"
+    )).toBe(false);
+    expect(state.suggestions.size).toBe(1);
+  });
+
+  it("整篇候选的批注映射失败时不提交正文或版本", async () => {
+    const state = createSession("whole-annotation-atomic");
+    const base = doc();
+    const draft = doc(paragraph("whole-annotation-block", "生成正文"));
+    await documentRepo.save(documentInput(state.docId, {
+      threadId: state.threadId ?? state.sessionId,
+      docVersion: 1,
+      pmDoc: base,
+      legacySections: [],
+    }));
+    state.doc = base;
+    state.legacySections = [];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftBaseDoc = base;
+    state.docDraftBaseVersion = 1;
+    state.docDraftBaseSections = [];
+    state.docDraftCandidateDoc = draft;
+    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
+    state.annotationGroups = [{
+      id: "annotation-whole-atomic",
+      summary: "核对生成正文",
+      note: "生成批注",
+      origin: "source-check",
+      status: "reviewing",
+      anchors: [{
+        blockId: "whole-annotation-block",
+        pmFrom: 1,
+        pmTo: 5,
+        quote: "生成正文",
+        textHash: "hash-whole-annotation",
+      }],
+    }];
+    await getDocumentsClient().execute("DROP TABLE document_suggestions");
+
+    const frames: BridgeFrame[] = [];
+    try {
+      frames.push(...await collectFrames(settleDraftCandidate({
+        state,
+        agentMessageId: "agent-message-whole-annotation",
+        streamId: "agent-stream-whole-annotation",
+        runId: "agent-run-whole-annotation",
+        wholeDocument: true,
+      })));
+    } catch {
+      // 修复前映射异常会在正文提交后冒泡。
+    }
+
+    expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("");
+    expect(await listVersions(state.docId)).toEqual([]);
+    expect(frames.some((frame) =>
+      frame.kind === "documentSnapshotWritten" ||
+      frame.kind === "docGenerationEvent"
+    )).toBe(false);
+    expect(state.docVersion).toBe(1);
+  });
+
   it("整批目标的基线哈希漂移时不部分落库并保留候选", async () => {
     const state = createSession("typed-block-partial-conflict");
     const base = doc(

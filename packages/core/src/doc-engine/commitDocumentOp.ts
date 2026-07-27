@@ -122,6 +122,14 @@ export interface CommitDocumentOpOptions {
     afterVersionInsert?: () => void | Promise<void>;
     afterOpInsert?: () => void | Promise<void>;
   };
+  /**
+   * 与 documents / document_versions / document_ops 共用同一事务的扩展写。
+   * 幂等回放也会执行，允许补偿升级前已提交但尚未完成的关联状态。
+   */
+  transactionalEffect?: (context: {
+    client: Client;
+    result: Extract<CommitDocumentOpResult, { status: "committed" }>;
+  }) => void | Promise<void>;
 }
 
 interface CurrentDocumentForCommit {
@@ -359,6 +367,13 @@ export async function commitDocumentOp(
   const makeVersionId = options.makeVersionId ?? defaultVersionId;
 
   const runTransaction = () => withTransaction<CommitDocumentOpResult>(async (client) => {
+    const finishIdempotentResult = async (
+      result: Extract<CommitDocumentOpResult, { status: "committed" }>,
+    ) => {
+      if (!options.transactionalEffect) return rollbackTransaction(result);
+      await options.transactionalEffect({ client, result });
+      return commitTransaction(result);
+    };
     let current = await getCurrentDocument(client, input.docId);
     const snapshotHighWater = await getMaxDocumentSnapshotVersion(input.docId, client);
 
@@ -367,7 +382,7 @@ export async function commitDocumentOp(
       client,
     );
     if (existingOp) {
-      return rollbackTransaction(await committedResultFromOp(existingOp, client));
+      return finishIdempotentResult(await committedResultFromOp(existingOp, client));
     }
 
     const creating = current === null && input.createIfMissing !== undefined;
@@ -450,7 +465,7 @@ export async function commitDocumentOp(
         current.docVersion,
         client,
       );
-      return rollbackTransaction({
+      return finishIdempotentResult({
         status: "committed",
         docVersion: current.docVersion,
         contentHash: current.contentHash,
@@ -462,7 +477,7 @@ export async function commitDocumentOp(
         }),
         createdNewVersion: false,
         committedAt: currentVersion?.createdAt || current.updatedAt || now(),
-      } satisfies CommitDocumentOpResult);
+      });
     }
     const opId = providedOpId
       ?? (providedClientMutationId
@@ -477,7 +492,7 @@ export async function commitDocumentOp(
       client,
     );
     if (derivedExistingOp) {
-      return rollbackTransaction(await committedResultFromOp(derivedExistingOp, client));
+      return finishIdempotentResult(await committedResultFromOp(derivedExistingOp, client));
     }
 
     const nextVersion = currentHighWater + 1;
@@ -633,7 +648,7 @@ export async function commitDocumentOp(
     );
     await options.hooks?.afterOpInsert?.();
 
-    return commitTransaction({
+    const committedResult = {
       status: "committed",
       docVersion: nextVersion,
       contentHash,
@@ -643,7 +658,9 @@ export async function commitDocumentOp(
       committedAt: createdAt,
       steps: applied.steps,
       conflicts: applied.conflicts,
-    } satisfies CommitDocumentOpResult);
+    } satisfies Extract<CommitDocumentOpResult, { status: "committed" }>;
+    await options.transactionalEffect?.({ client, result: committedResult });
+    return commitTransaction(committedResult);
   });
 
   return runExclusiveCommit(runTransaction);

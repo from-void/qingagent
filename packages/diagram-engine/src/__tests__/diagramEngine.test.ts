@@ -472,6 +472,42 @@ describe("diagram-engine", () => {
     expect(reThick.label).toBe("通过");
   });
 
+  it("flowchart 嵌入式标签边记录真实尾箭头且改箭头不破坏拓扑", () => {
+    const syntaxCases = [
+      { statement: "A -- 实线 --> B", syntax: "-->" },
+      { statement: "A -. 点线 .-> B", syntax: ".->" },
+      { statement: "A == 粗线 ==> B", syntax: "==>" },
+    ];
+    for (const item of syntaxCases) {
+      const source = `flowchart LR\n  ${item.statement}\n`;
+      const parsed = parseDiagram(source).model as FlowGraph;
+      expect(parsed.edges).toHaveLength(1);
+      expect(source.slice(parsed.edges[0]!.syntaxSpan!.start, parsed.edges[0]!.syntaxSpan!.end)).toBe(item.syntax);
+    }
+
+    const source = "flowchart LR\n  A[开始] -- 通过 --> B[结束]\n";
+    const before = parseDiagram(source).model as FlowGraph;
+    const changed = applyEdit(source, {
+      kind: "setEdgeArrow",
+      edgeId: before.edges[0]!.id,
+      direction: "both",
+      lineStyle: "dotted",
+    });
+
+    expect(changed.ok).toBe(true);
+    const after = parseDiagram(changed.source).model as FlowGraph;
+    expect(after.edges).toHaveLength(1);
+    expect(after.nodes.map((node) => node.id)).toEqual(["A", "B"]);
+    expect(after.edges[0]).toMatchObject({
+      source: "A",
+      target: "B",
+      label: "通过",
+      direction: "both",
+      lineStyle: "dotted",
+    });
+    expect(changed.idMap?.edges?.[before.edges[0]!.id]).toBe(after.edges[0]!.id);
+  });
+
   it("unsupported flowchart 元素能力禁用且 rewrite 拒绝", () => {
     const source = "flowchart TD\n  A:::warn --> B\n  classDef warn fill:#fee\n";
     const parsed = parseDiagram(source);

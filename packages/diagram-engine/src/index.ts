@@ -1469,21 +1469,22 @@ function parseFlowLinkAt(raw: string, offset: number): ParsedFlowLink | null {
   const prefixLength = edgeIdMatch?.[0].length ?? 0;
   const linkSource = source.slice(prefixLength);
 
-  const embeddedPatterns: Array<{ re: RegExp; token: string; lineStyle: EdgeLineStyle }> = [
-    { re: /^--\s+(.+?)\s+-->\s*/s, token: "-->", lineStyle: "solid" },
-    { re: /^-\.\s+(.+?)\s+\.->\s*/s, token: "-.->", lineStyle: "dotted" },
-    { re: /^==\s+(.+?)\s+==>\s*/s, token: "==>", lineStyle: "thick" },
+  const embeddedPatterns: Array<{ re: RegExp; token: string; trailingArrow: string; lineStyle: EdgeLineStyle }> = [
+    { re: /^--\s+(.+?)\s+-->\s*/s, token: "-->", trailingArrow: "-->", lineStyle: "solid" },
+    { re: /^-\.\s+(.+?)\s+\.->\s*/s, token: "-.->", trailingArrow: ".->", lineStyle: "dotted" },
+    { re: /^==\s+(.+?)\s+==>\s*/s, token: "==>", trailingArrow: "==>", lineStyle: "thick" },
   ];
   for (const pattern of embeddedPatterns) {
     const match = linkSource.match(pattern.re);
     if (!match?.[1]) continue;
     const rawLabel = match[1];
     const localLabelStart = linkSource.indexOf(rawLabel);
-    const tokenStart = start + prefixLength;
+    const trailingArrowStart = match[0].lastIndexOf(pattern.trailingArrow);
+    const tokenStart = start + prefixLength + trailingArrowStart;
     return {
       token: pattern.token,
       tokenStart,
-      tokenEnd: tokenStart + pattern.token.length,
+      tokenEnd: tokenStart + pattern.trailingArrow.length,
       endOffset: start + prefixLength + match[0].length,
       label: displayMermaidLabel(stripQuotes(rawLabel.trim())),
       labelStart: start + prefixLength + localLabelStart,
@@ -1632,12 +1633,29 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
   if (op.kind === "setEdgeArrow") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
     if (!edge.syntaxSpan) return { ok: false, source, error: "边箭头无法干净回写" };
-    const nextToken = flowArrowToken(op.direction, op.lineStyle ?? edge.lineStyle ?? "solid");
+    const nextLineStyle = op.lineStyle ?? edge.lineStyle ?? "solid";
+    const nextToken = flowArrowToken(op.direction, nextLineStyle);
+    const embeddedLinkSpan = flowEmbeddedEdgeLinkSpan(source, edge);
+    const nextSource = embeddedLinkSpan && edge.label
+      ? applyEdits(source, [{
+          start: embeddedLinkSpan.start,
+          end: embeddedLinkSpan.end,
+          text: `${nextToken}|${safeMermaidLabel(edge.label).replace(/\|/g, "&#124;")}|`,
+        }])
+      : applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]);
     return edgeRewriteResult(
       source,
-      applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]),
+      nextSource,
       model.type,
       edge,
+      (nextModel, nextEdge) =>
+        nextModel.type === "flowchart" &&
+        nextModel.edges.length === model.edges.length &&
+        nextEdge.source === edge.source &&
+        nextEdge.target === edge.target &&
+        (nextEdge.label ?? "") === (edge.label ?? "") &&
+        nextEdge.direction === op.direction &&
+        nextEdge.lineStyle === nextLineStyle,
     );
   }
   if (op.kind === "addNode") {
@@ -1987,6 +2005,17 @@ function rewriteFlowEdgeLabel(source: string, edge: BaseEdge, label: string): st
   if (!arrow || arrow.index === undefined) return null;
   const insertAt = edge.stmt.start + arrow.index + arrow[0].length;
   return applyEdits(source, [{ start: insertAt, end: insertAt, text: `|${safeMermaidLabel(label)}|` }]);
+}
+
+function flowEmbeddedEdgeLinkSpan(source: string, edge: BaseEdge): Span | null {
+  if (!edge.labelSpan || !edge.syntaxSpan || edge.labelSpan.end > edge.syntaxSpan.start) return null;
+  const beforeLabel = source.slice(edge.stmt.start, edge.labelSpan.start);
+  const prefix = beforeLabel.match(/(?:--|-\.|==)\s*$/);
+  if (!prefix || prefix.index === undefined) return null;
+  return {
+    start: edge.stmt.start + prefix.index,
+    end: edge.syntaxSpan.end,
+  };
 }
 
 function parseFlowArrowToken(token: string): { direction: EdgeDirection; lineStyle: EdgeLineStyle } | null {
@@ -3501,6 +3530,7 @@ function edgeRewriteResult(
   nextSource: string,
   diagramType: DiagramType,
   oldEdge: BaseEdge,
+  verify?: (nextModel: DiagramModel, nextEdge: BaseEdge) => boolean,
 ): RewriteResult {
   const reparsed = parseDiagram(nextSource);
   if (!reparsed.ok || reparsed.model.type !== diagramType) {
@@ -3508,6 +3538,9 @@ function edgeRewriteResult(
   }
   const nextEdge = modelEdges(reparsed.model).find((edge) => edge.orderIndex === oldEdge.orderIndex);
   if (!nextEdge) return { ok: false, source: originalSource, error: "边改写后无法重新定位" };
+  if (verify && !verify(reparsed.model, nextEdge)) {
+    return { ok: false, source: originalSource, error: "边改写后语义校验失败" };
+  }
   return nextEdge.id === oldEdge.id
     ? { ok: true, source: nextSource }
     : { ok: true, source: nextSource, idMap: { edges: { [oldEdge.id]: nextEdge.id } } };

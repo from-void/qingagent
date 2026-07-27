@@ -1624,6 +1624,40 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(inputs[0]!.blocks.map((b) => b.kind)).toEqual(["table"]);
   });
 
+  it("完整 blockquote replace 不走行内通道，保留多块边界与子节点类型", () => {
+    const before: PmBlockNode = {
+      type: "blockquote",
+      attrs: { blockId: "quote-structure" },
+      content: [
+        pmParagraph("quote-before-1", "第一段"),
+        pmParagraph("quote-before-2", "第二段"),
+      ],
+    };
+    const after: PmBlockNode = {
+      type: "blockquote",
+      attrs: { blockId: "quote-structure" },
+      content: [
+        pmHeading("quote-after-heading", "第一段"),
+        pmBulletListRows("quote-after-list", ["第二段", "新增项"]),
+      ],
+    };
+    const hunk = replaceHunk("quote-structure", "quote-structure", before, after);
+    hunk.beforeText = "第一段\n第二段";
+    hunk.afterText = "第一段\n第二段\n新增项";
+    const suggestion = blockSuggestion("quote-structure", hunk);
+    const doc = pmDocToViewDocumentSnapshot(pmDoc([before]), 1, "t");
+
+    expect(suggestionToPatchOverlay(doc, suggestion, 0)).toBeNull();
+    const inputs = suggestionToBlockPatchInputs(suggestion, 0);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      op: "replace",
+      blocks: [{ kind: "quote", node: after }],
+      beforePmNodes: [before],
+      pmNodes: [after],
+    });
+  });
+
   it("纯文本 replace 仍走行内文本通道(不回归划线+绿字体验)", () => {
     const para: PmBlockNode = {
       type: "paragraph",

@@ -1773,7 +1773,7 @@ export interface BlockPatchInput {
 }
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
-const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "blockquote", "penNote"]);
+const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "penNote"]);
 /** 行内节点类型:replace 的 hunk.before/after 是「行内切片」(text/hardBreak/inlineMath),
  * 本就属行内、该走行内文本通道。此前漏列 → pmNodesInlineSafe 误判其为结构块 → 内联通道返 null、
  * 块通道(pmNodesToViewBlocks 过滤行内节点)又返 [] → 纯文本改动被双通道丢弃(表现为"无法定位")。

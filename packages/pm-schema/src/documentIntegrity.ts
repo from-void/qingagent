@@ -4,23 +4,39 @@ export interface DocumentShape {
   topLevelNodeCount: number;
   nodeCount: number;
   textLength: number;
+  mediaCount: number;
+  keyAttributeCount: number;
   contentWeight: number;
 }
 
 type PmTreeNode = PmDoc | PmNode;
 
 /**
- * 文档完整性门只需要稳定、便宜的结构量级，不使用 JSON 字节数，避免图片 URL / SVG attrs
- * 把体积虚高。每个节点给固定结构权重，文本按 Unicode 码点计入。
+ * 文档完整性门只计算用户内容，不把 paragraph/list/table 等容器节点计入权重，
+ * 避免合法合并或重构仅因节点数减少而被误判。媒体与承载正文的关键属性使用固定权重，
+ * 不按 URL、源码或 SVG 的字节数计量，避免超长属性把体积虚高。
  */
 export function measureDocumentShape(doc: PmDoc): DocumentShape {
   let nodeCount = 0;
   let textLength = 0;
+  let mediaCount = 0;
+  let keyAttributeCount = 0;
 
   const visit = (node: PmTreeNode) => {
     if (node.type !== "doc") nodeCount += 1;
     if (node.type === "text") {
       textLength += Array.from(node.text).length;
+    }
+    if (node.type === "image" || node.type === "diagram" || node.type === "fileAttachment") {
+      mediaCount += 1;
+    }
+    if (
+      (node.type === "image" && node.attrs.src.length > 0) ||
+      (node.type === "diagram" && node.attrs.source.length > 0) ||
+      (node.type === "fileAttachment" && node.attrs.fileId.length > 0) ||
+      (node.type === "blockMath" && node.attrs.latex.length > 0)
+    ) {
+      keyAttributeCount += 1;
     }
     if ("content" in node && Array.isArray(node.content)) {
       for (const child of node.content) visit(child as PmTreeNode);
@@ -32,7 +48,9 @@ export function measureDocumentShape(doc: PmDoc): DocumentShape {
     topLevelNodeCount: doc.content.length,
     nodeCount,
     textLength,
-    contentWeight: textLength + nodeCount * 2,
+    mediaCount,
+    keyAttributeCount,
+    contentWeight: textLength + mediaCount * 12 + keyAttributeCount * 12,
   };
 }
 
@@ -40,7 +58,7 @@ export function measureDocumentShape(doc: PmDoc): DocumentShape {
  * 高危坍缩的组合信号：
  * 1. 上一有效态有多个顶层块；
  * 2. 一次更新后只剩至多一个节点；
- * 3. 原文有足够内容/结构量，且新文档不足原文三分之一。
+ * 3. 原文有足够文本/媒体/关键属性，且新文档不足原文三分之一。
  *
  * 三项同时满足才熔断，避免把正常的单块文档编辑或小幅删减误判为损坏。
  */

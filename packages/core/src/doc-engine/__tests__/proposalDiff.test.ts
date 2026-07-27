@@ -156,6 +156,55 @@ describe("proposalDiff shadow engine", () => {
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
+  it("同类型 mark 属性变化合并为单个原子替换, 不允许只采纳新增属性", () => {
+    const oldLink: PmMark = { type: "link", attrs: { href: "https://old.example" } };
+    const newLink: PmMark = { type: "link", attrs: { href: "https://new.example" } };
+    const base = doc([
+      paragraph("ai-block-base-link", [text("访问官网", [oldLink])]),
+    ]);
+    const draft = doc([
+      paragraph("ai-block-draft-link", [text("访问官网", [newLink])]),
+    ]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      beforeText: "访问官网",
+      afterText: "访问官网",
+      before: [{ type: "text", text: "访问官网", marks: [oldLink] }],
+      after: [{ type: "text", text: "访问官网", marks: [newLink] }],
+    });
+    expect(hunks.some((hunk) => hunk.op === "markAdd" || hunk.op === "markRemove")).toBe(false);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("前方文本长度变化后 mark hunk 的 after 侧使用 draft 坐标", () => {
+    const bold: PmMark = { type: "bold" };
+    const base = doc([
+      paragraph("ai-block-base-shifted-mark", [text("旧"), text("目标")]),
+    ]);
+    const draft = doc([
+      paragraph("ai-block-draft-shifted-mark", [text("新增长"), text("目标", [bold])]),
+    ]);
+
+    const hunks = buildDraftDiff(base, draft);
+    const markHunk = hunks.find((hunk) => hunk.op === "markAdd");
+
+    expect(markHunk).toMatchObject({
+      beforeText: "目标",
+      afterText: "目标",
+      anchor: {
+        quoteBefore: "目标",
+        quoteAfter: "目标",
+      },
+      before: [{ type: "text", text: "目标" }],
+      after: [{ type: "text", text: "目标", marks: [bold] }],
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
   it("支持块级插入、删除和整段替换", () => {
     const insertBase = doc([
       paragraph("ai-block-a", "第一段"),

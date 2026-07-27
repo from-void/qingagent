@@ -30,10 +30,13 @@ type FlatTextUnit = {
 };
 
 type MarkGroup = {
-  op: "markAdd" | "markRemove";
-  from: number;
-  to: number;
+  op: "markAdd" | "markRemove" | "replace";
+  baseFrom: number;
+  baseTo: number;
+  draftFrom: number;
+  draftTo: number;
   marks: PmMark[];
+  beforeMarks?: PmMark[];
   markKey: string;
 };
 
@@ -631,6 +634,7 @@ function appendMarkHunks(input: {
   const draftUnits = flattenInlineUnits(input.draftBlock.content);
   let activeAdd: MarkGroup | null = null;
   let activeRemove: MarkGroup | null = null;
+  let activeReplace: MarkGroup | null = null;
 
   const flushAdd = (): void => {
     if (!activeAdd) return;
@@ -642,6 +646,11 @@ function appendMarkHunks(input: {
     input.hunks.push(createMarkHunk(input, activeRemove));
     activeRemove = null;
   };
+  const flushReplace = (): void => {
+    if (!activeReplace) return;
+    input.hunks.push(createMarkHunk(input, activeReplace));
+    activeReplace = null;
+  };
 
   let baseOffset = input.baseFrom;
   let draftOffset = input.draftFrom;
@@ -652,22 +661,73 @@ function appendMarkHunks(input: {
     if (!baseUnit || !draftUnit || baseUnit.text !== draftUnit.text) {
       flushAdd();
       flushRemove();
+      flushReplace();
       break;
     }
 
     const added = markSetDifference(draftUnit.marks, baseUnit.marks);
     const removed = markSetDifference(baseUnit.marks, draftUnit.marks);
-    const unitLength = baseUnit.to - baseUnit.from;
+    const baseUnitLength = baseUnit.to - baseUnit.from;
+    const draftUnitLength = draftUnit.to - draftUnit.from;
+    const replacedMarkType = added.some((addedMark) =>
+      removed.some((removedMark) => removedMark.type === addedMark.type)
+    );
+
+    if (replacedMarkType) {
+      flushAdd();
+      flushRemove();
+      const replaceKey = `${marksKey(removed)}=>${marksKey(added)}`;
+      if (
+        activeReplace &&
+        activeReplace.baseTo === baseOffset &&
+        activeReplace.draftTo === draftOffset &&
+        activeReplace.markKey === replaceKey
+      ) {
+        activeReplace.baseTo = baseOffset + baseUnitLength;
+        activeReplace.draftTo = draftOffset + draftUnitLength;
+      } else {
+        flushReplace();
+        activeReplace = {
+          op: "replace",
+          baseFrom: baseOffset,
+          baseTo: baseOffset + baseUnitLength,
+          draftFrom: draftOffset,
+          draftTo: draftOffset + draftUnitLength,
+          marks: added,
+          beforeMarks: removed,
+          markKey: replaceKey,
+        };
+      }
+      baseOffset += baseUnitLength;
+      draftOffset += draftUnitLength;
+      continue;
+    }
+
+    flushReplace();
 
     if (added.length === 0) {
       flushAdd();
     } else {
       const addKey = marksKey(added);
-      if (activeAdd && activeAdd.to === baseOffset && activeAdd.markKey === addKey) {
-        activeAdd.to = baseOffset + unitLength;
+      if (
+        activeAdd &&
+        activeAdd.baseTo === baseOffset &&
+        activeAdd.draftTo === draftOffset &&
+        activeAdd.markKey === addKey
+      ) {
+        activeAdd.baseTo = baseOffset + baseUnitLength;
+        activeAdd.draftTo = draftOffset + draftUnitLength;
       } else {
         flushAdd();
-        activeAdd = { op: "markAdd", from: baseOffset, to: baseOffset + unitLength, marks: added, markKey: addKey };
+        activeAdd = {
+          op: "markAdd",
+          baseFrom: baseOffset,
+          baseTo: baseOffset + baseUnitLength,
+          draftFrom: draftOffset,
+          draftTo: draftOffset + draftUnitLength,
+          marks: added,
+          markKey: addKey,
+        };
       }
     }
 
@@ -675,20 +735,35 @@ function appendMarkHunks(input: {
       flushRemove();
     } else {
       const removeKey = marksKey(removed);
-      if (activeRemove && activeRemove.to === baseOffset && activeRemove.markKey === removeKey) {
-        activeRemove.to = baseOffset + unitLength;
+      if (
+        activeRemove &&
+        activeRemove.baseTo === baseOffset &&
+        activeRemove.draftTo === draftOffset &&
+        activeRemove.markKey === removeKey
+      ) {
+        activeRemove.baseTo = baseOffset + baseUnitLength;
+        activeRemove.draftTo = draftOffset + draftUnitLength;
       } else {
         flushRemove();
-        activeRemove = { op: "markRemove", from: baseOffset, to: baseOffset + unitLength, marks: removed, markKey: removeKey };
+        activeRemove = {
+          op: "markRemove",
+          baseFrom: baseOffset,
+          baseTo: baseOffset + baseUnitLength,
+          draftFrom: draftOffset,
+          draftTo: draftOffset + draftUnitLength,
+          marks: removed,
+          markKey: removeKey,
+        };
       }
     }
 
-    baseOffset += unitLength;
-    draftOffset += draftUnit.to - draftUnit.from;
+    baseOffset += baseUnitLength;
+    draftOffset += draftUnitLength;
   }
 
   flushAdd();
   flushRemove();
+  flushReplace();
 }
 
 function createTextReplaceHunk(input: {
@@ -746,9 +821,17 @@ function createMarkHunk(
   },
   group: MarkGroup,
 ): DiffHunk {
-  const beforeText = inlineText(input.baseBlock.content).slice(group.from, group.to);
-  const afterText = inlineText(input.draftBlock.content).slice(group.from, group.to);
-  const hunkId = createHunkId(group.op, input.baseIndex, group.from, group.to, group.markKey);
+  const beforeText = inlineText(input.baseBlock.content).slice(group.baseFrom, group.baseTo);
+  const afterText = inlineText(input.draftBlock.content).slice(group.draftFrom, group.draftTo);
+  const hunkId = createHunkId(
+    group.op,
+    input.baseIndex,
+    group.baseFrom,
+    group.baseTo,
+    group.draftFrom,
+    group.draftTo,
+    group.markKey,
+  );
   return createUngroupedHunk({
     hunkId,
     op: group.op,
@@ -757,18 +840,24 @@ function createMarkHunk(
       blockId: input.baseBlock.attrs.blockId,
       quoteBefore: beforeText,
       quoteAfter: afterText,
-      pmFrom: input.textStart + group.from,
-      pmTo: input.textStart + group.to,
+      pmFrom: input.textStart + group.baseFrom,
+      pmTo: input.textStart + group.baseTo,
       anchorKind: "range",
     },
-    before: inlineSliceAsNodes(input.baseBlock, group.from, group.to),
-    after: inlineSliceAsNodes(input.draftBlock, group.from, group.to),
-    marks: cloneValue(group.marks) as DiffHunk["marks"],
+    before: inlineSliceAsNodes(input.baseBlock, group.baseFrom, group.baseTo),
+    after: inlineSliceAsNodes(input.draftBlock, group.draftFrom, group.draftTo),
+    ...(group.op === "markAdd" || group.op === "markRemove"
+      ? { marks: cloneValue(group.marks) as DiffHunk["marks"] }
+      : {}),
     beforeText,
     afterText,
     beforeBlock: cloneValue(input.baseBlock) as DiffHunk["beforeBlock"],
     afterBlock: cloneValue(input.draftBlock) as DiffHunk["afterBlock"],
-    summary: group.op === "markAdd" ? `添加标记 ${markSummary(group.marks)}` : `移除标记 ${markSummary(group.marks)}`,
+    summary: group.op === "markAdd"
+      ? `添加标记 ${markSummary(group.marks)}`
+      : group.op === "markRemove"
+        ? `移除标记 ${markSummary(group.marks)}`
+        : `替换标记 ${markSummary(group.beforeMarks ?? [])} → ${markSummary(group.marks)}`,
     overlapRatio: input.overlapRatio,
   });
 }

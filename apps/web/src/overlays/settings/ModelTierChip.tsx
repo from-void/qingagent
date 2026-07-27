@@ -72,7 +72,9 @@ export function ModelTierChip({ provider, tier, disabled = false, onChange }: Mo
         break;
       case "Escape":
         if (open) {
+          // 只关档位浮层,不让 Esc 冒到设置弹层把整个设置一起关掉
           event.preventDefault();
+          event.stopPropagation();
           setOpen(false);
         }
         break;

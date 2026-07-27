@@ -13,16 +13,13 @@ function scanArrayCandidates(
   const firstArrayStart = text.indexOf("[");
   if (firstArrayStart === -1) return null;
 
-  let start = firstArrayStart;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = firstArrayStart; i < text.length; i++) {
+    const ch = text[i]!;
 
-  while (start !== -1) {
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i]!;
-
+    if (inString) {
       if (escape) {
         escape = false;
         continue;
@@ -32,25 +29,25 @@ function scanArrayCandidates(
         continue;
       }
       if (ch === '"') {
-        inString = !inString;
+        inString = false;
         continue;
       }
-      if (inString) continue;
-
-      if (ch === "[") {
-        depth++;
-      } else if (ch === "]") {
-        depth--;
-        if (depth === 0) {
-          const candidate = text.slice(start, i + 1);
-          const result = onCandidate(candidate);
-          if (result !== null) return result;
-          break;
-        }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "[") {
+      depth += 1;
+      continue;
+    }
+    if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return onCandidate(text.slice(firstArrayStart, i + 1));
       }
     }
-
-    start = text.indexOf("[", start + 1);
   }
 
   return null;
@@ -62,7 +59,7 @@ export function extractJsonArray(raw: string): string | null {
       const parsed = JSON.parse(candidate);
       if (Array.isArray(parsed)) return candidate;
     } catch {
-      /* try the next candidate */
+      /* the first top-level array is malformed */
     }
     return null;
   });

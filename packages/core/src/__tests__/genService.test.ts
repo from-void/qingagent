@@ -147,6 +147,12 @@ describe("GenService", () => {
     })]);
   });
 
+  it("顶层问卷数组截断时不把 options 子数组正规化成问题", () => {
+    expect(parseGeneratedQuestions(
+      '[{"id":"q1","label":"选择？","kind":"single","options":[{"value":"a","label":"甲"}]}',
+    )).toBeNull();
+  });
+
   it("缺 id/kind 的真实脏问题可按序补齐，不让终态问卷清空", () => {
     expect(parseGeneratedQuestions(`[
       {"label":"偏向哪种语气？","options":[{"value":"warm","label":"温暖"}]},

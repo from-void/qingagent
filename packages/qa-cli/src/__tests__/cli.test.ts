@@ -456,6 +456,29 @@ describe("qa cli", () => {
     expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"kind\":\"docCommitted\"");
   });
 
+  it("doc events 非 follow 在目标命中前 EOF 时明确失败", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async () =>
+      new Response(sseRawStream([
+        `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 42, nextSeq: 43, gap: false })}\n\n`,
+        `event: frame\ndata: ${JSON.stringify({ seq: 42, kind: "sessionMeta", data: { title: "未裁决" } })}\n\n`,
+      ])),
+    ) as typeof fetch;
+
+    await expect(
+      main(["doc", "events", "-s", "s1", "--after", "41", "--until", "reviewed"]),
+    ).rejects.toMatchObject({
+      code: "NO_INSTANCE",
+      message: "事件流提前结束，目标 reviewed 尚未到达",
+    });
+
+    expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"seq\":42");
+    expect(stderr.mock.calls.map((call) => call[0]).join(""))
+      .toContain("[qa] events exited reason=eof received=1");
+  });
+
   it("doc events --follow 遇 EOF 后用最后 seq 自动重连补拉", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

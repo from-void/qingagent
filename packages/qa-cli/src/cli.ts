@@ -337,6 +337,9 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
           maxSeq = parseAfterSeq(cursor);
           continue;
         }
+        if (!options.follow && options.until && !reason && !timedOut) {
+          reason = "eof";
+        }
         if (!options.follow || reason || timedOut) break;
       } catch (error) {
         if (timedOut || controller.signal.aborted) break;
@@ -362,6 +365,12 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   }
   if (timedOut && !reason) reason = "timeout";
   if (reason) process.stderr.write(`[qa] events exited reason=${reason} received=${received}\n`);
+  if (reason === "eof") {
+    throw new QaCliError(
+      "NO_INSTANCE",
+      `事件流提前结束，目标 ${options.until} 尚未到达`,
+    );
+  }
 }
 
 function abortableReconnectDelay(ms: number, signal: AbortSignal): Promise<void> {

@@ -259,14 +259,23 @@ function textContent(text: string): PmInlineNode[] {
 }
 
 function table(blockId: string, head: string[], rows: string[][]): PmTableNode {
-  const headerRow: PmTableRowNode | null = head.length
+  const columnCount = Math.max(head.length, ...rows.map((row) => row.length));
+  const padRow = (row: string[]) => [
+    ...row,
+    ...Array.from({ length: columnCount - row.length }, () => ""),
+  ];
+  const normalizedHead = head.length > 0 ? padRow(head) : head;
+  const normalizedRows = rows.map(padRow);
+  const headerRow: PmTableRowNode | null = normalizedHead.length
     ? {
         type: "tableRow",
-        content: head.map((cell, cellIndex) => tableCell("tableHeader", `${blockId}-h-${cellIndex + 1}`, cell)),
+        content: normalizedHead.map((cell, cellIndex) =>
+          tableCell("tableHeader", `${blockId}-h-${cellIndex + 1}`, cell)
+        ),
       }
     : null;
 
-  const bodyRows: PmTableRowNode[] = rows.map((row, rowIndex) => ({
+  const bodyRows: PmTableRowNode[] = normalizedRows.map((row, rowIndex) => ({
     type: "tableRow",
     content: row.map((cell, cellIndex) => tableCell("tableCell", `${blockId}-r-${rowIndex + 1}-${cellIndex + 1}`, cell)),
   }));

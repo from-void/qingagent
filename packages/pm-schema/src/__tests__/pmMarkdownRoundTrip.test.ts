@@ -100,6 +100,31 @@ describe("pmMarkdownRoundTrip", () => {
     expect(pmToMarkdown(parsed)).toBe(markdown);
   });
 
+  it("不齐列 Markdown 表格按全表最大列数补齐且保留多余单元格", () => {
+    const parsed = markdownToPm([
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 |",
+      "| x | y | z |",
+    ].join("\n"));
+    const table = parsed.content[0];
+
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content.map((row) => row.content.length)).toEqual([3, 3, 3]);
+    expect(table.content.map((row) => row.content.map((cell) => {
+      const paragraph = cell.content[0];
+      return paragraph?.type === "paragraph" && paragraph.content?.[0]?.type === "text"
+        ? paragraph.content[0].text
+        : "";
+    }))).toEqual([
+      ["A", "B", ""],
+      ["1", "", ""],
+      ["x", "y", "z"],
+    ]);
+    expect(safeParsePmDoc(parsed).success).toBe(true);
+  });
+
   it("R20门:代码块与图表内容含三/四反引号时使用更长围栏并完整往返", () => {
     const code = ["const sample = `ok`;", "```", "````", "return sample;"].join("\n");
     const diagram = ["flowchart TD", "```", "````", "  A --> B"].join("\n");

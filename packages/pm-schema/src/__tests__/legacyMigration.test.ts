@@ -54,6 +54,21 @@ describe("legacyMigration", () => {
     expect(legacy).toEqual(sections);
   });
 
+  it("legacy 不齐列表格按全表最大列数补空，不让整篇转换失败", () => {
+    const pm = legacySectionsToPm([{
+      kind: "table",
+      data: {
+        head: ["A", "B"],
+        rows: [["1"], ["x", "y", "z"]],
+      },
+    }]);
+    const table = pm.content[0];
+
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content.map((row) => row.content.length)).toEqual([3, 3, 3]);
+  });
+
   it("documents legacy taskList downgrade: nested task children stay as plain text, not task hierarchy", () => {
     const pm: PmDoc = {
       type: "doc",

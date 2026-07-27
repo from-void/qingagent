@@ -91,7 +91,7 @@ describe("Settings Track B", () => {
     expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
       .toContain("推 荐");
     expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
-      .toContain("价格最低");
+      .toContain("写作成本最低");
     expect(host?.querySelector('[data-wf="ModelVendorCardKimi"]')?.textContent)
       .toContain("能看图理解配图");
     // 没配置就没有档位、没有使用中
@@ -355,7 +355,7 @@ describe("Settings Track B", () => {
     expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
 
     await click(chip);
-    expect(document.body.querySelector(".md-tier-menu")?.textContent).toContain("快 · 日常写作");
+    expect(document.body.querySelector(".md-tier-menu")?.textContent).toContain("便宜、速度快");
     await click(getBodyButtonByWf("ModelTierDeepseekPro"));
 
     expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Pro");

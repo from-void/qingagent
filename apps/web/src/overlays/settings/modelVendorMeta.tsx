@@ -1,5 +1,5 @@
 // 厂商卡文案与档位元数据。两家厂商并列成卡,档位挂在厂商名右侧 chip。
-// 价格是"约值",仅用于让用户先有量级感;真实计费以厂商账单为准。
+// 一律不写具体单价:厂商随时调价,写死的数字会过期误导;只给定性特点与相对贵贱。
 import type { ReactNode } from "react";
 import type { ModelProvider, ModelTier } from "./visitorKeyStore";
 
@@ -27,8 +27,8 @@ export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
     recommended: true,
     hasBalance: true,
     tiers: {
-      flash: { name: "Flash", desc: "快 · 日常写作 · 约¥0.16/篇" },
-      pro: { name: "Pro", desc: "更强更慢 · 复杂长稿 · 约¥0.41/篇" },
+      flash: { name: "Flash", desc: "便宜、速度快 · 日常写作" },
+      pro: { name: "Pro", desc: "效果更好,费用更高、耗时久一点 · 复杂长稿" },
     },
   },
   kimi: {
@@ -36,8 +36,8 @@ export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
     recommended: false,
     hasBalance: false,
     tiers: {
-      flash: { name: "K2.7", desc: "均衡 · 约¥0.20/篇" },
-      pro: { name: "K3", desc: "更强 · 约¥0.35/篇" },
+      flash: { name: "K2.7", desc: "相对便宜、均衡" },
+      pro: { name: "K3", desc: "Kimi 当前最强的模型,也最贵" },
     },
   },
 };
@@ -46,12 +46,12 @@ export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
 export const VENDOR_INTRO: Record<ModelProvider, ReactNode> = {
   deepseek: (
     <>
-      国产旗舰,长文写作能力强,<em>价格最低(约¥0.16/篇)</em>;不支持看图(无多模态)。
+      国产旗舰,长文写作能力强,<em>写作成本最低</em>;不支持看图(无多模态)。
     </>
   ),
   kimi: (
     <>
-      支持多模态,<em>能看图理解配图</em>;价格略高(约¥0.20/篇起)。已有 Kimi 账号可直接接入。
+      支持多模态,<em>能看图理解配图</em>;价格比 DeepSeek 略高。已有 Kimi 账号可直接接入。
     </>
   ),
 };

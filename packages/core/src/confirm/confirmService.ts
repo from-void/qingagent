@@ -355,10 +355,25 @@ export class ConfirmService {
     this.#secrets.delete(state, pending.confirmId);
     if (state.pendingConfirms.get(pending.toolCallId) !== pending) return;
     state.pendingConfirms.delete(pending.toolCallId);
+    this.#rememberTerminalTombstone(
+      state,
+      pending,
+      "aborted",
+      "confirm:aborted",
+    );
+    const auditPersisted = await this.#safeAppendAudit(state, pending, {
+      eventType: "decision_failed",
+      decision: "failed",
+      source: pending.decisionSource ?? "ui",
+      grantId: pending.decisionGrantId ?? null,
+      result: "request-cancelled",
+    });
     try {
-      await this.#persist(state, "confirm:request-cancelled");
-    } catch {
-      await this.#retryPersist(state, "confirm:request-cancelled").catch(() => undefined);
+      await this.#persistTerminalDecisionState(state, "confirm:aborted");
+    } catch (error) {
+      // 审计账本中的取消墓碑与 metadata 终态是两条独立 durable 路径。
+      // 只要前者成功，metadata 双写失败也不能让旧 pending 在冷恢复后复活。
+      if (!auditPersisted) throw error;
     }
   }
 
@@ -724,7 +739,7 @@ export class ConfirmService {
     pending: PendingConfirm,
     resolution: ConfirmResolved["resolution"],
   ): Promise<void> {
-    return this.#safeAppendAudit(state, pending, {
+    return this.#recordAudit(state, pending, {
       eventType: "decision_finished",
       decision: resolution === "accepted" ? "accepted" : "rejected",
       source: pending.decisionSource ?? "ui",
@@ -737,7 +752,7 @@ export class ConfirmService {
     state: SessionState,
     pending: PendingConfirm,
   ): Promise<void> {
-    return this.#safeAppendAudit(state, pending, {
+    return this.#recordAudit(state, pending, {
       eventType: "decision_failed",
       decision: "failed",
       source: pending.decisionSource ?? "ui",
@@ -750,7 +765,7 @@ export class ConfirmService {
     state: SessionState,
     pending: PendingConfirm,
   ): Promise<void> {
-    return this.#safeAppendAudit(state, pending, {
+    return this.#recordAudit(state, pending, {
       eventType: "decision_expired",
       decision: "expired",
       source: "expired",
@@ -920,7 +935,7 @@ export class ConfirmService {
       ConfirmAuditEvent,
       "eventType" | "decision" | "source" | "grantId" | "result"
     >,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.#appendAudit({
         ...input,
@@ -936,6 +951,7 @@ export class ConfirmService {
         isolationEpoch: null,
         configHash: null,
       });
+      return true;
     } catch (error) {
       const previous = state.confirmAuditDegraded;
       state.confirmAuditDegraded = {
@@ -960,7 +976,19 @@ export class ConfirmService {
           error: persistError instanceof Error ? persistError.message : String(persistError),
         });
       }
+      return false;
     }
+  }
+
+  async #recordAudit(
+    state: SessionState,
+    pending: PendingConfirm,
+    input: Pick<
+      ConfirmAuditEvent,
+      "eventType" | "decision" | "source" | "grantId" | "result"
+    >,
+  ): Promise<void> {
+    await this.#safeAppendAudit(state, pending, input);
   }
 }
 

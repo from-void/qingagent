@@ -79,6 +79,7 @@ describe("processAgentStream tool-call-approval", () => {
     const persistReasons: string[] = [];
     const service = new ConfirmService({
       createId: () => "confirm-cancelled",
+      appendAudit: async () => undefined,
       persist: async (_state, reason) => {
         persistReasons.push(reason);
         if (reason === "confirm:requested") abortController.abort("user_abort");
@@ -99,7 +100,8 @@ describe("processAgentStream tool-call-approval", () => {
 
     expect(persistReasons).toEqual([
       "confirm:requested",
-      "confirm:request-cancelled",
+      "confirm:aborted:terminal",
+      "confirm:aborted",
     ]);
     expect(state.pendingConfirms.size).toBe(0);
     expect(frames.some((frame) => frame.kind === "confirmRequested")).toBe(false);

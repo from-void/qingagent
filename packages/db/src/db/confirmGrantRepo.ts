@@ -78,6 +78,12 @@ export interface ConfirmAuditEvent {
   configHash: string | null;
 }
 
+export interface ConfirmCancellationTombstone {
+  sessionId: string;
+  toolCallId: string;
+  confirmId: string;
+}
+
 export interface ConfirmGrantEvent {
   eventId: string;
   ts: string;
@@ -473,6 +479,26 @@ export async function listConfirmAuditEvents(sessionId?: string): Promise<Confir
       })
     : await getDocumentsClient().execute(`SELECT * FROM confirm_audit_events ORDER BY ts, event_id`);
   return result.rows.map((row) => mapAuditEvent(row as Record<string, unknown>));
+}
+
+export async function listConfirmCancellationTombstones(
+  sessionId: string,
+): Promise<ConfirmCancellationTombstone[]> {
+  await ensureMigrated();
+  const result = await getDocumentsClient().execute({
+    sql: `SELECT session_id, tool_call_id, confirm_id
+      FROM confirm_audit_events
+      WHERE session_id = ?
+        AND event_type = 'decision_failed'
+        AND result = 'request-cancelled'
+      ORDER BY ts, event_id`,
+    args: [sessionId],
+  });
+  return result.rows.map((row) => ({
+    sessionId: String(row.session_id),
+    toolCallId: String(row.tool_call_id),
+    confirmId: String(row.confirm_id),
+  }));
 }
 
 export async function listConfirmGrantEvents(): Promise<ConfirmGrantEvent[]> {

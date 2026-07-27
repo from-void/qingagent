@@ -249,6 +249,8 @@
 /* 一句话简介:列表态压成单行 */
 /* 简介比标题小一档,最多两行;配合删掉子技能徽标,列表卡自然等高 */
 .qj-sheet-body .sk-card-summary{margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-desc);
+  /* 固定两行高度:一行的技能也占两行位,整格网卡片严格等高 */
+  min-height:calc(11.5px * 1.6 * 2);
   display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 /* 描述:最多三行 */
 .qj-sheet-body .sk-card-desc{margin:0;font-size:13px;line-height:1.6;color:var(--ink-desc);

@@ -1,9 +1,7 @@
 import {
-  chmodSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+  readPrivateStringMap,
+  writePrivateStringMap,
+} from "./privateJsonStore.js";
 
 export interface DesktopClientSafeStorage {
   encryptString(plaintext: string): Buffer;
@@ -22,33 +20,11 @@ export interface DesktopClientSecretStore {
   writeMany(entries: Iterable<readonly [string, string]>): void;
 }
 
-function writePrivateJson(file: string, value: Record<string, string>): void {
-  // 临时文件 + rename 原子落盘，避免读到截断的半成品 JSON。
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "w",
-  });
-  renameSync(tmp, file);
-  chmodSync(file, 0o600);
-}
-
 export function createDesktopClientSecretStore(
   options: DesktopClientSecretStoreOptions,
 ): DesktopClientSecretStore {
   const readCiphertexts = (): Record<string, string> => {
-    try {
-      const parsed = JSON.parse(readFileSync(options.filePath, "utf8")) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-      const out: Record<string, string> = {};
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        if (options.secretKeys.has(key) && typeof value === "string") out[key] = value;
-      }
-      return out;
-    } catch {
-      return {};
-    }
+    return readPrivateStringMap(options.filePath);
   };
 
   const assertSecretKey = (key: string): void => {
@@ -71,7 +47,7 @@ export function createDesktopClientSecretStore(
       const ciphertexts = readCiphertexts();
       if (value === null) delete ciphertexts[key];
       else ciphertexts[key] = encrypt(value);
-      writePrivateJson(options.filePath, ciphertexts);
+      writePrivateStringMap(options.filePath, ciphertexts);
     },
     writeMany(entries) {
       const ciphertexts = readCiphertexts();
@@ -79,7 +55,7 @@ export function createDesktopClientSecretStore(
         assertSecretKey(key);
         ciphertexts[key] = encrypt(value);
       }
-      writePrivateJson(options.filePath, ciphertexts);
+      writePrivateStringMap(options.filePath, ciphertexts);
     },
   };
 }

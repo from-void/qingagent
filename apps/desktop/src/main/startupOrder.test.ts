@@ -209,7 +209,7 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
   assert.match(source, /desktopClientSecretStore\.write\(key, nextValue\)/);
   assert.match(source, /delete cfg\[key\]/);
   assert.match(secretStoreSource, /delete ciphertexts\[key\]/);
-  assert.match(source, /\^client-config\\\.json\\\.\\d\+\\\.tmp\$/);
+  assert.match(source, /\^client-config\(\?:\\\.secrets\)\?\\\.json/);
   assert.match(source, /cleanupClientConfigTempFiles\(\)/);
 });
 

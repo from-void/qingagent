@@ -14,12 +14,10 @@ import {
 } from "electron";
 import path from "node:path";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -29,6 +27,10 @@ import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
+import {
+  readPrivateStringMap,
+  writePrivateStringMap,
+} from "./privateJsonStore.js";
 import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
@@ -658,8 +660,8 @@ function clientConfigPath(): string {
 function cleanupClientConfigTempFiles(): void {
   try {
     for (const entry of readdirSync(app.getPath("userData"), { withFileTypes: true })) {
-      // 只回收本应用原子写入留下的明文配置临时文件；不碰密文文件或其他临时文件。
-      if (!/^client-config\.json\.\d+\.tmp$/.test(entry.name)) continue;
+      // 只回收本应用原子配置写入留下的临时文件，不碰目标文件或可恢复备份。
+      if (!/^client-config(?:\.secrets)?\.json(?:\.bak)?\.\d+\.tmp$/.test(entry.name)) continue;
       if (!entry.isFile() && !entry.isSymbolicLink()) continue;
       try {
         unlinkSync(path.join(app.getPath("userData"), entry.name));
@@ -712,28 +714,10 @@ function isDesktopModelEncryptionAvailable(): boolean {
 }
 
 function readClientConfig(): Record<string, string> {
-  try {
-    const parsed = JSON.parse(readFileSync(clientConfigPath(), "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof v === "string") out[k] = v;
-    }
-    return out;
-  } catch {
-    return {}; // 文件不存在/损坏都当空,绝不让读配置阻断启动。
-  }
+  return readPrivateStringMap(clientConfigPath());
 }
 function writeClientConfig(cfg: Record<string, string>): void {
-  const file = clientConfigPath();
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "w",
-  });
-  renameSync(tmp, file);
-  chmodSync(file, 0o600);
+  writePrivateStringMap(clientConfigPath(), cfg);
 }
 
 /**
@@ -760,8 +744,12 @@ function isDesktopClientConfigKey(value: unknown): value is string {
 function readClientConfigValueForRenderer(key: unknown): string | null {
   if (!isDesktopClientConfigKey(key)) return null;
   if (!DESKTOP_MODEL_SECRET_KEYS.has(key)) {
-    const value = readClientConfig()[key];
-    return typeof value === "string" && value.length > 0 ? value : null;
+    try {
+      const value = readClientConfig()[key];
+      return typeof value === "string" && value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
   }
 
   // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。

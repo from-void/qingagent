@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
@@ -36,7 +36,7 @@ export function DiagramSvgView({
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number; captured: boolean } | null>(null);
 
   // 以 (clientX,clientY) 为锚点缩放,保持光标/捏合中心下的内容不漂移。
-  const zoomAround = (clientX: number, clientY: number, factor: number) => {
+  const zoomAround = useCallback((clientX: number, clientY: number, factor: number) => {
     const el = boxRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -50,15 +50,21 @@ export function DiagramSvgView({
       const contentY = (ly - cur.y) / cur.scale;
       return { scale: ns, x: lx - contentX * ns, y: ly - contentY * ns };
     });
-  };
+  }, []);
 
-  const onWheel = (e: React.WheelEvent) => {
-    // 普通滚轮留给文档滚动;触控板双指捏合 = ctrl+wheel,才用于缩放。
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    zoomAround(e.clientX, e.clientY, e.deltaY < 0 ? 1.08 : 1 / 1.08);
-  };
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const onWheel = (event: WheelEvent) => {
+      // 普通滚轮留给文档滚动；仅触控板双指捏合产生的 ctrl+wheel 用于缩放。
+      if (!event.ctrlKey || event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      zoomAround(event.clientX, event.clientY, event.deltaY < 0 ? 1.08 : 1 / 1.08);
+    };
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => box.removeEventListener("wheel", onWheel);
+  }, [zoomAround]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
@@ -136,7 +142,6 @@ export function DiagramSvgView({
       ref={boxRef}
       className="pm-diagram-svg"
       style={{ touchAction: zoomed ? "none" : "pan-y", cursor: zoomed ? "grab" : undefined }}
-      onWheel={onWheel}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}

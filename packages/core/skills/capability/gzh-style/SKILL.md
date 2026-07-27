@@ -1,6 +1,7 @@
 ---
 name: gzh-style
 label: 公众号风格
+icon: style
 summary: 学习、创建和维护公众号排版与写作风格
 description: 用户要从公众号文章学习风格，或查看、新建、修改、删除公众号排版/写作模板时使用。
 user-invocable: true

@@ -253,7 +253,9 @@ describe("SkillsPanel 导入门控", () => {
 
     expect(h.getSkillDetail).toHaveBeenCalledWith("web-search");
     expect(host?.textContent).toContain("技能详情");
-    expect(host?.textContent).toContain("引出工具：联网搜索");
+    // 引出工具整段已从详情头部删除(用户判不重要)
+    expect(host?.textContent).not.toContain("引出工具");
+    expect(host?.textContent).toContain("内置");
     expect(host?.querySelector('[data-wf="SearchPanelMock"]')).not.toBeNull();
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).toContain("联网搜索");
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).not.toContain("---");
@@ -317,8 +319,8 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.querySelectorAll('[data-wf="SkillEntry"]')).toHaveLength(1);
     expect(q('[data-wf="SkillDetailEntry"]')).toBeNull();
     expect(q('[data-wf="SkillChildrenEntry"]')).toBeNull();
-    expect(q('[data-wf="SkillChildrenBadge"]')?.textContent).toContain("含 2 项子技能");
-    expect(q('[data-wf="SkillChildrenBadge"]')?.tagName).toBe("SPAN");
+    // 列表卡不再挂子技能徽标(会把卡撑得高度不一);数量只在详情页披露
+    expect(q('[data-wf="SkillChildrenBadge"]')).toBeNull();
     if (!parentEntry) throw new Error("parent skill entry not found");
     await act(async () => {
       parentEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -398,7 +400,7 @@ describe("SkillsPanel 导入门控", () => {
     });
     expect(q('[data-wf="SkillChildren"]')).toBeNull();
     expect(q('[data-wf="SkillEntry"]')).not.toBeNull();
-    expect(q('[data-wf="SkillChildrenBadge"]')?.textContent).toContain("含 2 项子技能");
+    expect(q('[data-wf="SkillChildrenBadge"]')).toBeNull();
   });
 
   it("自定义技能可从 hero 标题进入编辑并保存超长中文显示名，底层 slug 不变", async () => {
@@ -457,7 +459,8 @@ describe("SkillsPanel 导入门控", () => {
     });
 
     expect(h.setSkillLabel).toHaveBeenCalledWith("custom-research", longLabel);
-    expect(host?.textContent).toContain("标识：custom-research");
+    // 详情头部瘦身:标识/引出工具已删,只留名字+来源标+启用态
+    expect(host?.textContent).not.toContain("标识：custom-research");
     expect(host?.textContent).toContain(longLabel);
   });
 

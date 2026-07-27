@@ -2,7 +2,7 @@
 name: review
 label: 文档审查
 summary: 统一执行八类文档审查
-icon: search
+icon: review
 description: 文档审查总技能，统一路由敏感词、来源核查、去 AI 味、一致性、隐私、格式规范、角色与自定义审查；按需读取对应子技能后执行。
 user-invocable: true
 placeholder: 审查当前文档

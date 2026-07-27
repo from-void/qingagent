@@ -33,22 +33,6 @@ interface CtxMenu {
   y: number;
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  webSearch: "联网搜索",
-  fetchArticle: "网页抓取",
-  "browser_*": "浏览器操作",
-  generateSvg: "生成配图",
-  prepareImageEditSource: "准备图片源图",
-  importGeneratedImage: "导入图片产物",
-  readImage: "图像识别",
-  run_js: "精确计算",
-  parseFile: "文件解析",
-  readDocument: "读取资料",
-  searchDocuments: "检索资料",
-  readMaterial: "读取素材",
-  summarizeMaterial: "总结素材",
-  "lark-cli": "飞书操作",
-};
 
 function SkIcon({ icon }: { icon: string }) {
   const iconKey = normalizeSkillIconKey(icon);
@@ -66,10 +50,6 @@ function SkIcon({ icon }: { icon: string }) {
       {SKILL_CARD_ICON_PATHS[iconKey]}
     </svg>
   );
-}
-
-function toolLabel(tool: string): string {
-  return TOOL_LABELS[tool] ?? tool;
 }
 
 function sourceLabel(source: SkillBaseInfo["source"]): string {
@@ -450,6 +430,16 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
                 </div>
               </section>
             )}
+            <SkillDeleteFoot
+              skill={selectedSkill}
+              canMutate={canMutate}
+              busy={busy === selectedSkill.name}
+              onDelete={() => void confirmDelete(
+                selectedSkill.name,
+                selectedSkill.label,
+                selectedSkill.source === "builtin",
+              )}
+            />
           </>
         ) : detailLoading ? (
           showDetailLoading ? <p className="sm-empty">加载中…</p> : null
@@ -511,15 +501,8 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
                 {s.enabled ? "已启用" : "已停用"}
               </button>
             </div>
+            {/* 简介最多两行;子技能数量只在详情页展示,列表卡保持等高、保持轻。 */}
             <p className="sk-card-summary">{s.summary}</p>
-            {childSkills(s).length > 0 && (
-              <div className="sk-card-foot">
-                <span className="sk-card-tag" data-wf="SkillChildrenBadge">
-                  含 {childSkills(s).length} 项子技能
-                </span>
-              </div>
-            )}
-            {/* 依赖连接行只在技能详情页展示,列表卡保持轻。 */}
           </div>
         ))}
 
@@ -658,7 +641,6 @@ function SkillDetail({
     labelInputRef.current?.focus();
     labelInputRef.current?.select();
   }, [editingLabel]);
-  const deleteDisabled = isBuiltin || !canMutate || busy;
   const normalizedDraft = labelDraft.trim();
   const labelChanged = normalizedDraft.length > 0 && normalizedDraft !== skill.label;
   const beginLabelEdit = () => {
@@ -678,18 +660,17 @@ function SkillDetail({
       setLabelDraft(skill.label);
     }
   };
-  const deleteHint = isBuiltin
-    ? "内置技能不可删除,仅可停用。"
-    : canMutate
-      ? "已安装技能可删除。"
-      : "删除仅在桌面客户端开放。";
 
   return (
     <>
       <div className="sk-detail-hero">
         <SkIcon icon={skill.icon} />
         {isBuiltin ? (
-          <span className="sk-detail-name">{skill.label}</span>
+          <>
+            <span className="sk-detail-name">{skill.label}</span>
+            {/* 内置技能改不了名,来源标直接跟在名字后面,省掉单独一行元信息 */}
+            <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
+          </>
         ) : editingLabel ? (
           <form
             className="sk-label-inline"
@@ -768,15 +749,6 @@ function SkillDetail({
         </button>
       </div>
 
-      <p className="sk-detail-meta">
-        <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
-        &nbsp;&nbsp;
-        <span className="k">标识</span>：<code>{skill.name}</code>
-        &nbsp;&nbsp;
-        <span className="k">引出工具</span>：
-        {skill.tools.length > 0 ? skill.tools.map(toolLabel).join("、") : "无"}
-      </p>
-
       {skill.connectorId && (
         <ConnectorDependency connectorId={skill.connectorId} onOpen={onOpenConnector} />
       )}
@@ -795,18 +767,40 @@ function SkillDetail({
         {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
       </div>
 
-      <div className="sk-detail-foot">
-        <span className="hint">{deleteHint}</span>
-        <button
-          type="button"
-          className="sk-btn-danger"
-          disabled={deleteDisabled}
-          onClick={onDelete}
-        >
-          删除技能
-        </button>
-      </div>
     </>
+  );
+}
+
+/** 删除入口:整页最末(子技能之后),破坏性操作沿用红字惯例 */
+function SkillDeleteFoot({
+  skill,
+  canMutate,
+  busy,
+  onDelete,
+}: {
+  skill: SkillBaseInfo;
+  canMutate: boolean;
+  busy: boolean;
+  onDelete: () => void;
+}) {
+  const isBuiltin = skill.source === "builtin";
+  const hint = isBuiltin
+    ? "内置技能不可删除,仅可停用。"
+    : canMutate
+      ? "已安装技能可删除。"
+      : "删除仅在桌面客户端开放。";
+  return (
+    <div className="sk-detail-foot" data-wf="SkillDeleteFoot">
+      <span className="hint">{hint}</span>
+      <button
+        type="button"
+        className="sk-btn-danger"
+        disabled={isBuiltin || !canMutate || busy}
+        onClick={onDelete}
+      >
+        删除技能
+      </button>
+    </div>
   );
 }
 

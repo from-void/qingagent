@@ -107,8 +107,8 @@ describe("SkillsPanel 导入门控", () => {
     h.setSkillEnabled.mockClear();
     h.deleteSkill.mockClear();
     h.getSkillDetail.mockClear();
-    h.getSkillDetail.mockImplementation(async (name: string) => {
-      const detail = h.details.get(name);
+    h.getSkillDetail.mockImplementation(async (name: string, childName?: string) => {
+      const detail = h.details.get(childName ? `${name}/${childName}` : name);
       if (!detail) throw new Error("not found");
       return detail;
     });
@@ -307,6 +307,10 @@ describe("SkillsPanel 导入门控", () => {
       ...h.skills[0]!,
       body: "# 图表可视化\n\n母技能正文。",
     });
+    h.details.set("diagram-viz/drawio", {
+      ...h.skills[0]!.children![0]!,
+      body: "# draw.io 图表规范\n\n- 保持节点可编辑\n- 避免连线遮挡",
+    });
     await render();
 
     const parentEntry = q('[data-wf="SkillEntry"]');
@@ -344,9 +348,14 @@ describe("SkillsPanel 导入门控", () => {
     if (!childEntry) throw new Error("child skill entry not found");
     await act(async () => {
       childEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
     });
+    expect(h.getSkillDetail).toHaveBeenCalledWith("diagram-viz", "drawio");
     expect(q('[data-wf="SkillChildDetail"]')).not.toBeNull();
+    expect(q('[data-wf="SkillChildDetailBody"]')?.textContent).toContain("draw.io 图表规范");
+    expect(q('[data-wf="SkillChildDetailBody"]')?.textContent).toContain("保持节点可编辑");
     expect(host?.textContent).toContain("子技能详情");
+    expect(host?.textContent).toContain("技能正文(SKILL.md · 只读)");
     expect(host?.textContent).toContain("随母技能停用");
     expect(host?.textContent).toContain("此子技能不单独启停");
     expect(q(".sk-toggle")).toBeNull();
@@ -361,6 +370,26 @@ describe("SkillsPanel 导入门控", () => {
     expect(q('[data-wf="SkillChildren"]')).not.toBeNull();
     expect(host?.textContent).toContain("母技能正文");
     expect(q(".sk-toggle")).not.toBeNull();
+
+    const missingChildEntry = Array.from(
+      host?.querySelectorAll<HTMLElement>('[data-wf="SkillChildEntry"]') ?? [],
+    ).find((node) => node.textContent?.includes("Mermaid 图表"));
+    if (!missingChildEntry) throw new Error("missing child skill entry not found");
+    await act(async () => {
+      missingChildEntry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(h.getSkillDetail).toHaveBeenCalledWith("diagram-viz", "mermaid");
+    expect(q('[data-wf="SkillChildDetailBody"]')?.textContent).toContain(
+      "子技能正文暂时无法加载",
+    );
+    expect(q('[data-wf="SkillChildDetailBody"]')?.classList).not.toContain("sm-message");
+
+    const backFromMissingChild = q(".sk-back");
+    if (!backFromMissingChild) throw new Error("missing child back button not found");
+    await act(async () => {
+      backFromMissingChild.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
 
     const backToList = q(".sk-back");
     if (!backToList) throw new Error("parent back button not found");

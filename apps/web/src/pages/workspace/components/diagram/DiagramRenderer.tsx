@@ -33,12 +33,15 @@ export interface DiagramRendererProps {
   readOnly?: boolean;
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
+  onFullscreen?: () => void;
   openVisualSignal?: number;
   onOverlayChange?: (overlay: DiagramOverlay | null) => void;
   onSourceChange?: (source: string) => void;
   onVisualChange?: (change: DiagramVisualChange) => void;
   onUndo?: () => boolean;
   onRedo?: () => boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 export interface DiagramVisualChange {
@@ -54,12 +57,15 @@ export function DiagramRenderer({
   readOnly = true,
   align = "center",
   onAlignChange,
+  onFullscreen,
   openVisualSignal,
   onOverlayChange,
   onSourceChange,
   onVisualChange,
   onUndo,
   onRedo,
+  canUndo,
+  canRedo,
 }: DiagramRendererProps) {
   const type = lang === "mermaid" ? detectType(source) : null;
   const normalizedOverlay = normalizeOverlay(overlay);
@@ -78,6 +84,8 @@ export function DiagramRenderer({
           onVisualChange={onVisualChange}
           onUndo={onUndo}
           onRedo={onRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
         />
       </Suspense>
     );
@@ -90,6 +98,7 @@ export function DiagramRenderer({
       readOnly={readOnly}
       align={align}
       onAlignChange={onAlignChange}
+      onFullscreen={onFullscreen}
     />
   );
 }

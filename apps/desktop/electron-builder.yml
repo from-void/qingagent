@@ -10,6 +10,7 @@ artifactName: qingagent-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: resources
   output: release
+afterPack: ./afterPackResources.mjs
 # asar 打开:把 app 代码/依赖打进单个归档,大幅降文件数——否则 Windows runner 打包
 # (zip/nsis)要处理上万散文件被 FS/Defender 拖到卡死(实测 45min 超时)。运行时资源
 # (web/pyodide/lark-cli/skills)走 extraResources 在 asar 外不受影响;原生 .node 由
@@ -42,6 +43,14 @@ extraResources:
   # 运行时 ensureLarkCliShim 据 Resources/lark-cli/node_modules/@larksuite/cli/scripts/run.js 写 PATH shim。
   - from: build/lark-cli
     to: lark-cli
+    # electron-builder 默认会过滤 node_modules；显式包含全部暂存文件，避免打出静默瘦包。
+    filter:
+      - "**/*"
+  # 父 fileset 的 filter 仍会叠加 node_modules 默认忽略规则，必须单独复制该目录。
+  - from: build/lark-cli/node_modules
+    to: lark-cli/node_modules
+    filter:
+      - "**/*"
 mac:
   # mac 未签名时 Squirrel.Mac 自更不可用；仅保留 zip,避免 dmg 造成发布语义误导。
   target:

@@ -217,6 +217,7 @@
 }
 
 .skin-calendar__day {
+  position: relative;
   height: 29px;
   font-size: 10.5px;
 }
@@ -236,6 +237,25 @@
   color: var(--skin-menu-muted);
   cursor: default;
   opacity: .25;
+}
+
+.skin-calendar__day.is-unavailable {
+  opacity: .6;
+}
+
+.skin-calendar__mark {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--skin-menu-accent);
+  transform: translateX(-50%);
+}
+
+.skin-calendar__day.is-selected .skin-calendar__mark {
+  background: var(--bg-canvas);
 }
 
 .skin-calendar__foot {

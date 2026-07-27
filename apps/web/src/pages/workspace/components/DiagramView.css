@@ -236,13 +236,13 @@
   cursor: wait;
 }
 .pm-diagram-view-btn--ghost {
-  background: rgba(143, 109, 48, 0.96);
-  color: #fff;
+  background: var(--bg-canvas, #fffaf0);
+  color: var(--ink-1, #2f2a22);
 }
 .pm-diagram-view-btn--ghost:hover {
   border-color: rgba(143, 109, 48, 0.72);
-  background: #755821;
-  color: #fff;
+  background: var(--bg-hover, #f3ecdd);
+  color: var(--ink-1, #2f2a22);
 }
 /* 全屏覆盖层(legacy,已不再由图表使用) */
 .pm-diagram-fullscreen {

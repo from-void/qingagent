@@ -243,6 +243,14 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       return null;
     };
 
+    const pointIsInsideColumnBlock = (block: MovableBlock, e: MouseEvent): boolean => {
+      if (block.parentType !== "column") return true;
+      const blockDom = editor.view.nodeDOM(block.pos);
+      if (!(blockDom instanceof HTMLElement)) return false;
+      const rect = blockDom.getBoundingClientRect();
+      return e.clientX >= rect.left && e.clientX <= rect.right;
+    };
+
     const resolveHandleFromSelection = (): HandleState | null => {
       if (!editor.isEditable) return null;
       const { $from } = editor.state.selection;
@@ -302,7 +310,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       if (hit) {
         const $hit = resolveDocumentPositionSafely(editor.state.doc, hit.pos);
         const block = $hit ? findDraggableBlock($hit) : null;
-        const resolved = block ? handleFromBlock(block, hit.pos) : null;
+        const resolved = block && pointIsInsideColumnBlock(block, e)
+          ? handleFromBlock(block, hit.pos)
+          : null;
         if (resolved) return resolved;
       }
 

@@ -53,6 +53,7 @@ export interface ThemePalette {
 export interface DiagramThemeMetadata {
   themePalette?: ThemePalette;
   perNodeStyles?: Record<string, NodeStyleOverride>;
+  perSubgraphStyles?: Record<string, NodeStyleOverride>;
   perEdgeStyles?: Record<string, EdgeStyleOverride>;
 }
 
@@ -483,6 +484,83 @@ export function renameSubgraph(source: string, subgraphId: string, title: string
   });
 }
 
+/**
+ * 写回 flowchart 分区的 Mermaid `style` 语句。只开放填充与边框色，
+ * 保留同一语句里已有的其它声明及行尾注释。
+ */
+export function setSubgraphStyle(
+  source: string,
+  subgraphId: string,
+  patch: Pick<NodeStyleOverride, "fill" | "stroke">,
+): RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "setSubgraphStyle");
+  if (!parsed.model.subgraphs.some((subgraph) => subgraph.id === subgraphId)) {
+    return { ok: false, source, error: "分区不存在" };
+  }
+  if (!isStableMermaidId(subgraphId)) {
+    return { ok: false, source, error: "分区 id 不稳定，无法安全改色" };
+  }
+
+  const normalizedPatch: Pick<NodeStyleOverride, "fill" | "stroke"> = {};
+  if (patch.fill !== undefined) {
+    const fill = sanitizeColor(patch.fill);
+    if (!fill) return { ok: false, source, error: "分区填充色无效" };
+    normalizedPatch.fill = fill;
+  }
+  if (patch.stroke !== undefined) {
+    const stroke = sanitizeColor(patch.stroke);
+    if (!stroke) return { ok: false, source, error: "分区边框色无效" };
+    normalizedPatch.stroke = stroke;
+  }
+  if (Object.keys(normalizedPatch).length === 0) return { ok: true, source };
+
+  const declarationsFor = (existing: string[] = []) => {
+    const declarations = existing.filter((declaration) => {
+      const property = declaration.slice(0, declaration.indexOf(":")).trim().toLowerCase();
+      return !((normalizedPatch.fill !== undefined && property === "fill")
+        || (normalizedPatch.stroke !== undefined && property === "stroke"));
+    });
+    if (normalizedPatch.fill !== undefined) declarations.push(`fill:${normalizedPatch.fill}`);
+    if (normalizedPatch.stroke !== undefined) declarations.push(`stroke:${normalizedPatch.stroke}`);
+    return declarations;
+  };
+
+  let nextSource = source;
+  const existingLine = [...getLines(source)].reverse().find((line) => {
+    const match = stripTrailingComment(line.text).trim().match(INLINE_STYLE_RE);
+    return match?.[1] === subgraphId;
+  });
+  if (existingLine) {
+    const statementSource = stripTrailingComment(existingLine.text);
+    const match = statementSource.trim().match(INLINE_STYLE_RE)!;
+    const indent = existingLine.text.match(/^\s*/)?.[0] ?? "";
+    const suffix = existingLine.text.slice(statementSource.length);
+    const suffixSeparator = suffix && !/^\s/.test(suffix) ? " " : "";
+    const declarations = declarationsFor(splitStyleDeclarations(match[2]!));
+    nextSource = applyEdits(source, [{
+      start: existingLine.start,
+      end: existingLine.bodyEnd,
+      text: `${indent}style ${subgraphId} ${declarations.join(",")}${suffixSeparator}${suffix}`,
+    }]);
+  } else {
+    const declarations = declarationsFor();
+    nextSource = insertBeforeSourceEnd(source, `  style ${subgraphId} ${declarations.join(",")}\n`);
+  }
+
+  const verified = parseDiagram(nextSource);
+  if (!verified.ok || verified.model.type !== "flowchart") {
+    return { ok: false, source, error: verified.error ?? "分区样式写回后无法重新解析" };
+  }
+  const resolved = verified.model.perSubgraphStyles?.[subgraphId];
+  if ((normalizedPatch.fill !== undefined && resolved?.fill !== normalizedPatch.fill)
+    || (normalizedPatch.stroke !== undefined && resolved?.stroke !== normalizedPatch.stroke)) {
+    return { ok: false, source, error: "分区样式写回校验失败" };
+  }
+  return { ok: true, source: nextSource };
+}
+
 /** 解散 subgraph，仅移除它自己的声明行和配对 end；节点/子分区自然回到父级。 */
 export function dissolveSubgraph(source: string, subgraphId: string): RewriteResult {
   const parsed = parseDiagram(source);
@@ -518,6 +596,12 @@ export function getStableElementIds(model: DiagramModel): { nodes: Set<string>; 
   const edges = new Set<string>();
   for (const node of modelNodes(model)) {
     if (node.id) nodes.add(node.id);
+  }
+  // 分区也是可拖拽的稳定画布元素，位置与普通节点共用 overlay.positions。
+  if (model.type === "flowchart") {
+    for (const subgraph of model.subgraphs) {
+      if (subgraph.id) nodes.add(subgraph.id);
+    }
   }
   for (const edge of modelEdges(model)) {
     if (edge.id) edges.add(edge.id);
@@ -604,7 +688,11 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
   const bounds = graphSvgBounds(flattened, edges, layout, endpointRects, overlay);
   const clusterSvg = layout.clusters
     .sort((left, right) => left.depth - right.depth)
-    .map((cluster) => renderSvgCluster(cluster, parsed.model.themePalette))
+    .map((cluster) => renderSvgCluster(
+      cluster,
+      parsed.model.themePalette,
+      parsed.model.type === "flowchart" ? parsed.model.perSubgraphStyles?.[cluster.id] : undefined,
+    ))
     .join("");
   const nodeSvg = flattened
     .map((node) =>
@@ -687,6 +775,7 @@ function parseDiagramThemeMetadata(
   nodeIds: Iterable<string>,
   inlineNodeClasses: Map<string, string[]> = new Map(),
   edges: BaseEdge[] = [],
+  subgraphIds: Iterable<string> = [],
 ): DiagramThemeMetadata {
   const themePalette = parseThemePalette(source);
   const { classDefinitions, nodeClasses, nodeStyles } = parseClassStyleStatements(source);
@@ -706,10 +795,22 @@ function parseDiagramThemeMetadata(
     if (Object.keys(style).length > 0) perNodeStyles[nodeId] = style;
   }
   const perEdgeStyles = parseLinkStyleStatements(source, edges);
+  const perSubgraphStyles: Record<string, NodeStyleOverride> = {};
+  for (const subgraphId of subgraphIds) {
+    const assignedClassNames = nodeClasses.get(subgraphId) ?? [];
+    const classNames = classDefinitions.has("default") ? ["default", ...assignedClassNames] : assignedClassNames;
+    const classStyle = classNames.reduce<NodeStyleOverride>((merged, className) => {
+      const classStyle = classDefinitions.get(className);
+      return classStyle ? { ...merged, ...classStyle } : merged;
+    }, {});
+    const style = { ...classStyle, ...(nodeStyles.get(subgraphId) ?? {}) };
+    if (Object.keys(style).length > 0) perSubgraphStyles[subgraphId] = style;
+  }
 
   return {
     ...(themePalette ? { themePalette } : {}),
     ...(Object.keys(perNodeStyles).length > 0 ? { perNodeStyles } : {}),
+    ...(Object.keys(perSubgraphStyles).length > 0 ? { perSubgraphStyles } : {}),
     ...(Object.keys(perEdgeStyles).length > 0 ? { perEdgeStyles } : {}),
   };
 }
@@ -1108,7 +1209,13 @@ function parseFlowchart(source: string): ParseResult {
     const candidate = nodes.get(subgraphId);
     if (candidate?.implicit) nodes.delete(subgraphId);
   }
-  const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys(), inlineNodeClasses, edges);
+  const themeMetadata = parseDiagramThemeMetadata(
+    source,
+    nodes.keys(),
+    inlineNodeClasses,
+    edges,
+    subgraphs.map((subgraph) => subgraph.id),
+  );
   const result: ParseResult = {
     ok: true,
     ...themeMetadata,
@@ -3762,6 +3869,7 @@ export function layoutDiagramGraph(
   const translated = translateLayoutItems(root.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET);
   applyOverlayPositions(translated.nodes, overlay);
   const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes);
+  applyOverlayClusterPositions(translated.nodes, clusters, model, overlay);
   return { nodes: translated.nodes, clusters };
 }
 
@@ -3884,6 +3992,35 @@ function applyOverlayPositions(
   for (const [id, position] of Object.entries(overlay?.positions ?? {})) {
     if (!nodes[id] || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
     nodes[id] = { ...nodes[id]!, x: position.x, y: position.y };
+  }
+}
+
+function applyOverlayClusterPositions(
+  nodes: Record<string, GraphLayoutRect>,
+  clusters: GraphLayoutCluster[],
+  model: FlowGraph,
+  overlay: DiagramOverlay | null | undefined,
+): void {
+  const positionById = overlay?.positions ?? {};
+  const modelNodeById = new Map(model.nodes.map((node) => [node.id, node]));
+  const modelSubgraphById = new Map(model.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  for (const cluster of [...clusters].sort((left, right) => left.depth - right.depth)) {
+    const position = positionById[cluster.id];
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
+    const dx = position.x - cluster.x;
+    const dy = position.y - cluster.y;
+    if (dx === 0 && dy === 0) continue;
+    cluster.x += dx;
+    cluster.y += dy;
+    for (const [nodeId, rect] of Object.entries(nodes)) {
+      if (!modelNodeById.get(nodeId)?.scopePath.includes(cluster.id)) continue;
+      nodes[nodeId] = { ...rect, x: rect.x + dx, y: rect.y + dy };
+    }
+    for (const candidate of clusters) {
+      if (!modelSubgraphById.get(candidate.id)?.scopePath.includes(cluster.id)) continue;
+      candidate.x += dx;
+      candidate.y += dy;
+    }
   }
 }
 
@@ -4112,9 +4249,13 @@ function renderSvgEdge(
   return `<g data-edge-id="${escapeXml(edge.id)}" data-line-style="${edge.lineStyle ?? "solid"}"><path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}${markerStart && !invisible ? ` marker-start="${markerStart}"` : ""}${markerEnd && !invisible ? ` marker-end="${markerEnd}"` : ""}${invisible ? ' visibility="hidden"' : ""}/>${label}</g>`;
 }
 
-function renderSvgCluster(cluster: GraphLayoutCluster, themePalette: ThemePalette | undefined): string {
-  const fill = sanitizeColor(themePalette?.clusterFill) ?? "#f3ecdd";
-  const stroke = sanitizeColor(themePalette?.clusterStroke) ?? "#cdbfa3";
+function renderSvgCluster(
+  cluster: GraphLayoutCluster,
+  themePalette: ThemePalette | undefined,
+  style: NodeStyleOverride | undefined,
+): string {
+  const fill = sanitizeColor(style?.fill) ?? sanitizeColor(themePalette?.clusterFill) ?? "#f3ecdd";
+  const stroke = sanitizeColor(style?.stroke) ?? sanitizeColor(themePalette?.clusterStroke) ?? "#cdbfa3";
   const text = sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
   const emptyHint = cluster.empty
     ? `<text x="${cluster.x + cluster.width / 2}" y="${cluster.y + cluster.height / 2 + 12}" text-anchor="middle" font-size="12" fill="${text}" fill-opacity="0.58" font-family="${SVG_TEXT_FONT_FAMILY}">拖入节点</text>`

@@ -14,6 +14,7 @@ import {
   parseDiagram,
   renameSubgraph,
   safeMermaid,
+  setSubgraphStyle,
   wrapNodesInSubgraph,
   type BaseEdge,
   type ClassGraph,
@@ -1264,6 +1265,36 @@ flowchart TD
     });
   });
 
+  it("flowchart 分区支持 classDef/class 与 style，并可保留其它声明安全改色", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Zone["业务区"]',
+      "    A[开始]",
+      "  end",
+      "  classDef paper fill:#f3ecdd,stroke:#8f6d30",
+      "  class Zone paper",
+      "  style Zone stroke-width:3px,fill:#efe3cc %% 分区样式",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    expect((parsed.model as FlowGraph).perSubgraphStyles?.Zone).toMatchObject({
+      fill: "#efe3cc",
+      stroke: "#8f6d30",
+      strokeWidth: 3,
+    });
+    expect(graphToSvg(source)).toMatch(/data-cluster-id="Zone"[\s\S]*?<rect[^>]+fill="#efe3cc"[^>]+stroke="#8f6d30"/);
+
+    const rewritten = setSubgraphStyle(source, "Zone", { fill: "#f8e7a1", stroke: "#6a6256" });
+    expect(rewritten.ok).toBe(true);
+    expect(rewritten.source).toContain("style Zone stroke-width:3px,fill:#f8e7a1,stroke:#6a6256 %% 分区样式");
+    expect((parseDiagram(rewritten.source).model as FlowGraph).perSubgraphStyles?.Zone).toMatchObject({
+      fill: "#f8e7a1",
+      stroke: "#6a6256",
+      strokeWidth: 3,
+    });
+  });
+
   it("flowchart 节点 width/height 可由 Mermaid style 或持久化 overlay 驱动布局与导出", () => {
     const source = [
       "flowchart LR",
@@ -1450,6 +1481,39 @@ flowchart TD
     expect(after.y - before.y).toBe(70);
     expect(after.width).toBe(before.width);
     expect(after.height).toBe(before.height);
+  });
+
+  it("subgraph 自身位置可写入 overlay，空分区和后代节点都随位置稳定往返", () => {
+    const source = `flowchart LR
+  subgraph Outer["外层"]
+    A[甲]
+  end
+  subgraph Empty["空区"]
+  end
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    const before = layoutDiagramGraph(model);
+    const outerBefore = before.clusters.find((cluster) => cluster.id === "Outer")!;
+    const emptyBefore = before.clusters.find((cluster) => cluster.id === "Empty")!;
+    const overlay = {
+      positions: {
+        Outer: { x: outerBefore.x + 120, y: outerBefore.y + 60 },
+        Empty: { x: 680, y: 420 },
+        ORPHAN: { x: 1, y: 2 },
+      },
+    };
+    const after = layoutDiagramGraph(model, overlay);
+    const outerAfter = after.clusters.find((cluster) => cluster.id === "Outer")!;
+    const emptyAfter = after.clusters.find((cluster) => cluster.id === "Empty")!;
+
+    expect(outerAfter).toMatchObject({ x: outerBefore.x + 120, y: outerBefore.y + 60 });
+    expect(after.nodes.A!.x - before.nodes.A!.x).toBe(120);
+    expect(after.nodes.A!.y - before.nodes.A!.y).toBe(60);
+    expect(emptyAfter).toMatchObject({ x: 680, y: 420 });
+    expect(filterStableOverlay(source, overlay)?.positions).toEqual({
+      Outer: overlay.positions.Outer,
+      Empty: overlay.positions.Empty,
+    });
   });
 
   it("链式、多目标、两种标签、不可见边、圆/叉端点与 linkStyle 都进入边模型", () => {

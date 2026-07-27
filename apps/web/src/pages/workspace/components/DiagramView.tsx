@@ -518,6 +518,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
               overlay={overlay}
               readOnly={!editable}
               align={align}
+              onFullscreen={lang === "drawio" ? openVisualEdit : undefined}
               // 正文视图只要 editor.isEditable 就是设计上的可编辑态；历史/审阅等真正
               // 只读上下文会传 readOnly=true，GraphDiagramView 隐藏编辑按钮与把手。
               onAlignChange={editable
@@ -545,6 +546,8 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
               }}
               onUndo={() => editor.commands.undo()}
               onRedo={() => editor.commands.redo()}
+              canUndo={editor.can().undo()}
+              canRedo={editor.can().redo()}
             />
           )}
           {editable && (

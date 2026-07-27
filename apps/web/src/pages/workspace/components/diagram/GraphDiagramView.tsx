@@ -31,7 +31,6 @@ import {
   Background,
   BaseEdge as ReactFlowBaseEdge,
   ConnectionMode,
-  Controls,
   EdgeLabelRenderer,
   Handle,
   MarkerType,
@@ -64,6 +63,7 @@ import {
   moveNodeToSubgraph,
   parseDiagram,
   renameSubgraph,
+  setSubgraphStyle,
   wrapNodesInSubgraph,
   type BaseEdge as DiagramBaseEdge,
   type BaseNode,
@@ -99,6 +99,8 @@ interface GraphDiagramViewProps {
   onVisualChange?: (change: DiagramVisualChange) => void;
   onUndo?: () => boolean;
   onRedo?: () => boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 type CanvasSize = { width: number; height: number };
@@ -110,6 +112,8 @@ type ToolbarMenu =
   | "node-border"
   | "node-text"
   | "node-more"
+  | "subgraph-fill"
+  | "subgraph-border"
   | "edge-line"
   | "edge-arrow"
   | "edge-label"
@@ -134,6 +138,9 @@ type GraphDirection = "TB" | "BT" | "LR" | "RL";
 type GraphHandleId = "t" | "r" | "b" | "l";
 type CanvasToolIconName =
   | "subgraph"
+  | "undo"
+  | "redo"
+  | "hand"
   | "align-left"
   | "align-center"
   | "align-right"
@@ -153,10 +160,13 @@ type GraphNodeData = {
   canRename: boolean;
   canQuickAdd: boolean;
   canResize: boolean;
+  width: number;
+  height: number;
   onRenameStart: () => void;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
   onQuickAdd: (handleId: GraphHandleId) => void;
+  onResizePreview: (size: ResizeParams) => void;
   onResizeCommit: (size: ResizeParams) => void;
 } & Record<string, unknown>;
 type GraphRegularNode = Node<GraphNodeData, "graphNode">;
@@ -209,11 +219,6 @@ type ShiftDragState = {
   startPositions: Record<string, { x: number; y: number }>;
 };
 type GraphRect = { x: number; y: number; width: number; height: number };
-type PendingSubgraph = {
-  rect: GraphRect;
-  nodeIds: string[];
-  parentSubgraph: string | null;
-};
 type ClusterDragState = {
   clusterId: string;
   startPosition: { x: number; y: number };
@@ -226,6 +231,7 @@ type GraphDiagramTestAction =
   | { kind: "moveParent"; nodeId: string; newParentId: string }
   | { kind: "drawSubgraph"; rect: GraphRect }
   | { kind: "dropNode"; nodeId: string; position: { x: number; y: number } }
+  | { kind: "resizeNodePreview"; nodeId: string; rect: GraphRect }
   | { kind: "resizeNode"; nodeId: string; rect: GraphRect }
   | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } };
 
@@ -256,6 +262,8 @@ const NODE_FONT_SIZE_RANGE = { min: 10, max: 48, step: 1 };
 const DEFAULT_NODE_FONT_SIZE = 13;
 const DEFAULT_NODE_FILL = "#efe3cc";
 const DEFAULT_NODE_STROKE = "#b08a3e";
+const DEFAULT_CLUSTER_FILL = "#f3ecdd";
+const DEFAULT_CLUSTER_STROKE = "#cdbfa3";
 const DEFAULT_NODE_TEXT = "#2f2a22";
 const DEFAULT_EDGE_STROKE = "#8d7447";
 const DEFAULT_EDGE_TEXT = "#5c5346";
@@ -301,14 +309,14 @@ const GRAPH_HANDLES: Array<{ id: GraphHandleId; position: Position }> = [
 ];
 function graphNodeHandleBounds(width: number, height: number): NodeHandle[] {
   return [
-    { id: "t", type: "source", position: Position.Top, x: width / 2 - 5, y: -5, width: 10, height: 10 },
-    { id: "t", type: "target", position: Position.Top, x: width / 2 - 5, y: -5, width: 10, height: 10 },
-    { id: "r", type: "source", position: Position.Right, x: width - 5, y: height / 2 - 5, width: 10, height: 10 },
-    { id: "r", type: "target", position: Position.Right, x: width - 5, y: height / 2 - 5, width: 10, height: 10 },
-    { id: "b", type: "source", position: Position.Bottom, x: width / 2 - 5, y: height - 5, width: 10, height: 10 },
-    { id: "b", type: "target", position: Position.Bottom, x: width / 2 - 5, y: height - 5, width: 10, height: 10 },
-    { id: "l", type: "source", position: Position.Left, x: -5, y: height / 2 - 5, width: 10, height: 10 },
-    { id: "l", type: "target", position: Position.Left, x: -5, y: height / 2 - 5, width: 10, height: 10 },
+    { id: "t", type: "source", position: Position.Top, x: width / 2 - 8, y: -8, width: 16, height: 16 },
+    { id: "t", type: "target", position: Position.Top, x: width / 2 - 8, y: -8, width: 16, height: 16 },
+    { id: "r", type: "source", position: Position.Right, x: width - 8, y: height / 2 - 8, width: 16, height: 16 },
+    { id: "r", type: "target", position: Position.Right, x: width - 8, y: height / 2 - 8, width: 16, height: 16 },
+    { id: "b", type: "source", position: Position.Bottom, x: width / 2 - 8, y: height - 8, width: 16, height: 16 },
+    { id: "b", type: "target", position: Position.Bottom, x: width / 2 - 8, y: height - 8, width: 16, height: 16 },
+    { id: "l", type: "source", position: Position.Left, x: -8, y: height / 2 - 8, width: 16, height: 16 },
+    { id: "l", type: "target", position: Position.Left, x: -8, y: height / 2 - 8, width: 16, height: 16 },
   ];
 }
 const DIRECTION_HANDLES: Record<GraphDirection, {
@@ -352,6 +360,29 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   const isComposingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
   const blurArmedRef = useRef(false);
+  const handlePointerRef = useRef<{ id: GraphHandleId; x: number; y: number; moved: boolean } | null>(null);
+  const handlePreviewTimerRef = useRef<number | null>(null);
+  const [handleHover, setHandleHover] = useState<{ id: GraphHandleId; phase: "plus" | "preview" } | null>(null);
+
+  useEffect(() => () => {
+    if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
+  }, []);
+
+  const beginHandleHover = (handleId: GraphHandleId) => {
+    if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
+    setHandleHover({ id: handleId, phase: "plus" });
+    handlePreviewTimerRef.current = window.setTimeout(() => {
+      setHandleHover((current) => (current?.id === handleId ? { id: handleId, phase: "preview" } : current));
+      handlePreviewTimerRef.current = null;
+    }, 220);
+  };
+  const endHandleHover = (handleId: GraphHandleId) => {
+    if (handlePreviewTimerRef.current !== null) {
+      window.clearTimeout(handlePreviewTimerRef.current);
+      handlePreviewTimerRef.current = null;
+    }
+    setHandleHover((current) => (current?.id === handleId ? null : current));
+  };
 
   useEffect(() => {
     if (!data.isRenaming) {
@@ -424,6 +455,9 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
       className={classNames("graph-diagram-node-shell", `graph-diagram-node--${data.shape}`, data.canRename && "can-rename", data.isRenaming && "is-renaming")}
       data-node-shape={data.shape}
       data-mermaid-shape={data.rawShape ?? undefined}
+      data-node-width={data.width}
+      data-node-height={data.height}
+      style={{ width: data.width, height: data.height }}
       onClickCapture={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.detail >= 2) requestRename(event);
       }}
@@ -442,6 +476,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
         keepAspectRatio={data.shape === "circle" || data.shape === "doublecircle"}
         lineClassName="graph-diagram-resize-line"
         handleClassName="graph-diagram-resize-handle nodrag nopan"
+        onResize={(_event, size) => data.onResizePreview(size)}
         onResizeEnd={(_event, size) => data.onResizeCommit(size)}
       />
       <svg className="graph-diagram-node-shape-svg" viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none" aria-hidden="true">
@@ -501,7 +536,16 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
         {data.isRenaming ? null : data.label}
       </div>
       {GRAPH_HANDLES.map((handle) => (
-        <div key={handle.id} className={`graph-diagram-handle-slot graph-diagram-handle-slot--${handle.id}`}>
+        <div
+          key={handle.id}
+          className={`graph-diagram-handle-slot graph-diagram-handle-slot--${handle.id}`}
+          data-handle-state={handleHover?.id === handle.id ? handleHover.phase : "dot"}
+        >
+          <span
+            className={`graph-diagram-handle-dot graph-diagram-handle-dot--${handle.id}`}
+            data-direction={handle.id}
+            aria-hidden="true"
+          />
           <Handle
             id={handle.id}
             type="target"
@@ -511,6 +555,8 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线目标`}
             title="拖拽到目标节点连线"
+            onMouseEnter={() => beginHandleHover(handle.id)}
+            onMouseLeave={() => endHandleHover(handle.id)}
           />
           <Handle
             id={handle.id}
@@ -520,13 +566,32 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线起点`}
             title="拖拽到目标节点连线"
+            onMouseEnter={() => beginHandleHover(handle.id)}
+            onMouseLeave={() => endHandleHover(handle.id)}
+            onPointerDown={(event) => {
+              handlePointerRef.current = { id: handle.id, x: event.clientX, y: event.clientY, moved: false };
+            }}
+            onPointerMove={(event) => {
+              const pointer = handlePointerRef.current;
+              if (pointer?.id === handle.id && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 4) {
+                pointer.moved = true;
+              }
+            }}
+            onClick={(event) => {
+              const pointer = handlePointerRef.current;
+              handlePointerRef.current = null;
+              if (!data.canQuickAdd || pointer?.moved) return;
+              event.preventDefault();
+              event.stopPropagation();
+              data.onQuickAdd(handle.id);
+            }}
           />
-          {data.canQuickAdd ? (
+          {data.canQuickAdd && handleHover?.id === handle.id ? (
             <button
               type="button"
-              className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} nodrag nopan`}
+              className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} is-${handleHover.phase} nodrag nopan`}
               aria-label={`从${handleLabel(handle.id)}新增连接节点`}
-              title="点击新建相邻节点"
+              title={handleHover.phase === "preview" ? "点击新建相邻节点" : "继续悬停预览"}
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
@@ -539,8 +604,24 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
                 data.onQuickAdd(handle.id);
               }}
             >
-              <CanvasToolIcon name="plus" />
+              {handleHover.phase === "preview"
+                ? <HandleDirectionIcon direction={handle.id} />
+                : <CanvasToolIcon name="plus" />}
             </button>
+          ) : null}
+          {data.canQuickAdd && handleHover?.id === handle.id && handleHover.phase === "preview" ? (
+            <div
+              className={`graph-diagram-handle-ghost graph-diagram-handle-ghost--${handle.id}`}
+              data-direction={handle.id}
+              aria-hidden="true"
+            >
+              <span className="graph-diagram-handle-ghost__line" />
+              <span className="graph-diagram-handle-ghost__node">
+                <svg viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none">
+                  {renderShapeSvg(data.shape)}
+                </svg>
+              </span>
+            </div>
           ) : null}
         </div>
       ))}
@@ -548,16 +629,32 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   );
 }
 
-function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterNode>) {
+function HandleDirectionIcon({ direction }: { direction: GraphHandleId }) {
+  return (
+    <svg
+      className={`graph-diagram-handle-direction-icon graph-diagram-handle-direction-icon--${direction}`}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 8h9M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function GraphCluster({ data, selected }: NodeProps<GraphClusterNode>) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const titleRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!data.isRenaming) return;
-    const input = inputRef.current;
-    if (!input) return;
-    input.focus();
-    input.select();
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [data.isRenaming]);
 
   useEffect(() => {
@@ -619,7 +716,7 @@ function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterN
             onDoubleClick={(event) => event.stopPropagation()}
             onBlur={(event) => {
               const nextTitle = event.currentTarget.value.trim();
-              if (nextTitle && nextTitle !== data.editLabel.trim()) data.onRenameCommit(nextTitle);
+              data.onRenameCommit(nextTitle || data.editLabel);
             }}
             onKeyDown={(event) => {
               event.stopPropagation();
@@ -640,25 +737,6 @@ function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterN
           拖入节点
         </div>
       ) : null}
-      {GRAPH_HANDLES.map((handle) => (
-        <div key={handle.id} className={`graph-diagram-cluster__handle-slot graph-diagram-cluster__handle-slot--${handle.id}`}>
-          <Handle
-            id={handle.id}
-            type="target"
-            position={handle.position}
-            isConnectable={isConnectable}
-            isConnectableStart={false}
-            className="graph-diagram-cluster__handle"
-          />
-          <Handle
-            id={handle.id}
-            type="source"
-            position={handle.position}
-            isConnectable={isConnectable}
-            className="graph-diagram-cluster__handle"
-          />
-        </div>
-      ))}
     </div>
   );
 }
@@ -836,22 +914,28 @@ function graphMarkerSafeId(edgeId: string): string {
   return edgeId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-// 图表块外部工具栏只负责块对齐与进入全屏，结构和视觉与图片块完全共用。
+// 图表块外部工具栏复用图片块结构，并通过预览 React Flow 实例执行真实缩放。
 function GraphPreviewToolbar({
   readOnly,
   align,
   onAlignChange,
+  onZoomIn,
+  onZoomOut,
   onFullscreen,
 }: {
   readOnly: boolean;
   align: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
   onFullscreen: () => void;
 }) {
   return (
     <MediaBlockToolbar
       align={align}
       onAlignChange={readOnly ? undefined : onAlignChange}
+      onZoomIn={onZoomIn}
+      onZoomOut={onZoomOut}
       onFullscreen={onFullscreen}
       ariaLabel="图表画布工具栏"
       fullscreenAriaLabel="全屏查看"
@@ -912,6 +996,11 @@ function CanvasToolIcon({ name }: { name: CanvasToolIconName }) {
           <path d="M8 5.4v5.2M5.4 8h5.2" {...common} />
         </>
       )}
+      {name === "undo" && <path d="M6.2 4.2 2.8 7.1l3.4 2.8M3.2 7.1h5.1c2.7 0 4.2 1.4 4.2 4.1" {...common} />}
+      {name === "redo" && <path d="m9.8 4.2 3.4 2.9-3.4 2.8m3-2.8H7.7c-2.7 0-4.2 1.4-4.2 4.1" {...common} />}
+      {name === "hand" && (
+        <path d="M5.1 7.6V4.2a1 1 0 0 1 2 0v2.3-3a1 1 0 0 1 2 0v3-2a1 1 0 0 1 2 0v2.4-1a1 1 0 0 1 2 0v2.8c0 3-1.9 4.8-4.7 4.8H7.2c-1.5 0-2.5-.7-3.3-1.9L2.7 9.7a1.1 1.1 0 0 1 1.8-1.2l.6.8" {...common} />
+      )}
       {name === "align-left" && <path d="M3 3v10M5.5 5h7M5.5 8h4.5M5.5 11h6" {...common} />}
       {name === "align-center" && <path d="M8 3v10M4 5h8M5.5 8h5M4.8 11h6.4" {...common} />}
       {name === "align-right" && <path d="M13 3v10M3.5 5h7M6 8h4.5M4.5 11h6" {...common} />}
@@ -934,6 +1023,104 @@ function CanvasToolIcon({ name }: { name: CanvasToolIconName }) {
       )}
       {name === "plus" && <path d="M3.2 8h9.6M8 3.2v9.6" {...common} />}
     </svg>
+  );
+}
+
+function GraphViewportControls({
+  showHistory,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  panMode,
+  onPanModeChange,
+}: {
+  showHistory: boolean;
+  onUndo?: () => boolean;
+  onRedo?: () => boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  panMode?: boolean;
+  onPanModeChange?: (active: boolean) => void;
+}) {
+  const rf = useReactFlow<GraphFlowNode, GraphFlowEdge>();
+  const zoom = useStore((state) => state.transform[2]);
+  const stop = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const fit = () => void rf.fitView({ padding: 0.15, maxZoom: 1, duration: 160 });
+
+  return (
+    <div className="graph-diagram-viewport-controls" aria-label="画布视图控件">
+      {showHistory ? (
+        <div className="graph-diagram-viewport-controls__group" role="group" aria-label="历史操作">
+          <button
+            type="button"
+            aria-label="撤销"
+            title="撤销"
+            disabled={!onUndo || canUndo === false}
+            onMouseDown={stop}
+            onClick={() => onUndo?.()}
+          >
+            <CanvasToolIcon name="undo" />
+          </button>
+          <button
+            type="button"
+            aria-label="重做"
+            title="重做"
+            disabled={!onRedo || canRedo === false}
+            onMouseDown={stop}
+            onClick={() => onRedo?.()}
+          >
+            <CanvasToolIcon name="redo" />
+          </button>
+        </div>
+      ) : null}
+      <div className="graph-diagram-viewport-controls__group" role="group" aria-label="缩放与平移">
+        {onPanModeChange ? (
+          <button
+            type="button"
+            className={classNames(panMode && "is-active")}
+            aria-label="拖拽画布(空格)"
+            aria-pressed={panMode}
+            title="拖拽画布(空格)"
+            onMouseDown={stop}
+            onClick={() => onPanModeChange(!panMode)}
+          >
+            <CanvasToolIcon name="hand" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          aria-label="缩小画布"
+          title="缩小"
+          onMouseDown={stop}
+          onClick={() => void rf.zoomOut({ duration: 120 })}
+        >
+          <CanvasToolIcon name="zoom-out" />
+        </button>
+        <button
+          type="button"
+          className="graph-diagram-viewport-controls__zoom"
+          aria-label="适配视图"
+          title="适配视图"
+          onMouseDown={stop}
+          onClick={fit}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          aria-label="放大画布"
+          title="放大"
+          onMouseDown={stop}
+          onClick={() => void rf.zoomIn({ duration: 120 })}
+        >
+          <CanvasToolIcon name="zoom-in" />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1109,6 +1296,8 @@ export function GraphDiagramView({
   onVisualChange,
   onUndo,
   onRedo,
+  canUndo,
+  canRedo,
 }: GraphDiagramViewProps) {
   const toast = useToast();
   const [liveSource, setLiveSource] = useState(source);
@@ -1174,7 +1363,9 @@ export function GraphDiagramView({
   const [error, setError] = useState<string | null>(null);
   const [subgraphDrawMode, setSubgraphDrawMode] = useState(false);
   const [subgraphPreview, setSubgraphPreview] = useState<GraphRect | null>(null);
-  const [pendingSubgraph, setPendingSubgraph] = useState<PendingSubgraph | null>(null);
+  const [newSubgraphId, setNewSubgraphId] = useState<string | null>(null);
+  const [panMode, setPanMode] = useState(true);
+  const [spacePanning, setSpacePanning] = useState(false);
   const renameCommittedRef = useRef(false);
   const subgraphRenameCommittedRef = useRef(false);
   const edgeLabelCommittedRef = useRef(false);
@@ -1232,7 +1423,8 @@ export function GraphDiagramView({
     setOpenToolbarMenu(null);
     setSubgraphDrawMode(false);
     setSubgraphPreview(null);
-    setPendingSubgraph(null);
+    setNewSubgraphId(null);
+    setSpacePanning(false);
     subgraphDrawStartRef.current = null;
     clusterDragRef.current = null;
   }, []);
@@ -1259,8 +1451,12 @@ export function GraphDiagramView({
   }, [resetEditorState]);
 
   const openFullscreen = useCallback(() => {
-    setViewingFullscreen(true);
-  }, []);
+    if (readOnly) {
+      setViewingFullscreen(true);
+      return;
+    }
+    openEditor();
+  }, [openEditor, readOnly]);
 
   const closeFullscreen = useCallback(() => {
     setViewingFullscreen(false);
@@ -1319,44 +1515,9 @@ export function GraphDiagramView({
 
   useEffect(() => {
     if (!inEdit) return;
-    requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }));
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const key = event.key.toLowerCase();
-      const hasMod = event.ctrlKey || event.metaKey;
-      const isUndo = hasMod && !event.shiftKey && key === "z";
-      const isRedo = hasMod && (
-        (event.shiftKey && key === "z") ||
-        (!event.shiftKey && key === "y")
-      );
-      if (
-        ((isUndo && onUndo) || (isRedo && onRedo)) &&
-        !target?.closest("input, textarea, [contenteditable='true']")
-      ) {
-        event.preventDefault();
-        if (isUndo) onUndo?.();
-        else onRedo?.();
-        return;
-      }
-      if (event.key !== "Escape") return;
-      if (subgraphDrawMode || pendingSubgraph) {
-        event.preventDefault();
-        setSubgraphDrawMode(false);
-        setSubgraphPreview(null);
-        setPendingSubgraph(null);
-        subgraphDrawStartRef.current = null;
-        return;
-      }
-      closeEditor();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [closeEditor, inEdit, onRedo, onUndo, pendingSubgraph, subgraphDrawMode]);
+    const frame = requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [inEdit]);
 
   const emitOverlay = useCallback(
     (next: DiagramOverlay, extraIds?: { nodes?: string[]; edges?: string[] }) => {
@@ -1422,6 +1583,28 @@ export function GraphDiagramView({
       });
     },
     [emitOverlay, ids.nodes, inEdit],
+  );
+
+  const previewNodeResize = useCallback(
+    (nodeId: string, size: ResizeParams) => {
+      if (!inEdit || !ids.nodes.has(nodeId)) return;
+      const width = clamp(size.width, NODE_MIN_WIDTH, NODE_MAX_WIDTH);
+      const height = clamp(size.height, NODE_MIN_HEIGHT, NODE_MAX_HEIGHT);
+      setNodes((current) => current.map((node) => {
+        if (node.id !== nodeId || node.type !== "graphNode") return node;
+        return {
+          ...node,
+          position: { x: size.x, y: size.y },
+          initialWidth: width,
+          initialHeight: height,
+          measured: { ...(node.measured ?? {}), width, height },
+          handles: graphNodeHandleBounds(width, height),
+          data: { ...node.data, width, height },
+          style: { ...(node.style ?? {}), width, height },
+        };
+      }));
+    },
+    [ids.nodes, inEdit],
   );
 
   const runRewrite = useCallback(
@@ -1558,6 +1741,10 @@ export function GraphDiagramView({
   }, []);
 
   const clearSelection = useCallback(() => {
+    // React Flow 自己也维护 selected 标记；只清业务 state 会被下一次
+    // onSelectionChange 用旧标记重新选回，因此空白点击必须两层一起清。
+    setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)));
+    setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)));
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setSelectedSubgraphId(null);
@@ -1719,6 +1906,14 @@ export function GraphDiagramView({
     });
   }, [emitOverlay, inEdit, overlay, selectedEdgeId]);
 
+  const updateSelectedSubgraphStyle = useCallback(
+    (patch: Pick<NodeStyleOverride, "fill" | "stroke">) => {
+      if (!selectedSubgraphId || !inEdit) return;
+      runRewrite((baseSource) => setSubgraphStyle(baseSource, selectedSubgraphId, patch));
+    },
+    [inEdit, runRewrite, selectedSubgraphId],
+  );
+
   const setSelectedEdgeArrow = useCallback(
     (patch: { direction?: EdgeDirection; lineStyle?: EdgeLineStyle }) => {
       if (!selectedEdge || !capEnabled(selectedEdgeCaps, "setEdgeArrow")) return;
@@ -1792,14 +1987,91 @@ export function GraphDiagramView({
       ? parsed.model.subgraphs.find((item) => item.id === renamingSubgraphId)?.label ?? ""
       : "";
     setRenamingSubgraphId(null);
+    setNewSubgraphId((current) => (current === renamingSubgraphId ? null : current));
     if (!nextTitle || nextTitle === currentTitle) return;
     runRewrite((baseSource) => renameSubgraph(baseSource, renamingSubgraphId, nextTitle));
   }, [parsed, renamingSubgraphId, runRewrite]);
 
   const cancelSubgraphRename = useCallback(() => {
-    subgraphRenameCommittedRef.current = false;
+    if (subgraphRenameCommittedRef.current) return;
+    subgraphRenameCommittedRef.current = true;
+    const createdId = newSubgraphId && newSubgraphId === renamingSubgraphId ? newSubgraphId : null;
     setRenamingSubgraphId(null);
-  }, []);
+    setNewSubgraphId(null);
+    if (!createdId) return;
+    const result = runRewrite((baseSource) => dissolveSubgraph(baseSource, createdId));
+    if (result?.ok) clearSelection();
+  }, [clearSelection, newSubgraphId, renamingSubgraphId, runRewrite]);
+
+  useEffect(() => {
+    if (!inEdit) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const key = event.key.toLowerCase();
+      if (
+        event.code === "Space" &&
+        !event.repeat &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        setSpacePanning(true);
+        return;
+      }
+      const hasMod = event.ctrlKey || event.metaKey;
+      const isUndo = hasMod && !event.shiftKey && key === "z";
+      const isRedo = hasMod && (
+        (event.shiftKey && key === "z") ||
+        (!event.shiftKey && key === "y")
+      );
+      if (
+        ((isUndo && onUndo) || (isRedo && onRedo)) &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        if (isUndo) onUndo?.();
+        else onRedo?.();
+        return;
+      }
+      if (event.key !== "Escape") return;
+      if (newSubgraphId && newSubgraphId === renamingSubgraphId) {
+        event.preventDefault();
+        cancelSubgraphRename();
+        return;
+      }
+      if (subgraphDrawMode) {
+        event.preventDefault();
+        setSubgraphDrawMode(false);
+        setSubgraphPreview(null);
+        subgraphDrawStartRef.current = null;
+        return;
+      }
+      closeEditor();
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpacePanning(false);
+    };
+    const handleWindowBlur = () => setSpacePanning(false);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [
+    cancelSubgraphRename,
+    closeEditor,
+    inEdit,
+    newSubgraphId,
+    onRedo,
+    onUndo,
+    renamingSubgraphId,
+    subgraphDrawMode,
+  ]);
 
   const dissolveSelectedSubgraph = useCallback(() => {
     if (!selectedSubgraphId) return;
@@ -1812,13 +2084,12 @@ export function GraphDiagramView({
     openEditor();
     clearSelection();
     setError(null);
-    setPendingSubgraph(null);
     setSubgraphPreview(null);
     subgraphDrawStartRef.current = null;
     setSubgraphDrawMode(true);
   }, [clearSelection, openEditor, parsed, readOnly]);
 
-  const preparePendingSubgraph = useCallback((rawRect: GraphRect): boolean => {
+  const createSubgraphFromRect = useCallback((rawRect: GraphRect): boolean => {
     if (!parsed.ok || parsed.model.type !== "flowchart") return false;
     const rect = normalizeGraphRect(rawRect);
     if (rect.width < 8 || rect.height < 8) {
@@ -1842,34 +2113,39 @@ export function GraphDiagramView({
       .filter((node) => graphRectContainsPoint(rect, graphNodeCenter(node)))
       .filter((node) => sameStringPath(modelNodeById.get(node.id)?.scopePath ?? [], expectedScopePath))
       .map((node) => node.id);
-    setSubgraphPreview(rect);
-    setPendingSubgraph({ rect, nodeIds, parentSubgraph: placement.parentSubgraph });
-    return true;
-  }, [parsed, toast]);
-
-  const cancelPendingSubgraph = useCallback(() => {
-    setPendingSubgraph(null);
-    setSubgraphPreview(null);
-    setSubgraphDrawMode(false);
-    subgraphDrawStartRef.current = null;
-  }, []);
-
-  const confirmPendingSubgraph = useCallback((value: string) => {
-    const pending = pendingSubgraph;
-    const title = value.trim();
-    if (!pending || !title) return;
     const result = runRewrite((baseSource) =>
-      wrapNodesInSubgraph(baseSource, pending.nodeIds, title, pending.parentSubgraph),
+      wrapNodesInSubgraph(baseSource, nodeIds, "新分区", placement.parentSubgraph),
     );
-    if (!result?.ok) return;
-    setPendingSubgraph(null);
+    const createdId = result?.newSubgraphId;
+    if (!result?.ok || !createdId) {
+      setSubgraphPreview(null);
+      return false;
+    }
+    emitOverlay(
+      {
+        ...(overlayRef.current ?? {}),
+        positions: {
+          ...(overlayRef.current?.positions ?? {}),
+          [createdId]: { x: Math.round(rect.x), y: Math.round(rect.y) },
+        },
+      },
+      { nodes: [createdId] },
+    );
     setSubgraphPreview(null);
     setSubgraphDrawMode(false);
-    setSelectedSubgraphId(result.newSubgraphId ?? null);
-  }, [pendingSubgraph, runRewrite]);
+    setSelectedSubgraphId(createdId);
+    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
+    setSelectedEdgeIds([]);
+    subgraphRenameCommittedRef.current = false;
+    setNewSubgraphId(createdId);
+    setRenamingSubgraphId(createdId);
+    return true;
+  }, [emitOverlay, parsed, runRewrite, toast]);
 
   const handleSubgraphPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!subgraphDrawMode || pendingSubgraph || event.button !== 0) return;
+    if (!subgraphDrawMode || event.button !== 0) return;
     const target = event.target as HTMLElement | null;
     if (!target?.classList.contains("react-flow__pane")) return;
     const point = editorFit.screenToFlowPosition({ x: event.clientX, y: event.clientY });
@@ -1883,7 +2159,7 @@ export function GraphDiagramView({
     } catch {
       /* jsdom/旧浏览器无指针捕获时仍可依赖冒泡事件 */
     }
-  }, [editorFit, pendingSubgraph, subgraphDrawMode]);
+  }, [editorFit, subgraphDrawMode]);
 
   const handleSubgraphPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const start = subgraphDrawStartRef.current;
@@ -1913,14 +2189,13 @@ export function GraphDiagramView({
     if (!point) return;
     event.preventDefault();
     event.stopPropagation();
-    const accepted = preparePendingSubgraph({
+    createSubgraphFromRect({
       x: start.point.x,
       y: start.point.y,
       width: point.x - start.point.x,
       height: point.y - start.point.y,
     });
-    if (accepted) setSubgraphDrawMode(false);
-  }, [editorFit, preparePendingSubgraph]);
+  }, [createSubgraphFromRect, editorFit]);
 
   const startEdgeLabelEdit = useCallback(
     (edgeId: string) => {
@@ -2041,6 +2316,12 @@ export function GraphDiagramView({
           border: "none",
           background: "transparent",
           padding: 0,
+          ...(parsed.model.type === "flowchart" && parsed.model.perSubgraphStyles?.[cluster.id]?.fill
+            ? { "--graph-cluster-fill": parsed.model.perSubgraphStyles[cluster.id]!.fill! }
+            : {}),
+          ...(parsed.model.type === "flowchart" && parsed.model.perSubgraphStyles?.[cluster.id]?.stroke
+            ? { "--graph-cluster-stroke": parsed.model.perSubgraphStyles[cluster.id]!.stroke! }
+            : {}),
         },
       }));
     const regularNodes = graphNodes.map((node) => {
@@ -2079,10 +2360,13 @@ export function GraphDiagramView({
           canRename,
           canQuickAdd,
           canResize: inEdit,
+          width: nodeWidth,
+          height: nodeHeight,
           onRenameStart: () => startRename(node.id),
           onRenameCommit: commitRename,
           onRenameCancel: cancelRename,
           onQuickAdd: (handleId: GraphHandleId) => addConnectedNodeFromHandle(node.id, handleId),
+          onResizePreview: (size: ResizeParams) => previewNodeResize(node.id, size),
           onResizeCommit: (size: ResizeParams) => commitNodeResize(node.id, size),
         },
         draggable: inEdit && !isRenaming,
@@ -2192,6 +2476,7 @@ export function GraphDiagramView({
     parentPickerNodeId,
     parsed.model,
     parsed,
+    previewNodeResize,
     renamingNodeId,
     renamingSubgraphId,
     selectedEdgeId,
@@ -2267,8 +2552,14 @@ export function GraphDiagramView({
   );
 
   const contextPosition = useMemo(
-    () => getFloatingPosition({ selectedNodeId, selectedEdge, nodes, viewport: editViewport, canvasFrame: editCanvasFrame }),
-    [editCanvasFrame, editViewport, nodes, selectedEdge, selectedNodeId],
+    () => getFloatingPosition({
+      selectedNodeId: selectedNodeId ?? selectedSubgraphId,
+      selectedEdge,
+      nodes,
+      viewport: editViewport,
+      canvasFrame: editCanvasFrame,
+    }),
+    [editCanvasFrame, editViewport, nodes, selectedEdge, selectedNodeId, selectedSubgraphId],
   );
   const contextStyle = contextPosition
     ? ({ left: contextPosition.left, top: contextPosition.top } as const)
@@ -2278,7 +2569,19 @@ export function GraphDiagramView({
   const selectedNodeCanMove = capEnabled(selectedNodeCaps, "moveNode") && moveParentOptions.length > 0;
   const selectedNodeCanStyle = !!selectedNodeId && ids.nodes.has(selectedNodeId);
   const selectedNodeCanShape = capEnabled(selectedNodeCaps, "setNodeShape");
-  const selectedNodeStyle = selectedNodeId ? overlay?.styles?.[selectedNodeId] : undefined;
+  const selectedNodeStyle = selectedNodeId
+    ? {
+        ...(parsed.model.perNodeStyles?.[selectedNodeId] ?? {}),
+        ...(overlay?.styles?.[selectedNodeId] ?? {}),
+      }
+    : undefined;
+  const selectedNodeFill = selectedNodeStyle?.fill ?? parsed.model.themePalette?.nodeFill ?? DEFAULT_NODE_FILL;
+  const selectedNodeStroke = selectedNodeStyle?.stroke ?? parsed.model.themePalette?.nodeStroke ?? DEFAULT_NODE_STROKE;
+  const selectedSubgraphStyle = selectedSubgraphId && parsed.model.type === "flowchart"
+    ? parsed.model.perSubgraphStyles?.[selectedSubgraphId]
+    : undefined;
+  const selectedSubgraphFill = selectedSubgraphStyle?.fill ?? parsed.model.themePalette?.clusterFill ?? DEFAULT_CLUSTER_FILL;
+  const selectedSubgraphStroke = selectedSubgraphStyle?.stroke ?? parsed.model.themePalette?.clusterStroke ?? DEFAULT_CLUSTER_STROKE;
   const selectedNodeShape = selectedNode ? getNodeShape(selectedNode) : "rect";
   const canAddNodeFromToolbar = canAddNodeEmpty || selectedNodeCanAdd;
   const selectedEdgeCanDelete = capEnabled(selectedEdgeCaps, "deleteEdge");
@@ -2437,8 +2740,8 @@ export function GraphDiagramView({
         clusterDragRef.current = null;
         const dx = node.position.x - clusterState.startPosition.x;
         const dy = node.position.y - clusterState.startPosition.y;
-        const movedNodes = nodesRef.current
-          .filter((item): item is GraphRegularNode => item.type === "graphNode" && !!clusterState.movingPositions[item.id])
+        const movedElements = nodesRef.current
+          .filter((item) => !!clusterState.movingPositions[item.id])
           .map((item) => {
             const start = clusterState.movingPositions[item.id]!;
             return { ...item, position: { x: start.x + dx, y: start.y + dy }, dragging: false };
@@ -2449,7 +2752,7 @@ export function GraphDiagramView({
             return start ? { ...item, position: { x: start.x + dx, y: start.y + dy }, dragging: false } : item;
           }),
         );
-        commitNodePositions(movedNodes);
+        commitNodePositions([{ ...node, position: { ...node.position }, dragging: false }, ...movedElements]);
         return;
       }
       const altState = altDuplicateDragRef.current;
@@ -2555,7 +2858,7 @@ export function GraphDiagramView({
         return;
       }
       if (action.kind === "drawSubgraph") {
-        if (preparePendingSubgraph(action.rect)) setSubgraphDrawMode(false);
+        createSubgraphFromRect(action.rect);
         return;
       }
       if (action.kind === "dropNode") {
@@ -2567,15 +2870,27 @@ export function GraphDiagramView({
         return;
       }
       if (action.kind === "resizeNode") {
+        previewNodeResize(action.nodeId, action.rect);
         commitNodeResize(action.nodeId, action.rect);
+        return;
+      }
+      if (action.kind === "resizeNodePreview") {
+        previewNodeResize(action.nodeId, action.rect);
         return;
       }
       if (action.kind === "moveSubgraph" && parsed.ok && parsed.model.type === "flowchart") {
         const descendantIds = new Set(
           parsed.model.nodes.filter((item) => item.scopePath.includes(action.subgraphId)).map((item) => item.id),
         );
+        const descendantSubgraphIds = new Set(
+          parsed.model.subgraphs.filter((item) => item.scopePath.includes(action.subgraphId)).map((item) => item.id),
+        );
         const moved = nodesRef.current
-          .filter((item): item is GraphRegularNode => item.type === "graphNode" && descendantIds.has(item.id))
+          .filter((item) => (
+            item.id === action.subgraphId ||
+            descendantIds.has(item.id) ||
+            descendantSubgraphIds.has(item.id)
+          ))
           .map((item) => ({
             ...item,
             position: {
@@ -2605,7 +2920,8 @@ export function GraphDiagramView({
     ids.nodes,
     inEdit,
     parsed,
-    preparePendingSubgraph,
+    previewNodeResize,
+    createSubgraphFromRect,
     runEdit,
   ]);
 
@@ -2655,34 +2971,6 @@ export function GraphDiagramView({
             </button>
           </div>
           <div className="graph-diagram-editor__bottom-toolbar diagram-editor-chrome__toolbar" role="toolbar" aria-label="图表编辑操作">
-            {parsed.model.type === "flowchart" && (
-              <>
-                <CanvasToolButton
-                  label="新增分区"
-                  icon="subgraph"
-                  active={subgraphDrawMode}
-                  pressed={subgraphDrawMode}
-                  showLabel
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    beginSubgraphDrawing();
-                  }}
-                />
-                <CanvasToolButton
-                  label="解散分区"
-                  icon="dissolve"
-                  disabled={!selectedSubgraph}
-                  showLabel
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    dissolveSelectedSubgraph();
-                  }}
-                />
-                <span className="pm-diagram-tool-sep" aria-hidden="true" />
-              </>
-            )}
             <CanvasToolButton
               label="新增节点"
               icon="plus"
@@ -2698,6 +2986,20 @@ export function GraphDiagramView({
                 addNode();
               }}
             />
+            {parsed.model.type === "flowchart" && (
+              <CanvasToolButton
+                label="新增分区"
+                icon="subgraph"
+                active={subgraphDrawMode}
+                pressed={subgraphDrawMode}
+                showLabel
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  beginSubgraphDrawing();
+                }}
+              />
+            )}
           </div>
           {error && <div className="graph-diagram-error graph-diagram-error--floating">{error}</div>}
           <div
@@ -2706,7 +3008,7 @@ export function GraphDiagramView({
               "graph-diagram-canvas--editor",
               connecting && "is-connecting",
               subgraphDrawMode && "is-drawing-subgraph",
-              pendingSubgraph && "is-naming-subgraph",
+              (panMode || spacePanning) && "is-pan-enabled",
             )}
             ref={editorFit.canvasRef}
             onPointerDownCapture={handleSubgraphPointerDown}
@@ -2714,7 +3016,7 @@ export function GraphDiagramView({
             onPointerUp={handleSubgraphPointerUp}
             onPointerCancel={() => {
               subgraphDrawStartRef.current = null;
-              if (!pendingSubgraph) setSubgraphPreview(null);
+              setSubgraphPreview(null);
             }}
           >
             <ReactFlow
@@ -2727,15 +3029,15 @@ export function GraphDiagramView({
               minZoom={0.1}
               onInit={editorFit.onInit}
               onMove={(_event, viewport) => setEditViewport(viewport)}
-              nodesDraggable={inEdit && !subgraphDrawMode && !pendingSubgraph}
-              nodesConnectable={canConnectEdge && !subgraphDrawMode && !pendingSubgraph}
-              elementsSelectable={!subgraphDrawMode && !pendingSubgraph}
+              nodesDraggable={inEdit && !subgraphDrawMode}
+              nodesConnectable={canConnectEdge && !subgraphDrawMode}
+              elementsSelectable={!subgraphDrawMode}
               deleteKeyCode={null}
               selectionKeyCode={["Control", "Meta"]}
               multiSelectionKeyCode={["Control", "Meta"]}
               selectionMode={SelectionMode.Partial}
               selectionOnDrag={false}
-              panOnDrag={!subgraphDrawMode && !pendingSubgraph}
+              panOnDrag={!subgraphDrawMode && (panMode || spacePanning)}
               proOptions={{ hideAttribution: true }}
               zoomOnDoubleClick={false}
               // 关掉拖节点时的自动平移:alt 拖拽复制会把源节点钉在原位,但 React Flow 的拖拽仍"活跃",
@@ -2770,17 +3072,24 @@ export function GraphDiagramView({
                 startEdgeLabelEdit(edge.id);
               }}
               onPaneClick={() => {
-                if (!subgraphDrawMode && !pendingSubgraph) clearSelection();
+                if (!subgraphDrawMode) clearSelection();
               }}
             >
               <FitOnNodesInitialized />
               <Background color="#d8c9a8" gap={18} />
-              <Controls showInteractive />
+              <GraphViewportControls
+                showHistory
+                onUndo={onUndo}
+                onRedo={onRedo}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                panMode={panMode}
+                onPanModeChange={setPanMode}
+              />
               {subgraphPreview && (
                 <ViewportPortal>
                   <div
-                    className={classNames("graph-diagram-subgraph-draft", pendingSubgraph && "is-pending")}
-                    data-draft-node-count={pendingSubgraph?.nodeIds.length}
+                    className="graph-diagram-subgraph-draft"
                     style={{
                       left: subgraphPreview.x,
                       top: subgraphPreview.y,
@@ -2788,35 +3097,79 @@ export function GraphDiagramView({
                       height: subgraphPreview.height,
                     }}
                   >
-                    {pendingSubgraph && (
-                      <input
-                        className="graph-diagram-subgraph-draft__input nodrag nowheel"
-                        aria-label="新分区名称"
-                        defaultValue="新分区"
-                        autoFocus
-                        spellCheck={false}
-                        onFocus={(event) => event.currentTarget.select()}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => {
-                          event.stopPropagation();
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            confirmPendingSubgraph(event.currentTarget.value);
-                          }
-                          if (event.key === "Escape") {
-                            event.preventDefault();
-                            cancelPendingSubgraph();
-                          }
-                        }}
-                      />
-                    )}
                   </div>
                 </ViewportPortal>
               )}
             </ReactFlow>
           </div>
+          {selectedSubgraph && contextPosition && renamingSubgraphId !== selectedSubgraph.id && (
+            <div
+              className={classNames(
+                "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--subgraph",
+                `graph-diagram-context--${contextPosition.placement}`,
+                contextPosition.placement === "below" && "is-below",
+              )}
+              style={contextStyle}
+              aria-label="分区上下文操作"
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="graph-diagram-toolbar__row" role="toolbar" aria-label="分区操作工具栏">
+                <ToolbarDropdownButton
+                  menu="subgraph-fill"
+                  label="填充"
+                  icon="fill"
+                  swatchColor={selectedSubgraphFill}
+                  openMenu={openToolbarMenu}
+                  onToggle={setOpenToolbarMenu}
+                />
+                <ToolbarDropdownButton
+                  menu="subgraph-border"
+                  label="边框"
+                  icon="border"
+                  swatchColor={selectedSubgraphStroke}
+                  openMenu={openToolbarMenu}
+                  onToggle={setOpenToolbarMenu}
+                />
+                <button
+                  type="button"
+                  className="graph-diagram-toolbar__button"
+                  aria-label="解散分区"
+                  title="解散分区"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    dissolveSelectedSubgraph();
+                  }}
+                >
+                  <CanvasToolIcon name="dissolve" />
+                </button>
+              </div>
+              {openToolbarMenu === "subgraph-fill" && (
+                <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="分区填充设置">
+                  <ColorControl
+                    label="分区填充色"
+                    value={selectedSubgraphFill}
+                    disabled={false}
+                    swatches={NODE_FILL_COLORS}
+                    onChange={(fill) => updateSelectedSubgraphStyle({ fill })}
+                  />
+                </div>
+              )}
+              {openToolbarMenu === "subgraph-border" && (
+                <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="分区边框设置">
+                  <ColorControl
+                    label="分区边框色"
+                    value={selectedSubgraphStroke}
+                    disabled={false}
+                    swatches={NODE_STROKE_COLORS}
+                    onChange={(stroke) => updateSelectedSubgraphStyle({ stroke })}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
             <div
               className={classNames(
@@ -2850,8 +3203,8 @@ export function GraphDiagramView({
                       openMenu={openToolbarMenu}
                       onToggle={setOpenToolbarMenu}
                     />
-                    <ToolbarDropdownButton menu="node-fill" label="填充" icon="fill" disabled={!selectedNodeCanStyle} openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
-                    <ToolbarDropdownButton menu="node-border" label="边框" icon="border" disabled={!selectedNodeCanStyle} openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
+                    <ToolbarDropdownButton menu="node-fill" label="填充" icon="fill" swatchColor={selectedNodeFill} disabled={!selectedNodeCanStyle} openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
+                    <ToolbarDropdownButton menu="node-border" label="边框" icon="border" swatchColor={selectedNodeStroke} disabled={!selectedNodeCanStyle} openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
                     <ToolbarDropdownButton menu="node-text" label="文字" icon="text" disabled={!selectedNodeCanStyle} openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
                     <ToolbarDropdownButton menu="node-more" label="…更多" icon="more" openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
                   </div>
@@ -3069,6 +3422,7 @@ export function GraphDiagramView({
               nodesDraggable={false}
               nodesConnectable={false}
               elementsSelectable={false}
+              panOnDrag={panMode}
               deleteKeyCode={null}
               proOptions={{ hideAttribution: true }}
               zoomOnDoubleClick={false}
@@ -3077,7 +3431,11 @@ export function GraphDiagramView({
             >
               <FitOnNodesInitialized />
               <Background color="#d8c9a8" gap={18} />
-              <Controls showInteractive />
+              <GraphViewportControls
+                showHistory={false}
+                panMode={panMode}
+                onPanModeChange={setPanMode}
+              />
             </ReactFlow>
           </div>
         </div>,
@@ -3117,6 +3475,8 @@ export function GraphDiagramView({
             readOnly={readOnly}
             align={align}
             onAlignChange={onAlignChange}
+            onZoomIn={previewFit.zoomIn}
+            onZoomOut={previewFit.zoomOut}
             onFullscreen={openFullscreen}
           />
         </ReactFlow>
@@ -3132,6 +3492,7 @@ function ToolbarDropdownButton({
   menu,
   label,
   icon,
+  swatchColor,
   valueLabel,
   disabled = false,
   openMenu,
@@ -3140,6 +3501,7 @@ function ToolbarDropdownButton({
   menu: ToolbarMenu;
   label: string;
   icon: IconName;
+  swatchColor?: string;
   valueLabel?: string;
   disabled?: boolean;
   openMenu: ToolbarMenu | null;
@@ -3156,8 +3518,9 @@ function ToolbarDropdownButton({
       aria-label={valueLabel ? `${label}:${valueLabel}` : label}
       title={valueLabel ? `${label}:${valueLabel}` : label}
       onClick={() => onToggle(active ? null : menu)}
+      data-swatch-color={swatchColor}
     >
-      <GraphIcon name={icon} />
+      <GraphIcon name={icon} color={swatchColor} />
       {valueLabel ? <span className="graph-diagram-toolbar__value">{valueLabel}</span> : null}
       <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
     </button>
@@ -3201,18 +3564,33 @@ function IconOptionButton({
   );
 }
 
-function GraphIcon({ name }: { name: IconName }) {
+function GraphIcon({ name, color }: { name: IconName; color?: string }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" } as const;
   return (
     <svg className="graph-diagram-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {name === "shape" && <rect x="5" y="5" width="14" height="14" rx="3" {...common} />}
       {name === "fill" && (
-        <>
-          <path d="M7 4h8l3 5-7 11-7-11 3-5Z" {...common} />
-          <path d="M5 9h14" {...common} />
-        </>
+        <circle
+          className="graph-diagram-icon__color-sample graph-diagram-icon__color-sample--fill"
+          cx="12"
+          cy="12"
+          r="6"
+          fill={color ?? "currentColor"}
+          stroke="rgba(255, 250, 240, 0.55)"
+          strokeWidth="1"
+        />
       )}
-      {name === "border" && <rect x="5" y="5" width="14" height="14" rx="2" strokeDasharray="4 3" {...common} />}
+      {name === "border" && (
+        <circle
+          className="graph-diagram-icon__color-sample graph-diagram-icon__color-sample--border"
+          cx="12"
+          cy="12"
+          r="5.5"
+          fill="none"
+          stroke={color ?? "currentColor"}
+          strokeWidth="2.5"
+        />
+      )}
       {name === "text" && (
         <>
           <path d="M5 6h14" {...common} />
@@ -3449,6 +3827,12 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
   const screenToFlowPosition = useCallback((point: { x: number; y: number }) => {
     return rfRef.current?.screenToFlowPosition(point) ?? null;
   }, []);
+  const zoomIn = useCallback(() => {
+    void rfRef.current?.zoomIn({ duration: 120 });
+  }, []);
+  const zoomOut = useCallback(() => {
+    void rfRef.current?.zoomOut({ duration: 120 });
+  }, []);
 
   useEffect(() => {
     if (!active || !canvasEl || typeof ResizeObserver === "undefined") return;
@@ -3470,7 +3854,7 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
     };
   }, [active, canvasEl, onCanvasFrameChange]);
 
-  return { canvasRef, onInit, screenToFlowPosition };
+  return { canvasRef, onInit, screenToFlowPosition, zoomIn, zoomOut };
 }
 
 function modelNodes(model: DiagramModel): BaseNode[] {
@@ -3907,13 +4291,20 @@ export function getFloatingPosition({
   const leftMin = canvasFrame.left + 156;
   const leftMax = canvasFrame.left + Math.max(156, width - 156);
   const left = clamp(screenX, leftMin, leftMax);
-  const topAbove = screenY - 14;
+  // 四向快速新增会在节点外侧铺一层幽灵节点；工具栏需越过这层操作区，
+  // 否则顶部把手刚变成加号就会被工具栏截住。
+  const handlePreviewClearance = selectedNode ? 116 : 14;
+  const topAbove = screenY - handlePreviewClearance;
   // 选"above"时,工具栏在元素上方,其二级下拉(popover)还会再向上展开 ~一屏高度;
   // 只留工具栏自身高度(~70)会让靠顶部的下拉越出视口被裁切(实测 y 为负)。
   // 因此这里预留 工具栏 + 一个 popover 的headroom:不够就翻到"below"(下拉改向下展开、向下有充足空间)。
   const ABOVE_HEADROOM = 240;
   if (topAbove > canvasFrame.top + ABOVE_HEADROOM) return { left, top: topAbove, placement: "above" };
-  const belowY = selectedNode ? screenY + NODE_HEIGHT * viewport.zoom + 14 : screenY + 24;
+  const selectedHeight = selectedNode?.measured?.height
+    ?? (typeof selectedNode?.style?.height === "number" ? selectedNode.style.height : NODE_HEIGHT);
+  const belowY = selectedNode
+    ? screenY + selectedHeight * viewport.zoom + handlePreviewClearance
+    : screenY + 24;
   return { left, top: clamp(belowY, canvasFrame.top + 24, canvasFrame.top + Math.max(24, height - 72)), placement: "below" };
 }
 

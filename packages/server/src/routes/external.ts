@@ -505,18 +505,28 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     );
   }
 
-  const outcomeQueued = outcome.rejectedCount > 0;
-  if (outcomeQueued) {
+  let outcomeQueued = false;
+  if (outcome.rejectedCount > 0) {
     const outcomeCommand: Command = {
       kind: "submitReviewOutcome",
       data: { sessionId, outcome },
     };
-    void sessionManager.submit(sessionId, {
-      command: outcomeCommand,
-      origin: "external",
-      client,
-      modelOverrides,
-    }).catch((error) => {
+    let completion: Promise<LoggedFrame[]>;
+    try {
+      ({ completion } = await sessionManager.submitQueued(sessionId, {
+        command: outcomeCommand,
+        origin: "external",
+        client,
+        modelOverrides,
+      }));
+    } catch (error) {
+      if (error instanceof SessionActorQueueFullError) {
+        return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+      }
+      throw error;
+    }
+    outcomeQueued = true;
+    void completion.catch((error) => {
       console.warn("[external] evt=review_outcome result=async_failed", {
         sessionId,
         error: error instanceof Error ? error.message : String(error),

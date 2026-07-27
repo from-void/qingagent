@@ -126,11 +126,13 @@ describe("external review", () => {
 
   it("全量拒绝复用 reviewOutcome 命令并退出 pendingReview", async () => {
     const { sessionId } = await createPendingReview();
-    const originalSubmit = sessionManager.submit.bind(sessionManager);
-    const submit = vi.spyOn(sessionManager, "submit").mockImplementation(
+    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
+    const submitQueued = vi.spyOn(sessionManager, "submitQueued").mockImplementation(
       async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") return [];
-        return originalSubmit(targetSessionId, input);
+        if (input.command.kind === "submitReviewOutcome") {
+          return { completion: Promise.resolve([]) };
+        }
+        return originalSubmitQueued(targetSessionId, input);
       },
     );
 
@@ -156,12 +158,37 @@ describe("external review", () => {
       },
     });
     expect(
-      submit.mock.calls.some(
+      submitQueued.mock.calls.some(
         ([, input]) => input.command.kind === "submitReviewOutcome",
       ),
     ).toBe(true);
     const session = await getOrRestoreSession(sessionId);
     expect(session?.docState.kind).toBe("editing");
+  });
+
+  it("拒绝反馈队列准入失败时返回 429，不再提前声明 outcomeQueued", async () => {
+    const { sessionId } = await createPendingReview();
+    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
+    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
+      async (targetSessionId, input) => {
+        if (input.command.kind === "submitReviewOutcome") {
+          throw new SessionActorQueueFullError(64);
+        }
+        return originalSubmitQueued(targetSessionId, input);
+      },
+    );
+
+    const rejected = await request(`/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+    });
+
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("Retry-After")).toBe("1");
+    expect(await rejected.json()).toMatchObject({
+      code: "RATE_LIMITED",
+      error: "会话命令队列已满",
+    });
   });
 
   it("版本冲突、agent busy、无待审查和缺失 patch 都返回内建错误码", async () => {

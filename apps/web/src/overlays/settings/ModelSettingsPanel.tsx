@@ -20,6 +20,7 @@ import {
   maskKey,
   readCustomProvider,
   readOfficialModelOverride,
+  readPersistedModelState,
   setSelectedModelProvider,
   setSelectedModelTier,
   setVisitorModelKey,
@@ -184,27 +185,44 @@ export function ModelSettingsPanel() {
     });
   }, [toast]);
 
-  const resyncPersistedModelState = useCallback((provider: ModelProvider) => {
-    const persistedKey = getVisitorModelKey(provider);
-    const persistedCustom = readCustomProvider(provider);
-    const persistedOfficial = readOfficialModelOverride(provider);
-    setVisitorKey(persistedKey);
-    setCustomProvider(persistedCustom);
-    setSetupMode(persistedCustom ? "other" : "official");
-    setCustomProtocol(provider === "kimi" ? "openai" : persistedCustom?.protocol ?? "openai");
-    setCustomBaseUrl(persistedCustom?.baseUrl ?? "");
-    setCustomKey(persistedCustom?.apiKey ?? "");
-    setCustomModelFlash(persistedCustom?.modelFlash ?? MODEL_DEFAULTS[provider].flash);
-    setCustomModelPro(persistedCustom?.modelPro ?? MODEL_DEFAULTS[provider].pro);
-    setOfficialFlash(persistedOfficial?.flash ?? "");
-    setOfficialPro(persistedOfficial?.pro ?? "");
-    setKeyInput("");
-    setVerifyStatus("idle");
-    setVerifyMsg("");
-    setEditing(false);
-    setForceSetup(false);
-    setMessage(null);
+  const resyncPersistedModelState = useCallback((provider: ModelProvider): boolean => {
+    try {
+      const persisted = readPersistedModelState(provider);
+      if (!persisted) return false;
+      setVisitorKey(persisted.visitorKey);
+      setCustomProvider(persisted.customProvider);
+      setSetupMode(persisted.customProvider ? "other" : "official");
+      setCustomProtocol(
+        provider === "kimi" ? "openai" : persisted.customProvider?.protocol ?? "openai",
+      );
+      setCustomBaseUrl(persisted.customProvider?.baseUrl ?? "");
+      setCustomKey(persisted.customProvider?.apiKey ?? "");
+      setCustomModelFlash(
+        persisted.customProvider?.modelFlash ?? MODEL_DEFAULTS[provider].flash,
+      );
+      setCustomModelPro(persisted.customProvider?.modelPro ?? MODEL_DEFAULTS[provider].pro);
+      setOfficialFlash(persisted.officialModel?.flash ?? "");
+      setOfficialPro(persisted.officialModel?.pro ?? "");
+      setKeyInput("");
+      setVerifyStatus("idle");
+      setVerifyMsg("");
+      setEditing(false);
+      setForceSetup(false);
+      setMessage(null);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
+
+  const settlePersistFailure = useCallback((
+    provider: ModelProvider,
+    resyncedMessage?: string,
+  ) => {
+    setPersisting(false);
+    const resynced = resyncPersistedModelState(provider);
+    showPersistFailure(resynced ? resyncedMessage : undefined);
+  }, [resyncPersistedModelState, showPersistFailure]);
 
   const handleProviderChange = async (provider: ModelProvider) => {
     if (provider === modelProvider) return;
@@ -527,18 +545,14 @@ export function ModelSettingsPanel() {
     const savedKey = await setVisitorModelKey(modelProvider, trimmed);
     if (!canCommit()) return;
     if (!savedKey) {
-      setPersisting(false);
-      resyncPersistedModelState(modelProvider);
-      showPersistFailure();
+      settlePersistFailure(modelProvider);
       return;
     }
     // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
     const clearedCustom = await clearCustomProvider(modelProvider);
     if (!canCommit()) return;
     if (!clearedCustom) {
-      setPersisting(false);
-      resyncPersistedModelState(modelProvider);
-      showPersistFailure("key 已保存，但旧的自定义模型配置未清除，请重试");
+      settlePersistFailure(modelProvider, "key 已保存，但旧的自定义模型配置未清除，请重试");
       return;
     }
     const savedOfficialOverride = await writeOfficialModelOverride(
@@ -548,8 +562,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return;
     setPersisting(false);
     if (!savedOfficialOverride) {
-      resyncPersistedModelState(modelProvider);
-      showPersistFailure("key 已保存，但模型别名未保存，请重试");
+      settlePersistFailure(modelProvider, "key 已保存，但模型别名未保存，请重试");
       return;
     }
     setVisitorKey(trimmed);

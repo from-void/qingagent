@@ -6,7 +6,7 @@
 // 三者透传走同一出口 visitorKeyHeaders(),被对话/余额等请求统一带上。
 
 import { visionKeyHeaders } from "./visionProviderStore";
-import { readPersisted, writePersistedAwaited } from "./clientPersist";
+import { readPersisted, readPersistedChecked, writePersistedAwaited } from "./clientPersist";
 
 const DEEPSEEK_STORAGE_KEY = "qingagent.deepseek_api_key";
 const DEEPSEEK_CUSTOM_PROVIDER_KEY = "qingagent.custom_provider";
@@ -39,6 +39,12 @@ export interface CustomProvider {
 export interface OfficialModelOverride {
   flash?: string;
   pro?: string;
+}
+
+export interface PersistedModelState {
+  visitorKey: string | null;
+  customProvider: CustomProvider | null;
+  officialModel: OfficialModelOverride | null;
 }
 
 function providerStorageKeys(provider: ModelProvider) {
@@ -121,24 +127,7 @@ export function clearVisitorDeepseekKey(): Promise<boolean> {
 export function readCustomProvider(provider: ModelProvider = "deepseek"): CustomProvider | null {
   try {
     const raw = readPersisted(providerStorageKeys(provider).customProvider);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as Partial<CustomProvider>;
-    if (o && typeof o.baseUrl === "string" && o.baseUrl && typeof o.apiKey === "string" && o.apiKey) {
-      return {
-        protocol: provider === "kimi"
-          ? "openai"
-          : typeof o.protocol === "string" ? o.protocol : "openai",
-        baseUrl: o.baseUrl,
-        apiKey: o.apiKey,
-        modelFlash: typeof o.modelFlash === "string" && o.modelFlash
-          ? o.modelFlash
-          : DEFAULT_MODEL_IDS[provider].flash,
-        modelPro: typeof o.modelPro === "string" && o.modelPro
-          ? o.modelPro
-          : DEFAULT_MODEL_IDS[provider].pro,
-      };
-    }
-    return null;
+    return parseCustomProvider(raw, provider);
   } catch {
     return null;
   }
@@ -163,14 +152,60 @@ export function readOfficialModelOverride(
 ): OfficialModelOverride | null {
   try {
     const raw = readPersisted(providerStorageKeys(provider).officialModel);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as OfficialModelOverride;
-    const flash = typeof o.flash === "string" && o.flash.trim() ? o.flash.trim() : undefined;
-    const pro = typeof o.pro === "string" && o.pro.trim() ? o.pro.trim() : undefined;
-    return flash || pro ? { flash, pro } : null;
+    return parseOfficialModelOverride(raw);
   } catch {
     return null;
   }
+}
+
+/**
+ * 保存失败后的严格快照读取：任一持久化项不可读时整组失败，调用方不会拿半份数据更新 UI。
+ */
+export function readPersistedModelState(provider: ModelProvider): PersistedModelState | null {
+  const keys = providerStorageKeys(provider);
+  const keyResult = readPersistedChecked(keys.apiKey);
+  const customResult = readPersistedChecked(keys.customProvider);
+  const officialResult = readPersistedChecked(keys.officialModel);
+  if (!keyResult.ok || !customResult.ok || !officialResult.ok) return null;
+
+  try {
+    return {
+      visitorKey: keyResult.value?.trim() || null,
+      customProvider: parseCustomProvider(customResult.value, provider),
+      officialModel: parseOfficialModelOverride(officialResult.value),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseCustomProvider(raw: string | null, provider: ModelProvider): CustomProvider | null {
+  if (!raw) return null;
+  const o = JSON.parse(raw) as Partial<CustomProvider>;
+  if (!o || typeof o.baseUrl !== "string" || !o.baseUrl || typeof o.apiKey !== "string" || !o.apiKey) {
+    return null;
+  }
+  return {
+    protocol: provider === "kimi"
+      ? "openai"
+      : typeof o.protocol === "string" ? o.protocol : "openai",
+    baseUrl: o.baseUrl,
+    apiKey: o.apiKey,
+    modelFlash: typeof o.modelFlash === "string" && o.modelFlash
+      ? o.modelFlash
+      : DEFAULT_MODEL_IDS[provider].flash,
+    modelPro: typeof o.modelPro === "string" && o.modelPro
+      ? o.modelPro
+      : DEFAULT_MODEL_IDS[provider].pro,
+  };
+}
+
+function parseOfficialModelOverride(raw: string | null): OfficialModelOverride | null {
+  if (!raw) return null;
+  const o = JSON.parse(raw) as OfficialModelOverride;
+  const flash = typeof o.flash === "string" && o.flash.trim() ? o.flash.trim() : undefined;
+  const pro = typeof o.pro === "string" && o.pro.trim() ? o.pro.trim() : undefined;
+  return flash || pro ? { flash, pro } : null;
 }
 
 export function writeOfficialModelOverride(

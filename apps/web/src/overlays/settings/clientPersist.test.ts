@@ -118,6 +118,20 @@ describe("clientPersist", () => {
       expect(isDesktopPersist()).toBe(true);
     });
 
+    it("桌面 getter 异常时读取不逸出且写入安全失败", async () => {
+      const bridge = desktopBridge();
+      bridge.getDeepseekApiKey = vi.fn(() => {
+        throw new Error("ipc unavailable");
+      });
+      bridge.setDeepseekApiKey = vi.fn(async () => true);
+      setElectron(bridge);
+
+      expect(() => readPersisted(DEEPSEEK_KEY)).not.toThrow();
+      expect(readPersisted(DEEPSEEK_KEY)).toBeNull();
+      await expect(writePersistedAwaited(DEEPSEEK_KEY, "new")).resolves.toBe(false);
+      expect(bridge.setDeepseekApiKey).not.toHaveBeenCalled();
+    });
+
     it.each([
       "qingagent.kimi_api_key",
       "qingagent.kimi_custom_provider",

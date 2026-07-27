@@ -249,6 +249,96 @@ describe("Settings Track B", () => {
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
   });
 
+  it("官方配置第一段 key 落盘失败时重同步持久层并安全收敛", async () => {
+    const setDeepseekApiKey = vi.fn(async () => false);
+    const setCustomProvider = vi.fn(async () => true);
+    const setOfficialModel = vi.fn(async () => true);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        getDeepseekApiKey: () => null,
+        setDeepseekApiKey,
+        getCustomProvider: () => null,
+        setCustomProvider,
+        getOfficialModel: () => null,
+        setOfficialModel,
+      },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "attempted-new-key");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(setDeepseekApiKey).toHaveBeenCalledWith("attempted-new-key");
+    expect(setCustomProvider).not.toHaveBeenCalled();
+    expect(setOfficialModel).not.toHaveBeenCalled();
+    expect(getVisitorDeepseekKey()).toBeNull();
+    expect(getInputByWf("ModelKeyInput").value).toBe("");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
+  });
+
+  it("官方配置第二段旧自定义配置清除失败时从持久化层重同步 UI", async () => {
+    const previousCustom = JSON.stringify({
+      protocol: "openai",
+      baseUrl: "https://old-proxy.example/v1",
+      apiKey: "old-custom-key",
+      modelFlash: "old-custom-flash",
+      modelPro: "old-custom-pro",
+    });
+    const setDeepseekApiKey = vi.fn(async () => true);
+    const setCustomProvider = vi.fn(async () => false);
+    const setOfficialModel = vi.fn(async () => true);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        getDeepseekApiKey: () => null,
+        setDeepseekApiKey,
+        getCustomProvider: () => previousCustom,
+        setCustomProvider,
+        getOfficialModel: () => null,
+        setOfficialModel,
+      },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    await click(getButtonByText("修改配置"));
+    await click(getButtonByText("接入 DeepSeek 官方 API"));
+    setInput(getInputByWf("ModelKeyInput"), "deepseek-official-new");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(setDeepseekApiKey).toHaveBeenCalledWith("deepseek-official-new");
+    expect(setCustomProvider).toHaveBeenCalledWith(null);
+    expect(setOfficialModel).not.toHaveBeenCalled();
+    expect(getVisitorDeepseekKey()).toBe("deepseek-official-new");
+    expect(readCustomProvider()).toMatchObject({
+      baseUrl: "https://old-proxy.example/v1",
+      apiKey: "old-custom-key",
+    });
+    expect(host?.textContent).toContain("自定义模型");
+    expect(host?.textContent).toContain("https://old-proxy.example/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain(
+      "旧的自定义模型配置未清除",
+    );
+  });
+
   it("官方配置前两段成功而别名落盘失败时从持久化层重同步 UI", async () => {
     const previousCustom = JSON.stringify({
       protocol: "openai",
@@ -303,6 +393,44 @@ describe("Settings Track B", () => {
     expect(host?.textContent).toContain("••••-new");
     expect(host?.textContent).not.toContain("https://old-proxy.example/v1");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("模型别名未保存");
+  });
+
+  it("保存失败后重同步 getter 也异常时保持现有 UI 并走统一错误提示", async () => {
+    const getDeepseekApiKey = vi.fn(() => {
+      throw new Error("desktop getter failed");
+    });
+    const setDeepseekApiKey = vi.fn(async () => true);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        getDeepseekApiKey,
+        setDeepseekApiKey,
+        getCustomProvider: () => null,
+        setCustomProvider: vi.fn(async () => true),
+        getOfficialModel: () => null,
+        setOfficialModel: vi.fn(async () => true),
+      },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "keep-current-input");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(getDeepseekApiKey).toHaveBeenCalled();
+    expect(setDeepseekApiKey).not.toHaveBeenCalled();
+    expect(getInputByWf("ModelKeyInput").value).toBe("keep-current-input");
+    const toastText = host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "";
+    expect(toastText).toContain("未保存");
+    expect(toastText).not.toContain("desktop getter failed");
   });
 
   it("未显式选择且无本地配置时保留 server 优先级；旧 DeepSeek key 仍锁定 DeepSeek", async () => {

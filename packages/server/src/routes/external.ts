@@ -519,19 +519,23 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
         client,
         modelOverrides,
       }));
+      await completion;
     } catch (error) {
       if (error instanceof SessionActorQueueFullError) {
         return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
       }
-      throw error;
+      console.warn("[external] evt=review_outcome result=failed", {
+        sessionId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      return externalError(
+        c,
+        409,
+        "AGENT_BUSY",
+        "审查结果反馈未完成，请稍后重试",
+      );
     }
     outcomeQueued = true;
-    void completion.catch((error) => {
-      console.warn("[external] evt=review_outcome result=async_failed", {
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
   }
   externalLog("review_commit", {
     sessionId,

@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
-import { SessionActorQueueFullError } from "../gateway/sessionActor";
+import {
+  SessionActorCommandError,
+  SessionActorQueueFullError,
+} from "../gateway/sessionActor";
 import {
   getExternalToken,
   startExternalInstance,
@@ -188,6 +191,37 @@ describe("external review", () => {
     expect(await rejected.json()).toMatchObject({
       code: "RATE_LIMITED",
       error: "会话命令队列已满",
+    });
+  });
+
+  it("拒绝反馈 Actor 执行失败时调用方收到失败响应", async () => {
+    const { sessionId } = await createPendingReview();
+    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
+    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
+      async (targetSessionId, input) => {
+        if (input.command.kind === "submitReviewOutcome") {
+          return {
+            completion: Promise.reject(new SessionActorCommandError(
+              "Session actor command failed",
+              new Error("model handler rejected"),
+              [],
+            )),
+          };
+        }
+        return originalSubmitQueued(targetSessionId, input);
+      },
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const rejected = await request(`/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+    });
+
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toMatchObject({
+      code: "AGENT_BUSY",
+      error: "审查结果反馈未完成，请稍后重试",
     });
   });
 

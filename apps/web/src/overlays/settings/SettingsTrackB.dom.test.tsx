@@ -107,6 +107,7 @@ describe("Settings Track B", () => {
       </ToastProvider>,
     );
 
+    await openVendorConfig();
     await click(getButtonByText("接入其他云厂商 / 模型"));
     setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://proxy.example/v1");
     setInput(getInputByPlaceholder("sk-…"), "sk-custom");
@@ -124,6 +125,7 @@ describe("Settings Track B", () => {
       </ToastProvider>,
     );
 
+    await openVendorConfig();
     await click(getButtonByText("接入其他云厂商 / 模型"));
     const saveBtn = getButtonByText("测试并保存");
     expect(saveBtn.hasAttribute("disabled")).toBe(false);
@@ -152,7 +154,7 @@ describe("Settings Track B", () => {
         <ModelSettingsPanel />
       </ToastProvider>,
     );
-    await click(getButtonByText("修改配置"));
+    await openVendorConfig();
     await click(getButtonByText("接入其他云厂商 / 模型"));
     setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://a.example/v1");
     setInput(getInputByPlaceholder("sk-…"), "sk-a");
@@ -169,7 +171,7 @@ describe("Settings Track B", () => {
     expect(getVisitorDeepseekKey()).toBe("sk-current");
   });
 
-  it("Model 档位默认 Flash,切 Pro 后持久化并随请求 header 透传", async () => {
+  it("Model 档位 chip 默认 Flash,选 Pro 后持久化并随请求 header 透传", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(
       <ToastProvider>
@@ -177,23 +179,78 @@ describe("Settings Track B", () => {
       </ToastProvider>,
     );
 
-    expect(getButtonByWf("ModelTierFlash").getAttribute("aria-checked")).toBe("true");
-    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("false");
+    // 收起态只显示档名,说明与价格要点开浮层才出现
+    const chip = getButtonByWf("ModelTierChipDeepseek");
+    expect(chip.textContent).toBe("Flash");
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(document.body.querySelector(".md-tier-menu")).toBeNull();
     expect(getSelectedModelTier()).toBe("flash");
     expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
 
-    await click(getButtonByWf("ModelTierPro"));
-    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("true");
+    await click(chip);
+    expect(document.body.querySelector(".md-tier-menu")?.textContent).toContain("快 · 日常写作");
+    await click(getBodyButtonByWf("ModelTierDeepseekPro"));
+
+    expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Pro");
     expect(getSelectedModelTier()).toBe("pro");
     expect(visitorKeyHeaders()["x-model-tier"]).toBe("pro");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("Pro");
 
-    await click(getButtonByWf("ModelTierFlash"));
+    await pickTier("deepseek", "flash");
     expect(getSelectedModelTier()).toBe("flash");
     expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
   });
 
-  it("provider 切换保留 DeepSeek/Kimi 各自 key，并透传 Kimi 双档 header", async () => {
+  it("档位浮层点外关闭、Esc 关闭,Enter 可选中", async () => {
+    setVisitorDeepseekKey("deepseek-tier-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    const chip = getButtonByWf("ModelTierChipDeepseek");
+
+    await click(chip);
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(getButtonByWf("ModelTierChipDeepseek").getAttribute("aria-expanded")).toBe("false");
+
+    await keyDown(chip, "Enter");
+    expect(getButtonByWf("ModelTierChipDeepseek").getAttribute("aria-expanded")).toBe("true");
+    await keyDown(getButtonByWf("ModelTierChipDeepseek"), "Escape");
+    expect(getButtonByWf("ModelTierChipDeepseek").getAttribute("aria-expanded")).toBe("false");
+
+    await keyDown(getButtonByWf("ModelTierChipDeepseek"), "ArrowDown");
+    await keyDown(getButtonByWf("ModelTierChipDeepseek"), "Enter");
+    expect(getSelectedModelTier()).toBe("pro");
+    expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Pro");
+  });
+
+  it("两家档位各记各的,互不串档", async () => {
+    await setVisitorDeepseekKey("deepseek-key");
+    await setVisitorModelKey("kimi", "kimi-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelTierChipKimi").textContent).toBe("K2.7");
+    await pickTier("kimi", "pro");
+    expect(getButtonByWf("ModelTierChipKimi").textContent).toBe("K3");
+    expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Flash");
+    expect(getSelectedModelTier("kimi")).toBe("pro");
+    expect(getSelectedModelTier("deepseek")).toBe("flash");
+    // 使用中的是 DeepSeek,透传的档位跟随 DeepSeek 而不是 Kimi
+    expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
+
+    await click(getButtonByWf("ModelEnableKimi"));
+    expect(visitorKeyHeaders()["x-model-tier"]).toBe("pro");
+  });
+
+  it("「启 用」切换保留 DeepSeek/Kimi 各自 key，并透传 Kimi 双档 header", async () => {
     await setVisitorDeepseekKey("deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     setSelectedModelProvider("deepseek");
@@ -203,8 +260,9 @@ describe("Settings Track B", () => {
       </ToastProvider>,
     );
 
-    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
-    await click(getButtonByWf("ProviderKimi"));
+    // 使用中那张卡只有不可点的「使用中」,另一张才有「启 用」
+    expect(getButtonByWf("ModelUsingDeepseek").hasAttribute("disabled")).toBe(true);
+    await click(getButtonByWf("ModelEnableKimi"));
     expect(getSelectedModelProvider()).toBe("kimi");
     expect(getVisitorModelKey("deepseek")).toBe("deepseek-local-key");
     expect(getVisitorModelKey("kimi")).toBe("kimi-local-key");
@@ -213,9 +271,10 @@ describe("Settings Track B", () => {
       "x-model-key": "kimi-local-key",
     });
     expect(visitorKeyHeaders()["x-deepseek-key"]).toBeUndefined();
-    expect(host?.textContent).toContain("K2.7 / K3");
+    expect(getButtonByWf("ModelUsingKimi").hasAttribute("disabled")).toBe(true);
+    expect(getButtonByWf("ModelTierChipKimi").textContent).toBe("K2.7");
 
-    await click(getButtonByWf("ProviderDeepSeek"));
+    await click(getButtonByWf("ModelEnableDeepseek"));
     expect(getSelectedModelProvider()).toBe("deepseek");
     expect(visitorKeyHeaders()).toMatchObject({
       "x-model-provider": "deepseek",
@@ -224,7 +283,9 @@ describe("Settings Track B", () => {
     });
   });
 
-  it("provider 与档位落盘失败时保持原选择并通过全局 toast 告知未保存", async () => {
+  it("启用与档位落盘失败时保持原选择并通过全局 toast 告知未保存", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -238,13 +299,13 @@ describe("Settings Track B", () => {
       nativeSetItem.call(this, key, value);
     });
 
-    await click(getButtonByWf("ProviderKimi"));
-    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
+    await click(getButtonByWf("ModelEnableKimi"));
+    expect(getButtonByWf("ModelUsingDeepseek")).toBeTruthy();
     expect(getSelectedModelProvider()).toBe("deepseek");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
 
-    await click(getButtonByWf("ModelTierPro"));
-    expect(getButtonByWf("ModelTierFlash").getAttribute("aria-checked")).toBe("true");
+    await pickTier("deepseek", "pro");
+    expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Flash");
     expect(getSelectedModelTier()).toBe("flash");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
   });
@@ -274,6 +335,7 @@ describe("Settings Track B", () => {
         </ToastProvider>
       </ConfirmProvider>,
     );
+    await openVendorConfig();
     setInput(getInputByWf("ModelKeyInput"), "attempted-new-key");
     await click(getButtonByText("保存"));
     await click(getButtonByText("仍要保存"));
@@ -318,7 +380,7 @@ describe("Settings Track B", () => {
         </ToastProvider>
       </ConfirmProvider>,
     );
-    await click(getButtonByText("修改配置"));
+    await openVendorConfig();
     await click(getButtonByText("接入 DeepSeek 官方 API"));
     setInput(getInputByWf("ModelKeyInput"), "deepseek-official-new");
     await click(getButtonByText("保存"));
@@ -373,7 +435,7 @@ describe("Settings Track B", () => {
     );
     expect(host?.textContent).toContain("自定义模型");
 
-    await click(getButtonByText("修改配置"));
+    await openVendorConfig();
     await click(getButtonByText("接入 DeepSeek 官方 API"));
     setInput(getInputByWf("ModelKeyInput"), "deepseek-official-new");
     setInput(getInputByPlaceholder("deepseek-v4-flash"), "attempted-new-flash");
@@ -389,7 +451,7 @@ describe("Settings Track B", () => {
       "x-model-key": "deepseek-official-new",
       "x-model-flash": "persisted-official-flash",
     });
-    expect(host?.textContent).toContain("当前使用 本机 的 key");
+    expect(host?.textContent).toContain("当前使用 已配置密钥");
     expect(host?.textContent).toContain("••••-new");
     expect(host?.textContent).not.toContain("https://old-proxy.example/v1");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("模型别名未保存");
@@ -421,6 +483,7 @@ describe("Settings Track B", () => {
         </ToastProvider>
       </ConfirmProvider>,
     );
+    await openVendorConfig();
     setInput(getInputByWf("ModelKeyInput"), "keep-current-input");
     await click(getButtonByText("保存"));
     await click(getButtonByText("仍要保存"));
@@ -495,6 +558,7 @@ describe("Settings Track B", () => {
       </ToastProvider>,
     );
 
+    await openVendorConfig("kimi");
     setInput(getInputByWf("ModelKeyInput"), "kimi-explicit-test-key");
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 650));
@@ -517,9 +581,8 @@ describe("Settings Track B", () => {
     expect(host?.textContent).toContain("Kimi 短对话测试已连通");
   });
 
-  it("DeepSeek 余额检测在途切到 Kimi 时复位 loading 并丢弃迟到结果", async () => {
+  it("DeepSeek 余额检测在途进二级页时中止并丢弃迟到结果", async () => {
     await setVisitorDeepseekKey("deepseek-balance-key");
-    await setVisitorModelKey("kimi", "kimi-balance-key");
     let resolveBalance!: (response: Response) => void;
     const deferredBalance = new Promise<Response>((resolve) => {
       resolveBalance = resolve;
@@ -540,7 +603,7 @@ describe("Settings Track B", () => {
       () => (host?.textContent ?? "").includes("正在检测连接"),
       "DeepSeek 余额检测开始",
     );
-    await click(getButtonByWf("ProviderKimi"));
+    await openVendorConfig();
 
     expect(host?.textContent ?? "").not.toContain("正在检测连接");
     await act(async () => {
@@ -551,15 +614,42 @@ describe("Settings Track B", () => {
     expect(host?.textContent ?? "").not.toContain("迟到的 DeepSeek 结果");
   });
 
-  it("Kimi 测试连接在途切到 DeepSeek 时中止并丢弃迟到结果", async () => {
+  it("DeepSeek 余额检测不跟随使用中厂商:用着 Kimi 也照发 DeepSeek 自己的 key", async () => {
+    await setVisitorDeepseekKey("deepseek-balance-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    setSelectedModelProvider("kimi");
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await waitForCondition(
+      () => fetchMock.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/settings/model/balance")),
+      "DeepSeek 余额检测发出",
+    );
+    const balanceCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("/api/v1/settings/model/balance"));
+    expect(balanceCall?.[1]).toMatchObject({
+      headers: { "x-model-provider": "deepseek", "x-deepseek-key": "deepseek-balance-key" },
+    });
+    expect(host?.textContent).toContain("余额");
+  });
+
+  it("Kimi 测试连接在途启用 DeepSeek 时作废旧请求并丢弃迟到成功", async () => {
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    await setVisitorDeepseekKey("deepseek-local-key");
     setSelectedModelProvider("kimi");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
       resolveVerify = resolve;
     });
     const fallbackFetch = makeFetchMock();
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
-      String(input).includes("/api/v1/settings/model/balance")
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      (init?.headers as Record<string, string> | undefined)?.["x-model-provider"] === "kimi"
         ? deferredVerify
         : fallbackFetch(input),
     ));
@@ -569,21 +659,24 @@ describe("Settings Track B", () => {
         <ModelSettingsPanel />
       </ToastProvider>,
     );
+    await openVendorConfig("kimi");
     setInput(getInputByWf("ModelKeyInput"), "kimi-late-key");
     await click(getButtonByText("测试连接"));
-    await click(getButtonByWf("ProviderDeepSeek"));
+    await click(getButtonByWf("ModelConfigBack"));
+    await click(getButtonByWf("ModelEnableDeepseek"));
 
     await act(async () => {
       resolveVerify(json({ ok: true }));
       await deferredVerify;
     });
     await flush();
-    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
+    expect(getSelectedModelProvider()).toBe("deepseek");
     expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
   });
 
   it("Kimi 测试连接在途修改 key 时作废旧请求并丢弃迟到成功", async () => {
     setSelectedModelProvider("kimi");
+    await setVisitorModelKey("kimi", "kimi-local-key");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
       resolveVerify = resolve;
@@ -600,6 +693,7 @@ describe("Settings Track B", () => {
         <ModelSettingsPanel />
       </ToastProvider>,
     );
+    await openVendorConfig("kimi");
     setInput(getInputByWf("ModelKeyInput"), "kimi-key-a");
     await click(getButtonByText("测试连接"));
     setInput(getInputByWf("ModelKeyInput"), "kimi-key-b");
@@ -614,8 +708,9 @@ describe("Settings Track B", () => {
     expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
   });
 
-  it("Kimi 测试连接在途切换档位时作废旧请求并丢弃迟到成功", async () => {
+  it("Kimi 测试连接在途返回主视图切档位时作废旧请求并丢弃迟到成功", async () => {
     setSelectedModelProvider("kimi");
+    await setVisitorModelKey("kimi", "kimi-local-key");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
       resolveVerify = resolve;
@@ -632,17 +727,18 @@ describe("Settings Track B", () => {
         <ModelSettingsPanel />
       </ToastProvider>,
     );
+    await openVendorConfig("kimi");
     setInput(getInputByWf("ModelKeyInput"), "kimi-tier-key");
     await click(getButtonByText("测试连接"));
-    await click(getButtonByWf("ModelTierPro"));
+    await click(getButtonByWf("ModelConfigBack"));
+    await pickTier("kimi", "pro");
 
     await act(async () => {
       resolveVerify(json({ ok: true }));
       await deferredVerify;
     });
     await flush();
-    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("true");
-    expect(getButtonByText("测试连接").hasAttribute("disabled")).toBe(false);
+    expect(getButtonByWf("ModelTierChipKimi").textContent).toBe("K3");
     expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
   });
 
@@ -669,6 +765,7 @@ describe("Settings Track B", () => {
       </ConfirmProvider>,
     );
 
+    await openVendorConfig();
     const key = "sk-short_key.with-symbol";
     setInput(getInputByWf("ModelKeyInput"), key);
     await waitForCondition(
@@ -696,6 +793,7 @@ describe("Settings Track B", () => {
       </ConfirmProvider>,
     );
 
+    await openVendorConfig();
     const key = "sk-another_nonstandard-key";
     setInput(getInputByWf("ModelKeyInput"), key);
     await waitForCondition(
@@ -791,7 +889,7 @@ describe("Settings Track B", () => {
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "").not.toContain("图像识别已启用");
   });
 
-  it("F3: Model 落盘期间输入变更后不关编辑态或报假成功", async () => {
+  it("F3: Model 落盘期间输入变更后不退出配置页或报假成功", async () => {
     let resolvePersist!: (ok: boolean) => void;
     const setCustomProvider = vi.fn(() => new Promise<boolean>((resolve) => {
       resolvePersist = resolve;
@@ -807,6 +905,7 @@ describe("Settings Track B", () => {
         <ModelSettingsPanel />
       </ToastProvider>,
     );
+    await openVendorConfig();
     await click(getButtonByText("接入其他云厂商 / 模型"));
     const baseInput = getInputByPlaceholder("https://your-endpoint/v1");
     setInput(baseInput, "https://old.example/v1");
@@ -1393,6 +1492,24 @@ function getButtonByText(text: string): HTMLButtonElement {
   );
   if (!button) throw new Error(`${text} button not found`);
   return button;
+}
+
+// 新面板:主视图是两张厂商卡,key 表单在二级配置页,先点卡上的「配 置 / 去配置」进去
+async function openVendorConfig(vendor: "deepseek" | "kimi" = "deepseek"): Promise<void> {
+  await click(getButtonByWf(vendor === "kimi" ? "ModelConfigKimi" : "ModelConfigDeepseek"));
+}
+
+// 档位浮层 portal 到 body,不在 host 子树里
+function getBodyButtonByWf(dataWf: string): HTMLButtonElement {
+  const button = document.body.querySelector<HTMLButtonElement>(`button[data-wf="${dataWf}"]`);
+  if (!button) throw new Error(`${dataWf} button not found in body`);
+  return button;
+}
+
+async function pickTier(vendor: "deepseek" | "kimi", tier: "flash" | "pro"): Promise<void> {
+  const wf = vendor === "kimi" ? "Kimi" : "Deepseek";
+  await click(getButtonByWf(`ModelTierChip${wf}`));
+  await click(getBodyButtonByWf(`ModelTier${wf}${tier === "pro" ? "Pro" : "Flash"}`));
 }
 
 function getInputByPlaceholder(placeholder: string): HTMLInputElement {

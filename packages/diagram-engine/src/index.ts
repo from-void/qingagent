@@ -1619,7 +1619,14 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
   if (op.kind === "deleteEdge") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
     const edits = [{ ...lineRemovalSpan(source, edge.stmt), text: "" }];
-    return { ok: true, source: applyFlowchartEditsPreservingInlineLabels(source, edits, [edge.stmt]) };
+    // 端点节点若只在这条语句里声明(无论带不带标签),删掉整行会把两端节点一起带走
+    // = 只想删一条连线却丢了两个节点。这里先把它们补成独立声明再删边。
+    return {
+      ok: true,
+      source: applyFlowchartEditsPreservingInlineLabels(source, edits, [edge.stmt], {
+        preserveMissingEndpoints: true,
+      }),
+    };
   }
   if (op.kind === "reconnectEdge") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
@@ -1717,7 +1724,10 @@ function applyFlowchartEditsPreservingInlineLabels(
   removedEdgeSpans: Span[],
   opts: { excludeIds?: Set<string>; preserveMissingEndpoints?: boolean } = {},
 ): string {
-  const candidates = collectRemovedFlowInlineLabels(source, removedEdgeSpans);
+  // 要"保住被带走的端点"时,连裸 id 端点(A --> B 里的 A/B)也得进候选:它们同样只靠这条语句存在。
+  const candidates = collectRemovedFlowInlineLabels(source, removedEdgeSpans, {
+    includeBareIds: opts.preserveMissingEndpoints === true,
+  });
   const nextSource = applyEdits(source, edits);
   if (candidates.size === 0) return nextSource;
   const reparsed = parseFlowchart(nextSource);
@@ -1726,22 +1736,25 @@ function applyFlowchartEditsPreservingInlineLabels(
   const declarations: string[] = [];
   for (const candidate of candidates.values()) {
     if (opts.excludeIds?.has(candidate.id)) continue; // 不复活被删的节点本身
-    if (candidate.label === candidate.id) continue; // 没有可保留的 inline 标签
     const node = nextModel.nodes.find((item) => item.id === candidate.id);
     if (!node) {
-      // 端点在"删节点"时随它的关联连边一起被带走了。删一个节点不应连带删掉
-      // 只在被删连边里 inline 声明过的邻居节点,补回为孤立节点声明(否则删 B 会让
-      // 只写在 `A-->B` 里的 A 一起消失 = 数据丢失,见 e2e R2 Lane B)。
+      // 端点随被删语句一起消失了。删一条边/一个节点都不该连带删掉只在该语句里声明过的端点,
+      // 补回为孤立节点声明(否则删 `A[开始] --> B[结束]` 这条边会把两个节点一起丢掉)。
       if (opts.preserveMissingEndpoints) declarations.push(`  ${formatFlowNodeDeclaration(candidate)}\n`);
       continue;
     }
+    if (candidate.label === candidate.id) continue; // 节点还在,裸 id 没有可补的标签
     if (node.label !== node.id) continue; // 节点还在且标签没丢,无需补
     declarations.push(`  ${formatFlowNodeDeclaration(candidate)}\n`);
   }
   return declarations.length > 0 ? insertBeforeSourceEnd(nextSource, declarations.join("")) : nextSource;
 }
 
-function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<string, ParsedFlowNodeRef> {
+function collectRemovedFlowInlineLabels(
+  source: string,
+  spans: Span[],
+  opts: { includeBareIds?: boolean } = {},
+): Map<string, ParsedFlowNodeRef> {
   const out = new Map<string, ParsedFlowNodeRef>();
   const nextEdgeId = createEdgeIdFactory("flow");
   for (const span of spans) {
@@ -1757,7 +1770,9 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
     const parsed = parseFlowEdgeStatement(line, 0, [], nextEdgeId);
     if (!parsed || "error" in parsed) continue;
     for (const ref of parsed.refs) {
-      if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
+      const bare = !ref.labelSpan || ref.label === ref.id;
+      if (bare && !opts.includeBareIds) continue;
+      if (!bare && !ref.declared) continue;
       out.set(ref.id, ref);
     }
   }
@@ -1766,6 +1781,8 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
 
 function formatFlowNodeDeclaration(node: ParsedFlowNodeRef): string {
   const label = safeMermaidLabel(node.label);
+  // 裸 id 端点补回时仍写成裸 id,不给它凭空造一个标签。
+  if (node.label === node.id && (!node.shape || node.shape === "[")) return node.id;
   if (!node.shape || node.shape === "[") return `${node.id}["${label}"]`;
   const syntax = flowShapeSyntax(normalizeFlowShapeName(node.shape));
   return syntax ? `${node.id}${syntax.open}${label}${syntax.close}` : `${node.id}["${label}"]`;

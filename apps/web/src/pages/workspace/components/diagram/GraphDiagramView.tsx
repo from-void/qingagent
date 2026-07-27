@@ -1297,6 +1297,13 @@ function dropTargetSubgraphFor(node: Node, clusters: GraphClusterNode[]): string
   );
 }
 
+/** 选择集是否等价(顺序无关):用于避免把同一份选择反复写回 state。 */
+function sameIdList(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(left);
+  return right.every((id) => seen.has(id));
+}
+
 function sameStringPath(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((part, index) => part === right[index]);
 }
@@ -1874,8 +1881,10 @@ export function GraphDiagramView({
     const nextSubgraphIds = selection.nodes.filter((node) => node.type === "graphCluster").map((node) => node.id);
     const nextNodeIds = selection.nodes.filter((node) => node.type !== "graphCluster").map((node) => node.id);
     const nextEdgeIds = selection.edges.map((edge) => edge.id);
-    setSelectedNodeIds(nextNodeIds);
-    setSelectedEdgeIds(nextEdgeIds);
+    // 选择集内容没变就不写回:每次都塞新数组会让依赖它的节点重建反复触发,
+    // React Flow 再回吐一次 onSelectionChange —— 混合选中(节点+连线)时表现为工具栏疯狂闪烁。
+    setSelectedNodeIds((current) => (sameIdList(current, nextNodeIds) ? current : nextNodeIds));
+    setSelectedEdgeIds((current) => (sameIdList(current, nextEdgeIds) ? current : nextEdgeIds));
     setSelectedNodeId(nextNodeIds.length === 1 && nextEdgeIds.length === 0 && nextSubgraphIds.length === 0 ? nextNodeIds[0]! : null);
     setSelectedEdgeId(nextEdgeIds.length === 1 && nextNodeIds.length === 0 && nextSubgraphIds.length === 0 ? nextEdgeIds[0]! : null);
     setSelectedSubgraphId(
@@ -2678,9 +2687,23 @@ export function GraphDiagramView({
     [moveParentTargetIds, parentPickerNodeId, parsed, runEdit, selectNode, selectSubgraph],
   );
 
+  // 浮动工具栏的唯一归属:同一时刻最多一种元素能出样式工具栏。
+  // 混合选中(节点+连线/分区)一律不出——两个工具栏同时满足渲染条件会在同一位置争抢闪烁;
+  // 批量拖拽/删除/复制不依赖工具栏,照常可用(与多选态从简的口径一致)。
+  const contextKind = useMemo<"node" | "subgraph" | "edge" | null>(() => {
+    const kinds: Array<"node" | "subgraph" | "edge"> = [];
+    if (selectedNodeId) kinds.push("node");
+    if (selectedSubgraphId) kinds.push("subgraph");
+    if (selectedEdgeId) kinds.push("edge");
+    if (kinds.length !== 1) return null;
+    if (selectedNodeIds.length > 1 || selectedEdgeIds.length > 1) return null;
+    if (selectedNodeIds.length > 0 && selectedEdgeIds.length > 0) return null;
+    return kinds[0]!;
+  }, [selectedEdgeId, selectedEdgeIds, selectedNodeId, selectedNodeIds, selectedSubgraphId]);
+
   const contextPosition = useMemo(
     // 拖拽中不出浮动工具栏(三个工具栏同门):元素在手上,工具栏跟着飘只会挡视线。
-    () => draggingNodeId
+    () => draggingNodeId || !contextKind
       ? null
       : getFloatingPosition({
           selectedNodeId: selectedNodeId ?? selectedSubgraphId,
@@ -2690,7 +2713,7 @@ export function GraphDiagramView({
           canvasFrame: editCanvasFrame,
           handlePreviewActive: !!ghostPreviewNodeId && ghostPreviewNodeId === selectedNodeId,
         }),
-    [draggingNodeId, editCanvasFrame, editViewport, ghostPreviewNodeId, nodes, selectedEdge, selectedNodeId, selectedSubgraphId],
+    [contextKind, draggingNodeId, editCanvasFrame, editViewport, ghostPreviewNodeId, nodes, selectedEdge, selectedNodeId, selectedSubgraphId],
   );
   const contextStyle = contextPosition
     ? ({ left: contextPosition.left, top: contextPosition.top } as const)
@@ -3400,7 +3423,7 @@ export function GraphDiagramView({
               )}
             </ReactFlow>
           </div>
-          {selectedSubgraph && contextPosition && renamingSubgraphId !== selectedSubgraph.id && (
+          {contextKind === "subgraph" && selectedSubgraph && contextPosition && renamingSubgraphId !== selectedSubgraph.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--subgraph",
@@ -3469,7 +3492,7 @@ export function GraphDiagramView({
               )}
             </div>
           )}
-          {selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
+          {contextKind === "node" && selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--node",
@@ -3570,7 +3593,7 @@ export function GraphDiagramView({
               )}
             </div>
           )}
-          {selectedEdge && contextPosition && editingEdgeLabelId !== selectedEdge.id && (
+          {contextKind === "edge" && selectedEdge && contextPosition && editingEdgeLabelId !== selectedEdge.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--edge",

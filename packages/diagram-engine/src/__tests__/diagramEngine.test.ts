@@ -534,9 +534,11 @@ describe("diagram-engine", () => {
     const parsed = parseDiagram(source).model as FlowGraph;
     const deletedEdge = applyEdit(source, { kind: "deleteEdge", edgeId: parsed.edges[0]!.id });
     expect(deletedEdge.ok).toBe(true);
-    expect(deletedEdge.source).not.toContain("A[起点]");
+    // 删一条连线只删这条线:端点只在该语句里声明时(A),要补成独立声明留下来,
+    // 不能连带把节点删掉(用户只选中了连线)。
     const edgeModel = parseDiagram(deletedEdge.source).model as FlowGraph;
-    expect(edgeModel.nodes.find((node) => node.id === "A")).toBeUndefined();
+    expect(edgeModel.edges).toHaveLength(1);
+    expect(edgeModel.nodes.find((node) => node.id === "A")?.label).toBe("起点");
     expect(edgeModel.nodes.find((node) => node.id === "B")?.label).toBe("处理");
     expect(edgeModel.nodes.find((node) => node.id === "C")?.label).toBe("结束");
 
@@ -546,6 +548,53 @@ describe("diagram-engine", () => {
     expect(nodeModel.nodes.find((node) => node.id === "A")).toBeUndefined();
     expect(nodeModel.nodes.find((node) => node.id === "B")?.label).toBe("处理");
     expect(nodeModel.nodes.find((node) => node.id === "C")?.label).toBe("结束");
+  });
+
+  it("flowchart 删连线不带走只在该语句里声明的端点(形状与标签一并保留)", () => {
+    // 用户只选中连线按删除,期望"只少一条线";端点两个节点必须留在画布上。
+    const source = "flowchart TD\n  A[开始] --> B{结束}\n";
+    const parsed = parseDiagram(source).model as FlowGraph;
+    const deleted = applyEdit(source, { kind: "deleteEdge", edgeId: parsed.edges[0]!.id });
+    expect(deleted.ok).toBe(true);
+    const model = parseDiagram(deleted.source).model as FlowGraph;
+    expect(model.edges).toHaveLength(0);
+    expect(model.nodes.map((node) => `${node.id}:${node.label}`).sort()).toEqual(["A:开始", "B:结束"]);
+    // 形状(菱形)不能在补声明时退化成矩形
+    expect(model.nodes.find((node) => node.id === "B")?.shape).toBe("{");
+    // 往返:再解析一次仍是两个孤立节点
+    expect((parseDiagram(deleted.source).model as FlowGraph).nodes).toHaveLength(2);
+  });
+
+  it("flowchart 删连线:裸 id 端点补成裸 id,不凭空造标签", () => {
+    const source = "flowchart TD\n  A --> B\n";
+    const parsed = parseDiagram(source).model as FlowGraph;
+    const deleted = applyEdit(source, { kind: "deleteEdge", edgeId: parsed.edges[0]!.id });
+    expect(deleted.ok).toBe(true);
+    expect(deleted.source).toContain("\n  A\n");
+    expect(deleted.source).not.toContain('A["A"]');
+    const model = parseDiagram(deleted.source).model as FlowGraph;
+    expect(model.nodes.map((node) => node.id).sort()).toEqual(["A", "B"]);
+  });
+
+  it("flowchart 删连线:端点另有独立声明时不重复补行", () => {
+    const source = "flowchart TD\n  A[开始]\n  B[结束]\n  A --> B\n";
+    const parsed = parseDiagram(source).model as FlowGraph;
+    const deleted = applyEdit(source, { kind: "deleteEdge", edgeId: parsed.edges[0]!.id });
+    expect(deleted.ok).toBe(true);
+    expect(deleted.source).toBe("flowchart TD\n  A[开始]\n  B[结束]\n");
+    const model = parseDiagram(deleted.source).model as FlowGraph;
+    expect(model.nodes).toHaveLength(2);
+  });
+
+  it("flowchart 链式语句里的边维持拒绝改写,不会连带删掉整行", () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束] --> C[尾]\n";
+    const parsed = parseDiagram(source).model as FlowGraph;
+    expect(parsed.edges).toHaveLength(2);
+    for (const edge of parsed.edges) {
+      const result = applyEdit(source, { kind: "deleteEdge", edgeId: edge.id });
+      expect(result.ok).toBe(false);
+      expect(result.source).toBe(source);
+    }
   });
 
   it("flowchart 含 subgraph 时允许顶层 addNode、删除无关孤立节点和连接分区内节点", () => {

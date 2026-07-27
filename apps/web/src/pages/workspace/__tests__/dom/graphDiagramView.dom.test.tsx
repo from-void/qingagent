@@ -2364,6 +2364,59 @@ flowchart LR
     expect(resizeHook).toMatch(/if \(fittedSize === sizeKey\) return;/);
   });
 
+  it("形状层显式铺满外壳,非等比拉伸后填充/边框/文字与选框始终重合", async () => {
+    // svg 是替换元素:只写 inset:0 时浏览器按 viewBox 的固有宽高比定尺寸(忽略 bottom/right),
+    // 节点被拉高后填充与边框只占上半、文字掉在图形外(用户真机复现)。jsdom 不做布局,
+    // 这里守 CSS 契约,真实几何已在浏览器按 100%/173% × 只拖高/只拖宽逐档量测。
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram-node-shape-svg\s*\{[^}]*inset:\s*0;[^}]*width:\s*100%;[^}]*height:\s*100%;/s,
+    );
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+      />,
+    );
+    const editor = await openEditor();
+    const svg = findNode("开始", editor).querySelector(".graph-diagram-node-shape-svg")!;
+    expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
+    expect(svg.getAttribute("viewBox")).toBe("0 0 160 72");
+  });
+
+  it("混合选中(节点+连线)不出样式工具栏,任何时候最多一个浮动工具栏", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[甲] --> B[乙]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 }, B: { x: 300, y: 50 } } }}
+      />,
+    );
+    const editor = await openEditor();
+    const edgeId = (parseDiagram(`flowchart LR
+  A[甲] --> B[乙]
+`).model as FlowGraph).edges[0]!.id;
+
+    // 单选节点:一个工具栏
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A"] });
+    expect(editor.querySelectorAll(".graph-diagram-context")).toHaveLength(1);
+    // 单选连线:一个工具栏
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: [], edgeIds: [edgeId] });
+    expect(editor.querySelectorAll(".graph-diagram-context")).toHaveLength(1);
+    // 混合选中:一个都不出(批量拖拽/删除/复制不依赖工具栏)
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"], edgeIds: [edgeId] });
+    expect(editor.querySelectorAll(".graph-diagram-context")).toHaveLength(0);
+    // 同类多选同样从简
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"] });
+    expect(editor.querySelectorAll(".graph-diagram-context")).toHaveLength(0);
+    // 反复重放同一份混合选择不产生额外渲染(闪烁来源:选择集被反复写回)
+    const before = editor.querySelectorAll(".graph-diagram-context").length;
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"], edgeIds: [edgeId] });
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"], edgeIds: [edgeId] });
+    expect(editor.querySelectorAll(".graph-diagram-context").length).toBe(before);
+  });
+
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {
     const actionButtonCss = diagramViewCss.match(/\/\* 文字编辑按钮[\s\S]*?\/\* 全屏覆盖层/)?.[0] ?? "";
     const skinSources = `${graphDiagramSource}\n${graphDiagramCss}\n${actionButtonCss}`;

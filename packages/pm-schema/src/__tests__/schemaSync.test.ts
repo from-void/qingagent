@@ -53,6 +53,54 @@ describe("schemaSync", () => {
     expect(PM_SCHEMA_NODE_NAMES).not.toContain("resourceRef");
   });
 
+  it("inlineMath 与 hardBreak 的 marks 经校验、归一化和 runtime schema 往返后保留", async () => {
+    const doc: ContractPmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "marked-atoms" },
+        content: [
+          {
+            type: "inlineMath",
+            attrs: { latex: "E=mc^2" },
+            marks: [
+              { type: "bold" },
+              { type: "link", attrs: { href: "https://example.com/math", title: "公式" } },
+            ],
+          },
+          {
+            type: "hardBreak",
+            marks: [{ type: "textColor", attrs: { color: "red" } }],
+          },
+        ],
+      }],
+    };
+
+    const parsed = safeParsePmDoc(doc);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).toEqual(doc);
+
+    const { getSchema } = await import("@tiptap/core");
+    const { Node: PMNode } = await import("@tiptap/pm/model");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const reloaded = PMNode.fromJSON(getSchema(createQingagentExtensions()), parsed.data).toJSON();
+    expect(reloaded.content?.[0]?.content?.[0]).toMatchObject({
+      type: "inlineMath",
+      attrs: { latex: "E=mc^2" },
+      marks: expect.arrayContaining([
+        { type: "bold" },
+        { type: "link", attrs: expect.objectContaining({ href: "https://example.com/math", title: "公式" }) },
+      ]),
+    });
+    expect(reloaded.content?.[0]?.content?.[1]).toMatchObject({
+      type: "hardBreak",
+      marks: [{ type: "textColor", attrs: { color: "red" } }],
+    });
+    expect(safeParsePmDoc(reloaded).success).toBe(true);
+  });
+
   it("tableCell/tableHeader schema 均拒绝直接嵌套 table", async () => {
     const nestedTableDoc = {
       type: "doc",

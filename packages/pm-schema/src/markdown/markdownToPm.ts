@@ -520,10 +520,7 @@ function parseInlineMarkdown(text: string): PmInlineNode[] {
   return nodes;
 }
 
-/**
- * 粗体/斜体包裹的内容仍要先识别行内 code 与数学公式。持久 PM 合同禁止 inlineMath 带 mark，
- * 而 Tiptap 的 code mark 又排斥其它 mark，因此这两类叶子节点保持原样。
- */
+/** 粗体/斜体包裹的内容仍先识别行内 code 与数学公式；Markdown 包裹仅映射到文本叶子。 */
 function addInlineMark(nodes: readonly PmInlineNode[], mark: Extract<PmMark, { type: "bold" | "italic" }>): PmInlineNode[] {
   return nodes.map((node) => {
     if (node.type !== "text" || node.marks?.some((current) => current.type === "code")) return node;

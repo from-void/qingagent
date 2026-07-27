@@ -30,6 +30,29 @@ function tableJson() {
   };
 }
 
+function tableWithLeafNode(kind: "inlineMath" | "image") {
+  const table = tableJson();
+  table.content[0]!.content[0]!.content = (kind === "inlineMath"
+    ? [{
+        type: "paragraph",
+        attrs: { blockId: "leaf-inline-paragraph" },
+        content: [
+          { type: "text", text: "H1" },
+          { type: "inlineMath", attrs: { latex: "x^2" } },
+        ],
+      }]
+    : [{
+        type: "image",
+        attrs: {
+          blockId: "leaf-image",
+          src: "https://example.com/image.png",
+          alt: "H1",
+          caption: "H1",
+        },
+      }]) as never;
+  return table;
+}
+
 function row(content: ReturnType<typeof cell>[]) {
   return { type: "tableRow", content };
 }
@@ -99,6 +122,25 @@ describe("table axis drag transaction", () => {
       expect(editor.commands.undo()).toBe(true);
       // StarterKit 会对文末 table 另补不进历史的 trailing paragraph；表格本体须一次 undo 精确还原。
       expect(editor.state.doc.child(1).toJSON()).toEqual(beforeTable);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it.each(["inlineMath", "image"] as const)("前置单元格含 %s 叶子节点时列迁移仍按真实 nodeSize 定位", (kind) => {
+    const editor = createEditor(tableWithLeafNode(kind));
+    try {
+      expect(apply(editor, {
+        axis: "column",
+        sourceStart: 0,
+        sourceEnd: 0,
+        dropBoundary: 3,
+      })).toBe(true);
+      expect(texts(editor)[0]?.slice(0, 2)).toEqual(["H2", "H3"]);
+      const movedCell = editor.state.doc.child(1).child(0).child(2);
+      expect(kind === "inlineMath"
+        ? movedCell.firstChild?.child(1).type.name
+        : movedCell.firstChild?.type.name).toBe(kind);
     } finally {
       editor.destroy();
     }

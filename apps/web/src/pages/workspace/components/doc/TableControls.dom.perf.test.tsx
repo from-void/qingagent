@@ -663,6 +663,36 @@ describe("TableControls 行列拖拽排序", () => {
     expect(editor.state.doc.firstChild?.toJSON()).toEqual(before);
   });
 
+  it("列排序事务异常时仍清理拖影与 document 监听器", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    await renderControls(editor);
+    const colHeader = portal.querySelectorAll(".tbl-col-hdr")[0]!;
+    await act(async () => {
+      colHeader.dispatchEvent(new MouseEvent("mousedown", { clientX: 150, clientY: 95, altKey: true, bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+    });
+    expect(portal.querySelector(".tbl-axis-drag-ghost")).not.toBeNull();
+
+    const removeSpy = vi.spyOn(document, "removeEventListener");
+    const dispatchSpy = vi.spyOn(editor.view, "dispatch").mockImplementationOnce(() => {
+      throw new Error("模拟列排序事务失败");
+    });
+    const preventWindowError = (event: ErrorEvent) => event.preventDefault();
+    window.addEventListener("error", preventWindowError);
+    try {
+      await act(async () => {
+        document.dispatchEvent(new MouseEvent("mouseup", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+      });
+    } finally {
+      window.removeEventListener("error", preventWindowError);
+      dispatchSpy.mockRestore();
+    }
+
+    expect(portal.querySelector(".tbl-axis-drag-ghost")).toBeNull();
+    expect(removeSpy).toHaveBeenCalledWith("mousemove", expect.any(Function));
+    expect(removeSpy).toHaveBeenCalledWith("mouseup", expect.any(Function));
+  });
+
   it("窗口失焦会取消 hold timer 与进行中的拖影，不遗留落位", async () => {
     vi.useFakeTimers();
     try {

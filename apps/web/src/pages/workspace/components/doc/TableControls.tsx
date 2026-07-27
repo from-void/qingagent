@@ -345,25 +345,27 @@ export function TableControls({ editor, onAiModify, onToast }: {
       if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
     };
     const onUp = (event: MouseEvent) => {
-      if (mode === "reorder") {
-        latestClone = event.altKey || latestClone;
-        if (!latestAllowed) {
-          onToast?.("合并单元格跨越移动边界，无法排序");
-        } else if (!latestNoOp) {
-          applyTableAxisDrop(editor, {
-            blockId: info.blockId,
-            axis: dragAxis,
-            sourceStart: sourceRange[0],
-            sourceEnd: sourceRange[1],
-            dropBoundary: latestDropBoundary,
-            clone: latestClone,
-          });
+      try {
+        if (mode === "reorder") {
+          latestClone = event.altKey || latestClone;
+          if (!latestAllowed) {
+            onToast?.("合并单元格跨越移动边界，无法排序");
+          } else if (!latestNoOp) {
+            applyTableAxisDrop(editor, {
+              blockId: info.blockId,
+              axis: dragAxis,
+              sourceStart: sourceRange[0],
+              sourceEnd: sourceRange[1],
+              dropBoundary: latestDropBoundary,
+              clone: latestClone,
+            });
+          }
+          return;
         }
+        flushPending();
+      } finally {
         cleanup();
-        return;
       }
-      flushPending();
-      cleanup();
     };
     dragCleanupRef.current = cleanup;
     document.addEventListener("mousemove", onMove);

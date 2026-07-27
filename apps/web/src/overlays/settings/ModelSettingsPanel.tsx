@@ -862,7 +862,7 @@ export function ModelSettingsPanel() {
   };
 
   // —— 连通性状态:自动 checkBalance 结果 → 色点 + 文案 ——
-  const status = deriveConnectivity(balance, balanceLoading, modelProvider);
+  const deepseekStatus = deriveConnectivity(balance, balanceLoading, "deepseek");
   const balanceVal = balance?.ok ? balance.balances?.[0] : undefined;
   const lowBalance = balanceVal != null && balance?.isAvailable === false;
 
@@ -878,31 +878,6 @@ export function ModelSettingsPanel() {
   // 官方 DeepSeek key 表单(未配置态官方 tab 与 editing 态共用)。配置只存本机,无 scope 选择。
   const keyFormatOk = keyInput.trim() === "" ? null : true;
   const customBaseUrlValid = customBaseUrl.trim() === "" ? null : isHttpUrl(customBaseUrl.trim());
-  const modelTierSection = (
-    <div className="sm-tier-row" data-wf="ModelTierSelector">
-      <div className="sm-tier-copy">
-        <span className="sm-tier-title">模型档位</span>
-        <span className="sm-tier-note">默认 Flash;Pro 更强但更慢</span>
-      </div>
-      <div className="sm-tier-control" role="radiogroup" aria-label="模型档位">
-        {(["flash", "pro"] as const).map((tier) => (
-          <button
-            key={tier}
-            type="button"
-            role="radio"
-            aria-checked={modelTier === tier}
-            aria-pressed={modelTier === tier}
-            className={`sm-tier-option${modelTier === tier ? " sm-active" : ""}`}
-            onClick={() => void handleModelTierChange(tier)}
-            data-wf={tier === "flash" ? "ModelTierFlash" : "ModelTierPro"}
-          >
-            <span>{tier === "flash" ? "Flash" : "Pro"}</span>
-            <small>{tier === "flash" ? "快" : "更强更慢"}</small>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
   const officialKeyForm = (
     <>
       <div className="sm-keyrow">
@@ -910,7 +885,7 @@ export function ModelSettingsPanel() {
           autoComplete="off"
           spellCheck={false}
           className="sm-keyinput"
-          placeholder={modelProvider === "kimi" ? "粘贴 Kimi API key" : "粘贴 DeepSeek API key(sk-…)"}
+          placeholder={configProvider === "kimi" ? "粘贴 Kimi API key" : "粘贴 DeepSeek API key(sk-…)"}
           value={keyInput}
           disabled={persisting}
           onChange={(e) => {
@@ -929,30 +904,39 @@ export function ModelSettingsPanel() {
         >
           保存
         </button>
-        {modelProvider === "kimi" && (
+        {configProvider === "kimi" ? (
           <button
             type="button"
             className="sm-btn"
             onClick={() => void handleVerifyKimiKey()}
             disabled={persisting || verifyStatus === "verifying" || !keyInput.trim()}
             title="发起 Kimi 请求"
+            data-wf="KimiVerifyBtn"
           >
             {verifyStatus === "verifying" ? "测试中…" : "测试连接"}
           </button>
-        )}
-        {editing && (
+        ) : (
+          /* DeepSeek:「重新检测」与「测试连接」合并成一个动作——
+             填了新 key 就测新 key,没填就重测已保存的配置。 */
           <button
             type="button"
             className="sm-btn"
-            onClick={() => {
-              invalidateCustomTest();
-              setEditing(false);
-            }}
-            disabled={persisting}
+            onClick={() => void checkBalance(undefined, keyInput.trim() || undefined)}
+            disabled={persisting || balanceLoading || (!keyInput.trim() && !configProviderConfigured)}
+            title="查询 DeepSeek 连通性与余额"
+            data-wf="BalanceCheckBtn"
           >
-            取消
+            {balanceLoading ? "检测中…" : "测试连接"}
           </button>
         )}
+        <button
+          type="button"
+          className="sm-btn"
+          onClick={closeConfig}
+          disabled={persisting}
+        >
+          取消
+        </button>
       </div>
       {keyFormatOk && verifyStatus === "verifying" && <p className="sm-verify sm-verify--ing">正在验证 key…</p>}
       {verifyStatus === "ok" && (
@@ -967,7 +951,7 @@ export function ModelSettingsPanel() {
           {verifyMsg}
         </p>
       )}
-      {editing && modelProvider === "deepseek" && (
+      {configProviderConfigured && configProvider === "deepseek" && (
         <div className="sm-model-prefix">
           <div className="sm-field">
             <span className="sm-field-label">V4 Flash 模型名（一般无需修改）</span>
@@ -998,19 +982,19 @@ export function ModelSettingsPanel() {
           <p className="sm-keyhint">留空即用官方默认模型名;仅当官方升级换名导致报错时才需要改。</p>
         </div>
       )}
-      <p className="sm-keyhint">
-        {isDesktop ? "Key 只保存在本机，用于发起模型请求。" : "Key 会保存在这台电脑的浏览器中，用于发起模型请求。"}
-      </p>
+      <p className="sm-keyhint">Key 只保存在本机，用于发起模型请求。</p>
     </>
   );
 
-  // 配置编辑器(官方 / 其他厂商两 tab);setup 与 editing 共用,editing 不显示官方步骤、改显示模型前缀。
+  // 配置编辑器(官方 / 其他厂商两 tab):二级页主体。
+  // 未配置的厂商显示官方注册步骤;已配置的厂商改显示模型名前缀与清除入口。
   const configSection = (
     <div className="sm-config">
       <div className="sm-faq-q">
-        {editing ? "切换 / 修改模型配置" : `如何配置 ${modelProvider === "kimi" ? "Kimi" : "DeepSeek"}?`}
+        {configProviderConfigured
+          ? `切换 / 修改模型配置 · ${vendorName(configProvider)}`
+          : `如何配置 ${vendorName(configProvider)}?`}
       </div>
-      {modelTierSection}
       <div className="sm-setup-tabs" role="tablist" aria-label="配置方式">
         <button
           type="button"
@@ -1023,7 +1007,7 @@ export function ModelSettingsPanel() {
           }}
           disabled={persisting}
         >
-          <span>接入 {modelProvider === "kimi" ? "Kimi" : "DeepSeek"} 官方 API</span>
+          <span>接入 {vendorName(configProvider)} 官方 API</span>
           <small>推荐方式（步骤简单）</small>
         </button>
         <button
@@ -1044,20 +1028,20 @@ export function ModelSettingsPanel() {
 
       {setupMode === "official" ? (
         <div className="sm-official">
-          {!editing && (
+          {!configProviderConfigured && (
             <ol className="sm-steps">
               <li>
                 前往{" "}
                 <a
-                  href={modelProvider === "kimi" ? "https://www.kimi.com/code" : "https://platform.deepseek.com/"}
+                  href={configProvider === "kimi" ? "https://www.kimi.com/code" : "https://platform.deepseek.com/"}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  {modelProvider === "kimi" ? "Kimi Code" : "platform.deepseek.com"}
+                  {configProvider === "kimi" ? "Kimi Code" : "platform.deepseek.com"}
                 </a>{" "}
                 完成注册登录
               </li>
-              <li>{modelProvider === "kimi" ? "确认套餐已开通 K3 / K2.7 Code 权限" : "可先小额充值试用"}</li>
+              <li>{configProvider === "kimi" ? "确认套餐已开通 K3 / K2.7 Code 权限" : "可先小额充值试用"}</li>
               <li>
                 创建并复制 API key
               </li>
@@ -1075,13 +1059,13 @@ export function ModelSettingsPanel() {
             <span className="sm-field-label">API 协议类型</span>
             <SkinSelect
               className="sm-field-select"
-              value={modelProvider === "kimi" ? "openai" : customProtocol}
-              disabled={persisting || modelProvider === "kimi"}
+              value={configProvider === "kimi" ? "openai" : customProtocol}
+              disabled={persisting || configProvider === "kimi"}
               ariaLabel="API 协议类型"
               skin="ink"
               options={[
                 { value: "openai", label: "OpenAI 兼容" },
-                ...(modelProvider === "deepseek"
+                ...(configProvider === "deepseek"
                   ? [{ value: "anthropic", label: "Anthropic 兼容" }]
                   : []),
               ]}
@@ -1128,11 +1112,11 @@ export function ModelSettingsPanel() {
           </div>
           <div className="sm-field">
             <span className="sm-field-label">
-              {modelProvider === "kimi" ? "K2.7 Code（Flash）模型别名" : "V4 Flash 模型别名(可选)"}
+              {configProvider === "kimi" ? "K2.7 Code（Flash）模型别名" : "V4 Flash 模型别名(可选)"}
             </span>
             <input
               className="sm-field-input"
-              placeholder={MODEL_DEFAULTS[modelProvider].flash}
+              placeholder={MODEL_DEFAULTS[configProvider].flash}
               value={customModelFlash}
               disabled={persisting}
               onChange={(e) => {
@@ -1143,11 +1127,11 @@ export function ModelSettingsPanel() {
           </div>
           <div className="sm-field">
             <span className="sm-field-label">
-              {modelProvider === "kimi" ? "K3（Pro）模型别名" : "V4 PRO 模型别名(可选)"}
+              {configProvider === "kimi" ? "K3（Pro）模型别名" : "V4 PRO 模型别名(可选)"}
             </span>
             <input
               className="sm-field-input"
-              placeholder={MODEL_DEFAULTS[modelProvider].pro}
+              placeholder={MODEL_DEFAULTS[configProvider].pro}
               value={customModelPro}
               disabled={persisting}
               onChange={(e) => {
@@ -1157,7 +1141,7 @@ export function ModelSettingsPanel() {
             />
           </div>
           <p className="sm-other-note">
-            {modelProvider === "kimi"
+            {configProvider === "kimi"
               ? "档位固定映射 Flash → kimi-for-coding、Pro → k3；第三方中转别名不同时可在上方修改。"
               : "默认适配 DeepSeek 模型。其他模型可在上面改成对应别名自行尝试(效果不保证);两者留空则默认用 deepseek-v4-flash。"}
           </p>

@@ -211,8 +211,28 @@ async function withBackgroundSpawnLock<T>(
 }
 
 async function terminateSpawnedProcess(handle: ProcessHandle): Promise<void> {
-  await handle.kill();
-  await handle.wait();
+  try {
+    const killed = await handle.kill();
+    if (!killed) {
+      console.warn("[gatedExecuteCommandTool] 后台进程取消时已退出，继续等待回收", {
+        pid: handle.pid,
+      });
+    }
+  } catch (error) {
+    console.warn("[gatedExecuteCommandTool] 后台进程终止失败，继续等待回收", {
+      pid: handle.pid,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+  } finally {
+    try {
+      await handle.wait();
+    } catch (error) {
+      console.warn("[gatedExecuteCommandTool] 后台进程等待回收失败", {
+        pid: handle.pid,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
 }
 
 export function createGatedExecuteCommandTool({

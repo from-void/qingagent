@@ -82,6 +82,9 @@ function createToolHarness(
     retainWorkspace?: () => () => void;
     firstListGate?: Promise<void>;
     spawnGate?: Promise<void>;
+    killError?: Error;
+    killResult?: boolean;
+    waitError?: Error;
     commandResult?: {
       success: boolean;
       exitCode: number;
@@ -146,12 +149,15 @@ function createToolHarness(
             pid: 12345,
             kill: async () => {
               killCalls += 1;
+              if (options.killError) throw options.killError;
+              if (options.killResult === false) return false;
               spawnedRunning = Math.max(0, spawnedRunning - 1);
               return true;
             },
             wait: async () => {
               waitCalls += 1;
               await options.backgroundWait;
+              if (options.waitError) throw options.waitError;
               return {
                 success: true,
                 exitCode: 0,
@@ -890,6 +896,93 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(killCallCount()).toBe(1);
     expect(waitCallCount()).toBe(1);
     expect(runningProcessCount()).toBe(0);
+  });
+
+  it("后台进程 spawn 期间取消时 kill reject 仍等待回收并返回取消", async () => {
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const { tool, spawnCalls, killCallCount, waitCallCount } = createToolHarness(
+      "gated-background-spawn-cancel-kill-reject",
+      { spawnGate, killError: new Error("kill failed") },
+    );
+    const abortController = new AbortController();
+    const command = executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    }, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    await vi.waitFor(() => expect(spawnCalls).toHaveLength(1));
+
+    abortController.abort("user_abort");
+    releaseSpawn();
+
+    await expect(command).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(killCallCount()).toBe(1);
+    expect(waitCallCount()).toBe(1);
+  });
+
+  it("后台进程 spawn 期间取消时 kill false 仍等待回收并返回取消", async () => {
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const { tool, spawnCalls, killCallCount, waitCallCount } = createToolHarness(
+      "gated-background-spawn-cancel-kill-false",
+      { spawnGate, killResult: false },
+    );
+    const abortController = new AbortController();
+    const command = executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    }, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    await vi.waitFor(() => expect(spawnCalls).toHaveLength(1));
+
+    abortController.abort("user_abort");
+    releaseSpawn();
+
+    await expect(command).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(killCallCount()).toBe(1);
+    expect(waitCallCount()).toBe(1);
+  });
+
+  it("后台进程 spawn 期间取消时 wait reject 不冒出取消路径", async () => {
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const { tool, spawnCalls, killCallCount, waitCallCount } = createToolHarness(
+      "gated-background-spawn-cancel-wait-reject",
+      { spawnGate, waitError: new Error("wait failed") },
+    );
+    const abortController = new AbortController();
+    const command = executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    }, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    await vi.waitFor(() => expect(spawnCalls).toHaveLength(1));
+
+    abortController.abort("user_abort");
+    releaseSpawn();
+
+    await expect(command).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(killCallCount()).toBe(1);
+    expect(waitCallCount()).toBe(1);
   });
 });
 

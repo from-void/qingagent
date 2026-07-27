@@ -8,6 +8,8 @@ interface CalendarDatePickerProps {
   onChange: (value: string) => void;
   max?: string;
   disabled?: boolean;
+  markedDates?: ReadonlySet<string>;
+  onlyMarkedDatesSelectable?: boolean;
   title?: string;
   ariaLabel: string;
   skin: "paper" | "ink";
@@ -46,6 +48,8 @@ export function CalendarDatePicker({
   onChange,
   max,
   disabled = false,
+  markedDates,
+  onlyMarkedDatesSelectable = false,
   title,
   ariaLabel,
   skin,
@@ -113,7 +117,9 @@ export function CalendarDatePicker({
       </div>
       <div className="skin-calendar__grid">
         {days.map((date) => {
-          const isDisabled = Boolean(max && date.ymd > max);
+          const isMarked = markedDates?.has(date.ymd) ?? false;
+          const isUnmarkedDisabled = onlyMarkedDatesSelectable && !isMarked;
+          const isDisabled = Boolean(max && date.ymd > max) || isUnmarkedDisabled;
           return (
             <button
               key={date.ymd}
@@ -122,6 +128,7 @@ export function CalendarDatePicker({
                 "skin-calendar__day",
                 date.currentMonth ? "" : "is-adjacent",
                 date.ymd === value ? "is-selected" : "",
+                isUnmarkedDisabled ? "is-unavailable" : "",
               ].filter(Boolean).join(" ")}
               aria-label={date.ymd}
               aria-pressed={date.ymd === value}
@@ -133,6 +140,7 @@ export function CalendarDatePicker({
               }}
             >
               {date.day}
+              {isMarked ? <span className="skin-calendar__mark" aria-hidden="true" /> : null}
             </button>
           );
         })}

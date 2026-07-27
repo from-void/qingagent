@@ -716,7 +716,12 @@ describe("Settings Track B", () => {
 
     await click(getDateTrigger());
     await click(getButtonByLabel("上个月"));
-    await click(getButtonByLabel("2026-06-24"));
+    const consumedDay = getButtonByLabel("2026-06-24");
+    const idleDay = getButtonByLabel("2026-06-23");
+    expect(consumedDay.querySelector(".skin-calendar__mark")).not.toBeNull();
+    expect(consumedDay.disabled).toBe(false);
+    expect(idleDay.disabled).toBe(true);
+    await click(consumedDay);
     const filteredTable = getTable();
     expect(filteredTable.textContent).toContain("2026-06-24");
     expect(filteredTable.textContent).not.toContain("2026-06-25");
@@ -738,7 +743,9 @@ describe("Settings Track B", () => {
     expect(headers).toEqual(["日期", "输入", "输出", "缓存命中率", "估算费用"]);
     expect(getTable().textContent).not.toContain("调用点");
     expect(getTable().textContent).not.toContain("请求覆盖");
-    expect(getButtonByWf("UsageModeToggle").textContent).toContain("小白");
+    expect(getButtonByWf("UsageModeToggle").textContent?.trim()).toBe("用量明细");
+    expect(getButtonByWf("UsageModeToggle").getAttribute("aria-label")).toContain("小白模式");
+    expect(getButtonByWf("UsageModeToggle").querySelector("small")).toBeNull();
   });
 
   it("点击用量明细标题切换专家模式并披露完整列", async () => {
@@ -750,7 +757,9 @@ describe("Settings Track B", () => {
     await click(toggle);
 
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    expect(toggle.textContent).toContain("专家");
+    expect(toggle.textContent?.trim()).toBe("用量明细");
+    expect(toggle.getAttribute("aria-label")).toContain("专家模式");
+    expect(getTable().parentElement?.classList.contains("md-table-scroll")).toBe(true);
     const headerText = Array.from(getTable().querySelectorAll("th"))
       .map((cell) => cell.textContent ?? "")
       .join(" ");
@@ -844,7 +853,8 @@ describe("Settings Track B", () => {
     await flush();
 
     expect(getButtonByWf("UsageModeToggle").getAttribute("aria-pressed")).toBe("true");
-    expect(getButtonByWf("UsageModeToggle").textContent).toContain("专家");
+    expect(getButtonByWf("UsageModeToggle").textContent?.trim()).toBe("用量明细");
+    expect(getButtonByWf("UsageModeToggle").getAttribute("aria-label")).toContain("专家模式");
   });
 
   it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {

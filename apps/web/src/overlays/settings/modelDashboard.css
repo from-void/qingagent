@@ -74,14 +74,6 @@
 .qj-sheet-body .md-usage-mode-toggle .md-card-title {
   margin: 0;
 }
-.qj-sheet-body .md-usage-mode-toggle small {
-  padding-left: 7px;
-  border-left: 1px solid var(--qj-switch-border);
-  color: var(--qj-header-sub);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
 .qj-sheet-body .md-usage-mode-toggle:hover .md-card-title,
 .qj-sheet-body .md-usage-mode-toggle:focus-visible .md-card-title {
   color: var(--qj-switch-text);
@@ -502,6 +494,25 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 11px;
+}
+.qj-sheet-body .md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--qj-switch-border) transparent;
+}
+.qj-sheet-body .md-table-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.qj-sheet-body .md-table-scroll::-webkit-scrollbar-thumb {
+  border-radius: 0;
+  background: var(--qj-switch-border);
+}
+.qj-sheet-body .md-table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.qj-sheet-body .md-table--expert {
+  min-width: 880px;
 }
 .qj-sheet-body .md-table th {
   text-align: left;

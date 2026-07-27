@@ -686,6 +686,14 @@ export function ModelSettingsPanel() {
   const modelDist = useMemo(() => buildModelDistribution(totalUsage), [totalUsage]);
   const trend = useMemo(() => buildDailyTrend(dayUsage, 15), [dayUsage]);
   const todayYmd = useMemo(() => toYMD(new Date()), []);
+  const usageDates = useMemo(
+    () => new Set(
+      (dayUsage ?? [])
+        .filter((row) => row.inputTokens > 0 || row.outputTokens > 0)
+        .map((row) => row.bucket),
+    ),
+    [dayUsage],
+  );
   const visibleUsage = useMemo(() => {
     if (usage === null) return null;
     if (usageDate && usageView === "day") return usage.filter((row) => row.bucket === usageDate);
@@ -1342,7 +1350,6 @@ export function ModelSettingsPanel() {
                 data-wf="UsageModeToggle"
               >
                 <span className="md-card-title">用量明细</span>
-                <small>{usageMode === "expert" ? "专家" : "小白"}</small>
               </button>
               <span className="md-detail-filters">
                 <label className="md-date-filter">
@@ -1351,6 +1358,8 @@ export function ModelSettingsPanel() {
                     value={usageDate}
                     max={todayYmd}
                     disabled={usageView !== "day"}
+                    markedDates={usageDates}
+                    onlyMarkedDatesSelectable
                     title={usageView === "day" ? "仅筛选已加载的按天用量" : "日期筛选仅支持按天视图"}
                     ariaLabel="筛选用量日期"
                     skin="ink"
@@ -1387,7 +1396,8 @@ export function ModelSettingsPanel() {
                   {usageDate && usageView === "day" ? "该日期暂无用量记录" : "还没有用量记录,开始一次对话后这里会出现消耗明细"}
                 </p>
               ) : (
-                <table className={`md-table md-table--${usageMode}`} data-wf="UsageDetailTable">
+                <div className="md-table-scroll">
+                  <table className={`md-table md-table--${usageMode}`} data-wf="UsageDetailTable">
                   <thead>
                     <tr>
                       <th>
@@ -1509,7 +1519,8 @@ export function ModelSettingsPanel() {
                       ];
                     })}
                   </tbody>
-                </table>
+                  </table>
+                </div>
               )}
             <p className="md-foot-note">DeepSeek 费用按已核实公开单价估算；Kimi 暂无价目表，只记录 token，不估算金额。</p>
           </div>

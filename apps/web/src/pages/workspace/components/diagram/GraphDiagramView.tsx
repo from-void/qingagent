@@ -358,6 +358,9 @@ const NODE_SHAPE_VIEWBOX = `0 0 ${NODE_WIDTH} ${NODE_HEIGHT}`;
 // 手型钮提示条与按钮的间距,以及靠边内收时与视口的最小间距。
 const PAN_TIP_GAP = 10;
 const PAN_TIP_EDGE_GAP = 12;
+// 把手快速新增:新节点与源节点之间的净间距(横向/纵向)。
+const QUICK_ADD_GAP_X = 96;
+const QUICK_ADD_GAP_Y = 88;
 // 粘贴副本相对原件的整体偏移。
 const PASTE_OFFSET = 16;
 // 工具栏与元素的常态间距:只让开外侧圆点/加号那一圈。
@@ -397,6 +400,8 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
 
   const ghostPreviewChangeRef = useRef(data.onGhostPreviewChange);
   ghostPreviewChangeRef.current = data.onGhostPreviewChange;
+  // 连线进行中:把手只当连线落点,不再触发快速新增的加号/幽灵(拖线经过目标节点会误弹)。
+  const connectionInProgress = useStore((state) => state.connection.inProgress);
 
   useEffect(() => () => {
     if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
@@ -405,6 +410,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   }, []);
 
   const beginHandleHover = (handleId: GraphHandleId) => {
+    if (connectionInProgress) return;
     if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
     setHandleHover({ id: handleId, phase: "plus" });
     handlePreviewTimerRef.current = window.setTimeout(() => {
@@ -422,6 +428,17 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
     setHandleHover((current) => (current?.id === handleId ? null : current));
     data.onGhostPreviewChange(false);
   };
+
+  // 连线一开始就收掉已经弹出来的加号/幽灵,避免"拖线中途把手变成新增入口"。
+  useEffect(() => {
+    if (!connectionInProgress) return;
+    if (handlePreviewTimerRef.current !== null) {
+      window.clearTimeout(handlePreviewTimerRef.current);
+      handlePreviewTimerRef.current = null;
+    }
+    setHandleHover(null);
+    ghostPreviewChangeRef.current?.(false);
+  }, [connectionInProgress]);
 
   useEffect(() => {
     if (!data.isRenaming) {
@@ -635,7 +652,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
               data.onQuickAdd(handle.id);
             }}
           />
-          {data.canQuickAdd && handleHover?.id === handle.id ? (
+          {data.canQuickAdd && !connectionInProgress && handleHover?.id === handle.id ? (
             <button
               type="button"
               className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} is-${handleHover.phase} nodrag nopan`}
@@ -658,24 +675,140 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
                 : <CanvasToolIcon name="plus" />}
             </button>
           ) : null}
-          {data.canQuickAdd && handleHover?.id === handle.id && handleHover.phase === "preview" ? (
-            <div
-              className={`graph-diagram-handle-ghost graph-diagram-handle-ghost--${handle.id}`}
-              data-direction={handle.id}
-              aria-hidden="true"
-            >
-              <span className="graph-diagram-handle-ghost__line" />
-              <span className="graph-diagram-handle-ghost__node">
-                <svg viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none">
-                  {renderShapeSvg(data.shape)}
-                </svg>
-              </span>
-            </div>
+          {data.canQuickAdd && !connectionInProgress && handleHover?.id === handle.id && handleHover.phase === "preview" ? (
+            <QuickAddGhost shape={data.shape} width={data.width} height={data.height} handleId={handle.id} />
           ) : null}
         </div>
       ))}
     </div>
   );
+}
+
+/**
+ * 把手快速新增的唯一几何来源:预览(幽灵)与真正创建的节点共用它,禁止两套数字。
+ * 返回值都以源节点左上角为原点(流坐标 = 画布内 CSS px)。
+ */
+export function quickAddGhostGeometry(
+  sourceWidth: number,
+  sourceHeight: number,
+  handleId: GraphHandleId,
+): {
+  offset: { x: number; y: number };
+  size: { width: number; height: number };
+  line: { left: number; top: number; length: number; vertical: boolean };
+} {
+  const size = { width: NODE_WIDTH, height: NODE_HEIGHT };
+  if (handleId === "r") {
+    return {
+      offset: { x: sourceWidth + QUICK_ADD_GAP_X, y: 0 },
+      size,
+      line: { left: sourceWidth, top: sourceHeight / 2, length: QUICK_ADD_GAP_X, vertical: false },
+    };
+  }
+  if (handleId === "l") {
+    return {
+      offset: { x: -(sourceWidth + QUICK_ADD_GAP_X), y: 0 },
+      size,
+      line: { left: -QUICK_ADD_GAP_X, top: sourceHeight / 2, length: QUICK_ADD_GAP_X, vertical: false },
+    };
+  }
+  if (handleId === "b") {
+    return {
+      offset: { x: 0, y: sourceHeight + QUICK_ADD_GAP_Y },
+      size,
+      line: { left: sourceWidth / 2, top: sourceHeight, length: QUICK_ADD_GAP_Y, vertical: true },
+    };
+  }
+  return {
+    offset: { x: 0, y: -(sourceHeight + QUICK_ADD_GAP_Y) },
+    size,
+    line: { left: sourceWidth / 2, top: -QUICK_ADD_GAP_Y, length: QUICK_ADD_GAP_Y, vertical: true },
+  };
+}
+
+/** 幽灵预览 = 目标节点的真实尺寸/形状/落点 + 带箭头的连接段;点一下就是把它固化下来。 */
+function QuickAddGhost({
+  shape,
+  width,
+  height,
+  handleId,
+}: {
+  shape: GraphNodeShape;
+  width: number;
+  height: number;
+  handleId: GraphHandleId;
+}) {
+  const geometry = quickAddGhostGeometry(width, height, handleId);
+  const arrowSize = 9;
+  const lineStyle: CSSProperties = geometry.line.vertical
+    ? {
+        left: geometry.line.left,
+        top: geometry.line.top,
+        width: arrowSize,
+        height: geometry.line.length,
+        marginLeft: -arrowSize / 2,
+      }
+    : {
+        left: geometry.line.left,
+        top: geometry.line.top,
+        width: geometry.line.length,
+        height: arrowSize,
+        marginTop: -arrowSize / 2,
+      };
+  return (
+    <div className="graph-diagram-handle-ghost" data-direction={handleId} aria-hidden="true">
+      <svg
+        className="graph-diagram-handle-ghost__line"
+        style={lineStyle}
+        viewBox={geometry.line.vertical ? `0 0 ${arrowSize} ${geometry.line.length}` : `0 0 ${geometry.line.length} ${arrowSize}`}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <marker
+            id={`graph-ghost-arrow-${handleId}`}
+            markerWidth="6"
+            markerHeight="6"
+            refX="5"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0 0.6 L5.4 3 L0 5.4 z" fill="currentColor" />
+          </marker>
+        </defs>
+        <path
+          d={quickAddGhostLinePath(handleId, geometry.line.length, arrowSize)}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="5 4"
+          markerEnd={`url(#graph-ghost-arrow-${handleId})`}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <span
+        className="graph-diagram-handle-ghost__node"
+        style={{
+          left: geometry.offset.x,
+          top: geometry.offset.y,
+          width: geometry.size.width,
+          height: geometry.size.height,
+        }}
+      >
+        <svg viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none">
+          {renderShapeSvg(shape)}
+        </svg>
+      </span>
+    </div>
+  );
+}
+
+function quickAddGhostLinePath(handleId: GraphHandleId, length: number, thickness: number): string {
+  const mid = thickness / 2;
+  if (handleId === "r") return `M0 ${mid} H${length}`;
+  if (handleId === "l") return `M${length} ${mid} H0`;
+  if (handleId === "b") return `M${mid} 0 V${length}`;
+  return `M${mid} ${length} V0`;
 }
 
 function HandleDirectionIcon({ direction }: { direction: GraphHandleId }) {
@@ -4665,12 +4798,12 @@ function handlePosition(handleId: GraphHandleId): Position {
 function quickAddNodePosition(sourceNode: Node, handleId: GraphHandleId): { x: number; y: number } {
   const width = sourceNode.measured?.width ?? sourceNode.width ?? NODE_WIDTH;
   const height = sourceNode.measured?.height ?? sourceNode.height ?? NODE_HEIGHT;
-  const gapX = width + 96;
-  const gapY = height + 88;
-  if (handleId === "r") return { x: Math.round(sourceNode.position.x + gapX), y: Math.round(sourceNode.position.y) };
-  if (handleId === "l") return { x: Math.round(sourceNode.position.x - gapX), y: Math.round(sourceNode.position.y) };
-  if (handleId === "b") return { x: Math.round(sourceNode.position.x), y: Math.round(sourceNode.position.y + gapY) };
-  return { x: Math.round(sourceNode.position.x), y: Math.round(sourceNode.position.y - gapY) };
+  // 与幽灵预览同一套几何:所见即所得,点一下就是把预览固化。
+  const { offset } = quickAddGhostGeometry(width, height, handleId);
+  return {
+    x: Math.round(sourceNode.position.x + offset.x),
+    y: Math.round(sourceNode.position.y + offset.y),
+  };
 }
 
 function findAddedEdgeId(oldSource: string, newSource: string, sourceId: string, targetId: string): string | null {

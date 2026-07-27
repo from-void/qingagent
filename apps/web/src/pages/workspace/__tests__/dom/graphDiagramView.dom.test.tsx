@@ -756,7 +756,7 @@ flowchart LR
     const previewButton = startNode.querySelector<HTMLButtonElement>(".graph-diagram-handle-add--r");
     expect(previewButton?.classList.contains("is-preview")).toBe(true);
     expect(previewButton?.querySelector(".graph-diagram-handle-direction-icon--r")).not.toBeNull();
-    expect(startNode.querySelector(".graph-diagram-handle-ghost--r")).not.toBeNull();
+    expect(startNode.querySelector(".graph-diagram-handle-ghost[data-direction='r']")).not.toBeNull();
 
     await mouseEvent(rightHandle, "mouseout");
     expect(startNode.querySelector(".graph-diagram-handle-add")).toBeNull();
@@ -2490,6 +2490,104 @@ flowchart LR
     expect(graphDiagramCss).toMatch(
       /\.graph-diagram-toolbar__button:has\(\.graph-diagram-shape-glyph\)\s*\{[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s,
     );
+  });
+
+  it.each([
+    ["r", "右侧"],
+    ["l", "左侧"],
+    ["t", "上方"],
+    ["b", "下方"],
+  ])("把手幽灵预览与实际创建的节点几何完全一致(%s 向)", async (side, sideLabel) => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始] --> B[结束]
+`}
+        initialOverlay={{ positions: { A: { x: 200, y: 160 }, B: { x: 700, y: 160 } } }}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    const startNode = findNode("开始", editor);
+    const handle = Array.from(startNode.querySelectorAll<HTMLElement>(".react-flow__handle"))
+      .find((item) => item.classList.contains("source") && item.dataset.handleid === side)!;
+    await mouseEvent(handle, "mouseover");
+    await waitMs(240);
+    const ghost = startNode.querySelector<HTMLElement>(".graph-diagram-handle-ghost")!;
+    expect(ghost).not.toBeNull();
+    expect(ghost.dataset.direction).toBe(side);
+    const ghostNode = ghost.querySelector<HTMLElement>(".graph-diagram-handle-ghost__node")!;
+    // 幽灵 = 目标节点的真实尺寸 + 真实落点(相对源节点左上角),连接段带真实箭头
+    expect(ghostNode.style.width).toBe("160px");
+    expect(ghostNode.style.height).toBe("72px");
+    expect(ghost.querySelector(".graph-diagram-handle-ghost__line marker")).not.toBeNull();
+    const ghostOffset = {
+      x: Number.parseFloat(ghostNode.style.left),
+      y: Number.parseFloat(ghostNode.style.top),
+    };
+
+    // 点一下就是把幽灵固化:创建出来的节点位置 = 源节点位置 + 幽灵偏移
+    const addButton = startNode.querySelector<HTMLButtonElement>(`button[aria-label='从${sideLabel}新增连接节点']`)!;
+    expect(addButton).not.toBeNull();
+    await click(addButton);
+    const overlay = onOverlayChange.mock.calls.at(-1)?.[0] as
+      | { positions?: Record<string, { x: number; y: number }> }
+      | null
+      | undefined;
+    const positions = overlay?.positions ?? {};
+    const createdId = Object.keys(positions).find((id) => id !== "A" && id !== "B")!;
+    expect(positions[createdId]).toEqual({ x: 200 + ghostOffset.x, y: 160 + ghostOffset.y });
+  });
+
+  it("连线进行中把手只当落点:不再弹快速新增的加号与幽灵", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始] --> B[结束]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 }, B: { x: 400, y: 50 } } }}
+        onSourceChange={vi.fn()}
+      />,
+    );
+    const editor = await openEditor();
+    const startNode = findNode("开始", editor);
+    const targetNode = findNode("结束", editor);
+    const sourceHandle = Array.from(startNode.querySelectorAll<HTMLElement>(".react-flow__handle"))
+      .find((item) => item.classList.contains("source") && item.dataset.handleid === "r")!;
+    const targetHandle = Array.from(targetNode.querySelectorAll<HTMLElement>(".react-flow__handle"))
+      .find((item) => item.classList.contains("source") && item.dataset.handleid === "l")!;
+
+    // 常态:悬停目标把手会出加号 → 说明用例确实走在会弹的路径上
+    await mouseEvent(targetHandle, "mouseover");
+    await waitMs(240);
+    expect(targetNode.querySelector(".graph-diagram-handle-add")).not.toBeNull();
+    expect(targetNode.querySelector(".graph-diagram-handle-ghost")).not.toBeNull();
+    await mouseEvent(targetHandle, "mouseout");
+
+    // 从 A 起拖连线,经过 B 的把手:整条 hover 链被抑制
+    await act(async () => {
+      sourceHandle.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true, cancelable: true, button: 0, buttons: 1, clientX: 120, clientY: 80,
+      }));
+      // 连线要越过拖拽阈值才进入 connecting 态
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, buttons: 1, clientX: 260, clientY: 120,
+      }));
+    });
+    await flush();
+    // 守卫前提:React Flow 已进入 connecting 态
+    expect(editor.querySelector(".graph-diagram-canvas--editor.is-connecting")).not.toBeNull();
+    await mouseEvent(targetHandle, "mouseover");
+    await waitMs(280);
+    expect(targetNode.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(targetNode.querySelector(".graph-diagram-handle-ghost")).toBeNull();
+
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    });
+    await flush();
   });
 
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {

@@ -259,7 +259,39 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       return block ? handleFromBlock(block, editor.state.selection.from) : null;
     };
 
+    const resolveTrailingWhitespaceHandle = (e: MouseEvent): HandleState | null => {
+      // 只认真正的"块外留白":指针落在某个块自己的 DOM 上时一律交回行内解析,
+      // 否则会把列表行等块内 hover 抢成末块手柄。
+      const target = eventTargetElement(e.target);
+      if (target && target !== editor.view.dom && editor.view.dom.contains(target)) return null;
+      const doc = editor.state.doc;
+      const lastIndex = doc.childCount - 1;
+      if (lastIndex < 0) return null;
+      const lastBlockDom = editor.view.dom.lastElementChild;
+      if (!(lastBlockDom instanceof HTMLElement)) return null;
+      const paperRect = editor.view.dom.getBoundingClientRect();
+      const lastRect = lastBlockDom.getBoundingClientRect();
+      if (e.clientY <= lastRect.bottom) return null;
+      if (e.clientX < paperRect.left || e.clientX > paperRect.right) return null;
+      let lastPos = 0;
+      doc.forEach((_node, offset, index) => {
+        if (index === lastIndex) lastPos = offset;
+      });
+      const $inside = resolveDocumentPositionSafely(doc, Math.min(lastPos + 1, doc.content.size));
+      const $boundary = resolveDocumentPositionSafely(doc, lastPos);
+      const block =
+        ($inside ? findDraggableBlock($inside) : null) ??
+        ($boundary ? findDraggableBlock($boundary) : null);
+      return block ? handleFromBlock(block, lastPos + 1) : null;
+    };
+
     const resolveHandleFromPoint = (e: MouseEvent): HandleState | null => {
+      // 末尾空白优先判:指针落在最后一个顶层块底边之下、且横向在正文带内(纸面留白也算)时,
+      // 手柄锚到最后一个可拖块——飞书就是这样,不必精确压在行上才出加号;空文档锚到唯一的空段。
+      // 放最前是因为这时任何行内解析都不可能命中正确的块。
+      const trailing = resolveTrailingWhitespaceHandle(e);
+      if (trailing) return trailing;
+
       const targetLi = eventTargetElement(e.target)?.closest("li[data-block-id]");
       if (targetLi && editor.view.dom.contains(targetLi)) {
         const blockId = targetLi.getAttribute("data-block-id");
@@ -431,15 +463,23 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       openBlockMenu(next);
     };
 
+    // 纸面留白(.wf-doc 之外、纸内)也要收到 mousemove,否则最后一块下方的空白区连事件都没有;
+    // 与"末尾点击追加行"共用同一片留白:悬停出手柄、点击仍追加行,互不打架。
+    const paperHost: HTMLElement | null =
+      dom.closest<HTMLElement>(".ws-paper-surface") ?? dom.parentElement;
     dom.addEventListener("mousemove", onMove);
+    if (paperHost && paperHost !== dom) paperHost.addEventListener("mousemove", onMove as EventListener);
     dom.addEventListener("mouseleave", onLeave);
+    if (paperHost && paperHost !== dom) paperHost.addEventListener("mouseleave", onLeave as EventListener);
     dom.addEventListener("keydown", onKeyDown);
     window.addEventListener("scroll", scheduleFloatingSync, true); // capture:捕获嵌套滚动容器的滚动
     window.addEventListener("resize", scheduleFloatingSync);
     editor.on("transaction", onTransaction);
     return () => {
       dom.removeEventListener("mousemove", onMove);
+      paperHost?.removeEventListener("mousemove", onMove as EventListener);
       dom.removeEventListener("mouseleave", onLeave);
+      paperHost?.removeEventListener("mouseleave", onLeave as EventListener);
       dom.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", scheduleFloatingSync, true);
       window.removeEventListener("resize", scheduleFloatingSync);
@@ -1122,6 +1162,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       ref={wrapRef}
       className="block-handle-wrap"
       data-node-type={liveHandle.nodeType}
+      data-block-handle-id={liveHandle.blockId ?? undefined}
       style={{
         position: "fixed",
         top: liveHandle.top,

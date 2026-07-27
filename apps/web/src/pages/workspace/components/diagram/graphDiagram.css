@@ -555,26 +555,24 @@
   transform: rotate(180deg);
 }
 
+/* 幽灵预览:容器只是定位原点,落点/尺寸/连接段长度全部由 JS 的同一套几何给出(与创建共用),
+   这里只管观感(虚化、不吃指针)。 */
 .graph-diagram-handle-ghost {
   position: absolute;
+  inset: 0;
   z-index: 3;
-  width: 124px;
-  height: 56px;
-  opacity: 0.46;
+  color: color-mix(in srgb, var(--mark) 72%, transparent);
+  opacity: 0.55;
   pointer-events: none;
 }
 
 .graph-diagram-handle-ghost__line {
   position: absolute;
-  z-index: 0;
-  border-top: 1.5px dashed color-mix(in srgb, var(--mark) 72%, transparent);
+  overflow: visible;
 }
 
 .graph-diagram-handle-ghost__node {
   position: absolute;
-  z-index: 1;
-  width: 96px;
-  height: 48px;
   color: var(--graph-node-text);
   filter: saturate(0.72);
 }
@@ -585,85 +583,8 @@
   height: 100%;
 }
 
-.graph-diagram-handle-ghost .graph-diagram-node-shape-fill {
-  filter: none !important;
-}
-
-.graph-diagram-handle-ghost--r {
-  top: calc(50% - 28px);
-  left: calc(100% + 26px);
-}
-
-.graph-diagram-handle-ghost--r .graph-diagram-handle-ghost__line {
-  top: 28px;
-  left: -26px;
-  width: 30px;
-}
-
-.graph-diagram-handle-ghost--r .graph-diagram-handle-ghost__node {
-  top: 4px;
-  left: 4px;
-}
-
-.graph-diagram-handle-ghost--l {
-  top: calc(50% - 28px);
-  right: calc(100% + 26px);
-}
-
-.graph-diagram-handle-ghost--l .graph-diagram-handle-ghost__line {
-  top: 28px;
-  right: -26px;
-  width: 30px;
-}
-
-.graph-diagram-handle-ghost--l .graph-diagram-handle-ghost__node {
-  top: 4px;
-  right: 4px;
-}
-
-.graph-diagram-handle-ghost--t,
-.graph-diagram-handle-ghost--b {
-  width: 104px;
-  height: 80px;
-  left: calc(50% - 52px);
-}
-
-.graph-diagram-handle-ghost--t {
-  bottom: calc(100% + 22px);
-}
-
-.graph-diagram-handle-ghost--b {
-  top: calc(100% + 22px);
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__line,
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__line {
-  left: 52px;
-  width: 1px;
-  height: 26px;
-  border-top: 0;
-  border-left: 1.5px dashed color-mix(in srgb, var(--mark) 72%, transparent);
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__line {
-  bottom: -22px;
-}
-
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__line {
-  top: -22px;
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__node,
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__node {
-  left: 4px;
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__node {
-  bottom: 0;
-}
-
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__node {
-  top: 0;
+.graph-diagram-handle-ghost .graph-diagram-node-shell::before {
+  display: none;
 }
 
 .graph-diagram-canvas--preview .graph-diagram-handle-add {
@@ -1339,10 +1260,14 @@
 }
 
 .graph-diagram-toolbar__button:has(.graph-diagram-shape-glyph) {
+  /* 图标 + 尖角比默认 32px 宽,固定宽会让高亮块包不住内容(常态/hover/选中三态都错位);
+     改为按内容自适应,盒与内容始终同心。 */
+  width: auto;
+  min-width: 32px;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 0 6px !important;
+  padding: 0 7px !important;
 }
 
 .graph-diagram-icon-options {

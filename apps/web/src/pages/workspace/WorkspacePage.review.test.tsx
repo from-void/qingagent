@@ -31,6 +31,16 @@ declare global {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+function clearPageExitOutboxStorage(): void {
+  const prefix = "qingagent.page_exit_doc_save_outbox.v1";
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key === prefix || key?.startsWith(`${prefix}:`)) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 type MockServerStreamInstance = {
   listeners: Set<(frame: BridgeFrame) => void>;
   sendCommand: ReturnType<typeof vi.fn>;
@@ -680,7 +690,7 @@ describe("WorkspacePage review controls", () => {
     serverStreamMock.instances.length = 0;
     window.location.hash = "";
     sessionStorage.clear();
-    localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
+    clearPageExitOutboxStorage();
     localStorage.removeItem("qingagent:pending-submission-claim-v1");
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
     restoreWorkspaceDomMocks = installWorkspaceDomMocks();
@@ -690,7 +700,7 @@ describe("WorkspacePage review controls", () => {
     restoreWorkspaceDomMocks?.();
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
-    localStorage.removeItem("qingagent.page_exit_doc_save_outbox.v1");
+    clearPageExitOutboxStorage();
     localStorage.removeItem("qingagent:pending-submission-claim-v1");
     vi.unstubAllEnvs();
     vi.useRealTimers();

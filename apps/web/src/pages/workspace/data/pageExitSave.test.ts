@@ -8,16 +8,43 @@ import {
   readPageExitDocSaveOutbox,
   type PageExitOutboxStorage,
 } from "./pageExitSave";
+import type { CrossTabLockManager } from "../../../system/crossTabLock";
 
 function createStorage(): PageExitOutboxStorage {
   const values = new Map<string, string>();
   return {
+    get length() {
+      return values.size;
+    },
+    key: (index) => [...values.keys()][index] ?? null,
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => {
       values.set(key, value);
     },
     removeItem: (key) => {
       values.delete(key);
+    },
+  };
+}
+
+function createLockManager(): CrossTabLockManager {
+  let held = false;
+  return {
+    async request<T>(
+      name: string,
+      options: { mode: "exclusive"; ifAvailable?: boolean },
+      callback: (
+        lock: { name: string; mode: "exclusive" | "shared" } | null,
+      ) => T | PromiseLike<T>,
+    ): Promise<T> {
+      if (held && options.ifAvailable) return callback(null);
+      if (held) throw new Error("test lock only supports ifAvailable");
+      held = true;
+      try {
+        return await callback({ name, mode: "exclusive" });
+      } finally {
+        held = false;
+      }
     },
   };
 }
@@ -171,8 +198,137 @@ describe("pageExitSave 持久 outbox", () => {
     await expect(drainPageExitDocSaveOutbox({
       storage,
       fetchRequest,
-    })).resolves.toEqual({ saved: 1, remaining: 0 });
+      lockManager: createLockManager(),
+    })).resolves.toEqual({
+      saved: 1,
+      conflicts: [],
+      remaining: 0,
+      busy: false,
+    });
     expect(fetchRequest).toHaveBeenCalledOnce();
+    expect(readPageExitDocSaveOutbox({ storage })).toEqual([]);
+  });
+
+  it("双标签并发 drain 只有一个消费者提交同一 outbox", async () => {
+    const storage = createStorage();
+    const lockManager = createLockManager();
+    flushDocSaveOnPageExit({
+      sessionId: "session-concurrent",
+      expectedDocumentSnapshot: 5,
+      baseContentHash: "base-5",
+      pmDoc: edited,
+      baselineDoc: baseline,
+      hasPendingDocSave: false,
+      createMutationId: () => "exit-concurrent",
+      sendBeacon: () => true,
+      outboxStorage: storage,
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchRequest = vi.fn(async (_url: string, init: RequestInit) => {
+      await fetchGate;
+      const command = JSON.parse(String(init.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{
+          kind: "docWriteResult",
+          data: {
+            ok: true,
+            clientMutationId: command.data.clientMutationId,
+            docVersion: 6,
+          },
+        }],
+      };
+    });
+
+    const first = drainPageExitDocSaveOutbox({
+      storage,
+      fetchRequest,
+      lockManager,
+    });
+    await Promise.resolve();
+    const second = await drainPageExitDocSaveOutbox({
+      storage,
+      fetchRequest,
+      lockManager,
+    });
+
+    expect(second).toEqual({
+      saved: 0,
+      conflicts: [],
+      remaining: 1,
+      busy: true,
+    });
+    expect(fetchRequest).toHaveBeenCalledOnce();
+    releaseFetch();
+    await expect(first).resolves.toEqual({
+      saved: 1,
+      conflicts: [],
+      remaining: 0,
+      busy: false,
+    });
+    expect(fetchRequest).toHaveBeenCalledOnce();
+  });
+
+  it("陈旧离页快照撞 CAS 后保留较新外部版本，冲突项显式出列且不 rebase", async () => {
+    const storage = createStorage();
+    flushDocSaveOnPageExit({
+      sessionId: "session-stale",
+      expectedDocumentSnapshot: 7,
+      baseContentHash: "base-7",
+      pmDoc: edited,
+      baselineDoc: baseline,
+      hasPendingDocSave: false,
+      createMutationId: () => "exit-stale",
+      sendBeacon: () => true,
+      outboxStorage: storage,
+    });
+    const submittedVersions: number[] = [];
+    const fetchRequest = vi.fn(async (_url: string, init: RequestInit) => {
+      const command = JSON.parse(String(init.body));
+      submittedVersions.push(command.data.expectedDocumentSnapshot);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{
+          kind: "docWriteResult",
+          data: {
+            ok: false,
+            clientMutationId: command.data.clientMutationId,
+            conflict: {
+              expectedDocumentSnapshot: 7,
+              actualDocumentSnapshot: 8,
+            },
+          },
+        }],
+      };
+    });
+
+    await expect(drainPageExitDocSaveOutbox({
+      storage,
+      fetchRequest,
+      fetchCurrentBase: async () => ({
+        expectedDocumentSnapshot: 8,
+        baseContentHash: "newer-external-content",
+      }),
+      lockManager: createLockManager(),
+    })).resolves.toEqual({
+      saved: 0,
+      conflicts: [{
+        id: "exit-stale",
+        sessionId: "session-stale",
+        latestBase: {
+          expectedDocumentSnapshot: 8,
+          baseContentHash: "newer-external-content",
+        },
+      }],
+      remaining: 0,
+      busy: false,
+    });
+    expect(submittedVersions).toEqual([7]);
     expect(readPageExitDocSaveOutbox({ storage })).toEqual([]);
   });
 });

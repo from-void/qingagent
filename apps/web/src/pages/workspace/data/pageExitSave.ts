@@ -10,6 +10,11 @@ import {
   validateBridgeFrame,
   validateCommand,
 } from "../../../system/validators";
+import {
+  browserCrossTabLockManager,
+  withCrossTabLock,
+  type CrossTabLockManager,
+} from "../../../system/crossTabLock";
 
 function pmTextHasSubstantiveContent(text: string): boolean {
   const normalized = text.replace(/[\u200B\u200C\u200D\uFEFF]/gu, "");
@@ -63,6 +68,8 @@ type PageExitFetch = (
 ) => Promise<PageExitFetchResponse>;
 
 export interface PageExitOutboxStorage {
+  readonly length?: number;
+  key?(index: number): string | null;
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
@@ -83,6 +90,10 @@ export interface PageExitDocSaveOutboxEntry {
 
 export const PAGE_EXIT_DOC_SAVE_OUTBOX_KEY =
   "qingagent.page_exit_doc_save_outbox.v1";
+const PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX =
+  `${PAGE_EXIT_DOC_SAVE_OUTBOX_KEY}:entry:`;
+const PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK =
+  "qingagent:page-exit-doc-save-outbox-drain";
 const PAGE_EXIT_DOC_SAVE_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const PAGE_EXIT_DOC_SAVE_OUTBOX_MAX_ENTRIES = 8;
 
@@ -94,6 +105,28 @@ export class PageExitDocSaveError extends Error {
     super(message);
     this.name = "PageExitDocSaveError";
   }
+}
+
+export class PageExitDocSaveConflictError extends PageExitDocSaveError {
+  constructor(
+    readonly latestBase: PageExitDocSaveBase,
+  ) {
+    super("检测到较新的外部文档版本", false);
+    this.name = "PageExitDocSaveConflictError";
+  }
+}
+
+export interface PageExitDocSaveOutboxConflict {
+  id: string;
+  sessionId: string;
+  latestBase: PageExitDocSaveBase;
+}
+
+export interface PageExitDocSaveOutboxDrainResult {
+  saved: number;
+  conflicts: PageExitDocSaveOutboxConflict[];
+  remaining: number;
+  busy: boolean;
 }
 
 function pageExitFetch(): PageExitFetch | undefined {
@@ -141,17 +174,16 @@ function sanitizePageExitDocSaveOutbox(
       // 畸形或旧版 outbox 项不能阻塞其余待恢复保存。
     }
   }
-  return entries
-    .sort((left, right) => left.createdAt - right.createdAt)
-    .slice(-PAGE_EXIT_DOC_SAVE_OUTBOX_MAX_ENTRIES);
+  return entries.sort((left, right) => left.createdAt - right.createdAt);
 }
 
-export function readPageExitDocSaveOutbox(input: {
-  storage?: PageExitOutboxStorage;
-  now?: number;
-} = {}): PageExitDocSaveOutboxEntry[] {
-  const storage = input.storage ?? pageExitOutboxStorage();
-  if (!storage) return [];
+function pageExitOutboxEntryStorageKey(id: string): string {
+  return `${PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX}${encodeURIComponent(id)}`;
+}
+
+function readLegacyPageExitDocSaveOutbox(
+  storage: PageExitOutboxStorage,
+): unknown[] {
   let raw: string | null;
   try {
     raw = storage.getItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
@@ -159,9 +191,9 @@ export function readPageExitDocSaveOutbox(input: {
     return [];
   }
   if (!raw) return [];
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     try {
       storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
@@ -170,30 +202,75 @@ export function readPageExitDocSaveOutbox(input: {
     }
     return [];
   }
-  const entries = sanitizePageExitDocSaveOutbox(
-    parsed,
-    input.now ?? Date.now(),
-  );
-  if (entries.length === 0) {
-    try {
-      storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-    } catch {
-      // 同上。
-    }
-  }
-  return entries;
 }
 
-function writePageExitDocSaveOutbox(
-  entries: PageExitDocSaveOutboxEntry[],
+function readPageExitDocSaveOutboxEntries(input: {
+  storage?: PageExitOutboxStorage;
+  now?: number;
+  limit: boolean;
+}): PageExitDocSaveOutboxEntry[] {
+  const storage = input.storage ?? pageExitOutboxStorage();
+  if (!storage) return [];
+  const candidates = readLegacyPageExitDocSaveOutbox(storage);
+  if (
+    typeof storage.length === "number" &&
+    typeof storage.key === "function"
+  ) {
+    const keys = Array.from(
+      { length: storage.length },
+      (_, index) => storage.key?.(index) ?? null,
+    ).filter(
+      (key): key is string =>
+        typeof key === "string" &&
+        key.startsWith(PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX),
+    );
+    for (const key of keys) {
+      try {
+        const raw = storage.getItem(key);
+        if (raw) candidates.push(JSON.parse(raw));
+      } catch {
+        try {
+          storage.removeItem(key);
+        } catch {
+          // 单条坏记录不阻断其余 outbox。
+        }
+      }
+    }
+  }
+  const entries = sanitizePageExitDocSaveOutbox(
+    candidates,
+    input.now ?? Date.now(),
+  );
+  const deduplicated = new Map<string, PageExitDocSaveOutboxEntry>();
+  for (const entry of entries) {
+    const current = deduplicated.get(entry.id);
+    if (!current || current.createdAt <= entry.createdAt) {
+      deduplicated.set(entry.id, entry);
+    }
+  }
+  const sorted = [...deduplicated.values()]
+    .sort((left, right) => left.createdAt - right.createdAt);
+  return input.limit
+    ? sorted.slice(-PAGE_EXIT_DOC_SAVE_OUTBOX_MAX_ENTRIES)
+    : sorted;
+}
+
+export function readPageExitDocSaveOutbox(input: {
+  storage?: PageExitOutboxStorage;
+  now?: number;
+} = {}): PageExitDocSaveOutboxEntry[] {
+  return readPageExitDocSaveOutboxEntries({ ...input, limit: true });
+}
+
+function writePageExitDocSaveOutboxEntry(
+  entry: PageExitDocSaveOutboxEntry,
   storage: PageExitOutboxStorage,
 ): boolean {
   try {
-    if (entries.length === 0) {
-      storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-    } else {
-      storage.setItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY, JSON.stringify(entries));
-    }
+    storage.setItem(
+      pageExitOutboxEntryStorageKey(entry.id),
+      JSON.stringify(entry),
+    );
     return true;
   } catch {
     return false;
@@ -218,12 +295,42 @@ export function enqueuePageExitDocSave(input: {
     fallbackBase: input.fallbackBase,
     pmDoc: normalizePmDoc(input.pmDoc),
   };
-  const previous = readPageExitDocSaveOutbox({ storage, now: createdAt });
-  // 同一会话只需恢复最后一次离页快照；同时限制跨会话积压，避免无限占用本地空间。
-  const next = [...previous.filter((item) => item.sessionId !== entry.sessionId), entry]
+  // 每条记录独立 key，避免两个标签的 read-filter-write 相互覆盖整个 outbox。
+  if (!writePageExitDocSaveOutboxEntry(entry, storage)) return null;
+  const all = readPageExitDocSaveOutboxEntries({
+    storage,
+    now: createdAt,
+    limit: false,
+  });
+  const latestForSession = all
+    .filter((item) => item.sessionId === entry.sessionId)
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .at(-1);
+  const kept = [
+    ...all.filter((item) => item.sessionId !== entry.sessionId),
+    ...(latestForSession ? [latestForSession] : []),
+  ]
     .sort((left, right) => left.createdAt - right.createdAt)
     .slice(-PAGE_EXIT_DOC_SAVE_OUTBOX_MAX_ENTRIES);
-  return writePageExitDocSaveOutbox(next, storage) ? entry : null;
+  const keptIds = new Set(kept.map((item) => item.id));
+  for (const item of all) {
+    if (keptIds.has(item.id)) {
+      writePageExitDocSaveOutboxEntry(item, storage);
+    } else {
+      try {
+        storage.removeItem(pageExitOutboxEntryStorageKey(item.id));
+      } catch {
+        // 容量裁剪失败不影响刚写入记录；下次读取仍会限制消费数量。
+      }
+    }
+  }
+  try {
+    // 已迁移为独立 key；旧数组只作一次性兼容读取。
+    storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
+  } catch {
+    // 迁移清理失败时 read() 会按 id 去重。
+  }
+  return entry;
 }
 
 export function removePageExitDocSaveOutboxEntry(input: {
@@ -232,11 +339,24 @@ export function removePageExitDocSaveOutboxEntry(input: {
 }): void {
   const storage = input.storage ?? pageExitOutboxStorage();
   if (!storage) return;
-  const entries = readPageExitDocSaveOutbox({ storage });
-  writePageExitDocSaveOutbox(
-    entries.filter((entry) => entry.id !== input.id),
-    storage,
-  );
+  try {
+    storage.removeItem(pageExitOutboxEntryStorageKey(input.id));
+  } catch {
+    // 下方继续尝试兼容旧数组。
+  }
+  const legacy = sanitizePageExitDocSaveOutbox(
+    readLegacyPageExitDocSaveOutbox(storage),
+    Date.now(),
+  ).filter((entry) => entry.id !== input.id);
+  try {
+    if (legacy.length === 0) {
+      storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
+    } else {
+      storage.setItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY, JSON.stringify(legacy));
+    }
+  } catch {
+    // 受限 storage 中移除失败会留下 TTL 有界的旧兼容项。
+  }
 }
 
 function docWriteResultFromResponse(
@@ -454,6 +574,7 @@ export async function flushDocSaveInBackground(input: {
   createMutationId?: () => string;
   fetchKeepalive?: PageExitFetch;
   fetchCurrentBase?: () => Promise<PageExitDocSaveBase>;
+  conflictPolicy?: "rebase" | "preserve-latest";
   keepalive?: boolean;
   url?: string;
 }): Promise<"skipped" | "saved"> {
@@ -505,6 +626,11 @@ export async function flushDocSaveInBackground(input: {
   if (latestBase.baseContentHash === getPmContentHash(input.pmDoc)) {
     return "saved";
   }
+  if (input.conflictPolicy === "preserve-latest") {
+    // 离页 outbox 是冻结的旧快照，不具备当前标签连续编辑的因果保证。
+    // 与 docWriteBaseline 一致：外部版本前进后保留权威新版本，禁止拿旧正文 rebase 覆盖。
+    throw new PageExitDocSaveConflictError(latestBase);
+  }
   const retryCommand = buildCommand(latestBase);
   if (!retryCommand) return "skipped";
   const retried = await submitBackgroundDocSave({
@@ -525,37 +651,71 @@ export async function drainPageExitDocSaveOutbox(input: {
   storage?: PageExitOutboxStorage;
   fetchRequest?: PageExitFetch;
   fetchCurrentBase?: (sessionId: string) => Promise<PageExitDocSaveBase>;
+  lockManager?: CrossTabLockManager | null;
   url?: string;
-} = {}): Promise<{ saved: number; remaining: number }> {
+} = {}): Promise<PageExitDocSaveOutboxDrainResult> {
   const storage = input.storage ?? pageExitOutboxStorage();
   const fetchRequest = input.fetchRequest ?? pageExitFetch();
-  if (!storage || !fetchRequest) return { saved: 0, remaining: 0 };
-  const entries = readPageExitDocSaveOutbox({ storage });
-  let saved = 0;
-  for (const entry of entries) {
-    try {
-      await flushDocSaveInBackground({
-        sessionId: entry.sessionId,
-        fallbackBase: entry.fallbackBase,
-        pmDoc: entry.pmDoc,
-        hasPendingDocSave: true,
-        fetchKeepalive: fetchRequest,
-        fetchCurrentBase: input.fetchCurrentBase
-          ? () => input.fetchCurrentBase!(entry.sessionId)
-          : undefined,
-        keepalive: false,
-        url: input.url,
-      });
-      removePageExitDocSaveOutboxEntry({ id: entry.id, storage });
-      saved += 1;
-    } catch {
-      // 网络或 CAS 暂时失败时保留本地副本，下一次恢复/联网后继续补交。
-    }
+  if (!storage || !fetchRequest) {
+    return { saved: 0, conflicts: [], remaining: 0, busy: false };
   }
-  return {
-    saved,
+  const lockManager =
+    input.lockManager === undefined
+      ? browserCrossTabLockManager()
+      : input.lockManager;
+  const unavailable: PageExitDocSaveOutboxDrainResult = {
+    saved: 0,
+    conflicts: [],
     remaining: readPageExitDocSaveOutbox({ storage }).length,
+    busy: true,
   };
+  return withCrossTabLock<PageExitDocSaveOutboxDrainResult>({
+    name: PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK,
+    lockManager,
+    ifAvailable: true,
+    unavailable,
+    run: async () => {
+      const entries = readPageExitDocSaveOutbox({ storage });
+      let saved = 0;
+      const conflicts: PageExitDocSaveOutboxConflict[] = [];
+      for (const entry of entries) {
+        try {
+          await flushDocSaveInBackground({
+            sessionId: entry.sessionId,
+            fallbackBase: entry.fallbackBase,
+            pmDoc: entry.pmDoc,
+            hasPendingDocSave: true,
+            fetchKeepalive: fetchRequest,
+            fetchCurrentBase: input.fetchCurrentBase
+              ? () => input.fetchCurrentBase!(entry.sessionId)
+              : undefined,
+            conflictPolicy: "preserve-latest",
+            keepalive: false,
+            url: input.url,
+          });
+          removePageExitDocSaveOutboxEntry({ id: entry.id, storage });
+          saved += 1;
+        } catch (error) {
+          if (error instanceof PageExitDocSaveConflictError) {
+            // 冲突条目显式出列，不能在下一次联网时又拿陈旧正文自动覆盖新版本。
+            removePageExitDocSaveOutboxEntry({ id: entry.id, storage });
+            conflicts.push({
+              id: entry.id,
+              sessionId: entry.sessionId,
+              latestBase: error.latestBase,
+            });
+          }
+          // 网络/服务暂时失败保留副本，下一次恢复或联网后继续补交。
+        }
+      }
+      return {
+        saved,
+        conflicts,
+        remaining: readPageExitDocSaveOutbox({ storage }).length,
+        busy: false,
+      };
+    },
+  });
 }
 
 export function flushDocSaveOnPageExit(input: {

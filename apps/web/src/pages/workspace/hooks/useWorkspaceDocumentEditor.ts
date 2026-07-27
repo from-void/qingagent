@@ -707,6 +707,12 @@ export function useWorkspaceDocumentEditor(input: {
     const recoverPageExitSaves = () => {
       if (outboxDrain) return;
       outboxDrain = drainPageExitDocSaveOutbox()
+        .then((result) => {
+          if (result.conflicts.length === 0) return;
+          showToast(
+            `检测到另一标签页的较新版本，已保留新版本；${result.conflicts.length} 条离页草稿未自动覆盖`,
+          );
+        })
         .catch((error) => {
           console.error("[workspace] page-exit outbox recovery failed", error);
         })
@@ -738,7 +744,7 @@ export function useWorkspaceDocumentEditor(input: {
       window.removeEventListener("online", recoverPageExitSaves);
       document.removeEventListener("visibilitychange", visibilityFlush);
     };
-  }, [flushPendingDocSave, preparePageExitDocSave]);
+  }, [flushPendingDocSave, preparePageExitDocSave, showToast]);
   return {
     flushPendingDocSave,
     getLatestExportPmDoc,

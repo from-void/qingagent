@@ -129,6 +129,7 @@ export interface StateGraph extends DiagramThemeMetadata {
   type: "state";
   nodes: (BaseNode & { kind: "state" | "start" | "end" | "choice" | "fork" | "composite" })[];
   edges: BaseEdge[];
+  deleteProtectedNodeIds?: string[];
 }
 
 export interface ErGraph extends DiagramThemeMetadata {
@@ -141,6 +142,7 @@ export interface ClassGraph extends DiagramThemeMetadata {
   type: "class";
   classes: (BaseNode & { members: { raw: string; span: Span }[]; generics?: string })[];
   rels: (BaseEdge & { relKind: string })[];
+  deleteProtectedNodeIds?: string[];
 }
 
 export interface MindmapTree extends DiagramThemeMetadata {
@@ -2076,6 +2078,7 @@ function parseState(source: string): ParseResult {
   const nodes = new Map<string, BaseNode & { kind: "state" | "start" | "end" | "choice" | "fork" | "composite" }>();
   const edges: BaseEdge[] = [];
   const protectedSpans: Span[] = [];
+  const deleteProtectedNodeIds = new Set<string>();
   let edgeOrder = 0;
   const nextEdgeId = createEdgeIdFactory("state");
   let inComposite = false;
@@ -2100,6 +2103,10 @@ function parseState(source: string): ParseResult {
       continue;
     }
     if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+      const specialDeclaration = trimmed.match(
+        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
+      );
+      if (specialDeclaration) deleteProtectedNodeIds.add(specialDeclaration[1]!);
       protectedSpans.push(lineSpan(line));
       if (/\{/.test(trimmed)) inComposite = true;
       continue;
@@ -2149,7 +2156,13 @@ function parseState(source: string): ParseResult {
   return {
     ok: true,
     ...themeMetadata,
-    model: { type: "state", nodes: [...nodes.values()], edges, ...themeMetadata },
+    model: {
+      type: "state",
+      nodes: [...nodes.values()],
+      edges,
+      ...(deleteProtectedNodeIds.size > 0 ? { deleteProtectedNodeIds: [...deleteProtectedNodeIds] } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
 }
@@ -2158,12 +2171,17 @@ function stateCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: 
   const model = p.model as StateGraph;
   const edge = target?.edgeId ? model.edges.find((e) => e.id === target.edgeId) : undefined;
   const node = target?.nodeId ? model.nodes.find((n) => n.id === target.nodeId) : undefined;
+  const deleteProtected = !!node && model.deleteProtectedNodeIds?.includes(node.id);
   return [
     cap("connectEdge", true),
     cap("deleteEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "transition 不可回写"),
     cap("reconnectEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "transition 不可回写"),
     cap("addNode", true),
-    cap("deleteNode", !!node && node.hasStableId && node.kind === "state", "仅普通 state 可删除"),
+    cap(
+      "deleteNode",
+      !!node && node.hasStableId && node.kind === "state" && !deleteProtected,
+      deleteProtected ? "该节点含未完整建模的特殊 State 声明，暂不可删除" : "仅普通 state 可删除",
+    ),
     cap("relabelNode", !!node && node.hasStableId && !!node.labelSpan, node?.labelSpan ? undefined : "仅 state \"label\" as ID 可改 label"),
     cap("setNodeShape", false, "state 形状由状态语义决定,不做形状回写"),
     cap("setEdgeLabel", false, "state 边标签语法不是 flowchart |label|"),
@@ -2376,6 +2394,7 @@ function parseClass(source: string): ParseResult {
   const classes = new Map<string, BaseNode & { members: { raw: string; span: Span }[]; generics?: string }>();
   const rels: ClassGraph["rels"] = [];
   const protectedSpans: Span[] = [];
+  const deleteProtectedNodeIds = new Set<string>();
   let order = 0;
   const nextEdgeId = createEdgeIdFactory("class");
   let inClass: string | null = null;
@@ -2408,6 +2427,12 @@ function parseClass(source: string): ParseResult {
       protectedSpans.push(lineSpan(line));
       if (/^}/.test(trimmed)) inClass = null;
       else classes.get(inClass)?.members.push({ raw: trimmed, span: lineSpan(line) });
+      continue;
+    }
+    const colonMember = trimmed.match(/^([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*:\s*\S.*$/u);
+    if (colonMember) {
+      deleteProtectedNodeIds.add(colonMember[1]!);
+      protectedSpans.push(lineSpan(line));
       continue;
     }
     const decl = trimmed.match(/^class\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)(?:\s*\["([^"]+)"\])?\s*$/u);
@@ -2445,7 +2470,13 @@ function parseClass(source: string): ParseResult {
   return {
     ok: true,
     ...themeMetadata,
-    model: { type: "class", classes: [...classes.values()], rels, ...themeMetadata },
+    model: {
+      type: "class",
+      classes: [...classes.values()],
+      rels,
+      ...(deleteProtectedNodeIds.size > 0 ? { deleteProtectedNodeIds: [...deleteProtectedNodeIds] } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
 }
@@ -2454,12 +2485,21 @@ function classCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: 
   const model = p.model as ClassGraph;
   const edge = target?.edgeId ? model.rels.find((e) => e.id === target.edgeId) : undefined;
   const node = target?.nodeId ? model.classes.find((n) => n.id === target.nodeId) : undefined;
+  const deleteProtected = !!node && model.deleteProtectedNodeIds?.includes(node.id);
   return [
     cap("connectEdge", true),
     cap("deleteEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "relationship 不可回写"),
     cap("reconnectEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "relationship 不可回写"),
     cap("addNode", true),
-    cap("deleteNode", !!node && node.hasStableId && node.members.length === 0, node?.members.length ? "成员块 class 只读" : undefined),
+    cap(
+      "deleteNode",
+      !!node && node.hasStableId && node.members.length === 0 && !deleteProtected,
+      node?.members.length
+        ? "成员块 class 只读"
+        : deleteProtected
+          ? "该 class 含未完整建模的冒号式成员，暂不可删除"
+          : undefined,
+    ),
     cap("relabelNode", false, "class 名就是引用 id,默认禁止 rename"),
     cap("setNodeShape", false, "class 节点形状由图类型决定"),
     cap("setEdgeLabel", false, "class 关系标签语法不是 flowchart |label|"),

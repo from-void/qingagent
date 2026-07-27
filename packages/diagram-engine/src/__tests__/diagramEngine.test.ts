@@ -1066,6 +1066,37 @@ describe("diagram-engine", () => {
     expect(deleted.source).not.toContain("CUSTOMER");
   });
 
+  it("特殊 State 声明与冒号式 Class 成员禁用同名节点删除", () => {
+    const stateCases: Array<[string, string]> = [
+      ["stateDiagram-v2\n  state Decision <<choice>>\n  Decision --> Done\n", "Decision"],
+      ["stateDiagram-v2\n  state Parallel <<fork>>\n  Parallel --> Done\n", "Parallel"],
+      ["stateDiagram-v2\n  state Merge <<join>>\n  Ready --> Merge\n", "Merge"],
+      ["stateDiagram-v2\n  state Group {\n    Inner\n  }\n  Group --> Done\n", "Group"],
+    ];
+    for (const [source, specialId] of stateCases) {
+      expect(getCapabilities(parseDiagram(source), { nodeId: specialId }).find((cap) => cap.op === "deleteNode")).toMatchObject({
+        enabled: false,
+        reason: "该节点含未完整建模的特殊 State 声明，暂不可删除",
+      });
+      expect(applyEdit(source, { kind: "deleteNode", nodeId: specialId })).toMatchObject({
+        ok: false,
+        error: "该节点含未完整建模的特殊 State 声明，暂不可删除",
+        source,
+      });
+    }
+
+    const classSource = "classDiagram\n  Customer : +String name\n  Customer --> Order\n";
+    expect(getCapabilities(parseDiagram(classSource), { nodeId: "Customer" }).find((cap) => cap.op === "deleteNode")).toMatchObject({
+      enabled: false,
+      reason: "该 class 含未完整建模的冒号式成员，暂不可删除",
+    });
+    expect(applyEdit(classSource, { kind: "deleteNode", nodeId: "Customer" })).toMatchObject({
+      ok: false,
+      error: "该 class 含未完整建模的冒号式成员，暂不可删除",
+      source: classSource,
+    });
+  });
+
   it("stateDiagram-v2 支持 [*] 起止和中文状态名", () => {
     const source = [
       "stateDiagram-v2",

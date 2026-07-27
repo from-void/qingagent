@@ -8,7 +8,13 @@ import {
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
+import {
+  commitTransaction,
+  getDocumentsClient,
+  rollbackTransaction,
+  withTransaction,
+  withWriteRetry,
+} from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 import {
   assertDocumentWriteAllowed,
@@ -154,6 +160,7 @@ export interface DocumentRepairStats {
   scanned: number;
   versionPointersRepaired: number;
   pmMirrorsRepaired: number;
+  invalidRowsQuarantined: number;
 }
 
 function mapRow(row: Row): MappedDocumentRow {
@@ -187,6 +194,74 @@ function mapRow(row: Row): MappedDocumentRow {
       valueAsNumber(row.doc_schema_version) !== projection.schemaVersion ||
       valueAsString(row.doc_format) !== "pm",
   };
+}
+
+type InvalidPmReason = "missing_pm" | "invalid_pm";
+
+function invalidPmReason(row: Row): InvalidPmReason {
+  return typeof row.doc_pm !== "string" || row.doc_pm.trim().length === 0
+    ? "missing_pm"
+    : "invalid_pm";
+}
+
+async function quarantineInvalidPmRow(row: Row): Promise<boolean> {
+  const id = valueAsString(row.id);
+  const version = valueAsNumber(row.version);
+  const rawDocPm = typeof row.doc_pm === "string" ? row.doc_pm : null;
+  return withTransaction(async (client) => {
+    const inserted = await client.execute({
+      sql: `INSERT INTO documents_quarantine_invalid_pm (
+          id, thread_id, resource_id, title, doc_state, doc_version,
+          last_synced_version, doc_pm, doc_schema_version, content_hash,
+          doc_format, version, created_at, updated_at, role, reason
+        )
+        SELECT
+          id, thread_id, resource_id, title, doc_state, doc_version,
+          last_synced_version, doc_pm, doc_schema_version, content_hash,
+          doc_format, version, created_at, updated_at, role, ?
+        FROM documents
+        WHERE id = ? AND version = ? AND doc_pm IS ?`,
+      args: [invalidPmReason(row), id, version, rawDocPm],
+    });
+    if (inserted.rowsAffected !== 1) return rollbackTransaction(false);
+    const deleted = await client.execute({
+      sql: "DELETE FROM documents WHERE id = ? AND version = ? AND doc_pm IS ?",
+      args: [id, version, rawDocPm],
+    });
+    if (deleted.rowsAffected !== 1) return rollbackTransaction(false);
+    return commitTransaction(true);
+  });
+}
+
+async function mapRowOrQuarantine(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  rawRow: Row,
+): Promise<DocumentRow | null> {
+  try {
+    return mapRow(rawRow).row;
+  } catch {
+    if (await quarantineInvalidPmRow(rawRow)) return null;
+    const refreshed = await client.execute({
+      sql: "SELECT * FROM documents WHERE id = ?",
+      args: [valueAsString(rawRow.id)],
+    });
+    const current = refreshed.rows[0];
+    return current ? mapRow(current).row : null;
+  }
+}
+
+async function mapRowsAndQuarantine(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  rows: Row[],
+): Promise<{ rows: DocumentRow[]; quarantined: number }> {
+  const mappedRows: DocumentRow[] = [];
+  let quarantined = 0;
+  for (const rawRow of rows) {
+    const mapped = await mapRowOrQuarantine(client, rawRow);
+    if (mapped) mappedRows.push(mapped);
+    else quarantined += 1;
+  }
+  return { rows: mappedRows, quarantined };
 }
 
 function upsertStatement(input: DocumentSaveInput): InStatement {
@@ -348,8 +423,15 @@ export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
 
   let versionPointersRepaired = 0;
   let pmMirrorsRepaired = 0;
+  let invalidRowsQuarantined = 0;
   for (const rawRow of result.rows) {
-    const mapped = mapRow(rawRow);
+    let mapped: MappedDocumentRow;
+    try {
+      mapped = mapRow(rawRow);
+    } catch {
+      if (await quarantineInvalidPmRow(rawRow)) invalidRowsQuarantined += 1;
+      continue;
+    }
     const latestDocVersion = valueAsNumber(rawRow.latest_doc_version);
     const latestSnapshotPm = rawRow.latest_snapshot_pm;
     const sourceDocId = rawRow.latest_source_doc_id == null
@@ -420,7 +502,12 @@ export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
       }
     }
   }
-  return { scanned: result.rows.length, versionPointersRepaired, pmMirrorsRepaired };
+  return {
+    scanned: result.rows.length,
+    versionPointersRepaired,
+    pmMirrorsRepaired,
+    invalidRowsQuarantined,
+  };
 }
 
 export const documentRepo: DocumentRepo = {
@@ -432,7 +519,7 @@ export const documentRepo: DocumentRepo = {
     });
     const row = result.rows[0];
     if (!row) return null;
-    return mapRow(row).row;
+    return mapRowOrQuarantine(client, row);
   },
 
   async findIdByThreadId(threadId) {
@@ -525,9 +612,10 @@ export const documentRepo: DocumentRepo = {
         args: [opts.resourceId, perPage, offset],
       }),
     ]);
+    const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
     return {
-      rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
-      total: valueAsNumber(countResult.rows[0]?.total),
+      rows: mapped.rows,
+      total: Math.max(0, valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined),
     };
   },
 
@@ -554,9 +642,10 @@ export const documentRepo: DocumentRepo = {
           args: [opts.resourceId, perPage, offset],
         }),
       ]);
+      const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
       return {
-        rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
-        total: valueAsNumber(countResult.rows[0]?.total),
+        rows: mapped.rows,
+        total: Math.max(0, valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined),
       };
     } catch (error) {
       if (isMissingMastraThreadsTableError(error)) {
@@ -584,5 +673,5 @@ export async function loadMainDocumentByThread(threadId: string): Promise<Docume
   });
   const row = result.rows[0];
   if (!row) return null;
-  return mapRow(row).row;
+  return mapRowOrQuarantine(client, row);
 }

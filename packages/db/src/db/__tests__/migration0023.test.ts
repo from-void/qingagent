@@ -67,6 +67,42 @@ describe("0023 restore quarantine 0002", () => {
     expect(row.rows[0]?.title).toBe("旧库正文");
   });
 
+  it("恢复入口拒绝空白或非法 PM，且不恢复其关联子表", async () => {
+    const client = getDocumentsClient();
+    await runMigrations(MIGRATIONS.slice(0, 22));
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute(
+      "INSERT INTO mastra_threads(id) VALUES ('thread-empty'), ('thread-invalid')",
+    );
+    await create0002QuarantineTables();
+    await insertQuarantinedFamily("empty-pm", "thread-empty", "空白 PM");
+    await insertQuarantinedFamily("invalid-pm", "thread-invalid", "非法 PM");
+    await client.execute(
+      "UPDATE documents_quarantine_0002 SET doc_pm = '   ' WHERE id = 'empty-pm'",
+    );
+    await client.execute(
+      "UPDATE documents_quarantine_0002 SET doc_pm = '{broken' WHERE id = 'invalid-pm'",
+    );
+
+    const report = await restoreQuarantinedDocumentFamilies0002(client);
+
+    expect(report).toMatchObject({
+      eligibleDocuments: 2,
+      restoredDocuments: 0,
+      skippedInvalidDocuments: 2,
+      restoredDrafts: 0,
+      restoredSuggestions: 0,
+      restoredOps: 0,
+      restoredVersions: 0,
+    });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents WHERE id IN ('empty-pm', 'invalid-pm')",
+    )).rows[0]?.n)).toBe(0);
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents_quarantine_0002 WHERE id IN ('empty-pm', 'invalid-pm')",
+    )).rows[0]?.n)).toBe(2);
+  });
+
   it("RF4/F13: 无保险丝 0002 隔离家族按现存 thread 恢复，异 docId 主行冲突时只保留隔离子表", async () => {
     const client = getDocumentsClient();
     await runMigrations(MIGRATIONS.slice(0, 22));

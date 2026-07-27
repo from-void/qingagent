@@ -12,6 +12,7 @@ import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
 import {
   documentRepo,
   isMissingMastraThreadsTableError,
+  loadMainDocumentByThread,
   repairStoredDocumentRows,
   type DocumentSaveInput,
 } from "../documentRepo.js";
@@ -248,6 +249,40 @@ describe("documentRepo", () => {
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
   });
 
+  it("单行与列表读取逐行隔离坏 PM，其他文档继续可读", async () => {
+    await documentRepo.saveMany([
+      input("valid-row", { resourceId: "dirty-read" }),
+      input("bad-load", { resourceId: "dirty-read" }),
+      input("bad-thread", { resourceId: "dirty-read", threadId: "bad-thread-id" }),
+      input("bad-list", { resourceId: "dirty-read" }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute("UPDATE documents SET doc_pm = NULL WHERE id = 'bad-load'");
+    await client.execute("UPDATE documents SET doc_pm = '   ' WHERE id = 'bad-thread'");
+    await client.execute("UPDATE documents SET doc_pm = '{broken' WHERE id = 'bad-list'");
+
+    await expect(documentRepo.load("bad-load")).resolves.toBeNull();
+    await expect(loadMainDocumentByThread("bad-thread-id")).resolves.toBeNull();
+    await expect(documentRepo.list({ resourceId: "dirty-read" })).resolves.toMatchObject({
+      total: 1,
+      rows: [{ id: "valid-row" }],
+    });
+
+    const quarantined = await client.execute(
+      `SELECT id, reason FROM documents_quarantine_invalid_pm
+        WHERE id IN ('bad-load', 'bad-thread', 'bad-list')
+        ORDER BY id`,
+    );
+    expect(quarantined.rows).toMatchObject([
+      { id: "bad-list", reason: "invalid_pm" },
+      { id: "bad-load", reason: "missing_pm" },
+      { id: "bad-thread", reason: "missing_pm" },
+    ]);
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents WHERE resource_id = 'dirty-read'",
+    )).rows[0]?.n)).toBe(1);
+  });
+
   it("按不超过 50 个 id 轻量查询存在集合", async () => {
     await documentRepo.saveMany([
       input("exists-a"),
@@ -364,6 +399,35 @@ describe("documentRepo", () => {
     expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(pmDoc));
     expect(raw.rows[0]?.doc_schema_version).toBe(pmDoc.attrs.schemaVersion);
     expect(raw.rows[0]?.doc_format).toBe("pm");
+  });
+
+  it("后台巡检隔离坏 PM 后继续修复其余文档", async () => {
+    const validPm = legacySectionsToPm([section("继续修复")] as never);
+    await documentRepo.saveMany([
+      input("repair-valid", { pmDoc: validPm }),
+      input("repair-invalid"),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: `UPDATE documents
+        SET content_hash = 'stale-hash', doc_schema_version = 0, doc_format = 'legacy'
+        WHERE id = 'repair-valid'`,
+    });
+    await client.execute(
+      "UPDATE documents SET doc_pm = 'not-json' WHERE id = 'repair-invalid'",
+    );
+
+    await expect(repairStoredDocumentRows()).resolves.toMatchObject({
+      scanned: 2,
+      invalidRowsQuarantined: 1,
+      pmMirrorsRepaired: 1,
+    });
+    await expect(documentRepo.load("repair-valid")).resolves.toMatchObject({
+      contentHash: getPmContentHash(validPm),
+    });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'repair-invalid'",
+    )).rows[0]?.n)).toBe(1);
   });
 
   it("后台巡检回写前发生保存时不覆盖新正文与 hash", async () => {

@@ -44,6 +44,7 @@ afterEach(() => {
 
 const APP_TABLES = [
   "documents",
+  "documents_quarantine_invalid_pm",
   "document_versions",
   "document_version_restore_origins",
   "document_versions_quarantine_0025",

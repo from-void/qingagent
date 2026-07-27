@@ -73,7 +73,7 @@ async function insertOldDocument(id: string, legacySectionsJson: string): Promis
 }
 
 describe("documentRepo PM canonical shadow", () => {
-  it("upgrades an old documents schema idempotently but rejects rows without PM", async () => {
+  it("upgrades an old documents schema idempotently and quarantines rows without PM", async () => {
     await createOldDocumentsTable();
     await insertOldDocument("legacy-doc", JSON.stringify([section("旧正文")]));
 
@@ -95,9 +95,11 @@ describe("documentRepo PM canonical shadow", () => {
     // 老库的 doc_sections 死列应被启动迁移 DROP 掉
     expect(columnNames).not.toContain("doc_sections");
 
-    await expect(documentRepo.load("legacy-doc")).rejects.toThrow(
-      "Invalid documents.doc_pm: PM document is required",
+    await expect(documentRepo.load("legacy-doc")).resolves.toBeNull();
+    const quarantined = await client.execute(
+      "SELECT id, reason FROM documents_quarantine_invalid_pm WHERE id = 'legacy-doc'",
     );
+    expect(quarantined.rows).toMatchObject([{ id: "legacy-doc", reason: "missing_pm" }]);
   });
 
   it("writes PM as source (doc_sections column retired)", async () => {
@@ -127,17 +129,15 @@ describe("documentRepo PM canonical shadow", () => {
     expect(loaded?.contentHash).toBe(getPmContentHash(pmDoc));
   });
 
-  it("requires PM even when legacy doc_sections exists", async () => {
+  it("quarantines missing PM even when legacy doc_sections existed", async () => {
     await createOldDocumentsTable();
     await insertOldDocument("bad-sections", "{}");
     await ensureMigrated();
 
-    await expect(documentRepo.load("bad-sections")).rejects.toThrow(
-      "Invalid documents.doc_pm: PM document is required",
-    );
+    await expect(documentRepo.load("bad-sections")).resolves.toBeNull();
   });
 
-  it("surfaces invalid stored PM instead of falling back to doc_sections", async () => {
+  it("quarantines invalid stored PM instead of falling back to doc_sections", async () => {
     await documentRepo.save(documentInput("bad-pm"));
     const client = getDocumentsClient();
     await client.execute({
@@ -157,7 +157,7 @@ describe("documentRepo PM canonical shadow", () => {
       ],
     });
 
-    await expect(documentRepo.load("bad-pm")).rejects.toThrow("Invalid PM doc");
+    await expect(documentRepo.load("bad-pm")).resolves.toBeNull();
   });
 
   it("读取存量非矩形表时保持兼容，但新写入仍由严格 PM 校验拒绝", async () => {

@@ -433,6 +433,39 @@ describe("GET /api/v1/skills/:name", () => {
     expect(json.body).toContain("# 联网搜索");
     expect(json.body.trimStart().startsWith("---")).toBe(false);
   });
+
+  it("仅按母技能枚举结果返回子技能正文", async () => {
+    const res = await request("GET", "/api/v1/skills/diagram-viz?child=drawio");
+    expect(res.status).toBe(200);
+    const json = await res.json() as {
+      name: string;
+      label: string;
+      body: string;
+      enabled: boolean;
+    };
+    expect(json).toMatchObject({
+      name: "drawio",
+      label: "draw.io 图表",
+      enabled: true,
+    });
+    expect(json.body).toContain("# draw.io 图表规范");
+    expect(json.body.trimStart().startsWith("---")).toBe(false);
+  });
+
+  it("拒绝以子技能参数越权寻址", async () => {
+    const res = await request(
+      "GET",
+      "/api/v1/skills/diagram-viz?child=..%2F..%2Fweb-search",
+    );
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "not found" });
+  });
+
+  it("子技能文件不存在时返回 404", async () => {
+    const res = await request("GET", "/api/v1/skills/diagram-viz?child=missing-child");
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "not found" });
+  });
 });
 
 describe("POST /api/v1/skills/:name/:action", () => {

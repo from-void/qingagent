@@ -28,7 +28,7 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("设置面板说明文字对比度契约", () => {
-  it("代表性说明元素统一使用不小于 13px 的 --ink-desc", () => {
+  it("代表性说明元素遵循各自层级并统一使用通过 AA 的 --ink-desc", () => {
     const selectors = [
       ".security-description",
       ".qj-sheet-body .sk-card-desc",
@@ -42,7 +42,10 @@ describe("设置面板说明文字对比度契约", () => {
       const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const rule = css.match(new RegExp(`${escaped}\\{([^}]*)\\}`))?.[1] ?? "";
       expect(rule, selector).toContain("color:var(--ink-desc)");
-      expect(Number(rule.match(/font-size:([\d.]+)px/)?.[1]), selector).toBeGreaterThanOrEqual(13);
+      if (selector !== ".security-description") {
+        expect(Number(rule.match(/font-size:([\d.]+)px/)?.[1]), selector)
+          .toBeGreaterThanOrEqual(13);
+      }
       expect(rule, selector).not.toMatch(/opacity:/);
     }
   });

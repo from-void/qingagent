@@ -45,6 +45,12 @@ export async function drainActiveTurnsForShutdown(): Promise<void> {
   );
 }
 
+export function listSessionIdsForShutdownRecovery(): string[] {
+  // persistence drain 也可能卡在已经 idle 的脏会话，因此恢复标记必须覆盖全部已加载
+  // session，而不只是在退出瞬间仍有 _activeTurnPromise 的会话。
+  return Array.from(sessions.keys());
+}
+
 export async function collectRestoreFrames(sessionId: string): Promise<BridgeFrame[]> {
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);

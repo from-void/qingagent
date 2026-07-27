@@ -22,6 +22,7 @@ function markServerStartupErrorReported(error: unknown): Error {
 
 export interface StartServerOptions {
   desktopLogDir: string;
+  shutdownRecoveryMarkerPath?: string;
 }
 
 async function startServerOnce(options: StartServerOptions): Promise<{ port: number }> {
@@ -53,6 +54,12 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
   claimShutdownSignalOwnership({
     exit: (code) => electronApp.exit(code ?? 0),
   });
+  if (options.shutdownRecoveryMarkerPath) {
+    const { resumeInterruptedDesktopShutdown } = await import("@qingagent/server/desktopShutdown");
+    await resumeInterruptedDesktopShutdown({
+      recoveryMarkerPath: options.shutdownRecoveryMarkerPath,
+    });
+  }
   const { serveStatic } = await import("@hono/node-server/serve-static");
 
   // 存量 documents 的版本指针/PM 镜像仅在启动后后台巡检修复；读取接口保持纯读。

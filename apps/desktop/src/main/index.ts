@@ -59,6 +59,7 @@ import {
 import { computeMainWindowSize } from "./windowSize.js";
 import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
+import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
@@ -77,6 +78,10 @@ function assertTrustedRenderer(
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
 const desktopLogDir = path.join(userDataDir, "logs");
+const shutdownRecoveryMarkerPath = path.join(
+  userDataDir,
+  ".qingagent-shutdown-recovery.json",
+);
 try {
   mkdirSync(desktopLogDir, { recursive: true });
 } catch {
@@ -1011,7 +1016,10 @@ async function createWindowOnce() {
     console.warn("[startup] 启动壳加载失败:", error);
   });
   contentWindow.show();
-  const serverReady = embeddedServerReady ??= startServer({ desktopLogDir });
+  const serverReady = embeddedServerReady ??= startServer({
+    desktopLogDir,
+    shutdownRecoveryMarkerPath,
+  });
 
   // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
   let port: number;
@@ -1180,24 +1188,30 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await createWindow();
 });
 
-let quitFlushStarted = false;
-let quitResumed = false;
+const quitCoordinator = createDesktopQuitCoordinator({
+  telemetryEnabled: () => telemetry.enabled,
+  captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),
+  shutdownTelemetry: () => telemetry.shutdown(2000),
+  drainServer: async () => {
+    const { drainDesktopSessionsForShutdown } = await import(
+      "@qingagent/server/desktopShutdown"
+    );
+    await drainDesktopSessionsForShutdown({
+      recoveryMarkerPath: shutdownRecoveryMarkerPath,
+      timeoutMs: 10_000,
+    });
+  },
+  stopExternalInstance: async () => {
+    const { stopExternalInstance } = await import(
+      "@qingagent/server/externalInstance"
+    );
+    await stopExternalInstance();
+  },
+  quit: () => app.quit(),
+});
 
 app.on("before-quit", (event) => {
-  void import("@qingagent/server/externalInstance").then(({ stopExternalInstance }) => stopExternalInstance());
-  if (!telemetry.enabled || quitResumed) return;
-  if (quitFlushStarted) {
-    event.preventDefault();
-    return;
-  }
-
-  quitFlushStarted = true;
-  event.preventDefault();
-  telemetry.captureAppClosed(Date.now() - appStartedAt);
-  void telemetry.shutdown(2000).finally(() => {
-    quitResumed = true;
-    app.quit();
-  });
+  void quitCoordinator.handleBeforeQuit(event);
 });
 
 app.on("window-all-closed", () => {

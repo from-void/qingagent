@@ -481,7 +481,8 @@ function normalizeOrderedListStyle(value: string | null | undefined): PmOrderedL
 }
 
 function normalizeOrderedListStart(value: number | null | undefined): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 1;
+  // OOXML 的 w:start 使用有符号 ST_DecimalNumber，0 与负整数都可原样表达。
+  return typeof value === "number" && Number.isInteger(value) ? value : 1;
 }
 
 function orderedListLevelFormat(style: PmOrderedListStyle): (typeof LevelFormat)[keyof typeof LevelFormat] {

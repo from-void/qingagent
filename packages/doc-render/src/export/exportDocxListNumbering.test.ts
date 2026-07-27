@@ -39,7 +39,7 @@ function startForNumberId(numberingXml: string, numberId: string): string | null
   const abstractXml = numberingXml.match(
     new RegExp(`<w:abstractNum w:abstractNumId="${abstractId}"[^>]*>[\\s\\S]*?<\\/w:abstractNum>`),
   )?.[0];
-  return abstractXml?.match(/<w:lvl w:ilvl="0"[^>]*>[\s\S]*?<w:start w:val="(\d+)"\/>/)?.[1] ?? null;
+  return abstractXml?.match(/<w:lvl w:ilvl="0"[^>]*>[\s\S]*?<w:start w:val="(-?\d+)"\/>/)?.[1] ?? null;
 }
 
 describe("DOCX 有序列表编号", () => {
@@ -65,5 +65,22 @@ describe("DOCX 有序列表编号", () => {
     expect(firstNumberId).not.toBe(secondNumberId);
     expect(startForNumberId(numberingXml, firstNumberId!)).toBe("5");
     expect(startForNumberId(numberingXml, secondNumberId!)).toBe("1");
+  });
+
+  it.each([0, -3])("OOXML 原样保留 start=%i", async (start) => {
+    const text = `起始值 ${start}`;
+    const doc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [orderedList(`list-${start}`, start, text)],
+    };
+
+    const zip = await JSZip.loadAsync(await toDocx(doc));
+    const documentXml = await zip.file("word/document.xml")?.async("string") ?? "";
+    const numberingXml = await zip.file("word/numbering.xml")?.async("string") ?? "";
+    const numberId = paragraphNumberId(documentXml, text);
+
+    expect(numberId).not.toBeNull();
+    expect(startForNumberId(numberingXml, numberId!)).toBe(String(start));
   });
 });

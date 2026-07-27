@@ -105,7 +105,8 @@ function pmBlockToHtml(node: PmBlockNode): string {
     case "bulletList":
       return `<ul>${node.content.map(pmListItemToHtml).join("")}</ul>`;
     case "orderedList": {
-      const start = node.attrs.start && node.attrs.start !== 1 ? ` start="${node.attrs.start}"` : "";
+      const startValue = node.attrs.start ?? 1;
+      const start = startValue !== 1 ? ` start="${startValue}"` : "";
       const listStyle = orderedListStyleAttr(node.attrs.listStyle);
       return `<ol${start}${listStyle}>${node.content.map(pmListItemToHtml).join("")}</ol>`;
     }

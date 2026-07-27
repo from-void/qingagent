@@ -212,6 +212,32 @@ describe("toHtml 块级", () => {
     expect(html).toContain("<ul><li><p>内层</p></li></ul>");
   });
 
+  it.each([0, -3])("有序列表 start=%i 原样导出 HTML", (start) => {
+    const html = toHtml(
+      doc([
+        {
+          type: "orderedList",
+          attrs: { blockId: "ol", start },
+          content: [
+            {
+              type: "listItem",
+              attrs: { blockId: "li" },
+              content: [
+                {
+                  type: "paragraph",
+                  attrs: { blockId: "p" },
+                  content: [{ type: "text", text: "条目" }],
+                },
+              ],
+            },
+          ],
+        },
+      ] as never),
+    );
+
+    expect(html).toContain(`<ol start="${start}">`);
+  });
+
   it("表格 th/td 与 colspan", () => {
     const html = toHtml(
       doc([

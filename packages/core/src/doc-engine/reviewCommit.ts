@@ -8,6 +8,7 @@ import type {
   ToolCallStatus,
 } from "@qingagent/contract-ts";
 import {
+  getDeterministicId,
   getPmContentHash,
   isAbnormalDocumentCollapse,
   pmToLegacySections,
@@ -73,6 +74,24 @@ const logger = mastra.getLogger();
 
 function reviewBatchIdForRecord(record: SuggestionRecord): string {
   return record.suggestion.reviewBatchId ?? record.diffHunk?.reviewBatchId ?? record.suggestion.id;
+}
+
+function reviewCommitOpId(
+  state: SessionState,
+  records: readonly SuggestionRecord[],
+): string {
+  const suggestions = records
+    .map((record) => [
+      record.suggestion.baseVersion,
+      record.suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+      record.suggestion.id,
+      state.patchVerdicts.get(record.suggestion.id) ?? record.suggestion.status,
+    ])
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return getDeterministicId("review-commit-op", {
+    docId: state.docId,
+    suggestions,
+  });
 }
 
 function recordsByReviewBatchId(state: SessionState, reviewBatchId: string): SuggestionRecord[] {
@@ -768,7 +787,7 @@ export async function* commitPatches(
       ...(wholeCandidateAccepted
         ? { baseContentHash: candidateBaseContentHash }
         : {}),
-      opId: `patch:${state.sessionId}:${expandedIds.join(",")}:${state.docVersion}`,
+      opId: reviewCommitOpId(state, records),
       opKind: "patch_steps",
       actorType: "agent",
       summary: () => {

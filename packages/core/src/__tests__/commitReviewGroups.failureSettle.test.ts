@@ -204,6 +204,38 @@ describe("commitReviewGroups 写入失败保留候选", () => {
     expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
   });
 
+  it("同一批审阅跨文档版本重试仍复用稳定 opId", async () => {
+    const state = createSession("stable-review-op");
+    const base = doc([paragraph("block-a", "A 旧")]);
+    const draft = doc([paragraph("block-a", "A 新")]);
+    const [hunk] = await seedDiffState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing hunk");
+    vi.mocked(commitDocumentOp)
+      .mockResolvedValueOnce({
+        status: "conflict",
+        currentVersion: 2,
+        currentHash: "hash-v2",
+      })
+      .mockResolvedValueOnce({
+        status: "conflict",
+        currentVersion: 3,
+        currentHash: "hash-v3",
+      });
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunk.reviewBatchId],
+    }));
+    state.docVersion = 2;
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunk.reviewBatchId],
+    }));
+
+    const firstOpId = vi.mocked(commitDocumentOp).mock.calls[0]?.[0].opId;
+    const secondOpId = vi.mocked(commitDocumentOp).mock.calls[1]?.[0].opId;
+    expect(firstOpId).toBeTruthy();
+    expect(secondOpId).toBe(firstOpId);
+  });
+
   it("部分提交失败时保留 keepPending 和提交期间新增的 suggestion", async () => {
     const state = createSession("failure-keep-pending");
     const base = doc([

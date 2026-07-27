@@ -248,6 +248,47 @@ describe("proposalDiff shadow engine", () => {
     expect(applyDiffHunks(replaceBase, replaceHunks).doc).toEqual(replaceDraft);
   });
 
+  it("块插入效果已存在时重放保持幂等, 不重复插入整块", () => {
+    const base = doc([
+      paragraph("ai-block-a", "第一段"),
+      paragraph("ai-block-c", "第三段"),
+    ]);
+    const draft = doc([
+      paragraph("ai-block-a", "第一段"),
+      paragraph("ai-block-b", "第二段"),
+      paragraph("ai-block-c", "第三段"),
+    ]);
+    const [insertHunk] = buildDraftDiff(base, draft);
+    if (!insertHunk) throw new Error("fixture missing block insert hunk");
+
+    const replayed = applyDiffHunkToDoc(draft, insertHunk, {
+      oldBaseDoc: base,
+      anchorByBlockId: true,
+    });
+
+    expect(replayed).toEqual({ ok: true, doc: draft });
+  });
+
+  it("纯行内插入效果已存在时重放保持幂等, 不重复插入文本", () => {
+    const base = doc([
+      paragraph("ai-block-inline-insert", "甲乙"),
+    ]);
+    const draft = doc([
+      paragraph("ai-block-inline-insert", "甲新增乙"),
+    ]);
+    const insertHunk = buildDraftDiff(base, draft).find((hunk) =>
+      hunk.beforeText === "" && hunk.afterText === "新增"
+    );
+    if (!insertHunk) throw new Error("fixture missing inline insert hunk");
+
+    const replayed = applyDiffHunkToDoc(draft, insertHunk, {
+      oldBaseDoc: base,
+      anchorByBlockId: true,
+    });
+
+    expect(replayed).toEqual({ ok: true, doc: draft });
+  });
+
   it("columnList 参与块级 diff,并用拍平文本生成摘要与回放内容", () => {
     const base = doc([paragraph("ai-block-a", "前文")]);
     const draft = doc([

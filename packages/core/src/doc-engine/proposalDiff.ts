@@ -225,6 +225,13 @@ export function applyDiffHunkToDoc(
     const insertAt = options.anchorByBlockId === true
       ? (hunk.anchor.gravity === "before" ? index : index + 1)
       : index;
+    const currentBlocks = content.slice(insertAt, insertAt + blocks.length);
+    if (
+      getStablePmJson(currentBlocks.map(stripDiagramSvgForCompare)) ===
+        getStablePmJson(blocks.map(stripDiagramSvgForCompare))
+    ) {
+      return { ok: true, doc: normalizePmDoc(doc) };
+    }
     content.splice(insertAt, 0, ...cloneValue(blocks));
     return { ok: true, doc: normalizePmDoc(doc) };
   }
@@ -252,6 +259,15 @@ export function applyDiffHunkToDoc(
   }
 
   if (isInlineEditableHunk(hunk) && isInlineTextBlock(currentBlock)) {
+    if (hasPureInlineInsertEffect({
+      currentDoc: doc,
+      currentBlock,
+      currentIndex: index,
+      hunk,
+      oldBaseDoc: options.oldBaseDoc,
+    })) {
+      return { ok: true, doc: normalizePmDoc(doc) };
+    }
     const range = resolveInlineApplyRange({
       currentDoc: doc,
       currentBlock,
@@ -1548,6 +1564,43 @@ const PURE_INSERT_MAX_CANDIDATES = 96;
 function targetInlineTextFromHunk(hunk: DiffHunk): string | null {
   const afterBlock = nodeToBlock(hunk.afterBlock);
   return afterBlock && isInlineTextBlock(afterBlock) ? inlineText(afterBlock.content) : null;
+}
+
+function hasPureInlineInsertEffect(input: {
+  currentDoc: PmDoc;
+  currentBlock: InlineTextBlock;
+  currentIndex: number;
+  hunk: DiffHunk;
+  oldBaseDoc?: PmDoc;
+}): boolean {
+  if (
+    input.hunk.op !== "replace" ||
+    (input.hunk.beforeText ?? "") !== "" ||
+    (input.hunk.afterText ?? "") === "" ||
+    !isInlineNodeList(input.hunk.after)
+  ) {
+    return false;
+  }
+  const relative = relativeRangeFromHunk(
+    input.hunk,
+    input.oldBaseDoc,
+    input.currentDoc,
+    input.currentIndex,
+  );
+  if (!relative) return false;
+  const currentText = inlineText(input.currentBlock.content);
+  const mappedFrom = mapTextOffset(relative.oldText, currentText, relative.from);
+  const afterText = input.hunk.afterText ?? "";
+  if (currentText.slice(mappedFrom, mappedFrom + afterText.length) !== afterText) {
+    return false;
+  }
+  const currentSlice = inlineSliceAsNodes(
+    input.currentBlock,
+    mappedFrom,
+    mappedFrom + afterText.length,
+  );
+  return getStablePmJson(compactInlineContent(currentSlice as PmInlineNode[])) ===
+    getStablePmJson(compactInlineContent(input.hunk.after as PmInlineNode[]));
 }
 
 function addUniqueRangeCandidate(

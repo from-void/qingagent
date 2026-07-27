@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BridgeFrame, DiffHunk, LegacySection } from "@qingagent/contract-ts";
 import {
+  getDeterministicId,
   materializeDraftBlockIds,
   normalizePmDoc,
   pmToLegacySections,
@@ -72,6 +73,28 @@ function paragraph(blockId: string, text: string): PmDoc["content"][number] {
 
 function doc(...content: PmDoc["content"]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
+}
+
+function reviewCommitOpId(
+  state: ReturnType<typeof createSession>,
+  ids: readonly string[],
+): string {
+  const suggestions = ids
+    .map((id) => {
+      const suggestion = state.suggestions.get(id)?.suggestion;
+      if (!suggestion) throw new Error(`missing suggestion ${id}`);
+      return [
+        suggestion.baseVersion,
+        suggestion.batchId ?? "legacy",
+        suggestion.id,
+        state.patchVerdicts.get(id) ?? suggestion.status,
+      ];
+    })
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return getDeterministicId("review-commit-op", {
+    docId: state.docId,
+    suggestions,
+  });
 }
 
 async function suggestionRows(docId: string): Promise<Array<{ status: string; conflict: string | null }>> {
@@ -320,7 +343,7 @@ describe("用户手打块的候选审阅提交", () => {
       .map((id) => state.suggestions.get(id)?.diffHunk)
       .filter((hunk): hunk is DiffHunk => hunk !== undefined);
     expect(hunks).toHaveLength(2);
-    const opId = `patch:${state.sessionId}:${ids.join(",")}:${state.docVersion}`;
+    const opId = reviewCommitOpId(state, ids);
     const firstCommit = await commitDocumentOp({
       docId: state.docId,
       threadId: state.threadId ?? state.sessionId,
@@ -409,7 +432,7 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       expectedDocumentSnapshot: state.docVersion,
-      opId: `patch:${state.sessionId}:${ids.join(",")}:${state.docVersion}`,
+      opId: reviewCommitOpId(state, ids),
       opKind: "patch_steps",
       actorType: "agent",
       summary: "模拟升级前审阅提交",

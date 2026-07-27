@@ -146,4 +146,26 @@ describe("clientMessageId 首提持久幂等", () => {
       record: { sessionId: "session-recovered" },
     });
   });
+
+  it("恰好达到一小时卡死阈值的在途记录会被回收", async () => {
+    const createdAt = 1_000;
+    await claimClientMessageIdempotency({
+      id: "client-message-stuck-boundary",
+      sessionId: "session-stuck-boundary",
+      messageId: "client-message-stuck-boundary",
+      now: createdAt,
+    });
+
+    await expect(claimClientMessageIdempotency({
+      id: "client-message-stuck-boundary",
+      sessionId: "session-boundary-recovered",
+      messageId: "client-message-stuck-boundary",
+      now:
+        createdAt +
+        CLIENT_MESSAGE_IDEMPOTENCY_INFLIGHT_STALE_MS,
+    })).resolves.toMatchObject({
+      claimed: true,
+      record: { sessionId: "session-boundary-recovered" },
+    });
+  });
 });

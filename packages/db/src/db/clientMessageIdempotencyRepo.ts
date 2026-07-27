@@ -63,7 +63,7 @@ export async function claimClientMessageIdempotency(input: {
           AND completed_at <= ?
         ) OR (
           completed_at IS NULL
-          AND last_touched < ?
+          AND last_touched <= ?
         )`,
       args: [completedBefore, stuckBefore],
     }),

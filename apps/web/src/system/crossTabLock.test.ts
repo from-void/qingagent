@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createLocalStorageLeaseLockManager,
   crossTabLeaseStorageKey,
@@ -128,6 +128,83 @@ describe("localStorage 跨标签租约锁", () => {
     expect(storage.values.has(key)).toBe(false);
   });
 
+  it("租约首次读取受限时降级到标签内锁并继续发送", async () => {
+    const storage = createStorage();
+    storage.getItem = () => {
+      throw new Error("storage unavailable");
+    };
+    const send = vi.fn(() => "sent");
+    const manager = createLocalStorageLeaseLockManager({
+      storage,
+      settleMs: 0,
+    });
+
+    await expect(
+      manager.request(
+        "get-failed",
+        { mode: "exclusive", ifAvailable: true },
+        (lock) => {
+          expect(lock).not.toBeNull();
+          return send();
+        },
+      ),
+    ).resolves.toBe("sent");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("租约写入受限时降级到标签内锁并继续发送", async () => {
+    const storage = createStorage();
+    storage.setItem = () => {
+      throw new Error("storage unavailable");
+    };
+    const send = vi.fn(() => "sent");
+    const manager = createLocalStorageLeaseLockManager({
+      storage,
+      settleMs: 0,
+    });
+
+    await expect(
+      manager.request(
+        "set-failed",
+        { mode: "exclusive", ifAvailable: true },
+        (lock) => {
+          expect(lock).not.toBeNull();
+          return send();
+        },
+      ),
+    ).resolves.toBe("sent");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("租约确认读取受限时降级到标签内锁并继续发送", async () => {
+    const storage = createStorage();
+    const readLease = storage.getItem.bind(storage);
+    let readCount = 0;
+    storage.getItem = (key) => {
+      readCount += 1;
+      if (readCount === 2) throw new Error("storage unavailable");
+      return readLease(key);
+    };
+    const send = vi.fn(() => "sent");
+    const manager = createLocalStorageLeaseLockManager({
+      storage,
+      settleMs: 0,
+    });
+
+    await expect(
+      manager.request(
+        "confirm-read-failed",
+        { mode: "exclusive", ifAvailable: true },
+        (lock) => {
+          expect(lock).not.toBeNull();
+          return send();
+        },
+      ),
+    ).resolves.toBe("sent");
+    expect(readCount).toBe(2);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("写入后确认前已经超期时不确认持有并允许其他标签接管", async () => {
     const storage = createStorage();
     const storeLease = storage.setItem.bind(storage);
@@ -169,7 +246,7 @@ describe("localStorage 跨标签租约锁", () => {
     ).resolves.toBe("expired-before-confirm");
   });
 
-  it("心跳迟于 expiresAt 时不得复活已经过期的租约", async () => {
+  it("另一标签接管后旧持有者的迟到心跳不得夺回租约", async () => {
     const storage = createStorage();
     let time = 1_000;
     let heartbeat!: () => void;
@@ -204,13 +281,53 @@ describe("localStorage 跨标签租约锁", () => {
     });
 
     time = 1_091;
+    let finishTakeover!: () => void;
+    let takeoverStarted!: () => void;
+    const takeoverGate = new Promise<void>((resolve) => {
+      finishTakeover = resolve;
+    });
+    const takeoverEntered = new Promise<void>((resolve) => {
+      takeoverStarted = resolve;
+    });
+    const takeoverManager = createLocalStorageLeaseLockManager({
+      storage,
+      now: () => time,
+      leaseMs: 90,
+      heartbeatMs: 30,
+      settleMs: 0,
+      createOwnerId: () => "tab-takeover",
+      startHeartbeat: () => () => undefined,
+    });
+    const takeover = takeoverManager.request(
+      "late-heartbeat",
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        expect(lock).not.toBeNull();
+        takeoverStarted();
+        await takeoverGate;
+      },
+    );
+    await takeoverEntered;
+    expect(JSON.parse(storage.values.get(key) ?? "null")).toMatchObject({
+      ownerId: "tab-takeover",
+      expiresAt: 1_181,
+    });
+
     heartbeat();
     expect(JSON.parse(storage.values.get(key) ?? "null")).toMatchObject({
-      ownerId: "tab-late-heartbeat",
-      expiresAt: 1_090,
+      ownerId: "tab-takeover",
+      expiresAt: 1_181,
     });
 
     finish();
     await running;
+    expect(JSON.parse(storage.values.get(key) ?? "null")).toMatchObject({
+      ownerId: "tab-takeover",
+      expiresAt: 1_181,
+    });
+
+    finishTakeover();
+    await takeover;
+    expect(storage.values.has(key)).toBe(false);
   });
 });

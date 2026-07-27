@@ -48,7 +48,7 @@ describe("confirm contract schemas", () => {
     }).success).toBe(false);
   });
 
-  it("rememberCategory 仅允许 install/command，且拒绝未声明卡片的 remember", () => {
+  it("rememberCategory 四类可记住(0728解锁),类别与卡片kind不匹配及未声明卡片的 remember 仍拒", () => {
     const remembered = confirmSpecSchema.parse({
       ...plainSpec,
       rememberCategory: {
@@ -67,11 +67,12 @@ describe("confirm contract schemas", () => {
       accepted: true,
       remember: true,
     }).success).toBe(false);
+    // 0728 安全解锁:send/connect 也可配置记住,send 同类 rememberCategory 转为合法
     expect(confirmSpecSchema.safeParse({
       ...plainSpec,
       kind: "send",
-      rememberCategory: { kind: "send", label: "错误" },
-    }).success).toBe(false);
+      rememberCategory: { kind: "send", label: "对外发送内容" },
+    }).success).toBe(true);
     expect(confirmSpecSchema.safeParse({
       ...plainSpec,
       kind: "install",

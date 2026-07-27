@@ -16,6 +16,7 @@ import type {
 
 export type LegacyListSection = {
   ordered?: boolean;
+  start?: number;
   items: LegacyListItem[];
 };
 
@@ -170,7 +171,7 @@ function listBlock(blockId: string, data: LegacyListSection): PmBlockNode {
   if (data.ordered) {
     return {
       type: "orderedList",
-      attrs: { blockId, start: 1 },
+      attrs: { blockId, start: data.start ?? 1 },
       content,
     };
   }

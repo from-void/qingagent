@@ -53,6 +53,20 @@ describe("pmMarkdownRoundTrip", () => {
     )).toEqual(texts);
   });
 
+  it("Markdown 有序列表保留顶层与嵌套列表的首项序号", () => {
+    const markdown = ["5. 甲", "6. 乙", "  9. 子项"].join("\n");
+
+    const parsed = markdownToPm(markdown);
+    const top = parsed.content[0];
+    const nested = top?.type === "orderedList"
+      ? top.content[1]?.content.find((block) => block.type === "orderedList")
+      : undefined;
+
+    expect(top?.type === "orderedList" ? top.attrs.start : null).toBe(5);
+    expect(nested?.type === "orderedList" ? nested.attrs.start : null).toBe(9);
+    expect(pmToMarkdown(parsed)).toBe(markdown);
+  });
+
   it("R20门:代码块与图表内容含三/四反引号时使用更长围栏并完整往返", () => {
     const code = ["const sample = `ok`;", "```", "````", "return sample;"].join("\n");
     const diagram = ["flowchart TD", "```", "````", "  A --> B"].join("\n");

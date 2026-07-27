@@ -258,6 +258,20 @@ describe("pmToClipboardHtml", () => {
     expect(html).toBe("<ul><li><p>一</p><ol><li><p>1.1</p></li></ol></li></ul>");
   });
 
+  it("非 1 起始的有序列表输出 start 属性", () => {
+    const html = pmToClipboardHtml(
+      doc([{
+        type: "orderedList",
+        attrs: { start: 5 },
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "第五项" }] }] },
+        ],
+      }]),
+    );
+
+    expect(html).toBe('<ol start="5"><li><p>第五项</p></li></ol>');
+  });
+
   it("R3-15 taskList/callout 内部复制不吞块", () => {
     const html = pmToClipboardHtml(
       doc([

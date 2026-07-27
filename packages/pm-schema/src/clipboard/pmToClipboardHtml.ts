@@ -75,6 +75,11 @@ function boolAttr(name: string, value: boolean | undefined): string {
   return value ? ` ${name}="true"` : ` ${name}="false"`;
 }
 
+function orderedListAttrsToHtml(node: PmNode): string {
+  const start = positiveIntAttr((node as { attrs?: { start?: unknown } }).attrs?.start);
+  return start && start !== 1 ? ` start="${start}"` : "";
+}
+
 function markToTag(mark: PmMark): { open: string; close: string } | null {
   switch (mark.type) {
     case "bold":
@@ -149,7 +154,7 @@ function nodeToHtml(node: PmNode): string {
     case "bulletList":
       return `<ul>${(node.content ?? []).map(nodeToHtml).join("")}</ul>`;
     case "orderedList":
-      return `<ol>${(node.content ?? []).map(nodeToHtml).join("")}</ol>`;
+      return `<ol${orderedListAttrsToHtml(node)}>${(node.content ?? []).map(nodeToHtml).join("")}</ol>`;
     case "listItem":
       return `<li>${(node.content ?? []).map(nodeToHtml).join("")}</li>`;
     case "codeBlock": {

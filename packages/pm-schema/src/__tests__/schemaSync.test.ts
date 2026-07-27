@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { PmDoc as ContractPmDoc, PmFileAttachment as ContractPmFileAttachment } from "@qingagent/contract-ts";
+import { pmToClipboardHtml } from "../clipboard/pmToClipboardHtml";
 import { getQingagentTiptapNodeNames } from "../tiptap/createQingagentExtensions";
 import {
   PM_SCHEMA_MARK_NAMES,
@@ -429,6 +430,39 @@ describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", 
       const html = editor.getHTML();
       expect(html).toContain("list-style-type: lower-alpha");
       expect(html).toContain("list-style-type: upper-roman");
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("剪贴板 HTML 往返保留 orderedList.start", async () => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const html = pmToClipboardHtml({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "ol-start", start: 5 },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "ol-start-item" },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "ol-start-p" },
+            content: [{ type: "text", text: "第五项" }],
+          }],
+        }],
+      }],
+    });
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: html,
+    });
+
+    try {
+      expect(editor.getJSON().content?.[0]?.attrs?.start).toBe(5);
       expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
     } finally {
       editor.destroy();

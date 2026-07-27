@@ -17,11 +17,13 @@ interface ParsedMarkdownListLine {
   level: number;
   kind: ParsedMarkdownListKind;
   text: string;
+  start?: number;
   checked?: boolean;
 }
 
 interface ParsedMarkdownList {
   kind: ParsedMarkdownListKind;
+  start?: number;
   items: ParsedMarkdownListItem[];
 }
 
@@ -282,7 +284,12 @@ function parseMarkdownList(
   level: number,
   kind: ParsedMarkdownListKind,
 ): { list: ParsedMarkdownList; next: number } {
-  const list: ParsedMarkdownList = { kind, items: [] };
+  const firstLine = parseMarkdownListLine(lines[start] ?? "");
+  const list: ParsedMarkdownList = {
+    kind,
+    ...(kind === "ordered" && firstLine?.kind === "ordered" ? { start: firstLine.start } : {}),
+    items: [],
+  };
   let cursor = start;
 
   while (cursor < lines.length) {
@@ -321,9 +328,11 @@ function parseMarkdownList(
 function parseMarkdownListLine(line: string): ParsedMarkdownListLine | null {
   const ordered = line.match(/^([ \t]*)(\d+)\.\s+(.+)$/);
   if (ordered) {
+    const parsedStart = Number(ordered[2]);
     return {
       level: indentLevel(ordered[1] ?? ""),
       kind: "ordered",
+      start: Number.isSafeInteger(parsedStart) && parsedStart > 0 ? parsedStart : 1,
       text: ordered[3] ?? "",
     };
   }
@@ -371,6 +380,7 @@ function markdownListToLegacySection(list: ParsedMarkdownList): LegacyListSectio
     kind: "list",
     data: {
       ordered: list.kind === "ordered",
+      ...(list.kind === "ordered" ? { start: list.start } : {}),
       items: list.items.map((item) => ({
         text: item.text,
         children: item.children.map(markdownListToLegacySection),

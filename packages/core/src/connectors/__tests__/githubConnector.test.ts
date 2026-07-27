@@ -144,4 +144,47 @@ describe("GithubConnector 授权生命周期", () => {
     await expect(connector.status()).resolves.toMatchObject({ state: "disconnected" });
     expect(h.bundle).toBeNull();
   });
+
+  it("不同 scope 的并发 start 不共享授权卡", async () => {
+    const publicStarted = deferred();
+    const releasePublic = deferred();
+    const requestedScopes: string[] = [];
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/login/device/code")) {
+        const scope = new URLSearchParams(String(init?.body)).get("scope")!;
+        requestedScopes.push(scope);
+        if (scope === "public_repo") {
+          publicStarted.resolve();
+          await releasePublic.promise;
+        }
+        return new Response(JSON.stringify({
+          device_code: `device-${scope}`,
+          user_code: scope === "repo" ? "PRIVATE" : "PUBLIC",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      fetch,
+      sleep: (_ms, signal) => new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }),
+    });
+
+    const publicStart = connector.start({ scope: "public_repo" });
+    await publicStarted.promise;
+    const privateStart = connector.start({ scope: "repo" });
+    releasePublic.resolve();
+
+    await expect(publicStart).resolves.toMatchObject({ user_code: "PUBLIC" });
+    await expect(privateStart).resolves.toMatchObject({ user_code: "PRIVATE" });
+    expect(requestedScopes).toEqual(["public_repo", "repo"]);
+    await connector.disconnect();
+  });
 });

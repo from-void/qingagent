@@ -20,6 +20,52 @@ async function eventually<T>(read: () => Promise<T>, accept: (value: T) => boole
 }
 
 describe("FeishuConnector 授权编排", () => {
+  it("不同 domains 的并发 start 不共享授权卡", async () => {
+    let releaseConfig!: () => void;
+    const configGate = new Promise<void>((resolve) => { releaseConfig = resolve; });
+    let configStarted!: () => void;
+    const configEntered = new Promise<void>((resolve) => { configStarted = resolve; });
+    const run = vi.fn(async (command: LarkCliCommand, options?: { signal?: AbortSignal }): Promise<LarkCliRunResult> => {
+      const key = command.join(" ");
+      if (key === "config show") {
+        configStarted();
+        await configGate;
+        return ok(configured);
+      }
+      if (key === "auth status --json") return ok(missing);
+      if (key.includes("--no-wait")) return deviceResult();
+      if (key.includes("--device-code")) {
+        return new Promise<LarkCliRunResult>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve({
+            ok: false,
+            reasonCode: "LARK_CLI_FAILED",
+            message: "aborted",
+            cliVersion: "1.0.65",
+            source: "path",
+          }), { once: true });
+        });
+      }
+      if (key === "auth logout") return ok();
+      throw new Error(`unexpected ${key}`);
+    });
+    const connector = new FeishuConnector({ runner: { run } });
+
+    const docsStart = connector.start({ domains: ["docs"] });
+    await configEntered;
+    const calendarOutcome = connector.start({ domains: ["calendar"] }).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    releaseConfig();
+
+    await expect(docsStart).resolves.toMatchObject({ mode: "authorization", user_code: "ABCD-EFGH" });
+    await expect(calendarOutcome).resolves.toMatchObject({
+      ok: false,
+      error: { code: "FEISHU_AUTH_ALREADY_PENDING", status: 409 },
+    });
+    await connector.disconnect();
+  });
+
   it("start 仅返回公开 DTO，后台收尾后 status 复核 connected", async () => {
     let loggedIn = false;
     const run = vi.fn(async (command: LarkCliCommand): Promise<LarkCliRunResult> => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
+import { readFile } from "node:fs/promises";
 import {
   loadSafeOfficeZip,
   parseFileBuffer,
@@ -1047,6 +1048,27 @@ describe("parseFile Office 文本解析", () => {
     expect(result.text).toContain("LocaleDate\t2024-01-01");
     expect(result.text).toContain("TextNumericDateStyle\t45292");
     expect(result.text).toContain("InlineNumericTimeStyle\t0.5");
+  });
+
+  it("xlsx 按 Excel 语义渲染可选小数、分数与缩放逗号", async () => {
+    const fixture = await readFile(
+      new URL("fixtures/xlsx-number-formats.xlsx", import.meta.url),
+    );
+    const result = await parseFileBuffer({
+      buffer: fixture,
+      filename: "xlsx-number-formats.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.text).toContain("OptionalDecimals\t1.2");
+    expect(result.text).toContain("RequiredAndOptionalDecimals\t1.20");
+    expect(result.text).toContain("OneDigitFraction\t1 1/4");
+    expect(result.text).toContain("TwoDigitFraction\t2 1/8");
+    expect(result.text).toContain("ProperFraction\t1/3");
+    expect(result.text).toContain("ThousandsScale\t1,235");
+    expect(result.text).toContain("MillionsScale\t2.5M");
   });
 
   it("xlsx 无可读 worksheet 失败，但可读空 worksheet 仍是合法空内容", async () => {

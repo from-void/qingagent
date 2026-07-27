@@ -82,6 +82,9 @@ export function DerivativeGenerateModal(props: {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const initialTargetLanguagesKey = JSON.stringify(
+    [...new Set(props.initial.targetLanguages ?? [])].sort(),
+  );
   const detailRequestGenerationRef = useRef(0);
   const saveRequestGenerationRef = useRef(0);
   const currentScopeRef = useRef({
@@ -119,7 +122,7 @@ export function DerivativeGenerateModal(props: {
       }
     }).catch(() => { if (current) setError("风格模板读取失败，请重试"); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.targetLanguages, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
+  }, [initialTargetLanguagesKey, props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
 
   const openTemplate = async (item: StyleTemplateItem) => {
     if (item.slot === "instruction") return;

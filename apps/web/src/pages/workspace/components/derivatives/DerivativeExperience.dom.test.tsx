@@ -549,6 +549,61 @@ describe("公众号稿生成体验", () => {
     expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
   });
 
+  it("F12: 父组件用等值目标语言数组重渲染时保留翻译弹层草稿", async () => {
+    const template = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "原始翻译提示",
+      builtin: true,
+    };
+    const stream = {
+      listStyleTemplates: vi.fn(async () => [template]),
+      getStyleTemplate: vi.fn(async () => template),
+    };
+    const onClose = vi.fn();
+    const onGenerate = vi.fn();
+    const renderModal = () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY.translate}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: template.id,
+          targetLanguages: ["英语"],
+          privatePrompt: "",
+        }}
+        onClose={onClose}
+        onGenerate={onGenerate}
+      />,
+    );
+
+    await act(async () => renderModal());
+    await act(async () => Promise.resolve());
+    const supplement = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(supplement, "保留产品英文名");
+      supplement.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑忠实精准"]')!.click());
+    await act(async () => Promise.resolve());
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "用户尚未保存的模板草稿");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => renderModal());
+
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")?.value).toBe("用户尚未保存的模板草稿");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-back")!.click());
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.value).toBe("保留产品英文名");
+    expect(stream.listStyleTemplates).toHaveBeenCalledTimes(1);
+  });
+
   it("翻译稿聚合为语言 segmented，切换后显示对应译文且删除只在更多菜单", async () => {
     const english: DerivativeItem = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准", sourceVersion: 1, generatedAt: "en" };
     const japanese: DerivativeItem = { ...english, docId: "translate-ja", targetLang: "日语", generatedAt: "ja" };

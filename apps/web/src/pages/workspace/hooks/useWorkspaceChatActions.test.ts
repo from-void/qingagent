@@ -86,8 +86,8 @@ describe("cancelWorkspaceGeneration", () => {
 
 describe("WorkspaceTurnDispatchGate", () => {
   it("规划期停止后旧编排跨过多个异步步骤仍保持取消，不再派发后续 sendMessage/问卷", async () => {
-    const gate: WorkspaceTurnDispatchGate = { generation: 0 };
-    const generation = beginWorkspaceTurnDispatch(gate);
+    const gate: WorkspaceTurnDispatchGate = { generation: 0, sessionId: "session-a" };
+    const token = beginWorkspaceTurnDispatch(gate, "session-a");
     let finishPrepare!: (value: string) => void;
     const prepare = vi.fn(
       () => new Promise<string>((resolve) => {
@@ -98,7 +98,7 @@ describe("WorkspaceTurnDispatchGate", () => {
 
     const resultPromise = prepareAndDispatchWorkspaceTurn({
       gate,
-      generation,
+      token,
       prepare,
       dispatch,
     });
@@ -109,23 +109,46 @@ describe("WorkspaceTurnDispatchGate", () => {
 
     await expect(resultPromise).resolves.toBe("cancelled");
     expect(dispatch).not.toHaveBeenCalled();
-    expect(isWorkspaceTurnDispatchCurrent(gate, generation)).toBe(false);
+    expect(isWorkspaceTurnDispatchCurrent(gate, token)).toBe(false);
   });
 
   it("取消标记只终止旧 turn，下一次用户主动发送会获得新 generation", async () => {
-    const gate: WorkspaceTurnDispatchGate = { generation: 0 };
-    const cancelledGeneration = beginWorkspaceTurnDispatch(gate);
+    const gate: WorkspaceTurnDispatchGate = { generation: 0, sessionId: "session-a" };
+    const cancelledToken = beginWorkspaceTurnDispatch(gate, "session-a");
     cancelWorkspaceTurnDispatch(gate);
-    const nextGeneration = beginWorkspaceTurnDispatch(gate);
+    const nextToken = beginWorkspaceTurnDispatch(gate, "session-a");
     const dispatch = vi.fn(async (_command: string) => undefined);
 
-    expect(isWorkspaceTurnDispatchCurrent(gate, cancelledGeneration)).toBe(false);
+    expect(isWorkspaceTurnDispatchCurrent(gate, cancelledToken)).toBe(false);
     await expect(prepareAndDispatchWorkspaceTurn({
       gate,
-      generation: nextGeneration,
+      token: nextToken,
       prepare: async () => "sendMessage:新 turn",
       dispatch,
     })).resolves.toBe("sent");
     expect(dispatch).toHaveBeenCalledWith("sendMessage:新 turn");
+  });
+
+  it("切换会话立即作废旧 session 的准备链，完成上传后也不派发", async () => {
+    const gate: WorkspaceTurnDispatchGate = { generation: 0, sessionId: "session-a" };
+    const token = beginWorkspaceTurnDispatch(gate, "session-a");
+    let finishUpload!: (value: string) => void;
+    const dispatch = vi.fn(async (_command: string) => undefined);
+    const resultPromise = prepareAndDispatchWorkspaceTurn({
+      gate,
+      token,
+      prepare: () => new Promise<string>((resolve) => {
+        finishUpload = resolve;
+      }),
+      dispatch,
+    });
+    await Promise.resolve();
+
+    cancelWorkspaceTurnDispatch(gate, "session-b");
+    finishUpload("sendMessage:旧会话消息");
+
+    await expect(resultPromise).resolves.toBe("cancelled");
+    expect(gate.sessionId).toBe("session-b");
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

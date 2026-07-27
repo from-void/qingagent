@@ -177,6 +177,7 @@ import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { useReviewReveal } from "./useReviewReveal";
 import {
   beginWorkspaceTurnDispatch,
+  cancelWorkspaceTurnDispatch,
   isWorkspaceTurnDispatchCurrent,
   prepareAndDispatchWorkspaceTurn,
   useWorkspaceChatActions,
@@ -477,7 +478,10 @@ export function useWorkspacePageController() {
   > | null>(null);
   // 所有 sendMessage 入口共用同一 turn 闸门：首页 pending-message、输入框发送、
   // 衍生稿指令都必须能被一次停止持续作废，不能各自保留会晚到的异步派发链。
-  const turnDispatchGateRef = useRef<WorkspaceTurnDispatchGate>({ generation: 0 });
+  const turnDispatchGateRef = useRef<WorkspaceTurnDispatchGate>({
+    generation: 0,
+    sessionId: null,
+  });
   const reviewCloseInFlightRef = useRef<Promise<void> | null>(null);
   // cancelAskUser 的乐观事务 token。收到同 toolCall 的权威取消成功帧即失效；
   // 之后即使 POST 响应连接迟到失败，也不得把已解锁的服务端状态回滚成旧问卷。
@@ -2064,8 +2068,9 @@ export function useWorkspacePageController() {
       (pending != null || files.length > 0 || pendingFolder !== null)
     ) {
       const messageText = pending ?? "";
-      const dispatchGeneration = beginWorkspaceTurnDispatch(
+      const dispatchToken = beginWorkspaceTurnDispatch(
         turnDispatchGateRef.current,
+        null,
       );
 
       const sendPending = async () => {
@@ -2095,20 +2100,36 @@ export function useWorkspacePageController() {
         }
         const outcome = await prepareAndDispatchWorkspaceTurn({
           gate: turnDispatchGateRef.current,
-          generation: dispatchGeneration,
+          token: dispatchToken,
           prepare: async () => {
             const sessionPromise = startNewSessionOnce(
               stream,
               sessionIdRef,
               startNewSessionPromiseRef,
-              replaceWorkspaceSessionHash,
+              (sessionId) => {
+                if (
+                  isWorkspaceTurnDispatchCurrent(
+                    turnDispatchGateRef.current,
+                    dispatchToken,
+                  )
+                ) {
+                  replaceWorkspaceSessionHash(sessionId);
+                }
+              },
             );
             const [uploadedAssets, sessionId] = await Promise.all([
               uploadFiles(files),
               sessionPromise,
             ]);
+            if (
+              !isWorkspaceTurnDispatchCurrent(
+                turnDispatchGateRef.current,
+                dispatchToken,
+              )
+            ) {
+              throw new Error("workspace turn dispatch cancelled");
+            }
             const fileIds = uploadedAssets.map((asset) => asset.fileId);
-            markMaterialParsing(uploadedAssets);
             if (pendingFolder) {
               await sendAttachFolderSelection(
                 stream,
@@ -2119,27 +2140,39 @@ export function useWorkspacePageController() {
                     pendingFolder.provider === "browser-fs-access",
                 },
               );
+              if (
+                !isWorkspaceTurnDispatchCurrent(
+                  turnDispatchGateRef.current,
+                  dispatchToken,
+                )
+              ) {
+                throw new Error("workspace turn dispatch cancelled");
+              }
               if (peekPendingFolderSource() === pendingFolder)
                 clearPendingFolderSource();
             }
             return {
-              kind: "sendMessage",
-              data: {
-                sessionId,
-                text: messageText,
-                mentions: [],
-                skills: pendingSkills,
-                chips: pendingChips,
-                fileIds,
-                clientMessageId,
-                // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
-                ...(pendingChips.length > 0 && pendingRichText
-                  ? { richText: pendingRichText }
-                  : {}),
-              },
-            } satisfies Extract<Command, { kind: "sendMessage" }>;
+              command: {
+                kind: "sendMessage",
+                data: {
+                  sessionId,
+                  text: messageText,
+                  mentions: [],
+                  skills: pendingSkills,
+                  chips: pendingChips,
+                  fileIds,
+                  clientMessageId,
+                  // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
+                  ...(pendingChips.length > 0 && pendingRichText
+                    ? { richText: pendingRichText }
+                    : {}),
+                },
+              } satisfies Extract<Command, { kind: "sendMessage" }>,
+              uploadedAssets,
+            };
           },
-          dispatch: async (command) => {
+          dispatch: async ({ command, uploadedAssets }) => {
+            markMaterialParsing(uploadedAssets);
             lastRetriableSendRef.current = command;
             await stream.sendCommand(command);
           },
@@ -2180,8 +2213,8 @@ export function useWorkspacePageController() {
         // 用户已经停止这一 turn 时，晚到的上传/建会话失败不再冒充新的发送失败。
         if (
           !isWorkspaceTurnDispatchCurrent(
-            turnDispatchGateRef.current,
-            dispatchGeneration,
+              turnDispatchGateRef.current,
+              dispatchToken,
           )
         ) {
           return;
@@ -2203,6 +2236,10 @@ export function useWorkspacePageController() {
         streamRef.current
       )
         return;
+      // 会话边界必须先于文档保存等待作废旧发送；否则旧上传/保存 continuation
+      // 会在这 300ms 窗口继续向新会话投影解析态或发送消息。
+      cancelWorkspaceTurnDispatch(turnDispatchGateRef.current, nextSessionId);
+      setSendPending(false);
       // hash/popstate 切换不会触发组件 cleanup；先以旧 sessionId 捕获当前编辑器正文，
       // 正常 flush 超时/失败时把最新正文和旧 stream 转交后台链，再立即切换会话。
       const fallbackDocSave = preparePageExitDocSaveRef.current();
@@ -2881,8 +2918,9 @@ export function useWorkspacePageController() {
         showToast("连接还没准备好");
         return;
       }
-      const dispatchGeneration = beginWorkspaceTurnDispatch(
+      const dispatchToken = beginWorkspaceTurnDispatch(
         turnDispatchGateRef.current,
+        stateRef.current.sessionId,
       );
       const clientMessageId = newClientMessageId();
       dispatch({
@@ -2899,7 +2937,7 @@ export function useWorkspacePageController() {
       });
       void prepareAndDispatchWorkspaceTurn({
         gate: turnDispatchGateRef.current,
-        generation: dispatchGeneration,
+        token: dispatchToken,
         prepare: async () => {
           const sessionId = await ensureSessionId(stream);
           return {
@@ -2925,7 +2963,7 @@ export function useWorkspacePageController() {
         if (
           !isWorkspaceTurnDispatchCurrent(
             turnDispatchGateRef.current,
-            dispatchGeneration,
+            dispatchToken,
           )
         ) {
           return;

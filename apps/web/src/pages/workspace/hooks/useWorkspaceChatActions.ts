@@ -49,32 +49,49 @@ const STREAM_ERROR_TOAST_KEY = "workspace-stream-error";
  */
 export interface WorkspaceTurnDispatchGate {
   generation: number;
+  sessionId: string | null;
 }
 
-export function beginWorkspaceTurnDispatch(gate: WorkspaceTurnDispatchGate): number {
-  gate.generation += 1;
-  return gate.generation;
+export interface WorkspaceTurnDispatchToken {
+  generation: number;
+  sessionId: string | null;
 }
 
-export function cancelWorkspaceTurnDispatch(gate: WorkspaceTurnDispatchGate): void {
+export function beginWorkspaceTurnDispatch(
+  gate: WorkspaceTurnDispatchGate,
+  sessionId: string | null,
+): WorkspaceTurnDispatchToken {
   gate.generation += 1;
+  gate.sessionId = sessionId;
+  return { generation: gate.generation, sessionId };
+}
+
+export function cancelWorkspaceTurnDispatch(
+  gate: WorkspaceTurnDispatchGate,
+  sessionId: string | null = gate.sessionId,
+): void {
+  gate.generation += 1;
+  gate.sessionId = sessionId;
 }
 
 export function isWorkspaceTurnDispatchCurrent(
   gate: WorkspaceTurnDispatchGate,
-  generation: number,
+  token: WorkspaceTurnDispatchToken,
 ): boolean {
-  return gate.generation === generation;
+  return (
+    gate.generation === token.generation &&
+    gate.sessionId === token.sessionId
+  );
 }
 
 export async function prepareAndDispatchWorkspaceTurn<T>(input: {
   gate: WorkspaceTurnDispatchGate;
-  generation: number;
+  token: WorkspaceTurnDispatchToken;
   prepare: () => Promise<T>;
   dispatch: (prepared: T) => Promise<unknown>;
 }): Promise<"sent" | "cancelled"> {
   const prepared = await input.prepare();
-  if (!isWorkspaceTurnDispatchCurrent(input.gate, input.generation)) {
+  if (!isWorkspaceTurnDispatchCurrent(input.gate, input.token)) {
     return "cancelled";
   }
   await input.dispatch(prepared);
@@ -226,8 +243,9 @@ export function useWorkspaceChatActions(input: {
     }
 
     const keepMessageCount = stateRef.current.messages.length;
-    const dispatchGeneration = beginWorkspaceTurnDispatch(
+    const dispatchToken = beginWorkspaceTurnDispatch(
       turnDispatchGateRef.current,
+      stateRef.current.sessionId,
     );
 
     // Optimistic UI: add user message bubble to chat.
@@ -277,24 +295,55 @@ export function useWorkspaceChatActions(input: {
     const send = async () => {
       await prepareAndDispatchWorkspaceTurn({
         gate: turnDispatchGateRef.current,
-        generation: dispatchGeneration,
+        token: dispatchToken,
         prepare: async () => {
           // 模板填充在途时先等它落定(成败都等,失败自身已 toast):否则 sendMessage 可能先被服务端
           // 处理并置 streamId,骨架 updateDoc 随后被拒、模板内容永久丢失(review #6)。
           if (fillTemplatePromiseRef.current) {
             await fillTemplatePromiseRef.current.catch(() => {});
           }
+          if (
+            !isWorkspaceTurnDispatchCurrent(
+              turnDispatchGateRef.current,
+              dispatchToken,
+            )
+          ) {
+            throw new Error("workspace turn dispatch cancelled");
+          }
           return runAfterPendingDocSave({
             flushPendingDocSave,
             run: async () => {
+              if (
+                !isWorkspaceTurnDispatchCurrent(
+                  turnDispatchGateRef.current,
+                  dispatchToken,
+                )
+              ) {
+                throw new Error("workspace turn dispatch cancelled");
+              }
               // 先上传文件，再把 fileIds 随消息发给后端解析。
               const uploadedAssets = await uploadFiles(filesToUpload);
+              if (
+                !isWorkspaceTurnDispatchCurrent(
+                  turnDispatchGateRef.current,
+                  dispatchToken,
+                )
+              ) {
+                throw new Error("workspace turn dispatch cancelled");
+              }
               const fileIds = uploadedAssets.map((asset) => asset.fileId);
-              markMaterialParsing(uploadedAssets);
 
               const contractChips = snap.chips.map(toContractChip);
 
               const sessionId = await ensureSessionId(stream);
+              if (
+                !isWorkspaceTurnDispatchCurrent(
+                  turnDispatchGateRef.current,
+                  dispatchToken,
+                )
+              ) {
+                throw new Error("workspace turn dispatch cancelled");
+              }
               const command: Extract<Command, { kind: "sendMessage" }> = {
                 kind: "sendMessage",
                 data: {
@@ -313,12 +362,13 @@ export function useWorkspaceChatActions(input: {
                 },
               };
               await reviewCloseInFlightRef.current;
-              return command;
+              return { command, uploadedAssets };
             },
           });
         },
-        dispatch: async (command) => {
+        dispatch: async ({ command, uploadedAssets }) => {
           // 只有仍属当前 turn 的链路才进入服务端；被停止的旧链不会在稍后重新点亮 start。
+          markMaterialParsing(uploadedAssets);
           lastRetriableSendRef.current = command;
           await stream.sendCommand(command);
         },
@@ -329,8 +379,8 @@ export function useWorkspaceChatActions(input: {
       // 停止后的旧准备链即使晚到失败，也不应回滚已恢复的输入态或弹伪失败。
       if (
         !isWorkspaceTurnDispatchCurrent(
-          turnDispatchGateRef.current,
-          dispatchGeneration,
+            turnDispatchGateRef.current,
+            dispatchToken,
         )
       ) {
         return;
@@ -366,7 +416,10 @@ export function useWorkspaceChatActions(input: {
       showToast("没有可重试的上一条消息");
       return;
     }
-    beginWorkspaceTurnDispatch(turnDispatchGateRef.current);
+    beginWorkspaceTurnDispatch(
+      turnDispatchGateRef.current,
+      stateRef.current.sessionId,
+    );
     dispatch({ kind: "retryDrafting", streamId: "last" });
     setSendPending(true);
     stream.sendCommand(command).catch((e) => {
@@ -450,7 +503,10 @@ export function useWorkspaceChatActions(input: {
   const handleCancelActiveStream = useCallback(() => {
     // 先封住本地尚在保存/上传/建会话的旧 turn，再下发服务端 cancel；标记会持续到下一次
     // beginWorkspaceTurnDispatch，不能只 abort 当前一个 await 步骤。
-    cancelWorkspaceTurnDispatch(turnDispatchGateRef.current);
+    cancelWorkspaceTurnDispatch(
+      turnDispatchGateRef.current,
+      stateRef.current.sessionId,
+    );
     const pendingSubmissionId = sessionStorage.getItem(
       PENDING_SUBMISSION_ID_STORAGE_KEY,
     );

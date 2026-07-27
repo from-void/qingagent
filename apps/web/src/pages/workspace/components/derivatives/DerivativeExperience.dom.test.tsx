@@ -604,6 +604,102 @@ describe("公众号稿生成体验", () => {
     expect(stream.listStyleTemplates).toHaveBeenCalledTimes(1);
   });
 
+  it("F2: 生成提交与失败译文重试在请求完成前保持单次在途", async () => {
+    const template = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    let resolveCreate!: () => void;
+    const createRequest = new Promise<void>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const onGenerate = vi.fn(() => createRequest);
+    const modalStream = {
+      listStyleTemplates: vi.fn(async () => [template]),
+    };
+    await act(async () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY.translate}
+        sessionId="session-1"
+        stream={modalStream as never}
+        open
+        initial={{
+          templateId: template.id,
+          targetLanguages: ["英语"],
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={onGenerate}
+      />,
+    ));
+    await act(async () => Promise.resolve());
+    const form = host.querySelector<HTMLFormElement>(".ws-launch-form")!;
+    await act(async () => {
+      form.requestSubmit();
+      form.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    await act(async () => {
+      resolveCreate();
+      await createRequest;
+    });
+
+    const failedItem: DerivativeItem = {
+      ...item,
+      docId: "translate-retry",
+      dtype: "translate",
+      targetLang: "英语",
+      templateId: template.id,
+      templateName: template.name,
+    };
+    let resolveRetry!: () => void;
+    const retryRequest = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const generateTranslations = vi.fn(() => retryRequest);
+    const viewStream = {
+      getDerivativeDoc: vi.fn(async () => null),
+      generateTranslations,
+    };
+    await act(async () => root.render(
+      <ConfirmProvider>
+        <DerivativeView
+          sessionId="session-1"
+          item={failedItem}
+          stream={viewStream as never}
+          streamActive={false}
+          translationGen={new Map([
+            [failedItem.docId, { status: "failed" as const, text: "" }],
+          ])}
+          onRefresh={vi.fn(async () => {})}
+          onDeleted={vi.fn()}
+          onToast={vi.fn()}
+          onSendQuery={vi.fn()}
+        />
+      </ConfirmProvider>,
+    ));
+    const retryButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "重试")!;
+    await act(async () => {
+      retryButton.click();
+      retryButton.click();
+      await Promise.resolve();
+    });
+    expect(generateTranslations).toHaveBeenCalledTimes(1);
+    expect(retryButton.disabled).toBe(true);
+    await act(async () => {
+      resolveRetry();
+      await retryRequest;
+    });
+  });
+
   it("翻译稿聚合为语言 segmented，切换后显示对应译文且删除只在更多菜单", async () => {
     const english: DerivativeItem = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准", sourceVersion: 1, generatedAt: "en" };
     const japanese: DerivativeItem = { ...english, docId: "translate-ja", targetLang: "日语", generatedAt: "ja" };

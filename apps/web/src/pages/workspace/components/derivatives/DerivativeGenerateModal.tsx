@@ -81,12 +81,14 @@ export function DerivativeGenerateModal(props: {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [submitPending, setSubmitPending] = useState(false);
   const [error, setError] = useState("");
   const initialTargetLanguagesKey = JSON.stringify(
     [...new Set(props.initial.targetLanguages ?? [])].sort(),
   );
   const detailRequestGenerationRef = useRef(0);
   const saveRequestGenerationRef = useRef(0);
+  const generateFlightRef = useRef<Promise<void> | null>(null);
   const currentScopeRef = useRef({
     open: props.open,
     sessionId: props.sessionId,
@@ -233,7 +235,31 @@ export function DerivativeGenerateModal(props: {
     } catch (deleteError) { setError(deleteErrorMessage(deleteError)); } finally { setSaving(false); }
   };
 
+  const submitGenerate = (params: DerivativeGenerateParams): Promise<void> => {
+    const currentFlight = generateFlightRef.current;
+    if (currentFlight) return currentFlight;
+    const flight = Promise.resolve()
+      .then(() => props.onGenerate(params))
+      .then(() => undefined);
+    generateFlightRef.current = flight;
+    setSubmitPending(true);
+    void flight.then(
+      () => {
+        if (generateFlightRef.current !== flight) return;
+        generateFlightRef.current = null;
+        setSubmitPending(false);
+      },
+      () => {
+        if (generateFlightRef.current !== flight) return;
+        generateFlightRef.current = null;
+        setSubmitPending(false);
+      },
+    );
+    return flight;
+  };
+
   if (!props.open) return null;
+  const submitting = Boolean(props.submitting || submitPending);
   const slots: Array<{ slot: StyleSlot; label: string }> = props.descriptor.dtype === "gzh"
     ? [{ slot: "layout", label: "排版风格" }, { slot: "writing", label: "写作风格" }]
     : [{ slot: "writing", label: props.descriptor.dtype === "translate" ? "翻译风格" : "写作风格" }];
@@ -250,7 +276,7 @@ export function DerivativeGenerateModal(props: {
       subtitle={editor ? undefined : launchMeta.subtitle}
       onBack={editor ? () => { setEditor(null); setError(""); } : undefined}
       onClose={props.onClose}
-      closeDisabled={props.submitting || saving}
+      closeDisabled={submitting || saving}
       dataWf="DerivativeGenerateModal"
     >
       {error ? <p className="ws-launch-error" role="alert">{error}</p> : null}
@@ -288,7 +314,7 @@ export function DerivativeGenerateModal(props: {
       ) : (
         <form className="ws-launch-form" onSubmit={(event) => {
           event.preventDefault();
-          if (writingStyleId && (props.descriptor.dtype !== "translate" || targetLanguages.length > 0)) void props.onGenerate({ templateId: writingStyleId, writingStyleId, layoutStyleId, privatePrompt, ...(props.descriptor.dtype === "translate" ? { targetLanguages } : {}) });
+          if (writingStyleId && (props.descriptor.dtype !== "translate" || targetLanguages.length > 0)) void submitGenerate({ templateId: writingStyleId, writingStyleId, layoutStyleId, privatePrompt, ...(props.descriptor.dtype === "translate" ? { targetLanguages } : {}) });
         }}>
           {props.descriptor.dtype === "translate" ? <section className="ws-translate-language-group" aria-label="目标语言">
             <h3>目标语言</h3>
@@ -326,12 +352,12 @@ export function DerivativeGenerateModal(props: {
           <SupplementField
             value={privatePrompt}
             placeholder={launchMeta.supplementPlaceholder}
-            disabled={props.submitting}
+            disabled={submitting}
             onChange={setPrivatePrompt}
           />
           <div className="ws-launch-actions">
-            <Button type="button" variant="ghost" disabled={props.submitting} onClick={props.onClose}>取消</Button>
-            <Button type="submit" variant="primary" disabled={props.submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)}>{props.submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
+            <Button type="button" variant="ghost" disabled={submitting} onClick={props.onClose}>取消</Button>
+            <Button type="submit" variant="primary" disabled={submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
           </div>
         </form>
       )}

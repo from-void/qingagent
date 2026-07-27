@@ -86,6 +86,7 @@ export function DerivativeView(props: {
   const [modalOpen, setModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [translationFlightKeys, setTranslationFlightKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [coverTemplate, setCoverTemplate] = useState<XhsCoverTemplate>(item.coverTemplate ?? "poster");
   const articleRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLElement>(null);
@@ -94,6 +95,7 @@ export function DerivativeView(props: {
   const streamingTextRef = useRef<HTMLDivElement>(null);
   const streamActiveRef = useRef(props.streamActive);
   const sawActiveRef = useRef(props.streamActive);
+  const translationFlightsRef = useRef(new Map<string, Promise<void>>());
   useEffect(() => {
     if (props.items?.length && !props.items.some((candidate) => candidate.docId === selectedDocId)) setSelectedDocId(props.items[0]!.docId);
   }, [props.items, selectedDocId]);
@@ -169,6 +171,29 @@ export function DerivativeView(props: {
 
   const pmDoc = useMemo(() => document && document.docVersion > 0 ? normalizeStoredPmDoc(JSON.parse(document.docPm)) : null, [document]);
   const title = articleTitle(pmDoc, descriptor.label);
+  const translationFlightKey = `${props.sessionId}:${item.docId}`;
+  const translationSubmitting = translationFlightKeys.has(translationFlightKey);
+  const generateTranslationSingleFlight = (docId: string): Promise<void> => {
+    const flightKey = `${props.sessionId}:${docId}`;
+    const currentFlight = translationFlightsRef.current.get(flightKey);
+    if (currentFlight) return currentFlight;
+    const flight = Promise.resolve().then(
+      () => props.stream.generateTranslations(props.sessionId, [docId]),
+    );
+    translationFlightsRef.current.set(flightKey, flight);
+    setTranslationFlightKeys((current) => new Set(current).add(flightKey));
+    const finish = () => {
+      if (translationFlightsRef.current.get(flightKey) !== flight) return;
+      translationFlightsRef.current.delete(flightKey);
+      setTranslationFlightKeys((current) => {
+        const next = new Set(current);
+        next.delete(flightKey);
+        return next;
+      });
+    };
+    void flight.then(finish, finish);
+    return flight;
+  };
   const beginGenerate = async (params: DerivativeGenerateParams) => {
     try {
       await props.stream.createDerivative(props.sessionId, descriptor.dtype, params.templateId, params.privatePrompt, params.writingStyleId, params.layoutStyleId, item.targetLang ?? undefined);
@@ -181,7 +206,7 @@ export function DerivativeView(props: {
     if (isTranslation) {
       setModalOpen(false);
       try {
-        await props.stream.generateTranslations(props.sessionId, [item.docId]);
+        await generateTranslationSingleFlight(item.docId);
       } catch (error) {
         console.error("[workspace] regenerate translation failed", error);
         props.onToast("重新翻译失败，请重试");
@@ -248,7 +273,7 @@ export function DerivativeView(props: {
       </div>
     </div>
   </div>;
-  const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
+  const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} submitting={isTranslation && (translationSubmitting || translationState?.status === "streaming")} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
 
   if (!isTranslation && generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
   if (!isTranslation && (abortedEmpty || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{abortedEmpty ? "生成已中止" : "尚未生成"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>{modal}</section>;
@@ -263,7 +288,7 @@ export function DerivativeView(props: {
       return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); setGenerating(false); setAbortedEmpty(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span>{status ? <i className={`ws-translate-status is-${status}`} aria-hidden="true"/> : null}</button>;
     })}</div> : null}
     {isTranslation && translationState?.status === "streaming" ? <div ref={streamingTextRef} className="ws-deriv-streaming-paper is-generating">{translationParagraphs.length > 0 ? <article className="ws-translate-stream-text" aria-live="polite">{translationParagraphs.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>)}</article> : <QingLoading reasoning />}</div>
-      : isTranslation && (translationState?.status === "failed" || translationState?.status === "aborted") ? <div className="ws-translate-failed" role="status"><strong>{translationState.status === "aborted" ? "翻译已中止" : "翻译未完成"}</strong><button className="ws-deriv-primary" onClick={() => void props.stream.generateTranslations(props.sessionId, [item.docId]).catch(() => props.onToast("重新翻译未完成，请重试"))}>重试</button></div>
+      : isTranslation && (translationState?.status === "failed" || translationState?.status === "aborted") ? <div className="ws-translate-failed" role="status"><strong>{translationState.status === "aborted" ? "翻译已中止" : "翻译未完成"}</strong><button className="ws-deriv-primary" disabled={translationSubmitting} onClick={() => void generateTranslationSingleFlight(item.docId).catch(() => props.onToast("重新翻译未完成，请重试"))}>{translationSubmitting ? "重试中" : "重试"}</button></div>
         : isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>尚未生成</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>
           : pmDoc && PlainPreview ? <PlainPreview {...previewProps}/> : pmDoc && mode === "phone" && PhonePreview ? <><div className="ws-deriv-mode"><button className="is-active" onClick={() => setMode("phone")}>手机</button><button onClick={() => setMode("desktop")}>电脑</button></div><PhonePreview {...previewProps}/></> : pmDoc && DesktopPreview ? <><div className="ws-deriv-mode"><button onClick={() => setMode("phone")}>手机</button><button className="is-active" onClick={() => setMode("desktop")}>电脑</button></div><DesktopPreview {...previewProps}/></> : null}
     {modal}

@@ -231,4 +231,43 @@ describe("connector credential bundle", () => {
     })).rejects.toMatchObject({ code: "CONNECTOR_CREDENTIAL_WRITE_CANCELLED", status: 409 });
     await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
   });
+
+  it("重新授权可原子覆盖无法解密的 bundle", async () => {
+    await saveConnectorCredentialBundle("wechat-mp", { token: "old" });
+    await getDocumentsClient().execute({
+      sql: "UPDATE sandbox_credentials SET value_enc = 'broken' WHERE platform = ? AND cred_key = ?",
+      args: ["connector:wechat-mp", "bundle"],
+    });
+    await expect(getConnectorCredentialBundle("wechat-mp")).rejects.toThrow();
+
+    const repaired = await saveConnectorCredentialBundle(
+      "wechat-mp",
+      { token: "new" },
+      { expectedRevision: null },
+    );
+
+    expect(repaired).toMatchObject({ revision: 1, payload: { token: "new" } });
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toEqual(repaired);
+  });
+
+  it("disconnect 可删除无法解密的 bundle 与 legacy 凭据", async () => {
+    await seedWechatLegacy();
+    await saveConnectorCredentialBundle("wechat-mp", { token: "old" });
+    await getDocumentsClient().execute({
+      sql: "UPDATE sandbox_credentials SET value_enc = 'broken' WHERE platform = ? AND cred_key = ?",
+      args: ["connector:wechat-mp", "bundle"],
+    });
+
+    await deleteConnectorCredentialBundle("wechat-mp", {
+      expectedRevision: null,
+      legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS },
+    });
+
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
+    const rows = await getDocumentsClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform IN (?, ?)",
+      args: ["connector:wechat-mp", "wechat"],
+    });
+    expect(Number(rows.rows[0]?.n)).toBe(0);
+  });
 });

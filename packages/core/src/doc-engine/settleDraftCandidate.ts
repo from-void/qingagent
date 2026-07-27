@@ -40,7 +40,10 @@ import {
 } from "../agent-run/agentSpans.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { generateTitleAfterFirstDraft } from "../session/titleGeneration.js";
-import { mapAnnotationGroupsThroughSteps, pmDocContentSize } from "./annotationMapping.js";
+import {
+  buildAnnotationMappingSteps,
+  mapAnnotationGroupsThroughSteps,
+} from "./annotationMapping.js";
 import {
   getPmContentHash,
   legacySectionsToPm,
@@ -268,22 +271,90 @@ export async function* settleDraftCandidate(opts: {
     const nextVersionDoc = state.docDraftCandidateDoc ?? legacySectionsToPm(candidate as never);
     const previousDoc = currentPmDoc(state);
     const previousDocVersion = state.docVersion;
-    const result = await commitDocumentOp({
-      docId: state.docId,
-      threadId: state.threadId ?? state.sessionId,
-      resourceId: state.resourceId,
-      expectedDocumentSnapshot: baseVersion,
-      opId: `generation:${state.sessionId}:${streamId}`,
-      opKind: "replace_doc",
-      actorType: "agent",
-      summary: "AI 生成文档",
-      createIfMissing: {
-        title: state.title,
-        docState: "editing",
-        lastSyncedVersion: state.lastSyncedDocumentSnapshot,
-      },
-      apply: () => ({ nextDoc: nextVersionDoc }),
-    });
+    let transactionEffectPersisted = false;
+    type PendingAnnotationMapping = {
+      mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
+      replacedOrigins: string[];
+    };
+    let transactionAnnotationMapping: PendingAnnotationMapping | null = null;
+    let result: Awaited<ReturnType<typeof commitDocumentOp>>;
+    try {
+      result = await commitDocumentOp(
+        {
+          docId: state.docId,
+          threadId: state.threadId ?? state.sessionId,
+          resourceId: state.resourceId,
+          expectedDocumentSnapshot: baseVersion,
+          opId: `generation:${state.sessionId}:${streamId}`,
+          opKind: "replace_doc",
+          actorType: "agent",
+          summary: "AI 生成文档",
+          createIfMissing: {
+            title: state.title,
+            docState: "editing",
+            lastSyncedVersion: state.lastSyncedDocumentSnapshot,
+          },
+          apply: () => ({ nextDoc: nextVersionDoc }),
+        },
+        {
+          transactionalEffect: async ({ client, result: committed }) => {
+            let nextAnnotationMapping: PendingAnnotationMapping | null = null;
+            if (state.annotationGroups.length > 0) {
+              const replacedOrigins = [
+                ...new Set(state.annotationGroups.map((group) => group.origin)),
+              ];
+              const mapped = mapAnnotationGroupsThroughSteps(
+                state.annotationGroups,
+                buildAnnotationMappingSteps(previousDoc, committed.doc),
+                committed.doc,
+              );
+              await persistMappedAnnotationGroups(
+                state.docId,
+                mapped.groups,
+                mapped.survivingAnchorIndexes,
+                client,
+              );
+              nextAnnotationMapping = { mapped, replacedOrigins };
+            }
+            transactionAnnotationMapping = nextAnnotationMapping;
+            transactionEffectPersisted = true;
+          },
+        },
+      );
+    } catch (error) {
+      const reason = "生成提交关联状态保存失败，本次生成未写入。";
+      logger.error("Whole document commit transaction failed", {
+        sessionId: state.sessionId,
+        docId: state.docId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (emitGenerationEvent && generationId) {
+        yield {
+          kind: "docGenerationEvent",
+          data: nextDocGenerationEvent(generationId, generationLastSeq, {
+            kind: "generation_failed",
+            data: { reason },
+          }),
+        };
+      } else {
+        yield {
+          kind: "stream",
+          data: {
+            kind: "draftingFailed",
+            data: { streamId, reason, retriable: true },
+          },
+        };
+      }
+      recordSettleResultSpan(state, {
+        branch: "wholeDocument",
+        hunkCount: 0,
+        docWritten: false,
+        finalVersion: state.docVersion,
+        sourceStreamId: streamId,
+        runId,
+      });
+      return { hunkCount: 0, docWritten: false };
+    }
 
     if (result.status !== "committed") {
       const reason =
@@ -333,20 +404,24 @@ export async function* settleDraftCandidate(opts: {
     requestContext?.set("legacySections", state.legacySections);
     requestContext?.set("doc", result.doc);
     requestContext?.set("directionChangeAskedSinceLastWrite", false);
-    if (state.annotationGroups.length > 0) {
+    let annotationMapping: PendingAnnotationMapping | null = transactionAnnotationMapping;
+    if (!transactionEffectPersisted && state.annotationGroups.length > 0) {
       const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
-      const mapped = mapAnnotationGroupsThroughSteps(state.annotationGroups, [{
-        stepType: "replace",
-        from: 0,
-        to: pmDocContentSize(previousDoc),
-        slice: { content: result.doc.content, openStart: 0, openEnd: 0 },
-      }], result.doc);
-      state.annotationGroups = mapped.groups;
+      const mapped = mapAnnotationGroupsThroughSteps(
+        state.annotationGroups,
+        buildAnnotationMappingSteps(previousDoc, result.doc),
+        result.doc,
+      );
       await persistMappedAnnotationGroups(
         state.docId,
         mapped.groups,
         mapped.survivingAnchorIndexes,
       );
+      annotationMapping = { mapped, replacedOrigins };
+    }
+    if (annotationMapping) {
+      const { mapped, replacedOrigins } = annotationMapping;
+      state.annotationGroups = mapped.groups;
       yield {
         kind: "annotationGroupsReady",
         data: { groups: mapped.groups, replacedOrigins },

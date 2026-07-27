@@ -261,7 +261,25 @@ export const modelFetch: typeof globalThis.fetch = async (input, init) => {
   const rawUrl = typeof input === "string" || input instanceof URL
     ? input.toString()
     : input.url;
-  await validateModelFetchUrl(rawUrl);
+  const requestSignal = init?.signal ??
+    (typeof input === "string" || input instanceof URL ? undefined : input.signal);
+  const preflightController = new AbortController();
+  const relayAbort = () => preflightController.abort(requestSignal?.reason);
+  if (requestSignal?.aborted) relayAbort();
+  else requestSignal?.addEventListener("abort", relayAbort, { once: true });
+  const preflightTimer = setTimeout(
+    () => preflightController.abort(
+      new DOMException("Model DNS preflight timed out", "TimeoutError"),
+    ),
+    resolveModelConnectTimeoutMs(),
+  );
+  try {
+    await validateModelFetchUrl(rawUrl, process.env, preflightController.signal);
+  } finally {
+    clearTimeout(preflightTimer);
+    requestSignal?.removeEventListener("abort", relayAbort);
+  }
+  requestSignal?.throwIfAborted();
   const dispatcher = getModelDispatcher();
   return await undiciFetch(
     input as Parameters<typeof undiciFetch>[0],

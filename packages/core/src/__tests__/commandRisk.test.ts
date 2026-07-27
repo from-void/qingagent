@@ -135,6 +135,19 @@ describe("assessCommand 危险意图分类", () => {
         detail: "装好后青简才能继续帮你完成这项操作。会从网上下载并安装到这台电脑",
       });
     });
+
+    it.each([
+      ["npm --prefix ./app install zod", "安装 zod"],
+      ["npm --registry https://registry.example.test install zod", "安装 zod"],
+      ["pnpm --filter web add react", "安装 react"],
+    ])("前置带值选项不遮蔽安装动作：%s", (command, title) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["install"],
+        confirmKind: "install",
+        title,
+      });
+    });
   });
 
   describe("外发 effect", () => {
@@ -144,6 +157,10 @@ describe("assessCommand 危险意图分类", () => {
       "curl -d @report https://example.test/upload",
       "curl -X PATCH https://example.test/item",
       "wget --post-file=report https://example.test/upload",
+      "wget --method DELETE https://example.test/item",
+      "wget --method post https://example.test/item",
+      "wget --method PUT https://example.test/item",
+      "wget --method PATCH https://example.test/item",
       "git push origin main",
       "docker push example/image:latest",
       "scp report.txt user@example.test:/tmp/",
@@ -182,6 +199,7 @@ describe("assessCommand 危险意图分类", () => {
       "lark-cli search docs",
       "curl https://example.test/data",
       "curl -x POST https://example.test/data",
+      "wget --method GET https://example.test/data",
       "git fetch origin",
       "docker pull example/image:latest",
       "scp user@example.test:/tmp/report.txt .",
@@ -196,6 +214,19 @@ describe("assessCommand 危险意图分类", () => {
       "echo $(date +%s)",
     ])("反例 %s 保持 allow", (command) => {
       expect(assessCommand(command).risk).toBe("safe");
+    });
+
+    it.each([
+      "git -C ./repo push origin main",
+      "git -c credential.helper= push origin main",
+      "git --config credential.helper= push origin main",
+    ])("git 前置带值选项不遮蔽 push：%s", (command) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["send"],
+        confirmKind: "send",
+        title: "推送代码到远端",
+      });
     });
 
     it.each([
@@ -235,11 +266,42 @@ describe("assessCommand 危险意图分类", () => {
       "rm --help",
       "echo rm file",
       "git status",
+      "git checkout main",
+      "git checkout -b feature",
       "git reset --soft HEAD~1",
       "find . -print",
       "systemctl status demo",
     ])("反例 %s 保持 allow", (command) => {
       expect(assessCommand(command).risk).toBe("safe");
+    });
+
+    it.each([
+      "git -C ./repo clean -fd",
+      "git -c core.excludesFile=/dev/null clean -fd",
+      "git --config core.excludesFile=/dev/null clean -fd",
+    ])("git 前置带值选项不遮蔽 clean：%s", (command) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["destructive"],
+        confirmKind: "command",
+      });
+    });
+
+    it.each([
+      "git restore tracked.txt",
+      "git restore --source=HEAD tracked.txt",
+      "git restore --source HEAD --staged --worktree tracked.txt",
+      "git -C ./repo restore tracked.txt",
+      "git checkout -- tracked.txt",
+      "git checkout HEAD -- tracked.txt",
+      "git -C ./repo checkout HEAD~1 -- tracked.txt",
+    ])("覆盖已跟踪文件的 git 命令进入破坏性确认：%s", (command) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["destructive"],
+        confirmKind: "command",
+        title: "覆盖版本库文件",
+      });
     });
   });
 

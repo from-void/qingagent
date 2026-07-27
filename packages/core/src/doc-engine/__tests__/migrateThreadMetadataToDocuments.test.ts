@@ -449,6 +449,43 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(await documentRepo.load("good")).not.toBeNull();
   });
 
+  it("非法 legacySections 只隔离当前 thread，并继续迁移同页及后续页", async () => {
+    const laterMeta = validMetadata("later-good", { docId: "doc-later-good" });
+    const samePageMeta = validMetadata("same-page-good", { docId: "doc-same-page-good" });
+    const invalidMeta = validMetadata("invalid", { docId: "doc-invalid" });
+    invalidMeta.legacySections = [{
+      kind: "table",
+      data: { head: [], rows: null },
+    }] as unknown as LegacySection[];
+    // listThreads 按 updatedAt 倒序；最后加入的非法记录会排在第一页首位。
+    addThread("thread-later-good", laterMeta);
+    addThread("thread-same-page-good", samePageMeta);
+    addThread("thread-invalid", invalidMeta);
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments({ force: true, pageSize: 2 });
+
+    expect(stats).toMatchObject({
+      total: 3,
+      migrated: 2,
+      skipped: 0,
+      failed: 1,
+    });
+    expect(await documentRepo.load("doc-invalid")).toBeNull();
+    expect(await documentRepo.load("doc-same-page-good")).toMatchObject({
+      threadId: "thread-same-page-good",
+    });
+    expect(await documentRepo.load("doc-later-good")).toMatchObject({
+      threadId: "thread-later-good",
+    });
+    expect((threads.get("thread-invalid")?.metadata as QingagentThreadMetadata).migratedToDocumentsAt)
+      .toBeUndefined();
+    expect((threads.get("thread-same-page-good")?.metadata as QingagentThreadMetadata).migratedToDocumentsAt)
+      .toEqual(expect.any(String));
+  });
+
   it("falls back to single-row writes when a batch fails", async () => {
     addThread("thread-a", {
       docState: legacyDocState("draft"),

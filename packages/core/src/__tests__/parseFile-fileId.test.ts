@@ -137,4 +137,32 @@ describe("parseFile fileId 解析(CC 脱敏)", () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("Desktop 仅传 filePath 时按真实扩展名补齐 MIME 并解析", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "parse-file-desktop-mime-"));
+    const textPath = path.join(tempDir, "桌面附件.txt");
+    await fs.writeFile(textPath, "FILE_PATH_ONLY_BODY", "utf8");
+    try {
+      const result = await runDesktop({ filePath: textPath });
+
+      expect(result.text).toBe("FILE_PATH_ONLY_BODY");
+      expect(result.metadata.wordCount).toBe("FILE_PATH_ONLY_BODY".length);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("Desktop filePath 扩展名未知时仍要求显式 MIME", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "parse-file-desktop-mime-"));
+    const unknownPath = path.join(tempDir, "桌面附件.unknown");
+    await fs.writeFile(unknownPath, "UNKNOWN_EXTENSION_BODY", "utf8");
+    try {
+      const result = await runDesktop({ filePath: unknownPath });
+
+      expect(result.text).toContain("[Error]");
+      expect(result.text).toContain("mimeType");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

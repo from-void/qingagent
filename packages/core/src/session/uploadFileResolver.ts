@@ -32,6 +32,11 @@ const MIME_MAP: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
+export function inferMimeTypeFromFilename(filename: string): string | null {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_MAP[ext] ?? null;
+}
+
 export function isValidUploadId(fileId: unknown): fileId is string {
   return typeof fileId === "string" && UUID_RE.test(fileId);
 }
@@ -110,8 +115,7 @@ export async function resolveFileIds(
       continue;
     }
 
-    const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-    const mimeType = MIME_MAP[ext] ?? "application/octet-stream";
+    const mimeType = inferMimeTypeFromFilename(filename) ?? "application/octet-stream";
     results.push({ fileId, filename, filePath: fileRealPath, mimeType });
   }
 

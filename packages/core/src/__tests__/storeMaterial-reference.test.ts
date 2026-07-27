@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { parseFileTool } from "../tools/parseFile.js";
+import { UPLOADS_BASE } from "../session/uploadFileResolver.js";
 
 // storeMaterial 不再让模型传正文(避免吐几万字、生成巨慢)。正文走"引用本地已提取内容":
 //   - parseFile 解析的全文 → bridge 按 filename 缓存 → storeMaterial 按名引用;
@@ -403,6 +406,7 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
         filename: "legacy.xls",
         mimeType: "application/vnd.ms-excel",
         result: await executeParseFileFixture("legacy.xls", "application/vnd.ms-excel"),
+        fileId: "legacy-xls-upload",
         materialId: "mat-xls",
         parseToolCallId: "p-xls",
         storeToolCallId: "s-xls",
@@ -412,6 +416,7 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
         filename: "legacy.ppt",
         mimeType: "application/vnd.ms-powerpoint",
         result: await executeParseFileFixture("legacy.ppt", "application/vnd.ms-powerpoint"),
+        fileId: "legacy-ppt-upload",
         materialId: "mat-ppt",
         parseToolCallId: "p-ppt",
         storeToolCallId: "s-ppt",
@@ -427,11 +432,13 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
         processAgentStream(
           streamOf(
             toolCall("parseFile", c.parseToolCallId, {
+              fileId: c.fileId,
               filePath: `/x/${c.filename}`,
               filename: c.filename,
               mimeType: c.mimeType,
             }),
             toolResult("parseFile", c.parseToolCallId, {
+              fileId: c.fileId,
               filename: c.filename,
               mimeType: c.mimeType,
             }, c.result),
@@ -448,7 +455,9 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
         ),
       );
 
-      const errorMaterial = [...state.materials.values()].find((material) => material.fileId === c.filename);
+      const errorMaterial = [...state.materials.values()].find(
+        (material) => material.fileId === c.fileId,
+      );
       expect(errorMaterial).toBeTruthy();
       expect(errorMaterial?.text).toBe("");
       expect(errorMaterial?.metadata.parseState).toBe("error");
@@ -559,6 +568,59 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     if (latestFileAFrame?.kind === "resourceUpserted") {
       expect((latestFileAFrame.data.resource.metadata as { updatedAt?: unknown }).updatedAt)
         .toBe(materials[0]?.updatedAt);
+    }
+  });
+
+  it("Desktop filePath-only 失败素材沿用上传注册表真实 UUID", async () => {
+    const { createSession, processAgentStream, stableErrorMaterialId } = await import(
+      "../bridge/index.js"
+    );
+    const state = createSession("ref-desktop-file-path-binding");
+    const fileId = "88888888-8888-4888-8888-888888888888";
+    const filename = "desktop-report.txt";
+    const fileDir = path.resolve(UPLOADS_BASE, fileId);
+    const registeredPath = path.resolve(fileDir, filename);
+    const normalizedVariant = `${fileDir}/nested/../${filename}`;
+    await fs.mkdir(fileDir, { recursive: true });
+    await fs.writeFile(registeredPath, "DESKTOP_UPLOAD_BODY", "utf8");
+
+    try {
+      await drain(
+        processAgentStream(
+          streamOf(
+            toolCall("parseFile", "p-desktop-path", {
+              filePath: normalizedVariant,
+            }),
+            toolResult("parseFile", "p-desktop-path", {
+              filePath: normalizedVariant,
+            }, {
+              ok: false,
+              text: "[Error] Failed to parse text file",
+              failureKind: "error",
+              metadata: { pages: null, wordCount: 0, title: null },
+            }),
+          ),
+          {
+            state,
+            agentMessageId: "m",
+            streamId: "s-desktop-path",
+            runId: "r",
+            fileIds: [fileId],
+          },
+        ),
+      );
+
+      const material = state.materials.get(stableErrorMaterialId(fileId));
+      expect(material).toMatchObject({
+        fileId,
+        filename,
+        mimeType: "text/plain",
+      });
+      expect(
+        [...state.materials.values()].some((candidate) => candidate.fileId === filename),
+      ).toBe(false);
+    } finally {
+      await fs.rm(fileDir, { recursive: true, force: true });
     }
   });
 

@@ -16,21 +16,32 @@ const VISION_TEST_PNG = Buffer.from(
   "base64",
 );
 
-export async function testVisionConnection(vision: NonNullable<ModelOverrides["vision"]>): Promise<void> {
+export async function testVisionConnection(
+  vision: NonNullable<ModelOverrides["vision"]>,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(abortSignal?.reason);
+  if (abortSignal?.aborted) relayAbort();
+  else abortSignal?.addEventListener("abort", relayAbort, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("Vision test timed out", "TimeoutError")),
+    VISION_TEST_TIMEOUT_MS,
+  );
   const entries: Iterable<readonly [string, unknown]> = [
     [
       MODEL_OVERRIDES_CONTEXT_KEY,
       { vision },
     ],
+    ["abortSignal", controller.signal],
   ];
   const requestContext = new RequestContext<unknown>(entries);
-  const visionModel = await getVisionModel(requestContext, { callSite: "visionTest" });
-  if (!visionModel) {
-    throw new Error("图像识别配置未生效");
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), VISION_TEST_TIMEOUT_MS);
   try {
+    const visionModel = await getVisionModel(requestContext, { callSite: "visionTest" });
+    controller.signal.throwIfAborted();
+    if (!visionModel) {
+      throw new Error("图像识别配置未生效");
+    }
     const result = streamText({
       model: visionModel,
       maxOutputTokens: 16,
@@ -58,5 +69,6 @@ export async function testVisionConnection(vision: NonNullable<ModelOverrides["v
     }
   } finally {
     clearTimeout(timer);
+    abortSignal?.removeEventListener("abort", relayAbort);
   }
 }

@@ -7,6 +7,7 @@ import {
   getConfirmGrant,
   getConfirmGrantState,
   listConfirmAuditEvents,
+  listConfirmCancellationTombstones,
   listConfirmGrantEvents,
   listConfirmGrants,
   revokeConfirmGrant,
@@ -109,6 +110,46 @@ describe("confirm grant 与不可变审计仓储", () => {
       policyVersion: "command-policy-v1",
       isolationEpoch: null,
       configHash: null,
+    }]);
+  });
+
+  it("仅把 request-cancelled 审计暴露为取消墓碑", async () => {
+    const base = {
+      subjectId: "local-user",
+      sessionId: "session-cancelled",
+      runId: "run-1",
+      toolCallId: "tool-1",
+      confirmId: "confirm-1",
+      kind: "command" as const,
+      commandDigest: "digest-1",
+      commandPreview: "mv a b",
+      source: "ui" as const,
+      grantId: null,
+      policyVersion: "command-policy-v1",
+      isolationEpoch: null,
+      configHash: null,
+    };
+    await appendConfirmAuditEvent({
+      ...base,
+      eventId: "audit-cancelled",
+      ts: "2026-07-21T03:00:00.000Z",
+      eventType: "decision_failed",
+      decision: "failed",
+      result: "request-cancelled",
+    });
+    await appendConfirmAuditEvent({
+      ...base,
+      eventId: "audit-other-failure",
+      ts: "2026-07-21T03:01:00.000Z",
+      eventType: "decision_failed",
+      decision: "failed",
+      result: "failed",
+    });
+
+    expect(await listConfirmCancellationTombstones("session-cancelled")).toEqual([{
+      sessionId: "session-cancelled",
+      toolCallId: "tool-1",
+      confirmId: "confirm-1",
     }]);
   });
 

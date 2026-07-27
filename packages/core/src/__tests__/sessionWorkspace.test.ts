@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import {
   __resetIsolationCacheForTest,
   __resetSessionWorkspaceCacheForTest,
   __sessionWorkspaceCacheStatsForTest,
+  acquireSessionWorkspace,
   allowUnisolatedCommands,
   buildSandboxEnv,
   cleanupSessionWorkspace,
@@ -23,22 +25,22 @@ import {
 // 沙箱 P0:会话级 Workspace 装配——目录命名防穿越/最小 env/隔离解析/实例缓存
 
 describe("sessionWorkspaceDirName 路径安全", () => {
-  it("UUID 原样保留", () => {
-    expect(sessionWorkspaceDirName("9e01e165-1337-43f2-9383-cf339a82b60c")).toBe(
-      "9e01e165-1337-43f2-9383-cf339a82b60c",
+  it("所有 sessionId 统一编码为可逆的安全目录名", () => {
+    expect(sessionWorkspaceDirName("9e01e165-1337-43f2-9383-cf339a82b60c")).toMatch(
+      /^sid_[0-9a-f]+$/,
     );
-    expect(sessionWorkspaceDirName("sess_attack-01")).toBe("sess_attack-01");
+    expect(sessionWorkspaceDirName("sess_attack-01")).toMatch(/^sid_[0-9a-f]+$/);
   });
-  it("路径穿越字符全部清洗并追加原始 sessionId 短哈希", () => {
+  it("路径穿越字符不会进入目录名", () => {
     const name = sessionWorkspaceDirName("../../etc/passwd");
-    expect(name).toMatch(/^______etc_passwd_[0-9a-f]{12}$/);
+    expect(name).toMatch(/^sid_[0-9a-f]+$/);
     expect(name).not.toContain("..");
     expect(name).not.toContain("/");
     expect(name).not.toContain("\\");
 
-    expect(sessionWorkspaceDirName("a/b\\c:d")).toMatch(/^a_b_c_d_[0-9a-f]{12}$/);
+    expect(sessionWorkspaceDirName("a/b\\c:d")).toMatch(/^sid_[0-9a-f]+$/);
   });
-  it("Round5 回归:清洗后相同的恶意 sessionId 不再碰撞", () => {
+  it("清洗后相同的恶意 sessionId 不会碰撞", () => {
     const names = [
       sessionWorkspaceDirName("sess/attack"),
       sessionWorkspaceDirName("sess\\attack"),
@@ -48,15 +50,28 @@ describe("sessionWorkspaceDirName 路径安全", () => {
 
     expect(new Set(names).size).toBe(names.length);
     for (const name of names) {
-      expect(name).toMatch(/^sess_attack_[0-9a-f]{12}$/);
+      expect(name).toMatch(/^sid_[0-9a-f]+$/);
       expect(name).not.toContain("..");
       expect(name).not.toContain("/");
       expect(name).not.toContain("\\");
     }
   });
-  it("空串落 default", () => {
-    expect(sessionWorkspaceDirName("")).toBe("default");
-    expect(sessionWorkspaceDir("")).toContain("default");
+  it("非法字符分支的旧输出不能与合法 sessionId 原值碰撞", () => {
+    const unsafeSessionId = "sess/attack";
+    const collidingSafeSessionId = `sess_attack_${
+      createHash("sha256").update(unsafeSessionId).digest("hex").slice(0, 12)
+    }`;
+
+    expect(sessionWorkspaceDirName(unsafeSessionId)).not.toBe(
+      sessionWorkspaceDirName(collidingSafeSessionId),
+    );
+    expect(sessionWorkspaceDir(unsafeSessionId)).not.toBe(
+      sessionWorkspaceDir(collidingSafeSessionId),
+    );
+  });
+  it("空串也走统一编码", () => {
+    expect(sessionWorkspaceDirName("")).toBe("sid_");
+    expect(sessionWorkspaceDir("")).toContain("sid_");
   });
 });
 
@@ -305,6 +320,81 @@ describe("getSessionWorkspace 装配与缓存", () => {
 
     expect(destroyA).toHaveBeenCalledTimes(1);
     expect(destroyB).toHaveBeenCalledTimes(1);
+  });
+
+  it("全量 invalidate 也会等待活动租约释放", async () => {
+    const lease = await acquireSessionWorkspace("sess-leased-invalidate-all", opts);
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    invalidateSessionWorkspace();
+    expect(destroy).not.toHaveBeenCalled();
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("活动租约仅延迟旧实例销毁，下轮重新装配 workspace 与挂载", async () => {
+    const resolveFolderSources = vi.fn(() => [] as FolderSourceRecord[]);
+    const leaseOpts = { ...opts, resolveFolderSources };
+    const lease = await acquireSessionWorkspace("sess-leased-invalidate", leaseOpts);
+    const releaseBackground = lease.retain();
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    invalidateSessionWorkspace("sess-leased-invalidate");
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      cacheSize: 0,
+      leaseCount: 2,
+      pendingDestroyCount: 1,
+    });
+
+    const nextTurn = await acquireSessionWorkspace("sess-leased-invalidate", leaseOpts);
+    expect(nextTurn.workspace).not.toBe(lease.workspace);
+    expect(nextTurn.workspace.sandbox).not.toBe(lease.workspace.sandbox);
+    expect(resolveFolderSources).toHaveBeenCalledTimes(2);
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      cacheSize: 1,
+      pendingDestroyCount: 1,
+    });
+    lease.release();
+    nextTurn.release();
+    expect(destroy).not.toHaveBeenCalled();
+
+    releaseBackground();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      leaseCount: 0,
+      pendingDestroyCount: 0,
+    });
+  });
+
+  it("租约 Promise 落账前的同步预留也会阻止失效销毁", async () => {
+    const workspace = await getSessionWorkspace("sess-lease-reservation", opts);
+    const destroy = vi.spyOn(workspace, "destroy").mockResolvedValue(undefined);
+
+    const acquiring = acquireSessionWorkspace("sess-lease-reservation", opts);
+    invalidateSessionWorkspace("sess-lease-reservation");
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest().pendingAcquireCount).toBe(1);
+
+    const lease = await acquiring;
+    expect(lease.workspace).toBe(workspace);
+    expect(destroy).not.toHaveBeenCalled();
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("LRU 只标记仍有租约的 Workspace，释放后才销毁", async () => {
+    const lease = await acquireSessionWorkspace("sess-leased-lru-oldest", opts);
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    for (let index = 0; index < 512; index += 1) {
+      await getSessionWorkspace(`sess-leased-lru-${index}`, opts);
+    }
+
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest().pendingDestroyCount).toBe(1);
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 
   it("Round9 回归:同会话并发首建只产出一个实例(inflight 去重,防游离实例泄漏)", async () => {

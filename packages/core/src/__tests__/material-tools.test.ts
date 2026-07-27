@@ -465,8 +465,9 @@ describe("storeMaterial execute — pure computation", () => {
 
     expect(result.stored).toBe(true);
     expect(result.materialId).toBeTruthy();
-    // materialId should be a deterministic hash-based ID
-    expect(result.materialId).toMatch(/^mat-[0-9a-f]{12}$/);
+    expect(result.materialId).toMatch(
+      /^mat-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
   });
 
   it("generates unique IDs for different filenames", async () => {
@@ -484,7 +485,7 @@ describe("storeMaterial execute — pure computation", () => {
     expect(r1.materialId).not.toBe(r2.materialId);
   });
 
-  it("same filename produces same materialId", async () => {
+  it("同名素材未指定 materialId 时仍生成不同主键，避免静默覆盖", async () => {
     const raw1 = await storeMaterialTool.execute!(
       { filename: "report.pdf", mimeType: "application/pdf", pages: 5, title: "Report" },
       ctx,
@@ -496,7 +497,22 @@ describe("storeMaterial execute — pure computation", () => {
     const r1 = raw1 as { materialId: string };
     const r2 = raw2 as { materialId: string };
 
-    expect(r1.materialId).toBe(r2.materialId);
+    expect(r1.materialId).not.toBe(r2.materialId);
+  });
+
+  it("显式 materialId 原样保留用于上游正文精确联接", async () => {
+    const raw = await storeMaterialTool.execute!(
+      {
+        materialId: "mat-upstream",
+        filename: "report.pdf",
+        mimeType: "application/pdf",
+        pages: 5,
+        title: "Report",
+      },
+      ctx,
+    );
+
+    expect(raw).toEqual({ materialId: "mat-upstream", stored: true });
   });
 });
 

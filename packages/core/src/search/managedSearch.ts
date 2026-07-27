@@ -165,7 +165,7 @@ class ManagedApiProvider implements SearchProvider {
     } catch (err) {
       if (options?.signal?.aborted) return [];
       if (err instanceof SearchProviderError) {
-        recordSearchProviderError(this.id, err.kind);
+        recordSearchProviderError(this.id, err.kind, err.status);
       }
       return [];
     }
@@ -185,7 +185,7 @@ function buildProviderSignature(configSignature: string): string {
   const healthSignature = SEARCH_PROVIDER_REGISTRY
     .map((entry) => {
       const health = getSearchProviderHealth(entry.id);
-      return `${entry.id}:${health.status}:${health.quotaUntil ?? 0}`;
+      return `${entry.id}:${health.status}:${health.authRetryAt ?? 0}:${health.quotaUntil ?? 0}`;
     })
     .join("|");
   return `${configSignature}::${healthSignature}`;

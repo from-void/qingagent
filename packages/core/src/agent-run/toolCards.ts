@@ -101,7 +101,13 @@ export function commandCardFromResult(
   );
   const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
   const outputForDisplay = outRaw.replace(/\n?Exit code:?\s*\d+\s*$/i, "").trimEnd();
-  const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
+  const hasStructuredStatus =
+    typeof structured?.success === "boolean" ||
+    typeof structured?.exitCode === "number";
+  const looksLikeError =
+    !hasStructuredStatus &&
+    !exitMatch &&
+    /^Error:/.test(outRaw.trimStart());
   const structuredExitCode = typeof structured?.exitCode === "number"
     ? structured.exitCode
     : null;
@@ -138,7 +144,7 @@ export function commandCardFromResult(
       ? "运行命令"
       : verdict.title.replace(/^AI 想/, "");
   const failed =
-    structuredFailed || legacyNonZeroExit || looksLikeError || !ok;
+    structuredFailed || legacyNonZeroExit || looksLikeError || (!hasStructuredStatus && !ok);
   const terminalKind: CommandTerminalKind | undefined = background
     ? undefined
     : timedOut

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
+import { readFile } from "node:fs/promises";
 import {
   loadSafeOfficeZip,
   parseFileBuffer,
@@ -293,6 +294,40 @@ async function createXlsxRound7NumberFormatFixture(): Promise<Buffer> {
     <row r="12"><c r="A12" t="inlineStr"><is><t>LocaleDate</t></is></c><c r="B12" s="13"><v>45292</v></c></row>
     <row r="13"><c r="A13" t="inlineStr"><is><t>TextNumericDateStyle</t></is></c><c r="B13" s="1" t="inlineStr"><is><t>45292</t></is></c></row>
     <row r="14"><c r="A14" t="inlineStr"><is><t>InlineNumericTimeStyle</t></is></c><c r="B14" s="3" t="inlineStr"><is><t>0.5</t></is></c></row>
+  </sheetData>
+</worksheet>`,
+  );
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+async function createXlsxReferenceBoundsFixture(options: {
+  cellRef: string;
+  dimensionRef?: string;
+}): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "xl/workbook.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Bounds" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+  );
+  zip.file(
+    "xl/_rels/workbook.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+  );
+  zip.file(
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  ${options.dimensionRef ? `<dimension ref="${options.dimensionRef}"/>` : ""}
+  <sheetData>
+    <row r="${options.cellRef.match(/\d+$/)?.[0] ?? "1"}">
+      <c r="${options.cellRef}" t="inlineStr"><is><t>BOUNDARY_CELL</t></is></c>
+    </row>
   </sheetData>
 </worksheet>`,
   );
@@ -1047,6 +1082,82 @@ describe("parseFile Office 文本解析", () => {
     expect(result.text).toContain("LocaleDate\t2024-01-01");
     expect(result.text).toContain("TextNumericDateStyle\t45292");
     expect(result.text).toContain("InlineNumericTimeStyle\t0.5");
+  });
+
+  it("xlsx 按 Excel 语义渲染可选小数、分数与缩放逗号", async () => {
+    const fixture = await readFile(
+      new URL("fixtures/xlsx-number-formats.xlsx", import.meta.url),
+    );
+    const result = await parseFileBuffer({
+      buffer: fixture,
+      filename: "xlsx-number-formats.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.text).toContain("OptionalDecimals\t1.2");
+    expect(result.text).toContain("RequiredAndOptionalDecimals\t1.20");
+    expect(result.text).toContain("OneDigitFraction\t1 1/4");
+    expect(result.text).toContain("TwoDigitFraction\t2 1/8");
+    expect(result.text).toContain("ProperFraction\t1/3");
+    expect(result.text).toContain("ThousandsScale\t1,235");
+    expect(result.text).toContain("MillionsScale\t2.5M");
+  });
+
+  it("xlsx 拒绝超过 XFD 或最大行号的单元格引用", async () => {
+    const [columnOverflow, hugeColumnOverflow, rowOverflow] = await Promise.all([
+      parseFileBuffer({
+        buffer: await createXlsxReferenceBoundsFixture({ cellRef: "XFE1" }),
+        filename: "column-overflow.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      parseFileBuffer({
+        buffer: await createXlsxReferenceBoundsFixture({ cellRef: "ZZZZZZ1" }),
+        filename: "huge-column-overflow.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      parseFileBuffer({
+        buffer: await createXlsxReferenceBoundsFixture({ cellRef: "A1048577" }),
+        filename: "row-overflow.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ]);
+
+    expect(columnOverflow.ok).toBe(false);
+    expect(hugeColumnOverflow.ok).toBe(false);
+    expect(rowOverflow.ok).toBe(false);
+    if (columnOverflow.ok || hugeColumnOverflow.ok || rowOverflow.ok) {
+      throw new Error("expected XLSX bounds rejection");
+    }
+    expect(columnOverflow.error).toContain("列引用超出");
+    expect(hugeColumnOverflow.error).toContain("列引用超出");
+    expect(rowOverflow.error).toContain("行引用超出");
+  });
+
+  it("xlsx 拒绝越界 worksheet dimension，并接受规范最大单元格", async () => {
+    const invalidDimension = await parseFileBuffer({
+      buffer: await createXlsxReferenceBoundsFixture({
+        cellRef: "A1",
+        dimensionRef: "A1:XFE1",
+      }),
+      filename: "dimension-overflow.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const boundary = await parseFileBuffer({
+      buffer: await createXlsxReferenceBoundsFixture({
+        cellRef: "XFD1048576",
+        dimensionRef: "XFD1048576",
+      }),
+      filename: "dimension-boundary.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(invalidDimension.ok).toBe(false);
+    if (invalidDimension.ok) throw new Error("expected XLSX dimension rejection");
+    expect(invalidDimension.error).toContain("工作表维度");
+    expect(boundary.ok).toBe(true);
+    expect(boundary.text).toContain("BOUNDARY_CELL");
   });
 
   it("xlsx 无可读 worksheet 失败，但可读空 worksheet 仍是合法空内容", async () => {

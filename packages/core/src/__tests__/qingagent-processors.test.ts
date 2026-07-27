@@ -97,10 +97,20 @@ describe("qingagent processors", () => {
     expect(Object.keys(buildQingagentStaticTools())).not.toContain("webSearch");
   });
 
-  it("UnicodeNormalizer 会清掉控制字符并折叠空白", async () => {
+  it("UnicodeNormalizer 只清理协议控制字符并保留多行结构与 Unicode 正文", async () => {
     resetProcessorEnv();
     const [normalizer] = buildQingagentInputProcessors();
-    const input = "请\u0000\u0008  帮我\t\t写作：ＡＢＣ";
+    const input = [
+      "\u0000① 版本：ＡＢＣ",
+      "yaml:",
+      "  root:",
+      "    child:\tvalue",
+      "",
+      "```ts",
+      "  const marker = \"①\";",
+      "```",
+      "\u0008",
+    ].join("\r\n");
     const messages = [
       {
         id: "m1",
@@ -122,7 +132,9 @@ describe("qingagent processors", () => {
     });
 
     const text = output[0]!.content.parts[0]!.text;
-    expect(text).toBe("请 帮我 写作:ABC");
+    const expected = input.replace(/[\u0000\u0008]/g, "");
+    expect(text).toBe(expected);
+    expect(output[0]!.content.content).toBe(expected);
     expect(text).not.toContain("\u0000");
     expect(text).not.toContain("\u0008");
   });

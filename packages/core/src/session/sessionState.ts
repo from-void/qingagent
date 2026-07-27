@@ -181,7 +181,7 @@ export interface SessionState {
   suggestions: Map<string, SuggestionRecord>;
   /** 待用户裁决的问题中心批注组；独立于 revision，绝不驱动 pendingReview。 */
   annotationGroups: AnnotationGroup[];
-  /** Runtime-only：本轮 create_annotation_groups 要在前端按来源换代的 origin 集合。 */
+  /** Runtime-only：本轮已换代旧批注的 origin；后续同来源批次只追加，前端仍按该集合换代。 */
   _annotationOriginsReplacedThisTurn?: Set<string>;
   /** Verdict per patch: "accepted" | "rejected". Set by updatePatchVerdict. */
   patchVerdicts: Map<string, "accepted" | "rejected">;

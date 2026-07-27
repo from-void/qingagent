@@ -74,7 +74,8 @@ export class GithubConnector implements ConnectorAdapter {
   private lastReasonCode: string | null = null;
   // 最近一次真实核验时间(授权完成/probe 打真实 API 均算),status() 透出为 lastCheckedAt
   private lastCheckedAt: string | null = null;
-  private startFlight: Promise<GithubStartResult> | null = null;
+  private readonly startFlights = new Map<string, Promise<GithubStartResult>>();
+  private startSequence: Promise<void> = Promise.resolve();
   private generation = 0;
   private readonly terminalByPending = new Map<string, { status: ConnectorStatusDto; expiresAt: number }>();
   private readonly scopeByPending = new Map<string, "public_repo" | "repo">();
@@ -125,17 +126,37 @@ export class GithubConnector implements ConnectorAdapter {
     }
     const scope = input.scope ?? "public_repo";
     if (scope !== "public_repo" && scope !== "repo") throw new GithubConnectorError("GitHub scope 非法", "INVALID_ARGUMENT", 400);
-    if (this.startFlight) return this.startFlight;
-    this.startFlight = this.startInternal(scope).finally(() => { this.startFlight = null; });
-    return this.startFlight;
+    const key = this.pendingScope(scope);
+    const existing = this.startFlights.get(key);
+    if (existing) return existing;
+    const start = this.startSequence.then(() => this.startInternal(scope));
+    const flight = start.finally(() => {
+      if (this.startFlights.get(key) === flight) this.startFlights.delete(key);
+    });
+    this.startFlights.set(key, flight);
+    this.startSequence = flight.then(() => {}, () => {});
+    return flight;
   }
 
   private async startInternal(scope: "public_repo" | "repo"): Promise<GithubStartResult> {
     if (this.currentPendingId) {
+      const pendingId = this.currentPendingId;
+      const currentScope = this.scopeByPending.get(pendingId);
       try {
-        const existing = this.pending.get(this.currentPendingId, "github", this.pendingScope(scope));
-        return this.publicStart(existing.value.device, existing.value.providerExpiresAt, existing.pendingId, true);
-      } catch { this.currentPendingId = null; }
+        if (!currentScope) throw new PendingStoreError("授权上下文已丢失，请重新发起", "PENDING_LOST", 410);
+        const existing = this.pending.get(pendingId, "github", this.pendingScope(currentScope));
+        if (currentScope === scope) {
+          return this.publicStart(existing.value.device, existing.value.providerExpiresAt, existing.pendingId, true);
+        }
+        this.generation += 1;
+        this.pending.disconnect("github", this.pendingScope(currentScope));
+        this.scopeByPending.delete(pendingId);
+        this.currentPendingId = null;
+      } catch (error) {
+        if (!(error instanceof PendingStoreError)) throw error;
+        this.scopeByPending.delete(pendingId);
+        this.currentPendingId = null;
+      }
     }
     const device = await this.auth.start(scope);
     const providerExpiresAt = Date.now() + device.expires_in * 1000;
@@ -168,7 +189,10 @@ export class GithubConnector implements ConnectorAdapter {
       if (signal.aborted || generation !== this.generation) return;
       await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
         strategy: "oauth2-device", version: 1, grantedScopes, account, token: token.access_token,
-      }, { expectedRevision: oldBundle?.revision ?? null });
+      }, {
+        expectedRevision: oldBundle?.revision ?? null,
+        writeGuard: () => !signal.aborted && generation === this.generation,
+      });
       this.lastReasonCode = null;
       this.lastCheckedAt = new Date().toISOString();
       this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });

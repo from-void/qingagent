@@ -2,6 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import {
   SandboxTimeoutError,
   WORKSPACE_TOOLS,
+  type ProcessHandle,
   type Workspace,
 } from "@mastra/core/workspace";
 import { mkdirSync, realpathSync } from "node:fs";
@@ -59,6 +60,8 @@ export interface GatedExecuteCommandToolOptions {
   /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
   state?: ApprovalProofSession;
   getWorkspace: () => Promise<Workspace>;
+  /** 后台进程需把 Workspace 租约延长到自身退出。 */
+  retainWorkspace?: () => () => void;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
   /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
@@ -207,10 +210,36 @@ async function withBackgroundSpawnLock<T>(
   }
 }
 
+async function terminateSpawnedProcess(handle: ProcessHandle): Promise<void> {
+  try {
+    const killed = await handle.kill();
+    if (!killed) {
+      console.warn("[gatedExecuteCommandTool] 后台进程取消时已退出，继续等待回收", {
+        pid: handle.pid,
+      });
+    }
+  } catch (error) {
+    console.warn("[gatedExecuteCommandTool] 后台进程终止失败，继续等待回收", {
+      pid: handle.pid,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+  } finally {
+    try {
+      await handle.wait();
+    } catch (error) {
+      console.warn("[gatedExecuteCommandTool] 后台进程等待回收失败", {
+        pid: handle.pid,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+}
+
 export function createGatedExecuteCommandTool({
   sessionId,
   state,
   getWorkspace,
+  retainWorkspace,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
 }: GatedExecuteCommandToolOptions) {
@@ -323,7 +352,13 @@ export function createGatedExecuteCommandTool({
           return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持后台进程");
         }
         return await withBackgroundSpawnLock(sessionId, async () => {
+          if (context?.abortSignal?.aborted) {
+            return cancelledCommandResult("命令已取消: 等待后台启动锁期间请求已被取消");
+          }
           const processes = await sandbox.processes!.list();
+          if (context?.abortSignal?.aborted) {
+            return cancelledCommandResult("命令已取消: 后台进程检查期间请求已被取消");
+          }
           const runningCount = processes.filter((process) => process.running).length;
           if (runningCount >= SANDBOX_MAX_BACKGROUND_PROCESSES) {
             return rejectedCommandResult(
@@ -334,13 +369,43 @@ export function createGatedExecuteCommandTool({
           // LocalSandbox/bwrap 没有 per-process cgroup 或 RLIMIT hook；非特权桌面进程也
           // 不能可靠创建 cgroup。现阶段以 TTL、进程数和输出上限三层有界化，CPU/内存
           // 硬配额仍是残留边界，待框架提供资源控制接口后接入。
-          const handle = await sandbox.processes!.spawn(input.command, {
-            cwd,
-            ...perCallCredentialEnv,
-            timeout: backgroundTimeout,
-            maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-            abortSignal: context?.abortSignal,
-          });
+          const releaseWorkspace = retainWorkspace?.();
+          const abortSignal = context?.abortSignal;
+          let abortedDuringSpawn = abortSignal?.aborted === true;
+          const markSpawnAborted = () => {
+            abortedDuringSpawn = true;
+          };
+          abortSignal?.addEventListener("abort", markSpawnAborted);
+          let handle: ProcessHandle;
+          try {
+            handle = await sandbox.processes!.spawn(input.command, {
+              cwd,
+              ...perCallCredentialEnv,
+              timeout: backgroundTimeout,
+              maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
+              abortSignal,
+            });
+          } catch (error) {
+            abortSignal?.removeEventListener("abort", markSpawnAborted);
+            releaseWorkspace?.();
+            throw error;
+          }
+          if (abortedDuringSpawn || abortSignal?.aborted) {
+            try {
+              await terminateSpawnedProcess(handle);
+            } finally {
+              abortSignal?.removeEventListener("abort", markSpawnAborted);
+              releaseWorkspace?.();
+            }
+            return cancelledCommandResult("命令已取消: 后台进程启动期间请求已被取消");
+          }
+          // 检查与移除监听之间没有 await，abort 不能插入这段同步临界区。
+          abortSignal?.removeEventListener("abort", markSpawnAborted);
+          // wait 可被轮询工具重复调用；这里只负责在真实退出后释放后台活动引用。
+          void handle.wait().then(
+            () => releaseWorkspace?.(),
+            () => releaseWorkspace?.(),
+          );
           const clampedLabel = backgroundTimeoutClamped ? "，已按后台上限钳制" : "";
           return commandResult({
             success: true,

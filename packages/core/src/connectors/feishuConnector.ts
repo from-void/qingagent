@@ -89,7 +89,8 @@ export class FeishuConnector implements ConnectorAdapter {
   private readonly now: () => number;
   private currentPendingId: string | null = null;
   private currentScope: string | null = null;
-  private startFlight: Promise<FeishuStartResult> | null = null;
+  private readonly startFlights = new Map<string, Promise<FeishuStartResult>>();
+  private startSequence: Promise<void> = Promise.resolve();
   private generation = 0;
   private readonly terminalByPending = new Map<string, { status: ConnectorStatusDto; expiresAt: number }>();
 
@@ -124,9 +125,16 @@ export class FeishuConnector implements ConnectorAdapter {
 
   async start(input: { domains?: LarkAuthDomain[] } = {}): Promise<FeishuStartResult> {
     const domains = this.validateDomains(input);
-    if (this.startFlight) return this.startFlight;
-    this.startFlight = this.startInternal(domains).finally(() => { this.startFlight = null; });
-    return this.startFlight;
+    const key = domains.join(",");
+    const existing = this.startFlights.get(key);
+    if (existing) return existing;
+    const start = this.startSequence.then(() => this.startInternal(domains));
+    const flight = start.finally(() => {
+      if (this.startFlights.get(key) === flight) this.startFlights.delete(key);
+    });
+    this.startFlights.set(key, flight);
+    this.startSequence = flight.then(() => {}, () => {});
+    return flight;
   }
 
   private async startInternal(domains: LarkAuthDomain[]): Promise<FeishuStartResult> {
@@ -336,9 +344,9 @@ export class FeishuConnector implements ConnectorAdapter {
   private validateDomains(input: { domains?: LarkAuthDomain[] }): LarkAuthDomain[] {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => key !== "domains")) fail("INVALID_ARGUMENT", "飞书 start 参数非法");
     if (!Array.isArray(input.domains) || input.domains.length === 0) fail("INVALID_ARGUMENT", "至少选择一个飞书授权域");
-    const domains = [...new Set(input.domains)];
-    if (domains.some((domain) => !(LARK_AUTH_DOMAINS as readonly string[]).includes(domain))) fail("INVALID_ARGUMENT", "飞书授权域非法");
-    return domains;
+    const requested = new Set(input.domains);
+    if ([...requested].some((domain) => !(LARK_AUTH_DOMAINS as readonly string[]).includes(domain))) fail("INVALID_ARGUMENT", "飞书授权域非法");
+    return LARK_AUTH_DOMAINS.filter((domain) => requested.has(domain));
   }
 
   private expirePending(pendingId: string, scope: string, reasonCode: string): void {

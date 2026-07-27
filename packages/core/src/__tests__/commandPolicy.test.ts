@@ -613,6 +613,33 @@ describe("commandPolicy P0 gate", () => {
     expect(multi.action).toBe("confirm");
   });
 
+  it.each([
+    "npm --prefix ./app install zod",
+    "pnpm --filter web add react",
+    "git -C ./repo push origin main",
+    "git -c core.excludesFile=/dev/null clean -fd",
+  ])("前置带值选项后的副作用仍进入确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
+  it.each([
+    "git restore tracked.txt",
+    "git restore --source HEAD --staged --worktree tracked.txt",
+    "git checkout -- tracked.txt",
+    "git checkout HEAD -- tracked.txt",
+  ])("覆盖已跟踪文件的 git 命令进入确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
+  it.each([
+    "wget --method DELETE https://example.test/item",
+    "wget --method POST https://example.test/item",
+    "wget --method PUT https://example.test/item",
+    "wget --method PATCH https://example.test/item",
+  ])("wget 空格分隔写方法进入发送确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
   it("deny/confirm 消息可直接返回给模型", () => {
     const denied = decision("lark-cli auth login");
     if (denied.action !== "deny") throw new Error(`expected deny, got ${denied.action}`);

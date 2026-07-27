@@ -1,6 +1,7 @@
 import type { ReviewContext, SkillRef } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
+import type { Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getQingagentSessionWorkspace } from "../agents/qingagent.js";
@@ -97,7 +98,10 @@ import {
   truncateAnnotationSummary,
   type AnnotationGroupInput,
 } from "../tools/annotationGroups.js";
-import { replaceAnnotationGroupsByOrigin } from "@qingagent/db";
+import {
+  insertAnnotationGroups,
+  replaceAnnotationGroupsByOrigin,
+} from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,
@@ -676,9 +680,17 @@ function imageAttachmentToolInstruction({
 
 export function createSessionScopedTools(
   stateOrMaterials: SessionState | Map<string, Material>,
+  workspaceOptions: {
+    getWorkspace?: () => Promise<Workspace>;
+    retainWorkspace?: () => () => void;
+  } = {},
 ) {
   const state = stateOrMaterials instanceof Map ? null : stateOrMaterials;
   const materials = stateOrMaterials instanceof Map ? stateOrMaterials : stateOrMaterials.materials;
+  const getWorkspace = state
+    ? workspaceOptions.getWorkspace ?? (() => getQingagentSessionWorkspace(state.sessionId))
+    : null;
+  let annotationGroupWriteQueue: Promise<void> = Promise.resolve();
   const readMaterial = createTool({
     id: "readMaterial",
     description:
@@ -800,14 +812,29 @@ export function createSessionScopedTools(
         }];
       });
       if (groups.length) {
-        const replacedOrigins = new Set(groups.map((group) => group.origin));
-        await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, groups);
-        state.annotationGroups = [
-          ...state.annotationGroups.filter((group) => !replacedOrigins.has(group.origin)),
-          ...groups,
-        ];
-        const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
-        replacedOrigins.forEach((origin) => turnOrigins.add(origin));
+        const write = annotationGroupWriteQueue.then(async () => {
+          const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
+          const origins = new Set(groups.map((group) => group.origin));
+          const originsToReplace = new Set(
+            [...origins].filter((origin) => !turnOrigins.has(origin)),
+          );
+          const replacing = groups.filter((group) => originsToReplace.has(group.origin));
+          const appending = groups.filter((group) => !originsToReplace.has(group.origin));
+          if (replacing.length > 0) {
+            await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, replacing);
+          }
+          if (appending.length > 0) {
+            await insertAnnotationGroups(state.docId, state.docVersion, appending);
+          }
+          state.annotationGroups = [
+            ...state.annotationGroups.filter((group) => !originsToReplace.has(group.origin)),
+            ...replacing,
+            ...appending,
+          ];
+          origins.forEach((origin) => turnOrigins.add(origin));
+        });
+        annotationGroupWriteQueue = write.catch(() => undefined);
+        await write;
       }
       return { ok: groups.length > 0, groupCount: groups.length, anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0), errors };
     },
@@ -1335,12 +1362,13 @@ export function createSessionScopedTools(
     ? createGatedExecuteCommandTool({
         sessionId: state.sessionId,
         state,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
+        retainWorkspace: workspaceOptions.retainWorkspace,
       })
     : null;
   const getProcessOutput = state
     ? createBoundedGetProcessOutputTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   // 文件夹资料库 agent 工具:仅当会话连了文件夹源时注入(读文档/检索 + 受保护的工作区文件操作)。
@@ -1348,35 +1376,35 @@ export function createSessionScopedTools(
   const readDocument = state && hasFolderSources
     ? createReadDocumentTool({
         sessionId: state.sessionId,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
         getSources: () => state.folderSources.values(),
       })
     : null;
   const searchDocuments = state && hasFolderSources
     ? createSearchDocumentsTool({
         sessionId: state.sessionId,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
         getSources: () => state.folderSources.values(),
       })
     : null;
   const workspaceReadFile = state && hasFolderSources
     ? createProtectedFolderSourceReadFileTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceEditFile = state && hasFolderSources
     ? createProtectedFolderSourceEditFileTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceGrep = state && hasFolderSources
     ? createProtectedFolderSourceGrepTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceSearch = state && hasFolderSources
     ? createProtectedFolderSourceSearchTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const updateWorkingMemory = state ? createUpdateWorkingMemoryTool(state) : null;

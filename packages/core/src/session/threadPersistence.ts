@@ -29,6 +29,7 @@ import { sessionIdToTraceId } from "../agent-run/agentSpans.js";
 import type { Material } from "../types/material.js";
 import {
   documentRepo,
+  listConfirmCancellationTombstones,
   type DocumentRow,
 } from "@qingagent/db";
 import {
@@ -694,6 +695,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
 function deserializePendingConfirms(
   value: unknown,
   chatHistory: ChatMessage[],
+  cancelledConfirmKeys: ReadonlySet<string> | null,
 ): Map<string, PendingConfirm> {
   const restored = new Map<string, PendingConfirm>();
   if (!Array.isArray(value)) return restored;
@@ -709,6 +711,17 @@ function deserializePendingConfirms(
     if (!isRecord(item)) continue;
     // 已落盘的终态墓碑只证明该确认不可再恢复；绝不重建为 pending。
     if (item.status === "terminal") continue;
+    // 取消墓碑账本不可读时 fail closed；确认卡可由用户重试，旧命令绝不能误恢复。
+    if (
+      cancelledConfirmKeys === null ||
+      (
+        isNonEmptyString(item.toolCallId) &&
+        isNonEmptyString(item.confirmId) &&
+        cancelledConfirmKeys.has(`${item.toolCallId}\0${item.confirmId}`)
+      )
+    ) {
+      continue;
+    }
     const spec = confirmSpecSchema.safeParse(item.spec);
     const requestedAt = parseValidTimestamp(item.requestedAt);
     const expiresAt = parseValidTimestamp(item.expiresAt);
@@ -1932,7 +1945,30 @@ export async function loadSessionFromThread(
     }
   }
   let chatHistory = deserializeChatHistory(meta.chatHistory);
-  const pendingConfirms = deserializePendingConfirms(meta.pendingConfirms, chatHistory);
+  let cancelledConfirmKeys: Set<string> | null = new Set();
+  const hasRestorableConfirmCandidate = Array.isArray(meta.pendingConfirms) &&
+    meta.pendingConfirms.some((item) =>
+      isRecord(item) && (item.status === "pending" || item.status === "resuming")
+    );
+  if (hasRestorableConfirmCandidate) {
+    try {
+      const tombstones = await listConfirmCancellationTombstones(sessionId);
+      cancelledConfirmKeys = new Set(
+        tombstones.map((item) => `${item.toolCallId}\0${item.confirmId}`),
+      );
+    } catch (err) {
+      cancelledConfirmKeys = null;
+      logger.warn("Failed to read confirm cancellation tombstones; refusing pending restore", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  const pendingConfirms = deserializePendingConfirms(
+    meta.pendingConfirms,
+    chatHistory,
+    cancelledConfirmKeys,
+  );
   const toolCallFacts = scanRestoreToolCallFacts(chatHistory);
   const preferredAskUserToolCallId =
     typeof options.preferredAskUserToolCallId === "string" &&

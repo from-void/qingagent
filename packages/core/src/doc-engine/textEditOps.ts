@@ -404,14 +404,9 @@ function expandReplacement(replace: string, match: QuoteMatch, captures: boolean
   });
 }
 
-// 防御:模型做"内联选区改写"时,常把 replace 写成**整段重写**(含选区外、块里已存在的
-// 紧邻文字)——例如用户只选中标题前缀「多模态大模型综述」(甚至把它改写成「…研究综述」),
-// 模型却把整条标题「…综述：架构、对齐与数据治理」塞进 replace。若只把 replace 填进选区,
-// 选区外原有的「：架构…治理」仍保留 → 重复拼接成「…治理：架构…治理」。
-// 做法:检测 replace 的**尾部**与块内紧邻后文(tail)开头的最长重叠、replace 的**头部**与
-// 紧邻前文(head)结尾的最长重叠,把 replace 那段重叠**裁掉**(而非扩张替换范围)——这样选区外
-// 的原节点(连同其 bold/link/inlineMath 等结构)原样保留,只去掉 replace 里多写的那份。
-// 仅在重叠 >= 2 字符时触发(已覆盖实测全部形态:「：架构…治理」「年版」「协作」),避免单字巧合误伤。
+// 只有可信调用方明确知道 replacement 是从当前整块重组而来、确实夹带了选区外相邻正文时，
+// 才允许按边界重叠裁掉重复片段。单凭两个字符重合不能作为证据：重复词或标题边界本身也可能
+// 是调用方明确要求写入的合法正文。
 const REASSEMBLED_OVERLAP_MIN = 2;
 
 function longestBoundaryOverlap(endsWith: string, startsWith: string): number {
@@ -445,22 +440,29 @@ function trimReassembledOverlap(
   return result;
 }
 
+export interface ReplaceTextRunsOptions {
+  captures?: boolean;
+  /** replacement 确由当前整块重组而来，包含了选区外相邻正文。 */
+  reassembledFromBlock?: boolean;
+}
+
 export function replaceTextRuns(
   doc: PmDoc,
   matches: QuoteMatch[],
   replace: string,
-  captures?: boolean,
+  options: boolean | ReplaceTextRunsOptions = false,
 ): PmDoc {
+  const captures = typeof options === "boolean" ? options : options.captures;
+  const reassembledFromBlock =
+    typeof options !== "boolean" && options.reassembledFromBlock === true;
   const ordered = [...matches].sort((left, right) => right.pmFrom - left.pmFrom);
   return ordered.reduce((currentDoc, match) => {
     const from = match.pmFrom - match.block.textStart;
     const to = match.pmTo - match.block.textStart;
-    const replacement = trimReassembledOverlap(
-      match.block.text,
-      from,
-      to,
-      expandReplacement(replace, match, captures),
-    );
+    const expanded = expandReplacement(replace, match, captures);
+    const replacement = reassembledFromBlock
+      ? trimReassembledOverlap(match.block.text, from, to, expanded)
+      : expanded;
     const content = updateNodeAtPath(currentDoc.content, match.block.path, (node) => {
       if (!isInlineTextBlock(node)) return node;
       return {

@@ -172,6 +172,27 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).not.toThrow();
   });
 
+  it("resumeAskUser 必须携带非空 toolCallId", () => {
+    for (const toolCallId of [undefined, ""]) {
+      expect(() => validateCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: "session-ask",
+          ...(toolCallId === undefined ? {} : { toolCallId }),
+          answers: { q1: { chosen: [], freeText: "答案" } },
+        },
+      } as Command)).toThrow(CommandValidationError);
+    }
+    expect(() => validateCommand({
+      kind: "resumeAskUser",
+      data: {
+        sessionId: "session-ask",
+        toolCallId: "ask-1",
+        answers: { q1: { chosen: [], freeText: "答案" } },
+      },
+    })).not.toThrow();
+  });
+
   it("accepts valid sendMessage", () => {
     const cmd: Command = {
       kind: "sendMessage",

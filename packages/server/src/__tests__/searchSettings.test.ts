@@ -13,7 +13,11 @@ const mockCore = vi.hoisted(() => {
   }
 
   const store = new Map<string, string>();
-  const health = new Map<string, { status: "ok" | "auth" | "quota"; quotaUntil?: number }>();
+  const health = new Map<string, {
+    status: "ok" | "auth" | "quota";
+    authRetryAt?: number;
+    quotaUntil?: number;
+  }>();
   const registry = [
     {
       id: "bing",
@@ -96,10 +100,16 @@ const mockCore = vi.hoisted(() => {
     invalidateManagedSearchConfig: vi.fn(),
     invalidatePrimarySearchConfig: vi.fn(),
     isSearchProviderId: vi.fn((id: string) => ids.includes(id)),
-    markSearchProviderAuthFailed: vi.fn((id: string) => health.set(id, { status: "auth" })),
-    markSearchProviderQuota: vi.fn((id: string) =>
-      health.set(id, { status: "quota", quotaUntil: Date.now() + 30_000 }),
-    ),
+    recordSearchProviderError: vi.fn((id: string, kind: string, status?: number) => {
+      if (kind === "auth") {
+        health.set(id, status === 403 || status === 422
+          ? { status: "auth", authRetryAt: Date.now() + 5 * 60_000 }
+          : { status: "auth" });
+      }
+      if (kind === "quota") {
+        health.set(id, { status: "quota", quotaUntil: Date.now() + 30_000 });
+      }
+    }),
     parsePrimarySearchConfig,
     parseSearchProviderConfig,
     setAppSetting: vi.fn(async (key: string, value: string) => {
@@ -199,6 +209,34 @@ describe("searchSettingsRoutes", () => {
       keyConfigured: false,
       maskedTail: null,
     });
+  });
+
+  it("401 熔断不会被启停开关清除，仅在 API key 实际变更后恢复", async () => {
+    const app = await loadApp();
+    mockCore.store.set(
+      mockCore.SETTING_SEARCH_PROVIDER_CONFIG,
+      JSON.stringify({ tavily: { enabled: true, apiKey: "tvly-old-key" } }),
+    );
+    mockCore.health.set("tavily", { status: "auth" });
+
+    const disable = await app.request("/api/v1/settings/search/tavily", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(disable.status).toBe(200);
+    expect(mockCore.health.get("tavily")).toEqual({ status: "auth" });
+    expect(mockCore.clearManagedSearchProviderHealth).not.toHaveBeenCalled();
+
+    const changeKey = await app.request("/api/v1/settings/search/tavily", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "tvly-new-key" }),
+    });
+    expect(changeKey.status).toBe(200);
+    expect(mockCore.health.has("tavily")).toBe(false);
+    expect(mockCore.clearManagedSearchProviderHealth).toHaveBeenCalledOnce();
+    expect(mockCore.clearManagedSearchProviderHealth).toHaveBeenCalledWith("tavily");
   });
 
   it("GET primary 只返回脱敏 key 与 db source", async () => {

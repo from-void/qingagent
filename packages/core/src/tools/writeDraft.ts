@@ -326,7 +326,17 @@ export function createWriteDraftTool(opts: {
       const materials = context?.requestContext?.get("materials") as Map<string, Material> | undefined;
       const messages = context?.requestContext?.get("messages");
       const selectedMaterials = pickMaterials(materials, input.basedOnMaterialIds);
-      const materialContext = materialContextFrom(selectedMaterials);
+      const materialRelevanceText = [
+        context?.requestContext?.get("userText"),
+        input.title,
+        input.outline,
+        input.styleHint,
+      ].filter((value): value is string =>
+        typeof value === "string" && value.trim().length > 0
+      ).join("\n");
+      const materialContext = materialContextFrom(selectedMaterials, {
+        relevanceText: materialRelevanceText,
+      });
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);

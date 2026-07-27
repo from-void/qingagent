@@ -210,23 +210,25 @@ function findAskUserToolCallSpec(
   return null;
 }
 
-function applySubmittedAskUserToolCallId(
+function assertSubmittedAskUserOwnsActiveSuspension(
   session: SessionState,
   submittedToolCallId: string | null | undefined,
 ): void {
-  if (!submittedToolCallId || submittedToolCallId === session.toolCallId) return;
-  const submittedSpec = findAskUserToolCallSpec(session, submittedToolCallId);
-  if (!submittedSpec) {
-    return;
+  if (!submittedToolCallId) {
+    throw new Error("没有待恢复的操作");
   }
-  if (!isQuestionnaireTool(submittedSpec.name)) return;
-  session.toolCallId = submittedToolCallId;
-  if (session._suspensionOwner && isQuestionnaireTool(session._suspensionOwner.toolName)) {
-    session._suspensionOwner = {
-      ...session._suspensionOwner,
-      toolCallId: submittedToolCallId,
-      toolName: submittedSpec.name,
-    };
+  const owner = session._suspensionOwner;
+  if (
+    !hasActiveSuspension(session) ||
+    session.toolCallId !== submittedToolCallId ||
+    owner?.toolCallId !== submittedToolCallId ||
+    !isQuestionnaireTool(owner.toolName)
+  ) {
+    throw new Error("没有待恢复的操作");
+  }
+  const submittedSpec = findAskUserToolCallSpec(session, submittedToolCallId);
+  if (!submittedSpec || !isQuestionnaireTool(submittedSpec.name)) {
+    throw new Error("没有待恢复的操作");
   }
 }
 
@@ -979,7 +981,9 @@ export async function* handleTurnCommand(
         }
       }
 
-      applySubmittedAskUserToolCallId(session, command.data.toolCallId);
+      // toolCallId 是所有权凭据，不是修正热缓存状态的提示。旧页面提交的终态问卷
+      // 必须在进入 handleResume 前拒绝，绝不能覆盖当前挂起问卷并在失败清理中带走它。
+      assertSubmittedAskUserOwnsActiveSuspension(session, command.data.toolCallId);
 
       if (!session.runId) {
         throw new Error("没有待恢复的操作");

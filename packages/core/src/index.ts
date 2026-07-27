@@ -209,6 +209,7 @@ export {
   markSearchProviderQuota,
   parsePrimarySearchConfig,
   parseSearchProviderConfig,
+  recordSearchProviderError,
 } from "./search/index.js";
 export { seedInitialContent } from "./seed/seedInitialContent.js";
 export {

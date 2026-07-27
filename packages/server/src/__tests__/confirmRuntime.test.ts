@@ -51,6 +51,18 @@ function setupPending(spec: ConfirmSpec) {
   return { state, toolCallId };
 }
 
+function commandConfirmSpec(id: string): ConfirmSpec {
+  return {
+    id,
+    kind: "command",
+    title: "执行命令",
+    say: "将执行一条命令",
+    footHint: "仅本次执行",
+    primaryLabel: "执行",
+    secondaryLabel: "取消",
+  };
+}
+
 async function collect(generator: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
   for await (const frame of generator) frames.push(frame);
@@ -462,6 +474,145 @@ describe("confirm runtime", () => {
     expect(state._abortController).toBeNull();
     expect(state._activeTurnPromise).toBeNull();
     await manager.disposeAll();
+  });
+
+  it("beginDecision 永不 resolve 时，stop 可中止前置阶段且后续命令不被 Actor 堵塞", async () => {
+    const spec = commandConfirmSpec("confirm-begin-decision-hang");
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    const beginDecision = vi.spyOn(service, "beginDecision")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+    const executed: Command["kind"][] = [];
+    const manager = new SessionManager({
+      handleCommand: async function* (command) {
+        executed.push(command.kind);
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId: state.sessionId, title: command.kind },
+        };
+      },
+      abortSession: () => state._abortController?.abort("user_abort"),
+      cleanupSession: vi.fn(),
+    });
+
+    const decision = manager.runExclusive(
+      state.sessionId,
+      () => handleConfirmDecision({
+        sessionId: state.sessionId,
+        toolCallId,
+        decisionId: "decision-begin-hang",
+        decision: { id: spec.id, accepted: true },
+        hasSecretValue: false,
+      }, {
+        service,
+        getSession: async () => state,
+        resumeTimeoutMs: 10_000,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(beginDecision).toHaveBeenCalledTimes(1);
+      expect(state._abortController).not.toBeNull();
+    });
+
+    const cancel = manager.submit(state.sessionId, {
+      command: {
+        kind: "cancelStream",
+        data: { sessionId: state.sessionId },
+      },
+    });
+    await expect(decision).rejects.toThrow();
+    await expect(cancel).resolves.toHaveLength(1);
+    await expect(manager.submit(state.sessionId, {
+      command: {
+        kind: "sendMessage",
+        data: {
+          sessionId: state.sessionId,
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      },
+    })).resolves.toHaveLength(1);
+
+    expect(executed).toEqual(["cancelStream", "sendMessage"]);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(true);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    await manager.disposeAll();
+  });
+
+  it("onAccepted 永不 resolve 时，在墙钟上限内关闭确认并释放会话所有权", async () => {
+    const spec = commandConfirmSpec("confirm-on-accepted-hang");
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    const buildTools = vi.fn(async () => ({
+      sessionScoped: {},
+      capabilityTools: {},
+    }));
+    const startedAt = Date.now();
+
+    const frames = await collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-on-accepted-hang",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      getSession: async () => state,
+      onAccepted: () => new Promise<never>(() => undefined),
+      buildResumeTools: buildTools,
+      resumeTimeoutMs: 25,
+      persistTimeoutMs: 25,
+    }));
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(buildTools).not.toHaveBeenCalled();
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ toolCallId, resolution: "failed" }),
+    }));
+  });
+
+  it("buildResumeTools 永不 resolve 时，在墙钟上限内 fail-closed 且不调用 agent", async () => {
+    const spec = commandConfirmSpec("confirm-build-tools-hang");
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn(),
+    };
+    const startedAt = Date.now();
+
+    const frames = await collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-build-tools-hang",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      buildResumeTools: () => new Promise<never>(() => undefined),
+      resumeTimeoutMs: 25,
+      persistTimeoutMs: 25,
+    }));
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(agent.approveToolCall).not.toHaveBeenCalled();
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ toolCallId, resolution: "failed" }),
+    }));
   });
 
   it("确认过期终态持久化永不 resolve 时，内存先终态化且会话清理不死锁", async () => {

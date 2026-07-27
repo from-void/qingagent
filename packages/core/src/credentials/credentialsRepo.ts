@@ -88,18 +88,50 @@ function parseConnectorBundle<T>(stored: string, connectorId: string): Connector
   return parsed as ConnectorCredentialBundle<T>;
 }
 
-async function readBundleRow<T>(
+async function readBundleStored(
   client: Pick<ReturnType<typeof getDocumentsClient>, "execute">,
   connectorId: string,
   scope: string,
-): Promise<ConnectorCredentialBundle<T> | null> {
+): Promise<string | null> {
   const result = await client.execute({
     sql: `SELECT value_enc FROM sandbox_credentials
           WHERE scope = ? AND platform = ? AND cred_key = ?`,
     args: [scope, connectorBundlePlatform(connectorId), CONNECTOR_BUNDLE_KEY],
   });
   const row = result.rows[0];
-  return row ? parseConnectorBundle<T>(String(row.value_enc), connectorId) : null;
+  return row ? String(row.value_enc) : null;
+}
+
+async function readBundleRow<T>(
+  client: Pick<ReturnType<typeof getDocumentsClient>, "execute">,
+  connectorId: string,
+  scope: string,
+): Promise<ConnectorCredentialBundle<T> | null> {
+  const stored = await readBundleStored(client, connectorId, scope);
+  return stored === null ? null : parseConnectorBundle<T>(stored, connectorId);
+}
+
+interface MutableBundleState<T> {
+  bundle: ConnectorCredentialBundle<T> | null;
+  rowExists: boolean;
+}
+
+/**
+ * 写事务只需要可信 revision 与原始行是否存在。坏行没有可用于 CAS 的有效 revision，
+ * 因而按 null 处理；事务锁保证若它已被并发替换为有效 bundle，后续 CAS 仍会拒绝旧操作。
+ */
+async function readMutableBundleState<T>(
+  client: Pick<ReturnType<typeof getDocumentsClient>, "execute">,
+  connectorId: string,
+  scope: string,
+): Promise<MutableBundleState<T>> {
+  const stored = await readBundleStored(client, connectorId, scope);
+  if (stored === null) return { bundle: null, rowExists: false };
+  try {
+    return { bundle: parseConnectorBundle<T>(stored, connectorId), rowExists: true };
+  } catch {
+    return { bundle: null, rowExists: true };
+  }
 }
 
 /** 写入/更新一条凭据(值加密)。 */
@@ -181,7 +213,8 @@ export async function saveConnectorCredentialBundle<T>(
   await ensureMigrated();
   const scope = options.scope ?? DEFAULT_SCOPE;
   return withTransaction(async (client) => {
-    const current = await readBundleRow<T>(client, connectorId, scope);
+    const state = await readMutableBundleState<T>(client, connectorId, scope);
+    const current = state.bundle;
     const actualRevision = current?.revision ?? null;
     if (
       options.expectedRevision !== undefined &&
@@ -315,12 +348,13 @@ export async function deleteConnectorCredentialBundle(
   await ensureMigrated();
   const scope = options.scope ?? DEFAULT_SCOPE;
   await withTransaction(async (client) => {
-    const current = await readBundleRow(client, connectorId, scope);
+    const state = await readMutableBundleState(client, connectorId, scope);
+    const current = state.bundle;
     const actualRevision = current?.revision ?? null;
     if (actualRevision !== options.expectedRevision) {
       throw new ConnectorCredentialCasError(options.expectedRevision, actualRevision);
     }
-    if (actualRevision !== null) {
+    if (state.rowExists) {
       await client.execute({
         sql: `DELETE FROM sandbox_credentials
               WHERE scope = ? AND platform = ? AND cred_key = ?`,

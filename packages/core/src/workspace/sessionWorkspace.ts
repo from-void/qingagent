@@ -28,7 +28,7 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
-import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
@@ -83,13 +83,9 @@ export function __resetIsolationCacheForTest(): void {
   cachedIsolation = null;
 }
 
-/** sessionId 进文件路径前的清洗:只留安全字符,防路径穿越。 */
+/** sessionId 进文件路径前的统一编码：UTF-16 code unit 可逆，且仅输出路径安全字符。 */
 export function sessionWorkspaceDirName(sessionId: string): string {
-  if (sessionId.length === 0) return "default";
-  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  if (safe === sessionId) return safe;
-  const hash = createHash("sha256").update(sessionId).digest("hex").slice(0, 12);
-  return `${safe}_${hash}`;
+  return `sid_${Buffer.from(sessionId, "utf16le").toString("hex")}`;
 }
 
 export function sessionWorkspaceDir(sessionId: string): string {
@@ -208,14 +204,29 @@ export interface SessionWorkspaceFactoryOptions {
 interface CacheEntry {
   workspace: Workspace;
   lastAccessAt: number;
+  leaseCount: number;
+  pendingDestroy: boolean;
+  destroyStarted: boolean;
+}
+
+export interface SessionWorkspaceLease {
+  workspace: Workspace;
+  /** 为同一 Workspace 增加一个活动引用，返回幂等释放函数。 */
+  retain: () => () => void;
+  /** 释放当前租约；可重复调用。 */
+  release: () => void;
 }
 
 /** 会话 Workspace 缓存:stream 每轮都会解析 workspace,不能每次重建。
  *  上限驱逐防长寿进程内存膨胀(Workspace 本体很轻,512 足够宽裕)。 */
 const MAX_CACHED_WORKSPACES = 512;
 const cache = new Map<string, CacheEntry>();
+/** 已从可获取缓存摘除、但仍被旧租约引用的 entry。 */
+const retiredEntries = new Map<string, Set<CacheEntry>>();
 /** 同一 key 正在首建的 Promise:并发去重,避免重复构建游离实例(见 getSessionWorkspace)。 */
-const inflight = new Map<string, Promise<Workspace>>();
+const inflight = new Map<string, Promise<CacheEntry>>();
+/** acquire 发起到租约落账之间的同步预留，封住 Promise continuation 前的失效竞态。 */
+const pendingAcquires = new Map<string, number>();
 /** 每个会话 Workspace 的构建代际:invalidate 后旧构建结果不得回写缓存。 */
 const generation = new Map<string, number>();
 /** 已从 inflight 摘除但还没 settle 的旧构建也要保留 generation,否则会旧结果回写。 */
@@ -235,21 +246,84 @@ async function destroyWorkspace(workspace: Workspace): Promise<void> {
   }
 }
 
-function evictIfNeeded(): void {
-  if (cache.size <= MAX_CACHED_WORKSPACES) return;
-  let oldestKey: string | null = null;
-  let oldestAt = Infinity;
-  for (const [key, entry] of cache) {
-    if (entry.lastAccessAt < oldestAt) {
-      oldestAt = entry.lastAccessAt;
-      oldestKey = key;
+function removeAndDestroyEntry(key: string, entry: CacheEntry): void {
+  if (entry.destroyStarted) return;
+  if (cache.get(key) === entry) cache.delete(key);
+  const retired = retiredEntries.get(key);
+  if (retired) {
+    retired.delete(entry);
+    if (retired.size === 0) retiredEntries.delete(key);
+  }
+  entry.destroyStarted = true;
+  destroyWorkspaceQuietly(entry.workspace);
+  trimGenerationKey(key);
+}
+
+function markEntryForDestroy(key: string, entry: CacheEntry): void {
+  entry.pendingDestroy = true;
+  // 失效 entry 立即退出可获取缓存；旧 lease 只负责延迟它自己的销毁，
+  // 后续 acquire 必须重新装配凭据、技能和资料库挂载。
+  if (cache.get(key) === entry) cache.delete(key);
+  let retired = retiredEntries.get(key);
+  if (!retired) {
+    retired = new Set();
+    retiredEntries.set(key, retired);
+  }
+  retired.add(entry);
+  if (entry.leaseCount === 0 && !pendingAcquires.has(key)) {
+    removeAndDestroyEntry(key, entry);
+  }
+}
+
+function releaseEntry(key: string, entry: CacheEntry): void {
+  if (entry.leaseCount === 0) return;
+  entry.leaseCount -= 1;
+  if (entry.leaseCount === 0 && entry.pendingDestroy && !pendingAcquires.has(key)) {
+    removeAndDestroyEntry(key, entry);
+    return;
+  }
+  evictIfNeeded();
+}
+
+function retainEntry(key: string, entry: CacheEntry): () => void {
+  entry.leaseCount += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseEntry(key, entry);
+  };
+}
+
+function reserveAcquire(key: string): void {
+  pendingAcquires.set(key, (pendingAcquires.get(key) ?? 0) + 1);
+}
+
+function releaseAcquireReservation(key: string): void {
+  const next = (pendingAcquires.get(key) ?? 0) - 1;
+  if (next > 0) pendingAcquires.set(key, next);
+  else pendingAcquires.delete(key);
+  if (!pendingAcquires.has(key)) {
+    for (const entry of [...(retiredEntries.get(key) ?? [])]) {
+      if (entry.leaseCount === 0) removeAndDestroyEntry(key, entry);
     }
   }
-  if (oldestKey) {
-    const entry = cache.get(oldestKey);
-    cache.delete(oldestKey);
-    if (entry) destroyWorkspaceQuietly(entry.workspace);
-    trimGenerationKey(oldestKey);
+  trimGenerationKey(key);
+}
+
+function evictIfNeeded(): void {
+  while (cache.size > MAX_CACHED_WORKSPACES) {
+    const entries = [...cache.entries()].sort(
+      (left, right) => left[1].lastAccessAt - right[1].lastAccessAt,
+    );
+    const oldest = entries[0];
+    if (!oldest) return;
+    const [oldestKey, oldestEntry] = oldest;
+    if (oldestEntry.leaseCount > 0 || pendingAcquires.has(oldestKey)) {
+      markEntryForDestroy(oldestKey, oldestEntry);
+    } else {
+      removeAndDestroyEntry(oldestKey, oldestEntry);
+    }
   }
 }
 
@@ -264,7 +338,13 @@ function decrementActiveBuild(key: string): void {
 }
 
 function trimGenerationKey(key: string): void {
-  if (!cache.has(key) && !inflight.has(key) && !activeBuilds.has(key)) {
+  if (
+    !cache.has(key) &&
+    !retiredEntries.has(key) &&
+    !inflight.has(key) &&
+    !activeBuilds.has(key) &&
+    !pendingAcquires.has(key)
+  ) {
     generation.delete(key);
   }
 }
@@ -272,7 +352,9 @@ function trimGenerationKey(key: string): void {
 /** 仅测试用:清空缓存。 */
 export function __resetSessionWorkspaceCacheForTest(): void {
   cache.clear();
+  retiredEntries.clear();
   inflight.clear();
+  pendingAcquires.clear();
   generation.clear();
   activeBuilds.clear();
 }
@@ -283,37 +365,51 @@ export function __sessionWorkspaceCacheStatsForTest(): {
   inflightSize: number;
   generationSize: number;
   activeBuildSize: number;
+  leaseCount: number;
+  pendingAcquireCount: number;
+  pendingDestroyCount: number;
   generationKeys: string[];
 } {
+  const entries = [
+    ...cache.values(),
+    ...[...retiredEntries.values()].flatMap((retired) => [...retired]),
+  ];
   return {
     cacheSize: cache.size,
     inflightSize: inflight.size,
     generationSize: generation.size,
     activeBuildSize: activeBuilds.size,
+    leaseCount: entries.reduce((sum, entry) => sum + entry.leaseCount, 0),
+    pendingAcquireCount: [...pendingAcquires.values()].reduce((sum, count) => sum + count, 0),
+    pendingDestroyCount: entries.filter((entry) => entry.pendingDestroy).length,
     generationKeys: [...generation.keys()],
   };
 }
 
-/** 凭据变更后让会话 Workspace 缓存失效,下次 stream 重新装配以注入最新凭据 env。
+/** 凭据变更后让会话 Workspace 缓存失效；无活动租约时立即回收，否则延迟到最后释放。
  *  不传 sessionId 则全量失效(凭据是全局 scope,任一变更影响所有会话沙箱)。 */
 export function invalidateSessionWorkspace(sessionId?: string): void {
   if (sessionId) {
     const key = sessionWorkspaceDirName(sessionId);
     generation.set(key, (generation.get(key) ?? 0) + 1);
     const entry = cache.get(key);
-    cache.delete(key);
-    if (entry) destroyWorkspaceQuietly(entry.workspace);
+    if (entry) markEntryForDestroy(key, entry);
     inflight.delete(key);
     trimGenerationKey(key);
   } else {
-    const keys = new Set([...cache.keys(), ...inflight.keys(), ...generation.keys(), ...activeBuilds.keys()]);
+    const keys = new Set([
+      ...cache.keys(),
+      ...inflight.keys(),
+      ...generation.keys(),
+      ...activeBuilds.keys(),
+      ...pendingAcquires.keys(),
+    ]);
     for (const key of keys) {
       generation.set(key, (generation.get(key) ?? 0) + 1);
     }
-    for (const entry of cache.values()) {
-      destroyWorkspaceQuietly(entry.workspace);
+    for (const [key, entry] of [...cache]) {
+      markEntryForDestroy(key, entry);
     }
-    cache.clear();
     inflight.clear();
     for (const key of keys) trimGenerationKey(key);
   }
@@ -346,11 +442,39 @@ export async function getSessionWorkspace(
   sessionId: string,
   opts: SessionWorkspaceFactoryOptions,
 ): Promise<Workspace> {
+  return (await getSessionWorkspaceEntry(sessionId, opts)).workspace;
+}
+
+export async function acquireSessionWorkspace(
+  sessionId: string,
+  opts: SessionWorkspaceFactoryOptions,
+): Promise<SessionWorkspaceLease> {
+  const key = sessionWorkspaceDirName(sessionId);
+  reserveAcquire(key);
+  try {
+    const entry = await getSessionWorkspaceEntry(sessionId, opts);
+    const release = retainEntry(key, entry);
+    releaseAcquireReservation(key);
+    return {
+      workspace: entry.workspace,
+      retain: () => retainEntry(key, entry),
+      release,
+    };
+  } catch (error) {
+    releaseAcquireReservation(key);
+    throw error;
+  }
+}
+
+async function getSessionWorkspaceEntry(
+  sessionId: string,
+  opts: SessionWorkspaceFactoryOptions,
+): Promise<CacheEntry> {
   const key = sessionWorkspaceDirName(sessionId);
   const hit = cache.get(key);
   if (hit) {
     hit.lastAccessAt = Date.now();
-    return hit.workspace;
+    return hit;
   }
 
   // 并发去重:同一 key 首次构建时只建一次,其余并发调用 await 同一 Promise。
@@ -364,14 +488,21 @@ export async function getSessionWorkspace(
   const building = (async () => {
     const workspace = await buildSessionWorkspace(sessionId, opts);
     if ((generation.get(key) ?? 0) === buildGeneration) {
-      cache.set(key, { workspace, lastAccessAt: Date.now() });
+      const entry: CacheEntry = {
+        workspace,
+        lastAccessAt: Date.now(),
+        leaseCount: 0,
+        pendingDestroy: false,
+        destroyStarted: false,
+      };
+      cache.set(key, entry);
       evictIfNeeded();
-      return workspace;
+      return entry;
     }
     // invalidate 已推进代际：旧实例既不能回写，也不能交给调用方成为游离 workspace。
     // 先完整销毁，再复用/构建当前代实例。
     await destroyWorkspace(workspace);
-    return getSessionWorkspace(sessionId, opts);
+    return getSessionWorkspaceEntry(sessionId, opts);
   })();
   inflight.set(key, building);
   try {

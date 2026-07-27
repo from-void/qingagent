@@ -1,5 +1,5 @@
 import { createTool } from "@mastra/core/tools";
-import { createHash } from "crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 /**
@@ -41,8 +41,7 @@ export const storeMaterialTool = createTool({
   execute: async (input) => {
     // Pure computation — no session state dependency.
     // Bridge layer handles the actual persistence into state.materials.
-    const materialId =
-      input.materialId ?? ("mat-" + createHash("sha256").update(input.filename).digest("hex").slice(0, 12));
+    const materialId = input.materialId ?? `mat-${randomUUID()}`;
     return { materialId, stored: true };
   },
 });

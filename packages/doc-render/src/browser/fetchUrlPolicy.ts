@@ -6,6 +6,8 @@ export interface FetchUrlValidationOptions {
   allowLoopback?: boolean;
   /** 放行所有非 global-unicast 地址，供可信内网部署者显式逃生。 */
   allowPrivate?: boolean;
+  /** DNS 预检也必须服从调用方取消；Node DNS 本身不可取消，故在等待边界竞争。 */
+  signal?: AbortSignal;
 }
 
 type AddressScope = "global-unicast" | "loopback" | "non-global-unicast";
@@ -223,6 +225,38 @@ export function parseFetchUrl(rawUrl: string): URL {
   return parsed;
 }
 
+async function lookupAllWithAbort(
+  hostname: string,
+  signal?: AbortSignal,
+): Promise<Array<{ address: string; family: number }>> {
+  signal?.throwIfAborted();
+  const pending = lookup(hostname, { all: true, verbatim: true });
+  if (!signal) return pending;
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (
+      operation: () => void,
+    ) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      operation();
+    };
+    const onAbort = () => {
+      finish(() => reject(
+        signal.reason ?? new DOMException("DNS lookup aborted", "AbortError"),
+      ));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    void pending.then(
+      (records) => finish(() => resolve(records)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
 /**
  * 校验出站 URL 并返回本次连接必须使用的地址。域名的全部 DNS 结果都先经过策略校验，
  * 再固定其中一个地址；调用方必须把该地址交给 {@link createPinnedLookup}，不能再次解析域名。
@@ -247,7 +281,7 @@ export async function validateAndPinFetchUrl(
     return { url: parsed, address: addressHostname, family: ipKind as 4 | 6 };
   }
 
-  const records = await lookup(hostname, { all: true, verbatim: true });
+  const records = await lookupAllWithAbort(hostname, options.signal);
   if (records.length === 0) {
     throw new Error(`Could not resolve hostname: ${hostname}`);
   }

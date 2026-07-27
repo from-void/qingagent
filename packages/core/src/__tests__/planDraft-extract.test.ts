@@ -53,6 +53,24 @@ describe("extractQuestionsJson", () => {
     expect(JSON.parse(extractQuestionsJson(input))).toEqual([textQuestion]);
   });
 
+  it("selects the final schema-valid question array after a leading example", () => {
+    const example = {
+      id: "q-example",
+      label: "示例问题",
+      kind: "text",
+      options: [],
+    };
+    const input = `格式示例：${JSON.stringify([example])}\n最终答案：${JSON.stringify([textQuestion])}`;
+
+    expect(JSON.parse(extractQuestionsJson(input))).toEqual([textQuestion]);
+  });
+
+  it("uses planDraft schema validation to skip a later invalid object array", () => {
+    const input = `${JSON.stringify([textQuestion])}\n补充元数据：${JSON.stringify([{ title: "说明" }])}`;
+
+    expect(JSON.parse(extractQuestionsJson(input))).toEqual([textQuestion]);
+  });
+
   it("keeps escaped quotes inside label strings", () => {
     const question = {
       id: "q-quote",

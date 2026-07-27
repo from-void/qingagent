@@ -22,6 +22,8 @@ const mockState = vi.hoisted(() => ({
     return {
       events,
       resumeStream: vi.fn(),
+      listSuspendedRuns: vi.fn(async () => ({ runs: [] })),
+      declineToolCall: vi.fn(),
       buildCapabilityTools: vi.fn(async () => ({})),
       ensureWorkingMemorySnapshot: vi.fn(async () => "# 用户长期记忆\n- 喜欢短句"),
       prepareOmContextForTurn: vi.fn(async (session: any) => ({
@@ -177,6 +179,8 @@ async function loadBridge() {
       qingagentAgent: {
         ...actualCore.qingagentAgent,
         resumeStream: mockState.resumeStream,
+        listSuspendedRuns: mockState.listSuspendedRuns,
+        declineToolCall: mockState.declineToolCall,
       },
     };
   });
@@ -242,6 +246,9 @@ describe("handleResume askUser fresh-turn fallback", () => {
     vi.clearAllMocks();
     mockState.events.length = 0;
     mockState.resumeStream.mockReset();
+    mockState.listSuspendedRuns.mockReset();
+    mockState.listSuspendedRuns.mockResolvedValue({ runs: [] });
+    mockState.declineToolCall.mockReset();
     mockState.buildCapabilityTools.mockReset();
     mockState.buildCapabilityTools.mockResolvedValue({});
     mockState.ensureWorkingMemorySnapshot.mockClear();
@@ -311,6 +318,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
           kind: "resumeAskUser",
           data: {
             sessionId: session.sessionId,
+            toolCallId: "ask-1",
             answers,
           },
         }),
@@ -424,6 +432,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -516,6 +525,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -576,6 +586,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -611,6 +622,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: { "q-one": { chosen: [], freeText: "继续" } },
       },
     }));
@@ -661,6 +673,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "答案A" },
           },
@@ -718,6 +731,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续写" },
           },
@@ -753,15 +767,20 @@ describe("handleResume askUser fresh-turn fallback", () => {
     expect(writeDraftPlaceholderIndex).toBeGreaterThan(busyIndex);
   });
 
-  it("内联 askUser 提交优先使用命令里的 toolCallId,避免 stale session id 导致答案卡回退 raw value", async () => {
+  it("旧终态 askUser 提交不会覆盖当前活跃问卷的 suspension 所有权", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
-    const spec: ToolCallSpec = {
-      ...askUserToolCall("ask-inline-real"),
+    const staleSpec: ToolCallSpec = {
+      ...askUserToolCall("ask-inline-stale"),
+      status: { kind: "done" },
+      result: {
+        kind: "askUserAnswers",
+        data: { "q-format": { chosen: ["v1"], freeText: null } },
+      },
       body: {
         kind: "askUser",
         data: {
-          id: "ask-inline-real",
+          id: "ask-inline-stale",
           mode: { kind: "overlay" },
           purpose: { kind: "quickClarification" },
           source: null,
@@ -781,75 +800,99 @@ describe("handleResume askUser fresh-turn fallback", () => {
         },
       },
     };
+    if (staleSpec.body.kind !== "askUser") throw new Error("expected askUser body");
+    const activeSpec: ToolCallSpec = {
+      ...staleSpec,
+      id: "ask-inline-active",
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      result: null,
+      body: {
+        kind: "askUser",
+        data: {
+          ...staleSpec.body.data,
+          id: "ask-inline-active",
+        },
+      },
+    };
     session.docState = { kind: "editing" };
     session.chatHistory = [
       {
-        id: "msg-ask-real",
+        id: "msg-ask-stale",
         role: { kind: "agent" },
         ts: "2026-01-01T00:00:00.000Z",
-        parts: [{ kind: "toolCall", data: spec }],
+        parts: [{ kind: "toolCall", data: staleSpec }],
+        chips: null,
+      },
+      {
+        id: "msg-ask-active",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:01:00.000Z",
+        parts: [{ kind: "toolCall", data: activeSpec }],
         chips: null,
       },
     ];
-    session.runId = "run-inline-stale";
-    session.toolCallId = "ask-inline-stale";
+    session.runId = "run-inline-active";
+    session.toolCallId = "ask-inline-active";
     session._suspensionOwner = {
-      streamId: "restored:run-inline-stale",
-      runId: "run-inline-stale",
-      toolCallId: "ask-inline-stale",
+      streamId: "restored:run-inline-active",
+      runId: "run-inline-active",
+      toolCallId: "ask-inline-active",
       toolName: "askUser",
     };
 
-    mockState.resumeStream.mockResolvedValue({
-      runId: "run-inline-stale-resumed",
-      fullStream: streamOf({ type: "finish", payload: {} }),
-    });
-
-    const frames = await collectFrames(
+    await expect(collectFrames(
       bridge.handleCommand({
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
-          toolCallId: "ask-inline-real",
+          toolCallId: "ask-inline-stale",
           answers: {
             "q-format": { chosen: ["v2"], freeText: null },
           },
         },
       }),
-    );
+    )).rejects.toThrow("没有待恢复的操作");
 
-    expect(mockState.resumeStream.mock.calls[0]?.[1]).toMatchObject({
-      toolCallId: "ask-inline-real",
+    expect(mockState.resumeStream).not.toHaveBeenCalled();
+    expect(session.runId).toBe("run-inline-active");
+    expect(session.toolCallId).toBe("ask-inline-active");
+    expect(session._suspensionOwner).toEqual({
+      streamId: "restored:run-inline-active",
+      runId: "run-inline-active",
+      toolCallId: "ask-inline-active",
+      toolName: "askUser",
     });
-    const answerCardFrame = frames.find(
-      (frame) =>
-        frame.kind === "chatMessageAdded" &&
-        frame.data.message.parts.some((part) => part.kind === "askUserAnswerCard"),
-    );
-    expect(answerCardFrame).toMatchObject({
-      kind: "chatMessageAdded",
-      data: {
-        message: {
-          id: "askuser-answer:ask-inline-real",
-          parts: [
-            {
-              kind: "askUserAnswerCard",
-              data: {
-                toolCallId: "ask-inline-real",
-                items: [
-                  {
-                    questionId: "q-format",
-                    questionLabel: "想怎么调整结构？",
-                    answerText: "改成落地步骤",
-                    selectedOptionLabels: ["改成落地步骤"],
-                  },
-                ],
-              },
-            },
-          ],
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { id: "ask-inline-stale", status: { kind: "done" } },
+    });
+    expect(session.chatHistory[1]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { id: "ask-inline-active", status: { kind: "running" } },
+    });
+  });
+
+  it("缺失 toolCallId 的延迟提交不能接管当前活跃问卷", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(session, "run-delayed-missing-owner");
+
+    await expect(collectFrames(
+      bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: {
+            "q-one": { chosen: [], freeText: "迟到答案" },
+          },
         },
-      },
-    });
+      } as never),
+    )).rejects.toThrow("没有待恢复的操作");
+
+    expect(mockState.resumeStream).not.toHaveBeenCalled();
+    expect(session.runId).toBe("run-delayed-missing-owner");
+    expect(session.toolCallId).toBe("ask-1");
+    expect(session._suspensionOwner?.toolCallId).toBe("ask-1");
   });
 
   it("冷恢复 askUser 提交把命令里的 toolCallId 传给持久层恢复,避免 stale meta id 丢 runId", async () => {
@@ -901,6 +944,75 @@ describe("handleResume askUser fresh-turn fallback", () => {
     });
   });
 
+  it("startSession(existing) 冷恢复会安全终结 resuming 确认并回放结果未知提示", async () => {
+    const bridge = await loadBridge();
+    const { createSession } = await import("@qingagent/core");
+    const session = createSession("cold-resuming-confirm");
+    const toolCallId = "tool-resuming-before-crash";
+    session.threadId = session.sessionId;
+    session.chatHistory = [{
+      id: "msg-resuming-confirm",
+      role: { kind: "agent" },
+      ts: "2026-07-27T00:00:00.000Z",
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: toolCallId,
+          name: "mastra_workspace_execute_command",
+          render: { kind: "chatInline" },
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+          body: { kind: "generic", data: { argsJson: "" } },
+          result: null,
+        },
+      }],
+      chips: null,
+    }];
+    session.pendingConfirms.set(toolCallId, {
+      confirmId: "confirm-resuming-before-crash",
+      runId: "run-resuming-before-crash",
+      toolCallId,
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest",
+      spec: {
+        id: "confirm-resuming-before-crash",
+        kind: "command",
+        title: "执行命令",
+        say: "将执行一条命令",
+        footHint: "仅本次执行",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: "2026-07-27T00:00:00.000Z",
+      expiresAt: "2099-07-27T00:00:00.000Z",
+      status: "resuming",
+      decisionId: "decision-before-crash",
+    });
+    mockState.loadSessionFromThread.mockResolvedValueOnce(session);
+
+    const frames = await collectFrames(bridge.handleCommand({
+      kind: "startSession",
+      data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+    }));
+
+    expect(mockState.listSuspendedRuns).toHaveBeenCalledWith({
+      threadId: session.sessionId,
+      resourceId: session.resourceId,
+    });
+    expect(session.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({
+        toolCallId,
+        resolution: "failed",
+        message: expect.stringContaining("为避免重复操作"),
+      }),
+    }));
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { status: { kind: "failed" } },
+    });
+  });
+
   it("askUser resume 不推进 OM turnCounter，答案由 sidecar fallback 并回挂起轮次", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
@@ -917,6 +1029,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -952,6 +1065,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: { "q-one": { chosen: [], freeText: "直接回答" } },
       },
     }));
@@ -978,6 +1092,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "请记住我喜欢短句" },
           },
@@ -1016,6 +1131,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -1063,6 +1179,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -1138,6 +1255,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-format": { chosen: ["v2"], freeText: null },
             "q-note": { chosen: [], freeText: "暂不需要应用这版修改" },
@@ -1182,6 +1300,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
           kind: "resumeAskUser",
           data: {
             sessionId: session.sessionId,
+            toolCallId: "ask-1",
             answers: {
               "q-one": { chosen: [], freeText: "答案A" },
             },
@@ -1220,6 +1339,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -1261,6 +1381,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: {
           "q-one": { chosen: [], freeText: "答案A" },
         },

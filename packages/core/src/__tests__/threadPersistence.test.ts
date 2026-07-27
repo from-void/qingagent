@@ -1158,6 +1158,87 @@ describe("thread persistence", () => {
     expect(restored?.confirmAuditDegraded).toEqual(state.confirmAuditDegraded);
   });
 
+  it("取消 metadata 双写失败后冷恢复仍拒绝旧 pending", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { ConfirmService } = await import("../confirm/confirmService.js");
+    const {
+      __resetSessionPersistenceForTest,
+      loadSessionFromThread,
+      persistSessionMetadata,
+    } = await import("../session/threadPersistence.js");
+    const { listConfirmCancellationTombstones } = await import("@qingagent/db");
+    const state = createSession("confirm-cancelled-durable");
+    const tool = toolCall(
+      "mastra_workspace_execute_command",
+      { kind: "pending" },
+      "tool-cancelled-durable",
+    );
+    state.chatHistory = [toolMessage(tool)];
+    const pending = {
+      confirmId: "confirm-cancelled-durable",
+      runId: "run-cancelled-durable",
+      toolCallId: tool.id,
+      toolName: tool.name,
+      commandDigest: "digest-cancelled-durable",
+      spec: {
+        id: "confirm-cancelled-durable",
+        kind: "command" as const,
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+        commandPreview: "mv a b",
+      },
+      requestedAt: "2026-07-27T01:00:00.000Z",
+      expiresAt: "2026-07-27T01:10:00.000Z",
+      status: "pending" as const,
+    };
+    state.pendingConfirms.set(tool.id, pending);
+    await persistSessionMetadata(state, "confirm:requested");
+
+    const persist = vi.fn(async () => {
+      throw new Error("primary metadata unavailable");
+    });
+    const retryPersist = vi.fn(async () => {
+      throw new Error("retry metadata unavailable");
+    });
+    const service = new ConfirmService({ persist, retryPersist });
+    await service.cancelRequestedCommandConfirm(state, pending);
+    await vi.waitFor(() => expect(retryPersist).toHaveBeenCalled());
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: state.sessionId }),
+      "confirm:aborted:terminal",
+    );
+    expect(retryPersist).toHaveBeenCalledTimes(1);
+    expect(retryPersist).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: state.sessionId }),
+      "confirm:aborted:terminal-retry",
+    );
+
+    const stale = threads.get(state.sessionId)?.metadata as QingagentThreadMetadata;
+    expect(stale.pendingConfirms).toEqual([
+      expect.objectContaining({
+        toolCallId: tool.id,
+        status: "pending",
+      }),
+    ]);
+    expect(await listConfirmCancellationTombstones(state.sessionId)).toEqual([{
+      sessionId: state.sessionId,
+      toolCallId: tool.id,
+      confirmId: pending.confirmId,
+    }]);
+
+    __resetSessionPersistenceForTest();
+    const restored = await loadSessionFromThread(state.sessionId);
+    expect(restored?.pendingConfirms.size).toBe(0);
+    expect(restored?.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { id: tool.id, status: { kind: "aborted" } },
+    });
+  });
+
   it("恢复仲裁场景1: documents 无行时继续使用 metadata", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-only";

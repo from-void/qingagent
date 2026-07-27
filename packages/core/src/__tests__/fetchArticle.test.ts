@@ -178,6 +178,49 @@ describe("fetchArticle fallback signal", () => {
     expect(result.error).toBeNull();
   });
 
+  it("静态长加载壳触发降级后优先采用较短的浏览器实质正文", async () => {
+    const staticShell =
+      "原标题：正在加载... 返回首页 返回顶部 分享到微信 " +
+      "页面栏目、推荐阅读、版权说明和站点导航等静态壳内容。".repeat(18);
+    const browserText =
+      "浏览器渲染后恢复了真实文章，说明事件经过、关键数据、背景原因和后续影响。" +
+      "正文虽短于静态页面壳，但信息完整、句读清晰，可以作为可靠素材使用。".repeat(4);
+    expect(staticShell.replace(/\s+/g, "").length).toBeGreaterThan(
+      browserText.replace(/\s+/g, "").length,
+    );
+    expect(shouldFallbackToBrowser(staticShell)).toBe(true);
+
+    mockFetchArticleDeps.extractArticleContent.mockResolvedValueOnce({
+      title: "静态加载壳",
+      body: staticShell,
+      images: [],
+      screenshot: null,
+      ogImageUrl: null,
+    });
+    mockFetchArticleDeps.scrapeWithBrowserImpl.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      title: "浏览器真实正文",
+      text: browserText,
+      wordCount: wordCount(browserText),
+      images: [],
+      screenshotSrc: null,
+      ogImageUrl: null,
+    });
+
+    const result = await fetchArticleTool.execute!(
+      { url: "https://example.com/short-article" },
+      {} as never,
+    ) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      ok: true,
+      title: "浏览器真实正文",
+      text: browserText,
+      via: "browser",
+    });
+  });
+
   it("静态抓取成功返回 ok=true,不触发浏览器降级", async () => {
     const staticText = (
       "宋代点茶讲究注汤与击拂，茶筅在盏中回旋，使茶汤表面形成细密乳花。" +

@@ -206,7 +206,10 @@ function classifyVisionTestError(error: unknown): { kind: VisionTestErrorKind; m
     : typeof record.status === "number"
       ? record.status
       : undefined;
-  if (error instanceof Error && error.name === "AbortError") {
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
     return { kind: "timeout", message: `连接超时(${VISION_TEST_TIMEOUT_MS}ms)` };
   }
   if (/Blocked (?:private|loopback)|private hostname|private IPv[46]/i.test(message)) {
@@ -563,7 +566,7 @@ modelSettingsRoutes.post("/settings/vision/test", async (c) => {
       baseUrl,
       model,
       protocol: parsed.value.protocol,
-    });
+    }, c.req.raw.signal);
     return c.json({ ok: true });
   } catch (error) {
     const classified = classifyVisionTestError(error);

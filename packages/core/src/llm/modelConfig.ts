@@ -944,13 +944,18 @@ export interface ResolvedVisionConfig {
 export async function resolveVisionConfig(
   requestContext?: RequestContext,
 ): Promise<ResolvedVisionConfig | null> {
+  const contextualAbortSignal = requestContext?.get("abortSignal") as
+    | AbortSignal
+    | undefined;
   const vision = readOverrides(requestContext)?.vision;
   if (vision) {
     const apiKey = vision.apiKey?.trim();
     const baseUrl = sanitizeBaseUrl(vision.baseUrl);
     const model = sanitizeModelId(vision.model);
     if (!apiKey || !baseUrl || !model) return null;
-    const checkedUrl = await validateFetchUrl(baseUrl);
+    const checkedUrl = await validateFetchUrl(baseUrl, {
+      signal: contextualAbortSignal,
+    });
     return {
       apiKey,
       baseUrl: checkedUrl.toString().replace(/\/+$/, ""),

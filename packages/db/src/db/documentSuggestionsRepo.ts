@@ -191,7 +191,11 @@ export async function persistMappedAnnotationGroups(
       args: [group.status, JSON.stringify(anchor), JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }), group.severity ?? null, now,
         `${group.id}:${(survivingAnchorIndexes.get(group.id)?.[mappedIndex] ?? mappedIndex) + 1}`, docId],
     })));
-    if (statements.length > 0) await c.batch(statements);
+    if (client) {
+      for (const statement of statements) await c.execute(statement);
+    } else if (statements.length > 0) {
+      await c.batch(statements);
+    }
   });
 }
 

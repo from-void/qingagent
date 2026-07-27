@@ -1252,6 +1252,34 @@ describe("commitDocumentOp", () => {
     expect(frames).toEqual([]);
   });
 
+  it("事务扩展写失败时回滚正文、版本和操作记录", async () => {
+    await seedDocument("doc-transactional-effect", "before", 1);
+
+    await expect(
+      commitDocumentOp(
+        commitInput({
+          docId: "doc-transactional-effect",
+          threadId: "thread-doc-transactional-effect",
+          clientMutationId: "client-transactional-effect",
+        }),
+        {
+          transactionalEffect: () => {
+            throw new Error("fail transactional effect");
+          },
+        },
+      ),
+    ).rejects.toThrow("fail transactional effect");
+
+    const loaded = await documentRepo.load("doc-transactional-effect");
+    expect(loaded?.docVersion).toBe(1);
+    expect(loaded?.pmDoc).toEqual(pmDocFromText("before"));
+    expect(await listVersions("doc-transactional-effect")).toEqual([]);
+    expect(await findOpByIdempotencyKey({
+      docId: "doc-transactional-effect",
+      clientMutationId: "client-transactional-effect",
+    })).toBeNull();
+  });
+
   it("loads committed idempotent results from the real snapshot table", async () => {
     await seedDocument("doc-snapshot", "before", 1);
     const committed = await commitDocumentOp(

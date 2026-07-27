@@ -8,6 +8,7 @@ import type {
   ToolCallStatus,
 } from "@qingagent/contract-ts";
 import {
+  getDeterministicId,
   getPmContentHash,
   isAbnormalDocumentCollapse,
   pmToLegacySections,
@@ -73,6 +74,24 @@ const logger = mastra.getLogger();
 
 function reviewBatchIdForRecord(record: SuggestionRecord): string {
   return record.suggestion.reviewBatchId ?? record.diffHunk?.reviewBatchId ?? record.suggestion.id;
+}
+
+function reviewCommitOpId(
+  state: SessionState,
+  records: readonly SuggestionRecord[],
+): string {
+  const suggestions = records
+    .map((record) => [
+      record.suggestion.baseVersion,
+      record.suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+      record.suggestion.id,
+      state.patchVerdicts.get(record.suggestion.id) ?? record.suggestion.status,
+    ])
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return getDeterministicId("review-commit-op", {
+    docId: state.docId,
+    suggestions,
+  });
 }
 
 function recordsByReviewBatchId(state: SessionState, reviewBatchId: string): SuggestionRecord[] {
@@ -193,6 +212,7 @@ async function persistSuggestionStatus(
   suggestion: DocSuggestion,
   status: DocSuggestion["status"],
   conflict?: PatchConflict,
+  client?: Parameters<typeof updateDocumentSuggestionStatusInBatch>[6],
 ): Promise<void> {
   const rowsAffected = await updateDocumentSuggestionStatusInBatch(
     state.docId,
@@ -201,6 +221,7 @@ async function persistSuggestionStatus(
     suggestion.id,
     status,
     conflict,
+    client,
   );
   if (rowsAffected === 0) {
     throw new Error(
@@ -236,22 +257,25 @@ function suggestionPersistenceFailedFrame(
 async function* settleResolvedReviewRecords(
   state: SessionState,
   records: readonly SuggestionRecord[],
+  options: { alreadyPersisted?: boolean } = {},
 ): AsyncGenerator<BridgeFrame, boolean> {
   let allPersisted = true;
   for (const record of records) {
     const verdict = state.patchVerdicts.get(record.suggestion.id);
     const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
-    try {
-      await persistSuggestionStatus(
-        state,
-        nextSuggestion,
-        terminalStatus,
-      );
-    } catch (error) {
-      allPersisted = false;
-      yield suggestionPersistenceFailedFrame(state, record, terminalStatus, error);
-      continue;
+    if (!options.alreadyPersisted) {
+      try {
+        await persistSuggestionStatus(
+          state,
+          nextSuggestion,
+          terminalStatus,
+        );
+      } catch (error) {
+        allPersisted = false;
+        yield suggestionPersistenceFailedFrame(state, record, terminalStatus, error);
+        continue;
+      }
     }
     const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: terminalStatus });
     yield toolCallUpdated(record.messageId, record.suggestion.id, spec);
@@ -280,6 +304,7 @@ async function* settleUnappliedReviewRecords(
   records: readonly SuggestionRecord[],
   conflicts: readonly PatchConflict[],
   fallbackReason: string,
+  options: { alreadyPersisted?: boolean } = {},
 ): AsyncGenerator<BridgeFrame, boolean> {
   let allPersisted = true;
   const byId = new Map(conflicts.map((conflict) => [conflict.suggestionId, conflict]));
@@ -288,12 +313,14 @@ async function* settleUnappliedReviewRecords(
     const verdict = state.patchVerdicts.get(id);
     if (verdict === "rejected") {
       const nextSuggestion: DocSuggestion = { ...record.suggestion, status: "rejected" };
-      try {
-        await persistSuggestionStatus(state, nextSuggestion, "rejected");
-      } catch (error) {
-        allPersisted = false;
-        yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
-        continue;
+      if (!options.alreadyPersisted) {
+        try {
+          await persistSuggestionStatus(state, nextSuggestion, "rejected");
+        } catch (error) {
+          allPersisted = false;
+          yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
+          continue;
+        }
       }
       const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: "rejected" });
       yield toolCallUpdated(record.messageId, id, spec);
@@ -309,12 +336,14 @@ async function* settleUnappliedReviewRecords(
       status: "conflict",
       conflict,
     };
-    try {
-      await persistSuggestionStatus(state, nextSuggestion, "conflict", conflict);
-    } catch (error) {
-      allPersisted = false;
-      yield suggestionPersistenceFailedFrame(state, record, "conflict", error);
-      continue;
+    if (!options.alreadyPersisted) {
+      try {
+        await persistSuggestionStatus(state, nextSuggestion, "conflict", conflict);
+      } catch (error) {
+        allPersisted = false;
+        yield suggestionPersistenceFailedFrame(state, record, "conflict", error);
+        continue;
+      }
     }
     const spec = buildSuggestionToolCallSpec(nextSuggestion, {
       kind: "failed",
@@ -757,8 +786,70 @@ export async function* commitPatches(
   let appliedHunkCount = 0;
   let commitResultCountsKnown = true;
   let legacyReplayUnknown = false;
+  let transactionSettlementPersisted = false;
+  type PendingAnnotationMapping = {
+    mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
+    replacedOrigins: string[];
+  };
+  let transactionAnnotationMapping: PendingAnnotationMapping | null = null;
   let result: Awaited<ReturnType<typeof commitDocumentOp>>;
   const previousDocVersion = state.docVersion;
+  const reconcileCommittedResult = (
+    committed: Extract<Awaited<ReturnType<typeof commitDocumentOp>>, { status: "committed" }>,
+  ): void => {
+    if (!shouldCommitDiffHunks) return;
+    const persistedAppliedIds = new Set(
+      (committed.steps ?? [])
+        .flatMap((step) => [
+          ...(step.suggestionId ? [step.suggestionId] : []),
+          ...(step.suggestionIds ?? []),
+        ])
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    if (persistedAppliedIds.size > 0) {
+      appliedHunkCount = acceptedDiffHunks.filter((hunk) =>
+        persistedAppliedIds.has(hunk.hunkId)
+      ).length;
+      skippedHunks = acceptedDiffHunks.filter((hunk) =>
+        !persistedAppliedIds.has(hunk.hunkId)
+      );
+      return;
+    }
+    if (!committed.createdNewVersion && acceptedDiffHunks.length > 0) {
+      // 升级前 op 没有 suggestionId，无法诚实恢复部分成功计数；必须把全部项按未知冲突
+      // 结算并省略计数，不能猜测某项已提交或伪报精确 0/0。
+      commitResultCountsKnown = false;
+      legacyReplayUnknown = true;
+      skippedHunks = acceptedDiffHunks;
+      appliedHunkCount = 0;
+      logger.warn("Idempotent patch replay lacks persisted suggestion ids", {
+        sessionId: state.sessionId,
+        docId: state.docId,
+        docVersion: committed.docVersion,
+      });
+    }
+  };
+  const partitionReviewRecords = (): {
+    settledRecords: SuggestionRecord[];
+    skippedRecords: SuggestionRecord[];
+  } => {
+    const skippedHunkIds = new Set(skippedHunks.map((hunk) => hunk.hunkId));
+    const skippedRecords = skippedHunkIds.size === 0
+      ? []
+      : records.filter((record) =>
+          record.diffHunk && skippedHunkIds.has(record.diffHunk.hunkId)
+        );
+    return {
+      skippedRecords,
+      settledRecords: skippedRecords.length === 0
+        ? records
+        : records.filter((record) => !skippedRecords.includes(record)),
+    };
+  };
+  const skippedSettlementMessage = (skippedCount: number): string =>
+    legacyReplayUnknown
+      ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
+      : `${appliedHunkCount} 处已写入，${skippedCount} 处因文档变化失效。`;
   try {
     result = await commitDocumentOp({
       docId: state.docId,
@@ -768,7 +859,7 @@ export async function* commitPatches(
       ...(wholeCandidateAccepted
         ? { baseContentHash: candidateBaseContentHash }
         : {}),
-      opId: `patch:${state.sessionId}:${expandedIds.join(",")}:${state.docVersion}`,
+      opId: reviewCommitOpId(state, records),
       opKind: "patch_steps",
       actorType: "agent",
       summary: () => {
@@ -926,6 +1017,65 @@ export async function* commitPatches(
           conflicts: applied.conflicts,
         };
       },
+    }, {
+      transactionalEffect: async ({ client, result: committed }) => {
+        reconcileCommittedResult(committed);
+        let nextAnnotationMapping: PendingAnnotationMapping | null = null;
+        const committedAnnotationSteps = (committed.steps ?? []) as PmStep[];
+        const annotationMappingSteps = wholeCandidateAccepted && wholeCandidateDoc
+          ? buildAnnotationMappingSteps(oldBaseDoc, committed.doc)
+          : committedAnnotationSteps;
+        if (state.annotationGroups.length > 0 && annotationMappingSteps.length > 0) {
+          const replacedOrigins = [
+            ...new Set(state.annotationGroups.map((group) => group.origin)),
+          ];
+          const mapped = mapAnnotationGroupsThroughSteps(
+            state.annotationGroups,
+            annotationMappingSteps,
+            committed.doc,
+          );
+          await persistMappedAnnotationGroups(
+            state.docId,
+            mapped.groups,
+            mapped.survivingAnchorIndexes,
+            client,
+          );
+          nextAnnotationMapping = { mapped, replacedOrigins };
+        }
+
+        const { settledRecords, skippedRecords } = partitionReviewRecords();
+        for (const record of settledRecords) {
+          const terminalStatus =
+            state.patchVerdicts.get(record.suggestion.id) === "rejected"
+              ? "rejected"
+              : "committed";
+          await persistSuggestionStatus(
+            state,
+            { ...record.suggestion, status: terminalStatus },
+            terminalStatus,
+            undefined,
+            client,
+          );
+        }
+        const message = skippedSettlementMessage(skippedRecords.length);
+        for (const record of skippedRecords) {
+          const conflict: PatchConflict = {
+            kind: legacyReplayUnknown ? "version_conflict" : "block_removed",
+            message,
+            suggestionId: record.suggestion.id,
+            blockId: record.suggestion.anchor.blockId,
+          };
+          await persistSuggestionStatus(
+            state,
+            { ...record.suggestion, status: "conflict", conflict },
+            "conflict",
+            conflict,
+            client,
+          );
+        }
+        transactionAnnotationMapping = nextAnnotationMapping;
+        transactionSettlementPersisted = true;
+      },
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "提交失败，本次修改未写入。";
@@ -963,55 +1113,37 @@ export async function* commitPatches(
     return;
   }
 
-  if (shouldCommitDiffHunks) {
-    const persistedAppliedIds = new Set(
-      (result.steps ?? [])
-        .flatMap((step) => [
-          ...(step.suggestionId ? [step.suggestionId] : []),
-          ...(step.suggestionIds ?? []),
-        ])
-        .filter((id): id is string => typeof id === "string" && id.length > 0),
-    );
-    if (persistedAppliedIds.size > 0) {
-      appliedHunkCount = acceptedDiffHunks.filter((hunk) => persistedAppliedIds.has(hunk.hunkId)).length;
-      skippedHunks = acceptedDiffHunks.filter((hunk) => !persistedAppliedIds.has(hunk.hunkId));
-    } else if (!result.createdNewVersion && acceptedDiffHunks.length > 0) {
-      // 升级前 op 没有 suggestionId，无法诚实恢复部分成功计数；必须把全部项按未知冲突
-      // 结算并省略计数，不能猜测某项已提交或伪报精确 0/0。
-      commitResultCountsKnown = false;
-      legacyReplayUnknown = true;
-      skippedHunks = acceptedDiffHunks;
-      appliedHunkCount = 0;
-      logger.warn("Idempotent patch replay lacks persisted suggestion ids", {
-        sessionId: state.sessionId,
-        docId: state.docId,
-        docVersion: result.docVersion,
-      });
-    }
-  }
+  if (!transactionSettlementPersisted) reconcileCommittedResult(result);
 
   advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
   state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
   state.docVersion = result.docVersion;
   state._directionChangeAskedSinceLastWrite = false;
-  const committedAnnotationSteps = (result.steps ?? []) as PmStep[];
-  const annotationMappingSteps = wholeCandidateAccepted && wholeCandidateDoc
-    ? buildAnnotationMappingSteps(oldBaseDoc, result.doc)
-    : committedAnnotationSteps;
-  if (state.annotationGroups.length > 0 && annotationMappingSteps.length > 0) {
-    const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
-    const mapped = mapAnnotationGroupsThroughSteps(
-      state.annotationGroups,
-      annotationMappingSteps,
-      result.doc,
-    );
+  let annotationMapping: PendingAnnotationMapping | null = transactionAnnotationMapping;
+  if (!transactionSettlementPersisted) {
+    const committedAnnotationSteps = (result.steps ?? []) as PmStep[];
+    const annotationMappingSteps = wholeCandidateAccepted && wholeCandidateDoc
+      ? buildAnnotationMappingSteps(oldBaseDoc, result.doc)
+      : committedAnnotationSteps;
+    if (state.annotationGroups.length > 0 && annotationMappingSteps.length > 0) {
+      const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
+      const mapped = mapAnnotationGroupsThroughSteps(
+        state.annotationGroups,
+        annotationMappingSteps,
+        result.doc,
+      );
+      await persistMappedAnnotationGroups(
+        state.docId,
+        mapped.groups,
+        mapped.survivingAnchorIndexes,
+      );
+      annotationMapping = { mapped, replacedOrigins };
+    }
+  }
+  if (annotationMapping) {
+    const { mapped, replacedOrigins } = annotationMapping;
     state.annotationGroups = mapped.groups;
-    await persistMappedAnnotationGroups(
-      state.docId,
-      mapped.groups,
-      mapped.survivingAnchorIndexes,
-    );
     yield {
       kind: "annotationGroupsReady",
       data: { groups: mapped.groups, replacedOrigins },
@@ -1046,23 +1178,19 @@ export async function* commitPatches(
 
   // 失效 hunk(目标块被并发删除等)对应的 suggestion 按"未应用"结算,不能显示为已提交;
   // 沿既有 settleUnappliedReviewRecords 冲突帧通路把失效原因带给前端(不新造帧类型)。
-  const skippedHunkIds = new Set(skippedHunks.map((hunk) => hunk.hunkId));
-  const skippedRecords = skippedHunkIds.size === 0
-    ? []
-    : records.filter((record) => record.diffHunk && skippedHunkIds.has(record.diffHunk.hunkId));
-  const settledRecords = skippedRecords.length === 0
-    ? records
-    : records.filter((record) => !skippedRecords.includes(record));
+  const { settledRecords, skippedRecords } = partitionReviewRecords();
 
   const doc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
   yield { kind: "documentSnapshotWritten", data: { doc } };
 
-  const settledPersisted = yield* settleResolvedReviewRecords(state, settledRecords);
+  const settledPersisted = yield* settleResolvedReviewRecords(
+    state,
+    settledRecords,
+    { alreadyPersisted: transactionSettlementPersisted },
+  );
   let skippedPersisted = true;
   if (skippedRecords.length > 0) {
-    const message = legacyReplayUnknown
-      ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
-      : `${appliedHunkCount} 处已写入，${skippedRecords.length} 处因文档变化失效。`;
+    const message = skippedSettlementMessage(skippedRecords.length);
     skippedPersisted = yield* settleUnappliedReviewRecords(
       state,
       skippedRecords,
@@ -1073,6 +1201,7 @@ export async function* commitPatches(
         blockId: record.suggestion.anchor.blockId,
       })),
       message,
+      { alreadyPersisted: transactionSettlementPersisted },
     );
   }
   if (!settledPersisted || !skippedPersisted) {

@@ -55,6 +55,42 @@ describe("ConfirmService", () => {
     expect(state.pendingConfirms.size).toBe(0);
   });
 
+  it("grant 查询期间取消时不创建也不持久化 pending", async () => {
+    const state = createSession("confirm-cancel-during-grant-lookup");
+    const abortController = new AbortController();
+    let releaseLookup!: () => void;
+    const lookupBlocked = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const persist = vi.fn(async () => undefined);
+    const service = new ConfirmService({
+      persist,
+      loadGrant: async () => {
+        await lookupBlocked;
+        return null;
+      },
+    });
+
+    const request = service.requestCommandConfirm({
+      state,
+      runId: "run-cancelled",
+      toolCallId: "tool-cancelled",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv draft.txt final.txt" },
+      aborted: false,
+      abortSignal: abortController.signal,
+    });
+    abortController.abort("user_abort");
+    releaseLookup();
+
+    await expect(request).resolves.toEqual({
+      ok: false,
+      reason: "确认请求已取消",
+    });
+    expect(state.pendingConfirms.size).toBe(0);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("secret sentinel 只存在 SecretLeaseStore，单次 take 后销毁", async () => {
     const sentinel = "SECRET_SENTINEL_9f3d2b7a";
     const state = createSession("confirm-secret-sentinel");

@@ -297,6 +297,7 @@ describe("bridgeHandler durable askUser resume", () => {
           kind: "resumeAskUser",
           data: {
             sessionId,
+            toolCallId: suspended.payload.toolCallId,
             answers: {
               "q-one": { chosen: [], freeText: "答案A" },
             },

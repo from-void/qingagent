@@ -6,7 +6,10 @@ import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { statOpenedFileIdentity, verifyOpenedFilePath } from "./openedFilePath.js";
-import { resolveFileIds } from "../session/uploadFileResolver.js";
+import {
+  inferMimeTypeFromFilename,
+  resolveFileIds,
+} from "../session/uploadFileResolver.js";
 import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
 
@@ -748,14 +751,50 @@ function getFirstDescendantText(element: XmlElement, localName: string): string 
   return getElementsByLocalName(element, localName)[0]?.textContent ?? "";
 }
 
+const MAX_XLSX_COLUMNS = 16_384;
+const MAX_XLSX_ROWS = 1_048_576;
+
+function assertXlsxRowReference(rowRef: string, label = "行引用"): void {
+  const rowNumber = Number.parseInt(rowRef, 10);
+  if (
+    !/^\d+$/.test(rowRef) ||
+    !Number.isSafeInteger(rowNumber) ||
+    rowNumber < 1 ||
+    rowNumber > MAX_XLSX_ROWS
+  ) {
+    throw new Error(`${label}超出 Excel 规范上限 ${MAX_XLSX_ROWS}`);
+  }
+}
+
 function getCellColumnIndex(cellRef: string | null): number | null {
   const letters = cellRef?.match(/^[A-Z]+/i)?.[0];
   if (!letters) return null;
   let index = 0;
   for (const letter of letters.toUpperCase()) {
     index = index * 26 + (letter.charCodeAt(0) - 64);
+    if (index > MAX_XLSX_COLUMNS) {
+      throw new Error(`列引用超出 Excel 规范上限 XFD`);
+    }
   }
+  const rowRef = cellRef?.slice(letters.length);
+  if (rowRef) assertXlsxRowReference(rowRef);
   return index - 1;
+}
+
+function assertSafeXlsxDimension(doc: XmlDocument): void {
+  const dimensionRef = getElementsByLocalName(doc, "dimension")[0]?.getAttribute("ref");
+  if (!dimensionRef) return;
+  try {
+    const endpoints = dimensionRef.replace(/\$/g, "").split(":");
+    if (endpoints.length > 2 || endpoints.some((endpoint) => !/^[A-Z]+\d+$/i.test(endpoint))) {
+      throw new Error("invalid dimension");
+    }
+    for (const endpoint of endpoints) getCellColumnIndex(endpoint);
+  } catch {
+    throw new Error(
+      `工作表维度超出 Excel 规范上限 XFD${MAX_XLSX_ROWS}`,
+    );
+  }
 }
 
 type XlsxCellStyle = {
@@ -971,10 +1010,16 @@ function selectNumFmtSection(formatCode: string, value: number): { section: stri
   return { section: sections[0] ?? formatCode, useAbsoluteValue: false };
 }
 
-function decimalPlacesFromFormat(formatCode: string): number {
+function decimalPlacesFromFormat(formatCode: string): {
+  minimum: number;
+  maximum: number;
+} {
   const section = cleanNumFmtCode(formatCode).split(/[eE]/)[0] ?? formatCode;
-  const match = section.match(/\.([0#]+)/);
-  return match?.[1]?.length ?? 0;
+  const placeholders = section.match(/\.([0#?]+)/)?.[1] ?? "";
+  return {
+    minimum: [...placeholders].filter((placeholder) => placeholder === "0").length,
+    maximum: placeholders.length,
+  };
 }
 
 function exponentPlacesFromFormat(formatCode: string): number {
@@ -985,10 +1030,132 @@ function exponentPlacesFromFormat(formatCode: string): number {
 function formatScientificNumber(value: number, section: string): string {
   const decimals = decimalPlacesFromFormat(section);
   const exponentPlaces = exponentPlacesFromFormat(section);
-  const [mantissa = "0", exponent = "+0"] = value.toExponential(decimals).toUpperCase().split("E");
+  const [rawMantissa = "0", exponent = "+0"] = value
+    .toExponential(decimals.maximum)
+    .toUpperCase()
+    .split("E");
+  const mantissa = new Intl.NumberFormat("en-US", {
+    useGrouping: false,
+    minimumFractionDigits: decimals.minimum,
+    maximumFractionDigits: decimals.maximum,
+  }).format(Number(rawMantissa));
   const sign = exponent.startsWith("-") ? "-" : "+";
   const digits = exponent.replace(/^[+-]/, "").padStart(exponentPlaces, "0");
   return `${mantissa}E${sign}${digits}`;
+}
+
+function xlsxScalingCommaCount(section: string): number {
+  const cleaned = cleanNumFmtCode(section).split(/e/i)[0] ?? "";
+  let lastPlaceholder = -1;
+  for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+    if (/[0#?]/.test(cleaned[index] ?? "")) {
+      lastPlaceholder = index;
+      break;
+    }
+  }
+  if (lastPlaceholder < 0) return 0;
+  return cleaned.slice(lastPlaceholder + 1).match(/^,+/)?.[0]?.length ?? 0;
+}
+
+function hasXlsxGroupingComma(section: string): boolean {
+  const cleaned = cleanNumFmtCode(section).split(/e/i)[0] ?? "";
+  let lastPlaceholder = -1;
+  for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+    if (/[0#?]/.test(cleaned[index] ?? "")) {
+      lastPlaceholder = index;
+      break;
+    }
+  }
+  return lastPlaceholder >= 0 && cleaned.slice(0, lastPlaceholder + 1).includes(",");
+}
+
+type XlsxFractionFormat = {
+  hasWholePart: boolean;
+  denominator: number;
+  fixedDenominator: boolean;
+};
+
+function parseXlsxFractionFormat(section: string): XlsxFractionFormat | null {
+  const cleaned = cleanNumFmtCode(section);
+  const slashIndex = cleaned.indexOf("/");
+  if (slashIndex < 0) return null;
+  const numeratorMatch = cleaned.slice(0, slashIndex).match(/([0#?]+)\s*$/);
+  const denominatorMatch = cleaned.slice(slashIndex + 1).match(/^\s*([0#?]+|\d+)/);
+  if (!numeratorMatch || !denominatorMatch) return null;
+
+  const prefix = cleaned.slice(0, slashIndex - numeratorMatch[0].length);
+  const hasWholePart = /[0#?]/.test(prefix);
+  const denominatorPattern = denominatorMatch[1] ?? "";
+  if (/^\d+$/.test(denominatorPattern)) {
+    const denominator = Number.parseInt(denominatorPattern, 10);
+    return denominator > 0
+      ? { hasWholePart, denominator, fixedDenominator: true }
+      : null;
+  }
+  const denominator = 10 ** Math.min(denominatorPattern.length, 7) - 1;
+  return { hasWholePart, denominator, fixedDenominator: false };
+}
+
+function approximateFraction(
+  value: number,
+  maxDenominator: number,
+): { numerator: number; denominator: number } {
+  if (value <= 0) return { numerator: 0, denominator: 1 };
+
+  let p0 = 0;
+  let q0 = 1;
+  let p1 = 1;
+  let q1 = 0;
+  let remainder = value;
+  while (true) {
+    const coefficient = Math.floor(remainder);
+    const q2 = q0 + coefficient * q1;
+    if (q2 > maxDenominator) break;
+    const p2 = p0 + coefficient * p1;
+    p0 = p1;
+    q0 = q1;
+    p1 = p2;
+    q1 = q2;
+    const fraction = remainder - coefficient;
+    if (fraction <= Number.EPSILON) {
+      return { numerator: p1, denominator: q1 };
+    }
+    remainder = 1 / fraction;
+  }
+
+  const step = Math.floor((maxDenominator - q0) / q1);
+  const boundedNumerator = p0 + step * p1;
+  const boundedDenominator = q0 + step * q1;
+  const boundedError = Math.abs(value - boundedNumerator / boundedDenominator);
+  const convergentError = Math.abs(value - p1 / q1);
+  return boundedError < convergentError
+    ? { numerator: boundedNumerator, denominator: boundedDenominator }
+    : { numerator: p1, denominator: q1 };
+}
+
+function formatXlsxFraction(value: number, format: XlsxFractionFormat): string {
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  let whole = format.hasWholePart ? Math.floor(absolute) : 0;
+  const fractionValue = format.hasWholePart ? absolute - whole : absolute;
+  let numerator: number;
+  let denominator: number;
+  if (format.fixedDenominator) {
+    denominator = format.denominator;
+    numerator = Math.round(fractionValue * denominator);
+  } else {
+    ({ numerator, denominator } = approximateFraction(
+      fractionValue,
+      format.denominator,
+    ));
+  }
+  if (format.hasWholePart && numerator >= denominator) {
+    whole += Math.floor(numerator / denominator);
+    numerator %= denominator;
+  }
+  if (numerator === 0) return `${sign}${whole}`;
+  const fraction = `${numerator}/${denominator}`;
+  return `${sign}${whole > 0 ? `${whole} ${fraction}` : fraction}`;
 }
 
 function renderNumFmtLiteral(fragment: string): string {
@@ -1059,15 +1226,22 @@ function formatXlsxNumber(rawValue: string, style: XlsxCellStyle | undefined): s
   const section = selected.section || style.formatCode;
   const cleaned = cleanNumFmtCode(section);
   const percent = cleaned.includes("%");
-  const useGrouping = cleaned.includes(",");
-  const numericValue = (selected.useAbsoluteValue ? Math.abs(value) : value) * (percent ? 100 : 1);
-  const formatted = /e[+-]0+/i.test(cleaned)
-    ? formatScientificNumber(numericValue, section)
-    : new Intl.NumberFormat("en-US", {
-      useGrouping,
-      minimumFractionDigits: decimalPlacesFromFormat(section),
-      maximumFractionDigits: decimalPlacesFromFormat(section),
-    }).format(numericValue);
+  const scalingCommas = xlsxScalingCommaCount(section);
+  const numericValue =
+    (selected.useAbsoluteValue ? Math.abs(value) : value) *
+    (percent ? 100 : 1) /
+    (1000 ** scalingCommas);
+  const fractionFormat = parseXlsxFractionFormat(section);
+  const decimals = decimalPlacesFromFormat(section);
+  const formatted = fractionFormat
+    ? formatXlsxFraction(numericValue, fractionFormat)
+    : /e[+-]0+/i.test(cleaned)
+      ? formatScientificNumber(numericValue, section)
+      : new Intl.NumberFormat("en-US", {
+        useGrouping: hasXlsxGroupingComma(section),
+        minimumFractionDigits: decimals.minimum,
+        maximumFractionDigits: decimals.maximum,
+      }).format(numericValue);
   const withLiterals = applyNumFmtLiterals(section, formatted);
   return percent && !withLiterals.includes("%") ? `${withLiterals}%` : withLiterals;
 }
@@ -1130,12 +1304,23 @@ function parseXlsxSheet(
   signal?.throwIfAborted();
   const doc = parser.parseFromString(xml, "application/xml");
   const lines: string[] = [];
+  assertSafeXlsxDimension(doc);
+  const rows = getElementsByLocalName(doc, "row");
+  if (rows.length > MAX_XLSX_ROWS) {
+    throw new Error(`工作表行数超出 Excel 规范上限 ${MAX_XLSX_ROWS}`);
+  }
 
-  for (const row of getElementsByLocalName(doc, "row")) {
+  for (const row of rows) {
     signal?.throwIfAborted();
     if (isHiddenXlsxRow(row)) continue;
+    const rowRef = row.getAttribute("r");
+    if (rowRef) assertXlsxRowReference(rowRef);
     const values: string[] = [];
-    for (const cell of getChildElementsByLocalName(row, "c")) {
+    const cells = getChildElementsByLocalName(row, "c");
+    if (cells.length > MAX_XLSX_COLUMNS) {
+      throw new Error(`工作表列数超出 Excel 规范上限 ${MAX_XLSX_COLUMNS}`);
+    }
+    for (const cell of cells) {
       signal?.throwIfAborted();
       const cellText = readXlsxCellText(cell, sharedStrings, styles, date1904);
       const columnIndex = getCellColumnIndex(cell.getAttribute("r"));
@@ -1761,9 +1946,12 @@ export const parseFileTool = createTool({
         };
       }
 
+      if (filename && !mimeType) {
+        mimeType = inferMimeTypeFromFilename(filename) ?? undefined;
+      }
       if (!filename || !mimeType) {
         return {
-          text: "[Error] filename 与 mimeType 不能为空（传 filePath/content 时必填）",
+          text: "[Error] filename 与 mimeType 不能为空（扩展名未知时需显式传入 mimeType）",
           metadata: { pages: null, wordCount: 0, title: null },
         };
       }

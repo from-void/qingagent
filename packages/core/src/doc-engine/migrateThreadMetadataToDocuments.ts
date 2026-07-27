@@ -202,11 +202,20 @@ export async function migrateThreadMetadataToDocuments(
   while (true) {
     const candidates: Array<{ thread: StorageThreadType; input: DocumentSaveInput }> = [];
     for (const thread of currentPage.threads) {
-      const input = metadataToDocumentInput(thread);
-      if (input) {
-        candidates.push({ thread, input });
-      } else {
-        stats.skipped++;
+      try {
+        const input = metadataToDocumentInput(thread);
+        if (input) {
+          candidates.push({ thread, input });
+        } else {
+          stats.skipped++;
+        }
+      } catch (err) {
+        stats.failed++;
+        logger.warn("documents migration metadata conversion failed", {
+          page,
+          threadId: thread.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     const tombstoned = await getTombstonedSessionIds(

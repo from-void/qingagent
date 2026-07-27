@@ -52,7 +52,17 @@ export async function* handleApprovalEvent(
     toolName,
     args: chunk.payload.args,
     aborted: context.abortController.signal.aborted,
+    abortSignal: context.abortController.signal,
   });
+  if (context.abortController.signal.aborted) {
+    if (result.ok) {
+      await context.confirmService.cancelRequestedCommandConfirm(
+        context.state,
+        result.pending,
+      );
+    }
+    return "handled";
+  }
   if (!result.ok) {
     const safeReason = "确认没有完成，命令没有执行。请稍后再试。";
     yield* emitOrUpdateToolCall(

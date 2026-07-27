@@ -72,6 +72,38 @@ describe("processAgentStream tool-call-approval", () => {
     expect(tool?.kind === "toolCall" ? tool.data.status.kind : null).toBe("running");
   });
 
+  it("确认持久化期间取消时清除 pending 且不发确认卡", async () => {
+    const state = createSession("approval-cancel-during-persist");
+    const abortController = new AbortController();
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      createId: () => "confirm-cancelled",
+      persist: async (_state, reason) => {
+        persistReasons.push(reason);
+        if (reason === "confirm:requested") abortController.abort("user_abort");
+      },
+    });
+
+    const frames = await collect(processAgentStream(
+      events(approval("tool-cancelled", "mv draft.txt final.txt")),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "stream-cancelled",
+        runId: "run-confirm",
+        abortController,
+        confirmService: service,
+      },
+    ));
+
+    expect(persistReasons).toEqual([
+      "confirm:requested",
+      "confirm:request-cancelled",
+    ]);
+    expect(state.pendingConfirms.size).toBe(0);
+    expect(frames.some((frame) => frame.kind === "confirmRequested")).toBe(false);
+  });
+
   it("同一步多个 approval 全部按 toolCallId 收集，不串权", async () => {
     const state = createSession("approval-stream-many");
     let id = 0;

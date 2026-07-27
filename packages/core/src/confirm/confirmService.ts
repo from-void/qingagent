@@ -138,9 +138,11 @@ export class ConfirmService {
     toolName: string;
     args: unknown;
     aborted: boolean;
+    abortSignal?: AbortSignal;
     sandboxBinDir?: string;
   }): Promise<RequestCommandConfirmResult> {
-    if (input.aborted) return { ok: false, reason: "确认请求已取消" };
+    const requestAborted = () => input.aborted || input.abortSignal?.aborted === true;
+    if (requestAborted()) return { ok: false, reason: "确认请求已取消" };
     if (!CONFIRM_CAPABLE_TOOLS.has(input.toolName)) {
       return { ok: false, reason: "工具不支持确认通道" };
     }
@@ -181,6 +183,7 @@ export class ConfirmService {
       try {
         grantState = await this.#loadGrantState(spec.kind);
       } catch (error) {
+        if (requestAborted()) return { ok: false, reason: "确认请求已取消" };
         console.error("[confirm-audit] grant state lookup failed; showing confirm card", {
           sessionId: input.state.sessionId,
           confirmId,
@@ -188,6 +191,7 @@ export class ConfirmService {
         });
       }
     }
+    if (requestAborted()) return { ok: false, reason: "确认请求已取消" };
     const pending: PendingConfirm = {
       confirmId,
       runId: input.runId,
@@ -209,16 +213,33 @@ export class ConfirmService {
       input.state.pendingConfirms.delete(input.toolCallId);
       return { ok: false, reason: "确认请求无法安全持久化" };
     }
+    if (requestAborted()) {
+      await this.cancelRequestedCommandConfirm(input.state, pending);
+      return { ok: false, reason: "确认请求已取消" };
+    }
     if (grantState?.grant) {
       try {
         const grant = grantState.grant;
-        const decisionId = await this.#approveFromStoredGrant(input.state, pending, grant);
+        const decisionId = await this.#approveFromStoredGrant(
+          input.state,
+          pending,
+          grant,
+          input.abortSignal,
+        );
+        if (requestAborted()) {
+          await this.cancelRequestedCommandConfirm(input.state, pending);
+          return { ok: false, reason: "确认请求已取消" };
+        }
         return {
           ok: true,
           pending,
           storedGrantApproval: { decisionId, grant },
         };
       } catch (error) {
+        if (requestAborted()) {
+          await this.cancelRequestedCommandConfirm(input.state, pending);
+          return { ok: false, reason: "确认请求已取消" };
+        }
         if (
           error instanceof ConfirmDecisionError &&
           error.message === "存量确认已撤销" &&
@@ -247,6 +268,10 @@ export class ConfirmService {
         }
       }
     }
+    if (requestAborted()) {
+      await this.cancelRequestedCommandConfirm(input.state, pending);
+      return { ok: false, reason: "确认请求已取消" };
+    }
     return { ok: true, pending, frame: this.requestedFrame(pending) };
   }
 
@@ -258,7 +283,9 @@ export class ConfirmService {
     state: SessionState,
     pending: PendingConfirm,
     grant: ConfirmGrant,
+    abortSignal?: AbortSignal,
   ): Promise<string> {
+    abortSignal?.throwIfAborted();
     const pendingExpiresAt = Date.parse(pending.expiresAt);
     if (
       state.pendingConfirms.get(pending.toolCallId) !== pending ||
@@ -284,7 +311,9 @@ export class ConfirmService {
       throw error;
     }
     try {
+      abortSignal?.throwIfAborted();
       const currentState = await this.#loadGrantState(grant.kind);
+      abortSignal?.throwIfAborted();
       if (!currentState.grant || currentState.grant.grantId !== grant.grantId) {
         throw new ConfirmDecisionError("conflict", "存量确认已撤销");
       }
@@ -307,6 +336,21 @@ export class ConfirmService {
       clearApprovalProof(state, pending.toolCallId);
       await this.#rollbackStoredGrantDecision(state, pending);
       throw error;
+    }
+  }
+
+  async cancelRequestedCommandConfirm(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    clearApprovalProof(state, pending.toolCallId);
+    this.#secrets.delete(state, pending.confirmId);
+    if (state.pendingConfirms.get(pending.toolCallId) !== pending) return;
+    state.pendingConfirms.delete(pending.toolCallId);
+    try {
+      await this.#persist(state, "confirm:request-cancelled");
+    } catch {
+      await this.#retryPersist(state, "confirm:request-cancelled").catch(() => undefined);
     }
   }
 

@@ -5,10 +5,14 @@ import {
   buildPageExitDocSaveCommand,
   drainPageExitDocSaveOutbox,
   flushDocSaveOnPageExit,
+  PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK,
   readPageExitDocSaveOutbox,
   type PageExitOutboxStorage,
 } from "./pageExitSave";
-import type { CrossTabLockManager } from "../../../system/crossTabLock";
+import {
+  crossTabLeaseStorageKey,
+  type CrossTabLockManager,
+} from "../../../system/crossTabLock";
 
 function createStorage(): PageExitOutboxStorage {
   const values = new Map<string, string>();
@@ -271,6 +275,58 @@ describe("pageExitSave 持久 outbox", () => {
       busy: false,
     });
     expect(fetchRequest).toHaveBeenCalledOnce();
+  });
+
+  it("持有者崩溃后存活标签在租约过期时接管并补交", async () => {
+    const storage = createStorage();
+    flushDocSaveOnPageExit({
+      sessionId: "session-crashed-owner",
+      expectedDocumentSnapshot: 9,
+      baseContentHash: "base-9",
+      pmDoc: edited,
+      baselineDoc: baseline,
+      hasPendingDocSave: false,
+      createMutationId: () => "exit-crashed-owner",
+      sendBeacon: () => true,
+      outboxStorage: storage,
+    });
+    storage.setItem(
+      crossTabLeaseStorageKey(PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK),
+      JSON.stringify({
+        version: 1,
+        ownerId: "tab-crashed",
+        expiresAt: Date.now() - 1,
+      }),
+    );
+    const fetchRequest = vi.fn(
+      async (_url: string, init: RequestInit) => {
+        const command = JSON.parse(String(init.body));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{
+            kind: "docWriteResult",
+            data: {
+              ok: true,
+              clientMutationId: command.data.clientMutationId,
+              docVersion: 10,
+            },
+          }],
+        };
+      },
+    );
+
+    await expect(drainPageExitDocSaveOutbox({
+      storage,
+      fetchRequest,
+    })).resolves.toEqual({
+      saved: 1,
+      conflicts: [],
+      remaining: 0,
+      busy: false,
+    });
+    expect(fetchRequest).toHaveBeenCalledOnce();
+    expect(readPageExitDocSaveOutbox({ storage })).toEqual([]);
   });
 
   it("陈旧离页快照撞 CAS 后保留较新外部版本，冲突项显式出列且不 rebase", async () => {

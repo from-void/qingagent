@@ -92,7 +92,7 @@ export const PAGE_EXIT_DOC_SAVE_OUTBOX_KEY =
   "qingagent.page_exit_doc_save_outbox.v1";
 const PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX =
   `${PAGE_EXIT_DOC_SAVE_OUTBOX_KEY}:entry:`;
-const PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK =
+export const PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK =
   "qingagent:page-exit-doc-save-outbox-drain";
 const PAGE_EXIT_DOC_SAVE_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const PAGE_EXIT_DOC_SAVE_OUTBOX_MAX_ENTRIES = 8;
@@ -661,7 +661,7 @@ export async function drainPageExitDocSaveOutbox(input: {
   }
   const lockManager =
     input.lockManager === undefined
-      ? browserCrossTabLockManager()
+      ? browserCrossTabLockManager({ leaseStorage: storage })
       : input.lockManager;
   const unavailable: PageExitDocSaveOutboxDrainResult = {
     saved: 0,

@@ -52,6 +52,8 @@ import type { ServerStream } from "../data/serverStream";
 import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
 import type { DocWriteBaseline } from "../data/docWriteBaseline";
 
+const PAGE_EXIT_OUTBOX_RECOVERY_INTERVAL_MS = 30_000;
+
 export interface DocWriteTarget {
   sessionId: string;
   stream: ServerStream;
@@ -732,12 +734,17 @@ export function useWorkspaceDocumentEditor(input: {
     };
 
     recoverPageExitSaves();
+    const outboxRecoveryTimer = window.setInterval(
+      recoverPageExitSaves,
+      PAGE_EXIT_OUTBOX_RECOVERY_INTERVAL_MS,
+    );
     window.addEventListener("pagehide", pageExitFlush);
     window.addEventListener("beforeunload", pageExitFlush);
     window.addEventListener("pageshow", recoverPageExitSaves);
     window.addEventListener("online", recoverPageExitSaves);
     document.addEventListener("visibilitychange", visibilityFlush);
     return () => {
+      window.clearInterval(outboxRecoveryTimer);
       window.removeEventListener("pagehide", pageExitFlush);
       window.removeEventListener("beforeunload", pageExitFlush);
       window.removeEventListener("pageshow", recoverPageExitSaves);

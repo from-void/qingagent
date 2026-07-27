@@ -575,7 +575,7 @@ function normalizePmDocShape(value: unknown): unknown {
     attrs: { schemaVersion: PM_SCHEMA_VERSION, ...(record.attrs as Record<string, unknown> | undefined) },
     content: Array.isArray(record.content)
       ? record.content.map((child, index) => normalizeNodeShape(child, [index]))
-      : [],
+      : record.content,
   };
 }
 

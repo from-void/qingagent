@@ -99,6 +99,25 @@ const richPmDoc: PmDoc = {
 };
 
 describe("rich format serialization", () => {
+  it("根文档 content 缺失或非数组时拒绝归一化为空文档", () => {
+    const invalidDocs = [
+      { type: "doc", attrs: { schemaVersion: 1 } },
+      { type: "doc", attrs: { schemaVersion: 1 }, content: { type: "paragraph" } },
+      { type: "doc", attrs: { schemaVersion: 1 }, content: "正文" },
+    ];
+
+    for (const value of invalidDocs) {
+      const parsed = safeParsePmDoc(value);
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        expect(parsed.error.issues.map((issue) => issue.path)).toContainEqual(["content"]);
+      }
+      expect(() => normalizePmDoc(value)).toThrow("Invalid PM doc");
+    }
+
+    expect(safeParsePmDoc({ type: "doc", attrs: { schemaVersion: 1 }, content: [] }).success).toBe(true);
+  });
+
   it("Mermaid source 有无单个尾换行时导出同一字节，解散分区不制造空行", () => {
     const diagramMarkdown = (source: string) => pmToMarkdown({
       type: "doc",

@@ -1,4 +1,4 @@
-import type { LegacySection } from "@qingagent/contract-ts";
+import { isAllowedLinkHref, type LegacySection } from "@qingagent/contract-ts";
 import type {
   PmBlockNode,
   PmDoc,
@@ -94,7 +94,7 @@ function pmBlockToHtml(node: PmBlockNode): string {
   switch (node.type) {
     case "heading": {
       const level = node.attrs.level;
-      return `<h${level}${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</h${level}>`;
+      return `<h${level}${headingIdAttr(node.attrs.anchor)}${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</h${level}>`;
     }
     case "paragraph":
       return `<p${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</p>`;
@@ -266,8 +266,9 @@ function pmTextNodeToHtml(text: string, marks: readonly PmMark[]): string {
   if (highlight) {
     html = `<mark data-color="${escapeAttr(highlight.attrs.color)}">${html}</mark>`;
   }
-  if (link && /^https?:\/\//i.test(link.attrs.href)) {
-    html = `<a href="${escapeAttr(link.attrs.href)}">${html}</a>`;
+  const href = link ? exportLinkHref(link.attrs.href) : null;
+  if (href) {
+    html = `<a href="${escapeAttr(href)}">${html}</a>`;
   }
   return html;
 }
@@ -355,7 +356,7 @@ function legacySectionToHtml(section: LegacySection): string {
     case "h1":
       return `<h1>${escapeHtml(sectionText(section))}</h1>`;
     case "h2":
-      return `<h2>${escapeHtml(sectionText(section))}</h2>`;
+      return `<h2${headingIdAttr(section.data.anchor)}>${escapeHtml(sectionText(section))}</h2>`;
     case "p":
       return `<p>${escapeHtml(stripFormatting(section.data.text))}</p>`;
     case "penNote":
@@ -400,6 +401,18 @@ function alignAttr(align: string | null | undefined): string {
     return ` style="text-align:${align}"`;
   }
   return "";
+}
+
+function headingIdAttr(anchor: string | null | undefined): string {
+  const value = anchor?.trim();
+  if (!value || value.startsWith("#") || !isAllowedLinkHref(`#${value}`)) return "";
+  return ` id="${escapeAttr(value)}"`;
+}
+
+function exportLinkHref(href: string): string | null {
+  const value = href.trim();
+  if (!isAllowedLinkHref(value)) return null;
+  return /^https?:\/\//i.test(value) || value.startsWith("#") ? value : null;
 }
 
 function escapeHtml(value: string): string {

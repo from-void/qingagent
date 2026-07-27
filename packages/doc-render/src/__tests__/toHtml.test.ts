@@ -63,6 +63,54 @@ describe("toHtml 块级", () => {
     expect(html).toContain('<h3 style="text-align:center">三级居中</h3>');
   });
 
+  it("保留标题锚点与安全的同文档 hash 链接", () => {
+    const html = toHtml(
+      doc([
+        {
+          type: "paragraph",
+          attrs: { blockId: "toc" },
+          content: [{
+            type: "text",
+            text: "跳到背景",
+            marks: [{ type: "link", attrs: { href: "#background", title: null } }],
+          }],
+        },
+        {
+          type: "heading",
+          attrs: { blockId: "heading", level: 2, anchor: "background" },
+          content: [{ type: "text", text: "背景" }],
+        },
+      ] as never),
+    );
+
+    expect(html).toContain('<a href="#background">跳到背景</a>');
+    expect(html).toContain('<h2 id="background">背景</h2>');
+  });
+
+  it("丢弃含空白的 hash 链接与标题锚点", () => {
+    const html = toHtml(
+      doc([
+        {
+          type: "paragraph",
+          attrs: { blockId: "toc" },
+          content: [{
+            type: "text",
+            text: "坏链接",
+            marks: [{ type: "link", attrs: { href: "#bad target", title: null } }],
+          }],
+        },
+        {
+          type: "heading",
+          attrs: { blockId: "heading", level: 2, anchor: "bad target" },
+          content: [{ type: "text", text: "坏锚点" }],
+        },
+      ] as never),
+    );
+
+    expect(html).not.toContain('<a href="#bad target">');
+    expect(html).not.toContain('id="bad target"');
+  });
+
   it("段落正文转义 < > &", () => {
     const html = toHtml(
       doc([{ type: "paragraph", attrs: { blockId: "p" }, content: [{ type: "text", text: "a < b && c > d" }] }] as never),
@@ -363,5 +411,13 @@ describe("toHtml legacy 段", () => {
     expect(html).toContain('<pre class="code-block"><code>const a=1;</code></pre>');
     expect(html).toContain("<ul><li>一</li><li>二</li></ul>");
     expect(html).toContain("<hr>");
+  });
+
+  it("legacy h2 保留标题锚点", () => {
+    const html = toHtml([
+      { kind: "h2", data: { text: "带锚点的小节", anchor: "legacy-section" } },
+    ]);
+
+    expect(html).toContain('<h2 id="legacy-section">带锚点的小节</h2>');
   });
 });

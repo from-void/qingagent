@@ -65,6 +65,8 @@ const DARK_FALLBACK_MS = 780;
 // 收起是「离开」动作,要利落 —— 520ms 实测偏拖沓,收到 340ms。
 const RETURN_SLIDE_MS = 340;
 const RETURN_SLIDE_FADE_MS = 300;
+// morph / WebGL 任一链路不回调时也必须把控制权交还调用方；调用方会降级为直接导航。
+const FORWARD_SETTLE_TIMEOUT_MS = 3_000;
 
 /**
  * 在 host(首页根容器)内挂出固定覆盖层(space/dust/ink/morph),返回过渡控制器。
@@ -128,6 +130,68 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     dust = null;
   }
 
+  let disposed = false;
+  let operationGeneration = 0;
+  const stageRafs = new Set<number>();
+  const stageTimers = new Set<number>();
+  const pendingReturnSettlements = new Set<() => void>();
+  let activeForward: { generation: number; settleOnDispose: () => void } | null = null;
+
+  function requestStageFrame(
+    callback: FrameRequestCallback,
+    onError?: (error: unknown) => void,
+  ): number {
+    if (disposed) return 0;
+    try {
+      let id = 0;
+      id = requestAnimationFrame((now) => {
+        stageRafs.delete(id);
+        if (disposed) return;
+        try {
+          callback(now);
+        } catch (error) {
+          onError?.(error);
+        }
+      });
+      stageRafs.add(id);
+      return id;
+    } catch (error) {
+      onError?.(error);
+      return 0;
+    }
+  }
+
+  function setStageTimer(
+    callback: () => void,
+    delayMs: number,
+    onError?: (error: unknown) => void,
+  ): number {
+    if (disposed) return 0;
+    try {
+      let id = 0;
+      id = window.setTimeout(() => {
+        stageTimers.delete(id);
+        if (disposed) return;
+        try {
+          callback();
+        } catch (error) {
+          onError?.(error);
+        }
+      }, delayMs);
+      stageTimers.add(id);
+      return id;
+    } catch (error) {
+      onError?.(error);
+      return 0;
+    }
+  }
+
+  function clearStageTimer(id: number | null) {
+    if (id === null) return;
+    window.clearTimeout(id);
+    stageTimers.delete(id);
+  }
+
   function setMorphRect(r: StageRect, lift = 0, extra = "") {
     face.style.transition = "none";
     face.style.width = r.width + "px";
@@ -142,6 +206,8 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     to: StageRect,
     dur: number,
     onDone?: () => void,
+    isCurrent: () => boolean = () => !disposed,
+    onError?: (error: unknown) => void,
   ) {
     face.style.transition = "none";
     face.style.width = from.width + "px";
@@ -149,6 +215,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     face.style.opacity = "1";
     const t0 = performance.now();
     const tick = (now: number) => {
+      if (!isCurrent()) return;
       let p = (now - t0) / dur;
       if (p > 1) p = 1;
       const e = EASE_CUBIC(p);
@@ -165,20 +232,18 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
       face.style.transform =
         `translate(${x}px,${y + lift}px) scale(${sx},${sy}) ` +
         `perspective(1100px) rotateX(4deg) rotateY(${rotY}deg) skewY(${skY}deg)`;
-      if (p < 1) requestAnimationFrame(tick);
+      if (p < 1) requestStageFrame(tick, onError);
       else onDone?.();
     };
-    requestAnimationFrame(tick);
+    requestStageFrame(tick, onError);
   }
 
   // 去程「背景置深」的兜底定时器。放 stage 作用域(而非 playForward 局部)是为了 dispose 能取消 ——
   // 否则转场中途卸载首页,定时器仍会把 is-dark 加回已清理的 host 上。
-  let darkFallbackTimer = 0;
+  let darkFallbackTimer: number | null = null;
   function cancelDarkFallback() {
-    if (darkFallbackTimer) {
-      window.clearTimeout(darkFallbackTimer);
-      darkFallbackTimer = 0;
-    }
+    clearStageTimer(darkFallbackTimer);
+    darkFallbackTimer = null;
   }
 
   function darkOn(animate = false) {
@@ -191,24 +256,37 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     dust?.stop();
   }
 
-  function fadeOutForwardInk(): Promise<void> {
+  function fadeOutForwardInk(
+    isCurrent: () => boolean,
+    onDone: () => void,
+    onError: (error: unknown) => void,
+  ) {
     const renderedInk = inkCanvas.nextElementSibling;
     if (!(renderedInk instanceof HTMLCanvasElement) || !renderedInk.classList.contains("ccx-ink")) {
-      ink?.hide();
-      return Promise.resolve();
+      if (!isCurrent()) return;
+      try {
+        ink?.hide();
+        onDone();
+      } catch (error) {
+        onError(error);
+      }
+      return;
     }
 
     // 共享引擎把真实 WebGL canvas 接在占位 canvas 后；仅去程在同色 CSS 桌面上淡出交接。
     renderedInk.style.transition = `opacity ${INK_HANDOFF_MS}ms ease`;
     void renderedInk.offsetWidth;
     renderedInk.classList.remove("active");
-    return new Promise((resolve) => {
-      window.setTimeout(() => {
+    setStageTimer(() => {
+      if (!isCurrent()) return;
+      try {
         ink?.hide();
         renderedInk.style.transition = "";
-        resolve();
-      }, INK_HANDOFF_MS);
-    });
+        onDone();
+      } catch (error) {
+        onError(error);
+      }
+    }, INK_HANDOFF_MS, onError);
   }
 
   function playForward(
@@ -217,69 +295,127 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     inkOrigin: { x: number; y: number },
     plain = false,
   ): Promise<StageRect> {
-    return new Promise((resolve) => {
-      // plain:点击那一瞬间先把飞卡切成纯净(无噪点/边框/角标),和工作区文档纸一致,再开始形变
-      morph.classList.toggle("ccx-morph-plain", plain);
-      // morph 起点 = 新建卡固定位
-      setMorphRect(from);
-      const ox = inkOrigin.x / window.innerWidth;
-      const oy = inkOrigin.y / window.innerHeight;
-
-      let morphDone = false;
-      let inkDone = false;
-      const readTarget = () => (typeof to === "function" ? to() : to);
-      // 起飞前先实测一次。终帧还会再测一次，覆盖 1100ms 转场期间的 resize。
-      const initialTarget = readTarget();
-      // 到点无条件置深,与墨渗进度触发取先到者(详见 DARK_FALLBACK_MS)。
-      cancelDarkFallback();
-      darkFallbackTimer = window.setTimeout(() => {
-        darkFallbackTimer = 0;
-        darkOn(true);
-      }, DARK_FALLBACK_MS);
-      const tryResolve = () => {
-        if (morphDone && inkDone) {
-          cancelDarkFallback();
-          // 卡落定 + 背景已深的静止帧:重新实测目标纸壳，确保 resize 后仍与
-          // 工作区首帧逐像素同位；setMorphRect 直接写纸面 face 且保持
-          // transition:none，不靠动画糊对齐。
-          const settledTarget = readTarget();
-          setMorphRect(settledTarget);
-          resolve(settledTarget);
-        }
+    if (disposed) return Promise.resolve(from);
+    activeForward?.settleOnDispose();
+    for (const settle of [...pendingReturnSettlements]) settle();
+    const generation = ++operationGeneration;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let fallbackTarget = from;
+      let watchdogTimer: number | null = null;
+      const isCurrent = () =>
+        !disposed &&
+        !settled &&
+        operationGeneration === generation;
+      const cleanUp = () => {
+        cancelDarkFallback();
+        clearStageTimer(watchdogTimer);
+        watchdogTimer = null;
+        if (activeForward?.generation === generation) activeForward = null;
       };
+      const succeed = (target: StageRect) => {
+        if (!isCurrent()) return;
+        settled = true;
+        cleanUp();
+        resolve(target);
+      };
+      const fail = (error: unknown) => {
+        if (!isCurrent()) return;
+        settled = true;
+        cleanUp();
+        operationGeneration += 1;
+        reject(error instanceof Error ? error : new Error("首页转场未完成"));
+      };
+      const settleOnDispose = () => {
+        if (settled) return;
+        settled = true;
+        cleanUp();
+        resolve(fallbackTarget);
+      };
+      activeForward = { generation, settleOnDispose };
 
-      const inkHandle = ensureInk();
-      if (inkHandle && inkHandle.ok) {
-        host.classList.add("is-ink-wipe");
-        inkHandle
-          .play([ox, oy], 1100, false, (e) => {
-            if (e > 0.82) {
+      try {
+        // plain:点击那一瞬间先把飞卡切成纯净(无噪点/边框/角标),和工作区文档纸一致,再开始形变
+        morph.classList.toggle("ccx-morph-plain", plain);
+        // morph 起点 = 新建卡固定位
+        setMorphRect(from);
+        const ox = inkOrigin.x / window.innerWidth;
+        const oy = inkOrigin.y / window.innerHeight;
+
+        let morphDone = false;
+        let inkDone = false;
+        const readTarget = () => (typeof to === "function" ? to() : to);
+        // 起飞前先实测一次。终帧还会再测一次，覆盖 1100ms 转场期间的 resize。
+        const initialTarget = readTarget();
+        fallbackTarget = initialTarget;
+        watchdogTimer = setStageTimer(
+          () => fail(new Error("首页转场等待超时")),
+          FORWARD_SETTLE_TIMEOUT_MS,
+          fail,
+        );
+        // 到点无条件置深,与墨渗进度触发取先到者(详见 DARK_FALLBACK_MS)。
+        cancelDarkFallback();
+        darkFallbackTimer = setStageTimer(() => {
+          if (!isCurrent()) return;
+          darkFallbackTimer = null;
+          darkOn(true);
+        }, DARK_FALLBACK_MS, fail);
+        const tryResolve = () => {
+          if (!isCurrent() || !morphDone || !inkDone) return;
+          try {
+            cancelDarkFallback();
+            // 卡落定 + 背景已深的静止帧:重新实测目标纸壳，确保 resize 后仍与
+            // 工作区首帧逐像素同位；setMorphRect 直接写纸面 face 且保持
+            // transition:none，不靠动画糊对齐。
+            const settledTarget = readTarget();
+            setMorphRect(settledTarget);
+            succeed(settledTarget);
+          } catch (error) {
+            fail(error);
+          }
+        };
+
+        const inkHandle = ensureInk();
+        if (inkHandle && inkHandle.ok) {
+          host.classList.add("is-ink-wipe");
+          Promise.resolve(inkHandle.play([ox, oy], 1100, false, (e) => {
+            if (!isCurrent() || e <= 0.82) return;
+            cancelDarkFallback();
+            try {
+              darkOn(true);
+            } catch (error) {
+              fail(error);
+            }
+          }))
+            .then(() => {
+              if (!isCurrent()) return;
               cancelDarkFallback();
               darkOn(true);
-            }
-          })
-          .then(async () => {
-            cancelDarkFallback();
-            darkOn(true);
-            await fadeOutForwardInk();
-            inkDone = true;
-            tryResolve();
-          });
-      } else {
-        // WebGL 不可用:直接置深背景(无墨)
-        cancelDarkFallback();
-        darkOn(true);
-        inkDone = true;
-      }
+              fadeOutForwardInk(isCurrent, () => {
+                inkDone = true;
+                tryResolve();
+              }, fail);
+            })
+            .catch(fail);
+        } else {
+          // WebGL 不可用:直接置深背景(无墨)
+          cancelDarkFallback();
+          darkOn(true);
+          inkDone = true;
+        }
 
-      tweenMorph(from, initialTarget, 1100, () => {
-        morphDone = true;
-        tryResolve();
-      });
+        tweenMorph(from, initialTarget, 1100, () => {
+          morphDone = true;
+          tryResolve();
+        }, isCurrent, fail);
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
   function snapArrived(rect: StageRect, plain = false) {
+    if (disposed) return;
     // 返回到达态首帧(必须在 paint 前调):背景瞬时已深(is-ink-wipe 让 .ccx-space 无慢渐显,
     // is-dark 令其 opacity:1 立即满深,纯 CSS 渐变即可,无需 WebGL 墨层)、卡静停落点。
     // 这一帧 = 离开前的最后一帧(卡同 rect + 深背景)→ 切换瞬间不跳、不闪、不漏白。
@@ -303,50 +439,95 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     _inkOrigin: { x: number; y: number },
     animate = false,
   ): Promise<void> {
+    if (disposed) return Promise.resolve();
+    activeForward?.settleOnDispose();
+    for (const settle of [...pendingReturnSettlements]) settle();
+    const generation = ++operationGeneration;
     return new Promise((resolve) => {
-      cancelDarkFallback(); // 返程要变浅,别让去程遗留的兜底又把背景置深
-      host.classList.remove("is-ink-wipe");
-      ensureInk()?.hide(); // 收起墨层,不再播放渗墨锋面
-      darkOff(); // 深背景平滑退去(.ccx-space 自带过渡)
+      let settled = false;
+      const isCurrent = () =>
+        !disposed &&
+        !settled &&
+        operationGeneration === generation;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        pendingReturnSettlements.delete(settle);
+        resolve();
+      };
+      const finish = () => {
+        if (isCurrent()) settle();
+      };
+      pendingReturnSettlements.add(settle);
 
-      if (!animate) {
-        // 文档编辑页返回:纸停在原文档纸落点,往下滑出视口收起(纸被收走的动向)。
-        //
-        // 纯净纸兜底(幂等)。返程的 morph 是首页重新挂载时新建的元素 —— 去程那次
-        // playForward(plain=true) 的 class 随旧 stage 一起销毁了,不带 plain 就会露出
-        // .ccx-morph 的新建卡皮(#efe9dd 底 + 噪点 + 棕色双边框 + 朱砂角标)。
-        // 正常路径由 snapArrived(rect, true) 在到达态首帧就切好,这里只兜「没走 snapArrived」。
-        morph.classList.add("ccx-morph-plain");
-        setMorphRect(from);
-        void face.offsetWidth; // setMorphRect 写了 transition:none,强制回流让下面的过渡真的生效
-        face.style.transition =
-          `transform ${RETURN_SLIDE_MS}ms cubic-bezier(0.32, 0, 0.67, 0),` +
-          ` opacity ${RETURN_SLIDE_FADE_MS}ms ease`;
-        requestAnimationFrame(() => {
-          // 纸顶滑到视口下沿 = 整张纸滑出屏幕;与 darkOff() 的背景转浅同时进行。
-          face.style.transform = `translate(${from.left}px,${window.innerHeight}px)`;
-          face.style.opacity = "0";
-        });
-        window.setTimeout(resolve, RETURN_SLIDE_MS + 20);
-        return;
+      try {
+        cancelDarkFallback(); // 返程要变浅,别让去程遗留的兜底又把背景置深
+        host.classList.remove("is-ink-wipe");
+        ensureInk()?.hide(); // 收起墨层,不再播放渗墨锋面
+        darkOff(); // 深背景平滑退去(.ccx-space 自带过渡)
+
+        if (!animate) {
+          // 文档编辑页返回:纸停在原文档纸落点,往下滑出视口收起(纸被收走的动向)。
+          //
+          // 纯净纸兜底(幂等)。返程的 morph 是首页重新挂载时新建的元素 —— 去程那次
+          // playForward(plain=true) 的 class 随旧 stage 一起销毁了,不带 plain 就会露出
+          // .ccx-morph 的新建卡皮(#efe9dd 底 + 噪点 + 棕色双边框 + 朱砂角标)。
+          // 正常路径由 snapArrived(rect, true) 在到达态首帧就切好,这里只兜「没走 snapArrived」。
+          morph.classList.add("ccx-morph-plain");
+          setMorphRect(from);
+          void face.offsetWidth; // setMorphRect 写了 transition:none,强制回流让下面的过渡真的生效
+          face.style.transition =
+            `transform ${RETURN_SLIDE_MS}ms cubic-bezier(0.32, 0, 0.67, 0),` +
+            ` opacity ${RETURN_SLIDE_FADE_MS}ms ease`;
+          requestStageFrame(() => {
+            if (!isCurrent()) return;
+            // 纸顶滑到视口下沿 = 整张纸滑出屏幕;与 darkOff() 的背景转浅同时进行。
+            face.style.transform = `translate(${from.left}px,${window.innerHeight}px)`;
+            face.style.opacity = "0";
+          }, finish);
+          setStageTimer(finish, RETURN_SLIDE_MS + 20, finish);
+          return;
+        }
+
+        // 新建页返回:卡从落点飞回新建卡固定位(与去程同款弧线),落定后淡出。
+        tweenMorph(from, to, 760, () => {
+          if (!isCurrent()) return;
+          setMorphRect(to); // 精确停在新建卡位(去弧线残留)
+          face.style.transition = "opacity 0.34s ease";
+          requestStageFrame(() => {
+            if (isCurrent()) face.style.opacity = "0";
+          }, finish);
+          setStageTimer(finish, 360, finish);
+        }, isCurrent, finish);
+      } catch {
+        finish();
       }
-
-      // 新建页返回:卡从落点飞回新建卡固定位(与去程同款弧线),落定后淡出。
-      tweenMorph(from, to, 760, () => {
-        setMorphRect(to); // 精确停在新建卡位(去弧线残留)
-        face.style.transition = "opacity 0.34s ease";
-        requestAnimationFrame(() => {
-          face.style.opacity = "0";
-        });
-        window.setTimeout(resolve, 360);
-      });
     });
   }
 
   function dispose() {
+    if (disposed) return;
+    disposed = true;
+    operationGeneration += 1;
     cancelDarkFallback();
-    ink?.dispose();
-    dust?.dispose();
+    for (const raf of stageRafs) cancelAnimationFrame(raf);
+    stageRafs.clear();
+    for (const timer of stageTimers) window.clearTimeout(timer);
+    stageTimers.clear();
+    const forward = activeForward;
+    activeForward = null;
+    forward?.settleOnDispose();
+    for (const settle of [...pendingReturnSettlements]) settle();
+    try {
+      ink?.dispose();
+    } catch {
+      /* 已进入销毁态，资源释放失败不应复活转场。 */
+    }
+    try {
+      dust?.dispose();
+    } catch {
+      /* 同上。 */
+    }
     host.classList.remove("ccx-stage-host", "is-dark", "is-dark-anim", "is-ink-wipe");
     space.remove();
     dustCanvas.remove();

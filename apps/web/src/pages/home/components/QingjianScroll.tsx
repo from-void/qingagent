@@ -41,6 +41,7 @@ import {
 import {
   createHomeTransitionStage,
   type HomeTransitionStage,
+  type StageRect as TransitionStageRect,
 } from "../../new-session/transition/homeStage";
 import "./qingjian.css";
 import { HomeSettingsSheet, type SettingsSheetTab } from "./HomeSettingsSheet";
@@ -1174,6 +1175,8 @@ export function QingjianScroll({
   const txStageRef = useRef<HomeTransitionStage | null>(null);
   // 正在跑「进场核心动效」标记:屏蔽期间的重复点击 / 滚动触发。
   const transitioningRef = useRef(false);
+  // 每次去程与舞台生命周期绑定；卸载/重建会使旧 Promise 的 finally 无权再提交导航。
+  const transitionGenerationRef = useRef(0);
   const initialHomeViewXRef = useRef<number | null>(null);
 
   const [containerH, setContainerH] = useState(0);
@@ -1367,6 +1370,8 @@ export function QingjianScroll({
 
     return () => {
       cancelled = true;
+      transitionGenerationRef.current += 1;
+      transitioningRef.current = false;
       stage.dispose();
       txStageRef.current = null;
       root.classList.remove("qj-arriving", "qj-content-fadein", "qj-transitioning");
@@ -1812,23 +1817,39 @@ export function QingjianScroll({
       }
 
       transitioningRef.current = true;
+      const generation = ++transitionGenerationRef.current;
       const root = rootRef.current;
       root?.classList.add("qj-transitioning"); // 首页额外内容淡出(核心卡由 morph 接管)
       // 墨水起点 = 被点的新建卡中心(fromRect),墨从这张卡背后渗开 —— 与返回墨退 origin
       // (新建卡中心)对称。剔除点击抖动用卡中心而非 cx/cy,与返回落点同一坐标系。
       const inkOrigin = { x: fromRect.left + fromRect.width / 2, y: fromRect.top + fromRect.height / 2 };
-      txStage
-        .playForward(fromRect, measureLanding, inkOrigin, true)
-        .then((landing) => {
+      let landing: TransitionStageRect | null = null;
+      void Promise.resolve()
+        .then(() => txStage.playForward(fromRect, measureLanding, inkOrigin, true))
+        .then((resolvedLanding) => {
+          landing = resolvedLanding;
+        })
+        .catch(() => {
+          // 舞台资源异常或超时：finally 仍会解锁并直接导航，不保留不完整交接帧。
+        })
+        .finally(() => {
+          if (
+            transitionGenerationRef.current !== generation ||
+            txStageRef.current !== txStage
+          ) return;
+          transitioningRef.current = false;
+          root?.classList.remove("qj-transitioning");
           // 卡落定 + 背景已深的静止帧:交付到达态 → 切路由。编辑页挂载即静帧渲染。
           // (皮肤 CSS 的等待不在这儿:挡在 App.tsx 的 lazy 工厂里,覆盖所有进入路径。
           //  切页后 startTransition 会保留这一帧首页静止画面,直到编辑页连样式一起就绪。)
-          setWorkspaceArrive({
-            rect: landing,
-            x: inkOrigin.x,
-            y: inkOrigin.y,
-            sessionId: null,
-          });
+          if (landing) {
+            setWorkspaceArrive({
+              rect: landing,
+              x: inkOrigin.x,
+              y: inkOrigin.y,
+              sessionId: null,
+            });
+          }
           onNewSession();
         });
     };
@@ -1846,19 +1867,35 @@ export function QingjianScroll({
       // 与新建路径同口径：起飞前/落定帧各实测一次目标纸壳。
       const measureLanding = () => computeWorkspaceDocRect();
       transitioningRef.current = true;
+      const generation = ++transitionGenerationRef.current;
       const root = rootRef.current;
       root?.classList.add("qj-transitioning");
       const inkOrigin = { x: from.centerX, y: from.centerY };
-      txStage
+      let landing: TransitionStageRect | null = null;
+      void Promise.resolve()
         // plain=true:点击文章卡瞬间先把飞卡切成纯净纸,和工作区文档一致,再形变进场
-        .playForward(from.rect, measureLanding, inkOrigin, true)
-        .then((landing) => {
-          setWorkspaceArrive({
-            rect: landing,
-            x: inkOrigin.x,
-            y: inkOrigin.y,
-            sessionId,
-          });
+        .then(() => txStage.playForward(from.rect, measureLanding, inkOrigin, true))
+        .then((resolvedLanding) => {
+          landing = resolvedLanding;
+        })
+        .catch(() => {
+          // 同新建路径：失败时降级直达，不能永久占住入口。
+        })
+        .finally(() => {
+          if (
+            transitionGenerationRef.current !== generation ||
+            txStageRef.current !== txStage
+          ) return;
+          transitioningRef.current = false;
+          root?.classList.remove("qj-transitioning");
+          if (landing) {
+            setWorkspaceArrive({
+              rect: landing,
+              x: inkOrigin.x,
+              y: inkOrigin.y,
+              sessionId,
+            });
+          }
           onOpenSession(sessionId);
         });
     };

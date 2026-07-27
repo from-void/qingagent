@@ -5,9 +5,14 @@ import type { Material } from "../types/material.js";
 import { createSession } from "../session/sessionState.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
 import { annotationGroupsParseFailureInput } from "../tools/annotationGroups.js";
+import {
+  insertAnnotationGroups,
+  replaceAnnotationGroupsByOrigin,
+} from "@qingagent/db";
 
 vi.mock("@qingagent/db", () => ({
   STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"],
+  insertAnnotationGroups: vi.fn(async () => undefined),
   replaceAnnotationGroupsByOrigin: vi.fn(async () => undefined),
 }));
 
@@ -136,11 +141,30 @@ describe("create_annotation_groups 来源引句校验", () => {
     await tool.execute!({ groups: [group({ origin: "privacy", summary: "隐私问题" })] }, ctx);
     expect(state.annotationGroups.map((item) => item.origin).sort()).toEqual(["privacy", "source-check"]);
 
+    state._annotationOriginsReplacedThisTurn = new Set();
     await tool.execute!({ groups: [group({ summary: "来源复核新结果" })] }, ctx);
     expect(state.annotationGroups).toHaveLength(2);
     expect(state.annotationGroups.filter((item) => item.origin === "privacy")).toHaveLength(1);
     expect(state.annotationGroups.find((item) => item.origin === "source-check")?.id).not.toBe(firstSourceId);
-    expect(state._annotationOriginsReplacedThisTurn).toEqual(new Set(["source-check", "privacy"]));
+    expect(state._annotationOriginsReplacedThisTurn).toEqual(new Set(["source-check"]));
+  });
+
+  it("同轮同 origin 分批创建时首批换代旧轮、后批追加且两批均保留", async () => {
+    const { state, tool } = setup();
+
+    await tool.execute!({
+      groups: [group({ summary: "第一批来源问题" })],
+    }, ctx);
+    await tool.execute!({
+      groups: [group({ summary: "第二批来源问题" })],
+    }, ctx);
+
+    expect(state.annotationGroups.map((item) => item.summary)).toEqual([
+      "第一批来源问题",
+      "第二批来源问题",
+    ]);
+    expect(vi.mocked(replaceAnnotationGroupsByOrigin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(insertAnnotationGroups)).toHaveBeenCalledTimes(1);
   });
 
   it("八类菜单审查均按结构化上下文强制 origin，忽略模型错填", async () => {
@@ -219,6 +243,7 @@ describe("create_annotation_groups 来源引句校验", () => {
     });
     await tool.execute!({ groups: [custom("自定义审查:法务合规视角", "绝对化用语")] }, ctx);
     const firstId = state.annotationGroups[0]?.id;
+    state._annotationOriginsReplacedThisTurn = new Set();
     await tool.execute!({ groups: [custom("自定义审查:法务合规视角", "承诺表述风险")] }, ctx);
     expect(state.annotationGroups).toHaveLength(1);
     expect(state.annotationGroups[0]?.id).not.toBe(firstId);

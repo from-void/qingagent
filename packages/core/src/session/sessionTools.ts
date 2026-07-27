@@ -97,7 +97,10 @@ import {
   truncateAnnotationSummary,
   type AnnotationGroupInput,
 } from "../tools/annotationGroups.js";
-import { replaceAnnotationGroupsByOrigin } from "@qingagent/db";
+import {
+  insertAnnotationGroups,
+  replaceAnnotationGroupsByOrigin,
+} from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,
@@ -679,6 +682,7 @@ export function createSessionScopedTools(
 ) {
   const state = stateOrMaterials instanceof Map ? null : stateOrMaterials;
   const materials = stateOrMaterials instanceof Map ? stateOrMaterials : stateOrMaterials.materials;
+  let annotationGroupWriteQueue: Promise<void> = Promise.resolve();
   const readMaterial = createTool({
     id: "readMaterial",
     description:
@@ -800,14 +804,29 @@ export function createSessionScopedTools(
         }];
       });
       if (groups.length) {
-        const replacedOrigins = new Set(groups.map((group) => group.origin));
-        await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, groups);
-        state.annotationGroups = [
-          ...state.annotationGroups.filter((group) => !replacedOrigins.has(group.origin)),
-          ...groups,
-        ];
-        const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
-        replacedOrigins.forEach((origin) => turnOrigins.add(origin));
+        const write = annotationGroupWriteQueue.then(async () => {
+          const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
+          const origins = new Set(groups.map((group) => group.origin));
+          const originsToReplace = new Set(
+            [...origins].filter((origin) => !turnOrigins.has(origin)),
+          );
+          const replacing = groups.filter((group) => originsToReplace.has(group.origin));
+          const appending = groups.filter((group) => !originsToReplace.has(group.origin));
+          if (replacing.length > 0) {
+            await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, replacing);
+          }
+          if (appending.length > 0) {
+            await insertAnnotationGroups(state.docId, state.docVersion, appending);
+          }
+          state.annotationGroups = [
+            ...state.annotationGroups.filter((group) => !originsToReplace.has(group.origin)),
+            ...replacing,
+            ...appending,
+          ];
+          origins.forEach((origin) => turnOrigins.add(origin));
+        });
+        annotationGroupWriteQueue = write.catch(() => undefined);
+        await write;
       }
       return { ok: groups.length > 0, groupCount: groups.length, anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0), errors };
     },

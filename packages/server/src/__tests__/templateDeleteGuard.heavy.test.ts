@@ -33,10 +33,10 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-template-delete-guard-"); });
 afterEach(() => db.cleanup());
 
 describe("模板删除保底 bridge 路径", () => {
-  it("bridge 保存内置模板后原 id 降级，风格模板未传 detail 时保留原值", async () => {
+  it("bridge 拒绝覆盖内置审查模板，风格模板未传 detail 时保留原值", async () => {
     const sessionId = await createSession();
 
-    const reviewFrames = await collectFrames(handleCommand({
+    await expect(collectFrames(handleCommand({
       kind: "saveReviewTemplate",
       data: {
         sessionId,
@@ -46,18 +46,7 @@ describe("模板删除保底 bridge 路径", () => {
         name: "自定义来源核查",
         prompt: "只核对金额",
       },
-    }));
-    expect(reviewFrames).toContainEqual({
-      kind: "reviewTemplateSaved",
-      data: {
-        requestId: "request-review-save",
-        item: expect.objectContaining({
-          id: "review-source-default",
-          name: "自定义来源核查",
-          builtin: false,
-        }),
-      },
-    });
+    }))).rejects.toThrow("内置审查模板不能修改");
 
     const beforeFrames = await collectFrames(handleCommand({
       kind: "getStyleTemplate",
@@ -91,7 +80,7 @@ describe("模板删除保底 bridge 路径", () => {
     });
   });
 
-  it("审查与风格最后一个模板都返回前端可读错误帧", async () => {
+  it("审查与风格内置模板都返回前端可读错误帧", async () => {
     const sessionId = await createSession();
 
     const reviewFrames = await collectFrames(handleCommand({
@@ -104,7 +93,7 @@ describe("模板删除保底 bridge 路径", () => {
         requestId: "request-review-delete",
         id: "review-source-default",
         selectedTemplateId: "review-source-default",
-        error: "每类至少保留一个模板",
+        error: "内置审查模板不能删除",
       },
     });
 
@@ -132,16 +121,11 @@ describe("模板删除保底 bridge 路径", () => {
     }));
     expect(firstStyleDelete).toContainEqual({
       kind: "styleTemplateDeleted",
-      data: { requestId: "request-style-delete-first", id: "gzh-layout-classic" },
-    });
-
-    const lastStyleDelete = await collectFrames(handleCommand({
-      kind: "deleteStyleTemplate",
-      data: { sessionId, requestId: "request-style-delete-last", id: "gzh-layout-minimal" },
-    }));
-    expect(lastStyleDelete).toContainEqual({
-      kind: "styleTemplateDeleted",
-      data: { requestId: "request-style-delete-last", id: "gzh-layout-minimal", error: "每类至少保留一个模板" },
+      data: {
+        requestId: "request-style-delete-first",
+        id: "gzh-layout-classic",
+        error: "内置模板不可删除",
+      },
     });
   });
 

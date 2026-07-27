@@ -12,6 +12,7 @@ export type ExternalErrorCode =
   | "AUTH_FAILED"
   | "AGENT_BUSY"
   | "REVIEW_PENDING"
+  | "CONFLICT"
   | "VERSION_CONFLICT"
   | "VALIDATION"
   | "NOT_FOUND"
@@ -269,6 +270,87 @@ export interface ExternalAnnotationIgnoreResponse {
   seq: number | null;
 }
 
+export type ExternalReviewType =
+  | "sensitive" | "deai" | "source" | "consistency"
+  | "privacy" | "format" | "role" | "custom";
+
+export interface ExternalReviewTemplate {
+  id: string;
+  type: ExternalReviewType;
+  name: string;
+  prompt: string;
+  builtin: boolean;
+  selected: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalReviewTemplatesResponse { templates: ExternalReviewTemplate[] }
+export interface ExternalReviewTemplateResponse { template: ExternalReviewTemplate }
+export interface ExternalReviewTemplateCreateRequest {
+  type: ExternalReviewType;
+  name: string;
+  prompt: string;
+}
+export interface ExternalReviewTemplateUpdateRequest {
+  name?: string;
+  prompt?: string;
+  expectedUpdatedAt: string;
+}
+export interface ExternalReviewTemplateDeleteResponse { deleted: true; id: string }
+export interface ExternalReviewTemplateSelectResponse {
+  selected: true;
+  id: string;
+  type: ExternalReviewType;
+}
+export interface ExternalReviewSupplementResponse {
+  sessionId: string;
+  type: ExternalReviewType;
+  supplement: string;
+}
+export interface ExternalReviewRunRequest {
+  type: ExternalReviewType;
+  templateId?: string;
+  supplement?: string;
+}
+export interface ExternalReviewRunResponse extends ExternalChatSendResponse {
+  type: ExternalReviewType;
+  templateId: string;
+  /** 本次审查命令入队前的事件游标，等待方从下一帧开始回放，避免漏掉快速启动事件。 */
+  afterSeq: number;
+}
+
+export type ExternalSkillSource = "builtin" | "installed";
+export interface ExternalSkill {
+  name: string;
+  description: string;
+  label?: string;
+  summary?: string;
+  icon?: string;
+  source: ExternalSkillSource;
+  userInvocable: boolean;
+  placeholder?: string;
+  config?: unknown;
+  tools?: string[];
+  enabled: boolean;
+  connectorId?: string;
+  body?: string;
+  children: ExternalSkill[];
+}
+export interface ExternalSkillsResponse { skills: ExternalSkill[] }
+export interface ExternalSkillResponse { skill: ExternalSkill }
+export interface ExternalSkillFile { path: string; content: string }
+export type ExternalSkillInstallRequest =
+  | { skillMd: string; files?: never }
+  | { files: ExternalSkillFile[]; skillMd?: never };
+export interface ExternalSkillMutationResponse {
+  name: string;
+  installed?: true;
+  updated?: true;
+  deleted?: true;
+  enabled?: boolean;
+}
+
 export interface ExternalEventsMeta { epoch: number; minSeq: number; nextSeq: number; gap: boolean }
 
 /** qa-cli 消费的 BridgeFrame 子集只依赖公开 envelope；data 由 kind 对应的 v1 wire 契约承载。 */
@@ -289,4 +371,8 @@ export type ExternalSuccessResponse =
   | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
   | ExternalReviewListResponse | ExternalReviewPatchResponse | ExternalAnnotationResponse
   | ExternalReviewVerdictResponse | ExternalReviewCommitResponse
-  | ExternalAnnotationIgnoreResponse;
+  | ExternalAnnotationIgnoreResponse
+  | ExternalReviewTemplatesResponse | ExternalReviewTemplateResponse
+  | ExternalReviewTemplateDeleteResponse | ExternalReviewTemplateSelectResponse
+  | ExternalReviewSupplementResponse | ExternalReviewRunResponse
+  | ExternalSkillsResponse | ExternalSkillResponse | ExternalSkillMutationResponse;

@@ -48,6 +48,9 @@ import type { Material } from "@qingagent/core";
 import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import { BoundedSsePump } from "../lib/boundedSsePump";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
+import { queueExternalChat } from "../lib/externalChatQueue";
+import { externalTemplateRoutes } from "./externalTemplates";
+import { externalSkillRoutes } from "./externalSkills";
 
 export const externalRoutes = new Hono();
 
@@ -107,6 +110,9 @@ externalRoutes.use("*", async (c, next) => {
   }
   await next();
 });
+
+externalRoutes.route("/", externalTemplateRoutes);
+externalRoutes.route("/", externalSkillRoutes);
 
 externalRoutes.get("/health", (c) => {
   const startedAt = Date.now();
@@ -829,57 +835,13 @@ function parseExternalClient(value: string | undefined): ExternalClient {
 }
 
 externalRoutes.post("/sessions/:id/chat", async (c) => {
-  const startedAt = Date.now();
   const sessionId = c.req.param("id");
   const body = await c.req.json().catch(() => null) as { text?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text : "";
   if (!text.trim()) {
-    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
     return externalError(c, 400, "VALIDATION", "缺少 text");
   }
-  const session = await getOrRestoreSession(sessionId);
-  if (!session) {
-    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
-    return externalError(c, 404, "SESSION_NOT_FOUND");
-  }
-  // 把调用方身份编进消息 id(与 proposals 同约定),前端据 external-<client>- 前缀展示"代你发送了一条消息"。
-  const client = parseExternalClient(c.req.header("x-qa-client"));
-  const parsed = commandSchema.safeParse({
-    kind: "sendMessage",
-    data: {
-      sessionId,
-      text,
-      mentions: [],
-      skills: [],
-      chips: [],
-      fileIds: [],
-      clientMessageId: `external-${client}-${crypto.randomUUID()}`,
-    },
-  });
-  if (!parsed.success || parsed.data.kind !== "sendMessage") {
-    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
-    return externalError(c, 400, "VALIDATION", "text 超过 64KB 上限");
-  }
-  const modelOverrides = await resolveRequestModelOverrides({});
-  let completion: Promise<LoggedFrame[]>;
-  try {
-    ({ completion } = await sessionManager.submitQueued(sessionId, {
-      command: parsed.data,
-      origin: "external",
-      modelOverrides,
-    }));
-  } catch (error) {
-    if (error instanceof SessionActorQueueFullError) {
-      externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:RATE_LIMITED" });
-      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
-    }
-    throw error;
-  }
-  void completion.catch(() => {
-    console.warn(`[external] evt=chat session=${sessionId} result=async_failed`);
-  });
-  externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "queued" });
-  return c.json({ queued: true, note: "已入队,执行结果以 events 为准" });
+  return queueExternalChat(c, { sessionId, text });
 });
 
 externalRoutes.get("/sessions/:id/events", async (c) => {

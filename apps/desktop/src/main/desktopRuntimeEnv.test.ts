@@ -3,12 +3,13 @@ import test from "node:test";
 import { localFolderSourcesEnabled } from "@qingagent/core";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv";
 
-test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力和技能 mutation gate", (t) => {
+test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力、技能和模板 mutation gate", (t) => {
   const savedRuntime = process.env.QINGAGENT_RUNTIME;
   const savedPackaged = process.env.QINGAGENT_DESKTOP_PACKAGED;
   const savedInsecureRemember = process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
   const savedLocal = process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES;
   const savedMutation = process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
+  const savedTemplateMutation = process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION;
   const savedConnectors = process.env.QINGAGENT_CONNECTORS_ENABLED;
   t.after(() => {
     if (savedRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
@@ -24,6 +25,8 @@ test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力和技能 muta
     else process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = savedLocal;
     if (savedMutation === undefined) delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
     else process.env.QINGAGENT_ALLOW_SKILL_MUTATION = savedMutation;
+    if (savedTemplateMutation === undefined) delete process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION;
+    else process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION = savedTemplateMutation;
     if (savedConnectors === undefined) delete process.env.QINGAGENT_CONNECTORS_ENABLED;
     else process.env.QINGAGENT_CONNECTORS_ENABLED = savedConnectors;
   });
@@ -32,6 +35,7 @@ test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力和技能 muta
   process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
   delete process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES;
   delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
+  delete process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION;
   delete process.env.QINGAGENT_CONNECTORS_ENABLED;
 
   configureDesktopRuntimeEnv(process.env);
@@ -40,6 +44,7 @@ test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力和技能 muta
   assert.equal(process.env.QINGAGENT_DESKTOP_PACKAGED, undefined);
   assert.equal(process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES, "1");
   assert.equal(process.env.QINGAGENT_ALLOW_SKILL_MUTATION, "1");
+  assert.equal(process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION, "1");
   assert.equal(process.env.QINGAGENT_CONNECTORS_ENABLED, "1");
   assert.equal(localFolderSourcesEnabled(), true);
 });

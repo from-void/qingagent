@@ -275,6 +275,9 @@ if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
 if (!process.env.QINGAGENT_ALLOW_SKILL_MUTATION) {
   process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
 }
+if (!process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION) {
+  process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION = "1";
+}
 
 // 桌面端是单用户本地环境,agent 执行命令 = 用户自己在本机跑,凭据注入 = 用本机自己的登录态。
 // 安全默认翻转后(决策 4.5),这两项默认关闭;桌面显式补回以维持现状能力。必须在 import server/core 之前设。

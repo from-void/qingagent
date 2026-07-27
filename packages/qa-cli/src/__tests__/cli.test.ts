@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +55,312 @@ describe("qa cli", () => {
     const rendered = stdout.mock.calls.map((call) => call[0]).join("");
     expect(rendered).toContain("\"total\": 5");
     expect(rendered.endsWith("还有 3 个会话,用 --all 查看\n")).toBe(true);
+  });
+
+  it("template pull/push 保留乐观锁元数据并回写新 updatedAt", async () => {
+    const { main } = await import("../cli.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "qa-cli-template-"));
+    dirs.push(dir);
+    const filePath = path.join(dir, "legal.md");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const first = {
+      id: "review-custom-1",
+      type: "custom",
+      name: "法务口径审查",
+      prompt: "第一版规则",
+      builtin: false,
+      selected: false,
+      createdAt: "2026-07-27T00:00:00.000Z",
+      updatedAt: "2026-07-27T00:00:01.000Z",
+    };
+    let phase = "pull";
+    globalThis.fetch = vi.fn(async (input, init) => {
+      if (phase === "pull") {
+        expect(String(input)).toMatch(/\/review-templates\/review-custom-1$/);
+        return new Response(JSON.stringify({ template: first }));
+      }
+      expect(init?.method).toBe("PUT");
+      expect(String(input)).toMatch(/\/review-templates\/review-custom-1$/);
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
+        name: "法务口径审查",
+        prompt: "第二版规则",
+        expectedUpdatedAt: first.updatedAt,
+      });
+      expect(new Headers(init?.headers).get("X-QA-Client")).toBeTruthy();
+      return new Response(JSON.stringify({
+        template: {
+          ...first,
+          prompt: "第二版规则",
+          updatedAt: "2026-07-27T00:00:02.000Z",
+        },
+      }));
+    }) as typeof fetch;
+
+    await main(["template", "pull", first.id, "--out", filePath]);
+    expect(await readFile(filePath, "utf8")).toContain(`updatedAt: '${first.updatedAt}'`);
+    await writeFile(
+      filePath,
+      (await readFile(filePath, "utf8")).replace("第一版规则", "第二版规则"),
+      "utf8",
+    );
+    phase = "push";
+    await main(["template", "push", filePath]);
+    expect(await readFile(filePath, "utf8"))
+      .toContain("updatedAt: '2026-07-27T00:00:02.000Z'");
+    expect(stdout.mock.calls.map((call) => call[0]).join("")).not.toContain("secret-token");
+  });
+
+  it("template create/select/rm 使用 external 模板端点", async () => {
+    const { main } = await import("../cli.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "qa-cli-template-create-"));
+    dirs.push(dir);
+    const promptPath = path.join(dir, "prompt.md");
+    await writeFile(promptPath, "逐条检查法律风险", "utf8");
+    const requests: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      if (url.endsWith("/review-templates") && method === "POST") {
+        return new Response(JSON.stringify({
+          template: {
+            id: "review-custom-new",
+            type: "custom",
+            name: "法务",
+            prompt: "逐条检查法律风险",
+            builtin: false,
+            selected: false,
+            createdAt: "now",
+            updatedAt: "now",
+          },
+        }));
+      }
+      if (url.endsWith("/select")) {
+        return new Response(JSON.stringify({
+          selected: true,
+          id: "review-custom-new",
+          type: "custom",
+        }));
+      }
+      return new Response(JSON.stringify({ deleted: true, id: "review-custom-new" }));
+    }) as typeof fetch;
+
+    await main(["template", "create", "--type", "custom", "--name", "法务", "--file", promptPath]);
+    await main(["template", "select", "review-custom-new"]);
+    await main(["template", "rm", "review-custom-new"]);
+    expect(requests.map(({ url, method }) => `${method} ${new URL(url).pathname}`)).toEqual([
+      "POST /api/v1/external/review-templates",
+      "POST /api/v1/external/review-templates/review-custom-new/select",
+      "DELETE /api/v1/external/review-templates/review-custom-new",
+    ]);
+  });
+
+  it("review run --wait 忽略 editing 中间态，批注进入 review list 后才返回", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let reviewReads = 0;
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/sessions/s1/review/run")) {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          type: "custom",
+          templateId: "legal",
+          supplement: "只看合同",
+        });
+        return new Response(JSON.stringify({
+          queued: true,
+          note: "已入队,执行结果以 events 为准",
+          type: "custom",
+          templateId: "legal",
+          afterSeq: 12,
+        }));
+      }
+      if (url.includes("/sessions/s1/events?after=12")) {
+        return new Response(sseStream([
+          { seq: 13, kind: "stream", data: { kind: "start", data: { streamId: "run-1" } } },
+          {
+            seq: 14,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+          },
+          {
+            seq: 15,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+          },
+          {
+            seq: 16,
+            kind: "annotationGroupsReady",
+            data: {
+              groups: [{
+                id: "annotation-new",
+                summary: "合同风险",
+                note: "需补充责任边界",
+                origin: "review:custom",
+                status: "reviewing",
+                anchors: [],
+              }],
+            },
+          },
+        ]));
+      }
+      expect(url).toContain("/sessions/s1/review");
+      reviewReads += 1;
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        docVersion: 3,
+        state: "editing",
+        agentBusy: false,
+        patches: [],
+        annotations: reviewReads === 1
+          ? []
+          : [{
+            id: "annotation-new",
+            summary: "合同风险",
+            note: "需补充责任边界",
+            origin: "review:custom",
+            status: "reviewing",
+            anchors: [],
+          }],
+      }));
+    }) as typeof fetch;
+
+    await main([
+      "review", "run", "-s", "s1", "--type", "custom",
+      "--template", "legal", "--supplement", "只看合同", "--wait",
+    ]);
+
+    expect(reviewReads).toBe(2);
+    expect(stdout.mock.calls.map((call) => call[0]).join(""))
+      .toContain('"kind":"annotationGroupsReady"');
+    expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain(
+      "[qa] events exited reason=review-run-complete",
+    );
+  });
+
+  it("review run --wait 无批注时等待本轮 stream end 并对账 review list", async () => {
+    const { main } = await import("../cli.js");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let reviewReads = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sessions/s1/review/run")) {
+        return new Response(JSON.stringify({
+          queued: true,
+          note: "已入队,执行结果以 events 为准",
+          type: "source",
+          templateId: "source-default",
+          afterSeq: 20,
+        }));
+      }
+      if (url.includes("/sessions/s1/events?after=20")) {
+        return new Response(sseStream([
+          { seq: 21, kind: "stream", data: { kind: "start", data: { streamId: "run-2" } } },
+          {
+            seq: 22,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+          },
+          {
+            seq: 23,
+            kind: "stream",
+            data: { kind: "end", data: { streamId: "run-2", reason: { kind: "done" } } },
+          },
+        ]));
+      }
+      reviewReads += 1;
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        docVersion: 3,
+        state: "editing",
+        agentBusy: false,
+        patches: [],
+        annotations: [],
+      }));
+    }) as typeof fetch;
+
+    await main(["review", "run", "-s", "s1", "--type", "source", "--wait"]);
+
+    expect(reviewReads).toBe(1);
+    expect(stderr.mock.calls.map((call) => call[0]).join(""))
+      .toContain("[qa] events exited reason=review-run-complete");
+  });
+
+  it("skills validate 不联网，install/update 先验证本地目录再发送 files", async () => {
+    const { main } = await import("../cli.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "qa-cli-skill-dir-"));
+    dirs.push(dir);
+    await mkdir(path.join(dir, "child"));
+    await writeFile(
+      path.join(dir, "SKILL.md"),
+      "---\nname: legal-review\ndescription: 法务审查\n---\n# 根技能\n",
+    );
+    await writeFile(
+      path.join(dir, "child", "SKILL.md"),
+      "---\nname: contract-check\ndescription: 合同核对\n---\n# 子技能\n",
+    );
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    await main(["skills", "validate", dir, "--json"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        files: Array<{ path: string; content: string }>;
+      };
+      expect(body.files.map((file) => file.path)).toEqual([
+        "child/SKILL.md",
+        "SKILL.md",
+      ]);
+      if (init?.method === "PUT") {
+        expect(String(input)).toMatch(/\/skills\/legal-review$/);
+        return new Response(JSON.stringify({ updated: true, name: "legal-review" }));
+      }
+      expect(String(input)).toMatch(/\/external\/skills$/);
+      return new Response(JSON.stringify({ installed: true, name: "legal-review" }));
+    }) as typeof fetch;
+    await main(["skills", "install", dir]);
+    await main(["skills", "update", "legal-review", dir]);
+  });
+
+  it("skills list/show/rm/enable/disable 命令路径与响应口径一致", async () => {
+    const { main } = await import("../cli.js");
+    const requested: string[] = [];
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      const key = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
+      requested.push(key);
+      if (url.endsWith("/skills")) return new Response(JSON.stringify({ skills: [] }));
+      if ((init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({
+          skill: {
+            name: "demo",
+            description: "演示",
+            source: "installed",
+            userInvocable: true,
+            enabled: true,
+            body: "# demo",
+            children: [],
+          },
+        }));
+      }
+      return new Response(JSON.stringify({ name: "demo", enabled: true, deleted: true }));
+    }) as typeof fetch;
+    await main(["skills", "list"]);
+    await main(["skills", "show", "demo"]);
+    await main(["skills", "enable", "demo"]);
+    await main(["skills", "disable", "demo"]);
+    await main(["skills", "rm", "demo"]);
+    expect(requested).toEqual([
+      "GET /api/v1/external/skills",
+      "GET /api/v1/external/skills/demo",
+      "POST /api/v1/external/skills/demo/enable",
+      "POST /api/v1/external/skills/demo/disable",
+      "DELETE /api/v1/external/skills/demo",
+    ]);
   });
 
   it("sessions list --all 自动翻页并输出全量 JSON 元信息", async () => {

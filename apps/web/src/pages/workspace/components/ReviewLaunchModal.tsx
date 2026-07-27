@@ -1,4 +1,5 @@
 import { Button } from "@qingagent/ui-kit";
+import { assembleReviewQuery } from "@qingagent/contract-ts";
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildTemplateSummary, LaunchModalShell, REVIEW_STARTER_PRESETS, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "./launchModal";
@@ -107,13 +108,7 @@ export function buildReviewQuery(
   supplement: string,
   lexicons: Pick<LexiconResourceSummary, "id" | "name">[] = [],
 ): string {
-  const task = type === "sensitive"
-    ? `对当前文档做敏感词审查。启用词库：${lexicons.map((item) => `「${item.name}」(id: ${item.id})`).join("、") || "无"}。`
-    : type === "deai"
-      ? "对当前文档做去AI味审查。"
-      : `对当前文档做${REVIEW_META[type].title}。`;
-  const supplementText = supplement.trim() ? `\n文档级补充要求（只适用于当前文档）：${supplement.trim()}` : "";
-  return `${task}\n审查模板「${template.name}」(id: ${template.id})：\n${template.prompt.trim()}${supplementText}`;
+  return assembleReviewQuery(type, template, supplement, lexicons);
 }
 
 export function buildReviewActionCard(

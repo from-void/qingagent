@@ -3,6 +3,7 @@ import type { Context } from "hono";
 
 export const EXTERNAL_NEXT_STEP: Record<ExternalErrorCode, string> = {
   REVIEW_PENDING: "用 `qa review list -s <id>` 查看待审修改并采纳或拒绝（也可在青简中处理）；然后用 `qa doc events --follow` 等 docCommitted 再继续",
+  CONFLICT: "资源已变化,请重新读取最新版本后再提交",
   AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
   VERSION_CONFLICT: "文档已被改过,请 `qa doc read` 重读,基于新版本重做提案,绝不原样重发",
   AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
@@ -15,7 +16,7 @@ export const EXTERNAL_NEXT_STEP: Record<ExternalErrorCode, string> = {
 
 export function externalError(
   c: Context,
-  status: 400 | 401 | 404 | 409 | 429,
+  status: 400 | 401 | 403 | 404 | 409 | 429,
   code: ExternalErrorCode,
   message?: string,
   nextStep?: string,

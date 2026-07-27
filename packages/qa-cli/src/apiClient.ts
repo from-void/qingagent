@@ -30,6 +30,9 @@ export class ApiClient {
         headers: {
           Authorization: `Bearer ${this.instance.token}`,
           ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...(init.method && init.method !== "GET"
+            ? { "X-QA-Client": detectQaClient(process.env) }
+            : {}),
           ...(init.headers ?? {}),
         },
       },

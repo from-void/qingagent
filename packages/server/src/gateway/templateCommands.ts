@@ -126,6 +126,7 @@ export async function* handleTemplateCommand(
         const message = error instanceof Error ? error.message : String(error);
         if (
           message !== "每类至少保留一个模板" &&
+          message !== "内置模板不可删除" &&
           !(error instanceof StyleTemplateInUseError)
         ) throw error;
         yield { kind: "styleTemplateDeleted", data: { id: command.data.id, error: message, requestId: command.data.requestId } };
@@ -162,7 +163,10 @@ export async function* handleTemplateCommand(
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message !== "每类至少保留一个模板") throw error;
+        if (
+          message !== "每类至少保留一个模板" &&
+          message !== "内置审查模板不能删除"
+        ) throw error;
         const selected = type ? await getSelectedReviewTemplate(type) : null;
         yield {
           kind: "reviewTemplateDeleted",

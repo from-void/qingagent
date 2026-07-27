@@ -68,6 +68,7 @@ export function DocFindBar({
 
   const findInputRef = useRef<HTMLInputElement>(null);
   const queryRef = useRef(initialQuery);
+  const searchedQueryRef = useRef<string | null>(null);
   const replacementRef = useRef("");
   const matchesRef = useRef<FindMatch[]>([]);
   const currentIndexRef = useRef(-1);
@@ -88,6 +89,7 @@ export function DocFindBar({
       }
 
       const currentQuery = queryRef.current;
+      searchedQueryRef.current = currentQuery;
       if (!editor || editor.isDestroyed || currentQuery === "") {
         matchesRef.current = [];
         currentIndexRef.current = -1;
@@ -212,6 +214,13 @@ export function DocFindBar({
   const composing = inputComposing || inputComposingRef.current || !!editor?.view.composing;
   const canReplace = mode === "full" && !composing;
 
+  const syncSearchBeforeReplace = useCallback(() => {
+    runSearch({
+      resetCursor: searchedQueryRef.current !== queryRef.current,
+      scroll: false,
+    });
+  }, [runSearch]);
+
   const handleClose = useCallback(() => {
     clearFindDecorations(editor);
     onClose();
@@ -223,6 +232,7 @@ export function DocFindBar({
 
   const handleReplaceOne = useCallback(() => {
     if (!canReplace || !editor || editor.isDestroyed) return;
+    syncSearchBeforeReplace();
     const currentMatches = matchesRef.current;
     if (currentMatches.length === 0) return;
     if (currentIndexRef.current < 0) {
@@ -241,10 +251,11 @@ export function DocFindBar({
       return true;
     });
     runSearch({ resetCursor: false, scroll: true, preferredFrom });
-  }, [canReplace, editor, moveCursor, runSearch]);
+  }, [canReplace, editor, moveCursor, runSearch, syncSearchBeforeReplace]);
 
   const handleReplaceAll = useCallback(() => {
     if (!canReplace || !editor || editor.isDestroyed) return;
+    syncSearchBeforeReplace();
     const currentMatches = matchesRef.current;
     if (currentMatches.length === 0) return;
     const plans = planReplaceAll(currentMatches, replacementRef.current);
@@ -256,7 +267,7 @@ export function DocFindBar({
     });
     onToast(`已替换 ${plans.length} 处`);
     runSearch({ resetCursor: true, scroll: false });
-  }, [canReplace, editor, onToast, runSearch]);
+  }, [canReplace, editor, onToast, runSearch, syncSearchBeforeReplace]);
 
   const countText = formatFindCount(currentIndex, total, truncated, FIND_MATCH_LIMIT);
   const noHit = query !== "" && total === 0;

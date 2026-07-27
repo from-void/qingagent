@@ -137,6 +137,20 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     expect(card.exitCode).not.toBe(0);
   });
 
+  it("结构化成功不被 Error: 开头的正常 stdout 误判失败", () => {
+    const card = commandCardFromResult({ command: "node report.mjs" }, {
+      success: true,
+      exitCode: 0,
+      cancelled: false,
+      timedOut: false,
+      output: "Error: 0\n校验完成",
+    }, false);
+
+    expect(card.exitCode).toBe(0);
+    expect(card.phase).toBe("done");
+    expect(card.terminalKind).toBe("succeeded");
+  });
+
   it("正常成功输出 → done", () => {
     const card = commandCardFromResult({ command: "node calc.mjs sum" }, "{\"sum\":6}", true);
     expect(card.phase).toBe("done");

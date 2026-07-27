@@ -49,11 +49,24 @@ const PLACEHOLDER = DEFAULT_CHAT_INPUT_PLACEHOLDER;
 const EASE = "cubic-bezier(.2,.8,.2,1)";
 const DESKTOP_FOLDER_TOKEN_SAFE_TTL_MS = 110_000;
 
-interface PendingAttachmentEntry {
+export interface PendingAttachmentEntry {
   id: string;
   file: File;
 }
 
+export function pendingFilesVisibleInSnapshot(
+  entries: readonly PendingAttachmentEntry[],
+  chips: readonly { id?: string; type: string }[],
+): File[] {
+  const visibleIds = new Set(
+    chips
+      .filter((chip) => chip.type !== "skill" && chip.id)
+      .map((chip) => chip.id!),
+  );
+  return entries
+    .filter((entry) => visibleIds.has(entry.id))
+    .map((entry) => entry.file);
+}
 
 function pendingFolderToDisplaySource(source: PendingFolderSource): FolderSourceControlSource {
   if (source.provider === "desktop-local") {
@@ -191,11 +204,14 @@ export function NewSessionPage() {
       return;
     }
     const snap = editorRef.current?.snapshot();
+    const visiblePendingFiles = snap
+      ? pendingFilesVisibleInSnapshot(pendingAttachments, snap.chips)
+      : [];
     if (
       !snap ||
       (snap.text.trim().length === 0 &&
         snap.chips.length === 0 &&
-        pendingAttachments.length === 0 &&
+        visiblePendingFiles.length === 0 &&
         pendingFolder === null)
     ) {
       showCcxToast("先写点描述,或者加个素材吧");
@@ -227,7 +243,6 @@ export function NewSessionPage() {
     const skillRefs = [
       ...new Set(snap.chips.filter((c) => c.type === "skill" && c.id).map((c) => c.id!)),
     ].map((id) => ({ id, version: null }));
-
     if (busyRef.current) return;
     if (
       pendingFolder?.provider === "desktop-local" &&
@@ -250,8 +265,8 @@ export function NewSessionPage() {
     } else {
       sessionStorage.removeItem("qingagent:pending-skills");
     }
-    if (pendingAttachments.length > 0) {
-      setPendingFiles(pendingAttachments.map((entry) => entry.file));
+    if (visiblePendingFiles.length > 0) {
+      setPendingFiles(visiblePendingFiles);
     }
     if (pendingFolder) {
       setPendingFolderSource(pendingFolder);

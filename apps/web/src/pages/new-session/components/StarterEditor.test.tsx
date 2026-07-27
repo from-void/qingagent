@@ -11,6 +11,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildLongTextChip } from "../../../system/longText";
+import { pendingFilesVisibleInSnapshot } from "../NewSessionPage";
 import { StarterEditor } from "./StarterEditor";
 import type { StarterEditorHandle } from "./StarterEditor";
 
@@ -66,6 +67,37 @@ describe("StarterEditor 附件 chip 同步", () => {
     });
 
     expect(onSubmitFiles).toHaveBeenCalledWith([second]);
+  });
+
+  it("选区替换删除上传 chip 时同步父状态，提交不再携带已消失文件", async () => {
+    const harnessRef = createRef<AttachmentHarnessHandle>();
+    const onSubmitFiles = vi.fn();
+    await render(<AttachmentHarness ref={harnessRef} onSubmitFiles={onSubmitFiles} />);
+    const removed = new File(["secret"], "secret.txt", { type: "text/plain" });
+
+    await act(async () => {
+      harnessRef.current?.addFile("att-secret", removed);
+    });
+    const editor = host?.querySelector<HTMLElement>(".starter-edit");
+    const chip = editor?.querySelector<HTMLElement>(".src-chip");
+    if (!editor || !chip) throw new Error("attachment chip not found");
+
+    await act(async () => {
+      const range = document.createRange();
+      range.selectNode(chip);
+      range.deleteContents();
+      editor.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "替换内容",
+      }));
+    });
+
+    expect(harnessRef.current?.pendingFiles()).toEqual([]);
+    await act(async () => {
+      harnessRef.current?.submit();
+    });
+    expect(onSubmitFiles).toHaveBeenCalledWith([]);
   });
 });
 
@@ -126,7 +158,11 @@ const AttachmentHarness = forwardRef<
         return pendingRef.current.map((entry) => entry.file);
       },
       submit() {
-        onSubmitFiles(pendingRef.current.map((entry) => entry.file));
+        const snapshot = editorRef.current?.snapshot();
+        onSubmitFiles(pendingFilesVisibleInSnapshot(
+          pendingRef.current,
+          snapshot?.chips ?? [],
+        ));
       },
     }),
     [onSubmitFiles],

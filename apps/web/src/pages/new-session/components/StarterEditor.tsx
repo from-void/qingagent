@@ -114,6 +114,8 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
     const editRef = useRef<HTMLDivElement>(null);
     /** Last known caret range while the editor was focused. */
     const savedRangeRef = useRef<Range | null>(null);
+    /** 附件/技能 chip 的受控镜像，用于识别浏览器原生编辑事务删除的节点。 */
+    const knownChipsRef = useRef<Map<string, ChipSpec>>(new Map());
     // 长文本小条点击 → 全屏查看的原文(null = 不显示)。
     const [longTextView, setLongTextView] = useState<string | null>(null);
 
@@ -148,18 +150,35 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
       return r;
     }, []);
 
+    const reconcileRemovedChips = useCallback(() => {
+      const edit = editRef.current;
+      if (!edit) return;
+      const current = new Map<string, ChipSpec>();
+      for (const chip of edit.querySelectorAll<HTMLElement>(".src-chip")) {
+        const spec = readChipNode(chip);
+        if (spec.id) current.set(spec.id, spec);
+      }
+      for (const [id, spec] of knownChipsRef.current) {
+        if (!current.has(id)) onRemoveChip?.(spec);
+      }
+      knownChipsRef.current = current;
+    }, [onRemoveChip]);
+
     const reportChange = useCallback(() => {
       const edit = editRef.current;
       if (!edit) return;
+      reconcileRemovedChips();
       const text = extractEditorText(edit).replace(/\r?\n/g, "");
       const chips = edit.querySelectorAll(".src-chip").length;
       onChange(text, chips);
-    }, [onChange]);
+    }, [onChange, reconcileRemovedChips]);
 
     const notifyRemovedChips = useCallback(
       (chips: Iterable<HTMLElement>) => {
         for (const chip of chips) {
-          onRemoveChip?.(readChipNode(chip));
+          const spec = readChipNode(chip);
+          if (spec.id) knownChipsRef.current.delete(spec.id);
+          onRemoveChip?.(spec);
         }
       },
       [onRemoveChip],
@@ -183,6 +202,7 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
         snapshot() {
           const edit = editRef.current;
           if (!edit) return { text: "", richText: "", chips: [] };
+          reconcileRemovedChips();
           let text = "";
           let richText = "";
           const chips: ChipSpec[] = [];
@@ -228,6 +248,7 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
           r.deleteContents();
           const chip = makeChipNode(spec);
           r.insertNode(chip);
+          if (spec.id) knownChipsRef.current.set(spec.id, spec);
           const space = document.createTextNode(" ");
           chip.after(space);
           const r2 = document.createRange();
@@ -256,7 +277,7 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
           reportChange();
         },
       }),
-      [restoreOrEndRange, reportChange, notifyRemovedChips],
+      [restoreOrEndRange, reportChange, notifyRemovedChips, reconcileRemovedChips],
     );
 
     // Removal of a chip via its built-in × button: bubble up by class。

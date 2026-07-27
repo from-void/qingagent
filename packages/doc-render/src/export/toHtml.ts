@@ -1,4 +1,4 @@
-import type { LegacySection } from "@qingagent/contract-ts";
+import { isAllowedLinkHref, type LegacySection } from "@qingagent/contract-ts";
 import type {
   PmBlockNode,
   PmDoc,
@@ -94,7 +94,7 @@ function pmBlockToHtml(node: PmBlockNode): string {
   switch (node.type) {
     case "heading": {
       const level = node.attrs.level;
-      return `<h${level}${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</h${level}>`;
+      return `<h${level}${headingIdAttr(node.attrs.anchor)}${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</h${level}>`;
     }
     case "paragraph":
       return `<p${alignAttr(node.attrs.textAlign)}>${pmInlineToHtml(node.content ?? [])}</p>`;
@@ -105,7 +105,8 @@ function pmBlockToHtml(node: PmBlockNode): string {
     case "bulletList":
       return `<ul>${node.content.map(pmListItemToHtml).join("")}</ul>`;
     case "orderedList": {
-      const start = node.attrs.start && node.attrs.start !== 1 ? ` start="${node.attrs.start}"` : "";
+      const startValue = node.attrs.start ?? 1;
+      const start = startValue !== 1 ? ` start="${startValue}"` : "";
       const listStyle = orderedListStyleAttr(node.attrs.listStyle);
       return `<ol${start}${listStyle}>${node.content.map(pmListItemToHtml).join("")}</ol>`;
     }
@@ -139,18 +140,28 @@ function pmBlockToHtml(node: PmBlockNode): string {
           return `<div class="pm-column" style="flex-grow:${ratio}">${col.content.map(pmBlockToHtml).join("")}</div>`;
         })
         .join("")}</div>`;
-    case "diagram":
+    case "diagram": {
+      // 编辑器与运行时校验器已持久化 width/align；共享静态类型尚未同步声明，
+      // 导出边界显式读取这两个运行时属性，避免布局静默丢失。
+      const attrs = node.attrs as typeof node.attrs & {
+        width?: number | null;
+        align?: MediaAlign | null;
+      };
       return diagramToHtml(
-        node.attrs.lang,
-        node.attrs.source,
-        node.attrs.svg,
-        isDrawioExportSourceNormalized(node.attrs),
+        attrs.lang,
+        attrs.source,
+        attrs.svg,
+        isDrawioExportSourceNormalized(attrs),
+        { width: attrs.width, height: attrs.height, align: attrs.align },
       );
+    }
     case "image":
       return imageToHtml({
         src: node.attrs.src,
         alt: node.attrs.alt ?? "",
         caption: node.attrs.caption ?? null,
+        width: node.attrs.width ?? null,
+        height: node.attrs.height ?? null,
         align: node.attrs.align ?? null,
       });
     case "fileAttachment":
@@ -266,8 +277,9 @@ function pmTextNodeToHtml(text: string, marks: readonly PmMark[]): string {
   if (highlight) {
     html = `<mark data-color="${escapeAttr(highlight.attrs.color)}">${html}</mark>`;
   }
-  if (link && /^https?:\/\//i.test(link.attrs.href)) {
-    html = `<a href="${escapeAttr(link.attrs.href)}">${html}</a>`;
+  const href = link ? exportLinkHref(link.attrs.href) : null;
+  if (href) {
+    html = `<a href="${escapeAttr(href)}">${html}</a>`;
   }
   return html;
 }
@@ -301,6 +313,7 @@ function diagramToHtml(
   source: string,
   svg: string | null,
   sourceNormalized = false,
+  layoutInput: MediaLayoutInput = {},
 ): string {
   if (svg && svgExceedsExportByteLimit(svg)) {
     return diagramFallbackHtml(lang, source, true, sourceNormalized);
@@ -309,27 +322,51 @@ function diagramToHtml(
   // 加固后仍是可信 SVG,直接内联不转义;加固失败(解析坏/含 XXE)则回退源码。
   const safe = isRenderableSvg(svg) ? hardenInlineSvg(svg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safe) {
-    return `<div class="pm-diagram">${safe}</div>`;
+    const layout = normalizeMediaLayout(layoutInput);
+    return `<div${mediaBlockAttrs("pm-diagram", layout, true)}>${safe}</div>`;
   }
   // 无缓存 / 坏 SVG → 回退源码代码块,绝不让一张图毁掉整篇导出。
   return diagramFallbackHtml(lang, source, false, sourceNormalized);
 }
 
-function imageToHtml(opts: { src: string; alt: string; caption: string | null; align: "left" | "center" | "right" | null }): string {
-  const { src, alt, caption, align } = opts;
-  const alignClass = align === "left" ? " align-left" : align === "right" ? " align-right" : "";
+type MediaAlign = "left" | "center" | "right";
+type MediaLayoutInput = {
+  width?: number | null;
+  height?: number | null;
+  align?: MediaAlign | null;
+};
+type MediaLayout = {
+  width: number | null;
+  height: number | null;
+  align: MediaAlign;
+};
+
+function imageToHtml(opts: {
+  src: string;
+  alt: string;
+  caption: string | null;
+  width: number | null;
+  height: number | null;
+  align: MediaAlign | null;
+}): string {
+  const { src, alt, caption } = opts;
+  const layout = normalizeMediaLayout(opts);
+  const figureAttrs = mediaBlockAttrs("doc-image", layout, false);
   const captionHtml = caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : "";
+  const imageSizeAttrs = `${layout.width ? ` width="${layout.width}"` : ""}${layout.height ? ` height="${layout.height}"` : ""}`;
+  const wrapImage = (content: string) =>
+    `<figure${figureAttrs}>${imageMediaHtml(content, layout)}${captionHtml}</figure>`;
 
   // SVG:仅从 data:image/svg+xml 或本地 .svg 取;内联前加固(data:image/svg+xml 完全可控,
   // 是主要注入面)。加固失败 → 落到下方栅格/占位回退。绝不把栅格图当文本读。
   const isSvgSrc = /^data:image\/svg\+xml/i.test(src) || /\.svg(?:[?#].*)?$/i.test(src);
   const rawSvg = isSvgSrc ? (decodeSvgDataUrl(src) ?? readLocalUploadText(src)) : null;
   if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
-    return `<figure class="doc-image${alignClass}"><div class="doc-file-attach">[图过大未导出：${escapeHtml(alt)}]</div>${captionHtml}</figure>`;
+    return wrapImage(`<div class="doc-file-attach">[图过大未导出：${escapeHtml(alt)}]</div>`);
   }
   const safeSvg = isRenderableSvg(rawSvg) ? hardenInlineSvg(rawSvg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safeSvg) {
-    return `<figure class="doc-image${alignClass}">${safeSvg}${captionHtml}</figure>`;
+    return wrapImage(safeSvg);
   }
 
   // 栅格图:data URL(png/jpeg)直接用;本地上传读 buffer 转 base64 内嵌。
@@ -343,9 +380,9 @@ function imageToHtml(opts: { src: string; alt: string; caption: string | null; a
     }
   }
   if (dataImage) {
-    return `<figure class="doc-image${alignClass}"><img src="${escapeAttr(dataImage)}" alt="${escapeAttr(alt)}">${captionHtml}</figure>`;
+    return wrapImage(`<img src="${escapeAttr(dataImage)}" alt="${escapeAttr(alt)}"${imageSizeAttrs}>`);
   }
-  return `<figure class="doc-image${alignClass}"><div class="doc-file-attach">[图片：${escapeHtml(alt)}]</div>${captionHtml}</figure>`;
+  return wrapImage(`<div class="doc-file-attach">[图片：${escapeHtml(alt)}]</div>`);
 }
 
 // ============ Legacy 段序列化 ============
@@ -355,7 +392,7 @@ function legacySectionToHtml(section: LegacySection): string {
     case "h1":
       return `<h1>${escapeHtml(sectionText(section))}</h1>`;
     case "h2":
-      return `<h2>${escapeHtml(sectionText(section))}</h2>`;
+      return `<h2${headingIdAttr(section.data.anchor)}>${escapeHtml(sectionText(section))}</h2>`;
     case "p":
       return `<p>${escapeHtml(stripFormatting(section.data.text))}</p>`;
     case "penNote":
@@ -388,6 +425,8 @@ function legacySectionToHtml(section: LegacySection): string {
         src: section.data.src,
         alt: section.data.alt,
         caption: section.data.caption,
+        width: section.data.width,
+        height: section.data.height,
         align: section.data.align ?? null,
       });
   }
@@ -400,6 +439,68 @@ function alignAttr(align: string | null | undefined): string {
     return ` style="text-align:${align}"`;
   }
   return "";
+}
+
+function headingIdAttr(anchor: string | null | undefined): string {
+  const value = anchor?.trim();
+  if (!value || value.startsWith("#") || !isAllowedLinkHref(`#${value}`)) return "";
+  return ` id="${escapeAttr(value)}"`;
+}
+
+function exportLinkHref(href: string): string | null {
+  const value = href.trim();
+  if (!isAllowedLinkHref(value)) return null;
+  return /^https?:\/\//i.test(value) || value.startsWith("#") ? value : null;
+}
+
+function normalizeMediaLayout(input: MediaLayoutInput): MediaLayout {
+  return {
+    width: positiveMediaSize(input.width),
+    height: positiveMediaSize(input.height),
+    align: input.align === "left" || input.align === "right" ? input.align : "center",
+  };
+}
+
+function positiveMediaSize(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : null;
+}
+
+function mediaBlockAttrs(baseClass: string, layout: MediaLayout, includeHeight: boolean): string {
+  const classes = [
+    baseClass,
+    ...(layout.align === "center" ? [] : [`align-${layout.align}`]),
+    ...(includeHeight && layout.width ? ["has-custom-width"] : []),
+    ...(includeHeight && layout.height ? ["has-custom-height"] : []),
+  ];
+  const styles = [
+    ...(layout.width ? [`width:${layout.width}px`] : []),
+    ...(includeHeight && layout.height ? [`height:${layout.height}px`] : []),
+    ...(layout.width ? ["max-width:100%"] : []),
+  ];
+  if (layout.width) {
+    styles.push(
+      `margin-left:${layout.align === "left" ? "0" : "auto"}`,
+      `margin-right:${layout.align === "right" ? "0" : "auto"}`,
+    );
+  }
+  const styleAttr = styles.length > 0 ? ` style="${styles.join(";")}"` : "";
+  return ` class="${classes.join(" ")}"${styleAttr}`;
+}
+
+function imageMediaHtml(content: string, layout: MediaLayout): string {
+  const classes = [
+    "doc-image-media",
+    ...(layout.width ? ["has-custom-width"] : []),
+    ...(layout.height ? ["has-custom-height"] : []),
+  ];
+  const styles = [
+    ...(layout.width ? ["width:100%"] : []),
+    ...(layout.height ? [`height:${layout.height}px`] : []),
+  ];
+  const styleAttr = styles.length > 0 ? ` style="${styles.join(";")}"` : "";
+  return `<div class="${classes.join(" ")}"${styleAttr}>${content}</div>`;
 }
 
 function escapeHtml(value: string): string {

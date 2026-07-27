@@ -184,6 +184,60 @@ describe("pmToClipboardHtml", () => {
     expect(html).toBe('<p><a href="https://example.com/a?x=&quot;&lt;&gt;&amp;&#39;">官网</a></p>');
   });
 
+  it("输出安全的列表样式、文本对齐与链接 title", () => {
+    const html = pmToClipboardHtml(
+      doc([
+        {
+          type: "heading",
+          attrs: { level: 2, textAlign: "center" },
+          content: [{ type: "text", text: "居中标题" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { textAlign: "justify" },
+          content: [{
+            type: "text",
+            text: "说明",
+            marks: [{ type: "link", attrs: { href: "https://example.com", title: '提示 "<>&\'' } }],
+          }],
+        },
+        {
+          type: "orderedList",
+          attrs: { start: 3, listStyle: "upper-roman" },
+          content: [
+            { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "第三项" }] }] },
+          ],
+        },
+      ]),
+    );
+
+    expect(html).toContain('<h2 style="text-align:center">居中标题</h2>');
+    expect(html).toContain('<p style="text-align:justify"><a href="https://example.com" title="提示 &quot;&lt;&gt;&amp;&#39;">说明</a></p>');
+    expect(html).toContain('<ol start="3" data-list-style="upper-roman" style="list-style-type:upper-roman">');
+  });
+
+  it("非法列表样式和文本对齐不进入 HTML 属性", () => {
+    const html = pmToClipboardHtml(
+      doc([
+        {
+          type: "paragraph",
+          attrs: { textAlign: "left;color:red" },
+          content: [{ type: "text", text: "正文" }],
+        },
+        {
+          type: "orderedList",
+          attrs: { listStyle: "none;color:red" },
+          content: [
+            { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "条目" }] }] },
+          ],
+        },
+      ]),
+    );
+
+    expect(html).toBe("<p>正文</p><ol><li><p>条目</p></li></ol>");
+    expect(html).not.toContain("color:red");
+  });
+
   it("penNote 降级为段落;图片降级为说明文字;未知节点输出空", () => {
     const html = pmToClipboardHtml(
       doc([
@@ -256,6 +310,34 @@ describe("pmToClipboardHtml", () => {
       ]),
     );
     expect(html).toBe("<ul><li><p>一</p><ol><li><p>1.1</p></li></ol></li></ul>");
+  });
+
+  it("非 1 起始的有序列表输出 start 属性", () => {
+    const html = pmToClipboardHtml(
+      doc([{
+        type: "orderedList",
+        attrs: { start: 5 },
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "第五项" }] }] },
+        ],
+      }]),
+    );
+
+    expect(html).toBe('<ol start="5"><li><p>第五项</p></li></ol>');
+  });
+
+  it.each([0, -3])("有序列表 start=%i 原样输出为 HTML 整数属性", (start) => {
+    const html = pmToClipboardHtml(
+      doc([{
+        type: "orderedList",
+        attrs: { start },
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "条目" }] }] },
+        ],
+      }]),
+    );
+
+    expect(html).toBe(`<ol start="${start}"><li><p>条目</p></li></ol>`);
   });
 
   it("R3-15 taskList/callout 内部复制不吞块", () => {

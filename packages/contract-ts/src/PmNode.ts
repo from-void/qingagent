@@ -18,9 +18,15 @@ export type PmTextNode = {
 export type PmInlineMathNode = {
   type: "inlineMath";
   attrs: { latex: string };
+  marks?: Array<PmMark>;
 };
 
-export type PmInlineNode = PmTextNode | { type: "hardBreak" } | PmInlineMathNode;
+export type PmHardBreakNode = {
+  type: "hardBreak";
+  marks?: Array<PmMark>;
+};
+
+export type PmInlineNode = PmTextNode | PmHardBreakNode | PmInlineMathNode;
 
 export type PmBlockAttrs = {
   blockId: string;

@@ -96,13 +96,14 @@ const textNodeSchema = z.object({
 const inlineMathNodeSchema = z.object({
   type: z.literal("inlineMath"),
   attrs: z.object({ latex: z.string() }),
+  marks: z.array(markSchema).optional(),
 });
 
 // discriminatedUnion 按 type 判别:校验错误能精确定位到成员内部字段
 // (z.union 会聚合各分支错误,path 停在 union 节点,报错没法读)。
 const inlineNodeSchema = z.discriminatedUnion("type", [
   textNodeSchema,
-  z.object({ type: z.literal("hardBreak") }),
+  z.object({ type: z.literal("hardBreak"), marks: z.array(markSchema).optional() }),
   inlineMathNodeSchema,
 ]);
 
@@ -297,7 +298,7 @@ const blockNodeSchema: LazyNode = z.lazy(() =>
     z.object({
       type: z.literal("orderedList"),
       attrs: blockIdSchema.extend({
-        start: z.number().int().positive().nullable().optional(),
+        start: z.number().int().nullable().optional(),
         listStyle: z.enum(PM_ORDERED_LIST_STYLES).nullable().optional(),
       }),
       content: z.array(listItemSchema).min(1),
@@ -575,7 +576,7 @@ function normalizePmDocShape(value: unknown): unknown {
     attrs: { schemaVersion: PM_SCHEMA_VERSION, ...(record.attrs as Record<string, unknown> | undefined) },
     content: Array.isArray(record.content)
       ? record.content.map((child, index) => normalizeNodeShape(child, [index]))
-      : [],
+      : record.content,
   };
 }
 

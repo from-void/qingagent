@@ -472,6 +472,42 @@ describe("diagram-engine", () => {
     expect(reThick.label).toBe("通过");
   });
 
+  it("flowchart 嵌入式标签边记录真实尾箭头且改箭头不破坏拓扑", () => {
+    const syntaxCases = [
+      { statement: "A -- 实线 --> B", syntax: "-->" },
+      { statement: "A -. 点线 .-> B", syntax: ".->" },
+      { statement: "A == 粗线 ==> B", syntax: "==>" },
+    ];
+    for (const item of syntaxCases) {
+      const source = `flowchart LR\n  ${item.statement}\n`;
+      const parsed = parseDiagram(source).model as FlowGraph;
+      expect(parsed.edges).toHaveLength(1);
+      expect(source.slice(parsed.edges[0]!.syntaxSpan!.start, parsed.edges[0]!.syntaxSpan!.end)).toBe(item.syntax);
+    }
+
+    const source = "flowchart LR\n  A[开始] -- 通过 --> B[结束]\n";
+    const before = parseDiagram(source).model as FlowGraph;
+    const changed = applyEdit(source, {
+      kind: "setEdgeArrow",
+      edgeId: before.edges[0]!.id,
+      direction: "both",
+      lineStyle: "dotted",
+    });
+
+    expect(changed.ok).toBe(true);
+    const after = parseDiagram(changed.source).model as FlowGraph;
+    expect(after.edges).toHaveLength(1);
+    expect(after.nodes.map((node) => node.id)).toEqual(["A", "B"]);
+    expect(after.edges[0]).toMatchObject({
+      source: "A",
+      target: "B",
+      label: "通过",
+      direction: "both",
+      lineStyle: "dotted",
+    });
+    expect(changed.idMap?.edges?.[before.edges[0]!.id]).toBe(after.edges[0]!.id);
+  });
+
   it("unsupported flowchart 元素能力禁用且 rewrite 拒绝", () => {
     const source = "flowchart TD\n  A:::warn --> B\n  classDef warn fill:#fee\n";
     const parsed = parseDiagram(source);
@@ -831,6 +867,80 @@ describe("diagram-engine", () => {
     expect(Object.keys(filtered ?? {})).toEqual(["edgeHandles"]);
   });
 
+  it("flowchart 边标签、箭头或端点变化后迁移 edgeStyles 与 edgeHandles", () => {
+    const cases: Array<{
+      source: string;
+      op: (edgeId: string) => Parameters<typeof applyEdit>[1];
+    }> = [
+      {
+        source: "flowchart TD\n  A --> B\n",
+        op: (edgeId) => ({ kind: "setEdgeLabel", edgeId, label: "通过" }),
+      },
+      {
+        source: "flowchart TD\n  A --> B\n",
+        op: (edgeId) => ({ kind: "setEdgeArrow", edgeId, direction: "both", lineStyle: "dotted" }),
+      },
+      {
+        source: "flowchart TD\n  A --> B\n  C\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "C" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const beforeEdge = edge(parseDiagram(item.source).model as FlowGraph);
+      const overlay = {
+        edgeStyles: { [beforeEdge.id]: { stroke: "#d14", strokeWidth: 3 } },
+        edgeHandles: { [beforeEdge.id]: { sourceHandle: "r", targetHandle: "l" } },
+      };
+      const changed = applyEdit(item.source, item.op(beforeEdge.id));
+      expect(changed.ok).toBe(true);
+      const afterEdge = edge(parseDiagram(changed.source).model as FlowGraph);
+      expect(afterEdge.id).not.toBe(beforeEdge.id);
+      expect(changed.idMap?.edges?.[beforeEdge.id]).toBe(afterEdge.id);
+      expect(carryOverDiagramOverlay(item.source, overlay, changed.source, changed.idMap)).toEqual({
+        edgeStyles: { [afterEdge.id]: { stroke: "#d14", strokeWidth: 3 } },
+        edgeHandles: { [afterEdge.id]: { sourceHandle: "r", targetHandle: "l" } },
+      });
+    }
+  });
+
+  it("state、ER、class 边重连后返回身份映射并保留 overlay", () => {
+    const cases: Array<{
+      source: string;
+      op: (edgeId: string) => Parameters<typeof applyEdit>[1];
+    }> = [
+      {
+        source: "stateDiagram-v2\n  Open --> Closed : close\n  Done\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "Done" }),
+      },
+      {
+        source: "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ARCHIVE\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newTarget: "ARCHIVE" }),
+      },
+      {
+        source: "classDiagram\n  Animal <|-- Duck\n  class Bird\n",
+        op: (edgeId) => ({ kind: "reconnectEdge", edgeId, newSource: "Bird" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const beforeEdge = edge(parseDiagram(item.source).model as StateGraph | ErGraph | ClassGraph);
+      const overlay = {
+        edgeStyles: { [beforeEdge.id]: { stroke: "#d14" } },
+        edgeHandles: { [beforeEdge.id]: { sourceHandle: "b", targetHandle: "t" } },
+      };
+      const changed = applyEdit(item.source, item.op(beforeEdge.id));
+      expect(changed.ok).toBe(true);
+      const afterEdge = edge(parseDiagram(changed.source).model as StateGraph | ErGraph | ClassGraph);
+      expect(afterEdge.id).not.toBe(beforeEdge.id);
+      expect(changed.idMap?.edges?.[beforeEdge.id]).toBe(afterEdge.id);
+      expect(carryOverDiagramOverlay(item.source, overlay, changed.source, changed.idMap)).toEqual({
+        edgeStyles: { [afterEdge.id]: { stroke: "#d14" } },
+        edgeHandles: { [afterEdge.id]: { sourceHandle: "b", targetHandle: "t" } },
+      });
+    }
+  });
+
   it("flowchart 平行边 id 稳定且可区分", () => {
     const source = "flowchart TD\n  X --> Y\n  A --> B\n  A --> B\n";
     const parsed = parseDiagram(source).model as FlowGraph;
@@ -954,6 +1064,37 @@ describe("diagram-engine", () => {
     const deleted = applyEdit(bare, { kind: "deleteNode", nodeId: "CUSTOMER" });
     expect(deleted.ok).toBe(true);
     expect(deleted.source).not.toContain("CUSTOMER");
+  });
+
+  it("特殊 State 声明与冒号式 Class 成员禁用同名节点删除", () => {
+    const stateCases: Array<[string, string]> = [
+      ["stateDiagram-v2\n  state Decision <<choice>>\n  Decision --> Done\n", "Decision"],
+      ["stateDiagram-v2\n  state Parallel <<fork>>\n  Parallel --> Done\n", "Parallel"],
+      ["stateDiagram-v2\n  state Merge <<join>>\n  Ready --> Merge\n", "Merge"],
+      ["stateDiagram-v2\n  state Group {\n    Inner\n  }\n  Group --> Done\n", "Group"],
+    ];
+    for (const [source, specialId] of stateCases) {
+      expect(getCapabilities(parseDiagram(source), { nodeId: specialId }).find((cap) => cap.op === "deleteNode")).toMatchObject({
+        enabled: false,
+        reason: "该节点含未完整建模的特殊 State 声明，暂不可删除",
+      });
+      expect(applyEdit(source, { kind: "deleteNode", nodeId: specialId })).toMatchObject({
+        ok: false,
+        error: "该节点含未完整建模的特殊 State 声明，暂不可删除",
+        source,
+      });
+    }
+
+    const classSource = "classDiagram\n  Customer : +String name\n  Customer --> Order\n";
+    expect(getCapabilities(parseDiagram(classSource), { nodeId: "Customer" }).find((cap) => cap.op === "deleteNode")).toMatchObject({
+      enabled: false,
+      reason: "该 class 含未完整建模的冒号式成员，暂不可删除",
+    });
+    expect(applyEdit(classSource, { kind: "deleteNode", nodeId: "Customer" })).toMatchObject({
+      ok: false,
+      error: "该 class 含未完整建模的冒号式成员，暂不可删除",
+      source: classSource,
+    });
   });
 
   it("stateDiagram-v2 支持 [*] 起止和中文状态名", () => {
@@ -1084,6 +1225,34 @@ describe("diagram-engine", () => {
     expect(after2.nodes.map((n) => n.label).sort()).toEqual(["孤立", "开始"]);
   });
 
+  it("flowchart 删除嵌入式标签边的一端时保留仅在该边声明的另一端", () => {
+    const source = "flowchart TD\n  A[开始] -- 通过 --> B{判断}\n";
+    const deleted = applyEdit(source, { kind: "deleteNode", nodeId: "B" });
+
+    expect(deleted.ok).toBe(true);
+    const after = parseDiagram(deleted.source).model as FlowGraph;
+    expect(after.edges).toHaveLength(0);
+    expect(after.nodes.map((node) => [node.id, node.label, node.shape])).toEqual([
+      ["A", "开始", "["],
+    ]);
+  });
+
+  it("空 mindmap 的合成根不可改名且不会覆盖图类型头", () => {
+    const source = "mindmap\n";
+    const parsed = parseDiagram(source);
+    const root = (parsed.model as MindmapTree).root;
+
+    expect(root.hasStableId).toBe(false);
+    expect(getCapabilities(parsed, { nodeId: root.id }).find((cap) => cap.op === "relabelNode")).toMatchObject({
+      enabled: false,
+    });
+    expect(applyEdit(source, { kind: "relabelNode", nodeId: root.id, label: "新根" })).toMatchObject({
+      ok: false,
+      source,
+    });
+    expect(parseDiagram(source)).toMatchObject({ ok: true, model: { type: "mindmap" } });
+  });
+
   it("mindmap 形状语法剥离显示文本(根节点不再显示 root((中心)) 字面量),relabel 保留形状", () => {
     const source = "mindmap\n  root((中心))\n    分支1\n    子项[方形]\n    云((圆))";
     const parsed = parseDiagram(source).model as MindmapTree;
@@ -1178,7 +1347,7 @@ describe("diagram-engine", () => {
     expect(parsed.nodes.find((node) => node.id === "A")?.label).toBe("一\n二");
   });
 
-  it("graphToSvg 渲染五类图并保留 overlay 样式与 SVG 安全", () => {
+  it("graphToSvg 渲染五类图，flowchart 保留 overlay 样式与 SVG 安全", () => {
     const sources = [
       "flowchart TD\n  A[<危险>] -->|确认| B[结束]\n",
       "stateDiagram-v2\n  state \"打开\" as Open\n  Open --> Closed : close\n",
@@ -1187,7 +1356,7 @@ describe("diagram-engine", () => {
       "mindmap\n  root\n    child\n",
     ];
     for (const source of sources) {
-      const svg = graphToSvg(source, { positions: { A: { x: 99, y: 77 } }, styles: { A: { fill: "#d7e7f6", stroke: "#123456", textColor: "#111111" } } });
+      const svg = graphToSvg(source);
       expect(svg).toMatch(/^<svg[^>]+viewBox=/);
       expect(svg).toContain("<rect");
       expect(svg).toContain("<path");
@@ -1203,6 +1372,23 @@ describe("diagram-engine", () => {
     expect(flowSvg).toContain('font-family="sans-serif"');
     expect(flowSvg).not.toContain("Noto Serif SC");
     expect(flowSvg).not.toContain("Songti SC");
+  });
+
+  it("专有语义图带 overlay 时拒绝通用 SVG，交给官方 Mermaid 渲染", () => {
+    const sources = [
+      "stateDiagram-v2\n  [*] --> Active\n  Active --> [*]\n",
+      "erDiagram\n  CUSTOMER {\n    string name PK\n  }\n  CUSTOMER ||--o{ ORDER : places\n",
+      "classDiagram\n  class Customer {\n    +String name\n  }\n  Customer <|-- VipCustomer\n",
+      "mindmap\n  root\n    child\n",
+    ];
+    const overlay = { positions: { CUSTOMER: { x: 120, y: 80 } } };
+
+    for (const source of sources) {
+      expect(graphToSvg(source), source).not.toBeNull();
+      expect(graphToSvg(source, overlay), source).toBeNull();
+    }
+
+    expect(graphToSvg("flowchart TD\n  A --> B\n", { positions: { A: { x: 120, y: 80 } } })).not.toBeNull();
   });
 
   it("解析经典色板 init 与 classDef/class,graphToSvg 按节点样式和图级色板上色", () => {

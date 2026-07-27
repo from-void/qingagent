@@ -203,6 +203,18 @@ describe("aiIrToQingml", () => {
     });
   });
 
+  it.each([0, -3])("QingML 有序列表 start=%i 序列化后可等价读回", (start) => {
+    const block: AiBlock = {
+      type: "orderedList",
+      start,
+      items: [{ runs: [{ text: "条目" }] }],
+    };
+    const qingml = aiBlockToQingml(block);
+
+    expect(qingml).toContain(`start="${start}"`);
+    expect(qingmlParse(qingml).blocks).toEqual([block]);
+  });
+
   it("PM→AI-IR→QingML→parse 保留多块 blockquote/callout 的块类型、列表和 marks", () => {
     const pm: PmDoc = {
       type: "doc",

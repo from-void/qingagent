@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
+import { detectType, graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import {
   isPoisonedMermaidSvg,
   normalizeMermaidQuotes,
@@ -76,6 +76,7 @@ const WARM_THEME_VARS = {
 // 导出 SVG 会脱离宿主文档单独栅格化；与已验证的 generateSvg 路径一致，交给系统
 // sans-serif 做中文字体回退，避免依赖 Google Fonts 的家族名。
 const DIAGRAM_FONT = "sans-serif";
+export const SPECIALIZED_DIAGRAM_OVERLAY_NOTICE = "specialized-diagram-overlay";
 interface MermaidRenderInput {
   source: string;
   normalizedSource: string;
@@ -336,8 +337,16 @@ function hasMxfileRoot(source: string): boolean {
   return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<mxfile[\s>]/i.test(source);
 }
 
-/** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
-function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
+interface CollectDiagramOptions {
+  includeCached?: boolean;
+}
+
+/** 递归收集文档里的图表节点(PmDoc 节点 + Legacy 段都覆盖)，渲染路径默认只取缺可用 SVG 的节点。 */
+function collectDiagrams(
+  value: unknown,
+  acc: DiagramRef[],
+  options: CollectDiagramOptions = {},
+): void {
   if (!value || typeof value !== "object") return;
   const obj = value as Record<string, unknown>;
 
@@ -351,7 +360,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const svg = attrs.svg as string | null;
     const hasUsableCache = isRenderableSvg(svg)
       && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
-    if (source.trim() && !hasUsableCache) {
+    if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,
         blockId: typeof attrs.blockId === "string" ? attrs.blockId : null,
@@ -373,7 +382,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const svg = data.svg as string | null;
     const hasUsableCache = isRenderableSvg(svg)
       && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
-    if (source.trim() && !hasUsableCache) {
+    if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,
         blockId: typeof data.blockId === "string" ? data.blockId : null,
@@ -387,11 +396,23 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
 
   for (const v of Object.values(obj)) {
     if (Array.isArray(v)) {
-      for (const item of v) collectDiagrams(item, acc);
+      for (const item of v) collectDiagrams(item, acc, options);
     } else if (v && typeof v === "object") {
-      collectDiagrams(v, acc);
+      collectDiagrams(v, acc, options);
     }
   }
+}
+
+function requiresOfficialMermaidLayout(ref: DiagramRef): boolean {
+  const type = detectType(ref.source);
+  return ref.lang === "mermaid" && type !== null && type !== "flowchart" && hasOverlay(ref.overlay);
+}
+
+/** 导出响应据此提示：专有语义图保留官方 Mermaid 语义，但不会应用不兼容的画布 overlay。 */
+export function hasSpecializedDiagramOverlayFallback(document: ExportDocument): boolean {
+  const refs: DiagramRef[] = [];
+  collectDiagrams(structuredClone(document), refs, { includeCached: true });
+  return refs.some(requiresOfficialMermaidLayout);
 }
 
 /**
@@ -445,6 +466,15 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
       ref.assign(null);
       return;
     }
+    if (requiresOfficialMermaidLayout(ref)) {
+      getDocRenderLogger().warn("Specialized Mermaid diagram overlay skipped; official layout preserved", {
+        blockId: ref.blockId,
+        diagramType: diagramTypeOf(ref.source),
+        sourceSummary: summarizeDiagramSource(ref.source),
+      });
+      ref.assign(mermaidSvg);
+      return;
+    }
     if (hasOverlay(ref.overlay)) {
       const svg = graphToSvg(ref.source, ref.overlay);
       if (svg && isRenderableSvg(svg)) {
@@ -466,6 +496,7 @@ function hasOverlay(overlay: DiagramOverlay | null | undefined): overlay is Diag
   return !!overlay && (
     Object.keys(overlay.positions ?? {}).length > 0 ||
     Object.keys(overlay.styles ?? {}).length > 0 ||
-    Object.keys(overlay.edgeStyles ?? {}).length > 0
+    Object.keys(overlay.edgeStyles ?? {}).length > 0 ||
+    Object.keys(overlay.edgeHandles ?? {}).length > 0
   );
 }

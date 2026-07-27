@@ -76,6 +76,8 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 - 命中 \`docCommitted\`,或 \`docStateChanged\` 且 state 离开 \`pendingReview\`,立即退出码 0;
 - 超时也退出码 0,stderr 末行 \`[qa] events exited reason=timeout received=<N>\`;
 - 首次发现帧日志失效且尚未收到事件时会按服务端 \`minSeq\` 自动重订一次；已有输出或重订后仍 gap 时退出码 0,stderr 末行 \`[qa] events exited reason=gap received=<N>\`;
+- 非 follow 连接在目标命中前 EOF 时返回 \`EVENT_TARGET_NOT_REACHED\` 且退出码非 0,
+  stderr 会显示 \`reason=eof\`;按错误提示对账文档状态,不要把它误判为实例离线或裁决已完成;
 - 命中后读 stdout 那帧,向用户汇报"已采纳/已拒绝",不要替用户 accept/reject。
 
 如果宿主不能后台监听,记下 propose 返回的 \`seq\`,下次被唤起时用
@@ -110,6 +112,7 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 | \`AGENT_BUSY\` | 青简 agent 正在干活 | ${NEXT_STEP.AGENT_BUSY} |
 | \`VERSION_CONFLICT\` | 文档已被别人改过 | ${NEXT_STEP.VERSION_CONFLICT} |
 | \`AUTH_FAILED\` / \`NO_INSTANCE\` | 实例没了/重启了 | ${NEXT_STEP.AUTH_FAILED} |
+| \`EVENT_TARGET_NOT_REACHED\` | 事件流 EOF 且监听目标未命中 | ${NEXT_STEP.EVENT_TARGET_NOT_REACHED} |
 | \`SESSION_NOT_FOUND\` | 会话不存在 | ${NEXT_STEP.SESSION_NOT_FOUND} |
 | \`MATERIAL_NOT_FOUND\` | 材料不存在 | ${NEXT_STEP.MATERIAL_NOT_FOUND} |
 | \`VALIDATION\` | 提案不合法 | ${NEXT_STEP.VALIDATION} |

@@ -1,6 +1,10 @@
 export { toDocx } from "./toDocx.js";
 export { toHtml } from "./toHtml.js";
-export { withRenderedDiagrams } from "./mermaidServer.js";
+export {
+  hasSpecializedDiagramOverlayFallback,
+  SPECIALIZED_DIAGRAM_OVERLAY_NOTICE,
+  withRenderedDiagrams,
+} from "./mermaidServer.js";
 export { toMarkdown } from "./toMarkdown.js";
 export { toPdf } from "./toPdf.js";
 export { toTxt } from "./toTxt.js";

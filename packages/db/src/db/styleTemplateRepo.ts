@@ -1,12 +1,27 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
-import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
+import {
+  commitTransaction,
+  getDocumentsClient,
+  withTransaction,
+  withWriteRetry,
+} from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
 export type StyleTemplateSlot = "layout" | "writing" | "instruction";
 export const STYLE_TEMPLATE_DTYPES = ["gzh", "xhs", "translate", "deai"] as const;
 export type StyleTemplateDtype = typeof STYLE_TEMPLATE_DTYPES[number];
 export interface StyleTemplate { id: string; dtype: string; slot: StyleTemplateSlot; name: string; detail: string; prompt: string; builtin: boolean }
+
+export class StyleTemplateInUseError extends Error {
+  readonly documentCount: number;
+
+  constructor(documentCount: number) {
+    super(`仍有 ${documentCount} 篇稿件使用该模板，无法删除`);
+    this.name = "StyleTemplateInUseError";
+    this.documentCount = documentCount;
+  }
+}
 
 const map = (row: Record<string, unknown>): StyleTemplate => ({ id: String(row.resource_id), dtype: String(row.dtype), slot: String(row.slot) as StyleTemplateSlot, name: String(row.name), detail: String(row.detail ?? ""), prompt: String(row.prompt), builtin: Number(row.builtin) === 1 });
 async function client(c?: Client): Promise<Client> { await ensureMigrated(); return c ?? getDocumentsClient(); }
@@ -43,19 +58,36 @@ export async function saveStyleTemplate(input: { id?: string; dtype: string; slo
   return (await getStyleTemplate(id, db))!;
 }
 export async function deleteStyleTemplate(id: string, c?: Client): Promise<boolean> {
-  const db = await client(c);
-  const old = await getStyleTemplate(id, db);
-  if (!old) return false;
-  if (old.builtin) throw new Error("内置模板不可删除");
-  const result = await withWriteRetry(() => db.execute({
-    sql: `DELETE FROM skill_resources
-      WHERE id=? AND kind='style-template'
-        AND (SELECT COUNT(*) FROM style_templates WHERE dtype=? AND slot=?) > 1`,
-    args: [id, old.dtype, old.slot],
-  }));
-  if (Number(result.rowsAffected) === 0) {
-    if (!await getStyleTemplate(id, db)) return false;
-    throw new Error("每类至少保留一个模板");
-  }
-  return true;
+  const remove = async (db: Client): Promise<boolean> => {
+    const old = await getStyleTemplate(id, db);
+    if (!old) return false;
+    if (old.builtin) throw new Error("内置模板不可删除");
+    const result = await db.execute({
+      sql: `DELETE FROM skill_resources
+        WHERE id=? AND kind='style-template'
+          AND (SELECT COUNT(*) FROM style_templates WHERE dtype=? AND slot=?) > 1
+          AND NOT EXISTS (
+            SELECT 1 FROM document_derivatives
+            WHERE template_id=? OR layout_style_id=?
+          )`,
+      args: [id, old.dtype, old.slot, id, id],
+    });
+    if (Number(result.rowsAffected) === 0) {
+      const references = await db.execute({
+        sql: `SELECT COUNT(DISTINCT doc_id) AS count
+          FROM document_derivatives
+          WHERE template_id=? OR layout_style_id=?`,
+        args: [id, id],
+      });
+      const documentCount = Number(references.rows[0]?.count ?? 0);
+      if (documentCount > 0) throw new StyleTemplateInUseError(documentCount);
+      if (!await getStyleTemplate(id, db)) return false;
+      throw new Error("每类至少保留一个模板");
+    }
+    return true;
+  };
+
+  if (c) return withWriteRetry(() => remove(c));
+  await ensureMigrated();
+  return withTransaction(async (db) => commitTransaction(await remove(db)));
 }

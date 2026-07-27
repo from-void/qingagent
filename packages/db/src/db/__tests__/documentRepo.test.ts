@@ -7,11 +7,13 @@ import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   __resetDocumentsClientForTest,
   getDocumentsClient,
+  getTxnClient,
 } from "../documentsClient.js";
 import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
 import {
   documentRepo,
   isMissingMastraThreadsTableError,
+  loadMainDocumentByThread,
   repairStoredDocumentRows,
   type DocumentSaveInput,
 } from "../documentRepo.js";
@@ -248,6 +250,289 @@ describe("documentRepo", () => {
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
   });
 
+  it("大资源域的两种列表查询都只拉取当前页正文", async () => {
+    const documents = Array.from({ length: 120 }, (_, index) => input(
+      `large-${String(index).padStart(3, "0")}`,
+      {
+        resourceId: "large-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ));
+    await documentRepo.saveMany(documents);
+    const client = getDocumentsClient();
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.batch(documents.map((document) => ({
+      sql: "INSERT INTO mastra_threads (id) VALUES (?)",
+      args: [document.threadId],
+    })), "write");
+    const execute = vi.spyOn(client, "execute");
+
+    const page = await documentRepo.list({
+      resourceId: "large-pages",
+      perPage: 7,
+      offset: 40,
+    });
+    const pageWithThreads = await documentRepo.listWithExistingThreads({
+      resourceId: "large-pages",
+      perPage: 7,
+      offset: 40,
+    });
+
+    expect(page.total).toBe(120);
+    expect(page.rows.map((row) => row.id)).toEqual(
+      Array.from(
+        { length: 7 },
+        (_, index) => `large-${String(index + 40).padStart(3, "0")}`,
+      ),
+    );
+    expect(pageWithThreads).toEqual(page);
+    const fullRowQueries = execute.mock.calls
+      .map(([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement))
+      .filter((sql) => /SELECT\s+d\.\*\s+FROM\s+documents d/i.test(sql));
+    expect(fullRowQueries).toHaveLength(2);
+    expect(fullRowQueries.every((sql) => (
+      /\bLIMIT\s+\?\s+OFFSET\s+\?/i.test(sql)
+    ))).toBe(true);
+  });
+
+  it("单行与列表读取逐行隔离坏 PM，其他文档继续可读", async () => {
+    await documentRepo.saveMany([
+      input("valid-row", { resourceId: "dirty-read" }),
+      input("bad-load", { resourceId: "dirty-read" }),
+      input("bad-thread", { resourceId: "dirty-read", threadId: "bad-thread-id" }),
+      input("bad-list", { resourceId: "dirty-read" }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute("UPDATE documents SET doc_pm = NULL WHERE id = 'bad-load'");
+    await client.execute("UPDATE documents SET doc_pm = '   ' WHERE id = 'bad-thread'");
+    await client.execute("UPDATE documents SET doc_pm = '{broken' WHERE id = 'bad-list'");
+
+    await expect(documentRepo.load("bad-load")).resolves.toBeNull();
+    await expect(loadMainDocumentByThread("bad-thread-id")).resolves.toBeNull();
+    await expect(documentRepo.list({ resourceId: "dirty-read" })).resolves.toMatchObject({
+      total: 1,
+      rows: [{ id: "valid-row" }],
+    });
+
+    const quarantined = await client.execute(
+      `SELECT id, reason FROM documents_quarantine_invalid_pm
+        WHERE id IN ('bad-load', 'bad-thread', 'bad-list')
+        ORDER BY id`,
+    );
+    expect(quarantined.rows).toMatchObject([
+      { id: "bad-list", reason: "invalid_pm" },
+      { id: "bad-load", reason: "missing_pm" },
+      { id: "bad-thread", reason: "missing_pm" },
+    ]);
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents WHERE resource_id = 'dirty-read'",
+    )).rows[0]?.n)).toBe(1);
+  });
+
+  it("坏 PM 位于后续页时第一页 total 与有效行分页保持一致", async () => {
+    await documentRepo.saveMany([
+      input("page-valid-a", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-04T00:00:00.000Z",
+      }),
+      input("page-valid-b", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("page-invalid", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("page-valid-c", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "UPDATE documents SET doc_pm = '{broken' WHERE id = 'page-invalid'",
+    );
+
+    const first = await documentRepo.list({
+      resourceId: "dirty-pages",
+      page: 0,
+      perPage: 2,
+    });
+    const second = await documentRepo.list({
+      resourceId: "dirty-pages",
+      page: 1,
+      perPage: 2,
+    });
+
+    expect(first).toMatchObject({
+      total: 3,
+      rows: [{ id: "page-valid-a" }, { id: "page-valid-b" }],
+    });
+    expect(second).toMatchObject({
+      total: 3,
+      rows: [{ id: "page-valid-c" }],
+    });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'page-invalid'",
+    )).rows[0]?.n)).toBe(1);
+  });
+
+  it("JSON 合法的深层坏 PM 随所访问页面隔离，total 单调收敛", async () => {
+    await documentRepo.saveMany([
+      input("deep-valid-a", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-06T00:00:00.000Z",
+      }),
+      input("deep-invalid-first", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-05T00:00:00.000Z",
+      }),
+      input("deep-valid-b", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-04T00:00:00.000Z",
+      }),
+      input("deep-invalid-second", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("deep-valid-c", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("deep-valid-d", {
+        resourceId: "deep-dirty-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    const deepInvalidPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{ type: "unknownBlock" }],
+    });
+    await client.execute({
+      sql: `UPDATE documents SET doc_pm = ?
+        WHERE id IN ('deep-invalid-first', 'deep-invalid-second')`,
+      args: [deepInvalidPm],
+    });
+
+    const first = await documentRepo.list({
+      resourceId: "deep-dirty-pages",
+      page: 0,
+      perPage: 2,
+    });
+    const second = await documentRepo.list({
+      resourceId: "deep-dirty-pages",
+      page: 1,
+      perPage: 2,
+    });
+
+    expect(first).toMatchObject({
+      total: 5,
+      rows: [{ id: "deep-valid-a" }, { id: "deep-valid-b" }],
+    });
+    expect(second).toMatchObject({
+      total: 4,
+      rows: [{ id: "deep-valid-c" }, { id: "deep-valid-d" }],
+    });
+    expect((await client.execute(
+      `SELECT id FROM documents_quarantine_invalid_pm
+        WHERE id IN ('deep-invalid-first', 'deep-invalid-second')
+        ORDER BY id`,
+    )).rows).toMatchObject([
+      { id: "deep-invalid-first" },
+      { id: "deep-invalid-second" },
+    ]);
+  });
+
+  it("页内深层坏 PM 最多补取一轮，第二轮隔离后直接返回短页", async () => {
+    await documentRepo.saveMany([
+      ...Array.from({ length: 4 }, (_, index) => input(
+        `bounded-invalid-${index}`,
+        {
+          resourceId: "bounded-dirty-page",
+          updatedAt: `2026-01-0${5 - index}T00:00:00.000Z`,
+        },
+      )),
+      input("bounded-valid", {
+        resourceId: "bounded-dirty-page",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: `UPDATE documents SET doc_pm = ?
+        WHERE resource_id = 'bounded-dirty-page' AND id <> 'bounded-valid'`,
+      args: [JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{ type: "unknownBlock" }],
+      })],
+    });
+    const execute = vi.spyOn(client, "execute");
+    const transactionExecute = vi.spyOn(getTxnClient(), "execute");
+
+    const result = await documentRepo.list({
+      resourceId: "bounded-dirty-page",
+      perPage: 2,
+    });
+
+    expect(result).toEqual({ rows: [], total: 1 });
+    const sql = execute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(sql.filter((statement) => (
+      /SELECT\s+d\.\*\s+FROM\s+documents d/i.test(statement)
+    ))).toHaveLength(2);
+    expect(sql.filter((statement) => (
+      /SELECT\s+COUNT\(\*\)\s+AS\s+total\s+FROM\s+documents d/i.test(statement)
+    ))).toHaveLength(2);
+    const transactionSql = transactionExecute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(transactionSql.filter((statement) => statement === "BEGIN IMMEDIATE")).toHaveLength(2);
+    expect(transactionSql.filter((statement) => /^\s*COMMIT\s*$/i.test(statement))).toHaveLength(2);
+    expect(Number((await client.execute(
+      `SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm
+        WHERE id LIKE 'bounded-invalid-%'`,
+    )).rows[0]?.n)).toBe(4);
+  });
+
+  it("同一资源域的多条坏 PM 合并到一次隔离事务", async () => {
+    await documentRepo.saveMany([
+      input("batch-valid", { resourceId: "dirty-batch" }),
+      ...Array.from({ length: 30 }, (_, index) => input(
+        `batch-invalid-${index}`,
+        { resourceId: "dirty-batch" },
+      )),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "UPDATE documents SET doc_pm = '{broken' WHERE resource_id = 'dirty-batch' AND id <> 'batch-valid'",
+    );
+    const transactionExecute = vi.spyOn(getTxnClient(), "execute");
+
+    await expect(documentRepo.list({
+      resourceId: "dirty-batch",
+      perPage: 10,
+    })).resolves.toMatchObject({
+      total: 1,
+      rows: [{ id: "batch-valid" }],
+    });
+
+    const transactionSql = transactionExecute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(transactionSql.filter((sql) => sql === "BEGIN IMMEDIATE")).toHaveLength(1);
+    expect(transactionSql.filter((sql) => /^\s*COMMIT\s*$/i.test(sql))).toHaveLength(1);
+    expect(transactionSql.filter((sql) => (
+      /INSERT INTO documents_quarantine_invalid_pm/i.test(sql)
+    ))).toHaveLength(1);
+    expect(transactionSql.filter((sql) => /^\s*WITH candidates[\s\S]*DELETE FROM documents/i.test(
+      sql,
+    ))).toHaveLength(1);
+  });
+
   it("按不超过 50 个 id 轻量查询存在集合", async () => {
     await documentRepo.saveMany([
       input("exists-a"),
@@ -366,6 +651,35 @@ describe("documentRepo", () => {
     expect(raw.rows[0]?.doc_format).toBe("pm");
   });
 
+  it("后台巡检隔离坏 PM 后继续修复其余文档", async () => {
+    const validPm = legacySectionsToPm([section("继续修复")] as never);
+    await documentRepo.saveMany([
+      input("repair-valid", { pmDoc: validPm }),
+      input("repair-invalid"),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: `UPDATE documents
+        SET content_hash = 'stale-hash', doc_schema_version = 0, doc_format = 'legacy'
+        WHERE id = 'repair-valid'`,
+    });
+    await client.execute(
+      "UPDATE documents SET doc_pm = 'not-json' WHERE id = 'repair-invalid'",
+    );
+
+    await expect(repairStoredDocumentRows()).resolves.toMatchObject({
+      scanned: 2,
+      invalidRowsQuarantined: 1,
+      pmMirrorsRepaired: 1,
+    });
+    await expect(documentRepo.load("repair-valid")).resolves.toMatchObject({
+      contentHash: getPmContentHash(validPm),
+    });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'repair-invalid'",
+    )).rows[0]?.n)).toBe(1);
+  });
+
   it("后台巡检回写前发生保存时不覆盖新正文与 hash", async () => {
     const stalePm = legacySectionsToPm([section("巡检读取的旧正文")] as never);
     const latestPm = legacySectionsToPm([section("并发保存的新正文")] as never);
@@ -424,7 +738,7 @@ describe("documentRepo", () => {
 
     execute.mockClear();
     await documentRepo.list({ resourceId: "read-resource" });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls.every(([statement]) => {
       const sql = (statement as unknown as { sql?: string }).sql ?? String(statement);
       return /^\s*SELECT\b/i.test(sql);

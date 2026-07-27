@@ -173,6 +173,82 @@ describe("extractArticleContent fetch 轻量重试", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("跨站重定向不会把前站响应 Cookie 发送给目标站", async () => {
+    const html =
+      "<html><head><title>跨站目标</title></head><body><article>" +
+      "<p>跨站重定向后的正文内容足够长，用于验证静态抓取能够正常结束。</p>" +
+      "<p>前一站设置的会话 Cookie 不得随着重定向泄露给当前目标站。</p>" +
+      "</article></body></html>";
+    const redirectHeaders = new Headers({
+      location: "https://target.example/final",
+    });
+    redirectHeaders.append("set-cookie", "session=source-secret; Path=/; HttpOnly");
+    const fetchMock = vi
+      .fn<TestPinnedFetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: redirectHeaders }),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from(html), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      );
+    __setPinnedFetchForTest(fetchMock);
+
+    await expect(
+      extractArticleContent("https://source.example/start"),
+    ).resolves.toMatchObject({ title: "跨站目标" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1].headers).not.toHaveProperty("Cookie");
+  });
+
+  it("同站重定向按 Path、Secure、过期和同名规则选择 Cookie", async () => {
+    const html =
+      "<html><head><title>同站目标</title></head><body><article>" +
+      "<p>同站重定向后的正文内容足够长，用于验证 Cookie 的完整作用域语义。</p>" +
+      "<p>只有与最终 HTTPS 路径匹配且尚未过期的 Cookie 才应被发送。</p>" +
+      "</article></body></html>";
+    const firstHeaders = new Headers({ location: "/public/step" });
+    for (const cookie of [
+      "sid=root; Path=/",
+      "sid=private; Path=/private",
+      "secureOnly=yes; Path=/; Secure",
+      "expired=gone; Path=/; Max-Age=0",
+    ]) {
+      firstHeaders.append("set-cookie", cookie);
+    }
+    const secondHeaders = new Headers({ location: "/public/final" });
+    secondHeaders.append("set-cookie", "sid=public; Path=/public");
+    const fetchMock = vi
+      .fn<TestPinnedFetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: firstHeaders }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: secondHeaders }),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from(html), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      );
+    __setPinnedFetchForTest(fetchMock);
+
+    await expect(
+      extractArticleContent("https://example.com/start"),
+    ).resolves.toMatchObject({ title: "同站目标" });
+
+    expect(fetchMock.mock.calls[1]?.[1].headers).toMatchObject({
+      Cookie: "sid=root; secureOnly=yes",
+    });
+    expect(fetchMock.mock.calls[2]?.[1].headers).toMatchObject({
+      Cookie: "sid=public; sid=root; secureOnly=yes",
+    });
+  });
+
   it("F15: 3xx 缺少 Location 时抛错前取消未结束响应体", async () => {
     const body = new ReadableStream<Uint8Array>({ pull() {} });
     const response = new Response(body, { status: 302 });

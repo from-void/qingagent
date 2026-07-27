@@ -39,6 +39,19 @@ export type ScrapeResult = {
   ogImageUrl: string | null;
 };
 
+async function persistOptionalScreenshot(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    return await persistScreenshot(buffer, signal);
+  } catch {
+    signal?.throwIfAborted();
+    console.warn("[scrapeWithBrowser] 截图持久化失败，已保留成功抽取的正文");
+    return null;
+  }
+}
+
 export async function scrapeWithBrowserImpl(
   url: string,
   opts?: { waitForSelector?: string; signal?: AbortSignal },
@@ -449,7 +462,9 @@ export async function scrapeWithBrowserImpl(
               .screenshot({ fullPage: false, type: "jpeg", quality: 80 })
               .catch(() => null);
             opts?.signal?.throwIfAborted();
-            const wxShotSrc = wxShot ? await persistScreenshot(wxShot, opts?.signal) : null;
+            const wxShotSrc = wxShot
+              ? await persistOptionalScreenshot(wxShot, opts?.signal)
+              : null;
             return {
               ok: true,
               error: null,
@@ -482,7 +497,7 @@ export async function scrapeWithBrowserImpl(
         .catch(() => null);
       opts?.signal?.throwIfAborted();
       const screenshotSrc = screenshot
-        ? await persistScreenshot(screenshot, opts?.signal)
+        ? await persistOptionalScreenshot(screenshot, opts?.signal)
         : null;
       return {
         ok: true,

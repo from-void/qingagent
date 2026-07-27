@@ -129,6 +129,7 @@ export interface StateGraph extends DiagramThemeMetadata {
   type: "state";
   nodes: (BaseNode & { kind: "state" | "start" | "end" | "choice" | "fork" | "composite" })[];
   edges: BaseEdge[];
+  deleteProtectedNodeIds?: string[];
 }
 
 export interface ErGraph extends DiagramThemeMetadata {
@@ -141,6 +142,7 @@ export interface ClassGraph extends DiagramThemeMetadata {
   type: "class";
   classes: (BaseNode & { members: { raw: string; span: Span }[]; generics?: string })[];
   rels: (BaseEdge & { relKind: string })[];
+  deleteProtectedNodeIds?: string[];
 }
 
 export interface MindmapTree extends DiagramThemeMetadata {
@@ -676,6 +678,10 @@ export function safeMermaid(value: string): { id: string; label: string } {
 export function graphToSvg(source: string, overlay: DiagramOverlay | null | undefined = undefined): string | null {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return null;
+  // State/ER/Class/mindmap 都有通用节点/边字段无法表达的专有语义。带 overlay 时若继续
+  // 生成通用 SVG，会丢状态形状、实体属性、类成员、基数或树关系；返回 null 让导出层
+  // 保留已生成的官方 Mermaid SVG。flowchart 的 overlay 才由这里完整接管。
+  if (parsed.model.type !== "flowchart" && hasGraphSvgOverlay(overlay)) return null;
   const edges = modelEdges(parsed.model);
   const flattened = modelNodes(parsed.model);
   const hasFlowSubgraphs = parsed.model.type === "flowchart" && parsed.model.subgraphs.length > 0;
@@ -718,6 +724,14 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
     )
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${clusterSvg}${edgeSvg}${nodeSvg}</svg>`;
+}
+
+function hasGraphSvgOverlay(overlay: DiagramOverlay | null | undefined): boolean {
+  return !!overlay && (
+    Object.keys(overlay.positions ?? {}).length > 0 ||
+    Object.keys(overlay.styles ?? {}).length > 0 ||
+    Object.keys(overlay.edgeStyles ?? {}).length > 0
+  );
 }
 
 function makeFlowchartAdapter(): DiagramAdapter {
@@ -1469,21 +1483,22 @@ function parseFlowLinkAt(raw: string, offset: number): ParsedFlowLink | null {
   const prefixLength = edgeIdMatch?.[0].length ?? 0;
   const linkSource = source.slice(prefixLength);
 
-  const embeddedPatterns: Array<{ re: RegExp; token: string; lineStyle: EdgeLineStyle }> = [
-    { re: /^--\s+(.+?)\s+-->\s*/s, token: "-->", lineStyle: "solid" },
-    { re: /^-\.\s+(.+?)\s+\.->\s*/s, token: "-.->", lineStyle: "dotted" },
-    { re: /^==\s+(.+?)\s+==>\s*/s, token: "==>", lineStyle: "thick" },
+  const embeddedPatterns: Array<{ re: RegExp; token: string; trailingArrow: string; lineStyle: EdgeLineStyle }> = [
+    { re: /^--\s+(.+?)\s+-->\s*/s, token: "-->", trailingArrow: "-->", lineStyle: "solid" },
+    { re: /^-\.\s+(.+?)\s+\.->\s*/s, token: "-.->", trailingArrow: ".->", lineStyle: "dotted" },
+    { re: /^==\s+(.+?)\s+==>\s*/s, token: "==>", trailingArrow: "==>", lineStyle: "thick" },
   ];
   for (const pattern of embeddedPatterns) {
     const match = linkSource.match(pattern.re);
     if (!match?.[1]) continue;
     const rawLabel = match[1];
     const localLabelStart = linkSource.indexOf(rawLabel);
-    const tokenStart = start + prefixLength;
+    const trailingArrowStart = match[0].lastIndexOf(pattern.trailingArrow);
+    const tokenStart = start + prefixLength + trailingArrowStart;
     return {
       token: pattern.token,
       tokenStart,
-      tokenEnd: tokenStart + pattern.token.length,
+      tokenEnd: tokenStart + pattern.trailingArrow.length,
       endOffset: start + prefixLength + match[0].length,
       label: displayMermaidLabel(stripQuotes(rawLabel.trim())),
       labelStart: start + prefixLength + localLabelStart,
@@ -1614,7 +1629,12 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     const nextSource = op.newSource ?? edge.source;
     const nextTarget = op.newTarget ?? edge.target;
     const replacement = `  ${nextSource} ${edge.syntaxKind}${edge.label ? `|${safeMermaidLabel(edge.label)}|` : ""} ${nextTarget}${line.endsWith("\n") ? "\n" : ""}`;
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: replacement }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: replacement }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "setEdgeLabel") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
@@ -1622,13 +1642,35 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     const validationError = validateFlowEdgeLabel(nextLabel);
     if (validationError) return { ok: false, source, error: validationError };
     const rewrite = rewriteFlowEdgeLabel(source, edge, nextLabel);
-    return rewrite ? { ok: true, source: rewrite } : { ok: false, source, error: "边标签无法干净回写" };
+    return rewrite ? edgeRewriteResult(source, rewrite, model.type, edge) : { ok: false, source, error: "边标签无法干净回写" };
   }
   if (op.kind === "setEdgeArrow") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
     if (!edge.syntaxSpan) return { ok: false, source, error: "边箭头无法干净回写" };
-    const nextToken = flowArrowToken(op.direction, op.lineStyle ?? edge.lineStyle ?? "solid");
-    return { ok: true, source: applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]) };
+    const nextLineStyle = op.lineStyle ?? edge.lineStyle ?? "solid";
+    const nextToken = flowArrowToken(op.direction, nextLineStyle);
+    const embeddedLinkSpan = flowEmbeddedEdgeLinkSpan(source, edge);
+    const nextSource = embeddedLinkSpan && edge.label
+      ? applyEdits(source, [{
+          start: embeddedLinkSpan.start,
+          end: embeddedLinkSpan.end,
+          text: `${nextToken}|${safeMermaidLabel(edge.label).replace(/\|/g, "&#124;")}|`,
+        }])
+      : applyEdits(source, [{ start: edge.syntaxSpan.start, end: edge.syntaxSpan.end, text: nextToken }]);
+    return edgeRewriteResult(
+      source,
+      nextSource,
+      model.type,
+      edge,
+      (nextModel, nextEdge) =>
+        nextModel.type === "flowchart" &&
+        nextModel.edges.length === model.edges.length &&
+        nextEdge.source === edge.source &&
+        nextEdge.target === edge.target &&
+        (nextEdge.label ?? "") === (edge.label ?? "") &&
+        nextEdge.direction === op.direction &&
+        nextEdge.lineStyle === nextLineStyle,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label));
@@ -1712,9 +1754,9 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
       bodyEnd: raw.endsWith("\n") ? span.end - 1 : span.end,
       index: 0,
     };
-    const parsed = parseFlowEdgeLine(line, 0, [], nextEdgeId);
+    const parsed = parseFlowEdgeStatement(line, 0, [], nextEdgeId);
     if (!parsed || "error" in parsed) continue;
-    for (const ref of [parsed.left, parsed.right]) {
+    for (const ref of parsed.refs) {
       if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
       out.set(ref.id, ref);
     }
@@ -1979,6 +2021,17 @@ function rewriteFlowEdgeLabel(source: string, edge: BaseEdge, label: string): st
   return applyEdits(source, [{ start: insertAt, end: insertAt, text: `|${safeMermaidLabel(label)}|` }]);
 }
 
+function flowEmbeddedEdgeLinkSpan(source: string, edge: BaseEdge): Span | null {
+  if (!edge.labelSpan || !edge.syntaxSpan || edge.labelSpan.end > edge.syntaxSpan.start) return null;
+  const beforeLabel = source.slice(edge.stmt.start, edge.labelSpan.start);
+  const prefix = beforeLabel.match(/(?:--|-\.|==)\s*$/);
+  if (!prefix || prefix.index === undefined) return null;
+  return {
+    start: edge.stmt.start + prefix.index,
+    end: edge.syntaxSpan.end,
+  };
+}
+
 function parseFlowArrowToken(token: string): { direction: EdgeDirection; lineStyle: EdgeLineStyle } | null {
   if (token === "~~~") return { direction: "none", lineStyle: "invisible" };
   if (/^[ox]--[ox]$/.test(token)) return { direction: "none", lineStyle: "solid" };
@@ -2037,6 +2090,7 @@ function parseState(source: string): ParseResult {
   const nodes = new Map<string, BaseNode & { kind: "state" | "start" | "end" | "choice" | "fork" | "composite" }>();
   const edges: BaseEdge[] = [];
   const protectedSpans: Span[] = [];
+  const deleteProtectedNodeIds = new Set<string>();
   let edgeOrder = 0;
   const nextEdgeId = createEdgeIdFactory("state");
   let inComposite = false;
@@ -2061,6 +2115,10 @@ function parseState(source: string): ParseResult {
       continue;
     }
     if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+      const specialDeclaration = trimmed.match(
+        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
+      );
+      if (specialDeclaration) deleteProtectedNodeIds.add(specialDeclaration[1]!);
       protectedSpans.push(lineSpan(line));
       if (/\{/.test(trimmed)) inComposite = true;
       continue;
@@ -2110,7 +2168,13 @@ function parseState(source: string): ParseResult {
   return {
     ok: true,
     ...themeMetadata,
-    model: { type: "state", nodes: [...nodes.values()], edges, ...themeMetadata },
+    model: {
+      type: "state",
+      nodes: [...nodes.values()],
+      edges,
+      ...(deleteProtectedNodeIds.size > 0 ? { deleteProtectedNodeIds: [...deleteProtectedNodeIds] } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
 }
@@ -2119,12 +2183,17 @@ function stateCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: 
   const model = p.model as StateGraph;
   const edge = target?.edgeId ? model.edges.find((e) => e.id === target.edgeId) : undefined;
   const node = target?.nodeId ? model.nodes.find((n) => n.id === target.nodeId) : undefined;
+  const deleteProtected = !!node && model.deleteProtectedNodeIds?.includes(node.id);
   return [
     cap("connectEdge", true),
     cap("deleteEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "transition 不可回写"),
     cap("reconnectEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "transition 不可回写"),
     cap("addNode", true),
-    cap("deleteNode", !!node && node.hasStableId && node.kind === "state", "仅普通 state 可删除"),
+    cap(
+      "deleteNode",
+      !!node && node.hasStableId && node.kind === "state" && !deleteProtected,
+      deleteProtected ? "该节点含未完整建模的特殊 State 声明，暂不可删除" : "仅普通 state 可删除",
+    ),
     cap("relabelNode", !!node && node.hasStableId && !!node.labelSpan, node?.labelSpan ? undefined : "仅 state \"label\" as ID 可改 label"),
     cap("setNodeShape", false, "state 形状由状态语义决定,不做形状回写"),
     cap("setEdgeLabel", false, "state 边标签语法不是 flowchart |label|"),
@@ -2150,7 +2219,12 @@ function rewriteState(source: string, p: ParseResult, op: EditOp): RewriteResult
     const endpointError = reconnectEndpointError(model.nodes.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} --> ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} --> ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label, "state"));
@@ -2305,7 +2379,12 @@ function rewriteEr(source: string, p: ParseResult, op: EditOp): RewriteResult {
     const endpointError = reconnectEndpointError(model.entities.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.entities.map((n) => n.id), safeMermaidId(op.label, "entity").toUpperCase());
@@ -2327,6 +2406,7 @@ function parseClass(source: string): ParseResult {
   const classes = new Map<string, BaseNode & { members: { raw: string; span: Span }[]; generics?: string }>();
   const rels: ClassGraph["rels"] = [];
   const protectedSpans: Span[] = [];
+  const deleteProtectedNodeIds = new Set<string>();
   let order = 0;
   const nextEdgeId = createEdgeIdFactory("class");
   let inClass: string | null = null;
@@ -2359,6 +2439,12 @@ function parseClass(source: string): ParseResult {
       protectedSpans.push(lineSpan(line));
       if (/^}/.test(trimmed)) inClass = null;
       else classes.get(inClass)?.members.push({ raw: trimmed, span: lineSpan(line) });
+      continue;
+    }
+    const colonMember = trimmed.match(/^([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*:\s*\S.*$/u);
+    if (colonMember) {
+      deleteProtectedNodeIds.add(colonMember[1]!);
+      protectedSpans.push(lineSpan(line));
       continue;
     }
     const decl = trimmed.match(/^class\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)(?:\s*\["([^"]+)"\])?\s*$/u);
@@ -2396,7 +2482,13 @@ function parseClass(source: string): ParseResult {
   return {
     ok: true,
     ...themeMetadata,
-    model: { type: "class", classes: [...classes.values()], rels, ...themeMetadata },
+    model: {
+      type: "class",
+      classes: [...classes.values()],
+      rels,
+      ...(deleteProtectedNodeIds.size > 0 ? { deleteProtectedNodeIds: [...deleteProtectedNodeIds] } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
 }
@@ -2405,12 +2497,21 @@ function classCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: 
   const model = p.model as ClassGraph;
   const edge = target?.edgeId ? model.rels.find((e) => e.id === target.edgeId) : undefined;
   const node = target?.nodeId ? model.classes.find((n) => n.id === target.nodeId) : undefined;
+  const deleteProtected = !!node && model.deleteProtectedNodeIds?.includes(node.id);
   return [
     cap("connectEdge", true),
     cap("deleteEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "relationship 不可回写"),
     cap("reconnectEdge", !!edge && edge.rewritable, edge?.rewritable ? undefined : "relationship 不可回写"),
     cap("addNode", true),
-    cap("deleteNode", !!node && node.hasStableId && node.members.length === 0, node?.members.length ? "成员块 class 只读" : undefined),
+    cap(
+      "deleteNode",
+      !!node && node.hasStableId && node.members.length === 0 && !deleteProtected,
+      node?.members.length
+        ? "成员块 class 只读"
+        : deleteProtected
+          ? "该 class 含未完整建模的冒号式成员，暂不可删除"
+          : undefined,
+    ),
     cap("relabelNode", false, "class 名就是引用 id,默认禁止 rename"),
     cap("setNodeShape", false, "class 节点形状由图类型决定"),
     cap("setEdgeLabel", false, "class 关系标签语法不是 flowchart |label|"),
@@ -2436,7 +2537,12 @@ function rewriteClass(source: string, p: ParseResult, op: EditOp): RewriteResult
     const endpointError = reconnectEndpointError(model.classes.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
     const line = source.slice(edge.stmt.start, edge.stmt.end);
-    return { ok: true, source: applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]) };
+    return edgeRewriteResult(
+      source,
+      applyEdits(source, [{ start: edge.stmt.start, end: edge.stmt.end, text: `  ${op.newSource ?? edge.source} ${edge.syntaxKind} ${op.newTarget ?? edge.target}${edge.label ? ` : ${edge.label}` : ""}${line.endsWith("\n") ? "\n" : ""}` }]),
+      model.type,
+      edge,
+    );
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.classes.map((n) => n.id), safeMermaidId(op.label, "Class"));
@@ -2529,7 +2635,7 @@ function parseMindmap(source: string): ParseResult {
     stack.push(node);
   }
   if (!root) {
-    root = { id: "mind-root", label: "mindmap", line: lineSpan(header), indent: 0, children: [], hasStableId: true, parentId: null, scopePath: ["mindmap"], sourceRefs: [] };
+    root = { id: "mind-root", label: "mindmap", line: lineSpan(header), indent: 0, children: [], hasStableId: false, parentId: null, scopePath: ["mindmap"], sourceRefs: [] };
   }
   const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
   return {
@@ -2572,6 +2678,9 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const beforeIds = new Set(nodes.map((item) => item.id));
     const newSource = insertAtLineBoundary(source, insertAt, text);
     const reparsed = parseMindmap(newSource);
+    if (!reparsed.ok || reparsed.model.type !== "mindmap") {
+      return { ok: false, source, error: reparsed.error ?? "mindmap 改写后无法重新解析" };
+    }
     const reparsedTree = reparsed.model as MindmapTree;
     const newNode = flattenMindmap(reparsedTree.root).find((n) => !beforeIds.has(n.id) && n.label === op.label && n.parentId === parent.id);
     return { ok: true, newNodeId: newNode?.id, source: newSource };
@@ -2580,7 +2689,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const end = subtreeEnd(source, node!);
     const start = node!.line.start;
     const newSource = applyEdits(source, [{ start, end, text: "" }]);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart >= start && oldLineStart < end) return null;
       return oldLineStart >= end ? oldLineStart - (end - start) : oldLineStart;
     });
@@ -2597,7 +2706,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const replacement = `${leading}${body}${newline}`;
     const newSource = applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: replacement }]);
     const lengthDelta = replacement.length - (node!.line.end - node!.line.start);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart === node!.line.start) return node!.line.start;
       return oldLineStart >= node!.line.end ? oldLineStart + lengthDelta : oldLineStart;
     });
@@ -2638,7 +2747,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
       }
     }
     const newSource = insertAtLineBoundary(without, insertAt, shifted);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart >= oldStart && oldLineStart < oldEnd) {
         return movedLineStarts.get(oldLineStart) ?? null;
       }
@@ -2651,12 +2760,15 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
 }
 
 function mindmapRewriteResult(
+  originalSource: string,
   oldModel: MindmapTree,
   newSource: string,
   mapLineStart: (oldLineStart: number) => number | null,
 ): RewriteResult {
   const reparsed = parseMindmap(newSource);
-  if (!reparsed.ok || reparsed.model.type !== "mindmap") return { ok: true, source: newSource };
+  if (!reparsed.ok || reparsed.model.type !== "mindmap") {
+    return { ok: false, source: originalSource, error: reparsed.error ?? "mindmap 改写后无法重新解析" };
+  }
 
   const oldNodes = flattenMindmap(oldModel.root);
   const newModel = reparsed.model;
@@ -3469,6 +3581,27 @@ function insertBeforeSourceEnd(source: string, text: string): string {
 
 function unsupportedRewrite(source: string, op: string): RewriteResult {
   return { ok: false, source, error: `${op} 不支持当前图类型` };
+}
+
+function edgeRewriteResult(
+  originalSource: string,
+  nextSource: string,
+  diagramType: DiagramType,
+  oldEdge: BaseEdge,
+  verify?: (nextModel: DiagramModel, nextEdge: BaseEdge) => boolean,
+): RewriteResult {
+  const reparsed = parseDiagram(nextSource);
+  if (!reparsed.ok || reparsed.model.type !== diagramType) {
+    return { ok: false, source: originalSource, error: reparsed.error ?? "边改写后无法重新解析" };
+  }
+  const nextEdge = modelEdges(reparsed.model).find((edge) => edge.orderIndex === oldEdge.orderIndex);
+  if (!nextEdge) return { ok: false, source: originalSource, error: "边改写后无法重新定位" };
+  if (verify && !verify(reparsed.model, nextEdge)) {
+    return { ok: false, source: originalSource, error: "边改写后语义校验失败" };
+  }
+  return nextEdge.id === oldEdge.id
+    ? { ok: true, source: nextSource }
+    : { ok: true, source: nextSource, idMap: { edges: { [oldEdge.id]: nextEdge.id } } };
 }
 
 function createEdgeIdFactory(prefix: string): EdgeIdFactory {

@@ -1,4 +1,5 @@
 import type { Client, Row } from "@libsql/client";
+import { normalizeStoredPmDoc } from "@qingagent/pm-schema";
 import type { Migration } from "./types.js";
 
 const QUARANTINE_SUFFIX = "_quarantine_0002";
@@ -8,6 +9,7 @@ export interface Quarantine0002RecoveryReport {
   restoredDocuments: number;
   preservedCurrentDocuments: number;
   skippedDocumentConflicts: number;
+  skippedInvalidDocuments: number;
   restoredDrafts: number;
   restoredSuggestions: number;
   restoredOps: number;
@@ -20,6 +22,7 @@ function emptyReport(): Quarantine0002RecoveryReport {
     restoredDocuments: 0,
     preservedCurrentDocuments: 0,
     skippedDocumentConflicts: 0,
+    skippedInvalidDocuments: 0,
     restoredDrafts: 0,
     restoredSuggestions: 0,
     restoredOps: 0,
@@ -65,6 +68,17 @@ async function restoreDocument(
   row: Row,
   report: Quarantine0002RecoveryReport,
 ): Promise<string | null> {
+  const rawDocPm = row.doc_pm;
+  try {
+    if (typeof rawDocPm !== "string" || rawDocPm.trim().length === 0) {
+      throw new Error("missing PM");
+    }
+    normalizeStoredPmDoc(JSON.parse(rawDocPm) as unknown);
+  } catch {
+    report.skippedInvalidDocuments += 1;
+    return null;
+  }
+
   const threadId = String(row.thread_id);
   const existingId = await currentMainDocumentId(client, threadId);
   if (existingId) {

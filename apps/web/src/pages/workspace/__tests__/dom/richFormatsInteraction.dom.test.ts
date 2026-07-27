@@ -455,7 +455,7 @@ describe("richFormatsInteraction 输入规则收尾", () => {
 });
 
 describe("richFormatsInteraction 跨原子节点选区", () => {
-  it("横跨 inlineMath 的 toggleBold 只给文本加 mark, inlineMath 保持原子且不崩", () => {
+  it("横跨 inlineMath 的 toggleBold 给合法行内节点加 mark, inlineMath 仍保持原子且不崩", () => {
     const editor = createEditor({
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -477,9 +477,12 @@ describe("richFormatsInteraction 跨原子节点选区", () => {
 
       expect(() => editor.commands.toggleBold()).not.toThrow();
       const paragraph = normalized(editor).content[0];
+      // inlineMath 合法声明 marks 后，ProseMirror toggleMark 会覆盖选区内所有可标记
+      // inline 节点；mark 只附着于整个节点，不改变它的 atom 不可拆分语义。
+      expect(editor.schema.nodes.inlineMath?.spec.atom).toBe(true);
       expect(paragraph?.type === "paragraph" ? paragraph.content : []).toEqual([
         { type: "text", text: "前文 ", marks: [{ type: "bold" }] },
-        { type: "inlineMath", attrs: { latex: "x+1" } },
+        { type: "inlineMath", attrs: { latex: "x+1" }, marks: [{ type: "bold" }] },
         { type: "text", text: " 后文", marks: [{ type: "bold" }] },
       ]);
     } finally {

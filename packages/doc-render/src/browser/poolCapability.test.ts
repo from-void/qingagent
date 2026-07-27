@@ -62,4 +62,45 @@ describe("浏览器启动能力探测", () => {
     );
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("sandbox 已被显式关闭"));
   });
+
+  it("已可用浏览器断连后的瞬时启动失败不会永久禁用后续重试", async () => {
+    let connected = true;
+    let disconnect: (() => void) | undefined;
+    const firstBrowser = {
+      isConnected: vi.fn(() => connected),
+      on: vi.fn((event: string, listener: () => void) => {
+        if (event === "disconnected") disconnect = listener;
+      }),
+      close: vi.fn(async () => undefined),
+    };
+    const recoveredBrowser = {
+      isConnected: vi.fn(() => true),
+      on: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    launch
+      .mockResolvedValueOnce(firstBrowser)
+      .mockRejectedValueOnce(new Error("browser process temporarily unavailable"))
+      .mockResolvedValueOnce(recoveredBrowser);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mod = await import("./pool.js");
+
+    await expect(mod.probeBrowserCapability()).resolves.toMatchObject({
+      status: "available",
+    });
+    connected = false;
+    disconnect?.();
+
+    await expect(mod.getBrowser()).rejects.toBeInstanceOf(
+      mod.BrowserCapabilityUnavailableError,
+    );
+    expect(mod.getBrowserCapabilityState()).toMatchObject({
+      status: "available",
+      reason: null,
+    });
+    await expect(mod.getBrowser()).resolves.toBe(recoveredBrowser);
+    expect(launch).toHaveBeenCalledTimes(3);
+  });
 });

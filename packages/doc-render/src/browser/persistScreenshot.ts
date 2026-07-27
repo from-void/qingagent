@@ -7,16 +7,17 @@ export async function persistScreenshot(buffer: Buffer, signal?: AbortSignal): P
   signal?.throwIfAborted();
   const imageId = randomUUID();
   const imageDir = join(uploadsBaseDir(), imageId);
+  let persisted = false;
   try {
     await mkdir(imageDir, { recursive: true });
     signal?.throwIfAborted();
     await writeFile(join(imageDir, "screenshot.jpg"), buffer);
     signal?.throwIfAborted();
+    persisted = true;
     return "/api/v1/files/" + imageId + "/screenshot.jpg";
-  } catch (error) {
-    if (signal?.aborted) {
+  } finally {
+    if (!persisted) {
       await rm(imageDir, { recursive: true, force: true }).catch(() => undefined);
     }
-    throw error;
   }
 }

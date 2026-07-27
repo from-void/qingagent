@@ -50,6 +50,7 @@ export function SearchPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const providerUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -128,26 +129,32 @@ export function SearchPanel() {
     await updatePrimary({ apiKey: "" });
   };
 
-  const updateProvider = async (provider: SearchProviderSettings, patch: Record<string, unknown>) => {
-    setBusy(provider.id);
-    setMessage(null);
-    try {
-      const res = await fetch(`/api/v1/settings/search/${encodeURIComponent(provider.id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as { providers?: SearchProviderSettings[] };
-      if (!mountedRef.current) return;
-      setProviders(body.providers ?? []);
-      setDrafts((prev) => ({ ...prev, [provider.id]: "" }));
-      setMessage(`已更新 ${provider.label}`);
-    } catch {
-      if (mountedRef.current) setMessage(`${provider.label} 更新失败,请重试`);
-    } finally {
-      if (mountedRef.current) setBusy(null);
-    }
+  const updateProvider = (provider: SearchProviderSettings, patch: Record<string, unknown>) => {
+    const update = providerUpdateQueueRef.current.then(async () => {
+      if (mountedRef.current) {
+        setBusy(provider.id);
+        setMessage(null);
+      }
+      try {
+        const res = await fetch(`/api/v1/settings/search/${encodeURIComponent(provider.id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const body = (await res.json()) as { providers?: SearchProviderSettings[] };
+        if (!mountedRef.current) return;
+        setProviders(body.providers ?? []);
+        setDrafts((prev) => ({ ...prev, [provider.id]: "" }));
+        setMessage(`已更新 ${provider.label}`);
+      } catch {
+        if (mountedRef.current) setMessage(`${provider.label} 更新失败,请重试`);
+      } finally {
+        if (mountedRef.current) setBusy(null);
+      }
+    });
+    providerUpdateQueueRef.current = update;
+    return update;
   };
 
   const toggleProvider = async (provider: SearchProviderSettings) => {

@@ -310,10 +310,12 @@ export {
   listStyleTemplates,
   listVersions,
   loadMainDocumentByThread,
+  patchAppSettingJsonField,
   saveReviewTemplate,
   saveStyleTemplate,
   selectReviewTemplate,
   setAppSetting,
+  setAppSettingJsonField,
   updateParams,
   upsertReviewDocSupplement,
 } from "@qingagent/db";

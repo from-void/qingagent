@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
+import { CookieJar } from "tough-cookie";
 import { loadPdfParseConstructor } from "./pdfParse.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
 import {
@@ -390,17 +391,15 @@ async function fetchWithSsrfGuard(
   const deadlineMs = Date.now() + FETCH_TOTAL_TIMEOUT_MS;
   const retryState: FetchRetryState = { timeoutErrors: 0 };
   // 跨跳维持 cookie:不少站(医脉通 CAS 网关、各类 WAF/防盗链)首跳 Set-Cookie、次跳要带 Cookie 才放行,
-  // 手动重定向默认会丢 cookie → 二跳 403/连接重置。在重定向链里累积 name=value 回传。
-  const cookieJar = new Map<string, string>();
+  // 手动重定向默认会丢 cookie → 二跳 403/连接重置。CookieJar 按每跳目标 URL 保留浏览器作用域语义。
+  const cookieJar = new CookieJar();
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     throwIfAborted(signal);
     const target = await validateAndPinFetchUrl(currentUrl.toString());
     throwIfAborted(signal);
     currentUrl = target.url;
-    const cookieHeader = Array.from(cookieJar.entries())
-      .map(([k, v]) => `${k}=${v}`)
-      .join("; ");
+    const cookieHeader = await cookieJar.getCookieString(currentUrl.toString());
     const response = await fetchWithRetry(
       target,
       deadlineMs,
@@ -419,9 +418,7 @@ async function fetchWithSsrfGuard(
     const setCookies =
       (response.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
     for (const sc of setCookies) {
-      const pair = sc.split(";", 1)[0]?.trim();
-      const eq = pair?.indexOf("=") ?? -1;
-      if (pair && eq > 0) cookieJar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+      await cookieJar.setCookie(sc, currentUrl, { ignoreError: true });
     }
 
     if (response.status >= 300 && response.status < 400) {

@@ -16,7 +16,7 @@ function blockToMarkdown(node: PmBlockNode, options: PmToMarkdownOptions): strin
     case "heading":
       return `${"#".repeat(node.attrs.level)} ${inlineText(node.content ?? [])}`;
     case "paragraph":
-      return inlineText(node.content ?? []);
+      return escapeParagraphBlockSyntax(inlineText(node.content ?? []));
     case "blockquote":
       return node.content
         .map((child) =>
@@ -72,7 +72,9 @@ function listToMarkdown(
   depth: number,
   options: PmToMarkdownOptions,
 ): string {
-  const start = node.type === "orderedList" ? node.attrs.start ?? 1 : 1;
+  const rawStart = node.type === "orderedList" ? node.attrs.start ?? 1 : 1;
+  // CommonMark 有序列表只接受无符号十进制 marker；负数仅在 Markdown 出口降级为 1。
+  const start = rawStart < 0 ? 1 : rawStart;
   return node.content
     .map((item, index) => {
       const indent = "  ".repeat(depth);
@@ -115,6 +117,22 @@ function inlineText(content: readonly PmInlineNode[]): string {
       return markedText(node.text, node.marks ?? []);
     })
     .join("");
+}
+
+function escapeParagraphBlockSyntax(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => line
+      .replace(
+        /^([ \t]{0,3}\d+)(\\*)([.)])(?=[ \t]+)/,
+        (_match, prefix: string, slashes: string, marker: string) =>
+          `${prefix}${slashes}\\${marker}`,
+      )
+      .replace(
+        /^([ \t]{0,3})(\\*)(?=(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|[-+*][ \t]+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$))/,
+        (_match, indent: string, slashes: string) => `${indent}${slashes}\\`,
+      ))
+    .join("\n");
 }
 
 function markedText(text: string, marks: readonly PmMark[]): string {

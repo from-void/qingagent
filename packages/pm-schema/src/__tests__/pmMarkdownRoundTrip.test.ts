@@ -5,6 +5,149 @@ import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
+  it.each([
+    ["裸标题前缀", "# 字面标题", String.raw`\# 字面标题`],
+    ["已转义标题前缀", String.raw`\# 字面标题`, String.raw`\\# 字面标题`],
+    ["裸列表前缀", "- 字面项目", String.raw`\- 字面项目`],
+    ["已转义列表前缀", String.raw`\- 字面项目`, String.raw`\\- 字面项目`],
+    ["裸编号前缀", "1. 字面编号", String.raw`1\. 字面编号`],
+    ["已转义编号前缀", String.raw`1\. 字面编号`, String.raw`1\\. 字面编号`],
+    ["裸围栏前缀", "```ts", "\\```ts"],
+    ["已转义围栏前缀", "\\```ts", "\\\\```ts"],
+  ])("%s 双向往返保留反斜杠层级", (_name, text, markdown) => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "literal-prefix" },
+        content: [{ type: "text", text }],
+      }],
+    };
+
+    expect(pmToMarkdown(source)).toBe(markdown);
+    const fromPm = markdownToPm(pmToMarkdown(source));
+    const fromMarkdown = markdownToPm(markdown);
+    for (const roundTrip of [fromPm, fromMarkdown]) {
+      const block = roundTrip.content[0];
+      expect(block?.type).toBe("paragraph");
+      expect(block?.type === "paragraph" && block.content?.[0]?.type === "text"
+        ? block.content[0].text
+        : null).toBe(text);
+      expect(pmToMarkdown(roundTrip)).toBe(markdown);
+    }
+  });
+
+  it("普通段落的块级 Markdown 前缀往返后仍是原文字面量", () => {
+    const texts = [
+      "# 字面标题",
+      "---",
+      "- 字面项目",
+      "+ 外部列表前缀",
+      "1. 字面编号",
+      "2) 外部编号前缀",
+      "> 字面引用",
+      "***",
+      "___",
+      "```ts",
+      "~~~md",
+    ];
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: texts.map((text, index) => ({
+        type: "paragraph",
+        attrs: { blockId: `literal-${index}` },
+        content: [{ type: "text", text }],
+      })),
+    };
+
+    const markdown = pmToMarkdown(source);
+    const roundTrip = markdownToPm(markdown);
+
+    expect(markdown.split("\n\n")).toEqual([
+      String.raw`\# 字面标题`,
+      String.raw`\---`,
+      String.raw`\- 字面项目`,
+      String.raw`\+ 外部列表前缀`,
+      String.raw`1\. 字面编号`,
+      String.raw`2\) 外部编号前缀`,
+      String.raw`\> 字面引用`,
+      String.raw`\***`,
+      String.raw`\___`,
+      "\\```ts",
+      String.raw`\~~~md`,
+    ]);
+    expect(roundTrip.content.map((block) => block.type)).toEqual(texts.map(() => "paragraph"));
+    expect(roundTrip.content.map((block) =>
+      block.type === "paragraph" && block.content?.[0]?.type === "text"
+        ? block.content[0].text
+        : null,
+    )).toEqual(texts);
+  });
+
+  it("Markdown 有序列表保留顶层与嵌套列表的首项序号", () => {
+    const markdown = ["5. 甲", "6. 乙", "  9. 子项"].join("\n");
+
+    const parsed = markdownToPm(markdown);
+    const top = parsed.content[0];
+    const nested = top?.type === "orderedList"
+      ? top.content[1]?.content.find((block) => block.type === "orderedList")
+      : undefined;
+
+    expect(top?.type === "orderedList" ? top.attrs.start : null).toBe(5);
+    expect(nested?.type === "orderedList" ? nested.attrs.start : null).toBe(9);
+    expect(pmToMarkdown(parsed)).toBe(markdown);
+  });
+
+  it("Markdown 支持 0 起始；负数起始因语法无法表达仅在该出口归一为 1", () => {
+    const zeroMarkdown = "0. 零起始";
+    const zeroParsed = markdownToPm(zeroMarkdown);
+    const zeroList = zeroParsed.content[0];
+    expect(zeroList?.type === "orderedList" ? zeroList.attrs.start : undefined).toBe(0);
+    expect(pmToMarkdown(zeroParsed)).toBe(zeroMarkdown);
+
+    const negativeDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "negative-list", start: -3 },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "negative-item" },
+          content: [paragraph("negative-paragraph", "负数起始")],
+        }],
+      }],
+    };
+    expect(pmToMarkdown(negativeDoc)).toBe("1. 负数起始");
+  });
+
+  it("不齐列 Markdown 表格按全表最大列数补齐且保留多余单元格", () => {
+    const parsed = markdownToPm([
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 |",
+      "| x | y | z |",
+    ].join("\n"));
+    const table = parsed.content[0];
+
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content.map((row) => row.content.length)).toEqual([3, 3, 3]);
+    expect(table.content.map((row) => row.content.map((cell) => {
+      const paragraph = cell.content[0];
+      return paragraph?.type === "paragraph" && paragraph.content?.[0]?.type === "text"
+        ? paragraph.content[0].text
+        : "";
+    }))).toEqual([
+      ["A", "B", ""],
+      ["1", "", ""],
+      ["x", "y", "z"],
+    ]);
+    expect(safeParsePmDoc(parsed).success).toBe(true);
+  });
+
   it("R20门:代码块与图表内容含三/四反引号时使用更长围栏并完整往返", () => {
     const code = ["const sample = `ok`;", "```", "````", "return sample;"].join("\n");
     const diagram = ["flowchart TD", "```", "````", "  A --> B"].join("\n");

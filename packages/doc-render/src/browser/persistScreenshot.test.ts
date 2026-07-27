@@ -32,4 +32,17 @@ describe("persistScreenshot 取消收尾", () => {
       force: true,
     });
   });
+
+  it("普通写盘失败也会清理本次目录和残留文件", async () => {
+    fsMocks.mkdir.mockResolvedValueOnce(undefined);
+    fsMocks.writeFile.mockRejectedValueOnce(new Error("ENOSPC"));
+    fsMocks.rm.mockResolvedValueOnce(undefined);
+
+    await expect(persistScreenshot(Buffer.from("image"))).rejects.toThrow("ENOSPC");
+
+    expect(fsMocks.rm).toHaveBeenCalledWith(expect.any(String), {
+      recursive: true,
+      force: true,
+    });
+  });
 });

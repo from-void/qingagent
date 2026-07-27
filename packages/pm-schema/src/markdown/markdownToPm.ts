@@ -17,11 +17,13 @@ interface ParsedMarkdownListLine {
   level: number;
   kind: ParsedMarkdownListKind;
   text: string;
+  start?: number;
   checked?: boolean;
 }
 
 interface ParsedMarkdownList {
   kind: ParsedMarkdownListKind;
+  start?: number;
   items: ParsedMarkdownListItem[];
 }
 
@@ -141,7 +143,7 @@ export function markdownToPm(markdown: string): PmDoc {
       continue;
     }
 
-    sections.push({ kind: "p", data: { text: line } });
+    sections.push({ kind: "p", data: { text: unescapeParagraphBlockSyntax(line) } });
   }
 
   const base = legacySectionsToPm(sections);
@@ -153,6 +155,19 @@ export function markdownToPm(markdown: string): PmDoc {
     }),
   };
   return materializeDraftBlockIds(withParsedMarkdownInlines(replaced), { namespace: "markdown.html-table" });
+}
+
+function unescapeParagraphBlockSyntax(line: string): string {
+  return line
+    .replace(
+      /^([ \t]{0,3}\d+)(\\+)([.)])(?=[ \t]+)/,
+      (_match, prefix: string, slashes: string, marker: string) =>
+        `${prefix}${slashes.slice(1)}${marker}`,
+    )
+    .replace(
+      /^([ \t]{0,3})(\\+)(?=(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|[-+*][ \t]+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$))/,
+      (_match, indent: string, slashes: string) => `${indent}${slashes.slice(1)}`,
+    );
 }
 
 function isClosingBacktickFence(line: string, openingFenceLength: number): boolean {
@@ -273,7 +288,12 @@ function parseMarkdownList(
   level: number,
   kind: ParsedMarkdownListKind,
 ): { list: ParsedMarkdownList; next: number } {
-  const list: ParsedMarkdownList = { kind, items: [] };
+  const firstLine = parseMarkdownListLine(lines[start] ?? "");
+  const list: ParsedMarkdownList = {
+    kind,
+    ...(kind === "ordered" && firstLine?.kind === "ordered" ? { start: firstLine.start } : {}),
+    items: [],
+  };
   let cursor = start;
 
   while (cursor < lines.length) {
@@ -312,9 +332,11 @@ function parseMarkdownList(
 function parseMarkdownListLine(line: string): ParsedMarkdownListLine | null {
   const ordered = line.match(/^([ \t]*)(\d+)\.\s+(.+)$/);
   if (ordered) {
+    const parsedStart = Number(ordered[2]);
     return {
       level: indentLevel(ordered[1] ?? ""),
       kind: "ordered",
+      start: Number.isSafeInteger(parsedStart) && parsedStart >= 0 ? parsedStart : 1,
       text: ordered[3] ?? "",
     };
   }
@@ -362,6 +384,7 @@ function markdownListToLegacySection(list: ParsedMarkdownList): LegacyListSectio
     kind: "list",
     data: {
       ordered: list.kind === "ordered",
+      ...(list.kind === "ordered" ? { start: list.start } : {}),
       items: list.items.map((item) => ({
         text: item.text,
         children: item.children.map(markdownListToLegacySection),
@@ -501,10 +524,7 @@ function parseInlineMarkdown(text: string): PmInlineNode[] {
   return nodes;
 }
 
-/**
- * 粗体/斜体包裹的内容仍要先识别行内 code 与数学公式。持久 PM 合同禁止 inlineMath 带 mark，
- * 而 Tiptap 的 code mark 又排斥其它 mark，因此这两类叶子节点保持原样。
- */
+/** 粗体/斜体包裹的内容仍先识别行内 code 与数学公式；Markdown 包裹仅映射到文本叶子。 */
 function addInlineMark(nodes: readonly PmInlineNode[], mark: Extract<PmMark, { type: "bold" | "italic" }>): PmInlineNode[] {
   return nodes.map((node) => {
     if (node.type !== "text" || node.marks?.some((current) => current.type === "code")) return node;

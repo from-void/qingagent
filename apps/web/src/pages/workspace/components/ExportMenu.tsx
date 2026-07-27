@@ -21,6 +21,7 @@ const FORMATS: Fmt[] = [
   { id: "markdown", label: "导出 Markdown", ext: "md", doneToast: "Markdown 已生成" },
   { id: "txt", label: "导出 TXT", ext: "txt", doneToast: "TXT 已生成" },
 ];
+const SPECIALIZED_DIAGRAM_OVERLAY_NOTICE = "specialized-diagram-overlay";
 
 // 平台技能 → 导出项;skill 名对应 useSkills 返回的 name,启用了才出现。
 const PLATFORM_TARGETS: Array<{ skill: string; label: string; query: string }> = [
@@ -110,6 +111,8 @@ export function ExportMenu({
         }
         throw new Error(`Export failed: ${res.status}`);
       }
+      const specializedDiagramOverlayFallback =
+        res.headers.get("X-Qingagent-Export-Notice") === SPECIALIZED_DIAGRAM_OVERLAY_NOTICE;
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -122,11 +125,13 @@ export function ExportMenu({
       onAction(
         lossyColumns
           ? "Markdown 已生成 · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。"
+          : specializedDiagramOverlayFallback
+            ? `${f.doneToast} · 专有图表已保留完整语义，画布布局未应用。`
           : f.doneToast,
         // 导出经服务端往返后才弹成功 toast,默认 1.6s 太短——用户在导出等待期常瞥开、
         // 回看时 toast 已消失,显得"导出无反馈"(e2e #11 在 V2/V3/V5/V12/V13/V17 反复报)。
         // 成功反馈给 3.2s,足够回看确认;有损分栏信息量更大给 7s。
-        lossyColumns ? 7000 : 3200,
+        lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
       );
       onClose();
     } catch (err) {

@@ -99,6 +99,92 @@ describe("diagnostics collectFrameLogs", () => {
     expect(files[0]?.content).toContain("[redacted:len=");
   });
 
+  it("L1 按帧结构脱敏正文载体并摘要化未知 data/output", async () => {
+    const secrets = [
+      "衍生文档完整正文",
+      "审阅补充要求原文",
+      "建议摘要原文",
+      "被删除的正文",
+      "插入的新正文",
+      "工具输出尾部原文",
+      "未知 data 载荷原文",
+      "未知 output 载荷原文",
+      "metadata.type 绕过正文",
+      "资源摘要原文",
+    ];
+    mocks.sessionManager.frameLog.readFrom.mockReturnValue({
+      ...emptyRead(),
+      frames: [
+        frameEntry(1, {
+          kind: "derivativeDocLoaded",
+          data: {
+            requestId: "request-1",
+            meta: { privatePrompt: "私有提示词原文" },
+            docPm: secrets[0],
+            docVersion: 1,
+            title: "衍生稿标题",
+          },
+        }),
+        frameEntry(2, {
+          kind: "reviewSupplementLoaded",
+          data: { requestId: "request-2", type: "custom", supplement: secrets[1] },
+        }),
+        frameEntry(3, {
+          kind: "docDiffReady",
+          data: {
+            baseVersion: 1,
+            suggestions: [{
+              id: "suggestion-1",
+              summary: secrets[2],
+              preview: { deleteText: secrets[3], insertText: secrets[4] },
+            }],
+          },
+        }),
+        frameEntry(4, {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: "message-1",
+            toolCallId: "tool-1",
+            spec: {
+              id: "tool-1",
+              name: "runCommand",
+              result: { outputTail: secrets[5] },
+            },
+          },
+        }),
+        {
+          ...frameEntry(5, {
+            kind: "futureFrame",
+            data: { arbitrary: secrets[6] },
+          }),
+          output: secrets[7],
+        },
+        frameEntry(6, {
+          kind: "resourceUpdated",
+          data: {
+            resourceRef: { resourceId: "resource-1", versionId: "version-1" },
+            summary: secrets[9],
+            metadata: { type: secrets[8] },
+          },
+        }),
+      ],
+    });
+    mocks.collectRestoreFrames.mockResolvedValue([]);
+
+    const files = await collectFrameLogs("L1", { sessionIds: ["s-dirty"] });
+
+    expect(files).toHaveLength(1);
+    for (const secret of secrets) {
+      expect(files[0]?.content).not.toContain(secret);
+    }
+    expect(files[0]?.content).not.toContain("私有提示词原文");
+    expect(files[0]?.content).not.toContain("衍生稿标题");
+    expect(files[0]?.content).toContain("[redacted:len=");
+    expect(files[0]?.content).toContain('"omitted":true');
+    expect(files[0]?.content).toContain('"metadata":{"omitted":true,"type":"object","fields":1}');
+    expect(files[0]?.content).not.toContain('"output"');
+  });
+
   it("导出前聚合 FrameLog,但 frameCount 保留原始帧数", async () => {
     mocks.sessionManager.frameLog.readFrom.mockReturnValue({
       ...emptyRead(),
@@ -144,5 +230,14 @@ function appended(seq: number, messageId: string, body: string) {
         part: { kind: "text", data: { body } },
       },
     },
+  };
+}
+
+function frameEntry(seq: number, frame: unknown) {
+  return {
+    seq,
+    epoch: 20,
+    generation: 1,
+    frame,
   };
 }

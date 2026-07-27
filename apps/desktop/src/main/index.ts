@@ -14,12 +14,10 @@ import {
 } from "electron";
 import path from "node:path";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -29,6 +27,10 @@ import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
+import {
+  readPrivateStringMap,
+  writePrivateStringMap,
+} from "./privateJsonStore.js";
 import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
@@ -57,6 +59,7 @@ import {
 import { computeMainWindowSize } from "./windowSize.js";
 import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
+import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
@@ -75,6 +78,10 @@ function assertTrustedRenderer(
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
 const desktopLogDir = path.join(userDataDir, "logs");
+const shutdownRecoveryMarkerPath = path.join(
+  userDataDir,
+  ".qingagent-shutdown-recovery.json",
+);
 try {
   mkdirSync(desktopLogDir, { recursive: true });
 } catch {
@@ -658,8 +665,8 @@ function clientConfigPath(): string {
 function cleanupClientConfigTempFiles(): void {
   try {
     for (const entry of readdirSync(app.getPath("userData"), { withFileTypes: true })) {
-      // 只回收本应用原子写入留下的明文配置临时文件；不碰密文文件或其他临时文件。
-      if (!/^client-config\.json\.\d+\.tmp$/.test(entry.name)) continue;
+      // 只回收本应用原子配置写入留下的临时文件，不碰目标文件或可恢复备份。
+      if (!/^client-config(?:\.secrets)?\.json(?:\.bak)?\.\d+\.tmp$/.test(entry.name)) continue;
       if (!entry.isFile() && !entry.isSymbolicLink()) continue;
       try {
         unlinkSync(path.join(app.getPath("userData"), entry.name));
@@ -712,28 +719,10 @@ function isDesktopModelEncryptionAvailable(): boolean {
 }
 
 function readClientConfig(): Record<string, string> {
-  try {
-    const parsed = JSON.parse(readFileSync(clientConfigPath(), "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof v === "string") out[k] = v;
-    }
-    return out;
-  } catch {
-    return {}; // 文件不存在/损坏都当空,绝不让读配置阻断启动。
-  }
+  return readPrivateStringMap(clientConfigPath());
 }
 function writeClientConfig(cfg: Record<string, string>): void {
-  const file = clientConfigPath();
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "w",
-  });
-  renameSync(tmp, file);
-  chmodSync(file, 0o600);
+  writePrivateStringMap(clientConfigPath(), cfg);
 }
 
 /**
@@ -760,8 +749,12 @@ function isDesktopClientConfigKey(value: unknown): value is string {
 function readClientConfigValueForRenderer(key: unknown): string | null {
   if (!isDesktopClientConfigKey(key)) return null;
   if (!DESKTOP_MODEL_SECRET_KEYS.has(key)) {
-    const value = readClientConfig()[key];
-    return typeof value === "string" && value.length > 0 ? value : null;
+    try {
+      const value = readClientConfig()[key];
+      return typeof value === "string" && value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
   }
 
   // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。
@@ -1023,7 +1016,10 @@ async function createWindowOnce() {
     console.warn("[startup] 启动壳加载失败:", error);
   });
   contentWindow.show();
-  const serverReady = embeddedServerReady ??= startServer({ desktopLogDir });
+  const serverReady = embeddedServerReady ??= startServer({
+    desktopLogDir,
+    shutdownRecoveryMarkerPath,
+  });
 
   // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
   let port: number;
@@ -1192,24 +1188,30 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await createWindow();
 });
 
-let quitFlushStarted = false;
-let quitResumed = false;
+const quitCoordinator = createDesktopQuitCoordinator({
+  telemetryEnabled: () => telemetry.enabled,
+  captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),
+  shutdownTelemetry: () => telemetry.shutdown(2000),
+  drainServer: async (deadlineAtMs) => {
+    const { drainDesktopSessionsForShutdown } = await import(
+      "@qingagent/server/desktopShutdown"
+    );
+    await drainDesktopSessionsForShutdown({
+      recoveryMarkerPath: shutdownRecoveryMarkerPath,
+      deadlineAtMs,
+    });
+  },
+  stopExternalInstance: async () => {
+    const { stopExternalInstance } = await import(
+      "@qingagent/server/externalInstance"
+    );
+    await stopExternalInstance();
+  },
+  quit: () => app.quit(),
+});
 
 app.on("before-quit", (event) => {
-  void import("@qingagent/server/externalInstance").then(({ stopExternalInstance }) => stopExternalInstance());
-  if (!telemetry.enabled || quitResumed) return;
-  if (quitFlushStarted) {
-    event.preventDefault();
-    return;
-  }
-
-  quitFlushStarted = true;
-  event.preventDefault();
-  telemetry.captureAppClosed(Date.now() - appStartedAt);
-  void telemetry.shutdown(2000).finally(() => {
-    quitResumed = true;
-    app.quit();
-  });
+  void quitCoordinator.handleBeforeQuit(event);
 });
 
 app.on("window-all-closed", () => {

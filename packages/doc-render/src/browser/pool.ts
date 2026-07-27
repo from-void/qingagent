@@ -271,6 +271,7 @@ export async function getBrowser(): Promise<Browser> {
   }
 
   if (!browserPromise) {
+    const wasAvailable = browserCapabilityState.status === "available";
     browserPromise = launchBrowser().then((browser) => {
       browserInstance = browser;
       browserPromise = null;
@@ -282,6 +283,13 @@ export async function getBrowser(): Promise<Browser> {
       return browser;
     }).catch((error) => {
       browserPromise = null;
+      // 已通过启动探测的浏览器在断连后可能遇到一次瞬时重启失败。此时只让当前调用失败，
+      // 不把进程能力永久降级，后续调用仍可在环境恢复后重新初始化。
+      if (wasAvailable) {
+        throw error instanceof BrowserCapabilityUnavailableError
+          ? error
+          : new BrowserCapabilityUnavailableError();
+      }
       throw markBrowserUnavailable(error);
     });
   }

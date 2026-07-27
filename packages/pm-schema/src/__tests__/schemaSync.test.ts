@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { PmDoc as ContractPmDoc, PmFileAttachment as ContractPmFileAttachment } from "@qingagent/contract-ts";
+import { pmToClipboardHtml } from "../clipboard/pmToClipboardHtml";
 import { getQingagentTiptapNodeNames } from "../tiptap/createQingagentExtensions";
 import {
   PM_SCHEMA_MARK_NAMES,
@@ -50,6 +51,54 @@ describe("schemaSync", () => {
     expect(safeParsePmDoc(doc).success).toBe(true);
     expect(PM_SCHEMA_NODE_NAMES).toContain("fileAttachment");
     expect(PM_SCHEMA_NODE_NAMES).not.toContain("resourceRef");
+  });
+
+  it("inlineMath 与 hardBreak 的 marks 经校验、归一化和 runtime schema 往返后保留", async () => {
+    const doc: ContractPmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "marked-atoms" },
+        content: [
+          {
+            type: "inlineMath",
+            attrs: { latex: "E=mc^2" },
+            marks: [
+              { type: "bold" },
+              { type: "link", attrs: { href: "https://example.com/math", title: "公式" } },
+            ],
+          },
+          {
+            type: "hardBreak",
+            marks: [{ type: "textColor", attrs: { color: "red" } }],
+          },
+        ],
+      }],
+    };
+
+    const parsed = safeParsePmDoc(doc);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).toEqual(doc);
+
+    const { getSchema } = await import("@tiptap/core");
+    const { Node: PMNode } = await import("@tiptap/pm/model");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const reloaded = PMNode.fromJSON(getSchema(createQingagentExtensions()), parsed.data).toJSON();
+    expect(reloaded.content?.[0]?.content?.[0]).toMatchObject({
+      type: "inlineMath",
+      attrs: { latex: "E=mc^2" },
+      marks: expect.arrayContaining([
+        { type: "bold" },
+        { type: "link", attrs: expect.objectContaining({ href: "https://example.com/math", title: "公式" }) },
+      ]),
+    });
+    expect(reloaded.content?.[0]?.content?.[1]).toMatchObject({
+      type: "hardBreak",
+      marks: [{ type: "textColor", attrs: { color: "red" } }],
+    });
+    expect(safeParsePmDoc(reloaded).success).toBe(true);
   });
 
   it("tableCell/tableHeader schema 均拒绝直接嵌套 table", async () => {
@@ -429,6 +478,109 @@ describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", 
       const html = editor.getHTML();
       expect(html).toContain("list-style-type: lower-alpha");
       expect(html).toContain("list-style-type: upper-roman");
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("剪贴板 HTML 往返保留 orderedList.start", async () => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const html = pmToClipboardHtml({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "ol-start", start: 5 },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "ol-start-item" },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "ol-start-p" },
+            content: [{ type: "text", text: "第五项" }],
+          }],
+        }],
+      }],
+    });
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: html,
+    });
+
+    try {
+      expect(editor.getJSON().content?.[0]?.attrs?.start).toBe(5);
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it.each([0, -3])("HTML 有序列表 start=%i 可进入编辑器并通过 canonical 校验", async (start) => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: `<ol start="${start}" data-block-id="ol"><li data-block-id="li"><p data-block-id="p">条目</p></li></ol>`,
+    });
+
+    try {
+      expect(editor.getJSON().content?.[0]?.attrs?.start).toBe(start);
+      expect(editor.getHTML()).toContain(`start="${start}"`);
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("剪贴板 HTML 往返保留列表样式、文本对齐与链接 title", async () => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const html = pmToClipboardHtml({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { blockId: "aligned-heading", level: 2, textAlign: "center" },
+          content: [{
+            type: "text",
+            text: "标题",
+            marks: [{ type: "link", attrs: { href: "https://example.com", title: "站点提示" } }],
+          }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "aligned-p", textAlign: "justify" },
+          content: [{ type: "text", text: "两端对齐" }],
+        },
+        {
+          type: "orderedList",
+          attrs: { blockId: "styled-list", start: 3, listStyle: "upper-roman" },
+          content: [{
+            type: "listItem",
+            attrs: { blockId: "styled-list-item" },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: "styled-list-p" },
+              content: [{ type: "text", text: "第三项" }],
+            }],
+          }],
+        },
+      ],
+    });
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: html,
+    });
+
+    try {
+      const content = editor.getJSON().content ?? [];
+      expect(content[0]?.attrs?.textAlign).toBe("center");
+      expect(content[0]?.content?.[0]?.marks?.[0]?.attrs?.title).toBe("站点提示");
+      expect(content[1]?.attrs?.textAlign).toBe("justify");
+      expect(content[2]?.attrs).toMatchObject({ start: 3, listStyle: "upper-roman" });
       expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
     } finally {
       editor.destroy();

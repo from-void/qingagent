@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createDerivativeDoc,
+  deleteDerivativeDoc,
+  listDerivativesByThread,
+} from "../documentDerivativesRepo.js";
+import { documentRepo } from "../documentRepo.js";
 import { deleteStyleTemplate, getStyleTemplate, listStyleTemplates, saveStyleTemplate } from "../styleTemplateRepo.js";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
+import { documentInput, prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
 beforeEach(() => { db = prepareTempDocumentsDb("qa-style-repo-"); });
@@ -45,6 +51,82 @@ describe("styleTemplateRepo CRUD", () => {
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(await listStyleTemplates({ dtype: "xhs", slot: "layout" })).toHaveLength(1);
+  });
+
+  it("拒绝删除衍生稿仍在使用的写作或排版模板，并报告引用稿件数", async () => {
+    const writing = await saveStyleTemplate({
+      dtype: "gzh",
+      slot: "writing",
+      name: "在用写法",
+      prompt: "写作规则",
+    });
+    const layout = await saveStyleTemplate({
+      dtype: "gzh",
+      slot: "layout",
+      name: "在用排版",
+      prompt: "排版规则",
+    });
+    await documentRepo.save(documentInput("main", {
+      threadId: "thread",
+      docVersion: 1,
+    }));
+    const derivative = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "gzh",
+      writingStyleId: writing.id,
+      layoutStyleId: layout.id,
+      privatePrompt: "",
+    });
+
+    await expect(deleteStyleTemplate(writing.id)).rejects.toThrow(
+      "仍有 1 篇稿件使用该模板，无法删除",
+    );
+    await expect(deleteStyleTemplate(layout.id)).rejects.toThrow(
+      "仍有 1 篇稿件使用该模板，无法删除",
+    );
+    expect(await getStyleTemplate(writing.id)).not.toBeNull();
+    expect(await getStyleTemplate(layout.id)).not.toBeNull();
+
+    await deleteDerivativeDoc("thread", derivative.docId);
+    await expect(deleteStyleTemplate(writing.id)).resolves.toBe(true);
+    await expect(deleteStyleTemplate(layout.id)).resolves.toBe(true);
+  });
+
+  it("并发创建衍生稿与删除模板不会留下悬空引用", async () => {
+    const writing = await saveStyleTemplate({
+      dtype: "xhs",
+      slot: "writing",
+      name: "竞态写法",
+      prompt: "写作规则",
+    });
+    await documentRepo.save(documentInput("race-main", {
+      threadId: "race-thread",
+      docVersion: 1,
+    }));
+
+    const [creation, deletion] = await Promise.allSettled([
+      createDerivativeDoc({
+        threadId: "race-thread",
+        sourceDocId: "race-main",
+        dtype: "xhs",
+        writingStyleId: writing.id,
+        privatePrompt: "",
+      }),
+      deleteStyleTemplate(writing.id),
+    ]);
+
+    const persistedTemplate = await getStyleTemplate(writing.id);
+    const derivatives = await listDerivativesByThread("race-thread");
+    if (creation.status === "fulfilled") {
+      expect(deletion.status).toBe("rejected");
+      expect(persistedTemplate).not.toBeNull();
+      expect(derivatives).toHaveLength(1);
+    } else {
+      expect(deletion).toEqual({ status: "fulfilled", value: true });
+      expect(persistedTemplate).toBeNull();
+      expect(derivatives).toEqual([]);
+    }
   });
 
   it("dtype 只接受现有枚举，all 与省略 dtype 都返回全量", async () => {

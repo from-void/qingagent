@@ -28,6 +28,7 @@ import { migration0026ConfirmGrantsAndAudit } from "./0026_confirm_grants_and_au
 import { migration0027ConfirmAuditSubject } from "./0027_confirm_audit_subject.js";
 import { migration0028ConfirmGrantVersions } from "./0028_confirm_grant_versions.js";
 import { migration0029ConfirmSettingsAudit } from "./0029_confirm_settings_audit.js";
+import { migration0030InvalidDocumentPmQuarantine } from "./0030_invalid_document_pm_quarantine.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -62,4 +63,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0027ConfirmAuditSubject,
   migration0028ConfirmGrantVersions,
   migration0029ConfirmSettingsAudit,
+  migration0030InvalidDocumentPmQuarantine,
 ];

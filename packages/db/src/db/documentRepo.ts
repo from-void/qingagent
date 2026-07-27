@@ -8,7 +8,13 @@ import {
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
+import {
+  commitTransaction,
+  getDocumentsClient,
+  rollbackTransaction,
+  withTransaction,
+  withWriteRetry,
+} from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 import {
   assertDocumentWriteAllowed,
@@ -154,6 +160,7 @@ export interface DocumentRepairStats {
   scanned: number;
   versionPointersRepaired: number;
   pmMirrorsRepaired: number;
+  invalidRowsQuarantined: number;
 }
 
 function mapRow(row: Row): MappedDocumentRow {
@@ -187,6 +194,244 @@ function mapRow(row: Row): MappedDocumentRow {
       valueAsNumber(row.doc_schema_version) !== projection.schemaVersion ||
       valueAsString(row.doc_format) !== "pm",
   };
+}
+
+type InvalidPmReason = "missing_pm" | "invalid_pm";
+
+function invalidPmReason(row: Row): InvalidPmReason {
+  return typeof row.doc_pm !== "string" || row.doc_pm.trim().length === 0
+    ? "missing_pm"
+    : "invalid_pm";
+}
+
+interface InvalidPmCandidate {
+  id: string;
+  version: number;
+  docPm: string | null;
+  reason: InvalidPmReason;
+}
+
+const QUARANTINE_BATCH_SIZE = 200;
+const MAX_LIST_PAGE_FETCH_ROUNDS = 2;
+
+function invalidPmCandidate(row: Row): InvalidPmCandidate {
+  return {
+    id: valueAsString(row.id),
+    version: valueAsNumber(row.version),
+    docPm: typeof row.doc_pm === "string" ? row.doc_pm : null,
+    reason: invalidPmReason(row),
+  };
+}
+
+function invalidPmCandidateKey(candidate: Pick<InvalidPmCandidate, "id" | "version">): string {
+  return `${candidate.id}\u0000${candidate.version}`;
+}
+
+function sqlInvalidPmCondition(alias: string): string {
+  return `(
+    ${alias}.doc_pm IS NULL
+    OR trim(${alias}.doc_pm) = ''
+    OR NOT json_valid(${alias}.doc_pm)
+  )`;
+}
+
+function sqlValidPmCondition(alias: string): string {
+  return `(
+    ${alias}.doc_pm IS NOT NULL
+    AND trim(${alias}.doc_pm) <> ''
+    AND json_valid(${alias}.doc_pm)
+  )`;
+}
+
+async function quarantineInvalidPmRows(rows: Row[]): Promise<Set<string>> {
+  const candidates = [...new Map(rows.map((row) => {
+    const candidate = invalidPmCandidate(row);
+    return [invalidPmCandidateKey(candidate), candidate];
+  })).values()];
+  if (candidates.length === 0) return new Set();
+
+  return withTransaction(async (client) => {
+    const quarantined = new Set<string>();
+    for (let start = 0; start < candidates.length; start += QUARANTINE_BATCH_SIZE) {
+      const chunk = candidates.slice(start, start + QUARANTINE_BATCH_SIZE);
+      const values = chunk.map(() => "(?, ?, ?, ?)").join(", ");
+      const args = chunk.flatMap((candidate) => [
+        candidate.id,
+        candidate.version,
+        candidate.docPm,
+        candidate.reason,
+      ]);
+      const inserted = await client.execute({
+        sql: `WITH candidates(id, version, doc_pm, reason) AS (
+            VALUES ${values}
+          )
+          INSERT INTO documents_quarantine_invalid_pm (
+            id, thread_id, resource_id, title, doc_state, doc_version,
+            last_synced_version, doc_pm, doc_schema_version, content_hash,
+            doc_format, version, created_at, updated_at, role, reason
+          )
+          SELECT
+            d.id, d.thread_id, d.resource_id, d.title, d.doc_state, d.doc_version,
+            d.last_synced_version, d.doc_pm, d.doc_schema_version, d.content_hash,
+            d.doc_format, d.version, d.created_at, d.updated_at, d.role, candidates.reason
+          FROM documents d
+          INNER JOIN candidates
+            ON candidates.id = d.id
+            AND candidates.version = d.version
+            AND d.doc_pm IS candidates.doc_pm`,
+        args,
+      });
+      const deleted = await client.execute({
+        sql: `WITH candidates(id, version, doc_pm, reason) AS (
+            VALUES ${values}
+          )
+          DELETE FROM documents
+          WHERE EXISTS (
+            SELECT 1
+            FROM candidates
+            WHERE candidates.id = documents.id
+              AND candidates.version = documents.version
+              AND documents.doc_pm IS candidates.doc_pm
+          )
+          RETURNING id, version`,
+        args,
+      });
+      if (inserted.rowsAffected !== deleted.rows.length) {
+        return rollbackTransaction(new Set<string>());
+      }
+      for (const row of deleted.rows) {
+        quarantined.add(invalidPmCandidateKey({
+          id: valueAsString(row.id),
+          version: valueAsNumber(row.version),
+        }));
+      }
+    }
+    return commitTransaction(quarantined);
+  });
+}
+
+async function quarantineInvalidPmRow(row: Row): Promise<boolean> {
+  const candidate = invalidPmCandidate(row);
+  const quarantined = await quarantineInvalidPmRows([row]);
+  return quarantined.has(invalidPmCandidateKey(candidate));
+}
+
+async function mapRowOrQuarantine(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  rawRow: Row,
+): Promise<DocumentRow | null> {
+  try {
+    return mapRow(rawRow).row;
+  } catch {
+    if (await quarantineInvalidPmRow(rawRow)) return null;
+    const refreshed = await client.execute({
+      sql: "SELECT * FROM documents WHERE id = ?",
+      args: [valueAsString(rawRow.id)],
+    });
+    const current = refreshed.rows[0];
+    return current ? mapRow(current).row : null;
+  }
+}
+
+async function mapRowsAndQuarantine(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  rows: Row[],
+): Promise<{ rows: DocumentRow[]; quarantined: number }> {
+  const mappedRows: Array<DocumentRow | null> = Array.from(
+    { length: rows.length },
+    () => null,
+  );
+  const invalidRows: Array<{ index: number; row: Row; candidate: InvalidPmCandidate }> = [];
+  for (const [index, rawRow] of rows.entries()) {
+    try {
+      mappedRows[index] = mapRow(rawRow).row;
+    } catch {
+      invalidRows.push({ index, row: rawRow, candidate: invalidPmCandidate(rawRow) });
+    }
+  }
+
+  const quarantinedKeys = await quarantineInvalidPmRows(
+    invalidRows.map(({ row }) => row),
+  );
+  for (const invalid of invalidRows) {
+    if (quarantinedKeys.has(invalidPmCandidateKey(invalid.candidate))) continue;
+    const refreshed = await client.execute({
+      sql: "SELECT * FROM documents WHERE id = ?",
+      args: [invalid.candidate.id],
+    });
+    const current = refreshed.rows[0];
+    mappedRows[invalid.index] = current
+      ? await mapRowOrQuarantine(client, current)
+      : null;
+  }
+  return {
+    rows: mappedRows.filter((row): row is DocumentRow => row !== null),
+    quarantined: quarantinedKeys.size,
+  };
+}
+
+interface DocumentListScope {
+  fromSql: string;
+  whereSql: string;
+  args: string[];
+}
+
+/**
+ * 列表 total 对深层坏 PM 采用“单调收敛”契约：隔离是搬迁式的，坏行一经页面读取发现，
+ * 就永久移出 documents 查询域；尚未访问到的深层坏行可瞬时计入 total，之后会随对应
+ * 页面被访问而自动收敛。这样设计是因为 SQL 可廉价预筛空值和非法 JSON，却无法廉价
+ * 判定完整 PM 结构是否合法。
+ */
+async function listDocumentPage(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  scope: DocumentListScope,
+  offset: number,
+  perPage: number,
+): Promise<{ rows: DocumentRow[]; total: number }> {
+  const invalidResult = await client.execute({
+    sql: `SELECT d.id, d.version, d.doc_pm
+      FROM ${scope.fromSql}
+      WHERE ${scope.whereSql}
+        AND ${sqlInvalidPmCondition("d")}`,
+    args: scope.args,
+  });
+  await quarantineInvalidPmRows(invalidResult.rows);
+
+  for (let round = 0; round < MAX_LIST_PAGE_FETCH_ROUNDS; round += 1) {
+    const [countResult, rowsResult] = await Promise.all([
+      client.execute({
+        sql: `SELECT COUNT(*) AS total
+          FROM ${scope.fromSql}
+          WHERE ${scope.whereSql}
+            AND ${sqlValidPmCondition("d")}`,
+        args: scope.args,
+      }),
+      client.execute({
+        sql: `SELECT d.*
+          FROM ${scope.fromSql}
+          WHERE ${scope.whereSql}
+            AND ${sqlValidPmCondition("d")}
+          ORDER BY d.updated_at DESC, d.id ASC
+          LIMIT ? OFFSET ?`,
+        args: [...scope.args, perPage, offset],
+      }),
+    ]);
+    const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
+    const total = Math.max(
+      0,
+      valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined,
+    );
+    const shouldRefill = mapped.quarantined > 0 &&
+      round + 1 < MAX_LIST_PAGE_FETCH_ROUNDS;
+    if (!shouldRefill) {
+      return {
+        rows: mapped.rows,
+        total,
+      };
+    }
+  }
+
+  throw new Error("Unreachable document list fetch round");
 }
 
 function upsertStatement(input: DocumentSaveInput): InStatement {
@@ -348,8 +593,15 @@ export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
 
   let versionPointersRepaired = 0;
   let pmMirrorsRepaired = 0;
+  let invalidRowsQuarantined = 0;
   for (const rawRow of result.rows) {
-    const mapped = mapRow(rawRow);
+    let mapped: MappedDocumentRow;
+    try {
+      mapped = mapRow(rawRow);
+    } catch {
+      if (await quarantineInvalidPmRow(rawRow)) invalidRowsQuarantined += 1;
+      continue;
+    }
     const latestDocVersion = valueAsNumber(rawRow.latest_doc_version);
     const latestSnapshotPm = rawRow.latest_snapshot_pm;
     const sourceDocId = rawRow.latest_source_doc_id == null
@@ -420,7 +672,12 @@ export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
       }
     }
   }
-  return { scanned: result.rows.length, versionPointersRepaired, pmMirrorsRepaired };
+  return {
+    scanned: result.rows.length,
+    versionPointersRepaired,
+    pmMirrorsRepaired,
+    invalidRowsQuarantined,
+  };
 }
 
 export const documentRepo: DocumentRepo = {
@@ -432,7 +689,7 @@ export const documentRepo: DocumentRepo = {
     });
     const row = result.rows[0];
     if (!row) return null;
-    return mapRow(row).row;
+    return mapRowOrQuarantine(client, row);
   },
 
   async findIdByThreadId(threadId) {
@@ -512,23 +769,11 @@ export const documentRepo: DocumentRepo = {
     const page = opts.page ?? 0;
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
-    const [countResult, rowsResult] = await Promise.all([
-      client.execute({
-        sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ? AND role = 'main'`,
-        args: [opts.resourceId],
-      }),
-      client.execute({
-        sql: `SELECT * FROM documents
-          WHERE resource_id = ? AND role = 'main'
-          ORDER BY updated_at DESC, id ASC
-          LIMIT ? OFFSET ?`,
-        args: [opts.resourceId, perPage, offset],
-      }),
-    ]);
-    return {
-      rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
-      total: valueAsNumber(countResult.rows[0]?.total),
-    };
+    return listDocumentPage(client, {
+      fromSql: "documents d",
+      whereSql: "d.resource_id = ? AND d.role = 'main'",
+      args: [opts.resourceId],
+    }, offset, perPage);
   },
 
   async listWithExistingThreads(opts) {
@@ -537,27 +782,12 @@ export const documentRepo: DocumentRepo = {
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
     try {
-      const [countResult, rowsResult] = await Promise.all([
-        client.execute({
-          sql: `SELECT COUNT(*) AS total
-            FROM documents d
-            INNER JOIN mastra_threads t ON t.id = d.thread_id
-            WHERE d.resource_id = ? AND d.role = 'main'`,
-          args: [opts.resourceId],
-        }),
-        client.execute({
-          sql: `SELECT d.* FROM documents d
-            INNER JOIN mastra_threads t ON t.id = d.thread_id
-            WHERE d.resource_id = ? AND d.role = 'main'
-            ORDER BY d.updated_at DESC, d.id ASC
-            LIMIT ? OFFSET ?`,
-          args: [opts.resourceId, perPage, offset],
-        }),
-      ]);
-      return {
-        rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
-        total: valueAsNumber(countResult.rows[0]?.total),
-      };
+      return await listDocumentPage(client, {
+        fromSql: `documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id`,
+        whereSql: "d.resource_id = ? AND d.role = 'main'",
+        args: [opts.resourceId],
+      }, offset, perPage);
     } catch (error) {
       if (isMissingMastraThreadsTableError(error)) {
         return { rows: [], total: 0 };
@@ -584,5 +814,5 @@ export async function loadMainDocumentByThread(threadId: string): Promise<Docume
   });
   const row = result.rows[0];
   if (!row) return null;
-  return mapRow(row).row;
+  return mapRowOrQuarantine(client, row);
 }

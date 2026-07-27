@@ -63,6 +63,54 @@ describe("toHtml 块级", () => {
     expect(html).toContain('<h3 style="text-align:center">三级居中</h3>');
   });
 
+  it("保留标题锚点与安全的同文档 hash 链接", () => {
+    const html = toHtml(
+      doc([
+        {
+          type: "paragraph",
+          attrs: { blockId: "toc" },
+          content: [{
+            type: "text",
+            text: "跳到背景",
+            marks: [{ type: "link", attrs: { href: "#background", title: null } }],
+          }],
+        },
+        {
+          type: "heading",
+          attrs: { blockId: "heading", level: 2, anchor: "background" },
+          content: [{ type: "text", text: "背景" }],
+        },
+      ] as never),
+    );
+
+    expect(html).toContain('<a href="#background">跳到背景</a>');
+    expect(html).toContain('<h2 id="background">背景</h2>');
+  });
+
+  it("丢弃含空白的 hash 链接与标题锚点", () => {
+    const html = toHtml(
+      doc([
+        {
+          type: "paragraph",
+          attrs: { blockId: "toc" },
+          content: [{
+            type: "text",
+            text: "坏链接",
+            marks: [{ type: "link", attrs: { href: "#bad target", title: null } }],
+          }],
+        },
+        {
+          type: "heading",
+          attrs: { blockId: "heading", level: 2, anchor: "bad target" },
+          content: [{ type: "text", text: "坏锚点" }],
+        },
+      ] as never),
+    );
+
+    expect(html).not.toContain('<a href="#bad target">');
+    expect(html).not.toContain('id="bad target"');
+  });
+
   it("段落正文转义 < > &", () => {
     const html = toHtml(
       doc([{ type: "paragraph", attrs: { blockId: "p" }, content: [{ type: "text", text: "a < b && c > d" }] }] as never),
@@ -162,6 +210,32 @@ describe("toHtml 块级", () => {
     expect(html).toContain('<ol start="3">');
     expect(html).toContain("外层");
     expect(html).toContain("<ul><li><p>内层</p></li></ul>");
+  });
+
+  it.each([0, -3])("有序列表 start=%i 原样导出 HTML", (start) => {
+    const html = toHtml(
+      doc([
+        {
+          type: "orderedList",
+          attrs: { blockId: "ol", start },
+          content: [
+            {
+              type: "listItem",
+              attrs: { blockId: "li" },
+              content: [
+                {
+                  type: "paragraph",
+                  attrs: { blockId: "p" },
+                  content: [{ type: "text", text: "条目" }],
+                },
+              ],
+            },
+          ],
+        },
+      ] as never),
+    );
+
+    expect(html).toContain(`<ol start="${start}">`);
   });
 
   it("表格 th/td 与 colspan", () => {
@@ -265,6 +339,45 @@ describe("toHtml 图表与图片", () => {
     expect(html).not.toContain('<div class="pm-diagram-fallback">');
   });
 
+  it("图表保留自定义宽高与右对齐布局", () => {
+    const html = toHtml(doc([{
+      type: "diagram",
+      attrs: {
+        blockId: "diagram-layout",
+        lang: "mermaid",
+        source: "flowchart TD\n A-->B",
+        svg: GOOD_SVG,
+        width: 420,
+        height: 260,
+        align: "right",
+      },
+    }] as never));
+
+    expect(html).toContain('class="pm-diagram align-right has-custom-width has-custom-height"');
+    expect(html).toContain('style="width:420px;height:260px;max-width:100%;margin-left:auto;margin-right:0"');
+    expect(html).toContain(".wf-doc .pm-diagram.has-custom-height svg");
+  });
+
+  it.each(["left", "right"] as const)("图表仅设置 %s 对齐时移动内部 SVG", (align) => {
+    const html = toHtml(doc([{
+      type: "diagram",
+      attrs: {
+        blockId: `diagram-align-${align}`,
+        lang: "mermaid",
+        source: "flowchart TD\n A-->B",
+        svg: GOOD_SVG,
+        align,
+      },
+    }] as never));
+
+    expect(html).toContain(`<div class="pm-diagram align-${align}"><svg`);
+    expect(html).toContain(
+      `.wf-doc .pm-diagram.align-${align} { margin-left: ${
+        align === "left" ? "0" : "auto"
+      }; margin-right: ${align === "right" ? "0" : "auto"}; text-align: ${align}; }`,
+    );
+  });
+
   it("无缓存 SVG 图表显示类型化说明并回退源码代码块", () => {
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: null } }] as never));
     expect(html).toContain('<div class="pm-diagram-fallback">');
@@ -344,6 +457,26 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain(`<img src="data:image/png;base64,${png}" alt="猫">`);
     expect(html).toContain("<figcaption>图1</figcaption>");
   });
+
+  it("图片保留自定义宽高与右对齐布局", () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const html = toHtml(doc([{
+      type: "image",
+      attrs: {
+        blockId: "image-layout",
+        src: `data:image/png;base64,${png}`,
+        alt: "布局图",
+        width: 320,
+        height: 180,
+        align: "right",
+      },
+    }] as never));
+
+    expect(html).toContain('class="doc-image align-right" style="width:320px;max-width:100%;margin-left:auto;margin-right:0"');
+    expect(html).toContain('class="doc-image-media has-custom-width has-custom-height" style="width:100%;height:180px"');
+    expect(html).toContain('alt="布局图" width="320" height="180"');
+    expect(html).toContain(".wf-doc .doc-image-media.has-custom-height");
+  });
 });
 
 describe("toHtml legacy 段", () => {
@@ -363,5 +496,31 @@ describe("toHtml legacy 段", () => {
     expect(html).toContain('<pre class="code-block"><code>const a=1;</code></pre>');
     expect(html).toContain("<ul><li>一</li><li>二</li></ul>");
     expect(html).toContain("<hr>");
+  });
+
+  it("legacy h2 保留标题锚点", () => {
+    const html = toHtml([
+      { kind: "h2", data: { text: "带锚点的小节", anchor: "legacy-section" } },
+    ]);
+
+    expect(html).toContain('<h2 id="legacy-section">带锚点的小节</h2>');
+  });
+
+  it("legacy 图片保留宽高与对齐", () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const html = toHtml([{
+      kind: "image",
+      data: {
+        src: `data:image/png;base64,${png}`,
+        alt: "旧图片",
+        caption: null,
+        width: 240,
+        height: 120,
+        align: "left",
+      },
+    }]);
+
+    expect(html).toContain('class="doc-image align-left" style="width:240px;max-width:100%;margin-left:0;margin-right:auto"');
+    expect(html).toContain('alt="旧图片" width="240" height="120"');
   });
 });

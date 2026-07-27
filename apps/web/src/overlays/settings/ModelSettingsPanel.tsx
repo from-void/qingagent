@@ -1343,7 +1343,7 @@ export function ModelSettingsPanel() {
                       disabled={persisting}
                       data-wf="ModelClearKey"
                     >
-                      清除 key
+                      清除密钥
                     </button>
                   )}
                   {customProvider && (

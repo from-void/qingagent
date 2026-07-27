@@ -78,6 +78,173 @@ describe("Settings Track B", () => {
     vi.restoreAllMocks();
   });
 
+  it("状态一 · 初装零配置:引导条 + 两张介绍卡(DeepSeek 带推荐标),不出档位", async () => {
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    const onboard = host?.querySelector('[data-wf="ModelOnboardHint"]');
+    expect(onboard?.textContent).toContain("推荐先接 DeepSeek");
+    expect(host?.querySelectorAll(".vd-card")).toHaveLength(2);
+    expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
+      .toContain("推 荐");
+    expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
+      .toContain("价格最低");
+    expect(host?.querySelector('[data-wf="ModelVendorCardKimi"]')?.textContent)
+      .toContain("能看图理解配图");
+    // 没配置就没有档位、没有使用中
+    expect(host?.querySelector('[data-wf="ModelTierChipDeepseek"]')).toBeNull();
+    expect(host?.textContent).not.toContain("使用中");
+    expect(getButtonByWf("ModelConfigDeepseek").textContent).toContain("去配置");
+    // 看板仍在,走既有空态文案
+    expect(host?.textContent).toContain("用量看板");
+  });
+
+  it("状态二 · 单家已配:DeepSeek 金描边使用中,Kimi 仍是介绍卡", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(host?.querySelector('[data-wf="ModelOnboardHint"]')).toBeNull();
+    const deepseekCard = host?.querySelector('[data-wf="ModelVendorCardDeepseek"]');
+    expect(deepseekCard?.classList.contains("vd-card--on")).toBe(true);
+    expect(getButtonByWf("ModelUsingDeepseek").textContent).toContain("使用中");
+    expect(getButtonByWf("ModelTierChipDeepseek").textContent).toBe("Flash");
+    // 卡面不展示密钥
+    expect(deepseekCard?.textContent).not.toContain("••••");
+    expect(deepseekCard?.textContent).not.toContain("deepseek-local-key");
+    const kimiCard = host?.querySelector('[data-wf="ModelVendorCardKimi"]');
+    expect(kimiCard?.classList.contains("vd-card--on")).toBe(false);
+    expect(getButtonByWf("ModelConfigKimi").textContent).toContain("去配置");
+    // 余额只在 DeepSeek 卡出现
+    await waitForCondition(
+      () => (deepseekCard?.textContent ?? "").includes("余额"),
+      "DeepSeek 卡余额",
+    );
+    expect(kimiCard?.textContent).not.toContain("余额");
+  });
+
+  it("状态三 · 两家都已配:非使用卡出「启 用」,两卡都有档位与配置入口", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelUsingDeepseek")).toBeTruthy();
+    expect(getButtonByWf("ModelEnableKimi").textContent).toContain("启 用");
+    expect(getButtonByWf("ModelTierChipDeepseek")).toBeTruthy();
+    expect(getButtonByWf("ModelTierChipKimi")).toBeTruthy();
+    expect(getButtonByWf("ModelConfigDeepseek").textContent).toContain("配 置");
+    expect(getButtonByWf("ModelConfigKimi").textContent).toContain("配 置");
+
+    await click(getButtonByWf("ModelEnableKimi"));
+    expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
+    expect(getButtonByWf("ModelEnableDeepseek").textContent).toContain("启 用");
+  });
+
+  it("二级配置页:卡片进入、← 返回回主视图,官方/其他两 tab 与提示文案齐备", async () => {
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    await openVendorConfig();
+    const page = host?.querySelector('[data-wf="ModelConfigPage"]');
+    expect(page).not.toBeNull();
+    expect(page?.textContent).toContain("如何配置 DeepSeek");
+    expect(page?.textContent).toContain("接入 DeepSeek 官方 API");
+    expect(page?.textContent).toContain("接入其他云厂商 / 模型");
+    expect(page?.textContent).toContain("Key 只保存在本机");
+    expect(page?.textContent).not.toContain("本浏览器");
+    // 主视图元素在二级页里不出现(同弹层内视图切换)
+    expect(host?.querySelector(".vd-grid")).toBeNull();
+    expect(host?.textContent).not.toContain("用量看板");
+
+    await click(getButtonByWf("ModelConfigBack"));
+    expect(host?.querySelector('[data-wf="ModelConfigPage"]')).toBeNull();
+    expect(host?.querySelector(".vd-grid")).not.toBeNull();
+  });
+
+  it("二级页保存 key 后回主视图并直接成为使用中", async () => {
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    await openVendorConfig("kimi");
+    setInput(getInputByWf("ModelKeyInput"), "kimi-fresh-key");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(getVisitorModelKey("kimi")).toBe("kimi-fresh-key");
+    expect(host?.querySelector('[data-wf="ModelConfigPage"]')).toBeNull();
+    expect(getSelectedModelProvider()).toBe("kimi");
+    expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
+  });
+
+  it("已配厂商的二级页:清除 key 与模型名前缀都在,且不外露本机分层", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    await openVendorConfig();
+    const page = host?.querySelector('[data-wf="ModelConfigPage"]');
+    expect(page?.textContent).toContain("切换 / 修改模型配置 · DeepSeek");
+    expect(page?.textContent).toContain("当前使用 已配置密钥");
+    expect(page?.textContent).toContain("••••-key");
+    expect(page?.textContent).not.toContain("本机 的 key");
+    expect(getInputByPlaceholder("deepseek-v4-flash")).toBeTruthy();
+    expect(getInputByPlaceholder("deepseek-v4-pro")).toBeTruthy();
+
+    expect(getButtonByWf("ModelClearKey").textContent).toContain("清除密钥");
+    await click(getButtonByWf("ModelClearKey"));
+    await click(getButtonByText("清除 key"));
+    expect(getVisitorDeepseekKey()).toBeNull();
+  });
+
+  it("看板:三瓦片进看板卡,饼图按费用占比且 0 费用模型不进饼", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    const usageCard = host?.querySelector(".md-usage");
+    expect(usageCard?.textContent).toContain("近 7 天花费");
+    expect(usageCard?.textContent).toContain("近 7 天产出");
+    expect(usageCard?.textContent).toContain("平均每篇");
+    // 账户余额瓦片已从看板撤出,归 DeepSeek 卡
+    expect(usageCard?.textContent).not.toContain("账户余额");
+    expect(usageCard?.textContent).toContain("累计费用占比");
+
+    const legend = Array.from(host?.querySelectorAll(".md-legend-item") ?? [])
+      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    // total 数据:Flash ¥0.003 / PRO ¥0.002 → 按费用降序、百分比按费用算
+    expect(legend[0]).toContain("V4 Flash");
+    expect(legend[0]).toContain("60%");
+    expect(legend[0]).toContain("¥0.003");
+    expect(legend[1]).toContain("V4 PRO");
+    expect(legend[1]).toContain("40%");
+  });
+
   it("SecretInput 默认遮挡,眼睛按钮可切明文且保留 data-wf", async () => {
     await render(
       <SecretInput

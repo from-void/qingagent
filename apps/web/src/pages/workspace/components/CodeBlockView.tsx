@@ -93,6 +93,7 @@ const PreNodeViewContent = NodeViewContent as (
 /* ───────────── React NodeView Component ───────────── */
 
 interface CodeBlockNodeViewProps {
+  editor: NodeViewRendererProps["editor"];
   node: NodeViewRendererProps["node"];
   updateAttributes: (attrs: Record<string, unknown>) => void;
 }
@@ -111,10 +112,11 @@ function languageLabel(language: string): string {
  * 关闭即卸载——彻底不污染正文。菜单不在 ProseMirror 内容流里,不进文档序列化/字数统计。
  */
 function LanguageSelect(props: {
+  editable: boolean;
   language: string;
   onSelect: (lang: string) => void;
 }): ReactElement {
-  const { language, onSelect } = props;
+  const { editable, language, onSelect } = props;
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number }>({
     top: 0,
@@ -179,13 +181,18 @@ function LanguageSelect(props: {
         aria-label="代码语言"
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={!editable}
         // 阻止 mousedown 改动 ProseMirror 选区/光标,保持节点稳定。
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!editable) return;
+          setOpen((v) => !v);
+        }}
       >
         {languageLabel(language)}
       </button>
-      {open &&
+      {editable &&
+        open &&
         createPortal(
           <div
             ref={menuRef}
@@ -224,19 +231,24 @@ function LanguageSelect(props: {
 }
 
 function CodeBlockComponent(props: CodeBlockNodeViewProps) {
-  const { node, updateAttributes } = props;
+  const { editor, node, updateAttributes } = props;
   const language = resolveLanguage(node.attrs.language as string);
 
   const onSelect = useCallback(
     (lang: string) => {
+      if (!editor.isEditable) return;
       updateAttributes({ language: resolveLanguage(lang) });
     },
-    [updateAttributes],
+    [editor, updateAttributes],
   );
 
   return (
     <NodeViewWrapper className="code-block-node" data-language={language}>
-      <LanguageSelect language={language} onSelect={onSelect} />
+      <LanguageSelect
+        editable={editor.isEditable}
+        language={language}
+        onSelect={onSelect}
+      />
       <PreNodeViewContent
         as="pre"
         className={`language-${language}`}

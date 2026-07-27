@@ -181,4 +181,40 @@ describe("代码块语言选择器(自定义下拉,非原生 select):闭合不�
     expect(menu!.scrollTop).toBe(96);
     await unmount(editor);
   });
+
+  it("只读态禁用语言菜单且不产生属性事务", async () => {
+    const editor = await mountEditor(codeDoc("python"), false);
+    const button = mounted!.container.querySelector(
+      ".code-block-language-select",
+    ) as HTMLButtonElement;
+    const before = editor.state;
+
+    expect(button.disabled).toBe(true);
+    await click(button);
+
+    expect(document.querySelector(".code-block-language-menu")).toBeNull();
+    expect(firstCodeLanguage(editor)).toBe("python");
+    expect(editor.state).toBe(before);
+    await unmount(editor);
+  });
+
+  it("菜单展开后切为只读时阻止已挂载选项更新属性", async () => {
+    const editor = await mountEditor(codeDoc("python"));
+    const button = mounted!.container.querySelector(
+      ".code-block-language-select",
+    ) as HTMLButtonElement;
+    await click(button);
+    const bash = Array.from(
+      document.querySelectorAll<HTMLElement>(".code-block-language-option"),
+    ).find((option) => option.textContent === "Bash/Shell");
+    expect(bash).toBeTruthy();
+
+    editor.setEditable(false);
+    const before = editor.state;
+    await click(bash!);
+
+    expect(firstCodeLanguage(editor)).toBe("python");
+    expect(editor.state).toBe(before);
+    await unmount(editor);
+  });
 });

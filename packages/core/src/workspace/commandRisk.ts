@@ -1333,6 +1333,13 @@ function destructiveTitle(command: AnalyzedSimpleCommand): string | null {
     if (action?.value === "clean") return "清理版本库文件";
     if (action?.value === "reset" && actionArgs.includes("--hard")) return "强制重置版本库";
     if ((action?.value === "checkout" || action?.value === "restore") && actionArgs.some((arg) => arg === "-f" || arg === "--force")) return "强制覆盖版本库文件";
+    if (action?.value === "restore") return "覆盖版本库文件";
+    const checkoutSeparator = action?.value === "checkout"
+      ? actionArgs.indexOf("--")
+      : -1;
+    if (checkoutSeparator >= 0 && checkoutSeparator < actionArgs.length - 1) {
+      return "覆盖版本库文件";
+    }
     if (action?.value === "branch" && actionArgs.includes("-d")) return "强制删除分支";
   }
   if (new Set(["npm", "pnpm", "yarn", "pip", "pip3", "brew", "apt", "apt-get", "gem", "cargo", "composer", "conda", "mamba"]).has(name) &&

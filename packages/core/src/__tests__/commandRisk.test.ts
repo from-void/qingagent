@@ -261,6 +261,8 @@ describe("assessCommand 危险意图分类", () => {
       "rm --help",
       "echo rm file",
       "git status",
+      "git checkout main",
+      "git checkout -b feature",
       "git reset --soft HEAD~1",
       "find . -print",
       "systemctl status demo",
@@ -277,6 +279,23 @@ describe("assessCommand 危险意图分类", () => {
         risk: "confirm",
         effects: ["destructive"],
         confirmKind: "command",
+      });
+    });
+
+    it.each([
+      "git restore tracked.txt",
+      "git restore --source=HEAD tracked.txt",
+      "git restore --source HEAD --staged --worktree tracked.txt",
+      "git -C ./repo restore tracked.txt",
+      "git checkout -- tracked.txt",
+      "git checkout HEAD -- tracked.txt",
+      "git -C ./repo checkout HEAD~1 -- tracked.txt",
+    ])("覆盖已跟踪文件的 git 命令进入破坏性确认：%s", (command) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["destructive"],
+        confirmKind: "command",
+        title: "覆盖版本库文件",
       });
     });
   });

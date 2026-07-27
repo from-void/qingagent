@@ -622,6 +622,15 @@ describe("commandPolicy P0 gate", () => {
     expect(decision(command).action).toBe("confirm");
   });
 
+  it.each([
+    "git restore tracked.txt",
+    "git restore --source HEAD --staged --worktree tracked.txt",
+    "git checkout -- tracked.txt",
+    "git checkout HEAD -- tracked.txt",
+  ])("覆盖已跟踪文件的 git 命令进入确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
   it("deny/confirm 消息可直接返回给模型", () => {
     const denied = decision("lark-cli auth login");
     if (denied.action !== "deny") throw new Error(`expected deny, got ${denied.action}`);

@@ -4018,7 +4018,7 @@ export function layoutDiagramGraph(
   const root = arrangeLayoutItems(rootItems, rootPairs, rootDirection);
   const translated = translateLayoutItems(root.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET);
   applyOverlayPositions(translated.nodes, overlay);
-  const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes);
+  const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes, overlay);
   applyOverlayClusterPositions(translated.nodes, clusters, model, overlay);
   return { nodes: translated.nodes, clusters };
 }
@@ -4178,16 +4178,26 @@ function refitClustersToContents(
   clusters: GraphLayoutCluster[],
   nodes: Record<string, GraphLayoutRect>,
   modelNodes: FlowGraph["nodes"],
+  overlay?: DiagramOverlay | null,
 ): GraphLayoutCluster[] {
   const next = clusters.map((cluster) => ({ ...cluster }));
   const scopeByNodeId = new Map(modelNodes.map((node) => [node.id, node.scopePath]));
   for (const cluster of [...next].sort((left, right) => right.depth - left.depth)) {
+    // 用户手动拉过的分区尺寸(overlay)是下限之一:分区可以比内容大,但绝不会小于内容包络,
+    // 收缩时不会把已有子节点吞掉。
+    const sized = overlay?.styles?.[cluster.id];
+    const overlayWidth = typeof sized?.width === "number" && Number.isFinite(sized.width) ? sized.width : 0;
+    const overlayHeight = typeof sized?.height === "number" && Number.isFinite(sized.height) ? sized.height : 0;
     const directNodes = Object.entries(nodes)
       .filter(([nodeId]) => scopeByNodeId.get(nodeId)?.includes(cluster.id))
       .map(([, rect]) => rect);
     const childClusters = next.filter((candidate) => candidate.scopePath[candidate.scopePath.length - 1] === cluster.id);
     const contents = [...directNodes, ...childClusters];
-    if (contents.length === 0) continue;
+    if (contents.length === 0) {
+      if (overlayWidth > 0) cluster.width = Math.max(cluster.width, overlayWidth);
+      if (overlayHeight > 0) cluster.height = Math.max(cluster.height, overlayHeight);
+      continue;
+    }
     const minX = Math.min(...contents.map((rect) => rect.x));
     const minY = Math.min(...contents.map((rect) => rect.y));
     const maxX = Math.max(...contents.map((rect) => rect.x + rect.width));
@@ -4197,10 +4207,12 @@ function refitClustersToContents(
     cluster.width = Math.max(
       GRAPH_LAYOUT_NODE_WIDTH + GRAPH_CLUSTER_SIDE_PADDING * 2,
       maxX - minX + GRAPH_CLUSTER_SIDE_PADDING * 2,
+      overlayWidth,
     );
     cluster.height = Math.max(
       GRAPH_LAYOUT_NODE_HEIGHT + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
       maxY - minY + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+      overlayHeight,
     );
   }
   return next;

@@ -9,8 +9,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Node, Viewport } from "@xyflow/react";
 import { parseDiagram, type FlowGraph, type MindmapTree } from "@qingagent/diagram-engine";
+import { visibleFlowRect } from "../../components/diagram/GraphDiagramView";
 import { ToastProvider } from "../../../../system/ToastProvider";
 import { DiagramRenderer } from "../../components/diagram/DiagramRenderer";
+const CLUSTER_MIN_TEST_WIDTH = 160;
+const CLUSTER_MIN_TEST_HEIGHT = 120;
 const graphDiagramCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/graphDiagram.css"), "utf8");
 const graphDiagramSource = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/GraphDiagramView.tsx"), "utf8");
 const workspaceCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
@@ -2588,6 +2591,126 @@ flowchart LR
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
     });
     await flush();
+  });
+
+  it("分区选中后可四角形变,尺寸写入 overlay 并在导出与重开后保持", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  subgraph Outer["外层"]
+    A[甲]
+  end
+`}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    const clusterNode = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    const baseWidth = Number.parseFloat(clusterNode.style.width);
+    const baseHeight = Number.parseFloat(clusterNode.style.height);
+    expect(baseWidth).toBeGreaterThan(0);
+
+    await click(clusterNode.querySelector<HTMLElement>(".graph-diagram-cluster__title")!);
+    // 选中态才出四角把手,规格与节点一致(只四角)
+    const handles = Array.from(editor.querySelectorAll<HTMLElement>('.react-flow__node[data-id="Outer"] .graph-diagram-resize-handle'));
+    expect(handles).toHaveLength(4);
+    expect(handles.every((item) => /top|bottom/.test(item.className) && /left|right/.test(item.className))).toBe(true);
+
+    const target = { x: 40, y: 40, width: baseWidth + 180, height: baseHeight + 140 };
+    await dispatchGraphTestAction(editor, { kind: "resizeSubgraph", subgraphId: "Outer", rect: target });
+    const overlay = onOverlayChange.mock.calls.at(-1)?.[0] as
+      | { styles?: Record<string, { width?: number; height?: number }>; positions?: Record<string, { x: number; y: number }> }
+      | null;
+    expect(overlay?.styles?.Outer).toMatchObject({ width: target.width, height: target.height });
+    expect(overlay?.positions?.Outer).toEqual({ x: 40, y: 40 });
+
+    // 布局按 overlay 尺寸出图:重开编辑器尺寸保持,导出同尺寸
+    const resized = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    expect(Number.parseFloat(resized.style.width)).toBe(target.width);
+    expect(Number.parseFloat(resized.style.height)).toBe(target.height);
+    const exported = container?.querySelector<SVGElement>('.graph-diagram-export [data-cluster-id="Outer"] rect');
+    expect(Number(exported?.getAttribute("width"))).toBe(target.width);
+    expect(Number(exported?.getAttribute("height"))).toBe(target.height);
+
+    await click(editor.querySelector<HTMLButtonElement>(".diagram-editor-chrome__close")!);
+    const reopened = await openEditor();
+    const persisted = await waitForSelector('.react-flow__node[data-id="Outer"]', reopened) as HTMLElement;
+    expect(Number.parseFloat(persisted.style.width)).toBe(target.width);
+    expect(Number.parseFloat(persisted.style.height)).toBe(target.height);
+  });
+
+  it("分区收缩不吞子节点:小于内容包络时按包络兜底", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  subgraph Outer["外层"]
+    A[甲]
+  end
+`}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    const clusterNode = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    const baseWidth = Number.parseFloat(clusterNode.style.width);
+    const baseHeight = Number.parseFloat(clusterNode.style.height);
+
+    await dispatchGraphTestAction(editor, {
+      kind: "resizeSubgraph",
+      subgraphId: "Outer",
+      rect: { x: 20, y: 20, width: CLUSTER_MIN_TEST_WIDTH, height: CLUSTER_MIN_TEST_HEIGHT },
+    });
+    const shrunk = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    // 引擎按"子节点包络 + 内边距"兜底,不会缩到把子节点挤出去
+    expect(Number.parseFloat(shrunk.style.width)).toBe(baseWidth);
+    expect(Number.parseFloat(shrunk.style.height)).toBe(baseHeight);
+    expect(findNode("甲", editor)).not.toBeNull();
+  });
+
+  it("底部新增节点落在当前视口内并被选中,不会被排到画布外", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始] --> B[结束]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 40 }, B: { x: 400, y: 40 } } }}
+        onSourceChange={vi.fn()}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findButton("新增节点", editor));
+    const overlay = onOverlayChange.mock.calls.at(-1)?.[0] as
+      | { positions?: Record<string, { x: number; y: number }> }
+      | null;
+    const created = Object.entries(overlay?.positions ?? {}).find(([id]) => id !== "A" && id !== "B");
+    expect(created).toBeDefined();
+    const [createdId, placement] = created!;
+    // 落点要完整落在"当前视口对应的流坐标可视区"里(视口经 fitView 变换过,不能拿画布像素硬算)
+    const viewportEl = editor.querySelector<HTMLElement>(".react-flow__viewport")!;
+    const transform = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)\s*scale\(([\d.]+)\)/.exec(viewportEl.style.transform)!;
+    const visible = visibleFlowRect(
+      { x: Number(transform[1]), y: Number(transform[2]), zoom: Number(transform[3]) },
+      { width: 900, height: 600 },
+    );
+    expect(placement.x).toBeGreaterThanOrEqual(visible.x);
+    expect(placement.y).toBeGreaterThanOrEqual(visible.y);
+    expect(placement.x + 160).toBeLessThanOrEqual(visible.x + visible.width);
+    expect(placement.y + 72).toBeLessThanOrEqual(visible.y + visible.height);
+    // 也不该压在既有节点上
+    for (const id of ["A", "B"]) {
+      const other = overlay?.positions?.[id]!;
+      const overlapX = placement.x < other.x + 160 && placement.x + 160 > other.x;
+      const overlapY = placement.y < other.y + 72 && placement.y + 72 > other.y;
+      expect(overlapX && overlapY).toBe(false);
+    }
+    const selected = editor.querySelector(".react-flow__node.selected");
+    expect(selected?.getAttribute("data-id")).toBe(createdId);
   });
 
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {

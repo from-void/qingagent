@@ -181,10 +181,14 @@ type GraphClusterData = {
   isRenaming: boolean;
   canEdit: boolean;
   isDropTarget: boolean;
+  width: number;
+  height: number;
   onSelect: () => void;
   onRenameStart: () => void;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
+  onResizePreview: (size: ResizeParams) => void;
+  onResizeCommit: (size: ResizeParams) => void;
 } & Record<string, unknown>;
 type GraphClusterNode = Node<GraphClusterData, "graphCluster">;
 type GraphFlowNode = GraphRegularNode | GraphClusterNode;
@@ -240,7 +244,8 @@ type GraphDiagramTestAction =
   | { kind: "dropNode"; nodeId: string; position: { x: number; y: number } }
   | { kind: "resizeNodePreview"; nodeId: string; rect: GraphRect }
   | { kind: "resizeNode"; nodeId: string; rect: GraphRect }
-  | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } };
+  | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } }
+  | { kind: "resizeSubgraph"; subgraphId: string; rect: GraphRect };
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 72;
@@ -248,6 +253,11 @@ const NODE_MIN_WIDTH = 96;
 const NODE_MIN_HEIGHT = 48;
 const NODE_MAX_WIDTH = 640;
 const NODE_MAX_HEIGHT = 480;
+// 分区形变边界:下限交给引擎按内容包络兜底,这里只挡住明显不合理的极小/极大值。
+const CLUSTER_MIN_WIDTH = 160;
+const CLUSTER_MIN_HEIGHT = 120;
+const CLUSTER_MAX_WIDTH = 2400;
+const CLUSTER_MAX_HEIGHT = 1800;
 const NODE_FILL_COLORS = ["#efe3cc", "#f3ecdd", "#e5dfc9", "#f8e7a1", "#ddd0b5", "#cfc5b2"];
 const NODE_STROKE_COLORS = ["#b08a3e", "#8f6d30", "#8d7447", "#6a6256", "#4f514f", "#2f2a22"];
 // 节点填充/边框色板按两行铺开(纸暖色系:第一行由浅到深的纸墨,第二行暖色相)。
@@ -872,7 +882,22 @@ function GraphCluster({ data, selected }: NodeProps<GraphClusterNode>) {
       data-cluster-direction={data.direction}
       data-cluster-depth={data.depth}
       data-cluster-empty={data.empty}
+      data-cluster-width={data.width}
+      data-cluster-height={data.height}
     >
+      {/* 分区形变:与节点同规格——只四角、金系,挂在外偏包围盒上;
+          最小尺寸由引擎按"子节点包络 + 内边距"兜底,收缩不会吞掉已有子节点。 */}
+      <NodeResizer
+        isVisible={selected && data.canEdit && !data.isRenaming}
+        minWidth={CLUSTER_MIN_WIDTH}
+        minHeight={CLUSTER_MIN_HEIGHT}
+        maxWidth={CLUSTER_MAX_WIDTH}
+        maxHeight={CLUSTER_MAX_HEIGHT}
+        lineClassName="graph-diagram-resize-line"
+        handleClassName="graph-diagram-resize-handle nodrag nopan"
+        onResize={(_event, size) => data.onResizePreview(size)}
+        onResizeEnd={(_event, size) => data.onResizeCommit(size)}
+      />
       <div
         ref={titleRef}
         className={classNames("graph-diagram-cluster__title", data.isRenaming && "nodrag nowheel")}
@@ -1417,6 +1442,76 @@ function graphRectContainsRect(outer: GraphRect, inner: GraphRect): boolean {
   );
 }
 
+/**
+ * 新增节点的落点:必须整块落在当前视口内并尽量不压住既有元素。
+ * 有锚点(选中节点)时优先放它右侧/下方的常规位置,否则从视口中心起按环形找空位;
+ * 全被占满时退回视口中心(仍保证完整可见)。纯几何,流坐标。
+ */
+export function resolveNewNodePlacement(input: {
+  visible: GraphRect;
+  occupied: GraphRect[];
+  size: { width: number; height: number };
+  anchor?: GraphRect | null;
+}): { x: number; y: number } {
+  const { visible, occupied, size } = input;
+  const margin = 24;
+  const clampToVisible = (point: { x: number; y: number }): { x: number; y: number } => ({
+    x: Math.round(clamp(
+      point.x,
+      visible.x + margin,
+      Math.max(visible.x + margin, visible.x + visible.width - size.width - margin),
+    )),
+    y: Math.round(clamp(
+      point.y,
+      visible.y + margin,
+      Math.max(visible.y + margin, visible.y + visible.height - size.height - margin),
+    )),
+  });
+  const free = (point: { x: number; y: number }): boolean => {
+    const rect = { x: point.x, y: point.y, width: size.width, height: size.height };
+    if (!graphRectContainsRect(visible, rect)) return false;
+    return !occupied.some((item) => graphRectsIntersect(inflateGraphRect(item, 16), rect));
+  };
+  const center = {
+    x: visible.x + visible.width / 2 - size.width / 2,
+    y: visible.y + visible.height / 2 - size.height / 2,
+  };
+  const candidates: Array<{ x: number; y: number }> = [];
+  if (input.anchor) {
+    candidates.push({ x: input.anchor.x + input.anchor.width + QUICK_ADD_GAP_X, y: input.anchor.y });
+    candidates.push({ x: input.anchor.x, y: input.anchor.y + input.anchor.height + QUICK_ADD_GAP_Y });
+    candidates.push({ x: input.anchor.x - size.width - QUICK_ADD_GAP_X, y: input.anchor.y });
+  }
+  candidates.push(center);
+  const stepX = size.width + QUICK_ADD_GAP_X;
+  const stepY = size.height + QUICK_ADD_GAP_Y;
+  for (let ring = 1; ring <= 4; ring += 1) {
+    for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
+      candidates.push({ x: center.x + dx * ring * stepX, y: center.y + dy * ring * stepY });
+    }
+  }
+  for (const candidate of candidates) {
+    const rounded = { x: Math.round(candidate.x), y: Math.round(candidate.y) };
+    if (free(rounded)) return rounded;
+  }
+  return clampToVisible(center);
+}
+
+function inflateGraphRect(rect: GraphRect, by: number): GraphRect {
+  return { x: rect.x - by, y: rect.y - by, width: rect.width + by * 2, height: rect.height + by * 2 };
+}
+
+/** 当前视口对应的流坐标可视矩形。 */
+export function visibleFlowRect(viewport: Viewport, canvasFrame: CanvasSize): GraphRect {
+  const zoom = viewport.zoom > 0 ? viewport.zoom : 1;
+  return {
+    x: -viewport.x / zoom,
+    y: -viewport.y / zoom,
+    width: (canvasFrame.width || 900) / zoom,
+    height: (canvasFrame.height || 600) / zoom,
+  };
+}
+
 function graphRectsIntersect(left: GraphRect, right: GraphRect): boolean {
   return (
     left.x < right.x + right.width &&
@@ -1888,6 +1983,47 @@ export function GraphDiagramView({
     [ids.nodes, inEdit],
   );
 
+  // 分区形变:预览走 React Flow 的 dimension change(与节点同一条链),落库写 overlay。
+  const previewClusterResize = useCallback(
+    (clusterId: string, size: ResizeParams) => {
+      if (!inEdit) return;
+      const width = clamp(size.width, CLUSTER_MIN_WIDTH, CLUSTER_MAX_WIDTH);
+      const height = clamp(size.height, CLUSTER_MIN_HEIGHT, CLUSTER_MAX_HEIGHT);
+      setNodes((current) => current.map((node) => {
+        if (node.id !== clusterId || node.type !== "graphCluster") return node;
+        return {
+          ...node,
+          position: { x: size.x, y: size.y },
+          data: { ...node.data, width, height },
+        };
+      }));
+    },
+    [inEdit],
+  );
+
+  const commitClusterResize = useCallback(
+    (clusterId: string, size: ResizeParams) => {
+      if (!inEdit) return;
+      const width = clamp(Math.round(size.width), CLUSTER_MIN_WIDTH, CLUSTER_MAX_WIDTH);
+      const height = clamp(Math.round(size.height), CLUSTER_MIN_HEIGHT, CLUSTER_MAX_HEIGHT);
+      emitOverlay(
+        {
+          ...(overlayRef.current ?? {}),
+          positions: {
+            ...(overlayRef.current?.positions ?? {}),
+            [clusterId]: { x: Math.round(size.x), y: Math.round(size.y) },
+          },
+          styles: {
+            ...(overlayRef.current?.styles ?? {}),
+            [clusterId]: { ...(overlayRef.current?.styles?.[clusterId] ?? {}), width, height },
+          },
+        },
+        { nodes: [clusterId] },
+      );
+    },
+    [emitOverlay, inEdit],
+  );
+
   const runRewrite = useCallback(
     (rewrite: (source: string) => RewriteResult): RewriteResult | null => {
       if (readOnly || (!onSourceChange && !onVisualChange)) return null;
@@ -2077,6 +2213,22 @@ export function GraphDiagramView({
     const parentId = isMindmap ? selectedNodeId ?? undefined : undefined;
     const newNodeId = runEdit({ kind: "addNode", label: "新节点", parentId })?.newNodeId ?? null;
     if (newNodeId) {
+      // 不写落点的话,新节点交给自动布局,可能被排到画布最右缘、跑出当前视口(用户只看得到它的工具栏)。
+      // 这里按当前视口算一个完整可见、尽量不压既有元素的空位。
+      const anchorNode = selectedNodeId ? nodesRef.current.find((item) => item.id === selectedNodeId) : undefined;
+      const placement = resolveNewNodePlacement({
+        visible: visibleFlowRect(editViewport, editCanvasFrame),
+        occupied: nodesRef.current.map((item) => graphNodeRect(item)),
+        size: { width: NODE_WIDTH, height: NODE_HEIGHT },
+        anchor: anchorNode ? graphNodeRect(anchorNode) : null,
+      });
+      emitOverlay(
+        {
+          ...(overlayRef.current ?? {}),
+          positions: { ...(overlayRef.current?.positions ?? {}), [newNodeId]: placement },
+        },
+        { nodes: [newNodeId] },
+      );
       setSelectedNodeId(newNodeId);
       setSelectedNodeIds([newNodeId]);
       setSelectedEdgeId(null);
@@ -2085,7 +2237,16 @@ export function GraphDiagramView({
       setEditingEdgeLabelId(null);
       setParentPickerNodeId(null);
     }
-  }, [canAddNodeEmpty, isMindmap, runEdit, selectedNodeCaps, selectedNodeId]);
+  }, [
+    canAddNodeEmpty,
+    editCanvasFrame,
+    editViewport,
+    emitOverlay,
+    isMindmap,
+    runEdit,
+    selectedNodeCaps,
+    selectedNodeId,
+  ]);
 
   const deleteSelectedNode = useCallback(() => {
     if (!selectedNodeId || !capEnabled(selectedNodeCaps, "deleteNode")) return;
@@ -2600,10 +2761,14 @@ export function GraphDiagramView({
           isRenaming: inEdit && renamingSubgraphId === cluster.id,
           canEdit: inEdit,
           isDropTarget: false,
+          width: cluster.width,
+          height: cluster.height,
           onSelect: () => selectSubgraph(cluster.id),
           onRenameStart: () => startSubgraphRename(cluster.id),
           onRenameCommit: commitSubgraphRename,
           onRenameCancel: cancelSubgraphRename,
+          onResizePreview: (size: ResizeParams) => previewClusterResize(cluster.id, size),
+          onResizeCommit: (size: ResizeParams) => commitClusterResize(cluster.id, size),
         },
         draggable: inEdit && renamingSubgraphId !== cluster.id,
         selectable: inEdit,
@@ -2789,6 +2954,8 @@ export function GraphDiagramView({
     selectedNodeId,
     selectedNodeIds,
     selectedSubgraphId,
+    previewClusterResize,
+    commitClusterResize,
     selectEdge,
     selectSubgraph,
     setGhostPreviewActive,
@@ -3354,6 +3521,11 @@ export function GraphDiagramView({
         previewNodeResize(action.nodeId, action.rect);
         return;
       }
+      if (action.kind === "resizeSubgraph") {
+        previewClusterResize(action.subgraphId, action.rect);
+        commitClusterResize(action.subgraphId, action.rect);
+        return;
+      }
       if (action.kind === "moveSubgraph" && parsed.ok && parsed.model.type === "flowchart") {
         const descendantIds = new Set(
           parsed.model.nodes.filter((item) => item.scopePath.includes(action.subgraphId)).map((item) => item.id),
@@ -3387,6 +3559,7 @@ export function GraphDiagramView({
     editor.addEventListener("graph-diagram-test-action", handleTestAction);
     return () => editor.removeEventListener("graph-diagram-test-action", handleTestAction);
   }, [
+    commitClusterResize,
     commitDroppedNodes,
     commitNodePositions,
     commitNodeResize,
@@ -3400,6 +3573,7 @@ export function GraphDiagramView({
     inEdit,
     onNodesChange,
     parsed,
+    previewClusterResize,
     previewNodeResize,
     createSubgraphFromRect,
     runEdit,

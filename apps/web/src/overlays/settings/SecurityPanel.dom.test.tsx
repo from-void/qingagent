@@ -116,7 +116,7 @@ describe("SecurityPanel", () => {
       "utf8",
     );
     expect(css).toMatch(/\.security-description\{[^}]*color:var\(--ink-desc\)/);
-    expect(css).toMatch(/\.security-description\{[^}]*font-size:13px/);
+    expect(css).toMatch(/\.security-description\{[^}]*font-size:11\.5px/);
   });
 
   it("改回每次询问调用 revoke 语义并给出轻提示", async () => {

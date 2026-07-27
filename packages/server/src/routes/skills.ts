@@ -86,6 +86,36 @@ skillsRoutes.get("/skills/:name", async (c) => {
   if (!isValidSkillName(name)) return c.json({ error: "not found" }, 404);
   const skill = await findSkillOnDisk(name);
   if (!skill) return c.json({ error: "not found" }, 404);
+  const childName = c.req.query("child");
+  if (childName !== undefined) {
+    if (!isValidSkillName(childName)) return c.json({ error: "not found" }, 404);
+    const children = await listChildSkills(skill.path).catch(() => []);
+    // 子技能路径只取自技能发现结果，绝不以请求参数拼接磁盘路径。
+    const child = children.find((item) => item.metadata.name === childName);
+    if (!child) return c.json({ error: "not found" }, 404);
+    try {
+      const skillMd = await readFile(join(child.path, "SKILL.md"), "utf8");
+      return c.json({
+        name: child.metadata.name,
+        description: child.metadata.description,
+        label: child.metadata.label,
+        summary: child.metadata.summary,
+        icon: child.metadata.icon,
+        source: skill.source,
+        userInvocable: child.metadata.userInvocableExplicit
+          ? child.metadata.userInvocable
+          : skill.source === "installed",
+        placeholder: child.metadata.placeholder,
+        config: child.metadata.config,
+        tools: child.metadata.tools,
+        enabled: skill.enabled,
+        connectorId: connectorIdForSkill(child.metadata.name),
+        body: stripSkillFrontmatter(skillMd),
+      });
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+  }
   try {
     const skillMd = await readFile(join(skill.path, "SKILL.md"), "utf8");
     return c.json({

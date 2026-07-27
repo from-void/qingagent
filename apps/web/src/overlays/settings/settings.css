@@ -189,7 +189,7 @@
 .security-row{display:grid;grid-template-columns:minmax(0,1fr) 128px;align-items:center;gap:24px;min-height:72px;padding:10px 0;border-bottom:1px solid var(--qj-switch-border)}
 .security-copy{display:flex;min-width:0;flex-direction:column;gap:4px}
 .security-label{color:var(--qj-ink);font-size:13px;font-weight:700;line-height:1.45}
-.security-description{max-width:500px;color:var(--ink-desc);font-size:13px;line-height:1.6}
+.security-description{max-width:500px;color:var(--ink-desc);font-size:11.5px;line-height:1.6}
 .security-effect{color:var(--ink-desc);font-size:13px;line-height:1.55}
 .security-effect::before{content:"※";margin-right:5px;color:var(--qj-cinnabar)}
 .security-select{

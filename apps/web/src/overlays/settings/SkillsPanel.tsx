@@ -141,6 +141,9 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [childDetail, setChildDetail] = useState<SkillDetailInfo | null>(null);
+  const [childDetailLoading, setChildDetailLoading] = useState(false);
+  const [childDetailError, setChildDetailError] = useState<string | null>(null);
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   const mountedRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +185,35 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
       cancelled = true;
     };
   }, [selectedName, getSkillDetail]);
+
+  useEffect(() => {
+    if (!selectedName || !selectedChildName) {
+      setChildDetail(null);
+      setChildDetailError(null);
+      setChildDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setChildDetail(null);
+    setChildDetailLoading(true);
+    setChildDetailError(null);
+    void getSkillDetail(selectedName, selectedChildName)
+      .then((data) => {
+        if (!cancelled && mountedRef.current) setChildDetail(data);
+      })
+      .catch(() => {
+        if (!cancelled && mountedRef.current) {
+          setChildDetail(null);
+          setChildDetailError("子技能正文暂时无法加载");
+        }
+      })
+      .finally(() => {
+        if (!cancelled && mountedRef.current) setChildDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedName, selectedChildName, getSkillDetail]);
 
   useEffect(() => {
     if (!menu) return;
@@ -360,7 +392,13 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         </div>
 
         {selectedChild && selectedParent ? (
-          <ChildSkillDetail child={selectedChild} parent={selectedParent} />
+          <ChildSkillDetail
+            child={selectedChild}
+            parent={selectedParent}
+            body={childDetail?.body ?? ""}
+            bodyLoading={childDetailLoading}
+            bodyError={childDetailError}
+          />
         ) : selectedSkill ? (
           <>
             <SkillDetail
@@ -537,7 +575,19 @@ function childSkills(skill: SkillInfo): SkillInfo[] {
   return Array.isArray(skill.children) ? skill.children : [];
 }
 
-function ChildSkillDetail({ child, parent }: { child: SkillInfo; parent: SkillInfo }) {
+function ChildSkillDetail({
+  child,
+  parent,
+  body,
+  bodyLoading,
+  bodyError,
+}: {
+  child: SkillInfo;
+  parent: SkillInfo;
+  body: string;
+  bodyLoading: boolean;
+  bodyError: string | null;
+}) {
   return (
     <div data-wf="SkillChildDetail">
       <div className="sk-detail-hero">
@@ -549,9 +599,14 @@ function ChildSkillDetail({ child, parent }: { child: SkillInfo; parent: SkillIn
         {" · "}
         <span className="k">状态：</span>随母技能{parent.enabled ? "启用" : "停用"}
       </p>
-      <h3 className="sk-detail-sec-title">职责说明</h3>
       <div className="sk-md-body">
         <p>{child.description || child.summary}</p>
+      </div>
+      <h3 className="sk-detail-sec-title">技能正文(SKILL.md · 只读)</h3>
+      <div className="sk-md-body" data-wf="SkillChildDetailBody">
+        {bodyLoading && !body ? <p>加载中…</p> : null}
+        {bodyError ? <p>{bodyError}</p> : null}
+        {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
       </div>
       <p className="sm-note sk-child-inherited-note">
         此子技能不单独启停，由母技能「{parent.label}」统一控制。

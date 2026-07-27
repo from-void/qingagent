@@ -129,8 +129,12 @@ export function useSkills() {
     [refresh],
   );
 
-  const getSkillDetail = useCallback(async (name: string): Promise<SkillDetailInfo> => {
-    const res = await fetch(`/api/v1/skills/${encodeURIComponent(name)}`);
+  const getSkillDetail = useCallback(async (
+    name: string,
+    childName?: string,
+  ): Promise<SkillDetailInfo> => {
+    const childQuery = childName ? `?child=${encodeURIComponent(childName)}` : "";
+    const res = await fetch(`/api/v1/skills/${encodeURIComponent(name)}${childQuery}`);
     if (!res.ok) throw new Error(`技能详情加载失败 (${res.status})`);
     return (await res.json()) as SkillDetailInfo;
   }, []);

@@ -127,7 +127,7 @@ describe("ToolSearch bridge", () => {
     const bridge = await buildCapabilityToolSearchBridge([
       "web-search",
       "wechat-official-account",
-      "gzh-style",
+      "derivative-writing",
     ]);
     expect(Object.keys(bridge.searchableTools)).not.toContain("webSearch");
     expect(Object.keys(bridge.searchableTools)).not.toContain("fetchArticle");

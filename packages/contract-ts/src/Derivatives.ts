@@ -1,3 +1,23 @@
+/** 衍生稿撰写母技能名(与 packages/core/skills/capability/derivative-writing 目录同名)。 */
+export const DERIVATIVE_WRITING_SKILL = "derivative-writing";
+
+/**
+ * dtype → 子技能名的唯一映射表。server 装配纪律、web 展示与校验都从这里取,
+ * 不再各处硬编码字符串;新增衍生稿类型时只改这一处 + 建对应子技能目录。
+ */
+export const DERIVATIVE_CHILD_SKILL_BY_DTYPE = {
+  gzh: "wechat-gzh",
+  xhs: "xiaohongshu",
+  translate: "translate",
+} as const satisfies Record<"gzh" | "xhs" | "translate", string>;
+
+export type DerivativeDtypeName = keyof typeof DERIVATIVE_CHILD_SKILL_BY_DTYPE;
+
+/** 未知 dtype 返回 null,调用方据此回退到最小纪律,不抛错打断生成。 */
+export function derivativeChildSkillFor(dtype: string): string | null {
+  return DERIVATIVE_CHILD_SKILL_BY_DTYPE[dtype as DerivativeDtypeName] ?? null;
+}
+
 export interface DerivativeItem {
   docId: string;
   dtype: string;

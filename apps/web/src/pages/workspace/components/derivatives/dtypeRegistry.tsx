@@ -1,6 +1,6 @@
 import { useEffect, useRef, type FC, type MutableRefObject, type Ref } from "react";
 import type { PmDoc } from "@qingagent/pm-schema";
-import type { ActionCardData } from "@qingagent/contract-ts";
+import type { ActionCardData, DerivativeDtypeName } from "@qingagent/contract-ts";
 import { PmBlockView } from "../doc/PmStaticView";
 import { PhoneShell } from "./PhoneShell";
 import { DesktopShell } from "./DesktopShell";
@@ -9,7 +9,8 @@ import "./wechatPreview.css";
 import "./xhsPreview.css";
 import "./xhsOverrides.css";
 
-export type DerivativeDtype = "gzh" | "xhs" | "translate";
+/** dtype 集合以 contract 的母子技能映射表为单源:新增类型必须同时补齐本注册表。 */
+export type DerivativeDtype = DerivativeDtypeName;
 
 interface PreviewProps { doc: PmDoc; title: string; articleRef: Ref<HTMLElement>; coverTemplate?: XhsCoverTemplate; onCoverTemplateChange?: (template: XhsCoverTemplate) => void }
 
@@ -115,7 +116,9 @@ function TranslationPreview({ doc, articleRef }: PreviewProps) {
   return <article ref={articleRef} className="ws-translate-article"><PmBody doc={doc}/></article>;
 }
 
-const routeSuffix = "先调 derivative_brief,按模板与补充指令改写源文,再用 generate_derivative 提交。";
+// 硬触发脚手架:只描述工具序列(防"承诺句停机"复发),具体纪律由 derivative_brief 返回的
+// skillGuidance(衍生稿撰写子技能)承载,不在这里写死。
+const routeSuffix = "先调 derivative_brief,按返回的 skillGuidance 纪律与模板、补充指令改写源文,再用 generate_derivative 提交。";
 
 export function buildTranslationDisplayCard(languages: string[], style: string, privatePrompt: string): ActionCardData {
   const lines = [{ label: "语言", value: languages.join("、") }, { label: "风格", value: style }];

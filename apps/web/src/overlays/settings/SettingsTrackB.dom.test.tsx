@@ -249,6 +249,62 @@ describe("Settings Track B", () => {
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
   });
 
+  it("官方配置前两段成功而别名落盘失败时从持久化层重同步 UI", async () => {
+    const previousCustom = JSON.stringify({
+      protocol: "openai",
+      baseUrl: "https://old-proxy.example/v1",
+      apiKey: "old-custom-key",
+      modelFlash: "old-custom-flash",
+      modelPro: "old-custom-pro",
+    });
+    const setDeepseekApiKey = vi.fn(async () => true);
+    const setCustomProvider = vi.fn(async () => true);
+    const setOfficialModel = vi.fn(async () => false);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        getDeepseekApiKey: () => null,
+        setDeepseekApiKey,
+        getCustomProvider: () => previousCustom,
+        setCustomProvider,
+        getOfficialModel: () => JSON.stringify({ flash: "persisted-official-flash" }),
+        setOfficialModel,
+      },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    expect(host?.textContent).toContain("自定义模型");
+
+    await click(getButtonByText("修改配置"));
+    await click(getButtonByText("接入 DeepSeek 官方 API"));
+    setInput(getInputByWf("ModelKeyInput"), "deepseek-official-new");
+    setInput(getInputByPlaceholder("deepseek-v4-flash"), "attempted-new-flash");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(setDeepseekApiKey).toHaveBeenCalledWith("deepseek-official-new");
+    expect(setCustomProvider).toHaveBeenCalledWith(null);
+    expect(setOfficialModel).toHaveBeenCalledWith(JSON.stringify({ flash: "attempted-new-flash" }));
+    expect(getVisitorDeepseekKey()).toBe("deepseek-official-new");
+    expect(readCustomProvider()).toBeNull();
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-key": "deepseek-official-new",
+      "x-model-flash": "persisted-official-flash",
+    });
+    expect(host?.textContent).toContain("当前使用 本机 的 key");
+    expect(host?.textContent).toContain("••••-new");
+    expect(host?.textContent).not.toContain("https://old-proxy.example/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("模型别名未保存");
+  });
+
   it("未显式选择且无本地配置时保留 server 优先级；旧 DeepSeek key 仍锁定 DeepSeek", async () => {
     expect(getStoredModelProvider()).toBeNull();
     expect(getSelectedModelProvider()).toBe("deepseek");

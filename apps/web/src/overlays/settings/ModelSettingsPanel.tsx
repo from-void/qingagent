@@ -184,6 +184,28 @@ export function ModelSettingsPanel() {
     });
   }, [toast]);
 
+  const resyncPersistedModelState = useCallback((provider: ModelProvider) => {
+    const persistedKey = getVisitorModelKey(provider);
+    const persistedCustom = readCustomProvider(provider);
+    const persistedOfficial = readOfficialModelOverride(provider);
+    setVisitorKey(persistedKey);
+    setCustomProvider(persistedCustom);
+    setSetupMode(persistedCustom ? "other" : "official");
+    setCustomProtocol(provider === "kimi" ? "openai" : persistedCustom?.protocol ?? "openai");
+    setCustomBaseUrl(persistedCustom?.baseUrl ?? "");
+    setCustomKey(persistedCustom?.apiKey ?? "");
+    setCustomModelFlash(persistedCustom?.modelFlash ?? MODEL_DEFAULTS[provider].flash);
+    setCustomModelPro(persistedCustom?.modelPro ?? MODEL_DEFAULTS[provider].pro);
+    setOfficialFlash(persistedOfficial?.flash ?? "");
+    setOfficialPro(persistedOfficial?.pro ?? "");
+    setKeyInput("");
+    setVerifyStatus("idle");
+    setVerifyMsg("");
+    setEditing(false);
+    setForceSetup(false);
+    setMessage(null);
+  }, []);
+
   const handleProviderChange = async (provider: ModelProvider) => {
     if (provider === modelProvider) return;
     invalidateCustomTest();
@@ -506,6 +528,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return;
     if (!savedKey) {
       setPersisting(false);
+      resyncPersistedModelState(modelProvider);
       showPersistFailure();
       return;
     }
@@ -514,6 +537,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return;
     if (!clearedCustom) {
       setPersisting(false);
+      resyncPersistedModelState(modelProvider);
       showPersistFailure("key 已保存，但旧的自定义模型配置未清除，请重试");
       return;
     }
@@ -524,6 +548,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return;
     setPersisting(false);
     if (!savedOfficialOverride) {
+      resyncPersistedModelState(modelProvider);
       showPersistFailure("key 已保存，但模型别名未保存，请重试");
       return;
     }

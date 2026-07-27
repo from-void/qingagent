@@ -105,14 +105,17 @@ import {
   type PendingDocSaveWaiter,
 } from "../data/pendingDocSave";
 import {
+  appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
 } from "../data/docWriteResultOwnership";
 import {
   EMPTY_PM_DOC_CONTENT_HASH,
+  appliedDocWriteBaseline,
+  createKnownDocVersionLedger,
   isEmptyScaffoldConflict,
-  isSelfCausedDocWriteConflict,
+  resolveDocWriteConflict,
 } from "../data/docWriteBaseline";
 import type { DocWriteBaseline } from "../data/docWriteBaseline";
 import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
@@ -595,11 +598,13 @@ export function useWorkspacePageController() {
   // 空脚手架旧写冲突后，临时允许 startSession(existing) 的权威恢复帧覆盖该空稿。
   // 非空用户输入不进入此通道，继续沿用 dirty 冲突保留路径。
   const docConflictReconcileSessionRef = useRef<string | null>(null);
-  // 本标签自己写出来的最新版本与内容:用于识别"冲突其实是被自己上一笔推进的",
-  // 这种自冲突(图表可视化写回与正文防抖保存互相追尾)可以静默改基线重放,不该打扰用户。
-  const lastSelfAckedDocVersionRef = useRef<number | null>(null);
-  const lastSelfAckedPmDocRef = useRef<PmDoc | null>(null);
-  const selfRebasedMutationIdsRef = useRef<Set<string>>(new Set());
+  // 本会话【已知产出】的文档版本账本:本标签自己写入的回执版本 + agent 生成流推进且本标签
+  // 已应用的版本。冲突时服务端现版本若在账本里,只是基线取早了(可视化写回与防抖保存追尾、
+  // agent 刚写完本会话文档),静默改基线重放即可;不在账本里才是真外部并发,保留重载横幅。
+  const knownDocVersionsRef = useRef(createKnownDocVersionLedger());
+  // 已经拿来当基线重放过的版本 + 连续静默重放次数:双保险,杜绝重放打转。
+  const replayedConflictVersionsRef = useRef<Set<number>>(new Set());
+  const silentConflictReplayDepthRef = useRef(0);
   const presentationRunSeqRef = useRef(0);
   const sawDraftingRef = useRef(false);
   const presentedDocumentSnapshotRef = useRef<number | null>(null);
@@ -1785,6 +1790,16 @@ export function useWorkspacePageController() {
         })) {
           return;
         }
+        // 走到这里这一帧就会被应用:把它带来的版本登记为"本会话已知产出"。
+        // agent 生成流写出的版本正是从这条路进来的——它不是外部并发,后续冲突要静默重放。
+        // 反之被上面守卫挡掉的帧不登记:本地没应用它,那才是真分叉,该弹横幅。
+        const applied = appliedDocVersionFromBroadcastFrame(frame);
+        if (applied) {
+          knownDocVersionsRef.current.remember(
+            appliedDocWriteBaseline(applied),
+            "streamApply",
+          );
+        }
       }
       if (frame.kind === "documentSnapshotWritten") {
         stagePresentationRunForDocFrame(frame.data.doc);
@@ -1889,10 +1904,20 @@ export function useWorkspacePageController() {
           latestDocMutationIdRef.current = null;
           if (frame.data.ok) {
             docVersionRef.current = frame.data.docVersion;
-            lastSelfAckedDocVersionRef.current = frame.data.docVersion;
+            // 落库成功即结算重放链
+            silentConflictReplayDepthRef.current = 0;
             if (savedPmDoc) {
-              baseContentHashRef.current = getPmContentHash(savedPmDoc);
-              lastSelfAckedPmDocRef.current = savedPmDoc;
+              const selfHash = getPmContentHash(savedPmDoc);
+              baseContentHashRef.current = selfHash;
+              knownDocVersionsRef.current.remember(
+                {
+                  expectedDocumentSnapshot: frame.data.docVersion,
+                  baseContentHash: selfHash,
+                  baseHasSubstantiveContent:
+                    pmDocHasSubstantiveContent(savedPmDoc),
+                },
+                "selfWrite",
+              );
             }
           } else if (!("conflict" in frame.data)) {
             queuedPmDocRef.current = null;
@@ -1909,26 +1934,30 @@ export function useWorkspacePageController() {
             submittedDoc: savedPmDoc,
             queuedDoc: queuedBeforeResult?.pmDoc ?? null,
           });
-        // 自冲突静默重放:服务端现版本正是本标签自己上一笔写出来的那一版,说明这笔只是
-        // 基线取早了(可视化写回与防抖保存互相追尾),不是别人在改。用自己上一笔的内容当基线
-        // 重发一次即可,用户不该看到"文档已被更新"。只重放一次,避免打转。
-        const selfCausedConflict = isSelfCausedDocWriteConflict({
+        // 冲突静默重放:服务端现版本若是本会话自己产出的(本标签上一笔写入,或 agent 生成流
+        // 刚推进、本标签也已应用的那一版),这笔只是基线取早了,不是别人在改。用该版本的
+        // canonical 基线重发即可,用户不该看到"文档已被更新"。版本不在已知账本里才是真外部并发。
+        const conflictResolution = resolveDocWriteConflict({
           conflict: writeConflict,
           isLatestOwnMutation,
           hasSubmittedDoc: savedPmDoc !== null,
-          lastSelfAckedDocVersion: lastSelfAckedDocVersionRef.current,
-          lastSelfAckedDocPresent: lastSelfAckedPmDocRef.current !== null,
-          alreadyReplayed: selfRebasedMutationIdsRef.current.has(frame.data.clientMutationId),
+          knownActualVersion: writeConflict
+            ? knownDocVersionsRef.current.get(writeConflict.actualDocumentSnapshot)
+            : null,
+          replayedAgainstActual: writeConflict
+            ? replayedConflictVersionsRef.current.has(
+                writeConflict.actualDocumentSnapshot,
+              )
+            : false,
+          replayDepth: silentConflictReplayDepthRef.current,
         });
-        if (selfCausedConflict && writeConflict) {
-          selfRebasedMutationIdsRef.current.add(frame.data.clientMutationId);
+        if (conflictResolution.kind === "silentReplay" && writeConflict) {
+          replayedConflictVersionsRef.current.add(
+            writeConflict.actualDocumentSnapshot,
+          );
+          silentConflictReplayDepthRef.current += 1;
           const replayPmDoc = savedPmDoc!;
-          const canonical = lastSelfAckedPmDocRef.current!;
-          const replayBaseline: DocWriteBaseline = {
-            expectedDocumentSnapshot: writeConflict.actualDocumentSnapshot,
-            baseContentHash: getPmContentHash(canonical),
-            baseHasSubstantiveContent: pmDocHasSubstantiveContent(canonical),
-          };
+          const replayBaseline: DocWriteBaseline = conflictResolution.baseline;
           ack?.resolve();
           window.setTimeout(() => {
             sendDocWriteRef.current(replayPmDoc, undefined, replayBaseline).catch((error) => {
@@ -2090,6 +2119,10 @@ export function useWorkspacePageController() {
       docConflictReconcileSessionRef.current = null;
       lastSentPmDocRef.current = null;
       lastSentDocWriteBaselineRef.current = null;
+      // 已知产出账本按会话隔离:换会话后旧文档的版本号不能再当"自产"用
+      knownDocVersionsRef.current.clear();
+      replayedConflictVersionsRef.current.clear();
+      silentConflictReplayDepthRef.current = 0;
       startSessionPromisesBySessionRef.current.clear();
       startNewSessionPromiseRef.current = null;
       pendingBrowserAttachRef.current.clear();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
+  appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
@@ -66,6 +67,28 @@ describe("shouldHandleBroadcastDocumentFrame", () => {
         hasLocalDocumentChanges: true,
       })).toBe(false);
     }
+  });
+
+  it("会写版本的帧都能取出该版本与正文,供登记为本会话已知产出", () => {
+    // agent 生成流产出的版本必须进已知产出集,否则它推进版本后本标签的旧基线写
+    // 会被当成"外部并发"误弹重载横幅(战役缺陷#2)。
+    expect(appliedDocVersionFromBroadcastFrame(versionWritingFrames[0]!)).toEqual({
+      version: 2,
+      pmDoc,
+    });
+    expect(appliedDocVersionFromBroadcastFrame(versionWritingFrames[1]!)).toEqual({
+      version: 2,
+      pmDoc,
+    });
+    expect(appliedDocVersionFromBroadcastFrame(versionWritingFrames[2]!)).toEqual({
+      version: 2,
+      pmDoc,
+      contentHash: "hash",
+    });
+    expect(appliedDocVersionFromBroadcastFrame({
+      kind: "docWriteResult",
+      data: { ok: true, clientMutationId: "m", docVersion: 3 },
+    })).toBeNull();
   });
 
   it("干净标签照常消费版本帧，非终态帧不受 dirty 守卫影响", () => {

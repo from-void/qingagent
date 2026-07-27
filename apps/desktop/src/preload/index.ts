@@ -28,6 +28,7 @@ type DesktopConfigKey =
   | "qingagent.vision_provider"
   | "qingagent.official_model"
   | "qingagent.model_tier"
+  | "qingagent.kimi_model_tier"
   // 与 web clientPersist.ts、desktop main 的白名单保持同步。
   | "qingagent.kimi_api_key"
   | "qingagent.kimi_custom_provider"
@@ -73,6 +74,9 @@ contextBridge.exposeInMainWorld("electron", {
   getModelTier: () => readDesktopConfigValue("qingagent.model_tier"),
   setModelTier: (value: string | null) =>
     writeDesktopConfigValue("qingagent.model_tier", value),
+  getKimiModelTier: () => readDesktopConfigValue("qingagent.kimi_model_tier"),
+  setKimiModelTier: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.kimi_model_tier", value),
   getKimiApiKey: () => readDesktopConfigValue("qingagent.kimi_api_key"),
   setKimiApiKey: (value: string | null) =>
     writeDesktopConfigValue("qingagent.kimi_api_key", value),

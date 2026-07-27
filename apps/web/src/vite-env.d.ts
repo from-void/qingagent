@@ -56,6 +56,8 @@ interface Window {
     setOfficialModel?: (value: string | null) => Promise<boolean>;
     getModelTier?: () => string | null;
     setModelTier?: (value: string | null) => Promise<boolean>;
+    getKimiModelTier?: () => string | null;
+    setKimiModelTier?: (value: string | null) => Promise<boolean>;
     getKimiApiKey?: () => string | null;
     setKimiApiKey?: (value: string | null) => Promise<boolean>;
     getKimiCustomProvider?: () => string | null;

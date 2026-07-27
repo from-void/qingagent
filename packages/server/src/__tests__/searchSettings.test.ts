@@ -112,6 +112,21 @@ const mockCore = vi.hoisted(() => {
     }),
     parsePrimarySearchConfig,
     parseSearchProviderConfig,
+    patchAppSettingJsonField: vi.fn(async (
+      key: string,
+      field: string,
+      patch: Record<string, unknown>,
+      deleteFields: string[] = [],
+    ) => {
+      const current = parseSearchProviderConfig(store.get(key) ?? null);
+      const currentField = {
+        ...((current[field] as Record<string, unknown> | undefined) ?? {}),
+        ...patch,
+      };
+      for (const name of deleteFields) delete currentField[name];
+      current[field] = currentField;
+      store.set(key, JSON.stringify(current));
+    }),
     setAppSettingJsonField: vi.fn(async (key: string, field: string, value: unknown) => {
       const current = parseSearchProviderConfig(store.get(key) ?? null);
       current[field] = value;
@@ -270,10 +285,33 @@ describe("searchSettingsRoutes", () => {
 
     expect(tavily.status).toBe(200);
     expect(searxng.status).toBe(200);
-    expect(mockCore.setAppSettingJsonField).toHaveBeenCalledTimes(2);
+    expect(mockCore.patchAppSettingJsonField).toHaveBeenCalledTimes(2);
     expect(JSON.parse(mockCore.store.get(mockCore.SETTING_SEARCH_PROVIDER_CONFIG)!)).toEqual({
       tavily: { enabled: true, apiKey: "tvly-concurrent-1234" },
       searxng: { enabled: true, url: "https://search.example.com/" },
+    });
+  });
+
+  it("并发保存同一 provider 的不同属性时合并 patch", async () => {
+    const app = await loadApp();
+
+    const [enabled, apiKey] = await Promise.all([
+      app.request("/api/v1/settings/search/tavily", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      }),
+      app.request("/api/v1/settings/search/tavily", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: "tvly-concurrent-5678" }),
+      }),
+    ]);
+
+    expect(enabled.status).toBe(200);
+    expect(apiKey.status).toBe(200);
+    expect(JSON.parse(mockCore.store.get(mockCore.SETTING_SEARCH_PROVIDER_CONFIG)!)).toEqual({
+      tavily: { enabled: true, apiKey: "tvly-concurrent-5678" },
     });
   });
 

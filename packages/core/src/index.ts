@@ -310,6 +310,7 @@ export {
   listStyleTemplates,
   listVersions,
   loadMainDocumentByThread,
+  patchAppSettingJsonField,
   saveReviewTemplate,
   saveStyleTemplate,
   selectReviewTemplate,

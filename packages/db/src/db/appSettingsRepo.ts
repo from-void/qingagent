@@ -56,6 +56,33 @@ export async function setAppSettingJsonField(
   });
 }
 
+export async function patchAppSettingJsonField(
+  key: string,
+  field: string,
+  patch: Readonly<Record<string, unknown>>,
+  deleteFields: readonly string[] = [],
+): Promise<void> {
+  await ensureMigrated();
+  await withTransaction(async (client) => {
+    const result = await client.execute({
+      sql: `SELECT value FROM app_settings WHERE key = ?`,
+      args: [key],
+    });
+    const row = result.rows[0] as unknown as Record<string, unknown> | undefined;
+    const root = parseJsonObject(row ? String(row.value) : null);
+    const currentField = parseJsonObjectValue(root[field]);
+    Object.assign(currentField, patch);
+    for (const name of deleteFields) delete currentField[name];
+    root[field] = currentField;
+    await client.execute({
+      sql: `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      args: [key, JSON.stringify(root), new Date().toISOString()],
+    });
+    return commitTransaction(undefined);
+  });
+}
+
 export async function deleteAppSetting(key: string): Promise<void> {
   const client = getDocumentsClient();
   await ensureMigrated();
@@ -81,4 +108,10 @@ function parseJsonObject(raw: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function parseJsonObjectValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
 }

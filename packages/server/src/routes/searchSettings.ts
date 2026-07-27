@@ -15,8 +15,8 @@ import {
   parsePrimarySearchConfig,
   parseSearchProviderConfig,
   recordSearchProviderError,
+  patchAppSettingJsonField,
   setAppSetting,
-  setAppSettingJsonField,
   type SearchProviderConfig,
   type SearchProviderConfigMap,
   type SearchProviderErrorKind,
@@ -187,8 +187,10 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
   if (!parsed.ok) return parsed.response;
 
   const config = await readStoredConfig();
-  const current: SearchProviderConfig = { ...(config[id] ?? {}) };
-  const previousCredential = configValueFor(entry, current);
+  const previousCredential = configValueFor(entry, config[id]);
+  let nextCredential = previousCredential;
+  const patch: Record<string, unknown> = {};
+  const deleteFields: string[] = [];
 
   let warning: string | undefined;
   if (typeof parsed.body.enabled === "boolean") {
@@ -196,7 +198,7 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
       // R2-B:内置兜底源不可关闭——不再静默忽略,响应带 warning 让前端可提示。
       if (parsed.body.enabled === false) warning = "内置搜索源不能关闭,已保留";
     } else {
-      current.enabled = parsed.body.enabled;
+      patch.enabled = parsed.body.enabled;
     }
   }
 
@@ -204,22 +206,22 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
     if (entry.kind !== "api") return c.json({ error: "apiKey is only supported for API providers" }, 400);
     const parsedKey = sanitizeApiKey(parsed.body.apiKey);
     if (!parsedKey.ok) return c.json({ error: parsedKey.error }, 400);
-    if (parsedKey.value) current.apiKey = parsedKey.value;
-    else delete current.apiKey;
+    if (parsedKey.value) patch.apiKey = parsedKey.value;
+    else deleteFields.push("apiKey");
+    nextCredential = parsedKey.value;
   }
 
   if ("url" in parsed.body) {
     if (id !== "searxng") return c.json({ error: "url is only supported for SearXNG" }, 400);
     const parsedUrl = sanitizeUrl(parsed.body.url);
     if (!parsedUrl.ok) return c.json({ error: parsedUrl.error }, 400);
-    if (parsedUrl.value) current.url = parsedUrl.value;
-    else delete current.url;
+    if (parsedUrl.value) patch.url = parsedUrl.value;
+    else deleteFields.push("url");
+    nextCredential = parsedUrl.value;
   }
 
-  await setAppSettingJsonField(SETTING_SEARCH_PROVIDER_CONFIG, id, current);
-  if (configValueFor(entry, current) !== previousCredential) {
-    clearManagedSearchProviderHealth(id);
-  }
+  await patchAppSettingJsonField(SETTING_SEARCH_PROVIDER_CONFIG, id, patch, deleteFields);
+  if (nextCredential !== previousCredential) clearManagedSearchProviderHealth(id);
   invalidateManagedSearchConfig();
   clearSearchCache();
   const response = await readSearchSettingsResponse();

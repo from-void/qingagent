@@ -28,7 +28,7 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
-import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
@@ -83,13 +83,9 @@ export function __resetIsolationCacheForTest(): void {
   cachedIsolation = null;
 }
 
-/** sessionId 进文件路径前的清洗:只留安全字符,防路径穿越。 */
+/** sessionId 进文件路径前的统一编码：UTF-16 code unit 可逆，且仅输出路径安全字符。 */
 export function sessionWorkspaceDirName(sessionId: string): string {
-  if (sessionId.length === 0) return "default";
-  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  if (safe === sessionId) return safe;
-  const hash = createHash("sha256").update(sessionId).digest("hex").slice(0, 12);
-  return `${safe}_${hash}`;
+  return `sid_${Buffer.from(sessionId, "utf16le").toString("hex")}`;
 }
 
 export function sessionWorkspaceDir(sessionId: string): string {

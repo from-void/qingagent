@@ -208,7 +208,7 @@ export function validateCommand(cmd: Command): void {
     }
     case "resumeAskUser":
       if (!cmd.data.sessionId) fail(`ResumeAskUser.sessionId must be non-empty`);
-      if (cmd.data.toolCallId !== undefined && !cmd.data.toolCallId) {
+      if (!cmd.data.toolCallId) {
         fail(`ResumeAskUser.toolCallId must be non-empty`);
       }
       if (Object.keys(cmd.data.answers).length === 0)

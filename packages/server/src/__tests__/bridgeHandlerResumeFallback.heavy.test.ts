@@ -318,6 +318,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
           kind: "resumeAskUser",
           data: {
             sessionId: session.sessionId,
+            toolCallId: "ask-1",
             answers,
           },
         }),
@@ -431,6 +432,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -523,6 +525,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -583,6 +586,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -618,6 +622,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: { "q-one": { chosen: [], freeText: "继续" } },
       },
     }));
@@ -668,6 +673,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "答案A" },
           },
@@ -725,6 +731,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续写" },
           },
@@ -865,6 +872,29 @@ describe("handleResume askUser fresh-turn fallback", () => {
     });
   });
 
+  it("缺失 toolCallId 的延迟提交不能接管当前活跃问卷", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(session, "run-delayed-missing-owner");
+
+    await expect(collectFrames(
+      bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: {
+            "q-one": { chosen: [], freeText: "迟到答案" },
+          },
+        },
+      } as never),
+    )).rejects.toThrow("没有待恢复的操作");
+
+    expect(mockState.resumeStream).not.toHaveBeenCalled();
+    expect(session.runId).toBe("run-delayed-missing-owner");
+    expect(session.toolCallId).toBe("ask-1");
+    expect(session._suspensionOwner?.toolCallId).toBe("ask-1");
+  });
+
   it("冷恢复 askUser 提交把命令里的 toolCallId 传给持久层恢复,避免 stale meta id 丢 runId", async () => {
     const bridge = await loadBridge();
     const { createSession } = await import("@qingagent/core");
@@ -999,6 +1029,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -1034,6 +1065,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: { "q-one": { chosen: [], freeText: "直接回答" } },
       },
     }));
@@ -1060,6 +1092,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "请记住我喜欢短句" },
           },
@@ -1098,6 +1131,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -1145,6 +1179,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-one": { chosen: [], freeText: "继续" },
           },
@@ -1220,6 +1255,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: {
             "q-format": { chosen: ["v2"], freeText: null },
             "q-note": { chosen: [], freeText: "暂不需要应用这版修改" },
@@ -1264,6 +1300,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
           kind: "resumeAskUser",
           data: {
             sessionId: session.sessionId,
+            toolCallId: "ask-1",
             answers: {
               "q-one": { chosen: [], freeText: "答案A" },
             },
@@ -1302,6 +1339,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
+          toolCallId: "ask-1",
           answers: { "q-one": { chosen: [], freeText: "继续" } },
         },
       }));
@@ -1343,6 +1381,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       kind: "resumeAskUser",
       data: {
         sessionId: session.sessionId,
+        toolCallId: "ask-1",
         answers: {
           "q-one": { chosen: [], freeText: "答案A" },
         },

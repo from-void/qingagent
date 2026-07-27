@@ -214,7 +214,9 @@ function assertSubmittedAskUserOwnsActiveSuspension(
   session: SessionState,
   submittedToolCallId: string | null | undefined,
 ): void {
-  if (!submittedToolCallId) return;
+  if (!submittedToolCallId) {
+    throw new Error("没有待恢复的操作");
+  }
   const owner = session._suspensionOwner;
   if (
     !hasActiveSuspension(session) ||

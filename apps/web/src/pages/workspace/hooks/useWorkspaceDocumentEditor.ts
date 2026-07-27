@@ -8,6 +8,7 @@ import {
 import type { Editor } from "@tiptap/react";
 import {
   aiIrToPm,
+  getPmContentHash,
   normalizePmDoc,
   pmToLegacySections,
   type PmDoc,
@@ -31,10 +32,13 @@ import {
 } from "../data/pendingDocSave";
 import {
   createClientMutationId,
+  flushDocSaveInBackground,
   flushDocSaveOnPageExit,
+  PageExitDocSaveError,
   pageExitDocSaveFingerprint,
   pmDocHasSubstantiveContent,
   shouldFlushDocSaveOnPageExit,
+  type PageExitDocSaveBase,
 } from "../data/pageExitSave";
 import {
   ensureSessionIdOnce,
@@ -67,6 +71,15 @@ export type SendDocWrite = (
   target?: DocWriteTarget,
   baseline?: DocWriteBaseline,
 ) => Promise<void>;
+
+export interface PageExitDocSaveHandoff {
+  preservedStream: ServerStream | null;
+  completion: Promise<void>;
+}
+
+export type PreparedPageExitDocSave = (options?: {
+  deferUntilPendingSettles?: boolean;
+}) => PageExitDocSaveHandoff | null;
 
 function buildBlankStarterDoc(): PmDoc {
   return aiIrToPm({
@@ -125,6 +138,7 @@ export function useWorkspaceDocumentEditor(input: {
   showToast: (message: string, durationMs?: number) => void;
   showBackgroundDocSaveFailure: (error: unknown) => void;
   rejectPendingDocSaveDrain: (error: Error) => void;
+  resolvePendingDocSaveDrain: () => void;
   waitForPendingDocSaveDrain: () => Promise<void>;
 }) {
   const {
@@ -157,6 +171,7 @@ export function useWorkspaceDocumentEditor(input: {
     showToast,
     showBackgroundDocSaveFailure,
     rejectPendingDocSaveDrain,
+    resolvePendingDocSaveDrain,
     waitForPendingDocSaveDrain,
   } = input;
 
@@ -542,7 +557,7 @@ export function useWorkspaceDocumentEditor(input: {
     }
   }, [waitForPendingDocSaveDrain]);
 
-  const preparePageExitDocSave = useCallback((): (() => void) | null => {
+  const preparePageExitDocSave = useCallback((): PreparedPageExitDocSave | null => {
     const editor = tiptapEditorRef.current;
     const sessionId = sessionIdRef.current;
     if (!editor || editor.isDestroyed || !sessionId) return null;
@@ -562,8 +577,6 @@ export function useWorkspaceDocumentEditor(input: {
       return null;
     }
 
-    const expectedDocumentSnapshot = docVersionRef.current;
-    const baseContentHash = baseContentHashRef.current;
     const baselineDoc = current.doc.pmDoc ?? null;
     if (isAbnormalDocumentCollapse(baselineDoc, pmDoc)) {
       console.error("[workspace] page-exit 拒绝保存异常坍缩文档", {
@@ -577,7 +590,6 @@ export function useWorkspaceDocumentEditor(input: {
       queuedPmDocRef.current !== null ||
       scheduledDocWriteRef.current;
     if (
-      (expectedDocumentSnapshot === 0 && !pmDocHasSubstantiveContent(pmDoc)) ||
       !shouldFlushDocSaveOnPageExit({
         pmDoc,
         baselineDoc,
@@ -587,19 +599,105 @@ export function useWorkspaceDocumentEditor(input: {
       return null;
     }
 
-    const fingerprint = pageExitDocSaveFingerprint({
-      sessionId,
-      expectedDocumentSnapshot,
-      baseContentHash,
-      pmDoc,
-    });
-    return () => {
-      if (pageExitDocSaveFingerprintRef.current === fingerprint) return;
+    return (options = {}) => {
+      // A1：版本与 hash 必须在真正接管保存的这一刻读取。准备闭包后，
+      // 在途 B 可能已经确认并把基底推进到 N+1，不能继续使用准备时的 N。
+      const fallbackBase: PageExitDocSaveBase = {
+        expectedDocumentSnapshot: docVersionRef.current,
+        baseContentHash: baseContentHashRef.current,
+      };
+      if (
+        fallbackBase.expectedDocumentSnapshot === 0 &&
+        !pmDocHasSubstantiveContent(pmDoc)
+      ) {
+        return null;
+      }
+      const fingerprint = pageExitDocSaveFingerprint({
+        sessionId,
+        ...fallbackBase,
+        pmDoc,
+      });
+      if (pageExitDocSaveFingerprintRef.current === fingerprint) return null;
+
+      if (options.deferUntilPendingSettles) {
+        const pendingMutationId = latestDocMutationIdRef.current;
+        const pendingPmDoc = lastSentPmDocRef.current;
+        const pendingStream = streamRef.current;
+        let unsubscribe: () => void = () => undefined;
+        let pendingBase: Promise<PageExitDocSaveBase> | undefined;
+
+        if (pendingMutationId && pendingStream) {
+          pendingBase = new Promise<PageExitDocSaveBase>((resolve) => {
+            unsubscribe = pendingStream.subscribe((frame) => {
+              if (
+                frame.kind !== "docWriteResult" ||
+                frame.data.clientMutationId !== pendingMutationId
+              ) {
+                return;
+              }
+              unsubscribe();
+              unsubscribe = () => undefined;
+              if (frame.data.ok && pendingPmDoc) {
+                resolve({
+                  expectedDocumentSnapshot: frame.data.docVersion,
+                  baseContentHash: getPmContentHash(pendingPmDoc),
+                });
+                return;
+              }
+              // 旧写入失败时沿用接管时已知基底；若服务端其实已前进，
+              // C 的首次提交会 conflict，并由后台链读取最新基底重试。
+              resolve(fallbackBase);
+            });
+          });
+        }
+
+        // C 已由后台任务完整接管；先从共享单飞槽移走，再允许新会话复用这些 refs。
+        if (docSaveRetryTimerRef.current !== null) {
+          clearTimeout(docSaveRetryTimerRef.current);
+          docSaveRetryTimerRef.current = null;
+        }
+        queuedPmDocRef.current = null;
+        pendingDocWriteRef.current = false;
+        scheduledDocWriteRef.current = false;
+        latestDocMutationIdRef.current = null;
+        for (const waiter of docWriteAckRef.current.values()) waiter.resolve();
+        docWriteAckRef.current.clear();
+        resolvePendingDocSaveDrain();
+
+        const preservedStream = pendingBase ? pendingStream : null;
+        const completion = flushDocSaveInBackground({
+          sessionId,
+          fallbackBase,
+          pendingBase,
+          pmDoc,
+          baselineDoc,
+          hasPendingDocSave: true,
+        })
+          .then(() => {
+            pageExitDocSaveFingerprintRef.current = fingerprint;
+          })
+          .catch((error) => {
+            console.error(
+              "[workspace] background page-exit updateDoc failed",
+              error,
+            );
+            showToast(
+              error instanceof PageExitDocSaveError && error.transient
+                ? "旧会话最后修改暂时未能保存，请稍后返回重试"
+                : "旧会话最后修改保存失败，请返回该会话重试",
+            );
+          })
+          .finally(() => {
+            unsubscribe();
+            preservedStream?.dispose();
+          });
+        return { preservedStream, completion };
+      }
+
       try {
         const result = flushDocSaveOnPageExit({
           sessionId,
-          expectedDocumentSnapshot,
-          baseContentHash,
+          ...fallbackBase,
           pmDoc,
           baselineDoc,
           hasPendingDocSave,
@@ -610,8 +708,9 @@ export function useWorkspaceDocumentEditor(input: {
       } catch (error) {
         console.error("[workspace] page-exit updateDoc flush failed", error);
       }
+      return null;
     };
-  }, []);
+  }, [resolvePendingDocSaveDrain, showToast]);
 
   const getLatestExportPmDoc = useCallback((): PmDoc | null => {
     const editor = tiptapEditorRef.current;

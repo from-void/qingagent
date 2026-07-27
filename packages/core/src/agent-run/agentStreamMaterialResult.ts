@@ -190,7 +190,7 @@ export async function* handleMaterialToolResultSideEffects(
       bound?.fileId ??
       existing?.fileId ??
       null;
-    const fullText = bound?.text ?? "";
+    const fullText = bound?.text ?? existing?.text ?? "";
     const hollowWebContent =
       !!bound?.sourceUrl &&
       bound.sourceKind !== "github" &&
@@ -205,9 +205,21 @@ export async function* handleMaterialToolResultSideEffects(
         extractionsThisTurn: turn.extractionEventsThisTurn.length,
         cachedKeys: Array.from(turn.extractedTexts.keys()).slice(0, 10),
       });
+      const extractionToolNames = new Set([
+        "parseFile",
+        "fetchArticle",
+        "webSearch",
+        "github_read_file",
+        "github_search_code",
+      ]);
+      const hadExtractionAttemptThisTurn = Array.from(
+        turn.toolCallNameById.values(),
+      ).some((name) => extractionToolNames.has(name));
       const reason = hollowWebContent
         ? "网页正文未能有效提取（疑似动态渲染，或仅有标题+导航/分享控件的空洞页），按解析失败处理，未写入素材库。"
-        : "素材正文为空或未能有效提取（空内容或不支持的格式），按解析失败处理，未写入素材库。请确认文件内容或换成支持格式后重新上传。";
+        : !hadExtractionAttemptThisTurn && !existing?.text
+          ? "未找到该素材的正文（可能因服务重启丢失临时解析结果），请重新解析文件或重新抓取链接。"
+          : "素材正文为空或未能有效提取（空内容或不支持的格式），按解析失败处理，未写入素材库。请确认文件内容或换成支持格式后重新上传。";
       const failedSpec: ToolCallSpec = {
         id: toolCallId,
         name: toolName,

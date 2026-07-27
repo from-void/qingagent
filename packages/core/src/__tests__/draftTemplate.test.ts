@@ -1,5 +1,5 @@
 import { RequestContext } from "@mastra/core/request-context";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../session/sessionState.js";
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +19,7 @@ vi.mock("../llm/modelConfig.js", async (importOriginal) => ({
 
 import {
   buildDraftTemplateSteeringTail,
+  DRAFT_TEMPLATE_DEADLINE_MS,
   draftTemplate,
   parseDraftTemplate,
 } from "../session/draftTemplate.js";
@@ -28,6 +29,10 @@ const reviewScene = { kind: "review", type: "role", label: "角色审查" } as c
 describe("draftTemplate 旁支站点", () => {
   beforeEach(() => {
     mocks.generateText.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("表单有内容时原样表达名称主题与提示词续写意图", () => {
@@ -82,5 +87,38 @@ describe("draftTemplate 旁支站点", () => {
       intent: { name: "", prompt: "" },
     }, requestContext)).rejects.toMatchObject({ name: "AbortError" });
     expect(mocks.generateText).not.toHaveBeenCalled();
+  });
+
+  it("模型链路超过 85 秒时由服务端 deadline 中止", async () => {
+    vi.useFakeTimers();
+    const deadlineController = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      setTimeout(() => {
+        deadlineController.abort(new DOMException(
+          `draftTemplate timed out after ${ms}ms`,
+          "TimeoutError",
+        ));
+      }, ms);
+      return deadlineController.signal;
+    });
+    mocks.generateText.mockImplementation(({ abortSignal }: { abortSignal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        abortSignal?.addEventListener("abort", () => reject(abortSignal.reason), {
+          once: true,
+        });
+      }));
+    const pending = draftTemplate({ doc: null } as unknown as SessionState, {
+      scene: reviewScene,
+      intent: { name: "", prompt: "" },
+    }, new RequestContext([["sessionId", "draft-template-timeout"]] as never));
+    const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+
+    await vi.advanceTimersByTimeAsync(DRAFT_TEMPLATE_DEADLINE_MS);
+
+    await rejection;
+    expect(timeout).toHaveBeenCalledWith(DRAFT_TEMPLATE_DEADLINE_MS);
+    expect(mocks.generateText.mock.calls[0]?.[0].abortSignal).toBe(
+      deadlineController.signal,
+    );
   });
 });

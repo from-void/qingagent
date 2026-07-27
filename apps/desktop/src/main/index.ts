@@ -55,6 +55,8 @@ import {
   type RememberPromptDecision,
 } from "./trustedRememberUi.js";
 import { computeMainWindowSize } from "./windowSize.js";
+import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
+import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
 
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
@@ -339,6 +341,27 @@ const STARTUP_SHELL_HTML = `<!doctype html>
 <body><div class="shell"><div class="mark">青简</div><div class="breath"></div></div></body>
 </html>`;
 const STARTUP_SHELL_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STARTUP_SHELL_HTML)}`;
+const CHROMIUM_ERR_ABORTED = -3;
+const CONTENT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
+
+function waitForContentLoadRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function probeEmbeddedServerHealth(port: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CONTENT_HEALTH_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function captureAppOpenedOnce() {
   if (appOpenedCaptured) return;
@@ -347,17 +370,14 @@ function captureAppOpenedOnce() {
 }
 
 function installTelemetryProcessErrorHandlers() {
-  const existingUncaughtExceptionListeners = process.listenerCount("uncaughtException");
-  const existingUnhandledRejectionListeners = process.listenerCount("unhandledRejection");
-
   process.prependListener("uncaughtException", (err, origin) => {
     telemetry.captureError(err, {
       errorKind: "uncaughtException",
       errorOrigin: origin,
     });
 
-    // 接管 uncaughtException 会抑制 Node 默认的堆栈打印,这里补回再退出,绝不静默吞崩溃。
-    if (existingUncaughtExceptionListeners === 0) {
+    // 触发时实时判断：若除 telemetry 自身外无人接管，补回堆栈打印并退出，绝不静默吞崩溃。
+    if (!hasOtherProcessErrorHandler(process.listenerCount("uncaughtException"))) {
       console.error("[telemetry] uncaughtException:", err);
       void telemetry.shutdown(1000).finally(() => process.exit(1));
     }
@@ -368,8 +388,8 @@ function installTelemetryProcessErrorHandlers() {
       errorKind: "unhandledRejection",
     });
 
-    // 没有既有 handler 时,保持 Node 默认崩溃方向,并补回堆栈打印。
-    if (existingUnhandledRejectionListeners === 0) {
+    // crashGuard 可能晚于 telemetry 安装，必须在触发时实时判断是否已有其他 handler。
+    if (!hasOtherProcessErrorHandler(process.listenerCount("unhandledRejection"))) {
       console.error("[telemetry] unhandledRejection:", reason);
       void telemetry.shutdown(1000).finally(() => process.exit(1));
     }
@@ -1033,11 +1053,15 @@ async function createWindowOnce() {
   // 启动壳已完成，遥测从此处挂载，确保首个 did-finish-load 对应真正内容页。
   attachRendererTelemetry(contentWindow, telemetry.getRendererBootstrap());
 
-  contentWindow.webContents.once("did-finish-load", () => {
+  const startUpdaterAfterContentLoad = (): void => {
+    // 恢复过程会重新展示启动壳，不能让壳页的完成事件抢走 updater 的一次性启动机会。
+    if (contentWindow.webContents.getURL() === STARTUP_SHELL_URL) return;
+    contentWindow.webContents.off("did-finish-load", startUpdaterAfterContentLoad);
     setTimeout(() => {
       void startDesktopUpdater({ window: contentWindow });
     }, 250);
-  });
+  };
+  contentWindow.webContents.on("did-finish-load", startUpdaterAfterContentLoad);
 
   const contentUrl = isDev
     // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
@@ -1045,12 +1069,77 @@ async function createWindowOnce() {
     // 打包态由内置 Hono 同时提供 API 与静态文件。
     : `http://localhost:${port}`;
 
+  let contentRecoveryActive = false;
+  const recoverContentLoad = async (reason: unknown): Promise<void> => {
+    if (contentRecoveryActive || contentWindow.isDestroyed()) return;
+    contentRecoveryActive = true;
+    console.error("[startup] 内容页加载失败，开始恢复:", reason);
+    try {
+      while (!contentWindow.isDestroyed()) {
+        // 覆盖 Chromium 错误页，恢复期间持续显示与启动阶段一致的暖纸壳。
+        await contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
+          console.warn("[startup] 恢复启动壳加载失败:", error);
+        });
+
+        let completedRetries = 0;
+        while (!contentWindow.isDestroyed()) {
+          const step = nextContentLoadRecoveryStep(completedRetries);
+          if (step.kind === "prompt") break;
+
+          await waitForContentLoadRetry(step.delayMs);
+          if (contentWindow.isDestroyed()) return;
+          completedRetries = step.attempt;
+
+          if (!(await probeEmbeddedServerHealth(port))) {
+            console.warn(`[startup] 内容页第 ${step.attempt} 次恢复前健康探测失败`);
+            continue;
+          }
+
+          try {
+            await contentWindow.loadURL(contentUrl);
+            return;
+          } catch (error) {
+            console.error(`[startup] 内容页第 ${step.attempt} 次恢复失败:`, error);
+          }
+        }
+
+        if (contentWindow.isDestroyed()) return;
+        const { response } = await dialog.showMessageBox(contentWindow, {
+          type: "warning",
+          title: "内容页加载失败",
+          message: "青简当前无法加载内容页。",
+          detail: "本地服务不可用或内容页加载失败。你可以重新尝试加载，或退出应用。",
+          buttons: ["重试", "退出"],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response === 1) {
+          app.exit(1);
+          return;
+        }
+        // 用户选择重试后重新展示启动壳，并获得完整的三次恢复机会。
+      }
+    } finally {
+      contentRecoveryActive = false;
+    }
+  };
+
+  contentWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === CHROMIUM_ERR_ABORTED) return;
+      void recoverContentLoad({ errorCode, errorDescription, validatedURL });
+    },
+  );
+
   const contentLoad = contentWindow.loadURL(contentUrl);
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
     contentWindow.webContents.openDevTools({ mode: "detach" });
   }
   void contentLoad.catch((error) => {
     console.error("[startup] 内容页加载失败:", error);
+    void recoverContentLoad(error);
   });
 }
 

@@ -172,6 +172,88 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     expect(mat?.metadata.parseError).toBeNull();
   }, 10_000);
 
+  it("服务重启后提取缓存为空时，storeMaterial 复用已有素材正文", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("ref-restart-existing-material");
+    const oldText = "重启前已经持久化的素材正文。".repeat(40);
+    state.materials.set("mat-restart", {
+      id: "mat-restart",
+      filename: "重启素材.pdf",
+      mimeType: "application/pdf",
+      text: oldText,
+      summary: "旧摘要",
+      fileId: "file-restart",
+      metadata: {
+        pages: 2,
+        wordCount: oldText.length,
+        title: "重启素材",
+        sourceUrl: null,
+      },
+      createdAt: "2026-07-26T00:00:00.000Z",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+    });
+    state._extractedTexts = new Map();
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          toolCall("storeMaterial", "s-restart", {
+            filename: "重启素材.pdf",
+            mimeType: "application/pdf",
+            summary: "重启后更新摘要",
+          }),
+          toolResult("storeMaterial", "s-restart", {
+            filename: "重启素材.pdf",
+            mimeType: "application/pdf",
+            summary: "重启后更新摘要",
+          }, { materialId: "mat-restart", stored: true }),
+        ),
+        { state, agentMessageId: "m", streamId: "s-restart", runId: "r" },
+      ),
+    );
+
+    expect(storeMaterialFailureFor(frames, "s-restart")).toBeUndefined();
+    expect(state.materials.get("mat-restart")).toMatchObject({
+      text: oldText,
+      summary: "重启后更新摘要",
+      fileId: "file-restart",
+      createdAt: "2026-07-26T00:00:00.000Z",
+    });
+  });
+
+  it("本轮没有提取事件且没有旧正文时，提示重新解析或抓取", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("ref-restart-missing-text");
+    state._extractedTexts = new Map();
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          toolCall("storeMaterial", "s-missing", {
+            filename: "尚未恢复.pdf",
+            mimeType: "application/pdf",
+          }),
+          toolResult("storeMaterial", "s-missing", {
+            filename: "尚未恢复.pdf",
+            mimeType: "application/pdf",
+          }, { materialId: "mat-missing", stored: true }),
+        ),
+        { state, agentMessageId: "m", streamId: "s-missing", runId: "r" },
+      ),
+    );
+
+    const failed = storeMaterialFailureFor(frames, "s-missing");
+    expect(failed?.kind).toBe("toolCallUpdated");
+    if (failed?.kind === "toolCallUpdated" && failed.data.spec.status.kind === "failed") {
+      expect(failed.data.spec.status.data.reason).toBe(
+        "未找到该素材的正文（可能因服务重启丢失临时解析结果），请重新解析文件或重新抓取链接。",
+      );
+    } else {
+      throw new Error("完全无正文时 storeMaterial 未进入失败态");
+    }
+    expect(state.materials.has("mat-missing")).toBe(false);
+  });
+
   it("parseFile→storeMaterial:模型改形 filename 时仍沿用上传 fileId", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("ref-parse-file-id-mismatch");

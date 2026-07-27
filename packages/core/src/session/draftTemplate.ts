@@ -10,6 +10,8 @@ import { runSideChannel } from "../llm/sideChannel.js";
 const MAX_TEMPLATE_NAME_CHARS = 12;
 const MAX_FALLBACK_DOCUMENT_CHARS = 2_000;
 const MAX_TEMPLATE_TOKENS = 800;
+/** 服务端先在 85 秒终止模型链路，给 Web 的 90 秒上限预留失败帧与 422 返回时间。 */
+export const DRAFT_TEMPLATE_DEADLINE_MS = 85_000;
 
 function sceneInstruction(scene: DraftTemplateScene): string {
   if (scene.kind === "review") return `审查模板：${scene.label}（类型 ${scene.type}）`;
@@ -72,7 +74,11 @@ export async function draftTemplate(
   input: { scene: DraftTemplateScene; intent: DraftTemplateIntent },
   requestContext?: RequestContext,
 ): Promise<DraftTemplateResult> {
-  const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
+  const callerSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
+  const deadlineSignal = AbortSignal.timeout(DRAFT_TEMPLATE_DEADLINE_MS);
+  const abortSignal = callerSignal
+    ? AbortSignal.any([callerSignal, deadlineSignal])
+    : deadlineSignal;
   const documentText = state.doc
     ? pmToPlainText(state.doc, { skipMedia: true }).slice(0, MAX_FALLBACK_DOCUMENT_CHARS)
     : "";

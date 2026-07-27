@@ -33,7 +33,7 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   const serverReadyLine = source.indexOf("({ port } = await serverReady)", startServerLine);
   const seedLine = source.indexOf("await maybeSeedInitialContent();", serverReadyLine);
   const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", seedLine);
-  const finishLoadLine = source.indexOf('contentWindow.webContents.once("did-finish-load"', telemetryLine);
+  const finishLoadLine = source.indexOf('contentWindow.webContents.on("did-finish-load"', telemetryLine);
   const contentLoadLine = source.indexOf("contentWindow.loadURL(contentUrl)", finishLoadLine);
   const createWindowSource = source.slice(source.indexOf("async function createWindow()"), source.indexOf("// 首启示例内容"));
 
@@ -60,6 +60,27 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   assert.match(readStartupShellHtml(source), /background:\s*#ece4d3/);
   assert.match(readStartupShellHtml(source), /color:\s*#2f2a22/);
   assert.doesNotMatch(readStartupShellHtml(source), /https?:\/\//i, "启动壳不得引用外部资源");
+});
+
+test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ERR_ABORTED", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const recoveryLine = source.indexOf("const recoverContentLoad = async");
+  const failLoadLine = source.indexOf('contentWindow.webContents.on(\n    "did-fail-load"', recoveryLine);
+  const contentLoadLine = source.indexOf("const contentLoad = contentWindow.loadURL(contentUrl)", failLoadLine);
+  const catchLine = source.indexOf("void contentLoad.catch(", contentLoadLine);
+  const recoverySource = source.slice(recoveryLine, contentLoadLine);
+  const catchSource = source.slice(catchLine, source.indexOf("\n  });", catchLine) + 5);
+
+  assert.ok(recoveryLine >= 0, "必须定义内容页恢复流程");
+  assert.ok(failLoadLine > recoveryLine && failLoadLine < contentLoadLine, "did-fail-load 必须在首次内容页导航前注册");
+  assert.match(recoverySource, /!isMainFrame \|\| errorCode === CHROMIUM_ERR_ABORTED/);
+  assert.match(recoverySource, /recoverContentLoad\(\{ errorCode, errorDescription, validatedURL \}\)/);
+  assert.match(recoverySource, /probeEmbeddedServerHealth\(port\)/);
+  assert.match(recoverySource, /contentWindow\.loadURL\(STARTUP_SHELL_URL\)/);
+  assert.match(recoverySource, /dialog\.showMessageBox\(contentWindow/);
+  assert.match(recoverySource, /buttons: \["重试", "退出"\]/);
+  assert.match(recoverySource, /app\.exit\(1\)/);
+  assert.match(catchSource, /recoverContentLoad\(error\)/, "loadURL rejection 也必须进入同一恢复流程");
 });
 
 test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () => {

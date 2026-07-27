@@ -48,7 +48,11 @@ describe("API JSON 请求体上限", () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    // 请求体护栏已放行；不存在的会话随后由 Actor 按业务失败返回 422。
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "COMMAND_FAILED" },
+    });
   });
 
   it("upload 继续使用路由自身的更大上限", async () => {

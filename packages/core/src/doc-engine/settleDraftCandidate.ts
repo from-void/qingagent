@@ -427,6 +427,13 @@ export async function* settleDraftCandidate(opts: {
   void baseSections;
   void candidate;
   void baseVersion;
+  await documentDraftRepo.clear(state.docId).catch((err) => {
+    logger.warn("Failed to clear discarded pending draft row", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
   clearDraftConfirmationState(state);
   clearReviewDiffState(state);
   yield* syncContentAndProjectDocState(state, "draft_candidate_noop");

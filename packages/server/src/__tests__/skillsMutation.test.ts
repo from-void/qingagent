@@ -207,6 +207,66 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
     expect(await res.json()).toMatchObject({ installed: true, name: SKILL });
   });
 
+  it("并发直写同名技能时仅一个成功，最终文件完整且属于成功方", async () => {
+    const skillName = "atomic-concurrent-skill";
+    const { readFile } = await import("node:fs/promises");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { join } = await import("node:path");
+    installDir = join(SKILLS_INSTALL_DIR, skillName);
+    const candidates = [
+      `---\nname: ${skillName}\ndescription: 候选甲\n---\n# 完整内容甲\n`,
+      `---\nname: ${skillName}\ndescription: 候选乙\n---\n# 完整内容乙\n`,
+    ];
+    const app = await loadApp();
+
+    const responses = await Promise.all(candidates.map((skillMd) =>
+      app.request("/api/v1/skills/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillMd }),
+      }),
+    ));
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const successIndex = responses.findIndex((response) => response.status === 200);
+    expect(await readFile(join(installDir, "SKILL.md"), "utf8")).toBe(
+      candidates[successIndex],
+    );
+    await expect(responses.find((response) => response.status === 409)!.json())
+      .resolves.toEqual({ error: "这个技能已存在" });
+  });
+
+  it("直写 staging 写入失败不占用目标名，同名可重新安装", async () => {
+    const skillName = "atomic-write-failure";
+    const skillMd = `---\nname: ${skillName}\ndescription: 可重装\n---\n# 完整内容\n`;
+    const fs = await import("node:fs/promises");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { join } = await import("node:path");
+    const { installSkillMarkdown } = await import("../routes/skills");
+    installDir = join(SKILLS_INSTALL_DIR, skillName);
+
+    await expect(installSkillMarkdown(installDir, skillMd, {
+      mkdtemp: fs.mkdtemp,
+      rename: fs.rename,
+      rm: fs.rm,
+      writeFile: vi.fn(async () => {
+        throw new Error("injected write failure");
+      }) as typeof fs.writeFile,
+    })).rejects.toThrow("injected write failure");
+    await expect(fs.access(installDir)).rejects.toThrow();
+    expect((await fs.readdir(SKILLS_INSTALL_DIR)).filter((name) => name.startsWith(".install-")))
+      .toEqual([]);
+
+    const app = await loadApp();
+    const response = await app.request("/api/v1/skills/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skillMd }),
+    });
+    expect(response.status).toBe(200);
+    await expect(fs.readFile(join(installDir, "SKILL.md"), "utf8")).resolves.toBe(skillMd);
+  });
+
   it("归档内置技能名仍是保留名,不能导入同名自装技能", async () => {
     const archivedName = "archived-test-skill";
     const { ARCHIVED_BUILTIN_SKILLS } = await import("@qingagent/core");

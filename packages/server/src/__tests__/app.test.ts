@@ -62,6 +62,12 @@ async function readSseUntil(
 // Health
 // -----------------------------------------------------------------------
 describe("GET /health", () => {
+  it("支持 SSE 重连用 HEAD 探活且不返回响应体", async () => {
+    const res = await request("HEAD", "/health");
+    expect(res.status).toBe(200);
+    await expect(res.text()).resolves.toBe("");
+  });
+
   it("返回服务状态与浏览器/PDF 能力状态", async () => {
     const res = await request("GET", "/health");
     expect(res.status).toBe(200);
@@ -791,7 +797,11 @@ describe("POST /api/v1/stream", () => {
       },
     };
     const res = await request("POST", "/api/v1/stream", command);
-    expect(res.status).toBe(200);
+    // 结构校验已通过；不存在的会话进入 Actor 后按统一业务失败协议返回 422。
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: "COMMAND_FAILED" },
+    });
   });
 
   it("rejects updateDoc with missing sessionId", async () => {

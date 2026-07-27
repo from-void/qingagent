@@ -206,7 +206,7 @@ describe("handleCommand material commands", () => {
     expect(schedulePersist).toHaveBeenCalledWith(session, "command:removeMaterial");
   });
 
-  it("does not delete the uploaded file when another material shares fileId", async () => {
+  it("同一会话内两个素材共享 fileId 时，删一个不释放会话级引用也不删物理文件", async () => {
     const { bridge, deleteUploadedFile } = await loadBridge();
     const session = await createSession(bridge);
     const sharedFileId = "22222222-2222-2222-2222-222222222222";

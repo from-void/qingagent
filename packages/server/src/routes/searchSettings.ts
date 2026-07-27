@@ -6,6 +6,7 @@ import {
   SETTING_SEARCH_PROVIDER_CONFIG,
   SearchProviderError,
   clearManagedSearchProviderHealth,
+  clearSearchCache,
   getSearchProviderHealth,
   getAppSetting,
   invalidateManagedSearchConfig,
@@ -171,6 +172,7 @@ searchSettingsRoutes.put("/settings/search/primary", async (c) => {
 
   await setAppSetting(SETTING_SEARCH_PRIMARY, JSON.stringify(config));
   invalidatePrimarySearchConfig();
+  clearSearchCache();
   return c.json(await readPrimarySearchSettingsResponse());
 });
 
@@ -217,6 +219,7 @@ searchSettingsRoutes.put("/settings/search/:id", async (c) => {
   await setAppSetting(SETTING_SEARCH_PROVIDER_CONFIG, JSON.stringify(config));
   clearManagedSearchProviderHealth(id);
   invalidateManagedSearchConfig();
+  clearSearchCache();
   const response = await readSearchSettingsResponse();
   return c.json(warning ? { ...response, warning } : response);
 });

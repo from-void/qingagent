@@ -137,6 +137,20 @@ describe("qa cli", () => {
     expect(output).not.toContain("secret-token");
   });
 
+  it.each(["abc", "0", "-1", "1.5"])(
+    "chat log --limit %s 在发请求前报错",
+    async (limit) => {
+      const { main } = await import("../cli.js");
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      await expect(
+        main(["chat", "log", "-s", "s1", "--limit", limit]),
+      ).rejects.toThrow("--limit 必须是正整数");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("files list 请求 /files 并打印材料和文件夹源", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

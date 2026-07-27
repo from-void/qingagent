@@ -1332,7 +1332,7 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(changedDoc);
   }, 60_000);
 
-  it("O1: 会话切换 flush 超时后用旧 session 的 beacon 保存当前编辑器正文", async () => {
+  it("A1: B 延迟 400ms 时切会话，后台在 B 成功后以 N+1 保存 C", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] = await Promise.all([
       import("./WorkspacePage"),
@@ -1354,20 +1354,63 @@ describe("WorkspacePage review controls", () => {
     await flushMicrotasks(5);
     const editor = captured.current?.tiptapEditor;
     expect(editor).not.toBeNull();
-    let resolveUpdateDoc: (() => void) | null = null;
-    oldStream.sendCommand.mockImplementation((command: Command) =>
-      command.kind === "updateDoc"
-        ? new Promise<void>((resolve) => { resolveUpdateDoc = resolve; })
-        : Promise.resolve(),
-    );
+    const initialDoc = pmDoc([pmParagraph("p-switch-save", "旧正文")]);
+    const pendingDoc = pmDoc([pmParagraph("p-switch-save", "在途正文 B")]);
+    const latestDoc = pmDoc([pmParagraph("p-switch-save", "最新正文 C")]);
+    oldStream.sendCommand.mockImplementation((command: Command) => {
+      if (command.kind !== "updateDoc") return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        window.setTimeout(() => {
+          oldStream.emit({
+            kind: "docWriteResult",
+            data: {
+              ok: true,
+              clientMutationId: command.data.clientMutationId,
+              docVersion: 2,
+            },
+          });
+          resolve();
+        }, 400);
+      });
+    });
     const sendBeacon = vi.fn((_url: string, _data?: BodyInit | null) => true);
     const originalSendBeacon = navigator.sendBeacon;
     Object.defineProperty(navigator, "sendBeacon", { configurable: true, value: sendBeacon });
+    const backgroundCommands: Array<
+      Extract<Command, { kind: "updateDoc" }>
+    > = [];
+    const backgroundFetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const command = JSON.parse(String(init.body)) as Extract<
+        Command,
+        { kind: "updateDoc" }
+      >;
+      backgroundCommands.push(command);
+      return new Response(JSON.stringify([{
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion: 3,
+        },
+      }]), { status: 200 });
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: backgroundFetch,
+    });
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: backgroundFetch,
+    });
     vi.useFakeTimers();
 
     try {
+      const firstSave = captured.current!.handleEditorChange(pendingDoc);
+      await flushMicrotasks(2);
+      expect(updateDocCommands(oldStream)).toHaveLength(1);
+
       act(() => {
-        editor!.commands.setContent(pmDoc([pmParagraph("p-switch-save", "切换前未落盘正文")]));
+        editor!.commands.setContent(latestDoc);
         window.history.replaceState(null, "", "#/workspace?session=s-2");
         window.dispatchEvent(new HashChangeEvent("hashchange"));
       });
@@ -1376,19 +1419,30 @@ describe("WorkspacePage review controls", () => {
       });
       await flushMicrotasks(5);
 
-      expect(sendBeacon).toHaveBeenCalledTimes(1);
-      vi.useRealTimers();
-      const beaconBody = JSON.parse(await blobText(sendBeacon.mock.calls[0]?.[1] as Blob));
-      expect(beaconBody).toMatchObject({
-        kind: "updateDoc",
-        data: { sessionId: "s-1" },
-      });
-      expect(JSON.stringify(beaconBody.data.doc)).toContain("切换前未落盘正文");
+      expect(sendBeacon).not.toHaveBeenCalled();
       expect(latestServerStream()).not.toBe(oldStream);
+      expect(oldStream.dispose).not.toHaveBeenCalled();
+      expect(backgroundCommands).toHaveLength(0);
+
       await act(async () => {
-        resolveUpdateDoc?.();
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(100);
       });
+      await expect(firstSave).resolves.toBeUndefined();
+      await flushMicrotasks(5);
+
+      expect(updateDocCommands(oldStream)[0]?.data).toMatchObject({
+        sessionId: "s-1",
+        expectedDocumentSnapshot: 1,
+        baseContentHash: getPmContentHash(initialDoc),
+      });
+      expect(backgroundCommands).toHaveLength(1);
+      expect(backgroundCommands[0]?.data).toMatchObject({
+        sessionId: "s-1",
+        expectedDocumentSnapshot: 2,
+        baseContentHash: getPmContentHash(pendingDoc),
+      });
+      expect(backgroundCommands[0]?.data.doc).toEqual(latestDoc);
+      expect(oldStream.dispose).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(navigator, "sendBeacon", { configurable: true, value: originalSendBeacon });
     }
@@ -2310,6 +2364,70 @@ describe("WorkspacePage review controls", () => {
 
     expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+
+    await act(async () => {
+      pendingCommit.resolve([docStateFrame("editing")]);
+      await pendingCommit.promise;
+    });
+  });
+
+  it("B7 放弃全部不终止在途请求，pending 问卷卡保持可作答", async () => {
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试审阅" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            baseDocForReviewSpecs([textReviewToolCall("p-1", "batch-a", 0)]),
+            1,
+          ),
+        },
+      },
+      docStateFrame("pendingReview"),
+      toolCallUpdatedFrame(textReviewToolCall("p-1", "batch-a", 0)),
+    ]);
+    const pendingCommit = mockPendingCommit(stream);
+    await emitFrames(stream, [
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-ask",
+          toolCallId: "ask-1",
+          spec: inlineAskUserToolCall("ask-1"),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "pendingReview" },
+          activeOverlay: "askUser",
+          agentBusy: false,
+        },
+      },
+    ]);
+    expect(captured.current?.state.toolCalls.get("ask-1")?.status.kind).toBe(
+      "pending",
+    );
+
+    act(() => captured.current?.handleRejectAll());
+    await flushMicrotasks();
+
+    // stop 会 abort updateDoc/恢复等共享请求，并把 pending 工具卡统一终结为 aborted。
+    expect(stream.stop).not.toHaveBeenCalled();
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(captured.current?.state.toolCalls.get("ask-1")?.status.kind).toBe(
+      "pending",
+    );
 
     await act(async () => {
       pendingCommit.resolve([docStateFrame("editing")]);
@@ -3262,7 +3380,7 @@ describe("WorkspacePage review controls", () => {
     expect(removeMaterialCommands(stream)).toHaveLength(0);
   });
 
-  it("旧稿 ack 后队列定时器执行前切会话，排队正文只会发往旧会话", async () => {
+  it("300ms 快速路径：旧稿 ack 后排队正文照常发往旧会话并完整排空", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");
     const captured: {
@@ -3804,6 +3922,85 @@ describe("WorkspacePage optimistic send rollback", () => {
   });
 });
 
+describe("WorkspacePage existing session title hydration", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    serverStreamMock.instances.length = 0;
+    window.location.hash = "#/workspace?session=s-existing";
+    sessionStorage.clear();
+    localStorage.setItem("qingagent.deepseek_api_key", "test-key");
+    restoreWorkspaceDomMocks = installWorkspaceDomMocks();
+  });
+
+  afterEach(() => {
+    serverStreamMock.startSessionImpl = null;
+    restoreWorkspaceDomMocks?.();
+    restoreWorkspaceDomMocks = null;
+    localStorage.removeItem("qingagent.deepseek_api_key");
+    vi.useRealTimers();
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  it("B14 进入已有会话时，恢复完成前不清空 store 标题", async () => {
+    const { useSessionStore } = await import("../../stores/sessionStore");
+    useSessionStore.setState({
+      sessions: [{
+        id: "s-existing",
+        title: "已有标题",
+        created_at: "2026-07-27T00:00:00.000Z",
+        summary: "",
+        status: { kind: "Active" },
+      }],
+      currentSessionId: null,
+      currentSessionTitle: null,
+    });
+    serverStreamMock.startSessionImpl = () => new Promise<string>(() => undefined);
+
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    await flushMicrotasks(5);
+
+    expect(useSessionStore.getState().sessions[0]?.title).toBe("已有标题");
+    expect(useSessionStore.getState().currentSessionTitle).toBe("已有标题");
+  });
+
+  it("B14 已有会话恢复失败后，store 标题保持原值", async () => {
+    vi.useFakeTimers();
+    const { useSessionStore } = await import("../../stores/sessionStore");
+    useSessionStore.setState({
+      sessions: [{
+        id: "s-existing",
+        title: "恢复前标题",
+        created_at: "2026-07-27T00:00:00.000Z",
+        summary: "",
+        status: { kind: "Active" },
+      }],
+      currentSessionId: null,
+      currentSessionTitle: null,
+    });
+    serverStreamMock.startSessionImpl = async () => {
+      throw new Error("Stream request failed: 503");
+    };
+
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_500);
+    });
+    await flushMicrotasks(5);
+
+    expect(latestServerStream().startSession).toHaveBeenCalledTimes(4);
+    expect(useSessionStore.getState().sessions[0]?.title).toBe("恢复前标题");
+    expect(useSessionStore.getState().currentSessionTitle).toBe("恢复前标题");
+    expect(host?.textContent).toContain("恢复失败");
+  });
+});
+
 describe("WorkspacePage existing session restore retry", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -4104,6 +4301,175 @@ describe("WorkspacePage page-exit doc save", () => {
         baseContentHash,
         clientMutationId: "exit-fetch",
       },
+    });
+  });
+
+  it("后台兜底等待在途保存结算后，使用 N+1 提交最新正文", async () => {
+    const { flushDocSaveInBackground } = await import("./WorkspacePage");
+    const baseline = pmDoc([pmParagraph("p-1", "版本 N")]);
+    const pendingSaved = pmDoc([pmParagraph("p-1", "在途正文 B")]);
+    const latest = pmDoc([pmParagraph("p-1", "最新正文 C")]);
+    let resolvePending!: (base: {
+      expectedDocumentSnapshot: number;
+      baseContentHash: string;
+    }) => void;
+    const pendingBase = new Promise<{
+      expectedDocumentSnapshot: number;
+      baseContentHash: string;
+    }>((resolve) => {
+      resolvePending = resolve;
+    });
+    const submitted: Array<Extract<Command, { kind: "updateDoc" }>> = [];
+    const fetchKeepalive = vi.fn(async (_url: string, init: RequestInit) => {
+      const command = JSON.parse(String(init.body)) as Extract<
+        Command,
+        { kind: "updateDoc" }
+      >;
+      submitted.push(command);
+      return new Response(JSON.stringify([{
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion: command.data.expectedDocumentSnapshot + 1,
+        },
+      }]), { status: 200 });
+    });
+    const save = flushDocSaveInBackground({
+      sessionId: "session-1",
+      fallbackBase: {
+        expectedDocumentSnapshot: 7,
+        baseContentHash: getPmContentHash(baseline),
+      },
+      pendingBase,
+      pmDoc: latest,
+      baselineDoc: baseline,
+      hasPendingDocSave: true,
+      createMutationId: () => "exit-after-b",
+      fetchKeepalive,
+    });
+
+    await flushMicrotasks(2);
+    expect(fetchKeepalive).not.toHaveBeenCalled();
+    resolvePending({
+      expectedDocumentSnapshot: 8,
+      baseContentHash: getPmContentHash(pendingSaved),
+    });
+    await expect(save).resolves.toBe("saved");
+
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]?.data.expectedDocumentSnapshot).toBe(8);
+    expect(submitted[0]?.data.baseContentHash).toBe(
+      getPmContentHash(pendingSaved),
+    );
+    expect(submitted[0]?.data.doc).toEqual(latest);
+  });
+
+  it("在途保存永不结算时，后台链 10 秒后仍按最新已知基底尝试一次", async () => {
+    const { flushDocSaveInBackground } = await import("./WorkspacePage");
+    const baseline = pmDoc([pmParagraph("p-1", "版本 N")]);
+    const latest = pmDoc([pmParagraph("p-1", "不能丢的正文 C")]);
+    const fetchKeepalive = vi.fn(async (_url: string, init: RequestInit) => {
+      const command = JSON.parse(String(init.body)) as Extract<
+        Command,
+        { kind: "updateDoc" }
+      >;
+      return new Response(JSON.stringify([{
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion: 8,
+        },
+      }]), { status: 200 });
+    });
+    vi.useFakeTimers();
+    const save = flushDocSaveInBackground({
+      sessionId: "session-1",
+      fallbackBase: {
+        expectedDocumentSnapshot: 7,
+        baseContentHash: getPmContentHash(baseline),
+      },
+      pendingBase: new Promise(() => undefined),
+      pmDoc: latest,
+      baselineDoc: baseline,
+      hasPendingDocSave: true,
+      createMutationId: () => "exit-timeout",
+      fetchKeepalive,
+    });
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(fetchKeepalive).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(save).resolves.toBe("saved");
+    const command = JSON.parse(
+      String(fetchKeepalive.mock.calls[0]?.[1].body),
+    ) as Extract<Command, { kind: "updateDoc" }>;
+    expect(command.data.expectedDocumentSnapshot).toBe(7);
+    expect(command.data.doc).toEqual(latest);
+  });
+
+  it("后台兜底首次 conflict 后读取服务端最新基底并只重试一次", async () => {
+    const { flushDocSaveInBackground } = await import("./WorkspacePage");
+    const baseline = pmDoc([pmParagraph("p-1", "旧正文")]);
+    const latest = pmDoc([pmParagraph("p-1", "冲突后正文")]);
+    const submitted: Array<Extract<Command, { kind: "updateDoc" }>> = [];
+    const mutationIds = ["exit-conflict", "exit-retry"];
+    const fetchKeepalive = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === "GET") {
+        expect(url).toContain("/api/v1/history?sessionId=session-1");
+        return new Response(JSON.stringify({
+          entries: [{
+            docVersion: 8,
+            content_hash: "server-hash-8",
+          }],
+        }), { status: 200 });
+      }
+      const command = JSON.parse(String(init.body)) as Extract<
+        Command,
+        { kind: "updateDoc" }
+      >;
+      submitted.push(command);
+      const first = submitted.length === 1;
+      return new Response(JSON.stringify([{
+        kind: "docWriteResult",
+        data: first
+          ? {
+              ok: false,
+              clientMutationId: command.data.clientMutationId,
+              conflict: {
+                expectedDocumentSnapshot:
+                  command.data.expectedDocumentSnapshot,
+                actualDocumentSnapshot: 8,
+              },
+            }
+          : {
+              ok: true,
+              clientMutationId: command.data.clientMutationId,
+              docVersion: 9,
+            },
+      }]), { status: 200 });
+    });
+
+    await expect(flushDocSaveInBackground({
+      sessionId: "session-1",
+      fallbackBase: {
+        expectedDocumentSnapshot: 7,
+        baseContentHash: getPmContentHash(baseline),
+      },
+      pmDoc: latest,
+      baselineDoc: baseline,
+      hasPendingDocSave: true,
+      createMutationId: () => mutationIds.shift() ?? "unexpected-third",
+      fetchKeepalive,
+    })).resolves.toBe("saved");
+
+    expect(submitted).toHaveLength(2);
+    expect(submitted[0]?.data.expectedDocumentSnapshot).toBe(7);
+    expect(submitted[1]?.data).toMatchObject({
+      expectedDocumentSnapshot: 8,
+      baseContentHash: "server-hash-8",
+      clientMutationId: "exit-retry",
     });
   });
 });

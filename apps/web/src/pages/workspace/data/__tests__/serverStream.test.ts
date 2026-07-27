@@ -385,6 +385,33 @@ describe("ServerStream", () => {
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  it("draftTemplate 等待 90 秒后会中止对应 HTTP 请求", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const stream = new ServerStream();
+    const pending = stream.draftTemplate({
+      sessionId: "s-1",
+      scene: { kind: "review", type: "role", label: "角色审查" },
+      intent: { name: "", prompt: "" },
+    });
+    const rejection = expect(pending).rejects.toThrow(
+      "draftTemplate completed without receiving templateDrafted frame",
+    );
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(requestSignal?.aborted).toBe(true);
+    await rejection;
+  });
+
   it("stop() dispatches local stream termination", () => {
     const localActions: WorkspaceLocalAction[] = [];
     const stream = new ServerStream((action) => localActions.push(action));
@@ -475,22 +502,15 @@ describe("ServerStream", () => {
     expect(frames).toHaveLength(1);
   });
 
-  it("EventSource 429 错误显示应用提示并按游标退避重连", async () => {
+  it("EventSource 错误只用 health HEAD 探活，并按游标退避正式重连", async () => {
     vi.useFakeTimers();
-    const fakeWindow = new EventTarget();
-    vi.stubGlobal("window", fakeWindow);
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(
         JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ))
-      .mockResolvedValueOnce(new Response(
-        JSON.stringify({ error: "SSE connection limit exceeded" }),
-        { status: 429, headers: { "Retry-After": "2" } },
-      ));
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as typeof fetch;
-    const rateLimited = vi.fn();
-    fakeWindow.addEventListener("qa-sse-rate-limited", rateLimited);
     const stream = new ServerStream();
     const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
     const source = await waitForEventSource();
@@ -500,18 +520,24 @@ describe("ServerStream", () => {
     source.onerror?.(new Event("error"));
     await Promise.resolve();
     await Promise.resolve();
-    expect(rateLimited).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/health",
+      expect.objectContaining({
+        method: "HEAD",
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(source.closed).toBe(true);
     expect(MockEventSource.instances).toHaveLength(1);
 
-    await vi.advanceTimersByTimeAsync(1_999);
+    await vi.advanceTimersByTimeAsync(999);
     expect(MockEventSource.instances).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(MockEventSource.instances).toHaveLength(2);
     expect(MockEventSource.instances[1]!.url).toContain("after=7");
 
     stream.dispose();
-    fakeWindow.removeEventListener("qa-sse-rate-limited", rateLimited);
   });
 
   it("dispose() aborts active client requests without sending a cancel command", async () => {
@@ -565,68 +591,57 @@ describe("ServerStream", () => {
     expect(parsed.data.fileIds).toEqual(["file-abc-123"]);
   });
 
-  it("sendCommand 返回前台命令的 frame 数组，供 material retry 识别 busy", async () => {
-    const busyFrame: BridgeFrame = {
-      kind: "stream",
-      data: {
-        kind: "draftingFailed",
-        data: {
-          streamId: "active-stream",
-          reason: "生成中，请稍后再试",
-          retriable: false,
-        },
+  it("renameSession 等不依赖成功帧的命令遇到 422 时不再误判成功", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "名称未能保存，请稍后重试",
       },
-    };
-    globalThis.fetch = commandResponse([busyFrame]);
-
+    }, 422);
     const stream = new ServerStream();
-    const result = await stream.sendCommand({
-      kind: "reparseMaterial",
-      data: {
-        sessionId: "s-1",
-        fileId: "33333333-3333-4333-8333-333333333333",
-      },
+
+    await expect(stream.renameSession("s-1", "新名称")).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      message: "名称未能保存，请稍后重试",
     });
-
-    expect(result).toEqual([busyFrame]);
   });
 
-  it("P1-11: cancelAskUser 即使 HTTP 200，只要响应含 actor 错误帧也必须 reject", async () => {
-    const errorFrame: BridgeFrame = {
-      kind: "stream",
-      data: {
-        kind: "draftingFailed",
-        data: {
-          streamId: "error",
-          reason: "模型服务暂时不可用，请稍后重试",
-          retriable: true,
-        },
+  it("derivative 类命令遇到业务失败时立即 reject，不再等待成功帧超时", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "衍生稿不存在或不属于当前会话",
       },
-    };
-    globalThis.fetch = commandResponse([errorFrame]);
-
+      requestId: "request-derivative-failure",
+    }, 422);
     const stream = new ServerStream();
-    await expect(
-      stream.sendCommand({
-        kind: "cancelAskUser",
-        data: { sessionId: "s-1", toolCallId: "ask-1" },
-      }),
-    ).rejects.toThrow("cancelAskUser failed");
+
+    await expect(stream.getDerivativeDoc("s-1", "missing-doc")).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      message: "衍生稿不存在或不属于当前会话",
+      requestId: "request-derivative-failure",
+    });
   });
 
-  it.each([
-    { label: "非数组响应", body: { accepted: true } },
-    { label: "非法 frame", body: [{ kind: "stream", data: {} }] },
-  ])("P1-11: cancelAskUser 防御性拒绝$label", async ({ body }) => {
-    globalThis.fetch = commandResponse(body);
-    const stream = new ServerStream();
+  it("cancelAskUser 的专项失败标记由统一 422 协议保留", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "模型服务暂时不可用，请稍后重试",
+      },
+    }, 422);
 
+    const stream = new ServerStream();
     await expect(
       stream.sendCommand({
         kind: "cancelAskUser",
         data: { sessionId: "s-1", toolCallId: "ask-1" },
       }),
-    ).rejects.toThrow("cancelAskUser failed");
+    ).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      cancelAskUserServerFailure: true,
+      message: "模型服务暂时不可用，请稍后重试",
+    });
   });
 
   it("P1-11: cancelAskUser 空帧数组表示幂等成功", async () => {
@@ -906,6 +921,53 @@ describe("ServerStream", () => {
         },
       }),
     ).rejects.toThrow("Stream request failed: 500");
+  });
+
+  it("commands 的删除领域错误直接透传服务端 message", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "SESSION_DELETED",
+        message: "会话已删除，无法继续操作",
+      },
+    }, 410);
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await expect(
+      stream.sendCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s-1",
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      }),
+    ).rejects.toThrow("会话已删除，无法继续操作");
+    expect(localActions).toContainEqual({
+      kind: "streamErrorSet",
+      error: expect.objectContaining({
+        reason: "会话已删除，无法继续操作",
+        retriable: false,
+        userMessage: "会话已删除，无法继续操作",
+      }),
+    });
+  });
+
+  it("commit 的删除中领域错误直接透传服务端 message", async () => {
+    globalThis.fetch = commandResponse({
+      error: {
+        code: "SESSION_DELETION_IN_PROGRESS",
+        message: "会话正在删除，请稍后再试",
+      },
+    }, 409);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.commitReviewGroups("s-1", { acceptReviewBatchIds: ["review-1"] }),
+    ).rejects.toThrow("会话正在删除，请稍后再试");
   });
 
   it("commitReviewGroups 对 502 HTML 响应报清晰 status 错误,不冒出 JSON.parse 原始错误", async () => {

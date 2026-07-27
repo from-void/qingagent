@@ -184,8 +184,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   if (group === "chat" && command === "log") {
     const sessionId = requireOption(args, "-s");
-    const limit = optionValue(args, "--limit");
-    const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+    const rawLimit = optionValue(args, "--limit");
+    const limit = parsePositiveLimit(rawLimit);
+    const query = limit === undefined ? "" : `?limit=${limit}`;
     const data = await client.request<ExternalChatLogResponse>(`/sessions/${encodeURIComponent(sessionId)}/chat${query}`);
     if (hasFlag(args, "--json")) return printJson(data);
     for (const message of data.messages) {
@@ -426,6 +427,15 @@ function parseSessionsLimit(raw: string | undefined): number {
   const limit = Number(raw);
   if (!Number.isFinite(limit)) throw new QaCliError("VALIDATION", "--limit 必须是数字");
   return Math.min(500, Math.max(1, Math.floor(limit)));
+}
+
+function parsePositiveLimit(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const limit = Number(raw);
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new QaCliError("VALIDATION", "--limit 必须是正整数");
+  }
+  return limit;
 }
 
 async function listAllSessions(

@@ -15,6 +15,10 @@ import {
   SessionActorCommandError,
   type HandleCommandFn,
 } from "../gateway/sessionActor";
+import {
+  SessionDeletedError,
+  SessionDeletionInProgressError,
+} from "../gateway/sessionErrors";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -344,5 +348,83 @@ describe("POST /api/v1/commit", () => {
     expect(body).toEqual({ error: "模型服务暂时不可用，请稍后重试" });
     expect(JSON.stringify(body)).not.toContain("private-key");
     expect(JSON.stringify(body)).not.toContain("supersecret");
+  });
+
+  it.each([
+    [new SessionDeletedError(), 410, "SESSION_DELETED", "会话已删除，无法继续操作"],
+    [new SessionDeletionInProgressError(), 409, "SESSION_DELETION_IN_PROGRESS", "会话正在删除，请稍后再试"],
+  ])("commit 将删除领域错误映射为明确状态（case %#）", async (error, status, code, message) => {
+    vi.spyOn(sessionManager, "submit").mockRejectedValueOnce(error);
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "deleted-commit-session",
+      acceptReviewBatchIds: ["batch"],
+    });
+
+    expect(res.status).toBe(status);
+    await expect(res.json()).resolves.toEqual({
+      error: { code, message },
+    });
+  });
+
+  it.each([
+    [new SessionDeletedError(), 410, "SESSION_DELETED", "会话已删除，无法继续操作"],
+    [new SessionDeletionInProgressError(), 409, "SESSION_DELETION_IN_PROGRESS", "会话正在删除，请稍后再试"],
+  ])("commands 将删除领域错误映射为明确状态（case %#）", async (error, status, code, message) => {
+    vi.spyOn(sessionManager, "submitQueued").mockRejectedValueOnce(error);
+    const res = await request("POST", "/api/v1/commands", {
+      kind: "startSession",
+      data: { mode: { kind: "existing", data: { id: "deleted-command-session" } } },
+    });
+
+    expect(res.status).toBe(status);
+    await expect(res.json()).resolves.toEqual({
+      error: { code, message },
+    });
+  });
+
+  it("draftTemplate deadline 失败返回 422，并携带失败帧 reason 与 requestId", async () => {
+    const failureFrame: LoggedFrame = {
+      seq: 8,
+      epoch: 1,
+      generation: 3,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "error",
+            reason: "操作未能完成，请刷新页面后重试",
+            retriable: true,
+          },
+        },
+      },
+    };
+    vi.spyOn(sessionManager, "submitQueued").mockResolvedValueOnce({
+      completion: Promise.reject(new SessionActorCommandError(
+        "Session actor command failed",
+        new DOMException("draftTemplate timed out after 85000ms", "TimeoutError"),
+        [failureFrame],
+      )),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await request("POST", "/api/v1/commands", {
+      kind: "draftTemplate",
+      data: {
+        sessionId: "command-runtime-failure-test",
+        requestId: "request-template-timeout",
+        scene: { kind: "review", type: "role", label: "角色审查" },
+        intent: { name: "", prompt: "" },
+      },
+    });
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        code: "COMMAND_FAILED",
+        message: "操作未能完成，请刷新页面后重试",
+      },
+      requestId: "request-template-timeout",
+    });
   });
 });

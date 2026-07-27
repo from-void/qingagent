@@ -87,6 +87,7 @@ const mockCore = vi.hoisted(() => {
     SEARCH_PROVIDER_REGISTRY: registry,
     SearchProviderError,
     clearManagedSearchProviderHealth: vi.fn((id: string) => health.delete(id)),
+    clearSearchCache: vi.fn(),
     getSearchProviderHealth: vi.fn((id: string) => health.get(id) ?? { status: "ok" }),
     getAppSetting: vi.fn(async (key: string) => store.get(key) ?? null),
     getPrimarySearchConfig: vi.fn(async () =>
@@ -150,6 +151,7 @@ describe("searchSettingsRoutes", () => {
       keyConfigured: true,
       maskedTail: "3456",
     });
+    expect(mockCore.clearSearchCache).toHaveBeenCalledTimes(1);
 
     const get = await app.request("/api/v1/settings/search");
     expect(get.status).toBe(200);
@@ -262,6 +264,7 @@ describe("searchSettingsRoutes", () => {
       apiKey,
     });
     expect(mockCore.invalidatePrimarySearchConfig).toHaveBeenCalledTimes(1);
+    expect(mockCore.clearSearchCache).toHaveBeenCalledTimes(1);
 
     const clear = await app.request("/api/v1/settings/search/primary", {
       method: "PUT",
@@ -282,5 +285,6 @@ describe("searchSettingsRoutes", () => {
       enabled: false,
     });
     expect(mockCore.invalidatePrimarySearchConfig).toHaveBeenCalledTimes(2);
+    expect(mockCore.clearSearchCache).toHaveBeenCalledTimes(2);
   });
 });

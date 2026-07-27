@@ -200,6 +200,7 @@ export {
   SEARCH_PROVIDER_REGISTRY,
   SearchProviderError,
   clearManagedSearchProviderHealth,
+  clearSearchCache,
   getSearchProviderHealth,
   invalidateManagedSearchConfig,
   invalidatePrimarySearchConfig,

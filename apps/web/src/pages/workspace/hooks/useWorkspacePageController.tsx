@@ -75,6 +75,7 @@ import {
   getChatInputBlockReason,
 } from "../data/chatInputBlockReason";
 import { logClientEvent } from "../data/clientLog";
+import { newClientMessageId } from "../data/clientMessageId";
 import { cloneViewSections } from "../data/cloneViewDoc";
 import { installAnnotationGroupDecorations } from "../data/annotationDecorations";
 import { deriveDocDimensions } from "../data/docDimensions";
@@ -185,6 +186,7 @@ import { useWorkspaceDebugControls } from "./useWorkspaceDebugControls";
 import {
   useWorkspaceDocumentEditor,
   type QueuedDocWrite,
+  type PreparedPageExitDocSave,
   type SendDocWrite,
 } from "./useWorkspaceDocumentEditor";
 import { useWorkspaceFind } from "./useWorkspaceFind";
@@ -196,7 +198,9 @@ import {
 export { RightPane } from "../components/RightPane";
 export {
   buildPageExitDocSaveCommand,
+  flushDocSaveInBackground,
   flushDocSaveOnPageExit,
+  PageExitDocSaveError,
   pageExitDocSaveFingerprint,
   shouldFlushDocSaveOnPageExit,
 } from "../data/pageExitSave";
@@ -248,9 +252,30 @@ export async function sendMaterialParseCommandWithStream(
   return stream.sendCommand(command);
 }
 
+function hydratedSessionTitle(value: string | null | undefined): string | null {
+  if (!value || value.trim().length === 0 || value === "未命名草稿") {
+    return null;
+  }
+  return value;
+}
+
+function sessionTitleFromStore(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  const title = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.title;
+  return hydratedSessionTitle(title);
+}
+
 export function useWorkspacePageController() {
-  // 初始化不带标题(空),真实会话标题加载后再 setTitle 覆盖。
-  const [title, setTitle] = useState("");
+  const initialSessionId =
+    typeof window === "undefined"
+      ? null
+      : workspaceSessionIdFromHash(window.location.hash);
+  // 已有会话先沿用列表中的标题，避免恢复帧到达前把 store 短暂写空。
+  const [title, setTitle] = useState(
+    () => sessionTitleFromStore(initialSessionId) ?? "",
+  );
   const {
     debugMode,
     demoBarKind,
@@ -268,11 +293,7 @@ export function useWorkspacePageController() {
   const { previewExit, previewSource, setPreviewSource } =
     useAssetPreviewState();
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
-  const initialHydrationSessionIdRef = useRef<string | null>(
-    typeof window === "undefined"
-      ? null
-      : workspaceSessionIdFromHash(window.location.hash),
-  );
+  const initialHydrationSessionIdRef = useRef<string | null>(initialSessionId);
   const [hydration, setHydration] = useState(() =>
     initialWorkspaceHydration(initialHydrationSessionIdRef.current),
   );
@@ -504,7 +525,7 @@ export function useWorkspacePageController() {
   const flushPendingDocSaveRef = useRef<() => Promise<void>>(() =>
     Promise.resolve(),
   );
-  const preparePageExitDocSaveRef = useRef<() => (() => void) | null>(
+  const preparePageExitDocSaveRef = useRef<() => PreparedPageExitDocSave | null>(
     () => null,
   );
   const reducedMotionRef = useRef(false);
@@ -1893,7 +1914,10 @@ export function useWorkspacePageController() {
 
     const startWorkspaceStream = (
       targetSessionId: string | null,
-      options: { resetSessionState: boolean },
+      options: {
+        resetSessionState: boolean;
+        preservePreviousStream?: ServerStream | null;
+      },
     ): ServerStream => {
       const previousStream = streamRef.current;
       const abandoningDocSave =
@@ -1936,14 +1960,20 @@ export function useWorkspacePageController() {
       beginWorkspaceHydration(targetSessionId);
 
       if (options.resetSessionState && targetSessionId) {
-        setTitle("");
+        const storedTitle = sessionTitleFromStore(targetSessionId);
+        setTitle(storedTitle ?? "");
         dispatch({
           kind: "sessionMeta",
-          data: { sessionId: targetSessionId, title: "未命名草稿" },
+          data: {
+            sessionId: targetSessionId,
+            title: storedTitle ?? "未命名草稿",
+          },
         });
       }
 
-      previousStream?.dispose();
+      if (previousStream !== options.preservePreviousStream) {
+        previousStream?.dispose();
+      }
       // 资源注册表是模块级单例,切换会话会残留上一个会话的素材("串了")。
       // 建立新 stream 前先清空;本会话的素材随后由 restore/实时 resourceUpserted 帧重建。
       resources.reset();
@@ -2040,7 +2070,7 @@ export function useWorkspacePageController() {
         // e2e-loop-0704 R15 回归:气泡必须在建会话/传文件 await **之前**先落地——此前放在
         // await 之后,新建页跳转后的头 1-2 秒(带附件更久)工作区完全空白、用户消息无影,
         // 自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息其实已在跑)。
-        const clientMessageId = `m-user-${Date.now()}`;
+        const clientMessageId = newClientMessageId();
         if (messageText.length > 0 || pendingChips.length > 0) {
           const displayBody =
             pendingChips.length > 0 && pendingRichText
@@ -2148,8 +2178,9 @@ export function useWorkspacePageController() {
       )
         return;
       // hash/popstate 切换不会触发组件 cleanup；先以旧 sessionId 捕获当前编辑器正文，
-      // 正常 flush 超时/失败时复用退出页的 beacon/keepalive 兜底，再清旧会话队列。
+      // 正常 flush 超时/失败时把最新正文和旧 stream 转交后台链，再立即切换会话。
       const fallbackDocSave = preparePageExitDocSaveRef.current();
+      let preservedPreviousStream: ServerStream | null = null;
       try {
         await new Promise<void>((resolve, reject) => {
           const timer = window.setTimeout(
@@ -2172,9 +2203,14 @@ export function useWorkspacePageController() {
           "[workspace] failed to flush updateDoc before session switch",
           error,
         );
-        fallbackDocSave?.();
+        preservedPreviousStream =
+          fallbackDocSave?.({ deferUntilPendingSettles: true })
+            ?.preservedStream ?? null;
       }
-      startWorkspaceStream(nextSessionId, { resetSessionState: true });
+      startWorkspaceStream(nextSessionId, {
+        resetSessionState: true,
+        preservePreviousStream: preservedPreviousStream,
+      });
     };
 
     // hashchange:用户改地址栏 hash(含 session 参数)即重切会话。
@@ -2202,6 +2238,7 @@ export function useWorkspacePageController() {
         }
         void (async () => {
           let timeout: ReturnType<typeof setTimeout> | null = null;
+          let handoffOwnsStream = false;
           try {
             await Promise.race([
               flushPendingDocSaveRef.current(),
@@ -2217,11 +2254,19 @@ export function useWorkspacePageController() {
               "[workspace] failed to flush updateDoc before workspace exit",
               error,
             );
-            fallbackDocSave();
+            const handoff = fallbackDocSave({
+              deferUntilPendingSettles: true,
+            });
+            handoffOwnsStream =
+              handoff?.preservedStream === streamToDispose;
           } finally {
             if (timeout !== null) clearTimeout(timeout);
-            streamToDispose.dispose();
-            if (streamRef.current === streamToDispose) streamRef.current = null;
+            if (!handoffOwnsStream) {
+              streamToDispose.dispose();
+              if (streamRef.current === streamToDispose) {
+                streamRef.current = null;
+              }
+            }
           }
         })();
       }, 75);
@@ -2383,8 +2428,13 @@ export function useWorkspacePageController() {
   );
 
   useEffect(() => {
-    setCurrentSession(state.sessionId, title);
-    if (state.sessionId) updateSessionTitle(state.sessionId, title);
+    const hydratedTitle = hydratedSessionTitle(title);
+    const currentTitle =
+      hydratedTitle ?? sessionTitleFromStore(state.sessionId);
+    setCurrentSession(state.sessionId, currentTitle);
+    if (state.sessionId && hydratedTitle) {
+      updateSessionTitle(state.sessionId, hydratedTitle);
+    }
     return () => setCurrentSession(null);
   }, [setCurrentSession, state.sessionId, title, updateSessionTitle]);
 
@@ -2524,6 +2574,7 @@ export function useWorkspacePageController() {
     showToast,
     showBackgroundDocSaveFailure,
     rejectPendingDocSaveDrain,
+    resolvePendingDocSaveDrain,
     waitForPendingDocSaveDrain,
   });
   flushPendingDocSaveRef.current = flushPendingDocSave;
@@ -2807,7 +2858,7 @@ export function useWorkspacePageController() {
       const dispatchGeneration = beginWorkspaceTurnDispatch(
         turnDispatchGateRef.current,
       );
-      const clientMessageId = `m-user-${Date.now()}`;
+      const clientMessageId = newClientMessageId();
       dispatch({
         kind: "chatMessageAdded",
         data: {

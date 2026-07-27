@@ -11,7 +11,11 @@ import { mastra } from "../mastra.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { recordLlmResponseSpan } from "./agentSpans.js";
 import type { AgentStreamTurnContext, ProcessOutcome } from "./agentStreamTurnContext.js";
-import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
+import {
+  clearDraftConfirmationState,
+  currentPmDoc,
+  hasNonEmptyCanonicalBase,
+} from "../doc-engine/draftScratch.js";
 import {
   restoreDocStateAfterGenerateSvg,
   syncContentAndProjectDocState,
@@ -162,6 +166,13 @@ export async function* finalizeAgentStream(
     !!state.docDraftCandidateDoc &&
     pmToPlainText(state.docDraftCandidateDoc).trim().length > 0 &&
     (context.sawValidDraftMutation || context.docGeneratedThisTurn);
+  const shouldCommitEmptyBaseAsFirstDraft =
+    hasUsableDraftCandidateFromThisTurn &&
+    context.sawValidDraftMutation &&
+    !hasNonEmptyCanonicalBase(
+      state,
+      state.docDraftBaseDoc ?? currentPmDoc(state),
+    );
 
   if (
     !context.wasSuspended &&
@@ -172,7 +183,8 @@ export async function* finalizeAgentStream(
       agentMessageId,
       streamId,
       runId,
-      wholeDocument: context.docGeneratedThisTurn,
+      wholeDocument:
+        context.docGeneratedThisTurn || shouldCommitEmptyBaseAsFirstDraft,
       requestContext,
       generationId: context.settledDocGenerationId,
       generationLastSeq: context.settledDocGenerationLastSeq,

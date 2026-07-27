@@ -189,24 +189,35 @@ describe("external events", () => {
     }
   });
 
-  it("after 早于内存窗口时首帧 meta 标记 gap", async () => {
-    const sessionId = "events-gap";
+  it("不存在的会话返回 SESSION_NOT_FOUND，不建立空 SSE", async () => {
+    const sessionId = "events-missing";
     sessionManager.frameLog.evict(sessionId);
-    const controller = new AbortController();
     const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=999`, {
+      headers: authHeaders(),
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "SESSION_NOT_FOUND",
+    });
+    expect(sessionManager.frameLog.hasSession(sessionId)).toBe(false);
+  });
+
+  it("frameLog 有活跃条目但尚未落盘时仍可订阅", async () => {
+    const sessionId = "events-memory-only";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "sessionMeta",
+      data: { sessionId, title: "尚未落盘" },
+    });
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
       headers: authHeaders(),
       signal: controller.signal,
     });
 
-    const events = await readSseEvents(res, controller, 1);
-    expect(events).toHaveLength(1);
-    expect(events[0]?.event).toBe("meta");
-    expect(JSON.parse(events[0]!.data)).toEqual({
-      epoch: expect.any(Number),
-      minSeq: 1,
-      nextSeq: 1,
-      gap: true,
-    });
+    expect(res.status).toBe(200);
+    const events = await readSseEvents(res, controller, 2);
+    expect(events.map((event) => event.event)).toEqual(["meta", "frame"]);
   });
 
   it("documentSnapshotWritten 按真实 sections 形状深度净化 SVG", async () => {

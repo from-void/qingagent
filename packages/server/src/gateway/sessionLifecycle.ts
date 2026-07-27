@@ -84,6 +84,22 @@ function normalizedRestoreOptions(
     : undefined;
 }
 
+function mergeRestoredSuspension(cached: SessionState, restored: SessionState): SessionState {
+  // C1②：cached 可能已有尚未持久化的聊天、正文、素材或标题。整体替换成 DB
+  // 恢复对象会把这些内存改动回退；这里只补 resumeAskUser 真正需要的挂起身份。
+  cached.runId = restored.runId;
+  cached.toolCallId = restored.toolCallId;
+  cached.previousDocState = restored.previousDocState ?? cached.previousDocState;
+  cached._suspendedThisTurn = restored._suspendedThisTurn;
+  cached._suspensionOwner = restored._suspensionOwner;
+  // 两个 askUser 标记都是单向事实，恢复旧快照时只能补真，不能抹掉内存中的真值。
+  cached._askUserCompleted =
+    cached._askUserCompleted === true || restored._askUserCompleted === true;
+  cached._askUserAsked =
+    cached._askUserAsked === true || restored._askUserAsked === true;
+  return cached;
+}
+
 export async function getOrRestoreSession(
   sessionId: string,
   options: { preferredAskUserToolCallId?: string | null } = {},
@@ -93,11 +109,11 @@ export async function getOrRestoreSession(
   if (cached) {
     if (!restoreOptions || cached.runId) return cached;
     const restored = await loadSessionFromThread(sessionId, restoreOptions);
-    if (restored?.runId) {
+    if (restored?.runId && !cached.runId) {
       await reconcileRestoredConfirms(restored);
-      sessions.set(sessionId, restored);
-      armSessionConfirmTimeouts(restored);
-      return restored;
+      mergeRestoredSuspension(cached, restored);
+      armSessionConfirmTimeouts(cached);
+      return cached;
     }
     return cached;
   }
@@ -116,9 +132,9 @@ export async function getOrRestoreSession(
       const existing = sessions.get(sessionId);
       if (existing) {
         if (restoreOptions && !existing.runId && restored.runId) {
-          sessions.set(sessionId, restored);
-          armSessionConfirmTimeouts(restored);
-          return restored;
+          mergeRestoredSuspension(existing, restored);
+          armSessionConfirmTimeouts(existing);
+          return existing;
         }
         return existing;
       }

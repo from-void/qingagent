@@ -149,6 +149,81 @@ describe("schedulePersist dirty-loop", () => {
     ).toBe(true);
   });
 
+  it("旧对象首轮写入阻塞时会消费同 sessionId 的最新对象且不残留 pending", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../session/threadPersistence.js");
+    const firstWrite = deferred();
+    const writes: Array<Record<string, unknown>> = [];
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+        if (writes.length === 1) await firstWrite.promise;
+      },
+    );
+
+    const oldState = createSession("schedule-replaced-state");
+    oldState.docVersion = 1;
+    const oldPersist = schedulePersist(oldState, "old-state");
+
+    await vi.waitFor(() => expect(memory.updateThread).toHaveBeenCalledTimes(1));
+    const newState = createSession(oldState.sessionId);
+    newState.docVersion = 2;
+    newState.title = "内存新对象";
+    const newPersist = schedulePersist(newState, "new-state");
+
+    firstWrite.resolve();
+    await Promise.all([oldPersist, newPersist]);
+    await drainSessionPersistence();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(2);
+    expect(writes.map((metadata) => metadata.docVersion)).toEqual([1, 2]);
+    expect(writes[1]?.title).toBe("内存新对象");
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 0,
+      loopCount: 0,
+      pendingCount: 0,
+    });
+  });
+
+  it("OM sidecar 持有的旧引用先调度时，后恢复的新对象仍会成为最终写入", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../session/threadPersistence.js");
+    const sidecarWrite = deferred();
+    const writes: Array<Record<string, unknown>> = [];
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+        if (writes.length === 1) await sidecarWrite.promise;
+      },
+    );
+
+    const sidecarOldState = createSession("schedule-om-old-reference");
+    sidecarOldState.omCompressionEpoch = 1;
+    schedulePersist(sidecarOldState, "om_sidecar:cursor");
+
+    await vi.waitFor(() => expect(memory.updateThread).toHaveBeenCalledTimes(1));
+    const restoredState = createSession(sidecarOldState.sessionId);
+    restoredState.omCompressionEpoch = 2;
+    restoredState.docVersion = 7;
+    schedulePersist(restoredState, "stream_end");
+
+    sidecarWrite.resolve();
+    await drainSessionPersistence();
+
+    expect(writes.map((metadata) => metadata.docVersion)).toEqual([0, 7]);
+    expect(writes[1]?.omCompressionEpoch).toBe(2);
+    expect(__getSessionPersistenceStateForTest().pendingCount).toBe(0);
+  });
+
   it("loop 收尾微任务里追加的 mutation 不会被 finally 清理窗口吞掉", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const {
@@ -189,6 +264,7 @@ describe("schedulePersist dirty-loop", () => {
       queueCount: 0,
       dirtyCount: 0,
       loopCount: 0,
+      pendingCount: 0,
     });
   });
 
@@ -275,6 +351,7 @@ describe("schedulePersist dirty-loop", () => {
       queueCount: 0,
       dirtyCount: 0,
       loopCount: 0,
+      pendingCount: 0,
     });
   });
 
@@ -298,6 +375,7 @@ describe("schedulePersist dirty-loop", () => {
       queueCount: 0,
       dirtyCount: 0,
       loopCount: 0,
+      pendingCount: 0,
     });
   });
 
@@ -326,6 +404,7 @@ describe("schedulePersist dirty-loop", () => {
       queueCount: 0,
       dirtyCount: 1,
       loopCount: 0,
+      pendingCount: 1,
     });
   });
 
@@ -349,6 +428,7 @@ describe("schedulePersist dirty-loop", () => {
       queueCount: 0,
       dirtyCount: 0,
       loopCount: 0,
+      pendingCount: 0,
     });
   });
 

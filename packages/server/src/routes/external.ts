@@ -36,7 +36,11 @@ import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
-import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import {
+  getOrRestoreSession,
+  sessionExists,
+  sessionManager,
+} from "../gateway/bridgeHandler";
 import { loadSessionFromThread } from "../gateway/bridgeCore";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
@@ -637,7 +641,12 @@ externalRoutes.get("/sessions/:id/chat", async (c) => {
     externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
   }
-  const messages = applyLimit(session.chatHistory, c.req.query("limit")).map((message) => ({
+  const limit = parsePositiveQueryInteger(c.req.query("limit"));
+  if (!limit.ok) {
+    externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
+    return externalError(c, 400, "VALIDATION", "limit 必须是正整数");
+  }
+  const messages = applyLimit(session.chatHistory, limit.value).map((message) => ({
     id: message.id,
     role: message.role,
     ts: message.ts,
@@ -795,8 +804,11 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
   return c.json({ queued: true, note: "已入队,执行结果以 events 为准" });
 });
 
-externalRoutes.get("/sessions/:id/events", (c) => {
+externalRoutes.get("/sessions/:id/events", async (c) => {
   const sessionId = c.req.param("id");
+  if (!sessionManager.frameLog.hasSession(sessionId) && !(await sessionExists(sessionId))) {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
   const afterParam = c.req.header("Last-Event-ID") ?? c.req.query("after");
   const client = requestClientAddress(c);
   const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
@@ -853,7 +865,11 @@ externalRoutes.get("/sessions/:id/events", (c) => {
     };
     try {
       unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, enqueue);
-      if (cleaned) unsubscribe();
+      if (cleaned) {
+        unsubscribe();
+      } else {
+        sessionManager.subscriberConnected(sessionId);
+      }
       if (!cleaned) {
         heartbeat = setInterval(() => {
           pump.enqueue({ event: "ping", data: "{}" }, { dropOnOverflow: true });
@@ -1273,11 +1289,17 @@ function withLineNumbers(markdown: string): string {
     .join("\n");
 }
 
-function applyLimit(messages: ChatMessage[], value: string | undefined): ChatMessage[] {
-  if (!value) return messages;
-  const limit = Number(value);
-  if (!Number.isFinite(limit) || limit <= 0) return [];
-  return messages.slice(-Math.floor(limit));
+function applyLimit(messages: ChatMessage[], limit: number | undefined): ChatMessage[] {
+  return limit === undefined ? messages : messages.slice(-limit);
+}
+
+function parsePositiveQueryInteger(
+  value: string | undefined,
+): { ok: true; value: number | undefined } | { ok: false } {
+  if (value === undefined) return { ok: true, value: undefined };
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return { ok: false };
+  return { ok: true, value: parsed };
 }
 
 function partText(part: MessagePart): string {

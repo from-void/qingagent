@@ -1446,6 +1446,11 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
           persistDirty.set(sid, false);
           break;
         }
+        const pending = pendingPersists.get(sid);
+        if (!pending) {
+          persistDirty.set(sid, false);
+          break;
+        }
         let lastError: unknown;
         for (let attempt = 1; attempt <= SCHEDULE_PERSIST_MAX_ATTEMPTS; attempt += 1) {
           if (isSessionDeleted(sid)) {
@@ -1457,8 +1462,15 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
           // 立即回置，确保未保存标记不会被当成成功清掉。
           persistDirty.set(sid, false);
           try {
-            await persistSessionMetadata(state, reason);
+            await persistSessionMetadata(pending.state, pending.reason);
             lastError = undefined;
+            // 只删除本轮实际写入的条目。写入期间若被新对象覆盖，必须保留最新
+            // 条目并继续下一轮，不能让旧对象的完成回调误删新对象。
+            if (pendingPersists.get(sid) === pending) {
+              pendingPersists.delete(sid);
+            } else {
+              persistDirty.set(sid, true);
+            }
             break;
           } catch (err) {
             lastError = err;
@@ -1478,7 +1490,7 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
           exhaustedRetries = true;
           logger.error("Scheduled session metadata persist exhausted retries; session remains dirty", {
             sessionId: sid,
-            reason,
+            reason: pending.reason,
             attempts: SCHEDULE_PERSIST_MAX_ATTEMPTS,
             error: lastError instanceof Error ? lastError.message : String(lastError),
           });
@@ -1489,16 +1501,21 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
       if (persistLoops.get(sid) === loop) {
         persistLoops.delete(sid);
         if (persistDirty.get(sid) && !exhaustedRetries) {
-          void schedulePersist(state, "reschedule_after_loop_finally").catch((err) => {
-            logger.error("Failed to reschedule dirty session metadata persist", {
-              sessionId: sid,
-              error: err instanceof Error ? err.message : String(err),
+          const pending = pendingPersists.get(sid);
+          if (pending) {
+            void schedulePersist(pending.state, pending.reason).catch((err) => {
+              logger.error("Failed to reschedule dirty session metadata persist", {
+                sessionId: sid,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
+          }
         } else {
           if (!persistDirty.get(sid)) {
             persistDirty.delete(sid);
-            pendingPersists.delete(sid);
+            if (isSessionDeleted(sid)) {
+              pendingPersists.delete(sid);
+            }
           }
         }
       }
@@ -1625,6 +1642,7 @@ export function __getSessionPersistenceStateForTest(): {
   queueCount: number;
   dirtyCount: number;
   loopCount: number;
+  pendingCount: number;
 } {
   let dirtyCount = 0;
   for (const dirty of persistDirty.values()) {
@@ -1634,6 +1652,7 @@ export function __getSessionPersistenceStateForTest(): {
     queueCount: persistQueues.size,
     dirtyCount,
     loopCount: persistLoops.size,
+    pendingCount: pendingPersists.size,
   };
 }
 

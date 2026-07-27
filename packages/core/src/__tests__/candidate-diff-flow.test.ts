@@ -106,6 +106,17 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   return frames;
 }
 
+async function collectFramesAndReturn<T>(
+  gen: AsyncGenerator<BridgeFrame, T>,
+): Promise<{ frames: BridgeFrame[]; result: T }> {
+  const frames: BridgeFrame[] = [];
+  for (;;) {
+    const next = await gen.next();
+    if (next.done) return { frames, result: next.value };
+    frames.push(next.value);
+  }
+}
+
 function appendedToolCallIds(frames: BridgeFrame[], toolName: string): string[] {
   return frames.flatMap((frame) =>
     frame.kind === "chatMessageAppended" &&
@@ -334,6 +345,87 @@ describe("candidate-diff backend flow", () => {
     expect(state.docState).toEqual({ kind: "editing" });
     expect(docText(state.doc)).toBe("第一版正文");
   }, 10_000);
+
+  it("空文档 editDraft insertBlock 在回合末按首稿提交并清理候选", async () => {
+    const {
+      createSession,
+      createSessionScopedTools,
+      processAgentStream,
+    } = await import("../bridge/index.js");
+    const state = createSession("candidate-editdraft-first");
+    const args = {
+      ops: [{
+        action: "insertBlock" as const,
+        position: "end" as const,
+        blocks: "<p>editDraft 生成的首稿正文</p>",
+      }],
+    };
+    const { editDraft } = createSessionScopedTools(state);
+    const editResult = await editDraft.execute!(args, {} as never) as Record<string, unknown>;
+    expect(editResult).toMatchObject({ ok: true, changed: true });
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          editDraftCall("ed-first", args),
+          editDraftResult("ed-first", args, editResult),
+        ),
+        {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-editdraft-first",
+          runId: "run-editdraft-first",
+        },
+      ),
+    );
+
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(true);
+    expect(state.docVersion).toBe(1);
+    expect(docText(state.doc)).toBe("editDraft 生成的首稿正文");
+    expect(state.docDraftCandidateDoc).toBeNull();
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+    expect(docText((await documentRepo.load(state.docId))?.pmDoc)).toBe(
+      "editDraft 生成的首稿正文",
+    );
+  });
+
+  it("noop 丢弃候选时同步清库，冷恢复不再提交已丢弃首稿", async () => {
+    const {
+      createSession,
+      rehydratePendingDraft,
+      settleDraftCandidate,
+    } = await import("../bridge/index.js");
+    const sessionId = "candidate-noop-clears-checkpoint";
+    const state = createSession(sessionId);
+    const candidate = legacySectionsToPm([p("应被丢弃的候选正文")] as never);
+    state.docDraftCandidateDoc = candidate;
+    state.docDraftCandidateSections =
+      pmToLegacySections(candidate) as unknown as LegacySection[];
+    await documentDraftRepo.saveCandidate({
+      docId: state.docId,
+      threadId: state.sessionId,
+      baseVersion: 0,
+      baseHash: getPmContentHash(legacySectionsToPm([] as never)),
+      draftPmDoc: candidate,
+      sourceStreamId: "stream-noop",
+      sourceToolCallId: "ed-noop",
+    });
+
+    const settled = await collectFramesAndReturn(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-noop",
+      runId: "run-noop",
+      wholeDocument: false,
+    }));
+
+    expect(settled.result).toEqual({ hunkCount: 0, docWritten: false });
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+    const restarted = createSession(sessionId);
+    await expect(rehydratePendingDraft(restarted)).resolves.toEqual({ kind: "skipped" });
+    expect(restarted.docVersion).toBe(0);
+    await expect(documentRepo.load(state.docId)).resolves.toBeNull();
+  });
 
   it.each([
     [

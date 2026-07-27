@@ -1,6 +1,9 @@
 import { countVisibleChars, normalizePmDoc, pmToLegacySections, type PmDoc, type PmNode } from "@qingagent/pm-schema";
-import type { Command, LegacySection } from "@qingagent/contract-ts";
-import { validateCommand } from "../../../system/validators";
+import type { BridgeFrame, Command, LegacySection } from "@qingagent/contract-ts";
+import {
+  validateBridgeFrame,
+  validateCommand,
+} from "../../../system/validators";
 
 function pmTextHasSubstantiveContent(text: string): boolean {
   const normalized = text.replace(/[\u200B\u200C\u200D\uFEFF]/gu, "");
@@ -43,7 +46,170 @@ export function createClientMutationId(): string {
 }
 
 type PageExitSendBeacon = (url: string, data?: BodyInit | null) => boolean;
-type PageExitFetch = (url: string, init: RequestInit) => Promise<unknown>;
+type PageExitFetchResponse = {
+  ok: boolean;
+  status: number;
+  json: () => Promise<unknown>;
+};
+type PageExitFetch = (
+  url: string,
+  init: RequestInit,
+) => Promise<PageExitFetchResponse>;
+
+export interface PageExitDocSaveBase {
+  expectedDocumentSnapshot: number;
+  baseContentHash: string;
+}
+
+export class PageExitDocSaveError extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+  ) {
+    super(message);
+    this.name = "PageExitDocSaveError";
+  }
+}
+
+function pageExitFetch(): PageExitFetch | undefined {
+  return typeof fetch === "undefined"
+    ? undefined
+    : (requestUrl, init) => fetch(requestUrl, init);
+}
+
+function docWriteResultFromResponse(
+  body: unknown,
+  clientMutationId: string,
+): Extract<BridgeFrame, { kind: "docWriteResult" }>["data"] | null {
+  if (!Array.isArray(body)) return null;
+  for (const value of body) {
+    try {
+      validateBridgeFrame(value);
+    } catch {
+      continue;
+    }
+    const frame = value as BridgeFrame;
+    if (
+      frame.kind === "docWriteResult" &&
+      frame.data.clientMutationId === clientMutationId
+    ) {
+      return frame.data;
+    }
+  }
+  return null;
+}
+
+async function submitBackgroundDocSave(input: {
+  command: Extract<Command, { kind: "updateDoc" }>;
+  fetchKeepalive: PageExitFetch;
+  url: string;
+}): Promise<Extract<BridgeFrame, { kind: "docWriteResult" }>["data"]> {
+  let response: PageExitFetchResponse;
+  try {
+    response = await input.fetchKeepalive(input.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input.command),
+      keepalive: true,
+    });
+  } catch (error) {
+    throw new PageExitDocSaveError(
+      `后台保存请求未送达：${error instanceof Error ? error.message : String(error)}`,
+      true,
+    );
+  }
+  if (!response.ok) {
+    throw new PageExitDocSaveError(
+      `后台保存请求失败：HTTP ${response.status}`,
+      response.status === 408 ||
+        response.status === 425 ||
+        response.status === 429 ||
+        response.status >= 500,
+    );
+  }
+  const body = await response.json().catch(() => null);
+  const result = docWriteResultFromResponse(
+    body,
+    input.command.data.clientMutationId,
+  );
+  if (!result) {
+    throw new PageExitDocSaveError("后台保存未收到服务端确认", true);
+  }
+  return result;
+}
+
+async function fetchCurrentDocSaveBase(input: {
+  sessionId: string;
+  fetchRequest: PageExitFetch;
+  historyUrl?: string;
+}): Promise<PageExitDocSaveBase> {
+  const url =
+    input.historyUrl ??
+    `/api/v1/history?sessionId=${encodeURIComponent(input.sessionId)}`;
+  let response: PageExitFetchResponse;
+  try {
+    response = await input.fetchRequest(url, { method: "GET" });
+  } catch (error) {
+    throw new PageExitDocSaveError(
+      `读取最新文档版本失败：${error instanceof Error ? error.message : String(error)}`,
+      true,
+    );
+  }
+  if (!response.ok) {
+    throw new PageExitDocSaveError(
+      `读取最新文档版本失败：HTTP ${response.status}`,
+      response.status === 408 ||
+        response.status === 425 ||
+        response.status === 429 ||
+        response.status >= 500,
+    );
+  }
+  const body = await response.json().catch(() => null) as {
+    entries?: unknown;
+  } | null;
+  const entries = Array.isArray(body?.entries) ? body.entries : [];
+  const latest = entries
+    .filter(
+      (
+        entry,
+      ): entry is {
+        docVersion: number;
+        content_hash: string;
+      } =>
+        entry !== null &&
+        typeof entry === "object" &&
+        Number.isInteger((entry as { docVersion?: unknown }).docVersion) &&
+        typeof (entry as { content_hash?: unknown }).content_hash === "string" &&
+        (entry as { content_hash: string }).content_hash.length > 0,
+    )
+    .sort((left, right) => right.docVersion - left.docVersion)[0];
+  if (!latest) {
+    throw new PageExitDocSaveError("服务端没有可用的最新文档版本", true);
+  }
+  return {
+    expectedDocumentSnapshot: latest.docVersion,
+    baseContentHash: latest.content_hash,
+  };
+}
+
+async function settlePendingDocSaveBase(input: {
+  fallbackBase: PageExitDocSaveBase;
+  pendingBase?: Promise<PageExitDocSaveBase>;
+  maxWaitMs: number;
+}): Promise<PageExitDocSaveBase> {
+  if (!input.pendingBase) return input.fallbackBase;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      input.pendingBase.catch(() => input.fallbackBase),
+      new Promise<PageExitDocSaveBase>((resolve) => {
+        timer = setTimeout(() => resolve(input.fallbackBase), input.maxWaitMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
 
 export function shouldFlushDocSaveOnPageExit(input: {
   pmDoc: PmDoc | null;
@@ -109,6 +275,81 @@ export function buildPageExitDocSaveCommand(input: {
   return command;
 }
 
+/**
+ * 会话切换后的后台保存只走可读取响应的 keepalive fetch：
+ * 先等旧写入结算（最多 10 秒），再按其新基底提交最新正文；
+ * 若仍撞 CAS，只读取一次服务端最新版本并重试一次。
+ */
+export async function flushDocSaveInBackground(input: {
+  sessionId: string;
+  fallbackBase: PageExitDocSaveBase;
+  pendingBase?: Promise<PageExitDocSaveBase>;
+  maxPendingWaitMs?: number;
+  pmDoc: PmDoc;
+  baselineDoc?: PmDoc | null;
+  hasPendingDocSave: boolean;
+  createMutationId?: () => string;
+  fetchKeepalive?: PageExitFetch;
+  fetchCurrentBase?: () => Promise<PageExitDocSaveBase>;
+  url?: string;
+}): Promise<"skipped" | "saved"> {
+  const fetchKeepalive = input.fetchKeepalive ?? pageExitFetch();
+  if (!fetchKeepalive) {
+    throw new PageExitDocSaveError("当前环境不支持后台保存", true);
+  }
+  const base = await settlePendingDocSaveBase({
+    fallbackBase: input.fallbackBase,
+    pendingBase: input.pendingBase,
+    maxWaitMs: input.maxPendingWaitMs ?? 10_000,
+  });
+  const buildCommand = (nextBase: PageExitDocSaveBase) =>
+    buildPageExitDocSaveCommand({
+      sessionId: input.sessionId,
+      expectedDocumentSnapshot: nextBase.expectedDocumentSnapshot,
+      baseContentHash: nextBase.baseContentHash,
+      pmDoc: input.pmDoc,
+      baselineDoc: input.baselineDoc,
+      hasPendingDocSave: input.hasPendingDocSave,
+      createMutationId: input.createMutationId,
+    });
+  const command = buildCommand(base);
+  if (!command) return "skipped";
+
+  const first = await submitBackgroundDocSave({
+    command,
+    fetchKeepalive,
+    url: input.url ?? "/api/v1/stream",
+  });
+  if (first.ok) return "saved";
+  if (!("conflict" in first)) {
+    throw new PageExitDocSaveError(
+      "服务端拒绝了后台保存",
+      first.reason === "agent_busy",
+    );
+  }
+
+  const latestBase = await (
+    input.fetchCurrentBase?.() ??
+    fetchCurrentDocSaveBase({
+      sessionId: input.sessionId,
+      fetchRequest: fetchKeepalive,
+    })
+  );
+  const retryCommand = buildCommand(latestBase);
+  if (!retryCommand) return "skipped";
+  const retried = await submitBackgroundDocSave({
+    command: retryCommand,
+    fetchKeepalive,
+    url: input.url ?? "/api/v1/stream",
+  });
+  if (retried.ok) return "saved";
+  throw new PageExitDocSaveError(
+    "按服务端最新版本重试后仍未保存成功",
+    "conflict" in retried ||
+      ("reason" in retried && retried.reason === "agent_busy"),
+  );
+}
+
 export function flushDocSaveOnPageExit(input: {
   sessionId: string | null;
   expectedDocumentSnapshot: number;
@@ -139,9 +380,7 @@ export function flushDocSaveOnPageExit(input: {
 
   const fetchKeepalive: PageExitFetch | undefined =
     input.fetchKeepalive ??
-    (typeof fetch !== "undefined"
-      ? (requestUrl, init) => fetch(requestUrl, init)
-      : undefined);
+    pageExitFetch();
   if (!fetchKeepalive) return "skipped";
   void fetchKeepalive(url, {
     method: "POST",

@@ -22,6 +22,8 @@ export type UploadedFileRecord = {
   mimeType: string | null;
   size: number;
   contentHash: string;
+  /** 旧索引可能没有该字段；缺失表示历史引用数未知。 */
+  refCount?: number;
 };
 
 type UploadContentIndex = {
@@ -111,6 +113,11 @@ async function readContentIndex(): Promise<UploadContentIndex> {
           mimeType: typeof record.mimeType === "string" ? record.mimeType : null,
           size: record.size,
           contentHash: record.contentHash,
+          ...(typeof record.refCount === "number" &&
+          Number.isSafeInteger(record.refCount) &&
+          record.refCount > 0
+            ? { refCount: record.refCount }
+            : {}),
         };
       }
     }
@@ -179,6 +186,7 @@ async function rebuildContentIndex(): Promise<UploadContentIndex> {
         mimeType: null,
         size: buffer.length,
         contentHash,
+        // 扫描得到的历史文件没有可靠的引用数，保持未知以避免后续误删物理文件。
       };
     } catch {
       continue;
@@ -223,6 +231,12 @@ export async function findOrStoreUploadedFile(input: {
       mimeType: input.mimeType,
     });
     if (existing && await uploadedRecordExists(existing.record)) {
+      if (existing.record.refCount !== undefined) {
+        existing.record.refCount += 1;
+      }
+      // 去重返回也是一次新的会话级引用；已知计数必须在返回前持久化。
+      // 历史记录的基数未知，不能擅自假定为 1；新增引用后仍保持未知并走保守清理。
+      await writeContentIndex(index);
       return { record: existing.record, deduped: true };
     }
     if (existing) delete index.records[existing.key];
@@ -243,6 +257,7 @@ export async function findOrStoreUploadedFile(input: {
       mimeType: input.mimeType,
       size: input.buffer.length,
       contentHash,
+      refCount: 1,
     };
     index.records[uploadRecordKey(contentHash, input.filename, input.mimeType)] = record;
     index.complete = true;
@@ -265,15 +280,46 @@ export async function deleteUploadedFile(fileId: string): Promise<boolean> {
 
   return withUploadIndexLock(async () => {
     try {
-      await fs.rm(dir, { recursive: true, force: true });
-      const index = await readContentIndex();
-      let changed = false;
-      for (const [hash, record] of Object.entries(index.records)) {
-        if (record.fileId !== fileId) continue;
-        delete index.records[hash];
-        changed = true;
+      let index = await readContentIndex();
+      if (!index.complete) {
+        index = await rebuildContentIndex();
       }
-      if (changed) await writeContentIndex(index);
+
+      const indexedEntry = Object.entries(index.records).find(
+        ([, record]) => record.fileId === fileId,
+      );
+      if (!indexedEntry) {
+        console.warn("[uploadStorage] Upload is not indexed; keeping physical file", {
+          fileId,
+        });
+        return false;
+      }
+
+      const [recordKey, record] = indexedEntry;
+      if (record.refCount === undefined) {
+        // 历史索引无法推断全局引用数。这里只移除去重索引，保留物理文件交给人工或后续 GC，
+        // 宁可产生孤儿文件，也不能误删仍被旧会话引用的原始字节。
+        delete index.records[recordKey];
+        await writeContentIndex(index);
+        console.warn(
+          "[uploadStorage] Upload refCount is unknown; removed index record but kept physical file for manual or GC cleanup",
+          { fileId },
+        );
+        return true;
+      }
+
+      const nextRefCount = record.refCount - 1;
+      if (nextRefCount > 0) {
+        record.refCount = nextRefCount;
+        await writeContentIndex(index);
+        return true;
+      }
+
+      await fs.rm(dir, { recursive: true, force: true });
+      for (const [key, candidate] of Object.entries(index.records)) {
+        if (candidate.fileId === fileId) delete index.records[key];
+      }
+      await writeContentIndex(index);
       return true;
     } catch (err) {
       console.error(

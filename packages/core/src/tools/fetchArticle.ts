@@ -73,12 +73,8 @@ function fetchArticleFailure(
   };
 }
 
-function shouldUseBrowserResult(staticResult: FetchArticleResult, browserResult: ScrapeResult): boolean {
-  return (
-    browserResult.ok &&
-    isSubstantiveContent(browserResult.text) &&
-    (!isSubstantiveContent(staticResult.text) || browserResult.wordCount > staticResult.wordCount)
-  );
+function shouldUseBrowserResult(browserResult: ScrapeResult): boolean {
+  return browserResult.ok && isSubstantiveContent(browserResult.text);
 }
 
 export const fetchArticleTool = createTool({
@@ -139,7 +135,7 @@ export const fetchArticleTool = createTool({
             signal,
           });
           signal?.throwIfAborted();
-          if (shouldUseBrowserResult(selected, browserResult)) {
+          if (shouldUseBrowserResult(browserResult)) {
             selected = {
               ok: true,
               error: null,

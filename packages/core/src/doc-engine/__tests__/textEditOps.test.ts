@@ -130,7 +130,12 @@ describe("textEditOps", () => {
     ]);
     const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "多模态大模型综述", false);
 
-    const next = replaceTextRuns(base, matches, "多模态大模型综述：架构、对齐与数据治理");
+    const next = replaceTextRuns(
+      base,
+      matches,
+      "多模态大模型综述：架构、对齐与数据治理",
+      { reassembledFromBlock: true },
+    );
 
     expect(inlineText(next)).toBe("多模态大模型综述：架构、对齐与数据治理");
   });
@@ -147,7 +152,12 @@ describe("textEditOps", () => {
     ]);
     const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "多模态大模型综述", false);
 
-    const next = replaceTextRuns(base, matches, "多模态大模型研究综述：架构、对齐与数据治理");
+    const next = replaceTextRuns(
+      base,
+      matches,
+      "多模态大模型研究综述：架构、对齐与数据治理",
+      { reassembledFromBlock: true },
+    );
 
     expect(inlineText(next)).toBe("多模态大模型研究综述：架构、对齐与数据治理");
   });
@@ -163,7 +173,9 @@ describe("textEditOps", () => {
     ]);
     const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "综述", false);
 
-    const next = replaceTextRuns(base, matches, "研究综述：要点");
+    const next = replaceTextRuns(base, matches, "研究综述：要点", {
+      reassembledFromBlock: true,
+    });
 
     // 后缀「：要点」是原节点保留(仍带 bold),replace 里重复的那份被裁掉。
     expect(next.content[0]).toMatchObject({
@@ -175,7 +187,9 @@ describe("textEditOps", () => {
     const base = doc([paragraph("p1", "第一章 总则")]);
     const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "总则", false);
 
-    const next = replaceTextRuns(base, matches, "第一章 总则");
+    const next = replaceTextRuns(base, matches, "第一章 总则", {
+      reassembledFromBlock: true,
+    });
 
     expect(inlineText(next)).toBe("第一章 总则");
   });
@@ -188,6 +202,15 @@ describe("textEditOps", () => {
     const next = replaceTextRuns(base, matches, "测试用例");
 
     expect(inlineText(next)).toBe("测试用例 通过");
+  });
+
+  it("replacement 与后文重复词重合时默认完整保留调用方文本", () => {
+    const base = doc([paragraph("p1", "旧稿方案方案")]);
+    const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "旧稿", false);
+
+    const next = replaceTextRuns(base, matches, "新方案方案");
+
+    expect(inlineText(next)).toBe("新方案方案方案方案");
   });
 
   it("tx-replaceText-captures: 正则捕获组替换正确展开", async () => {

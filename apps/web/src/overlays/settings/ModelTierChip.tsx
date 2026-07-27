@@ -4,6 +4,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "../../system/useAnchoredPopover";
+import { useOverlayDismiss } from "../../system/overlayDismissStack";
 import { MODEL_TIERS, VENDOR_META, providerWfKey } from "./modelVendorMeta";
 import type { ModelProvider, ModelTier } from "./visitorKeyStore";
 
@@ -28,6 +29,12 @@ export function ModelTierChip({ provider, tier, disabled = false, onChange }: Mo
   useEffect(() => {
     if (!open) setActiveIndex(selectedIndex);
   }, [open, selectedIndex]);
+
+  // 开着时进浮层关闭栈:Esc 由面板级守卫统一弹栈关闭,焦点不在 chip 上也能关
+  useOverlayDismiss(open, () => {
+    setOpen(false);
+    anchorRef.current?.focus();
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -71,10 +78,10 @@ export function ModelTierChip({ provider, tier, disabled = false, onChange }: Mo
         else openAt(selectedIndex);
         break;
       case "Escape":
+        // 设置弹层内 Esc 由面板级守卫走浮层关闭栈统一处理(先于本处捕获并消费);
+        // 这里只兜住脱离设置弹层单独使用本组件的场景。
         if (open) {
-          // 只关档位浮层,不让 Esc 冒到设置弹层把整个设置一起关掉
           event.preventDefault();
-          event.stopPropagation();
           setOpen(false);
         }
         break;

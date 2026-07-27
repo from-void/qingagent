@@ -945,6 +945,11 @@ export function useWorkspacePageController() {
     }
     return () => {
       cancelled = true;
+      for (const source of browserSources) {
+        const key = `${source.sessionId}\0${source.id}`;
+        stopBrowserFolderBridge(source.sessionId, source.id);
+        activeBrowserFolderKeysRef.current.delete(key);
+      }
     };
   }, [state.folderSources]);
   // 真实信号一到,撤掉乐观标记(由真实信号接力维持辉光,避免双重计时)。

@@ -168,6 +168,26 @@ describe("OM sidecar 接线形状", () => {
     else process.env.QINGAGENT_OM_BUFFER_TOKENS = originalBufferTokens;
   });
 
+  it("首次 memory store 临时失败后会在下次访问重新初始化", async () => {
+    mockState.memory.storage.getStore.mockRejectedValueOnce(new Error("temporary storage outage"));
+    const { getOmObservations } = await import("../session/omSidecar.js");
+
+    await expect(getOmObservations({
+      threadId: "om-init-retry",
+      resourceId: "qingagent-user",
+    })).resolves.toBeUndefined();
+    expect(mockState.memory.storage.getStore).toHaveBeenCalledTimes(1);
+    expect(mockState.omInstances).toHaveLength(0);
+
+    await expect(getOmObservations({
+      threadId: "om-init-retry",
+      resourceId: "qingagent-user",
+    })).resolves.toBeUndefined();
+    expect(mockState.memory.storage.getStore).toHaveBeenCalledTimes(2);
+    expect(mockState.omInstances).toHaveLength(1);
+    expect(mockState.omInstances[0]!.getObservations).toHaveBeenCalledTimes(1);
+  });
+
   it("OM model 在主链快照可用时通过 BranchCall 生成并按 omObserve 记调用", async () => {
     const {
       beginSessionSnapshotTurn,

@@ -1124,7 +1124,12 @@ async function getOmSidecar(): Promise<ObservationalMemory | null> {
   if (!omSidecarPromise) {
     omSidecarPromise = createOmSidecar();
   }
-  return await omSidecarPromise;
+  const current = omSidecarPromise;
+  const sidecar = await current;
+  if (!sidecar && omSidecarPromise === current) {
+    omSidecarPromise = null;
+  }
+  return sidecar;
 }
 
 async function createOmSidecar(): Promise<ObservationalMemory | null> {

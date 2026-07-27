@@ -127,6 +127,12 @@ async function flush() {
   });
 }
 
+async function waitMs(ms: number) {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  });
+}
+
 async function waitForSelector(selector: string, rootEl: ParentNode = container!): Promise<Element> {
   for (let i = 0; i < 60; i += 1) {
     const el = rootEl.querySelector(selector);
@@ -150,9 +156,27 @@ async function mouseDown(el: Element) {
   await flush();
 }
 
+async function mouseEvent(el: Element, type: "mouseover" | "mousemove" | "mouseout") {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      relatedTarget: type === "mouseout" ? document.body : null,
+    }));
+  });
+  await flush();
+}
+
 async function keyDown(el: EventTarget, init: KeyboardEventInit) {
   await act(async () => {
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  });
+  await flush();
+}
+
+async function keyUp(el: EventTarget, init: KeyboardEventInit) {
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, ...init }));
   });
   await flush();
 }
@@ -205,11 +229,19 @@ function EditableDiagramHarness({
   initialOverlay = null,
   onSourceChange,
   onOverlayChange,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: {
   source: string;
   initialOverlay?: Parameters<typeof DiagramRenderer>[0]["overlay"];
   onSourceChange?: (source: string) => void;
   onOverlayChange?: Parameters<typeof DiagramRenderer>[0]["onOverlayChange"];
+  onUndo?: () => boolean;
+  onRedo?: () => boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }) {
   const [openVisualSignal, setOpenVisualSignal] = useState(0);
   const [overlay, setOverlay] = useState<Parameters<typeof DiagramRenderer>[0]["overlay"]>(initialOverlay);
@@ -224,6 +256,10 @@ function EditableDiagramHarness({
         readOnly={false}
         openVisualSignal={openVisualSignal}
         onSourceChange={onSourceChange}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onOverlayChange={(nextOverlay) => {
           setOverlay(nextOverlay);
           onOverlayChange?.(nextOverlay);
@@ -359,8 +395,7 @@ describe("GraphDiagramView", () => {
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas \.react-flow\s*\{[^}]*flex:\s*1\s+1\s+auto;[^}]*min-height:\s*0;[^}]*width:\s*100%;/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview\s*\{[^}]*border:\s*0;/s);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__controls\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
-    expect(graphDiagramCss).toContain(".graph-diagram:hover .graph-diagram-canvas--preview .react-flow__controls");
+    expect(container?.querySelector(".react-flow__controls")).toBeNull();
   });
 
   it("单行分号声明与链式边渲染出全部 React Flow 节点", async () => {
@@ -379,8 +414,9 @@ describe("GraphDiagramView", () => {
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });
 
-  it("外部工具栏与图片款一致，仅保留左中右全屏文字按钮", async () => {
+  it("交互图外部工具栏提供真实缩放，可编辑全屏直进编辑器，纯 SVG 不展示缩放", async () => {
     const onAlignChange = vi.fn();
+    const onDrawioFullscreen = vi.fn();
     const source = `flowchart TD
   A[开始] --> B[结束]
 `;
@@ -397,25 +433,29 @@ describe("GraphDiagramView", () => {
     expect(editableToolbar.classList.contains("pm-image-toolbar")).toBe(true);
     expect(editableToolbar.classList.contains("pm-image-chrome")).toBe(true);
     const editableButtons = Array.from(editableToolbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
-    expect(editableButtons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "全屏"]);
+    expect(editableButtons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "放大", "缩小", "全屏"]);
     expect(editableButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "左对齐",
       "居中",
       "右对齐",
+      "放大图表",
+      "缩小图表",
       "全屏查看",
     ]);
     expect(editableToolbar.querySelector(".pm-diagram-tool")).toBeNull();
     expect(editableToolbar.textContent).not.toContain("新增分区");
     expect(editableToolbar.textContent).not.toContain("适配视图");
-    expect(editableToolbar.textContent).not.toContain("＋");
-    expect(editableToolbar.textContent).not.toContain("−");
     await mouseDown(editableToolbar.querySelector("[aria-label='右对齐']")!);
     expect(onAlignChange).toHaveBeenCalledWith("right");
+    const viewport = container!.querySelector<HTMLElement>(".react-flow__viewport")!;
+    const beforeZoom = viewport.style.transform;
+    await mouseDown(editableToolbar.querySelector("[aria-label='放大图表']")!);
+    expect(viewport.style.transform).not.toBe(beforeZoom);
     await mouseDown(editableToolbar.querySelector("[aria-label='全屏查看']")!);
-    const editableViewer = await waitForSelector(".graph-diagram-viewer", document.body);
-    expect(editableViewer.querySelector(".graph-diagram-handle-add")).toBeNull();
-    expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
-    await click(findButton("关闭", editableViewer));
+    const editableEditor = await waitForSelector(".graph-diagram-editor", document.body);
+    expect(editableEditor.querySelector("[aria-label='画布视图控件']")).not.toBeNull();
+    expect(document.body.querySelector(".graph-diagram-viewer")).toBeNull();
+    await click(findButton("✕", editableEditor));
 
     await act(async () => {
       root!.render(<DiagramRenderer source={source} readOnly />);
@@ -423,8 +463,38 @@ describe("GraphDiagramView", () => {
     await flush();
     const readOnlyToolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
     const readOnlyButtons = Array.from(readOnlyToolbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
-    expect(readOnlyButtons.map((button) => button.textContent?.trim())).toEqual(["全屏"]);
-    expect(readOnlyButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["全屏查看"]);
+    expect(readOnlyButtons.map((button) => button.textContent?.trim())).toEqual(["放大", "缩小", "全屏"]);
+    expect(readOnlyButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["放大图表", "缩小图表", "全屏查看"]);
+
+    await act(async () => {
+      root!.render(
+        <DiagramRenderer
+          source="sequenceDiagram\n  Alice->>Bob: 你好"
+          cachedSvg="<svg xmlns='http://www.w3.org/2000/svg'><text>你好</text></svg>"
+          readOnly={false}
+        />,
+      );
+    });
+    await flush();
+    const svgToolbar = await waitForSelector("[aria-label='图表操作']", container!);
+    expect(svgToolbar.querySelector("[aria-label='放大图表']")).toBeNull();
+    expect(svgToolbar.querySelector("[aria-label='缩小图表']")).toBeNull();
+
+    await act(async () => {
+      root!.render(
+        <DiagramRenderer
+          source="<mxGraphModel><root><mxCell id='0'/><mxCell id='1' parent='0'/><mxCell id='2' value='节点' vertex='1' parent='1'><mxGeometry width='120' height='60' as='geometry'/></mxCell></root></mxGraphModel>"
+          cachedSvg="<svg xmlns='http://www.w3.org/2000/svg'><text>drawio</text></svg>"
+          lang="drawio"
+          readOnly={false}
+          onFullscreen={onDrawioFullscreen}
+        />,
+      );
+    });
+    await flush();
+    const drawioToolbar = await waitForSelector("[aria-label='图表操作']", container!);
+    await mouseDown(drawioToolbar.querySelector("[aria-label='全屏查看图表']")!);
+    expect(onDrawioFullscreen).toHaveBeenCalledTimes(1);
   });
 
   it("只读态全屏按钮打开纯查看层，Esc/关闭可退出且不出现编辑把手", async () => {
@@ -441,6 +511,9 @@ describe("GraphDiagramView", () => {
     const viewer = await waitForSelector(".graph-diagram-viewer", document.body) as HTMLElement;
     expect(viewer.getAttribute("aria-label")).toBe("图表全屏预览");
     expect(viewer.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(viewer.querySelector(".react-flow__controls")).toBeNull();
+    expect(viewer.querySelector("[aria-label='拖拽画布(空格)']")).not.toBeNull();
+    expect(graphDiagramCss).toMatch(/\.graph-diagram,\s*\.graph-diagram-editor,\s*\.graph-diagram-viewer\s*\{/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__handle\s*\{[^}]*display:\s*none;/s);
     await click(findButton("关闭", viewer));
     expect(document.body.querySelector(".graph-diagram-viewer")).toBeNull();
@@ -509,12 +582,18 @@ flowchart LR
 
   it("外部信号进入全屏后空选可加节点并回写 source", async () => {
     const onSourceChange = vi.fn();
+    const onUndo = vi.fn(() => true);
+    const onRedo = vi.fn(() => true);
     await render(
       <EditableDiagramHarness
         source={`flowchart TD
   A[开始] --> B[结束]
 `}
         onSourceChange={onSourceChange}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={false}
+        canRedo
       />,
     );
     expect(container?.querySelector(".graph-diagram-edit-entry")).toBeNull();
@@ -531,14 +610,35 @@ flowchart LR
     expect(
       Array.from(bottomToolbar!.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
         .map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["新增分区", "解散分区", "新增节点"]);
+    ).toEqual(["新增节点", "新增分区"]);
+    expect(bottomToolbar!.querySelector("[aria-label='解散分区']")).toBeNull();
+    const viewportControls = editor.querySelector<HTMLElement>("[aria-label='画布视图控件']")!;
+    expect(viewportControls.querySelector(".react-flow__controls")).toBeNull();
+    expect(
+      Array.from(viewportControls.querySelectorAll<HTMLButtonElement>("button"))
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["撤销", "重做", "拖拽画布(空格)", "缩小画布", "适配视图", "放大画布"]);
+    expect(viewportControls.querySelector<HTMLButtonElement>("[aria-label='撤销']")?.disabled).toBe(true);
+    const redoButton = viewportControls.querySelector<HTMLButtonElement>("[aria-label='重做']")!;
+    expect(redoButton.disabled).toBe(false);
+    await click(redoButton);
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    const handButton = viewportControls.querySelector<HTMLButtonElement>("[aria-label='拖拽画布(空格)']")!;
+    expect(handButton.getAttribute("aria-pressed")).toBe("true");
+    await click(handButton);
+    expect(handButton.getAttribute("aria-pressed")).toBe("false");
+    const editCanvas = editor.querySelector<HTMLElement>(".graph-diagram-canvas--editor")!;
+    await keyDown(document, { key: " ", code: "Space" });
+    expect(editCanvas.classList.contains("is-pan-enabled")).toBe(true);
+    await keyUp(document, { key: " ", code: "Space" });
+    expect(editCanvas.classList.contains("is-pan-enabled")).toBe(false);
     expect(graphDiagramCss).not.toContain(".graph-diagram-editor__topbar-actions");
     expect(graphDiagramCss).not.toContain(".graph-diagram-primary-action");
     await click(findButton("新增节点", editor));
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("新节点"));
   });
 
-  it("编辑态节点有四面 handle，默认隐藏并在 hover/连接态实显", async () => {
+  it("编辑态节点默认显示四个圆点，悬停依次切换加号、箭头和幽灵预览", async () => {
     await render(
       <EditableDiagramHarness
         source={`flowchart LR
@@ -572,21 +672,35 @@ flowchart LR
         .every((handle) => handle.classList.contains("connectableend")),
     ).toBe(true);
     expect(editor.querySelectorAll(".react-flow__handle")).toHaveLength(16);
+    expect(startNode.querySelectorAll(".graph-diagram-handle-dot")).toHaveLength(4);
+    expect(startNode.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(startNode.querySelector(".graph-diagram-handle-ghost")).toBeNull();
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle");
-    expect(graphDiagramCss).not.toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle");
+    expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle");
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor.is-connecting .react-flow__handle.connectionindicator");
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__node:hover \.react-flow__handle,[\s\S]*pointer-events:\s*auto;/);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle:hover\s*\{[^}]*transform:\s*scale\(1\.35\);/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-slot\s*\{[^}]*pointer-events:\s*none;/s);
     expect(graphDiagramCss).not.toContain(".graph-diagram-handle-slot::before");
     expect(graphDiagramCss).toMatch(/\.graph-diagram .react-flow__handle,[\s\S]*cursor:\s*crosshair;/);
-    expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .graph-diagram-handle-add");
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-add\s*\{[^}]*cursor:\s*copy;[^}]*pointer-events:\s*none;/s);
-    expect(
-      Array.from(startNode.querySelectorAll<HTMLButtonElement>(".graph-diagram-handle-add"))
-        .every((button) => button.title === "点击新建相邻节点"),
-    ).toBe(true);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-dot\s*\{[^}]*border-radius:\s*999px;[^}]*opacity:\s*0;/s);
+
+    const rightHandle = handles.find((handle) => handle.classList.contains("source") && handle.dataset.handleid === "r")!;
+    await mouseEvent(rightHandle, "mouseover");
+    const addButton = startNode.querySelector<HTMLButtonElement>(".graph-diagram-handle-add--r");
+    expect(addButton?.classList.contains("is-plus")).toBe(true);
+    expect(addButton?.querySelector(".graph-diagram-canvas-tool-icon")).not.toBeNull();
+    expect(startNode.querySelector(".graph-diagram-handle-ghost")).toBeNull();
+
+    await waitMs(240);
+    const previewButton = startNode.querySelector<HTMLButtonElement>(".graph-diagram-handle-add--r");
+    expect(previewButton?.classList.contains("is-preview")).toBe(true);
+    expect(previewButton?.querySelector(".graph-diagram-handle-direction-icon--r")).not.toBeNull();
+    expect(startNode.querySelector(".graph-diagram-handle-ghost--r")).not.toBeNull();
+
+    await mouseEvent(rightHandle, "mouseout");
+    expect(startNode.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(startNode.querySelector(".graph-diagram-handle-ghost")).toBeNull();
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__handle\s*\{[^}]*display:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__node:hover");
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__edge:hover .react-flow__edge-path");
@@ -678,10 +792,14 @@ flowchart LR
     );
     const editor = await openEditor();
     const startNode = findNode("开始", editor);
+    const rightHandle = Array.from(startNode.querySelectorAll<HTMLElement>(".react-flow__handle"))
+      .find((handle) => handle.classList.contains("source") && handle.dataset.handleid === "r")!;
+    await mouseEvent(rightHandle, "mouseover");
+    await waitMs(240);
     const addButton = startNode.querySelector<HTMLButtonElement>("button[aria-label='从右侧新增连接节点']");
     expect(addButton).not.toBeNull();
     expect(addButton?.title).toBe("点击新建相邻节点");
-    expect(addButton?.querySelector(".graph-diagram-canvas-tool-icon")).not.toBeNull();
+    expect(addButton?.querySelector(".graph-diagram-handle-direction-icon--r")).not.toBeNull();
     await click(addButton!);
 
     const latestSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
@@ -693,7 +811,7 @@ flowchart LR
     expect(fixedHandle).toEqual({ sourceHandle: "r", targetHandle: "l" });
   });
 
-  it("画框建区先预览并命名，Esc 整体取消，Enter 将框内节点写回 subgraph", async () => {
+  it("画框松手即用默认名建区并全选标题，失焦保留，Escape 撤销本次创建", async () => {
     const onSourceChange = vi.fn();
     await render(
       <EditableDiagramHarness
@@ -710,35 +828,42 @@ flowchart LR
       kind: "drawSubgraph",
       rect: { x: 20, y: 20, width: 220, height: 140 },
     });
-    const firstDraft = await waitForSelector(".graph-diagram-subgraph-draft.is-pending", editor) as HTMLElement;
-    expect(firstDraft.dataset.draftNodeCount).toBe("1");
-    const firstInput = findInput("新分区名称", editor);
+    const firstInput = findInput("分区名称", editor);
+    expect(firstInput.value).toBe("新分区");
+    expect(document.activeElement).toBe(firstInput);
+    expect(firstInput.selectionStart).toBe(0);
+    expect(firstInput.selectionEnd).toBe(firstInput.value.length);
+    const defaultSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(defaultSource).model as FlowGraph).subgraphs[0]?.label).toBe("新分区");
     await keyDown(firstInput, { key: "Escape" });
-    expect(editor.querySelector(".graph-diagram-subgraph-draft")).toBeNull();
-    expect(onSourceChange).not.toHaveBeenCalled();
+    const cancelledSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(cancelledSource).model as FlowGraph).subgraphs).toHaveLength(0);
 
     await dispatchGraphTestAction(editor, {
       kind: "drawSubgraph",
       rect: { x: 20, y: 20, width: 220, height: 140 },
     });
-    const input = findInput("新分区名称", editor);
+    const input = findInput("分区名称", editor);
     await setInputValue(input, "业务分区");
-    await keyDown(input, { key: "Enter" });
+    await act(async () => input.blur());
+    await flush();
 
     const nextSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
     const model = parseDiagram(nextSource).model as FlowGraph;
-    expect(model.subgraphs.find((subgraph) => subgraph.label === "业务分区")).toBeTruthy();
-    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual(["subgraph_业务分区"]);
+    const businessSubgraph = model.subgraphs.find((subgraph) => subgraph.label === "业务分区");
+    expect(businessSubgraph).toBeTruthy();
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual([businessSubgraph!.id]);
     expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual([]);
-    expect(editor.querySelector(".graph-diagram-subgraph-draft")).toBeNull();
+    expect(editor.querySelector("input[aria-label='分区名称']")).toBeNull();
 
     await dispatchGraphTestAction(editor, {
       kind: "drawSubgraph",
       rect: { x: 620, y: 320, width: 120, height: 80 },
     });
-    const emptyInput = findInput("新分区名称", editor);
+    const emptyInput = findInput("分区名称", editor);
     await setInputValue(emptyInput, "空分区");
-    await keyDown(emptyInput, { key: "Enter" });
+    await act(async () => emptyInput.blur());
+    await flush();
     const emptyModel = parseDiagram(onSourceChange.mock.calls.at(-1)?.[0] as string).model as FlowGraph;
     expect(emptyModel.subgraphs.find((subgraph) => subgraph.label === "空分区")).toBeTruthy();
     expect(emptyModel.nodes.every((node) => !node.scopePath.includes("subgraph_空分区"))).toBe(true);
@@ -773,7 +898,7 @@ flowchart LR
         height: 28,
       },
     });
-    const input = findInput("新分区名称", editor);
+    const input = findInput("分区名称", editor);
     await setInputValue(input, "内层");
     await keyDown(input, { key: "Enter" });
     const nestedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
@@ -794,7 +919,7 @@ flowchart LR
     });
     const toast = await waitForSelector(".qa-toast", document.body);
     expect(toast.textContent).toContain("分区不能跨越已有分区边界");
-    expect(editor.querySelector("input[aria-label='新分区名称']")).toBeNull();
+    expect(editor.querySelector("input[aria-label='分区名称']")).toBeNull();
   });
 
   it("拖节点进出分区会改归属，容器按新成员自动包络", async () => {
@@ -849,7 +974,7 @@ flowchart LR
       kind: "drawSubgraph",
       rect: { x: 620, y: 320, width: 120, height: 80 },
     });
-    const createInput = findInput("新分区名称", editor);
+    const createInput = findInput("分区名称", editor);
     await setInputValue(createInput, "Gamma区");
     await keyDown(createInput, { key: "Enter" });
     const createdSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
@@ -861,6 +986,7 @@ flowchart LR
     expect(cluster.dataset.clusterEmpty).toBe("true");
     expect(cluster.classList.contains("is-empty")).toBe(true);
     expect(cluster.textContent).toContain("拖入节点");
+    expect(cluster.querySelector(".react-flow__handle")).toBeNull();
     expect(clusterNode.style.width).toBe("220px");
     expect(clusterNode.style.height).toBe("146px");
     expect(graphDiagramCss).toMatch(
@@ -868,12 +994,22 @@ flowchart LR
     );
 
     const createdPosition = parseTranslate(clusterNode.style.transform);
+    expect(createdPosition).toEqual({ x: 620, y: 320 });
+    await dispatchGraphTestAction(editor, {
+      kind: "moveSubgraph",
+      subgraphId: gammaId,
+      delta: { x: 80, y: 45 },
+    });
+    clusterNode = await waitForSelector(`.react-flow__node[data-id="${gammaId}"]`, editor) as HTMLElement;
+    const draggedPosition = parseTranslate(clusterNode.style.transform);
+    expect(draggedPosition).toEqual({ x: 700, y: 365 });
+
     await dispatchGraphTestAction(editor, {
       kind: "dropNode",
       nodeId: "A",
       position: {
-        x: createdPosition.x,
-        y: createdPosition.y,
+        x: draggedPosition.x,
+        y: draggedPosition.y,
       },
     });
     const movedInSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
@@ -994,6 +1130,48 @@ flowchart LR
     expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
   });
 
+  it("分区填充与边框色样随源码变化，改色写回 Mermaid 并同步预览导出", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  subgraph Outer["业务区"]
+    A[甲]
+  end
+  style Outer fill:#efe3cc,stroke:#8f6d30
+`}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    await click(await waitForSelector(".graph-diagram-cluster__title", editor));
+    const toolbar = await waitForSelector("[aria-label='分区上下文操作']", editor);
+    const fillButton = findToolbarButton("填充", toolbar);
+    const borderButton = findToolbarButton("边框", toolbar);
+    expect(fillButton.dataset.swatchColor).toBe("#efe3cc");
+    expect(fillButton.querySelector("circle")?.getAttribute("fill")).toBe("#efe3cc");
+    expect(borderButton.dataset.swatchColor).toBe("#8f6d30");
+    expect(borderButton.querySelector("circle")?.getAttribute("stroke")).toBe("#8f6d30");
+
+    await openToolbarMenu("填充", toolbar);
+    await click(await waitForSelector("button[aria-label='分区填充色 #f8e7a1']", editor));
+    await openToolbarMenu("边框", toolbar);
+    await click(await waitForSelector("button[aria-label='分区边框色 #6a6256']", editor));
+
+    const rewritten = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect(rewritten).toContain("style Outer fill:#f8e7a1,stroke:#6a6256");
+    expect((parseDiagram(rewritten).model as FlowGraph).perSubgraphStyles?.Outer).toMatchObject({
+      fill: "#f8e7a1",
+      stroke: "#6a6256",
+    });
+    const clusterNode = editor.querySelector<HTMLElement>('.react-flow__node[data-id="Outer"]')!;
+    expect(clusterNode.style.getPropertyValue("--graph-cluster-fill")).toBe("#f8e7a1");
+    expect(clusterNode.style.getPropertyValue("--graph-cluster-stroke")).toBe("#6a6256");
+    const exportedRect = container?.querySelector<SVGRectElement>('.graph-diagram-export [data-cluster-id="Outer"] rect');
+    expect(exportedRect?.getAttribute("fill")).toBe("#f8e7a1");
+    expect(exportedRect?.getAttribute("stroke")).toBe("#6a6256");
+  });
+
   it("选中分区按 Delete 解散；拖标题整体移动时内部相对位置不变且不改 source", async () => {
     const onSourceChange = vi.fn();
     const onOverlayChange = vi.fn();
@@ -1019,6 +1197,10 @@ flowchart LR
     const latestOverlay = onOverlayChange.mock.calls.at(-1)?.[0] as NonNullable<Parameters<typeof DiagramRenderer>[0]["overlay"]>;
     expect(latestOverlay.positions?.A).toEqual({ x: 220, y: 160 });
     expect(latestOverlay.positions?.B).toEqual({ x: 440, y: 160 });
+    expect(latestOverlay.positions?.Outer).toEqual({
+      x: Math.round(clusterBefore.x + 140),
+      y: Math.round(clusterBefore.y + 70),
+    });
     expect(Object.keys(latestOverlay)).toEqual(["positions"]);
     expect((latestOverlay.positions?.B?.x ?? 0) - (latestOverlay.positions?.A?.x ?? 0)).toBe(220);
     const clusterAfter = parseTranslate((await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement).style.transform);
@@ -1191,6 +1373,43 @@ flowchart LR
     await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"] });
     expect(editor.querySelectorAll(".react-flow__node.selected").length).toBeGreaterThanOrEqual(2);
     expect(editor.querySelector(".graph-diagram-toolbar[aria-label='节点上下文操作']")).toBeNull();
+  });
+
+  it("点击空白画布同时清除节点、边、分区与多选标记", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  subgraph Zone["分区"]
+    A[开始] --> B[结束]
+  end
+`}
+      />,
+    );
+    const editor = await openEditor();
+    const pane = await waitForSelector(".react-flow__pane", editor);
+
+    await click(findNode("开始", editor));
+    expect(editor.querySelector("[aria-label='节点上下文操作']")).not.toBeNull();
+    await click(pane);
+    expect(editor.querySelector(".react-flow__node.selected")).toBeNull();
+    expect(editor.querySelector("[aria-label='节点上下文操作']")).toBeNull();
+
+    await click(await waitForSelector(".react-flow__edge", editor));
+    expect(editor.querySelector("[aria-label='连线上下文操作']")).not.toBeNull();
+    await click(pane);
+    expect(editor.querySelector(".react-flow__edge.selected")).toBeNull();
+    expect(editor.querySelector("[aria-label='连线上下文操作']")).toBeNull();
+
+    await click(await waitForSelector(".graph-diagram-cluster__title", editor));
+    expect(editor.querySelector("[aria-label='分区上下文操作']")).not.toBeNull();
+    await click(pane);
+    expect(editor.querySelector(".graph-diagram-cluster.is-selected")).toBeNull();
+    expect(editor.querySelector("[aria-label='分区上下文操作']")).toBeNull();
+
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"] });
+    expect(editor.querySelectorAll(".react-flow__node.selected").length).toBeGreaterThanOrEqual(2);
+    await click(pane);
+    expect(editor.querySelector(".react-flow__node.selected")).toBeNull();
   });
 
   it("source prop 变化后重新 parse 并重渲视图", async () => {
@@ -1482,10 +1701,18 @@ flowchart LR
     expect(contextToolbar.querySelectorAll(".dt-btn")).toHaveLength(5);
     expect(editor.querySelectorAll(".graph-diagram-shape-grid")).toHaveLength(0);
     expect(editor.querySelectorAll(".graph-diagram-segmented")).toHaveLength(0);
+    const fillButton = findToolbarButton("填充", editor);
+    const borderButton = findToolbarButton("边框", editor);
+    expect(fillButton.dataset.swatchColor).toBe("#efe3cc");
+    expect(fillButton.querySelector("circle")?.getAttribute("fill")).toBe("#efe3cc");
+    expect(borderButton.dataset.swatchColor).toBe("#b08a3e");
+    expect(borderButton.querySelector("circle")?.getAttribute("stroke")).toBe("#b08a3e");
     await openToolbarMenu("填充", editor);
     expect(editor.querySelector(".graph-diagram-popover.dt-menu")).not.toBeNull();
     const swatch = await waitForSelector("button[aria-label='填充色 #f3ecdd']", editor);
     await click(swatch);
+    expect(findToolbarButton("填充", editor).dataset.swatchColor).toBe("#f3ecdd");
+    expect(findToolbarButton("填充", editor).querySelector("circle")?.getAttribute("fill")).toBe("#f3ecdd");
     await setInputValue(findInput("填充不透明度", editor), "50");
     await openToolbarMenu("边框", editor);
     await setInputValue(findInput("边框粗细(px)", editor), "4");
@@ -1546,7 +1773,7 @@ flowchart LR
     expect(onSourceChange).not.toHaveBeenCalled();
   });
 
-  it("选中节点提供八向尺寸把手,拖拽结果写入 overlay 并参与导出往返", async () => {
+  it("节点 resize 中间态本体与选区实时同尺寸，结束后写入 overlay 并参与导出往返", async () => {
     const onOverlayChange = vi.fn();
     await render(
       <EditableDiagramHarness
@@ -1559,6 +1786,21 @@ flowchart LR
     const editor = await openEditor();
     await click(findNode("开始", editor));
     expect(editor.querySelectorAll(".graph-diagram-resize-handle, .graph-diagram-resize-line")).toHaveLength(8);
+
+    await dispatchGraphTestAction(editor, {
+      kind: "resizeNodePreview",
+      nodeId: "A",
+      rect: { x: 58, y: 82, width: 260, height: 126 },
+    });
+    const previewNode = findNode("开始", editor);
+    const previewBody = previewNode.querySelector<HTMLElement>(".graph-diagram-node-shell")!;
+    expect(previewNode.style.width).toBe("260px");
+    expect(previewNode.style.height).toBe("126px");
+    expect(previewBody.style.width).toBe("260px");
+    expect(previewBody.style.height).toBe("126px");
+    expect(previewBody.dataset.nodeWidth).toBe("260");
+    expect(previewBody.dataset.nodeHeight).toBe("126");
+    expect(onOverlayChange).not.toHaveBeenCalled();
 
     await dispatchGraphTestAction(editor, {
       kind: "resizeNode",
@@ -1578,14 +1820,16 @@ flowchart LR
     expect(resized.style.height).toBe("144px");
   });
 
-  it("图编辑交互皮肤无系统蓝,连接把手和加号默认隐藏并统一金墨", () => {
+  it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {
     const actionButtonCss = diagramViewCss.match(/\/\* 文字编辑按钮[\s\S]*?\/\* 全屏覆盖层/)?.[0] ?? "";
     const skinSources = `${graphDiagramSource}\n${graphDiagramCss}\n${actionButtonCss}`;
     expect(skinSources).not.toMatch(/#(?:35619d|1d4f91|2f4f6f|243e58|5178c6|7b61c8|b2483b|8a3028)\b/i);
     expect(skinSources).not.toMatch(/rgba?\(\s*(?:53\s*,\s*97\s*,\s*157|47\s*,\s*79\s*,\s*111|83\s*,\s*105\s*,\s*136)/i);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*opacity:\s*0;/s);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-add\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-dot\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--mark\) 82%,\s*var\(--ink-1\)\);/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-add\s*\{[^}]*background:\s*#fffaf0;[^}]*pointer-events:\s*none;/s);
     expect(actionButtonCss).toContain("rgba(143, 109, 48, 0.96)");
+    expect(actionButtonCss).toMatch(/\.pm-diagram-view-btn--ghost\s*\{[^}]*background:\s*var\(--bg-canvas,\s*#fffaf0\);[^}]*color:\s*var\(--ink-1,\s*#2f2a22\);/s);
   });
 
   it("选中态只有自定义一层选中环,React Flow 默认 selected 描边被重置", async () => {
@@ -1687,6 +1931,6 @@ flowchart LR
     const editor = await openEditor();
     expect(editor.getAttribute("role")).toBe("dialog");
     expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*z-index:\s*2147483000;[^}]*pointer-events:\s*auto;/s);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*rgba\(246,\s*241,\s*231,\s*0\.98\);/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-editor\s*\{[^}]*background:\s*var\(--bg-paper-deep,\s*#f6f1e7\);/s);
   });
 });

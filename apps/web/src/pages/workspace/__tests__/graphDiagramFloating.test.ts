@@ -35,6 +35,8 @@ describe("getFloatingPosition 工具栏/下拉放置", () => {
       canvasFrame: CANVAS,
     });
     expect(pos?.placement).toBe("above");
+    // 给顶部圆点、加号和幽灵节点留出完整操作带，工具栏不能再贴着节点顶边。
+    expect(pos?.top).toBe(284);
   });
 });
 

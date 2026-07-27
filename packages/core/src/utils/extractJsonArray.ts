@@ -5,12 +5,45 @@ function stripJsonFence(raw: string): string {
   return text.trim();
 }
 
+function startsJsonValue(text: string, arrayStart: number): boolean {
+  let cursor = arrayStart + 1;
+  while (cursor < text.length && /\s/.test(text[cursor]!)) cursor += 1;
+  if (cursor >= text.length) return true;
+
+  const first = text[cursor]!;
+  if (
+    first === "]" ||
+    first === "{" ||
+    first === "[" ||
+    first === '"' ||
+    first === "-" ||
+    (first >= "0" && first <= "9")
+  ) {
+    return true;
+  }
+
+  return ["true", "false", "null"].some((literal) => {
+    if (!text.startsWith(literal, cursor)) return false;
+    const next = text[cursor + literal.length];
+    return next === undefined || next === "," || next === "]" || /\s/.test(next);
+  });
+}
+
+function findFirstJsonArrayStart(text: string): number {
+  let start = text.indexOf("[");
+  while (start !== -1) {
+    if (startsJsonValue(text, start)) return start;
+    start = text.indexOf("[", start + 1);
+  }
+  return -1;
+}
+
 function scanArrayCandidates(
   raw: string,
   onCandidate: (candidate: string) => string | null,
 ): string | null {
   const text = stripJsonFence(raw);
-  const firstArrayStart = text.indexOf("[");
+  const firstArrayStart = findFirstJsonArrayStart(text);
   if (firstArrayStart === -1) return null;
 
   let depth = 0;

@@ -13,6 +13,22 @@ describe("extractJsonArray 首个顶层数组边界", () => {
     expect(extractFirstBalancedArray(truncated)).toBeNull();
   });
 
+  it("跳过前导散文方括号，并兼容 fence 与尾随文本", () => {
+    const expected = '[{"label":"问题","options":[]}]';
+    const raw = `说明[草稿]：\n\`\`\`json\n${expected}\n\`\`\`\n以上是结果。`;
+
+    expect(extractJsonArray(raw)).toBe(expected);
+    expect(extractFirstBalancedArray(raw)).toBe(expected);
+  });
+
+  it("跳过前导散文后，真正的顶层数组截断仍然失败", () => {
+    const raw =
+      '说明[草稿]：\n```json\n[{"id":"q1","options":[{"value":"a"}]}\n```\n以上是结果。';
+
+    expect(extractJsonArray(raw)).toBeNull();
+    expect(extractFirstBalancedArray(raw)).toBeNull();
+  });
+
   it.each([
     [
       "尾随散文",

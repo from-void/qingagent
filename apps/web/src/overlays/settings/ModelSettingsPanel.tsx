@@ -32,7 +32,6 @@ import {
   setSelectedModelProvider,
   setSelectedModelTier,
   setVisitorModelKey,
-  visitorKeyHeaders,
   writeCustomProvider,
   writeOfficialModelOverride,
 } from "./visitorKeyStore";
@@ -314,9 +313,6 @@ export function ModelSettingsPanel() {
     }
   }, []);
 
-  // 桌面客户端没有「浏览器 / 站点」概念:key 存本机、只认用户自带 key。文案/按钮据此调整。
-  const isDesktop = typeof window !== "undefined" && window.electron?.isDesktop === true;
-
   const loadUsage = useCallback(async (view: UsageView, signal?: AbortSignal) => {
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
@@ -494,7 +490,6 @@ export function ModelSettingsPanel() {
     Boolean(customProviders[provider]);
   const customProvider = customProviders[configProvider];
   const visitorKey = visitorKeys[configProvider];
-  const usingCustom = Boolean(customProvider);
   const serverProviderState = serverStateOf(configProvider);
   const configProviderConfigured = vendorConfigured(configProvider);
   const anyConfigured = MODEL_VENDORS.some((provider) => vendorConfigured(provider));
@@ -1162,75 +1157,149 @@ export function ModelSettingsPanel() {
     </div>
   );
 
-  const keySourceLabel = customProvider
-    ? "自定义模型"
-    : visitorKey
-      ? isDesktop
-        ? "本机"
-        : "本浏览器"
-      : serverProviderState?.source === "db"
-        ? isDesktop
-          ? "本机配置"
-          : "站点全局"
-        : isDesktop
-          ? "本机环境变量"
-          : "环境变量";
+  // 二级页里的 key 概览:不再外露"本机 / 站点全局 / 环境变量"分层,统一「已配置密钥」语义。
+  const keySourceLabel = customProvider ? "自定义模型" : "已配置密钥";
   const keySourceDetail = customProvider
     ? customProvider.baseUrl
     : visitorKey
       ? maskKey(visitorKey)
-      : serverProviderState?.source === "db"
-        ? serverProviderState.maskedTail
-          ? `••••${serverProviderState.maskedTail}`
-          : ""
-        : isDesktop
-          ? ".env"
-          : "站点默认";
+      : serverProviderState?.maskedTail
+        ? `••••${serverProviderState.maskedTail}`
+        : "";
+
+  // —— 厂商卡:一个强调信号(金描边 + 卡底金面「使用中」)+ 一个主动作 ——
+  const renderVendorCard = (provider: ModelProvider) => {
+    const meta = VENDOR_META[provider];
+    const wf = providerWfKey(provider);
+    const configuredVendor = vendorConfigured(provider);
+    const isActive = configuredVendor && modelProvider === provider;
+    const vendorCustom = customProviders[provider];
+    const balanceText = balanceVal
+      ? balanceVal.currency === "CNY"
+        ? fmtMoney(Number(balanceVal.total))
+        : `${balanceVal.currency} ${Number(balanceVal.total).toFixed(2)}`
+      : null;
+    // 卡内状态行:DeepSeek 走自动余额检测;Kimi 无余额体系,连通只在二级页手动测。
+    const cardStatus = vendorCustom
+      ? { tone: "ok" as const, text: "已接入自定义模型" }
+      : provider === "deepseek"
+        ? deepseekStatus
+        : { tone: "ok" as const, text: kimiConnected ? "已连通" : "已配置" };
+
+    return (
+      <div
+        key={provider}
+        className={`md-card vd-card${isActive ? " vd-card--on" : ""}`}
+        data-wf={`ModelVendorCard${wf}`}
+      >
+        <div className="vd-head">
+          <span className="md-card-title">{meta.name}</span>
+          {configuredVendor ? (
+            <ModelTierChip
+              provider={provider}
+              tier={tiers[provider]}
+              disabled={persisting}
+              onChange={(tier) => void handleModelTierChange(provider, tier)}
+            />
+          ) : meta.recommended ? (
+            <i className="sk-card-tag">推 荐</i>
+          ) : null}
+        </div>
+
+        {configuredVendor ? (
+          <>
+            <div className="md-status-row">
+              <span className={`md-dot md-dot--${cardStatus.tone}`} aria-hidden="true" />
+              <span className="md-status-text">
+                {cardStatus.text}
+                {meta.hasBalance && !vendorCustom && balanceText ? (
+                  <>
+                    {" · 余额 "}
+                    <span className="font-mono">{balanceText}</span>
+                  </>
+                ) : null}
+              </span>
+            </div>
+            {meta.hasBalance && !vendorCustom && lowBalance && (
+              <span className="md-metric-warn">
+                <span className="md-dot md-dot--warn" aria-hidden="true" />
+                余额偏低，建议及时充值
+              </span>
+            )}
+            {meta.hasBalance && !vendorCustom && estDocs != null && (
+              <span className="vd-note">按当前均价,余额约还能写 {Math.floor(estDocs)} 篇</span>
+            )}
+          </>
+        ) : (
+          <p className="vd-intro">{VENDOR_INTRO[provider]}</p>
+        )}
+
+        {configuredVendor ? (
+          isActive ? (
+            <button
+              type="button"
+              className="sm-btn vd-cta vd-cta--using"
+              disabled
+              data-wf={`ModelUsing${wf}`}
+            >
+              使用中
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="sm-btn vd-cta"
+              onClick={() => void handleProviderChange(provider)}
+              disabled={persisting}
+              data-wf={`ModelEnable${wf}`}
+            >
+              启 用
+            </button>
+          )
+        ) : (
+          <button
+            type="button"
+            className={`sm-btn vd-cta${meta.recommended ? " vd-cta--rec" : ""}`}
+            onClick={() => openConfig(provider)}
+            disabled={persisting}
+            data-wf={`ModelConfig${wf}`}
+          >
+            去配置
+          </button>
+        )}
+
+        {configuredVendor && (
+          <span className="md-keyops vd-cfg">
+            <button
+              type="button"
+              className="md-mini-btn"
+              onClick={() => openConfig(provider)}
+              disabled={persisting}
+              data-wf={`ModelConfig${wf}`}
+            >
+              配 置
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="settings-model" data-wf="ModelSettingsPanel">
-      <div className="sm-tier-row sm-provider-row" data-wf="ModelProviderSelector">
-        <div className="sm-tier-copy">
-          <span className="sm-tier-title">模型厂商</span>
-          <span className="sm-tier-note">两家配置分别保留，切换不会清除另一家的 key 与中转设置</span>
-        </div>
-        <div className="sm-tier-control" role="radiogroup" aria-label="模型厂商">
-          {(["deepseek", "kimi"] as const).map((provider) => (
-            <button
-              key={provider}
-              type="button"
-              role="radio"
-              aria-checked={modelProvider === provider}
-              aria-pressed={modelProvider === provider}
-              className={`sm-tier-option${modelProvider === provider ? " sm-active" : ""}`}
-              onClick={() => void handleProviderChange(provider)}
-              disabled={persisting}
-              data-wf={provider === "deepseek" ? "ProviderDeepSeek" : "ProviderKimi"}
-            >
-              <span>{provider === "deepseek" ? "DeepSeek" : "Kimi"}</span>
-              <small>{provider === "deepseek" ? "V4 双档" : "K2.7 / K3"}</small>
-            </button>
-          ))}
-        </div>
-      </div>
-      {!dashboardVisible ? (
-        <section className="sm-setup">
+      {view === "config" ? (
+        /* —— 二级配置页:同弹层内的视图切换,现「切换 / 修改模型配置」全套元素平移 —— */
+        <section className="sm-setup vd-subpage" data-wf="ModelConfigPage">
           <div className="sm-guide">
-            {configured && (forceSetup || editing) && (
-              <button
-                type="button"
-                className="sm-back"
-                onClick={() => {
-                  invalidateCustomTest();
-                  setForceSetup(false);
-                  setEditing(false);
-                }}
-                disabled={persisting}
-              >
-                ← 返回看板
-              </button>
-            )}
-            {(!configured || forceSetup) && (
+            <button
+              type="button"
+              className="sm-back"
+              onClick={closeConfig}
+              disabled={persisting}
+              data-wf="ModelConfigBack"
+            >
+              ← 返回
+            </button>
+            {!anyConfigured && (
               <div className="sm-faq">
                 <div className="sm-faq-item">
                   <div className="sm-faq-q">青简是什么?</div>
@@ -1252,43 +1321,66 @@ export function ModelSettingsPanel() {
                 </div>
               </div>
             )}
+            {configProviderConfigured && (
+              <div className="vd-keyline">
+                <span className="md-keysrc">
+                  当前使用 <strong>{keySourceLabel}</strong>
+                  {keySourceDetail ? (
+                    <>
+                      {" · "}
+                      <span className="md-keysrc-detail font-mono" title={keySourceDetail}>
+                        {keySourceDetail}
+                      </span>
+                    </>
+                  ) : null}
+                </span>
+                <span className="md-keyops">
+                  {visitorKey && (
+                    <button
+                      type="button"
+                      className="md-mini-btn"
+                      onClick={() => void handleClearVisitor()}
+                      disabled={persisting}
+                      data-wf="ModelClearKey"
+                    >
+                      清除 key
+                    </button>
+                  )}
+                  {customProvider && (
+                    <button
+                      type="button"
+                      className="md-mini-btn"
+                      onClick={() => void handleClearCustom()}
+                      disabled={persisting}
+                      data-wf="ModelClearCustom"
+                    >
+                      清除自定义配置
+                    </button>
+                  )}
+                </span>
+              </div>
+            )}
             {configSection}
           </div>
+          {message && <p className="sm-message">{message}</p>}
         </section>
       ) : (
         <section className="sm-configured">
-          {/* —— 账户卡片:连通性状态 + 余额 + 近 7 天消耗 + key 管理 —— */}
-          <div className="md-card md-account">
-            <div className="md-status-row">
-              {usingCustom ? (
-                <>
-                  <span className="md-dot md-dot--ok" aria-hidden="true" />
-                  <span className="md-status-text">已接入自定义模型</span>
-                </>
-              ) : (
-                <>
-                  <span className={`md-dot md-dot--${status.tone}`} aria-hidden="true" />
-                  <span className="md-status-text">{status.text}</span>
-                  <button
-                    type="button"
-                    className="md-recheck"
-                    disabled={balanceLoading}
-                    onClick={() => void checkBalance()}
-                    data-wf="BalanceCheckBtn"
-                  >
-                    {balanceLoading
-                      ? "检测中…"
-                      : modelProvider === "kimi" ? "测试连接" : "重新检测"}
-                  </button>
-                </>
-              )}
+          {!anyConfigured && (
+            <div className="vd-onboard" data-wf="ModelOnboardHint">
+              还没有可用的模型。<b>推荐先接 DeepSeek</b>——写作最便宜;需要模型看图再接 Kimi。配置任意一家即可开始写作。
             </div>
+          )}
 
-            {modelTierSection}
-
-            <div className={`md-metrics${usingCustom || modelProvider === "kimi" ? " md-metrics--3" : ""}`}>
+          <div className="vd-grid" data-wf="ModelVendorCards">
+            {MODEL_VENDORS.map((provider) => renderVendorCard(provider))}
+          </div>
+          {/* —— 用量看板:三瓦片 + 按模型分布 + 按天趋势 —— */}
+          <div className="md-card md-usage">
+            <h3 className="md-card-title">用量看板</h3>
+            <div className="md-metrics md-metrics--3">
               <div className="md-metric">
-                <div className="md-metric-label">近 7 天已计价消耗</div>
+                <div className="md-metric-label">近 7 天花费</div>
                 <div className="md-metric-value md-value-accent font-mono">
                   {recent?.hasPriced
                     ? <AnimatedNumber value={recent.cost} format={fmtMoney} />
@@ -1300,7 +1392,7 @@ export function ModelSettingsPanel() {
               </div>
 
               <div className="md-metric">
-                <div className="md-metric-label">近 7 天文档</div>
+                <div className="md-metric-label">近 7 天产出</div>
                 <div className="md-metric-value font-mono">
                   {docStats ? <AnimatedNumber value={docs7} format={(n) => `${Math.round(n)} 篇`} /> : "—"}
                 </div>
@@ -1313,96 +1405,16 @@ export function ModelSettingsPanel() {
                   {avgPerDoc != null ? <AnimatedNumber value={avgPerDoc} format={fmtMoney} /> : "—"}
                 </div>
                 <div className="md-metric-sub">
-                  {docsPer10 != null ? `每 10 元约 ${Math.floor(docsPer10)} 篇` : "需有消耗与文档"}
+                  {docsPer10 != null ? `每 10 元约可写 ${Math.floor(docsPer10)} 篇` : "需有消耗与文档"}
                 </div>
               </div>
-
-              {!usingCustom && modelProvider === "deepseek" && (
-                <div className="md-metric">
-                  <div className="md-metric-label">账户余额</div>
-                  <div className={`md-metric-value${lowBalance ? "" : " md-value-accent"} font-mono`}>
-                    {balanceVal ? (
-                      <AnimatedNumber
-                        value={Number(balanceVal.total)}
-                        format={(n) =>
-                          balanceVal.currency === "CNY" ? fmtMoney(n) : `${balanceVal.currency} ${n.toFixed(2)}`
-                        }
-                      />
-                    ) : (
-                      "—"
-                    )}
-                  </div>
-                  <div className="md-metric-sub">
-                    {estDocs != null
-                      ? `预估还可建 ${Math.floor(estDocs)} 篇`
-                      : balanceVal
-                        ? `充值 ${balanceVal.toppedUp}`
-                        : "暂无"}
-                  </div>
-                  {lowBalance && (
-                    <div className="md-metric-warn">
-                      <span className="md-dot md-dot--warn" aria-hidden="true" />
-                      余额偏低，建议及时充值
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
-            <div className="md-keyline">
-              <span className="md-keysrc">
-                当前使用 <strong>{keySourceLabel}</strong> 的 key
-                {keySourceDetail ? (
-                  <>
-                    {" · "}
-                    <span className="md-keysrc-detail font-mono" title={keySourceDetail}>
-                      {keySourceDetail}
-                    </span>
-                  </>
-                ) : null}
-              </span>
-              <span className="md-keyops">
-                <button type="button" className="md-mini-btn" onClick={() => setEditing(true)} data-wf="ModelKeyEdit" disabled={persisting}>
-                  修改配置
-                </button>
-                {visitorKey && (
-                  <button type="button" className="md-mini-btn" onClick={() => void handleClearVisitor()} disabled={persisting}>
-                    {isDesktop ? "清除本机 key" : "清除本浏览器 key"}
-                  </button>
-                )}
-                {customProvider && (
-                  <button type="button" className="md-mini-btn" onClick={() => void handleClearCustom()} disabled={persisting}>
-                    清除自定义配置
-                  </button>
-                )}
-                {/* 客户端只认本机自带 key、无 env/站点兜底,「清除·重新配置」无意义,仅 web 版显示 */}
-                {!isDesktop && (
-                  <button
-                    type="button"
-                    className="md-mini-btn"
-                    title="不删除后端 key，刷新后恢复"
-                    disabled={persisting}
-                    onClick={async () => {
-                      if (visitorKey && !(await handleClearVisitor())) return;
-                      if (customProvider && !(await handleClearCustom())) return;
-                      setForceSetup(true);
-                    }}
-                  >
-                    清除·重新配置
-                  </button>
-                )}
-              </span>
-            </div>
-          </div>
-
-          {/* —— 用量看板:按模型分布 + 按天趋势(并排) —— */}
-          <div className="md-card md-usage">
-            <h3 className="md-card-title">用量看板</h3>
             <div className="md-row">
               <div className="md-block md-col">
                 <div className="md-block-head">
                   <span className="md-block-title">按模型分布</span>
-                  <span className="md-block-sub">累计 tokens 占比</span>
+                  <span className="md-block-sub">累计费用占比</span>
                 </div>
                 {modelDist === null ? (
                   <p className="md-empty">加载失败或暂不可用</p>
@@ -1413,12 +1425,15 @@ export function ModelSettingsPanel() {
                     <div className="md-pie" style={{ background: pieGradient(modelDist) }} aria-hidden="true" />
                     <ul className="md-pie-legend">
                       {modelDist.map((m, i) => (
-                        <li className="md-legend-item" key={m.name}>
+                        <li
+                          className="md-legend-item"
+                          key={m.name}
+                          title={`${formatTokens(m.tokens)} tokens`}
+                        >
                           <span className="md-legend-dot" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
                           <span className="md-legend-name">{m.name}</span>
                           <span className="md-legend-num">
-                            {m.pct.toFixed(0)}% · {formatTokens(m.tokens)}
-                            {m.cost > 0 && <> · <span className="md-model-cost">¥{m.cost.toFixed(3)}</span></>}
+                            {m.pct.toFixed(0)}% · <span className="md-model-cost">{fmtMoney(m.cost)}</span>
                           </span>
                         </li>
                       ))}
@@ -1650,7 +1665,6 @@ export function ModelSettingsPanel() {
           </div>
         </section>
       )}
-      {message && <p className="sm-message">{message}</p>}
     </div>
   );
 }
@@ -1972,7 +1986,8 @@ function summarizeRecentDays(
   return { cost, tokens, calls, hasPriced };
 }
 
-// 按模型分布:total 数据按 modelId 聚合,算 tokens 占比(降序)。
+// 按模型分布:total 数据按 modelId 聚合,算**费用**占比(降序)。
+// 钱是用户真正关心的口径;没有价目表(费用为 0)的模型不进饼,tokens 降级成注脚。
 function buildModelDistribution(
   rows: UsageRow[] | null,
 ): Array<{ name: string; tokens: number; cost: number; pct: number }> | null {
@@ -1985,10 +2000,16 @@ function buildModelDistribution(
     prev.cost += r.costCny ?? 0;
     map.set(name, prev);
   }
-  const total = Array.from(map.values()).reduce((s, m) => s + m.tokens, 0);
-  return Array.from(map.entries())
-    .map(([name, m]) => ({ name, tokens: m.tokens, cost: m.cost, pct: total > 0 ? (m.tokens / total) * 100 : 0 }))
-    .sort((a, b) => b.tokens - a.tokens);
+  const priced = Array.from(map.entries()).filter(([, m]) => m.cost > 0);
+  const total = priced.reduce((sum, [, m]) => sum + m.cost, 0);
+  return priced
+    .map(([name, m]) => ({
+      name,
+      tokens: m.tokens,
+      cost: m.cost,
+      pct: total > 0 ? (m.cost / total) * 100 : 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
 }
 
 // 按天趋势:day 数据按日期聚合(各模型相加),取最近 N 天,补齐日期序列;返回升序便于柱状从左到右。

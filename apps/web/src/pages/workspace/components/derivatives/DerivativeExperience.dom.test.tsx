@@ -437,6 +437,105 @@ describe("公众号稿生成体验", () => {
     expect(stream.saveStyleTemplate).not.toHaveBeenCalled();
   });
 
+  it("F1: 旧类型模板延迟保存回包不污染切换后的新类型", async () => {
+    const gzhTemplate = {
+      id: "gzh-opinion",
+      dtype: "gzh",
+      slot: "writing" as const,
+      name: "旧类型模板",
+      detail: "旧详情",
+      prompt: "旧提示",
+      builtin: false,
+    };
+    const translateTemplate = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    const savedGzhTemplate = {
+      ...gzhTemplate,
+      name: "旧类型保存结果",
+      prompt: "修改后的旧类型提示",
+    };
+    let resolveOldSave!: (value: typeof savedGzhTemplate) => void;
+    const oldSaveRequest = new Promise<typeof savedGzhTemplate>((resolve) => {
+      resolveOldSave = resolve;
+    });
+    const onGenerate = vi.fn();
+    const stream = {
+      listStyleTemplates: vi.fn(async (_sessionId: string, dtype: string) =>
+        dtype === "gzh" ? [gzhTemplate] : [translateTemplate]),
+      getStyleTemplate: vi.fn(async () => gzhTemplate),
+      saveStyleTemplate: vi.fn(() => oldSaveRequest),
+    };
+    const renderModal = (dtype: "gzh" | "translate") => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY[dtype]}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: dtype === "gzh" ? gzhTemplate.id : translateTemplate.id,
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={onGenerate}
+      />,
+    );
+
+    await act(async () => renderModal("gzh"));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑旧类型模板"]')!.click());
+    await act(async () => Promise.resolve());
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        prompt,
+        savedGzhTemplate.prompt,
+      );
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const saveButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "保存")!;
+    await act(async () => {
+      saveButton.click();
+      await Promise.resolve();
+    });
+    expect(stream.saveStyleTemplate).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        id: gzhTemplate.id,
+        dtype: "gzh",
+        prompt: savedGzhTemplate.prompt,
+      }),
+    );
+
+    await act(async () => renderModal("translate"));
+    await act(async () => Promise.resolve());
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.querySelector('[aria-checked="true"]')?.textContent).toContain(translateTemplate.name);
+
+    await act(async () => {
+      resolveOldSave(savedGzhTemplate);
+      await oldSaveRequest;
+    });
+
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.textContent).not.toContain(savedGzhTemplate.name);
+    expect(host.querySelector(".ws-launch-editor")).toBeNull();
+    expect(host.querySelectorAll(".ws-launch-template-card")).toHaveLength(1);
+    expect(host.querySelector('[aria-checked="true"]')?.textContent).toContain(translateTemplate.name);
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: translateTemplate.id,
+      writingStyleId: translateTemplate.id,
+    }));
+  });
+
   it("用户风格模板可删除，删除选中项后回退同组内置模板", async () => {
     const layout = { id: "layout-a", dtype: "gzh", slot: "layout" as const, name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true };
     const builtin = { id: "gzh-opinion", dtype: "gzh", slot: "writing" as const, name: "深度观点文", detail: "深入", prompt: "深度提示", builtin: true };

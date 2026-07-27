@@ -91,9 +91,13 @@ describe("derivative Agent tools", () => {
       ok: boolean;
       layoutPrompt?: string;
       writingPrompt?: string;
+      skillGuidance?: string;
+      skillName?: string | null;
     };
     expect(brief.layoutPrompt).toContain("<mark>");
-    expect(brief.writingPrompt).toContain("不得新增未经素材/主稿支撑的事实");
+    // 纪律层已迁到子技能:事实约束由 skillGuidance 承载,writingPrompt 回归纯模板。
+    expect(brief.skillName).toBe("wechat-gzh");
+    expect(brief.skillGuidance).toContain("不得新增未经素材/主稿支撑的事实");
     expect(brief.writingPrompt).toContain("前三行定生死");
 
     const denied = (await updateDerivativeParamsTool.execute!(

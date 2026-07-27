@@ -20,6 +20,7 @@ import { SearchPanel } from "./SearchPanel";
 import { VisionPanel } from "./VisionPanel";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
+import { useOverlayDismiss } from "../../system/overlayDismissStack";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import type { ConnectorId } from "@qingagent/contract-ts";
 
@@ -199,21 +200,19 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     };
   }, [selectedName, selectedChildName, getSkillDetail]);
 
+  // 行右键菜单同样是浮层:Esc 交给面板级守卫走浮层关闭栈统一关,这里只留点击/滚动关闭
+  useOverlayDismiss(Boolean(menu), () => setMenu(null));
+
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
-    };
     window.addEventListener("click", close);
     window.addEventListener("contextmenu", close);
     window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("contextmenu", close);
       window.removeEventListener("scroll", close, true);
-      window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
 

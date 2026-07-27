@@ -31,6 +31,7 @@ interface DesktopRecoveryDeps {
 export interface DesktopShutdownOptions {
   recoveryMarkerPath?: string;
   timeoutMs?: number;
+  deadlineAtMs?: number;
   deps?: DesktopShutdownDeps;
 }
 
@@ -150,14 +151,24 @@ export async function drainDesktopSessionsForShutdown(
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
     ? Math.max(1, Math.floor(requestedTimeoutMs))
     : DESKTOP_SHUTDOWN_TIMEOUT_MS;
+  const deadline = Number.isFinite(options.deadlineAtMs)
+    ? Math.floor(options.deadlineAtMs!)
+    : Date.now() + timeoutMs;
   const deps = options.deps ?? await defaultShutdownDeps();
   const pendingSessionIds = uniqueSessionIds(deps.listRecoverableSessionIds());
-  const deadline = Date.now() + timeoutMs;
+  const remainingAtStartMs = deadline - Date.now();
+  if (remainingAtStartMs <= 0) {
+    writeRecoveryMarker(markerPath, pendingSessionIds);
+    console.warn("[desktop] 会话排空启动时已到退出期限，已写入下次启动恢复标记", {
+      pendingSessionCount: pendingSessionIds.length,
+    });
+    return { completed: false, pendingSessionIds };
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`desktop shutdown drain timed out after ${timeoutMs}ms`)),
-      timeoutMs,
+      () => reject(new Error("desktop shutdown drain reached quit deadline")),
+      remainingAtStartMs,
     );
     timer.unref?.();
   });
@@ -165,7 +176,7 @@ export async function drainDesktopSessionsForShutdown(
     await deps.drainActiveTurns();
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
-      throw new Error(`desktop shutdown drain timed out after ${timeoutMs}ms`);
+      throw new Error("desktop shutdown drain reached quit deadline");
     }
     await deps.drainPersistence(remainingMs);
   })();

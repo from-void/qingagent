@@ -1192,13 +1192,13 @@ const quitCoordinator = createDesktopQuitCoordinator({
   telemetryEnabled: () => telemetry.enabled,
   captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),
   shutdownTelemetry: () => telemetry.shutdown(2000),
-  drainServer: async () => {
+  drainServer: async (deadlineAtMs) => {
     const { drainDesktopSessionsForShutdown } = await import(
       "@qingagent/server/desktopShutdown"
     );
     await drainDesktopSessionsForShutdown({
       recoveryMarkerPath: shutdownRecoveryMarkerPath,
-      timeoutMs: 10_000,
+      deadlineAtMs,
     });
   },
   stopExternalInstance: async () => {

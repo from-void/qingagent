@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, mock } from "node:test";
+import { drainDesktopSessionsForShutdown } from "@qingagent/server/desktopShutdown";
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 
 describe("desktop quit coordinator", () => {
@@ -52,5 +56,51 @@ describe("desktop quit coordinator", () => {
     const resumedEvent = { preventDefault: mock.fn() };
     assert.equal(coordinator.handleBeforeQuit(resumedEvent), undefined);
     assert.equal(resumedEvent.preventDefault.mock.callCount(), 0);
+  });
+
+  it("外部清理永不收敛时仍按总期限写恢复标记并放行退出", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "qingagent-quit-coordinator-"));
+    const recoveryMarkerPath = join(tempDir, "recovery.json");
+    const never = new Promise<void>(() => undefined);
+    const order: string[] = [];
+    const quit = mock.fn(() => {
+      assert.equal(existsSync(recoveryMarkerPath), true);
+      order.push("quit");
+    });
+    const startedAt = Date.now();
+    const coordinator = createDesktopQuitCoordinator({
+      telemetryEnabled: () => false,
+      captureAppClosed: mock.fn(),
+      shutdownTelemetry: mock.fn(async () => undefined),
+      drainServer: async (deadlineAtMs) => {
+        await drainDesktopSessionsForShutdown({
+          recoveryMarkerPath,
+          deadlineAtMs,
+          deps: {
+            listRecoverableSessionIds: () => ["session-never-settled"],
+            drainActiveTurns: () => never,
+            drainPersistence: mock.fn(async () => undefined),
+          },
+        });
+        order.push("marker");
+      },
+      stopExternalInstance: () => never,
+      quit,
+      // 生产值为 10 秒；测试缩短同一墙钟 deadline，避免套件平白等待。
+      deadlineMs: 30,
+    });
+
+    try {
+      await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+      assert.equal(quit.mock.callCount(), 1);
+      assert.deepEqual(order, ["marker", "quit"]);
+      assert.deepEqual(
+        JSON.parse(readFileSync(recoveryMarkerPath, "utf8")).sessionIds,
+        ["session-never-settled"],
+      );
+      assert.ok(Date.now() - startedAt < 500);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

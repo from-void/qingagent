@@ -120,6 +120,44 @@ const ORDERED_NUMBERING_BY_STYLE: Record<PmOrderedListStyle, string> = {
   "upper-roman": "qingagent-ordered-list-upper-roman",
 };
 
+type DocxNumberingConfig = {
+  reference: string;
+  levels: ReturnType<typeof numberingLevels>;
+};
+
+type DocxNumberingRegistry = {
+  config: DocxNumberingConfig[];
+  referenceFor: (
+    owner: object,
+    listStyle: string | null | undefined,
+    start: number | null | undefined,
+  ) => string;
+};
+
+function createDocxNumberingRegistry(): DocxNumberingRegistry {
+  const config: DocxNumberingConfig[] = [
+    { reference: BULLET_NUMBERING, levels: numberingLevels("bullet") },
+  ];
+  const references = new WeakMap<object, string>();
+  let nextReference = 1;
+
+  return {
+    config,
+    referenceFor(owner, listStyle, start) {
+      const existing = references.get(owner);
+      if (existing) return existing;
+      const style = normalizeOrderedListStyle(listStyle);
+      const reference = `${ORDERED_NUMBERING_BY_STYLE[style]}-${nextReference++}`;
+      references.set(owner, reference);
+      config.push({
+        reference,
+        levels: numberingLevels("ordered", style, normalizeOrderedListStart(start)),
+      });
+      return reference;
+    },
+  };
+}
+
 export async function toDocx(
   document: ExportDocument,
   options: ExportOptions = {},
@@ -131,11 +169,13 @@ export async function toDocx(
   const mathImages = isPmDocDocument(prepared)
     ? await buildMathImages(collectMathFormulas(prepared))
     : new Map<string, ImageRun | null>();
+  const numbering = createDocxNumberingRegistry();
   const sectionChildren = isPmDocDocument(prepared)
-    ? await pmDocToDocx(prepared, mathImages)
+    ? await pmDocToDocx(prepared, mathImages, numbering)
     : (await Promise.all(prepared.map((section) =>
         sectionToDocx(
           section,
+          numbering,
           section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
         ),
       ))).flat();
@@ -167,13 +207,7 @@ export async function toDocx(
       },
     },
     numbering: {
-      config: [
-        { reference: BULLET_NUMBERING, levels: numberingLevels("bullet") },
-        ...Object.entries(ORDERED_NUMBERING_BY_STYLE).map(([style, reference]) => ({
-          reference,
-          levels: numberingLevels("ordered", style as PmOrderedListStyle),
-        })),
-      ],
+      config: numbering.config,
     },
     sections: [{ children }],
   });
@@ -181,8 +215,12 @@ export async function toDocx(
   return Packer.toBuffer(doc);
 }
 
-async function pmDocToDocx(doc: PmDoc, mathImages: MathImages): Promise<Array<Paragraph | Table>> {
-  return (await Promise.all(doc.content.map((node) => pmBlockToDocx(node, 0, {}, mathImages)))).flat();
+async function pmDocToDocx(
+  doc: PmDoc,
+  mathImages: MathImages,
+  numbering: DocxNumberingRegistry,
+): Promise<Array<Paragraph | Table>> {
+  return (await Promise.all(doc.content.map((node) => pmBlockToDocx(node, 0, {}, mathImages, numbering)))).flat();
 }
 
 // 引用块视觉装饰:左缩进 + 左侧竖边框 + 浅暖底纹(与 callout/codeBlock 同色系),
@@ -197,9 +235,10 @@ const QUOTE_PARAGRAPH_DECORATION = {
 
 async function pmBlockToDocx(
   node: PmBlockNode,
-  depth = 0,
-  opts: { inQuote?: boolean } = {},
-  mathImages: MathImages = new Map(),
+  depth: number,
+  opts: { inQuote?: boolean },
+  mathImages: MathImages,
+  numbering: DocxNumberingRegistry,
 ): Promise<Array<Paragraph | Table>> {
   const quoteDeco = opts.inQuote ? QUOTE_PARAGRAPH_DECORATION : {};
   switch (node.type) {
@@ -207,7 +246,7 @@ async function pmBlockToDocx(
       return (
         await Promise.all(
           node.content.map((column) =>
-            Promise.all(column.content.map((child) => pmBlockToDocx(child, depth, {}, mathImages))),
+            Promise.all(column.content.map((child) => pmBlockToDocx(child, depth, {}, mathImages, numbering))),
           ),
         )
       ).flat(2);
@@ -215,6 +254,7 @@ async function pmBlockToDocx(
       // 图表块:有渲染好的 svg 就当图片嵌入(走 image 的 svg→png 路径),否则源码降级为 code 块。
       return sectionToDocx(
         { kind: "diagram", data: { lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg } },
+        numbering,
         isDrawioExportSourceNormalized(node.attrs),
       );
     case "heading":
@@ -244,13 +284,12 @@ async function pmBlockToDocx(
       ];
     case "blockquote":
       // 把 inQuote 透传给子块,使引用内的段落/标题带上引用视觉装饰。
-      return (await Promise.all(node.content.map((child) => pmBlockToDocx(child, depth, { inQuote: true }, mathImages)))).flat();
+      return (await Promise.all(node.content.map((child) => pmBlockToDocx(child, depth, { inQuote: true }, mathImages, numbering)))).flat();
     case "bulletList":
-      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, BULLET_NUMBERING, depth, mathImages)))).flat();
+      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, BULLET_NUMBERING, depth, mathImages, numbering)))).flat();
     case "orderedList": {
-      // union:dev 的 listStyle 感知编号 + 本分支的 mathImages 公式管线
-      const reference = ORDERED_NUMBERING_BY_STYLE[normalizeOrderedListStyle(node.attrs.listStyle)];
-      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, reference, depth, mathImages)))).flat();
+      const reference = numbering.referenceFor(node, node.attrs.listStyle, node.attrs.start);
+      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, reference, depth, mathImages, numbering)))).flat();
     }
     case "horizontalRule":
       return [new Paragraph({ text: "————————", spacing: { after: 180 } })];
@@ -268,22 +307,25 @@ async function pmBlockToDocx(
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: await Promise.all(node.content.map(async (row) =>
             new TableRow({
-              children: await Promise.all(row.content.map((cell) => pmTableCellToDocx(cell, mathImages))),
+              children: await Promise.all(row.content.map((cell) => pmTableCellToDocx(cell, mathImages, numbering))),
             }),
           )),
         }),
       ];
     case "image":
-      return sectionToDocx({
-        kind: "image",
-        data: {
-          src: node.attrs.src,
-          alt: node.attrs.alt ?? "",
-          caption: node.attrs.caption ?? null,
-          width: node.attrs.width ?? null,
-          height: node.attrs.height ?? null,
+      return sectionToDocx(
+        {
+          kind: "image",
+          data: {
+            src: node.attrs.src,
+            alt: node.attrs.alt ?? "",
+            caption: node.attrs.caption ?? null,
+            width: node.attrs.width ?? null,
+            height: node.attrs.height ?? null,
+          },
         },
-      });
+        numbering,
+      );
     case "fileAttachment":
       return [
         new Paragraph({
@@ -305,9 +347,9 @@ async function pmBlockToDocx(
               spacing: { after: 120 },
             }));
           } else if (child.type === "taskList") {
-            children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages));
+            children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
           } else {
-            children.push(...await pmBlockToDocx(child, depth, {}, mathImages));
+            children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering));
           }
         }
       }
@@ -343,7 +385,8 @@ async function pmListItemToDocx(
   content: readonly PmBlockNode[],
   reference: string,
   depth: number,
-  mathImages: MathImages = new Map(),
+  mathImages: MathImages,
+  numbering: DocxNumberingRegistry,
 ): Promise<Array<Paragraph | Table>> {
   const children: Array<Paragraph | Table> = [];
   for (const child of content) {
@@ -356,20 +399,24 @@ async function pmListItemToDocx(
       continue;
     }
     if (child.type === "bulletList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages));
+      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
       continue;
     }
     if (child.type === "orderedList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages));
+      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
       continue;
     }
-    children.push(...await pmBlockToDocx(child, depth, {}, mathImages));
+    children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering));
   }
   return children;
 }
 
-async function pmTableCellToDocx(cell: PmTableCellNode, mathImages: MathImages = new Map()): Promise<TableCell> {
-  const children = (await Promise.all(cell.content.map((child) => pmBlockToDocx(child, 0, {}, mathImages)))).flat();
+async function pmTableCellToDocx(
+  cell: PmTableCellNode,
+  mathImages: MathImages,
+  numbering: DocxNumberingRegistry,
+): Promise<TableCell> {
+  const children = (await Promise.all(cell.content.map((child) => pmBlockToDocx(child, 0, {}, mathImages, numbering)))).flat();
   const colspan = normalizeTableSpan(cell.attrs?.colspan);
   const rowspan = normalizeTableSpan(cell.attrs?.rowspan);
   // 单元格背景色:此前 docx 导出丢失(回归 table-cell-color)。docx TableCell 原生支持 shading,
@@ -410,12 +457,17 @@ export function pmInlineToDocx(
 }
 
 // latexToDocxMath(假 OMML)已删:blockMath/inlineMath 走 KaTeX→PNG 图片管线(mathImages)
-function numberingLevels(kind: "bullet" | "ordered", listStyle: PmOrderedListStyle = "decimal") {
+function numberingLevels(
+  kind: "bullet" | "ordered",
+  listStyle: PmOrderedListStyle = "decimal",
+  start = 1,
+) {
   const bulletText = ["•", "◦", "▪", "•", "◦", "▪"];
   return Array.from({ length: 6 }, (_, level) => ({
     level,
     format: kind === "bullet" ? LevelFormat.BULLET : orderedListLevelFormat(listStyle),
     text: kind === "bullet" ? bulletText[level] : `%${level + 1}.`,
+    ...(kind === "ordered" ? { start } : {}),
     style: {
       paragraph: {
         indent: { left: 360 * (level + 1), hanging: 260 },
@@ -426,6 +478,10 @@ function numberingLevels(kind: "bullet" | "ordered", listStyle: PmOrderedListSty
 
 function normalizeOrderedListStyle(value: string | null | undefined): PmOrderedListStyle {
   return value && value in ORDERED_NUMBERING_BY_STYLE ? (value as PmOrderedListStyle) : "decimal";
+}
+
+function normalizeOrderedListStart(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 1;
 }
 
 function orderedListLevelFormat(style: PmOrderedListStyle): (typeof LevelFormat)[keyof typeof LevelFormat] {
@@ -647,6 +703,7 @@ async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Pro
 
 async function sectionToDocx(
   section: LegacySection,
+  numbering: DocxNumberingRegistry,
   sourceNormalized = false,
 ): Promise<Array<Paragraph | Table>> {
   switch (section.kind) {
@@ -672,7 +729,7 @@ async function sectionToDocx(
       if (section.data.svg && svgExceedsExportByteLimit(section.data.svg)) {
         return [
           fallbackNotice(true),
-          ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }),
+          ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }, numbering),
         ];
       }
       if (isRenderableSvg(section.data.svg)) {
@@ -684,7 +741,7 @@ async function sectionToDocx(
       }
       return [
         fallbackNotice(false),
-        ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }),
+        ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }, numbering),
       ];
     }
     case "quote":
@@ -697,17 +754,21 @@ async function sectionToDocx(
       ];
     case "hr":
       return [new Paragraph({ text: "─".repeat(30) })];
-    case "list":
+    case "list": {
+      const reference = section.data.ordered
+        ? numbering.referenceFor(section, "decimal", 1)
+        : BULLET_NUMBERING;
       return section.data.items.map(
         (it) =>
           new Paragraph({
             children: [new TextRun({ text: it, font: FONT })],
             numbering: {
-              reference: section.data.ordered ? ORDERED_NUMBERING_BY_STYLE.decimal : BULLET_NUMBERING,
+              reference,
               level: 0,
             },
           }),
       );
+    }
     case "h1":
       return [
         new Paragraph({

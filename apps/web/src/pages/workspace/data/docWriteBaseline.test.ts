@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { getPmContentHash, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
-import { canonicalDocWriteBaseline, isEmptyScaffoldConflict, type DocWriteBaseline } from "./docWriteBaseline";
+import {
+  EMPTY_PM_DOC_CONTENT_HASH,
+  canonicalDocWriteBaseline,
+  isEmptyScaffoldConflict,
+  type DocWriteBaseline,
+} from "./docWriteBaseline";
 import { pmDocToViewDocumentSnapshot } from "./protocol";
 import { viewDocToPm } from "./viewDocHtml";
 
@@ -115,6 +120,23 @@ describe("canonicalDocWriteBaseline", () => {
       ]),
       3,
     );
+  });
+
+  it("version 0(服务端尚无 canonical)按空文档记基线,不拿本地空段落脚手架算哈希", () => {
+    // 新建文档时本地先摆一个带 blockId 的空段落脚手架;服务端首写比对的是空文档。
+    // 拿脚手架算哈希会让首写必冲突 → 文档永远建不出来,之后每一笔(含图表块回写 svg)连锁冲突。
+    const scaffold = docWith([
+      { type: "paragraph", attrs: { blockId: "ai-block-1" }, content: [] },
+    ]);
+    const snapshot = pmDocToViewDocumentSnapshot(normalizePmDoc(scaffold), 0);
+    const baseline = canonicalDocWriteBaseline(snapshot, viewDocToPm);
+    expect(baseline.expectedDocumentSnapshot).toBe(0);
+    expect(baseline.baseContentHash).toBe(EMPTY_PM_DOC_CONTENT_HASH);
+    expect(baseline.baseHasSubstantiveContent).toBe(false);
+    // 与服务端首写时构造的空文档同形
+    expect(EMPTY_PM_DOC_CONTENT_HASH).toBe(getPmContentHash(normalizePmDoc(
+      { type: "doc", attrs: { schemaVersion: 1 }, content: [] } as unknown as PmDoc,
+    )));
   });
 
   it("快照只有 legacy sections(无 pmDoc)时回退到既有转换", () => {

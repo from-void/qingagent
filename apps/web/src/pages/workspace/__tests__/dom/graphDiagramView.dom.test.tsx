@@ -2314,6 +2314,56 @@ flowchart LR
     expect(resized.style.height).toBe("144px");
   });
 
+  it("节点尺寸同时声明进 measured,resize 起拖尺寸不会退化", async () => {
+    // React Flow 每次采纳新的 nodes 数组都用 userNode.measured 重建内部节点;我们显式提供了
+    // handles,它不会再去量 DOM 补回来。不声明 measured 的话,选中/改样式引发的节点重建会把
+    // 内部尺寸清空,NodeResizer 起拖时读到 0,一拖就被钳到最小尺寸(真机实测:拖大反被压成 96×48)。
+    // jsdom 的 ResizeObserver 桩会无条件回填尺寸,掩盖这条真实路径,故这里守构建契约。
+    const nodeBuilder = graphDiagramSource.slice(
+      graphDiagramSource.indexOf("const regularNodes = graphNodes.map"),
+      graphDiagramSource.indexOf("const nextNodes: GraphFlowNode[]"),
+    );
+    expect(nodeBuilder).toMatch(/measured:\s*\{\s*width:\s*nodeWidth,\s*height:\s*nodeHeight\s*\}/);
+    expect(nodeBuilder).toMatch(/initialWidth:\s*nodeWidth/);
+    expect(nodeBuilder).toMatch(/width:\s*nodeWidth/);
+    const clusterBuilder = graphDiagramSource.slice(
+      graphDiagramSource.indexOf("const clusterNodes = [...diagramLayout.clusters]"),
+      graphDiagramSource.indexOf("const regularNodes = graphNodes.map"),
+    );
+    expect(clusterBuilder).toMatch(/measured:\s*\{\s*width:\s*cluster\.width,\s*height:\s*cluster\.height\s*\}/);
+
+    // 尺寸仍然只有一处真相:外壳不写内联尺寸,跟随 React Flow 的节点包围盒
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+        initialOverlay={{ styles: { A: { width: 240, height: 120 } } } as Parameters<typeof DiagramRenderer>[0]["overlay"]}
+      />,
+    );
+    const editor = await openEditor();
+    const node = findNode("开始", editor);
+    expect(node.style.width).toBe("240px");
+    expect(node.style.height).toBe("120px");
+    expect(node.querySelector<HTMLElement>(".graph-diagram-node-shell")!.style.width).toBe("");
+  });
+
+  it("节点重建不再重置用户缩放:fit 只认容器尺寸变化", () => {
+    // resize/移动落库都会重建节点,useNodesInitialized 随之抖动;若照旧 refit,
+    // 用户手动缩放/平移过的视角会被一并重置(真机实测:193% 拖完变回 100%)。
+    const fitBlock = graphDiagramSource.slice(
+      graphDiagramSource.indexOf("function FitOnNodesInitialized"),
+      graphDiagramSource.indexOf("type GraphNodePosition"),
+    );
+    expect(fitBlock).toContain("fittedFrameRef");
+    expect(fitBlock).toMatch(/if \(fittedFrameRef\.current === frameKey\) return;/);
+    const resizeHook = graphDiagramSource.slice(
+      graphDiagramSource.indexOf("function useFitOnResize"),
+      graphDiagramSource.indexOf("function modelNodes"),
+    );
+    expect(resizeHook).toMatch(/if \(fittedSize === sizeKey\) return;/);
+  });
+
   it("图编辑交互皮肤无系统蓝,连接把手圆点与悬停按钮统一金墨", () => {
     const actionButtonCss = diagramViewCss.match(/\/\* 文字编辑按钮[\s\S]*?\/\* 全屏覆盖层/)?.[0] ?? "";
     const skinSources = `${graphDiagramSource}\n${graphDiagramCss}\n${actionButtonCss}`;

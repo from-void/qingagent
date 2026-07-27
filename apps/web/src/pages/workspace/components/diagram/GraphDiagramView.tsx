@@ -1191,8 +1191,14 @@ function FitOnNodesInitialized({ maxZoom = 1 }: { maxZoom?: number }) {
   // 一次就定死,图表被顶出视口渲染成空白(审阅态复现)。
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
+  // 只在"首次量到容器"和"容器尺寸真的变了"时 fit。节点重建(选中/改样式/resize 落库都会重建)
+  // 会让 useNodesInitialized 抖动,若照旧 refit 就会把用户手动缩放/平移过的视角一并重置。
+  const fittedFrameRef = useRef<string | null>(null);
   useEffect(() => {
     if (!initialized || width === 0 || height === 0) return;
+    const frameKey = `${Math.round(width)}x${Math.round(height)}`;
+    if (fittedFrameRef.current === frameKey) return;
+    fittedFrameRef.current = frameKey;
     const id = requestAnimationFrame(() => fitView({ padding: 0.15, maxZoom }));
     return () => cancelAnimationFrame(id);
   }, [initialized, fitView, maxZoom, width, height]);
@@ -2395,6 +2401,11 @@ export function GraphDiagramView({
         position: { x: cluster.x, y: cluster.y },
         initialWidth: cluster.width,
         initialHeight: cluster.height,
+        // 尺寸要同时声明进 measured:React Flow 每次采纳新的 nodes 数组都会用
+        // userNode.measured 重建内部节点(adoptUserNodes),而我们显式提供了 handles,
+        // 它就不会再去量 DOM 补回来——不声明的话内部 measured 会被清空,
+        // NodeResizer 起拖时读到的起始尺寸是 0,一拖就被钳到最小尺寸。
+        measured: { width: cluster.width, height: cluster.height },
         sourcePosition: graphHandleDirection.sourcePosition,
         targetPosition: graphHandleDirection.targetPosition,
         data: {
@@ -2456,6 +2467,9 @@ export function GraphDiagramView({
         position: over ?? auto,
         initialWidth: nodeWidth,
         initialHeight: nodeHeight,
+        // 与 style/initialWidth 同一个数(节点尺寸的唯一真相:源码/overlay 里的宽高);
+        // 声明给 React Flow 的 measured,免得内部尺寸在重建后被清空。
+        measured: { width: nodeWidth, height: nodeHeight },
         sourcePosition: graphHandleDirection.sourcePosition,
         targetPosition: graphHandleDirection.targetPosition,
         handles: graphNodeHandleBounds(nodeWidth, nodeHeight),
@@ -4356,9 +4370,14 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
   useEffect(() => {
     if (!active || !canvasEl || typeof ResizeObserver === "undefined") return;
     let raf = 0;
+    let fittedSize: string | null = null;
     const update = () => {
       const rect = canvasEl.getBoundingClientRect();
       onCanvasFrameChange?.({ width: rect.width, height: rect.height, left: rect.left, top: rect.top });
+      // 容器尺寸没变就别重新 fit:用户手动缩放/平移过的视角要留着。
+      const sizeKey = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+      if (fittedSize === sizeKey) return;
+      fittedSize = sizeKey;
       rfRef.current?.fitView({ padding: 0.15, maxZoom: 1 });
     };
     const ro = new ResizeObserver(() => {

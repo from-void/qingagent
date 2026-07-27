@@ -109,7 +109,7 @@ import {
   shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
 } from "../data/docWriteResultOwnership";
-import { isEmptyScaffoldConflict } from "../data/docWriteBaseline";
+import { EMPTY_PM_DOC_CONTENT_HASH, isEmptyScaffoldConflict } from "../data/docWriteBaseline";
 import type { DocWriteBaseline } from "../data/docWriteBaseline";
 import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import type {
@@ -244,12 +244,6 @@ export {
   shouldAcceptBridgeFrameForSession,
   submitImmediateChatInputSend,
 } from "../data/sessionFrameGuards";
-
-const EMPTY_PM_DOC_CONTENT_HASH = getPmContentHash({
-  type: "doc",
-  attrs: { schemaVersion: 1 },
-  content: [],
-} satisfies PmDoc);
 
 // 历史版本入口特性开关:后端(版本快照/操作流水/读取 API)已就绪,前端列表/查看 UI 尚未迭代,
 // 暂时隐藏文档纸右上角的"历史"按钮(及其"即将上线"toast)。功能做完翻为 true 即可恢复入口。

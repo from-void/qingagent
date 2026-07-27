@@ -321,6 +321,23 @@ function pressEnter(editor: Editor): boolean {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
+  it("同一 version 的流式草稿内容变化会持续刷新已挂载编辑器", async () => {
+    let editor: Editor | null = null;
+    const handleEditorReady = (readyEditor: Editor | null) => {
+      editor = readyEditor;
+    };
+
+    renderDoc(paragraphDoc("首帧"), 7, handleEditorReady);
+    await flush();
+    expect(editor).not.toBeNull();
+    expect(editor!.state.doc.textContent).toBe("首帧");
+
+    renderDoc(paragraphDoc("首帧和后续帧"), 7, handleEditorReady);
+    await flush();
+
+    expect(editor!.state.doc.textContent).toBe("首帧和后续帧");
+  });
+
   it("多块文档异常坍缩时立即恢复上一有效快照且不转发保存", async () => {
     let editor: Editor | null = null;
     const baseline = listDoc();

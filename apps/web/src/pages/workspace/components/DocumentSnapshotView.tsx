@@ -513,8 +513,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   const latestCanonicalDocRef = useRef(doc);
   const lastVersionRef = useRef(doc.version);
   const latestDocVersionRef = useRef(doc.version);
+  const docRevision = useMemo(() => viewDocumentSyncRevision(doc), [doc]);
+  const lastSyncedDocRevisionRef = useRef(docRevision);
+  const latestDocRevisionRef = useRef(docRevision);
   latestCanonicalDocRef.current = doc;
   latestDocVersionRef.current = doc.version;
+  latestDocRevisionRef.current = docRevision;
   const currentDocWriteBaseline = useCallback((): DocWriteBaseline => {
     const canonical = normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current));
     return {
@@ -725,7 +729,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return true;
         }
         // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
-        if (latestDocVersionRef.current !== lastVersionRef.current) return false;
+        if (
+          latestDocVersionRef.current !== lastVersionRef.current ||
+          latestDocRevisionRef.current !== lastSyncedDocRevisionRef.current
+        ) {
+          return false;
+        }
         try {
           const live = JSON.stringify(normalizePmDoc(editor.getJSON()));
           const canonical = JSON.stringify(
@@ -891,18 +900,29 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     if (
       editor &&
       !editor.isDestroyed &&
-      doc.version !== lastVersionRef.current
+      (
+        doc.version !== lastVersionRef.current ||
+        docRevision !== lastSyncedDocRevisionRef.current
+      )
     ) {
       if (presentationRun?.docVersion === doc.version) {
         lastVersionRef.current = doc.version;
+        lastSyncedDocRevisionRef.current = docRevision;
         return;
       }
       const scheduledDoc = doc;
       const scheduledVersion = doc.version;
+      const scheduledRevision = docRevision;
       scheduleMicrotask(() => {
         if (!editor || editor.isDestroyed) return;
         if (latestDocVersionRef.current !== scheduledVersion) return;
-        if (lastVersionRef.current === scheduledVersion) return;
+        if (latestDocRevisionRef.current !== scheduledRevision) return;
+        if (
+          lastVersionRef.current === scheduledVersion &&
+          lastSyncedDocRevisionRef.current === scheduledRevision
+        ) {
+          return;
+        }
         // 揭示动画正在播放(或将播放本版本):主 effect 绝不抢着 setContent,
         // 把渲染权让给 presentation 动画的逐帧 setContentSilently,否则会用成品
         // 直接覆盖、吞掉逐字光标动效。microtask 延后后时序可能与 presentationRun
@@ -912,6 +932,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           latestPresentationDocVersionRef.current === scheduledVersion
         ) {
           lastVersionRef.current = scheduledVersion;
+          lastSyncedDocRevisionRef.current = scheduledRevision;
           return;
         }
         beginApplyingRemote();
@@ -953,6 +974,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             }
             lastValidEditorDocRef.current = normalizePmDoc(editor.getJSON());
             lastVersionRef.current = scheduledVersion;
+            lastSyncedDocRevisionRef.current = scheduledRevision;
           } else {
             // 真·外部变更:我方在途编辑已被外部覆盖,清空在途自我键避免后续误判;
             // 换内容前先记住选区,焦点在编辑器时按原位恢复光标(越界则钳到文末)。
@@ -962,6 +984,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             setRemoteEditorContent(editor, normalizedIncoming);
             lastValidEditorDocRef.current = normalizedIncoming;
             lastVersionRef.current = scheduledVersion;
+            lastSyncedDocRevisionRef.current = scheduledRevision;
             if (hadFocus) {
               const size = editor.state.doc.content.size;
               const from = Math.min(prevSelection.from, size);
@@ -987,6 +1010,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   }, [
     beginApplyingRemote,
     doc,
+    docRevision,
     editor,
     finishApplyingRemoteSoon,
     onToast,
@@ -1260,6 +1284,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         setRemoteEditorContent(editor, targetDoc);
         lastVersionRef.current = targetVersion;
+        lastSyncedDocRevisionRef.current = viewDocumentSyncRevision(doc);
       } finally {
         finishApplyingRemoteSoon();
       }
@@ -1578,4 +1603,8 @@ function scheduleMicrotask(callback: () => void): void {
     return;
   }
   setTimeout(callback, 0);
+}
+
+function viewDocumentSyncRevision(doc: ViewDocumentSnapshot): string {
+  return JSON.stringify(doc.pmDoc ?? doc.sections);
 }

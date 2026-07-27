@@ -1442,6 +1442,78 @@ flowchart LR
     expect(editor.querySelector(".react-flow__node.selected")).toBeNull();
   });
 
+  it("多选节点在位置 overlay 回写重建后仍保持完整选择集", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始]
+  B[结束]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 }, B: { x: 220, y: 50 } } }}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    await dispatchGraphTestAction(editor, { kind: "boxSelect", nodeIds: ["A", "B"] });
+    await dispatchGraphTestAction(editor, {
+      kind: "shiftDrag",
+      nodeId: "A",
+      dropPosition: { x: 160, y: 90 },
+    });
+
+    expect(onOverlayChange).toHaveBeenCalled();
+    expect(
+      editor.querySelector('.react-flow__node[data-id="A"]')?.classList.contains("selected"),
+    ).toBe(true);
+    expect(
+      editor.querySelector('.react-flow__node[data-id="B"]')?.classList.contains("selected"),
+    ).toBe(true);
+  });
+
+  it("多选边在节点位置 overlay 回写重建后仍保持完整选择集", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始] --> B[中间]
+  B --> C[结束]
+`}
+        initialOverlay={{
+          positions: {
+            A: { x: 40, y: 50 },
+            B: { x: 220, y: 50 },
+            C: { x: 400, y: 50 },
+          },
+        }}
+      />,
+    );
+    const editor = await openEditor();
+    const edgeIds = Array.from(
+      editor.querySelectorAll<HTMLElement>(".react-flow__edge"),
+      (edge) => edge.dataset.id,
+    ).filter((id): id is string => Boolean(id));
+    expect(edgeIds).toHaveLength(2);
+
+    await dispatchGraphTestAction(editor, {
+      kind: "boxSelect",
+      nodeIds: [],
+      edgeIds,
+    });
+    await dispatchGraphTestAction(editor, {
+      kind: "shiftDrag",
+      nodeId: "A",
+      dropPosition: { x: 160, y: 90 },
+    });
+
+    for (const edgeId of edgeIds) {
+      expect(
+        editor
+          .querySelector(`.react-flow__edge[data-id="${edgeId}"]`)
+          ?.classList.contains("selected"),
+      ).toBe(true);
+    }
+  });
+
   it("source prop 变化后重新 parse 并重渲视图", async () => {
     await render(
       <DiagramRenderer

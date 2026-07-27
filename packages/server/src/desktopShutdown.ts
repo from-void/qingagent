@@ -1,14 +1,17 @@
 import {
   existsSync,
-  mkdirSync,
   readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
+import {
+  mkdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const DESKTOP_SHUTDOWN_TIMEOUT_MS = 10_000;
+export const DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS = 2_000;
 const MARKER_VERSION = 1;
 const MAX_MARKER_BYTES = 64 * 1024;
 
@@ -22,6 +25,10 @@ interface DesktopShutdownDeps {
   listRecoverableSessionIds: () => string[];
   drainActiveTurns: () => Promise<void>;
   drainPersistence: (timeoutMs: number) => Promise<void>;
+  writeRecoveryMarker?: (
+    markerPath: string,
+    sessionIds: readonly string[],
+  ) => Promise<void>;
 }
 
 interface DesktopRecoveryDeps {
@@ -56,34 +63,84 @@ function uniqueSessionIds(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
-function writeRecoveryMarker(
+async function writeRecoveryMarker(
   markerPath: string,
   sessionIds: readonly string[],
-): void {
+): Promise<void> {
   const marker: DesktopShutdownRecoveryMarker = {
     version: MARKER_VERSION,
     createdAt: new Date().toISOString(),
     sessionIds: uniqueSessionIds(sessionIds),
   };
-  mkdirSync(dirname(markerPath), { recursive: true });
+  await mkdir(dirname(markerPath), { recursive: true });
   const tempPath = `${markerPath}.${process.pid}.tmp`;
   try {
-    writeFileSync(tempPath, JSON.stringify(marker), { mode: 0o600 });
-    renameSync(tempPath, markerPath);
+    await writeFile(tempPath, JSON.stringify(marker), { mode: 0o600 });
+    await rename(tempPath, markerPath);
   } finally {
     try {
-      unlinkSync(tempPath);
+      await unlink(tempPath);
     } catch {
       // rename 成功或临时文件本就不存在。
     }
   }
 }
 
-function removeRecoveryMarker(markerPath: string): void {
+async function removeRecoveryMarker(markerPath: string): Promise<void> {
   try {
-    unlinkSync(markerPath);
+    await unlink(markerPath);
   } catch {
     // 不存在或清理失败均不影响正常退出；失败时下次启动会再次幂等恢复。
+  }
+}
+
+async function writeRecoveryMarkerWithinDeadline(
+  markerPath: string,
+  sessionIds: readonly string[],
+  deadlineAtMs: number,
+  writer: (
+    markerPath: string,
+    sessionIds: readonly string[],
+  ) => Promise<void>,
+): Promise<boolean> {
+  const remainingMs = Math.min(
+    DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS,
+    deadlineAtMs - Date.now(),
+  );
+  if (remainingMs <= 0) {
+    console.warn("[desktop] 退出恢复标记已无可用预算，将直接退出");
+    return false;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const markerWrite = Promise.resolve()
+    .then(() => writer(markerPath, sessionIds))
+    .then(
+      () => ({ kind: "written" as const }),
+      (error) => {
+        return { kind: "failed" as const, error };
+      },
+    );
+  const timeout = new Promise<{ kind: "timeout" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timeout" }), remainingMs);
+    timer.unref?.();
+  });
+  try {
+    const result = await Promise.race([markerWrite, timeout]);
+    if (result.kind === "failed") {
+      console.warn("[desktop] 退出恢复标记写入失败，将直接退出", {
+        error: result.error instanceof Error
+          ? result.error.message
+          : String(result.error),
+      });
+    } else if (result.kind === "timeout") {
+      console.warn("[desktop] 退出恢复标记未在期限内写完，将直接退出", {
+        markerBudgetMs: remainingMs,
+      });
+    }
+    return result.kind === "written";
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -140,8 +197,8 @@ async function defaultRecoveryDeps(): Promise<DesktopRecoveryDeps> {
 }
 
 /**
- * Electron 正常退出专用排空。active turn 与持久化共用一个 10 秒墙钟预算；
- * 超时或失败时同步落恢复标记，确保 app.quit 放行前标记已经 durable。
+ * Electron 正常退出专用排空。active turn、持久化与恢复标记共用一个 10 秒墙钟预算；
+ * 最后 2 秒预留给异步恢复标记，标记超时或失败时退出优先。
  */
 export async function drainDesktopSessionsForShutdown(
   options: DesktopShutdownOptions = {},
@@ -156,39 +213,53 @@ export async function drainDesktopSessionsForShutdown(
     : Date.now() + timeoutMs;
   const deps = options.deps ?? await defaultShutdownDeps();
   const pendingSessionIds = uniqueSessionIds(deps.listRecoverableSessionIds());
-  const remainingAtStartMs = deadline - Date.now();
+  const markerWriter = deps.writeRecoveryMarker ?? writeRecoveryMarker;
+  const drainDeadline = deadline - DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS;
+  const remainingAtStartMs = drainDeadline - Date.now();
   if (remainingAtStartMs <= 0) {
-    writeRecoveryMarker(markerPath, pendingSessionIds);
-    console.warn("[desktop] 会话排空启动时已到退出期限，已写入下次启动恢复标记", {
+    const markerWritten = await writeRecoveryMarkerWithinDeadline(
+      markerPath,
+      pendingSessionIds,
+      deadline,
+      markerWriter,
+    );
+    console.warn("[desktop] 会话排空启动时已进入恢复标记预算", {
       pendingSessionCount: pendingSessionIds.length,
+      markerWritten,
     });
     return { completed: false, pendingSessionIds };
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error("desktop shutdown drain reached quit deadline")),
+      () => reject(new Error("desktop shutdown drain reached marker budget")),
       remainingAtStartMs,
     );
     timer.unref?.();
   });
   const drain = (async () => {
     await deps.drainActiveTurns();
-    const remainingMs = deadline - Date.now();
+    const remainingMs = drainDeadline - Date.now();
     if (remainingMs <= 0) {
-      throw new Error("desktop shutdown drain reached quit deadline");
+      throw new Error("desktop shutdown drain reached marker budget");
     }
     await deps.drainPersistence(remainingMs);
   })();
 
   try {
     await Promise.race([drain, timeout]);
-    removeRecoveryMarker(markerPath);
+    await removeRecoveryMarker(markerPath);
     return { completed: true, pendingSessionIds: [] };
   } catch (error) {
-    writeRecoveryMarker(markerPath, pendingSessionIds);
-    console.warn("[desktop] 会话排空未完成，已写入下次启动恢复标记", {
+    const markerWritten = await writeRecoveryMarkerWithinDeadline(
+      markerPath,
+      pendingSessionIds,
+      deadline,
+      markerWriter,
+    );
+    console.warn("[desktop] 会话排空未完成", {
       pendingSessionCount: pendingSessionIds.length,
+      markerWritten,
       error: error instanceof Error ? error.message : String(error),
     });
     return { completed: false, pendingSessionIds };
@@ -216,7 +287,7 @@ export async function resumeInterruptedDesktopShutdown(
     return { recoveredSessionCount: 0, pending: true };
   }
   if (!marker) {
-    removeRecoveryMarker(markerPath);
+    await removeRecoveryMarker(markerPath);
     return { recoveredSessionCount: 0, pending: false };
   }
 
@@ -226,7 +297,7 @@ export async function resumeInterruptedDesktopShutdown(
     for (const sessionId of marker.sessionIds) {
       if (await deps.resumeSession(sessionId)) recoveredSessionCount++;
     }
-    removeRecoveryMarker(markerPath);
+    await removeRecoveryMarker(markerPath);
     return { recoveredSessionCount, pending: false };
   } catch (error) {
     console.warn("[desktop] 上次未完成会话恢复失败，将在下次启动重试", {

@@ -103,4 +103,46 @@ describe("desktop quit coordinator", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("排空与恢复标记双双卡死时仍在绝对期限内放行退出", async () => {
+    const never = new Promise<void>(() => undefined);
+    const drainActiveTurns = mock.fn(() => never);
+    const markerWrite = mock.fn(() => never);
+    const quit = mock.fn();
+    const startedAt = Date.now();
+    const coordinator = createDesktopQuitCoordinator({
+      telemetryEnabled: () => true,
+      captureAppClosed: mock.fn(),
+      shutdownTelemetry: () => never,
+      drainServer: (deadlineAtMs) =>
+        drainDesktopSessionsForShutdown({
+          recoveryMarkerPath: join(
+            tmpdir(),
+            `qingagent-marker-hang-${process.pid}.json`,
+          ),
+          deadlineAtMs,
+          deps: {
+            listRecoverableSessionIds: () => ["session-double-hang"],
+            drainActiveTurns,
+            drainPersistence: mock.fn(async () => undefined),
+            writeRecoveryMarker: markerWrite,
+          },
+        }).then(() => undefined),
+      stopExternalInstance: () => never,
+      quit,
+      // 生产值为 10 秒；测试保留真实 2 秒 marker 子预算，只缩短排空预算。
+      deadlineMs: 2_100,
+    });
+
+    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+
+    assert.equal(drainActiveTurns.mock.callCount(), 1);
+    assert.equal(markerWrite.mock.callCount(), 1);
+    assert.equal(quit.mock.callCount(), 1);
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(
+      elapsedMs >= 1_900 && elapsedMs < 3_000,
+      `elapsed=${elapsedMs} 应在 2100ms 绝对期限附近退出`,
+    );
+  });
 });

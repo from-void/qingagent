@@ -27,7 +27,7 @@ describe("desktop shutdown drain", () => {
     const order: string[] = [];
     const result = await drainDesktopSessionsForShutdown({
       recoveryMarkerPath: path,
-      timeoutMs: 100,
+      timeoutMs: 2_500,
       deps: {
         listRecoverableSessionIds: () => ["session-a"],
         drainActiveTurns: async () => {
@@ -44,7 +44,7 @@ describe("desktop shutdown drain", () => {
     expect(() => readFileSync(path)).toThrow();
   });
 
-  it("共用预算超时时同步记录未完成会话，下次启动自动恢复并清除标记", async () => {
+  it("共用预算超时时异步记录未完成会话，下次启动自动恢复并清除标记", async () => {
     const path = markerPath();
     const never = new Promise<void>(() => undefined);
     const result = await drainDesktopSessionsForShutdown({
@@ -79,6 +79,30 @@ describe("desktop shutdown drain", () => {
       "session-b",
     ]);
     expect(() => readFileSync(path)).toThrow();
+  });
+
+  it("恢复标记写入卡死时只等待总期限内的子预算", async () => {
+    const path = markerPath();
+    const never = new Promise<void>(() => undefined);
+    const startedAt = Date.now();
+    const result = await drainDesktopSessionsForShutdown({
+      recoveryMarkerPath: path,
+      deadlineAtMs: startedAt + 50,
+      deps: {
+        listRecoverableSessionIds: () => ["session-marker-hang"],
+        drainActiveTurns: () => never,
+        drainPersistence: vi.fn(),
+        writeRecoveryMarker: () => never,
+      },
+    });
+
+    expect(result).toEqual({
+      completed: false,
+      pendingSessionIds: ["session-marker-hang"],
+    });
+    const elapsedMs = Date.now() - startedAt;
+    expect(elapsedMs).toBeGreaterThanOrEqual(35);
+    expect(elapsedMs).toBeLessThan(500);
   });
 
   it("恢复失败保留标记，损坏标记则安全丢弃且不触发会话恢复", async () => {

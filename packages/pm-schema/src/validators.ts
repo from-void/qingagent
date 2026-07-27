@@ -298,7 +298,7 @@ const blockNodeSchema: LazyNode = z.lazy(() =>
     z.object({
       type: z.literal("orderedList"),
       attrs: blockIdSchema.extend({
-        start: z.number().int().positive().nullable().optional(),
+        start: z.number().int().nullable().optional(),
         listStyle: z.enum(PM_ORDERED_LIST_STYLES).nullable().optional(),
       }),
       content: z.array(listItemSchema).min(1),

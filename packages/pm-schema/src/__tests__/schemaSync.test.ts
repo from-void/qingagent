@@ -517,6 +517,23 @@ describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", 
     }
   });
 
+  it.each([0, -3])("HTML 有序列表 start=%i 可进入编辑器并通过 canonical 校验", async (start) => {
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: `<ol start="${start}" data-block-id="ol"><li data-block-id="li"><p data-block-id="p">条目</p></li></ol>`,
+    });
+
+    try {
+      expect(editor.getJSON().content?.[0]?.attrs?.start).toBe(start);
+      expect(editor.getHTML()).toContain(`start="${start}"`);
+      expect(safeParsePmDoc(editor.getJSON()).success).toBe(true);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("剪贴板 HTML 往返保留列表样式、文本对齐与链接 title", async () => {
     const { Editor } = await import("@tiptap/core");
     const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");

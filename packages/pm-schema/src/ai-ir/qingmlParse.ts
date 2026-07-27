@@ -253,7 +253,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
       return { type: "bulletList", items: parseListItems(element, ctx) };
     case "ol": {
       const block: AiBlock = { type: "orderedList", items: parseListItems(element, ctx) };
-      const start = positiveInt(element.attribs.start);
+      const start = integer(element.attribs.start);
       const listStyle = oneOf(PM_ORDERED_LIST_STYLES, element.attribs.style);
       if (start !== undefined) block.start = start;
       if (listStyle) block.listStyle = listStyle;
@@ -993,6 +993,12 @@ function positiveInt(value: unknown): number | undefined {
   if (typeof value !== "string" || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function integer(value: unknown): number | undefined {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
 function nonnegativeInt(value: unknown): number | undefined {

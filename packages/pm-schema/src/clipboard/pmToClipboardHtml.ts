@@ -31,6 +31,10 @@ function positiveIntAttr(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function intAttr(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
 function themeColorAttr(value: unknown): PmThemeColor | null {
   return isAllowedThemeColor(value) ? (value as PmThemeColor) : null;
 }
@@ -83,14 +87,14 @@ function boolAttr(name: string, value: boolean | undefined): string {
 
 function orderedListAttrsToHtml(node: PmNode): string {
   const attrs = (node as { attrs?: { start?: unknown; listStyle?: unknown } }).attrs;
-  const start = positiveIntAttr(attrs?.start);
+  const start = intAttr(attrs?.start);
   const listStyle = PM_ORDERED_LIST_STYLES.includes(
     attrs?.listStyle as (typeof PM_ORDERED_LIST_STYLES)[number],
   )
     ? attrs?.listStyle as (typeof PM_ORDERED_LIST_STYLES)[number]
     : null;
   const parts: string[] = [];
-  if (start && start !== 1) parts.push(`start="${start}"`);
+  if (start !== null && start !== 1) parts.push(`start="${start}"`);
   if (listStyle) {
     parts.push(`data-list-style="${listStyle}"`);
     parts.push(`style="list-style-type:${listStyle}"`);

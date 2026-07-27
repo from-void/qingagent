@@ -326,6 +326,20 @@ describe("pmToClipboardHtml", () => {
     expect(html).toBe('<ol start="5"><li><p>第五项</p></li></ol>');
   });
 
+  it.each([0, -3])("有序列表 start=%i 原样输出为 HTML 整数属性", (start) => {
+    const html = pmToClipboardHtml(
+      doc([{
+        type: "orderedList",
+        attrs: { start },
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "条目" }] }] },
+        ],
+      }]),
+    );
+
+    expect(html).toBe(`<ol start="${start}"><li><p>条目</p></li></ol>`);
+  });
+
   it("R3-15 taskList/callout 内部复制不吞块", () => {
     const html = pmToClipboardHtml(
       doc([

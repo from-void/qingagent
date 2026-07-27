@@ -182,7 +182,7 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
       ...aiBlockIdentitySchemaShape,
       type: z.literal("orderedList"),
       items: z.array(aiListItemSchema).min(1),
-      start: z.number().int().positive().nullable().optional(),
+      start: z.number().int().nullable().optional(),
       listStyle: aiOrderedListStyleSchema.nullable().optional(),
     }),
     z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("horizontalRule") }),

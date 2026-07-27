@@ -100,6 +100,29 @@ describe("pmMarkdownRoundTrip", () => {
     expect(pmToMarkdown(parsed)).toBe(markdown);
   });
 
+  it("Markdown 支持 0 起始；负数起始因语法无法表达仅在该出口归一为 1", () => {
+    const zeroMarkdown = "0. 零起始";
+    const zeroParsed = markdownToPm(zeroMarkdown);
+    const zeroList = zeroParsed.content[0];
+    expect(zeroList?.type === "orderedList" ? zeroList.attrs.start : undefined).toBe(0);
+    expect(pmToMarkdown(zeroParsed)).toBe(zeroMarkdown);
+
+    const negativeDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "negative-list", start: -3 },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "negative-item" },
+          content: [paragraph("negative-paragraph", "负数起始")],
+        }],
+      }],
+    };
+    expect(pmToMarkdown(negativeDoc)).toBe("1. 负数起始");
+  });
+
   it("不齐列 Markdown 表格按全表最大列数补齐且保留多余单元格", () => {
     const parsed = markdownToPm([
       "| A | B |",

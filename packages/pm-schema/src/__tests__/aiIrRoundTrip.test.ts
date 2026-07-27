@@ -956,6 +956,34 @@ describe("aiIrRoundTrip", () => {
     expect(image?.type === "image" ? image.attrs.title : undefined).toBe("图片标题");
   });
 
+  it.each([0, -3])("orderedList.start=%i 在 canonical 与 AI-IR 间往返保留", (start) => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "list", start },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "item" },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "paragraph" },
+            content: [{ type: "text", text: "条目" }],
+          }],
+        }],
+      }],
+    };
+
+    expect(safeParsePmDoc(source).success).toBe(true);
+    const ir = pmToAiIr(source);
+    expect(ir.blocks[0]).toMatchObject({ type: "orderedList", start });
+    expect(aiBlockSchema.safeParse(ir.blocks[0]).success).toBe(true);
+    const roundTripped = aiIrToPm(ir);
+    const list = roundTripped.content[0];
+    expect(list?.type === "orderedList" ? list.attrs.start : undefined).toBe(start);
+  });
+
   it("compiles heading levels 1-6 and rejects bad blocks without producing a canonical doc", () => {
     const result = compileAiDocumentToPm({
       blocks: [

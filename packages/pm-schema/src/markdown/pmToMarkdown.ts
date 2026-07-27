@@ -72,7 +72,9 @@ function listToMarkdown(
   depth: number,
   options: PmToMarkdownOptions,
 ): string {
-  const start = node.type === "orderedList" ? node.attrs.start ?? 1 : 1;
+  const rawStart = node.type === "orderedList" ? node.attrs.start ?? 1 : 1;
+  // CommonMark 有序列表只接受无符号十进制 marker；负数仅在 Markdown 出口降级为 1。
+  const start = rawStart < 0 ? 1 : rawStart;
   return node.content
     .map((item, index) => {
       const indent = "  ".repeat(depth);

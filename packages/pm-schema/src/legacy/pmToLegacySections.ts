@@ -26,6 +26,9 @@ function blockToLegacy(node: PmBlockNode): LegacyLegacySection | LegacyLegacySec
         kind: "list",
         data: {
           ordered: node.type === "orderedList",
+          ...(node.type === "orderedList" && node.attrs.start != null && node.attrs.start !== 1
+            ? { start: node.attrs.start }
+            : {}),
           items: node.content.map((item) => item.content.map((child) => pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: [child] })).join("\n")),
         },
       };

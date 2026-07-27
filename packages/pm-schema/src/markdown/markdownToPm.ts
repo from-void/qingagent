@@ -336,7 +336,7 @@ function parseMarkdownListLine(line: string): ParsedMarkdownListLine | null {
     return {
       level: indentLevel(ordered[1] ?? ""),
       kind: "ordered",
-      start: Number.isSafeInteger(parsedStart) && parsedStart > 0 ? parsedStart : 1,
+      start: Number.isSafeInteger(parsedStart) && parsedStart >= 0 ? parsedStart : 1,
       text: ordered[3] ?? "",
     };
   }

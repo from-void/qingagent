@@ -69,6 +69,16 @@ describe("legacyMigration", () => {
     expect(table.content.map((row) => row.content.length)).toEqual([3, 3, 3]);
   });
 
+  it("legacy 有序列表往返保留非正 start", () => {
+    const sections: LegacyLegacySection[] = [{
+      kind: "list",
+      data: { ordered: true, start: -3, items: ["条目"] },
+    }];
+    const pm = legacySectionsToPm(sections);
+
+    expect(pmToLegacySections(pm)).toEqual(sections);
+  });
+
   it("documents legacy taskList downgrade: nested task children stay as plain text, not task hierarchy", () => {
     const pm: PmDoc = {
       type: "doc",

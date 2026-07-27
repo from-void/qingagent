@@ -339,7 +339,14 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         if (liFallback) return liFallback;
       }
 
-      const hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
+      // posAtCoords 依赖宿主的 elementFromPoint,极端环境(块刚卸载/非常规宿主)会抛;
+      // 命中失败退回下面按块矩形的解析,不让一次异常打断整条 hover 链。
+      let hit: { pos: number } | null = null;
+      try {
+        hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
+      } catch {
+        hit = null;
+      }
       if (hit) {
         const $hit = resolveDocumentPositionSafely(editor.state.doc, hit.pos);
         const block = $hit ? findDraggableBlock($hit) : null;

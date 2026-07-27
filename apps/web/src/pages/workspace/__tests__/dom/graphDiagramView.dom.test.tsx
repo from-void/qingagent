@@ -79,6 +79,9 @@ function polyfillLayout() {
   Element.prototype.getClientRects = function () {
     return Object.assign([], { item: () => null }) as unknown as DOMRectList;
   };
+  // jsdom 没有命中测试;React Flow 连线中会用它找落点把手,补个空实现避免抛未捕获异常。
+  (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => null;
+  (document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => [];
   Object.defineProperty(SVGElement.prototype, "getBBox", {
     configurable: true,
     value() {

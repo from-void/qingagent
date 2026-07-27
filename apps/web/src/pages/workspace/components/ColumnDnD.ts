@@ -34,7 +34,7 @@ export interface RectLike {
 
 export type DropIntent =
   | { kind: "native" }
-  | { kind: "vertical" }
+  | { kind: "vertical"; source: MovableBlock; target: MovableBlock; placement: "before" | "after" }
   | { kind: "reject" }
   | { kind: "columnEdge"; source: MovableBlock; target: MovableBlock; side: ColumnDropSide; edgePx: number };
 
@@ -71,7 +71,6 @@ const columnDndKey = new PluginKey<ColumnDnDState>("qingagentColumnDnd");
 
 const rejectedDirectTargetTypes = new Set([
   "column",
-  "columnList",
   "tableRow",
   "tableCell",
   "tableHeader",
@@ -129,6 +128,29 @@ export function normalizeColumnDropRatios(ratios: readonly unknown[]): number[] 
 }
 
 export function findDraggableBlock($pos: ResolvedPos): MovableBlock | null {
+  // 块起始边界是最常见的 hover / drop 命中形态。列内段落的边界位置深度仍停在
+  // column；若先向上找祖先，会把顶层 columnList 抢先返回，栏内块就永远拿不到手柄。
+  // 因此边界后的直属块必须优先于祖先块解析。
+  const after = $pos.nodeAfter;
+  const boundaryParent = $pos.parent;
+  if (
+    after &&
+    after.isBlock &&
+    (boundaryParent.type.name === "doc" || boundaryParent.type.name === "column")
+  ) {
+    const d = $pos.depth;
+    return {
+      pos: $pos.pos,
+      node: after,
+      parentType: boundaryParent.type.name,
+      parentPos: d >= 1 ? $pos.before(d) : null,
+      parentDepth: d,
+      index: $pos.index(d),
+      columnListPos: boundaryParent.type.name === "column" && d >= 2 ? $pos.before(d - 1) : null,
+      columnIndex: boundaryParent.type.name === "column" && d >= 2 ? $pos.index(d - 1) : null,
+    };
+  }
+
   for (let depth = $pos.depth; depth >= 1; depth--) {
     const node = $pos.node(depth);
     const parent = $pos.node(depth - 1);
@@ -144,28 +166,6 @@ export function findDraggableBlock($pos: ResolvedPos): MovableBlock | null {
       index: $pos.index(depth - 1),
       columnListPos: parent.type.name === "column" && depth >= 2 ? $pos.before(depth - 2) : null,
       columnIndex: parent.type.name === "column" && depth >= 2 ? $pos.index(depth - 2) : null,
-    };
-  }
-  // 叶子块(atom,如 diagram / horizontalRule / image)无法从"内部位置"解析到自身
-  // (向上走 node(depth) 永远拿到的是父节点)。改从边界命中:若解析点正好在某叶子块之前,
-  // 用 $pos.nodeAfter 把这个叶子块当作可拖块返回。索引/父级口径与上面分支保持一致。
-  const after = $pos.nodeAfter;
-  const boundaryParent = $pos.parent;
-  if (
-    after &&
-    after.isBlock &&
-    (boundaryParent.type.name === "doc" || boundaryParent.type.name === "column")
-  ) {
-    const d = $pos.depth; // 父级深度;叶子块概念上位于 d+1
-    return {
-      pos: $pos.pos,
-      node: after,
-      parentType: boundaryParent.type.name,
-      parentPos: d >= 1 ? $pos.before(d) : null,
-      parentDepth: d,
-      index: $pos.index(d),
-      columnListPos: boundaryParent.type.name === "column" && d >= 2 ? $pos.before(d - 1) : null,
-      columnIndex: boundaryParent.type.name === "column" && d >= 2 ? $pos.index(d - 1) : null,
     };
   }
   return null;
@@ -248,18 +248,23 @@ export function resolveDropIntent(input: ResolveDropIntentInput): DropIntent {
   if (source.node.type.name === "columnList") return { kind: "native" };
   const target = resolveMovableBlockAtCoords(state, coords, posAtCoords, getRect);
   if (!target) return { kind: "native" };
-  if (target.node.type.name === "columnList") return { kind: "native" };
-  if (source.pos === target.pos || containsPos(source, target.pos) || containsPos(target, source.pos)) {
-    return { kind: "reject" };
-  }
   const rect = getRect(target);
   if (!rect || rect.width <= 0 || rect.height <= 0) return { kind: "native" };
   if (coords.top < rect.top || coords.top > rect.bottom) return { kind: "native" };
+  const placement = coords.top < rect.top + rect.height / 2 ? "before" : "after";
+  // 栏内块拖到本分栏整行的上/下半区，表示拖出到分栏前/后。这里必须先于
+  // containsPos 判断，否则祖先 columnList 会被当成“包含源块”的非法目标。
+  if (target.node.type.name === "columnList") {
+    return { kind: "vertical", source, target, placement };
+  }
+  if (source.pos === target.pos || containsPos(source, target.pos) || containsPos(target, source.pos)) {
+    return { kind: "reject" };
+  }
   const edgePx = clamp(rect.width * 0.2, 24, 64);
   const middle = rect.left + rect.width / 2;
   const side: ColumnDropSide = coords.left < middle ? "left" : "right";
   const distance = side === "left" ? coords.left - rect.left : rect.right - coords.left;
-  if (distance > edgePx) return { kind: "vertical" };
+  if (distance > edgePx) return { kind: "vertical", source, target, placement };
   // MAX_COLUMNS:目标列所在 columnList 已满,且不是同列表内重排(重排不增列)→ 不建栏,
   // 降级竖直(让原生 dropcursor 接管),避免画了"建栏"金边却在 drop 时无法建栏。
   if (target.parentType === "column" && target.columnListPos != null) {
@@ -270,7 +275,7 @@ export function resolveDropIntent(input: ResolveDropIntentInput): DropIntent {
       list.childCount >= MAX_COLUMNS &&
       source.columnListPos !== target.columnListPos
     ) {
-      return { kind: "vertical" };
+      return { kind: "vertical", source, target, placement };
     }
   }
   return { kind: "columnEdge", source, target, side, edgePx };
@@ -281,11 +286,16 @@ function containsPos(block: MovableBlock, pos: number): boolean {
 }
 
 function isSourceAllowed(source: MovableBlock | null): source is MovableBlock {
-  return !!source && source.node.type.name !== "columnList";
+  return !!source &&
+    source.node.type.name !== "columnList" &&
+    (source.parentType === "doc" || source.parentType === "column");
 }
 
 function isTargetAllowed(target: MovableBlock | null): target is MovableBlock {
-  return !!target && !rejectedDirectTargetTypes.has(target.node.type.name);
+  return !!target &&
+    target.node.type.name !== "columnList" &&
+    (target.parentType === "doc" || target.parentType === "column") &&
+    !rejectedDirectTargetTypes.has(target.node.type.name);
 }
 
 function columnsFromList(list: PmNode): ColumnDraft[] {
@@ -372,6 +382,120 @@ function sourceAndTargetValid(source: MovableBlock | null, target: MovableBlock 
   if (!isSourceAllowed(source) || !isTargetAllowed(target)) return false;
   if (source.pos === target.pos || containsPos(source, target.pos) || containsPos(target, source.pos)) return false;
   return true;
+}
+
+function moveBlockWithinColumnList(
+  state: EditorState,
+  source: MovableBlock,
+  target: MovableBlock,
+  placement: "before" | "after",
+): Transaction | null {
+  if (
+    source.columnListPos == null ||
+    target.columnListPos == null ||
+    source.columnListPos !== target.columnListPos ||
+    source.columnIndex == null ||
+    target.columnIndex == null
+  ) {
+    return null;
+  }
+  const list = state.doc.nodeAt(source.columnListPos);
+  if (!list || list.type.name !== "columnList") return null;
+  const columns = columnsFromList(list);
+  const sourceColumn = columns[source.columnIndex];
+  const targetColumn = columns[target.columnIndex];
+  if (!sourceColumn?.blocks[source.index] || !targetColumn?.blocks[target.index]) return null;
+
+  const nextColumns = columns.map((column) => ({
+    attrs: column.attrs,
+    blocks: column.blocks.slice(),
+  }));
+  nextColumns[source.columnIndex]!.blocks.splice(source.index, 1);
+
+  let insertIndex = target.index + (placement === "after" ? 1 : 0);
+  if (source.columnIndex === target.columnIndex && source.index < insertIndex) {
+    insertIndex -= 1;
+  }
+  if (source.columnIndex === target.columnIndex && insertIndex === source.index) {
+    return null;
+  }
+  nextColumns[target.columnIndex]!.blocks.splice(insertIndex, 0, source.node);
+
+  const tr = state.tr;
+  replaceListInTransaction(tr, source.columnListPos, list, nextColumns);
+  return safeFinalize(tr);
+}
+
+function moveBlockOutOfOwnColumnList(
+  state: EditorState,
+  source: MovableBlock,
+  placement: "before" | "after",
+): Transaction | null {
+  if (source.columnListPos == null || source.columnIndex == null) return null;
+  const list = state.doc.nodeAt(source.columnListPos);
+  if (!list || list.type.name !== "columnList") return null;
+  const columns = filterEmptyColumns(removeSourceFromColumns(columnsFromList(list), source));
+  const remaining =
+    columns.length >= 2
+      ? [makeColumnListNodeFromDoc(state.doc, list.attrs, columns)]
+      : columns.length === 1
+        ? columns[0]!.blocks
+        : [];
+  const replacement = placement === "before"
+    ? [source.node, ...remaining]
+    : [...remaining, source.node];
+  const tr = state.tr.replaceWith(
+    source.columnListPos,
+    source.columnListPos + list.nodeSize,
+    Fragment.fromArray(replacement),
+  );
+  return safeFinalize(tr);
+}
+
+/**
+ * 纵向拖放跨越 doc / column 边界时由确定性事务接管；同一父级的普通顶层排序仍交给
+ * ProseMirror 原生 drop。这样既保留原生 dropcursor，也能复用既有空栏删除、单栏解散语义。
+ */
+export function buildVerticalBlockMoveTransaction(
+  state: EditorState,
+  sourcePos: number,
+  targetPos: number,
+  placement: "before" | "after",
+): Transaction | null {
+  const source = resolveBlockAtPos(state, sourcePos);
+  const target = resolveBlockAtPos(state, targetPos);
+  if (
+    !isSourceAllowed(source) ||
+    !target ||
+    (target.parentType !== "doc" && target.parentType !== "column") ||
+    rejectedDirectTargetTypes.has(target.node.type.name)
+  ) {
+    return null;
+  }
+  if (source.pos === target.pos) return null;
+
+  if (target.node.type.name === "columnList" && source.columnListPos === target.pos) {
+    return moveBlockOutOfOwnColumnList(state, source, placement);
+  }
+  if (containsPos(source, target.pos) || containsPos(target, source.pos)) return null;
+  if (source.columnListPos != null && source.columnListPos === target.columnListPos) {
+    return moveBlockWithinColumnList(state, source, target, placement);
+  }
+  if (source.parentType !== "column" && target.parentType !== "column") return null;
+
+  const tr = state.tr;
+  if (!removeSourceFirst(tr, source)) return null;
+  const mapped = mapTargetAfterSourceRemoval(tr, target, source);
+  if (mapped.deleted) return null;
+  const mappedTarget = resolveBlockInDoc(tr.doc, mapped.pos);
+  if (!mappedTarget || mappedTarget.node.type.name !== target.node.type.name) return null;
+  const insertPos = mappedTarget.pos + (placement === "after" ? mappedTarget.node.nodeSize : 0);
+  try {
+    tr.insert(insertPos, source.node);
+  } catch {
+    return null;
+  }
+  return safeFinalize(tr);
 }
 
 export function rebuildColumnList(
@@ -665,6 +789,20 @@ function applyColumnDrop(view: EditorView, source: MovableBlock, target: Movable
   return true;
 }
 
+function applyVerticalDrop(
+  view: EditorView,
+  source: MovableBlock,
+  target: MovableBlock,
+  placement: "before" | "after",
+): boolean {
+  const tr = buildVerticalBlockMoveTransaction(view.state, source.pos, target.pos, placement);
+  if (!tr) return false;
+  clearColumnDropClassOnly(view);
+  tr.setMeta(columnDndKey, { kind: "clear" } satisfies ColumnDnDMeta);
+  view.dispatch(tr);
+  return true;
+}
+
 function flattenColumnListBlocks(list: PmNode): PmNode[] {
   const blocks: PmNode[] = [];
   for (let i = 0; i < list.childCount; i++) {
@@ -787,6 +925,26 @@ export function createColumnDndPlugin(): Plugin {
           return false;
         }
         const intent = resolveIntentFromEvent(view, event);
+        if (intent.kind === "vertical") {
+          const crossesColumnBoundary =
+            intent.source.parentType === "column" ||
+            intent.target.parentType === "column";
+          if (!crossesColumnBoundary) {
+            clearColumnDropTarget(view);
+            return false;
+          }
+          applyVerticalDrop(
+            view,
+            intent.source,
+            intent.target,
+            intent.placement,
+          );
+          clearColumnDropTarget(view);
+          event.preventDefault();
+          // 已识别为跨 doc / column 的纵向拖放后即使事务因结构校验失败也要吞掉，
+          // 避免原生 drop 留下必填空段落或把块插进错误层级。
+          return true;
+        }
         if (intent.kind !== "columnEdge") {
           clearColumnDropTarget(view);
           return false;

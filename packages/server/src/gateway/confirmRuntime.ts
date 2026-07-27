@@ -595,6 +595,7 @@ export async function* handleConfirmDecision(
       service,
       agent,
       emitResolvedFrame: false,
+      abortController,
     });
   }
 }

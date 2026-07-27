@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { createSession } from "../session/sessionState.js";
 import { ConfirmService } from "../confirm/confirmService.js";
@@ -449,6 +449,7 @@ describe("processAgentStream tool-call-approval", () => {
       chips: null,
     });
     const service = new ConfirmService({ persist: async () => undefined });
+    const sharedAbortController = new AbortController();
     const agent = {
       approveToolCall: async (options: { abortSignal: AbortSignal }) => {
         options.abortSignal.throwIfAborted();
@@ -465,6 +466,7 @@ describe("processAgentStream tool-call-approval", () => {
       service,
       agent: agent as never,
       emitResolvedFrame: false,
+      abortController: sharedAbortController,
     });
     const frames: BridgeFrame[] = [];
     frames.push((await generator.next()).value as BridgeFrame);
@@ -489,6 +491,117 @@ describe("processAgentStream tool-call-approval", () => {
         data: { retriable: false, reason: "已中止，结果可能未知" },
       });
     expect(state._activeConfirmedToolCallId).toBeNull();
+  });
+
+  it("stored grant 队列复用原轮取消信号，停止前项后不执行后项", async () => {
+    const state = createSession("approval-stored-drain-cancel");
+    const sharedAbortController = new AbortController();
+    const service = new ConfirmService({ persist: async () => undefined });
+    const makePending = (suffix: string) => ({
+      confirmId: `confirm-${suffix}`,
+      runId: "run-stored-drain",
+      toolCallId: `tool-${suffix}`,
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: `digest-${suffix}`,
+      spec: {
+        id: `confirm-${suffix}`,
+        kind: "command" as const,
+        title: `命令 ${suffix}`,
+        say: "将执行命令",
+        commandPreview: `mv ${suffix}.txt done-${suffix}.txt`,
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming" as const,
+      decisionId: `decision-${suffix}`,
+      decisionSource: "stored-grant" as const,
+      decisionAccepted: true,
+    });
+    const first = makePending("first");
+    const second = makePending("second");
+    for (const pending of [first, second]) {
+      state.pendingConfirms.set(pending.toolCallId, pending);
+      state.chatHistory.push({
+        id: `agent-${pending.toolCallId}`,
+        role: { kind: "agent" },
+        ts: new Date().toISOString(),
+        parts: [{
+          kind: "toolCall",
+          data: {
+            id: pending.toolCallId,
+            name: pending.toolName,
+            render: { kind: "chatInline" },
+            status: { kind: "pending" },
+            body: {
+              kind: "commandCard",
+              data: {
+                title: pending.spec.title,
+                icon: "⚙️",
+                command: pending.spec.commandPreview,
+                exitCode: 0,
+                outputTail: "",
+                phase: "running",
+              },
+            },
+            result: null,
+          },
+        }],
+        chips: null,
+      });
+    }
+    const approveToolCall = vi.fn(async () => ({
+      runId: "run-stored-drain",
+      fullStream: events(),
+    }));
+    const agent = {
+      approveToolCall,
+      declineToolCall: async () => ({ runId: "run-stored-drain", fullStream: events() }),
+    };
+
+    const firstResume = resumeConfirmDecision({
+      session: state,
+      pending: first,
+      decisionId: first.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service,
+      agent: agent as never,
+      emitResolvedFrame: false,
+      abortController: sharedAbortController,
+    });
+    await firstResume.next();
+    await firstResume.next();
+    expect(cancelConfirmedCommand(state, first.toolCallId)).toBe(true);
+    await collect(firstResume);
+
+    await collect(resumeConfirmDecision({
+      session: state,
+      pending: second,
+      decisionId: second.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service,
+      agent: agent as never,
+      emitResolvedFrame: false,
+      abortController: sharedAbortController,
+    }));
+
+    expect(approveToolCall).not.toHaveBeenCalled();
+    const secondCard = state.chatHistory.flatMap((message) => message.parts)
+      .find((part) => part.kind === "toolCall" && part.data.id === second.toolCallId);
+    expect(secondCard?.kind === "toolCall" ? secondCard.data : null).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { reason: "已中止，结果可能未知" },
+      },
+      body: {
+        kind: "commandCard",
+        data: { terminalKind: "aborted" },
+      },
+    });
   });
 
   it("确认所属消息缺失且 failDecision 持久化失败时仍补失败工具卡与 resolved", async () => {

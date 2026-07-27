@@ -806,6 +806,7 @@ export async function* runAgentTurn(
             service: confirmService,
             agent: qingagentAgent,
             emitResolvedFrame: false,
+            abortController,
           });
         }
         if (

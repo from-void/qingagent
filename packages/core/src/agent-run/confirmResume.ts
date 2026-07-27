@@ -220,11 +220,12 @@ export async function* resumeConfirmDecision(input: {
   service: ConfirmService;
   agent?: ApprovalAgent;
   emitResolvedFrame?: boolean;
+  abortController?: AbortController;
 }): AsyncGenerator<BridgeFrame> {
   const { session, pending, service } = input;
   const agent = input.agent ?? qingagentAgent;
   const streamId = crypto.randomUUID();
-  const abortController = new AbortController();
+  const abortController = input.abortController ?? new AbortController();
   const previousStreamId = session.streamId;
   const previousAbortController = session._abortController;
   const previousActiveConfirmedToolCallId = session._activeConfirmedToolCallId;
@@ -249,6 +250,7 @@ export async function* resumeConfirmDecision(input: {
   yield { kind: "stream", data: { kind: "start", data: { streamId } } };
 
   try {
+    abortController.signal.throwIfAborted();
     if (!input.accepted) {
       const rejected = rejectConfirmedToolCall(session, pending);
       if (rejected) {
@@ -278,6 +280,7 @@ export async function* resumeConfirmDecision(input: {
       };
     }
     const toolsets = await buildResumeTools(session);
+    abortController.signal.throwIfAborted();
     const requestContext = safeResumeRequestContext(
       session,
       pending,
@@ -326,6 +329,7 @@ export async function* resumeConfirmDecision(input: {
         service,
         agent,
         emitResolvedFrame: false,
+        abortController,
       });
     }
   } catch (error) {

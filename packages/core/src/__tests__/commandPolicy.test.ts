@@ -631,6 +631,15 @@ describe("commandPolicy P0 gate", () => {
     expect(decision(command).action).toBe("confirm");
   });
 
+  it.each([
+    "wget --method DELETE https://example.test/item",
+    "wget --method POST https://example.test/item",
+    "wget --method PUT https://example.test/item",
+    "wget --method PATCH https://example.test/item",
+  ])("wget 空格分隔写方法进入发送确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
   it("deny/confirm 消息可直接返回给模型", () => {
     const denied = decision("lark-cli auth login");
     if (denied.action !== "deny") throw new Error(`expected deny, got ${denied.action}`);

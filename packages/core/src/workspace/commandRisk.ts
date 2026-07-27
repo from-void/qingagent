@@ -1248,10 +1248,24 @@ function curlWrites(command: AnalyzedSimpleCommand): boolean {
 }
 
 function wgetWrites(command: AnalyzedSimpleCommand): boolean {
-  return command.argv.slice(1).some((arg) =>
-    /^(?:--post-data|--post-file)=/i.test(arg) ||
-    /^(?:--method=)(?:POST|PUT|PATCH|DELETE)$/i.test(arg) ||
-    new Set(["--post-data", "--post-file"]).has(arg.toLowerCase()));
+  const args = command.argv.slice(1);
+  const writeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    const lower = arg.toLowerCase();
+    if (
+      /^(?:--post-data|--post-file)=/i.test(arg) ||
+      new Set(["--post-data", "--post-file"]).has(lower)
+    ) {
+      return true;
+    }
+    if (lower === "--method" && writeMethods.has((args[index + 1] ?? "").toUpperCase())) {
+      return true;
+    }
+    const method = arg.match(/^--method=(.+)$/i)?.[1]?.toUpperCase();
+    if (method && writeMethods.has(method)) return true;
+  }
+  return false;
 }
 
 const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([

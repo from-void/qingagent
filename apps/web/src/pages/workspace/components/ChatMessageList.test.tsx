@@ -491,10 +491,15 @@ describe("ChatMessageList", () => {
           {
             kind: "text",
             data: {
-              body: '```json\n{"blocks":[{"id":"block-a","numericValue":3}]}\n```',
+              body: [
+                "[tool-result]",
+                "toolName: editDraft",
+                "toolCallId: call-1",
+                'args: {"blockId":"block-a"}',
+                'result: {"ok":true}',
+              ].join("\n"),
             },
           },
-          { kind: "text", data: { body: "[tool-result] raw args/result" } },
           { kind: "text", data: { body: "这是可见回复" } },
         ],
         chips: null,
@@ -511,7 +516,6 @@ describe("ChatMessageList", () => {
     const text = host?.textContent ?? "";
     expect(text).not.toContain("SYSTEM SECRET");
     expect(text).not.toContain("block-a");
-    expect(text).not.toContain("numericValue");
     expect(text).not.toContain("[tool-result]");
     expect(text).toContain("这是可见回复");
     expect(host?.querySelector('[data-wf="ChatMsg-system"]')).toBeNull();
@@ -520,13 +524,11 @@ describe("ChatMessageList", () => {
   it("内部文本分片经 reducer 合并隐藏后，独立兜底消息仍实际渲染", async () => {
     const internalDeltas = [
       "[tool-",
-      "result] raw args/result\n",
-      "AI",
-      "-IR draft payload\n",
-      '{"blo',
-      'cks":[{"id":"blo',
-      'ck-a","numeric',
-      'Value":3}]}',
+      "result]\n",
+      "toolName: editDraft\n",
+      "toolCallId: call-1\n",
+      'args: {"blockId":"block-a"}\n',
+      'result: {"ok":true}',
     ];
     const rawMessage: ChatMessage = {
       id: "m-split-internal",
@@ -587,7 +589,6 @@ describe("ChatMessageList", () => {
     const text = host?.textContent ?? "";
     expect(text).toContain("模型这一轮没有返回任何内容");
     expect(text).not.toContain("[tool-result]");
-    expect(text).not.toContain("AI-IR");
     expect(text).not.toContain("block-a");
   });
 

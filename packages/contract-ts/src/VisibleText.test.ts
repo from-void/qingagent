@@ -4,26 +4,40 @@ import { sanitizeVisibleText } from "./VisibleText";
 describe("sanitizeVisibleText", () => {
   it.each([
     ["纯空白", " \r\n\t "],
-    ["工具结果标记", "[tool-result] raw args/result"],
-    ["AI-IR", "AI-IR draft payload"],
     [
-      "fence 内部 JSON",
-      '```json\n{"blocks":[{"id":"block-a","numericValue":3}]}\n```',
-    ],
-    [
-      "前导内部 JSON",
-      '{"tool":"editDraft","args":{"blockId":"block-a"},"result":{"ok":true}}',
+      "带来源标记和完整字段的工具结果帧",
+      [
+        "[tool-result]",
+        "toolName: editDraft",
+        "toolCallId: call-1",
+        'args: {"blockId":"block-a"}',
+        'result: {"ok":true}',
+      ].join("\n"),
     ],
   ])("%s 会被完整过滤", (_label, body) => {
     expect(sanitizeVisibleText(body)).toBeNull();
   });
 
-  it("只移除内部过程行，保留并规范化真实回复", () => {
-    expect(
-      sanitizeVisibleText(
-        "Let me inspect the request.\r\n这是第一行。\r\nI should call the tool.\r\n这是第二行。",
-      ),
-    ).toBe("这是第一行。\n这是第二行。");
+  it.each([
+    ["技术术语", "AI-IR 使用 numericValue 和 block-section 表达 tool call。"],
+    [
+      "英文过程式句首",
+      "Let me explain the protocol.\nI will show a legal example.\n这是完整回复。",
+    ],
+    [
+      "技术 JSON 代码",
+      '```json\n{"blocks":[{"id":"block-a","numericValue":3}]}\n```',
+    ],
+    [
+      "协议标记示例",
+      "代码里的 [tool-result] 只是文档示例，不是内部来源帧。",
+    ],
+    [
+      "系统提示词说明",
+      "The system prompt may include a developer instruction.",
+    ],
+  ])("%s 默认完整保留", (_label, body) => {
+    expect(sanitizeVisibleText(body)).toBe(body);
   });
 
   it("正文里的普通括号、转义引号与 JSON 字样不会被误删", () => {

@@ -578,13 +578,11 @@ describe("processAgentStream 行为特征", () => {
     addEmptyAgentMessage(state);
     const internalDeltas = [
       "[tool-",
-      "result] raw args/result\n",
-      "AI",
-      "-IR draft payload\n",
-      '{"blo',
-      'cks":[{"id":"blo',
-      'ck-a","numeric',
-      'Value":3}]}',
+      "result]\n",
+      "toolName: editDraft\n",
+      "toolCallId: call-1\n",
+      'args: {"blockId":"block-a"}\n',
+      'result: {"ok":true}',
     ];
     const mergedInternalText = internalDeltas.join("");
 

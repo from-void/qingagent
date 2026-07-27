@@ -264,6 +264,19 @@ async function mapRowsAndQuarantine(
   return { rows: mappedRows, quarantined };
 }
 
+async function mapAndPaginateRows(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  rows: Row[],
+  offset: number,
+  perPage: number,
+): Promise<{ rows: DocumentRow[]; total: number }> {
+  const mapped = await mapRowsAndQuarantine(client, rows);
+  return {
+    rows: mapped.rows.slice(offset, offset + perPage),
+    total: mapped.rows.length,
+  };
+}
+
 function upsertStatement(input: DocumentSaveInput): InStatement {
   const projection = buildPmProjection(input);
   return {
@@ -599,24 +612,13 @@ export const documentRepo: DocumentRepo = {
     const page = opts.page ?? 0;
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
-    const [countResult, rowsResult] = await Promise.all([
-      client.execute({
-        sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ? AND role = 'main'`,
-        args: [opts.resourceId],
-      }),
-      client.execute({
-        sql: `SELECT * FROM documents
-          WHERE resource_id = ? AND role = 'main'
-          ORDER BY updated_at DESC, id ASC
-          LIMIT ? OFFSET ?`,
-        args: [opts.resourceId, perPage, offset],
-      }),
-    ]);
-    const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
-    return {
-      rows: mapped.rows,
-      total: Math.max(0, valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined),
-    };
+    const result = await client.execute({
+      sql: `SELECT * FROM documents
+        WHERE resource_id = ? AND role = 'main'
+        ORDER BY updated_at DESC, id ASC`,
+      args: [opts.resourceId],
+    });
+    return mapAndPaginateRows(client, result.rows, offset, perPage);
   },
 
   async listWithExistingThreads(opts) {
@@ -625,28 +627,14 @@ export const documentRepo: DocumentRepo = {
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
     try {
-      const [countResult, rowsResult] = await Promise.all([
-        client.execute({
-          sql: `SELECT COUNT(*) AS total
-            FROM documents d
-            INNER JOIN mastra_threads t ON t.id = d.thread_id
-            WHERE d.resource_id = ? AND d.role = 'main'`,
-          args: [opts.resourceId],
-        }),
-        client.execute({
-          sql: `SELECT d.* FROM documents d
-            INNER JOIN mastra_threads t ON t.id = d.thread_id
-            WHERE d.resource_id = ? AND d.role = 'main'
-            ORDER BY d.updated_at DESC, d.id ASC
-            LIMIT ? OFFSET ?`,
-          args: [opts.resourceId, perPage, offset],
-        }),
-      ]);
-      const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
-      return {
-        rows: mapped.rows,
-        total: Math.max(0, valueAsNumber(countResult.rows[0]?.total) - mapped.quarantined),
-      };
+      const result = await client.execute({
+        sql: `SELECT d.* FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ? AND d.role = 'main'
+          ORDER BY d.updated_at DESC, d.id ASC`,
+        args: [opts.resourceId],
+      });
+      return mapAndPaginateRows(client, result.rows, offset, perPage);
     } catch (error) {
       if (isMissingMastraThreadsTableError(error)) {
         return { rows: [], total: 0 };

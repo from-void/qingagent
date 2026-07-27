@@ -283,6 +283,54 @@ describe("documentRepo", () => {
     )).rows[0]?.n)).toBe(1);
   });
 
+  it("坏 PM 位于后续页时第一页 total 与有效行分页保持一致", async () => {
+    await documentRepo.saveMany([
+      input("page-valid-a", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-04T00:00:00.000Z",
+      }),
+      input("page-valid-b", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("page-invalid", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("page-valid-c", {
+        resourceId: "dirty-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "UPDATE documents SET doc_pm = '{broken' WHERE id = 'page-invalid'",
+    );
+
+    const first = await documentRepo.list({
+      resourceId: "dirty-pages",
+      page: 0,
+      perPage: 2,
+    });
+    const second = await documentRepo.list({
+      resourceId: "dirty-pages",
+      page: 1,
+      perPage: 2,
+    });
+
+    expect(first).toMatchObject({
+      total: 3,
+      rows: [{ id: "page-valid-a" }, { id: "page-valid-b" }],
+    });
+    expect(second).toMatchObject({
+      total: 3,
+      rows: [{ id: "page-valid-c" }],
+    });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'page-invalid'",
+    )).rows[0]?.n)).toBe(1);
+  });
+
   it("按不超过 50 个 id 轻量查询存在集合", async () => {
     await documentRepo.saveMany([
       input("exists-a"),
@@ -488,7 +536,7 @@ describe("documentRepo", () => {
 
     execute.mockClear();
     await documentRepo.list({ resourceId: "read-resource" });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls.every(([statement]) => {
       const sql = (statement as unknown as { sql?: string }).sql ?? String(statement);
       return /^\s*SELECT\b/i.test(sql);

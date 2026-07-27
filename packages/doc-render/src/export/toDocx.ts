@@ -370,6 +370,8 @@ async function pmListItemToDocx(
 
 async function pmTableCellToDocx(cell: PmTableCellNode, mathImages: MathImages = new Map()): Promise<TableCell> {
   const children = (await Promise.all(cell.content.map((child) => pmBlockToDocx(child, 0, {}, mathImages)))).flat();
+  const colspan = normalizeTableSpan(cell.attrs?.colspan);
+  const rowspan = normalizeTableSpan(cell.attrs?.rowspan);
   // 单元格背景色:此前 docx 导出丢失(回归 table-cell-color)。docx TableCell 原生支持 shading,
   // fill 为 6 位 hex 无 #。
   const bg = cell.attrs?.backgroundColor;
@@ -379,8 +381,16 @@ async function pmTableCellToDocx(cell: PmTableCellNode, mathImages: MathImages =
       : {};
   return new TableCell({
     children: children.length > 0 ? children : [new Paragraph("")],
+    ...(colspan > 1 ? { columnSpan: colspan } : {}),
+    // docx 的 rowSpan 会在建表时按逻辑列插入 vMerge continuation，
+    // 同时继承 columnSpan，避免后续行的真实单元格向左错位。
+    ...(rowspan > 1 ? { rowSpan: rowspan } : {}),
     ...shading,
   });
+}
+
+function normalizeTableSpan(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 1 ? value : 1;
 }
 
 /**

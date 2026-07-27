@@ -11,6 +11,10 @@ export interface DocumentShape {
 
 type PmTreeNode = PmDoc | PmNode;
 
+const CONTENT_UNIT_WEIGHT = 12;
+// 旧阈值 24 含容器节点权重；改按语义内容计量后，一个内容单位已足以保护短文档。
+const MIN_MEANINGFUL_CONTENT_WEIGHT = CONTENT_UNIT_WEIGHT;
+
 /**
  * 文档完整性门只计算用户内容，不把 paragraph/list/table 等容器节点计入权重，
  * 避免合法合并或重构仅因节点数减少而被误判。媒体与承载正文的关键属性使用固定权重，
@@ -50,7 +54,10 @@ export function measureDocumentShape(doc: PmDoc): DocumentShape {
     textLength,
     mediaCount,
     keyAttributeCount,
-    contentWeight: textLength + mediaCount * 12 + keyAttributeCount * 12,
+    contentWeight:
+      textLength +
+      mediaCount * CONTENT_UNIT_WEIGHT +
+      keyAttributeCount * CONTENT_UNIT_WEIGHT,
   };
 }
 
@@ -73,7 +80,7 @@ export function isAbnormalDocumentCollapse(
   const previousShape = measureDocumentShape(previous);
   const nextShape = measureDocumentShape(next);
   return (
-    previousShape.contentWeight >= 24 &&
+    previousShape.contentWeight >= MIN_MEANINGFUL_CONTENT_WEIGHT &&
     nextShape.contentWeight * 3 <= previousShape.contentWeight
   );
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isAbnormalDocumentCollapse } from "../documentIntegrity";
+import {
+  isAbnormalDocumentCollapse,
+  measureDocumentShape,
+} from "../documentIntegrity";
 import type { PmBlockNode, PmDoc } from "../types";
 
 function paragraph(blockId: string, text: string): PmBlockNode {
@@ -64,5 +67,17 @@ describe("documentIntegrity", () => {
       },
     ]);
     expect(isAbnormalDocumentCollapse(mediaPrevious, doc([]))).toBe(true);
+  });
+
+  it("短多块正文丢失主体时不因语义权重低于旧结构阈值而漏拦截", () => {
+    const previous = doc([
+      paragraph("intro", "列表前言"),
+      paragraph("items", "第一项第二项"),
+      paragraph("tail", "列表结尾"),
+    ]);
+    const next = doc([paragraph("damaged", "300")]);
+
+    expect(measureDocumentShape(previous).contentWeight).toBe(14);
+    expect(isAbnormalDocumentCollapse(previous, next)).toBe(true);
   });
 });

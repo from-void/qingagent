@@ -82,10 +82,6 @@ import type {
   EditorDocChange,
 } from "../data/docWriteBaseline";
 import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
-import {
-  isAbnormalDocumentCollapse,
-  measureDocumentShape,
-} from "../data/documentIntegrity";
 import type {
   ViewBlock,
   ViewBlockSeqDiff,
@@ -505,16 +501,15 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   // 与 debounce 正文同寿命的写入基线；第一笔本地事务产生时冻结，后续远端版本
   // 即使先抵达也绝不能把这份旧正文“升级”为新基线。
   const pendingUpdateBaselineRef = useRef<DocWriteBaseline | null>(null);
-  const initialValidEditorDoc = useMemo(
-    () => normalizePmDoc(viewDocToPm(doc)),
-    [], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const lastValidEditorDocRef = useRef<PmDoc>(initialValidEditorDoc);
   const latestCanonicalDocRef = useRef(doc);
   const lastVersionRef = useRef(doc.version);
   const latestDocVersionRef = useRef(doc.version);
+  const docRevision = useMemo(() => viewDocumentSyncRevision(doc), [doc]);
+  const lastSyncedDocRevisionRef = useRef(docRevision);
+  const latestDocRevisionRef = useRef(docRevision);
   latestCanonicalDocRef.current = doc;
   latestDocVersionRef.current = doc.version;
+  latestDocRevisionRef.current = docRevision;
   const currentDocWriteBaseline = useCallback((): DocWriteBaseline => {
     const canonical = normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current));
     return {
@@ -645,41 +640,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     });
   }, [editor, forceExpandCollapse]);
 
-  const readValidEditorDocOrRecover = useCallback((): PmDoc | null => {
+  const readCurrentEditorDoc = useCallback((): PmDoc | null => {
     if (!editor || editor.isDestroyed) return null;
-    let normalized: PmDoc;
     try {
-      normalized = normalizePmDoc(editor.getJSON());
+      return normalizePmDoc(editor.getJSON());
     } catch (error) {
-      // diagram 等 NodeView 可能短暂处在尚未填完 attrs 的中间态；完整性门不能把原先
-      // 防抖保存链可容忍的瞬态校验失败升级成同步崩溃，等下一次合法 update 再判断。
+      // diagram 等 NodeView 可能短暂处在尚未填完 attrs 的中间态；等下一次
+      // 合法 update 再转发，不能让一次瞬态校验失败中断编辑器。
       console.warn("[doc] 跳过瞬态非法编辑器状态", error);
       return null;
     }
-    const previous = lastValidEditorDocRef.current;
-    if (!isAbnormalDocumentCollapse(previous, normalized)) {
-      lastValidEditorDocRef.current = normalized;
-      return normalized;
-    }
-
-    console.error("[doc] 检测到异常结构坍缩，已恢复上一有效快照", {
-      previous: measureDocumentShape(previous),
-      rejected: measureDocumentShape(normalized),
-    });
-    beginApplyingRemote();
-    try {
-      setRemoteEditorContent(editor, previous);
-    } finally {
-      finishApplyingRemoteSoon();
-    }
-    onToast?.("检测到文档结构异常，已恢复编辑前内容");
-    return null;
-  }, [
-    beginApplyingRemote,
-    editor,
-    finishApplyingRemoteSoon,
-    onToast,
-  ]);
+  }, [editor]);
 
   const forwardCurrentEditorDoc = useCallback(async () => {
     if (
@@ -693,7 +664,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     ) {
       return;
     }
-    const normalized = readValidEditorDocOrRecover();
+    const normalized = readCurrentEditorDoc();
     if (!normalized) return;
     const baseline =
       pendingUpdateBaselineRef.current ?? currentDocWriteBaseline();
@@ -708,7 +679,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     currentDocWriteBaseline,
     editor,
     onEditorChange,
-    readValidEditorDocOrRecover,
+    readCurrentEditorDoc,
   ]);
 
   useImperativeHandle(
@@ -725,7 +696,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return true;
         }
         // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
-        if (latestDocVersionRef.current !== lastVersionRef.current) return false;
+        if (
+          latestDocVersionRef.current !== lastVersionRef.current ||
+          latestDocRevisionRef.current !== lastSyncedDocRevisionRef.current
+        ) {
+          return false;
+        }
         try {
           const live = JSON.stringify(normalizePmDoc(editor.getJSON()));
           const canonical = JSON.stringify(
@@ -838,9 +814,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       ) {
         return;
       }
-      // update 当拍就做完整性门，不能等 400ms 保存定时器：旧 BlockHandle / page-exit
-      // 都可能在这段窗口内消费已经坍缩的 doc。
-      if (!readValidEditorDocOrRecover()) return;
+      // 本地 docChanged transaction 就是用户显式编辑，全文删除/短改写必须照常保存；
+      // 完整性门仅保留在外部 snapshot 同步入口。这里只过滤瞬态非法 PM 状态。
+      if (!readCurrentEditorDoc()) return;
       pendingUpdateBaselineRef.current ??= currentDocWriteBaseline();
       if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
       if (transaction.getMeta(DIAGRAM_VISUAL_WRITE_META) === true) {
@@ -875,7 +851,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     currentDocWriteBaseline,
     forwardCurrentEditorDoc,
     onEditorChange,
-    readValidEditorDocOrRecover,
+    readCurrentEditorDoc,
   ]);
 
   const latestPresentationDocVersionRef = useRef<number | null>(
@@ -891,18 +867,29 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     if (
       editor &&
       !editor.isDestroyed &&
-      doc.version !== lastVersionRef.current
+      (
+        doc.version !== lastVersionRef.current ||
+        docRevision !== lastSyncedDocRevisionRef.current
+      )
     ) {
       if (presentationRun?.docVersion === doc.version) {
         lastVersionRef.current = doc.version;
+        lastSyncedDocRevisionRef.current = docRevision;
         return;
       }
       const scheduledDoc = doc;
       const scheduledVersion = doc.version;
+      const scheduledRevision = docRevision;
       scheduleMicrotask(() => {
         if (!editor || editor.isDestroyed) return;
         if (latestDocVersionRef.current !== scheduledVersion) return;
-        if (lastVersionRef.current === scheduledVersion) return;
+        if (latestDocRevisionRef.current !== scheduledRevision) return;
+        if (
+          lastVersionRef.current === scheduledVersion &&
+          lastSyncedDocRevisionRef.current === scheduledRevision
+        ) {
+          return;
+        }
         // 揭示动画正在播放(或将播放本版本):主 effect 绝不抢着 setContent,
         // 把渲染权让给 presentation 动画的逐帧 setContentSilently,否则会用成品
         // 直接覆盖、吞掉逐字光标动效。microtask 延后后时序可能与 presentationRun
@@ -912,6 +899,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           latestPresentationDocVersionRef.current === scheduledVersion
         ) {
           lastVersionRef.current = scheduledVersion;
+          lastSyncedDocRevisionRef.current = scheduledRevision;
           return;
         }
         beginApplyingRemote();
@@ -951,8 +939,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
               );
               if (blockIdSync) editor.view.dispatch(blockIdSync);
             }
-            lastValidEditorDocRef.current = normalizePmDoc(editor.getJSON());
             lastVersionRef.current = scheduledVersion;
+            lastSyncedDocRevisionRef.current = scheduledRevision;
           } else {
             // 真·外部变更:我方在途编辑已被外部覆盖,清空在途自我键避免后续误判;
             // 换内容前先记住选区,焦点在编辑器时按原位恢复光标(越界则钳到文末)。
@@ -960,8 +948,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
             setRemoteEditorContent(editor, normalizedIncoming);
-            lastValidEditorDocRef.current = normalizedIncoming;
             lastVersionRef.current = scheduledVersion;
+            lastSyncedDocRevisionRef.current = scheduledRevision;
             if (hadFocus) {
               const size = editor.state.doc.content.size;
               const from = Math.min(prevSelection.from, size);
@@ -987,6 +975,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   }, [
     beginApplyingRemote,
     doc,
+    docRevision,
     editor,
     finishApplyingRemoteSoon,
     onToast,
@@ -1027,7 +1016,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         editor.view.dispatch(repair);
         const repairedDoc = normalizePmDoc(editor.getJSON());
-        lastValidEditorDocRef.current = repairedDoc;
         // update 监听被 isApplyingRemote 抑制；这里只显式保存一次修复结果，回声由既有
         // pendingSelfDocKeys 识别，不会形成 setContent → dirty-save 循环。
         pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
@@ -1260,6 +1248,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         setRemoteEditorContent(editor, targetDoc);
         lastVersionRef.current = targetVersion;
+        lastSyncedDocRevisionRef.current = viewDocumentSyncRevision(doc);
       } finally {
         finishApplyingRemoteSoon();
       }
@@ -1578,4 +1567,8 @@ function scheduleMicrotask(callback: () => void): void {
     return;
   }
   setTimeout(callback, 0);
+}
+
+function viewDocumentSyncRevision(doc: ViewDocumentSnapshot): string {
+  return JSON.stringify(doc.pmDoc ?? doc.sections);
 }

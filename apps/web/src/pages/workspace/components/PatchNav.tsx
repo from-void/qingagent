@@ -5,6 +5,7 @@ export interface PatchNavProps {
   totalCount: number;
   activePatchIndex: number;
   isSubmitting?: boolean;
+  retryOnly?: boolean;
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onRejectAll: () => void;
@@ -23,6 +24,7 @@ export function PatchNav({
   totalCount,
   activePatchIndex,
   isSubmitting = false,
+  retryOnly = false,
   onJumpPrev,
   onJumpNext,
   onRejectAll,
@@ -33,14 +35,18 @@ export function PatchNav({
   return (
     <div className="patch-nav" data-wf="PatchNav" aria-busy={isSubmitting}>
       <span className="pn-dot" aria-hidden="true" />
-      <span
-        className="pn-label"
-        title={remainingCount === totalCount ? undefined : `剩余 ${remainingCount} 处`}
-      >
-        剩余 · <b>{totalCount}</b> 处
-      </span>
+      {retryOnly ? (
+        <span className="pn-label">提交失败，候选待重试</span>
+      ) : (
+        <span
+          className="pn-label"
+          title={remainingCount === totalCount ? undefined : `剩余 ${remainingCount} 处`}
+        >
+          剩余 · <b>{totalCount}</b> 处
+        </span>
+      )}
       {/* 上/下一处:仅当修改位置多于 1 处时才有意义,单处时不渲染 */}
-      {totalCount > 1 && (
+      {!retryOnly && totalCount > 1 && (
         <>
           <button
             type="button"
@@ -72,7 +78,7 @@ export function PatchNav({
       >
         提交 ↵
       </button>
-      <span style={{ position: "relative" }}>
+      {!retryOnly && <span style={{ position: "relative" }}>
         <button
           type="button"
           className="pn-ghost"
@@ -88,7 +94,7 @@ export function PatchNav({
             <button type="button" onClick={() => setConfirmOpen(false)}>取消</button>
           </div>
         )}
-      </span>
+      </span>}
     </div>
   );
 }

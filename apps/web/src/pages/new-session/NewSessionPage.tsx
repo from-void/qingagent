@@ -5,12 +5,12 @@ import {
   ACCEPTED_UPLOAD_ACCEPT_ATTR,
   ACCEPTED_UPLOAD_LABEL,
   acceptedDocumentExtension,
-  clearPendingFolderSource,
+  createPendingSubmission,
   deriveFolderCapability,
   FolderSourceControl,
   isAcceptedUploadFile,
-  setPendingFolderSource,
-  setPendingFiles,
+  loadPendingSubmission,
+  PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS,
   useClientCapabilities,
   useToast,
   type FolderSourceControlSource,
@@ -47,13 +47,32 @@ import { useModelKeyConfigured, goConfigureModel, NoKeyTip } from "../../system/
 // 占位符与编辑页统一(用编辑页默认提示)。
 const PLACEHOLDER = DEFAULT_CHAT_INPUT_PLACEHOLDER;
 const EASE = "cubic-bezier(.2,.8,.2,1)";
-const DESKTOP_FOLDER_TOKEN_SAFE_TTL_MS = 110_000;
 
-interface PendingAttachmentEntry {
+export interface PendingAttachmentEntry {
   id: string;
   file: File;
 }
 
+export function pendingFilesVisibleInSnapshot(
+  entries: readonly PendingAttachmentEntry[],
+  chips: readonly { id?: string; type: string }[],
+): File[] {
+  return pendingAttachmentsVisibleInSnapshot(entries, chips).map(
+    (entry) => entry.file,
+  );
+}
+
+export function pendingAttachmentsVisibleInSnapshot(
+  entries: readonly PendingAttachmentEntry[],
+  chips: readonly { id?: string; type: string }[],
+): PendingAttachmentEntry[] {
+  const visibleIds = new Set(
+    chips
+      .filter((chip) => chip.type !== "skill" && chip.id)
+      .map((chip) => chip.id!),
+  );
+  return entries.filter((entry) => visibleIds.has(entry.id));
+}
 
 function pendingFolderToDisplaySource(source: PendingFolderSource): FolderSourceControlSource {
   if (source.provider === "desktop-local") {
@@ -142,6 +161,39 @@ export function NewSessionPage() {
     return `new-att-${Date.now()}-${attachmentSeqRef.current}`;
   }, []);
 
+  const createSubmissionId = useCallback(() => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `new-submission-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }, []);
+
+  useEffect(() => {
+    // 元数据已经写入、但转场定时器触发前刷新时，继续把同一笔 queued 载荷交给工作区。
+    // retryable 不自动跳转：失败/取消后的重试必须由用户明确触发。
+    let active = true;
+    void loadPendingSubmission().then((result) => {
+      if (!active) return;
+      if (
+        (result.kind === "ready" &&
+          result.submission.state === "queued") ||
+        result.kind === "degraded"
+      ) {
+        window.location.hash = routeToHash("workspace");
+        return;
+      }
+      if (result.kind === "expired") {
+        toast.show({
+          message: "上次待发送内容已过期，请重新输入",
+          tone: "warn",
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [toast]);
+
   const showCcxToast = useCallback((msg: string) => {
     const el = toastElRef.current;
     if (!el) return;
@@ -184,18 +236,21 @@ export function NewSessionPage() {
     if (keyTipTimerRef.current) clearTimeout(keyTipTimerRef.current);
   }, []);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     // 未配置模型 key:无论点按钮还是按快捷键,一律不放行,改成强弹引导气泡。
     if (!hasModelKey) {
       flashKeyTip();
       return;
     }
     const snap = editorRef.current?.snapshot();
+    const visiblePendingAttachments = snap
+      ? pendingAttachmentsVisibleInSnapshot(pendingAttachments, snap.chips)
+      : [];
     if (
       !snap ||
       (snap.text.trim().length === 0 &&
         snap.chips.length === 0 &&
-        pendingAttachments.length === 0 &&
+        visiblePendingAttachments.length === 0 &&
         pendingFolder === null)
     ) {
       showCcxToast("先写点描述,或者加个素材吧");
@@ -227,39 +282,59 @@ export function NewSessionPage() {
     const skillRefs = [
       ...new Set(snap.chips.filter((c) => c.type === "skill" && c.id).map((c) => c.id!)),
     ].map((id) => ({ id, version: null }));
-
     if (busyRef.current) return;
+    const availableAttachmentIds = new Set(
+      visiblePendingAttachments.map((attachment) => attachment.id),
+    );
+    if (
+      snap.chips.some(
+        (chip) =>
+          chip.type !== "skill" &&
+          (!chip.id || !availableAttachmentIds.has(chip.id)),
+      )
+    ) {
+      showCcxToast("部分附件已失效，请移除后重新添加");
+      return;
+    }
     if (
       pendingFolder?.provider === "desktop-local" &&
-      Date.now() - pendingFolder.selectedAt > DESKTOP_FOLDER_TOKEN_SAFE_TTL_MS
+      Date.now() - pendingFolder.selectedAt >
+        PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS
     ) {
       showCcxToast("文件夹选择已过期，请重新选择");
       setPendingFolder(null);
       return;
     }
-    sessionStorage.setItem("qingagent:pending-message", snap.text);
-    if (snap.chips.length > 0) {
-      sessionStorage.setItem("qingagent:pending-richtext", snap.richText);
-      sessionStorage.setItem("qingagent:pending-chips", JSON.stringify(contractChips));
-    } else {
-      sessionStorage.removeItem("qingagent:pending-richtext");
-      sessionStorage.removeItem("qingagent:pending-chips");
-    }
-    if (skillRefs.length > 0) {
-      sessionStorage.setItem("qingagent:pending-skills", JSON.stringify(skillRefs));
-    } else {
-      sessionStorage.removeItem("qingagent:pending-skills");
-    }
-    if (pendingAttachments.length > 0) {
-      setPendingFiles(pendingAttachments.map((entry) => entry.file));
-    }
-    if (pendingFolder) {
-      setPendingFolderSource(pendingFolder);
-    } else {
-      clearPendingFolderSource();
-    }
+    const submissionId = createSubmissionId();
     busyRef.current = true;
     showCcxToast("已起一卷新稿 · 开始读取素材");
+    try {
+      const persisted = await createPendingSubmission({
+        submissionId,
+        clientMessageId: submissionId,
+        text: snap.text,
+        richText: snap.chips.length > 0 ? snap.richText : null,
+        chips: contractChips,
+        skills: skillRefs,
+        attachments: visiblePendingAttachments,
+        folderSource: pendingFolder,
+      });
+      if (!persisted.durable) {
+        toast.show({
+          message: "当前环境无法持久保存全部素材，刷新后需重新添加",
+          tone: "warn",
+          sticky: true,
+        });
+      }
+    } catch (error) {
+      busyRef.current = false;
+      console.error("[NewSessionPage] persist pending submission failed", error);
+      toast.show({
+        message: "素材暂存失败，请重新发送",
+        tone: "error",
+      });
+      return;
+    }
     // 离场:左侧文案/输入/返回钮淡出(汉字不在此淡出 —— 改为逐字吸入顶卡)
     pageRef.current?.classList.add("is-leaving");
 
@@ -291,7 +366,7 @@ export function NewSessionPage() {
       // 兜底:无叠卡(直链态)时维持原 180ms 快速淡出
       window.setTimeout(goWorkspace, 180);
     }
-  }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden]);
+  }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden, createSubmissionId, toast]);
 
   const handleRemoveEditorChip = useCallback(
     (chip: { id?: string; type?: string; name?: string }) => {

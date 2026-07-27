@@ -74,6 +74,24 @@ afterEach(() => {
 });
 
 describe("首页稳定模板选择", () => {
+  it.each([
+    ["curated-bamboo-shadow", false],
+    ["curated-square-egret-vertical", true],
+    ["curated-tall-banana-rain", true],
+    ["curated-tall-osmanthus-branch", false],
+    ["curated-tall-eave-bell", false],
+  ] as const)("英文内容对 %s 的硬过滤与真实正文方向一致", (templateId, eligible) => {
+    const registry = createDefaultRegistry();
+    const template = registry.get(templateId);
+    if (!template) throw new Error(`Missing template fixture: ${templateId}`);
+
+    expect(qingagentTemplateFilter({
+      id: "english-direction",
+      title: "English title",
+      description: "English description",
+    }, template)).toBe(eligible);
+  });
+
   it("同一 article 多次重建 selector 时选择同一模板，且不读取 Math.random", () => {
     vi.spyOn(Math, "random").mockImplementation(() => {
       throw new Error("生产路径不应读取默认随机源");

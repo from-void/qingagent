@@ -82,6 +82,7 @@ describe("material command stream route validation", () => {
         kind: "attachFolder",
         data: {
           sessionId: "session-1",
+          requestId: "attach-desktop",
           source: { provider: "desktop-local", selectionToken: "tok" },
         },
       }),
@@ -91,6 +92,7 @@ describe("material command stream route validation", () => {
         kind: "attachFolder",
         data: {
           sessionId: "session-1",
+          requestId: "attach-browser",
           source: { provider: "browser-fs-access", clientSourceId: "c1", name: "docs", browserHandleKey: "h1" },
         },
       }),
@@ -98,7 +100,7 @@ describe("material command stream route validation", () => {
     expect(
       validateCommandKind({
         kind: "attachFolder",
-        data: { sessionId: "session-1", source: { provider: "desktop-local" } },
+        data: { sessionId: "session-1", requestId: "attach-invalid", source: { provider: "desktop-local" } },
       }),
     ).toContain("attachFolder.data.source.selectionToken");
     expect(
@@ -124,6 +126,7 @@ describe("material command stream route validation", () => {
         kind: "attachFolder",
         data: {
           sessionId: "session-1",
+          requestId: "attach-long-token",
           source: { provider: "desktop-local", selectionToken: longId },
         },
       }),
@@ -139,6 +142,7 @@ describe("material command stream route validation", () => {
         kind: "attachFolder",
         data: {
           sessionId: "session-1",
+          requestId: "attach-long-name",
           source: {
             provider: "browser-fs-access",
             clientSourceId: "client-1",
@@ -153,6 +157,7 @@ describe("material command stream route validation", () => {
         kind: "attachFolder",
         data: {
           sessionId: "session-1",
+          requestId: "attach-long-handle",
           source: {
             provider: "browser-fs-access",
             clientSourceId: "client-1",

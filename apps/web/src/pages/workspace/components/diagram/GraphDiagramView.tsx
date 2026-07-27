@@ -2329,7 +2329,7 @@ export function GraphDiagramView({
       const overlayStyle = overlay?.styles?.[node.id];
       const over = overlay?.positions?.[node.id];
       const auto = autoLayout[node.id] ?? { x: 40, y: 40 };
-      const isSelected = inEdit && node.id === selectedNodeId;
+      const isSelected = inEdit && selectedNodeIds.includes(node.id);
       const isMoveTarget = inEdit && !!parentPickerNodeId && moveParentTargetIds.has(node.id);
       const isRenaming = inEdit && renamingNodeId === node.id;
       const canRename = inEdit && capEnabled(getCapabilities(parsed, { nodeId: node.id }), "relabelNode");
@@ -2402,7 +2402,7 @@ export function GraphDiagramView({
       };
       const fixedHandles = overlay?.edgeHandles?.[edge.id];
       const renderHandles = graphEdgeRenderHandles(edge, nextNodeById, fixedHandles);
-      const isSelected = inEdit && edge.id === selectedEdgeId;
+      const isSelected = inEdit && selectedEdgeIds.includes(edge.id);
       const edgeStroke = style?.stroke ?? parsed.model.themePalette?.lineColor ?? DEFAULT_EDGE_STROKE;
       const edgeLineStyle = getEdgeLineStyle(edge);
       const edgeDirection = getEdgeDirection(edge);
@@ -2480,7 +2480,9 @@ export function GraphDiagramView({
     renamingNodeId,
     renamingSubgraphId,
     selectedEdgeId,
+    selectedEdgeIds,
     selectedNodeId,
+    selectedNodeIds,
     selectedSubgraphId,
     selectEdge,
     selectSubgraph,

@@ -7,6 +7,7 @@ import { __resetClientPersistCacheForTests } from "../overlays/settings/clientPe
 import {
   setSelectedModelProvider,
   setVisitorModelKey,
+  visitorKeyHeaders,
 } from "../overlays/settings/visitorKeyStore";
 import { NoKeyTip, useModelKeyConfigured } from "./modelKeyGate";
 
@@ -36,7 +37,11 @@ describe("modelKeyGate", () => {
   it("已验证服务端有 key 后，后续 fetch 失败不误弹门禁", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ apiKeyConfigured: true }))
+      .mockResolvedValueOnce(jsonResponse(modelSettings({
+        activeProvider: "deepseek",
+        deepseek: true,
+        kimi: false,
+      })))
       .mockRejectedValueOnce(new Error("temporary network failure"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -55,7 +60,11 @@ describe("modelKeyGate", () => {
   it("服务端确认无 key 时仍显示门禁并禁用发送", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({ apiKeyConfigured: false })),
+      vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse(modelSettings({
+        activeProvider: "deepseek",
+        deepseek: false,
+        kimi: false,
+      }))),
     );
 
     await renderGate();
@@ -64,7 +73,7 @@ describe("modelKeyGate", () => {
   });
 
   it("当前 provider 为 Kimi 时读取 Kimi 本地 key，不误用 DeepSeek 槽位", async () => {
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     await setVisitorModelKey("kimi", "kimi-local-key");
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
@@ -73,6 +82,38 @@ describe("modelKeyGate", () => {
 
     expectGate(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("用户选择 Kimi 且仅 DeepSeek 有服务端 key 时仍启用门禁", async () => {
+    await setSelectedModelProvider("kimi");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse(modelSettings({
+      activeProvider: "deepseek",
+      deepseek: true,
+      kimi: false,
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderGate();
+
+    expectGate(true);
+    expect(visitorKeyHeaders()["x-model-provider"]).toBe("kimi");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/model");
+  });
+
+  it("用户选择 Kimi 且仅 Kimi 有服务端 key 时不被活动 DeepSeek 状态误拦", async () => {
+    await setSelectedModelProvider("kimi");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse(modelSettings({
+        activeProvider: "deepseek",
+        deepseek: false,
+        kimi: true,
+      }))),
+    );
+
+    await renderGate();
+
+    expectGate(false);
   });
 });
 
@@ -106,4 +147,19 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+function modelSettings(input: {
+  activeProvider: "deepseek" | "kimi";
+  deepseek: boolean;
+  kimi: boolean;
+}) {
+  return {
+    provider: input.activeProvider,
+    apiKeyConfigured: input[input.activeProvider],
+    providers: {
+      deepseek: { apiKeyConfigured: input.deepseek },
+      kimi: { apiKeyConfigured: input.kimi },
+    },
+  };
 }

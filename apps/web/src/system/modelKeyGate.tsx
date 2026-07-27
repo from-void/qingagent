@@ -1,10 +1,11 @@
 // 模型 key 门禁:检测是否已配置可用 key;未配置时发送按钮 disable + hover 引导气泡,
 // 「去配置」按钮带转场返回首页并打开设置(定位第一个 tab)。新建页与编辑页共用。
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
-  getSelectedModelProvider,
   getVisitorModelKey,
   readCustomProvider,
+  resolveModelRequestProvider,
+  type ModelProvider,
 } from "../overlays/settings/visitorKeyStore";
 
 const OPEN_SETTINGS_FLAG = "qj-open-settings";
@@ -12,11 +13,28 @@ type ModelKeyGateState = "loading" | "configured" | "unconfigured";
 
 function readLocalKey(): boolean {
   try {
-    const provider = getSelectedModelProvider();
+    const provider = resolveModelRequestProvider();
     return Boolean(getVisitorModelKey(provider)) || Boolean(readCustomProvider(provider));
   } catch {
     return false;
   }
+}
+
+interface ModelKeySettingsResponse {
+  provider?: ModelProvider;
+  apiKeyConfigured?: boolean;
+  providers?: Partial<Record<ModelProvider, { apiKeyConfigured?: boolean }>>;
+}
+
+function readServerKeyConfigured(body: ModelKeySettingsResponse): boolean {
+  const provider = resolveModelRequestProvider(body.provider);
+  const providerConfigured = body.providers?.[provider]?.apiKeyConfigured;
+  if (typeof providerConfigured === "boolean") return providerConfigured;
+  // 兼容仅返回顶层状态的旧服务端，但只能在顶层 provider 与请求选择一致时使用。
+  if (body.provider === provider && typeof body.apiKeyConfigured === "boolean") {
+    return body.apiKeyConfigured;
+  }
+  throw new Error(`model settings response is missing ${provider} apiKeyConfigured`);
 }
 
 // 是否已配置可用模型 key。桌面端只认本机自带 key(visitor/custom);web 端再叠加服务端状态。
@@ -24,7 +42,6 @@ export function useModelKeyConfigured(): boolean {
   const [state, setState] = useState<ModelKeyGateState>(() =>
     readLocalKey() ? "configured" : "loading",
   );
-  const serverConfiguredVerified = useRef(false);
   useEffect(() => {
     let alive = true;
     const recompute = async () => {
@@ -36,15 +53,12 @@ export function useModelKeyConfigured(): boolean {
       try {
         const res = await fetch("/api/v1/settings/model");
         if (!res.ok) throw new Error(`model settings request failed: ${res.status}`);
-        const body = (await res.json()) as { apiKeyConfigured?: boolean };
-        if (typeof body?.apiKeyConfigured !== "boolean") {
-          throw new Error("model settings response is missing apiKeyConfigured");
-        }
+        const body = (await res.json()) as ModelKeySettingsResponse;
+        const configured = readServerKeyConfigured(body);
         if (!alive) return;
-        if (body.apiKeyConfigured) {
-          serverConfiguredVerified.current = true;
+        if (configured) {
           setState("configured");
-        } else if (!serverConfiguredVerified.current) {
+        } else {
           setState("unconfigured");
         }
       } catch {

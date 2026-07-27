@@ -709,6 +709,7 @@ type ColumnPmBlock = ColumnListPmBlock["content"][number];
 type TextDiffPmBlock = Extract<PmBlockNode, { type: "paragraph" | "heading" | "penNote" }>;
 
 type ListRowData = {
+  node: ListPmBlock["content"][number];
   text: string;
   spans: ViewDocSpan[];
   checked?: boolean;
@@ -716,6 +717,7 @@ type ListRowData = {
 };
 
 type TableCellData = {
+  node: PmTableCellNode;
   text: string;
   spans: ViewDocSpan[];
 };
@@ -776,6 +778,7 @@ function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
     return node.content.map((item) => {
       const spans = pmBlocksInlineSpans(item.content);
       return {
+        node: item,
         text: viewSpansText(spans),
         spans,
         checked: item.attrs.checked,
@@ -786,6 +789,7 @@ function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
   return node.content.map((item) => {
     const spans = pmBlocksInlineSpans(item.content);
     return {
+      node: item,
       text: viewSpansText(spans),
       spans,
       childLists: item.content.filter(isListPmBlock),
@@ -798,6 +802,7 @@ function tableRowsFromPmBlock(node: TablePmBlock): TableRowData[] {
     const cells = row.content.map((cell) => {
       const spans = pmBlocksInlineSpans(cell.content);
       return {
+        node: cell,
         text: viewSpansText(spans),
         spans,
       };
@@ -809,25 +814,38 @@ function tableRowsFromPmBlock(node: TablePmBlock): TableRowData[] {
   });
 }
 
-function tableCellReviewAttrs(cell: PmTableCellNode): object {
-  return {
-    type: cell.type,
-    colspan: cell.attrs?.colspan ?? 1,
-    rowspan: cell.attrs?.rowspan ?? 1,
-    colwidth: cell.attrs?.colwidth ?? null,
-    backgroundColor: cell.attrs?.backgroundColor ?? null,
-  };
+/** blockId 只用于锚定和对齐，不是用户会接受的内容变化；其余持久字段全部参与审阅等价。 */
+function samePersistentPmValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a, (key, value) => key === "blockId" ? undefined : value)
+    === JSON.stringify(b, (key, value) => key === "blockId" ? undefined : value);
 }
 
-function tableCellAttrsChanged(beforeNode: TablePmBlock, afterNode: TablePmBlock): boolean {
-  if (beforeNode.content.length !== afterNode.content.length) return false;
-  return beforeNode.content.some((beforeRow, rowIndex) => {
-    const afterRow = afterNode.content[rowIndex];
-    if (!afterRow || beforeRow.content.length !== afterRow.content.length) return false;
-    return beforeRow.content.some((beforeCell, cellIndex) =>
-      JSON.stringify(tableCellReviewAttrs(beforeCell)) !== JSON.stringify(tableCellReviewAttrs(afterRow.content[cellIndex]!)),
-    );
+function sameListRowValue(a: ListRowData, b: ListRowData): boolean {
+  const directNode = (row: ListRowData) => ({
+    ...row.node,
+    content: row.node.content.filter((child) => !isListPmBlock(child)),
   });
+  return samePersistentPmValue(directNode(a), directNode(b));
+}
+
+/**
+ * granular 正文只直接表达文本/marks；同位置节点的类型或 attrs 变化需要回退完整块级替换。
+ * 文本值与 marks 刻意不参与此判定，它们由 inlineSpanDiffSpans 保真展示。
+ */
+function pmStructureOrAttrsChanged(before: unknown, after: unknown): boolean {
+  if (!before || typeof before !== "object" || !after || typeof after !== "object") {
+    return before !== after;
+  }
+  const beforeNode = before as { type?: unknown; attrs?: unknown; content?: unknown[] };
+  const afterNode = after as { type?: unknown; attrs?: unknown; content?: unknown[] };
+  if (beforeNode.type !== afterNode.type) return true;
+  if (!samePersistentPmValue(beforeNode.attrs ?? null, afterNode.attrs ?? null)) return true;
+  const beforeContent = beforeNode.content ?? [];
+  const afterContent = afterNode.content ?? [];
+  if (beforeContent.length !== afterContent.length) return true;
+  return beforeContent.some((child, index) =>
+    pmStructureOrAttrsChanged(child, afterContent[index]),
+  );
 }
 
 /** 只有物理行列与合并结构都稳定时，物理 cell 下标才可用于格级 diff。 */
@@ -850,6 +868,35 @@ function cloneSpans(spans: readonly ViewDocSpan[]): ViewDocSpan[] {
 type InlineDiffUnit =
   | { kind: "text"; text: string; marks?: PmMark[] }
   | { kind: "math"; latex: string };
+
+/**
+ * 500 × 500 个行内单元的真实 LCS 基准约耗时 3ms、分配约 25 万个 DP 槽；
+ * 再放大时二维 number[][] 的内存与主线程耗时同步平方增长。字符级 diff 因此以
+ * 25 万槽为上限，超限由上层降级为完整块级 replace，保证同步工作与内存有界。
+ */
+export const INLINE_DIFF_MAX_MATRIX_CELLS = 250_000;
+const INLINE_DIFF_BUDGET_EXCEEDED = Symbol("inline-diff-budget-exceeded");
+
+function inlineDiffUnitCount(spans: readonly ViewDocSpan[]): number {
+  let count = 0;
+  for (const span of spans) {
+    switch (span.kind) {
+      case "text":
+      case "patchIns":
+      case "patchDel":
+      case "patchMark":
+      case "selectable":
+        for (const _character of span.text) count += 1;
+        break;
+      case "math":
+      case "patchInsMath":
+      case "patchDelMath":
+        count += 1;
+        break;
+    }
+  }
+  return count;
+}
 
 function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[] {
   const units: InlineDiffUnit[] = [];
@@ -879,7 +926,7 @@ function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[]
 function sameInlineDiffUnit(a: InlineDiffUnit, b: InlineDiffUnit): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "math") return b.kind === "math" && a.latex === b.latex;
-  return b.kind === "text" && a.text === b.text;
+  return b.kind === "text" && a.text === b.text && sameMarks(a.marks, b.marks);
 }
 
 function sameMarks(a: readonly PmMark[] | undefined, b: readonly PmMark[] | undefined): boolean {
@@ -932,9 +979,19 @@ function patchSpans(spans: readonly ViewDocSpan[], op: "insert" | "delete", patc
 }
 
 function inlineSpanDiffSpans(beforeSpans: readonly ViewDocSpan[], afterSpans: readonly ViewDocSpan[], patchId: string): ViewDocSpan[] {
+  const beforeUnitCount = inlineDiffUnitCount(beforeSpans);
+  const afterUnitCount = inlineDiffUnitCount(afterSpans);
+  if (beforeUnitCount === 0 && afterUnitCount === 0) return [];
+  if (
+    beforeUnitCount > 0 &&
+    afterUnitCount > Math.floor(
+      INLINE_DIFF_MAX_MATRIX_CELLS / beforeUnitCount,
+    )
+  ) {
+    throw INLINE_DIFF_BUDGET_EXCEEDED;
+  }
   const beforeUnits = spansToInlineDiffUnits(beforeSpans);
   const afterUnits = spansToInlineDiffUnits(afterSpans);
-  if (beforeUnits.length === 0 && afterUnits.length === 0) return [];
   const raw = lcsDiff(beforeUnits, afterUnits, sameInlineDiffUnit);
   const out: ViewDocSpan[] = [];
   for (const op of raw) {
@@ -1030,9 +1087,7 @@ function changedListRow(before: ListRowData, after: ListRowData, patchId: string
     typeof before.checked === "boolean" &&
     typeof after.checked === "boolean" &&
     before.checked !== after.checked;
-  const spans = before.text === after.text
-    ? cloneSpans(after.spans)
-    : inlineSpanDiffSpans(before.spans, after.spans, patchId);
+  const spans = inlineSpanDiffSpans(before.spans, after.spans, patchId);
   const childLists = childListDiffForRows(before, after, patchId);
   return {
     status: "changed",
@@ -1054,9 +1109,12 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
       const before = current.a!;
       const after = current.b!;
       if (
-        typeof before.checked === "boolean" &&
-        typeof after.checked === "boolean" &&
-        before.checked !== after.checked
+        !sameListRowValue(before, after) ||
+        (
+          typeof before.checked === "boolean" &&
+          typeof after.checked === "boolean" &&
+          before.checked !== after.checked
+        )
       ) {
         out.push(changedListRow(before, after, patchId));
       } else {
@@ -1179,7 +1237,7 @@ function changedTableRow(before: TableRowData, after: TableRowData, patchId: str
   for (let i = 0; i < maxCells; i += 1) {
     const beforeCell = before.cells[i];
     const afterCell = after.cells[i];
-    if (beforeCell && afterCell && beforeCell.text === afterCell.text) {
+    if (beforeCell && afterCell && samePersistentPmValue(beforeCell.node, afterCell.node)) {
       cells.push(sameTableCell(afterCell));
     } else {
       cells.push(changedTableCell(beforeCell, afterCell, patchId));
@@ -1202,10 +1260,10 @@ function buildTableCellDiff(
   while (i < raw.length) {
     const current = raw[i]!;
     if (current.kind === "same") {
-      out.push({
-        status: "same",
-        cells: current.b!.cells.map(sameTableCell),
-      });
+      const row = changedTableRow(current.a!, current.b!, patchId);
+      out.push(row.status === "same"
+        ? { status: "same", cells: current.b!.cells.map(sameTableCell) }
+        : row);
       i += 1;
       continue;
     }
@@ -1257,6 +1315,10 @@ function withTableCellDiff(block: ViewBlock, cellDiff: ViewTableRowDiff[], after
   return block;
 }
 
+function isInlineDiffBudgetExceeded(error: unknown): boolean {
+  return error === INLINE_DIFF_BUDGET_EXCEEDED;
+}
+
 function buildListRowReplace(
   beforeNode: ListPmBlock,
   afterNode: ListPmBlock,
@@ -1268,22 +1330,38 @@ function buildListRowReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock) return null;
-  const rowDiff = buildListRowDiff(
-    listRowsFromPmBlock(beforeNode),
-    listRowsFromPmBlock(afterNode),
-    input.patchId,
-  );
-  // granular 只在任意深度的行级 diff 真的标出了可见变化时才置。
-  // 若递归 rowDiff 全 same(变化只在 marks / orderedList.start 等当前行协议看不见的维度),
-  // 则保留块级标记,否则正文会变成"零可见标记"。
+  let rowDiff: ViewListRowDiff[];
+  try {
+    rowDiff = buildListRowDiff(
+      listRowsFromPmBlock(beforeNode),
+      listRowsFromPmBlock(afterNode),
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [
+        afterBlock.kind === "list"
+          ? { ...afterBlock, node: afterNode }
+          : afterBlock,
+      ],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
+  // granular 只在任意深度的行级 diff 真的标出了可见变化，且变化可由文本/marks 保真表达时才置；
+  // 节点类型或 attrs 变化回退完整块级替换，避免局部正文与实际提交结构不一致。
   const rowLevelVisible = hasVisibleListRowDiff(rowDiff);
+  const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
     ...input,
     op: "replace",
     blocks: [withListRowDiff(afterBlock, rowDiff, afterNode)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
-    ...(rowLevelVisible ? { granular: true } : {}),
+    ...(rowLevelVisible && !needsBlockHover ? { granular: true } : {}),
   };
 }
 
@@ -1307,20 +1385,32 @@ function buildTableCellReplace(
       blockCount: 1,
     };
   }
-  const cellDiff = buildTableCellDiff(
-    tableRowsFromPmBlock(beforeNode),
-    tableRowsFromPmBlock(afterNode),
-    input.patchId,
-  );
+  let cellDiff: ViewTableRowDiff[];
+  try {
+    cellDiff = buildTableCellDiff(
+      tableRowsFromPmBlock(beforeNode),
+      tableRowsFromPmBlock(afterNode),
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [{ ...afterBlock, node: afterNode }],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const cellLevelVisible = hasVisibleTableCellDiff(cellDiff);
+  const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
     ...input,
     op: "replace",
     blocks: [withTableCellDiff(afterBlock, cellDiff, afterNode)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
-    ...(cellLevelVisible ? { granular: true } : {}),
-    ...(cellLevelVisible && tableCellAttrsChanged(beforeNode, afterNode) ? { granularBlockHover: true } : {}),
+    ...(cellLevelVisible && !needsBlockHover ? { granular: true } : {}),
   };
 }
 
@@ -1329,7 +1419,12 @@ function changedContainerBlock(
   afterNode: PmBlockNode,
   patchId: string,
 ): ViewBlockSeqDiff[number] | null {
-  if (isTextDiffPmBlock(beforeNode) && isTextDiffPmBlock(afterNode) && beforeNode.type === afterNode.type) {
+  if (
+    isTextDiffPmBlock(beforeNode) &&
+    isTextDiffPmBlock(afterNode) &&
+    beforeNode.type === afterNode.type &&
+    samePersistentPmValue(beforeNode.attrs, afterNode.attrs)
+  ) {
     const oldText = pmBlockText(beforeNode);
     return {
       status: "changed",
@@ -1383,13 +1478,23 @@ function buildBlockSeqDiff(
   afterNodes: readonly PmBlockNode[],
   patchId: string,
 ): ViewBlockSeqDiff {
-  const raw = lcsDiff(beforeNodes, afterNodes, (before, after) => pmBlockText(before) === pmBlockText(after));
+  const raw = lcsDiff(beforeNodes, afterNodes, (before, after) =>
+    pmBlockText(before) === pmBlockText(after),
+  );
   const out: ViewBlockSeqDiff = [];
   let i = 0;
   while (i < raw.length) {
     const current = raw[i]!;
     if (current.kind === "same") {
-      out.push({ status: "same", block: current.b! });
+      if (samePersistentPmValue(current.a!, current.b!)) {
+        out.push({ status: "same", block: current.b! });
+      } else {
+        out.push(changedContainerBlock(current.a!, current.b!, patchId) ?? {
+          status: "changed",
+          kind: "block",
+          node: current.b!,
+        });
+      }
       i += 1;
       continue;
     }
@@ -1524,17 +1629,6 @@ function buildColumnsDiff(
   return out;
 }
 
-function columnWidthsChanged(
-  beforeNode: ColumnListPmBlock,
-  afterNode: ColumnListPmBlock,
-  columnsDiff: readonly ViewColumnDiff[],
-): boolean {
-  return columnsDiff.some((columnDiff) => {
-    if (columnDiff.beforeColumnIndex === undefined || columnDiff.afterColumnIndex === undefined) return false;
-    return beforeNode.content[columnDiff.beforeColumnIndex]?.attrs.widthRatio !== afterNode.content[columnDiff.afterColumnIndex]?.attrs.widthRatio;
-  });
-}
-
 function buildCalloutReplace(
   beforeNode: CalloutPmBlock,
   afterNode: CalloutPmBlock,
@@ -1545,17 +1639,32 @@ function buildCalloutReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "callout") return null;
-  const bodyDiff = buildBlockSeqDiff(beforeNode.content, afterNode.content, input.patchId);
+  let bodyDiff: ViewBlockSeqDiff;
+  try {
+    bodyDiff = buildBlockSeqDiff(
+      beforeNode.content,
+      afterNode.content,
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [afterBlock],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
+  const bodyLevelVisible = hasVisibleBlockSeqDiff(bodyDiff);
+  const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
     ...input,
     op: "replace",
     blocks: [withCalloutBodyDiff(afterBlock, bodyDiff)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
-    ...(hasVisibleBlockSeqDiff(bodyDiff) ? { granular: true } : {}),
-    ...(hasVisibleBlockSeqDiff(bodyDiff) && (
-      beforeNode.attrs.emoji !== afterNode.attrs.emoji || beforeNode.attrs.tone !== afterNode.attrs.tone
-    ) ? { granularBlockHover: true } : {}),
+    ...(bodyLevelVisible && !needsBlockHover ? { granular: true } : {}),
   };
 }
 
@@ -1569,18 +1678,34 @@ function buildColumnListReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "columnList") return null;
-  const columnsDiff = buildColumnsDiff(beforeNode.content, afterNode.content, input.patchId);
+  let columnsDiff: ViewColumnDiff[];
+  try {
+    columnsDiff = buildColumnsDiff(
+      beforeNode.content,
+      afterNode.content,
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [afterBlock],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const columnLevelVisible = columnsDiff.some((columnDiff) =>
     columnDiff.status !== "same" || hasVisibleBlockSeqDiff(columnDiff.bodyDiff),
   );
+  const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
     ...input,
     op: "replace",
     blocks: [withColumnListColumnsDiff(afterBlock, columnsDiff)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
-    ...(columnLevelVisible ? { granular: true } : {}),
-    ...(columnLevelVisible && columnWidthsChanged(beforeNode, afterNode, columnsDiff) ? { granularBlockHover: true } : {}),
+    ...(columnLevelVisible && !needsBlockHover ? { granular: true } : {}),
   };
 }
 
@@ -1752,7 +1877,7 @@ export interface BlockPatchInput {
 }
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
-const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "blockquote", "penNote"]);
+const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "penNote"]);
 /** 行内节点类型:replace 的 hunk.before/after 是「行内切片」(text/hardBreak/inlineMath),
  * 本就属行内、该走行内文本通道。此前漏列 → pmNodesInlineSafe 误判其为结构块 → 内联通道返 null、
  * 块通道(pmNodesToViewBlocks 过滤行内节点)又返 [] → 纯文本改动被双通道丢弃(表现为"无法定位")。

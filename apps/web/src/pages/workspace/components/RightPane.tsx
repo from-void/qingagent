@@ -60,6 +60,7 @@ interface RightPaneProps {
   remainingCount: number;
   activePatchIndex: number;
   isReviewSubmitting?: boolean;
+  reviewSettlementRetryPending?: boolean;
   visiblePatchCount: number;
   unrenderablePatchCount: number;
   effectiveReview: boolean;
@@ -146,6 +147,7 @@ export function RightPane({
   remainingCount,
   activePatchIndex,
   isReviewSubmitting,
+  reviewSettlementRetryPending = false,
   visiblePatchCount,
   unrenderablePatchCount,
   effectiveReview,
@@ -415,6 +417,7 @@ export function RightPane({
           totalCount={visiblePatchCount}
           activePatchIndex={activePatchIndex}
           isSubmitting={isReviewSubmitting}
+          retryOnly={reviewSettlementRetryPending}
           onJumpPrev={onJumpPrev}
           onJumpNext={onJumpNext}
           onRejectAll={onRejectAll}

@@ -28,6 +28,11 @@ interface ActiveBrowserBridge {
   closed: boolean;
 }
 
+interface PendingBrowserBridgeStart {
+  cancelled: boolean;
+  promise: Promise<void>;
+}
+
 interface BrowserBridgeRequest {
   requestId: string;
   sessionId: string;
@@ -49,6 +54,7 @@ const DB_VERSION = 1;
 const HANDLE_STORE = "handles";
 const SOURCE_STORE = "sources";
 const activeBridges = new Map<string, ActiveBrowserBridge>();
+const pendingBridgeStarts = new Map<string, PendingBrowserBridgeStart>();
 
 function bridgeKey(sessionId: string, folderId: string): string {
   return `${sessionId}\0${folderId}`;
@@ -412,6 +418,77 @@ async function unregisterBridge(sessionId: string, folderId: string, clientId: s
   }).catch(() => undefined);
 }
 
+async function closeActiveBridge(
+  key: string,
+  bridge: ActiveBrowserBridge,
+): Promise<void> {
+  bridge.closed = true;
+  bridge.eventSource.close();
+  if (activeBridges.get(key) === bridge) activeBridges.delete(key);
+  await unregisterBridge(bridge.sessionId, bridge.folderId, bridge.clientId);
+}
+
+async function startBridgeOnce(
+  args: {
+    sessionId: string;
+    folderId: string;
+    clientId: string;
+    handle: FileSystemDirectoryHandle;
+  },
+  pending: PendingBrowserBridgeStart,
+): Promise<void> {
+  const key = bridgeKey(args.sessionId, args.folderId);
+  const existing = activeBridges.get(key);
+  if (existing) await closeActiveBridge(key, existing);
+  if (pending.cancelled) return;
+
+  let registered = false;
+  let adopted = false;
+  let eventSource: EventSource | null = null;
+  try {
+    await registerBridge(args.sessionId, args.folderId, args.clientId);
+    registered = true;
+    if (pending.cancelled) return;
+
+    const url = `/api/v1/folder-bridge/events?sessionId=${encodeURIComponent(args.sessionId)}&clientId=${encodeURIComponent(args.clientId)}`;
+    eventSource = new EventSource(url);
+    const bridge: ActiveBrowserBridge = {
+      sessionId: args.sessionId,
+      folderId: args.folderId,
+      clientId: args.clientId,
+      handle: args.handle,
+      eventSource,
+      closed: false,
+    };
+    eventSource.addEventListener("folder-request", (event) => {
+      let data: unknown;
+      try {
+        data = JSON.parse((event as MessageEvent).data);
+      } catch (error) {
+        console.error("[browserFolderBridge] request JSON parse failed", error);
+        return;
+      }
+      void handleBridgeRequest(bridge, data);
+    });
+    eventSource.onerror = () => {
+      // EventSource 会自动重连；这里只记录，不主动关闭，避免短暂网络抖动中断资料库。
+      console.warn("[browserFolderBridge] SSE connection error", {
+        sessionId: args.sessionId,
+        folderId: args.folderId,
+      });
+    };
+    activeBridges.set(key, bridge);
+    adopted = true;
+  } finally {
+    if (!adopted) {
+      eventSource?.close();
+      if (registered) {
+        await unregisterBridge(args.sessionId, args.folderId, args.clientId);
+      }
+    }
+  }
+}
+
 async function startBridge(args: {
   sessionId: string;
   folderId: string;
@@ -420,37 +497,43 @@ async function startBridge(args: {
 }): Promise<void> {
   const key = bridgeKey(args.sessionId, args.folderId);
   const existing = activeBridges.get(key);
-  if (existing && existing.clientId === args.clientId && !existing.closed) return;
-  stopBrowserFolderBridge(args.sessionId, args.folderId);
-  await registerBridge(args.sessionId, args.folderId, args.clientId);
-  const url = `/api/v1/folder-bridge/events?sessionId=${encodeURIComponent(args.sessionId)}&clientId=${encodeURIComponent(args.clientId)}`;
-  const eventSource = new EventSource(url);
-  const bridge: ActiveBrowserBridge = {
-    sessionId: args.sessionId,
-    folderId: args.folderId,
-    clientId: args.clientId,
-    handle: args.handle,
-    eventSource,
-    closed: false,
-  };
-  eventSource.addEventListener("folder-request", (event) => {
-    let data: unknown;
-    try {
-      data = JSON.parse((event as MessageEvent).data);
-    } catch (error) {
-      console.error("[browserFolderBridge] request JSON parse failed", error);
+  if (
+    existing &&
+    existing.clientId === args.clientId &&
+    existing.handle === args.handle &&
+    !existing.closed
+  ) {
+    return;
+  }
+
+  const inFlight = pendingBridgeStarts.get(key);
+  if (inFlight) {
+    await inFlight.promise;
+    if (inFlight.cancelled) return startBridge(args);
+    const started = activeBridges.get(key);
+    if (
+      started &&
+      started.clientId === args.clientId &&
+      started.handle === args.handle &&
+      !started.closed
+    ) {
       return;
     }
-    void handleBridgeRequest(bridge, data);
-  });
-  eventSource.onerror = () => {
-    // EventSource 会自动重连；这里只记录，不主动关闭，避免短暂网络抖动中断资料库。
-    console.warn("[browserFolderBridge] SSE connection error", {
-      sessionId: args.sessionId,
-      folderId: args.folderId,
-    });
+    return startBridge(args);
+  }
+
+  const pending: PendingBrowserBridgeStart = {
+    cancelled: false,
+    promise: Promise.resolve(),
   };
-  activeBridges.set(key, bridge);
+  const promise = startBridgeOnce(args, pending).finally(() => {
+    if (pendingBridgeStarts.get(key) === pending) {
+      pendingBridgeStarts.delete(key);
+    }
+  });
+  pending.promise = promise;
+  pendingBridgeStarts.set(key, pending);
+  return promise;
 }
 
 async function getSourceIndex(sessionId: string, folderId: string): Promise<BrowserFolderSourceIndex | undefined> {
@@ -575,12 +658,11 @@ export async function requestBrowserFolderPermission(source: FolderSource): Prom
 
 export function stopBrowserFolderBridge(sessionId: string, folderId: string): void {
   const key = bridgeKey(sessionId, folderId);
+  const pending = pendingBridgeStarts.get(key);
+  if (pending) pending.cancelled = true;
   const bridge = activeBridges.get(key);
   if (!bridge) return;
-  bridge.closed = true;
-  bridge.eventSource.close();
-  activeBridges.delete(key);
-  void unregisterBridge(sessionId, folderId, bridge.clientId);
+  void closeActiveBridge(key, bridge);
 }
 
 export async function forgetBrowserFolderSource(sessionId: string, folderId: string): Promise<void> {

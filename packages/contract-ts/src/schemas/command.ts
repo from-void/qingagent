@@ -291,6 +291,7 @@ type _ReparseMaterialExact = Expect<Equal<z.infer<typeof reparseMaterialDataSche
 
 const attachFolderDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_ID_LENGTH),
+  requestId: boundedNonEmptyString(MAX_ID_LENGTH),
   source: z.discriminatedUnion("provider", [
     z.object({
       provider: z.literal("desktop-local"),

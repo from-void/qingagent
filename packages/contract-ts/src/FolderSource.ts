@@ -34,6 +34,7 @@ export interface FolderSourceRecord extends FolderSource {
 
 export type AttachFolder = {
   sessionId: string;
+  requestId: string;
   source:
     | { provider: "desktop-local"; selectionToken: string }
     | {
@@ -55,10 +56,32 @@ export type FolderSourcesChanged = {
 };
 
 export type FolderSourceOperationResult =
-  | { ok: true; op: "attach" | "detach"; folderId: string }
+  | {
+      ok: true;
+      op: "attach";
+      requestId: string;
+      clientSourceId: string | null;
+      folderId: string;
+    }
+  | { ok: true; op: "detach"; folderId: string }
   | {
       ok: false;
-      op: "attach" | "detach";
+      op: "attach";
+      requestId: string;
+      clientSourceId: string | null;
+      reason:
+        | "agent_busy"
+        | "unsupported_environment"
+        | "not_found"
+        | "too_many_sources"
+        | "permission_denied"
+        | "invalid_path"
+        | "bridge_offline"
+        | "unknown";
+    }
+  | {
+      ok: false;
+      op: "detach";
       reason:
         | "agent_busy"
         | "unsupported_environment"

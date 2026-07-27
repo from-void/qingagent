@@ -30,6 +30,10 @@ export type FolderAttachSelection =
   | { provider: "desktop-local"; selectionToken: string }
   | { provider: "browser-fs-access"; picked: PickedBrowserFolderSource };
 
+export function newFolderAttachRequestId(): string {
+  return `folder_attach_${crypto.randomUUID()}`;
+}
+
 export function folderAttachSelectionFromPending(source: PendingFolderSource): FolderAttachSelection {
   if (source.provider === "desktop-local") {
     return { provider: "desktop-local", selectionToken: source.selection.selectionToken };
@@ -40,11 +44,13 @@ export function folderAttachSelectionFromPending(source: PendingFolderSource): F
 export function buildAttachFolderCommand(
   sessionId: string,
   selection: FolderAttachSelection,
+  requestId: string,
 ): Extract<Command, { kind: "attachFolder" }> {
   return {
     kind: "attachFolder",
     data: {
       sessionId,
+      requestId,
       source: selection.provider === "desktop-local"
         ? {
             provider: "desktop-local",
@@ -58,4 +64,17 @@ export function buildAttachFolderCommand(
           },
     },
   };
+}
+
+export function matchesAttachFolderResult(
+  data: FolderSourceOperationResult,
+  requestId: string,
+  selection: FolderAttachSelection,
+): boolean {
+  if (data.op !== "attach" || data.requestId !== requestId) return false;
+  const expectedClientSourceId =
+    selection.provider === "browser-fs-access"
+      ? selection.picked.clientSourceId
+      : null;
+  return data.clientSourceId === expectedClientSourceId;
 }

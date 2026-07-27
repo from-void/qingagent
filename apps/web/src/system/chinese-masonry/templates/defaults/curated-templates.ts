@@ -591,7 +591,7 @@ export const curatedTemplates: TemplateDefinition[] = [
         "青灰"
       ],
       "requiresImage": false,
-      "preferVerticalText": false,
+      "preferVerticalText": true,
       "maxTitleLength": 10,
       "weight": 9,
       "textCapacity": {
@@ -1816,7 +1816,7 @@ export const curatedTemplates: TemplateDefinition[] = [
         "竖排"
       ],
       "requiresImage": false,
-      "preferVerticalText": true,
+      "preferVerticalText": false,
       "maxTitleLength": 12,
       "weight": 11,
       "textCapacity": {
@@ -2644,7 +2644,7 @@ export const curatedTemplates: TemplateDefinition[] = [
         "青绿"
       ],
       "requiresImage": false,
-      "preferVerticalText": true,
+      "preferVerticalText": false,
       "maxTitleLength": 10,
       "weight": 11,
       "textCapacity": {
@@ -2976,7 +2976,7 @@ export const curatedTemplates: TemplateDefinition[] = [
         "浅黄"
       ],
       "requiresImage": false,
-      "preferVerticalText": false,
+      "preferVerticalText": true,
       "maxTitleLength": 13,
       "weight": 10,
       "textCapacity": {
@@ -4181,7 +4181,7 @@ export const curatedTemplates: TemplateDefinition[] = [
         "风铃"
       ],
       "requiresImage": false,
-      "preferVerticalText": false,
+      "preferVerticalText": true,
       "maxTitleLength": 14,
       "weight": 10,
       "textCapacity": {

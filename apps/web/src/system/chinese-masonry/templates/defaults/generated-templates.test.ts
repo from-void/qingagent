@@ -121,6 +121,30 @@ describe('curated default templates', () => {
     expect(textElements.every((element) => element.maxLines >= 1)).toBe(true);
   });
 
+  it.each([
+    ['curated-bamboo-shadow', true],
+    ['curated-square-egret-vertical', false],
+    ['curated-tall-banana-rain', false],
+    ['curated-tall-osmanthus-branch', true],
+    ['curated-tall-eave-bell', true],
+  ] as const)('%s 的竖排元数据与标题、描述真实方向一致', (templateId, vertical) => {
+    const template = defaultTemplates.find((item) => item.id === templateId);
+    if (!template) throw new Error(`Missing template fixture: ${templateId}`);
+    const contentDirections = template.elements
+      .filter(
+        (element): element is TextElement =>
+          isTextElement(element) &&
+          (element.role === 'title' || element.role === 'description'),
+      )
+      .map((element) => element.direction);
+
+    expect(contentDirections.length).toBeGreaterThan(0);
+    expect(new Set(contentDirections)).toEqual(
+      new Set([vertical ? 'vertical' : 'horizontal']),
+    );
+    expect(template.meta.preferVerticalText).toBe(vertical);
+  });
+
   it('includes landscape, square and portrait background families', () => {
     const imageUrls = defaultTemplates
       .flatMap((template) => template.elements)

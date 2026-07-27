@@ -53,20 +53,53 @@ type FolderSourceFailureReason = Extract<
   { ok: false }
 >["reason"];
 
-function folderSourceResult(
-  op: "attach" | "detach",
+function detachFolderResult(
   reason: FolderSourceFailureReason,
 ): BridgeFrame {
   return {
     kind: "folderSourceOperationResult",
-    data: { ok: false, op, reason },
+    data: { ok: false, op: "detach", reason },
   };
 }
 
-function folderSourceOkResult(op: "attach" | "detach", folderId: string): BridgeFrame {
+function detachFolderOkResult(folderId: string): BridgeFrame {
   return {
     kind: "folderSourceOperationResult",
-    data: { ok: true, op, folderId },
+    data: { ok: true, op: "detach", folderId },
+  };
+}
+
+function attachFolderResult(
+  requestId: string,
+  clientSourceId: string | null,
+  reason: FolderSourceFailureReason,
+): BridgeFrame {
+  return {
+    kind: "folderSourceOperationResult",
+    data: {
+      ok: false,
+      op: "attach",
+      requestId,
+      clientSourceId,
+      reason,
+    },
+  };
+}
+
+function attachFolderOkResult(
+  requestId: string,
+  clientSourceId: string | null,
+  folderId: string,
+): BridgeFrame {
+  return {
+    kind: "folderSourceOperationResult",
+    data: {
+      ok: true,
+      op: "attach",
+      requestId,
+      clientSourceId,
+      folderId,
+    },
   };
 }
 
@@ -102,14 +135,17 @@ async function removeFolderSourceRuntimeState(
 
 async function* handleAttachFolder(
   session: SessionState,
+  requestId: string,
   source: AttachFolderSource,
 ): AsyncGenerator<BridgeFrame> {
+  const clientSourceId =
+    source.provider === "browser-fs-access" ? source.clientSourceId : null;
   if (session.streamId || session.runId) {
-    yield folderSourceResult("attach", "agent_busy");
+    yield attachFolderResult(requestId, clientSourceId, "agent_busy");
     return;
   }
   if (hasConnectedFolderSource(session)) {
-    yield folderSourceResult("attach", "too_many_sources");
+    yield attachFolderResult(requestId, clientSourceId, "too_many_sources");
     return;
   }
 
@@ -120,12 +156,12 @@ async function* handleAttachFolder(
 
   if (source.provider === "desktop-local") {
     if (!localFolderSourcesEnabled()) {
-      yield folderSourceResult("attach", "unsupported_environment");
+      yield attachFolderResult(requestId, clientSourceId, "unsupported_environment");
       return;
     }
     const selection = peekDesktopFolderSelection(source.selectionToken);
     if (!selection) {
-      yield folderSourceResult("attach", "invalid_path");
+      yield attachFolderResult(requestId, clientSourceId, "invalid_path");
       return;
     }
 
@@ -133,16 +169,16 @@ async function* handleAttachFolder(
     try {
       rootPath = await assertDirectory(selection.rootPath);
     } catch {
-      yield folderSourceResult("attach", "invalid_path");
+      yield attachFolderResult(requestId, clientSourceId, "invalid_path");
       return;
     }
     const consumedSelection = consumeDesktopFolderSelection(source.selectionToken);
     if (!consumedSelection || consumedSelection.rootPath !== selection.rootPath) {
-      yield folderSourceResult("attach", "invalid_path");
+      yield attachFolderResult(requestId, clientSourceId, "invalid_path");
       return;
     }
     if (hasConnectedFolderSource(session)) {
-      yield folderSourceResult("attach", "too_many_sources");
+      yield attachFolderResult(requestId, clientSourceId, "too_many_sources");
       return;
     }
     for (const staleId of staleFolderSourceIds(session)) {
@@ -167,11 +203,11 @@ async function* handleAttachFolder(
     };
   } else {
     if (!browserFolderSourcesEnabled()) {
-      yield folderSourceResult("attach", "unsupported_environment");
+      yield attachFolderResult(requestId, clientSourceId, "unsupported_environment");
       return;
     }
     if (hasConnectedFolderSource(session)) {
-      yield folderSourceResult("attach", "too_many_sources");
+      yield attachFolderResult(requestId, clientSourceId, "too_many_sources");
       return;
     }
     for (const staleId of staleFolderSourceIds(session)) {
@@ -207,7 +243,7 @@ async function* handleAttachFolder(
   invalidateSessionWorkspace(session.sessionId);
   await persistFolderSourceChange(session, "command:attachFolder");
 
-  yield folderSourceOkResult("attach", folderId);
+  yield attachFolderOkResult(requestId, clientSourceId, folderId);
   yield folderSourcesChangedFrame(session);
   startFolderSourceFileCountRefresh(session, folderId);
 }
@@ -217,11 +253,11 @@ async function* handleDetachFolder(
   folderId: string,
 ): AsyncGenerator<BridgeFrame> {
   if (session.streamId || session.runId) {
-    yield folderSourceResult("detach", "agent_busy");
+    yield detachFolderResult("agent_busy");
     return;
   }
   if (!session.folderSources.has(folderId)) {
-    yield folderSourceResult("detach", "not_found");
+    yield detachFolderResult("not_found");
     return;
   }
 
@@ -230,7 +266,7 @@ async function* handleDetachFolder(
   invalidateSessionWorkspace(session.sessionId);
   await persistFolderSourceChange(session, "command:detachFolder");
 
-  yield folderSourceOkResult("detach", folderId);
+  yield detachFolderOkResult(folderId);
   yield folderSourcesChangedFrame(session);
 }
 
@@ -245,18 +281,32 @@ export async function* handleFolderSourceCommand(
     case "attachFolder": {
       const session = await getOrRestoreSession(command.data.sessionId);
       if (!session) {
-        yield folderSourceResult("attach", "not_found");
+        const clientSourceId =
+          command.data.source.provider === "browser-fs-access"
+            ? command.data.source.clientSourceId
+            : null;
+        yield attachFolderResult(
+          command.data.requestId,
+          clientSourceId,
+          "not_found",
+        );
         return;
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-      yield* runFolderSourceOperation(session, () => handleAttachFolder(session, command.data.source));
+      yield* runFolderSourceOperation(session, () =>
+        handleAttachFolder(
+          session,
+          command.data.requestId,
+          command.data.source,
+        ),
+      );
       return;
     }
 
     case "detachFolder": {
       const session = await getOrRestoreSession(command.data.sessionId);
       if (!session) {
-        yield folderSourceResult("detach", "not_found");
+        yield detachFolderResult("not_found");
         return;
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);

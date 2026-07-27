@@ -38,6 +38,7 @@ import {
 } from "./blockHandleGeometry";
 import {
   getCurrentHandleNode,
+  resolveHandleRangeByStableId,
   resolveDocumentPositionSafely,
 } from "./blockHandlePosition";
 
@@ -846,14 +847,31 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       const html = pmToClipboardHtml(pmDoc);
       const plain = pmToPlainText(pmDoc);
       if (!html && !plain) return;
+      const docBeforeClipboardWrite = editor.state.doc;
 
       try {
         await writeBlockClipboardPayload(html, plain);
         if (isCut) {
+          if (!editor.isEditable) {
+            onToast?.("已复制，当前为只读，未删除");
+            return;
+          }
+          const currentDoc = editor.state.doc;
+          const stableRange = resolveHandleRangeByStableId(currentDoc, h);
+          const unchangedRange =
+            currentDoc === docBeforeClipboardWrite &&
+            getCurrentHandleNode(currentDoc, h)
+              ? { from: h.blockPos, to: h.blockPos + node.nodeSize }
+              : null;
+          const range = stableRange ?? unchangedRange;
+          if (!range) {
+            onToast?.("已复制，原内容已变化，未删除");
+            return;
+          }
           editor
             .chain()
             .focus()
-            .deleteRange({ from: h.blockPos, to: h.blockPos + node.nodeSize })
+            .deleteRange(range)
             .run();
         }
         onToast?.(isCut ? "已剪切" : "已复制");

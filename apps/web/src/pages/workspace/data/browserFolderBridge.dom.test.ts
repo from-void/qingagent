@@ -6,6 +6,7 @@ import {
   ensureBrowserFolderBridge,
   pickBrowserFolderSource,
   rememberAttachedBrowserFolderSource,
+  stopBrowserFolderBridge,
   type PickedBrowserFolderSource,
 } from "./browserFolderBridge";
 
@@ -94,6 +95,7 @@ class FakeIDBDatabase {
 class FakeEventSource {
   onerror: (() => void) | null = null;
   readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  closed = false;
 
   constructor(readonly url: string) {
     fakeEventSources.push(this);
@@ -112,7 +114,9 @@ class FakeEventSource {
     }
   }
 
-  close(): void {}
+  close(): void {
+    this.closed = true;
+  }
 }
 
 const fakeEventSources: FakeEventSource[] = [];
@@ -233,6 +237,137 @@ describe("browser folder handle persistence", () => {
     await forgetBrowserFolderSource("sess", "fld");
     expect(handleStore(stores).size).toBe(0);
     expect(sourceStore(stores).size).toBe(0);
+  });
+
+  it("同一文件夹并发启动只注册一次并只建立一个 SSE", async () => {
+    const picked: PickedBrowserFolderSource = {
+      handle: makeDirectoryHandle("single-flight-folder"),
+      name: "single-flight-folder",
+      browserHandleKey: `${window.location.origin}:sess-flight:handle:root`,
+      clientSourceId: "browser_client_flight",
+    };
+    const source: FolderSource = {
+      id: "fld-flight",
+      sessionId: "sess-flight",
+      provider: "browser-fs-access",
+      name: picked.name,
+      pathLabel: picked.name,
+      mountName: "source_flight",
+      mountPath: "/sources/source_flight",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-27T00:00:00.000Z",
+      updatedAt: "2026-07-27T00:00:00.000Z",
+    };
+    await rememberAttachedBrowserFolderSource({
+      sessionId: source.sessionId,
+      folderId: source.id,
+      picked,
+    });
+    stopBrowserFolderBridge(source.sessionId, source.id);
+    fakeEventSources.length = 0;
+    vi.mocked(fetch).mockClear();
+
+    let releaseRegister!: () => void;
+    const registerGate = new Promise<void>((resolve) => {
+      releaseRegister = resolve;
+    });
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      if (String(input).endsWith("/folder-bridge/register")) {
+        await registerGate;
+      }
+      return { ok: true, status: 200 } as Response;
+    });
+
+    const first = ensureBrowserFolderBridge(source);
+    const second = ensureBrowserFolderBridge(source);
+    await flushBridgeTasks();
+    const registerCallsBeforeRelease = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input]) =>
+        String(input).endsWith("/folder-bridge/register"),
+      );
+    expect(registerCallsBeforeRelease).toHaveLength(1);
+
+    releaseRegister();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { status: "connected", error: null },
+      { status: "connected", error: null },
+    ]);
+    expect(fakeEventSources).toHaveLength(1);
+
+    await forgetBrowserFolderSource(source.sessionId, source.id);
+  });
+
+  it("启动注册在途时停止会注销旧连接，随后重启不会被旧竞争者覆盖", async () => {
+    const picked: PickedBrowserFolderSource = {
+      handle: makeDirectoryHandle("cancelled-folder"),
+      name: "cancelled-folder",
+      browserHandleKey: `${window.location.origin}:sess-cancel:handle:root`,
+      clientSourceId: "browser_client_cancel",
+    };
+    const source: FolderSource = {
+      id: "fld-cancel",
+      sessionId: "sess-cancel",
+      provider: "browser-fs-access",
+      name: picked.name,
+      pathLabel: picked.name,
+      mountName: "source_cancel",
+      mountPath: "/sources/source_cancel",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-27T00:00:00.000Z",
+      updatedAt: "2026-07-27T00:00:00.000Z",
+    };
+    await rememberAttachedBrowserFolderSource({
+      sessionId: source.sessionId,
+      folderId: source.id,
+      picked,
+    });
+    stopBrowserFolderBridge(source.sessionId, source.id);
+    fakeEventSources.length = 0;
+    vi.mocked(fetch).mockClear();
+
+    let releaseRegister!: () => void;
+    const registerGate = new Promise<void>((resolve) => {
+      releaseRegister = resolve;
+    });
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      if (String(input).endsWith("/folder-bridge/register")) {
+        await registerGate;
+      }
+      return { ok: true, status: 200 } as Response;
+    });
+
+    const starting = ensureBrowserFolderBridge(source);
+    await flushBridgeTasks();
+    stopBrowserFolderBridge(source.sessionId, source.id);
+    const restarted = ensureBrowserFolderBridge(source);
+    releaseRegister();
+    await starting;
+    await expect(restarted).resolves.toEqual({
+      status: "connected",
+      error: null,
+    });
+    await flushBridgeTasks();
+
+    expect(fakeEventSources).toHaveLength(1);
+    const registerCalls = vi.mocked(fetch).mock.calls.filter(([input]) =>
+      String(input).endsWith("/folder-bridge/register"),
+    );
+    expect(registerCalls).toHaveLength(2);
+    const unregisterCalls = vi.mocked(fetch).mock.calls.filter(([input]) =>
+      String(input).endsWith("/folder-bridge/unregister"),
+    );
+    expect(unregisterCalls).toHaveLength(1);
+
+    await forgetBrowserFolderSource(source.sessionId, source.id);
   });
 
   it("readdir 不逐文件 getFile 读取 size，size 由 stat/readFile 懒加载", async () => {

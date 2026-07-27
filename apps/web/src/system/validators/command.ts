@@ -255,6 +255,7 @@ export function validateCommand(cmd: Command): void {
       const data = cmd.data as unknown;
       if (!isRecord(data)) fail(`AttachFolder.data must be an object`);
       if (!nonEmptyString(data.sessionId)) fail(`AttachFolder.sessionId must be non-empty`);
+      if (!nonEmptyString(data.requestId)) fail(`AttachFolder.requestId must be non-empty`);
       const source = data.source;
       if (!isRecord(source)) fail(`AttachFolder.source must be an object`);
       if (source.provider === "desktop-local") {

@@ -13,6 +13,19 @@ const xhsDerivative: DerivativeItem = {
   generatedAt: "2026-07-26T00:00:00.000Z",
   stale: false,
 };
+const englishTranslation: DerivativeItem = {
+  ...xhsDerivative,
+  docId: "translation-en",
+  dtype: "translate",
+  targetLang: "英语",
+  templateId: "translate-faithful",
+  templateName: "忠实精准",
+};
+const japaneseTranslation: DerivativeItem = {
+  ...englishTranslation,
+  docId: "translation-ja",
+  targetLang: "日语",
+};
 
 describe("buildActiveDerivativeTurnContext", () => {
   it("激活的 Tab 对应衍生稿时注入 doc_id、类型与修改路由", () => {
@@ -32,5 +45,18 @@ describe("buildActiveDerivativeTurnContext", () => {
 
   it("激活主文档 Tab 时不注入", () => {
     expect(buildActiveDerivativeTurnContext("main", [xhsDerivative])).toBeNull();
+  });
+
+  it("F3: 翻译聚合 Tab 按当前语言译文注入准确 doc_id", () => {
+    expect(
+      buildActiveDerivativeTurnContext(
+        "translate",
+        [englishTranslation, japaneseTranslation],
+        japaneseTranslation.docId,
+      ),
+    ).toBe(
+      "[系统:用户当前正查看衍生稿(doc_id: translation-ja,类型=翻译)。" +
+        "若本轮是对这篇衍生稿的修改诉求,按「已有衍生稿修改路由」执行,doc_id 已给出无需 list_derivatives 定位。]",
+    );
   });
 });

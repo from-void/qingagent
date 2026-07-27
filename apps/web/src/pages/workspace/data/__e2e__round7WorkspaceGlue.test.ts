@@ -248,6 +248,8 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
       const toast = folderSourceOperationFailureToastForTest({
         ok: false,
         op: "attach",
+        requestId: "attach-test",
+        clientSourceId: null,
         reason,
       });
       expect(toast).toContain("连接文件夹失败");
@@ -270,6 +272,8 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
     const toast = folderSourceOperationFailureToastForTest({
       ok: false,
       op: "attach",
+      requestId: "attach-test",
+      clientSourceId: null,
       reason: "agent_busy",
     });
     expect(toast).toContain("青简正在处理");
@@ -279,6 +283,8 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
     const toast = folderSourceOperationFailureToastForTest({
       ok: false,
       op: "attach",
+      requestId: "attach-test",
+      clientSourceId: null,
       reason: "too_many_sources",
     });
     expect(toast).toContain("暂只支持连接一个");
@@ -288,6 +294,8 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
     const toast = folderSourceOperationFailureToastForTest({
       ok: false,
       op: "attach",
+      requestId: "attach-test",
+      clientSourceId: null,
       reason: "bridge_offline",
     });
     expect(toast).toContain("文件夹桥接未就绪");
@@ -455,7 +463,13 @@ describe("H. folderSourceOperationResult reducer 行为", () => {
     const state = withFolderSource("session-A", sourceA);
     const next = workspaceReducer(state, {
       kind: "folderSourceOperationResult",
-      data: { ok: true, op: "attach", folderId: "fld_A" },
+      data: {
+        ok: true,
+        op: "attach",
+        requestId: "attach-a",
+        clientSourceId: null,
+        folderId: "fld_A",
+      },
     });
     // folderSources 不变（由 folderSourcesChanged 更新）
     expect(next.folderSources).toEqual(state.folderSources);

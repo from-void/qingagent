@@ -31,6 +31,16 @@ declare global {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+function clearPageExitOutboxStorage(): void {
+  const prefix = "qingagent.page_exit_doc_save_outbox.v1";
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key === prefix || key?.startsWith(`${prefix}:`)) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 type MockServerStreamInstance = {
   listeners: Set<(frame: BridgeFrame) => void>;
   sendCommand: ReturnType<typeof vi.fn>;
@@ -680,6 +690,8 @@ describe("WorkspacePage review controls", () => {
     serverStreamMock.instances.length = 0;
     window.location.hash = "";
     sessionStorage.clear();
+    clearPageExitOutboxStorage();
+    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
     restoreWorkspaceDomMocks = installWorkspaceDomMocks();
   });
@@ -688,6 +700,8 @@ describe("WorkspacePage review controls", () => {
     restoreWorkspaceDomMocks?.();
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
+    clearPageExitOutboxStorage();
+    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     vi.unstubAllEnvs();
     vi.useRealTimers();
     if (root) {
@@ -1224,7 +1238,7 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(offlineEditedDoc);
   }, 60_000);
 
-  it("异常坍缩态在 updateDoc 前被熔断，不落库也不覆盖有效快照", async () => {
+  it("用户显式将多块长文档改写为短文时仍发送 updateDoc", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");
     const captured: {
@@ -1243,7 +1257,7 @@ describe("WorkspacePage review controls", () => {
     ]);
     const collapsed = pmDoc([pmHeading("damaged-heading", "300")]);
     await emitFrames(stream, [
-      { kind: "sessionMeta", data: { sessionId: "s-1", title: "坍缩熔断" } },
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "全文改写" } },
       {
         kind: "documentSnapshotWritten",
         data: { doc: wireSnapshotFromPmDoc(baseline, 7) },
@@ -1263,9 +1277,10 @@ describe("WorkspacePage review controls", () => {
     });
     await flushMicrotasks(3);
 
-    expect(updateDocCommands(stream)).toHaveLength(0);
-    expect(captured.current?.state.version).toBe(7);
-    expect(captured.current?.state.doc?.pmDoc).toEqual(baseline);
+    expect(updateDocCommands(stream)).toHaveLength(1);
+    expect(updateDocCommands(stream)[0]?.data.doc).toEqual(collapsed);
+    expect(captured.current?.state.version).toBe(8);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(collapsed);
   }, 60_000);
 
   it("no-op 保存回执保持当前版本，下一次真实编辑沿用一致的版本与哈希基线", async () => {
@@ -2351,7 +2366,7 @@ describe("WorkspacePage review controls", () => {
     expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
 
-  it("C11 放弃全部确认后不等待 commit 返回就解锁输入", async () => {
+  it("放弃全部在服务端确认前保持锁定，成功后才清理候选并解锁", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2363,12 +2378,16 @@ describe("WorkspacePage review controls", () => {
     await clickButton("确认放弃全部");
 
     expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
-    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
 
     await act(async () => {
       pendingCommit.resolve([docStateFrame("editing")]);
       await pendingCommit.promise;
     });
+    await flushMicrotasks();
+
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
   it("B7 放弃全部不终止在途请求，pending 问卷卡保持可作答", async () => {
@@ -2419,7 +2438,9 @@ describe("WorkspacePage review controls", () => {
       "pending",
     );
 
-    act(() => captured.current?.handleRejectAll());
+    act(() => {
+      void captured.current?.handleRejectAll();
+    });
     await flushMicrotasks();
 
     // stop 会 abort updateDoc/恢复等共享请求，并把 pending 工具卡统一终结为 aborted。
@@ -2435,7 +2456,7 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
-  it("C11 放弃后收到 stale pendingReview 回帧时仍由 fallback 解锁", async () => {
+  it("放弃全部只收到 stale pendingReview 时保留候选和重试入口", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2443,7 +2464,7 @@ describe("WorkspacePage review controls", () => {
 
     await clickButton("放弃全部");
     await clickButton("确认放弃全部");
-    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
 
     await emitFrames(stream, [docStateFrame("pendingReview")]);
     expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
@@ -2454,6 +2475,72 @@ describe("WorkspacePage review controls", () => {
     });
     await flushMicrotasks();
 
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("候选已保留，请重试");
+  });
+
+  it("放弃全部请求失败后保留原候选，可再次确认并成功结算", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-reject-retry", "batch-reject-retry", 0),
+    ]);
+    stream.commitReviewGroups.mockRejectedValueOnce(new Error("network down"));
+
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    await flushMicrotasks(5);
+
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("剩余 · 1 处");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+
+    mockCommitWithFrames(stream, [docStateFrame("editing")]);
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(2);
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+  });
+
+  it("逐处审阅自动提交失败后显示显式重试入口，重试成功再解锁", async () => {
+    const patch = textReviewToolCall(
+      "p-auto-retry",
+      "batch-auto-retry",
+      0,
+      "reviewing",
+    );
+    const stream = await renderWorkspaceWithReview([patch]);
+    stream.commitReviewGroups.mockRejectedValueOnce(new Error("network down"));
+
+    await emitFrames(stream, [
+      toolCallUpdatedFrame({ ...patch, status: { kind: "accepted" } }),
+    ]);
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("提交失败，候选待重试");
+
+    mockCommitWithFrames(stream, [
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      docStateFrame("editing"),
+    ]);
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(2);
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
@@ -2509,7 +2596,7 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
-  it("C11 放弃后立刻追问时 sendMessage 等关闭审阅完成后再发送", async () => {
+  it("放弃全部成功解锁后可继续追问", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
@@ -2518,20 +2605,22 @@ describe("WorkspacePage review controls", () => {
     await clickButton("放弃全部");
     await clickButton("确认放弃全部");
 
-    const editor = getChatEditor();
-    bindInnerText(editor);
-    await act(async () => {
-      editor.innerText = "继续追问";
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
-    await clickButton("发送 →");
-    expect(sendMessageCommands(stream)).toHaveLength(0);
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
 
     await act(async () => {
       pendingCommit.resolve([docStateFrame("editing")]);
       await pendingCommit.promise;
     });
+    await flushMicrotasks(5);
+
+    const editor = getChatEditor();
+    expect(editor.getAttribute("contenteditable")).toBe("true");
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "继续追问";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("发送 →");
     await flushMicrotasks(5);
 
     const sends = sendMessageCommands(stream);
@@ -3121,10 +3210,17 @@ describe("WorkspacePage review controls", () => {
     // R15 形态:新建页 Ctrl+Enter 跳进工作区后,建会话/传文件在途的头 1-2 秒工作区
     // 完全空白、用户消息无影,自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息
     // 已在跑)。修法:乐观气泡在任何 await 之前先落地。
-    sessionStorage.setItem(
-      "qingagent:pending-message",
-      "请写一篇短篇小说，题目《雨夜的最后一班公交》，约2000字。",
-    );
+    const { createPendingSubmission } = await import("../../system");
+    await createPendingSubmission({
+      submissionId: "submission-first-message",
+      clientMessageId: "message-first-message",
+      text: "请写一篇短篇小说，题目《雨夜的最后一班公交》，约2000字。",
+      richText: null,
+      chips: [],
+      skills: [],
+      attachments: [],
+      folderSource: null,
+    });
     let resolveStart: ((sessionId: string) => void) | null = null;
     serverStreamMock.startSessionImpl = () =>
       new Promise<string>((resolve) => {
@@ -3154,6 +3250,125 @@ describe("WorkspacePage review controls", () => {
       serverStreamMock.startSessionImpl = null;
     }
   });
+
+  it("IDB 写入窗口刷新后经真实路由移交文字与缺失清单，不静默发送无附件首提", async () => {
+    window.location.hash = "#/new";
+    const { PENDING_SUBMISSION_STORAGE_KEY } = await import("../../system");
+    sessionStorage.setItem(PENDING_SUBMISSION_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      submissionId: "submission-idb-writing",
+      clientMessageId: "message-idb-writing",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1_000,
+      state: "queued",
+      targetSessionId: null,
+      text: "刷新后必须移交到输入框的文字",
+      richText: "刷新后必须移交到输入框的文字{{chip:0}}",
+      chips: [{
+        kind: { kind: "attach" },
+        resourceRef: {
+          id: "attachment-writing",
+          domain: { kind: "file" },
+        },
+        prefix: null,
+        label: "写入中的附件.txt",
+        suffix: null,
+      }],
+      skills: [],
+      attachments: [{
+        id: "attachment-writing",
+        name: "写入中的附件.txt",
+        type: "text/plain",
+        size: 8,
+        lastModified: 123,
+      }],
+      attachmentsPersisted: false,
+      uploadedAssets: [],
+      folderExpected: false,
+      folderPersisted: true,
+      folderAttached: false,
+    }));
+
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const originalToDataUrl = HTMLCanvasElement.prototype.toDataURL;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () =>
+        new Proxy(
+          {},
+          {
+            get: (_target, prop) => {
+              if (prop === "createImageData") {
+                return (width: number, height: number) => ({
+                  width,
+                  height,
+                  data: new Uint8ClampedArray(
+                    Math.max(0, width) * Math.max(0, height) * 4,
+                  ),
+                  colorSpace: "srgb",
+                });
+              }
+              if (prop === "measureText") {
+                return () => ({ width: 0 });
+              }
+              return () => undefined;
+            },
+            set: () => true,
+          },
+        ),
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
+      configurable: true,
+      value: () => "data:image/png;base64,",
+    });
+    try {
+      const [
+        { Router },
+        { NewSessionPage },
+        { WorkspacePage },
+      ] = await Promise.all([
+        import("../../shell/Router"),
+        import("../new-session/NewSessionPage"),
+        import("./WorkspacePage"),
+      ]);
+      await render(
+        <Router
+          routes={{
+            "new-session": <NewSessionPage />,
+            workspace: <WorkspacePage />,
+          }}
+        />,
+      );
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      });
+      await flushMicrotasks(10);
+
+      expect(window.location.hash).toBe("#/workspace");
+      expect(getChatEditor().textContent).toContain(
+        "刷新后必须移交到输入框的文字",
+      );
+      expect(host?.textContent).toContain("1 个附件无法恢复");
+      expect(host?.textContent).toContain("请重新添加");
+      expect(
+        serverStreamMock.instances.flatMap((stream) =>
+          sendMessageCommands(stream),
+        ),
+      ).toHaveLength(0);
+      expect(
+        sessionStorage.getItem(PENDING_SUBMISSION_STORAGE_KEY),
+      ).toBeNull();
+    } finally {
+      Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value: originalGetContext,
+      });
+      Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
+        configurable: true,
+        value: originalToDataUrl,
+      });
+    }
+  }, 60_000);
 
   it("e2e-0723 停止门二轮:建会话中的规划 turn 停止后不再晚发 sendMessage/问卷", async () => {
     let resolveStart: ((sessionId: string) => void) | null = null;
@@ -3188,6 +3403,74 @@ describe("WorkspacePage review controls", () => {
           (button) => button.textContent === "停止",
         ),
       ).toBe(false);
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  });
+
+  it("首提准备期取消后保留原文并提供显式一键重试", async () => {
+    window.history.replaceState(null, "", "#/workspace");
+    const {
+      createPendingSubmission,
+      loadPendingSubmission,
+    } = await import("../../system");
+    await createPendingSubmission({
+      submissionId: "submission-cancelled",
+      clientMessageId: "message-cancelled",
+      text: "取消后仍要保留的首提",
+      richText: null,
+      chips: [],
+      skills: [],
+      attachments: [],
+      folderSource: null,
+    });
+    let resolveStart: ((sessionId: string) => void) | null = null;
+    serverStreamMock.startSessionImpl = () =>
+      new Promise<string>((resolve) => {
+        resolveStart = resolve;
+      });
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      const stream = latestServerStream();
+
+      await clickButton("停止");
+      await act(async () => {
+        resolveStart?.("s-cancelled");
+      });
+      await flushMicrotasks(20);
+
+      expect(sendMessageCommands(stream)).toHaveLength(0);
+      const pending = await loadPendingSubmission();
+      expect(pending.kind).toBe("ready");
+      if (pending.kind !== "ready") return;
+      expect(pending.submission).toMatchObject({
+        submissionId: "submission-cancelled",
+        state: "retryable",
+        targetSessionId: "s-cancelled",
+        text: "取消后仍要保留的首提",
+      });
+      expect(window.location.hash).toContain("session=s-cancelled");
+      await flushMicrotasks(20);
+      const toast = host!.querySelector<HTMLElement>(
+        '[data-toast-key="workspace-pending-submission"]',
+      );
+      expect(toast?.textContent).toContain(
+        "已停止，内容与素材已保留",
+      );
+      expect(toast?.textContent).toContain("重试");
+      await clickButton("重试");
+      await flushMicrotasks(10);
+      const sends = sendMessageCommands(stream);
+      expect(sends).toHaveLength(1);
+      expect(sends[0]?.data).toMatchObject({
+        sessionId: "s-cancelled",
+        text: "取消后仍要保留的首提",
+        clientMessageId: "message-cancelled",
+      });
+      await expect(loadPendingSubmission()).resolves.toEqual({
+        kind: "none",
+      });
     } finally {
       serverStreamMock.startSessionImpl = null;
     }
@@ -4238,9 +4521,9 @@ describe("WorkspacePage page-exit doc save", () => {
         expectedDocumentSnapshot: 7,
         baseContentHash,
         clientMutationId: "exit-1",
-        legacySections: [{ kind: "p", data: { text: "新正文" } }],
       },
     });
+    expect(command?.data.legacySections).toBeUndefined();
   });
 
   it("page-exit flush 优先 sendBeacon,失败时回退 keepalive fetch", async () => {
@@ -4491,6 +4774,7 @@ function installWorkspaceDomMocks(): () => void {
   const originalGlobalCancelRaf = globalThis.cancelAnimationFrame;
   const originalWindowFetch = window.fetch;
   const originalGlobalFetch = globalThis.fetch;
+  const originalNavigatorLocks = navigator.locks;
   const originalScrollIntoView = Element.prototype.scrollIntoView;
   const originalScrollTo = Element.prototype.scrollTo;
   const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerText");
@@ -4531,6 +4815,16 @@ function installWorkspaceDomMocks(): () => void {
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: cancelRaf });
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (
+        name: string,
+        _options: LockOptions,
+        callback: (lock: Lock | null) => unknown,
+      ) => callback({ name, mode: "exclusive" }),
+    },
+  });
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -4557,6 +4851,7 @@ function installWorkspaceDomMocks(): () => void {
     restoreProperty(globalThis, "cancelAnimationFrame", originalGlobalCancelRaf);
     restoreProperty(window, "fetch", originalWindowFetch);
     restoreProperty(globalThis, "fetch", originalGlobalFetch);
+    restoreProperty(navigator, "locks", originalNavigatorLocks);
     restoreProperty(Element.prototype, "scrollIntoView", originalScrollIntoView);
     restoreProperty(Element.prototype, "scrollTo", originalScrollTo);
     restoreDescriptor(HTMLElement.prototype, "innerText", originalInnerText);

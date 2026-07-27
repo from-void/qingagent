@@ -25,6 +25,8 @@ describe("MediaZoomFullscreen", () => {
   });
 
   it("支持打开、滚轮缩放和 Esc 关闭", async () => {
+    const addSpy = vi.spyOn(HTMLElement.prototype, "addEventListener");
+    const removeSpy = vi.spyOn(HTMLElement.prototype, "removeEventListener");
     const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);
       return 0;
@@ -49,16 +51,28 @@ describe("MediaZoomFullscreen", () => {
       const content = document.body.querySelector<HTMLElement>(".media-zoom-content");
       expect(viewport).not.toBeNull();
       expect(content).not.toBeNull();
+      expect(addSpy.mock.calls.some(
+        ([type, , options]) => type === "wheel" && typeof options === "object" && options?.passive === false,
+      )).toBe(true);
 
-      await act(async () => {
-        viewport!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100, clientX: 50, clientY: 50 }));
+      const zoomWheel = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: -100,
+        clientX: 50,
+        clientY: 50,
       });
+      await act(async () => {
+        viewport!.dispatchEvent(zoomWheel);
+      });
+      expect(zoomWheel.defaultPrevented).toBe(true);
       expect(content!.style.transform).toContain("scale(1.12)");
 
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       });
       expect(document.body.querySelector(".media-zoom-fullscreen")).toBeNull();
+      expect(removeSpy.mock.calls.some(([type]) => type === "wheel")).toBe(true);
     } finally {
       rafSpy.mockRestore();
       await act(async () => {

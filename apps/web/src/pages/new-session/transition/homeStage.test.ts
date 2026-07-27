@@ -51,6 +51,26 @@ describe("homeStage 深色桌面交接", () => {
     expect(host.classList.contains("is-dark-anim")).toBe(false);
   });
 
+  it("无 WebGL 时 morph 正常落定并返回最终实测矩形", async () => {
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    vi.mocked(window.requestAnimationFrame).mockImplementation((callback) => {
+      callback(1_100);
+      return 1;
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const stage = createHomeTransitionStage(host);
+    const from = { left: 100, top: 80, width: 320, height: 420 };
+    const landing = { left: 420, top: 52, width: 800, height: 860 };
+
+    await expect(stage.playForward(from, () => landing, { x: 260, y: 290 }))
+      .resolves.toEqual(landing);
+    expect(host.querySelector<HTMLElement>(".ccx-morph-face")?.style.transform)
+      .toBe("translate(420px,52px)");
+
+    stage.dispose();
+  });
+
   it("墨渗一帧都不推进时,背景仍按兜底时刻置深(不许露出首页浅底)", async () => {
     // 回归:去程的背景置深原先只挂在墨渗进度回调上(e > 0.82)。WebGL 首帧卡在驱动编译、
     // 掉帧、上下文丢失时 onProgress 迟迟不来,屏幕上就是「纸已经飞到落点、背景还是首页浅底」
@@ -81,6 +101,70 @@ describe("homeStage 深色桌面交接", () => {
     stage.dispose();
     vi.useRealTimers();
     vi.doUnmock("./inkWipe");
+    vi.resetModules();
+  });
+
+  it("目标测量异常或动画永久静默时，forward 都会拒绝结算而非永久挂起", async () => {
+    vi.useFakeTimers();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const stage = createHomeTransitionStage(host);
+    const rect = { left: 100, top: 80, width: 320, height: 420 };
+
+    await expect(stage.playForward(rect, () => {
+      throw new Error("measure failed");
+    }, { x: 260, y: 290 })).rejects.toThrow("measure failed");
+
+    const stalled = stage.playForward(rect, rect, { x: 260, y: 290 });
+    const stalledResult = expect(stalled).rejects.toThrow("首页转场等待超时");
+    await vi.advanceTimersByTimeAsync(3_100);
+    await stalledResult;
+
+    stage.dispose();
+    vi.useRealTimers();
+  });
+
+  it("dispose 结算在途 forward、取消 morph RAF，墨水晚到 continuation 不会复活 dust", async () => {
+    vi.resetModules();
+    let resolveInk: (() => void) | undefined;
+    const dustStart = vi.fn();
+    const dustDispose = vi.fn();
+    vi.doMock("./inkWipe", () => ({
+      createInkWipe: () => ({
+        ok: true,
+        play: () => new Promise<void>((resolve) => {
+          resolveInk = resolve;
+        }),
+        hide: vi.fn(),
+        dispose: () => resolveInk?.(),
+      }),
+      prewarmInkWipe: () => true,
+    }));
+    vi.doMock("./dust", () => ({
+      createDust: () => ({
+        start: dustStart,
+        stop: vi.fn(),
+        dispose: dustDispose,
+      }),
+    }));
+    const { createHomeTransitionStage: create } = await import("./homeStage");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const stage = create(host);
+    const rect = { left: 100, top: 80, width: 320, height: 420 };
+
+    const forward = stage.playForward(rect, rect, { x: 260, y: 290 });
+    stage.dispose();
+    await expect(forward).resolves.toEqual(rect);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(window.cancelAnimationFrame).toHaveBeenCalled();
+    expect(dustDispose).toHaveBeenCalledTimes(1);
+    expect(dustStart).not.toHaveBeenCalled();
+
+    vi.doUnmock("./inkWipe");
+    vi.doUnmock("./dust");
     vi.resetModules();
   });
 

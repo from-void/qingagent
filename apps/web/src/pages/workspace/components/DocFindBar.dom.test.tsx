@@ -117,6 +117,52 @@ describe("DocFindBar", () => {
       editor.destroy();
     }
   });
+
+  it("查询词改变后的防抖窗口内替换只消费当前关键词", async () => {
+    const editor = editorWithText("alpha beta alpha");
+    try {
+      await renderDocFind(<Harness editor={editor} mode="full" />);
+      await inputText(findInput(), "alpha");
+      await flushSearch();
+      await openReplaceWith("omega");
+
+      await inputText(findInput(), "beta");
+      await click(buttonByText("替换"));
+
+      expect(editor.getText()).toBe("alpha omega alpha");
+      expect(countText()).toBe("0/0");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("正文事务后的防抖窗口内替换会按当前文档重算位置", async () => {
+    const editor = editorWithText("alpha tail");
+    try {
+      await renderDocFind(<Harness editor={editor} mode="full" />);
+      await inputText(findInput(), "alpha");
+      await flushSearch();
+      await openReplaceWith("omega");
+
+      await act(async () => {
+        editor.commands.setContent({
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "p-1" },
+            content: [{ type: "text", text: "xxxxx alpha tail" }],
+          }],
+        } satisfies PmDoc);
+        await Promise.resolve();
+      });
+      await click(buttonByText("替换"));
+
+      expect(editor.getText()).toBe("xxxxx omega tail");
+    } finally {
+      editor.destroy();
+    }
+  });
 });
 
 function Harness({
@@ -194,6 +240,11 @@ async function click(element: HTMLElement): Promise<void> {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
   });
+}
+
+async function openReplaceWith(value: string): Promise<void> {
+  await click(buttonByTitle("替换"));
+  await inputText(replaceInput(), value);
 }
 
 function findInput(): HTMLInputElement {

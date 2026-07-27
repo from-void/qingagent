@@ -6,7 +6,7 @@
 // 三者透传走同一出口 visitorKeyHeaders(),被对话/余额等请求统一带上。
 
 import { visionKeyHeaders } from "./visionProviderStore";
-import { readPersisted, writePersisted, writePersistedAwaited } from "./clientPersist";
+import { readPersisted, readPersistedChecked, writePersistedAwaited } from "./clientPersist";
 
 const DEEPSEEK_STORAGE_KEY = "qingagent.deepseek_api_key";
 const DEEPSEEK_CUSTOM_PROVIDER_KEY = "qingagent.custom_provider";
@@ -41,6 +41,12 @@ export interface OfficialModelOverride {
   pro?: string;
 }
 
+export interface PersistedModelState {
+  visitorKey: string | null;
+  customProvider: CustomProvider | null;
+  officialModel: OfficialModelOverride | null;
+}
+
 function providerStorageKeys(provider: ModelProvider) {
   return provider === "kimi"
     ? {
@@ -66,8 +72,28 @@ export function getSelectedModelProvider(): ModelProvider {
   return getStoredModelProvider() ?? "deepseek";
 }
 
-export function setSelectedModelProvider(provider: ModelProvider): void {
-  writePersisted(MODEL_PROVIDER_KEY, provider);
+/**
+ * 解析本次请求实际选择的 provider。
+ * 本地显式选择优先；旧版仅保存了 DeepSeek 配置时继续锁定 DeepSeek；
+ * 都没有时跟随服务端活动 provider，与服务端请求解析的 DB/env/default 优先级一致。
+ */
+export function resolveModelRequestProvider(
+  serverProvider?: ModelProvider,
+): ModelProvider {
+  const storedProvider = getStoredModelProvider();
+  if (storedProvider) return storedProvider;
+  if (
+    getVisitorModelKey("deepseek") ||
+    readCustomProvider("deepseek") ||
+    readOfficialModelOverride("deepseek")
+  ) {
+    return "deepseek";
+  }
+  return serverProvider ?? "deepseek";
+}
+
+export function setSelectedModelProvider(provider: ModelProvider): Promise<boolean> {
+  return writePersistedAwaited(MODEL_PROVIDER_KEY, provider);
 }
 
 export function getVisitorModelKey(provider: ModelProvider): string | null {
@@ -101,24 +127,7 @@ export function clearVisitorDeepseekKey(): Promise<boolean> {
 export function readCustomProvider(provider: ModelProvider = "deepseek"): CustomProvider | null {
   try {
     const raw = readPersisted(providerStorageKeys(provider).customProvider);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as Partial<CustomProvider>;
-    if (o && typeof o.baseUrl === "string" && o.baseUrl && typeof o.apiKey === "string" && o.apiKey) {
-      return {
-        protocol: provider === "kimi"
-          ? "openai"
-          : typeof o.protocol === "string" ? o.protocol : "openai",
-        baseUrl: o.baseUrl,
-        apiKey: o.apiKey,
-        modelFlash: typeof o.modelFlash === "string" && o.modelFlash
-          ? o.modelFlash
-          : DEFAULT_MODEL_IDS[provider].flash,
-        modelPro: typeof o.modelPro === "string" && o.modelPro
-          ? o.modelPro
-          : DEFAULT_MODEL_IDS[provider].pro,
-      };
-    }
-    return null;
+    return parseCustomProvider(raw, provider);
   } catch {
     return null;
   }
@@ -143,33 +152,78 @@ export function readOfficialModelOverride(
 ): OfficialModelOverride | null {
   try {
     const raw = readPersisted(providerStorageKeys(provider).officialModel);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as OfficialModelOverride;
-    const flash = typeof o.flash === "string" && o.flash.trim() ? o.flash.trim() : undefined;
-    const pro = typeof o.pro === "string" && o.pro.trim() ? o.pro.trim() : undefined;
-    return flash || pro ? { flash, pro } : null;
+    return parseOfficialModelOverride(raw);
   } catch {
     return null;
   }
 }
 
+/**
+ * 保存失败后的严格快照读取：任一持久化项不可读时整组失败，调用方不会拿半份数据更新 UI。
+ */
+export function readPersistedModelState(provider: ModelProvider): PersistedModelState | null {
+  const keys = providerStorageKeys(provider);
+  const keyResult = readPersistedChecked(keys.apiKey);
+  const customResult = readPersistedChecked(keys.customProvider);
+  const officialResult = readPersistedChecked(keys.officialModel);
+  if (!keyResult.ok || !customResult.ok || !officialResult.ok) return null;
+
+  try {
+    return {
+      visitorKey: keyResult.value?.trim() || null,
+      customProvider: parseCustomProvider(customResult.value, provider),
+      officialModel: parseOfficialModelOverride(officialResult.value),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseCustomProvider(raw: string | null, provider: ModelProvider): CustomProvider | null {
+  if (!raw) return null;
+  const o = JSON.parse(raw) as Partial<CustomProvider>;
+  if (!o || typeof o.baseUrl !== "string" || !o.baseUrl || typeof o.apiKey !== "string" || !o.apiKey) {
+    return null;
+  }
+  return {
+    protocol: provider === "kimi"
+      ? "openai"
+      : typeof o.protocol === "string" ? o.protocol : "openai",
+    baseUrl: o.baseUrl,
+    apiKey: o.apiKey,
+    modelFlash: typeof o.modelFlash === "string" && o.modelFlash
+      ? o.modelFlash
+      : DEFAULT_MODEL_IDS[provider].flash,
+    modelPro: typeof o.modelPro === "string" && o.modelPro
+      ? o.modelPro
+      : DEFAULT_MODEL_IDS[provider].pro,
+  };
+}
+
+function parseOfficialModelOverride(raw: string | null): OfficialModelOverride | null {
+  if (!raw) return null;
+  const o = JSON.parse(raw) as OfficialModelOverride;
+  const flash = typeof o.flash === "string" && o.flash.trim() ? o.flash.trim() : undefined;
+  const pro = typeof o.pro === "string" && o.pro.trim() ? o.pro.trim() : undefined;
+  return flash || pro ? { flash, pro } : null;
+}
+
 export function writeOfficialModelOverride(
   v: OfficialModelOverride,
   provider: ModelProvider = "deepseek",
-): void {
+): Promise<boolean> {
   try {
     const flash = v.flash?.trim();
     const pro = v.pro?.trim();
     if (flash || pro) {
-      writePersisted(
+      return writePersistedAwaited(
         providerStorageKeys(provider).officialModel,
         JSON.stringify({ ...(flash ? { flash } : {}), ...(pro ? { pro } : {}) }),
       );
-    } else {
-      writePersisted(providerStorageKeys(provider).officialModel, null);
     }
+    return writePersistedAwaited(providerStorageKeys(provider).officialModel, null);
   } catch {
-    // 静默
+    return Promise.resolve(false);
   }
 }
 
@@ -180,8 +234,8 @@ export function getSelectedModelTier(): ModelTier {
   return value === "pro" ? "pro" : DEFAULT_MODEL_TIER;
 }
 
-export function setSelectedModelTier(tier: ModelTier): void {
-  writePersisted(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
+export function setSelectedModelTier(tier: ModelTier): Promise<boolean> {
+  return writePersistedAwaited(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
 }
 
 /** 给请求层用:按当前配置返回要附加的 header(对话 / 余额等请求统一带上)。
@@ -189,7 +243,7 @@ export function setSelectedModelTier(tier: ModelTier): void {
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
   const storedProvider = getStoredModelProvider();
-  const provider = storedProvider ?? "deepseek";
+  const provider = resolveModelRequestProvider();
   const vision = visionKeyHeaders();
   const tier = getSelectedModelTier();
   const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};

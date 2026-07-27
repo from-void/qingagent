@@ -679,6 +679,14 @@ function checkFolderSourceOperationResult(
   if (!nonEmptyString(data.op) || !ALLOWED_FOLDER_SOURCE_OPS.has(data.op)) {
     fail("FolderSourceOperationResult.op is invalid");
   }
+  if (data.op === "attach") {
+    if (!nonEmptyString(data.requestId)) {
+      fail("FolderSourceOperationResult.requestId must be non-empty on attach");
+    }
+    if (data.clientSourceId !== null && !nonEmptyString(data.clientSourceId)) {
+      fail("FolderSourceOperationResult.clientSourceId must be string|null on attach");
+    }
+  }
   if (data.ok) {
     if (!nonEmptyString(data.folderId)) {
       fail("FolderSourceOperationResult.folderId must be non-empty on success");

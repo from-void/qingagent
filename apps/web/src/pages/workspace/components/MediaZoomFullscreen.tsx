@@ -91,12 +91,12 @@ export function MediaZoomFullscreen({
     };
   }, [onClose, open, restoreFocusRef]);
 
-  const zoomAt = useCallback((clientX: number, clientY: number, nextScale: number) => {
+  const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const rect = viewport.getBoundingClientRect();
     setTransform((current) => {
-      const clampedScale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+      const clampedScale = clamp(current.scale * factor, MIN_SCALE, MAX_SCALE);
       const localX = clientX - rect.left;
       const localY = clientY - rect.top;
       const contentX = (localX - current.x) / current.scale;
@@ -113,8 +113,22 @@ export function MediaZoomFullscreen({
     const viewport = viewportRef.current;
     if (!viewport) return;
     const rect = viewport.getBoundingClientRect();
-    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, transform.scale * factor);
-  }, [transform.scale, zoomAt]);
+    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
+  }, [zoomAt]);
+
+  useEffect(() => {
+    if (!open) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      zoomAt(event.clientX, event.clientY, event.deltaY < 0 ? 1.12 : 1 / 1.12);
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", onWheel);
+  }, [open, zoomAt]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -147,11 +161,6 @@ export function MediaZoomFullscreen({
         className={`media-zoom-viewport${panning ? " is-panning" : ""}`}
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) onClose();
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-          zoomAt(event.clientX, event.clientY, transform.scale * factor);
         }}
         onDoubleClick={(event) => {
           event.preventDefault();

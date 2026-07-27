@@ -83,6 +83,7 @@ export function WorkspaceDocumentPane({
     unrenderablePatchCount,
     inlinePatchReview,
     isReviewSubmitting,
+    reviewSettlementRetryPending,
     awaitingWholeDocReviewMaterial,
     fullpageAsk,
     submittingAskUserId,
@@ -126,6 +127,8 @@ export function WorkspaceDocumentPane({
     derivatives,
     activeTab,
     setActiveTab,
+    activeTranslationDocId,
+    setActiveTranslationDocId,
     derivativeCreateOpen,
     setDerivativeCreateOpen,
     derivativeCreateDtype,
@@ -210,7 +213,9 @@ export function WorkspaceDocumentPane({
   );
   const activeDerivative =
     activeTab === "translate"
-      ? translationItems[0]
+      ? translationItems.find(
+          (item) => item.docId === activeTranslationDocId,
+        ) ?? translationItems[0]
       : derivatives.find((item) => item.docId === activeTab);
   const activeDerivativeCacheKey =
     state.sessionId && activeDerivative
@@ -226,7 +231,9 @@ export function WorkspaceDocumentPane({
       }
       const target =
         nextTab === "translate"
-          ? translationItems[0]
+          ? translationItems.find(
+              (item) => item.docId === activeTranslationDocId,
+            ) ?? translationItems[0]
           : derivatives.find((item) => item.docId === nextTab);
       if (!target) return;
       const cacheKey = `${state.sessionId}:${target.docId}:${target.generatedAt ?? ""}`;
@@ -265,6 +272,7 @@ export function WorkspaceDocumentPane({
     [
       derivativeDocCache,
       derivatives,
+      activeTranslationDocId,
       pendingDerivativeGeneration,
       setActiveTab,
       showToast,
@@ -439,9 +447,10 @@ export function WorkspaceDocumentPane({
             remainingCount={remainingPatches}
             activePatchIndex={activePatchIndex}
             isReviewSubmitting={isReviewSubmitting}
+            reviewSettlementRetryPending={reviewSettlementRetryPending}
             visiblePatchCount={visiblePatchCount}
             unrenderablePatchCount={unrenderablePatchCount}
-            effectiveReview={inlinePatchReview}
+            effectiveReview={inlinePatchReview || reviewSettlementRetryPending}
             reviewMaterializing={awaitingWholeDocReviewMaterial}
             fullpageAsk={fullpageAsk}
             submittingAskUserId={submittingAskUserId}
@@ -493,6 +502,12 @@ export function WorkspaceDocumentPane({
                 : null
             }
             items={activeTab === "translate" ? translationItems : undefined}
+            activeDocId={
+              activeTab === "translate" ? activeDerivative.docId : undefined
+            }
+            onActiveDocIdChange={
+              activeTab === "translate" ? setActiveTranslationDocId : undefined
+            }
             stream={streamRef.current}
             streamActive={agentActive}
             translationGen={state.translationGen}

@@ -648,12 +648,64 @@ describe("QrCard — validation loop 3", () => {
       expect(onStatusChange).toHaveBeenCalledTimes(1);
     });
 
-    it("飞书配置完成为 disconnected 终态时也通知设置页推进流程", async () => {
+    it.each([
+      ["unavailable", "当前无法完成授权，重新发起"],
+      ["unconfigured", "授权尚未配置，重新发起"],
+      ["disconnected", "授权未完成，重新发起"],
+      ["needs_reauth", "授权需要重新进行"],
+    ] as const)("飞书轮询返回 %s 终态时停止轮询并显示中性结果", async (state, expectedCopy) => {
       vi.useFakeTimers();
       const onStatusChange = vi.fn();
-      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "disconnected", reasonCode: "LARK_AUTH_MISSING" } }), { status: 200 })));
+      const fetchMock = vi.fn(async () => new Response(
+        JSON.stringify({ status: { state, reasonCode: "AUTH_NOT_COMPLETED" } }),
+        { status: 200 },
+      ));
+      vi.stubGlobal("fetch", fetchMock);
       render(<QrCard data={{ ...connectorCard(), presentation: "scan", connectorId: "feishu", code: null }} onStatusChange={onStatusChange} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(document.querySelector(".qr-card__confirm")?.textContent).toContain(expectedCopy);
+      expect(onStatusChange).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("pendingId 切换会取消旧请求，旧响应不能覆盖新授权流程", async () => {
+      vi.useFakeTimers();
+      let resolveOld: ((response: Response) => void) | undefined;
+      let resolveNew: ((response: Response) => void) | undefined;
+      const fetchMock = vi.fn((url: string, _init?: RequestInit) => new Promise<Response>((resolve) => {
+        if (url.includes("pending-old")) resolveOld = resolve;
+        else resolveNew = resolve;
+      }));
+      const onStatusChange = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<QrCard data={{ ...connectorCard(), pendingId: "pending-old" }} onStatusChange={onStatusChange} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      const oldSignal = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.signal;
+
+      await act(async () => {
+        root?.render(<QrCard data={{ ...connectorCard(), pendingId: "pending-new" }} onStatusChange={onStatusChange} />);
+      });
+      expect(oldSignal?.aborted).toBe(true);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      await act(async () => {
+        resolveNew?.(new Response(JSON.stringify({
+          status: { state: "connected", account: { displayName: "@new-account" } },
+        }), { status: 200 }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(document.querySelector(".qr-card__completion")?.textContent).toContain("@new-account");
+
+      await act(async () => {
+        resolveOld?.(new Response(JSON.stringify({ error: "PENDING_LOST" }), { status: 410 }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(document.querySelector(".qr-card__completion")?.textContent).toContain("@new-account");
+      expect(document.body.textContent).not.toContain("授权已中断");
       expect(onStatusChange).toHaveBeenCalledTimes(1);
     });
 

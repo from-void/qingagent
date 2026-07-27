@@ -30,6 +30,11 @@ import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { formatCommandError, parseBody } from "../lib/validation";
 import { BoundedSsePump } from "../lib/boundedSsePump";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
+import {
+  clientMessageIdempotency,
+  normalizeIdempotencyClientMessageId,
+  type ClientMessageClaimResult,
+} from "../gateway/clientMessageIdempotency";
 
 const PUBLIC_STREAM_ERROR_REASON = "模型服务暂时不可用，请稍后重试";
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
@@ -301,6 +306,33 @@ async function handleCommandPost(c: Context) {
     return c.json({ error: "Unable to route command to a session" }, 404);
   }
 
+  let clientMessageClaim:
+    | (Extract<ClientMessageClaimResult, { kind: "claimed" }> & {
+        clientMessageId: string;
+      })
+    | null = null;
+  if (prepared.command.kind === "sendMessage") {
+    const clientMessageId = normalizeIdempotencyClientMessageId(
+      prepared.command.data.clientMessageId,
+    );
+    if (clientMessageId) {
+      const claim = await clientMessageIdempotency.claim(
+        clientMessageId,
+        prepared.sessionId,
+      );
+      if (claim.kind === "duplicate") {
+        return c.json({
+          accepted: true,
+          duplicate: true,
+          sessionId: claim.sessionId,
+          messageId: claim.messageId,
+          epoch: sessionManager.frameLog.getEpoch(claim.sessionId),
+        });
+      }
+      clientMessageClaim = { ...claim, clientMessageId };
+    }
+  }
+
   let promise: Promise<LoggedFrame[]>;
   try {
     ({ completion: promise } = await sessionManager.submitQueued(prepared.sessionId, {
@@ -311,12 +343,25 @@ async function handleCommandPost(c: Context) {
       abortSignal: c.req.raw.signal,
     }));
   } catch (error) {
+    if (clientMessageClaim) {
+      await clientMessageIdempotency.release(
+        clientMessageClaim.clientMessageId,
+        clientMessageClaim.token,
+      );
+    }
     const deletionResponse = sessionDeletionErrorResponse(c, error);
     if (deletionResponse) return deletionResponse;
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "Session command queue is full" }, 429);
     }
     throw error;
+  }
+  if (clientMessageClaim) {
+    promise = clientMessageIdempotency.maintain(
+      clientMessageClaim.clientMessageId,
+      clientMessageClaim.token,
+      promise,
+    );
   }
 
   if (isBackgroundCommand(prepared.command)) {

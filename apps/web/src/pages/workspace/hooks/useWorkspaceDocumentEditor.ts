@@ -32,6 +32,7 @@ import {
 } from "../data/pendingDocSave";
 import {
   createClientMutationId,
+  drainPageExitDocSaveOutbox,
   flushDocSaveInBackground,
   flushDocSaveOnPageExit,
   PageExitDocSaveError,
@@ -46,14 +47,12 @@ import {
 } from "../data/sessionLifecycle";
 import { canEditDocument } from "../data/workspacePageView";
 import { deriveDocDimensions } from "../data/docDimensions";
-import {
-  isAbnormalDocumentCollapse,
-  measureDocumentShape,
-} from "../data/documentIntegrity";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
 import type { ServerStream } from "../data/serverStream";
 import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
 import type { DocWriteBaseline } from "../data/docWriteBaseline";
+
+const PAGE_EXIT_OUTBOX_RECOVERY_INTERVAL_MS = 30_000;
 
 export interface DocWriteTarget {
   sessionId: string;
@@ -459,18 +458,6 @@ export function useWorkspaceDocumentEditor(input: {
         return Promise.resolve();
       }
 
-      const persistedBaseline = current.doc.pmDoc ?? null;
-      if (isAbnormalDocumentCollapse(persistedBaseline, pmDoc)) {
-        console.error("[workspace] 拒绝保存异常坍缩文档", {
-          previous: persistedBaseline
-            ? measureDocumentShape(persistedBaseline)
-            : null,
-          rejected: measureDocumentShape(pmDoc),
-        });
-        showToast("检测到文档结构异常，本次损坏内容未保存");
-        return Promise.resolve();
-      }
-
       // 廉价判断在前(review E2):有 session 的常规编辑(绝大多数)直接短路,不白跑整树遍历
       if (!current.sessionId && !pmDocHasSubstantiveContent(pmDoc)) {
         dispatch({
@@ -578,13 +565,6 @@ export function useWorkspaceDocumentEditor(input: {
     }
 
     const baselineDoc = current.doc.pmDoc ?? null;
-    if (isAbnormalDocumentCollapse(baselineDoc, pmDoc)) {
-      console.error("[workspace] page-exit 拒绝保存异常坍缩文档", {
-        previous: baselineDoc ? measureDocumentShape(baselineDoc) : null,
-        rejected: measureDocumentShape(pmDoc),
-      });
-      return null;
-    }
     const hasPendingDocSave =
       pendingDocWriteRef.current ||
       queuedPmDocRef.current !== null ||
@@ -725,6 +705,23 @@ export function useWorkspaceDocumentEditor(input: {
   }, []);
 
   useEffect(() => {
+    let outboxDrain: Promise<unknown> | null = null;
+    const recoverPageExitSaves = () => {
+      if (outboxDrain) return;
+      outboxDrain = drainPageExitDocSaveOutbox()
+        .then((result) => {
+          if (result.conflicts.length === 0) return;
+          showToast(
+            `检测到另一标签页的较新版本，已保留新版本；${result.conflicts.length} 条离页草稿未自动覆盖`,
+          );
+        })
+        .catch((error) => {
+          console.error("[workspace] page-exit outbox recovery failed", error);
+        })
+        .finally(() => {
+          outboxDrain = null;
+        });
+    };
     const pageExitFlush = () => {
       preparePageExitDocSave()?.();
     };
@@ -736,15 +733,25 @@ export function useWorkspaceDocumentEditor(input: {
       });
     };
 
+    recoverPageExitSaves();
+    const outboxRecoveryTimer = window.setInterval(
+      recoverPageExitSaves,
+      PAGE_EXIT_OUTBOX_RECOVERY_INTERVAL_MS,
+    );
     window.addEventListener("pagehide", pageExitFlush);
     window.addEventListener("beforeunload", pageExitFlush);
+    window.addEventListener("pageshow", recoverPageExitSaves);
+    window.addEventListener("online", recoverPageExitSaves);
     document.addEventListener("visibilitychange", visibilityFlush);
     return () => {
+      window.clearInterval(outboxRecoveryTimer);
       window.removeEventListener("pagehide", pageExitFlush);
       window.removeEventListener("beforeunload", pageExitFlush);
+      window.removeEventListener("pageshow", recoverPageExitSaves);
+      window.removeEventListener("online", recoverPageExitSaves);
       document.removeEventListener("visibilitychange", visibilityFlush);
     };
-  }, [flushPendingDocSave, preparePageExitDocSave]);
+  }, [flushPendingDocSave, preparePageExitDocSave, showToast]);
   return {
     flushPendingDocSave,
     getLatestExportPmDoc,

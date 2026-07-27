@@ -16,6 +16,9 @@ type DesktopConfigAccessor = {
   get: () => string | null;
   set: (value: string | null) => Promise<boolean>;
 };
+export type PersistedReadResult =
+  | { ok: true; value: string | null }
+  | { ok: false; value: null };
 
 const cache: ConfigMap = {};
 const loadedKeys = new Set<string>();
@@ -78,14 +81,19 @@ function desktopConfigAccessor(key: string): DesktopConfigAccessor | null {
   }
 }
 
-function readDesktopCached(key: string, accessor: DesktopConfigAccessor): string | null {
+function readDesktopCached(key: string, accessor: DesktopConfigAccessor): PersistedReadResult {
   if (!loadedKeys.has(key)) {
-    const initial = accessor.get();
-    updateCacheValue(cache, key, initial);
-    loadedKeys.add(key);
+    try {
+      const initial = accessor.get();
+      updateCacheValue(cache, key, initial);
+      loadedKeys.add(key);
+    } catch {
+      // preload 同步 getter 也可能因 IPC/主进程异常失败；不把失败误记为“已加载的空值”。
+      return { ok: false, value: null };
+    }
   }
   const value = cache[key];
-  return value && value.length > 0 ? value : null;
+  return { ok: true, value: value && value.length > 0 ? value : null };
 }
 
 /** 当前是否走 userData 持久化(桌面端)。web 端为 false,走 localStorage。 */
@@ -94,44 +102,23 @@ export function isDesktopPersist(): boolean {
 }
 
 /** 读取一个持久化字符串;缺失/空串都返回 null。 */
-export function readPersisted(key: string): string | null {
+export function readPersistedChecked(key: string): PersistedReadResult {
   const accessor = desktopConfigAccessor(key);
   if (accessor) return readDesktopCached(key, accessor);
   try {
-    return window.localStorage.getItem(key);
+    return { ok: true, value: window.localStorage.getItem(key) };
   } catch {
-    return null;
+    return { ok: false, value: null };
   }
 }
 
-/** 写入(value=null 表示删除)。桌面端同步更新内存镜像 + 异步落盘 userData。 */
-export function writePersisted(key: string, value: string | null): void {
-  const accessor = desktopConfigAccessor(key);
-  if (accessor) {
-    updateCacheValue(cache, key, value);
-    loadedKeys.add(key);
-    nextWriteRevision(key);
-    // 普通配置保持宽松语义:内存立即可读，落盘失败只告警。
-    const pending = accessor.set(value);
-    void pending
-      .then((ok) => {
-        if (!ok) console.warn(`[client-persist] 桌面配置落盘失败: ${key}`);
-      })
-      .catch((err: unknown) => {
-        console.warn(`[client-persist] 桌面配置落盘异常: ${key}`, err);
-      });
-    return;
-  }
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // localStorage 不可用(隐私模式等)时静默。
-  }
+/** 宽松读取路径：持久层不可读时按缺失处理，且绝不让底层异常逸出。 */
+export function readPersisted(key: string): string | null {
+  return readPersistedChecked(key).value;
 }
 
 /**
- * 可等待的写入路径，供含模型 key 的敏感配置使用。
+ * 可等待的写入路径，供客户端模型配置统一使用。
  * 桌面端仍会先同步更新镜像；IPC 失败时恢复写入前的值，避免形成“本次能用、重启丢失”的假象。
  */
 export async function writePersistedAwaited(key: string, value: string | null): Promise<boolean> {
@@ -146,7 +133,8 @@ export async function writePersistedAwaited(key: string, value: string | null): 
     }
   }
 
-  readDesktopCached(key, accessor);
+  const current = readDesktopCached(key, accessor);
+  if (!current.ok) return false;
   const hadPrevious = Object.prototype.hasOwnProperty.call(cache, key);
   const previous = cache[key];
   updateCacheValue(cache, key, value);

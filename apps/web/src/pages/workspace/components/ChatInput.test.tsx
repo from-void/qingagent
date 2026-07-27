@@ -138,6 +138,29 @@ describe("ChatInput", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("相邻块级节点在纯文本与含 chip 的 richText 中都保留换行", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    edit.innerHTML = [
+      "<div>第一行</div>",
+      '<div>第二行<span class="chat-chip" data-kind="attach" data-label="资料.pdf"></span></div>',
+    ].join("");
+
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: "第一行\n第二行",
+      richText: "第一行\n第二行{{chip:0}}",
+      chips: [{ kind: "attach", label: "资料.pdf" }],
+    });
+  });
+
   it("IME 组合态 Enter 与 keyCode 229 只选字，compositionend 后首个独立 Enter 才发送", async () => {
     const onSubmit = vi.fn();
     await render(
@@ -295,7 +318,7 @@ describe("ChatInput", () => {
     expect(label?.title).toBe(longName);
   });
 
-  it("同名重复选择复用现有 attach chip,不新增幽灵 chip", async () => {
+  it("不同内容的同名附件保留独立对象与 chip，不再按文件名静默去重", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
       <ChatInput
@@ -309,11 +332,21 @@ describe("ChatInput", () => {
     await selectFile(new File(["a"], "report.md", { type: "text/markdown" }));
     await selectFile(new File(["b"], "report.md", { type: "text/markdown" }));
 
-    expect(ref.current?.snapshot().files.map((file) => file.name)).toEqual(["report.md"]);
-    expect(attachChipLabels()).toEqual(["report.md"]);
+    expect(ref.current?.snapshot().files.map((file) => file.name)).toEqual([
+      "report.md",
+      "report.md",
+    ]);
+    expect(attachChipLabels()).toEqual(["report.md", "report.md"]);
+    const attachmentIds = Array.from(
+      getEditor().querySelectorAll<HTMLElement>(
+        '.chat-chip[data-kind="attach"]',
+      ),
+      (chip) => chip.dataset.attachmentId,
+    );
+    expect(new Set(attachmentIds).size).toBe(2);
   });
 
-  it("点击 attach chip 删除按钮时同步删除同名 File 和残留同名 chip", async () => {
+  it("点击 attach chip 删除按钮时只删除对应 File 和同对象残留 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
       <ChatInput
@@ -323,19 +356,21 @@ describe("ChatInput", () => {
         onSubmit={() => undefined}
       />,
     );
-    await selectFile(new File(["a"], "report.md", { type: "text/markdown" }));
+    const first = new File(["a"], "report.md", { type: "text/markdown" });
+    const second = new File(["b"], "report.md", { type: "text/markdown" });
+    await selectFiles([first, second]);
     const edit = getEditor();
     const chip = edit.querySelector<HTMLElement>(".chat-chip");
     if (!chip) throw new Error("attach chip not found");
     edit.appendChild(chip.cloneNode(true));
-    expect(attachChipLabels()).toEqual(["report.md", "report.md"]);
+    expect(attachChipLabels()).toEqual(["report.md", "report.md", "report.md"]);
 
     const removeButton = edit.querySelector<HTMLElement>(".chat-chip .c-x");
     if (!removeButton) throw new Error("chip remove button not found");
     clickElement(removeButton);
 
-    expect(ref.current?.snapshot().files).toEqual([]);
-    expect(attachChipLabels()).toEqual([]);
+    expect(ref.current?.snapshot().files).toEqual([second]);
+    expect(attachChipLabels()).toEqual(["report.md"]);
   });
 
   it("选择文件未发送时只插 attach chip，不渲染已关联素材条", async () => {

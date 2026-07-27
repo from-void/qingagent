@@ -321,7 +321,24 @@ function pressEnter(editor: Editor): boolean {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
-  it("多块文档异常坍缩时立即恢复上一有效快照且不转发保存", async () => {
+  it("同一 version 的流式草稿内容变化会持续刷新已挂载编辑器", async () => {
+    let editor: Editor | null = null;
+    const handleEditorReady = (readyEditor: Editor | null) => {
+      editor = readyEditor;
+    };
+
+    renderDoc(paragraphDoc("首帧"), 7, handleEditorReady);
+    await flush();
+    expect(editor).not.toBeNull();
+    expect(editor!.state.doc.textContent).toBe("首帧");
+
+    renderDoc(paragraphDoc("首帧和后续帧"), 7, handleEditorReady);
+    await flush();
+
+    expect(editor!.state.doc.textContent).toBe("首帧和后续帧");
+  });
+
+  it("用户显式清空多块长文档时保留空稿并转发保存", async () => {
     let editor: Editor | null = null;
     const baseline = listDoc();
     const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
@@ -353,22 +370,19 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
       editor!.commands.setContent({
         type: "doc",
         attrs: { schemaVersion: 1 },
-        content: [{
-          type: "heading",
-          attrs: { blockId: "damaged-heading", level: 1 },
-          content: [{ type: "text", text: "300" }],
-        }],
+        content: [],
       });
     });
 
-    expect(normalizePmDoc(editor!.getJSON())).toEqual(normalizePmDoc(baseline));
-    expect(onToast).toHaveBeenCalledWith(
-      "检测到文档结构异常，已恢复编辑前内容",
-    );
+    expect(editor!.state.doc.textContent).toBe("");
+    expect(onToast).not.toHaveBeenCalled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(401);
     });
-    expect(onEditorChange).not.toHaveBeenCalled();
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(onEditorChange.mock.calls[0]?.[0])).not.toContain(
+      "第一项",
+    );
   });
 
   it("400ms 防抖未到时卸载会补发当前编辑内容", async () => {

@@ -4,9 +4,16 @@ import {
   __resetClientPersistCacheForTests,
   isDesktopPersist,
   readPersisted,
-  writePersisted,
   writePersistedAwaited,
 } from "./clientPersist";
+import {
+  getSelectedModelProvider,
+  getSelectedModelTier,
+  readOfficialModelOverride,
+  setSelectedModelProvider,
+  setSelectedModelTier,
+  writeOfficialModelOverride,
+} from "./visitorKeyStore";
 
 type ElectronBridge = {
   isDesktop?: boolean;
@@ -32,6 +39,7 @@ type ElectronBridge = {
 const DEEPSEEK_KEY = "qingagent.deepseek_api_key";
 const OFFICIAL_MODEL_KEY = "qingagent.official_model";
 const MODEL_TIER_KEY = "qingagent.model_tier";
+const MODEL_PROVIDER_KEY = "qingagent.model_provider";
 
 function desktopBridge(
   initial: Record<string, string> = {},
@@ -73,33 +81,34 @@ describe("clientPersist", () => {
   });
 
   describe("web(无 window.electron)走 localStorage", () => {
-    it("写后能读回,删后为 null", () => {
+    it("写后能读回,删后为 null", async () => {
       setElectron(undefined);
       expect(isDesktopPersist()).toBe(false);
-      writePersisted("k", "v");
+      await expect(writePersistedAwaited("k", "v")).resolves.toBe(true);
       expect(readPersisted("k")).toBe("v");
       expect(window.localStorage.getItem("k")).toBe("v");
-      writePersisted("k", null);
+      await expect(writePersistedAwaited("k", null)).resolves.toBe(true);
       expect(readPersisted("k")).toBeNull();
       expect(window.localStorage.getItem("k")).toBeNull();
     });
   });
 
   describe("桌面具名单项 API 走 userData", () => {
-    it("按需读单项 / 写更新内存镜像并落盘 / 删除", () => {
+    it("按需读单项 / 写更新内存镜像并落盘 / 删除", async () => {
       const write = vi.fn(async () => true);
       setElectron(desktopBridge({ [OFFICIAL_MODEL_KEY]: "snap" }, write));
       expect(isDesktopPersist()).toBe(true);
       expect(readPersisted(OFFICIAL_MODEL_KEY)).toBe("snap");
 
-      writePersisted(OFFICIAL_MODEL_KEY, "v1");
+      const writePending = writePersistedAwaited(OFFICIAL_MODEL_KEY, "v1");
       expect(write).toHaveBeenCalledWith(OFFICIAL_MODEL_KEY, "v1");
       // 同步从内存镜像读到最新值(不依赖异步落盘)
       expect(readPersisted(OFFICIAL_MODEL_KEY)).toBe("v1");
+      await expect(writePending).resolves.toBe(true);
       // 桌面路径不写 localStorage
       expect(window.localStorage.getItem(OFFICIAL_MODEL_KEY)).toBeNull();
 
-      writePersisted(OFFICIAL_MODEL_KEY, null);
+      await expect(writePersistedAwaited(OFFICIAL_MODEL_KEY, null)).resolves.toBe(true);
       expect(write).toHaveBeenLastCalledWith(OFFICIAL_MODEL_KEY, null);
       expect(readPersisted(OFFICIAL_MODEL_KEY)).toBeNull();
     });
@@ -109,17 +118,31 @@ describe("clientPersist", () => {
       expect(isDesktopPersist()).toBe(true);
     });
 
+    it("桌面 getter 异常时读取不逸出且写入安全失败", async () => {
+      const bridge = desktopBridge();
+      bridge.getDeepseekApiKey = vi.fn(() => {
+        throw new Error("ipc unavailable");
+      });
+      bridge.setDeepseekApiKey = vi.fn(async () => true);
+      setElectron(bridge);
+
+      expect(() => readPersisted(DEEPSEEK_KEY)).not.toThrow();
+      expect(readPersisted(DEEPSEEK_KEY)).toBeNull();
+      await expect(writePersistedAwaited(DEEPSEEK_KEY, "new")).resolves.toBe(false);
+      expect(bridge.setDeepseekApiKey).not.toHaveBeenCalled();
+    });
+
     it.each([
       "qingagent.kimi_api_key",
       "qingagent.kimi_custom_provider",
       "qingagent.kimi_official_model",
       "qingagent.model_provider",
-    ])("%s 走桌面 userData 而非随机端口 localStorage", (key) => {
+    ])("%s 走桌面 userData 而非随机端口 localStorage", async (key) => {
       const write = vi.fn(async () => true);
       setElectron(desktopBridge({ [key]: "old" }, write));
 
       expect(readPersisted(key)).toBe("old");
-      writePersisted(key, "new");
+      await expect(writePersistedAwaited(key, "new")).resolves.toBe(true);
 
       expect(write).toHaveBeenCalledWith(key, "new");
       expect(readPersisted(key)).toBe("new");
@@ -149,10 +172,26 @@ describe("clientPersist", () => {
       expect(readPersisted(DEEPSEEK_KEY)).toBe("secret");
     });
 
-    it("旧 preload 缺具名配置 API 时回退 localStorage", () => {
+    it("provider、档位与官方别名写入失败时返回失败并恢复旧配置", async () => {
+      setElectron(desktopBridge({
+        [MODEL_PROVIDER_KEY]: "deepseek",
+        [MODEL_TIER_KEY]: "flash",
+        [OFFICIAL_MODEL_KEY]: JSON.stringify({ flash: "old-flash" }),
+      }, async () => false));
+
+      await expect(setSelectedModelProvider("kimi")).resolves.toBe(false);
+      await expect(setSelectedModelTier("pro")).resolves.toBe(false);
+      await expect(writeOfficialModelOverride({ flash: "new-flash" })).resolves.toBe(false);
+
+      expect(getSelectedModelProvider()).toBe("deepseek");
+      expect(getSelectedModelTier()).toBe("flash");
+      expect(readOfficialModelOverride()).toEqual({ flash: "old-flash" });
+    });
+
+    it("旧 preload 缺具名配置 API 时回退 localStorage", async () => {
       setElectron({ isDesktop: true });
       expect(isDesktopPersist()).toBe(false);
-      writePersisted(DEEPSEEK_KEY, "v");
+      await expect(writePersistedAwaited(DEEPSEEK_KEY, "v")).resolves.toBe(true);
       expect(window.localStorage.getItem(DEEPSEEK_KEY)).toBe("v");
     });
   });

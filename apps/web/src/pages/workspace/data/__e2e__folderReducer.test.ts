@@ -91,7 +91,13 @@ describe("folderSourcesChanged reducer", () => {
     });
     const next = workspaceReducer(state, {
       kind: "folderSourceOperationResult",
-      data: { ok: true, op: "attach", folderId: "fld_A" },
+      data: {
+        ok: true,
+        op: "attach",
+        requestId: "attach-a",
+        clientSourceId: null,
+        folderId: "fld_A",
+      },
     });
     expect(next.folderSources).toEqual(state.folderSources);
   });

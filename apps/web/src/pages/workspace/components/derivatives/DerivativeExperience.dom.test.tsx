@@ -375,6 +375,167 @@ describe("公众号稿生成体验", () => {
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ writingStyleId: builtin.id }));
   });
 
+  it("F1: 切换稿件类型后丢弃旧类型模板详情的迟到回包", async () => {
+    const gzhTemplate = {
+      id: "gzh-opinion",
+      dtype: "gzh",
+      slot: "writing" as const,
+      name: "旧类型模板",
+      detail: "旧详情",
+      prompt: "旧提示",
+      builtin: true,
+    };
+    const translateTemplate = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    let resolveOldTemplate!: (value: typeof gzhTemplate) => void;
+    const oldTemplateRequest = new Promise<typeof gzhTemplate>((resolve) => {
+      resolveOldTemplate = resolve;
+    });
+    const stream = {
+      listStyleTemplates: vi.fn(async (_sessionId: string, dtype: string) =>
+        dtype === "gzh" ? [gzhTemplate] : [translateTemplate]),
+      getStyleTemplate: vi.fn(() => oldTemplateRequest),
+      saveStyleTemplate: vi.fn(),
+    };
+    const renderModal = (dtype: "gzh" | "translate") => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY[dtype]}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: dtype === "gzh" ? gzhTemplate.id : translateTemplate.id,
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={vi.fn()}
+      />,
+    );
+
+    await act(async () => renderModal("gzh"));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑旧类型模板"]')!.click());
+    expect(stream.getStyleTemplate).toHaveBeenCalledWith("session-1", gzhTemplate.id);
+
+    await act(async () => renderModal("translate"));
+    await act(async () => Promise.resolve());
+    await act(async () => {
+      resolveOldTemplate(gzhTemplate);
+      await oldTemplateRequest;
+    });
+
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.textContent).not.toContain("旧类型模板");
+    expect(host.querySelector(".ws-launch-editor")).toBeNull();
+    expect(stream.saveStyleTemplate).not.toHaveBeenCalled();
+  });
+
+  it("F1: 旧类型模板延迟保存回包不污染切换后的新类型", async () => {
+    const gzhTemplate = {
+      id: "gzh-opinion",
+      dtype: "gzh",
+      slot: "writing" as const,
+      name: "旧类型模板",
+      detail: "旧详情",
+      prompt: "旧提示",
+      builtin: false,
+    };
+    const translateTemplate = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    const savedGzhTemplate = {
+      ...gzhTemplate,
+      name: "旧类型保存结果",
+      prompt: "修改后的旧类型提示",
+    };
+    let resolveOldSave!: (value: typeof savedGzhTemplate) => void;
+    const oldSaveRequest = new Promise<typeof savedGzhTemplate>((resolve) => {
+      resolveOldSave = resolve;
+    });
+    const onGenerate = vi.fn();
+    const stream = {
+      listStyleTemplates: vi.fn(async (_sessionId: string, dtype: string) =>
+        dtype === "gzh" ? [gzhTemplate] : [translateTemplate]),
+      getStyleTemplate: vi.fn(async () => gzhTemplate),
+      saveStyleTemplate: vi.fn(() => oldSaveRequest),
+    };
+    const renderModal = (dtype: "gzh" | "translate") => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY[dtype]}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: dtype === "gzh" ? gzhTemplate.id : translateTemplate.id,
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={onGenerate}
+      />,
+    );
+
+    await act(async () => renderModal("gzh"));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑旧类型模板"]')!.click());
+    await act(async () => Promise.resolve());
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        prompt,
+        savedGzhTemplate.prompt,
+      );
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const saveButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "保存")!;
+    await act(async () => {
+      saveButton.click();
+      await Promise.resolve();
+    });
+    expect(stream.saveStyleTemplate).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        id: gzhTemplate.id,
+        dtype: "gzh",
+        prompt: savedGzhTemplate.prompt,
+      }),
+    );
+
+    await act(async () => renderModal("translate"));
+    await act(async () => Promise.resolve());
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.querySelector('[aria-checked="true"]')?.textContent).toContain(translateTemplate.name);
+
+    await act(async () => {
+      resolveOldSave(savedGzhTemplate);
+      await oldSaveRequest;
+    });
+
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.textContent).not.toContain(savedGzhTemplate.name);
+    expect(host.querySelector(".ws-launch-editor")).toBeNull();
+    expect(host.querySelectorAll(".ws-launch-template-card")).toHaveLength(1);
+    expect(host.querySelector('[aria-checked="true"]')?.textContent).toContain(translateTemplate.name);
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: translateTemplate.id,
+      writingStyleId: translateTemplate.id,
+    }));
+  });
+
   it("用户风格模板可删除，删除选中项后回退同组内置模板", async () => {
     const layout = { id: "layout-a", dtype: "gzh", slot: "layout" as const, name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true };
     const builtin = { id: "gzh-opinion", dtype: "gzh", slot: "writing" as const, name: "深度观点文", detail: "深入", prompt: "深度提示", builtin: true };
@@ -487,6 +648,157 @@ describe("公众号稿生成体验", () => {
     expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
   });
 
+  it("F12: 父组件用等值目标语言数组重渲染时保留翻译弹层草稿", async () => {
+    const template = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "原始翻译提示",
+      builtin: true,
+    };
+    const stream = {
+      listStyleTemplates: vi.fn(async () => [template]),
+      getStyleTemplate: vi.fn(async () => template),
+    };
+    const onClose = vi.fn();
+    const onGenerate = vi.fn();
+    const renderModal = () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY.translate}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: template.id,
+          targetLanguages: ["英语"],
+          privatePrompt: "",
+        }}
+        onClose={onClose}
+        onGenerate={onGenerate}
+      />,
+    );
+
+    await act(async () => renderModal());
+    await act(async () => Promise.resolve());
+    const supplement = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(supplement, "保留产品英文名");
+      supplement.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑忠实精准"]')!.click());
+    await act(async () => Promise.resolve());
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "用户尚未保存的模板草稿");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => renderModal());
+
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")?.value).toBe("用户尚未保存的模板草稿");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-back")!.click());
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.value).toBe("保留产品英文名");
+    expect(stream.listStyleTemplates).toHaveBeenCalledTimes(1);
+  });
+
+  it("F2: 生成提交与失败译文重试在请求完成前保持单次在途", async () => {
+    const template = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    let resolveCreate!: () => void;
+    const createRequest = new Promise<void>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const onGenerate = vi.fn(() => createRequest);
+    const modalStream = {
+      listStyleTemplates: vi.fn(async () => [template]),
+    };
+    await act(async () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY.translate}
+        sessionId="session-1"
+        stream={modalStream as never}
+        open
+        initial={{
+          templateId: template.id,
+          targetLanguages: ["英语"],
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={onGenerate}
+      />,
+    ));
+    await act(async () => Promise.resolve());
+    const form = host.querySelector<HTMLFormElement>(".ws-launch-form")!;
+    await act(async () => {
+      form.requestSubmit();
+      form.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    await act(async () => {
+      resolveCreate();
+      await createRequest;
+    });
+
+    const failedItem: DerivativeItem = {
+      ...item,
+      docId: "translate-retry",
+      dtype: "translate",
+      targetLang: "英语",
+      templateId: template.id,
+      templateName: template.name,
+    };
+    let resolveRetry!: () => void;
+    const retryRequest = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const generateTranslations = vi.fn(() => retryRequest);
+    const viewStream = {
+      getDerivativeDoc: vi.fn(async () => null),
+      generateTranslations,
+    };
+    await act(async () => root.render(
+      <ConfirmProvider>
+        <DerivativeView
+          sessionId="session-1"
+          item={failedItem}
+          stream={viewStream as never}
+          streamActive={false}
+          translationGen={new Map([
+            [failedItem.docId, { status: "failed" as const, text: "" }],
+          ])}
+          onRefresh={vi.fn(async () => {})}
+          onDeleted={vi.fn()}
+          onToast={vi.fn()}
+          onSendQuery={vi.fn()}
+        />
+      </ConfirmProvider>,
+    ));
+    const retryButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "重试")!;
+    await act(async () => {
+      retryButton.click();
+      retryButton.click();
+      await Promise.resolve();
+    });
+    expect(generateTranslations).toHaveBeenCalledTimes(1);
+    expect(retryButton.disabled).toBe(true);
+    await act(async () => {
+      resolveRetry();
+      await retryRequest;
+    });
+  });
+
   it("翻译稿聚合为语言 segmented，切换后显示对应译文且删除只在更多菜单", async () => {
     const english: DerivativeItem = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准", sourceVersion: 1, generatedAt: "en" };
     const japanese: DerivativeItem = { ...english, docId: "translate-ja", targetLang: "日语", generatedAt: "ja" };
@@ -494,13 +806,16 @@ describe("公众号稿生成体验", () => {
       "translate-en": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "en" }, content: [{ type: "text", text: "English copy" }] }] }),
       "translate-ja": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "ja" }, content: [{ type: "text", text: "日本語訳" }] }] }),
     };
+    const onActiveDocIdChange = vi.fn();
     const stream = { getDerivativeDoc: vi.fn(async (_sessionId: string, docId: string) => ({ meta: docId === english.docId ? english : japanese, docPm: docs[docId], docVersion: 1, title: "" })) };
-    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()} onActiveDocIdChange={onActiveDocIdChange}/></ConfirmProvider>));
     await act(async () => Promise.resolve());
+    expect(onActiveDocIdChange).toHaveBeenLastCalledWith(english.docId);
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).map((button) => button.textContent)).toEqual(["英语", "日语"]);
     expect(host.textContent).toContain("English copy");
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
     await act(async () => Promise.resolve());
+    expect(onActiveDocIdChange).toHaveBeenLastCalledWith(japanese.docId);
     expect(host.textContent).toContain("日本語訳");
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("复制文案");

@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { app } from "../app";
 import {
@@ -7,6 +14,10 @@ import {
   getSession,
   sessionManager,
 } from "../gateway/bridgeHandler";
+import {
+  clientMessageIdempotency,
+  type ClientMessageIdempotencyStore,
+} from "../gateway/clientMessageIdempotency";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);
@@ -148,5 +159,135 @@ describe("POST /api/v1/commands startSession(new) 覆写防护", () => {
       ),
     ).rejects.toThrow(/already exists/);
     expect(getSession(sessionId)).toBe(original);
+  });
+});
+
+describe("POST /api/v1/commands sendMessage 幂等", () => {
+  let restoreStore: (() => void) | null = null;
+
+  beforeEach(() => {
+    const records = new Map<string, {
+      id: string;
+      sessionId: string;
+      messageId: string;
+      createdAt: number;
+      lastTouched: number;
+      completedAt: number | null;
+    }>();
+    const store: ClientMessageIdempotencyStore = {
+      async claim(input) {
+        const current = records.get(input.id);
+        if (current) return { claimed: false, record: current };
+        const record = {
+          id: input.id,
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          createdAt: input.now,
+          lastTouched: input.now,
+          completedAt: null,
+        };
+        records.set(input.id, record);
+        return { claimed: true, record };
+      },
+      async touch(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt ||
+          current.completedAt !== null
+        ) {
+          return false;
+        }
+        current.lastTouched = Math.max(current.lastTouched, input.now);
+        return true;
+      },
+      async complete(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt ||
+          current.completedAt !== null
+        ) {
+          return false;
+        }
+        current.lastTouched = Math.max(current.lastTouched, input.now);
+        current.completedAt = input.now;
+        return true;
+      },
+      async release(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt
+        ) {
+          return false;
+        }
+        records.delete(input.id);
+        return true;
+      },
+    };
+    restoreStore = clientMessageIdempotency.useStoreForTest(store);
+  });
+
+  afterEach(() => {
+    restoreStore?.();
+    restoreStore = null;
+    vi.restoreAllMocks();
+  });
+
+  it("两个会话并发提交同一 clientMessageId 时只入队一次", async () => {
+    let finishCompletion!: () => void;
+    const completion = new Promise<never>((_resolve) => {
+      finishCompletion = () => {
+        // 测试只需终止 maintain 的心跳；后台 completion 的值不会被路由读取。
+        (_resolve as (value: never) => void)([] as never);
+      };
+    });
+    const submitQueued = vi
+      .spyOn(sessionManager, "submitQueued")
+      .mockResolvedValue({ completion });
+    const send = (sessionId: string) =>
+      request({
+        kind: "sendMessage",
+        data: {
+          sessionId,
+          text: "克隆标签的同一首提",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+          clientMessageId: "cloned-first-message",
+        },
+      });
+
+    const responses = await Promise.all([
+      send("cloned-session-a"),
+      send("cloned-session-b"),
+    ]);
+    const bodies = await Promise.all(
+      responses.map((response) => response.json()) as Array<Promise<{
+        accepted: boolean;
+        duplicate?: boolean;
+        sessionId?: string;
+        messageId?: string;
+      }>>,
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(submitQueued).toHaveBeenCalledTimes(1);
+    expect(bodies.filter((body) => body.duplicate === true)).toHaveLength(1);
+    expect(
+      bodies.find((body) => body.duplicate === true)?.sessionId,
+    ).toBe(
+      submitQueued.mock.calls[0]?.[0],
+    );
+    expect(
+      bodies.find((body) => body.duplicate === true)?.messageId,
+    ).toBe("cloned-first-message");
+    finishCompletion();
+    await Promise.resolve();
   });
 });

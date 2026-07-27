@@ -74,7 +74,7 @@ export function applyTableAxisDrop(editor: Editor, input: TableAxisDropInput): b
   const tableJson = located.node.toJSON() as PmBlockNode;
   const reordered = input.axis === "row"
     ? reorderRows(tableJson, sourceStart, sourceEnd, input.dropBoundary, input.clone)
-    : reorderColumns(tableJson, map, sourceStart, sourceEnd, input.dropBoundary, input.clone);
+    : reorderColumns(tableJson, located.node, map, sourceStart, sourceEnd, input.dropBoundary, input.clone);
   const prepared = input.clone
     ? materializeDraftBlockNodes([reordered], {
         namespace: `table-axis-clone:${input.blockId}:${input.axis}`,
@@ -119,6 +119,7 @@ function reorderRows(
 
 function reorderColumns(
   table: PmBlockNode,
+  tableNode: ProseMirrorNode,
   map: TableMap,
   sourceStart: number,
   sourceEnd: number,
@@ -128,14 +129,15 @@ function reorderColumns(
   if (table.type !== "table") return table;
   let rowStart = 0;
   const rows = table.content.map((row, rowIndex) => {
+    const rowNode = tableNode.child(rowIndex);
     let cellStart = rowStart + 1;
     const entries = row.content.map((cell, cellIndex) => {
       const rect = map.findCell(cellStart);
       const entry = { cell, cellIndex, rect };
-      cellStart += pmJsonNodeSize(cell);
+      cellStart += rowNode.child(cellIndex).nodeSize;
       return entry;
     });
-    rowStart += pmJsonNodeSize(row);
+    rowStart += rowNode.nodeSize;
     const selected = entries.filter((entry) =>
       entry.rect.left >= sourceStart && entry.rect.right <= sourceEnd + 1,
     );
@@ -217,12 +219,4 @@ function assertUniquePmBlockIds(doc: ProseMirrorNode): void {
     ids.add(blockId);
     return true;
   });
-}
-
-function pmJsonNodeSize(value: unknown): number {
-  if (!value || typeof value !== "object") return 0;
-  const record = value as { type?: string; text?: string; content?: unknown[] };
-  if (record.type === "text") return record.text?.length ?? 0;
-  if (record.type === "hardBreak") return 1;
-  return 2 + (record.content ?? []).reduce<number>((sum, child) => sum + pmJsonNodeSize(child), 0);
 }

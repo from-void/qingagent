@@ -165,6 +165,7 @@ describe("command span lifecycle", () => {
       kind: "attachFolder",
       data: {
         sessionId: "sess-redact",
+        requestId: "attach-redact",
         source: {
           provider: "desktop-local",
           selectionToken: "dfs_7_/Users/alice/SecretDocs",
@@ -218,6 +219,7 @@ describe("command span lifecycle", () => {
         kind: "attachFolder",
         data: {
           sessionId: sessionMeta.data.sessionId,
+          requestId: "attach-missing",
           source: {
             provider: "desktop-local",
             selectionToken: "dfs_missing",
@@ -228,7 +230,13 @@ describe("command span lifecycle", () => {
 
     expect(frames).toContainEqual({
       kind: "folderSourceOperationResult",
-      data: { ok: false, op: "attach", reason: "unsupported_environment" },
+      data: {
+        ok: false,
+        op: "attach",
+        requestId: "attach-missing",
+        clientSourceId: null,
+        reason: "unsupported_environment",
+      },
     });
     const attachSpan = spans.find((span) => {
       const metadata = span.options.metadata as { kind?: string } | undefined;

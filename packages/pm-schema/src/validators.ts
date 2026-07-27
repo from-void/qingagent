@@ -575,9 +575,33 @@ function normalizePmDocShape(value: unknown): unknown {
     ...record,
     attrs: { schemaVersion: PM_SCHEMA_VERSION, ...(record.attrs as Record<string, unknown> | undefined) },
     content: Array.isArray(record.content)
-      ? record.content.map((child, index) => normalizeNodeShape(child, [index]))
+      ? normalizeNodeContent(record.content, [])
       : record.content,
   };
+}
+
+function isTransientUploadImageNode(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== "image" || !record.attrs || typeof record.attrs !== "object") {
+    return false;
+  }
+  const attrs = record.attrs as Record<string, unknown>;
+  if (attrs.uploading === true || attrs.error === true) return true;
+  return (
+    typeof attrs.blockId === "string" &&
+    attrs.blockId.startsWith("upload-image-") &&
+    typeof attrs.src === "string" &&
+    attrs.src.startsWith("data:image/")
+  );
+}
+
+function normalizeNodeContent(content: unknown[], path: number[]): unknown[] {
+  return content.flatMap((child, index) =>
+    isTransientUploadImageNode(child)
+      ? []
+      : [normalizeNodeShape(child, [...path, index])],
+  );
 }
 
 function normalizeNodeShape(value: unknown, path: number[]): unknown {
@@ -592,7 +616,7 @@ function normalizeNodeShape(value: unknown, path: number[]): unknown {
       continue;
     }
     if (key === "content" && Array.isArray(child)) {
-      output[key] = child.map((nested, index) => normalizeNodeShape(nested, [...path, index]));
+      output[key] = normalizeNodeContent(child, path);
       continue;
     }
     output[key] = normalizeNodeShape(child, path);

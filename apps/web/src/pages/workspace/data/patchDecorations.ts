@@ -303,25 +303,28 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
 
     if (input.op === "delete" || input.op === "replace") {
       const count = Math.max(1, input.blockCount ?? input.replaceBeforeBlocks?.length ?? input.blocks.length);
-      const toRange = blockRanges[range.index + count - 1];
-      if (!toRange) {
+      const hiddenRanges = blockRanges.slice(range.index, range.index + count);
+      if (hiddenRanges.length !== count) {
         dropped.push(input.patchId);
         continue;
       }
       // 隐藏被替换/删除的旧块(delete/replace 都隐藏原位;replace 的原文经 hover 卡看)。
-      decorations.push(
-        Decoration.node(
-          range.from,
-          toRange.to,
-          {
-            class: `wf-blockmark delete${currentClass}${statusClass}`,
-            "data-patch-id": input.patchId,
-            "data-patch-index": String(index),
-            "data-patch-state": "delete",
-          },
-          spec,
-        ),
-      );
+      // Decoration.node 只能精确包住单个节点；跨多个相邻块会被 ProseMirror 静默过滤。
+      for (const hiddenRange of hiddenRanges) {
+        decorations.push(
+          Decoration.node(
+            hiddenRange.from,
+            hiddenRange.to,
+            {
+              class: `wf-blockmark delete${currentClass}${statusClass}`,
+              "data-patch-id": input.patchId,
+              "data-patch-index": String(index),
+              "data-patch-state": "delete",
+            },
+            spec,
+          ),
+        );
+      }
       // 块级红删标记(红竖线+球):**只在真正孤立的纯删除时画**。替换走"显示新块 + hover 看原文",
       // 不再另出红删标记——含多块 replace 拆成的 delete 半(其 patchId 另有 insert)也不画,口径统一。
       if (input.op === "delete" && !patchIdsWithInsert.has(input.patchId)) {

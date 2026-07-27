@@ -1,6 +1,6 @@
 import { Button } from "@qingagent/ui-kit";
 import type { StyleTemplateItem } from "@qingagent/contract-ts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "../../../../system";
 import { buildTemplateSummary, DERIVATIVE_STARTER_PRESETS, LaunchModalShell, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "../launchModal";
 import type { ServerStream } from "../../data/serverStream";
@@ -21,7 +21,15 @@ export const TRANSLATION_LANGUAGES = [
 export const MAX_TRANSLATION_LANGUAGES = 5;
 
 type StyleSlot = "layout" | "writing";
-type EditorState = { id?: string; slot: StyleSlot; name: string; detail: string; prompt: string; builtin: boolean };
+type EditorState = {
+  id?: string;
+  dtype: DtypeDescriptor["dtype"];
+  slot: StyleSlot;
+  name: string;
+  detail: string;
+  prompt: string;
+  builtin: boolean;
+};
 
 const DERIVATIVE_LAUNCH_META = {
   gzh: {
@@ -73,10 +81,29 @@ export function DerivativeGenerateModal(props: {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [submitPending, setSubmitPending] = useState(false);
   const [error, setError] = useState("");
+  const initialTargetLanguagesKey = JSON.stringify(
+    [...new Set(props.initial.targetLanguages ?? [])].sort(),
+  );
+  const detailRequestGenerationRef = useRef(0);
+  const saveRequestGenerationRef = useRef(0);
+  const generateFlightRef = useRef<Promise<void> | null>(null);
+  const currentScopeRef = useRef({
+    open: props.open,
+    sessionId: props.sessionId,
+    dtype: props.descriptor.dtype,
+  });
+  currentScopeRef.current = {
+    open: props.open,
+    sessionId: props.sessionId,
+    dtype: props.descriptor.dtype,
+  };
 
   useEffect(() => {
     if (!props.open) return;
+    detailRequestGenerationRef.current += 1;
+    saveRequestGenerationRef.current += 1;
     let current = true;
     setWritingStyleId(props.initial.writingStyleId ?? props.initial.templateId);
     setLayoutStyleId(props.descriptor.dtype === "gzh" ? props.initial.layoutStyleId ?? null : null);
@@ -85,6 +112,7 @@ export function DerivativeGenerateModal(props: {
     setEditor(null);
     setError("");
     setLoading(true);
+    setSaving(false);
     void props.stream.listStyleTemplates(props.sessionId, props.descriptor.dtype).then((items) => {
       if (!current) return;
       setTemplates(items);
@@ -96,35 +124,92 @@ export function DerivativeGenerateModal(props: {
       }
     }).catch(() => { if (current) setError("风格模板读取失败，请重试"); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.targetLanguages, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
+  }, [initialTargetLanguagesKey, props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
 
   const openTemplate = async (item: StyleTemplateItem) => {
     if (item.slot === "instruction") return;
+    const request = {
+      generation: detailRequestGenerationRef.current + 1,
+      sessionId: props.sessionId,
+      dtype: props.descriptor.dtype,
+      templateId: item.id,
+    };
+    detailRequestGenerationRef.current = request.generation;
     setError("");
     try {
-      const full = await props.stream.getStyleTemplate(props.sessionId, item.id);
+      const full = await props.stream.getStyleTemplate(request.sessionId, request.templateId);
+      const currentScope = currentScopeRef.current;
+      if (
+        detailRequestGenerationRef.current !== request.generation ||
+        !currentScope.open ||
+        currentScope.sessionId !== request.sessionId ||
+        currentScope.dtype !== request.dtype ||
+        full.id !== request.templateId ||
+        full.dtype !== request.dtype
+      ) {
+        return;
+      }
       if (full.slot === "instruction") throw new Error("非衍生稿风格模板");
-      setEditor({ id: full.id, slot: full.slot, name: full.name, detail: full.detail, prompt: full.prompt, builtin: full.builtin });
-    } catch { setError("模板读取失败，请重试"); }
+      setEditor({ id: full.id, dtype: request.dtype, slot: full.slot, name: full.name, detail: full.detail, prompt: full.prompt, builtin: full.builtin });
+    } catch {
+      const currentScope = currentScopeRef.current;
+      if (
+        detailRequestGenerationRef.current === request.generation &&
+        currentScope.open &&
+        currentScope.sessionId === request.sessionId &&
+        currentScope.dtype === request.dtype
+      ) {
+        setError("模板读取失败，请重试");
+      }
+    }
   };
 
   const saveEditor = async (asNew: boolean) => {
     if (!editor || !editor.name.trim() || !editor.prompt.trim()) { setError("模板名和提示词不能为空"); return; }
+    if (editor.dtype !== props.descriptor.dtype) return;
+    const request = {
+      generation: saveRequestGenerationRef.current + 1,
+      sessionId: props.sessionId,
+      dtype: editor.dtype,
+      editor,
+    };
+    saveRequestGenerationRef.current = request.generation;
     setSaving(true);
     setError("");
     try {
-      const saved = await props.stream.saveStyleTemplate(props.sessionId, {
-        id: asNew ? undefined : editor.id,
-        dtype: props.descriptor.dtype,
-        slot: editor.slot,
-        name: editor.name.trim(),
-        detail: editor.detail.trim(),
-        prompt: editor.prompt.trim(),
+      const saved = await props.stream.saveStyleTemplate(request.sessionId, {
+        id: asNew ? undefined : request.editor.id,
+        dtype: request.dtype,
+        slot: request.editor.slot,
+        name: request.editor.name.trim(),
+        detail: request.editor.detail.trim(),
+        prompt: request.editor.prompt.trim(),
       });
+      const currentScope = currentScopeRef.current;
+      if (
+        saveRequestGenerationRef.current !== request.generation ||
+        !currentScope.open ||
+        currentScope.sessionId !== request.sessionId ||
+        currentScope.dtype !== request.dtype
+      ) {
+        return;
+      }
       setTemplates((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       if (saved.slot === "writing") setWritingStyleId(saved.id); else if (saved.slot === "layout") setLayoutStyleId(saved.id);
       setEditor(null);
-    } catch { setError("模板保存失败，请重试"); } finally { setSaving(false); }
+    } catch {
+      const currentScope = currentScopeRef.current;
+      if (
+        saveRequestGenerationRef.current === request.generation &&
+        currentScope.open &&
+        currentScope.sessionId === request.sessionId &&
+        currentScope.dtype === request.dtype
+      ) {
+        setError("模板保存失败，请重试");
+      }
+    } finally {
+      if (saveRequestGenerationRef.current === request.generation) setSaving(false);
+    }
   };
 
   const deleteEditor = async () => {
@@ -150,7 +235,31 @@ export function DerivativeGenerateModal(props: {
     } catch (deleteError) { setError(deleteErrorMessage(deleteError)); } finally { setSaving(false); }
   };
 
+  const submitGenerate = (params: DerivativeGenerateParams): Promise<void> => {
+    const currentFlight = generateFlightRef.current;
+    if (currentFlight) return currentFlight;
+    const flight = Promise.resolve()
+      .then(() => props.onGenerate(params))
+      .then(() => undefined);
+    generateFlightRef.current = flight;
+    setSubmitPending(true);
+    void flight.then(
+      () => {
+        if (generateFlightRef.current !== flight) return;
+        generateFlightRef.current = null;
+        setSubmitPending(false);
+      },
+      () => {
+        if (generateFlightRef.current !== flight) return;
+        generateFlightRef.current = null;
+        setSubmitPending(false);
+      },
+    );
+    return flight;
+  };
+
   if (!props.open) return null;
+  const submitting = Boolean(props.submitting || submitPending);
   const slots: Array<{ slot: StyleSlot; label: string }> = props.descriptor.dtype === "gzh"
     ? [{ slot: "layout", label: "排版风格" }, { slot: "writing", label: "写作风格" }]
     : [{ slot: "writing", label: props.descriptor.dtype === "translate" ? "翻译风格" : "写作风格" }];
@@ -167,7 +276,7 @@ export function DerivativeGenerateModal(props: {
       subtitle={editor ? undefined : launchMeta.subtitle}
       onBack={editor ? () => { setEditor(null); setError(""); } : undefined}
       onClose={props.onClose}
-      closeDisabled={props.submitting || saving}
+      closeDisabled={submitting || saving}
       dataWf="DerivativeGenerateModal"
     >
       {error ? <p className="ws-launch-error" role="alert">{error}</p> : null}
@@ -205,7 +314,7 @@ export function DerivativeGenerateModal(props: {
       ) : (
         <form className="ws-launch-form" onSubmit={(event) => {
           event.preventDefault();
-          if (writingStyleId && (props.descriptor.dtype !== "translate" || targetLanguages.length > 0)) void props.onGenerate({ templateId: writingStyleId, writingStyleId, layoutStyleId, privatePrompt, ...(props.descriptor.dtype === "translate" ? { targetLanguages } : {}) });
+          if (writingStyleId && (props.descriptor.dtype !== "translate" || targetLanguages.length > 0)) void submitGenerate({ templateId: writingStyleId, writingStyleId, layoutStyleId, privatePrompt, ...(props.descriptor.dtype === "translate" ? { targetLanguages } : {}) });
         }}>
           {props.descriptor.dtype === "translate" ? <section className="ws-translate-language-group" aria-label="目标语言">
             <h3>目标语言</h3>
@@ -236,19 +345,19 @@ export function DerivativeGenerateModal(props: {
                   const template = slotTemplates.find((candidate) => candidate.id === item.id);
                   if (template) void openTemplate(template);
                 }}
-                onCreate={() => { setError(""); setEditor({ slot, name: "", detail: "", prompt: "", builtin: false }); }}
+                onCreate={() => { setError(""); setEditor({ dtype: props.descriptor.dtype, slot, name: "", detail: "", prompt: "", builtin: false }); }}
               />
             );
           })}
           <SupplementField
             value={privatePrompt}
             placeholder={launchMeta.supplementPlaceholder}
-            disabled={props.submitting}
+            disabled={submitting}
             onChange={setPrivatePrompt}
           />
           <div className="ws-launch-actions">
-            <Button type="button" variant="ghost" disabled={props.submitting} onClick={props.onClose}>取消</Button>
-            <Button type="submit" variant="primary" disabled={props.submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)}>{props.submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
+            <Button type="button" variant="ghost" disabled={submitting} onClick={props.onClose}>取消</Button>
+            <Button type="submit" variant="primary" disabled={submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
           </div>
         </form>
       )}

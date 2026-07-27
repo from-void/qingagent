@@ -20,6 +20,7 @@ import {
   maskKey,
   readCustomProvider,
   readOfficialModelOverride,
+  readPersistedModelState,
   setSelectedModelProvider,
   setSelectedModelTier,
   setVisitorModelKey,
@@ -176,14 +177,69 @@ export function ModelSettingsPanel() {
     setCustomTesting(false);
   };
 
-  const handleProviderChange = (provider: ModelProvider) => {
+  const showPersistFailure = useCallback((message = modelPersistFailureMessage()) => {
+    toast.show({
+      message,
+      tone: "warn",
+      dedupeKey: "model-persist-failure",
+    });
+  }, [toast]);
+
+  const resyncPersistedModelState = useCallback((provider: ModelProvider): boolean => {
+    try {
+      const persisted = readPersistedModelState(provider);
+      if (!persisted) return false;
+      setVisitorKey(persisted.visitorKey);
+      setCustomProvider(persisted.customProvider);
+      setSetupMode(persisted.customProvider ? "other" : "official");
+      setCustomProtocol(
+        provider === "kimi" ? "openai" : persisted.customProvider?.protocol ?? "openai",
+      );
+      setCustomBaseUrl(persisted.customProvider?.baseUrl ?? "");
+      setCustomKey(persisted.customProvider?.apiKey ?? "");
+      setCustomModelFlash(
+        persisted.customProvider?.modelFlash ?? MODEL_DEFAULTS[provider].flash,
+      );
+      setCustomModelPro(persisted.customProvider?.modelPro ?? MODEL_DEFAULTS[provider].pro);
+      setOfficialFlash(persisted.officialModel?.flash ?? "");
+      setOfficialPro(persisted.officialModel?.pro ?? "");
+      setKeyInput("");
+      setVerifyStatus("idle");
+      setVerifyMsg("");
+      setEditing(false);
+      setForceSetup(false);
+      setMessage(null);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const settlePersistFailure = useCallback((
+    provider: ModelProvider,
+    resyncedMessage?: string,
+  ) => {
+    setPersisting(false);
+    const resynced = resyncPersistedModelState(provider);
+    showPersistFailure(resynced ? resyncedMessage : undefined);
+  }, [resyncPersistedModelState, showPersistFailure]);
+
+  const handleProviderChange = async (provider: ModelProvider) => {
     if (provider === modelProvider) return;
     invalidateCustomTest();
     balanceControllerRef.current?.abort();
     balanceControllerRef.current = null;
     setBalanceLoading(false);
     invalidateKimiVerification();
-    setSelectedModelProvider(provider);
+    const revision = persistRevisionRef.current;
+    setPersisting(true);
+    const saved = await setSelectedModelProvider(provider);
+    if (!mountedRef.current || persistRevisionRef.current !== revision) return;
+    setPersisting(false);
+    if (!saved) {
+      showPersistFailure();
+      return;
+    }
     const custom = readCustomProvider(provider);
     const official = readOfficialModelOverride(provider);
     setModelProvider(provider);
@@ -306,7 +362,7 @@ export function ModelSettingsPanel() {
       readCustomProvider("deepseek") ||
       readOfficialModelOverride("deepseek")
     ) return;
-    handleProviderChange(server.provider);
+    void handleProviderChange(server.provider);
   }, [server]);
   useEffect(() => {
     const controller = new AbortController();
@@ -489,21 +545,28 @@ export function ModelSettingsPanel() {
     const savedKey = await setVisitorModelKey(modelProvider, trimmed);
     if (!canCommit()) return;
     if (!savedKey) {
-      setPersisting(false);
-      setMessage(modelPersistFailureMessage());
+      settlePersistFailure(modelProvider);
       return;
     }
     // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
     const clearedCustom = await clearCustomProvider(modelProvider);
     if (!canCommit()) return;
-    setPersisting(false);
     if (!clearedCustom) {
-      setMessage("key 已保存，但旧的自定义模型配置清除失败，请重试");
+      settlePersistFailure(modelProvider, "key 已保存，但旧的自定义模型配置未清除，请重试");
+      return;
+    }
+    const savedOfficialOverride = await writeOfficialModelOverride(
+      { flash: officialFlash, pro: officialPro },
+      modelProvider,
+    );
+    if (!canCommit()) return;
+    setPersisting(false);
+    if (!savedOfficialOverride) {
+      settlePersistFailure(modelProvider, "key 已保存，但模型别名未保存，请重试");
       return;
     }
     setVisitorKey(trimmed);
     setCustomProvider(null);
-    writeOfficialModelOverride({ flash: officialFlash, pro: officialPro }, modelProvider);
     setKeyInput("");
     setEditing(false);
     setForceSetup(false);
@@ -533,7 +596,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
-      setMessage("本机配置清除失败，请重试");
+      showPersistFailure("本机配置清除失败，请重试");
       return false;
     }
     setVisitorKey(null);
@@ -557,7 +620,7 @@ export function ModelSettingsPanel() {
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
-      setMessage("本机配置清除失败，请重试");
+      showPersistFailure("本机配置清除失败，请重试");
       return false;
     }
     setCustomProvider(null);
@@ -565,17 +628,25 @@ export function ModelSettingsPanel() {
     return true;
   };
 
-  const handleModelTierChange = useCallback((tier: ModelTier) => {
+  const handleModelTierChange = useCallback(async (tier: ModelTier) => {
     if (tier === modelTier) return;
     invalidateKimiVerification();
-    setSelectedModelTier(tier);
+    const revision = persistRevisionRef.current;
+    setPersisting(true);
+    const saved = await setSelectedModelTier(tier);
+    if (!mountedRef.current || persistRevisionRef.current !== revision) return;
+    setPersisting(false);
+    if (!saved) {
+      showPersistFailure();
+      return;
+    }
     setModelTier(tier);
     toast.show({
       message: tier === "pro" ? "已切换到 Pro 档,生成会更慢" : "已切换到 Flash 档",
       tone: "success",
       dedupeKey: "model-tier",
     });
-  }, [invalidateKimiVerification, modelTier, toast]);
+  }, [invalidateKimiVerification, modelTier, showPersistFailure, toast]);
 
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
@@ -647,14 +718,14 @@ export function ModelSettingsPanel() {
       const savedProvider = await writeCustomProvider(provider, modelProvider);
       if (!canCommit()) return;
       if (!savedProvider) {
-        setMessage(modelPersistFailureMessage());
+        showPersistFailure();
         return;
       }
       // 互斥:切到其他云厂商,清官方 visitor key
       const clearedVisitorKey = await clearVisitorModelKey(modelProvider);
       if (!canCommit()) return;
       if (!clearedVisitorKey) {
-        setMessage("自定义模型已保存，但旧的官方 key 清除失败，请重试");
+        showPersistFailure("自定义模型已保存，但旧的官方 key 未清除，请重试");
         return;
       }
       setCustomProvider(provider);
@@ -753,7 +824,7 @@ export function ModelSettingsPanel() {
             aria-checked={modelTier === tier}
             aria-pressed={modelTier === tier}
             className={`sm-tier-option${modelTier === tier ? " sm-active" : ""}`}
-            onClick={() => handleModelTierChange(tier)}
+            onClick={() => void handleModelTierChange(tier)}
             data-wf={tier === "flash" ? "ModelTierFlash" : "ModelTierPro"}
           >
             <span>{tier === "flash" ? "Flash" : "Pro"}</span>
@@ -1079,7 +1150,7 @@ export function ModelSettingsPanel() {
               aria-checked={modelProvider === provider}
               aria-pressed={modelProvider === provider}
               className={`sm-tier-option${modelProvider === provider ? " sm-active" : ""}`}
-              onClick={() => handleProviderChange(provider)}
+              onClick={() => void handleProviderChange(provider)}
               disabled={persisting}
               data-wf={provider === "deepseek" ? "ProviderDeepSeek" : "ProviderKimi"}
             >

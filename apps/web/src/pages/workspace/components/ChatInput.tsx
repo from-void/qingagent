@@ -282,58 +282,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         if (!edit) return { text: "", chips: [], files: [], richText: "", skills: [] };
         const chipNodes = edit.querySelectorAll<HTMLElement>(".chat-chip");
         const chips: ChatChipSpec[] = Array.from(chipNodes).map(readChipNode);
-        // Extract only user-typed text, excluding chip visual content.
-        // Clone the node, strip chip spans, then read innerText so the
-        // backend receives a clean message without §/×/label noise.
-        const clone = edit.cloneNode(true) as HTMLElement;
-        for (const c of clone.querySelectorAll<HTMLElement>(".chat-chip")) {
-          // 长文本/批注卡片:原位展开完整载荷,让 sendMessage.text 与后端/模型都拿到真实正文；
-          // 其余引用型 chip 仍剔除，仅由 richText + chips 协议表达。
-          if (
-            (c.dataset.kind === "longtext" || c.dataset.kind === "annotation")
-            && c.dataset.text != null
-          ) {
-            c.replaceWith(document.createTextNode(c.dataset.text));
-          } else {
-            c.remove();
-          }
-        }
-        // Preserve newlines so sent messages retain line breaks
-        const text = (clone.innerText || clone.textContent || "").trim();
-
-        // Build richText: walk childNodes in document order, emitting
-        // text as-is and chip placeholders like {{chip:0}}.
-        // This preserves the interleaved order for inline rendering.
-        let chipIndex = 0;
-        const richParts: string[] = [];
-        function walk(node: Node) {
-          if (
-            node.nodeType === Node.ELEMENT_NODE &&
-            (node as HTMLElement).classList?.contains("chat-chip")
-          ) {
-            richParts.push(`{{chip:${chipIndex++}}}`);
-            return;
-          }
-          if (node.nodeType === Node.TEXT_NODE) {
-            richParts.push(node.textContent ?? "");
-            return;
-          }
-          if (
-            node.nodeType === Node.ELEMENT_NODE &&
-            (node as HTMLElement).tagName === "BR"
-          ) {
-            richParts.push("\n");
-            return;
-          }
-          // Recurse into child nodes (e.g. divs created by Enter key)
-          for (const child of node.childNodes) {
-            walk(child);
-          }
-        }
-        for (const child of edit.childNodes) {
-          walk(child);
-        }
-        const richText = richParts.join("").trim();
+        // 纯文本、气泡 richText 与模型上下文共用同一个 DOM walker；不能依赖游离 clone
+        // 的 innerText 布局计算，否则 contenteditable 用相邻 div 表示的换行会被吞掉。
+        const { text, richText } = serializeChatInputContent(edit);
 
         // 本轮 skills 直接从正文里的技能占位 chip 反推(按 skillId 去重),发后端做检索预加载/记录。
         const seenSkill = new Set<string>();
@@ -734,11 +685,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   );
 
   const removeAttachment = useCallback(
-    (filename: string) => {
-      setAttachedFiles((prev) => prev.filter((f) => attachmentFileKey(f) !== filename));
+    (attachmentId: string) => {
+      setAttachedFiles((prev) =>
+        prev.filter((file) => attachmentFileKey(file) !== attachmentId),
+      );
       const edit = editRef.current;
       if (!edit) return;
-      removeAttachChips(edit, filename);
+      removeAttachChips(edit, attachmentId);
       reportChange();
     },
     [reportChange],
@@ -777,8 +730,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           e.preventDefault();
           e.stopPropagation();
           if (chip.dataset.kind === "attach" && chip.dataset.label) {
-            removeAttachment(chip.dataset.label);
-            return;
+            const attachmentId = chip.dataset.attachmentId;
+            if (attachmentId) {
+              removeAttachment(attachmentId);
+              return;
+            }
           }
           chip.remove();
           reportChange();
@@ -812,9 +768,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         return next;
       });
       for (const f of accepted) {
-        const key = attachmentFileKey(f);
-        if (hasAttachChip(edit, key)) continue;
-        const chip = makeChatChipNode({ kind: "attach", label: key });
+        const attachmentId = attachmentFileKey(f);
+        if (hasLocalAttachChip(edit, attachmentId)) continue;
+        const chip = makeChatChipNode({
+          kind: "attach",
+          label: f.name,
+          attachmentId,
+        });
         const hasContent = !!(edit.textContent && edit.textContent.trim().length > 0);
         if (hasContent) edit.appendChild(document.createElement("br"));
         edit.appendChild(chip);
@@ -914,8 +874,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       setAttachedFiles((prev) => {
         const next = [...prev];
         for (const file of acceptedFiles) {
-          const key = attachmentFileKey(file);
-          if (!next.some((existing) => attachmentFileKey(existing) === key)) {
+          const attachmentId = attachmentFileKey(file);
+          if (!next.some((existing) => attachmentFileKey(existing) === attachmentId)) {
             next.push(file);
           }
         }
@@ -927,11 +887,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       if (!edit) return;
       edit.focus();
       for (const file of acceptedFiles) {
-        const key = attachmentFileKey(file);
-        if (hasAttachChip(edit, key)) continue;
+        const attachmentId = attachmentFileKey(file);
+        if (hasLocalAttachChip(edit, attachmentId)) continue;
         const r = restoreOrEndRange();
         r.deleteContents();
-        const chip = makeChatChipNode({ kind: "attach", label: key });
+        const chip = makeChatChipNode({
+          kind: "attach",
+          label: file.name,
+          attachmentId,
+        });
         r.insertNode(chip);
         const space = document.createTextNode(" ");
         chip.after(space);
@@ -954,7 +918,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       const edit = editRef.current;
       if (!edit || disabled) return;
       // 同名 attach chip 已存在则不重复插(避免「引用」多次留下重复 chip)。
-      if (hasAttachChip(edit, label)) {
+      if (hasReferencedAttachChip(edit, label)) {
         edit.focus();
         reportChange();
         return;
@@ -1234,6 +1198,9 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   if (spec.to !== undefined) chip.dataset.to = String(spec.to);
   if (spec.blockId !== undefined) chip.dataset.blockId = spec.blockId;
   if (spec.skillId !== undefined) chip.dataset.skillId = spec.skillId;
+  if (spec.attachmentId !== undefined) {
+    chip.dataset.attachmentId = spec.attachmentId;
+  }
   if (spec.text !== undefined) chip.dataset.text = spec.text;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) {
     chip.dataset.selectionRefs = JSON.stringify(spec.selectionRefs);
@@ -1319,23 +1286,112 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   return chip;
 }
 
+const attachmentFileIds = new WeakMap<File, string>();
+let attachmentFileIdSequence = 0;
+
 function attachmentFileKey(file: File): string {
-  return file.name;
+  const existing = attachmentFileIds.get(file);
+  if (existing) return existing;
+  attachmentFileIdSequence += 1;
+  const id = `local-attachment-${attachmentFileIdSequence}`;
+  attachmentFileIds.set(file, id);
+  return id;
 }
 
-function hasAttachChip(edit: HTMLElement, label: string): boolean {
+function hasLocalAttachChip(edit: HTMLElement, attachmentId: string): boolean {
   return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).some(
-    (chip) => chip.dataset.kind === "attach" && chip.dataset.label === label,
+    (chip) =>
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === attachmentId,
   );
 }
 
-function removeAttachChips(edit: HTMLElement, label: string): void {
+function hasReferencedAttachChip(edit: HTMLElement, label: string): boolean {
+  return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).some(
+    (chip) =>
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === undefined &&
+      chip.dataset.label === label,
+  );
+}
+
+function removeAttachChips(edit: HTMLElement, attachmentId: string): void {
   const chips = edit.querySelectorAll<HTMLElement>(".chat-chip");
   for (const chip of chips) {
-    if (chip.dataset.kind === "attach" && chip.dataset.label === label) {
+    if (
+      chip.dataset.kind === "attach" &&
+      chip.dataset.attachmentId === attachmentId
+    ) {
       chip.remove();
     }
   }
+}
+
+const CHAT_INPUT_BLOCK_TAGS = new Set([
+  "ADDRESS",
+  "BLOCKQUOTE",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "LI",
+  "OL",
+  "P",
+  "PRE",
+  "UL",
+]);
+
+function serializeChatInputContent(edit: HTMLElement): {
+  text: string;
+  richText: string;
+} {
+  let text = "";
+  let richText = "";
+  let chipIndex = 0;
+
+  const appendBreak = () => {
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
+    if (richText.length > 0 && !richText.endsWith("\n")) richText += "\n";
+  };
+
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = node.textContent ?? "";
+      text += value;
+      richText += value;
+      return;
+    }
+    if (!(node instanceof HTMLElement)) return;
+    if (node.classList.contains("chat-chip")) {
+      if (
+        (node.dataset.kind === "longtext" ||
+          node.dataset.kind === "annotation") &&
+        node.dataset.text != null
+      ) {
+        text += node.dataset.text;
+      }
+      richText += `{{chip:${chipIndex++}}}`;
+      return;
+    }
+    if (node.tagName === "BR") {
+      appendBreak();
+      return;
+    }
+
+    const isBlock = CHAT_INPUT_BLOCK_TAGS.has(node.tagName);
+    if (isBlock) appendBreak();
+    node.childNodes.forEach(walk);
+    if (isBlock) appendBreak();
+  };
+
+  edit.childNodes.forEach(walk);
+  return {
+    text: text.trim(),
+    richText: richText.trim(),
+  };
 }
 
 function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot): void {
@@ -1438,6 +1494,9 @@ function readChipNode(el: HTMLElement): ChatChipSpec {
   if (el.dataset.to !== undefined) spec.to = parseInt(el.dataset.to, 10);
   if (el.dataset.blockId !== undefined) spec.blockId = el.dataset.blockId;
   if (el.dataset.skillId !== undefined) spec.skillId = el.dataset.skillId;
+  if (el.dataset.attachmentId !== undefined) {
+    spec.attachmentId = el.dataset.attachmentId;
+  }
   if (el.dataset.text !== undefined) spec.text = el.dataset.text;
   const selectionRefs = parseSelectionRefs(el.dataset.selectionRefs);
   if (selectionRefs) spec.selectionRefs = selectionRefs;

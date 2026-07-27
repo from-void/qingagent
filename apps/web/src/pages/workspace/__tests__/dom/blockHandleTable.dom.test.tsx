@@ -17,8 +17,16 @@ import {
 import { glyphForBlock } from "../../components/doc/blockHandleGeometry";
 import { TableAxisSelectionExtension } from "../../data/tableToolbar";
 
+const { writeBlockClipboardPayload } = vi.hoisted(() => ({
+  writeBlockClipboardPayload: vi.fn(),
+}));
+
 vi.mock("../../components/drawioEditorLauncher", () => ({
   openDrawioEditor: vi.fn(async () => null),
+}));
+
+vi.mock("../../components/doc/blockClipboard", () => ({
+  writeBlockClipboardPayload,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,6 +40,7 @@ afterEach(() => {
   editor?.destroy();
   editor = null;
   document.body.innerHTML = "";
+  writeBlockClipboardPayload.mockReset();
 });
 
 describe("BlockHandle 表格专属菜单", () => {
@@ -355,6 +364,64 @@ describe("BlockHandle 表格专属菜单", () => {
         }));
       }).not.toThrow();
     });
+  });
+
+  it("剪贴板等待期间块坐标漂移时按 blockId 删除原块", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(
+      editorElement,
+      paragraph("cut-target", "待剪切"),
+      [paragraph("tail", "保留尾段")],
+    );
+    editor.commands.setTextSelection(1);
+    let finishClipboardWrite: (() => void) | null = null;
+    writeBlockClipboardPayload.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishClipboardWrite = resolve;
+      }),
+    );
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} />));
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    const cut = Array.from(
+      workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((button) => button.textContent?.includes("剪切"));
+    expect(cut).toBeTruthy();
+    await act(async () => {
+      cut!.click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      editor!.commands.insertContentAt(0, paragraph("inserted", "等待期间插入"));
+    });
+    await act(async () => {
+      finishClipboardWrite?.();
+      await Promise.resolve();
+    });
+
+    const content = (editor.getJSON() as PmDoc).content;
+    expect(content.map((node) => node.attrs.blockId)).toEqual([
+      "inserted",
+      "tail",
+    ]);
+    expect(content.map((node) =>
+      node.type === "paragraph" && node.content?.[0]?.type === "text"
+        ? node.content[0].text
+        : "",
+    )).toEqual(["等待期间插入", "保留尾段"]);
   });
 });
 

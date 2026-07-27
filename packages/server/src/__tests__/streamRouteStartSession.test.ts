@@ -171,6 +171,8 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
       sessionId: string;
       messageId: string;
       createdAt: number;
+      lastTouched: number;
+      completedAt: number | null;
     }>();
     const store: ClientMessageIdempotencyStore = {
       async claim(input) {
@@ -181,9 +183,38 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
           sessionId: input.sessionId,
           messageId: input.messageId,
           createdAt: input.now,
+          lastTouched: input.now,
+          completedAt: null,
         };
         records.set(input.id, record);
         return { claimed: true, record };
+      },
+      async touch(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt ||
+          current.completedAt !== null
+        ) {
+          return false;
+        }
+        current.lastTouched = Math.max(current.lastTouched, input.now);
+        return true;
+      },
+      async complete(input) {
+        const current = records.get(input.id);
+        if (
+          current?.sessionId !== input.sessionId ||
+          current.messageId !== input.messageId ||
+          current.createdAt !== input.createdAt ||
+          current.completedAt !== null
+        ) {
+          return false;
+        }
+        current.lastTouched = Math.max(current.lastTouched, input.now);
+        current.completedAt = input.now;
+        return true;
       },
       async release(input) {
         const current = records.get(input.id);
@@ -208,7 +239,13 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
   });
 
   it("两个会话并发提交同一 clientMessageId 时只入队一次", async () => {
-    const completion = new Promise<never>(() => undefined);
+    let finishCompletion!: () => void;
+    const completion = new Promise<never>((_resolve) => {
+      finishCompletion = () => {
+        // 测试只需终止 maintain 的心跳；后台 completion 的值不会被路由读取。
+        (_resolve as (value: never) => void)([] as never);
+      };
+    });
     const submitQueued = vi
       .spyOn(sessionManager, "submitQueued")
       .mockResolvedValue({ completion });
@@ -250,5 +287,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     expect(
       bodies.find((body) => body.duplicate === true)?.messageId,
     ).toBe("cloned-first-message");
+    finishCompletion();
+    await Promise.resolve();
   });
 });

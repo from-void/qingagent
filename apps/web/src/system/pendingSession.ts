@@ -382,6 +382,7 @@ export function createPendingSubmissionManager(input: {
   const now = input.now ?? Date.now;
   let memoryMetadata: StoredPendingSubmission | null = null;
   const memoryPayloads = new Map<string, PendingPayload>();
+  const memoryClaims = new Map<string, PendingSubmissionClaim>();
 
   const removeLegacyStorage = () => {
     for (const key of LEGACY_STORAGE_KEYS) {
@@ -478,6 +479,7 @@ export function createPendingSubmissionManager(input: {
   };
 
   const releaseOwnedClaim = (submissionId: string): void => {
+    memoryClaims.delete(submissionId);
     const claims = readClaims();
     const next = claims.filter(
       (claim) =>
@@ -491,6 +493,13 @@ export function createPendingSubmissionManager(input: {
     submissionId: string,
     expiresAt: number,
   ): void => {
+    const memoryClaim = memoryClaims.get(submissionId);
+    if (memoryClaim?.ownerId === claimOwnerId) {
+      memoryClaims.set(submissionId, {
+        ...memoryClaim,
+        expiresAt: Math.max(memoryClaim.expiresAt, expiresAt),
+      });
+    }
     const claims = readClaims();
     let updated = false;
     const next = claims.map((claim) => {
@@ -741,20 +750,29 @@ export function createPendingSubmissionManager(input: {
         ) {
           return false;
         }
+        const currentTime = now();
+        for (const [id, item] of memoryClaims) {
+          if (item.expiresAt <= currentTime) memoryClaims.delete(id);
+        }
         const claims = readClaims().filter(
-          (item) => item.expiresAt > now(),
+          (item) => item.expiresAt > currentTime,
         );
-        if (claims.some(
-          (item) => item.submissionId === submissionId,
-        )) {
+        if (
+          memoryClaims.has(submissionId) ||
+          claims.some((item) => item.submissionId === submissionId)
+        ) {
           return false;
         }
-        if (!writeClaims([...claims, {
+        const ownedClaim: PendingSubmissionClaim = {
           submissionId,
           ownerId: claimOwnerId,
-          expiresAt: now() + PENDING_SUBMISSION_CLAIM_LEASE_MS,
-        }])) {
-          return false;
+          expiresAt: currentTime + PENDING_SUBMISSION_CLAIM_LEASE_MS,
+        };
+        if (!writeClaims([...claims, ownedClaim])) {
+          // 共享 storage claim 只是跨标签去重层；受限环境写失败时降级为
+          // 本标签内存 claim 继续发送。此时跨标签去重尽力而为，最终由
+          // 服务端 SQLite 持久幂等兜底，不能因浏览器存储受限堵死首提。
+          memoryClaims.set(submissionId, ownedClaim);
         }
         writeMetadata({ ...metadata, state: "dispatching" });
         return true;

@@ -247,7 +247,11 @@ export function createLocalStorageLeaseLockManager(
             callback,
           );
         }
-        if (confirmed.lease?.ownerId !== ownerId) {
+        const confirmedAt = now();
+        if (
+          confirmed.lease?.ownerId !== ownerId ||
+          confirmed.lease.expiresAt <= confirmedAt
+        ) {
           if (requestOptions.ifAvailable) return callback(null);
           await waitForStorageChange({
             eventSource: options.eventSource,
@@ -259,18 +263,17 @@ export function createLocalStorageLeaseLockManager(
 
         const renew = () => {
           const owned = readLease(key);
+          const touchedAt = now();
           if (
             owned.kind !== "ok" ||
-            owned.lease?.ownerId !== ownerId
+            owned.lease?.ownerId !== ownerId ||
+            owned.lease.expiresAt <= touchedAt
           ) {
             return;
           }
           writeLease(key, {
             ...owned.lease,
-            expiresAt: Math.max(
-              owned.lease.expiresAt,
-              now() + leaseMs,
-            ),
+            expiresAt: Math.max(owned.lease.expiresAt, touchedAt + leaseMs),
           });
         };
         const stopHeartbeat = startHeartbeat(renew, heartbeatMs);

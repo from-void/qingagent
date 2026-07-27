@@ -127,4 +127,90 @@ describe("localStorage 跨标签租约锁", () => {
     expect(stopCalled).toBe(true);
     expect(storage.values.has(key)).toBe(false);
   });
+
+  it("写入后确认前已经超期时不确认持有并允许其他标签接管", async () => {
+    const storage = createStorage();
+    const storeLease = storage.setItem.bind(storage);
+    let time = 1_000;
+    storage.setItem = (key, value) => {
+      storeLease(key, value);
+      time = 1_100;
+    };
+    const expiredManager = createLocalStorageLeaseLockManager({
+      storage,
+      now: () => time,
+      leaseMs: 100,
+      settleMs: 0,
+      createOwnerId: () => "tab-expired-before-confirm",
+    });
+
+    await expect(
+      expiredManager.request(
+        "expired-before-confirm",
+        { mode: "exclusive", ifAvailable: true },
+        (lock) => lock?.name ?? null,
+      ),
+    ).resolves.toBeNull();
+
+    storage.setItem = storeLease;
+    const takeoverManager = createLocalStorageLeaseLockManager({
+      storage,
+      now: () => time,
+      leaseMs: 100,
+      settleMs: 0,
+      createOwnerId: () => "tab-takeover",
+    });
+    await expect(
+      takeoverManager.request(
+        "expired-before-confirm",
+        { mode: "exclusive", ifAvailable: true },
+        (lock) => lock?.name ?? null,
+      ),
+    ).resolves.toBe("expired-before-confirm");
+  });
+
+  it("心跳迟于 expiresAt 时不得复活已经过期的租约", async () => {
+    const storage = createStorage();
+    let time = 1_000;
+    let heartbeat!: () => void;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const manager = createLocalStorageLeaseLockManager({
+      storage,
+      now: () => time,
+      leaseMs: 90,
+      heartbeatMs: 30,
+      settleMs: 0,
+      createOwnerId: () => "tab-late-heartbeat",
+      startHeartbeat: (callback) => {
+        heartbeat = callback;
+        return () => undefined;
+      },
+    });
+
+    const running = manager.request(
+      "late-heartbeat",
+      { mode: "exclusive" },
+      async () => {
+        await gate;
+      },
+    );
+    await Promise.resolve();
+    const key = crossTabLeaseStorageKey("late-heartbeat");
+    expect(JSON.parse(storage.values.get(key) ?? "null")).toMatchObject({
+      expiresAt: 1_090,
+    });
+
+    time = 1_091;
+    heartbeat();
+    expect(JSON.parse(storage.values.get(key) ?? "null")).toMatchObject({
+      ownerId: "tab-late-heartbeat",
+      expiresAt: 1_090,
+    });
+
+    finish();
+    await running;
+  });
 });

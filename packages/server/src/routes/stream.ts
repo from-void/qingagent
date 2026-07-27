@@ -356,6 +356,13 @@ async function handleCommandPost(c: Context) {
     }
     throw error;
   }
+  if (clientMessageClaim) {
+    promise = clientMessageIdempotency.maintain(
+      clientMessageClaim.clientMessageId,
+      clientMessageClaim.token,
+      promise,
+    );
+  }
 
   if (isBackgroundCommand(prepared.command)) {
     void promise.catch((error) => {

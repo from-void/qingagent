@@ -586,6 +586,37 @@ describe("pending submission 持久化与归属", () => {
     expect(claims.filter(Boolean)).toHaveLength(1);
   });
 
+  it("共享 claim storage 写失败时降级为本标签内存 claim 继续发送", async () => {
+    const storage = createStorage();
+    const claimStorage: PendingSessionStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException("storage blocked", "SecurityError");
+      },
+      removeItem: () => undefined,
+    };
+    const manager = createPendingSubmissionManager({
+      storage,
+      claimStorage,
+      lockManager: createLockManager(),
+      claimOwnerId: "tab-restricted",
+      payloadStore: createPayloadStore(),
+      now: () => 1_000,
+    });
+    await manager.create(submissionInput("submission-restricted"));
+
+    await expect(
+      manager.claim("submission-restricted", null, ["queued"]),
+    ).resolves.toBe(true);
+    expect(manager.peekState()).toEqual({
+      submissionId: "submission-restricted",
+      state: "dispatching",
+    });
+    await expect(
+      manager.claim("submission-restricted", null, ["dispatching"]),
+    ).resolves.toBe(false);
+  });
+
   it.each([
     ["截断 JSON", '{"version":2,"submissionId":"broken"'],
     [

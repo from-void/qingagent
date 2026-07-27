@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import {
   extractFirstBalancedArray,
@@ -61,6 +62,32 @@ describe("extractJsonArray 顶层数组候选边界", () => {
 
     expect(extractJsonArray(raw)).toBeNull();
     expect(extractFirstBalancedArray(raw)).toBeNull();
+  });
+
+  it("validate 路径遇到末尾截断时不捞取外层内部的完整对象数组", () => {
+    const raw = [
+      '[{"label":"旧答案","options":[]}]',
+      '最终答案：[{"label":"被截断","options":[{"label":"嵌套选项"}]}',
+    ].join("\n");
+    const validate = (arr: unknown[]) =>
+      arr.every((item) =>
+        item !== null &&
+        typeof item === "object" &&
+        "label" in item &&
+        typeof item.label === "string"
+      );
+
+    expect(extractJsonArray(raw, validate)).toBeNull();
+    expect(extractFirstBalancedArray(raw, validate)).toBeNull();
+  });
+
+  it("在耗时上限内线性处理四千个连续未闭合数组起始符", () => {
+    const raw = "[".repeat(4_000);
+    const startedAt = performance.now();
+
+    expect(extractJsonArray(raw)).toBeNull();
+
+    expect(performance.now() - startedAt).toBeLessThan(10);
   });
 
   it("组合处理散文方括号、小数组、fence 与尾随文本", () => {

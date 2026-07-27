@@ -43,26 +43,37 @@ function startsJsonValue(text: string, arrayStart: number): boolean {
   });
 }
 
-function findNextJsonArrayStart(text: string, fromIndex: number): number {
-  let start = text.indexOf("[", fromIndex);
-  while (start !== -1) {
-    if (startsJsonValue(text, start)) return start;
-    start = text.indexOf("[", start + 1);
-  }
-  return -1;
-}
-
 interface ArrayCandidateScan {
   candidates: Array<{ candidate: string; start: number }>;
   lastUnbalancedStart: number | null;
 }
 
-function findBalancedArrayEnd(text: string, arrayStart: number): number {
+function isJsonLexicalCharacter(ch: string): boolean {
+  return (
+    /\s/.test(ch) ||
+    "{}[],:-+.0123456789eEtrufalsn".includes(ch)
+  );
+}
+
+function scanArrayCandidates(raw: string): ArrayCandidateScan {
+  const text = getLastFenceContent(raw) ?? raw;
+  const candidates: Array<{ candidate: string; start: number }> = [];
+  let lastUnbalancedStart: number | null = null;
+  let arrayStart: number | null = null;
   let depth = 0;
   let inString = false;
   let escape = false;
-  for (let i = arrayStart; i < text.length; i++) {
-    const ch = text[i]!;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const ch = text[index]!;
+
+    if (arrayStart === null) {
+      if (ch === "[" && startsJsonValue(text, index)) {
+        arrayStart = index;
+        depth = 1;
+      }
+      continue;
+    }
 
     if (inString) {
       if (escape) {
@@ -86,34 +97,23 @@ function findBalancedArrayEnd(text: string, arrayStart: number): number {
     }
     if (ch === "]") {
       depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
-function scanArrayCandidates(raw: string): ArrayCandidateScan {
-  const text = getLastFenceContent(raw) ?? raw;
-  const candidates: Array<{ candidate: string; start: number }> = [];
-  let lastUnbalancedStart: number | null = null;
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const arrayStart = findNextJsonArrayStart(text, cursor);
-    if (arrayStart === -1) break;
-    const arrayEnd = findBalancedArrayEnd(text, arrayStart);
-    if (arrayEnd === -1) {
-      lastUnbalancedStart = arrayStart;
-      cursor = arrayStart + 1;
+      if (depth === 0) {
+        candidates.push({
+          candidate: text.slice(arrayStart, index + 1),
+          start: arrayStart,
+        });
+        arrayStart = null;
+      }
       continue;
     }
-    candidates.push({
-      candidate: text.slice(arrayStart, arrayEnd + 1),
-      start: arrayStart,
-    });
-    cursor = arrayEnd + 1;
+    if (!isJsonLexicalCharacter(ch)) {
+      lastUnbalancedStart = arrayStart;
+      arrayStart = null;
+      depth = 0;
+    }
   }
 
+  if (arrayStart !== null) lastUnbalancedStart = arrayStart;
   return { candidates, lastUnbalancedStart };
 }
 

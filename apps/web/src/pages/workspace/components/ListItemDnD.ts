@@ -153,10 +153,16 @@ interface ParsedListItem {
   listType: DraggableListItem["listType"];
   itemIndex: number;
   blockId: string | null;
-  baseContent: PmNode[];
-  childListAttrs: PmNode["attrs"] | null;
-  childListMarks: PmNode["marks"] | null;
-  children: ParsedListItem[];
+  content: ParsedListItemContent[];
+  parentList: ParsedList;
+}
+
+interface ParsedList {
+  listNode: PmNode;
+  listPos: number;
+  items: ParsedListItem[];
+  parentItem: ParsedListItem | null;
+  isNew: boolean;
 }
 
 interface ParsedListTree {
@@ -164,17 +170,21 @@ interface ParsedListTree {
   rootListNode: PmNode;
   listType: DraggableListItem["listType"];
   itemType: DraggableListItem["itemType"];
-  items: ParsedListItem[];
+  rootList: ParsedList;
 }
 
 interface FlattenedListRow {
   rootListPos: number;
-  indexes: number[];
   depth: number;
   itemPos: number;
   blockId: string | null;
   item: ParsedListItem;
+  parentList: ParsedList;
 }
+
+type ParsedListItemContent =
+  | { kind: "node"; node: PmNode }
+  | { kind: "list"; list: ParsedList };
 
 function itemFromBoundary($pos: ResolvedPos): DraggableListItem | null {
   const itemNode = $pos.nodeAfter;
@@ -350,13 +360,20 @@ function isManagedChildList(
   return true;
 }
 
-function parseListItems(
+function parseList(
   listNode: PmNode,
   listPos: number,
   listType: DraggableListItem["listType"],
   itemType: DraggableListItem["itemType"],
-): ParsedListItem[] | null {
-  const items: ParsedListItem[] = [];
+  parentItem: ParsedListItem | null,
+): ParsedList | null {
+  const parsedList: ParsedList = {
+    listNode,
+    listPos,
+    items: [],
+    parentItem,
+    isNew: false,
+  };
   let itemPos = listPos + 1;
 
   for (let itemIndex = 0; itemIndex < listNode.childCount; itemIndex += 1) {
@@ -364,29 +381,7 @@ function parseListItems(
     if (itemNode.type.name !== itemType) return null;
     if (itemNode.childCount <= 0 || itemNode.child(0).type.name !== "paragraph") return null;
 
-    const baseContent: PmNode[] = [];
-    const children: ParsedListItem[] = [];
-    let childListAttrs: PmNode["attrs"] | null = null;
-    let childListMarks: PmNode["marks"] | null = null;
-    let childPos = itemPos + 1;
-
-    for (let childIndex = 0; childIndex < itemNode.childCount; childIndex += 1) {
-      const child = itemNode.child(childIndex);
-      if (isManagedChildList(child, listType, itemType)) {
-        if (!childListAttrs) {
-          childListAttrs = child.attrs;
-          childListMarks = child.marks;
-        }
-        const parsedChildren = parseListItems(child, childPos, listType, itemType);
-        if (!parsedChildren) return null;
-        children.push(...parsedChildren);
-      } else {
-        baseContent.push(child);
-      }
-      childPos += child.nodeSize;
-    }
-
-    items.push({
+    const item: ParsedListItem = {
       itemPos,
       itemNode,
       itemType,
@@ -395,46 +390,72 @@ function parseListItems(
       listType,
       itemIndex,
       blockId: blockIdOf(itemNode),
-      baseContent,
-      childListAttrs,
-      childListMarks,
-      children,
-    });
+      content: [],
+      parentList: parsedList,
+    };
+    let childPos = itemPos + 1;
+
+    for (let childIndex = 0; childIndex < itemNode.childCount; childIndex += 1) {
+      const child = itemNode.child(childIndex);
+      if (isManagedChildList(child, listType, itemType)) {
+        const parsedChildList = parseList(
+          child,
+          childPos,
+          listType,
+          itemType,
+          item,
+        );
+        if (!parsedChildList) return null;
+        item.content.push({ kind: "list", list: parsedChildList });
+      } else {
+        item.content.push({ kind: "node", node: child });
+      }
+      childPos += child.nodeSize;
+    }
+
+    parsedList.items.push(item);
     itemPos += itemNode.nodeSize;
   }
 
-  return items;
+  return parsedList;
 }
 
 function parseRootListTree(root: RootListInfo): ParsedListTree | null {
-  const items = parseListItems(root.rootListNode, root.rootListPos, root.listType, root.itemType);
-  if (!items) return null;
+  const rootList = parseList(
+    root.rootListNode,
+    root.rootListPos,
+    root.listType,
+    root.itemType,
+    null,
+  );
+  if (!rootList) return null;
   return {
     rootListPos: root.rootListPos,
     rootListNode: root.rootListNode,
     listType: root.listType,
     itemType: root.itemType,
-    items,
+    rootList,
   };
 }
 
 function flattenParsedListTree(tree: ParsedListTree): FlattenedListRow[] {
   const rows: FlattenedListRow[] = [];
-  const visit = (items: ParsedListItem[], parentPath: number[]) => {
-    items.forEach((item, index) => {
-      const indexes = [...parentPath, index];
+  const visit = (list: ParsedList, depth: number) => {
+    list.items.forEach((item) => {
       rows.push({
         rootListPos: tree.rootListPos,
-        indexes,
-        depth: indexes.length,
+        depth,
         itemPos: item.itemPos,
         blockId: item.blockId,
         item,
+        parentList: list,
       });
-      visit(item.children, indexes);
+      for (const part of item.content) {
+        if (part.kind === "list") visit(part.list, depth + 1);
+      }
     });
   };
-  visit(tree.items, []);
+  visit(tree.rootList, 1);
   return rows;
 }
 
@@ -451,32 +472,35 @@ function parsedRowToDraggable(row: FlattenedListRow): DraggableListItem {
   };
 }
 
-function pathKey(path: readonly number[]): string {
-  return path.join(".");
-}
-
-function parentItemsAtPath(tree: ParsedListTree, parentPath: readonly number[]): ParsedListItem[] | null {
-  let items = tree.items;
-  for (const index of parentPath) {
-    const item = items[index];
-    if (!item) return null;
-    items = item.children;
+function removeParsedItem(tree: ParsedListTree, row: FlattenedListRow): ParsedListItem | null {
+  const parentList = row.item.parentList;
+  const index = parentList.items.indexOf(row.item);
+  if (index < 0) return null;
+  const [removed] = parentList.items.splice(index, 1);
+  if (parentList.items.length === 0 && parentList !== tree.rootList) {
+    const parentItem = parentList.parentItem;
+    if (!parentItem) return null;
+    const partIndex = parentItem.content.findIndex(
+      (part) => part.kind === "list" && part.list === parentList,
+    );
+    if (partIndex < 0) return null;
+    parentItem.content.splice(partIndex, 1);
   }
-  return items;
-}
-
-function removeItemAtPath(tree: ParsedListTree, path: readonly number[]): ParsedListItem | null {
-  const parent = parentItemsAtPath(tree, path.slice(0, -1));
-  const index = path[path.length - 1];
-  if (!parent || index == null || index < 0 || index >= parent.length) return null;
-  const [removed] = parent.splice(index, 1);
   return removed ?? null;
 }
 
-function insertItemAtPath(tree: ParsedListTree, parentPath: readonly number[], index: number, item: ParsedListItem): boolean {
-  const parent = parentItemsAtPath(tree, parentPath);
-  if (!parent || index < 0 || index > parent.length) return false;
-  parent.splice(index, 0, item);
+function insertParsedItem(
+  destination: { list: ParsedList; index: number },
+  item: ParsedListItem,
+): boolean {
+  if (
+    destination.index < 0 ||
+    destination.index > destination.list.items.length
+  ) {
+    return false;
+  }
+  item.parentList = destination.list;
+  destination.list.items.splice(destination.index, 0, item);
   return true;
 }
 
@@ -516,61 +540,60 @@ function listAttrsWithBlockId(
   return { ...attrs, blockId: allocateWrapperListBlockId(reserved, context) };
 }
 
-function buildListNodeFromItems(
+function buildListNode(
   listTemplateNode: PmNode,
   listType: DraggableListItem["listType"],
   itemType: DraggableListItem["itemType"],
-  listAttrs: PmNode["attrs"],
-  listMarks: PmNode["marks"],
-  items: readonly ParsedListItem[],
+  list: ParsedList,
   reserved: Set<string>,
   context: { parentBlockId: string | null },
 ): PmNode | null {
-  if (items.length === 0) return null;
+  if (list.items.length === 0) return null;
   const listNodeType = listTemplateNode.type.schema.nodes[listType];
   const itemNodeType = listTemplateNode.type.schema.nodes[itemType];
   if (!listNodeType || !itemNodeType) return null;
 
   let generatedChildListCount = 0;
   const buildItem = (item: ParsedListItem): PmNode | null => {
-    if (item.baseContent.length === 0 || item.baseContent[0]?.type.name !== "paragraph") return null;
-    const content = [...item.baseContent];
-    if (item.children.length > 0) {
-      const childAttrs = listAttrsWithBlockId(item.childListAttrs ?? {}, reserved, {
-        listType,
-        parentBlockId: item.blockId,
-        occurrence: generatedChildListCount,
-      });
-      generatedChildListCount += 1;
-      const childList = buildListNodeFromItems(
+    const content: PmNode[] = [];
+    for (const part of item.content) {
+      if (part.kind === "node") {
+        content.push(part.node);
+        continue;
+      }
+      const childList = buildListNode(
         listTemplateNode,
         listType,
         itemType,
-        childAttrs,
-        item.childListMarks ?? [],
-        item.children,
+        part.list,
         reserved,
         { parentBlockId: item.blockId },
       );
       if (!childList) return null;
       content.push(childList);
+      generatedChildListCount += 1;
     }
+    if (content.length === 0 || content[0]?.type.name !== "paragraph") return null;
     return itemNodeType.createChecked(item.itemNode.attrs, Fragment.fromArray(content), item.itemNode.marks);
   };
 
   const itemNodes: PmNode[] = [];
-  for (const item of items) {
+  for (const item of list.items) {
     const nextItem = buildItem(item);
     if (!nextItem) return null;
     itemNodes.push(nextItem);
   }
 
-  const attrsWithId = listAttrsWithBlockId(listAttrs, reserved, {
+  const attrsWithId = listAttrsWithBlockId(list.isNew ? {} : list.listNode.attrs, reserved, {
     listType,
     parentBlockId: context.parentBlockId,
     occurrence: generatedChildListCount,
   });
-  return listNodeType.createChecked(attrsWithId, Fragment.fromArray(itemNodes), listMarks);
+  return listNodeType.createChecked(
+    attrsWithId,
+    Fragment.fromArray(itemNodes),
+    list.isNew ? [] : list.listNode.marks,
+  );
 }
 
 function insertionIndexAfterRemoval(
@@ -659,11 +682,12 @@ function estimateIndentStep(
   rows: readonly FlattenedListRow[],
   getMetrics: (item: DraggableListItem) => ListItemRowMetrics | null,
 ): number {
-  const byPath = new Map(rows.map((row) => [pathKey(row.indexes), row]));
+  const byItem = new Map(rows.map((row) => [row.item, row]));
   let best: number | null = null;
   for (const row of rows) {
     if (row.depth <= 1) continue;
-    const parent = byPath.get(pathKey(row.indexes.slice(0, -1)));
+    const parentItem = row.parentList.parentItem;
+    const parent = parentItem ? byItem.get(parentItem) : null;
     if (!parent) continue;
     const rowMetrics = getMetrics(parsedRowToDraggable(row));
     const parentMetrics = getMetrics(parsedRowToDraggable(parent));
@@ -688,7 +712,7 @@ function resolveRowsAfterSourceRemoval(
   targetRow: FlattenedListRow,
   placement: ListItemDropPlacement,
 ): { rowsAfterRemoval: FlattenedListRow[]; insertFlatIndex: number } | null {
-  const removed = removeItemAtPath(tree, sourceRow.indexes);
+  const removed = removeParsedItem(tree, sourceRow);
   if (!removed) return null;
   const rowsAfterRemoval = flattenParsedListTree(tree);
   const targetIndex = rowsAfterRemoval.findIndex((row) => row.item === targetRow.item);
@@ -869,7 +893,9 @@ export function resolveListItemDropIntent(input: ResolveListItemDropIntentInput)
   if (!zoned) return { kind: "invalid", source };
   const sourceRoot = resolveRootListInfo(state.doc, source);
   const tree = sourceRoot ? parseRootListTree(sourceRoot) : null;
-  const sourceDepth = tree?.items ? flattenParsedListTree(tree).find((row) => row.itemPos === source.itemPos)?.depth : null;
+  const sourceDepth = tree
+    ? flattenParsedListTree(tree).find((row) => row.itemPos === source.itemPos)?.depth
+    : null;
   if (
     sourceDepth != null &&
     zoned.targetDepth === sourceDepth &&
@@ -913,20 +939,25 @@ export function buildListItemReorderTransaction(
     return tr;
   }
 
-  const destination = resolveTreeDestination(after.rowsAfterRemoval, after.insertFlatIndex, nextDepth);
+  const destination = resolveTreeDestination(
+    prepared.tree,
+    after.rowsAfterRemoval,
+    after.insertFlatIndex,
+    nextDepth,
+    prepared.targetRow,
+    placement,
+  );
   if (!destination) return null;
-  if (!insertItemAtPath(prepared.tree, destination.parentPath, destination.index, prepared.sourceRow.item)) return null;
+  if (!insertParsedItem(destination, prepared.sourceRow.item)) return null;
 
   const reserved = collectReservedBlockIds(state.doc);
   let nextRoot: PmNode | null = null;
   try {
-    nextRoot = buildListNodeFromItems(
+    nextRoot = buildListNode(
       prepared.root.rootListNode,
       prepared.root.listType,
       prepared.root.itemType,
-      prepared.root.rootListNode.attrs,
-      prepared.root.rootListNode.marks,
-      prepared.tree.items,
+      prepared.tree.rootList,
       reserved,
       { parentBlockId: null },
     );
@@ -986,25 +1017,82 @@ function buildSameParentListItemReorderTransaction(
 }
 
 function resolveTreeDestination(
+  tree: ParsedListTree,
   rowsAfterRemoval: readonly FlattenedListRow[],
   insertFlatIndex: number,
   targetDepth: number,
-): { parentPath: number[]; index: number } | null {
+  targetRow: FlattenedListRow,
+  placement: ListItemDropPlacement,
+): { list: ParsedList; index: number } | null {
   if (targetDepth < 1) return null;
+  const targetList = targetRow.item.parentList;
+  const targetIndex = targetList.items.indexOf(targetRow.item);
+  if (targetIndex < 0) return null;
+  if (targetDepth === targetRow.depth) {
+    return {
+      list: targetList,
+      index: targetIndex + (placement === "after" ? 1 : 0),
+    };
+  }
+  if (targetDepth === targetRow.depth + 1) {
+    const childList = firstParsedChildList(targetRow.item) ??
+      appendParsedChildList(tree, targetRow.item);
+    return childList ? { list: childList, index: 0 } : null;
+  }
+
+  for (let index = insertFlatIndex; index < rowsAfterRemoval.length; index += 1) {
+    const next = rowsAfterRemoval[index]!;
+    if (next.depth < targetDepth) break;
+    if (next.depth !== targetDepth) continue;
+    const nextIndex = next.item.parentList.items.indexOf(next.item);
+    return nextIndex < 0
+      ? null
+      : { list: next.item.parentList, index: nextIndex };
+  }
+
   const prev = rowsAfterRemoval[insertFlatIndex - 1] ?? null;
   if (!prev) {
-    return targetDepth === 1 ? { parentPath: [], index: 0 } : null;
+    return targetDepth === 1 ? { list: tree.rootList, index: 0 } : null;
   }
   if (targetDepth > prev.depth + 1) return null;
   if (targetDepth === prev.depth + 1) {
-    return { parentPath: prev.indexes, index: 0 };
+    const childList = firstParsedChildList(prev.item) ??
+      appendParsedChildList(tree, prev.item);
+    return childList ? { list: childList, index: 0 } : null;
   }
-  const siblingIndex = prev.indexes[targetDepth - 1];
-  if (siblingIndex == null) return null;
-  return {
-    parentPath: prev.indexes.slice(0, targetDepth - 1),
-    index: siblingIndex + 1,
+
+  for (let index = insertFlatIndex - 1; index >= 0; index -= 1) {
+    const previous = rowsAfterRemoval[index]!;
+    if (previous.depth < targetDepth) break;
+    if (previous.depth !== targetDepth) continue;
+    const previousIndex = previous.item.parentList.items.indexOf(previous.item);
+    return previousIndex < 0
+      ? null
+      : { list: previous.item.parentList, index: previousIndex + 1 };
+  }
+  return null;
+}
+
+function firstParsedChildList(item: ParsedListItem): ParsedList | null {
+  for (const part of item.content) {
+    if (part.kind === "list") return part.list;
+  }
+  return null;
+}
+
+function appendParsedChildList(
+  tree: ParsedListTree,
+  parentItem: ParsedListItem,
+): ParsedList {
+  const list: ParsedList = {
+    listNode: tree.rootList.listNode,
+    listPos: -1,
+    items: [],
+    parentItem,
+    isNew: true,
   };
+  parentItem.content.push({ kind: "list", list });
+  return list;
 }
 
 function listItemDropLineDecoration(meta: Extract<ListItemDndMeta, { kind: "set" }>): Decoration {

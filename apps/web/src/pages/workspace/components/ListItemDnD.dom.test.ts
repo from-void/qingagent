@@ -570,6 +570,73 @@ describe("列表行 DnD 事务", () => {
     expect(() => editor.state.doc.check()).not.toThrow();
   });
 
+  it("跨级移动保留多个子列表及夹层正文的原顺序、ID 和属性", () => {
+    const content = doc([
+      orderedList("root", 1, [
+        listItem("li-parent", "父项", [
+          {
+            ...orderedList("nested-first", 3, [listItem("li-first", "第一组")]),
+            attrs: {
+              blockId: "nested-first",
+              start: 3,
+              listStyle: "lower-alpha",
+            },
+          },
+          paragraph("between", "夹层正文"),
+          {
+            ...orderedList("nested-second", 8, [listItem("li-second", "第二组")]),
+            attrs: {
+              blockId: "nested-second",
+              start: 8,
+              listStyle: "lower-roman",
+            },
+          },
+        ]),
+        listItem("li-source", "待移动"),
+      ]),
+      paragraph("tail", ""),
+    ]);
+    const editor = createEditor(content);
+    const before = JSON.stringify(normalized(editor));
+
+    dispatchListItemReorder(editor, "li-source", "li-second", "before", 2);
+
+    const out = firstList(normalized(editor));
+    const parent = out.content[0]!;
+    expect(parent.content.map((node) => node.type)).toEqual([
+      "paragraph",
+      "orderedList",
+      "paragraph",
+      "orderedList",
+    ]);
+    const firstNested = parent.content[1];
+    const between = parent.content[2];
+    const secondNested = parent.content[3];
+    expect(firstNested?.type).toBe("orderedList");
+    expect(firstNested?.type === "orderedList" ? firstNested.attrs : null).toMatchObject({
+      blockId: "nested-first",
+      start: 3,
+      listStyle: "lower-alpha",
+    });
+    expect(firstNested?.type === "orderedList" ? itemIds(firstNested) : []).toEqual([
+      "li-first",
+    ]);
+    expect(itemText(between as never)).toBe("夹层正文");
+    expect(secondNested?.type).toBe("orderedList");
+    expect(secondNested?.type === "orderedList" ? secondNested.attrs : null).toMatchObject({
+      blockId: "nested-second",
+      start: 8,
+      listStyle: "lower-roman",
+    });
+    expect(secondNested?.type === "orderedList" ? itemIds(secondNested) : []).toEqual([
+      "li-source",
+      "li-second",
+    ]);
+    expect(safeParsePmDoc(normalized(editor)).success).toBe(true);
+    expect(editor.commands.undo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(before);
+  });
+
   it("文档末尾就是 list 时,跨级后一次 undo 完整回到 before,防 TrailingNode 污染历史", () => {
     const editor = createEditor(
       doc([bulletList("list", [listItem("li-a", "A"), listItem("li-b", "B"), listItem("li-c", "C")])]),

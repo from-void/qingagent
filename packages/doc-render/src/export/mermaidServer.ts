@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
+import { detectType, graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import {
   isPoisonedMermaidSvg,
   normalizeMermaidQuotes,
@@ -76,6 +76,7 @@ const WARM_THEME_VARS = {
 // 导出 SVG 会脱离宿主文档单独栅格化；与已验证的 generateSvg 路径一致，交给系统
 // sans-serif 做中文字体回退，避免依赖 Google Fonts 的家族名。
 const DIAGRAM_FONT = "sans-serif";
+export const SPECIALIZED_DIAGRAM_OVERLAY_NOTICE = "specialized-diagram-overlay";
 interface MermaidRenderInput {
   source: string;
   normalizedSource: string;
@@ -394,6 +395,18 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   }
 }
 
+function requiresOfficialMermaidLayout(ref: DiagramRef): boolean {
+  const type = detectType(ref.source);
+  return ref.lang === "mermaid" && type !== null && type !== "flowchart" && hasOverlay(ref.overlay);
+}
+
+/** 导出响应据此提示：专有语义图保留官方 Mermaid 语义，但不会应用不兼容的画布 overlay。 */
+export function hasSpecializedDiagramOverlayFallback(document: ExportDocument): boolean {
+  const refs: DiagramRef[] = [];
+  collectDiagrams(structuredClone(document), refs);
+  return refs.some(requiresOfficialMermaidLayout);
+}
+
 /**
  * 导出前预处理:Mermaid 缺缓存时服务端补渲染；drawio 使用客户端安全 SVG 缓存。
  * PDF / HTML 导出在序列化前调用,确保图表以真实渲染样子导出,而非回退源码。
@@ -443,6 +456,15 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
     if (!mermaidSvg) {
       // 旧缓存可能只有框线没有文字；补渲染失败时必须清空，强制导出回退源码。
       ref.assign(null);
+      return;
+    }
+    if (requiresOfficialMermaidLayout(ref)) {
+      getDocRenderLogger().warn("Specialized Mermaid diagram overlay skipped; official layout preserved", {
+        blockId: ref.blockId,
+        diagramType: diagramTypeOf(ref.source),
+        sourceSummary: summarizeDiagramSource(ref.source),
+      });
+      ref.assign(mermaidSvg);
       return;
     }
     if (hasOverlay(ref.overlay)) {

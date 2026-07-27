@@ -678,6 +678,10 @@ export function safeMermaid(value: string): { id: string; label: string } {
 export function graphToSvg(source: string, overlay: DiagramOverlay | null | undefined = undefined): string | null {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return null;
+  // State/ER/Class/mindmap 都有通用节点/边字段无法表达的专有语义。带 overlay 时若继续
+  // 生成通用 SVG，会丢状态形状、实体属性、类成员、基数或树关系；返回 null 让导出层
+  // 保留已生成的官方 Mermaid SVG。flowchart 的 overlay 才由这里完整接管。
+  if (parsed.model.type !== "flowchart" && hasGraphSvgOverlay(overlay)) return null;
   const edges = modelEdges(parsed.model);
   const flattened = modelNodes(parsed.model);
   const hasFlowSubgraphs = parsed.model.type === "flowchart" && parsed.model.subgraphs.length > 0;
@@ -720,6 +724,14 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
     )
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${clusterSvg}${edgeSvg}${nodeSvg}</svg>`;
+}
+
+function hasGraphSvgOverlay(overlay: DiagramOverlay | null | undefined): boolean {
+  return !!overlay && (
+    Object.keys(overlay.positions ?? {}).length > 0 ||
+    Object.keys(overlay.styles ?? {}).length > 0 ||
+    Object.keys(overlay.edgeStyles ?? {}).length > 0
+  );
 }
 
 function makeFlowchartAdapter(): DiagramAdapter {

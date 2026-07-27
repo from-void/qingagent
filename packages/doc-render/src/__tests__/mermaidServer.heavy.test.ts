@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderDiagramSvgs, withRenderedDiagrams } from "../export/mermaidServer.js";
+import {
+  hasSpecializedDiagramOverlayFallback,
+  renderDiagramSvgs,
+  withRenderedDiagrams,
+} from "../export/mermaidServer.js";
 import { ExportBusyError, ExportDeadlineExceededError } from "../export/exportSlot.js";
 import { toHtml } from "../export/toHtml.js";
 import { setDocRenderLogger } from "../renderLogger.js";
@@ -165,6 +169,7 @@ describe("mermaidServer 引号 normalization", () => {
       }],
     } as unknown as PmDoc;
 
+    expect(hasSpecializedDiagramOverlayFallback(document)).toBe(true);
     const prepared = await withRenderedDiagrams(document) as PmDoc;
     const diagram = prepared.content[0] as { attrs: { svg: string | null } };
     expect(diagram.attrs.svg).toBeNull();
@@ -175,6 +180,53 @@ describe("mermaidServer 引号 normalization", () => {
     expect(html).toContain("code-block");
     expect(html).toContain("C[未闭合");
     expect(html).not.toContain('<div class="pm-diagram">');
+  });
+
+  it("专有语义图带 overlay 时保留官方 Mermaid SVG，并提示未应用画布布局", async () => {
+    const warn = vi.fn();
+    setDocRenderLogger({ warn });
+    const mermaid: FakeMermaid = {
+      initialize: vi.fn(),
+      parse: vi.fn(async () => true),
+      render: vi.fn(async (id: string) => ({
+        svg: `<svg viewBox="0 0 320 180" data-official="${id}"><text>官方语义</text></svg>`,
+      })),
+    };
+    installFakeBrowser(mermaid);
+    const sources = [
+      "stateDiagram-v2\n  [*] --> Active\n  Active --> [*]\n",
+      "erDiagram\n  CUSTOMER {\n    string name PK\n  }\n  CUSTOMER ||--o{ ORDER : places\n",
+      "classDiagram\n  class Customer {\n    +String name\n  }\n  Customer <|-- VipCustomer\n",
+      "mindmap\n  root\n    child\n",
+    ];
+    const document = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: sources.map((source, index) => ({
+        type: "diagram",
+        attrs: {
+          blockId: `specialized-${index}`,
+          lang: "mermaid",
+          source,
+          svg: null,
+          overlay: { positions: { CUSTOMER: { x: 120, y: 80 } } },
+        },
+      })),
+    } as unknown as PmDoc;
+
+    const prepared = await withRenderedDiagrams(document) as PmDoc;
+    for (const node of prepared.content as Array<{ attrs: { svg: string | null } }>) {
+      expect(node.attrs.svg).toContain("data-official=");
+      expect(node.attrs.svg).toContain("官方语义");
+    }
+    expect(warn).toHaveBeenCalledTimes(sources.length);
+    expect(warn).toHaveBeenCalledWith(
+      "Specialized Mermaid diagram overlay skipped; official layout preserved",
+      expect.objectContaining({
+        blockId: "specialized-1",
+        diagramType: "erDiagram",
+      }),
+    );
   });
 
   it("合法 flowchart/sequence 原文 parse 成功时不改写引号正文", async () => {

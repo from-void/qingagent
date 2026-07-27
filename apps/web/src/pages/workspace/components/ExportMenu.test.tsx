@@ -98,6 +98,30 @@ describe("ExportMenu", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/export/session-1?format=html");
   });
 
+  it("专有图表回退官方布局时在成功 toast 提示画布布局未应用", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      new Blob(["<html></html>"]),
+      { headers: { "X-Qingagent-Export-Notice": "specialized-diagram-overlay" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const onAction = vi.fn();
+    await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction} />);
+
+    const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-html"]');
+    if (!item) throw new Error("HTML export item not found");
+    await act(async () => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(
+      "HTML 已生成 · 专有图表已保留完整语义，画布布局未应用。",
+      7000,
+    );
+  });
+
   it("HTML 导出先等待 drawio 补缓存并显示逐块进度，再保存和请求导出", async () => {
     const events: string[] = [];
     let finishPreparation: (() => void) | undefined;

@@ -2,7 +2,9 @@ import { Hono, type Context } from "hono";
 import { loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
 import {
   getBrowserCapabilityState,
+  hasSpecializedDiagramOverlayFallback,
   hasHtmlToPdfRenderer,
+  SPECIALIZED_DIAGRAM_OVERLAY_NOTICE,
   toDocx,
   toHtml,
   toMarkdown,
@@ -70,6 +72,9 @@ exportRoutes.get("/export/:sessionId", async (c) => {
     forwardedHost: c.req.header("x-forwarded-host"),
     forwardedProto: c.req.header("x-forwarded-proto"),
   });
+  const specializedOverlayFallback =
+    (format === "pdf" || format === "docx" || format === "html") &&
+    hasSpecializedDiagramOverlayFallback(document);
   let body: BodyInit;
   try {
     body = await renderExport(format, document, title, baseUrl);
@@ -111,6 +116,9 @@ exportRoutes.get("/export/:sessionId", async (c) => {
       "Content-Type": CONTENT_TYPES[format],
       "Content-Disposition": contentDisposition(filename),
       "Cache-Control": "no-store",
+      ...(specializedOverlayFallback
+        ? { "X-Qingagent-Export-Notice": SPECIALIZED_DIAGRAM_OVERLAY_NOTICE }
+        : {}),
     },
   });
 });

@@ -1347,7 +1347,7 @@ describe("diagram-engine", () => {
     expect(parsed.nodes.find((node) => node.id === "A")?.label).toBe("一\n二");
   });
 
-  it("graphToSvg 渲染五类图并保留 overlay 样式与 SVG 安全", () => {
+  it("graphToSvg 渲染五类图，flowchart 保留 overlay 样式与 SVG 安全", () => {
     const sources = [
       "flowchart TD\n  A[<危险>] -->|确认| B[结束]\n",
       "stateDiagram-v2\n  state \"打开\" as Open\n  Open --> Closed : close\n",
@@ -1356,7 +1356,7 @@ describe("diagram-engine", () => {
       "mindmap\n  root\n    child\n",
     ];
     for (const source of sources) {
-      const svg = graphToSvg(source, { positions: { A: { x: 99, y: 77 } }, styles: { A: { fill: "#d7e7f6", stroke: "#123456", textColor: "#111111" } } });
+      const svg = graphToSvg(source);
       expect(svg).toMatch(/^<svg[^>]+viewBox=/);
       expect(svg).toContain("<rect");
       expect(svg).toContain("<path");
@@ -1372,6 +1372,23 @@ describe("diagram-engine", () => {
     expect(flowSvg).toContain('font-family="sans-serif"');
     expect(flowSvg).not.toContain("Noto Serif SC");
     expect(flowSvg).not.toContain("Songti SC");
+  });
+
+  it("专有语义图带 overlay 时拒绝通用 SVG，交给官方 Mermaid 渲染", () => {
+    const sources = [
+      "stateDiagram-v2\n  [*] --> Active\n  Active --> [*]\n",
+      "erDiagram\n  CUSTOMER {\n    string name PK\n  }\n  CUSTOMER ||--o{ ORDER : places\n",
+      "classDiagram\n  class Customer {\n    +String name\n  }\n  Customer <|-- VipCustomer\n",
+      "mindmap\n  root\n    child\n",
+    ];
+    const overlay = { positions: { CUSTOMER: { x: 120, y: 80 } } };
+
+    for (const source of sources) {
+      expect(graphToSvg(source), source).not.toBeNull();
+      expect(graphToSvg(source, overlay), source).toBeNull();
+    }
+
+    expect(graphToSvg("flowchart TD\n  A --> B\n", { positions: { A: { x: 120, y: 80 } } })).not.toBeNull();
   });
 
   it("解析经典色板 init 与 classDef/class,graphToSvg 按节点样式和图级色板上色", () => {

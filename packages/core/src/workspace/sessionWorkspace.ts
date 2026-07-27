@@ -206,6 +206,7 @@ interface CacheEntry {
   lastAccessAt: number;
   leaseCount: number;
   pendingDestroy: boolean;
+  destroyStarted: boolean;
 }
 
 export interface SessionWorkspaceLease {
@@ -220,6 +221,8 @@ export interface SessionWorkspaceLease {
  *  上限驱逐防长寿进程内存膨胀(Workspace 本体很轻,512 足够宽裕)。 */
 const MAX_CACHED_WORKSPACES = 512;
 const cache = new Map<string, CacheEntry>();
+/** 已从可获取缓存摘除、但仍被旧租约引用的 entry。 */
+const retiredEntries = new Map<string, Set<CacheEntry>>();
 /** 同一 key 正在首建的 Promise:并发去重,避免重复构建游离实例(见 getSessionWorkspace)。 */
 const inflight = new Map<string, Promise<CacheEntry>>();
 /** acquire 发起到租约落账之间的同步预留，封住 Promise continuation 前的失效竞态。 */
@@ -244,13 +247,29 @@ async function destroyWorkspace(workspace: Workspace): Promise<void> {
 }
 
 function removeAndDestroyEntry(key: string, entry: CacheEntry): void {
+  if (entry.destroyStarted) return;
   if (cache.get(key) === entry) cache.delete(key);
+  const retired = retiredEntries.get(key);
+  if (retired) {
+    retired.delete(entry);
+    if (retired.size === 0) retiredEntries.delete(key);
+  }
+  entry.destroyStarted = true;
   destroyWorkspaceQuietly(entry.workspace);
   trimGenerationKey(key);
 }
 
 function markEntryForDestroy(key: string, entry: CacheEntry): void {
   entry.pendingDestroy = true;
+  // 失效 entry 立即退出可获取缓存；旧 lease 只负责延迟它自己的销毁，
+  // 后续 acquire 必须重新装配凭据、技能和资料库挂载。
+  if (cache.get(key) === entry) cache.delete(key);
+  let retired = retiredEntries.get(key);
+  if (!retired) {
+    retired = new Set();
+    retiredEntries.set(key, retired);
+  }
+  retired.add(entry);
   if (entry.leaseCount === 0 && !pendingAcquires.has(key)) {
     removeAndDestroyEntry(key, entry);
   }
@@ -284,9 +303,10 @@ function releaseAcquireReservation(key: string): void {
   const next = (pendingAcquires.get(key) ?? 0) - 1;
   if (next > 0) pendingAcquires.set(key, next);
   else pendingAcquires.delete(key);
-  const entry = cache.get(key);
-  if (entry?.pendingDestroy && entry.leaseCount === 0 && !pendingAcquires.has(key)) {
-    removeAndDestroyEntry(key, entry);
+  if (!pendingAcquires.has(key)) {
+    for (const entry of [...(retiredEntries.get(key) ?? [])]) {
+      if (entry.leaseCount === 0) removeAndDestroyEntry(key, entry);
+    }
   }
   trimGenerationKey(key);
 }
@@ -300,13 +320,10 @@ function evictIfNeeded(): void {
     if (!oldest) return;
     const [oldestKey, oldestEntry] = oldest;
     if (oldestEntry.leaseCount > 0 || pendingAcquires.has(oldestKey)) {
-      oldestEntry.pendingDestroy = true;
+      markEntryForDestroy(oldestKey, oldestEntry);
+    } else {
+      removeAndDestroyEntry(oldestKey, oldestEntry);
     }
-    const idle = entries.find(
-      ([key, entry]) => entry.leaseCount === 0 && !pendingAcquires.has(key),
-    );
-    if (!idle) return;
-    removeAndDestroyEntry(idle[0], idle[1]);
   }
 }
 
@@ -323,6 +340,7 @@ function decrementActiveBuild(key: string): void {
 function trimGenerationKey(key: string): void {
   if (
     !cache.has(key) &&
+    !retiredEntries.has(key) &&
     !inflight.has(key) &&
     !activeBuilds.has(key) &&
     !pendingAcquires.has(key)
@@ -334,6 +352,7 @@ function trimGenerationKey(key: string): void {
 /** 仅测试用:清空缓存。 */
 export function __resetSessionWorkspaceCacheForTest(): void {
   cache.clear();
+  retiredEntries.clear();
   inflight.clear();
   pendingAcquires.clear();
   generation.clear();
@@ -351,14 +370,18 @@ export function __sessionWorkspaceCacheStatsForTest(): {
   pendingDestroyCount: number;
   generationKeys: string[];
 } {
+  const entries = [
+    ...cache.values(),
+    ...[...retiredEntries.values()].flatMap((retired) => [...retired]),
+  ];
   return {
     cacheSize: cache.size,
     inflightSize: inflight.size,
     generationSize: generation.size,
     activeBuildSize: activeBuilds.size,
-    leaseCount: [...cache.values()].reduce((sum, entry) => sum + entry.leaseCount, 0),
+    leaseCount: entries.reduce((sum, entry) => sum + entry.leaseCount, 0),
     pendingAcquireCount: [...pendingAcquires.values()].reduce((sum, count) => sum + count, 0),
-    pendingDestroyCount: [...cache.values()].filter((entry) => entry.pendingDestroy).length,
+    pendingDestroyCount: entries.filter((entry) => entry.pendingDestroy).length,
     generationKeys: [...generation.keys()],
   };
 }
@@ -470,6 +493,7 @@ async function getSessionWorkspaceEntry(
         lastAccessAt: Date.now(),
         leaseCount: 0,
         pendingDestroy: false,
+        destroyStarted: false,
       };
       cache.set(key, entry);
       evictIfNeeded();

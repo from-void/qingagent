@@ -332,20 +332,29 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("活动租约让失效延迟到最后一个前台或后台使用者释放", async () => {
-    const lease = await acquireSessionWorkspace("sess-leased-invalidate", opts);
+  it("活动租约仅延迟旧实例销毁，下轮重新装配 workspace 与挂载", async () => {
+    const resolveFolderSources = vi.fn(() => [] as FolderSourceRecord[]);
+    const leaseOpts = { ...opts, resolveFolderSources };
+    const lease = await acquireSessionWorkspace("sess-leased-invalidate", leaseOpts);
     const releaseBackground = lease.retain();
     const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
 
     invalidateSessionWorkspace("sess-leased-invalidate");
     expect(destroy).not.toHaveBeenCalled();
     expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      cacheSize: 0,
       leaseCount: 2,
       pendingDestroyCount: 1,
     });
 
-    const nextTurn = await acquireSessionWorkspace("sess-leased-invalidate", opts);
-    expect(nextTurn.workspace).toBe(lease.workspace);
+    const nextTurn = await acquireSessionWorkspace("sess-leased-invalidate", leaseOpts);
+    expect(nextTurn.workspace).not.toBe(lease.workspace);
+    expect(nextTurn.workspace.sandbox).not.toBe(lease.workspace.sandbox);
+    expect(resolveFolderSources).toHaveBeenCalledTimes(2);
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      cacheSize: 1,
+      pendingDestroyCount: 1,
+    });
     lease.release();
     nextTurn.release();
     expect(destroy).not.toHaveBeenCalled();

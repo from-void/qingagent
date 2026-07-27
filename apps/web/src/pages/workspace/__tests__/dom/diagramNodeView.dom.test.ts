@@ -114,6 +114,17 @@ async function unmount(editor: Editor) {
   editor.destroy();
 }
 
+// 源码面板的「完成/取消」是完整点击手势:按下 → 抬起 → click。
+// 面板会在动作里当拍换回预览视图,这里如实重放整串事件,才能守住"残余事件不击穿预览层"。
+async function pressDiagramActionButton(button: HTMLButtonElement) {
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await flush();
+}
+
 function diagramDoc(
   source: string,
   svg: string | null = null,
@@ -1105,15 +1116,52 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       });
       const complete = Array.from(editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-actions button"))
         .find((button) => button.textContent?.trim() === "完成")!;
-      await act(async () => {
-        complete.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      });
+      await pressDiagramActionButton(complete);
       await flush(20);
       expect(firstDiagramAttrs(editor)?.source).toContain('value="入口"');
       expect(firstDiagramAttrs(editor)?.svg).toMatch(/^<svg\b/);
       const persisted = normalizePmDoc(editor.getJSON());
       const persistedBlock = persisted.content.find((block) => block.type === "diagram");
       expect(persistedBlock?.type === "diagram" ? persistedBlock.attrs.svg : null).toMatch(/^<svg\b/);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it.each([["完成"], ["取消"]])("源码面板「%s」在 mousedown 当拍不切视图,残余事件不会击穿预览层", async (label) => {
+    // 用非节点-边图:这类图没有画布可视化编辑器,双击走 Mermaid 源码面板。
+    const editor = await mountEditor(diagramDoc("sequenceDiagram\n  A->>B: hi"));
+    try {
+      const diagramView = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-view");
+      expect(diagramView).not.toBeNull();
+      await act(async () => {
+        diagramView!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        diagramView!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+      });
+      await flush();
+      const textarea = editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source");
+      expect(textarea).not.toBeNull();
+
+      const button = Array.from(editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-actions button"))
+        .find((item) => item.textContent?.trim() === label)!;
+      expect(button).toBeDefined();
+
+      // 按下当拍绝不能执行动作:否则面板立刻换回预览,同一手势剩下的 mouseup/click
+      // 会落到新挂载的预览画布上(预览层点击=进全屏),点"取消"反而进全屏。
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      });
+      await flush();
+      expect(editor.view.dom.querySelector(".pm-diagram-source")).not.toBeNull();
+
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flush();
+      expect(editor.view.dom.querySelector(".pm-diagram-source")).toBeNull();
+      expect(document.querySelector("[aria-label='图表全屏查看']")).toBeNull();
+      expect(document.querySelector(".graph-diagram-editor")).toBeNull();
     } finally {
       await unmount(editor);
     }
@@ -1580,9 +1628,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source")?.value).toBe(pasted);
 
       const doneBtn = editor.view.dom.querySelector<HTMLButtonElement>(".pm-diagram-btn");
-      await act(async () => {
-        doneBtn!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      });
+      await pressDiagramActionButton(doneBtn!);
       await flush(4);
       expect(firstDiagramAttrs(editor)?.source).toBe(pasted);
     } finally {
@@ -1614,9 +1660,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await flush();
       // 点「完成」
       const doneBtn = editor.view.dom.querySelector<HTMLButtonElement>(".pm-diagram-btn");
-      await act(async () => {
-        doneBtn!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      });
+      await pressDiagramActionButton(doneBtn!);
       await flush();
       // diagram 节点应已被删除
       expect(firstDiagramAttrs(editor)).toBeNull();

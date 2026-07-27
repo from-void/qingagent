@@ -2329,6 +2329,10 @@
   #view-workspace .wf-doc hr{
     border:none;height:1px;background:var(--line-2);margin:16px 0;
   }
+  /* 分隔线不做选中态视觉(ProseMirror 默认给选中节点描一圈系统蓝);编辑语义不变。 */
+  #view-workspace .wf-doc hr.ProseMirror-selectednode{
+    outline:none;box-shadow:none;background:var(--line-2);
+  }
   #view-workspace .wf-doc a{color:var(--mark);text-decoration:underline;text-decoration-thickness:.5px;text-underline-offset:2px}
   #view-workspace .wf-doc pre.md-code-block{
     background:var(--bg-subtle);border:1px solid var(--line-1);

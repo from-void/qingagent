@@ -970,3 +970,200 @@
 .qj-sheet-body .sm-verify--fail {
   color: var(--qj-cinnabar);
 }
+
+/* —— 厂商卡(vd-*):DeepSeek / Kimi 并列;每卡只给一个强调信号 + 一个主动作 ——
+   使用中 = 金描边 + 卡底全宽金面「使用中」;已配未用 = 卡底「启 用」;
+   未配置 = 介绍文案 + 卡底「去配置」。右上角固定低调「配 置」小钮。 */
+.qj-sheet-body .vd-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-right: 6px;
+  margin-bottom: 12px;
+}
+.qj-sheet-body .md-card.vd-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 126px;
+  margin: 0;
+  padding: 13px 14px 14px;
+}
+.qj-sheet-body .md-card.vd-card + .md-card.vd-card {
+  margin-top: 0;
+}
+.qj-sheet-body .md-card.vd-card--on {
+  border-color: var(--qj-cinnabar);
+  box-shadow: inset 0 0 0 1px var(--qj-cinnabar), 0 6px 18px rgba(8, 6, 4, 0.28);
+}
+.qj-sheet-body .vd-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  /* 给右上角「配 置」小钮让位,长厂商名也不会压到它下面 */
+  padding-right: 52px;
+}
+.qj-sheet-body .vd-card .md-card-title {
+  margin: 0;
+}
+.qj-sheet-body .vd-cfg {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.qj-sheet-body .vd-card .md-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.qj-sheet-body .vd-note {
+  margin: -4px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .vd-intro {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-desc);
+}
+.qj-sheet-body .vd-intro em {
+  font-style: normal;
+  color: var(--qj-cinnabar-lite);
+}
+.qj-sheet-body .sm-btn.vd-cta {
+  width: 100%;
+  /* 卡内容高矮不一时,主动作一律贴卡底对齐 */
+  margin-top: auto;
+}
+.qj-sheet-body .sm-btn.vd-cta--rec {
+  border-color: var(--qj-cinnabar);
+  background: rgba(200, 169, 106, 0.2);
+  color: var(--qj-cinnabar-lite);
+}
+.qj-sheet-body .sm-btn.vd-cta--using:disabled {
+  opacity: 1;
+  cursor: default;
+  border-color: var(--qj-cinnabar);
+  background: linear-gradient(180deg, rgba(200, 169, 106, 0.3), rgba(200, 169, 106, 0.16));
+  color: var(--qj-cinnabar-lite);
+}
+@media (max-width: 560px) {
+  .qj-sheet-body .vd-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 零配置引导条 */
+.qj-sheet-body .vd-onboard {
+  margin: 0 6px 12px 0;
+  padding: 9px 14px;
+  border: 1px dashed var(--qj-seal-red-deep);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-desc);
+}
+.qj-sheet-body .vd-onboard b {
+  color: var(--qj-cinnabar);
+  font-weight: 700;
+}
+
+/* 档位 chip:厂商名右侧,收起只有档名 */
+.qj-sheet-body .vd-chipwrap {
+  position: relative;
+  display: inline-flex;
+}
+.qj-sheet-body .vd-chip {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 0;
+  cursor: pointer;
+  border: 1px solid var(--qj-switch-border);
+  background: rgba(236, 227, 208, 0.06);
+  color: var(--qj-switch-text);
+  font-family: var(--font-zh-serif);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.qj-sheet-body .vd-chip::after {
+  content: "▾";
+  font-size: 9px;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .vd-chip:hover:not(:disabled),
+.qj-sheet-body .vd-chip:focus-visible {
+  border-color: var(--qj-cinnabar);
+  background: var(--qj-switch-active-bg);
+}
+.qj-sheet-body .vd-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 档位浮层:portal 到 body,沿用 skin-select 暗墨浮层的令牌与 z-index,
+   这里只改成两行(档名 + 说明/价格)的排布。 */
+.md-tier-menu {
+  min-width: 236px;
+}
+.skin-select__option.md-tier-option {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 0;
+  padding: 8px 10px;
+}
+.md-tier-option .md-tier-name {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.md-tier-option[aria-selected="true"] .md-tier-name {
+  color: var(--skin-menu-accent);
+}
+.md-tier-option .md-tier-desc {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--skin-menu-muted);
+}
+
+/* —— 二级配置页:同弹层内的视图切换,入场节奏对齐 qj-panel-in —— */
+.qj-sheet-body .vd-subpage {
+  animation: qj-panel-in 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.qj-sheet-body .vd-subpage .sm-config {
+  border-top: 0;
+  padding-top: 0;
+}
+.qj-sheet-body .vd-keyline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--qj-switch-border);
+}
+.qj-sheet-body .vd-keyline .md-keysrc {
+  font-size: 11.5px;
+  color: var(--qj-switch-text);
+  min-width: 0;
+}
+.qj-sheet-body .vd-keyline .md-keyops {
+  margin-left: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .qj-sheet-body .vd-subpage {
+    animation: none;
+  }
+}

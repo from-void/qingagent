@@ -282,58 +282,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         if (!edit) return { text: "", chips: [], files: [], richText: "", skills: [] };
         const chipNodes = edit.querySelectorAll<HTMLElement>(".chat-chip");
         const chips: ChatChipSpec[] = Array.from(chipNodes).map(readChipNode);
-        // Extract only user-typed text, excluding chip visual content.
-        // Clone the node, strip chip spans, then read innerText so the
-        // backend receives a clean message without §/×/label noise.
-        const clone = edit.cloneNode(true) as HTMLElement;
-        for (const c of clone.querySelectorAll<HTMLElement>(".chat-chip")) {
-          // 长文本/批注卡片:原位展开完整载荷,让 sendMessage.text 与后端/模型都拿到真实正文；
-          // 其余引用型 chip 仍剔除，仅由 richText + chips 协议表达。
-          if (
-            (c.dataset.kind === "longtext" || c.dataset.kind === "annotation")
-            && c.dataset.text != null
-          ) {
-            c.replaceWith(document.createTextNode(c.dataset.text));
-          } else {
-            c.remove();
-          }
-        }
-        // Preserve newlines so sent messages retain line breaks
-        const text = (clone.innerText || clone.textContent || "").trim();
-
-        // Build richText: walk childNodes in document order, emitting
-        // text as-is and chip placeholders like {{chip:0}}.
-        // This preserves the interleaved order for inline rendering.
-        let chipIndex = 0;
-        const richParts: string[] = [];
-        function walk(node: Node) {
-          if (
-            node.nodeType === Node.ELEMENT_NODE &&
-            (node as HTMLElement).classList?.contains("chat-chip")
-          ) {
-            richParts.push(`{{chip:${chipIndex++}}}`);
-            return;
-          }
-          if (node.nodeType === Node.TEXT_NODE) {
-            richParts.push(node.textContent ?? "");
-            return;
-          }
-          if (
-            node.nodeType === Node.ELEMENT_NODE &&
-            (node as HTMLElement).tagName === "BR"
-          ) {
-            richParts.push("\n");
-            return;
-          }
-          // Recurse into child nodes (e.g. divs created by Enter key)
-          for (const child of node.childNodes) {
-            walk(child);
-          }
-        }
-        for (const child of edit.childNodes) {
-          walk(child);
-        }
-        const richText = richParts.join("").trim();
+        // 纯文本、气泡 richText 与模型上下文共用同一个 DOM walker；不能依赖游离 clone
+        // 的 innerText 布局计算，否则 contenteditable 用相邻 div 表示的换行会被吞掉。
+        const { text, richText } = serializeChatInputContent(edit);
 
         // 本轮 skills 直接从正文里的技能占位 chip 反推(按 skillId 去重),发后端做检索预加载/记录。
         const seenSkill = new Set<string>();
@@ -1374,6 +1325,73 @@ function removeAttachChips(edit: HTMLElement, attachmentId: string): void {
       chip.remove();
     }
   }
+}
+
+const CHAT_INPUT_BLOCK_TAGS = new Set([
+  "ADDRESS",
+  "BLOCKQUOTE",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "LI",
+  "OL",
+  "P",
+  "PRE",
+  "UL",
+]);
+
+function serializeChatInputContent(edit: HTMLElement): {
+  text: string;
+  richText: string;
+} {
+  let text = "";
+  let richText = "";
+  let chipIndex = 0;
+
+  const appendBreak = () => {
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
+    if (richText.length > 0 && !richText.endsWith("\n")) richText += "\n";
+  };
+
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = node.textContent ?? "";
+      text += value;
+      richText += value;
+      return;
+    }
+    if (!(node instanceof HTMLElement)) return;
+    if (node.classList.contains("chat-chip")) {
+      if (
+        (node.dataset.kind === "longtext" ||
+          node.dataset.kind === "annotation") &&
+        node.dataset.text != null
+      ) {
+        text += node.dataset.text;
+      }
+      richText += `{{chip:${chipIndex++}}}`;
+      return;
+    }
+    if (node.tagName === "BR") {
+      appendBreak();
+      return;
+    }
+
+    const isBlock = CHAT_INPUT_BLOCK_TAGS.has(node.tagName);
+    if (isBlock) appendBreak();
+    node.childNodes.forEach(walk);
+    if (isBlock) appendBreak();
+  };
+
+  edit.childNodes.forEach(walk);
+  return {
+    text: text.trim(),
+    richText: richText.trim(),
+  };
 }
 
 function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot): void {

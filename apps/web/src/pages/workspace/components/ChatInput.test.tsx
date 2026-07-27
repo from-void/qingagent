@@ -138,6 +138,29 @@ describe("ChatInput", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("相邻块级节点在纯文本与含 chip 的 richText 中都保留换行", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    edit.innerHTML = [
+      "<div>第一行</div>",
+      '<div>第二行<span class="chat-chip" data-kind="attach" data-label="资料.pdf"></span></div>',
+    ].join("");
+
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: "第一行\n第二行",
+      richText: "第一行\n第二行{{chip:0}}",
+      chips: [{ kind: "attach", label: "资料.pdf" }],
+    });
+  });
+
   it("IME 组合态 Enter 与 keyCode 229 只选字，compositionend 后首个独立 Enter 才发送", async () => {
     const onSubmit = vi.fn();
     await render(

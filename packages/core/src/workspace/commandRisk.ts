@@ -844,14 +844,44 @@ function hasHelpFlag(command: AnalyzedSimpleCommand): boolean {
   return command.argv.slice(1).some((arg) => arg === "--help" || arg === "-h" || arg === "/?");
 }
 
-function firstPositional(args: string[]): string | undefined {
-  return args.find((arg) => !arg.startsWith("-"));
+function leadingAction(
+  command: AnalyzedSimpleCommand,
+  optionsWithValue: Set<string>,
+): { index: number; value: string } | null {
+  for (let index = 1; index < command.argv.length; index += 1) {
+    const value = command.argv[index]!;
+    const lower = value.toLowerCase();
+    if (value === "--") {
+      const action = command.argv[index + 1];
+      return action ? { index: index + 1, value: action.toLowerCase() } : null;
+    }
+    if (!value.startsWith("-") || value === "-") {
+      return { index, value: lower };
+    }
+    const flag = lower.split("=", 1)[0]!;
+    if (
+      !value.includes("=") &&
+      optionsWithValue.has(flag) &&
+      value.length === flag.length
+    ) {
+      index += 1;
+      continue;
+    }
+    if (
+      !value.startsWith("--") &&
+      [...optionsWithValue].some((option) =>
+        option.length === 2 && lower.startsWith(option) && lower.length > option.length)
+    ) {
+      continue;
+    }
+  }
+  return null;
 }
 
 function isInstallCommand(command: AnalyzedSimpleCommand, pipeline: AnalyzedSimpleCommand[]): boolean {
   const name = commandName(command.argv[0] ?? "");
   const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
-  const action = firstPositional(args);
+  const action = leadingAction(command, INSTALL_OPTIONS_WITH_VALUE)?.value;
   if (name === "npx") return true;
   if (name === "npm" && action && new Set(["install", "i", "ci", "update", "exec"]).has(action)) return true;
   if (name === "pnpm" && action && new Set(["add", "install", "i", "up", "update", "dlx"]).has(action)) return true;
@@ -934,6 +964,11 @@ function nextInstallOperand(
 }
 
 function actionIndex(command: AnalyzedSimpleCommand, actions: Set<string>): number {
+  const name = commandName(command.argv[0] ?? "");
+  if (new Set(["npm", "pnpm", "yarn", "pip", "pip3", "cargo", "gem", "composer"]).has(name)) {
+    const action = leadingAction(command, INSTALL_OPTIONS_WITH_VALUE);
+    return action && actions.has(action.value) ? action.index : -1;
+  }
   return command.argv.findIndex(
     (arg, index) => index > 0 && actions.has(arg.toLowerCase()),
   );
@@ -1219,6 +1254,23 @@ function wgetWrites(command: AnalyzedSimpleCommand): boolean {
     new Set(["--post-data", "--post-file"]).has(arg.toLowerCase()));
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-c",
+  "--config",
+  "--config-env",
+  "--exec-path",
+  "--git-dir",
+  "--namespace",
+  "--super-prefix",
+  "--work-tree",
+]);
+
+function gitAction(command: AnalyzedSimpleCommand): { index: number; value: string } | null {
+  return commandName(command.argv[0] ?? "") === "git"
+    ? leadingAction(command, GIT_GLOBAL_OPTIONS_WITH_VALUE)
+    : null;
+}
+
 function looksRemotePath(value: string): boolean {
   if (/^(?:[a-z][a-z0-9+.-]*):\/\//i.test(value)) return true;
   if (/^[^/\s:]+@?[^/\s:]*:.+/.test(value) && !/^[A-Za-z]:[\\/]/.test(value)) return true;
@@ -1244,12 +1296,13 @@ function fileTransferWrites(command: AnalyzedSimpleCommand): boolean {
 function isSendCommand(command: AnalyzedSimpleCommand): boolean {
   const name = commandName(command.argv[0] ?? "");
   const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
+  const action = leadingAction(command, INSTALL_OPTIONS_WITH_VALUE)?.value;
   if (hasDynamicExternalLocation(command)) return true;
   if (larkWrites(command)) return true;
   if (name === "curl" && curlWrites(command)) return true;
   if (name === "wget" && wgetWrites(command)) return true;
-  if (name === "git" && args[0] === "push") return true;
-  if (new Set(["npm", "pnpm", "yarn", "cargo", "gem", "composer"]).has(name) && args[0] === "publish") return true;
+  if (gitAction(command)?.value === "push") return true;
+  if (new Set(["npm", "pnpm", "yarn", "cargo", "gem", "composer"]).has(name) && action === "publish") return true;
   if (new Set(["docker", "podman", "nerdctl"]).has(name) && args[0] === "push") return true;
   if (new Set(["vercel", "netlify", "wrangler", "firebase"]).has(name) && args.some((arg) => new Set(["deploy", "publish"]).has(arg))) return true;
   if (name === "gh" && args[0] === "release" && new Set(["create", "upload", "edit", "delete"]).has(args[1] ?? "")) return true;
@@ -1273,10 +1326,14 @@ function destructiveTitle(command: AnalyzedSimpleCommand): string | null {
   if (new Set(["mv", "move", "rename"]).has(name)) return "移动/重命名文件";
   if (name === "find" && args.includes("-delete")) return "删除查找到的文件";
   if (name === "git") {
-    if (args[0] === "clean") return "清理版本库文件";
-    if (args[0] === "reset" && args.includes("--hard")) return "强制重置版本库";
-    if ((args[0] === "checkout" || args[0] === "restore") && args.some((arg) => arg === "-f" || arg === "--force")) return "强制覆盖版本库文件";
-    if (args[0] === "branch" && args.includes("-d")) return "强制删除分支";
+    const action = gitAction(command);
+    const actionArgs = action
+      ? command.argv.slice(action.index + 1).map((arg) => arg.toLowerCase())
+      : [];
+    if (action?.value === "clean") return "清理版本库文件";
+    if (action?.value === "reset" && actionArgs.includes("--hard")) return "强制重置版本库";
+    if ((action?.value === "checkout" || action?.value === "restore") && actionArgs.some((arg) => arg === "-f" || arg === "--force")) return "强制覆盖版本库文件";
+    if (action?.value === "branch" && actionArgs.includes("-d")) return "强制删除分支";
   }
   if (new Set(["npm", "pnpm", "yarn", "pip", "pip3", "brew", "apt", "apt-get", "gem", "cargo", "composer", "conda", "mamba"]).has(name) &&
       args.some((arg) => new Set(["uninstall", "remove", "purge"]).has(arg))) return "卸载依赖/工具";
@@ -1296,7 +1353,7 @@ function sendTitle(commands: AnalyzedSimpleCommand[]): { title: string; detail: 
   if (commands.some((command) => larkWrites(command))) {
     return { title: "发送或发布到飞书", detail: "将修改你的飞书内容或向飞书发送数据" };
   }
-  if (commands.some((command) => commandName(command.argv[0] ?? "") === "git" && command.argv[1]?.toLowerCase() === "push")) {
+  if (commands.some((command) => gitAction(command)?.value === "push")) {
     return { title: "推送代码到远端", detail: "将修改远端代码仓库" };
   }
   return { title: "发送、上传或发布到外部", detail: "数据将离开本地或修改外部系统" };

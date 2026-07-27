@@ -613,6 +613,15 @@ describe("commandPolicy P0 gate", () => {
     expect(multi.action).toBe("confirm");
   });
 
+  it.each([
+    "npm --prefix ./app install zod",
+    "pnpm --filter web add react",
+    "git -C ./repo push origin main",
+    "git -c core.excludesFile=/dev/null clean -fd",
+  ])("前置带值选项后的副作用仍进入确认门：%s", (command) => {
+    expect(decision(command).action).toBe("confirm");
+  });
+
   it("deny/confirm 消息可直接返回给模型", () => {
     const denied = decision("lark-cli auth login");
     if (denied.action !== "deny") throw new Error(`expected deny, got ${denied.action}`);

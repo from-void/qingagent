@@ -297,7 +297,7 @@ describe("rich format serialization", () => {
     expect(list?.type === "orderedList" ? list.attrs.listStyle : null).toBe("decimal");
   });
 
-  it("normalizePmDoc 丢弃图片上传瞬时 attrs", () => {
+  it("normalizePmDoc 丢弃上传中、失败及遗留的图片占位节点", () => {
     const normalized = normalizePmDoc(docWith([
       {
         type: "image",
@@ -311,14 +311,49 @@ describe("rich format serialization", () => {
           preview: "local-preview",
         },
       },
+      {
+        type: "image",
+        attrs: {
+          blockId: "img-error",
+          src: "data:image/svg+xml,%3Csvg%2F%3E",
+          alt: "失败占位图",
+          uploading: false,
+          error: true,
+        },
+      },
+      {
+        type: "image",
+        attrs: {
+          blockId: "upload-image-legacy-placeholder",
+          src: "data:image/svg+xml,%3Csvg%2F%3E",
+          alt: "状态已被旧规范化移除的占位图",
+        },
+      },
+      {
+        type: "image",
+        attrs: {
+          blockId: "upload-image-complete",
+          src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png",
+          alt: "已上传图片",
+          uploading: false,
+          progress: 100,
+          error: false,
+        },
+      },
     ]));
 
+    expect(normalized.content).toHaveLength(1);
     const image = normalized.content[0];
-    expect(image?.type).toBe("image");
+    expect(image).toMatchObject({
+      type: "image",
+      attrs: {
+        blockId: "upload-image-complete",
+        src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png",
+      },
+    });
     expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("uploading");
     expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("progress");
     expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("error");
-    expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("preview");
   });
 });
 

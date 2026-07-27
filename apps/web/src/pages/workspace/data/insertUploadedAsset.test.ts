@@ -65,6 +65,9 @@ describe("insertUploadedAsset", () => {
     expect(attrs.src).toBe(UPLOAD_PLACEHOLDER_IMAGE_SRC);
     expect(attrs.uploading).toBe(false);
     expect(attrs.error).toBe(true);
+    expect(
+      normalizePmDoc(editor.getJSON()).content.some((node) => node.type === "image"),
+    ).toBe(false);
   });
 
   it("文件仍在 durable upload 后插入 fileAttachment 节点", async () => {

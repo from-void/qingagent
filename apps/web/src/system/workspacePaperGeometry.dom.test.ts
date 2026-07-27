@@ -271,6 +271,10 @@ describe("首页转场纸与工作区真纸几何交接", () => {
         /\.playForward\([^,]+,\s*measureLanding,\s*inkOrigin,\s*true\)/g,
       ),
     ).toHaveLength(2);
-    expect(qingjianSource.match(/\.then\(\(landing\) =>/g)).toHaveLength(2);
+    expect(
+      qingjianSource.match(
+        /\.then\(\(resolvedLanding\) =>\s*\{\s*landing = resolvedLanding;\s*\}\)/g,
+      ),
+    ).toHaveLength(2);
   });
 });

@@ -760,15 +760,20 @@ describe("handleResume askUser fresh-turn fallback", () => {
     expect(writeDraftPlaceholderIndex).toBeGreaterThan(busyIndex);
   });
 
-  it("内联 askUser 提交优先使用命令里的 toolCallId,避免 stale session id 导致答案卡回退 raw value", async () => {
+  it("旧终态 askUser 提交不会覆盖当前活跃问卷的 suspension 所有权", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
-    const spec: ToolCallSpec = {
-      ...askUserToolCall("ask-inline-real"),
+    const staleSpec: ToolCallSpec = {
+      ...askUserToolCall("ask-inline-stale"),
+      status: { kind: "done" },
+      result: {
+        kind: "askUserAnswers",
+        data: { "q-format": { chosen: ["v1"], freeText: null } },
+      },
       body: {
         kind: "askUser",
         data: {
-          id: "ask-inline-real",
+          id: "ask-inline-stale",
           mode: { kind: "overlay" },
           purpose: { kind: "quickClarification" },
           source: null,
@@ -788,74 +793,75 @@ describe("handleResume askUser fresh-turn fallback", () => {
         },
       },
     };
+    if (staleSpec.body.kind !== "askUser") throw new Error("expected askUser body");
+    const activeSpec: ToolCallSpec = {
+      ...staleSpec,
+      id: "ask-inline-active",
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      result: null,
+      body: {
+        kind: "askUser",
+        data: {
+          ...staleSpec.body.data,
+          id: "ask-inline-active",
+        },
+      },
+    };
     session.docState = { kind: "editing" };
     session.chatHistory = [
       {
-        id: "msg-ask-real",
+        id: "msg-ask-stale",
         role: { kind: "agent" },
         ts: "2026-01-01T00:00:00.000Z",
-        parts: [{ kind: "toolCall", data: spec }],
+        parts: [{ kind: "toolCall", data: staleSpec }],
+        chips: null,
+      },
+      {
+        id: "msg-ask-active",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:01:00.000Z",
+        parts: [{ kind: "toolCall", data: activeSpec }],
         chips: null,
       },
     ];
-    session.runId = "run-inline-stale";
-    session.toolCallId = "ask-inline-stale";
+    session.runId = "run-inline-active";
+    session.toolCallId = "ask-inline-active";
     session._suspensionOwner = {
-      streamId: "restored:run-inline-stale",
-      runId: "run-inline-stale",
-      toolCallId: "ask-inline-stale",
+      streamId: "restored:run-inline-active",
+      runId: "run-inline-active",
+      toolCallId: "ask-inline-active",
       toolName: "askUser",
     };
 
-    mockState.resumeStream.mockResolvedValue({
-      runId: "run-inline-stale-resumed",
-      fullStream: streamOf({ type: "finish", payload: {} }),
-    });
-
-    const frames = await collectFrames(
+    await expect(collectFrames(
       bridge.handleCommand({
         kind: "resumeAskUser",
         data: {
           sessionId: session.sessionId,
-          toolCallId: "ask-inline-real",
+          toolCallId: "ask-inline-stale",
           answers: {
             "q-format": { chosen: ["v2"], freeText: null },
           },
         },
       }),
-    );
+    )).rejects.toThrow("没有待恢复的操作");
 
-    expect(mockState.resumeStream.mock.calls[0]?.[1]).toMatchObject({
-      toolCallId: "ask-inline-real",
+    expect(mockState.resumeStream).not.toHaveBeenCalled();
+    expect(session.runId).toBe("run-inline-active");
+    expect(session.toolCallId).toBe("ask-inline-active");
+    expect(session._suspensionOwner).toEqual({
+      streamId: "restored:run-inline-active",
+      runId: "run-inline-active",
+      toolCallId: "ask-inline-active",
+      toolName: "askUser",
     });
-    const answerCardFrame = frames.find(
-      (frame) =>
-        frame.kind === "chatMessageAdded" &&
-        frame.data.message.parts.some((part) => part.kind === "askUserAnswerCard"),
-    );
-    expect(answerCardFrame).toMatchObject({
-      kind: "chatMessageAdded",
-      data: {
-        message: {
-          id: "askuser-answer:ask-inline-real",
-          parts: [
-            {
-              kind: "askUserAnswerCard",
-              data: {
-                toolCallId: "ask-inline-real",
-                items: [
-                  {
-                    questionId: "q-format",
-                    questionLabel: "想怎么调整结构？",
-                    answerText: "改成落地步骤",
-                    selectedOptionLabels: ["改成落地步骤"],
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      },
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { id: "ask-inline-stale", status: { kind: "done" } },
+    });
+    expect(session.chatHistory[1]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { id: "ask-inline-active", status: { kind: "running" } },
     });
   });
 

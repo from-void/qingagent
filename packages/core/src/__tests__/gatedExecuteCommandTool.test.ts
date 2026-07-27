@@ -81,6 +81,7 @@ function createToolHarness(
     backgroundWait?: Promise<void>;
     retainWorkspace?: () => () => void;
     firstListGate?: Promise<void>;
+    spawnGate?: Promise<void>;
     commandResult?: {
       success: boolean;
       exitCode: number;
@@ -94,6 +95,8 @@ function createToolHarness(
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
+  let killCalls = 0;
+  let waitCalls = 0;
   let spawnedRunning = 0;
   let listCalls = 0;
   const mockedCommandResult = options.commandResult;
@@ -133,6 +136,7 @@ function createToolHarness(
         spawn: async (_command: string, spawnOptions: SandboxSpawnOptions) => {
           spawnCalls.push(spawnOptions);
           spawnedRunning += 1;
+          await options.spawnGate;
           if (options.simulateBackgroundTimeout && spawnOptions.timeout) {
             setTimeout(() => {
               spawnedRunning = Math.max(0, spawnedRunning - 1);
@@ -140,7 +144,13 @@ function createToolHarness(
           }
           return {
             pid: 12345,
+            kill: async () => {
+              killCalls += 1;
+              spawnedRunning = Math.max(0, spawnedRunning - 1);
+              return true;
+            },
             wait: async () => {
+              waitCalls += 1;
               await options.backgroundWait;
               return {
                 success: true,
@@ -168,6 +178,8 @@ function createToolHarness(
     executeCalls,
     spawnCalls,
     listCallCount: () => listCalls,
+    killCallCount: () => killCalls,
+    waitCallCount: () => waitCalls,
     runningProcessCount: () => (options.runningProcesses ?? 0) + spawnedRunning,
   };
 }
@@ -842,6 +854,42 @@ describe("gated execute_command tool cwd 约束", () => {
       cancelled: true,
     });
     expect(spawnCalls).toHaveLength(0);
+  });
+
+  it("后台进程 spawn 期间取消后 kill 并等待终止", async () => {
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const {
+      tool,
+      spawnCalls,
+      killCallCount,
+      waitCallCount,
+      runningProcessCount,
+    } = createToolHarness("gated-background-spawn-cancel", { spawnGate });
+    const abortController = new AbortController();
+    const command = executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    }, {
+      toolCallId: "gated-execute-test",
+      messages: [],
+      abortSignal: abortController.signal,
+    } as never);
+    await vi.waitFor(() => expect(spawnCalls).toHaveLength(1));
+
+    abortController.abort("user_abort");
+    releaseSpawn();
+
+    await expect(command).resolves.toMatchObject({
+      success: false,
+      cancelled: true,
+    });
+    expect(killCallCount()).toBe(1);
+    expect(waitCallCount()).toBe(1);
+    expect(runningProcessCount()).toBe(0);
   });
 });
 

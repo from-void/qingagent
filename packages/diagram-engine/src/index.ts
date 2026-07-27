@@ -2583,7 +2583,7 @@ function parseMindmap(source: string): ParseResult {
     stack.push(node);
   }
   if (!root) {
-    root = { id: "mind-root", label: "mindmap", line: lineSpan(header), indent: 0, children: [], hasStableId: true, parentId: null, scopePath: ["mindmap"], sourceRefs: [] };
+    root = { id: "mind-root", label: "mindmap", line: lineSpan(header), indent: 0, children: [], hasStableId: false, parentId: null, scopePath: ["mindmap"], sourceRefs: [] };
   }
   const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
   return {
@@ -2626,6 +2626,9 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const beforeIds = new Set(nodes.map((item) => item.id));
     const newSource = insertAtLineBoundary(source, insertAt, text);
     const reparsed = parseMindmap(newSource);
+    if (!reparsed.ok || reparsed.model.type !== "mindmap") {
+      return { ok: false, source, error: reparsed.error ?? "mindmap 改写后无法重新解析" };
+    }
     const reparsedTree = reparsed.model as MindmapTree;
     const newNode = flattenMindmap(reparsedTree.root).find((n) => !beforeIds.has(n.id) && n.label === op.label && n.parentId === parent.id);
     return { ok: true, newNodeId: newNode?.id, source: newSource };
@@ -2634,7 +2637,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const end = subtreeEnd(source, node!);
     const start = node!.line.start;
     const newSource = applyEdits(source, [{ start, end, text: "" }]);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart >= start && oldLineStart < end) return null;
       return oldLineStart >= end ? oldLineStart - (end - start) : oldLineStart;
     });
@@ -2651,7 +2654,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const replacement = `${leading}${body}${newline}`;
     const newSource = applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: replacement }]);
     const lengthDelta = replacement.length - (node!.line.end - node!.line.start);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart === node!.line.start) return node!.line.start;
       return oldLineStart >= node!.line.end ? oldLineStart + lengthDelta : oldLineStart;
     });
@@ -2692,7 +2695,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
       }
     }
     const newSource = insertAtLineBoundary(without, insertAt, shifted);
-    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+    return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart >= oldStart && oldLineStart < oldEnd) {
         return movedLineStarts.get(oldLineStart) ?? null;
       }
@@ -2705,12 +2708,15 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
 }
 
 function mindmapRewriteResult(
+  originalSource: string,
   oldModel: MindmapTree,
   newSource: string,
   mapLineStart: (oldLineStart: number) => number | null,
 ): RewriteResult {
   const reparsed = parseMindmap(newSource);
-  if (!reparsed.ok || reparsed.model.type !== "mindmap") return { ok: true, source: newSource };
+  if (!reparsed.ok || reparsed.model.type !== "mindmap") {
+    return { ok: false, source: originalSource, error: reparsed.error ?? "mindmap 改写后无法重新解析" };
+  }
 
   const oldNodes = flattenMindmap(oldModel.root);
   const newModel = reparsed.model;

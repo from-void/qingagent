@@ -1206,6 +1206,22 @@ describe("diagram-engine", () => {
     ]);
   });
 
+  it("空 mindmap 的合成根不可改名且不会覆盖图类型头", () => {
+    const source = "mindmap\n";
+    const parsed = parseDiagram(source);
+    const root = (parsed.model as MindmapTree).root;
+
+    expect(root.hasStableId).toBe(false);
+    expect(getCapabilities(parsed, { nodeId: root.id }).find((cap) => cap.op === "relabelNode")).toMatchObject({
+      enabled: false,
+    });
+    expect(applyEdit(source, { kind: "relabelNode", nodeId: root.id, label: "新根" })).toMatchObject({
+      ok: false,
+      source,
+    });
+    expect(parseDiagram(source)).toMatchObject({ ok: true, model: { type: "mindmap" } });
+  });
+
   it("mindmap 形状语法剥离显示文本(根节点不再显示 root((中心)) 字面量),relabel 保留形状", () => {
     const source = "mindmap\n  root((中心))\n    分支1\n    子项[方形]\n    云((圆))";
     const parsed = parseDiagram(source).model as MindmapTree;

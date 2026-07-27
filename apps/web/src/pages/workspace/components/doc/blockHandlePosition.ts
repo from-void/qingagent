@@ -54,3 +54,31 @@ export function getCurrentHandleNode(
   }
   return node;
 }
+
+/**
+ * 异步命令恢复时按稳定 blockId 重新定位。若 ID 重复则无法唯一确认用户原先操作的块，
+ * 必须安全放弃，不能猜一个位置继续删除。
+ */
+export function resolveHandleRangeByStableId(
+  doc: ProseMirrorNode,
+  handle: HandleState,
+): { from: number; to: number } | null {
+  if (!handle.blockId) return null;
+  let match: { from: number; to: number } | null = null;
+  let ambiguous = false;
+  doc.descendants((node, pos) => {
+    if (
+      node.type.name !== handle.nodeType ||
+      node.attrs.blockId !== handle.blockId
+    ) {
+      return true;
+    }
+    if (match) {
+      ambiguous = true;
+      return true;
+    }
+    match = { from: pos, to: pos + node.nodeSize };
+    return true;
+  });
+  return ambiguous ? null : match;
+}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
-import type { QrCardBody } from "@qingagent/contract-ts";
+import type { ConnectorState, QrCardBody } from "@qingagent/contract-ts";
 import { chatInputBus } from "../../../system";
 import { useVisibilityPausedInterval } from "../../../system/perf/visibilityScheduler";
 import { sanitizeToolbarLinkHref } from "../data/toolbarUnlock";
@@ -22,13 +22,23 @@ export interface AuthCardProps {
   onStatusChange?: () => void;
 }
 
+type ConnectorCardState = ConnectorState | "interrupted";
+
+const TERMINAL_STATE_COPY: Partial<Record<ConnectorCardState, string>> = {
+  interrupted: "授权已中断，重新发起",
+  unavailable: "当前无法完成授权，重新发起",
+  unconfigured: "授权尚未配置，重新发起",
+  disconnected: "授权未完成，重新发起",
+  needs_reauth: "授权需要重新进行",
+};
+
 export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   // v1 历史帧没有 presentation：GitHub 旧卡按纯配对码恢复，其余旧 qrCard 保持二维码形态。
   const presentation = data.presentation ??
     (data.connectorId === "github" && !data.imageDataUri ? "device-code" : "scan");
   const rendersQr = presentation === "scan";
-  const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">(
-    () => data.success ? "connected" : "polling",
+  const [connectorState, setConnectorState] = useState<ConnectorCardState>(
+    () => data.success ? "connected" : "pending",
   );
   const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
   // 微信扫码反馈:server 感知到手机扫到码后,pending 轮询带 reasonCode=WECHAT_SCANNED。
@@ -45,41 +55,86 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const expired = remain !== null && remain <= 0;
   const pollingRef = useRef(false);
   const settledRef = useRef(false);
+  const pollGenerationRef = useRef(0);
+  const activeRequestRef = useRef<AbortController | null>(null);
   const completed = data.success !== undefined || connectorState === "connected";
 
   useEffect(() => {
-    setConnectorState(data.success ? "connected" : "polling");
+    const generation = ++pollGenerationRef.current;
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = null;
+    setConnectorState(data.success ? "connected" : "pending");
     setConnectedAccount(data.success?.account ?? null);
     setScanned(false);
     pollingRef.current = false;
     settledRef.current = false;
-  }, [data.pendingId, data.success?.account, data.success?.message]);
+    return () => {
+      if (pollGenerationRef.current === generation) pollGenerationRef.current += 1;
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+      pollingRef.current = false;
+    };
+  }, [data.connectorId, data.pendingId, data.success?.account, data.success?.message]);
 
   useVisibilityPausedInterval(
     async () => {
-      if (!data.connectorId || !data.pendingId || connectorState !== "polling") return;
+      if (!data.connectorId || !data.pendingId || connectorState !== "pending") return;
       if (pollingRef.current) return;
+      const generation = pollGenerationRef.current;
+      const controller = new AbortController();
+      const isCurrent = () =>
+        pollGenerationRef.current === generation &&
+        activeRequestRef.current === controller &&
+        !controller.signal.aborted;
       pollingRef.current = true;
+      activeRequestRef.current = controller;
       try {
-        const response = await fetch(`/api/v1/connectors/${encodeURIComponent(data.connectorId)}?pendingId=${encodeURIComponent(data.pendingId)}`, { credentials: "same-origin" });
-        if (response.status === 410) { setConnectorState("interrupted"); return; }
+        const response = await fetch(
+          `/api/v1/connectors/${encodeURIComponent(data.connectorId)}?pendingId=${encodeURIComponent(data.pendingId)}`,
+          { credentials: "same-origin", signal: controller.signal },
+        );
+        if (!isCurrent()) return;
+        const settleTerminal = (state: ConnectorCardState) => {
+          if (!isCurrent()) return;
+          setConnectorState(state);
+          if (!settledRef.current) {
+            settledRef.current = true;
+            onStatusChange?.();
+          }
+        };
+        if (response.status === 410) {
+          settleTerminal("interrupted");
+          return;
+        }
         if (!response.ok) return;
-        const payload = await response.json() as { status?: { state?: string; account?: { displayName?: string } | null; reasonCode?: string | null } };
+        const payload = await response.json() as {
+          status?: {
+            state?: ConnectorState;
+            account?: { displayName?: string } | null;
+            reasonCode?: string | null;
+          };
+        };
+        if (!isCurrent()) return;
         if (payload.status?.state === "connected") {
           setConnectedAccount(payload.status.account?.displayName ?? null);
-          setConnectorState("connected");
-          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
-        } else if (payload.status?.reasonCode === "PENDING_LOST" || payload.status?.reasonCode === "PENDING_EXPIRED") {
-          setConnectorState("interrupted");
+          settleTerminal("connected");
         } else if (payload.status?.state === "pending" && payload.status.reasonCode === "WECHAT_SCANNED") {
           setScanned(true);
         } else if (payload.status?.state && payload.status.state !== "pending") {
-          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
+          const interrupted =
+            payload.status.reasonCode === "PENDING_LOST" ||
+            payload.status.reasonCode === "PENDING_EXPIRED";
+          settleTerminal(interrupted ? "interrupted" : payload.status.state);
         }
       } catch { /* 短暂网络失败保持原卡，下个节流周期再试。 */ }
-      finally { pollingRef.current = false; }
+      finally {
+        if (activeRequestRef.current === controller) {
+          activeRequestRef.current = null;
+          if (pollGenerationRef.current === generation) pollingRef.current = false;
+        }
+      }
     },
-    data.connectorId && data.pendingId && connectorState === "polling" ? 2000 : null,
+    data.connectorId && data.pendingId && connectorState === "pending" ? 2000 : null,
     { runOnResume: true },
   );
 
@@ -174,8 +229,10 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
   return (
     <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
-      {!completed && connectorState === "interrupted" ? (
-        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
+      {!completed && TERMINAL_STATE_COPY[connectorState] ? (
+        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>
+          {TERMINAL_STATE_COPY[connectorState]}
+        </button>
       ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
       {rendersQr && <div className={`qr-card__frame${completed ? " is-completed" : expired ? " is-expired" : ""}`}>

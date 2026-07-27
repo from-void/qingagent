@@ -1335,7 +1335,17 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(viewbar.classList.contains("pm-image-chrome")).toBe(true);
       expect(Array.from(viewbar.children).every((child) => child.tagName === "BUTTON")).toBe(true);
       const buttons = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
-      expect(buttons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "放大", "缩小", "全屏"]);
+      // 缩放钮已改图标,文案语义只留在 aria-label/title。
+      expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+        "左对齐",
+        "居中",
+        "右对齐",
+        "放大图表",
+        "缩小图表",
+        "全屏查看",
+      ]);
+      expect(buttons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "", "", "全屏"]);
+      expect(viewbar.querySelectorAll(".pm-image-tool--icon .pm-image-tool-icon")).toHaveLength(2);
       expect(viewbar.querySelector(".pm-diagram-tool")).toBeNull();
       expect(viewbar.textContent).not.toContain("新增分区");
       expect(viewbar.textContent).not.toContain("适配视图");

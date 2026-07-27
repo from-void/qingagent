@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Node, Viewport } from "@xyflow/react";
 
-import { computePreviewFitViewport, getFloatingPosition, graphNodePositionKey } from "../components/diagram/GraphDiagramView";
+import {
+  computePreviewFitViewport,
+  deepestSubgraphContainingRect,
+  getFloatingPosition,
+  graphNodePositionKey,
+} from "../components/diagram/GraphDiagramView";
 
 // 回归:工具栏二级下拉(popover)在"above"时会再向上展开约一屏,
 // 靠近编辑器顶部的元素若仅按"工具栏自身高度"判定 above,会让下拉越出视口被裁切。
@@ -26,7 +31,7 @@ describe("getFloatingPosition 工具栏/下拉放置", () => {
     expect(pos?.placement).toBe("below");
   });
 
-  it("元素上方有充足空间时仍默认 above", () => {
+  it("元素上方有充足空间时仍默认 above,且常态贴近元素", () => {
     const pos = getFloatingPosition({
       selectedNodeId: "A",
       selectedEdge: undefined,
@@ -35,8 +40,42 @@ describe("getFloatingPosition 工具栏/下拉放置", () => {
       canvasFrame: CANVAS,
     });
     expect(pos?.placement).toBe("above");
-    // 给顶部圆点、加号和幽灵节点留出完整操作带，工具栏不能再贴着节点顶边。
+    // 常态只让开外侧圆点/加号那一圈(44px),不再为偶发的幽灵预览永久留 116px。
+    expect(pos?.top).toBe(356);
+  });
+
+  it("把手悬停铺出幽灵预览时工具栏临时让位", () => {
+    const pos = getFloatingPosition({
+      selectedNodeId: "A",
+      selectedEdge: undefined,
+      nodes: [nodeAt(400)],
+      viewport: VIEWPORT,
+      canvasFrame: CANVAS,
+      handlePreviewActive: true,
+    });
+    expect(pos?.placement).toBe("above");
     expect(pos?.top).toBe(284);
+  });
+});
+
+describe("deepestSubgraphContainingRect 拖拽入区判定", () => {
+  const outer = { id: "Outer", rect: { x: 0, y: 0, width: 400, height: 300 }, depth: 0 };
+  const inner = { id: "Inner", rect: { x: 40, y: 40, width: 200, height: 160 }, depth: 1 };
+
+  it("整块被包住才算进区,中心点在里但探出边界不算", () => {
+    expect(deepestSubgraphContainingRect({ x: 60, y: 60, width: 160, height: 72 }, [outer, inner])).toBe("Inner");
+    // 中心点(370,120)落在 Outer 内,但右边探出 Outer 边界 → 不收
+    expect(deepestSubgraphContainingRect({ x: 290, y: 84, width: 160, height: 72 }, [outer, inner])).toBeNull();
+  });
+
+  it("同时被多层包住时取最深的一层", () => {
+    expect(deepestSubgraphContainingRect({ x: 50, y: 50, width: 100, height: 60 }, [outer, inner])).toBe("Inner");
+    // 只在 Outer 里(避开 Inner 的范围)
+    expect(deepestSubgraphContainingRect({ x: 260, y: 210, width: 100, height: 60 }, [outer, inner])).toBe("Outer");
+  });
+
+  it("贴边(边界重合)算包含", () => {
+    expect(deepestSubgraphContainingRect({ x: 0, y: 0, width: 400, height: 300 }, [outer])).toBe("Outer");
   });
 });
 

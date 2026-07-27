@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useToast } from "../../system/ToastProvider";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 import {
   useSkills,
   type SkillBaseInfo,
@@ -139,7 +140,10 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [selectedChildName, setSelectedChildName] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
+  const showListLoading = useDelayedVisible(loading && skills.length === 0);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 加载占位延迟 250ms 才显形,快请求不闪
+  const showDetailLoading = useDelayedVisible(detailLoading);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [childDetail, setChildDetail] = useState<SkillDetailInfo | null>(null);
   const [childDetailLoading, setChildDetailLoading] = useState(false);
@@ -448,7 +452,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             )}
           </>
         ) : detailLoading ? (
-          <p className="sm-empty">加载中…</p>
+          showDetailLoading ? <p className="sm-empty">加载中…</p> : null
         ) : (
           <p className="sm-message">{detailError ?? "技能不存在"}</p>
         )}
@@ -463,7 +467,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         {canMutate ? "可导入 .zip 技能包或 .md 文件。" : "技能的导入与删除仅在桌面客户端开放。"}
       </p>
 
-      {loading && skills.length === 0 && <p className="sm-empty">加载中…</p>}
+      {showListLoading && <p className="sm-empty">加载中…</p>}
       {error && <p className="sm-message">{error}</p>}
 
       {canMutate && (
@@ -588,6 +592,7 @@ function ChildSkillDetail({
   bodyLoading: boolean;
   bodyError: string | null;
 }) {
+  const showBodyLoading = useDelayedVisible(bodyLoading && !body);
   return (
     <div data-wf="SkillChildDetail">
       <div className="sk-detail-hero">
@@ -604,7 +609,7 @@ function ChildSkillDetail({
       </div>
       <h3 className="sk-detail-sec-title">技能正文(SKILL.md · 只读)</h3>
       <div className="sk-md-body" data-wf="SkillChildDetailBody">
-        {bodyLoading && !body ? <p>加载中…</p> : null}
+        {showBodyLoading ? <p>加载中…</p> : null}
         {bodyError ? <p>{bodyError}</p> : null}
         {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
       </div>
@@ -638,6 +643,7 @@ function SkillDetail({
   onDelete: () => void;
   onOpenConnector?: (id: ConnectorId) => void;
 }) {
+  const showBodyLoading = useDelayedVisible(bodyLoading && !body);
   const [labelDraft, setLabelDraft] = useState(skill.label);
   const [editingLabel, setEditingLabel] = useState(false);
   const labelInputRef = useRef<HTMLInputElement>(null);
@@ -784,7 +790,7 @@ function SkillDetail({
 
       <div className="sk-detail-sec-title">技能正文(SKILL.md · 只读)</div>
       <div className="sk-md-body" data-wf="SkillDetailBody">
-        {bodyLoading && !body ? <p>加载中…</p> : null}
+        {showBodyLoading ? <p>加载中…</p> : null}
         {bodyError ? <p>{bodyError}</p> : null}
         {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
       </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 import type {
   SecurityGrantCategory,
   SecurityGrantKind,
@@ -101,6 +102,8 @@ function mergeSettings(
 export function SecurityPanel() {
   const toast = useToast();
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
+  // 加载占位延迟 250ms 才显形,快请求不闪
+  const showLoading = useDelayedVisible(settings === null);
   const [updatePhases, setUpdatePhases] = useState<
     Partial<Record<SecurityGrantKind, UpdatePhase>>
   >({});
@@ -248,7 +251,7 @@ export function SecurityPanel() {
               />
             </div>
           );
-        }) ?? <p className="security-loading">正在加载…</p>}
+        }) ?? (showLoading ? <p className="security-loading">正在加载…</p> : null)}
       </div>
     </div>
   );

@@ -134,12 +134,14 @@ export function buildCommandConfirmSpec(
       ? [verdict.detail]
       : [policyReason, verdict.detail];
   const explanation = joinExplanationParts(explanationParts);
-  const rememberCategory = kind === "install" || kind === "command"
+  const rememberCategory = kind === "install" || kind === "command" || kind === "send"
     ? {
         kind,
         label: kind === "install"
           ? "以后安装时不再询问"
-          : "以后遇到同类操作不再询问",
+          : kind === "send"
+            ? "以后向外发送时不再询问"
+            : "以后遇到同类操作不再询问",
         ...(insecureRememberEnvironmentAllowed()
           ? { insecureWithoutDesktop: true }
           : {}),

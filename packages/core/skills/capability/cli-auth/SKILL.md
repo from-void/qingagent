@@ -1,6 +1,7 @@
 ---
 name: cli-auth
 label: 命令行授权
+icon: terminal
 summary: 安全处理阻塞等待扫码或网页授权的 CLI
 description: 命令行扫码与网页授权等待规程。用于 init/login 等打印授权链接或字符画二维码后持续等待、不会自行退出的 CLI 命令。
 user-invocable: false

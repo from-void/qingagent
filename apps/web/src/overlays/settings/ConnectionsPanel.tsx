@@ -8,6 +8,7 @@ import type {
 } from "@qingagent/contract-ts";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { useToast } from "../../system/ToastProvider";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 import { AuthCard } from "../../pages/workspace/components/QrCard";
 import { useConnectors } from "./useConnectors";
 
@@ -254,6 +255,8 @@ export interface ConnectionsPanelProps {
 export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange }: ConnectionsPanelProps) {
   const capabilities = useClientCapabilities();
   const { connectors, loading, error, refresh, start, probe, disconnect } = useConnectors();
+  // 加载占位延迟 250ms 才显形,快请求不闪
+  const showLoading = useDelayedVisible(loading && connectors.length === 0);
   const toast = useToast();
   const confirm = useConfirm();
   // 未提供回调时把 selectedId 当作初始值，避免半受控调用导致返回按钮失效。
@@ -412,7 +415,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   return (
     <div className="settings-connections" data-wf="ConnectionsPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>管理青简以你的身份访问的外部服务。可在详情页主动连接，也可在对话里按需发起。</p>
-      {loading && connectors.length === 0 && <p className="sm-empty">加载中…</p>}
+      {showLoading && <p className="sm-empty">加载中…</p>}
       {error && <p className="sm-message">{error}</p>}
       <div className="cn-list">
         {connectors.map((connector) => {

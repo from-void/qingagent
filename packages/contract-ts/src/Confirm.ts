@@ -1,5 +1,6 @@
 export type ConfirmKind = "install" | "connect" | "send" | "command";
-export type RememberableConfirmKind = "install" | "command";
+// 四类确认都允许记住"始终允许"(是否给出「记住」仍由各确认卡的 rememberCategory 声明决定)
+export type RememberableConfirmKind = ConfirmKind;
 
 export interface RememberCategory {
   kind: RememberableConfirmKind;

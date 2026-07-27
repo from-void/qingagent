@@ -184,7 +184,13 @@ export class ConfirmService {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
     let grantState: ConfirmGrantState | null = null;
-    if (spec.kind === "install" || spec.kind === "command") {
+    // 设置里把某类设成"始终允许"后,这一类的确认卡不再弹,直接按存量授权放行
+    if (
+      spec.kind === "install" ||
+      spec.kind === "command" ||
+      spec.kind === "send" ||
+      spec.kind === "connect"
+    ) {
       try {
         grantState = await this.#loadGrantState(spec.kind);
       } catch (error) {
@@ -297,7 +303,6 @@ export class ConfirmService {
       pending.status !== "pending" ||
       pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
       pending.spec.kind !== grant.kind ||
-      (grant.kind !== "install" && grant.kind !== "command") ||
       !Number.isFinite(pendingExpiresAt) ||
       pendingExpiresAt <= this.#now()
     ) {

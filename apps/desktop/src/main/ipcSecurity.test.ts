@@ -64,6 +64,8 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
     "setKimiCustomProvider",
     "getKimiOfficialModel",
     "setKimiOfficialModel",
+    "getKimiModelTier",
+    "setKimiModelTier",
     "getModelProvider",
     "setModelProvider",
   ]) {
@@ -81,6 +83,7 @@ test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", ()
     "qingagent.kimi_api_key",
     "qingagent.kimi_custom_provider",
     "qingagent.kimi_official_model",
+    "qingagent.kimi_model_tier",
     "qingagent.model_provider",
   ]) {
     assert.ok(configSetSource.includes(`"${key}"`), `主进程白名单缺少：${key}`);

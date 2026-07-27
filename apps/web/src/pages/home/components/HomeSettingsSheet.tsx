@@ -110,7 +110,10 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) handleClose();
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // 面板内还开着浮层(下拉/日历/档位)时,Esc 先归浮层自己关,不连整个设置一起关掉
+      if (document.querySelector(".skin-select__menu, .skin-calendar, .md-tier-menu")) return;
+      handleClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);

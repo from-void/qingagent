@@ -56,6 +56,8 @@ interface Window {
     setOfficialModel?: (value: string | null) => Promise<boolean>;
     getModelTier?: () => string | null;
     setModelTier?: (value: string | null) => Promise<boolean>;
+    getKimiModelTier?: () => string | null;
+    setKimiModelTier?: (value: string | null) => Promise<boolean>;
     getKimiApiKey?: () => string | null;
     setKimiApiKey?: (value: string | null) => Promise<boolean>;
     getKimiCustomProvider?: () => string | null;
@@ -67,11 +69,11 @@ interface Window {
     requestConfirmRememberGrant?: (input: {
       sessionId: string;
       confirmId: string;
-      kind: "install" | "command";
+      kind: "install" | "command" | "send" | "connect";
       trustedGesture: boolean;
     }) => Promise<string | null>;
     requestSettingsRememberGrant?: (input: {
-      kind: "install" | "command";
+      kind: "install" | "command" | "send" | "connect";
       trustedGesture: boolean;
     }) => Promise<string | null>;
     onUpdateStatus?: (cb: (payload: ElectronUpdateStatus) => void) => () => void;

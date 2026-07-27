@@ -59,6 +59,10 @@ function desktopConfigAccessor(key: string): DesktopConfigAccessor | null {
       return bridge.getModelTier && bridge.setModelTier
         ? { get: bridge.getModelTier, set: bridge.setModelTier }
         : null;
+    case "qingagent.kimi_model_tier":
+      return bridge.getKimiModelTier && bridge.setKimiModelTier
+        ? { get: bridge.getKimiModelTier, set: bridge.setKimiModelTier }
+        : null;
     // 新增桌面配置键时需同步 preload/index.ts 与 desktop main 的两组白名单。
     case "qingagent.kimi_api_key":
       return bridge.getKimiApiKey && bridge.setKimiApiKey

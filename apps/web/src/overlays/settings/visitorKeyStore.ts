@@ -15,7 +15,9 @@ const KIMI_STORAGE_KEY = "qingagent.kimi_api_key";
 const KIMI_CUSTOM_PROVIDER_KEY = "qingagent.kimi_custom_provider";
 const KIMI_OFFICIAL_MODEL_KEY = "qingagent.kimi_official_model";
 const MODEL_PROVIDER_KEY = "qingagent.model_provider";
+// 档位按厂商各记一份:DeepSeek 沿用历史键(老数据即 DeepSeek 档),Kimi 单独一键。
 const MODEL_TIER_KEY = "qingagent.model_tier";
+const KIMI_MODEL_TIER_KEY = "qingagent.kimi_model_tier";
 
 const DEFAULT_MODEL_IDS = {
   deepseek: { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" },
@@ -229,13 +231,20 @@ export function writeOfficialModelOverride(
 
 // —— 当前模型档位:默认 flash;pro 仅在用户显式选择后透传 ——
 
-export function getSelectedModelTier(): ModelTier {
-  const value = readPersisted(MODEL_TIER_KEY)?.trim();
+function tierStorageKey(provider: ModelProvider): string {
+  return provider === "kimi" ? KIMI_MODEL_TIER_KEY : MODEL_TIER_KEY;
+}
+
+export function getSelectedModelTier(provider: ModelProvider = "deepseek"): ModelTier {
+  const value = readPersisted(tierStorageKey(provider))?.trim();
   return value === "pro" ? "pro" : DEFAULT_MODEL_TIER;
 }
 
-export function setSelectedModelTier(tier: ModelTier): Promise<boolean> {
-  return writePersistedAwaited(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
+export function setSelectedModelTier(
+  tier: ModelTier,
+  provider: ModelProvider = "deepseek",
+): Promise<boolean> {
+  return writePersistedAwaited(tierStorageKey(provider), tier === "pro" ? "pro" : "flash");
 }
 
 /** 给请求层用:按当前配置返回要附加的 header(对话 / 余额等请求统一带上)。
@@ -245,7 +254,7 @@ export function visitorKeyHeaders(): Record<string, string> {
   const storedProvider = getStoredModelProvider();
   const provider = resolveModelRequestProvider();
   const vision = visionKeyHeaders();
-  const tier = getSelectedModelTier();
+  const tier = getSelectedModelTier(provider);
   const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};
   // 其他云厂商:整体覆盖 baseURL + key + 模型别名
   const custom = readCustomProvider(provider);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 
 type SearchProviderHealthStatus = "ok" | "auth" | "quota";
 type PrimarySearchSource = "db" | "env" | "none";
@@ -47,6 +48,8 @@ export function SearchPanel() {
   const [primaryDraft, setPrimaryDraft] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  // 加载占位延迟 250ms 才显形,快请求不闪
+  const showLoading = useDelayedVisible(loading && providers.length === 0);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);

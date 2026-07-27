@@ -7,9 +7,10 @@ import {
 } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
-export type ConfirmGrantKind = "install" | "command";
+// 四类确认都可记住"始终允许"(0033 迁移放开了 send / connect 的 CHECK 约束)
+export type ConfirmGrantKind = "install" | "command" | "send" | "connect";
 export type ConfirmGrantSource = "card" | "settings";
-export type ConfirmAuditKind = ConfirmGrantKind | "connect" | "send";
+export type ConfirmAuditKind = ConfirmGrantKind;
 export type ConfirmDecisionSource = "ui" | "stored-grant" | "expired" | "settings";
 export type ConfirmAuditDecision = "accepted" | "rejected" | "expired" | "failed";
 export type ConfirmAuditEventType =

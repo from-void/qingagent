@@ -12,10 +12,16 @@ function makeHarness(initial: ConfirmGrant[] = []) {
   const stored = new Map<ConfirmGrantKind, ConfirmGrant>(initial.map((grant) => [grant.kind, grant]));
   const created: Array<{ kind: ConfirmGrantKind; source: ConfirmGrantSource }> = [];
   const revoked: ConfirmGrantKind[] = [];
-  const versions = new Map<ConfirmGrantKind, number>([["install", 0], ["command", 0]]);
+  const versions = new Map<ConfirmGrantKind, number>([
+    ["install", 0],
+    ["command", 0],
+    ["send", 0],
+    ["connect", 0],
+  ]);
   const app = new Hono();
   app.route("/api/v1", createSecuritySettingsRoutes({
-    listGrantStates: async () => (["install", "command"] as const).map((kind): ConfirmGrantState => {
+    listGrantStates: async () =>
+      (["install", "command", "send", "connect"] as const).map((kind): ConfirmGrantState => {
       const grant = stored.get(kind) ?? null;
       return {
         kind,
@@ -86,7 +92,7 @@ async function post(
 }
 
 describe("安全设置路由", () => {
-  it("读取真实授权档位，send/connect 只有每次询问", async () => {
+  it("读取真实授权档位，四类都可在每次询问 / 始终允许之间选", async () => {
     const harness = makeHarness([{
       grantId: "grant-command",
       kind: "command",
@@ -99,8 +105,8 @@ describe("安全设置路由", () => {
       categories: [
         { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"] },
         { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"] },
-        { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask"] },
-        { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask"] },
+        { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask", "always"] },
+        { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask", "always"] },
       ],
     });
   });
@@ -146,15 +152,25 @@ describe("安全设置路由", () => {
     expect(harness.stored.has("install")).toBe(false);
   });
 
-  it.each(["send", "connect"])("%s 设置写入始终 hard reject", async (kind) => {
+  it.each(["send", "connect"])("%s 也能设为始终允许并撤回", async (kind) => {
     const harness = makeHarness();
-    const response = await post(harness.app, kind, { grantMode: "always" });
+    const grantKind = kind as ConfirmGrantKind;
+    const always = await post(harness.app, kind, { grantMode: "always" });
+    expect(always.status).toBe(200);
+    expect(await always.json()).toMatchObject({ kind, grantMode: "always", present: true });
+    expect(harness.created).toEqual([{ kind: grantKind, source: "settings" }]);
+
+    const back = await post(harness.app, kind, { grantMode: "ask" });
+    expect(back.status).toBe(200);
+    expect(await back.json()).toMatchObject({ kind, grantMode: "ask", present: false });
+    expect(harness.revoked).toEqual([grantKind]);
+  });
+
+  it("未知类别仍然拒绝", async () => {
+    const harness = makeHarness();
+    const response = await post(harness.app, "unknown-kind", { grantMode: "always" });
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: "这类操作只能每次询问，不能改为自动进行。",
-    });
     expect(harness.created).toHaveLength(0);
-    expect(harness.revoked).toHaveLength(0);
   });
 
   it("设置内容不完整时返回可行动说明", async () => {
@@ -177,7 +193,7 @@ describe("安全设置路由", () => {
     }) => ({ grantId: "dev-grant", kind, source, createdAt: new Date().toISOString() }));
     const app = new Hono();
     app.route("/api/v1", createSecuritySettingsRoutes({
-      listGrantStates: async () => (["install", "command"] as const).map((kind) => ({
+      listGrantStates: async () => (["install", "command", "send", "connect"] as const).map((kind) => ({
         kind,
         present: false,
         grantId: null,

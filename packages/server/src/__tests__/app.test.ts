@@ -349,7 +349,7 @@ describe("GET /api/v1/skills", () => {
     expect(byName.get("review")).toMatchObject({
       label: "文档审查",
       summary: "统一执行八类文档审查",
-      icon: "search",
+      icon: "review",
       userInvocable: true,
       tools: [
         "lexicon_list",

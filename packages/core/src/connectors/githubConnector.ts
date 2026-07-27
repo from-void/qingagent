@@ -168,7 +168,10 @@ export class GithubConnector implements ConnectorAdapter {
       if (signal.aborted || generation !== this.generation) return;
       await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
         strategy: "oauth2-device", version: 1, grantedScopes, account, token: token.access_token,
-      }, { expectedRevision: oldBundle?.revision ?? null });
+      }, {
+        expectedRevision: oldBundle?.revision ?? null,
+        writeGuard: () => !signal.aborted && generation === this.generation,
+      });
       this.lastReasonCode = null;
       this.lastCheckedAt = new Date().toISOString();
       this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });

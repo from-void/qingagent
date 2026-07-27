@@ -13,7 +13,18 @@ const h = vi.hoisted(() => ({
       account: { id: "1", displayName: "@octo" },
       token: "tok-test",
     },
-  },
+  } as {
+    version: 1;
+    connectorId: string;
+    revision: number;
+    payload: {
+      strategy: "oauth2-device";
+      version: 1;
+      grantedScopes: string[];
+      account: { id: string; displayName: string };
+      token: string;
+    };
+  } | null,
 }));
 
 vi.mock("../../credentials/credentialsRepo.js", () => ({
@@ -22,6 +33,7 @@ vi.mock("../../credentials/credentialsRepo.js", () => ({
   deleteConnectorCredentialBundle: vi.fn(),
 }));
 
+import { saveConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
 import { GithubConnector } from "../githubConnector.js";
 
 function fetchOk(body: unknown): typeof globalThis.fetch {
@@ -30,8 +42,28 @@ function fetchOk(body: unknown): typeof globalThis.fetch {
   ) as unknown as typeof globalThis.fetch;
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe("GithubConnector probe", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.bundle = {
+      version: 1,
+      connectorId: "github",
+      revision: 1,
+      payload: {
+        strategy: "oauth2-device",
+        version: 1,
+        grantedScopes: ["repo"],
+        account: { id: "1", displayName: "@octo" },
+        token: "tok-test",
+      },
+    };
+  });
 
   it("probe 成功后 status 带 lastCheckedAt(luna e2e 回归)", async () => {
     const connector = new GithubConnector({ clientId: "cid", fetch: fetchOk({ id: 1, login: "octo" }) });
@@ -47,5 +79,69 @@ describe("GithubConnector probe", () => {
     // 后续 status 查询也应保留探活时间
     const after = await connector.status();
     expect(after.lastCheckedAt).toBe(probed.lastCheckedAt);
+  });
+});
+
+describe("GithubConnector 授权生命周期", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.bundle = null;
+  });
+
+  it("disconnect 后保存事务内的代际 guard 拒绝迟到凭证写入", async () => {
+    const saveEntered = deferred();
+    const releaseSave = deferred();
+    let writeGuard: (() => boolean) | undefined;
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, _payload, options) => {
+      writeGuard = options?.writeGuard;
+      saveEntered.resolve();
+      await releaseSave.promise;
+      if (!writeGuard?.()) {
+        throw Object.assign(new Error("连接器授权已取消"), {
+          code: "CONNECTOR_CREDENTIAL_WRITE_CANCELLED",
+        });
+      }
+      throw new Error("测试期望 disconnect 使 writeGuard 失效");
+    });
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/login/device/code")) {
+        return new Response(JSON.stringify({
+          device_code: "device-public",
+          user_code: "PUBLIC",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return new Response(JSON.stringify({
+          access_token: "token-public",
+          token_type: "bearer",
+          scope: "public_repo",
+        }));
+      }
+      if (url.endsWith("/user")) {
+        return new Response(JSON.stringify({ id: 1, login: "octo" }));
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      apiBaseUrl: "https://api.github.test",
+      fetch,
+      sleep: async () => {},
+    });
+
+    await connector.start({ scope: "public_repo" });
+    await saveEntered.promise;
+    await expect(connector.disconnect()).resolves.toMatchObject({ state: "disconnected" });
+    expect(writeGuard).toBeTypeOf("function");
+    expect(writeGuard?.()).toBe(false);
+    releaseSave.resolve();
+    await vi.waitFor(() => expect(saveConnectorCredentialBundle).toHaveBeenCalledTimes(1));
+    await expect(connector.status()).resolves.toMatchObject({ state: "disconnected" });
+    expect(h.bundle).toBeNull();
   });
 });

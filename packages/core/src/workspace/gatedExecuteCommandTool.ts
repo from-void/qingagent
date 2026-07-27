@@ -59,6 +59,8 @@ export interface GatedExecuteCommandToolOptions {
   /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
   state?: ApprovalProofSession;
   getWorkspace: () => Promise<Workspace>;
+  /** 后台进程需把 Workspace 租约延长到自身退出。 */
+  retainWorkspace?: () => () => void;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
   /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
@@ -211,6 +213,7 @@ export function createGatedExecuteCommandTool({
   sessionId,
   state,
   getWorkspace,
+  retainWorkspace,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
 }: GatedExecuteCommandToolOptions) {
@@ -340,13 +343,25 @@ export function createGatedExecuteCommandTool({
           // LocalSandbox/bwrap 没有 per-process cgroup 或 RLIMIT hook；非特权桌面进程也
           // 不能可靠创建 cgroup。现阶段以 TTL、进程数和输出上限三层有界化，CPU/内存
           // 硬配额仍是残留边界，待框架提供资源控制接口后接入。
-          const handle = await sandbox.processes!.spawn(input.command, {
-            cwd,
-            ...perCallCredentialEnv,
-            timeout: backgroundTimeout,
-            maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-            abortSignal: context?.abortSignal,
-          });
+          const releaseWorkspace = retainWorkspace?.();
+          let handle;
+          try {
+            handle = await sandbox.processes!.spawn(input.command, {
+              cwd,
+              ...perCallCredentialEnv,
+              timeout: backgroundTimeout,
+              maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
+              abortSignal: context?.abortSignal,
+            });
+          } catch (error) {
+            releaseWorkspace?.();
+            throw error;
+          }
+          // wait 可被轮询工具重复调用；这里只负责在真实退出后释放后台活动引用。
+          void handle.wait().then(
+            () => releaseWorkspace?.(),
+            () => releaseWorkspace?.(),
+          );
           if (context?.abortSignal?.aborted) {
             return cancelledCommandResult("命令已取消: 后台进程启动期间请求已被取消");
           }

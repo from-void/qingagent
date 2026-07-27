@@ -78,6 +78,8 @@ function createToolHarness(
     sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
     runningProcesses?: number;
     simulateBackgroundTimeout?: boolean;
+    backgroundWait?: Promise<void>;
+    retainWorkspace?: () => () => void;
     firstListGate?: Promise<void>;
     commandResult?: {
       success: boolean;
@@ -136,7 +138,19 @@ function createToolHarness(
               spawnedRunning = Math.max(0, spawnedRunning - 1);
             }, spawnOptions.timeout);
           }
-          return { pid: 12345 };
+          return {
+            pid: 12345,
+            wait: async () => {
+              await options.backgroundWait;
+              return {
+                success: true,
+                exitCode: 0,
+                stdout: "",
+                stderr: "",
+                executionTimeMs: 1,
+              };
+            },
+          };
         },
       },
     },
@@ -145,6 +159,7 @@ function createToolHarness(
     sessionId,
     state: options.state,
     getWorkspace: async () => workspace,
+    retainWorkspace: options.retainWorkspace,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
   });
@@ -655,6 +670,29 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(result.output).toContain("最长运行: 10 秒");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
+  });
+
+  it("后台进程退出前持续持有 Workspace 租约", async () => {
+    let finishBackground!: () => void;
+    const backgroundWait = new Promise<void>((resolve) => {
+      finishBackground = resolve;
+    });
+    const releaseWorkspace = vi.fn();
+    const retainWorkspace = vi.fn(() => releaseWorkspace);
+    const { tool } = createToolHarness("gated-background-workspace-lease", {
+      backgroundWait,
+      retainWorkspace,
+    });
+
+    await expect(executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+    })).resolves.toMatchObject({ success: true, background: true });
+    expect(retainWorkspace).toHaveBeenCalledTimes(1);
+    expect(releaseWorkspace).not.toHaveBeenCalled();
+
+    finishBackground();
+    await vi.waitFor(() => expect(releaseWorkspace).toHaveBeenCalledTimes(1));
   });
 
   it("P2-6 回归:无 timeout 后台 dev 命令不确认，静默套用并展示实际 TTL", async () => {

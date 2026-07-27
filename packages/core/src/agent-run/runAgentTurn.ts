@@ -10,7 +10,13 @@ import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-conte
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { buildChipOnlyGuidance, composeInlineChipText } from "../session/chipOnlyNote.js";
 import { createSkillChipInstructionLoader } from "./skillChipInstructionLoader.js";
-import { getQingagentSkills, qingagentAgent } from "../agents/qingagent.js";
+import {
+  acquireQingagentSessionWorkspace,
+  getQingagentSkills,
+  QINGAGENT_SESSION_WORKSPACE_CONTEXT_KEY,
+  qingagentAgent,
+} from "../agents/qingagent.js";
+import type { SessionWorkspaceLease } from "../workspace/sessionWorkspace.js";
 import { guardContext, withPrefixCacheGuardContext } from "../llm/prefixCacheGuard.js";
 import {
   beginSessionSnapshotTurn,
@@ -196,6 +202,7 @@ export async function* runAgentTurn(
   state._activeTurnPromise = turnCompletion.promise;
   state._suspendedThisTurn = false;
   let turnRequestContext: RequestContext | undefined;
+  let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
 
   // Resolve workspace skills defensively: skill discovery / maybeRefresh must
   // never abort the turn. On any failure we log and fall back to the default
@@ -580,7 +587,28 @@ export async function* runAgentTurn(
         observations: null,
       };
     });
-    const sessionTools = createSessionScopedTools(state);
+    const shouldLeaseSessionWorkspace =
+      !process.env.VITEST || process.env.QINGAGENT_FORCE_SESSION_SANDBOX === "1";
+    if (shouldLeaseSessionWorkspace) {
+      try {
+        sessionWorkspaceLease = await acquireQingagentSessionWorkspace(state.sessionId);
+      } catch (error) {
+        logger.error("[sessionWorkspace] 租约获取失败，保留无命令能力的降级路径", {
+          sessionId: state.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const activeWorkspaceLease = sessionWorkspaceLease;
+    const sessionTools = createSessionScopedTools(
+      state,
+      activeWorkspaceLease
+        ? {
+            getWorkspace: async () => activeWorkspaceLease.workspace,
+            retainWorkspace: () => activeWorkspaceLease.retain(),
+          }
+        : {},
+    );
 
     const messagesForModel = omContextForTurn.messagesForModel;
     const messagesForToolContext = omContextForTurn.tailObservationPrompt
@@ -620,6 +648,12 @@ export async function* runAgentTurn(
       ["isDirectionReset", isDirectionReset(state)],
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
+    if (activeWorkspaceLease) {
+      requestContext.set(
+        QINGAGENT_SESSION_WORKSPACE_CONTEXT_KEY,
+        activeWorkspaceLease.workspace,
+      );
+    }
     bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
     if (selectionDiagramLanguages.size > 0) {
       markDiagramVizEditing(requestContext, selectionDiagramLanguages);
@@ -936,6 +970,7 @@ export async function* runAgentTurn(
       yield* syncContentAndProjectDocState(state, "agent_turn_failed");
     }
   } finally {
+    sessionWorkspaceLease?.release();
     if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
       turnOutcome = "cancelled";
     }

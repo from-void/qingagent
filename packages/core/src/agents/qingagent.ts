@@ -8,7 +8,11 @@ import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
-import { getSessionWorkspace } from "../workspace/sessionWorkspace.js";
+import {
+  acquireSessionWorkspace,
+  getSessionWorkspace,
+  type SessionWorkspaceLease,
+} from "../workspace/sessionWorkspace.js";
 import { getSessionFolderSources } from "../folderSources/runtime.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import { listTopLevelSkills } from "../skills/discovery.js";
@@ -194,6 +198,17 @@ export async function getQingagentSessionWorkspace(sessionId: string): Promise<W
   });
 }
 
+export async function acquireQingagentSessionWorkspace(
+  sessionId: string,
+): Promise<SessionWorkspaceLease> {
+  return await acquireSessionWorkspace(sessionId, {
+    resolveSkillDirs: resolveEnabledSkillDirs,
+    resolveFolderSources: getSessionFolderSources,
+  });
+}
+
+export const QINGAGENT_SESSION_WORKSPACE_CONTEXT_KEY = "qingagentSessionWorkspace";
+
 /** 全局兜底 Workspace:技能发现/列表(getQingagentSkills)与无会话上下文时使用。
  *  不带沙箱——命令执行能力只存在于会话级 Workspace。 */
 export const qingagentWorkspace = new Workspace({
@@ -211,6 +226,8 @@ async function resolveWorkspaceForRequest({
 }: {
   requestContext?: { get?: (key: string) => unknown };
 }): Promise<Workspace> {
+  const leasedWorkspace = requestContext?.get?.(QINGAGENT_SESSION_WORKSPACE_CONTEXT_KEY);
+  if (leasedWorkspace instanceof Workspace) return leasedWorkspace;
   // 测试环境旁路:现有 mock 测试经 agent.stream 间接触发本解析,不应装配重量级
   // LocalSandbox(真实 mkdir+子进程探测)——并行下会拖垮无关测试。沙箱能力由
   // sessionWorkspace.test/exec.test 直接调 getSessionWorkspace 覆盖,无需经此路径。

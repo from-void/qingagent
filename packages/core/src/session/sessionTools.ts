@@ -1,6 +1,7 @@
 import type { ReviewContext, SkillRef } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
+import type { Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getQingagentSessionWorkspace } from "../agents/qingagent.js";
@@ -679,9 +680,16 @@ function imageAttachmentToolInstruction({
 
 export function createSessionScopedTools(
   stateOrMaterials: SessionState | Map<string, Material>,
+  workspaceOptions: {
+    getWorkspace?: () => Promise<Workspace>;
+    retainWorkspace?: () => () => void;
+  } = {},
 ) {
   const state = stateOrMaterials instanceof Map ? null : stateOrMaterials;
   const materials = stateOrMaterials instanceof Map ? stateOrMaterials : stateOrMaterials.materials;
+  const getWorkspace = state
+    ? workspaceOptions.getWorkspace ?? (() => getQingagentSessionWorkspace(state.sessionId))
+    : null;
   let annotationGroupWriteQueue: Promise<void> = Promise.resolve();
   const readMaterial = createTool({
     id: "readMaterial",
@@ -1354,12 +1362,13 @@ export function createSessionScopedTools(
     ? createGatedExecuteCommandTool({
         sessionId: state.sessionId,
         state,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
+        retainWorkspace: workspaceOptions.retainWorkspace,
       })
     : null;
   const getProcessOutput = state
     ? createBoundedGetProcessOutputTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   // 文件夹资料库 agent 工具:仅当会话连了文件夹源时注入(读文档/检索 + 受保护的工作区文件操作)。
@@ -1367,35 +1376,35 @@ export function createSessionScopedTools(
   const readDocument = state && hasFolderSources
     ? createReadDocumentTool({
         sessionId: state.sessionId,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
         getSources: () => state.folderSources.values(),
       })
     : null;
   const searchDocuments = state && hasFolderSources
     ? createSearchDocumentsTool({
         sessionId: state.sessionId,
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
         getSources: () => state.folderSources.values(),
       })
     : null;
   const workspaceReadFile = state && hasFolderSources
     ? createProtectedFolderSourceReadFileTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceEditFile = state && hasFolderSources
     ? createProtectedFolderSourceEditFileTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceGrep = state && hasFolderSources
     ? createProtectedFolderSourceGrepTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const workspaceSearch = state && hasFolderSources
     ? createProtectedFolderSourceSearchTool({
-        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+        getWorkspace: getWorkspace!,
       })
     : null;
   const updateWorkingMemory = state ? createUpdateWorkingMemoryTool(state) : null;

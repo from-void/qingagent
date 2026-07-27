@@ -9,6 +9,7 @@ import {
   __resetIsolationCacheForTest,
   __resetSessionWorkspaceCacheForTest,
   __sessionWorkspaceCacheStatsForTest,
+  acquireSessionWorkspace,
   allowUnisolatedCommands,
   buildSandboxEnv,
   cleanupSessionWorkspace,
@@ -319,6 +320,72 @@ describe("getSessionWorkspace 装配与缓存", () => {
 
     expect(destroyA).toHaveBeenCalledTimes(1);
     expect(destroyB).toHaveBeenCalledTimes(1);
+  });
+
+  it("全量 invalidate 也会等待活动租约释放", async () => {
+    const lease = await acquireSessionWorkspace("sess-leased-invalidate-all", opts);
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    invalidateSessionWorkspace();
+    expect(destroy).not.toHaveBeenCalled();
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("活动租约让失效延迟到最后一个前台或后台使用者释放", async () => {
+    const lease = await acquireSessionWorkspace("sess-leased-invalidate", opts);
+    const releaseBackground = lease.retain();
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    invalidateSessionWorkspace("sess-leased-invalidate");
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      leaseCount: 2,
+      pendingDestroyCount: 1,
+    });
+
+    const nextTurn = await acquireSessionWorkspace("sess-leased-invalidate", opts);
+    expect(nextTurn.workspace).toBe(lease.workspace);
+    lease.release();
+    nextTurn.release();
+    expect(destroy).not.toHaveBeenCalled();
+
+    releaseBackground();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(__sessionWorkspaceCacheStatsForTest()).toMatchObject({
+      leaseCount: 0,
+      pendingDestroyCount: 0,
+    });
+  });
+
+  it("租约 Promise 落账前的同步预留也会阻止失效销毁", async () => {
+    const workspace = await getSessionWorkspace("sess-lease-reservation", opts);
+    const destroy = vi.spyOn(workspace, "destroy").mockResolvedValue(undefined);
+
+    const acquiring = acquireSessionWorkspace("sess-lease-reservation", opts);
+    invalidateSessionWorkspace("sess-lease-reservation");
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest().pendingAcquireCount).toBe(1);
+
+    const lease = await acquiring;
+    expect(lease.workspace).toBe(workspace);
+    expect(destroy).not.toHaveBeenCalled();
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("LRU 只标记仍有租约的 Workspace，释放后才销毁", async () => {
+    const lease = await acquireSessionWorkspace("sess-leased-lru-oldest", opts);
+    const destroy = vi.spyOn(lease.workspace, "destroy").mockResolvedValue(undefined);
+
+    for (let index = 0; index < 512; index += 1) {
+      await getSessionWorkspace(`sess-leased-lru-${index}`, opts);
+    }
+
+    expect(destroy).not.toHaveBeenCalled();
+    expect(__sessionWorkspaceCacheStatsForTest().pendingDestroyCount).toBe(1);
+    lease.release();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 
   it("Round9 回归:同会话并发首建只产出一个实例(inflight 去重,防游离实例泄漏)", async () => {

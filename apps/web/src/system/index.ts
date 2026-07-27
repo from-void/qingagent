@@ -3,20 +3,33 @@ export { ConfirmProvider, useConfirm } from "./ConfirmProvider";
 export type { ConfirmOptions } from "./ConfirmProvider";
 export { chatInputBus } from "./chatInputBus";
 export {
-  setPendingFiles,
-  peekPendingFiles,
-  clearPendingFiles,
-  consumePendingFiles,
+  bindPendingSubmissionToSession,
+  claimPendingSubmission,
+  clearPendingSubmission,
+  createPendingSubmission,
+  loadPendingSubmission,
+  markPendingSubmissionRetryable,
+  peekPendingSubmissionState,
+  PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS,
   PENDING_SUBMISSION_ID_STORAGE_KEY,
-  setPendingFolderSource,
-  peekPendingFolderSource,
-  clearPendingFolderSource,
-  consumePendingFolderSource,
+  PENDING_SUBMISSION_STORAGE_KEY,
+  PENDING_SUBMISSION_TTL_MS,
+  updatePendingSubmissionProgress,
 } from "./pendingSession";
 export type {
+  PendingAttachmentInput,
   PendingBrowserFolderSource,
   PendingDesktopFolderSource,
   PendingFolderSource,
+  PendingPayloadSaveResult,
+  PendingPayloadStore,
+  PendingSessionStorage,
+  PendingSubmission,
+  PendingSubmissionInput,
+  PendingSubmissionLoadResult,
+  PendingSubmissionManager,
+  PendingSubmissionState,
+  PendingUploadedAsset,
 } from "./pendingSession";
 export {
   FOLDER_INTRO_STORAGE_KEY,

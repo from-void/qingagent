@@ -26,21 +26,27 @@ import {
 } from "react";
 import { useSessionStore } from "../../../stores/sessionStore";
 import {
+  bindPendingSubmissionToSession,
   chatInputBus,
-  clearPendingFiles,
-  clearPendingFolderSource,
+  claimPendingSubmission,
+  clearPendingSubmission,
   deriveFolderCapability,
-  peekPendingFiles,
-  peekPendingFolderSource,
-  PENDING_SUBMISSION_ID_STORAGE_KEY,
+  loadPendingSubmission,
+  markPendingSubmissionRetryable,
+  updatePendingSubmissionProgress,
   useClientCapabilities,
   useToast,
+  type PendingSubmission,
+  type PendingUploadedAsset,
 } from "../../../system";
 import { useConfirm } from "../../../system/ConfirmProvider";
 import { useModelKeyConfigured } from "../../../system/modelKeyGate";
 import { resources, useResourceList } from "../../../system/resources";
 import { validateCommand } from "../../../system/validators";
-import type { ChatInputHandle } from "../data/chatInputTypes";
+import type {
+  ChatInputHandle,
+  ChatInputSnapshot,
+} from "../data/chatInputTypes";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
 import { buildActiveDerivativeTurnContext } from "../components/derivatives/derivativeTurnContext";
@@ -269,6 +275,44 @@ function sessionTitleFromStore(sessionId: string | null): string | null {
     .getState()
     .sessions.find((session) => session.id === sessionId)?.title;
   return hydratedSessionTitle(title);
+}
+
+export function pendingSubmissionMatchesWorkspace(
+  submission: Pick<PendingSubmission, "targetSessionId">,
+  workspaceSessionId: string | null,
+): boolean {
+  return submission.targetSessionId !== null
+    ? submission.targetSessionId === workspaceSessionId
+    : workspaceSessionId === null;
+}
+
+export function pendingSubmissionToChatInputSnapshot(
+  submission: PendingSubmission,
+): ChatInputSnapshot {
+  return {
+    text: submission.text,
+    richText: submission.richText ?? submission.text,
+    files: submission.attachments.flatMap((attachment) =>
+      attachment.file ? [attachment.file] : [],
+    ),
+    skills: submission.skills,
+    chips: submission.chips.map((chip) => {
+      if (chip.kind.kind === "skill") {
+        return {
+          kind: "mention" as const,
+          label: chip.label,
+          ...(chip.skillId ? { skillId: chip.skillId } : {}),
+        };
+      }
+      return {
+        kind: "attach" as const,
+        label: chip.label,
+        ...(chip.resourceRef
+          ? { attachmentId: chip.resourceRef.id }
+          : {}),
+      };
+    }),
+  };
 }
 
 export function useWorkspacePageController() {
@@ -501,6 +545,7 @@ export function useWorkspacePageController() {
     Command,
     { kind: "sendMessage" }
   > | null>(null);
+  const pendingSubmissionAttemptRef = useRef<string | null>(null);
   // 所有 sendMessage 入口共用同一 turn 闸门：首页 pending-message、输入框发送、
   // 衍生稿指令都必须能被一次停止持续作废，不能各自保留会晚到的异步派发链。
   const turnDispatchGateRef = useRef<WorkspaceTurnDispatchGate>({
@@ -1647,6 +1692,7 @@ export function useWorkspacePageController() {
   // StrictMode's cleanup/re-mount cycle does NOT dispose the stream
   // while an in-flight SSE request is still active.
   useEffect(() => {
+    let effectActive = true;
     if (streamDisposeTimerRef.current !== null) {
       clearTimeout(streamDisposeTimerRef.current);
       streamDisposeTimerRef.current = null;
@@ -2058,119 +2104,152 @@ export function useWorkspacePageController() {
     };
 
     const initialSessionId = workspaceSessionIdFromHash(window.location.hash);
-    const createdInitialStream = streamRef.current === null;
     const stream =
       streamRef.current ??
       startWorkspaceStream(initialSessionId, {
         resetSessionState: false,
       });
 
-    // Check for pending text/files from NewSessionPage
-    const pending = sessionStorage.getItem("qingagent:pending-message");
-    const pendingSubmissionId = sessionStorage.getItem(
-      PENDING_SUBMISSION_ID_STORAGE_KEY,
-    );
-    const files = peekPendingFiles(pendingSubmissionId);
-    const pendingFolder = peekPendingFolderSource();
-    // 新建页选的技能(0702:此前 skills 写死 [],技能被整个丢掉)。防御性解析:坏 JSON/坏形状一律当没有。
-    const pendingSkills: Extract<
-      Command,
-      { kind: "sendMessage" }
-    >["data"]["skills"] = (() => {
-      try {
-        const raw = sessionStorage.getItem("qingagent:pending-skills");
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return [];
-        return parsed
-          .filter(
-            (s): s is { id: string } =>
-              Boolean(s) && typeof s.id === "string" && s.id.length > 0,
-          )
-          .map((s) => ({ id: s.id, version: null }));
-      } catch {
-        return [];
-      }
-    })();
-    // 新建页输入框的 chips(WYSIWYG):气泡按 richText 的 {{chip:N}} 原位内联渲染,与输入框所见一致。
-    const pendingRichText = sessionStorage.getItem(
-      "qingagent:pending-richtext",
-    );
-    const pendingChips: ChatChip[] = (() => {
-      try {
-        const raw = sessionStorage.getItem("qingagent:pending-chips");
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter(
-          (c): c is ChatChip =>
-            Boolean(c) &&
-            typeof c.label === "string" &&
-            c.kind &&
-            typeof c.kind.kind === "string",
-        );
-      } catch {
-        return [];
-      }
-    })();
+    const offerPendingRetry = (
+      submissionId: string,
+      message = "待发送内容与素材已恢复",
+    ) => {
+      if (!window.location.hash.startsWith("#/workspace")) return;
+      toast.show({
+        message,
+        tone: "warn",
+        sticky: true,
+        dedupeKey: "workspace-pending-submission",
+        action: {
+          label: "重试",
+          onClick: () => {
+            void loadPendingSubmission().then((result) => {
+              if (
+                result.kind !== "ready" ||
+                result.submission.submissionId !== submissionId
+              ) {
+                return;
+              }
+              void sendPendingSubmission(result.submission, false);
+            });
+          },
+        },
+      });
+    };
 
-    if (
-      createdInitialStream &&
-      !initialSessionId &&
-      (pending != null || files.length > 0 || pendingFolder !== null)
-    ) {
-      const messageText = pending ?? "";
+    const sendPendingSubmission = async (
+      submission: PendingSubmission,
+      automatic: boolean,
+    ) => {
+      if (
+        pendingSubmissionAttemptRef.current === submission.submissionId
+      ) {
+        return;
+      }
+      const workspaceSessionId = workspaceSessionIdFromHash(
+        window.location.hash,
+      );
+      if (
+        !pendingSubmissionMatchesWorkspace(
+          submission,
+          workspaceSessionId,
+        ) ||
+        !claimPendingSubmission(
+          submission.submissionId,
+          workspaceSessionId,
+          automatic ? ["queued"] : ["retryable", "dispatching"],
+        )
+      ) {
+        return;
+      }
+      pendingSubmissionAttemptRef.current = submission.submissionId;
+      setSendPending(true);
+      toast.dismiss("workspace-pending-submission", {
+        runOnDismiss: false,
+      });
+
+      // 同一 clientMessageId 贯穿刷新和重试；reducer 与服务端均可按 id 去重。
+      if (submission.text.length > 0 || submission.chips.length > 0) {
+        const displayBody =
+          submission.chips.length > 0 && submission.richText
+            ? submission.richText
+            : submission.text;
+        dispatch({
+          kind: "chatMessageAdded",
+          data: {
+            message: {
+              id: submission.clientMessageId,
+              role: { kind: "user" },
+              ts: new Date().toISOString(),
+              parts: [{ kind: "text", data: { body: displayBody } }],
+              chips:
+                submission.chips.length > 0 ? submission.chips : null,
+            },
+          },
+        });
+      }
+
       const dispatchToken = beginWorkspaceTurnDispatch(
         turnDispatchGateRef.current,
-        null,
+        workspaceSessionId,
       );
-
-      const sendPending = async () => {
-        // 乐观气泡与服务端直播 user 帧共用同一 id(clientMessageId),按 id 去重合一。
-        // WYSIWYG:有 chips 时气泡 body 用 richText({{chip:N}} 原位内联),与新建页输入框所见一致。
-        // e2e-loop-0704 R15 回归:气泡必须在建会话/传文件 await **之前**先落地——此前放在
-        // await 之后,新建页跳转后的头 1-2 秒(带附件更久)工作区完全空白、用户消息无影,
-        // 自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息其实已在跑)。
-        const clientMessageId = newClientMessageId();
-        if (messageText.length > 0 || pendingChips.length > 0) {
-          const displayBody =
-            pendingChips.length > 0 && pendingRichText
-              ? pendingRichText
-              : messageText;
-          dispatch({
-            kind: "chatMessageAdded",
-            data: {
-              message: {
-                id: clientMessageId,
-                role: { kind: "user" },
-                ts: new Date().toISOString(),
-                parts: [{ kind: "text", data: { body: displayBody } }],
-                chips: pendingChips.length > 0 ? pendingChips : null,
-              },
-            },
-          });
-        }
+      try {
         const outcome = await prepareAndDispatchWorkspaceTurn({
           gate: turnDispatchGateRef.current,
           token: dispatchToken,
           prepare: async () => {
-            const sessionPromise = startNewSessionOnce(
-              stream,
-              sessionIdRef,
-              startNewSessionPromiseRef,
-              (sessionId) => {
-                if (
-                  isWorkspaceTurnDispatchCurrent(
-                    turnDispatchGateRef.current,
-                    dispatchToken,
+            const sessionPromise = (
+              submission.targetSessionId
+                ? Promise.resolve(submission.targetSessionId)
+                : startNewSessionOnce(
+                    stream,
+                    sessionIdRef,
+                    startNewSessionPromiseRef,
+                    (sessionId) => {
+                      if (
+                        isWorkspaceTurnDispatchCurrent(
+                          turnDispatchGateRef.current,
+                          dispatchToken,
+                        )
+                      ) {
+                        replaceWorkspaceSessionHash(sessionId);
+                      }
+                    },
                   )
-                ) {
-                  replaceWorkspaceSessionHash(sessionId);
-                }
-              },
+            ).then((sessionId) => {
+              // 建会话通常早于大文件上传完成；一拿到 id 就固化归属，避免上传中刷新后
+              // 元数据仍是 target=null，导致已带 session hash 的重试入口读不到本提交。
+              if (
+                !bindPendingSubmissionToSession(
+                  submission.submissionId,
+                  sessionId,
+                )
+              ) {
+                throw new Error("pending submission ownership changed");
+              }
+              if (
+                submission.targetSessionId === null &&
+                window.location.hash.startsWith("#/workspace") &&
+                workspaceSessionIdFromHash(window.location.hash) ===
+                  null
+              ) {
+                // 停止可能先作废 turn，随后建会话才返回。会话已真实存在时仍把空白
+                // workspace 绑定到它，保留的 retryable 载荷才能通过同会话归属校验。
+                replaceWorkspaceSessionHash(sessionId);
+              }
+              return sessionId;
+            });
+            const pendingUploads = submission.attachments.filter(
+              (attachment) =>
+                attachment.uploadedAsset === null &&
+                attachment.file !== null,
             );
-            const [uploadedAssets, sessionId] = await Promise.all([
-              uploadFiles(files),
+            const [newlyUploadedAssets, sessionId] = await Promise.all([
+              uploadFiles(
+                pendingUploads.flatMap((attachment) =>
+                  attachment.file ? [attachment.file] : [],
+                ),
+              ),
               sessionPromise,
             ]);
             if (
@@ -2181,15 +2260,35 @@ export function useWorkspacePageController() {
             ) {
               throw new Error("workspace turn dispatch cancelled");
             }
-            const fileIds = uploadedAssets.map((asset) => asset.fileId);
-            if (pendingFolder) {
+            const uploadedProgress: PendingUploadedAsset[] = [
+              ...submission.attachments.flatMap((attachment) =>
+                attachment.uploadedAsset
+                  ? [attachment.uploadedAsset]
+                  : [],
+              ),
+              ...newlyUploadedAssets.map((asset, index) => ({
+                attachmentId: pendingUploads[index]!.id,
+                ...asset,
+              })),
+            ];
+            updatePendingSubmissionProgress(submission.submissionId, {
+              uploadedAssets: uploadedProgress,
+            });
+
+            if (
+              !submission.folderAttached &&
+              submission.folderSource
+            ) {
               await sendAttachFolderSelection(
                 stream,
                 sessionId,
-                folderAttachSelectionFromPending(pendingFolder),
+                folderAttachSelectionFromPending(
+                  submission.folderSource,
+                ),
                 {
                   awaitBrowserBridge:
-                    pendingFolder.provider === "browser-fs-access",
+                    submission.folderSource.provider ===
+                    "browser-fs-access",
                 },
               );
               if (
@@ -2200,27 +2299,32 @@ export function useWorkspacePageController() {
               ) {
                 throw new Error("workspace turn dispatch cancelled");
               }
-              if (peekPendingFolderSource() === pendingFolder)
-                clearPendingFolderSource();
+              updatePendingSubmissionProgress(
+                submission.submissionId,
+                { folderAttached: true },
+              );
             }
+
             return {
               command: {
                 kind: "sendMessage",
                 data: {
                   sessionId,
-                  text: messageText,
+                  text: submission.text,
                   mentions: [],
-                  skills: pendingSkills,
-                  chips: pendingChips,
-                  fileIds,
-                  clientMessageId,
-                  // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
-                  ...(pendingChips.length > 0 && pendingRichText
-                    ? { richText: pendingRichText }
+                  skills: submission.skills,
+                  chips: submission.chips,
+                  fileIds: uploadedProgress.map(
+                    (asset) => asset.fileId,
+                  ),
+                  clientMessageId: submission.clientMessageId,
+                  ...(submission.chips.length > 0 &&
+                  submission.richText
+                    ? { richText: submission.richText }
                     : {}),
                 },
               } satisfies Extract<Command, { kind: "sendMessage" }>,
-              uploadedAssets,
+              uploadedAssets: newlyUploadedAssets,
             };
           },
           dispatch: async ({ command, uploadedAssets }) => {
@@ -2229,57 +2333,128 @@ export function useWorkspacePageController() {
             await stream.sendCommand(command);
           },
         });
-        const clearOwnedPendingFiles = () => {
-          if (!pendingSubmissionId) return;
-          clearPendingFiles(pendingSubmissionId);
-          if (
-            sessionStorage.getItem(PENDING_SUBMISSION_ID_STORAGE_KEY) ===
-            pendingSubmissionId
-          ) {
-            sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
-          }
-        };
+
         if (outcome === "cancelled") {
-          clearOwnedPendingFiles();
+          setSendPending(false);
+          if (
+            !markPendingSubmissionRetryable(
+              submission.submissionId,
+            )
+          ) {
+            return;
+          }
+          offerPendingRetry(
+            submission.submissionId,
+            "已停止，内容与素材已保留",
+          );
           return;
         }
-        if (sessionStorage.getItem("qingagent:pending-message") === pending) {
-          sessionStorage.removeItem("qingagent:pending-message");
+        await clearPendingSubmission(submission.submissionId);
+      } catch (error) {
+        setSendPending(false);
+        if (
+          !markPendingSubmissionRetryable(submission.submissionId)
+        ) {
+          return;
         }
-        sessionStorage.removeItem("qingagent:pending-skills");
-        sessionStorage.removeItem("qingagent:pending-richtext");
-        sessionStorage.removeItem("qingagent:pending-chips");
-        clearOwnedPendingFiles();
-      };
-
-      sendPending().catch((e) => {
-        if (pendingSubmissionId) {
-          clearPendingFiles(pendingSubmissionId);
+        const stillCurrent = isWorkspaceTurnDispatchCurrent(
+          turnDispatchGateRef.current,
+          dispatchToken,
+        );
+        if (stillCurrent) {
+          console.error(
+            "[workspace] pending submission send failed",
+            error,
+          );
+          offerPendingRetry(
+            submission.submissionId,
+            "发送失败，内容与素材已保留",
+          );
+        } else {
+          // 上传/建会话的 await 被停止门作废时 prepare 会抛错而非返回 cancelled。
+          // 仅当当前 URL 仍属于本提交时显示重试，切去别的会话不能把旧载荷投影过来。
+          const latest = await loadPendingSubmission();
           if (
-            sessionStorage.getItem(PENDING_SUBMISSION_ID_STORAGE_KEY) ===
-            pendingSubmissionId
+            latest.kind === "ready" &&
+            latest.submission.submissionId ===
+              submission.submissionId &&
+            pendingSubmissionMatchesWorkspace(
+              latest.submission,
+              workspaceSessionIdFromHash(window.location.hash),
+            )
           ) {
-            sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
+            offerPendingRetry(
+              submission.submissionId,
+              "已停止，内容与素材已保留",
+            );
           }
         }
-        // 用户已经停止这一 turn 时，晚到的上传/建会话失败不再冒充新的发送失败。
+      } finally {
         if (
-          !isWorkspaceTurnDispatchCurrent(
-              turnDispatchGateRef.current,
-              dispatchToken,
+          pendingSubmissionAttemptRef.current ===
+          submission.submissionId
+        ) {
+          pendingSubmissionAttemptRef.current = null;
+        }
+      }
+    };
+
+    void loadPendingSubmission().then(async (result) => {
+        if (!effectActive) return;
+        if (result.kind === "expired") {
+          toast.show({
+            message: "上次待发送内容已过期，请重新输入",
+            tone: "warn",
+          });
+          return;
+        }
+        if (result.kind === "none") return;
+        const submission = result.submission;
+        if (
+          !pendingSubmissionMatchesWorkspace(
+            submission,
+            initialSessionId,
           )
         ) {
           return;
         }
-        console.error("[workspace] pending-message send failed", e);
-        const message = e instanceof Error ? e.message : "";
-        showToast(
-          message.startsWith("连接文件夹失败")
-            ? `${message}，请重选或重试`
-            : "发送失败 · 请重试",
-        );
+        if (result.kind === "degraded") {
+          const chatInput = chatInputRef.current;
+          if (!chatInput) {
+            offerPendingRetry(
+              submission.submissionId,
+              "部分素材无法恢复，请返回新建页重新添加",
+            );
+            return;
+          }
+          chatInput.restore(
+            pendingSubmissionToChatInputSnapshot(submission),
+          );
+          await clearPendingSubmission(submission.submissionId);
+          const missing = [
+            result.missingAttachmentCount > 0
+              ? `${result.missingAttachmentCount} 个附件`
+              : "",
+            result.folderMissing ? "文件夹" : "",
+          ].filter(Boolean);
+          toast.show({
+            message: `${missing.join("和")}无法恢复，已移除；文字已保留，请重新添加`,
+            tone: "warn",
+            sticky: true,
+          });
+          return;
+        }
+        if (result.submission.state === "queued") {
+          void sendPendingSubmission(result.submission, true);
+          return;
+        }
+        if (
+          pendingSubmissionAttemptRef.current !==
+          result.submission.submissionId
+        ) {
+          offerPendingRetry(result.submission.submissionId);
+        }
       });
-    }
 
     const syncHashSession = async () => {
       const nextSessionId = workspaceSessionIdFromHash(window.location.hash);
@@ -2335,6 +2510,7 @@ export function useWorkspacePageController() {
     window.addEventListener("hashchange", syncHashSession);
     window.addEventListener("popstate", syncHashSession);
     return () => {
+      effectActive = false;
       window.removeEventListener("hashchange", syncHashSession);
       window.removeEventListener("popstate", syncHashSession);
       // 延迟释放让开发 StrictMode 的立即 cleanup/re-run 有机会取消 dispose，
@@ -2398,6 +2574,7 @@ export function useWorkspacePageController() {
     showToast,
     stagePresentationRunForDocFrame,
     stagePresentationRunForViewDoc,
+    toast,
   ]);
 
   // 组件卸载时清掉在排的瞬态保存重试定时器,防孤儿定时器卸载后用旧态杂散重发。

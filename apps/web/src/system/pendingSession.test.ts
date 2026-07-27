@@ -1,0 +1,433 @@
+import type { ChatChip } from "@qingagent/contract-ts";
+import { describe, expect, it } from "vitest";
+import {
+  PENDING_SUBMISSION_STORAGE_KEY,
+  PENDING_SUBMISSION_TTL_MS,
+  PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS,
+  createPendingSubmissionManager,
+  type PendingFolderSource,
+  type PendingPayloadStore,
+  type PendingSessionStorage,
+  type PendingSubmissionInput,
+} from "./pendingSession";
+
+function createStorage(): PendingSessionStorage & {
+  values: Map<string, string>;
+} {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+  };
+}
+
+function createPayloadStore(options?: {
+  persistAttachments?: boolean;
+  persistFolder?: boolean;
+}): PendingPayloadStore {
+  const payloads = new Map<
+    string,
+    {
+      attachments?: PendingSubmissionInput["attachments"];
+      folderSource?: PendingFolderSource | null;
+    }
+  >();
+  return {
+    async save(submissionId, payload) {
+      const current = payloads.get(submissionId) ?? {};
+      if (options?.persistAttachments !== false) {
+        current.attachments = payload.attachments;
+      }
+      if (options?.persistFolder !== false) {
+        current.folderSource = payload.folderSource;
+      }
+      payloads.set(submissionId, current);
+      return {
+        attachments:
+          payload.attachments.length === 0 ||
+          options?.persistAttachments !== false,
+        folder:
+          payload.folderSource === null ||
+          options?.persistFolder !== false,
+      };
+    },
+    async load(submissionId) {
+      return payloads.get(submissionId) ?? null;
+    },
+    async remove(submissionId) {
+      payloads.delete(submissionId);
+    },
+  };
+}
+
+function attachChip(id: string, label = "材料.txt"): ChatChip {
+  return {
+    kind: { kind: "attach" },
+    resourceRef: { id, domain: { kind: "file" } },
+    prefix: null,
+    label,
+    suffix: null,
+  };
+}
+
+function skillChip(id: string, label = "深度研究"): ChatChip {
+  return {
+    kind: { kind: "skill" },
+    resourceRef: null,
+    skillId: id,
+    prefix: null,
+    label,
+    suffix: null,
+  };
+}
+
+function submissionInput(
+  submissionId: string,
+  overrides: Partial<PendingSubmissionInput> = {},
+): PendingSubmissionInput {
+  return {
+    submissionId,
+    clientMessageId: `message-${submissionId}`,
+    text: "请分析材料",
+    richText: "请分析{{chip:0}}",
+    chips: [attachChip("attachment-1")],
+    skills: [],
+    attachments: [
+      {
+        id: "attachment-1",
+        file: new File(["真实文件内容"], "材料.txt", {
+          type: "text/plain",
+          lastModified: 123,
+        }),
+      },
+    ],
+    folderSource: null,
+    ...overrides,
+  };
+}
+
+describe("pending submission 持久化与归属", () => {
+  it("跨模块实例从持久层恢复 File 内容，不留下只有 chip 的假附件", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore();
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await expect(
+      beforeRefresh.create(submissionInput("submission-refresh")),
+    ).resolves.toMatchObject({ durable: true });
+
+    // 新 manager 没有上一实例的内存 Map，等价于页面刷新后的模块重载。
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("ready");
+    if (result.kind !== "ready") return;
+    expect(result.submission.attachments).toHaveLength(1);
+    expect(
+      await result.submission.attachments[0]!.file?.text(),
+    ).toBe("真实文件内容");
+    expect(result.submission.chips).toEqual([
+      attachChip("attachment-1"),
+    ]);
+  });
+
+  it("失败载荷保留为 retryable，且只能由绑定会话认领", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore();
+    const manager = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await manager.create(submissionInput("submission-owned"));
+
+    expect(
+      manager.claim("submission-owned", null, ["queued"]),
+    ).toBe(true);
+    expect(
+      manager.bindToSession("submission-owned", "session-a"),
+    ).toBe(true);
+    expect(manager.markRetryable("submission-owned")).toBe(true);
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const loaded = await afterRefresh.load();
+    expect(loaded.kind).toBe("ready");
+    if (loaded.kind !== "ready") return;
+    expect(loaded.submission.state).toBe("retryable");
+    expect(loaded.submission.targetSessionId).toBe("session-a");
+    expect(
+      afterRefresh.claim("submission-owned", "session-b", [
+        "retryable",
+      ]),
+    ).toBe(false);
+    expect(
+      afterRefresh.claim("submission-owned", "session-a", [
+        "retryable",
+      ]),
+    ).toBe(true);
+  });
+
+  it("IndexedDB 无法恢复附件时移除对应 chip、重排 richText，并保留文字", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore({
+      persistAttachments: false,
+    });
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    const input = submissionInput("submission-degraded", {
+      text: "前文后文",
+      richText: "前文{{chip:0}}后文{{chip:1}}",
+      chips: [
+        attachChip("attachment-1"),
+        skillChip("skill-research"),
+      ],
+      skills: [{ id: "skill-research", version: null }],
+    });
+    await expect(beforeRefresh.create(input)).resolves.toMatchObject({
+      durable: false,
+    });
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("degraded");
+    if (result.kind !== "degraded") return;
+    expect(result.missingAttachmentCount).toBe(1);
+    expect(result.submission.text).toBe("前文后文");
+    expect(result.submission.attachments).toEqual([]);
+    expect(result.submission.chips).toEqual([
+      skillChip("skill-research"),
+    ]);
+    expect(result.submission.richText).toBe("前文后文{{chip:0}}");
+    expect(result.submission.state).toBe("retryable");
+  });
+
+  it("目录句柄不可持久化时仍恢复普通文件，并明确标记文件夹缺失", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore({
+      persistFolder: false,
+    });
+    const folderSource: PendingFolderSource = {
+      provider: "desktop-local",
+      selectedAt: 1_000,
+      selection: {
+        selectionToken: "folder-token",
+        name: "客户资料",
+        pathLabel: "~/客户资料",
+        fileCount: 2,
+        fileCountCapped: false,
+      },
+    };
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await beforeRefresh.create(
+      submissionInput("submission-folder", { folderSource }),
+    );
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("degraded");
+    if (result.kind !== "degraded") return;
+    expect(result.folderMissing).toBe(true);
+    expect(result.missingAttachmentCount).toBe(0);
+    expect(result.submission.attachments[0]!.file?.name).toBe(
+      "材料.txt",
+    );
+  });
+
+  it("桌面文件夹令牌超过安全时效后不作为可恢复素材重试", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore();
+    const folderSource: PendingFolderSource = {
+      provider: "desktop-local",
+      selectedAt: 1_000,
+      selection: {
+        selectionToken: "folder-token",
+        name: "客户资料",
+        pathLabel: "~/客户资料",
+        fileCount: 2,
+        fileCountCapped: false,
+      },
+    };
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await beforeRefresh.create(
+      submissionInput("submission-folder-expired", {
+        folderSource,
+      }),
+    );
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () =>
+        1_000 + PENDING_DESKTOP_FOLDER_TOKEN_TTL_MS + 1,
+    });
+
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("degraded");
+    if (result.kind !== "degraded") return;
+    expect(result.folderMissing).toBe(true);
+    expect(result.submission.folderSource).toBeNull();
+  });
+
+  it("已上传附件即使刷新后 File 不可读也可沿用 fileId 重试", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore({
+      persistAttachments: false,
+    });
+    const manager = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await manager.create(submissionInput("submission-uploaded"));
+    manager.claim("submission-uploaded", null, ["queued"]);
+    manager.bindToSession("submission-uploaded", "session-a");
+    manager.updateProgress("submission-uploaded", {
+      uploadedAssets: [
+        {
+          attachmentId: "attachment-1",
+          fileId: "file-server-1",
+          filename: "材料.txt",
+          mime: "text/plain",
+          size: 18,
+        },
+      ],
+    });
+    manager.markRetryable("submission-uploaded");
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("ready");
+    if (result.kind !== "ready") return;
+    expect(result.submission.attachments[0]).toMatchObject({
+      file: null,
+      uploadedAsset: {
+        fileId: "file-server-1",
+      },
+    });
+  });
+
+  it("超过 TTL 自动清理，不再自动重发旧载荷", async () => {
+    let time = 1_000;
+    const storage = createStorage();
+    const payloadStore = createPayloadStore();
+    const manager = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => time,
+    });
+    await manager.create(submissionInput("submission-expired"));
+
+    time += PENDING_SUBMISSION_TTL_MS + 1;
+    await expect(manager.load()).resolves.toEqual({ kind: "expired" });
+    expect(storage.getItem(PENDING_SUBMISSION_STORAGE_KEY)).toBeNull();
+    await expect(manager.load()).resolves.toEqual({ kind: "none" });
+  });
+
+  it("新提交覆盖旧 submission，旧回调不能清掉新载荷", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore();
+    const manager = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await manager.create(submissionInput("submission-old"));
+    manager.claim("submission-old", null, ["queued"]);
+    manager.markRetryable("submission-old");
+    await manager.create(
+      submissionInput("submission-new", {
+        text: "新的首提",
+        attachments: [],
+        chips: [],
+        richText: null,
+      }),
+    );
+
+    await expect(manager.clear("submission-old")).resolves.toBe(false);
+    const result = await manager.load();
+    expect(result.kind).toBe("ready");
+    if (result.kind !== "ready") return;
+    expect(result.submission.submissionId).toBe("submission-new");
+    expect(result.submission.text).toBe("新的首提");
+  });
+
+  it.each([
+    ["截断 JSON", '{"version":2,"submissionId":"broken"'],
+    [
+      "字段形状错误",
+      JSON.stringify({
+        version: 2,
+        submissionId: "broken",
+        clientMessageId: "message-broken",
+        createdAt: 1,
+        expiresAt: "永不过期",
+        state: "queued",
+        targetSessionId: null,
+        text: "不应发送",
+        richText: null,
+        chips: [],
+        skills: [],
+        attachments: [],
+        attachmentsPersisted: true,
+        uploadedAssets: [],
+        folderExpected: false,
+        folderPersisted: true,
+        folderAttached: false,
+      }),
+    ],
+  ])("脏 sessionStorage（%s）不会被当作待发送载荷", async (_name, raw) => {
+    const storage = createStorage();
+    storage.setItem(PENDING_SUBMISSION_STORAGE_KEY, raw);
+    const manager = createPendingSubmissionManager({
+      storage,
+      payloadStore: createPayloadStore(),
+      now: () => 1_000,
+    });
+
+    await expect(manager.load()).resolves.toEqual({ kind: "none" });
+    expect(manager.peekState()).toBeNull();
+  });
+});

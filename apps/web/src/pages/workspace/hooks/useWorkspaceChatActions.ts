@@ -7,11 +7,7 @@ import {
 } from "react";
 import type { Editor } from "@tiptap/react";
 import type { PmDoc } from "@qingagent/pm-schema";
-import {
-  clearPendingFiles,
-  PENDING_SUBMISSION_ID_STORAGE_KEY,
-  useToast,
-} from "../../../system";
+import { useToast } from "../../../system";
 import { validateCommand } from "../../../system/validators";
 import { goConfigureModel } from "../../../system/modelKeyGate";
 import type { Command } from "@qingagent/contract-ts";
@@ -507,13 +503,6 @@ export function useWorkspaceChatActions(input: {
       turnDispatchGateRef.current,
       stateRef.current.sessionId,
     );
-    const pendingSubmissionId = sessionStorage.getItem(
-      PENDING_SUBMISSION_ID_STORAGE_KEY,
-    );
-    if (pendingSubmissionId) {
-      clearPendingFiles(pendingSubmissionId);
-      sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
-    }
     const current = stateRef.current;
     void cancelWorkspaceGeneration({
       stream: streamRef.current,

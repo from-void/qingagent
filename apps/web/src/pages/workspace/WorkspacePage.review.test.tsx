@@ -3195,10 +3195,17 @@ describe("WorkspacePage review controls", () => {
     // R15 形态:新建页 Ctrl+Enter 跳进工作区后,建会话/传文件在途的头 1-2 秒工作区
     // 完全空白、用户消息无影,自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息
     // 已在跑)。修法:乐观气泡在任何 await 之前先落地。
-    sessionStorage.setItem(
-      "qingagent:pending-message",
-      "请写一篇短篇小说，题目《雨夜的最后一班公交》，约2000字。",
-    );
+    const { createPendingSubmission } = await import("../../system");
+    await createPendingSubmission({
+      submissionId: "submission-first-message",
+      clientMessageId: "message-first-message",
+      text: "请写一篇短篇小说，题目《雨夜的最后一班公交》，约2000字。",
+      richText: null,
+      chips: [],
+      skills: [],
+      attachments: [],
+      folderSource: null,
+    });
     let resolveStart: ((sessionId: string) => void) | null = null;
     serverStreamMock.startSessionImpl = () =>
       new Promise<string>((resolve) => {
@@ -3262,6 +3269,74 @@ describe("WorkspacePage review controls", () => {
           (button) => button.textContent === "停止",
         ),
       ).toBe(false);
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  });
+
+  it("首提准备期取消后保留原文并提供显式一键重试", async () => {
+    window.history.replaceState(null, "", "#/workspace");
+    const {
+      createPendingSubmission,
+      loadPendingSubmission,
+    } = await import("../../system");
+    await createPendingSubmission({
+      submissionId: "submission-cancelled",
+      clientMessageId: "message-cancelled",
+      text: "取消后仍要保留的首提",
+      richText: null,
+      chips: [],
+      skills: [],
+      attachments: [],
+      folderSource: null,
+    });
+    let resolveStart: ((sessionId: string) => void) | null = null;
+    serverStreamMock.startSessionImpl = () =>
+      new Promise<string>((resolve) => {
+        resolveStart = resolve;
+      });
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      const stream = latestServerStream();
+
+      await clickButton("停止");
+      await act(async () => {
+        resolveStart?.("s-cancelled");
+      });
+      await flushMicrotasks(20);
+
+      expect(sendMessageCommands(stream)).toHaveLength(0);
+      const pending = await loadPendingSubmission();
+      expect(pending.kind).toBe("ready");
+      if (pending.kind !== "ready") return;
+      expect(pending.submission).toMatchObject({
+        submissionId: "submission-cancelled",
+        state: "retryable",
+        targetSessionId: "s-cancelled",
+        text: "取消后仍要保留的首提",
+      });
+      expect(window.location.hash).toContain("session=s-cancelled");
+      await flushMicrotasks(20);
+      const toast = host!.querySelector<HTMLElement>(
+        '[data-toast-key="workspace-pending-submission"]',
+      );
+      expect(toast?.textContent).toContain(
+        "已停止，内容与素材已保留",
+      );
+      expect(toast?.textContent).toContain("重试");
+      await clickButton("重试");
+      await flushMicrotasks(10);
+      const sends = sendMessageCommands(stream);
+      expect(sends).toHaveLength(1);
+      expect(sends[0]?.data).toMatchObject({
+        sessionId: "s-cancelled",
+        text: "取消后仍要保留的首提",
+        clientMessageId: "message-cancelled",
+      });
+      await expect(loadPendingSubmission()).resolves.toEqual({
+        kind: "none",
+      });
     } finally {
       serverStreamMock.startSessionImpl = null;
     }

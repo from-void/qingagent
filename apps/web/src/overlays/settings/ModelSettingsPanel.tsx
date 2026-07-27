@@ -5,6 +5,14 @@ import { useConfirm } from "../../system";
 import { CalendarDatePicker } from "../../system/CalendarDatePicker";
 import { SkinSelect } from "../../system/SkinSelect";
 import "./modelDashboard.css";
+import { ModelTierChip } from "./ModelTierChip";
+import {
+  MODEL_VENDORS,
+  VENDOR_INTRO,
+  VENDOR_META,
+  providerWfKey,
+  vendorName,
+} from "./modelVendorMeta";
 import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
@@ -36,6 +44,17 @@ const MODEL_DEFAULTS: Record<ModelProvider, { flash: string; pro: string }> = {
   deepseek: { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" },
   kimi: { flash: "kimi-for-coding", pro: "k3" },
 };
+
+// 余额/连通检测始终按 DeepSeek 自己的配置发,不跟随"使用中"的厂商——
+// 两张卡并列时,即使当前用的是 Kimi,DeepSeek 卡照样要显示余额。
+// 不带 key 时服务端按 DB > env 兜底解析,与既有多源 key 优先级一致。
+function deepseekBalanceHeaders(keyOverride?: string): Record<string, string> {
+  const key = keyOverride?.trim() || getVisitorModelKey("deepseek");
+  return {
+    "x-model-provider": "deepseek",
+    ...(key ? { "x-model-key": key, "x-deepseek-key": key } : {}),
+  };
+}
 
 function modelPersistFailureMessage(): string {
   return window.electron?.isDesktop
@@ -82,19 +101,25 @@ export function ModelSettingsPanel() {
   const toast = useToast();
   const confirm = useConfirm();
   const initialProvider = getSelectedModelProvider();
+  // modelProvider = 当前"使用中"的厂商;configProvider = 二级页正在配置的厂商(可以不是使用中那家)
   const [modelProvider, setModelProvider] = useState<ModelProvider>(initialProvider);
+  const [view, setView] = useState<"main" | "config">("main");
+  const [configProvider, setConfigProvider] = useState<ModelProvider>(initialProvider);
   const [server, setServer] = useState<ServerModelSettings | null>(null);
-  const [visitorKey, setVisitorKey] = useState<string | null>(
-    () => getVisitorModelKey(initialProvider),
-  );
-  const [editing, setEditing] = useState(false);
-  // 临时回到未配置引导流程(不删后端 .env key,刷新即恢复;方便预览/重配)
-  const [forceSetup, setForceSetup] = useState(false);
+  // 两张卡并列,两家的 key / 自定义配置都要在主视图上显示,故各存一份
+  const [visitorKeys, setVisitorKeys] = useState<Record<ModelProvider, string | null>>(() => ({
+    deepseek: getVisitorModelKey("deepseek"),
+    kimi: getVisitorModelKey("kimi"),
+  }));
+  const [customProviders, setCustomProviders] = useState<
+    Record<ModelProvider, CustomProvider | null>
+  >(() => ({
+    deepseek: readCustomProvider("deepseek"),
+    kimi: readCustomProvider("kimi"),
+  }));
+  // Kimi 无余额体系,连通性只能靠用户在二级页手动测一次;测通后卡内状态行升级为"已连通"
+  const [kimiConnected, setKimiConnected] = useState(false);
   const [keyInput, setKeyInput] = useState("");
-  // 其他云厂商配置(进阶):存在即表示当前用自定义模型,覆盖 baseURL+key+别名
-  const [customProvider, setCustomProvider] = useState<CustomProvider | null>(
-    () => readCustomProvider(initialProvider),
-  );
   const [persisting, setPersisting] = useState(false);
   // 配置方式:官方 DeepSeek(默认)/ 其他云厂商;已配自定义则默认停在"其他"
   const initialCustom = readCustomProvider(initialProvider);
@@ -114,14 +139,18 @@ export function ModelSettingsPanel() {
     () => initialCustom?.modelPro ?? initialDefaults.pro,
   );
   const [customTesting, setCustomTesting] = useState(false);
-  // 官方模型前缀覆盖(仅 editing 态可改;防官方升级改名)
+  // 官方模型前缀覆盖(仅已配置厂商的二级页可改;防官方升级改名)
   const [officialFlash, setOfficialFlash] = useState(
     () => readOfficialModelOverride(initialProvider)?.flash ?? "",
   );
   const [officialPro, setOfficialPro] = useState(
     () => readOfficialModelOverride(initialProvider)?.pro ?? "",
   );
-  const [modelTier, setModelTier] = useState<ModelTier>(() => getSelectedModelTier());
+  // 档位每厂商各记一份(DeepSeek Flash/Pro、Kimi K2.7/K3)
+  const [tiers, setTiers] = useState<Record<ModelProvider, ModelTier>>(() => ({
+    deepseek: getSelectedModelTier("deepseek"),
+    kimi: getSelectedModelTier("kimi"),
+  }));
   // 官方 key 输入即自动验证的状态
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "verifying" | "ok" | "fail">("idle");
   const [verifyMsg, setVerifyMsg] = useState("");
@@ -145,15 +174,15 @@ export function ModelSettingsPanel() {
   const kimiVerifyRevisionRef = useRef(0);
   const kimiVerifyControllerRef = useRef<AbortController | null>(null);
   const kimiVerificationInputRef = useRef({
-    provider: modelProvider,
+    provider: configProvider,
     key: keyInput.trim(),
-    tier: modelTier,
+    tier: tiers[configProvider],
   });
   const persistRevisionRef = useRef(0);
   kimiVerificationInputRef.current = {
-    provider: modelProvider,
+    provider: configProvider,
     key: keyInput.trim(),
-    tier: modelTier,
+    tier: tiers[configProvider],
   };
 
   const invalidatePersistence = () => {
@@ -189,8 +218,8 @@ export function ModelSettingsPanel() {
     try {
       const persisted = readPersistedModelState(provider);
       if (!persisted) return false;
-      setVisitorKey(persisted.visitorKey);
-      setCustomProvider(persisted.customProvider);
+      setVisitorKeys((current) => ({ ...current, [provider]: persisted.visitorKey }));
+      setCustomProviders((current) => ({ ...current, [provider]: persisted.customProvider }));
       setSetupMode(persisted.customProvider ? "other" : "official");
       setCustomProtocol(
         provider === "kimi" ? "openai" : persisted.customProvider?.protocol ?? "openai",
@@ -206,8 +235,6 @@ export function ModelSettingsPanel() {
       setKeyInput("");
       setVerifyStatus("idle");
       setVerifyMsg("");
-      setEditing(false);
-      setForceSetup(false);
       setMessage(null);
       return true;
     } catch {
@@ -224,27 +251,36 @@ export function ModelSettingsPanel() {
     showPersistFailure(resynced ? resyncedMessage : undefined);
   }, [resyncPersistedModelState, showPersistFailure]);
 
-  const handleProviderChange = async (provider: ModelProvider) => {
-    if (provider === modelProvider) return;
-    invalidateCustomTest();
-    balanceControllerRef.current?.abort();
-    balanceControllerRef.current = null;
-    setBalanceLoading(false);
-    invalidateKimiVerification();
+  // 「启 用」= 切换 modelProvider(两家配置各自保留,不互相清除)
+  const handleProviderChange = async (provider: ModelProvider, silent = false) => {
+    if (provider === modelProvider) return true;
     const revision = persistRevisionRef.current;
     setPersisting(true);
     const saved = await setSelectedModelProvider(provider);
-    if (!mountedRef.current || persistRevisionRef.current !== revision) return;
+    if (!mountedRef.current || persistRevisionRef.current !== revision) return false;
     setPersisting(false);
     if (!saved) {
       showPersistFailure();
-      return;
+      return false;
     }
+    setModelProvider(provider);
+    if (!silent) {
+      toast.show({
+        message: `已启用 ${vendorName(provider)}`,
+        tone: "success",
+        dedupeKey: "model-provider",
+      });
+    }
+    return true;
+  };
+
+  // 进二级配置页:把该厂商已存的配置读进表单(与"使用中"那家无关)
+  const openConfig = (provider: ModelProvider) => {
+    invalidateCustomTest();
+    invalidateKimiVerification();
     const custom = readCustomProvider(provider);
     const official = readOfficialModelOverride(provider);
-    setModelProvider(provider);
-    setVisitorKey(getVisitorModelKey(provider));
-    setCustomProvider(custom);
+    setConfigProvider(provider);
     setSetupMode(custom ? "other" : "official");
     setCustomProtocol(provider === "kimi" ? "openai" : custom?.protocol ?? "openai");
     setCustomBaseUrl(custom?.baseUrl ?? "");
@@ -254,10 +290,16 @@ export function ModelSettingsPanel() {
     setOfficialFlash(official?.flash ?? "");
     setOfficialPro(official?.pro ?? "");
     setKeyInput("");
-    setBalance(null);
-    setForceSetup(false);
-    setEditing(false);
     setMessage(null);
+    setView("config");
+  };
+
+  const closeConfig = () => {
+    invalidateCustomTest();
+    invalidateKimiVerification();
+    setKeyInput("");
+    setMessage(null);
+    setView("main");
   };
 
   const loadServer = useCallback(async (signal?: AbortSignal) => {
@@ -315,8 +357,9 @@ export function ModelSettingsPanel() {
   }, []);
 
   // 余额查询兼 key 有效性测试(DeepSeek /user/balance;401=key无效)。
-  // 既被进入看板时的自动 useEffect 调用,也被"重新检测"按钮手动调用。
-  const checkBalance = useCallback(async (signal?: AbortSignal) => {
+  // 既被进入主视图时的自动 useEffect 调用,也被二级页「测试连接」手动调用。
+  // keyOverride:二级页里用刚粘上、还没保存的 key 先测一把。
+  const checkBalance = useCallback(async (signal?: AbortSignal, keyOverride?: string) => {
     // 手动触发时取消上一次在途请求;自动触发(传入外部 signal)时沿用调用方的 controller
     let controller = balanceControllerRef.current;
     if (!signal) {
@@ -331,7 +374,7 @@ export function ModelSettingsPanel() {
     const canCommit = () => mountedRef.current && !signal!.aborted;
     try {
       const res = await fetch("/api/v1/settings/model/balance", {
-        headers: visitorKeyHeaders(),
+        headers: deepseekBalanceHeaders(keyOverride),
         signal,
       });
       const body = (await res.json()) as BalanceState;
@@ -362,7 +405,7 @@ export function ModelSettingsPanel() {
       readCustomProvider("deepseek") ||
       readOfficialModelOverride("deepseek")
     ) return;
-    void handleProviderChange(server.provider);
+    void handleProviderChange(server.provider, true);
   }, [server]);
   useEffect(() => {
     const controller = new AbortController();
@@ -393,7 +436,7 @@ export function ModelSettingsPanel() {
       return;
     }
     // Kimi 连接测试会产生一次最短模型调用，禁止输入 debounce 自动触发；只允许用户点按钮。
-    if (modelProvider === "kimi") {
+    if (configProvider === "kimi") {
       setVerifyStatus("idle");
       setVerifyMsg("");
       return;
@@ -406,9 +449,9 @@ export function ModelSettingsPanel() {
         try {
           const res = await fetch("/api/v1/settings/model/balance", {
             headers: {
-              "x-model-provider": modelProvider,
+              "x-model-provider": configProvider,
               "x-model-key": trimmed,
-              ...(modelProvider === "deepseek" ? { "x-deepseek-key": trimmed } : {}),
+              ...(configProvider === "deepseek" ? { "x-deepseek-key": trimmed } : {}),
             },
             signal: ctrl.signal,
           });
@@ -439,18 +482,29 @@ export function ModelSettingsPanel() {
       ctrl.abort();
       clearTimeout(timer);
     };
-  }, [keyInput, modelProvider]);
+  }, [keyInput, configProvider]);
 
+  // —— 每厂商各自的配置状态(visitor / 站点全局 / env / 自定义模型 四源合一)——
+  const serverStateOf = (provider: ModelProvider) =>
+    server?.providers?.[provider] ??
+    (server?.provider === undefined || server.provider === provider ? server : null);
+  const vendorConfigured = (provider: ModelProvider) =>
+    Boolean(visitorKeys[provider]) ||
+    Boolean(serverStateOf(provider)?.apiKeyConfigured) ||
+    Boolean(customProviders[provider]);
+  const customProvider = customProviders[configProvider];
+  const visitorKey = visitorKeys[configProvider];
   const usingCustom = Boolean(customProvider);
-  const serverProviderState = server?.providers?.[modelProvider] ??
-    (server?.provider === undefined || server.provider === modelProvider ? server : null);
-  const configured =
-    Boolean(visitorKey) || Boolean(serverProviderState?.apiKeyConfigured) || usingCustom;
-  const dashboardVisible = configured && !editing && !forceSetup;
+  const serverProviderState = serverStateOf(configProvider);
+  const configProviderConfigured = vendorConfigured(configProvider);
+  const anyConfigured = MODEL_VENDORS.some((provider) => vendorConfigured(provider));
+  const deepseekAutoBalance =
+    view === "main" && vendorConfigured("deepseek") && !customProviders.deepseek;
 
-  // 进入已配置看板:自动查一次连通性 + 余额。其他云厂商不查(DeepSeek 余额接口测不了)。
+  // 主视图上 DeepSeek 卡要显示余额:进主视图自动查一次连通性 + 余额(与"使用中"哪家无关)。
+  // 其他云厂商不查(DeepSeek 余额接口测不了)。
   useEffect(() => {
-    if (!dashboardVisible || usingCustom || modelProvider === "kimi") return;
+    if (!deepseekAutoBalance) return;
     const controller = new AbortController();
     balanceControllerRef.current = controller;
     void checkBalance(controller.signal);
@@ -458,15 +512,15 @@ export function ModelSettingsPanel() {
       controller.abort();
       if (balanceControllerRef.current === controller) balanceControllerRef.current = null;
     };
-  }, [dashboardVisible, usingCustom, checkBalance, visitorKey, modelProvider]);
+  }, [deepseekAutoBalance, checkBalance, visitorKeys.deepseek]);
 
   const handleVerifyKimiKey = async () => {
     const trimmed = keyInput.trim();
     if (!trimmed || verifyStatus === "verifying") return;
     const requestSnapshot = {
-      provider: modelProvider,
+      provider: configProvider,
       key: trimmed,
-      tier: modelTier,
+      tier: tiers[configProvider],
     };
     kimiVerifyRevisionRef.current += 1;
     const revision = kimiVerifyRevisionRef.current;
@@ -487,7 +541,7 @@ export function ModelSettingsPanel() {
         headers: {
           "x-model-provider": "kimi",
           "x-model-key": trimmed,
-          "x-model-tier": modelTier,
+          "x-model-tier": tiers.kimi,
         },
         signal: controller.signal,
       });
@@ -496,6 +550,7 @@ export function ModelSettingsPanel() {
       if (body.ok) {
         setVerifyStatus("ok");
         setVerifyMsg("Kimi 短对话测试已连通");
+        setKimiConnected(true);
       } else {
         setVerifyStatus("fail");
         setVerifyMsg(
@@ -514,15 +569,15 @@ export function ModelSettingsPanel() {
     }
   };
 
-  // 进入已配置看板:自动加载按天 + 总计两份用量,喂给趋势图与按模型分布。
+  // 进入主视图:自动加载按天 + 总计两份用量,喂给趋势图与按模型分布。
   useEffect(() => {
-    if (!dashboardVisible) return;
+    if (view !== "main") return;
     const controller = new AbortController();
     void loadDashboardUsage("day", controller.signal);
     void loadDashboardUsage("total", controller.signal);
     void loadDocStats(controller.signal);
     return () => controller.abort();
-  }, [dashboardVisible, loadDashboardUsage, loadDocStats, visitorKey]);
+  }, [view, loadDashboardUsage, loadDocStats, visitorKeys]);
 
   // 验证是输入时自动做的(见上方 useEffect)。保存:验证过→直接存;没过→二次确认(可能失效)。
   const handleSave = async () => {
@@ -539,43 +594,48 @@ export function ModelSettingsPanel() {
       });
       if (!proceed) return;
     }
+    const target = configProvider;
+    const activeConfigured = vendorConfigured(modelProvider);
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const savedKey = await setVisitorModelKey(modelProvider, trimmed);
+    const savedKey = await setVisitorModelKey(target, trimmed);
     if (!canCommit()) return;
     if (!savedKey) {
-      settlePersistFailure(modelProvider);
+      settlePersistFailure(target);
       return;
     }
-    // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
-    const clearedCustom = await clearCustomProvider(modelProvider);
+    // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(首配为空=清除,已配可改)
+    const clearedCustom = await clearCustomProvider(target);
     if (!canCommit()) return;
     if (!clearedCustom) {
-      settlePersistFailure(modelProvider, "key 已保存，但旧的自定义模型配置未清除，请重试");
+      settlePersistFailure(target, "key 已保存，但旧的自定义模型配置未清除，请重试");
       return;
     }
     const savedOfficialOverride = await writeOfficialModelOverride(
       { flash: officialFlash, pro: officialPro },
-      modelProvider,
+      target,
     );
     if (!canCommit()) return;
     setPersisting(false);
     if (!savedOfficialOverride) {
-      settlePersistFailure(modelProvider, "key 已保存，但模型别名未保存，请重试");
+      settlePersistFailure(target, "key 已保存，但模型别名未保存，请重试");
       return;
     }
-    setVisitorKey(trimmed);
-    setCustomProvider(null);
+    setVisitorKeys((current) => ({ ...current, [target]: trimmed }));
+    setCustomProviders((current) => ({ ...current, [target]: null }));
     setKeyInput("");
-    setEditing(false);
-    setForceSetup(false);
     setMessage(null);
+    setView("main");
     toast.show(verifyStatus === "ok" ? "key 已验证并保存到本机" : "key 已保存到本机，尚未验证通过");
-    // 保存后回到用量看板:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
+    // 原来那家还没配好时,刚配好的这家直接成为"使用中",省掉一次多余的「启 用」
+    if (!activeConfigured && target !== modelProvider) {
+      void handleProviderChange(target, true);
+    }
+    // 保存后回到主视图:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
     requestAnimationFrame(() => {
       document.querySelector(".qj-sheet-body")?.scrollTo({ top: 0, behavior: "auto" });
-      if (modelProvider === "deepseek") void checkBalance();
+      if (target === "deepseek") void checkBalance();
     });
   };
 
@@ -592,15 +652,16 @@ export function ModelSettingsPanel() {
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const cleared = await clearVisitorModelKey(modelProvider);
+    const cleared = await clearVisitorModelKey(configProvider);
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
       showPersistFailure("本机配置清除失败，请重试");
       return false;
     }
-    setVisitorKey(null);
-    setMessage(window.electron?.isDesktop ? "已清除本机的 key" : "已清除本浏览器的 key");
+    setVisitorKeys((current) => ({ ...current, [configProvider]: null }));
+    if (configProvider === "kimi") setKimiConnected(false);
+    setMessage("已清除已保存的 key");
     return true;
   };
 
@@ -616,40 +677,46 @@ export function ModelSettingsPanel() {
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const cleared = await clearCustomProvider(modelProvider);
+    const cleared = await clearCustomProvider(configProvider);
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
       showPersistFailure("本机配置清除失败，请重试");
       return false;
     }
-    setCustomProvider(null);
+    setCustomProviders((current) => ({ ...current, [configProvider]: null }));
     setMessage("已清除自定义模型配置");
     return true;
   };
 
-  const handleModelTierChange = useCallback(async (tier: ModelTier) => {
-    if (tier === modelTier) return;
+  // 档位切换:每厂商各记各的,选完立即生效
+  const handleModelTierChange = useCallback(async (
+    provider: ModelProvider,
+    tier: ModelTier,
+  ) => {
+    if (tier === tiers[provider]) return;
     invalidateKimiVerification();
     const revision = persistRevisionRef.current;
     setPersisting(true);
-    const saved = await setSelectedModelTier(tier);
+    const saved = await setSelectedModelTier(tier, provider);
     if (!mountedRef.current || persistRevisionRef.current !== revision) return;
     setPersisting(false);
     if (!saved) {
       showPersistFailure();
       return;
     }
-    setModelTier(tier);
+    setTiers((current) => ({ ...current, [provider]: tier }));
     toast.show({
-      message: tier === "pro" ? "已切换到 Pro 档,生成会更慢" : "已切换到 Flash 档",
+      message: `已切换到 ${VENDOR_META[provider].tiers[tier].name} 档`,
       tone: "success",
       dedupeKey: "model-tier",
     });
-  }, [invalidateKimiVerification, modelTier, showPersistFailure, toast]);
+  }, [invalidateKimiVerification, showPersistFailure, tiers, toast]);
 
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
+    const target = configProvider;
+    const activeConfigured = vendorConfigured(modelProvider);
     const baseUrl = customBaseUrl.trim();
     const apiKey = customKey.trim();
     if (!baseUrl || !apiKey) {
@@ -660,8 +727,8 @@ export function ModelSettingsPanel() {
       setMessage("API 地址格式不对:需以 http(s):// 开头");
       return;
     }
-    const modelFlash = customModelFlash.trim() || MODEL_DEFAULTS[modelProvider].flash;
-    const modelPro = customModelPro.trim() || MODEL_DEFAULTS[modelProvider].pro;
+    const modelFlash = customModelFlash.trim() || MODEL_DEFAULTS[target].flash;
+    const modelPro = customModelPro.trim() || MODEL_DEFAULTS[target].pro;
     customTestControllerRef.current?.abort();
     const revision = ++customTestRevisionRef.current;
     setCustomTesting(true);
@@ -682,11 +749,11 @@ export function ModelSettingsPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          provider: modelProvider,
+          provider: target,
           baseUrl,
           apiKey,
           model: modelFlash,
-          protocol: modelProvider === "kimi" ? "openai" : customProtocol,
+          protocol: target === "kimi" ? "openai" : customProtocol,
         }),
         signal: testCtrl.signal,
       });
@@ -708,32 +775,34 @@ export function ModelSettingsPanel() {
         return;
       }
       const provider: CustomProvider = {
-        protocol: modelProvider === "kimi" ? "openai" : customProtocol,
+        protocol: target === "kimi" ? "openai" : customProtocol,
         baseUrl,
         apiKey,
         modelFlash,
         modelPro,
       };
       setPersisting(true);
-      const savedProvider = await writeCustomProvider(provider, modelProvider);
+      const savedProvider = await writeCustomProvider(provider, target);
       if (!canCommit()) return;
       if (!savedProvider) {
         showPersistFailure();
         return;
       }
       // 互斥:切到其他云厂商,清官方 visitor key
-      const clearedVisitorKey = await clearVisitorModelKey(modelProvider);
+      const clearedVisitorKey = await clearVisitorModelKey(target);
       if (!canCommit()) return;
       if (!clearedVisitorKey) {
         showPersistFailure("自定义模型已保存，但旧的官方 key 未清除，请重试");
         return;
       }
-      setCustomProvider(provider);
-      setVisitorKey(null);
-      setEditing(false);
-      setForceSetup(false);
+      setCustomProviders((current) => ({ ...current, [target]: provider }));
+      setVisitorKeys((current) => ({ ...current, [target]: null }));
       setMessage(null);
+      setView("main");
       toast.show("接口测试通过,已保存并启用自定义模型");
+      if (!activeConfigured && target !== modelProvider) {
+        void handleProviderChange(target, true);
+      }
     } catch (e) {
       if (canCommit()) {
         setMessage(

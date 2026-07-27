@@ -751,14 +751,50 @@ function getFirstDescendantText(element: XmlElement, localName: string): string 
   return getElementsByLocalName(element, localName)[0]?.textContent ?? "";
 }
 
+const MAX_XLSX_COLUMNS = 16_384;
+const MAX_XLSX_ROWS = 1_048_576;
+
+function assertXlsxRowReference(rowRef: string, label = "行引用"): void {
+  const rowNumber = Number.parseInt(rowRef, 10);
+  if (
+    !/^\d+$/.test(rowRef) ||
+    !Number.isSafeInteger(rowNumber) ||
+    rowNumber < 1 ||
+    rowNumber > MAX_XLSX_ROWS
+  ) {
+    throw new Error(`${label}超出 Excel 规范上限 ${MAX_XLSX_ROWS}`);
+  }
+}
+
 function getCellColumnIndex(cellRef: string | null): number | null {
   const letters = cellRef?.match(/^[A-Z]+/i)?.[0];
   if (!letters) return null;
   let index = 0;
   for (const letter of letters.toUpperCase()) {
     index = index * 26 + (letter.charCodeAt(0) - 64);
+    if (index > MAX_XLSX_COLUMNS) {
+      throw new Error(`列引用超出 Excel 规范上限 XFD`);
+    }
   }
+  const rowRef = cellRef?.slice(letters.length);
+  if (rowRef) assertXlsxRowReference(rowRef);
   return index - 1;
+}
+
+function assertSafeXlsxDimension(doc: XmlDocument): void {
+  const dimensionRef = getElementsByLocalName(doc, "dimension")[0]?.getAttribute("ref");
+  if (!dimensionRef) return;
+  try {
+    const endpoints = dimensionRef.replace(/\$/g, "").split(":");
+    if (endpoints.length > 2 || endpoints.some((endpoint) => !/^[A-Z]+\d+$/i.test(endpoint))) {
+      throw new Error("invalid dimension");
+    }
+    for (const endpoint of endpoints) getCellColumnIndex(endpoint);
+  } catch {
+    throw new Error(
+      `工作表维度超出 Excel 规范上限 XFD${MAX_XLSX_ROWS}`,
+    );
+  }
 }
 
 type XlsxCellStyle = {
@@ -1268,12 +1304,23 @@ function parseXlsxSheet(
   signal?.throwIfAborted();
   const doc = parser.parseFromString(xml, "application/xml");
   const lines: string[] = [];
+  assertSafeXlsxDimension(doc);
+  const rows = getElementsByLocalName(doc, "row");
+  if (rows.length > MAX_XLSX_ROWS) {
+    throw new Error(`工作表行数超出 Excel 规范上限 ${MAX_XLSX_ROWS}`);
+  }
 
-  for (const row of getElementsByLocalName(doc, "row")) {
+  for (const row of rows) {
     signal?.throwIfAborted();
     if (isHiddenXlsxRow(row)) continue;
+    const rowRef = row.getAttribute("r");
+    if (rowRef) assertXlsxRowReference(rowRef);
     const values: string[] = [];
-    for (const cell of getChildElementsByLocalName(row, "c")) {
+    const cells = getChildElementsByLocalName(row, "c");
+    if (cells.length > MAX_XLSX_COLUMNS) {
+      throw new Error(`工作表列数超出 Excel 规范上限 ${MAX_XLSX_COLUMNS}`);
+    }
+    for (const cell of cells) {
       signal?.throwIfAborted();
       const cellText = readXlsxCellText(cell, sharedStrings, styles, date1904);
       const columnIndex = getCellColumnIndex(cell.getAttribute("r"));

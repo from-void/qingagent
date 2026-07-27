@@ -12,10 +12,15 @@ export function allowsPrivateModelHost(env: Env = process.env): boolean {
 }
 
 /** 主模型出站统一策略：本机模型合法，私网/链路本地默认拒绝，部署者可显式放行。 */
-export function validateModelFetchUrl(rawUrl: string, env: Env = process.env): Promise<URL> {
+export function validateModelFetchUrl(
+  rawUrl: string,
+  env: Env = process.env,
+  signal?: AbortSignal,
+): Promise<URL> {
   return validateFetchUrl(rawUrl, {
     allowLoopback: true,
     allowPrivate: allowsPrivateModelHost(env),
+    signal,
   });
 }
 

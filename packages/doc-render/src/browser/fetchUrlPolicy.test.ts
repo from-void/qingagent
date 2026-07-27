@@ -121,4 +121,17 @@ describe("fetchUrlPolicy 已解析地址策略", () => {
       /Blocked private\/non-global-unicast/,
     );
   });
+
+  it("DNS 预检等待期间取消时立即传播原取消原因", async () => {
+    lookupMock.mockReturnValue(new Promise(() => undefined));
+    const controller = new AbortController();
+    const reason = new DOMException("turn cancelled", "AbortError");
+    const pending = validateAndPinFetchUrl("https://slow-dns.example.com/", {
+      signal: controller.signal,
+    });
+
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+  });
 });

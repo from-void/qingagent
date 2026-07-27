@@ -273,7 +273,7 @@ describe("modelSettingsRoutes", () => {
       baseUrl: "https://vision.example.com/api/anthropic",
       model: "vision-model",
       protocol: "anthropic",
-    });
+    }, expect.any(AbortSignal));
   });
 
   it("test-custom 正常公网 baseUrl 通过 SSRF 校验后请求 /models", async () => {

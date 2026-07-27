@@ -13,7 +13,8 @@ vi.mock("../llm/modelConfig.js", async (importActual) => {
   return { ...actual, getVisionModel: getVisionModelMock };
 });
 
-const { testVisionConnection } = await import("../llm/visionTest.js");
+const { testVisionConnection, VISION_TEST_TIMEOUT_MS } =
+  await import("../llm/visionTest.js");
 
 type Part = { type: "text-delta"; textDelta: string } | { type: "finish"; finishReason: string } | { type: "error"; error: unknown };
 function fullStream(parts: Part[]): AsyncIterable<Part> {
@@ -55,5 +56,27 @@ describe("testVisionConnection", () => {
   it("getVisionModel 返回 null(配置未生效)→ 抛错", async () => {
     getVisionModelMock.mockResolvedValue(null);
     await expect(testVisionConnection(VISION)).rejects.toThrow(/未生效/);
+  });
+
+  it("12 秒计时从 DNS 配置预检前开始", async () => {
+    vi.useFakeTimers();
+    getVisionModelMock.mockImplementation(async (requestContext: {
+      get(key: string): unknown;
+    }) => {
+      const signal = requestContext.get("abortSignal") as AbortSignal;
+      return await new Promise((_resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    });
+    try {
+      const pending = testVisionConnection(VISION);
+      const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+      await vi.advanceTimersByTimeAsync(VISION_TEST_TIMEOUT_MS);
+      await rejection;
+      expect(streamTextMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -24,6 +24,7 @@ const TEST_ENV_KEYS = [
   "no_proxy",
   "NO_PROXY",
   "QINGAGENT_ALLOW_PRIVATE_MODEL_HOST",
+  "QINGAGENT_MODEL_CONNECT_TIMEOUT_MS",
 ] as const;
 
 let savedEnv: Partial<Record<(typeof TEST_ENV_KEYS)[number], string>>;
@@ -161,6 +162,33 @@ describe("主模型 URL SSRF 策略", () => {
     await expect(modelFetch("http://169.254.169.254/latest/meta-data")).rejects.toThrow(
       /Blocked private/,
     );
+  });
+
+  it("modelFetch 在 DNS 预检期间服从原请求取消原因", async () => {
+    lookupMock.mockReturnValue(new Promise(() => undefined));
+    const controller = new AbortController();
+    const reason = new DOMException("turn cancelled", "AbortError");
+    const pending = modelFetch("https://slow-dns.example.com/v1", {
+      signal: controller.signal,
+    });
+
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+  });
+
+  it("modelFetch 的连接超时覆盖 DNS 预检等待", async () => {
+    vi.useFakeTimers();
+    process.env.QINGAGENT_MODEL_CONNECT_TIMEOUT_MS = "25";
+    lookupMock.mockReturnValue(new Promise(() => undefined));
+    try {
+      const pending = modelFetch("https://slow-dns.example.com/v1");
+      const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+      await vi.advanceTimersByTimeAsync(25);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

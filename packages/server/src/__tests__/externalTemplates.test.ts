@@ -210,6 +210,7 @@ describe("external review templates", () => {
       queued: true,
       type: "source",
       templateId: "review-source-default",
+      afterSeq: expect.any(Number),
     });
     const sourceSeed = REVIEW_TEMPLATE_PROMPT_SEEDS.find(
       (template) => template.id === "review-source-default",

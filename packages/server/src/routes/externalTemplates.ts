@@ -248,6 +248,7 @@ externalTemplateRoutes.post("/sessions/:id/review/run", async (c) => {
       templateId: template.id,
       templateName: template.name,
     },
+    includeAfterSeq: true,
     responseExtra: { type: body.type, templateId: template.id },
   });
 });

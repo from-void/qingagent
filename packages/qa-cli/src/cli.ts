@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApiClient } from "./apiClient.js";
 import { discoverInstance } from "./discovery.js";
-import { NEXT_STEP, QaCliError } from "./errors.js";
+import { formatQaCliError, QaCliError } from "./errors.js";
 import { hasFlag, optionValue, optionValues, printJson } from "./output.js";
 import { installPointerSkill, writerSkillMarkdown, type SkillInstallTarget } from "./skill.js";
 import {
@@ -39,6 +39,7 @@ interface EventOptions {
   after: string;
   timeoutMs: number | null;
   until: string | null;
+  completion?: (data: string) => string | null;
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
@@ -285,12 +286,15 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     );
     output(data, hasFlag(args, "--json"));
     if (hasFlag(args, "--wait")) {
+      const completion = createReviewRunCompletion();
       await events(client, sessionId, {
-        follow: false,
-        after: "tip",
+        follow: true,
+        after: String(data.afterSeq),
         timeoutMs: null,
-        until: "reviewed",
+        until: null,
+        completion: completion.hit,
       });
+      await ensureReviewRunVisible(client, sessionId, completion.annotationIds);
     }
     return;
   }
@@ -505,7 +509,7 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
             received += 1;
             maxSeq = Math.max(maxSeq, frameSeq(data));
             cursor = String(maxSeq);
-            const hit = untilHit(options.until, data);
+            const hit = options.completion?.(data) ?? untilHit(options.until, data);
             if (hit) {
               reason = hit;
               break;
@@ -747,6 +751,98 @@ function untilHit(until: string | null, data: string): string | null {
   return null;
 }
 
+function createReviewRunCompletion(): {
+  hit: (data: string) => string | null;
+  annotationIds: Set<string>;
+} {
+  let sawRunStart = false;
+  const annotationIds = new Set<string>();
+  return {
+    annotationIds,
+    hit(data) {
+      const frame = parseEventFrame(data);
+      if (!frame) return null;
+      if (frame.kind === "stream") {
+        const streamKind = nestedString(frame.data, "kind");
+        if (streamKind === "start") {
+          sawRunStart = true;
+          return null;
+        }
+        if (streamKind === "end" && sawRunStart) return "review-run-complete";
+      }
+      if (frame.kind === "docStateChanged") {
+        const agentBusy = nestedBoolean(frame.data, "agentBusy");
+        if (agentBusy === true) {
+          sawRunStart = true;
+          return null;
+        }
+        const stateKind = docStateKind(frame.data);
+        if (
+          sawRunStart &&
+          agentBusy === false &&
+          stateKind !== undefined &&
+          stateKind !== "editing"
+        ) {
+          return "review-run-complete";
+        }
+      }
+      if (frame.kind === "annotationGroupsReady" && sawRunStart) {
+        for (const id of annotationGroupIds(frame.data)) annotationIds.add(id);
+        if (annotationIds.size > 0) return "review-run-complete";
+      }
+      return null;
+    },
+  };
+}
+
+async function ensureReviewRunVisible(
+  client: ApiClient,
+  sessionId: string,
+  expectedAnnotationIds: ReadonlySet<string>,
+): Promise<void> {
+  const attempts = expectedAnnotationIds.size > 0 ? 10 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const review = await client.request<ExternalReviewListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review`,
+    );
+    const visible = new Set(review.annotations.map((annotation) => annotation.id));
+    if ([...expectedAnnotationIds].every((id) => visible.has(id))) return;
+    if (attempt + 1 < attempts) await abortableReconnectDelay(50, new AbortController().signal);
+  }
+  throw new QaCliError("VALIDATION", "审查回合已结束，但本轮批注尚未进入审查列表");
+}
+
+function parseEventFrame(data: string): { kind?: string; data?: unknown } | null {
+  try {
+    return JSON.parse(data) as { kind?: string; data?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+function nestedString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const nested = (value as Record<string, unknown>)[key];
+  return typeof nested === "string" ? nested : undefined;
+}
+
+function nestedBoolean(value: unknown, key: string): boolean | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const nested = (value as Record<string, unknown>)[key];
+  return typeof nested === "boolean" ? nested : undefined;
+}
+
+function annotationGroupIds(data: unknown): string[] {
+  if (!data || typeof data !== "object") return [];
+  const groups = (data as { groups?: unknown }).groups;
+  if (!Array.isArray(groups)) return [];
+  return groups.flatMap((group) => {
+    if (!group || typeof group !== "object") return [];
+    const id = (group as { id?: unknown }).id;
+    return typeof id === "string" && id ? [id] : [];
+  });
+}
+
 function docStateKind(data: unknown): string | undefined {
   if (!data || typeof data !== "object") return undefined;
   const state = (data as { state?: unknown }).state;
@@ -910,13 +1006,7 @@ qa skills disable <name> [--json]
 if (isDirectRun()) {
   main().catch((error) => {
     const err = error instanceof QaCliError ? error : new QaCliError("VALIDATION", error instanceof Error ? error.message : String(error));
-    const remoteNextStep = err.details &&
-        typeof err.details === "object" &&
-        "nextStep" in err.details &&
-        typeof err.details.nextStep === "string"
-      ? err.details.nextStep
-      : null;
-    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${remoteNextStep ?? NEXT_STEP[err.code]}\n`);
+    process.stderr.write(formatQaCliError(process.argv.slice(2), err));
     process.exitCode = 1;
   });
 }

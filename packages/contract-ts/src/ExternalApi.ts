@@ -316,6 +316,8 @@ export interface ExternalReviewRunRequest {
 export interface ExternalReviewRunResponse extends ExternalChatSendResponse {
   type: ExternalReviewType;
   templateId: string;
+  /** 本次审查命令入队前的事件游标，等待方从下一帧开始回放，避免漏掉快速启动事件。 */
+  afterSeq: number;
 }
 
 export type ExternalSkillSource = "builtin" | "installed";

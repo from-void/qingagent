@@ -15,6 +15,7 @@ export async function queueExternalChat(
     reviewContext?: ReviewContext;
     event?: "chat" | "review_run";
     responseExtra?: Record<string, unknown>;
+    includeAfterSeq?: boolean;
   },
 ): Promise<Response> {
   const startedAt = Date.now();
@@ -42,6 +43,12 @@ export async function queueExternalChat(
     log(evt, client, input.sessionId, startedAt, "rejected:VALIDATION");
     return externalError(c, 400, "VALIDATION", "text 超过 64KB 上限");
   }
+  const afterSeq = input.includeAfterSeq
+    ? Math.max(
+      0,
+      sessionManager.frameLog.readFrom(input.sessionId, Number.MAX_SAFE_INTEGER).nextSeq - 1,
+    )
+    : undefined;
   let completion: Promise<unknown>;
   try {
     ({ completion } = await sessionManager.submitQueued(input.sessionId, {
@@ -65,6 +72,7 @@ export async function queueExternalChat(
     queued: true as const,
     note: "已入队,执行结果以 events 为准",
     ...(input.responseExtra ?? {}),
+    ...(afterSeq === undefined ? {} : { afterSeq }),
   });
 }
 

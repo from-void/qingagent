@@ -38,3 +38,100 @@ export class QaCliError extends Error {
     this.name = "QaCliError";
   }
 }
+
+export function formatQaCliError(args: string[], error: QaCliError): string {
+  const hint = commandErrorHint(args, error);
+  return `${error.code}: ${error.message}\n${hint ? `下一步: ${hint}\n` : ""}`;
+}
+
+export function commandErrorHint(
+  args: string[],
+  error: QaCliError,
+): string | null {
+  const group = args[0];
+  const command = args[1];
+  const remote = remoteNextStep(error.details);
+  const common = commonErrorHint(error.code);
+
+  if (group === "template") {
+    if (error.code === "CONFLICT") {
+      if (error.message.includes("内置")) {
+        return "内置模板只能使用 `qa template select <id>` 选用，不能修改或删除";
+      }
+      return remote?.includes("qa template")
+        ? remote
+        : "用 `qa template pull <id> --out <file.md>` 拉取最新版，合并后再 push";
+    }
+    if (error.code === "NOT_FOUND") {
+      return "用 `qa template list [--type <t>]` 重新确认模板 id";
+    }
+    if (error.code === "VALIDATION") {
+      if (error.message.includes("禁止") || error.message.includes("权限")) {
+        return "当前实例未开启模板写入权限；请在受信部署中配置 QINGAGENT_ALLOW_TEMPLATE_MUTATION";
+      }
+      return "按错误正文检查模板 type、name、prompt、frontmatter 与模板写入权限";
+    }
+    return common;
+  }
+
+  if (group === "skills") {
+    if (error.code === "CONFLICT") {
+      return error.message.includes("内置")
+        ? "内置技能不能覆盖或删除；只能使用 `qa skills enable|disable <name>` 调整启停"
+        : "用 `qa skills list` 检查重名；更新仅适用于 source=installed 的技能";
+    }
+    if (error.code === "NOT_FOUND") {
+      return "用 `qa skills list` 重新确认技能名称和 source";
+    }
+    if (error.code === "VALIDATION") {
+      if (error.message.includes("禁止") || error.message.includes("权限")) {
+        return "当前实例未开启技能写入权限；请在受信部署中配置 QINGAGENT_ALLOW_SKILL_MUTATION";
+      }
+      return "先运行 `qa skills validate <dir>`，再按错误正文修正 SKILL.md 或文件路径";
+    }
+    return common;
+  }
+
+  if (group === "review") {
+    if (error.code === "NOT_FOUND" && command === "run") {
+      return "用 `qa template list --type <t>` 确认模板存在且类型与 --type 一致";
+    }
+    if (error.code === "NOT_FOUND") {
+      return "用 `qa review list -s <id>` 重新确认审查项";
+    }
+    if (error.code === "VALIDATION") {
+      return command === "run"
+        ? "检查 -s、--type、--template 与 --supplement；模板类型必须与 --type 一致"
+        : "按错误正文检查审查目标、文档版本和命令参数";
+    }
+    return common ?? remote;
+  }
+
+  if (group === "doc") {
+    return remote ?? NEXT_STEP[error.code];
+  }
+  if (error.code === "VALIDATION") return null;
+  return common ?? remote;
+}
+
+function commonErrorHint(code: QaErrorCode): string | null {
+  if (
+    code === "NO_INSTANCE" ||
+    code === "AUTH_FAILED" ||
+    code === "AGENT_BUSY" ||
+    code === "REVIEW_PENDING" ||
+    code === "VERSION_CONFLICT" ||
+    code === "SESSION_NOT_FOUND" ||
+    code === "MATERIAL_NOT_FOUND" ||
+    code === "RATE_LIMITED"
+  ) {
+    return NEXT_STEP[code];
+  }
+  return null;
+}
+
+function remoteNextStep(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const value = (details as { nextStep?: unknown }).nextStep;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}

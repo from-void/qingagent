@@ -156,10 +156,11 @@ describe("qa cli", () => {
     ]);
   });
 
-  it("review run --wait 提交后复用 events --until reviewed", async () => {
+  it("review run --wait 忽略 editing 中间态，批注进入 review list 后才返回", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let reviewReads = 0;
     globalThis.fetch = vi.fn(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/sessions/s1/review/run")) {
@@ -173,21 +174,57 @@ describe("qa cli", () => {
           note: "已入队,执行结果以 events 为准",
           type: "custom",
           templateId: "legal",
+          afterSeq: 12,
         }));
       }
-      expect(url).toContain("/sessions/s1/events?after=tip");
-      return new Response([
-        "event: meta",
-        'data: {"epoch":1,"minSeq":1,"nextSeq":1,"gap":false}',
-        "",
-        "id: 1",
-        "event: frame",
-        'data: {"seq":1,"kind":"docCommitted","data":{}}',
-        "",
-        "",
-      ].join("\n"), {
-        headers: { "Content-Type": "text/event-stream" },
-      });
+      if (url.includes("/sessions/s1/events?after=12")) {
+        return new Response(sseStream([
+          { seq: 13, kind: "stream", data: { kind: "start", data: { streamId: "run-1" } } },
+          {
+            seq: 14,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+          },
+          {
+            seq: 15,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+          },
+          {
+            seq: 16,
+            kind: "annotationGroupsReady",
+            data: {
+              groups: [{
+                id: "annotation-new",
+                summary: "合同风险",
+                note: "需补充责任边界",
+                origin: "review:custom",
+                status: "reviewing",
+                anchors: [],
+              }],
+            },
+          },
+        ]));
+      }
+      expect(url).toContain("/sessions/s1/review");
+      reviewReads += 1;
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        docVersion: 3,
+        state: "editing",
+        agentBusy: false,
+        patches: [],
+        annotations: reviewReads === 1
+          ? []
+          : [{
+            id: "annotation-new",
+            summary: "合同风险",
+            note: "需补充责任边界",
+            origin: "review:custom",
+            status: "reviewing",
+            anchors: [],
+          }],
+      }));
     }) as typeof fetch;
 
     await main([
@@ -195,10 +232,60 @@ describe("qa cli", () => {
       "--template", "legal", "--supplement", "只看合同", "--wait",
     ]);
 
-    expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain('"kind":"docCommitted"');
+    expect(reviewReads).toBe(2);
+    expect(stdout.mock.calls.map((call) => call[0]).join(""))
+      .toContain('"kind":"annotationGroupsReady"');
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain(
-      "[qa] events exited reason=reviewed",
+      "[qa] events exited reason=review-run-complete",
     );
+  });
+
+  it("review run --wait 无批注时等待本轮 stream end 并对账 review list", async () => {
+    const { main } = await import("../cli.js");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let reviewReads = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sessions/s1/review/run")) {
+        return new Response(JSON.stringify({
+          queued: true,
+          note: "已入队,执行结果以 events 为准",
+          type: "source",
+          templateId: "source-default",
+          afterSeq: 20,
+        }));
+      }
+      if (url.includes("/sessions/s1/events?after=20")) {
+        return new Response(sseStream([
+          { seq: 21, kind: "stream", data: { kind: "start", data: { streamId: "run-2" } } },
+          {
+            seq: 22,
+            kind: "docStateChanged",
+            data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+          },
+          {
+            seq: 23,
+            kind: "stream",
+            data: { kind: "end", data: { streamId: "run-2", reason: { kind: "done" } } },
+          },
+        ]));
+      }
+      reviewReads += 1;
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        docVersion: 3,
+        state: "editing",
+        agentBusy: false,
+        patches: [],
+        annotations: [],
+      }));
+    }) as typeof fetch;
+
+    await main(["review", "run", "-s", "s1", "--type", "source", "--wait"]);
+
+    expect(reviewReads).toBe(1);
+    expect(stderr.mock.calls.map((call) => call[0]).join(""))
+      .toContain("[qa] events exited reason=review-run-complete");
   });
 
   it("skills validate 不联网，install/update 先验证本地目录再发送 files", async () => {

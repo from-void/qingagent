@@ -59,7 +59,7 @@ export function MediaBlockToolbar({
         <>
           <button
             type="button"
-            className="pm-image-tool pm-image-tool--wide"
+            className="pm-image-tool pm-image-tool--icon"
             aria-label="放大图表"
             title="放大图表"
             onMouseDown={(event) => {
@@ -67,11 +67,11 @@ export function MediaBlockToolbar({
               onZoomIn();
             }}
           >
-            放大
+            <ZoomIcon direction="in" />
           </button>
           <button
             type="button"
-            className="pm-image-tool pm-image-tool--wide"
+            className="pm-image-tool pm-image-tool--icon"
             aria-label="缩小图表"
             title="缩小图表"
             onMouseDown={(event) => {
@@ -79,7 +79,7 @@ export function MediaBlockToolbar({
               onZoomOut();
             }}
           >
-            缩小
+            <ZoomIcon direction="out" />
           </button>
         </>
       ) : null}
@@ -96,6 +96,22 @@ export function MediaBlockToolbar({
         全屏
       </button>
     </div>
+  );
+}
+
+// 缩放钮改图标(与画布左下角的 zoom-in/zoom-out 同一套线形),文字语义留在 aria-label/title。
+function ZoomIcon({ direction }: { direction: "in" | "out" }) {
+  return (
+    <svg className="pm-image-tool-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d={direction === "in" ? "M3.2 8h9.6M8 3.2v9.6" : "M3.2 8h9.6"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

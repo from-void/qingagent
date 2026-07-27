@@ -436,11 +436,32 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
             }}
             placeholder={lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE}
           />
+          {/* 动作放在 click:若在 mousedown 就执行,面板当拍换回预览视图,同一手势剩下的
+              mouseup/click 会击穿到新挂载的预览画布(预览层点击=进全屏),点"取消"反而进全屏。
+              mousedown 只 preventDefault 防止 textarea 失焦。 */}
           <div className="pm-diagram-actions">
-            <button type="button" className="pm-diagram-btn" onMouseDown={(e) => { e.preventDefault(); commit(); }}>
+            <button
+              type="button"
+              className="pm-diagram-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                commit();
+              }}
+            >
               完成
             </button>
-            <button type="button" className="pm-diagram-btn pm-diagram-btn--ghost" onMouseDown={(e) => { e.preventDefault(); cancel(); }}>
+            <button
+              type="button"
+              className="pm-diagram-btn pm-diagram-btn--ghost"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                cancel();
+              }}
+            >
               取消
             </button>
           </div>

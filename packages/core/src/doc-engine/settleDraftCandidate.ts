@@ -40,7 +40,10 @@ import {
 } from "../agent-run/agentSpans.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { generateTitleAfterFirstDraft } from "../session/titleGeneration.js";
-import { mapAnnotationGroupsThroughSteps, pmDocContentSize } from "./annotationMapping.js";
+import {
+  buildAnnotationMappingSteps,
+  mapAnnotationGroupsThroughSteps,
+} from "./annotationMapping.js";
 import {
   getPmContentHash,
   legacySectionsToPm,
@@ -300,16 +303,11 @@ export async function* settleDraftCandidate(opts: {
               const replacedOrigins = [
                 ...new Set(state.annotationGroups.map((group) => group.origin)),
               ];
-              const mapped = mapAnnotationGroupsThroughSteps(state.annotationGroups, [{
-                stepType: "replace",
-                from: 0,
-                to: pmDocContentSize(previousDoc),
-                slice: {
-                  content: committed.doc.content,
-                  openStart: 0,
-                  openEnd: 0,
-                },
-              }], committed.doc);
+              const mapped = mapAnnotationGroupsThroughSteps(
+                state.annotationGroups,
+                buildAnnotationMappingSteps(previousDoc, committed.doc),
+                committed.doc,
+              );
               await persistMappedAnnotationGroups(
                 state.docId,
                 mapped.groups,
@@ -409,12 +407,11 @@ export async function* settleDraftCandidate(opts: {
     let annotationMapping: PendingAnnotationMapping | null = transactionAnnotationMapping;
     if (!transactionEffectPersisted && state.annotationGroups.length > 0) {
       const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
-      const mapped = mapAnnotationGroupsThroughSteps(state.annotationGroups, [{
-        stepType: "replace",
-        from: 0,
-        to: pmDocContentSize(previousDoc),
-        slice: { content: result.doc.content, openStart: 0, openEnd: 0 },
-      }], result.doc);
+      const mapped = mapAnnotationGroupsThroughSteps(
+        state.annotationGroups,
+        buildAnnotationMappingSteps(previousDoc, result.doc),
+        result.doc,
+      );
       await persistMappedAnnotationGroups(
         state.docId,
         mapped.groups,

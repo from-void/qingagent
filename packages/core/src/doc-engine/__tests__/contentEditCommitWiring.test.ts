@@ -2,7 +2,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { BridgeFrame, DiffHunk, LegacySection } from "@qingagent/contract-ts";
+import type {
+  AnnotationGroup,
+  BridgeFrame,
+  DiffHunk,
+  LegacySection,
+} from "@qingagent/contract-ts";
 import {
   getDeterministicId,
   materializeDraftBlockIds,
@@ -23,6 +28,7 @@ import { diffHunkToStep } from "../draftReviewSuggestions.js";
 import { applyDiffHunks } from "../proposalDiff.js";
 import { documentRepo } from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
+import { insertAnnotationGroups } from "@qingagent/db";
 import { listVersions } from "@qingagent/db";
 import {
   documentInput,
@@ -380,6 +386,76 @@ describe("用户手打块的候选审阅提交", () => {
       frame.kind === "docGenerationEvent"
     )).toBe(false);
     expect(state.docVersion).toBe(1);
+  });
+
+  it("整篇候选落地时按真实差异保留未改正文上的批注", async () => {
+    const state = createSession("whole-annotation-mapping");
+    const base = doc(
+      paragraph("whole-annotation-kept", "保留批注"),
+      paragraph("whole-annotation-edited", "旧尾段"),
+    );
+    const draft = doc(
+      paragraph("whole-annotation-kept", "保留批注"),
+      paragraph("whole-annotation-edited", "新尾段"),
+    );
+    const annotationGroup: AnnotationGroup = {
+      id: "annotation-whole-kept",
+      summary: "保留区批注",
+      note: "未改正文上的批注不应丢失",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{
+        blockId: "whole-annotation-kept",
+        pmFrom: 1,
+        pmTo: 5,
+        quote: "保留批注",
+        textHash: "hash-whole-kept",
+      }],
+    };
+    await documentRepo.save(documentInput(state.docId, {
+      threadId: state.threadId ?? state.sessionId,
+      docVersion: 1,
+      pmDoc: base,
+      legacySections: pmToLegacySections(base) as unknown as LegacySection[],
+    }));
+    await insertAnnotationGroups(state.docId, 1, [annotationGroup]);
+    // 复现 legacy-only 运行态：canonical 已落库，但内存仍由 legacySections 提供当前全文。
+    state.doc = undefined;
+    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftBaseDoc = base;
+    state.docDraftBaseVersion = 1;
+    state.docDraftBaseSections = state.legacySections;
+    state.docDraftCandidateDoc = draft;
+    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
+    state.annotationGroups = [annotationGroup];
+
+    const frames = await collectFrames(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-message-whole-mapping",
+      streamId: "agent-stream-whole-mapping",
+      runId: "agent-run-whole-mapping",
+      wholeDocument: true,
+    }));
+
+    expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("保留批注\n新尾段");
+    expect(state.annotationGroups).toEqual([annotationGroup]);
+    expect(frames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: state.annotationGroups,
+        replacedOrigins: ["consistency"],
+      },
+    });
+    const annotationRows = await getDocumentsClient().execute({
+      sql: "SELECT status,anchor_json FROM document_suggestions WHERE doc_id=? AND group_id=?",
+      args: [state.docId, annotationGroup.id],
+    });
+    expect(annotationRows.rows).toMatchObject([{
+      status: "reviewing",
+      anchor_json: JSON.stringify(annotationGroup.anchors[0]),
+    }]);
   });
 
   it("整批目标的基线哈希漂移时不部分落库并保留候选", async () => {

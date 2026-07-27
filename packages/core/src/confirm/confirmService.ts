@@ -18,7 +18,12 @@ import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import type { PendingConfirm, SessionState } from "../session/sessionState.js";
 import { persistSessionMetadata, schedulePersist } from "../session/threadPersistence.js";
-import { clearApprovalProof, clearAllApprovalProofs, issueApprovalProof } from "./approvalProof.js";
+import {
+  APPROVAL_PROOF_TTL_MS,
+  clearApprovalProof,
+  clearAllApprovalProofs,
+  issueApprovalProof,
+} from "./approvalProof.js";
 import {
   buildCommandConfirmSpec,
   commandConfirmationDigest,
@@ -322,7 +327,10 @@ export class ConfirmService {
         runId: pending.runId,
         toolCallId: pending.toolCallId,
         commandDigest: pending.commandDigest,
-        expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+        expiresAt: Math.min(
+          Date.parse(pending.expiresAt),
+          this.#now() + APPROVAL_PROOF_TTL_MS,
+        ),
       });
       await this.#safeAppendAudit(state, pending, {
         eventType: "decision_started",
@@ -352,6 +360,34 @@ export class ConfirmService {
     } catch {
       await this.#retryPersist(state, "confirm:request-cancelled").catch(() => undefined);
     }
+  }
+
+  refreshApprovalProofForResume(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): void {
+    const pendingExpiresAt = Date.parse(pending.expiresAt);
+    if (
+      state.pendingConfirms.get(pending.toolCallId) !== pending ||
+      pending.status !== "resuming" ||
+      pending.decisionAccepted !== true ||
+      pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
+      !Number.isFinite(pendingExpiresAt) ||
+      pendingExpiresAt <= this.#now()
+    ) {
+      clearApprovalProof(state, pending.toolCallId);
+      throw new ConfirmDecisionError("expired", "确认授权已经失效");
+    }
+    this.#issueProof(state, {
+      sessionId: state.sessionId,
+      runId: pending.runId,
+      toolCallId: pending.toolCallId,
+      commandDigest: pending.commandDigest,
+      expiresAt: Math.min(
+        pendingExpiresAt,
+        this.#now() + APPROVAL_PROOF_TTL_MS,
+      ),
+    });
   }
 
   #resetStoredGrantDecision(pending: PendingConfirm): void {
@@ -533,7 +569,10 @@ export class ConfirmService {
           runId: pending.runId,
           toolCallId: pending.toolCallId,
           commandDigest: pending.commandDigest,
-          expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+          expiresAt: Math.min(
+            Date.parse(pending.expiresAt),
+            this.#now() + APPROVAL_PROOF_TTL_MS,
+          ),
         });
       } catch {
         clearApprovalProof(state, pending.toolCallId);

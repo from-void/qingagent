@@ -281,6 +281,12 @@ export async function* resumeConfirmDecision(input: {
     }
     const toolsets = await buildResumeTools(session);
     abortController.signal.throwIfAborted();
+    if (
+      input.accepted &&
+      pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
+    ) {
+      service.refreshApprovalProofForResume(session, pending);
+    }
     const requestContext = safeResumeRequestContext(
       session,
       pending,

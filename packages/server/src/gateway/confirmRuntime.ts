@@ -411,6 +411,12 @@ export async function* handleConfirmDecision(
   try {
     yield { kind: "stream", data: { kind: "start", data: { streamId } } };
     const toolsets = await buildResumeTools(session);
+    if (
+      submission.decision.accepted &&
+      pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
+    ) {
+      service.refreshApprovalProofForResume(session, pending);
+    }
     const requestContext = safeResumeRequestContext(
       session,
       pending,

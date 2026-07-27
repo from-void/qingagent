@@ -8,6 +8,7 @@ import {
   resumeConfirmDecision,
 } from "../agent-run/confirmResume.js";
 import type { ProcessOutcome } from "../agent-run/agentStreamTurnContext.js";
+import { consumeApprovalProof } from "../confirm/approvalProof.js";
 
 async function* events(...items: unknown[]): AsyncGenerator<unknown> {
   for (const item of items) yield item;
@@ -265,8 +266,10 @@ describe("processAgentStream tool-call-approval", () => {
 
   it("stored grant 跳过参数流 generic 占位，首帧为排队 commandCard 并恢复到完成态", async () => {
     const state = createSession("approval-stream-stored");
+    let now = Date.now();
     const audits: Array<Record<string, unknown>> = [];
     const service = new ConfirmService({
+      now: () => now,
       createId: () => "stored-confirm",
       persist: async () => undefined,
       loadGrant: async () => ({
@@ -315,19 +318,28 @@ describe("processAgentStream tool-call-approval", () => {
     )).toBe(false);
     expect(initial.outcome.storedGrantApprovals).toHaveLength(1);
     const stored = initial.outcome.storedGrantApprovals[0]!;
+    now += 61_000;
     const agent = {
-      approveToolCall: async () => ({
-        runId: "run-confirm",
-        fullStream: events({
-          type: "tool-result",
-          payload: {
-            toolName: "mastra_workspace_execute_command",
-            toolCallId: "tool-stored",
-            args: { command: "mv a.txt b.txt" },
-            result: "ok",
-          },
-        }),
-      }),
+      approveToolCall: async () => {
+        expect(consumeApprovalProof(state, {
+          sessionId: state.sessionId,
+          runId: stored.pending.runId,
+          toolCallId: stored.pending.toolCallId,
+          commandDigest: stored.pending.commandDigest,
+        }, now)).toBe(true);
+        return {
+          runId: "run-confirm",
+          fullStream: events({
+            type: "tool-result",
+            payload: {
+              toolName: "mastra_workspace_execute_command",
+              toolCallId: "tool-stored",
+              args: { command: "mv a.txt b.txt" },
+              result: "ok",
+            },
+          }),
+        };
+      },
       declineToolCall: async () => ({ runId: "run-confirm", fullStream: events() }),
     };
     const resumed = await collect(resumeConfirmDecision({

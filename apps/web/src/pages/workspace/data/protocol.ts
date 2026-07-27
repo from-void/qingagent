@@ -842,7 +842,8 @@ function pmStructureOrAttrsChanged(before: unknown, after: unknown): boolean {
   if (!samePersistentPmValue(beforeNode.attrs ?? null, afterNode.attrs ?? null)) return true;
   const beforeContent = beforeNode.content ?? [];
   const afterContent = afterNode.content ?? [];
-  return beforeContent.slice(0, Math.min(beforeContent.length, afterContent.length)).some((child, index) =>
+  if (beforeContent.length !== afterContent.length) return true;
+  return beforeContent.some((child, index) =>
     pmStructureOrAttrsChanged(child, afterContent[index]),
   );
 }

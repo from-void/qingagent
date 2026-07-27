@@ -1600,6 +1600,69 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     )).toEqual(["changed:text", "changed:block", "changed:block"]);
   });
 
+  it("列表或表格同块文字变化并增删非文本子节点时强制整块 fallback", () => {
+    const listBefore = pmBulletListRows("child-count-list", ["旧文"]) as Extract<PmBlockNode, { type: "bulletList" }>;
+    const listAfter = {
+      ...pmBulletListRows("child-count-list", ["新文"]),
+      content: [{
+        ...listBefore.content[0]!,
+        content: [
+          pmParagraph("child-count-list-p0", "新文"),
+          {
+            type: "image",
+            attrs: {
+              blockId: "child-count-list-image",
+              src: "https://example.com/added.png",
+              caption: "新增图片",
+            },
+          },
+        ],
+      }],
+    } as PmBlockNode;
+    const listInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "child-count-list",
+      replaceHunk("child-count-list", "child-count-list", listBefore, listAfter),
+    ), 0)[0]!;
+
+    expect(listInput).toMatchObject({
+      op: "replace",
+      blocks: [{ kind: "list", node: listAfter }],
+    });
+    expect(listInput.granular).toBeUndefined();
+
+    const tableAfter = pmTableRows("child-count-table", [["新值"]]) as Extract<PmBlockNode, { type: "table" }>;
+    const tableBefore = {
+      ...pmTableRows("child-count-table", [["旧值"]]),
+      content: [{
+        ...tableAfter.content[0]!,
+        content: [{
+          ...tableAfter.content[0]!.content[0]!,
+          content: [
+            pmParagraph("child-count-table-p0", "旧值"),
+            {
+              type: "image",
+              attrs: {
+                blockId: "child-count-table-image",
+                src: "https://example.com/removed.png",
+                caption: "删除图片",
+              },
+            },
+          ],
+        }],
+      }],
+    } as PmBlockNode;
+    const tableInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "child-count-table",
+      replaceHunk("child-count-table", "child-count-table", tableBefore, tableAfter),
+    ), 0)[0]!;
+
+    expect(tableInput).toMatchObject({
+      op: "replace",
+      blocks: [{ kind: "table", node: tableAfter }],
+    });
+    expect(tableInput.granular).toBeUndefined();
+  });
+
   it("段落→表格的 replace 不走行内文本通道——否则表格被 insertText 拍平成一串绿字", () => {
     const para: PmBlockNode = {
       type: "paragraph",
@@ -1869,7 +1932,9 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-columns", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1, granular: true });
+    // 第二栏的列表新增了子项，columnsDiff 仍可用于诊断，但审阅交互必须整块 fallback。
+    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1 });
+    expect(inputs[0]!.granular).toBeUndefined();
     const columnList = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
     expect(columnList.kind).toBe("columnList");
     expect(columnList.node.type).toBe("columnList");

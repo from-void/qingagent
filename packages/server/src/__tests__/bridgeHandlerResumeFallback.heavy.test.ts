@@ -22,6 +22,8 @@ const mockState = vi.hoisted(() => ({
     return {
       events,
       resumeStream: vi.fn(),
+      listSuspendedRuns: vi.fn(async () => ({ runs: [] })),
+      declineToolCall: vi.fn(),
       buildCapabilityTools: vi.fn(async () => ({})),
       ensureWorkingMemorySnapshot: vi.fn(async () => "# 用户长期记忆\n- 喜欢短句"),
       prepareOmContextForTurn: vi.fn(async (session: any) => ({
@@ -177,6 +179,8 @@ async function loadBridge() {
       qingagentAgent: {
         ...actualCore.qingagentAgent,
         resumeStream: mockState.resumeStream,
+        listSuspendedRuns: mockState.listSuspendedRuns,
+        declineToolCall: mockState.declineToolCall,
       },
     };
   });
@@ -242,6 +246,9 @@ describe("handleResume askUser fresh-turn fallback", () => {
     vi.clearAllMocks();
     mockState.events.length = 0;
     mockState.resumeStream.mockReset();
+    mockState.listSuspendedRuns.mockReset();
+    mockState.listSuspendedRuns.mockResolvedValue({ runs: [] });
+    mockState.declineToolCall.mockReset();
     mockState.buildCapabilityTools.mockReset();
     mockState.buildCapabilityTools.mockResolvedValue({});
     mockState.ensureWorkingMemorySnapshot.mockClear();
@@ -898,6 +905,75 @@ describe("handleResume askUser fresh-turn fallback", () => {
     expect(mockState.resumeStream.mock.calls[0]?.[1]).toMatchObject({
       runId: "run-cold",
       toolCallId: "ask-inline-real",
+    });
+  });
+
+  it("startSession(existing) 冷恢复会安全终结 resuming 确认并回放结果未知提示", async () => {
+    const bridge = await loadBridge();
+    const { createSession } = await import("@qingagent/core");
+    const session = createSession("cold-resuming-confirm");
+    const toolCallId = "tool-resuming-before-crash";
+    session.threadId = session.sessionId;
+    session.chatHistory = [{
+      id: "msg-resuming-confirm",
+      role: { kind: "agent" },
+      ts: "2026-07-27T00:00:00.000Z",
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: toolCallId,
+          name: "mastra_workspace_execute_command",
+          render: { kind: "chatInline" },
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+          body: { kind: "generic", data: { argsJson: "" } },
+          result: null,
+        },
+      }],
+      chips: null,
+    }];
+    session.pendingConfirms.set(toolCallId, {
+      confirmId: "confirm-resuming-before-crash",
+      runId: "run-resuming-before-crash",
+      toolCallId,
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest",
+      spec: {
+        id: "confirm-resuming-before-crash",
+        kind: "command",
+        title: "执行命令",
+        say: "将执行一条命令",
+        footHint: "仅本次执行",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: "2026-07-27T00:00:00.000Z",
+      expiresAt: "2099-07-27T00:00:00.000Z",
+      status: "resuming",
+      decisionId: "decision-before-crash",
+    });
+    mockState.loadSessionFromThread.mockResolvedValueOnce(session);
+
+    const frames = await collectFrames(bridge.handleCommand({
+      kind: "startSession",
+      data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+    }));
+
+    expect(mockState.listSuspendedRuns).toHaveBeenCalledWith({
+      threadId: session.sessionId,
+      resourceId: session.resourceId,
+    });
+    expect(session.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({
+        toolCallId,
+        resolution: "failed",
+        message: expect.stringContaining("为避免重复操作"),
+      }),
+    }));
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: { status: { kind: "failed" } },
     });
   });
 

@@ -4,7 +4,6 @@ import {
   createSession,
   createSessionThread,
   ensureWorkingMemorySnapshotWithStatus,
-  loadSessionFromThread,
   persistSessionMetadata,
   schedulePersist,
   type SessionState,
@@ -95,13 +94,13 @@ export async function* handleSessionCommand(
           return;
         }
 
-        // Load from thread storage
-        const restored = await loadSessionFromThread(sessionId);
+        // 统一走写命令冷恢复入口：它会在注册会话前核对持久化确认与 Mastra
+        // snapshot，并安全终结崩溃窗口中的 resuming 状态。
+        const restored = await getOrRestoreSession(sessionId);
         if (!restored) {
           throw new Error(`Session not found: ${sessionId}`);
         }
         bindClientTraceId(restored, resolvedClientTraceId, origin, modelOverrides);
-        sessions.set(sessionId, restored);
         const wmSnapshot = await ensureWorkingMemorySnapshotWithStatus(restored);
         if (wmSnapshot.loadedNow && wmSnapshot.persistable) {
           await schedulePersist(restored, "restore:working_memory_snapshot");

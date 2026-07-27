@@ -260,6 +260,7 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   let reconnectAttempt = 0;
   let printWatchingOnNextConnection = true;
   let gapResubscribed = false;
+  let epoch: number | null = null;
   try {
     while (!reason && !timedOut) {
       const receivedBeforeConnection = received;
@@ -287,6 +288,16 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
             if (data === "{}") continue;
             if (event.event === "meta") {
               meta = parseEventsMeta(data);
+              if (meta && epoch !== null && meta.epoch !== epoch) {
+                epoch = meta.epoch;
+                gapResubscribed = false;
+                const resumeSeq = Math.max(1, Math.floor(meta.minSeq));
+                resumeAfter = String(resumeSeq - 1);
+                process.stderr.write(`[qa] log rebuilt, resuming from seq=${resumeSeq}\n`);
+                printWatchingOnNextConnection = true;
+                break;
+              }
+              if (meta) epoch = meta.epoch;
               if (meta?.gap) {
                 if (received === 0 && !gapResubscribed) {
                   gapResubscribed = true;

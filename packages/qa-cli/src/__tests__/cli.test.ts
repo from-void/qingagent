@@ -488,6 +488,50 @@ describe("qa cli", () => {
       .toContain("[qa] events exited reason=reviewed received=2");
   });
 
+  it("doc events --follow 检测到 epoch 变化后从新日志起点续传", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const requestedUrls: string[] = [];
+    let call = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      call += 1;
+      requestedUrls.push(String(input));
+      if (call === 1) {
+        return new Response(sseRawStream([
+          `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 100, nextSeq: 101, gap: false })}\n\n`,
+          `event: frame\ndata: ${JSON.stringify({ seq: 100, kind: "sessionMeta", data: { title: "旧日志" } })}\n\n`,
+        ]));
+      }
+      if (call === 2) {
+        return new Response(sseRawStream([
+          `event: meta\ndata: ${JSON.stringify({ epoch: 2, minSeq: 1, nextSeq: 102, gap: false })}\n\n`,
+          `event: frame\ndata: ${JSON.stringify({ seq: 101, kind: "sessionMeta", data: { title: "追平旧游标" } })}\n\n`,
+        ]));
+      }
+      return new Response(sseRawStream([
+        `event: meta\ndata: ${JSON.stringify({ epoch: 2, minSeq: 1, nextSeq: 102, gap: false })}\n\n`,
+        `event: frame\ndata: ${JSON.stringify({ seq: 1, kind: "docCommitted", data: { version: 2 } })}\n\n`,
+      ]));
+    }) as typeof fetch;
+
+    await main([
+      "doc", "events", "-s", "s1", "--after", "99",
+      "--follow", "--until", "reviewed", "--timeout", "2s",
+    ]);
+
+    expect(requestedUrls).toEqual([
+      "http://127.0.0.1:45678/api/v1/external/sessions/s1/events?after=99",
+      "http://127.0.0.1:45678/api/v1/external/sessions/s1/events?after=100",
+      "http://127.0.0.1:45678/api/v1/external/sessions/s1/events?after=0",
+    ]);
+    const output = stdout.mock.calls.map((entry) => entry[0]).join("");
+    expect(output).toContain("\"seq\":1");
+    expect(output).not.toContain("\"seq\":101");
+    expect(stderr.mock.calls.map((entry) => entry[0]).join(""))
+      .toContain("[qa] log rebuilt, resuming from seq=1");
+  });
+
   it("doc events --until 未显式 after 时从 tip 开始,不从 0 回放旧帧", async () => {
     const { main } = await import("../cli.js");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

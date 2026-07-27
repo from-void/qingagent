@@ -2,7 +2,6 @@ import type {
   InputProcessorOrWorkflow,
   OutputProcessor,
   OutputProcessorOrWorkflow,
-  UnicodeNormalizerOptions,
 } from "@mastra/core/processors";
 import {
   BatchPartsProcessor,
@@ -38,22 +37,9 @@ export interface QingagentProcessorFlags {
   pii: boolean;
 }
 
-const UNICODE_NORMALIZER_DIRTY_RE =
-  /[\x00-\x1F\x7F-\x9F\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u2070-\u209F\u2100-\u214F\u2150-\u218F\u2460-\u24FF\u3000-\u303F\u3200-\u33FF\uF900-\uFAFF\uFB00-\uFDFF\uFE00-\uFEFF\uFF00-\uFFEF]|^\s|\s$| {2,}/u;
+const PROTOCOL_CONTROL_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
-class NoopPreservingUnicodeNormalizer extends UnicodeNormalizer {
-  private readonly qingagentOptions: Required<UnicodeNormalizerOptions>;
-
-  constructor(options: UnicodeNormalizerOptions = {}) {
-    super(options);
-    this.qingagentOptions = {
-      stripControlChars: options.stripControlChars ?? false,
-      preserveEmojis: options.preserveEmojis ?? true,
-      collapseWhitespace: options.collapseWhitespace ?? true,
-      trim: options.trim ?? true,
-    };
-  }
-
+class StructurePreservingUnicodeNormalizer extends UnicodeNormalizer {
   override processInput(args: Parameters<UnicodeNormalizer["processInput"]>[0]): ReturnType<UnicodeNormalizer["processInput"]> {
     try {
       let changed = false;
@@ -97,29 +83,11 @@ class NoopPreservingUnicodeNormalizer extends UnicodeNormalizer {
   }
 
   private normalizeQingagentText(text: string): string {
-    if (!UNICODE_NORMALIZER_DIRTY_RE.test(text)) return text;
-    let normalized = text.normalize("NFKC");
-    if (this.qingagentOptions.stripControlChars) {
-      normalized = this.qingagentOptions.preserveEmojis
-        ? normalized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "")
-        : normalized.replace(/[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]/g, "");
-    }
-    if (this.qingagentOptions.collapseWhitespace) {
-      normalized = normalized.replace(/\r\n/g, "\n");
-      normalized = normalized.replace(/\r/g, "\n");
-      normalized = normalized.replace(/\n+/g, "\n");
-      normalized = normalized.replace(/[ \t]+/g, " ");
-    }
-    return this.qingagentOptions.trim ? normalized.trim() : normalized;
+    return text.replace(PROTOCOL_CONTROL_CHARS_RE, "");
   }
 }
 
-const DEFAULT_UNICODE_NORMALIZER = new NoopPreservingUnicodeNormalizer({
-  stripControlChars: true,
-  preserveEmojis: true,
-  collapseWhitespace: true,
-  trim: true,
-});
+const DEFAULT_UNICODE_NORMALIZER = new StructurePreservingUnicodeNormalizer();
 
 const DEFAULT_BATCH_PARTS_PROCESSOR = new BatchPartsProcessor({
   batchSize: QINGAGENT_BATCH_PARTS_SIZE,

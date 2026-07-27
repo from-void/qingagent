@@ -169,8 +169,10 @@
 }
 .qj-sheet-body{
   flex:1 1 auto;min-height:0;overflow-y:auto;
-  /* 底部留 ~3 行 buffer:内容不贴底被渐隐截断,且都能往上滚出空间 */
-  padding:8px 8px 60px 0;
+  /* 底部留 ~3 行 buffer:内容不贴底被渐隐截断,且都能往上滚出空间。
+     左侧留 6px:满宽输入框的聚焦圈(outline 2px + offset 2px)要完整可见,
+     否则会被这个滚动容器在左缘裁掉半圈(右侧本就有 8px)。 */
+  padding:8px 8px 60px 6px;
   border:0;
   border-radius:0;
   background:transparent;

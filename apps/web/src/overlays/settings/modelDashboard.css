@@ -978,8 +978,8 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  padding-right: 6px;
-  margin-bottom: 12px;
+  /* 不留右侧内边距:厂商卡行要与下方看板卡、明细卡(.md-card 满宽)左右缘严格对齐 */
+  margin: 0 0 12px;
 }
 .qj-sheet-body .md-card.vd-card {
   position: relative;
@@ -1061,7 +1061,8 @@
 
 /* 零配置引导条 */
 .qj-sheet-body .vd-onboard {
-  margin: 0 6px 12px 0;
+  /* 同上:引导条也与各卡片同宽,不额外缩右边 */
+  margin: 0 0 12px;
   padding: 9px 14px;
   border: 1px dashed var(--qj-seal-red-deep);
   font-size: 12.5px;

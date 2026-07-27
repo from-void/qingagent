@@ -104,34 +104,8 @@ export function readPersisted(key: string): string | null {
   }
 }
 
-/** 写入(value=null 表示删除)。桌面端同步更新内存镜像 + 异步落盘 userData。 */
-export function writePersisted(key: string, value: string | null): void {
-  const accessor = desktopConfigAccessor(key);
-  if (accessor) {
-    updateCacheValue(cache, key, value);
-    loadedKeys.add(key);
-    nextWriteRevision(key);
-    // 普通配置保持宽松语义:内存立即可读，落盘失败只告警。
-    const pending = accessor.set(value);
-    void pending
-      .then((ok) => {
-        if (!ok) console.warn(`[client-persist] 桌面配置落盘失败: ${key}`);
-      })
-      .catch((err: unknown) => {
-        console.warn(`[client-persist] 桌面配置落盘异常: ${key}`, err);
-      });
-    return;
-  }
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // localStorage 不可用(隐私模式等)时静默。
-  }
-}
-
 /**
- * 可等待的写入路径，供含模型 key 的敏感配置使用。
+ * 可等待的写入路径，供客户端模型配置统一使用。
  * 桌面端仍会先同步更新镜像；IPC 失败时恢复写入前的值，避免形成“本次能用、重启丢失”的假象。
  */
 export async function writePersistedAwaited(key: string, value: string | null): Promise<boolean> {

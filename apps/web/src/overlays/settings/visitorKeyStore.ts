@@ -6,7 +6,7 @@
 // 三者透传走同一出口 visitorKeyHeaders(),被对话/余额等请求统一带上。
 
 import { visionKeyHeaders } from "./visionProviderStore";
-import { readPersisted, writePersisted, writePersistedAwaited } from "./clientPersist";
+import { readPersisted, writePersistedAwaited } from "./clientPersist";
 
 const DEEPSEEK_STORAGE_KEY = "qingagent.deepseek_api_key";
 const DEEPSEEK_CUSTOM_PROVIDER_KEY = "qingagent.custom_provider";
@@ -66,8 +66,8 @@ export function getSelectedModelProvider(): ModelProvider {
   return getStoredModelProvider() ?? "deepseek";
 }
 
-export function setSelectedModelProvider(provider: ModelProvider): void {
-  writePersisted(MODEL_PROVIDER_KEY, provider);
+export function setSelectedModelProvider(provider: ModelProvider): Promise<boolean> {
+  return writePersistedAwaited(MODEL_PROVIDER_KEY, provider);
 }
 
 export function getVisitorModelKey(provider: ModelProvider): string | null {
@@ -156,20 +156,19 @@ export function readOfficialModelOverride(
 export function writeOfficialModelOverride(
   v: OfficialModelOverride,
   provider: ModelProvider = "deepseek",
-): void {
+): Promise<boolean> {
   try {
     const flash = v.flash?.trim();
     const pro = v.pro?.trim();
     if (flash || pro) {
-      writePersisted(
+      return writePersistedAwaited(
         providerStorageKeys(provider).officialModel,
         JSON.stringify({ ...(flash ? { flash } : {}), ...(pro ? { pro } : {}) }),
       );
-    } else {
-      writePersisted(providerStorageKeys(provider).officialModel, null);
     }
+    return writePersistedAwaited(providerStorageKeys(provider).officialModel, null);
   } catch {
-    // 静默
+    return Promise.resolve(false);
   }
 }
 
@@ -180,8 +179,8 @@ export function getSelectedModelTier(): ModelTier {
   return value === "pro" ? "pro" : DEFAULT_MODEL_TIER;
 }
 
-export function setSelectedModelTier(tier: ModelTier): void {
-  writePersisted(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
+export function setSelectedModelTier(tier: ModelTier): Promise<boolean> {
+  return writePersistedAwaited(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
 }
 
 /** 给请求层用:按当前配置返回要附加的 header(对话 / 余额等请求统一带上)。

@@ -224,6 +224,31 @@ describe("Settings Track B", () => {
     });
   });
 
+  it("provider 与档位落盘失败时保持原选择并通过全局 toast 告知未保存", async () => {
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    const nativeSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "qingagent.model_provider" || key === "qingagent.model_tier") {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      }
+      nativeSetItem.call(this, key, value);
+    });
+
+    await click(getButtonByWf("ProviderKimi"));
+    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
+    expect(getSelectedModelProvider()).toBe("deepseek");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
+
+    await click(getButtonByWf("ModelTierPro"));
+    expect(getButtonByWf("ModelTierFlash").getAttribute("aria-checked")).toBe("true");
+    expect(getSelectedModelTier()).toBe("flash");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
+  });
+
   it("未显式选择且无本地配置时保留 server 优先级；旧 DeepSeek key 仍锁定 DeepSeek", async () => {
     expect(getStoredModelProvider()).toBeNull();
     expect(getSelectedModelProvider()).toBe("deepseek");

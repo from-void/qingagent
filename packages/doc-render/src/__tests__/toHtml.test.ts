@@ -313,6 +313,25 @@ describe("toHtml 图表与图片", () => {
     expect(html).not.toContain('<div class="pm-diagram-fallback">');
   });
 
+  it("图表保留自定义宽高与右对齐布局", () => {
+    const html = toHtml(doc([{
+      type: "diagram",
+      attrs: {
+        blockId: "diagram-layout",
+        lang: "mermaid",
+        source: "flowchart TD\n A-->B",
+        svg: GOOD_SVG,
+        width: 420,
+        height: 260,
+        align: "right",
+      },
+    }] as never));
+
+    expect(html).toContain('class="pm-diagram align-right has-custom-width has-custom-height"');
+    expect(html).toContain('style="width:420px;height:260px;max-width:100%;margin-left:auto;margin-right:0"');
+    expect(html).toContain(".wf-doc .pm-diagram.has-custom-height svg");
+  });
+
   it("无缓存 SVG 图表显示类型化说明并回退源码代码块", () => {
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: null } }] as never));
     expect(html).toContain('<div class="pm-diagram-fallback">');
@@ -392,6 +411,26 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain(`<img src="data:image/png;base64,${png}" alt="猫">`);
     expect(html).toContain("<figcaption>图1</figcaption>");
   });
+
+  it("图片保留自定义宽高与右对齐布局", () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const html = toHtml(doc([{
+      type: "image",
+      attrs: {
+        blockId: "image-layout",
+        src: `data:image/png;base64,${png}`,
+        alt: "布局图",
+        width: 320,
+        height: 180,
+        align: "right",
+      },
+    }] as never));
+
+    expect(html).toContain('class="doc-image align-right" style="width:320px;max-width:100%;margin-left:auto;margin-right:0"');
+    expect(html).toContain('class="doc-image-media has-custom-width has-custom-height" style="width:100%;height:180px"');
+    expect(html).toContain('alt="布局图" width="320" height="180"');
+    expect(html).toContain(".wf-doc .doc-image-media.has-custom-height");
+  });
 });
 
 describe("toHtml legacy 段", () => {
@@ -419,5 +458,23 @@ describe("toHtml legacy 段", () => {
     ]);
 
     expect(html).toContain('<h2 id="legacy-section">带锚点的小节</h2>');
+  });
+
+  it("legacy 图片保留宽高与对齐", () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const html = toHtml([{
+      kind: "image",
+      data: {
+        src: `data:image/png;base64,${png}`,
+        alt: "旧图片",
+        caption: null,
+        width: 240,
+        height: 120,
+        align: "left",
+      },
+    }]);
+
+    expect(html).toContain('class="doc-image align-left" style="width:240px;max-width:100%;margin-left:0;margin-right:auto"');
+    expect(html).toContain('alt="旧图片" width="240" height="120"');
   });
 });

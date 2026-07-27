@@ -358,6 +358,14 @@ td.wf-page-cell {
   max-width: 100%;
   height: auto;
 }
+.wf-doc .pm-diagram.align-left { margin-left: 0; margin-right: auto; }
+.wf-doc .pm-diagram.align-right { margin-left: auto; margin-right: 0; }
+.wf-doc .pm-diagram.has-custom-width svg { width: 100%; }
+.wf-doc .pm-diagram.has-custom-height svg {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+}
 .wf-doc .pm-diagram-fallback {
   margin: 14px 0 0;
   padding: 7px 10px;
@@ -371,6 +379,16 @@ td.wf-page-cell {
 /* ============ 图片 ============ */
 .wf-doc figure.doc-image { margin: 14px 0; text-align: center; break-inside: avoid; }
 .wf-doc figure.doc-image img { max-width: 100%; height: auto; border-radius: var(--r-sm); }
+.wf-doc .doc-image-media { display: inline-block; max-width: 100%; line-height: 0; }
+.wf-doc .doc-image-media > img,
+.wf-doc .doc-image-media > svg { display: block; max-width: 100%; }
+.wf-doc .doc-image-media.has-custom-width > img,
+.wf-doc .doc-image-media.has-custom-width > svg { width: 100%; }
+.wf-doc .doc-image-media.has-custom-height > img,
+.wf-doc .doc-image-media.has-custom-height > svg {
+  height: 100%;
+  object-fit: contain;
+}
 .wf-doc figure.doc-image.align-left { text-align: left; }
 .wf-doc figure.doc-image.align-right { text-align: right; }
 .wf-doc figure.doc-image figcaption {

@@ -375,6 +375,68 @@ describe("公众号稿生成体验", () => {
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ writingStyleId: builtin.id }));
   });
 
+  it("F1: 切换稿件类型后丢弃旧类型模板详情的迟到回包", async () => {
+    const gzhTemplate = {
+      id: "gzh-opinion",
+      dtype: "gzh",
+      slot: "writing" as const,
+      name: "旧类型模板",
+      detail: "旧详情",
+      prompt: "旧提示",
+      builtin: true,
+    };
+    const translateTemplate = {
+      id: "translate-faithful",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "忠实精准",
+      detail: "准确",
+      prompt: "翻译提示",
+      builtin: true,
+    };
+    let resolveOldTemplate!: (value: typeof gzhTemplate) => void;
+    const oldTemplateRequest = new Promise<typeof gzhTemplate>((resolve) => {
+      resolveOldTemplate = resolve;
+    });
+    const stream = {
+      listStyleTemplates: vi.fn(async (_sessionId: string, dtype: string) =>
+        dtype === "gzh" ? [gzhTemplate] : [translateTemplate]),
+      getStyleTemplate: vi.fn(() => oldTemplateRequest),
+      saveStyleTemplate: vi.fn(),
+    };
+    const renderModal = (dtype: "gzh" | "translate") => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY[dtype]}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{
+          templateId: dtype === "gzh" ? gzhTemplate.id : translateTemplate.id,
+          privatePrompt: "",
+        }}
+        onClose={vi.fn()}
+        onGenerate={vi.fn()}
+      />,
+    );
+
+    await act(async () => renderModal("gzh"));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑旧类型模板"]')!.click());
+    expect(stream.getStyleTemplate).toHaveBeenCalledWith("session-1", gzhTemplate.id);
+
+    await act(async () => renderModal("translate"));
+    await act(async () => Promise.resolve());
+    await act(async () => {
+      resolveOldTemplate(gzhTemplate);
+      await oldTemplateRequest;
+    });
+
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.textContent).not.toContain("旧类型模板");
+    expect(host.querySelector(".ws-launch-editor")).toBeNull();
+    expect(stream.saveStyleTemplate).not.toHaveBeenCalled();
+  });
+
   it("用户风格模板可删除，删除选中项后回退同组内置模板", async () => {
     const layout = { id: "layout-a", dtype: "gzh", slot: "layout" as const, name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true };
     const builtin = { id: "gzh-opinion", dtype: "gzh", slot: "writing" as const, name: "深度观点文", detail: "深入", prompt: "深度提示", builtin: true };

@@ -1736,8 +1736,11 @@ flowchart LR
     expect(toolbar.querySelectorAll(".graph-diagram-toolbar__row > button")).toHaveLength(5);
     expect(toolbar.querySelector(".graph-diagram-panel-section")).toBeNull();
     expect(toolbar.querySelector(".graph-diagram-popover")).toBeNull();
-    await openToolbarMenu("形状", editor);
-    expect(["矩形", "圆角矩形", "体育场/胶囊", "子流程", "圆柱", "菱形(判断)", "圆形", "双圆形", "非对称形", "六边形", "平行四边形", "反向平行四边形", "梯形", "反向梯形"].map((label) => findButton(label, editor).textContent?.trim())).toEqual([
+    const shapePopover = await openToolbarMenu("形状", editor);
+    // 形状弹层改成图标网格:标题「更改图形」+ 每格一个迷你形状预览(文字语义留在 aria-label/title)。
+    expect(shapePopover.querySelector(".graph-diagram-popover__title")?.textContent).toBe("更改图形");
+    const shapeButtons = Array.from(shapePopover.querySelectorAll<HTMLButtonElement>(".graph-diagram-shape-btn"));
+    expect(shapeButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "矩形",
       "圆角矩形",
       "体育场/胶囊",
@@ -1753,7 +1756,11 @@ flowchart LR
       "梯形",
       "反向梯形",
     ]);
-    await click(findButton("菱形(判断)", editor));
+    expect(shapeButtons.every((button) => !!button.querySelector(".graph-diagram-shape-glyph"))).toBe(true);
+    expect(shapeButtons.find((button) => button.getAttribute("aria-label") === "矩形")?.classList.contains("is-active")).toBe(true);
+    // 触发钮显示当前形状
+    expect(findToolbarButton("形状", editor).querySelector(".graph-diagram-shape-glyph")).not.toBeNull();
+    await click(shapeButtons.find((button) => button.getAttribute("aria-label") === "菱形(判断)")!);
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("A{开始} --> B[结束]"));
     expect(onOverlayChange).not.toHaveBeenCalled();
   });
@@ -1863,8 +1870,17 @@ flowchart LR
     expect(findToolbarButton("填充", editor).dataset.swatchColor).toBe("#f3ecdd");
     expect(findToolbarButton("填充", editor).querySelector("circle")?.getAttribute("fill")).toBe("#f3ecdd");
     await setInputValue(findInput("填充不透明度", editor), "50");
-    await openToolbarMenu("边框", editor);
-    await setInputValue(findInput("边框粗细(px)", editor), "4");
+    const borderPopover = await openToolbarMenu("边框", editor);
+    // 边框弹层改成:标题 + 线型 4 钮 + 线宽 4 档 + 分隔线 + 两行色样 + 不透明度
+    expect(borderPopover.querySelector(".graph-diagram-popover__title")?.textContent).toBe("边框样式");
+    expect(Array.from(borderPopover.querySelectorAll<HTMLElement>("[aria-label='边框线型'] .graph-diagram-option-btn"))
+      .map((button) => button.getAttribute("aria-label"))).toEqual(["无边框", "实线", "虚线", "点线"]);
+    expect(Array.from(borderPopover.querySelectorAll<HTMLElement>("[aria-label='边框粗细'] .graph-diagram-option-btn"))
+      .map((button) => button.getAttribute("aria-label"))).toEqual(["边框粗细 1px", "边框粗细 2px", "边框粗细 3px", "边框粗细 4px"]);
+    expect(borderPopover.querySelectorAll("[aria-label='边框色色板'] .graph-diagram-swatch-row")).toHaveLength(2);
+    expect(borderPopover.querySelector(".graph-diagram-popover__divider")).not.toBeNull();
+    expect(borderPopover.querySelector("input[aria-label='边框粗细(px)']")).toBeNull();
+    await click(borderPopover.querySelector<HTMLButtonElement>("[aria-label='边框粗细 4px']")!);
     await openToolbarMenu("文字", editor);
     const fontSizeInput = findInput("字号(px)", editor);
     expect(fontSizeInput.getAttribute("min")).toBe("10");
@@ -1890,6 +1906,77 @@ flowchart LR
         A: expect.objectContaining({ fontSize: 18 }),
       }),
     }));
+    expect(onSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("填充弹层两行色样+无填充首格,无填充写 alpha 0 并在导出 SVG 往返", async () => {
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findNode("开始", editor));
+    const popover = await openToolbarMenu("填充", editor);
+    const rows = popover.querySelectorAll("[aria-label='填充色色板'] .graph-diagram-swatch-row");
+    expect(rows).toHaveLength(2);
+    // 首格是"无填充"(斜杠图标),末位是"+"自定义色
+    expect(rows[0]!.firstElementChild?.getAttribute("aria-label")).toBe("无填充");
+    expect(popover.querySelector("input[type='color'][aria-label='填充色']")).not.toBeNull();
+
+    await click(popover.querySelector<HTMLButtonElement>("[aria-label='无填充']")!);
+    const noneOverlay = onOverlayChange.mock.calls.at(-1)?.[0];
+    expect(noneOverlay?.styles?.A?.fill).toBe("#efe3cc00");
+    // 全透明色进导出 SVG 不被吞
+    const exported = container?.querySelector<SVGElement>(".graph-diagram-export [data-node-id='A'] path, .graph-diagram-export [data-node-id='A'] rect");
+    expect(exported?.getAttribute("fill")).toBe("#efe3cc00");
+
+    // 无填充态下再点色样,自动恢复不透明(否则点了像没反应)
+    await click(await waitForSelector("button[aria-label='填充色 #f8e7a1']", editor));
+    expect(onOverlayChange.mock.calls.at(-1)?.[0]?.styles?.A?.fill).toBe("#f8e7a1");
+  });
+
+  it("边框弹层线型走 dashArray、无边框走 alpha 0,均在导出 SVG 往返", async () => {
+    const onOverlayChange = vi.fn();
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+        onOverlayChange={onOverlayChange}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    await click(findNode("开始", editor));
+    const popover = await openToolbarMenu("边框", editor);
+
+    await click(popover.querySelector<HTMLButtonElement>("[aria-label='虚线']")!);
+    expect(onOverlayChange.mock.calls.at(-1)?.[0]?.styles?.A?.dashArray).toBe("6 4");
+    const dashedShape = container?.querySelector<SVGElement>(".graph-diagram-export [data-node-id='A'] rect, .graph-diagram-export [data-node-id='A'] path");
+    expect(dashedShape?.getAttribute("stroke-dasharray")).toBe("6 4");
+
+    await click(findToolbarButton("边框", editor));
+    const reopened = await openToolbarMenu("边框", editor);
+    // 回填:当前线型被高亮
+    expect(reopened.querySelector<HTMLElement>("[aria-label='虚线']")?.classList.contains("is-active")).toBe(true);
+    await click(reopened.querySelector<HTMLButtonElement>("[aria-label='实线']")!);
+    expect(onOverlayChange.mock.calls.at(-1)?.[0]?.styles?.A?.dashArray).toBe("");
+    const solidShape = container?.querySelector<SVGElement>(".graph-diagram-export [data-node-id='A'] rect, .graph-diagram-export [data-node-id='A'] path");
+    expect(solidShape?.getAttribute("stroke-dasharray")).toBeNull();
+
+    await click(findToolbarButton("边框", editor));
+    const borderPopover = await openToolbarMenu("边框", editor);
+    await click(borderPopover.querySelector<HTMLButtonElement>("[aria-label='无边框']")!);
+    expect(onOverlayChange.mock.calls.at(-1)?.[0]?.styles?.A?.stroke).toBe("#b08a3e00");
+    const borderlessShape = container?.querySelector<SVGElement>(".graph-diagram-export [data-node-id='A'] rect, .graph-diagram-export [data-node-id='A'] path");
+    expect(borderlessShape?.getAttribute("stroke")).toBe("#b08a3e00");
+    // 全程只写 overlay,不改 Mermaid 源码
     expect(onSourceChange).not.toHaveBeenCalled();
   });
 

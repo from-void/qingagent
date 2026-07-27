@@ -250,6 +250,22 @@ const NODE_MAX_WIDTH = 640;
 const NODE_MAX_HEIGHT = 480;
 const NODE_FILL_COLORS = ["#efe3cc", "#f3ecdd", "#e5dfc9", "#f8e7a1", "#ddd0b5", "#cfc5b2"];
 const NODE_STROKE_COLORS = ["#b08a3e", "#8f6d30", "#8d7447", "#6a6256", "#4f514f", "#2f2a22"];
+// 节点填充/边框色板按两行铺开(纸暖色系:第一行由浅到深的纸墨,第二行暖色相)。
+const NODE_FILL_COLOR_ROWS: string[][] = [
+  ["#fffaf0", "#f6f1e7", "#f3ecdd", "#efe3cc", "#e5dfc9", "#ddd0b5"],
+  ["#f8e7a1", "#f2d7a8", "#e8c9a0", "#d9c3a5", "#cfc5b2", "#b9ab93"],
+];
+const NODE_STROKE_COLOR_ROWS: string[][] = [
+  ["#2f2a22", "#4f514f", "#6a6256", "#8d7447", "#cdbfa3", "#e5dfc9"],
+  ["#8f6d30", "#a8763a", "#b08a3e", "#7a6a4f", "#5c5346", "#9a8f7a"],
+];
+// 边框线型与粗细档位:线型落到 dashArray,粗细落到 strokeWidth(引擎钳 1~8)。
+const NODE_BORDER_DASH_OPTIONS: Array<{ key: "solid" | "dashed" | "dotted"; label: string; dashArray: string }> = [
+  { key: "solid", label: "实线", dashArray: "" },
+  { key: "dashed", label: "虚线", dashArray: "6 4" },
+  { key: "dotted", label: "点线", dashArray: "2 4" },
+];
+const NODE_BORDER_WIDTH_OPTIONS = [1, 2, 3, 4];
 const NODE_TEXT_COLORS = ["#2f2a22", "#4f514f", "#5c5346", "#6a6256", "#8d7447", "#11110f"];
 const EDGE_COLORS = ["#8d7447", "#8f6d30", "#b08a3e", "#6a6256", "#4f514f"];
 const EDGE_DIRECTION_OPTIONS: Array<{ direction: EdgeDirection; label: string; icon: IconName }> = [
@@ -3468,7 +3484,9 @@ export function GraphDiagramView({
                       menu="node-shape"
                       label="形状"
                       icon="shape"
-                      valueLabel={NODE_SHAPE_LABELS[selectedNodeShape]}
+                      // 触发钮直接显示当前形状,不再靠文字标签占宽。
+                      iconNode={<NodeShapeGlyph shape={selectedNodeShape} />}
+                      valueLabel={undefined}
                       disabled={!selectedNodeCanShape}
                       openMenu={openToolbarMenu}
                       onToggle={setOpenToolbarMenu}
@@ -3479,58 +3497,30 @@ export function GraphDiagramView({
                     <ToolbarDropdownButton menu="node-more" label="…更多" icon="more" openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
                   </div>
                   {openToolbarMenu === "node-shape" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="形状选择">
-                      <div className="graph-diagram-shape-grid" aria-label="节点形状">
-                        {NODE_SHAPE_OPTIONS.map((item) => (
-                          <button
-                            key={item.shape}
-                            type="button"
-                            className={classNames("graph-diagram-shape-btn dt-mi", selectedNodeShape === item.shape && "is-active")}
-                            disabled={!selectedNodeCanShape}
-                            aria-pressed={selectedNodeShape === item.shape}
-                            onClick={() => {
-                              setSelectedNodeShape(item.shape);
-                              setOpenToolbarMenu(null);
-                            }}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <NodeShapePopover
+                      shape={selectedNodeShape}
+                      disabled={!selectedNodeCanShape}
+                      onSelect={(shape) => {
+                        setSelectedNodeShape(shape);
+                        setOpenToolbarMenu(null);
+                      }}
+                    />
                   )}
                   {openToolbarMenu === "node-fill" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="填充设置">
-                      <ColorControl
-                        label="填充色"
-                        value={selectedNodeStyle?.fill ?? DEFAULT_NODE_FILL}
-                        disabled={!selectedNodeCanStyle}
-                        swatches={NODE_FILL_COLORS}
-                        opacityLabel="填充不透明度"
-                        onChange={(fill) => updateNodeStyle({ fill })}
-                      />
-                    </div>
+                    <NodeFillPopover
+                      value={selectedNodeStyle?.fill ?? DEFAULT_NODE_FILL}
+                      disabled={!selectedNodeCanStyle}
+                      onChange={(fill) => updateNodeStyle({ fill })}
+                    />
                   )}
                   {openToolbarMenu === "node-border" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="边框设置">
-                      <ColorControl
-                        label="边框色"
-                        value={selectedNodeStyle?.stroke ?? DEFAULT_NODE_STROKE}
-                        disabled={!selectedNodeCanStyle}
-                        swatches={NODE_STROKE_COLORS}
-                        onChange={(stroke) => updateNodeStyle({ stroke })}
-                      />
-                      <NumberRangeControl
-                        label="边框粗细"
-                        inputLabel="边框粗细(px)"
-                        disabled={!selectedNodeCanStyle}
-                        value={selectedNodeStyle?.strokeWidth ?? 1.5}
-                        min={NODE_STROKE_WIDTH_RANGE.min}
-                        max={NODE_STROKE_WIDTH_RANGE.max}
-                        step={NODE_STROKE_WIDTH_RANGE.step}
-                        onChange={(strokeWidth) => updateNodeStyle({ strokeWidth })}
-                      />
-                    </div>
+                    <NodeBorderPopover
+                      value={selectedNodeStyle?.stroke ?? DEFAULT_NODE_STROKE}
+                      strokeWidth={selectedNodeStyle?.strokeWidth ?? 1.5}
+                      dashArray={selectedNodeStyle?.dashArray}
+                      disabled={!selectedNodeCanStyle}
+                      onChange={updateNodeStyle}
+                    />
                   )}
                   {openToolbarMenu === "node-text" && (
                     <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="文字设置">
@@ -3764,6 +3754,7 @@ function ToolbarDropdownButton({
   menu,
   label,
   icon,
+  iconNode,
   swatchColor,
   valueLabel,
   disabled = false,
@@ -3773,6 +3764,7 @@ function ToolbarDropdownButton({
   menu: ToolbarMenu;
   label: string;
   icon: IconName;
+  iconNode?: ReactNode;
   swatchColor?: string;
   valueLabel?: string;
   disabled?: boolean;
@@ -3792,7 +3784,7 @@ function ToolbarDropdownButton({
       onClick={() => onToggle(active ? null : menu)}
       data-swatch-color={swatchColor}
     >
-      <GraphIcon name={icon} color={swatchColor} />
+      {iconNode ?? <GraphIcon name={icon} color={swatchColor} />}
       {valueLabel ? <span className="graph-diagram-toolbar__value">{valueLabel}</span> : null}
       <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
     </button>
@@ -3962,6 +3954,262 @@ function MenuActionButton({
       <kbd>{shortcut}</kbd>
     </button>
   );
+}
+
+/** 色板:两行色样 +(可选)首格「无」+ 末位「+」自定义色;透明度以颜色 alpha 承载。 */
+function SwatchPalette({
+  label,
+  value,
+  rows,
+  disabled,
+  noneLabel,
+  onSelect,
+  onSelectNone,
+}: {
+  label: string;
+  value: string;
+  rows: string[][];
+  disabled: boolean;
+  noneLabel?: string;
+  onSelect: (color: string) => void;
+  onSelectNone?: () => void;
+}) {
+  const opaqueValue = toOpaqueHex(value);
+  const isNone = colorOpacityPercent(value) === 0;
+  return (
+    <div className="graph-diagram-swatch-panel" aria-label={`${label}色板`}>
+      {rows.map((row, rowIndex) => (
+        <div className="graph-diagram-swatch-row" key={`row-${rowIndex}`}>
+          {rowIndex === 0 && noneLabel && onSelectNone ? (
+            <button
+              type="button"
+              className={classNames("graph-diagram-swatch graph-diagram-swatch--none", isNone && "is-active")}
+              disabled={disabled}
+              aria-label={noneLabel}
+              aria-pressed={isNone}
+              title={noneLabel}
+              onClick={onSelectNone}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M3 13 13 3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null}
+          {row.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={classNames("graph-diagram-swatch", !isNone && opaqueValue === color && "is-active")}
+              style={{ background: color }}
+              disabled={disabled}
+              aria-label={`${label} ${color}`}
+              aria-pressed={!isNone && opaqueValue === color}
+              onClick={() => onSelect(color)}
+            />
+          ))}
+          {rowIndex === rows.length - 1 ? (
+            <label className="graph-diagram-swatch graph-diagram-swatch--custom" title="自定义颜色">
+              <span aria-hidden="true">+</span>
+              <input
+                type="color"
+                aria-label={label}
+                value={opaqueValue}
+                disabled={disabled}
+                onChange={(event) => onSelect(event.currentTarget.value)}
+              />
+            </label>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NodeFillPopover({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (fill: string) => void;
+}) {
+  const opacityPercent = colorOpacityPercent(value);
+  return (
+    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="填充设置">
+      <SwatchPalette
+        label="填充色"
+        value={value}
+        rows={NODE_FILL_COLOR_ROWS}
+        disabled={disabled}
+        noneLabel="无填充"
+        onSelect={(color) => onChange(applyPaletteColor(color, opacityPercent))}
+        onSelectNone={() => onChange(`${toOpaqueHex(value)}00`)}
+      />
+      <NumberRangeControl
+        label="不透明度"
+        inputLabel="填充不透明度"
+        disabled={disabled}
+        value={opacityPercent}
+        min={0}
+        max={100}
+        step={1}
+        unit="%"
+        onChange={(percent) => onChange(withColorOpacity(toOpaqueHex(value), percent))}
+      />
+    </div>
+  );
+}
+
+function NodeBorderPopover({
+  value,
+  strokeWidth,
+  dashArray,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  strokeWidth: number;
+  dashArray: string | undefined;
+  disabled: boolean;
+  onChange: (patch: NodeStyleOverride) => void;
+}) {
+  const opacityPercent = colorOpacityPercent(value);
+  const isNone = opacityPercent === 0;
+  const activeDash = matchBorderDashKey(dashArray);
+  // 选线型时若当前是"无边框"(alpha 0),顺手把边框恢复成不透明,否则点了没反应。
+  const restoredColor = isNone ? toOpaqueHex(value) : value;
+  return (
+    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="边框设置">
+      <div className="graph-diagram-popover__title">边框样式</div>
+      <div className="graph-diagram-option-row" role="group" aria-label="边框线型">
+        <button
+          type="button"
+          className={classNames("graph-diagram-option-btn", isNone && "is-active")}
+          disabled={disabled}
+          aria-label="无边框"
+          aria-pressed={isNone}
+          title="无边框"
+          onClick={() => onChange({ stroke: `${toOpaqueHex(value)}00` })}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M5 19 19 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+        {NODE_BORDER_DASH_OPTIONS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            className={classNames("graph-diagram-option-btn", !isNone && activeDash === option.key && "is-active")}
+            disabled={disabled}
+            aria-label={option.label}
+            aria-pressed={!isNone && activeDash === option.key}
+            title={option.label}
+            onClick={() => onChange({ dashArray: option.dashArray, stroke: restoredColor })}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M4 12h16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                {...(option.key === "dashed" ? { strokeDasharray: "6 4" } : {})}
+                {...(option.key === "dotted" ? { strokeDasharray: "2 4" } : {})}
+              />
+            </svg>
+          </button>
+        ))}
+      </div>
+      <div className="graph-diagram-option-row" role="group" aria-label="边框粗细">
+        {NODE_BORDER_WIDTH_OPTIONS.map((width) => (
+          <button
+            key={width}
+            type="button"
+            className={classNames("graph-diagram-option-btn", Math.round(strokeWidth) === width && "is-active")}
+            disabled={disabled}
+            aria-label={`边框粗细 ${width}px`}
+            aria-pressed={Math.round(strokeWidth) === width}
+            title={`${width}px`}
+            onClick={() => onChange({ strokeWidth: width, stroke: restoredColor })}
+          >
+            <span className="graph-diagram-width-dot" style={{ width: width * 2 + 2, height: width * 2 + 2 }} />
+          </button>
+        ))}
+      </div>
+      <div className="graph-diagram-popover__divider" aria-hidden="true" />
+      <SwatchPalette
+        label="边框色"
+        value={value}
+        rows={NODE_STROKE_COLOR_ROWS}
+        disabled={disabled}
+        onSelect={(color) => onChange({ stroke: applyPaletteColor(color, opacityPercent) })}
+      />
+      <NumberRangeControl
+        label="不透明度"
+        inputLabel="边框不透明度"
+        disabled={disabled}
+        value={opacityPercent}
+        min={0}
+        max={100}
+        step={1}
+        unit="%"
+        onChange={(percent) => onChange({ stroke: withColorOpacity(toOpaqueHex(value), percent) })}
+      />
+    </div>
+  );
+}
+
+function NodeShapePopover({
+  shape,
+  disabled,
+  onSelect,
+}: {
+  shape: GraphNodeShape;
+  disabled: boolean;
+  onSelect: (shape: FlowNodeShape) => void;
+}) {
+  return (
+    <div className="graph-diagram-popover graph-diagram-popover--shape dt-menu" role="dialog" aria-label="形状选择">
+      <div className="graph-diagram-popover__title">更改图形</div>
+      <div className="graph-diagram-shape-grid" aria-label="节点形状">
+        {NODE_SHAPE_OPTIONS.map((item) => (
+          <button
+            key={item.shape}
+            type="button"
+            className={classNames("graph-diagram-shape-btn dt-mi", shape === item.shape && "is-active")}
+            disabled={disabled}
+            aria-label={item.label}
+            aria-pressed={shape === item.shape}
+            title={item.label}
+            onClick={() => onSelect(item.shape)}
+          >
+            <NodeShapeGlyph shape={item.shape} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 形状迷你预览:与画布同一套几何,只是换一套适配深色浮层的描边填充。 */
+function NodeShapeGlyph({ shape }: { shape: GraphNodeShape }) {
+  return (
+    <svg className="graph-diagram-shape-glyph" viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      {renderShapeSvg(shape)}
+    </svg>
+  );
+}
+
+function matchBorderDashKey(dashArray: string | undefined): "solid" | "dashed" | "dotted" {
+  const normalized = (dashArray ?? "").trim();
+  if (!normalized) return "solid";
+  return NODE_BORDER_DASH_OPTIONS.find((option) => option.dashArray === normalized)?.key ?? "dashed";
+}
+
+/** 从色板选色:当前是全透明(无填充/无边框)时恢复成不透明,否则沿用现有透明度。 */
+function applyPaletteColor(color: string, opacityPercent: number): string {
+  return withColorOpacity(color, opacityPercent > 0 ? opacityPercent : 100);
 }
 
 function ColorControl({
@@ -4630,7 +4878,8 @@ function colorOpacityPercent(value: string): number {
 function withColorOpacity(color: string, opacityPercent: number): string {
   const normalized = normalizeHex(color) ?? "#000000";
   const opaque = normalized.slice(0, 7);
-  const percent = clamp(Math.round(opacityPercent), 10, 100);
+  // 0% 用于"无填充/无边框"(alpha 00),故下界放到 0。
+  const percent = clamp(Math.round(opacityPercent), 0, 100);
   if (percent >= 100) return opaque;
   const alpha = Math.round((percent / 100) * 255).toString(16).padStart(2, "0");
   return `${opaque}${alpha}`;

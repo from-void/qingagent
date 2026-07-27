@@ -1179,23 +1179,160 @@
   text-align: center;
 }
 
+/* 弹层小标题与分隔线(边框/形状弹层照分组排布)。 */
+.graph-diagram-popover__title {
+  color: rgba(255, 250, 240, 0.66);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.graph-diagram-popover__divider {
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* 线型/线宽这类等宽小钮成行排布。 */
+.graph-diagram-option-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-diagram-option-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 250, 240, 0.82);
+  cursor: pointer;
+}
+
+.graph-diagram-option-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.graph-diagram-option-btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.graph-diagram-option-btn.is-active {
+  border-color: var(--mark);
+  background: color-mix(in srgb, var(--mark) 32%, transparent);
+  color: #fffaf0;
+}
+
+.graph-diagram-option-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.graph-diagram-width-dot {
+  display: block;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* 色板两行 + 首格「无」+ 末位「+」自定义。 */
+.graph-diagram-swatch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.graph-diagram-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-diagram-swatch--none,
+.graph-diagram-swatch--custom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 250, 240, 0.78);
+  cursor: pointer;
+}
+
+.graph-diagram-swatch--none svg {
+  width: 14px;
+  height: 14px;
+}
+
+.graph-diagram-swatch--custom {
+  position: relative;
+  font: 600 14px/1 var(--font-zh-serif);
+}
+
+.graph-diagram-swatch--custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.graph-diagram-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--ink-1), 0 0 0 3.5px var(--mark);
+}
+
 .graph-diagram-shape-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
 
+.graph-diagram-popover--shape {
+  min-width: 236px;
+}
+
 .graph-diagram-shape-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  min-width: 104px;
+  width: 38px;
+  height: 34px;
+  min-width: 0;
+  padding: 0 !important;
+  border: 1px solid transparent;
+}
+
+/* 迷你形状预览换一套适配深色浮层的描边填充(几何仍与画布同源)。 */
+.graph-diagram-shape-glyph {
+  --graph-node-fill: rgba(255, 250, 240, 0.14);
+  --graph-node-stroke: rgba(255, 250, 240, 0.76);
+  --graph-node-stroke-width: 3px;
+  display: block;
+  width: 26px;
+  height: 18px;
+  overflow: visible;
 }
 
 .graph-diagram-shape-btn.is-active {
   border-color: var(--mark);
-  background: var(--mark-soft);
-  color: var(--mark);
-  font-weight: 650;
+  background: color-mix(in srgb, var(--mark) 32%, transparent);
+}
+
+.graph-diagram-shape-btn.is-active .graph-diagram-shape-glyph {
+  --graph-node-stroke: #fffaf0;
+}
+
+.graph-diagram-toolbar__button .graph-diagram-shape-glyph {
+  width: 20px;
+  height: 14px;
 }
 
 .graph-diagram-icon-options {

@@ -66,6 +66,26 @@ export function getSelectedModelProvider(): ModelProvider {
   return getStoredModelProvider() ?? "deepseek";
 }
 
+/**
+ * 解析本次请求实际选择的 provider。
+ * 本地显式选择优先；旧版仅保存了 DeepSeek 配置时继续锁定 DeepSeek；
+ * 都没有时跟随服务端活动 provider，与服务端请求解析的 DB/env/default 优先级一致。
+ */
+export function resolveModelRequestProvider(
+  serverProvider?: ModelProvider,
+): ModelProvider {
+  const storedProvider = getStoredModelProvider();
+  if (storedProvider) return storedProvider;
+  if (
+    getVisitorModelKey("deepseek") ||
+    readCustomProvider("deepseek") ||
+    readOfficialModelOverride("deepseek")
+  ) {
+    return "deepseek";
+  }
+  return serverProvider ?? "deepseek";
+}
+
 export function setSelectedModelProvider(provider: ModelProvider): Promise<boolean> {
   return writePersistedAwaited(MODEL_PROVIDER_KEY, provider);
 }
@@ -188,7 +208,7 @@ export function setSelectedModelTier(tier: ModelTier): Promise<boolean> {
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
   const storedProvider = getStoredModelProvider();
-  const provider = storedProvider ?? "deepseek";
+  const provider = resolveModelRequestProvider();
   const vision = visionKeyHeaders();
   const tier = getSelectedModelTier();
   const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};

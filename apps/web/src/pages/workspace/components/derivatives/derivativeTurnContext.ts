@@ -4,8 +4,14 @@ import { getDtypeDescriptor } from "./dtypeRegistry";
 export function buildActiveDerivativeTurnContext(
   activeTab: "main" | string,
   derivatives: readonly DerivativeItem[],
+  activeTranslationDocId?: string | null,
 ): string | null {
-  const activeDerivative = derivatives.find((item) => item.docId === activeTab);
+  const activeDerivative = activeTab === "translate"
+    ? derivatives.find(
+      (item) =>
+        item.dtype === "translate" && item.docId === activeTranslationDocId,
+    ) ?? derivatives.find((item) => item.dtype === "translate")
+    : derivatives.find((item) => item.docId === activeTab);
   if (!activeDerivative) return null;
   const typeLabel = getDtypeDescriptor(activeDerivative.dtype).label;
   return (

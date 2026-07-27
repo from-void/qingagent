@@ -318,9 +318,32 @@ export function useWorkspacePageController() {
     ) => void
   >(() => undefined);
   const [activeTab, setActiveTab] = useState<"main" | string>("main");
+  const [activeTranslationDocId, setActiveTranslationDocId] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setActiveTranslationDocId((current) => {
+      if (
+        current &&
+        derivatives.some(
+          (item) => item.dtype === "translate" && item.docId === current,
+        )
+      ) {
+        return current;
+      }
+      return (
+        derivatives.find((item) => item.dtype === "translate")?.docId ?? null
+      );
+    });
+  }, [derivatives]);
   const derivativeTurnContext = useMemo(
-    () => buildActiveDerivativeTurnContext(activeTab, derivatives),
-    [activeTab, derivatives],
+    () =>
+      buildActiveDerivativeTurnContext(
+        activeTab,
+        derivatives,
+        activeTranslationDocId,
+      ),
+    [activeTab, activeTranslationDocId, derivatives],
   );
   useEffect(() => {
     // 批注预览是转瞬态：切 tab 不恢复、不保留。
@@ -3192,6 +3215,8 @@ export function useWorkspacePageController() {
     derivatives,
     activeTab,
     setActiveTab,
+    activeTranslationDocId,
+    setActiveTranslationDocId,
     derivativeCreateOpen,
     setDerivativeCreateOpen,
     derivativeCreateDtype,

@@ -707,13 +707,16 @@ describe("公众号稿生成体验", () => {
       "translate-en": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "en" }, content: [{ type: "text", text: "English copy" }] }] }),
       "translate-ja": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "ja" }, content: [{ type: "text", text: "日本語訳" }] }] }),
     };
+    const onActiveDocIdChange = vi.fn();
     const stream = { getDerivativeDoc: vi.fn(async (_sessionId: string, docId: string) => ({ meta: docId === english.docId ? english : japanese, docPm: docs[docId], docVersion: 1, title: "" })) };
-    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()} onActiveDocIdChange={onActiveDocIdChange}/></ConfirmProvider>));
     await act(async () => Promise.resolve());
+    expect(onActiveDocIdChange).toHaveBeenLastCalledWith(english.docId);
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).map((button) => button.textContent)).toEqual(["英语", "日语"]);
     expect(host.textContent).toContain("English copy");
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
     await act(async () => Promise.resolve());
+    expect(onActiveDocIdChange).toHaveBeenLastCalledWith(japanese.docId);
     expect(host.textContent).toContain("日本語訳");
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("复制文案");

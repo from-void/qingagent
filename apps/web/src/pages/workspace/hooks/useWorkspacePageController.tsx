@@ -84,6 +84,8 @@ import {
   buildAttachFolderCommand,
   folderAttachSelectionFromPending,
   folderSourceOperationFailureToast,
+  matchesAttachFolderResult,
+  newFolderAttachRequestId,
   type FolderAttachSelection,
 } from "../data/folderAttach";
 import {
@@ -511,10 +513,15 @@ export function useWorkspacePageController() {
   const askUserCancelMutationTokensRef = useRef<Map<string, symbol>>(
     new Map(),
   );
-  const pendingBrowserAttachRef = useRef<{
-    sessionId: string;
-    picked: PickedBrowserFolderSource;
-  } | null>(null);
+  const pendingBrowserAttachRef = useRef<
+    Map<
+      string,
+      {
+        sessionId: string;
+        picked: PickedBrowserFolderSource;
+      }
+    >
+  >(new Map());
   const activeBrowserFolderKeysRef = useRef<
     Map<string, { sessionId: string; folderId: string }>
   >(new Map());
@@ -647,6 +654,7 @@ export function useWorkspacePageController() {
       stream: ServerStream,
       sessionId: string,
       selection: FolderAttachSelection,
+      requestId: string,
       options: { awaitBrowserBridge?: boolean } = {},
     ): {
       promise: Promise<void>;
@@ -657,7 +665,7 @@ export function useWorkspacePageController() {
         unsubscribe = stream.subscribe((frame: BridgeFrame) => {
           if (
             frame.kind !== "folderSourceOperationResult" ||
-            frame.data.op !== "attach"
+            !matchesAttachFolderResult(frame.data, requestId, selection)
           )
             return;
           unsubscribe?.();
@@ -715,20 +723,26 @@ export function useWorkspacePageController() {
       selection: FolderAttachSelection,
       options: { awaitBrowserBridge?: boolean } = {},
     ): Promise<void> => {
-      const command = buildAttachFolderCommand(sessionId, selection);
+      const requestId = newFolderAttachRequestId();
+      const command = buildAttachFolderCommand(
+        sessionId,
+        selection,
+        requestId,
+      );
       const attachResult = createAttachFolderResultWaiter(
         stream,
         sessionId,
         selection,
+        requestId,
         options,
       );
       let usedGlobalPending = false;
       if (selection.provider === "browser-fs-access") {
         if (!options.awaitBrowserBridge) {
-          pendingBrowserAttachRef.current = {
+          pendingBrowserAttachRef.current.set(requestId, {
             sessionId,
             picked: selection.picked,
-          };
+          });
           usedGlobalPending = true;
         }
       }
@@ -737,7 +751,9 @@ export function useWorkspacePageController() {
         validateCommand(command);
       } catch (error) {
         attachResult.cancel();
-        if (usedGlobalPending) pendingBrowserAttachRef.current = null;
+        if (usedGlobalPending) {
+          pendingBrowserAttachRef.current.delete(requestId);
+        }
         console.error("[workspace] attachFolder validation failed", error);
         showToast("命令校验失败 · 见 console");
         throw error;
@@ -748,7 +764,9 @@ export function useWorkspacePageController() {
         await attachResult.promise;
       } catch (error) {
         attachResult.cancel();
-        if (usedGlobalPending) pendingBrowserAttachRef.current = null;
+        if (usedGlobalPending) {
+          pendingBrowserAttachRef.current.delete(requestId);
+        }
         throw error;
       }
     },
@@ -1751,7 +1769,9 @@ export function useWorkspacePageController() {
       if (frame.kind === "folderSourceOperationResult") {
         const result = frame.data;
         if (!result.ok) {
-          if (result.op === "attach") pendingBrowserAttachRef.current = null;
+          if (result.op === "attach") {
+            pendingBrowserAttachRef.current.delete(result.requestId);
+          }
           showToast(folderSourceOperationFailureToast(result));
         } else if (result.op === "detach") {
           const sessionId =
@@ -1768,9 +1788,13 @@ export function useWorkspacePageController() {
               },
             );
           }
-        } else if (pendingBrowserAttachRef.current) {
-          const pending = pendingBrowserAttachRef.current;
-          pendingBrowserAttachRef.current = null;
+        } else if (result.op === "attach") {
+          const pending = pendingBrowserAttachRef.current.get(
+            result.requestId,
+          );
+          if (!pending) return;
+          if (result.clientSourceId !== pending.picked.clientSourceId) return;
+          pendingBrowserAttachRef.current.delete(result.requestId);
           void rememberAttachedBrowserFolderSource({
             sessionId: pending.sessionId,
             folderId: result.folderId,
@@ -1983,7 +2007,7 @@ export function useWorkspacePageController() {
       lastSentDocWriteBaselineRef.current = null;
       startSessionPromisesBySessionRef.current.clear();
       startNewSessionPromiseRef.current = null;
-      pendingBrowserAttachRef.current = null;
+      pendingBrowserAttachRef.current.clear();
       setSendPending(false);
       beginWorkspaceHydration(targetSessionId);
 

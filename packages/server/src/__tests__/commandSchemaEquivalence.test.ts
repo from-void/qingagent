@@ -74,8 +74,8 @@ const sharedAccept: CommandFixture[] = [
   { name: "updateDoc/baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m", legacySections: [] } } },
   { name: "updateMaterialSummary/empty-summary", body: { kind: "updateMaterialSummary", data: { sessionId: "s", materialId: "m", summary: "" } } },
   { name: "removeMaterial", body: { kind: "removeMaterial", data: { sessionId: "s", materialId: "m" } } },
-  { name: "attachFolder/desktop", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local", selectionToken: "tok" } } } },
-  { name: "attachFolder/browser", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "browser-fs-access", clientSourceId: "c", name: "docs", browserHandleKey: "h" } } } },
+  { name: "attachFolder/desktop", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-desktop", source: { provider: "desktop-local", selectionToken: "tok" } } } },
+  { name: "attachFolder/browser", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-browser", source: { provider: "browser-fs-access", clientSourceId: "c", name: "docs", browserHandleKey: "h" } } } },
   { name: "detachFolder", body: { kind: "detachFolder", data: { sessionId: "s", folderId: "f" } } },
 ];
 
@@ -114,10 +114,10 @@ const sharedReject: CommandFixture[] = [
   { name: "updateDoc/legacySections-not-array", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m", legacySections: "bad" } } },
   { name: "updateMaterialSummary/summary-not-string", body: { kind: "updateMaterialSummary", data: { sessionId: "s", materialId: "m", summary: 1 } } },
   { name: "removeMaterial/missing-materialId", body: { kind: "removeMaterial", data: { sessionId: "s" } } },
-  { name: "attachFolder/unknown-provider", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "ftp" } } } },
-  { name: "attachFolder/missing-selectionToken", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local" } } } },
-  { name: "attachFolder/overlong-selectionToken", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local", selectionToken: "x".repeat(257) } } } },
-  { name: "attachFolder/overlong-handle", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "browser-fs-access", clientSourceId: "c", name: "n", browserHandleKey: "h".repeat(1025) } } } },
+  { name: "attachFolder/unknown-provider", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "ftp" } } } },
+  { name: "attachFolder/missing-selectionToken", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "desktop-local" } } } },
+  { name: "attachFolder/overlong-selectionToken", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "desktop-local", selectionToken: "x".repeat(257) } } } },
+  { name: "attachFolder/overlong-handle", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "browser-fs-access", clientSourceId: "c", name: "n", browserHandleKey: "h".repeat(1025) } } } },
   { name: "detachFolder/missing-folderId", body: { kind: "detachFolder", data: { sessionId: "s" } } },
   { name: "detachFolder/overlong-folderId", body: { kind: "detachFolder", data: { sessionId: "s", folderId: "x".repeat(257) } } },
 ];

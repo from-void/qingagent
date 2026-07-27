@@ -307,14 +307,15 @@ describe("validateCommand", () => {
 
   it("rejects malformed attachFolder and detachFolder commands without TypeError", () => {
     const malformed: unknown[] = [
-      { kind: "attachFolder", data: { sessionId: "s" } },
-      { kind: "attachFolder", data: { sessionId: "s", source: null } },
-      { kind: "attachFolder", data: { sessionId: 123, source: { provider: "desktop-local", selectionToken: "tok" } } },
-      { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local", selectionToken: 123 } } },
+      { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid" } },
+      { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: null } },
+      { kind: "attachFolder", data: { sessionId: 123, requestId: "attach-invalid", source: { provider: "desktop-local", selectionToken: "tok" } } },
+      { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "desktop-local", selectionToken: 123 } } },
       {
         kind: "attachFolder",
         data: {
           sessionId: "s",
+          requestId: "attach-invalid",
           source: { provider: "browser-fs-access", clientSourceId: 1, name: 2, browserHandleKey: 3 },
         },
       },
@@ -800,7 +801,13 @@ describe("validateBridgeFrame", () => {
     expect(() =>
       validateBridgeFrame({
         kind: "folderSourceOperationResult",
-        data: { ok: true, op: "attach", folderId: "fld_valid" },
+        data: {
+          ok: true,
+          op: "attach",
+          requestId: "attach-valid",
+          clientSourceId: "browser-valid",
+          folderId: "fld_valid",
+        },
       }),
     ).not.toThrow();
     expect(() =>

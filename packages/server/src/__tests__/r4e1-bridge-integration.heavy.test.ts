@@ -81,7 +81,11 @@ async function createSession(bridge: typeof import("../gateway/bridgeHandler")) 
 function attachCmd(sessionId: string, token: string): Command {
   return {
     kind: "attachFolder",
-    data: { sessionId, source: { provider: "desktop-local", selectionToken: token } },
+    data: {
+      sessionId,
+      requestId: `attach-${token}`,
+      source: { provider: "desktop-local", selectionToken: token },
+    },
   };
 }
 
@@ -148,7 +152,13 @@ describe("R4E1 handleCommand folder sources — 集成测试", () => {
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual({
       kind: "folderSourceOperationResult",
-      data: { ok: false, op: "attach", reason: "unsupported_environment" },
+      data: {
+        ok: false,
+        op: "attach",
+        requestId: `attach-${selectionToken}`,
+        clientSourceId: null,
+        reason: "unsupported_environment",
+      },
     });
     expect(session.folderSources.size).toBe(0);
 
@@ -472,7 +482,13 @@ describe("R4E1 handleCommand folder sources — 集成测试", () => {
     );
     expect(attachFrames).toEqual([{
       kind: "folderSourceOperationResult",
-      data: { ok: false, op: "attach", reason: "not_found" },
+      data: {
+        ok: false,
+        op: "attach",
+        requestId: `attach-${selectionToken}`,
+        clientSourceId: null,
+        reason: "not_found",
+      },
     }]);
 
     const detachFrames = await collectFrames(

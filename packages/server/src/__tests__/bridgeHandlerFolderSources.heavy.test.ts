@@ -98,6 +98,7 @@ function attachCommand(sessionId: string, token: string): Command {
     kind: "attachFolder",
     data: {
       sessionId,
+      requestId: `attach-${token}`,
       source: { provider: "desktop-local", selectionToken: token },
     },
   };
@@ -108,6 +109,7 @@ function browserAttachCommand(sessionId: string, clientId: string, name = "brows
     kind: "attachFolder",
     data: {
       sessionId,
+      requestId: `attach-${clientId}`,
       source: {
         provider: "browser-fs-access",
         clientSourceId: clientId,
@@ -241,7 +243,13 @@ describe("handleCommand folder source commands", () => {
     expect(frames).toEqual([
       {
         kind: "folderSourceOperationResult",
-        data: { ok: false, op: "attach", reason: "unsupported_environment" },
+        data: {
+          ok: false,
+          op: "attach",
+          requestId: "attach-token",
+          clientSourceId: null,
+          reason: "unsupported_environment",
+        },
       },
     ]);
   });
@@ -416,7 +424,20 @@ describe("handleCommand folder source commands", () => {
     const session = await createSession(bridge);
     const clientId = "client_retry_count";
 
-    await collectFrames(bridge.handleCommand(browserAttachCommand(session.sessionId, clientId, "retry docs")));
+    const attachFrames = await collectFrames(
+      bridge.handleCommand(
+        browserAttachCommand(session.sessionId, clientId, "retry docs"),
+      ),
+    );
+    expect(attachFrames).toContainEqual({
+      kind: "folderSourceOperationResult",
+      data: expect.objectContaining({
+        ok: true,
+        op: "attach",
+        requestId: `attach-${clientId}`,
+        clientSourceId: clientId,
+      }),
+    });
     const folderId = Array.from(session.folderSources.keys())[0]!;
 
     await waitForAssertion(() => {
@@ -517,7 +538,13 @@ describe("handleCommand folder source commands", () => {
     expect(frames).toEqual([
       {
         kind: "folderSourceOperationResult",
-        data: { ok: false, op: "attach", reason: "invalid_path" },
+        data: {
+          ok: false,
+          op: "attach",
+          requestId: `attach-${selection.selectionToken}`,
+          clientSourceId: null,
+          reason: "invalid_path",
+        },
       },
     ]);
     expect(registry.consumeDesktopFolderSelection(selection.selectionToken)?.rootPath).toBe(filePath);

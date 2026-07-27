@@ -422,8 +422,8 @@ describe("commandSchema", () => {
     ["resumeAskUser 空 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "", answers: { q1: { chosen: [], freeText: "x" } } } }],
     ["reparseMaterial sessionId 空", { kind: "reparseMaterial", data: { sessionId: "", fileId: "file-1" } }],
     ["reparseMaterial fileId 空", { kind: "reparseMaterial", data: { sessionId: "s", fileId: "" } }],
-    ["attachFolder 未知 provider", { kind: "attachFolder", data: { sessionId: "s", source: { provider: "ftp" } } }],
-    ["attachFolder 超长 token", { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local", selectionToken: "x".repeat(257) } } }],
+    ["attachFolder 未知 provider", { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "ftp" } } }],
+    ["attachFolder 超长 token", { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-long-token", source: { provider: "desktop-local", selectionToken: "x".repeat(257) } } }],
   ])("拒绝:%s", (_label, body) => {
     expect(commandSchema.safeParse(body).success).toBe(false);
   });

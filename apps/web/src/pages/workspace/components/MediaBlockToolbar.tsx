@@ -6,6 +6,8 @@ export type MediaBlockAlign = "left" | "center" | "right";
 export function MediaBlockToolbar({
   align,
   onAlignChange,
+  onZoomIn,
+  onZoomOut,
   onFullscreen,
   ariaLabel,
   fullscreenAriaLabel,
@@ -13,6 +15,8 @@ export function MediaBlockToolbar({
 }: {
   align: MediaBlockAlign;
   onAlignChange?: (align: MediaBlockAlign) => void;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
   onFullscreen: () => void;
   ariaLabel: string;
   fullscreenAriaLabel: string;
@@ -51,6 +55,34 @@ export function MediaBlockToolbar({
             </button>
           ))
         : null}
+      {onZoomIn && onZoomOut ? (
+        <>
+          <button
+            type="button"
+            className="pm-image-tool pm-image-tool--wide"
+            aria-label="放大图表"
+            title="放大图表"
+            onMouseDown={(event) => {
+              stop(event);
+              onZoomIn();
+            }}
+          >
+            放大
+          </button>
+          <button
+            type="button"
+            className="pm-image-tool pm-image-tool--wide"
+            aria-label="缩小图表"
+            title="缩小图表"
+            onMouseDown={(event) => {
+              stop(event);
+              onZoomOut();
+            }}
+          >
+            缩小
+          </button>
+        </>
+      ) : null}
       <button
         type="button"
         className="pm-image-tool pm-image-tool--wide"

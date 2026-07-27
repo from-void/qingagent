@@ -182,6 +182,7 @@ export function MermaidPreview({
   readOnly = true,
   align = "center",
   onAlignChange,
+  onFullscreen,
 }: {
   source: string;
   cachedSvg?: string | null;
@@ -189,6 +190,7 @@ export function MermaidPreview({
   readOnly?: boolean;
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
+  onFullscreen?: () => void;
 }) {
   const emptyDrawio = lang === "drawio" && isEmptyDrawioSource((source ?? "").trim());
   const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, source);
@@ -261,7 +263,7 @@ export function MermaidPreview({
         showToolbar={editable}
         align={align}
         onAlignChange={editable ? onAlignChange : undefined}
-        onFullscreen={editable ? () => setFullscreen(true) : undefined}
+        onFullscreen={editable ? onFullscreen ?? (() => setFullscreen(true)) : undefined}
       />
       <MediaZoomFullscreen open={fullscreen} onClose={() => setFullscreen(false)} ariaLabel="图表全屏查看">
         <div className="pm-diagram-zoom-svg" dangerouslySetInnerHTML={{ __html: svg }} />

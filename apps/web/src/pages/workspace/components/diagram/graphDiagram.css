@@ -1,5 +1,6 @@
 .graph-diagram,
-.graph-diagram-editor {
+.graph-diagram-editor,
+.graph-diagram-viewer {
   --graph-node-fill: #efe3cc;
   --graph-node-stroke: #b08a3e;
   --graph-line-color: #8d7447;
@@ -85,20 +86,6 @@
   z-index: 0;
 }
 
-.graph-diagram-canvas--preview .react-flow__controls {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.graph-diagram:hover .graph-diagram-canvas--preview .react-flow__controls,
-.graph-diagram:focus-within .graph-diagram-canvas--preview .react-flow__controls {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
 .graph-diagram-canvas--preview .react-flow__attribution {
   display: none;
 }
@@ -126,31 +113,6 @@
   background: color-mix(in srgb, var(--mark) 7%, transparent);
   pointer-events: none;
   box-shadow: 0 0 0 1px rgba(255, 250, 240, 0.64) inset;
-}
-
-.graph-diagram-subgraph-draft.is-pending {
-  border-style: solid;
-  background: var(--mark-soft);
-}
-
-.graph-diagram-subgraph-draft__input {
-  position: absolute;
-  top: -32px;
-  left: 50%;
-  width: min(220px, max(120px, 80%));
-  height: 27px;
-  box-sizing: border-box;
-  padding: 2px 8px;
-  border: 1px solid var(--line-3);
-  border-radius: 0;
-  outline: none;
-  background: #fffaf0;
-  color: var(--ink-1);
-  font: 600 13px/1.4 var(--font-zh-serif);
-  text-align: center;
-  pointer-events: auto;
-  transform: translateX(-50%);
-  box-shadow: 0 6px 18px rgba(47, 42, 34, 0.14);
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node,
@@ -252,20 +214,6 @@
   text-align: center;
   box-shadow: 0 0 0 3px var(--mark-soft);
   pointer-events: auto;
-}
-
-.graph-diagram-cluster__handle-slot {
-  position: absolute;
-  inset: 0;
-}
-
-.graph-diagram-cluster .react-flow__handle.graph-diagram-cluster__handle {
-  display: block;
-  width: 1px;
-  height: 1px;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .graph-diagram-node-shell {
@@ -663,12 +611,6 @@
   border: 1px solid var(--line-2);
 }
 
-.graph-diagram-canvas--fullscreen .react-flow__controls {
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
-}
-
 .graph-diagram-context button,
 .graph-diagram-viewer .graph-diagram-editor__close {
   height: 30px;
@@ -682,8 +624,8 @@
 
 .graph-diagram-viewer .graph-diagram-editor__close {
   padding: 0 14px;
-  background: var(--ink-1);
-  color: var(--ink-on-dark);
+  background: var(--bg-canvas, #fffaf0);
+  color: var(--ink-1);
 }
 
 .graph-diagram-context button {
@@ -697,7 +639,80 @@
 }
 
 .graph-diagram-viewer .graph-diagram-editor__close:hover {
-  background: var(--ink-surface);
+  background: var(--bg-hover);
+}
+
+.graph-diagram-viewport-controls {
+  position: absolute;
+  z-index: 30;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.graph-diagram-viewport-controls__group {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-canvas, #fffaf0) 96%, transparent);
+  box-shadow: 0 8px 24px rgba(47, 42, 34, 0.14);
+}
+
+.graph-diagram-viewport-controls button {
+  display: inline-grid;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-zh-serif);
+  cursor: pointer;
+}
+
+.graph-diagram-viewport-controls button + button {
+  border-left-color: var(--line-1);
+}
+
+.graph-diagram-viewport-controls button:hover:not(:disabled),
+.graph-diagram-viewport-controls button.is-active {
+  background: var(--mark-soft);
+  color: var(--mark);
+}
+
+.graph-diagram-viewport-controls button:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.graph-diagram-viewport-controls button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 1px solid var(--mark);
+  outline-offset: -2px;
+}
+
+.graph-diagram-viewport-controls .graph-diagram-viewport-controls__zoom {
+  width: 54px;
+  font: 12px/1 var(--font-mono);
+}
+
+.graph-diagram-canvas--editor.is-pan-enabled .react-flow__pane {
+  cursor: grab;
+}
+
+.graph-diagram-canvas--editor.is-pan-enabled .react-flow__pane:active {
+  cursor: grabbing;
 }
 
 .graph-diagram-context button:disabled {

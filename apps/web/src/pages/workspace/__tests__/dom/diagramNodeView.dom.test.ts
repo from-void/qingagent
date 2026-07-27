@@ -1324,7 +1324,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("流程图外部工具栏与图片结构一致，仅保留左中右全屏，点对齐回写 node.attrs.align", async () => {
+  it("流程图外部工具栏与图片结构一致，提供对齐、缩放和全屏，点对齐回写 node.attrs.align", async () => {
     const editor = await mountEditor(diagramDoc(`flowchart TD
   A[开始] --> B[结束]
 `));
@@ -1335,7 +1335,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(viewbar.classList.contains("pm-image-chrome")).toBe(true);
       expect(Array.from(viewbar.children).every((child) => child.tagName === "BUTTON")).toBe(true);
       const buttons = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
-      expect(buttons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "全屏"]);
+      expect(buttons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "放大", "缩小", "全屏"]);
       expect(viewbar.querySelector(".pm-diagram-tool")).toBeNull();
       expect(viewbar.textContent).not.toContain("新增分区");
       expect(viewbar.textContent).not.toContain("适配视图");

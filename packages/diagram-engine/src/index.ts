@@ -519,6 +519,12 @@ export function getStableElementIds(model: DiagramModel): { nodes: Set<string>; 
   for (const node of modelNodes(model)) {
     if (node.id) nodes.add(node.id);
   }
+  // 分区也是可拖拽的稳定画布元素，位置与普通节点共用 overlay.positions。
+  if (model.type === "flowchart") {
+    for (const subgraph of model.subgraphs) {
+      if (subgraph.id) nodes.add(subgraph.id);
+    }
+  }
   for (const edge of modelEdges(model)) {
     if (edge.id) edges.add(edge.id);
   }
@@ -3762,6 +3768,7 @@ export function layoutDiagramGraph(
   const translated = translateLayoutItems(root.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET);
   applyOverlayPositions(translated.nodes, overlay);
   const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes);
+  applyOverlayClusterPositions(translated.nodes, clusters, model, overlay);
   return { nodes: translated.nodes, clusters };
 }
 
@@ -3884,6 +3891,35 @@ function applyOverlayPositions(
   for (const [id, position] of Object.entries(overlay?.positions ?? {})) {
     if (!nodes[id] || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
     nodes[id] = { ...nodes[id]!, x: position.x, y: position.y };
+  }
+}
+
+function applyOverlayClusterPositions(
+  nodes: Record<string, GraphLayoutRect>,
+  clusters: GraphLayoutCluster[],
+  model: FlowGraph,
+  overlay: DiagramOverlay | null | undefined,
+): void {
+  const positionById = overlay?.positions ?? {};
+  const modelNodeById = new Map(model.nodes.map((node) => [node.id, node]));
+  const modelSubgraphById = new Map(model.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  for (const cluster of [...clusters].sort((left, right) => left.depth - right.depth)) {
+    const position = positionById[cluster.id];
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
+    const dx = position.x - cluster.x;
+    const dy = position.y - cluster.y;
+    if (dx === 0 && dy === 0) continue;
+    cluster.x += dx;
+    cluster.y += dy;
+    for (const [nodeId, rect] of Object.entries(nodes)) {
+      if (!modelNodeById.get(nodeId)?.scopePath.includes(cluster.id)) continue;
+      nodes[nodeId] = { ...rect, x: rect.x + dx, y: rect.y + dy };
+    }
+    for (const candidate of clusters) {
+      if (!modelSubgraphById.get(candidate.id)?.scopePath.includes(cluster.id)) continue;
+      candidate.x += dx;
+      candidate.y += dy;
+    }
   }
 }
 

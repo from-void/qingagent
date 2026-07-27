@@ -2,6 +2,9 @@
 
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
+import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import { Editor } from "@tiptap/core";
+import { DecorationSet } from "@tiptap/pm/view";
 import { describe, expect, it } from "vitest";
 import type { AppliedPatch, BlockPatchInput, ViewBlock } from "./protocol";
 import { buildPatchDecorations } from "./patchDecorations";
@@ -357,6 +360,38 @@ describe("buildPatchDecorations", () => {
     const isWidget = (d: unknown) => typeof (d as { type: { toDOM?: unknown } }).type.toDOM === "function";
     const widgetClasses = decorations.filter(isWidget).map((d) => widgetDom(d).className);
     expect(widgetClasses.some((c) => c.includes("wf-blockmark-del"))).toBe(true);
+  });
+
+  it("多块删除为每个完整旧块分别生成可落入 DecorationSet 的 node decoration", () => {
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: baselineDoc,
+    });
+    try {
+      const { decorations, dropped } = buildPatchDecorations({
+        baselineDoc,
+        blockPatches: [blockPatch("multi-del", "delete", {
+          anchorBlockId: "p-1",
+          blockCount: 2,
+        })],
+        applied: [applied("multi-del", 7, "delete", "abcdefghij", "")],
+      });
+
+      expect(dropped).toEqual([]);
+      const hiddenBlocks = decorations.filter((decoration) =>
+        decoration.from < decoration.to && className(decoration).includes("wf-blockmark delete"),
+      );
+      expect(hiddenBlocks.map((decoration) => [decoration.from, decoration.to])).toEqual([
+        [0, 8],
+        [8, 14],
+      ]);
+      const decorationSet = DecorationSet.create(editor.state.doc, decorations);
+      expect(decorationSet.find().filter((decoration) =>
+        decoration.from < decoration.to && className(decoration).includes("wf-blockmark delete"),
+      )).toHaveLength(2);
+    } finally {
+      editor.destroy();
+    }
   });
 
   it("块级坏锚点进入 dropped 且不产出 decoration", () => {

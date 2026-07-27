@@ -1897,6 +1897,46 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     assertInternallyConsistent(result);
   });
 
+  it.each([
+    {
+      label: "列表项",
+      before: pmBulletListRows("large-list", ["甲".repeat(600)]),
+      after: pmBulletListRows("large-list", ["乙".repeat(600)]),
+      nestedDiffKey: "rowDiff",
+    },
+    {
+      label: "表格单元格",
+      before: pmTableRows("large-table", [["甲".repeat(600)]]),
+      after: pmTableRows("large-table", [["乙".repeat(600)]]),
+      nestedDiffKey: "cellDiff",
+    },
+    {
+      label: "容器段落",
+      before: pmCalloutRows("large-callout", ["甲".repeat(600)]),
+      after: pmCalloutRows("large-callout", ["乙".repeat(600)]),
+      nestedDiffKey: "bodyDiff",
+    },
+  ])("超长$label的字符矩阵超限时降级为完整块级替换", ({
+    label: _label,
+    before,
+    after,
+    nestedDiffKey,
+  }) => {
+    const input = suggestionToBlockPatchInputs(
+      blockSuggestion(
+        `large-${nestedDiffKey}`,
+        replaceHunk(`large-${nestedDiffKey}`, before.attrs.blockId, before, after),
+      ),
+      0,
+    )[0]!;
+
+    expect(input).toMatchObject({ op: "replace", blockCount: 1 });
+    expect(input.granular).toBeUndefined();
+    expect(input.granularBlockHover).toBeUndefined();
+    expect(input.blocks[0]).not.toHaveProperty(nestedDiffKey);
+    expect(input.beforePmNodes?.[0]).toBe(before);
+  });
+
   it("同类型 columnList replace 每栏 columnsDiff 递归,内部 list/table 复用 rowDiff/cellDiff", () => {
     const before = pmColumnListBlocks("columns-1", [
       [

@@ -869,6 +869,35 @@ type InlineDiffUnit =
   | { kind: "text"; text: string; marks?: PmMark[] }
   | { kind: "math"; latex: string };
 
+/**
+ * 500 × 500 个行内单元的真实 LCS 基准约耗时 3ms、分配约 25 万个 DP 槽；
+ * 再放大时二维 number[][] 的内存与主线程耗时同步平方增长。字符级 diff 因此以
+ * 25 万槽为上限，超限由上层降级为完整块级 replace，保证同步工作与内存有界。
+ */
+export const INLINE_DIFF_MAX_MATRIX_CELLS = 250_000;
+const INLINE_DIFF_BUDGET_EXCEEDED = Symbol("inline-diff-budget-exceeded");
+
+function inlineDiffUnitCount(spans: readonly ViewDocSpan[]): number {
+  let count = 0;
+  for (const span of spans) {
+    switch (span.kind) {
+      case "text":
+      case "patchIns":
+      case "patchDel":
+      case "patchMark":
+      case "selectable":
+        for (const _character of span.text) count += 1;
+        break;
+      case "math":
+      case "patchInsMath":
+      case "patchDelMath":
+        count += 1;
+        break;
+    }
+  }
+  return count;
+}
+
 function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[] {
   const units: InlineDiffUnit[] = [];
   for (const span of spans) {
@@ -950,9 +979,19 @@ function patchSpans(spans: readonly ViewDocSpan[], op: "insert" | "delete", patc
 }
 
 function inlineSpanDiffSpans(beforeSpans: readonly ViewDocSpan[], afterSpans: readonly ViewDocSpan[], patchId: string): ViewDocSpan[] {
+  const beforeUnitCount = inlineDiffUnitCount(beforeSpans);
+  const afterUnitCount = inlineDiffUnitCount(afterSpans);
+  if (beforeUnitCount === 0 && afterUnitCount === 0) return [];
+  if (
+    beforeUnitCount > 0 &&
+    afterUnitCount > Math.floor(
+      INLINE_DIFF_MAX_MATRIX_CELLS / beforeUnitCount,
+    )
+  ) {
+    throw INLINE_DIFF_BUDGET_EXCEEDED;
+  }
   const beforeUnits = spansToInlineDiffUnits(beforeSpans);
   const afterUnits = spansToInlineDiffUnits(afterSpans);
-  if (beforeUnits.length === 0 && afterUnits.length === 0) return [];
   const raw = lcsDiff(beforeUnits, afterUnits, sameInlineDiffUnit);
   const out: ViewDocSpan[] = [];
   for (const op of raw) {
@@ -1276,6 +1315,10 @@ function withTableCellDiff(block: ViewBlock, cellDiff: ViewTableRowDiff[], after
   return block;
 }
 
+function isInlineDiffBudgetExceeded(error: unknown): boolean {
+  return error === INLINE_DIFF_BUDGET_EXCEEDED;
+}
+
 function buildListRowReplace(
   beforeNode: ListPmBlock,
   afterNode: ListPmBlock,
@@ -1287,11 +1330,27 @@ function buildListRowReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock) return null;
-  const rowDiff = buildListRowDiff(
-    listRowsFromPmBlock(beforeNode),
-    listRowsFromPmBlock(afterNode),
-    input.patchId,
-  );
+  let rowDiff: ViewListRowDiff[];
+  try {
+    rowDiff = buildListRowDiff(
+      listRowsFromPmBlock(beforeNode),
+      listRowsFromPmBlock(afterNode),
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [
+        afterBlock.kind === "list"
+          ? { ...afterBlock, node: afterNode }
+          : afterBlock,
+      ],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   // granular 只在任意深度的行级 diff 真的标出了可见变化，且变化可由文本/marks 保真表达时才置；
   // 节点类型或 attrs 变化回退完整块级替换，避免局部正文与实际提交结构不一致。
   const rowLevelVisible = hasVisibleListRowDiff(rowDiff);
@@ -1326,11 +1385,23 @@ function buildTableCellReplace(
       blockCount: 1,
     };
   }
-  const cellDiff = buildTableCellDiff(
-    tableRowsFromPmBlock(beforeNode),
-    tableRowsFromPmBlock(afterNode),
-    input.patchId,
-  );
+  let cellDiff: ViewTableRowDiff[];
+  try {
+    cellDiff = buildTableCellDiff(
+      tableRowsFromPmBlock(beforeNode),
+      tableRowsFromPmBlock(afterNode),
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [{ ...afterBlock, node: afterNode }],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const cellLevelVisible = hasVisibleTableCellDiff(cellDiff);
   const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
@@ -1568,7 +1639,23 @@ function buildCalloutReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "callout") return null;
-  const bodyDiff = buildBlockSeqDiff(beforeNode.content, afterNode.content, input.patchId);
+  let bodyDiff: ViewBlockSeqDiff;
+  try {
+    bodyDiff = buildBlockSeqDiff(
+      beforeNode.content,
+      afterNode.content,
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [afterBlock],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const bodyLevelVisible = hasVisibleBlockSeqDiff(bodyDiff);
   const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
@@ -1591,7 +1678,23 @@ function buildColumnListReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "columnList") return null;
-  const columnsDiff = buildColumnsDiff(beforeNode.content, afterNode.content, input.patchId);
+  let columnsDiff: ViewColumnDiff[];
+  try {
+    columnsDiff = buildColumnsDiff(
+      beforeNode.content,
+      afterNode.content,
+      input.patchId,
+    );
+  } catch (error) {
+    if (!isInlineDiffBudgetExceeded(error)) throw error;
+    return {
+      ...input,
+      op: "replace",
+      blocks: [afterBlock],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const columnLevelVisible = columnsDiff.some((columnDiff) =>
     columnDiff.status !== "same" || hasVisibleBlockSeqDiff(columnDiff.bodyDiff),
   );

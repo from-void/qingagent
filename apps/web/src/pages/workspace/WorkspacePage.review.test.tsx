@@ -1226,7 +1226,7 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(offlineEditedDoc);
   }, 60_000);
 
-  it("异常坍缩态在 updateDoc 前被熔断，不落库也不覆盖有效快照", async () => {
+  it("用户显式将多块长文档改写为短文时仍发送 updateDoc", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");
     const captured: {
@@ -1245,7 +1245,7 @@ describe("WorkspacePage review controls", () => {
     ]);
     const collapsed = pmDoc([pmHeading("damaged-heading", "300")]);
     await emitFrames(stream, [
-      { kind: "sessionMeta", data: { sessionId: "s-1", title: "坍缩熔断" } },
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "全文改写" } },
       {
         kind: "documentSnapshotWritten",
         data: { doc: wireSnapshotFromPmDoc(baseline, 7) },
@@ -1265,9 +1265,10 @@ describe("WorkspacePage review controls", () => {
     });
     await flushMicrotasks(3);
 
-    expect(updateDocCommands(stream)).toHaveLength(0);
-    expect(captured.current?.state.version).toBe(7);
-    expect(captured.current?.state.doc?.pmDoc).toEqual(baseline);
+    expect(updateDocCommands(stream)).toHaveLength(1);
+    expect(updateDocCommands(stream)[0]?.data.doc).toEqual(collapsed);
+    expect(captured.current?.state.version).toBe(8);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(collapsed);
   }, 60_000);
 
   it("no-op 保存回执保持当前版本，下一次真实编辑沿用一致的版本与哈希基线", async () => {

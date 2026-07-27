@@ -82,10 +82,6 @@ import type {
   EditorDocChange,
 } from "../data/docWriteBaseline";
 import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
-import {
-  isAbnormalDocumentCollapse,
-  measureDocumentShape,
-} from "../data/documentIntegrity";
 import type {
   ViewBlock,
   ViewBlockSeqDiff,
@@ -505,11 +501,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   // 与 debounce 正文同寿命的写入基线；第一笔本地事务产生时冻结，后续远端版本
   // 即使先抵达也绝不能把这份旧正文“升级”为新基线。
   const pendingUpdateBaselineRef = useRef<DocWriteBaseline | null>(null);
-  const initialValidEditorDoc = useMemo(
-    () => normalizePmDoc(viewDocToPm(doc)),
-    [], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const lastValidEditorDocRef = useRef<PmDoc>(initialValidEditorDoc);
   const latestCanonicalDocRef = useRef(doc);
   const lastVersionRef = useRef(doc.version);
   const latestDocVersionRef = useRef(doc.version);
@@ -649,41 +640,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     });
   }, [editor, forceExpandCollapse]);
 
-  const readValidEditorDocOrRecover = useCallback((): PmDoc | null => {
+  const readCurrentEditorDoc = useCallback((): PmDoc | null => {
     if (!editor || editor.isDestroyed) return null;
-    let normalized: PmDoc;
     try {
-      normalized = normalizePmDoc(editor.getJSON());
+      return normalizePmDoc(editor.getJSON());
     } catch (error) {
-      // diagram 等 NodeView 可能短暂处在尚未填完 attrs 的中间态；完整性门不能把原先
-      // 防抖保存链可容忍的瞬态校验失败升级成同步崩溃，等下一次合法 update 再判断。
+      // diagram 等 NodeView 可能短暂处在尚未填完 attrs 的中间态；等下一次
+      // 合法 update 再转发，不能让一次瞬态校验失败中断编辑器。
       console.warn("[doc] 跳过瞬态非法编辑器状态", error);
       return null;
     }
-    const previous = lastValidEditorDocRef.current;
-    if (!isAbnormalDocumentCollapse(previous, normalized)) {
-      lastValidEditorDocRef.current = normalized;
-      return normalized;
-    }
-
-    console.error("[doc] 检测到异常结构坍缩，已恢复上一有效快照", {
-      previous: measureDocumentShape(previous),
-      rejected: measureDocumentShape(normalized),
-    });
-    beginApplyingRemote();
-    try {
-      setRemoteEditorContent(editor, previous);
-    } finally {
-      finishApplyingRemoteSoon();
-    }
-    onToast?.("检测到文档结构异常，已恢复编辑前内容");
-    return null;
-  }, [
-    beginApplyingRemote,
-    editor,
-    finishApplyingRemoteSoon,
-    onToast,
-  ]);
+  }, [editor]);
 
   const forwardCurrentEditorDoc = useCallback(async () => {
     if (
@@ -697,7 +664,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     ) {
       return;
     }
-    const normalized = readValidEditorDocOrRecover();
+    const normalized = readCurrentEditorDoc();
     if (!normalized) return;
     const baseline =
       pendingUpdateBaselineRef.current ?? currentDocWriteBaseline();
@@ -712,7 +679,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     currentDocWriteBaseline,
     editor,
     onEditorChange,
-    readValidEditorDocOrRecover,
+    readCurrentEditorDoc,
   ]);
 
   useImperativeHandle(
@@ -847,9 +814,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       ) {
         return;
       }
-      // update 当拍就做完整性门，不能等 400ms 保存定时器：旧 BlockHandle / page-exit
-      // 都可能在这段窗口内消费已经坍缩的 doc。
-      if (!readValidEditorDocOrRecover()) return;
+      // 本地 docChanged transaction 就是用户显式编辑，全文删除/短改写必须照常保存；
+      // 完整性门仅保留在外部 snapshot 同步入口。这里只过滤瞬态非法 PM 状态。
+      if (!readCurrentEditorDoc()) return;
       pendingUpdateBaselineRef.current ??= currentDocWriteBaseline();
       if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
       if (transaction.getMeta(DIAGRAM_VISUAL_WRITE_META) === true) {
@@ -884,7 +851,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     currentDocWriteBaseline,
     forwardCurrentEditorDoc,
     onEditorChange,
-    readValidEditorDocOrRecover,
+    readCurrentEditorDoc,
   ]);
 
   const latestPresentationDocVersionRef = useRef<number | null>(
@@ -972,7 +939,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
               );
               if (blockIdSync) editor.view.dispatch(blockIdSync);
             }
-            lastValidEditorDocRef.current = normalizePmDoc(editor.getJSON());
             lastVersionRef.current = scheduledVersion;
             lastSyncedDocRevisionRef.current = scheduledRevision;
           } else {
@@ -982,7 +948,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
             setRemoteEditorContent(editor, normalizedIncoming);
-            lastValidEditorDocRef.current = normalizedIncoming;
             lastVersionRef.current = scheduledVersion;
             lastSyncedDocRevisionRef.current = scheduledRevision;
             if (hadFocus) {
@@ -1051,7 +1016,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         editor.view.dispatch(repair);
         const repairedDoc = normalizePmDoc(editor.getJSON());
-        lastValidEditorDocRef.current = repairedDoc;
         // update 监听被 isApplyingRemote 抑制；这里只显式保存一次修复结果，回声由既有
         // pendingSelfDocKeys 识别，不会形成 setContent → dirty-save 循环。
         pendingSelfDocKeysRef.current = pushPendingSelfDocKey(

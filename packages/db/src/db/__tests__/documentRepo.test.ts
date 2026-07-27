@@ -7,6 +7,7 @@ import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   __resetDocumentsClientForTest,
   getDocumentsClient,
+  getTxnClient,
 } from "../documentsClient.js";
 import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
 import {
@@ -249,6 +250,51 @@ describe("documentRepo", () => {
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
   });
 
+  it("大资源域的两种列表查询都只拉取当前页正文", async () => {
+    const documents = Array.from({ length: 120 }, (_, index) => input(
+      `large-${String(index).padStart(3, "0")}`,
+      {
+        resourceId: "large-pages",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ));
+    await documentRepo.saveMany(documents);
+    const client = getDocumentsClient();
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.batch(documents.map((document) => ({
+      sql: "INSERT INTO mastra_threads (id) VALUES (?)",
+      args: [document.threadId],
+    })), "write");
+    const execute = vi.spyOn(client, "execute");
+
+    const page = await documentRepo.list({
+      resourceId: "large-pages",
+      perPage: 7,
+      offset: 40,
+    });
+    const pageWithThreads = await documentRepo.listWithExistingThreads({
+      resourceId: "large-pages",
+      perPage: 7,
+      offset: 40,
+    });
+
+    expect(page.total).toBe(120);
+    expect(page.rows.map((row) => row.id)).toEqual(
+      Array.from(
+        { length: 7 },
+        (_, index) => `large-${String(index + 40).padStart(3, "0")}`,
+      ),
+    );
+    expect(pageWithThreads).toEqual(page);
+    const fullRowQueries = execute.mock.calls
+      .map(([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement))
+      .filter((sql) => /SELECT\s+d\.\*\s+FROM\s+documents d/i.test(sql));
+    expect(fullRowQueries).toHaveLength(2);
+    expect(fullRowQueries.every((sql) => (
+      /\bLIMIT\s+\?\s+OFFSET\s+\?/i.test(sql)
+    ))).toBe(true);
+  });
+
   it("单行与列表读取逐行隔离坏 PM，其他文档继续可读", async () => {
     await documentRepo.saveMany([
       input("valid-row", { resourceId: "dirty-read" }),
@@ -329,6 +375,41 @@ describe("documentRepo", () => {
     expect(Number((await client.execute(
       "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'page-invalid'",
     )).rows[0]?.n)).toBe(1);
+  });
+
+  it("同一资源域的多条坏 PM 合并到一次隔离事务", async () => {
+    await documentRepo.saveMany([
+      input("batch-valid", { resourceId: "dirty-batch" }),
+      ...Array.from({ length: 30 }, (_, index) => input(
+        `batch-invalid-${index}`,
+        { resourceId: "dirty-batch" },
+      )),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "UPDATE documents SET doc_pm = '{broken' WHERE resource_id = 'dirty-batch' AND id <> 'batch-valid'",
+    );
+    const transactionExecute = vi.spyOn(getTxnClient(), "execute");
+
+    await expect(documentRepo.list({
+      resourceId: "dirty-batch",
+      perPage: 10,
+    })).resolves.toMatchObject({
+      total: 1,
+      rows: [{ id: "batch-valid" }],
+    });
+
+    const transactionSql = transactionExecute.mock.calls.map(
+      ([statement]) => (statement as unknown as { sql?: string }).sql ?? String(statement),
+    );
+    expect(transactionSql.filter((sql) => sql === "BEGIN IMMEDIATE")).toHaveLength(1);
+    expect(transactionSql.filter((sql) => /^\s*COMMIT\s*$/i.test(sql))).toHaveLength(1);
+    expect(transactionSql.filter((sql) => (
+      /INSERT INTO documents_quarantine_invalid_pm/i.test(sql)
+    ))).toHaveLength(1);
+    expect(transactionSql.filter((sql) => /^\s*WITH candidates[\s\S]*DELETE FROM documents/i.test(
+      sql,
+    ))).toHaveLength(1);
   });
 
   it("按不超过 50 个 id 轻量查询存在集合", async () => {
@@ -536,7 +617,7 @@ describe("documentRepo", () => {
 
     execute.mockClear();
     await documentRepo.list({ resourceId: "read-resource" });
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls.every(([statement]) => {
       const sql = (statement as unknown as { sql?: string }).sql ?? String(statement);
       return /^\s*SELECT\b/i.test(sql);

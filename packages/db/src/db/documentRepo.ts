@@ -204,33 +204,115 @@ function invalidPmReason(row: Row): InvalidPmReason {
     : "invalid_pm";
 }
 
-async function quarantineInvalidPmRow(row: Row): Promise<boolean> {
-  const id = valueAsString(row.id);
-  const version = valueAsNumber(row.version);
-  const rawDocPm = typeof row.doc_pm === "string" ? row.doc_pm : null;
+interface InvalidPmCandidate {
+  id: string;
+  version: number;
+  docPm: string | null;
+  reason: InvalidPmReason;
+}
+
+const QUARANTINE_BATCH_SIZE = 200;
+
+function invalidPmCandidate(row: Row): InvalidPmCandidate {
+  return {
+    id: valueAsString(row.id),
+    version: valueAsNumber(row.version),
+    docPm: typeof row.doc_pm === "string" ? row.doc_pm : null,
+    reason: invalidPmReason(row),
+  };
+}
+
+function invalidPmCandidateKey(candidate: Pick<InvalidPmCandidate, "id" | "version">): string {
+  return `${candidate.id}\u0000${candidate.version}`;
+}
+
+function sqlInvalidPmCondition(alias: string): string {
+  return `(
+    ${alias}.doc_pm IS NULL
+    OR trim(${alias}.doc_pm) = ''
+    OR NOT json_valid(${alias}.doc_pm)
+  )`;
+}
+
+function sqlValidPmCondition(alias: string): string {
+  return `(
+    ${alias}.doc_pm IS NOT NULL
+    AND trim(${alias}.doc_pm) <> ''
+    AND json_valid(${alias}.doc_pm)
+  )`;
+}
+
+async function quarantineInvalidPmRows(rows: Row[]): Promise<Set<string>> {
+  const candidates = [...new Map(rows.map((row) => {
+    const candidate = invalidPmCandidate(row);
+    return [invalidPmCandidateKey(candidate), candidate];
+  })).values()];
+  if (candidates.length === 0) return new Set();
+
   return withTransaction(async (client) => {
-    const inserted = await client.execute({
-      sql: `INSERT INTO documents_quarantine_invalid_pm (
-          id, thread_id, resource_id, title, doc_state, doc_version,
-          last_synced_version, doc_pm, doc_schema_version, content_hash,
-          doc_format, version, created_at, updated_at, role, reason
-        )
-        SELECT
-          id, thread_id, resource_id, title, doc_state, doc_version,
-          last_synced_version, doc_pm, doc_schema_version, content_hash,
-          doc_format, version, created_at, updated_at, role, ?
-        FROM documents
-        WHERE id = ? AND version = ? AND doc_pm IS ?`,
-      args: [invalidPmReason(row), id, version, rawDocPm],
-    });
-    if (inserted.rowsAffected !== 1) return rollbackTransaction(false);
-    const deleted = await client.execute({
-      sql: "DELETE FROM documents WHERE id = ? AND version = ? AND doc_pm IS ?",
-      args: [id, version, rawDocPm],
-    });
-    if (deleted.rowsAffected !== 1) return rollbackTransaction(false);
-    return commitTransaction(true);
+    const quarantined = new Set<string>();
+    for (let start = 0; start < candidates.length; start += QUARANTINE_BATCH_SIZE) {
+      const chunk = candidates.slice(start, start + QUARANTINE_BATCH_SIZE);
+      const values = chunk.map(() => "(?, ?, ?, ?)").join(", ");
+      const args = chunk.flatMap((candidate) => [
+        candidate.id,
+        candidate.version,
+        candidate.docPm,
+        candidate.reason,
+      ]);
+      const inserted = await client.execute({
+        sql: `WITH candidates(id, version, doc_pm, reason) AS (
+            VALUES ${values}
+          )
+          INSERT INTO documents_quarantine_invalid_pm (
+            id, thread_id, resource_id, title, doc_state, doc_version,
+            last_synced_version, doc_pm, doc_schema_version, content_hash,
+            doc_format, version, created_at, updated_at, role, reason
+          )
+          SELECT
+            d.id, d.thread_id, d.resource_id, d.title, d.doc_state, d.doc_version,
+            d.last_synced_version, d.doc_pm, d.doc_schema_version, d.content_hash,
+            d.doc_format, d.version, d.created_at, d.updated_at, d.role, candidates.reason
+          FROM documents d
+          INNER JOIN candidates
+            ON candidates.id = d.id
+            AND candidates.version = d.version
+            AND d.doc_pm IS candidates.doc_pm`,
+        args,
+      });
+      const deleted = await client.execute({
+        sql: `WITH candidates(id, version, doc_pm, reason) AS (
+            VALUES ${values}
+          )
+          DELETE FROM documents
+          WHERE EXISTS (
+            SELECT 1
+            FROM candidates
+            WHERE candidates.id = documents.id
+              AND candidates.version = documents.version
+              AND documents.doc_pm IS candidates.doc_pm
+          )
+          RETURNING id, version`,
+        args,
+      });
+      if (inserted.rowsAffected !== deleted.rows.length) {
+        return rollbackTransaction(new Set<string>());
+      }
+      for (const row of deleted.rows) {
+        quarantined.add(invalidPmCandidateKey({
+          id: valueAsString(row.id),
+          version: valueAsNumber(row.version),
+        }));
+      }
+    }
+    return commitTransaction(quarantined);
   });
+}
+
+async function quarantineInvalidPmRow(row: Row): Promise<boolean> {
+  const candidate = invalidPmCandidate(row);
+  const quarantined = await quarantineInvalidPmRows([row]);
+  return quarantined.has(invalidPmCandidateKey(candidate));
 }
 
 async function mapRowOrQuarantine(
@@ -254,27 +336,87 @@ async function mapRowsAndQuarantine(
   client: Awaited<ReturnType<typeof readyClient>>,
   rows: Row[],
 ): Promise<{ rows: DocumentRow[]; quarantined: number }> {
-  const mappedRows: DocumentRow[] = [];
-  let quarantined = 0;
-  for (const rawRow of rows) {
-    const mapped = await mapRowOrQuarantine(client, rawRow);
-    if (mapped) mappedRows.push(mapped);
-    else quarantined += 1;
+  const mappedRows: Array<DocumentRow | null> = Array.from(
+    { length: rows.length },
+    () => null,
+  );
+  const invalidRows: Array<{ index: number; row: Row; candidate: InvalidPmCandidate }> = [];
+  for (const [index, rawRow] of rows.entries()) {
+    try {
+      mappedRows[index] = mapRow(rawRow).row;
+    } catch {
+      invalidRows.push({ index, row: rawRow, candidate: invalidPmCandidate(rawRow) });
+    }
   }
-  return { rows: mappedRows, quarantined };
+
+  const quarantinedKeys = await quarantineInvalidPmRows(
+    invalidRows.map(({ row }) => row),
+  );
+  for (const invalid of invalidRows) {
+    if (quarantinedKeys.has(invalidPmCandidateKey(invalid.candidate))) continue;
+    const refreshed = await client.execute({
+      sql: "SELECT * FROM documents WHERE id = ?",
+      args: [invalid.candidate.id],
+    });
+    const current = refreshed.rows[0];
+    mappedRows[invalid.index] = current
+      ? await mapRowOrQuarantine(client, current)
+      : null;
+  }
+  return {
+    rows: mappedRows.filter((row): row is DocumentRow => row !== null),
+    quarantined: quarantinedKeys.size,
+  };
 }
 
-async function mapAndPaginateRows(
+interface DocumentListScope {
+  fromSql: string;
+  whereSql: string;
+  args: string[];
+}
+
+async function listDocumentPage(
   client: Awaited<ReturnType<typeof readyClient>>,
-  rows: Row[],
+  scope: DocumentListScope,
   offset: number,
   perPage: number,
 ): Promise<{ rows: DocumentRow[]; total: number }> {
-  const mapped = await mapRowsAndQuarantine(client, rows);
-  return {
-    rows: mapped.rows.slice(offset, offset + perPage),
-    total: mapped.rows.length,
-  };
+  const invalidResult = await client.execute({
+    sql: `SELECT d.id, d.version, d.doc_pm
+      FROM ${scope.fromSql}
+      WHERE ${scope.whereSql}
+        AND ${sqlInvalidPmCondition("d")}`,
+    args: scope.args,
+  });
+  await quarantineInvalidPmRows(invalidResult.rows);
+
+  while (true) {
+    const [countResult, rowsResult] = await Promise.all([
+      client.execute({
+        sql: `SELECT COUNT(*) AS total
+          FROM ${scope.fromSql}
+          WHERE ${scope.whereSql}
+            AND ${sqlValidPmCondition("d")}`,
+        args: scope.args,
+      }),
+      client.execute({
+        sql: `SELECT d.*
+          FROM ${scope.fromSql}
+          WHERE ${scope.whereSql}
+            AND ${sqlValidPmCondition("d")}
+          ORDER BY d.updated_at DESC, d.id ASC
+          LIMIT ? OFFSET ?`,
+        args: [...scope.args, perPage, offset],
+      }),
+    ]);
+    const mapped = await mapRowsAndQuarantine(client, rowsResult.rows);
+    if (mapped.quarantined === 0) {
+      return {
+        rows: mapped.rows,
+        total: valueAsNumber(countResult.rows[0]?.total),
+      };
+    }
+  }
 }
 
 function upsertStatement(input: DocumentSaveInput): InStatement {
@@ -612,13 +754,11 @@ export const documentRepo: DocumentRepo = {
     const page = opts.page ?? 0;
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
-    const result = await client.execute({
-      sql: `SELECT * FROM documents
-        WHERE resource_id = ? AND role = 'main'
-        ORDER BY updated_at DESC, id ASC`,
+    return listDocumentPage(client, {
+      fromSql: "documents d",
+      whereSql: "d.resource_id = ? AND d.role = 'main'",
       args: [opts.resourceId],
-    });
-    return mapAndPaginateRows(client, result.rows, offset, perPage);
+    }, offset, perPage);
   },
 
   async listWithExistingThreads(opts) {
@@ -627,14 +767,12 @@ export const documentRepo: DocumentRepo = {
     const perPage = opts.perPage ?? 50;
     const offset = opts.offset ?? page * perPage;
     try {
-      const result = await client.execute({
-        sql: `SELECT d.* FROM documents d
-          INNER JOIN mastra_threads t ON t.id = d.thread_id
-          WHERE d.resource_id = ? AND d.role = 'main'
-          ORDER BY d.updated_at DESC, d.id ASC`,
+      return await listDocumentPage(client, {
+        fromSql: `documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id`,
+        whereSql: "d.resource_id = ? AND d.role = 'main'",
         args: [opts.resourceId],
-      });
-      return mapAndPaginateRows(client, result.rows, offset, perPage);
+      }, offset, perPage);
     } catch (error) {
       if (isMissingMastraThreadsTableError(error)) {
         return { rows: [], total: 0 };

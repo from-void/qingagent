@@ -25,8 +25,8 @@ const modeLabels: Record<SecurityGrantMode, string> = {
 const categoryDescriptions: Record<SecurityGrantKind, string> = {
   install: "安装软件或依赖前先询问，避免在不知情时改变本机环境。",
   command: "仅影响会删除、移动或产生多种影响的同类操作，普通命令不受影响。",
-  send: "内容发出后不能撤回，因此每次都会询问。",
-  connect: "连接会改变可访问的内容，因此每次连接前都会询问。",
+  send: "内容发出后不能撤回，涉及对外发送的操作按这里的设置处理。",
+  connect: "连接会改变可访问的内容，账号连接按这里的设置处理。",
 };
 
 function isGrantMode(value: unknown): value is SecurityGrantMode {
@@ -64,7 +64,6 @@ function parseCanonical(
   kind: SecurityGrantKind,
   value: unknown,
 ): UpdateSecurityGrantResponse {
-  if (kind !== "install" && kind !== "command") throw new Error("invalid grant kind");
   if (!value || typeof value !== "object") throw new Error("invalid grant state");
   const input = value as Record<string, unknown>;
   if (

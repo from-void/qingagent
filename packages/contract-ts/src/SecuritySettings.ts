@@ -21,7 +21,7 @@ export interface UpdateSecurityGrantRequest {
 }
 
 export interface UpdateSecurityGrantResponse {
-  kind: "install" | "command";
+  kind: SecurityGrantKind;
   grantMode: SecurityGrantMode;
   present: boolean;
   grantId: string | null;

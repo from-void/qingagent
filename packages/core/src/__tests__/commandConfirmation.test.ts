@@ -230,7 +230,11 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       "将推送代码",
       "send-linux",
     );
-    expect(send.rememberCategory).toBeUndefined();
+    // 向外发送也放开了"记住":与安装/同类操作同等,由用户决定要不要每次询问
+    expect(send.rememberCategory).toEqual({
+      kind: "send",
+      label: "以后向外发送时不再询问",
+    });
   });
 
   it("打包桌面即使注入开发开关也不暴露不安全记忆标记", () => {

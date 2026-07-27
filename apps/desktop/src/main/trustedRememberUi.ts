@@ -12,7 +12,7 @@ interface TrustedInput {
   at: number;
 }
 
-export type RememberGrantKind = "install" | "command";
+export type RememberGrantKind = "install" | "command" | "send" | "connect";
 export type RememberGrantPurpose = "confirm" | "settings";
 export type RememberPromptDecision = "remember" | "cancel";
 

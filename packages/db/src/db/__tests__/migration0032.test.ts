@@ -29,8 +29,9 @@ describe("0032 client message 幂等在途状态", () => {
       args: ["legacy", "session-legacy", "message-legacy", 1_000],
     });
 
+    // 后续新增迁移会一并跑完,这里只关心 0032 有没有落
     await expect(runMigrations()).resolves.toMatchObject({
-      appliedIds: [32],
+      appliedIds: expect.arrayContaining([32]),
     });
     const result = await client.execute(
       `SELECT last_touched, completed_at

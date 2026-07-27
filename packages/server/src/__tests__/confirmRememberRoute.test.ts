@@ -48,7 +48,7 @@ function makeHarness(
   });
   const audits: AuditInput[] = [];
   const decisions: SafeSubmitConfirmDecision[] = [];
-  const created: Array<{ kind: "install" | "command"; source: "card" }> = [];
+  const created: Array<{ kind: "install" | "command" | "send" | "connect"; source: "card" }> = [];
   const cancelCommand = vi.fn(() => false);
   const service = new ConfirmService({
     persist: async () => undefined,
@@ -272,23 +272,43 @@ describe("确认记忆路由", () => {
     },
   );
 
-  it.each(["send", "connect"] as const)("%s 携带 remember 时 hard reject", async (kind) => {
-    const harness = makeHarness(kind);
-    const response = await postDecision(harness, decisionBody(harness));
+  // 四类都放开后,能不能记住只看确认卡自己声明的 rememberCategory,不再按 kind 一刀切拒绝
+  it.each(["send", "connect"] as const)(
+    "%s 未声明 rememberCategory 时不落 grant,但请求本身不再被硬拒",
+    async (kind) => {
+      const harness = makeHarness(kind);
+      const response = await postDecision(harness, decisionBody(harness));
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: "这类操作只能每次询问，不能改为自动进行。",
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ accepted: true, remembered: false });
+      expect(harness.created).toHaveLength(0);
+      expect(harness.audits).toContainEqual(expect.objectContaining({
+        eventType: "remember_rejected",
+        kind,
+        source: "ui",
+        result: "remember-rejected:undeclared-category",
+      }));
+    },
+  );
+
+  it("send 声明了 rememberCategory 且 nonce 匹配时可落 card grant", async () => {
+    const harness = makeHarness("send");
+    harness.pendingSpec.rememberCategory = { kind: "send", label: "以后向外发送时不再询问" };
+    const nonce = harness.grants.register({
+      purpose: "confirm",
+      sessionId: harness.session.sessionId,
+      confirmId: harness.pendingSpec.id,
+      kind: "send",
     });
-    expect(harness.decisions).toHaveLength(0);
-    expect(harness.created).toHaveLength(0);
-    expect(harness.audits).toContainEqual(expect.objectContaining({
-      eventType: "remember_rejected",
-      kind,
-      source: "ui",
-      commandDigest: "digest-a",
-      result: "remember-rejected:forbidden-kind",
-    }));
+    const response = await postDecision(harness, decisionBody(harness, { uiGrantNonce: nonce }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: true, remembered: true });
+    expect(harness.created).toEqual([{
+      kind: "send",
+      source: "card",
+      expectedRevocationEpoch: 0,
+    }]);
   });
 
   it("匹配的一次性 nonce 只在 accepted 后落 card grant，decline 不落 grant", async () => {

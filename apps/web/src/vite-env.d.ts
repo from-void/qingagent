@@ -69,11 +69,11 @@ interface Window {
     requestConfirmRememberGrant?: (input: {
       sessionId: string;
       confirmId: string;
-      kind: "install" | "command";
+      kind: "install" | "command" | "send" | "connect";
       trustedGesture: boolean;
     }) => Promise<string | null>;
     requestSettingsRememberGrant?: (input: {
-      kind: "install" | "command";
+      kind: "install" | "command" | "send" | "connect";
       trustedGesture: boolean;
     }) => Promise<string | null>;
     onUpdateStatus?: (cb: (payload: ElectronUpdateStatus) => void) => () => void;

@@ -244,14 +244,14 @@
 /* 头部:标题在左,开关在右上 */
 .qj-sheet-body .sk-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .qj-sheet-body .sk-card-icon{flex:0 0 auto;width:18px;height:18px;color:var(--qj-cinnabar)}
-.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13px;font-weight:700;color:var(--qj-ink);line-height:1.2}
+.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13.5px;font-weight:700;color:var(--qj-ink);line-height:1.2}
 .qj-sheet-body .sk-card-tag{font-size:9.5px;font-style:normal;color:var(--qj-header-sub);border:1px solid var(--qj-switch-border);border-radius:0;padding:1px 5px;white-space:nowrap}
 /* 一句话简介:列表态压成单行 */
 /* 简介比标题小一档,最多两行;配合删掉子技能徽标,列表卡自然等高 */
 .qj-sheet-body .sk-card-summary{margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-desc);
   display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 /* 描述:最多三行 */
-.qj-sheet-body .sk-card-desc{margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-desc);
+.qj-sheet-body .sk-card-desc{margin:0;font-size:13px;line-height:1.6;color:var(--ink-desc);
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* 开关:右上角 */
 .qj-sheet-body .sk-toggle{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 11px;border-radius:0;cursor:pointer;border:1px solid var(--qj-switch-border);background:rgba(236,227,208,.06);color:var(--qj-header-sub);font:inherit;font-size:10.5px;font-weight:700;font-family:var(--font-zh-serif)}

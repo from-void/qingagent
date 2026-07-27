@@ -92,11 +92,11 @@ contextBridge.exposeInMainWorld("electron", {
   requestConfirmRememberGrant: (input: {
     sessionId: string;
     confirmId: string;
-    kind: "install" | "command";
+    kind: "install" | "command" | "send" | "connect";
     trustedGesture: boolean;
   }) => ipcRenderer.invoke("qingagent:confirm-remember-grant", input) as Promise<string | null>,
   requestSettingsRememberGrant: (input: {
-    kind: "install" | "command";
+    kind: "install" | "command" | "send" | "connect";
     trustedGesture: boolean;
   }) => ipcRenderer.invoke("qingagent:settings-remember-grant", input) as Promise<string | null>,
   onUpdateStatus: (cb: (payload: UpdateStatusPayload) => void) => {

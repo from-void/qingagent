@@ -124,7 +124,7 @@ interface ConfirmRoutesDependencies {
   consumeUiGrant?: typeof consumeConfirmUiGrant;
   insecureRememberAllowed?: () => boolean;
   createGrant?: (input: {
-    kind: "install" | "command";
+    kind: "install" | "command" | "send" | "connect";
     source: "card";
     expectedRevocationEpoch: number;
   }) => Promise<ConfirmGrantMutation>;
@@ -216,16 +216,13 @@ export function createConfirmRoutes(
     }
   }
   if (rememberRequested && pending?.confirmId === parsed.decision.id) {
-    if (pending.spec.kind === "send" || pending.spec.kind === "connect") {
-      await service.recordRememberRejected(
-        session,
-        pending,
-        parsed.decision.accepted,
-        "forbidden-kind",
-      );
-      return c.json({ error: "这类操作只能每次询问，不能改为自动进行。" }, 400);
-    }
-    if (pending.spec.kind === "install" || pending.spec.kind === "command") {
+    // 四类确认都可记住:是否给出「记住」由确认卡自己的 rememberCategory 声明决定
+    if (
+      pending.spec.kind === "install" ||
+      pending.spec.kind === "command" ||
+      pending.spec.kind === "send" ||
+      pending.spec.kind === "connect"
+    ) {
       if (pending.spec.rememberCategory?.kind !== pending.spec.kind) {
         rememberFailure = "not-saved";
         await service.recordRememberRejected(
@@ -272,7 +269,7 @@ export function createConfirmRoutes(
       ...(rememberRequested && rememberAuthorized
         ? {
             onAccepted: async (current) => {
-              if (current.spec.kind !== "install" && current.spec.kind !== "command") return null;
+              // 四类都可落 grant;真正的门槛是这张卡自己声明了 rememberCategory
               if (current.spec.rememberCategory?.kind !== current.spec.kind) return null;
               if (current.rememberRevocationEpoch === undefined) {
                 rememberFailure = "settings-changed";

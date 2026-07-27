@@ -72,7 +72,7 @@ export const confirmWidgetSchema = z.discriminatedUnion("type", [
 type _ConfirmWidgetExact = Expect<Equal<z.infer<typeof confirmWidgetSchema>, ConfirmWidget>>;
 
 export const rememberCategorySchema = z.object({
-  kind: z.enum(["install", "command"]),
+  kind: z.enum(["install", "connect", "send", "command"]),
   label: boundedNonEmptyString(160),
   riskHint: boundedNonEmptyString(300).optional(),
   insecureWithoutDesktop: z.boolean().optional(),

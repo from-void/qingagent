@@ -5,7 +5,7 @@ import type {
 import type { RequestContext } from "@mastra/core/request-context";
 import { SpanType } from "@mastra/core/observability";
 import type { Span } from "@mastra/core/observability";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
 import type { PendingConfirm } from "../session/sessionState.js";
@@ -152,6 +152,7 @@ export interface AgentStreamTurnContext {
   fileIdMap: Map<string, string>;
   resolvedFilesByFilename: Map<string, ResolvedUploadedFile>;
   resolvedFilesByFileId: Map<string, ResolvedUploadedFile>;
+  resolvedFilesByFilePath: Map<string, ResolvedUploadedFile>;
 }
 
 export async function createAgentStreamTurnContext(
@@ -180,6 +181,7 @@ export async function createAgentStreamTurnContext(
   const fileIdMap = new Map<string, string>();
   const resolvedFilesByFilename = new Map<string, ResolvedUploadedFile>();
   const resolvedFilesByFileId = new Map<string, ResolvedUploadedFile>();
+  const resolvedFilesByFilePath = new Map<string, ResolvedUploadedFile>();
   if (turnFileIds && turnFileIds.length > 0) {
     try {
       const resolved = await resolveFileIds(turnFileIds);
@@ -187,6 +189,7 @@ export async function createAgentStreamTurnContext(
         fileIdMap.set(file.filename, file.fileId);
         resolvedFilesByFilename.set(file.filename, file);
         resolvedFilesByFileId.set(file.fileId, file);
+        resolvedFilesByFilePath.set(resolve(file.filePath), file);
       }
     } catch {
       // Non-fatal: preview just won't have fileId.
@@ -275,6 +278,7 @@ export async function createAgentStreamTurnContext(
     fileIdMap,
     resolvedFilesByFilename,
     resolvedFilesByFileId,
+    resolvedFilesByFilePath,
   };
 }
 
@@ -291,17 +295,32 @@ export function resolveParseFileBinding(
   const argFilename = typeof args.filename === "string" && args.filename ? args.filename : null;
   const byFileId = argFileId ? context.resolvedFilesByFileId.get(argFileId) : undefined;
   const byFilename = argFilename ? context.resolvedFilesByFilename.get(argFilename) : undefined;
+  const argFilePath =
+    typeof args.filePath === "string" && args.filePath.trim().length > 0
+      ? resolve(args.filePath)
+      : null;
+  const byFilePath = argFilePath
+    ? context.resolvedFilesByFilePath.get(argFilePath)
+    : undefined;
   const filePathBase = basenameArg(args.filePath);
   const fileId = argFileId ??
     (argFilename ? context.fileIdMap.get(argFilename) ?? null : null) ??
-    filePathBase;
+    byFilePath?.fileId ??
+    null;
   return {
     fileId,
-    filename: argFilename ?? byFileId?.filename ?? byFilename?.filename ?? filePathBase ?? fileId,
+    filename:
+      argFilename ??
+      byFileId?.filename ??
+      byFilename?.filename ??
+      byFilePath?.filename ??
+      filePathBase ??
+      fileId,
     mimeType:
       (typeof args.mimeType === "string" && args.mimeType ? args.mimeType : null) ??
       byFileId?.mimeType ??
       byFilename?.mimeType ??
+      byFilePath?.mimeType ??
       null,
   };
 }

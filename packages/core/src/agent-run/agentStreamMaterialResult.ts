@@ -95,7 +95,7 @@ export async function* handleMaterialToolResultSideEffects(
       upsertParseFileErrorMaterial(turn, args, failure);
     } else if (typeof toolResult.text === "string") {
       const binding = resolveParseFileBinding(turn, args);
-      const filename = args.filename as string | undefined;
+      const filename = binding.filename;
       const entry = { text: toolResult.text, sourceUrl: null, fileId: binding.fileId };
       if (filename) turn.extractedTexts.set(filename, entry);
       turn.extractionEventsThisTurn.push(entry);

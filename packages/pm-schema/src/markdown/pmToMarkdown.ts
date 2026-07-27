@@ -16,7 +16,7 @@ function blockToMarkdown(node: PmBlockNode, options: PmToMarkdownOptions): strin
     case "heading":
       return `${"#".repeat(node.attrs.level)} ${inlineText(node.content ?? [])}`;
     case "paragraph":
-      return inlineText(node.content ?? []);
+      return escapeParagraphBlockSyntax(inlineText(node.content ?? []));
     case "blockquote":
       return node.content
         .map((child) =>
@@ -115,6 +115,18 @@ function inlineText(content: readonly PmInlineNode[]): string {
       return markedText(node.text, node.marks ?? []);
     })
     .join("");
+}
+
+function escapeParagraphBlockSyntax(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => line
+      .replace(/^([ \t]{0,3}\d+)([.)])(?=[ \t]+)/, "$1\\$2")
+      .replace(
+        /^([ \t]{0,3})(?=(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|[-+*][ \t]+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$))/,
+        "$1\\",
+      ))
+    .join("\n");
 }
 
 function markedText(text: string, marks: readonly PmMark[]): string {

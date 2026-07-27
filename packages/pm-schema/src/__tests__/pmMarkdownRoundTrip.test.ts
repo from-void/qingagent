@@ -5,6 +5,54 @@ import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
+  it("普通段落的块级 Markdown 前缀往返后仍是原文字面量", () => {
+    const texts = [
+      "# 字面标题",
+      "---",
+      "- 字面项目",
+      "+ 外部列表前缀",
+      "1. 字面编号",
+      "2) 外部编号前缀",
+      "> 字面引用",
+      "***",
+      "___",
+      "```ts",
+      "~~~md",
+    ];
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: texts.map((text, index) => ({
+        type: "paragraph",
+        attrs: { blockId: `literal-${index}` },
+        content: [{ type: "text", text }],
+      })),
+    };
+
+    const markdown = pmToMarkdown(source);
+    const roundTrip = markdownToPm(markdown);
+
+    expect(markdown.split("\n\n")).toEqual([
+      String.raw`\# 字面标题`,
+      String.raw`\---`,
+      String.raw`\- 字面项目`,
+      String.raw`\+ 外部列表前缀`,
+      String.raw`1\. 字面编号`,
+      String.raw`2\) 外部编号前缀`,
+      String.raw`\> 字面引用`,
+      String.raw`\***`,
+      String.raw`\___`,
+      "\\```ts",
+      String.raw`\~~~md`,
+    ]);
+    expect(roundTrip.content.map((block) => block.type)).toEqual(texts.map(() => "paragraph"));
+    expect(roundTrip.content.map((block) =>
+      block.type === "paragraph" && block.content?.[0]?.type === "text"
+        ? block.content[0].text
+        : null,
+    )).toEqual(texts);
+  });
+
   it("R20门:代码块与图表内容含三/四反引号时使用更长围栏并完整往返", () => {
     const code = ["const sample = `ok`;", "```", "````", "return sample;"].join("\n");
     const diagram = ["flowchart TD", "```", "````", "  A --> B"].join("\n");

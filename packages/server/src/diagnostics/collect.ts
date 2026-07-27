@@ -455,54 +455,99 @@ function redactFrameEntry(entry: unknown, privacyLevel: "L1" | "L2"): unknown {
   return redactFrameValue(entry, privacyLevel, "");
 }
 
-const BRIDGE_FRAME_KINDS = {
-  templateDrafted: true,
-  reviewTemplatesListed: true,
-  reviewTemplateSaved: true,
-  reviewTemplateDeleted: true,
-  reviewTemplateSelected: true,
-  reviewSupplementLoaded: true,
-  reviewSupplementSaved: true,
-  styleTemplatesListed: true,
-  styleTemplateLoaded: true,
-  styleTemplateSaved: true,
-  styleTemplateDeleted: true,
-  derivativeParamsUpdated: true,
-  derivativesListed: true,
-  derivativeCreated: true,
-  derivativeGenStarted: true,
-  derivativeGenDelta: true,
-  derivativeGenFinished: true,
-  derivativeGenFailed: true,
-  derivativeDeleted: true,
-  derivativeDocLoaded: true,
-  lexiconsListed: true,
-  lexiconEntriesListed: true,
-  restoreReset: true,
-  sessionRestoreCompleted: true,
-  sessionMeta: true,
-  chatMessageAdded: true,
-  chatMessageAppended: true,
-  confirmRequested: true,
-  confirmResolved: true,
-  toolCallUpdated: true,
-  documentSnapshotWritten: true,
-  docGenerationEvent: true,
-  docCommitted: true,
-  docDiffReady: true,
-  annotationGroupsReady: true,
-  annotationPreview: true,
-  annotationPreviewCleared: true,
-  docWriteResult: true,
-  docStateChanged: true,
-  todosChanged: true,
-  resourceUpserted: true,
-  resourceUpdated: true,
-  resourceRemoved: true,
-  folderSourcesChanged: true,
-  folderSourceOperationResult: true,
-  stream: true,
-} as const satisfies Record<BridgeFrame["kind"], true>;
+type L1FieldMode = "structural" | "redacted" | "redactedDeep" | "summary";
+type L1FrameRule = Readonly<Record<string, L1FieldMode>>;
+
+/**
+ * L1 只投影 BridgeFrame 契约明确声明的顶层字段。嵌套契约可整体脱敏，
+ * metadata 等不透明值必须摘要化；不能再靠 type/status 一类键名猜测可见性。
+ */
+const L1_FRAME_RULES = {
+  templateDrafted: { requestId: "structural" },
+  reviewTemplatesListed: { requestId: "structural", items: "redactedDeep", selectedTemplateId: "structural" },
+  reviewTemplateSaved: { requestId: "structural", item: "redactedDeep" },
+  reviewTemplateDeleted: {
+    requestId: "structural",
+    id: "structural",
+    selectedTemplateId: "structural",
+    error: "redacted",
+  },
+  reviewTemplateSelected: { requestId: "structural", type: "structural", templateId: "structural" },
+  reviewSupplementLoaded: { requestId: "structural", type: "structural", supplement: "redacted" },
+  reviewSupplementSaved: { requestId: "structural", type: "structural", supplement: "redacted" },
+  styleTemplatesListed: { requestId: "structural", items: "redactedDeep" },
+  styleTemplateLoaded: { requestId: "structural", item: "redactedDeep" },
+  styleTemplateSaved: { requestId: "structural", item: "redactedDeep" },
+  styleTemplateDeleted: { requestId: "structural", id: "structural", error: "redacted" },
+  derivativeParamsUpdated: { requestId: "structural", item: "redactedDeep" },
+  derivativesListed: { requestId: "structural", items: "redactedDeep" },
+  derivativeCreated: { requestId: "structural", item: "redactedDeep" },
+  derivativeGenStarted: { docId: "structural", targetLang: "structural" },
+  derivativeGenDelta: { docId: "structural", text: "redacted" },
+  derivativeGenFinished: { docId: "structural", generatedAt: "structural", docVersion: "structural" },
+  derivativeGenFailed: { docId: "structural", reason: "redacted" },
+  derivativeDeleted: { requestId: "structural", docId: "structural" },
+  derivativeDocLoaded: {
+    requestId: "structural",
+    meta: "redactedDeep",
+    docPm: "redacted",
+    docVersion: "structural",
+    title: "redacted",
+  },
+  lexiconsListed: { lexicons: "redactedDeep" },
+  lexiconEntriesListed: { resourceId: "structural", entries: "redactedDeep" },
+  restoreReset: { epoch: "structural", snapshotSeq: "structural" },
+  sessionRestoreCompleted: { sessionId: "structural" },
+  sessionMeta: { title: "redacted", sessionId: "structural" },
+  chatMessageAdded: { message: "redactedDeep", appendSeq: "structural" },
+  chatMessageAppended: {
+    messageId: "structural",
+    seq: "structural",
+    part: "redactedDeep",
+  },
+  confirmRequested: {},
+  confirmResolved: {},
+  toolCallUpdated: {
+    messageId: "structural",
+    toolCallId: "structural",
+    spec: "redactedDeep",
+  },
+  documentSnapshotWritten: { doc: "redactedDeep" },
+  docGenerationEvent: {},
+  docCommitted: {},
+  docDiffReady: { baseVersion: "structural", suggestions: "redactedDeep" },
+  annotationGroupsReady: { groups: "redactedDeep", replacedOrigins: "redactedDeep" },
+  annotationPreview: {
+    previewId: "structural",
+    summary: "redacted",
+    anchors: "redactedDeep",
+  },
+  annotationPreviewCleared: {},
+  docWriteResult: {
+    ok: "structural",
+    clientMutationId: "structural",
+    docVersion: "structural",
+    reason: "structural",
+    conflict: "redactedDeep",
+  },
+  docStateChanged: {
+    state: "structural",
+    activeOverlay: "structural",
+    agentBusy: "structural",
+    reviewCompletion: "structural",
+  },
+  todosChanged: { todos: "redactedDeep" },
+  resourceUpserted: { resource: "redactedDeep" },
+  resourceUpdated: {
+    resourceRef: "redactedDeep",
+    summary: "redacted",
+    metadata: "summary",
+  },
+  resourceRemoved: { resourceRef: "redactedDeep" },
+  folderSourcesChanged: {},
+  folderSourceOperationResult: {},
+  stream: {},
+} as const satisfies Record<BridgeFrame["kind"], L1FrameRule>;
 
 const AGGREGATED_FRAME_KINDS = new Set([
   "chatMessageAppended@merged",
@@ -524,12 +569,12 @@ function projectL1FrameEntry(entry: unknown): unknown {
   if (isBridgeFrameKind(kind)) {
     projected.frame = {
       kind,
-      data: redactKnownFramePayload(frame.data, ""),
+      data: projectKnownFramePayload(frame.data, L1_FRAME_RULES[kind]),
     };
   } else if (AGGREGATED_FRAME_KINDS.has(kind)) {
     projected.frame = {
       kind,
-      data: redactKnownFramePayload(frame.data, ""),
+      data: redactKnownFramePayload(frame.data),
     };
   } else {
     projected.frame = {
@@ -541,27 +586,44 @@ function projectL1FrameEntry(entry: unknown): unknown {
 }
 
 function isBridgeFrameKind(kind: string): kind is BridgeFrame["kind"] {
-  return Object.prototype.hasOwnProperty.call(BRIDGE_FRAME_KINDS, kind);
+  return Object.prototype.hasOwnProperty.call(L1_FRAME_RULES, kind);
 }
 
-function redactKnownFramePayload(value: unknown, key: string): unknown {
+function projectKnownFramePayload(value: unknown, rule: L1FrameRule): unknown {
+  const source = recordValue(value);
+  if (!source) return summarizeUnknownFramePayload(value);
+  const projected: Record<string, unknown> = {};
+  for (const [key, mode] of Object.entries(rule)) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    projected[key] = projectKnownFrameField(source[key], mode);
+  }
+  return projected;
+}
+
+function projectKnownFrameField(value: unknown, mode: L1FieldMode): unknown {
+  if (mode === "summary") return summarizeUnknownFramePayload(value);
+  if (mode === "redacted") {
+    return typeof value === "string"
+      ? `[redacted:len=${value.length}]`
+      : summarizeUnknownFramePayload(value);
+  }
+  if (mode === "redactedDeep") return redactKnownFramePayload(value);
+  if (typeof value === "string") return redactDiagnosticText(value);
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  return summarizeUnknownFramePayload(value);
+}
+
+function redactKnownFramePayload(value: unknown): unknown {
   if (typeof value === "string") {
-    if (isFrameStructuralStringKey(key)) return redactDiagnosticText(value);
     return `[redacted:len=${value.length}]`;
   }
   if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map((item) => redactKnownFramePayload(item, key));
+  if (Array.isArray(value)) return value.map((item) => redactKnownFramePayload(item));
   const out: Record<string, unknown> = {};
   for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
-    out[childKey] = redactKnownFramePayload(childValue, childKey);
+    out[childKey] = redactKnownFramePayload(childValue);
   }
   return out;
-}
-
-function isFrameStructuralStringKey(key: string): boolean {
-  return /^(kind|type|status|resolution|action|category|domain|mime|lang|dtype|slot|role)$/i.test(key)
-    || /^(?:.*Ids?|.*Hash)$/i.test(key)
-    || /(?:At|_at|^ts)$/i.test(key);
 }
 
 function summarizeUnknownFramePayload(value: unknown): Record<string, unknown> {

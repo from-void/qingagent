@@ -109,6 +109,8 @@ describe("diagnostics collectFrameLogs", () => {
       "工具输出尾部原文",
       "未知 data 载荷原文",
       "未知 output 载荷原文",
+      "metadata.type 绕过正文",
+      "资源摘要原文",
     ];
     mocks.sessionManager.frameLog.readFrom.mockReturnValue({
       ...emptyRead(),
@@ -157,6 +159,14 @@ describe("diagnostics collectFrameLogs", () => {
           }),
           output: secrets[7],
         },
+        frameEntry(6, {
+          kind: "resourceUpdated",
+          data: {
+            resourceRef: { resourceId: "resource-1", versionId: "version-1" },
+            summary: secrets[9],
+            metadata: { type: secrets[8] },
+          },
+        }),
       ],
     });
     mocks.collectRestoreFrames.mockResolvedValue([]);
@@ -171,6 +181,7 @@ describe("diagnostics collectFrameLogs", () => {
     expect(files[0]?.content).not.toContain("衍生稿标题");
     expect(files[0]?.content).toContain("[redacted:len=");
     expect(files[0]?.content).toContain('"omitted":true');
+    expect(files[0]?.content).toContain('"metadata":{"omitted":true,"type":"object","fields":1}');
     expect(files[0]?.content).not.toContain('"output"');
   });
 

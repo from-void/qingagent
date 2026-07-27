@@ -159,10 +159,14 @@ export function markdownToPm(markdown: string): PmDoc {
 
 function unescapeParagraphBlockSyntax(line: string): string {
   return line
-    .replace(/^([ \t]{0,3}\d+)\\([.)])(?=[ \t]+)/, "$1$2")
     .replace(
-      /^([ \t]{0,3})\\(?=(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|[-+*][ \t]+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$))/,
-      "$1",
+      /^([ \t]{0,3}\d+)(\\+)([.)])(?=[ \t]+)/,
+      (_match, prefix: string, slashes: string, marker: string) =>
+        `${prefix}${slashes.slice(1)}${marker}`,
+    )
+    .replace(
+      /^([ \t]{0,3})(\\+)(?=(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|[-+*][ \t]+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$))/,
+      (_match, indent: string, slashes: string) => `${indent}${slashes.slice(1)}`,
     );
 }
 

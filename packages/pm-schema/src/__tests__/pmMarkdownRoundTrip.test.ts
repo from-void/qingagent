@@ -5,6 +5,39 @@ import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
+  it.each([
+    ["裸标题前缀", "# 字面标题", String.raw`\# 字面标题`],
+    ["已转义标题前缀", String.raw`\# 字面标题`, String.raw`\\# 字面标题`],
+    ["裸列表前缀", "- 字面项目", String.raw`\- 字面项目`],
+    ["已转义列表前缀", String.raw`\- 字面项目`, String.raw`\\- 字面项目`],
+    ["裸编号前缀", "1. 字面编号", String.raw`1\. 字面编号`],
+    ["已转义编号前缀", String.raw`1\. 字面编号`, String.raw`1\\. 字面编号`],
+    ["裸围栏前缀", "```ts", "\\```ts"],
+    ["已转义围栏前缀", "\\```ts", "\\\\```ts"],
+  ])("%s 双向往返保留反斜杠层级", (_name, text, markdown) => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "literal-prefix" },
+        content: [{ type: "text", text }],
+      }],
+    };
+
+    expect(pmToMarkdown(source)).toBe(markdown);
+    const fromPm = markdownToPm(pmToMarkdown(source));
+    const fromMarkdown = markdownToPm(markdown);
+    for (const roundTrip of [fromPm, fromMarkdown]) {
+      const block = roundTrip.content[0];
+      expect(block?.type).toBe("paragraph");
+      expect(block?.type === "paragraph" && block.content?.[0]?.type === "text"
+        ? block.content[0].text
+        : null).toBe(text);
+      expect(pmToMarkdown(roundTrip)).toBe(markdown);
+    }
+  });
+
   it("普通段落的块级 Markdown 前缀往返后仍是原文字面量", () => {
     const texts = [
       "# 字面标题",

@@ -5,12 +5,14 @@ import {
   ACCEPTED_UPLOAD_ACCEPT_ATTR,
   ACCEPTED_UPLOAD_LABEL,
   acceptedDocumentExtension,
+  clearPendingFiles,
   clearPendingFolderSource,
   deriveFolderCapability,
   FolderSourceControl,
   isAcceptedUploadFile,
   setPendingFolderSource,
   setPendingFiles,
+  PENDING_SUBMISSION_ID_STORAGE_KEY,
   useClientCapabilities,
   useToast,
   type FolderSourceControlSource,
@@ -155,6 +157,26 @@ export function NewSessionPage() {
     return `new-att-${Date.now()}-${attachmentSeqRef.current}`;
   }, []);
 
+  const createSubmissionId = useCallback(() => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `new-submission-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }, []);
+
+  useEffect(() => {
+    // 进入新建页即开启一笔全新的草稿，不能继承上一笔失败发送的附件所有权。
+    clearPendingFiles();
+    sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
+    return () => {
+      // 正常提交转场由工作区接管；其它离页路径清掉尚未交接的槽位。
+      if (!busyRef.current) {
+        clearPendingFiles();
+        sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
+      }
+    };
+  }, []);
+
   const showCcxToast = useCallback((msg: string) => {
     const el = toastElRef.current;
     if (!el) return;
@@ -252,6 +274,8 @@ export function NewSessionPage() {
       setPendingFolder(null);
       return;
     }
+    const submissionId = createSubmissionId();
+    sessionStorage.setItem(PENDING_SUBMISSION_ID_STORAGE_KEY, submissionId);
     sessionStorage.setItem("qingagent:pending-message", snap.text);
     if (snap.chips.length > 0) {
       sessionStorage.setItem("qingagent:pending-richtext", snap.richText);
@@ -265,9 +289,8 @@ export function NewSessionPage() {
     } else {
       sessionStorage.removeItem("qingagent:pending-skills");
     }
-    if (visiblePendingFiles.length > 0) {
-      setPendingFiles(visiblePendingFiles);
-    }
+    // 空附件也写入新所有权，显式覆盖同标签页上一笔失败发送留下的槽位。
+    setPendingFiles(submissionId, visiblePendingFiles);
     if (pendingFolder) {
       setPendingFolderSource(pendingFolder);
     } else {
@@ -306,7 +329,7 @@ export function NewSessionPage() {
       // 兜底:无叠卡(直链态)时维持原 180ms 快速淡出
       window.setTimeout(goWorkspace, 180);
     }
-  }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden]);
+  }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden, createSubmissionId]);
 
   const handleRemoveEditorChip = useCallback(
     (chip: { id?: string; type?: string; name?: string }) => {

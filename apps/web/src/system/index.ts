@@ -7,6 +7,7 @@ export {
   peekPendingFiles,
   clearPendingFiles,
   consumePendingFiles,
+  PENDING_SUBMISSION_ID_STORAGE_KEY,
   setPendingFolderSource,
   peekPendingFolderSource,
   clearPendingFolderSource,

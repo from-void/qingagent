@@ -9,7 +9,15 @@
  * and leaving the second mount with nothing.
  */
 
-let pendingFiles: File[] = [];
+export const PENDING_SUBMISSION_ID_STORAGE_KEY =
+  "qingagent:pending-submission-id";
+
+interface PendingFilesSubmission {
+  submissionId: string;
+  files: File[];
+}
+
+let pendingFilesSubmission: PendingFilesSubmission | null = null;
 
 export interface PendingDesktopFolderSource {
   provider: "desktop-local";
@@ -37,21 +45,29 @@ export type PendingFolderSource = PendingDesktopFolderSource | PendingBrowserFol
 
 let pendingFolderSource: PendingFolderSource | null = null;
 
-export function setPendingFiles(files: File[]): void {
-  pendingFiles = files;
+export function setPendingFiles(submissionId: string, files: File[]): void {
+  pendingFilesSubmission = { submissionId, files };
 }
 
-export function peekPendingFiles(): File[] {
-  return pendingFiles;
+export function peekPendingFiles(submissionId: string | null): File[] {
+  return pendingFilesSubmission?.submissionId === submissionId
+    ? pendingFilesSubmission.files
+    : [];
 }
 
-export function clearPendingFiles(): void {
-  pendingFiles = [];
+export function clearPendingFiles(submissionId?: string): void {
+  if (
+    submissionId !== undefined &&
+    pendingFilesSubmission?.submissionId !== submissionId
+  ) {
+    return;
+  }
+  pendingFilesSubmission = null;
 }
 
-export function consumePendingFiles(): File[] {
-  const files = pendingFiles;
-  clearPendingFiles();
+export function consumePendingFiles(submissionId: string): File[] {
+  const files = peekPendingFiles(submissionId);
+  clearPendingFiles(submissionId);
   return files;
 }
 

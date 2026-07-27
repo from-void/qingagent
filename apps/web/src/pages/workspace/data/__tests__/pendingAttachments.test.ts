@@ -67,7 +67,7 @@ describe("pendingSession module-level file passing", () => {
     clearPendingFolderSource();
   });
 
-  it("setPendingFiles + consumePendingFiles round-trip", async () => {
+  it("setPendingFiles + consumePendingFiles 按 submission 所有权 round-trip", async () => {
     const { setPendingFiles, consumePendingFiles } = await import(
       "../../../../system/pendingSession"
     );
@@ -78,8 +78,8 @@ describe("pendingSession module-level file passing", () => {
       new File(["pdf data"], "report.pdf", { type: "application/pdf" }),
     ];
 
-    setPendingFiles(fakeFiles);
-    const consumed = consumePendingFiles();
+    setPendingFiles("submission-1", fakeFiles);
+    const consumed = consumePendingFiles("submission-1");
 
     expect(consumed).toHaveLength(2);
     expect(consumed[0]!.name).toBe("test.txt");
@@ -91,9 +91,9 @@ describe("pendingSession module-level file passing", () => {
       "../../../../system/pendingSession"
     );
 
-    setPendingFiles([new File(["data"], "a.txt")]);
-    consumePendingFiles(); // first consume
-    const second = consumePendingFiles(); // should be empty
+    setPendingFiles("submission-1", [new File(["data"], "a.txt")]);
+    consumePendingFiles("submission-1"); // first consume
+    const second = consumePendingFiles("submission-1"); // should be empty
     expect(second).toHaveLength(0);
   });
 
@@ -102,8 +102,25 @@ describe("pendingSession module-level file passing", () => {
       "../../../../system/pendingSession"
     );
 
-    const result = consumePendingFiles();
+    const result = consumePendingFiles("submission-empty");
     expect(result).toEqual([]);
+  });
+
+  it("旧 submission 既读不到也清不掉新 submission 的附件", async () => {
+    const {
+      clearPendingFiles,
+      peekPendingFiles,
+      setPendingFiles,
+    } = await import("../../../../system/pendingSession");
+    const stale = new File(["old"], "old.txt");
+    const current = new File(["new"], "new.txt");
+
+    setPendingFiles("submission-old", [stale]);
+    setPendingFiles("submission-new", [current]);
+    expect(peekPendingFiles("submission-old")).toEqual([]);
+
+    clearPendingFiles("submission-old");
+    expect(peekPendingFiles("submission-new")).toEqual([current]);
   });
 
   it("setPendingFolderSource + consumePendingFolderSource round-trip", async () => {

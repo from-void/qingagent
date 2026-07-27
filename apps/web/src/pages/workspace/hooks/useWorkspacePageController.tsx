@@ -32,6 +32,7 @@ import {
   deriveFolderCapability,
   peekPendingFiles,
   peekPendingFolderSource,
+  PENDING_SUBMISSION_ID_STORAGE_KEY,
   useClientCapabilities,
   useToast,
 } from "../../../system";
@@ -2010,7 +2011,10 @@ export function useWorkspacePageController() {
 
     // Check for pending text/files from NewSessionPage
     const pending = sessionStorage.getItem("qingagent:pending-message");
-    const files = peekPendingFiles();
+    const pendingSubmissionId = sessionStorage.getItem(
+      PENDING_SUBMISSION_ID_STORAGE_KEY,
+    );
+    const files = peekPendingFiles(pendingSubmissionId);
     const pendingFolder = peekPendingFolderSource();
     // 新建页选的技能(0702:此前 skills 写死 [],技能被整个丢掉)。防御性解析:坏 JSON/坏形状一律当没有。
     const pendingSkills: Extract<
@@ -2140,17 +2144,39 @@ export function useWorkspacePageController() {
             await stream.sendCommand(command);
           },
         });
-        if (outcome === "cancelled") return;
+        const clearOwnedPendingFiles = () => {
+          if (!pendingSubmissionId) return;
+          clearPendingFiles(pendingSubmissionId);
+          if (
+            sessionStorage.getItem(PENDING_SUBMISSION_ID_STORAGE_KEY) ===
+            pendingSubmissionId
+          ) {
+            sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
+          }
+        };
+        if (outcome === "cancelled") {
+          clearOwnedPendingFiles();
+          return;
+        }
         if (sessionStorage.getItem("qingagent:pending-message") === pending) {
           sessionStorage.removeItem("qingagent:pending-message");
         }
         sessionStorage.removeItem("qingagent:pending-skills");
         sessionStorage.removeItem("qingagent:pending-richtext");
         sessionStorage.removeItem("qingagent:pending-chips");
-        if (peekPendingFiles() === files) clearPendingFiles();
+        clearOwnedPendingFiles();
       };
 
       sendPending().catch((e) => {
+        if (pendingSubmissionId) {
+          clearPendingFiles(pendingSubmissionId);
+          if (
+            sessionStorage.getItem(PENDING_SUBMISSION_ID_STORAGE_KEY) ===
+            pendingSubmissionId
+          ) {
+            sessionStorage.removeItem(PENDING_SUBMISSION_ID_STORAGE_KEY);
+          }
+        }
         // 用户已经停止这一 turn 时，晚到的上传/建会话失败不再冒充新的发送失败。
         if (
           !isWorkspaceTurnDispatchCurrent(

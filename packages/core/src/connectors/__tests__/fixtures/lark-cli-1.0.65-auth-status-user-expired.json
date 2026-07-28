@@ -1,0 +1,22 @@
+{
+  "appId": "cli_****************",
+  "brand": "feishu",
+  "defaultAs": "auto",
+  "identities": {
+    "bot": {
+      "status": "ready",
+      "available": true,
+      "message": "Bot identity: ready"
+    },
+    "user": {
+      "status": "missing",
+      "available": false,
+      "message": "User identity: missing (token expired)",
+      "openId": "ou_[REDACTED]",
+      "userName": "示例用户",
+      "tokenStatus": "expired",
+      "expiresAt": "2020-07-11T21:31:52+08:00"
+    }
+  },
+  "identity": "bot"
+}

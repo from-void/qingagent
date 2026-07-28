@@ -1,0 +1,20 @@
+{
+  "appId": "cli_****************",
+  "brand": "feishu",
+  "defaultAs": "auto",
+  "identities": {
+    "bot": {
+      "status": "ready",
+      "available": true,
+      "message": "Bot identity: ready"
+    },
+    "user": {
+      "status": "missing",
+      "available": false,
+      "message": "User identity: missing (no user logged in)",
+      "hint": "run: lark-cli auth login --help"
+    }
+  },
+  "identity": "bot",
+  "note": "User identity is missing; bot identity is ready for bot/tenant API calls. Run `lark-cli auth login` to enable user identity."
+}

@@ -28,6 +28,32 @@ describe("lark-cli 1.0.65 真实脱敏 fixture", () => {
     });
   });
 
+  it("从没登录过的真实形状(status:missing 且无 token 痕迹)判为未连接,不谎称授权失效", () => {
+    // 实测 `lark-cli auth status --json`(1.0.65,本机无用户身份):user 只有
+    // status/available/message/hint,没有 tokenStatus。
+    expect(parseLarkAuthStatusOutput(fixture("lark-cli-1.0.65-auth-status-user-missing.json"))).toEqual({
+      ok: true,
+      value: { connected: false, needsReauth: false, account: null, scopes: null },
+    });
+  });
+
+  it("status:missing 叠加 tokenStatus:expired 仍判为需要重新授权", () => {
+    expect(parseLarkAuthStatusOutput(fixture("lark-cli-1.0.65-auth-status-user-expired.json"))).toMatchObject({
+      ok: true,
+      value: { connected: false, needsReauth: true },
+    });
+  });
+
+  it("状态取值不认识时回退看 token 维度", () => {
+    expect(parseLarkAuthStatusOutput(JSON.stringify({
+      identities: { user: { available: false, status: "logged_out", tokenStatus: "revoked" } },
+    }))).toMatchObject({ ok: true, value: { connected: false, needsReauth: true } });
+    // 认识的连接态不被 token 维度推翻。
+    expect(parseLarkAuthStatusOutput(JSON.stringify({
+      identities: { user: { available: true, status: "ready", tokenStatus: "expired" } },
+    }))).toMatchObject({ ok: true, value: { connected: true, needsReauth: false } });
+  });
+
   it.each([
     "garbage",
     '{"identities":{"user":{"available":true}}}',

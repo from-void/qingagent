@@ -32,7 +32,11 @@ import {
 } from "../data/sessionFrameGuards";
 import { staleTableSelectionChipIndices } from "../data/tableSelectionFreshness";
 import type { ServerStream } from "../data/serverStream";
-import type { UploadedAsset } from "../data/useMaterialParseTracker";
+import {
+  MATERIAL_PARSE_INCOMPLETE_REASON,
+  MATERIAL_PARSE_SEND_FAILED_REASON,
+  type UploadedAsset,
+} from "../data/useMaterialParseTracker";
 import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
 import type { AssetSource } from "../data/sources";
 
@@ -157,7 +161,9 @@ export function useWorkspaceChatActions(input: {
   setPreviewSource: Dispatch<SetStateAction<AssetSource | null>>;
   setSendPending: Dispatch<SetStateAction<boolean>>;
   flushPendingDocSave: () => Promise<void>;
-  markMaterialParsing: (assets: UploadedAsset[]) => void;
+  markMaterialParsing: (assets: UploadedAsset[]) => number | null;
+  markMaterialParsingTurnError: (turnKey: number, reason: string) => void;
+  materialParsingTurnKeyRef: MutableRefObject<number | null>;
   ensureSessionId: (stream: ServerStream) => Promise<string>;
   showToast: (message: string, durationMs?: number) => void;
   toast: ReturnType<typeof useToast>;
@@ -185,6 +191,8 @@ export function useWorkspaceChatActions(input: {
     setSendPending,
     flushPendingDocSave,
     markMaterialParsing,
+    markMaterialParsingTurnError,
+    materialParsingTurnKeyRef,
     ensureSessionId,
     showToast,
     toast,
@@ -364,9 +372,23 @@ export function useWorkspaceChatActions(input: {
         },
         dispatch: async ({ command, uploadedAssets }) => {
           // 只有仍属当前 turn 的链路才进入服务端；被停止的旧链不会在稍后重新点亮 start。
-          markMaterialParsing(uploadedAssets);
+          const materialTurnKey = markMaterialParsing(uploadedAssets);
+          materialParsingTurnKeyRef.current = materialTurnKey;
           lastRetriableSendRef.current = command;
-          await stream.sendCommand(command);
+          try {
+            await stream.sendCommand(command);
+          } catch (error) {
+            if (materialTurnKey !== null) {
+              markMaterialParsingTurnError(
+                materialTurnKey,
+                MATERIAL_PARSE_SEND_FAILED_REASON,
+              );
+            }
+            if (materialParsingTurnKeyRef.current === materialTurnKey) {
+              materialParsingTurnKeyRef.current = null;
+            }
+            throw error;
+          }
         },
       });
     };
@@ -398,6 +420,7 @@ export function useWorkspaceChatActions(input: {
     ensureSessionId,
     flushPendingDocSave,
     markMaterialParsing,
+    markMaterialParsingTurnError,
     showToast,
     tiptapEditor,
     turnContext,
@@ -503,6 +526,14 @@ export function useWorkspaceChatActions(input: {
       turnDispatchGateRef.current,
       stateRef.current.sessionId,
     );
+    const materialTurnKey = materialParsingTurnKeyRef.current;
+    if (materialTurnKey !== null) {
+      markMaterialParsingTurnError(
+        materialTurnKey,
+        MATERIAL_PARSE_INCOMPLETE_REASON,
+      );
+      materialParsingTurnKeyRef.current = null;
+    }
     const current = stateRef.current;
     void cancelWorkspaceGeneration({
       stream: streamRef.current,
@@ -511,7 +542,7 @@ export function useWorkspaceChatActions(input: {
       setSendPending,
       showToast,
     });
-  }, [showToast]);
+  }, [markMaterialParsingTurnError, showToast]);
 
   return {
     handleCancelActiveStream,

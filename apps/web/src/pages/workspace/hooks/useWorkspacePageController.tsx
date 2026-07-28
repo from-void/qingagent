@@ -162,6 +162,7 @@ import {
 } from "../data/revisionedMutation";
 import {
   MATERIAL_PARSE_BUSY_REASON,
+  MATERIAL_PARSE_SEND_FAILED_REASON,
   useMaterialParseTracker,
 } from "../data/useMaterialParseTracker";
 import {
@@ -916,9 +917,11 @@ export function useWorkspacePageController() {
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
+  const materialParsingTurnKeyRef = useRef<number | null>(null);
   const {
     rows: materialParseRows,
     markParsing: markMaterialParsing,
+    markTurnError: markMaterialParsingTurnError,
     retry: retryMaterialParse,
   } = useMaterialParseTracker({
     sessionId: state.sessionId,
@@ -2408,9 +2411,23 @@ export function useWorkspacePageController() {
             };
           },
           dispatch: async ({ command, uploadedAssets }) => {
-            markMaterialParsing(uploadedAssets);
+            const materialTurnKey = markMaterialParsing(uploadedAssets);
+            materialParsingTurnKeyRef.current = materialTurnKey;
             lastRetriableSendRef.current = command;
-            await stream.sendCommand(command);
+            try {
+              await stream.sendCommand(command);
+            } catch (error) {
+              if (materialTurnKey !== null) {
+                markMaterialParsingTurnError(
+                  materialTurnKey,
+                  MATERIAL_PARSE_SEND_FAILED_REASON,
+                );
+              }
+              if (materialParsingTurnKeyRef.current === materialTurnKey) {
+                materialParsingTurnKeyRef.current = null;
+              }
+              throw error;
+            }
           },
         });
 
@@ -2654,6 +2671,7 @@ export function useWorkspacePageController() {
     clearHydrationTimers,
     rejectPendingDocSaveDrain,
     markMaterialParsing,
+    markMaterialParsingTurnError,
     observeHydrationFrame,
     resolvePendingDocSaveDrain,
     restoreExistingSession,
@@ -3214,6 +3232,8 @@ export function useWorkspacePageController() {
       setSendPending,
       flushPendingDocSave,
       markMaterialParsing,
+      markMaterialParsingTurnError,
+      materialParsingTurnKeyRef,
       ensureSessionId,
       showToast,
       toast,

@@ -182,6 +182,51 @@ describe("useMaterialParseTracker state machine", () => {
     ]);
   });
 
+  it("派发失败只结算匹配 turnKey 的 parsing，不覆盖同文件后发起的重试", () => {
+    let state = reduce(initialMaterialParseTrackerState, {
+      type: "markParsing",
+      assets: [uploaded("file-1")],
+      agentActive: false,
+      turnKey: 1,
+      resources: [],
+    });
+    state = reduce(state, {
+      type: "retry",
+      fileId: "file-1",
+      agentActive: false,
+      turnKey: 2,
+      resources: [],
+    });
+
+    state = reduce(state, {
+      type: "markTurnError",
+      turnKey: 1,
+      reason: "发送失败，请重试",
+    });
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        fileId: "file-1",
+        turnKey: 2,
+        state: "parsing",
+        errorReason: null,
+      }),
+    ]);
+
+    state = reduce(state, {
+      type: "markTurnError",
+      turnKey: 2,
+      reason: "发送失败，请重试",
+    });
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        fileId: "file-1",
+        turnKey: 2,
+        state: "error",
+        errorReason: "发送失败，请重试",
+      }),
+    ]);
+  });
+
   it("retry 会把本地 error 翻回 parsing", () => {
     let state = reduce(initialMaterialParseTrackerState, {
       type: "markParsing",

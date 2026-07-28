@@ -43,6 +43,33 @@ function isRateLimitError(error: unknown): boolean {
   );
 }
 
+function visionRequestErrorMessage(error: unknown): string {
+  const maybeError = error as { statusCode?: unknown; status?: unknown; message?: unknown } | null | undefined;
+  const status = typeof maybeError?.statusCode === "number"
+    ? maybeError.statusCode
+    : typeof maybeError?.status === "number"
+      ? maybeError.status
+      : null;
+  const message = typeof maybeError?.message === "string" ? maybeError.message : "";
+  if (
+    status === 401 ||
+    status === 403 ||
+    /auth|unauthori[sz]ed|forbidden|api.?key|鉴权|认证/i.test(message)
+  ) {
+    return "图像识别模型鉴权失败，请检查模型配置。";
+  }
+  if (
+    (status !== null && status >= 500) ||
+    /network|fetch|econn|socket|连接|网络/i.test(message)
+  ) {
+    return "图像识别服务连接失败，请稍后重试。";
+  }
+  if (/unsupported|not support|不支持|model capability|模型能力/i.test(message)) {
+    return "当前图像识别模型不支持此请求，请检查模型配置。";
+  }
+  return "图像识别失败，请检查模型配置或稍后重试。";
+}
+
 function makeAbortError(): Error {
   const error = new Error("Aborted");
   error.name = "AbortError";
@@ -325,9 +352,16 @@ export const readImageTool = createTool({
           await waitForRetryDelay(parentSignal);
           try {
             trimmed = await runVisionOnce();
-          } catch {
+          } catch (retryError) {
             parentSignal?.throwIfAborted();
-            return { ok: false, text: "", error: READ_IMAGE_RATE_LIMIT_ERROR, materialId: null };
+            return {
+              ok: false,
+              text: "",
+              error: isRateLimitError(retryError)
+                ? READ_IMAGE_RATE_LIMIT_ERROR
+                : visionRequestErrorMessage(retryError),
+              materialId: null,
+            };
           }
         }
 

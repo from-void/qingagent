@@ -459,30 +459,18 @@
 .qj-sheet-body .md-detail-filters .md-views {
   margin-bottom: 0;
 }
+/* 日期筛选:只在「按天」视图出现;文案标签与独立清除钮已撤,清除并入日历浮层内部 */
 .qj-sheet-body .md-date-filter {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  color: var(--qj-header-sub);
-  letter-spacing: 0.04em;
 }
-.qj-sheet-body .md-date-clear {
-  height: 24px;
-  padding: 0 8px;
-  border-radius:0;
-  cursor: pointer;
-  border: 1px solid var(--qj-switch-border);
-  background: rgba(236, 227, 208, 0.04);
-  color: var(--qj-header-sub);
-  font-family: var(--font-zh-serif);
-  font-size: 10px;
-  outline: none;
+/* 模型多选:三种视图都在,与日期控件并排 */
+.qj-sheet-body .md-model-filter .skin-select__value {
+  min-width: 3.6em;
 }
-.qj-sheet-body .md-date-clear:hover,
-.qj-sheet-body .md-date-clear:focus-visible {
-  border-color: var(--qj-cinnabar);
-  color: var(--qj-cinnabar);
+/* 「全部」项与各模型之间留一道分隔,层级更清楚 */
+.skin-select__option--all {
+  border-bottom: 1px solid var(--qj-switch-border);
 }
 .qj-sheet-body .md-filter-note {
   margin: -2px 0 8px;

@@ -2138,9 +2138,11 @@ export async function loadSessionFromThread(
   const rebuiltVisibleAnswerCards = appendMissingVisibleAskUserAnswerMessagesFromChatHistory(state);
   const docVersionBeforePendingRehydrate = state.docVersion;
   const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
+  let pendingRehydrateConflict = false;
   try {
     const pendingRehydrateResult = await rehydratePendingDraft(state, { readOnly: isSnapshot });
-    if (!isSnapshot && pendingRehydrateResult.kind === "conflict") {
+    if (pendingRehydrateResult.kind === "conflict") {
+      pendingRehydrateConflict = true;
       state._pendingDraftRecoveryFrames.push(...pendingRehydrateResult.frames);
     }
   } catch (err) {
@@ -2160,6 +2162,7 @@ export async function loadSessionFromThread(
     (
       needsContentTimeBackfill ||
       needsRestoreReconcilePersist ||
+      pendingRehydrateConflict ||
       pendingRehydrateChangedCanonical ||
       rebuiltAskUserState
     )

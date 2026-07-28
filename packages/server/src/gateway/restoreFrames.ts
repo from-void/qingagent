@@ -229,13 +229,14 @@ export function* emitRestoreFrames(
       },
     };
   }
-  // gap/epoch restore 必须纯读；restoreReset 已先清空前端队列，无需消费一次性恢复终态帧。
+  // gap/epoch restore 必须纯读：确认恢复终态不重放；草稿冲突却是冷快照刚推导出的
+  // 必要提示，必须发送但不得消费。activate 恢复仍保持一次性消费语义。
   if (!readOnly) {
     for (const frame of takeConfirmRecoveryFrames(session)) yield frame;
-    const pendingDraftRecoveryFrames = session._pendingDraftRecoveryFrames;
-    session._pendingDraftRecoveryFrames = [];
-    for (const frame of pendingDraftRecoveryFrames) yield frame;
   }
+  const pendingDraftRecoveryFrames = session._pendingDraftRecoveryFrames;
+  if (!readOnly) session._pendingDraftRecoveryFrames = [];
+  for (const frame of pendingDraftRecoveryFrames) yield frame;
 
   // 回放 AI 任务清单(与 docStateChanged 同路数:会话状态帧,页面刷新/重连恢复 pill)。
   if (session.todos.length > 0) {

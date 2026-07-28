@@ -641,7 +641,7 @@ describe("handleCommand existing-session restore", () => {
     expect(diffFrame.data.editedDoc).toEqual(editedDoc);
   });
 
-  it("冷恢复冲突只补发一次 draftingFailed，不生成 docDiffReady", async () => {
+  it("只读快照不消费冲突帧，activate 恢复仍只补发一次", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     session.docState = { kind: "editing" };
@@ -657,6 +657,8 @@ describe("handleCommand existing-session restore", () => {
       },
     }];
 
+    const firstSnapshot = await bridge.collectRestoreFrames(session.sessionId);
+    const secondSnapshot = await bridge.collectRestoreFrames(session.sessionId);
     const firstFrames = await collectFrames(
       bridge.handleCommand({
         kind: "startSession",
@@ -670,6 +672,17 @@ describe("handleCommand existing-session restore", () => {
       }),
     );
 
+    for (const snapshot of [firstSnapshot, secondSnapshot]) {
+      expect(snapshot).toContainEqual(expect.objectContaining({
+        kind: "stream",
+        data: expect.objectContaining({
+          kind: "draftingFailed",
+          data: expect.objectContaining({
+            reason: "正文已变化，请重新生成本轮审阅。",
+          }),
+        }),
+      }));
+    }
     expect(firstFrames).toContainEqual(expect.objectContaining({
       kind: "stream",
       data: expect.objectContaining({

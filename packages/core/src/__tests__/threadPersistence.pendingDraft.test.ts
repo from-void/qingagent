@@ -189,7 +189,7 @@ describe("pending draft rehydrate", () => {
     expect(restored?.suggestionBaseDoc).toEqual(base);
   });
 
-  it("loadSessionFromThread 冷恢复冲突时保留 draftingFailed 恢复帧", async () => {
+  it("连续 activate 冷恢复会持久化冲突清理，第二次不再重放旧审阅态", async () => {
     const sessionId = "rehy-load-conflict";
     const persistedBase = doc([paragraph("block-a", "旧基线")]);
     const current = doc([paragraph("block-a", "已变化正文")]);
@@ -211,19 +211,19 @@ describe("pending draft rehydrate", () => {
       metadata: {
         docId: sessionId,
         docState: { kind: "pendingReview" },
-        docVersion: 4,
-        doc: persistedBase,
-        legacySections: pmToLegacySections(persistedBase),
+        docVersion: 5,
+        doc: current,
+        legacySections: pmToLegacySections(current),
         messages: [],
       },
     });
 
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
-    const restored = await loadSessionFromThread(sessionId);
+    const first = await loadSessionFromThread(sessionId);
 
-    expect(restored?.docState).toEqual({ kind: "editing" });
-    expect(restored?.suggestions.size).toBe(0);
-    expect(restored?._pendingDraftRecoveryFrames).toEqual([
+    expect(first?.docState).toEqual({ kind: "editing" });
+    expect(first?.suggestions.size).toBe(0);
+    expect(first?._pendingDraftRecoveryFrames).toEqual([
       {
         kind: "stream",
         data: {
@@ -236,6 +236,20 @@ describe("pending draft rehydrate", () => {
         },
       },
     ]);
+    expect(memory.updateThread).toHaveBeenCalledWith(expect.objectContaining({
+      id: sessionId,
+      metadata: expect.objectContaining({
+        docState: { kind: "editing" },
+        docVersion: 5,
+        suggestions: [],
+      }),
+    }));
+
+    const second = await loadSessionFromThread(sessionId);
+
+    expect(second?.docState).toEqual({ kind: "editing" });
+    expect(second?.suggestions.size).toBe(0);
+    expect(second?._pendingDraftRecoveryFrames).toEqual([]);
   });
 
   it("rehydrate 直接路径 hash 一致时发 docDiffReady 且不改 state.doc", async () => {

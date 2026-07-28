@@ -9,7 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Node, Viewport } from "@xyflow/react";
 import { parseDiagram, type FlowGraph, type MindmapTree } from "@qingagent/diagram-engine";
-import { visibleFlowRect } from "../../components/diagram/GraphDiagramView";
+import { GRAPH_HANDLE_ZONE_GRACE_MS, visibleFlowRect } from "../../components/diagram/GraphDiagramView";
 import { ToastProvider } from "../../../../system/ToastProvider";
 import { DiagramRenderer } from "../../components/diagram/DiagramRenderer";
 const CLUSTER_MIN_TEST_WIDTH = 160;
@@ -170,6 +170,13 @@ async function mouseEvent(el: Element, type: "mouseover" | "mousemove" | "mouseo
       cancelable: true,
       relatedTarget: type === "mouseout" ? document.body : null,
     }));
+  });
+  await flush();
+}
+
+async function sleep(ms: number) {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   });
   await flush();
 }
@@ -743,6 +750,50 @@ flowchart LR
     expect(graphDiagramCss).not.toContain(".graph-diagram-primary-action");
     await click(findButton("新增节点", editor));
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("新节点"));
+  });
+
+  it("鼠标从节点移到外挂圆点的途中把手不消失(带宽限期的悬停区)", async () => {
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[开始] --> B[结束]
+`}
+      />,
+    );
+    const editor = await openEditor();
+    await waitForSelector(".graph-diagram-node-shell.can-rename", editor);
+    const startNode = findNode("开始", editor);
+    const shell = startNode.querySelector<HTMLElement>(".graph-diagram-node-shell")!;
+    expect(shell.dataset.handleZone).toBeUndefined();
+
+    await mouseEvent(shell, "mouseover");
+    expect(shell.dataset.handleZone).toBe("active");
+
+    // 指针离开节点包围盒、落到盒外的把手上:途中掉的这一帧不许收起把手。
+    const rightHandle = startNode.querySelector<HTMLElement>(
+      ".react-flow__handle.source[data-handleid='r']",
+    )!;
+    await mouseEvent(shell, "mouseout");
+    expect(shell.dataset.handleZone).toBe("active");
+    await mouseEvent(rightHandle, "mouseover");
+    await sleep(GRAPH_HANDLE_ZONE_GRACE_MS + 60);
+    // 停在圆点上:宽限期早过了,把手必须还在,用户才按得下去。
+    expect(shell.dataset.handleZone).toBe("active");
+
+    // 真正走开之后才收起。
+    await mouseEvent(rightHandle, "mouseout");
+    await sleep(GRAPH_HANDLE_ZONE_GRACE_MS + 60);
+    expect(shell.dataset.handleZone).toBeUndefined();
+
+    // 命中盒必须铺满圆点外移的那段距离,否则鼠标在节点与圆点之间会掉进空档。
+    expect(graphDiagramCss).toMatch(/--graph-handle-offset:\s*11px;/);
+    expect(graphDiagramCss).toMatch(/--graph-handle-hit:\s*22px;/);
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram \.react-flow__handle,[\s\S]*?width:\s*var\(--graph-handle-hit\);/,
+    );
+    expect(graphDiagramCss).toContain(
+      '.graph-diagram-canvas--editor .graph-diagram-node-shell[data-handle-zone="active"] .react-flow__handle',
+    );
   });
 
   it("编辑态节点默认显示四个圆点，悬停依次切换加号、箭头和幽灵预览", async () => {

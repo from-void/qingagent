@@ -1100,7 +1100,7 @@ export function UIKitPage() {
                 <div className="settings-skills uk-sheet-demo-block">
                   <div className="sk-subhead">
                     <button className="sk-back" type="button">
-                      <span className="sk-back-arrow">‹</span>
+                      <span className="sk-back-arrow"><CaretIcon size={14} direction="left" /></span>
                       返回技能
                     </button>
                     <span className="sk-subtitle">联网搜索</span>
@@ -1117,7 +1117,7 @@ export function UIKitPage() {
                       </div>
                       <p className="sk-card-desc">调用搜索源补齐事实、日期与出处。</p>
                       <button className="sk-search-toggle" type="button">
-                        配置搜索引擎 <span className="sk-card-arrow">›</span>
+                        配置搜索引擎 <span className="sk-card-arrow"><CaretIcon size={12} direction="right" /></span>
                       </button>
                       <div className="sk-card-foot">
                         <span className="sk-card-tag">可配置</span>

@@ -1396,7 +1396,7 @@
     outline-offset:-2px;
   }
   #view-workspace .dt-mi:hover{background:var(--bg-hover)}
-  #view-workspace .dt-mi-spacer{margin-left:auto;color:var(--ink-3);font-family:var(--font-zh-serif)}
+  #view-workspace .dt-mi-spacer{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3)}
   #view-workspace .dt-mi-k{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);min-width:24px}
   #view-workspace .dt-menu-icon{
     width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;

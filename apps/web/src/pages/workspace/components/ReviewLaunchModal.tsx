@@ -2,6 +2,7 @@ import { Button } from "@qingagent/ui-kit";
 import { assembleReviewQuery } from "@qingagent/contract-ts";
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CaretIcon } from "./icons";
 import { buildTemplateSummary, LaunchModalShell, REVIEW_STARTER_PRESETS, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "./launchModal";
 import { rankRoleReviewTemplates, roleAvatarKind, rolePosition } from "./roleReview";
 
@@ -315,7 +316,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
           {props.type === "sensitive" ? (
             <div className="ws-launch-resource-row">
               <span>已启用 {selectedLexicons.size} 个词库</span>
-              <button type="button" className="ws-launch-link" onClick={() => setPage("lexicons")}>管理词库 ›</button>
+              <button type="button" className="ws-launch-link" onClick={() => setPage("lexicons")}>管理词库<CaretIcon size={12} direction="right" /></button>
             </div>
           ) : null}
           <SupplementField value={supplement} placeholder={meta.supplementPlaceholder} disabled={loading} onChange={setSupplement} />
@@ -371,7 +372,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
                 <button type="button" className="ws-lexicon-open" onClick={() => showEntries(lexicon)}>
                   <span className="ws-lexicon-copy"><strong>{lexicon.name}</strong><small>{lexicon.description}</small></span>
                   <small>{lexicon.entryCount} 词</small>
-                  <span className="ws-lexicon-chevron">›</span>
+                  <span className="ws-lexicon-chevron"><CaretIcon size={15} direction="right" /></span>
                 </button>
               </div>
             ))}

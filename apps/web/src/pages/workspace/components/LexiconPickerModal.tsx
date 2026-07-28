@@ -1,6 +1,7 @@
 import { Button } from "@qingagent/ui-kit";
 import type { LexiconEntrySummary, LexiconResourceSummary } from "@qingagent/contract-ts";
 import { useEffect, useRef, useState } from "react";
+import { CaretIcon } from "./icons";
 
 interface LexiconPickerModalProps {
   open: boolean;
@@ -75,7 +76,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
       <section className="ws-folder-intro-modal ws-lexicon-modal" role="dialog" aria-modal="true" aria-labelledby="ws-lexicon-title" data-wf="LexiconPickerModal">
         <header className="ws-lexicon-head">
           {activeLexicon ? (
-            <button type="button" className="ws-lexicon-back" onClick={() => { entriesRequestRef.current += 1; setActiveLexicon(null); }}>‹ 返回</button>
+            <button type="button" className="ws-lexicon-back" onClick={() => { entriesRequestRef.current += 1; setActiveLexicon(null); }}><CaretIcon size={13} direction="left" />返回</button>
           ) : <span className="ws-lexicon-head-spacer" />}
           <h2 id="ws-lexicon-title">{activeLexicon ? activeLexicon.name : "选择敏感词词库"}</h2>
           <span className="ws-lexicon-head-count">{activeLexicon ? `${entriesLoading ? activeLexicon.entryCount : entries.length} 词` : ""}</span>
@@ -108,7 +109,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
                 <button type="button" className="ws-lexicon-open" onClick={() => showEntries(lexicon)}>
                   <span className="ws-lexicon-copy"><strong>{lexicon.name}</strong>{lexicon.description ? <small>{lexicon.description}</small> : null}</span>
                   <small>{lexicon.entryCount} 词</small>
-                  <span className="ws-lexicon-chevron" aria-hidden="true">›</span>
+                  <span className="ws-lexicon-chevron" aria-hidden="true"><CaretIcon size={15} direction="right" /></span>
                 </button>
               </div>
             ))}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CaretIcon } from "../../system/icons";
 import type {
   ConnectorAuthPresentation,
   ConnectorId,
@@ -345,7 +346,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       <div className="cn-detail" data-wf="ConnectionDetail" data-connector-id={selected.id}>
         <div className="sk-subhead">
           <button type="button" className="sk-back" onClick={() => select(null)}>
-            <span className="sk-back-arrow" aria-hidden="true">‹</span>返回连接
+            <span className="sk-back-arrow" aria-hidden="true"><CaretIcon size={14} direction="left" /></span>返回连接
           </button>
           <span className="sk-subtitle">连接详情</span>
         </div>
@@ -430,7 +431,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
                 </span>
                 <span className="cn-sub">{listSubtitle(connector, visibleState)}</span>
               </span>
-              <span className="cn-caret" aria-hidden="true">›</span>
+              <span className="cn-caret" aria-hidden="true"><CaretIcon size={15} direction="right" /></span>
             </button>
           );
         })}

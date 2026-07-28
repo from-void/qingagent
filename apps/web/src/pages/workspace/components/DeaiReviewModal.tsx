@@ -1,6 +1,7 @@
 import { Button } from "@qingagent/ui-kit";
 import type { StyleTemplateItem } from "@qingagent/contract-ts";
 import { useEffect, useRef, useState } from "react";
+import { CaretIcon } from "./icons";
 
 interface DeaiReviewModalProps {
   open: boolean;
@@ -71,7 +72,7 @@ export function DeaiReviewModal({ open, loadTemplates, loadTemplate, saveTemplat
     <div className="ws-folder-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="ws-folder-intro-modal ws-lexicon-modal ws-deai-modal" role="dialog" aria-modal="true" aria-labelledby="ws-deai-title" data-wf="DeaiReviewModal">
         <header className="ws-lexicon-head">
-          {activeTemplate ? <button type="button" className="ws-lexicon-back" onClick={() => { requestRef.current += 1; setActiveTemplate(null); }}>‹ 返回</button> : <span className="ws-lexicon-head-spacer" />}
+          {activeTemplate ? <button type="button" className="ws-lexicon-back" onClick={() => { requestRef.current += 1; setActiveTemplate(null); }}><CaretIcon size={13} direction="left" />返回</button> : <span className="ws-lexicon-head-spacer" />}
           <h2 id="ws-deai-title">{activeTemplate ? activeTemplate.name : "去AI味"}</h2>
           <span className="ws-lexicon-head-count">{activeTemplate ? "模板详情" : ""}</span>
           <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}>×</button>
@@ -90,7 +91,7 @@ export function DeaiReviewModal({ open, loadTemplates, loadTemplate, saveTemplat
                   </label>
                   <button type="button" className="ws-lexicon-open" onClick={() => showTemplate(template)}>
                     <span className="ws-lexicon-copy"><strong>{template.name}</strong><small>{template.detail}</small></span>
-                    <span className="ws-lexicon-chevron" aria-hidden="true">›</span>
+                    <span className="ws-lexicon-chevron" aria-hidden="true"><CaretIcon size={15} direction="right" /></span>
                   </button>
                 </div>
               ))}

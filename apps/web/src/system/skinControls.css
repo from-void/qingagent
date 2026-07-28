@@ -197,8 +197,9 @@
 }
 
 .skin-calendar__head button {
+  display: grid;
+  place-items: center;
   height: 28px;
-  font-size: 20px;
 }
 
 .skin-calendar__head button:hover,

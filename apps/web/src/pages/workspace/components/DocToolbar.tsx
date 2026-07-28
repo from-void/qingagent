@@ -1243,7 +1243,7 @@ export function DocToolbar({
           <MenuItem
             onPreview={(anchor, autoFocus) => setTablePicker({ anchor, autoFocus })}
             disabled={!editorEditable || !toolbarUnlock.blocks}
-          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer">›</span></MenuItem>
+          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer"><CaretIcon size={12} direction="right" /></span></MenuItem>
           <MenuItem onPick={() => runCommand("insertColumns")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="columns" />插入分栏</MenuItem>
           <MenuItem onPick={() => runCommand("codeBlock")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="code" />代码块</MenuItem>
           <MenuItem onPick={() => runCommand("horizontalRule")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="divider" />分隔线</MenuItem>

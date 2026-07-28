@@ -43,7 +43,10 @@ export const WORKSPACE_PAPER_DOM = Object.freeze({
   paperShellClass: "ws-paper-shell",
   paperShellDataWf: "WorkspacePaperShell",
   documentContentClass: "ws-document-content",
+  paperSurfaceClass: "ws-paper-surface",
+  paperSurfaceDataWf: "WorkspacePaperSurface",
   documentClass: "wf-doc",
+  documentDataWf: "DocumentSnapshotView",
 });
 
 function rectFromElement(element: Element | null): WorkspacePaperRect | null {
@@ -73,11 +76,11 @@ function findMountedPaper(view: HTMLElement): Element | null {
   );
   if (!paperColumn) return null;
 
-  // 左侧问卷/模板预览也会复用 `.wf-doc` 排版类，测量只能落在右栏正文容器。
+  // 问卷和空文档模板预览都会复用 `.wf-doc` 排版类，测量必须落在真实纸面组件。
   // hydration 首帧正文尚未挂出时，再以同一右栏的纸壳接住交接。
   return (
     paperColumn.querySelector(
-      `.${WORKSPACE_PAPER_DOM.documentContentClass} .${WORKSPACE_PAPER_DOM.documentClass}`,
+      `.${WORKSPACE_PAPER_DOM.documentContentClass} .${WORKSPACE_PAPER_DOM.paperSurfaceClass}[data-wf="${WORKSPACE_PAPER_DOM.paperSurfaceDataWf}"] .${WORKSPACE_PAPER_DOM.documentClass}[data-wf="${WORKSPACE_PAPER_DOM.documentDataWf}"]`,
     ) ??
     paperColumn.querySelector(
       `[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"]`,
@@ -135,11 +138,17 @@ function createWorkspacePaperMeasurementView(): {
   documentContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
   documentContent.dataset.wf = "WorkspaceHydrationDocumentContent";
 
+  const paperSurface = document.createElement("div");
+  paperSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+  paperSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
+
   const paper = document.createElement("article");
   paper.className = WORKSPACE_PAPER_DOM.documentClass;
+  paper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
   paper.setAttribute("aria-hidden", "true");
 
-  documentContent.appendChild(paper);
+  paperSurface.appendChild(paper);
+  documentContent.appendChild(paperSurface);
   paperColumn.append(shell, documentContent);
   body.append(chatColumn, paperColumn);
   view.appendChild(body);

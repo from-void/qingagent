@@ -393,13 +393,16 @@ export const DocumentSnapshotView = forwardRef<
   }
 
   return (
-    <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+    <div
+      className={WORKSPACE_PAPER_DOM.paperSurfaceClass}
+      data-wf={WORKSPACE_PAPER_DOM.paperSurfaceDataWf}
+    >
       <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
       <article
         ref={articleRef}
         className={WORKSPACE_PAPER_DOM.documentClass}
         style={{ maxWidth: 800, paddingRight: 200 }}
-        data-wf="DocumentSnapshotView"
+        data-wf={WORKSPACE_PAPER_DOM.documentDataWf}
         data-version={doc.version}
         spellCheck={false}
       >
@@ -578,8 +581,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     content: initialContent,
     editorProps: {
       attributes: {
-        class: "wf-doc",
-        "data-wf": "DocumentSnapshotView",
+        class: WORKSPACE_PAPER_DOM.documentClass,
+        "data-wf": WORKSPACE_PAPER_DOM.documentDataWf,
         "data-version": String(doc.version),
         style: "max-width:800px;padding-right:200px;outline:none",
       },
@@ -1281,7 +1284,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       data-native-presentation-run-id={presentationRun?.id}
     >
       {presentationRun ? <div className="native-presentation-vignette" aria-hidden="true" /> : null}
-      <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+      <div
+        className={WORKSPACE_PAPER_DOM.paperSurfaceClass}
+        data-wf={WORKSPACE_PAPER_DOM.paperSurfaceDataWf}
+      >
         <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
         <EditorContent editor={editor} />
         {!presentationRun ? <DocColophon doc={doc} /> : null}

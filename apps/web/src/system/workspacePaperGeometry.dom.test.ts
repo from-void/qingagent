@@ -54,7 +54,7 @@ describe("首页转场纸与工作区真纸几何交接", () => {
             ).not.toBeNull();
             expect(
               view.querySelector(
-                `.${WORKSPACE_PAPER_DOM.paperColumnClass} > .${WORKSPACE_PAPER_DOM.paperShellClass}[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"] + .${WORKSPACE_PAPER_DOM.documentContentClass} > .${WORKSPACE_PAPER_DOM.documentClass}`,
+                `.${WORKSPACE_PAPER_DOM.paperColumnClass} > .${WORKSPACE_PAPER_DOM.paperShellClass}[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"] + .${WORKSPACE_PAPER_DOM.documentContentClass} > .${WORKSPACE_PAPER_DOM.paperSurfaceClass}[data-wf="${WORKSPACE_PAPER_DOM.paperSurfaceDataWf}"] > .${WORKSPACE_PAPER_DOM.documentClass}[data-wf="${WORKSPACE_PAPER_DOM.documentDataWf}"]`,
               ),
             ).toBe(this);
             expect(
@@ -91,10 +91,15 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     mountedShell.dataset.wf = WORKSPACE_PAPER_DOM.paperShellDataWf;
     const mountedContent = document.createElement("div");
     mountedContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const mountedSurface = document.createElement("div");
+    mountedSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    mountedSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
     const mountedPaper = document.createElement("article");
     mountedPaper.className = WORKSPACE_PAPER_DOM.documentClass;
+    mountedPaper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
     mountedPaper.getBoundingClientRect = () => domRect(expected);
-    mountedContent.appendChild(mountedPaper);
+    mountedSurface.appendChild(mountedPaper);
+    mountedContent.appendChild(mountedSurface);
     mountedPaperColumn.append(mountedShell, mountedContent);
     mountedBody.append(mountedChatColumn, mountedPaperColumn);
     mountedView.appendChild(mountedBody);
@@ -146,6 +151,10 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     shell.getBoundingClientRect = vi.fn(() => domRect(shellRect));
     const content = document.createElement("div");
     content.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const starterPreview = document.createElement("div");
+    starterPreview.className = `starter-preview ${WORKSPACE_PAPER_DOM.documentClass}`;
+    starterPreview.getBoundingClientRect = vi.fn(() => domRect(previewRect));
+    content.appendChild(starterPreview);
     right.append(shell, content);
     body.append(left, right);
     view.appendChild(body);
@@ -155,11 +164,17 @@ describe("首页转场纸与工作区真纸几何交接", () => {
 
     const documentPaper = document.createElement("article");
     documentPaper.className = WORKSPACE_PAPER_DOM.documentClass;
+    documentPaper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
     documentPaper.getBoundingClientRect = vi.fn(() => domRect(documentRect));
-    content.appendChild(documentPaper);
+    const paperSurface = document.createElement("div");
+    paperSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    paperSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
+    paperSurface.appendChild(documentPaper);
+    content.appendChild(paperSurface);
 
     expect(measureWorkspacePaperRect()).toEqual(documentRect);
     expect(askUserPreview.getBoundingClientRect).not.toHaveBeenCalled();
+    expect(starterPreview.getBoundingClientRect).not.toHaveBeenCalled();
   });
 
   it("真实转场 DOM 的纸面层在落定帧重取目标，终帧与工作区首帧误差不超过 1px", async () => {
@@ -192,11 +207,16 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     paperColumn.className = WORKSPACE_PAPER_DOM.paperColumnClass;
     const documentContent = document.createElement("div");
     documentContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const paperSurface = document.createElement("div");
+    paperSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    paperSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
     const paper = document.createElement("div");
     paper.className = WORKSPACE_PAPER_DOM.documentClass;
+    paper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
     paper.getBoundingClientRect = () =>
       domRect(resized ? workspaceFirstFrame : beforeResize);
-    documentContent.appendChild(paper);
+    paperSurface.appendChild(paper);
+    documentContent.appendChild(paperSurface);
     paperColumn.appendChild(documentContent);
     workspace.appendChild(paperColumn);
     document.body.appendChild(workspace);

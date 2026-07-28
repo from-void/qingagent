@@ -4,13 +4,24 @@ import type { ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
-import {
-  NewSessionPage,
-  newSessionCommandLengthError,
-} from "./NewSessionPage";
+import { NewSessionPage } from "./NewSessionPage";
+
+const createPendingSubmissionMock = vi.hoisted(() => vi.fn());
+vi.mock("../../system", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../system")>();
+  return {
+    ...actual,
+    createPendingSubmission: createPendingSubmissionMock,
+  };
+});
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+
+beforeEach(() => {
+  createPendingSubmissionMock.mockReset();
+  createPendingSubmissionMock.mockResolvedValue({ durable: true });
+});
 
 describe("NewSessionPage 文件夹弹框键盘行为", () => {
   beforeEach(() => {
@@ -161,13 +172,82 @@ describe("NewSessionPage 附件校验", () => {
 });
 
 describe("NewSessionPage 正文校验", () => {
-  it("正文或富文本超过命令上限时会在持久化前拦截", () => {
-    const atLimit = "字".repeat(MAX_COMMAND_STRING_LENGTH);
-    const oversized = `${atLimit}字`;
+  beforeEach(() => {
+    installBrowserPolyfills();
+    window.localStorage.clear();
+    window.location.hash = "#/new";
+  });
 
-    expect(newSessionCommandLengthError(atLimit, atLimit)).toBeNull();
-    expect(newSessionCommandLengthError(oversized, null)).toBe("内容过长，请缩短后再发送");
-    expect(newSessionCommandLengthError("", oversized)).toBe("内容过长，请缩短后再发送");
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("astral Unicode 正文超过 65536 code units 时真实提交被拦截并保留编辑态", async () => {
+    await render(<NewSessionPage />);
+    const editor = query("[data-wf='StarterInput']")!;
+    const oversized = "😀".repeat(MAX_COMMAND_STRING_LENGTH / 2 + 1);
+    setStarterText(editor, oversized);
+
+    click(getButton("[data-wf='StartSession']"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createPendingSubmissionMock).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/new");
+    expect(editor.textContent).toBe(oversized);
+    expect(query(".ccx-toast")?.textContent).toContain("内容过长");
+  });
+
+  it("astral Unicode 正文恰好 65536 code units 时通过真实提交入口", async () => {
+    await render(<NewSessionPage />);
+    const editor = query("[data-wf='StarterInput']")!;
+    const atLimit = "😀".repeat(MAX_COMMAND_STRING_LENGTH / 2);
+    expect(atLimit.length).toBe(MAX_COMMAND_STRING_LENGTH);
+    setStarterText(editor, atLimit);
+
+    click(getButton("[data-wf='StartSession']"));
+    await waitFor(() => createPendingSubmissionMock.mock.calls.length === 1);
+
+    expect(createPendingSubmissionMock.mock.calls[0]?.[0]).toMatchObject({
+      text: atLimit,
+      richText: null,
+    });
+  });
+
+  it("可见正文在边界但富文本因真实 chip 超限时不持久化、不离页且保留内容", async () => {
+    await render(<NewSessionPage />);
+    const editor = query("[data-wf='StarterInput']")!;
+    const atLimit = "😀".repeat(MAX_COMMAND_STRING_LENGTH / 2);
+    setStarterText(editor, atLimit);
+    const fileInput = host!.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const file = new File(["pdf"], "资料.pdf", { type: "application/pdf" });
+    Object.defineProperty(fileInput, "files", { configurable: true, value: [file] });
+    await act(async () => {
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const chip = editor.querySelector<HTMLElement>(".src-chip")!;
+    if (chip.nextSibling?.nodeType === Node.TEXT_NODE) chip.nextSibling.remove();
+    await act(async () => {
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent" }));
+      await Promise.resolve();
+    });
+
+    click(getButton("[data-wf='StartSession']"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createPendingSubmissionMock).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/new");
+    expect(editorTextWithoutChips(editor)).toBe(atLimit);
+    expect(editor.querySelectorAll(".src-chip")).toHaveLength(1);
+    expect(query(".ccx-toast")?.textContent).toContain("内容过长");
   });
 });
 
@@ -195,6 +275,19 @@ function click(element: HTMLElement): void {
   act(() => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
+}
+
+function setStarterText(editor: HTMLElement, text: string): void {
+  act(() => {
+    editor.textContent = text;
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  });
+}
+
+function editorTextWithoutChips(editor: HTMLElement): string {
+  const clone = editor.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(".src-chip").forEach((chip) => chip.remove());
+  return clone.textContent ?? "";
 }
 
 async function keyDown(key: string): Promise<KeyboardEvent> {

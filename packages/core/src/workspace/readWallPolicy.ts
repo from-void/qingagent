@@ -170,6 +170,10 @@ function addHomeDenyPaths(target: RawDenyPath[], home: string, configHome: strin
   add(join(home, ".aws"), "directory");
   add(join(home, ".gnupg"), "directory");
   add(join(home, ".kube"), "directory");
+  // .lark-cli 与 .aws/.ssh 同属凭证类默认 deny(非 hard),它的放行已完全交给
+  // 「feishu 技能声明 credential-paths + 用户授权」这条通道,代码里不再有任何
+  // 针对 lark-cli 的特判。这一行留着是"未授权即读拒"的来源——删掉会把
+  // ~/.lark-cli 直接降级成沙箱内可读,与方案第 2/3 节"授权前读拒"自相矛盾。
   add(join(home, ".lark-cli"), "directory");
   add(join(configHome, "gcloud"), "directory");
   add(join(home, ".config", "gcloud"), "directory");

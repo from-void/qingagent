@@ -7,6 +7,8 @@ description: 飞书(Lark)全平台代操作。覆盖云文档、多维表格、�
 user-invocable: true
 placeholder: 说明飞书操作
 tools: [feishu_auth_start, lark-cli]
+credential-paths:
+  - ~/.lark-cli
 metadata:
   category: capability
   platform: feishu

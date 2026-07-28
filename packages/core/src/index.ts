@@ -232,7 +232,11 @@ export {
   SKILLS_INSTALL_DIR,
   USER_SKILLS_DIR,
   checkCredentialPath,
+  ensureCredentialPathExists,
+  intersectGrantedWithRequests,
   isNeverAllowedCredentialPath,
+  listCredentialRequests,
+  pendingCredentialRequests,
   listChildSkills,
   listTopLevelSkills,
   parseCredentialPathDeclarations,
@@ -243,6 +247,7 @@ export {
 } from "./skills/index.js";
 export type {
   CredentialPathDeclaration,
+  CredentialRequest,
   DiscoveredSkill,
   ParsedSkillFrontmatter,
 } from "./skills/index.js";
@@ -273,6 +278,8 @@ export {
   registerBrowserFolderSource,
   requestBrowserFolderBridge,
   resolveBrowserFolderBridgeResponse,
+  resolveCredentialWallMode,
+  resolveSandboxCredentialPaths,
   resolveIsolation,
   unregisterBrowserFolderSession,
   unregisterBrowserFolderSource,

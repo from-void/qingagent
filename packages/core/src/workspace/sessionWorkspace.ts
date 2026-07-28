@@ -28,6 +28,7 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
+import { listGrantedCredentialPaths } from "@qingagent/db";
 import { Buffer } from "node:buffer";
 import { mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
@@ -42,10 +43,16 @@ import {
 import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import {
+  ensureCredentialPathExists,
+  intersectGrantedWithRequests,
+  listCredentialRequests,
+} from "../skills/credentialRequests.js";
+import {
   prepareReadWall,
   ReadWallLocalSandbox,
   type PreparedReadWall,
 } from "./readWallSandbox.js";
+import type { CredentialWallMode } from "./readWallPolicy.js";
 import { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
 export { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
 
@@ -192,6 +199,35 @@ export function shouldInjectCredentials(): boolean {
  *  QINGAGENT_ALLOW_UNISOLATED_COMMANDS=1 补回单用户本地命令能力。 */
 export function allowUnisolatedCommands(): boolean {
   return isEnvEnabled(process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS);
+}
+
+/**
+ * 凭证墙档位的唯一判定入口。
+ *
+ * 这里刻意不新造开关:0721 拍板的安全档位体系(YOLO/最宽档)尚未合入本分支,
+ * 合入后只需把这一个函数改成读取那套档位即可,调用方与渲染层都不动。
+ * 在此之前按现有形态判定——完全不设文件隔离、且显式放开未隔离命令执行,
+ * 就是当前产品里语义上的最宽档,凭证墙没有再收紧的意义。
+ */
+export function resolveCredentialWallMode(): CredentialWallMode {
+  return resolveIsolation() === "none" && allowUnisolatedCommands() ? "wide" : "standard";
+}
+
+/**
+ * 本次会话真正要放行的凭证路径:已授权 ∩ 当前仍被已启用技能声明。
+ * 授权被回收、技能被关掉、声明被删掉,下次构建沙箱即自动收回。
+ */
+export async function resolveSandboxCredentialPaths(
+  loadGrantedPaths: () => Promise<string[]>,
+): Promise<string[]> {
+  const [granted, requests] = await Promise.all([
+    loadGrantedPaths().catch(() => [] as string[]),
+    listCredentialRequests().catch(() => []),
+  ]);
+  const paths = intersectGrantedWithRequests(granted, requests);
+  // 目录不存在就 bind 不上;CLI 首登也要往里写,先建出来(0700)。
+  await Promise.all(paths.map((path) => ensureCredentialPathExists(path)));
+  return paths;
 }
 
 export interface SessionWorkspaceFactoryOptions {
@@ -530,6 +566,9 @@ async function buildSessionWorkspace(
   let readWall: PreparedReadWall | null = null;
   if (isolation === "seatbelt" || isolation === "bwrap") {
     try {
+      const grantedCredentialPaths = await resolveSandboxCredentialPaths(
+        () => listGrantedCredentialPaths(),
+      );
       readWall = await prepareReadWall({
         platform: isolation === "seatbelt" ? "darwin" : "linux",
         env: process.env,
@@ -540,6 +579,8 @@ async function buildSessionWorkspace(
         builtinSkillsDir: BUILTIN_SKILLS_DIR,
         userSkillsDir: USER_SKILLS_DIR,
         extraReadOnlyPaths,
+        grantedCredentialPaths,
+        credentialWallMode: resolveCredentialWallMode(),
         nodeExecutable: process.execPath,
       });
       console.info("[sessionWorkspace] read-wall ready", {
@@ -547,6 +588,9 @@ async function buildSessionWorkspace(
         mode: readWall.mode,
         ruleCount: readWall.ruleCount,
         policyHash: readWall.policyHash,
+        credentialWallMode: readWall.credentialWallMode,
+        // 路径含宿主用户名,只报条数不报原文。
+        credentialPathCount: readWall.credentialPaths.length,
         warnings: readWall.warnings,
       });
     } catch (error) {

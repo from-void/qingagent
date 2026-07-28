@@ -267,6 +267,12 @@ function ColumnComponent(props: ColumnNodeViewProps) {
       const effectiveMin = Math.min(Math.max(MIN_COLUMN_RATIO, minByWidth), pairSum / 2);
       const leftRatio = snapBoundaryRatio(rawLeft, pairSum, effectiveMin);
       const rightRatio = roundRatio(pairSum - leftRatio);
+      const snappedRatios = nextContext.ratios.slice();
+      snappedRatios[nextContext.index] = leftRatio;
+      snappedRatios[nextContext.index + 1] = rightRatio;
+      // pointermove 写入的是未吸附原始比例；即使吸附结果等于 attrs、不需要事务，
+      // 松手时也必须先把预览 DOM 恢复到最终持久化比例。
+      applyPreviewRatios(drag.columnElements, snappedRatios);
       if (leftRatio === nextContext.ratios[nextContext.index] && rightRatio === nextContext.ratios[nextContext.index + 1]) {
         return;
       }

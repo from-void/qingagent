@@ -2183,7 +2183,7 @@ export async function loadSessionFromThread(
  */
 export async function listSessionThreads(opts: {
   page?: number;
-  perPage?: number;
+  perPage?: number | false;
 } = {}): Promise<{
   threads: StorageThreadType[];
   total: number;

@@ -69,23 +69,6 @@ function legacySectionsSignature(sections: unknown): string {
   return JSON.stringify(normalized) ?? "";
 }
 
-async function collectAllThreads(
-  firstPage: Awaited<ReturnType<typeof listSessionThreads>>,
-  pageSize: number,
-): Promise<StorageThreadType[]> {
-  const threads = [...firstPage.threads];
-  let page = 0;
-  let currentPage = firstPage;
-
-  while (currentPage.hasMore) {
-    page++;
-    currentPage = await listSessionThreads({ page, perPage: pageSize });
-    threads.push(...currentPage.threads);
-  }
-
-  return threads;
-}
-
 function documentMatchesMetadata(
   input: DocumentSaveInput,
   docRow: Awaited<ReturnType<typeof documentRepo.load>>,
@@ -101,20 +84,22 @@ function documentMatchesMetadata(
 }
 
 async function shouldSkipStartupMigration(
-  firstPage: Awaited<ReturnType<typeof listSessionThreads>>,
-  pageSize: number,
+  snapshot: Awaited<ReturnType<typeof listSessionThreads>>,
 ): Promise<boolean> {
-  if (firstPage.total === 0) return true;
+  if (snapshot.total === 0) return true;
 
   try {
     const existing = await documentRepo.countByResourceId(QINGAGENT_RESOURCE_ID);
-    if (existing !== firstPage.total) return false;
+    if (existing !== snapshot.total) return false;
 
-    const threads = await collectAllThreads(firstPage, pageSize);
-    if (threads.length !== firstPage.total) {
+    const uniqueThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
+    if (
+      uniqueThreadIds.size !== snapshot.threads.length ||
+      uniqueThreadIds.size !== snapshot.total
+    ) {
       return false;
     }
-    for (const thread of threads) {
+    for (const thread of snapshot.threads) {
       const input = metadataToDocumentInput(thread);
       if (!input) return false;
       const docRow = await documentRepo.load(input.id);
@@ -184,9 +169,11 @@ export async function migrateThreadMetadataToDocuments(
   opts: MigrationOptions = {},
 ): Promise<MigrationStats> {
   const pageSize = opts.pageSize ?? 200;
-  const firstPage = await listSessionThreads({ page: 0, perPage: pageSize });
+  // Mastra 的 perPage:false 在一次存储查询中取回完整结果，避免 updatedAt 在 offset
+  // 分页期间变化造成重复/漏读；pageSize 只控制后续写入批次。
+  const snapshot = await listSessionThreads({ page: 0, perPage: false });
   const stats: MigrationStats = {
-    total: firstPage.total,
+    total: snapshot.total,
     migrated: 0,
     skipped: 0,
     failed: 0,
@@ -194,16 +181,22 @@ export async function migrateThreadMetadataToDocuments(
     batchFallbacks: 0,
   };
 
-  if (!opts.force && (await shouldSkipStartupMigration(firstPage, pageSize))) {
+  if (!opts.force && (await shouldSkipStartupMigration(snapshot))) {
     return stats;
   }
 
-  let page = 0;
-  let currentPage = firstPage;
   const migratedThreads: MigratedThread[] = [];
-  while (true) {
+  for (
+    let page = 0;
+    page * pageSize < snapshot.threads.length;
+    page += 1
+  ) {
+    const pageThreads = snapshot.threads.slice(
+      page * pageSize,
+      (page + 1) * pageSize,
+    );
     const candidates: Array<{ thread: StorageThreadType; input: DocumentSaveInput }> = [];
-    for (const thread of currentPage.threads) {
+    for (const thread of pageThreads) {
       try {
         const input = metadataToDocumentInput(thread);
         if (input) {
@@ -270,9 +263,6 @@ export async function migrateThreadMetadataToDocuments(
       }
     }
 
-    if (!currentPage.hasMore) break;
-    page++;
-    currentPage = await listSessionThreads({ page, perPage: pageSize });
   }
 
   await markThreadsMigrated(migratedThreads, new Date().toISOString());

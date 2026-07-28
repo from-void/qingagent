@@ -50,7 +50,7 @@ const { memory, threads } = vi.hoisted(() => {
       }: {
         filter: { resourceId: string };
         page: number;
-        perPage: number;
+        perPage: number | false;
       }) => {
         const all = Array.from(threads.values())
           .filter((thread) => thread.resourceId === filter.resourceId)
@@ -58,6 +58,13 @@ const { memory, threads } = vi.hoisted(() => {
             (a, b) =>
               (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime(),
           );
+        if (perPage === false) {
+          return {
+            threads: all,
+            total: all.length,
+            hasMore: false,
+          };
+        }
         const start = page * perPage;
         const pageThreads = all.slice(start, start + perPage);
         return {
@@ -410,6 +417,70 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(stats.migrated).toBe(21);
     expect((await documentRepo.load("doc-01"))?.title).toBe("content-01");
   });
+
+  it("updatedAt 页间重排不会让最旧线程漏过启动核验", async () => {
+    const rows = Array.from({ length: 201 }, (_, index) => {
+      const id = `thread-${String(index + 1).padStart(3, "0")}`;
+      const metadata = validMetadata(`content-${index + 1}`, {
+        docId: `doc-${String(index + 1).padStart(3, "0")}`,
+      });
+      addThread(id, metadata);
+      return { id, metadata };
+    });
+    for (const { id, metadata } of rows) {
+      await saveDocumentFromMetadata(id, metadata, id === "thread-001"
+        ? { title: "stale-oldest" }
+        : {});
+    }
+
+    let offsetPaginationCalls = 0;
+    memory.listThreads.mockImplementation(async (args) => {
+      const all = Array.from(threads.values())
+        .filter((thread) => thread.resourceId === args.filter.resourceId)
+        .sort(
+          (a, b) =>
+            (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime(),
+        );
+      if (args.perPage === false) {
+        return { threads: all, total: all.length, hasMore: false };
+      }
+      if (args.filter.resourceId === "qingagent-user") {
+        offsetPaginationCalls += 1;
+        const start = args.page * args.perPage;
+        const result = {
+          threads: all.slice(start, start + args.perPage),
+          total: all.length,
+          hasMore: start + args.perPage < all.length,
+        };
+        if (args.page === 0) {
+          const oldest = threads.get("thread-001");
+          if (oldest) {
+            oldest.updatedAt = new Date("2030-01-01T00:00:00.000Z");
+          }
+        }
+        return result;
+      }
+      const start = args.page * args.perPage;
+      return {
+        threads: all.slice(start, start + args.perPage),
+        total: all.length,
+        hasMore: start + args.perPage < all.length,
+      };
+    });
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments({ pageSize: 200 });
+
+    expect(offsetPaginationCalls).toBe(0);
+    expect(stats.migrated).toBe(201);
+    expect((await documentRepo.load("doc-001"))?.title).toBe("content-1");
+    expect(memory.listThreads).toHaveBeenCalledWith(expect.objectContaining({
+      page: 0,
+      perPage: false,
+    }));
+  }, 20_000);
 
   it("does not skip when counts match but a document row is missing", async () => {
     const metaA = validMetadata("present", { docId: "doc-present" });

@@ -76,6 +76,30 @@ describe("NewSessionPage 文件夹弹框键盘行为", () => {
     expect(window.location.hash).toBe("#/new");
   });
 
+  it("技能菜单与文件夹引导层同时打开时，Escape 每次只关闭最前景一层", async () => {
+    await render(<NewSessionPage />);
+    const skillButton = Array.from(host?.querySelectorAll<HTMLButtonElement>(".ccx-toolbar button") ?? [])
+      .find((button) => button.textContent?.includes("技能"));
+    if (!skillButton) throw new Error("skill button not found");
+    const folderButton = getButton("[data-wf='NewSessionFolderBtn']");
+    await waitFor(() => !folderButton.disabled);
+
+    click(skillButton);
+    click(folderButton);
+    expect(query("[data-wf='NsSkillMenu']")).not.toBeNull();
+    expect(query("[data-wf='NewSessionFolderIntroOverlay']")).not.toBeNull();
+
+    await keyDown("Escape");
+    expect(query("[data-wf='NewSessionFolderIntroOverlay']")).toBeNull();
+    expect(query("[data-wf='NsSkillMenu']")).not.toBeNull();
+    expect(window.location.hash).toBe("#/new");
+
+    await keyDown("Escape");
+    await wait(520);
+    expect(query("[data-wf='NsSkillMenu']")).toBeNull();
+    expect(window.location.hash).toBe("#/new");
+  });
+
   it("提交动画期间离开新建页后不会被旧回调拉回工作区", async () => {
     await render(<NewSessionPage />);
     const editor = query(".starter-edit");

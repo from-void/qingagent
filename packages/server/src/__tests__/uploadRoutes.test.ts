@@ -195,6 +195,34 @@ describe("uploadRoutes 下载响应头", () => {
     );
   });
 
+  it("孤立代理项不会令下载 500，非 BMP emoji 仍完整编码进 filename*", async () => {
+    const { app } = await createUploadApp();
+    const malformed = await postUpload(app, {
+      filename: "坏\uD800名.txt",
+      mimeType: "text/plain",
+      content: "malformed filename",
+    });
+    const emoji = await postUpload(app, {
+      filename: "发布🚀.pdf",
+      mimeType: "application/pdf",
+      content: "emoji filename",
+    });
+
+    const malformedDownload = await app.request(
+      `/api/v1/files/${malformed.body.fileId}`,
+    );
+    const emojiDownload = await app.request(`/api/v1/files/${emoji.body.fileId}`);
+
+    expect(malformedDownload.status).toBe(200);
+    expect(malformedDownload.headers.get("content-disposition")).toContain(
+      "filename*=UTF-8''%E5%9D%8F%E5%90%8D.txt",
+    );
+    expect(emojiDownload.status).toBe(200);
+    expect(emojiDownload.headers.get("content-disposition")).toContain(
+      "filename*=UTF-8''%E5%8F%91%E5%B8%83%F0%9F%9A%80.pdf",
+    );
+  });
+
   it("MIME 与文件名中的控制字符不能注入下载响应头", async () => {
     const { app } = await createUploadApp();
     const uploaded = await postUpload(app, {

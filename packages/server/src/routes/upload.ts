@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { removeUnpairedSurrogates } from "@qingagent/contract-ts";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
   UPLOAD_DIR,
@@ -41,7 +42,8 @@ function sanitizeFilename(filename: string): string {
 }
 
 function encodeDispositionFilename(filename: string): string {
-  const withoutControls = filename.replace(/[\u0000-\u001f\u007f]/g, "_");
+  const withoutControls = removeUnpairedSurrogates(filename)
+    .replace(/[\u0000-\u001f\u007f]/g, "_");
   return encodeURIComponent(withoutControls).replace(
     /['()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,

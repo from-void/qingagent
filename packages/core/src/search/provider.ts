@@ -5,7 +5,7 @@ import {
   parseLiteSerp,
   type SearchResult,
 } from "./parseDuckDuckGo.js";
-import { markSearchProviderQuota } from "./health.js";
+import { markSearchProviderQuota, shouldSkipSearchProvider } from "./health.js";
 
 export type { SearchResult } from "./parseDuckDuckGo.js";
 
@@ -29,10 +29,12 @@ const USER_AGENT =
 
 const ENDPOINTS = [
   {
+    healthId: "ddg:html",
     url: "https://html.duckduckgo.com/html/",
     parse: parseDdgHtml,
   },
   {
+    healthId: "ddg:lite",
     url: "https://lite.duckduckgo.com/lite/",
     parse: parseLiteSerp,
   },
@@ -56,6 +58,7 @@ export class DuckDuckGoProvider implements SearchProvider {
     if (!query.trim() || limit <= 0) return [];
 
     for (const endpoint of ENDPOINTS) {
+      if (shouldSkipSearchProvider(endpoint.healthId)) continue;
       try {
         const results = await this.searchOne(
           endpoint.url,
@@ -68,7 +71,7 @@ export class DuckDuckGoProvider implements SearchProvider {
       } catch (err) {
         if (options?.signal?.aborted) return [];
         if (isConnectionFailure(err)) {
-          markSearchProviderQuota("ddg", 10 * 60 * 1000);
+          markSearchProviderQuota(endpoint.healthId, 10 * 60 * 1000);
         }
         // Best-effort provider: try the next endpoint, then return [].
       }

@@ -38,6 +38,7 @@ import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import {
   getOrRestoreSession,
+  handleCommand,
   sessionExists,
   sessionManager,
 } from "../gateway/bridgeHandler";
@@ -404,13 +405,89 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     });
     return externalError(c, 400, "VALIDATION", "expectedDocVersion、patchId、verdict 不合法");
   }
-  const session = await getOrRestoreSession(sessionId);
-  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
-  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
+  const {
+    expectedDocVersion,
+    patchId,
+    verdict,
+  } = body as ExternalReviewVerdictRequest;
+  const command: Command = verdict === "accepted"
+    ? { kind: "acceptPatch", data: { id: patchId } }
+    : { kind: "rejectPatch", data: { id: patchId } };
+  const client = parseExternalClient(c.req.header("x-qa-client"));
+  const modelOverrides = await resolveRequestModelOverrides({});
+  type AtomicResult =
+    | { kind: "session_not_found" }
+    | { kind: "agent_busy" }
+    | { kind: "version_conflict"; actual: number }
+    | { kind: "no_pending_review" }
+    | { kind: "patch_not_found" }
+    | {
+        kind: "marked";
+        saved: boolean;
+        docVersion: number;
+        reviewingCount: number;
+      };
+  const atomic = {
+    result: { kind: "session_not_found" } as AtomicResult,
+  };
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) {
+        atomic.result = { kind: "session_not_found" };
+        return;
+      }
+      if (deriveAgentBusy(session)) {
+        atomic.result = { kind: "agent_busy" };
+        return;
+      }
+      if (session.docVersion !== expectedDocVersion) {
+        atomic.result = { kind: "version_conflict", actual: session.docVersion };
+        return;
+      }
+      if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+        atomic.result = { kind: "no_pending_review" };
+        return;
+      }
+      if (!session.suggestions.has(patchId)) {
+        atomic.result = { kind: "patch_not_found" };
+        return;
+      }
+
+      yield* handleCommand(
+        command,
+        undefined,
+        "external",
+        modelOverrides,
+        client,
+        sessionId,
+      );
+      const updated = session.suggestions.get(patchId);
+      atomic.result = {
+        kind: "marked",
+        saved: updated?.suggestion.status === verdict,
+        docVersion: session.docVersion,
+        reviewingCount: countReviewingPatches(session.suggestions.values()),
+      };
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
   }
-  if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+  const atomicResult = atomic.result;
+  if (atomicResult.kind === "session_not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (atomicResult.kind === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (atomicResult.kind === "version_conflict") {
+    return reviewVersionConflict(c, expectedDocVersion, atomicResult.actual, maxSeq(frames));
+  }
+  if (atomicResult.kind === "no_pending_review") {
     return externalError(
       c,
       409,
@@ -419,7 +496,7 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
       "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
     );
   }
-  if (!session.suggestions.has(body.patchId)) {
+  if (atomicResult.kind === "patch_not_found") {
     return externalError(
       c,
       404,
@@ -428,28 +505,7 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
       "用 `qa review list -s <id>` 重读待审修改列表",
     );
   }
-  const command: Command = body.verdict === "accepted"
-    ? { kind: "acceptPatch", data: { id: body.patchId } }
-    : { kind: "rejectPatch", data: { id: body.patchId } };
-  let frames: LoggedFrame[];
-  try {
-    frames = await sessionManager.submit(sessionId, {
-      command,
-      origin: "external",
-      client: parseExternalClient(c.req.header("x-qa-client")),
-      modelOverrides: await resolveRequestModelOverrides({}),
-    });
-  } catch (error) {
-    if (error instanceof SessionActorQueueFullError) {
-      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
-    }
-    throw error;
-  }
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
-  }
-  const updated = session.suggestions.get(body.patchId);
-  if (!updated || updated.suggestion.status !== body.verdict) {
+  if (!atomicResult.saved) {
     return externalError(
       c,
       409,
@@ -463,14 +519,14 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     sessionId,
     ms: elapsed(startedAt),
     result: "marked",
-    verdict: body.verdict,
+    verdict,
   });
   return c.json({
     status: "marked" as const,
-    docVersion: session.docVersion,
-    patchIds: [body.patchId],
-    verdict: body.verdict,
-    reviewingCount: countReviewingPatches(session.suggestions.values()),
+    docVersion: atomicResult.docVersion,
+    patchIds: [patchId],
+    verdict,
+    reviewingCount: atomicResult.reviewingCount,
     seq,
   });
 });

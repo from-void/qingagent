@@ -1,14 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Dispatcher } from "undici";
 import {
   DEFAULT_MODEL_CONNECT_TIMEOUT_MS,
+  MODEL_PREFLIGHT_CACHE_TTL_MS,
+  MODEL_PREFLIGHT_RETRY_DELAYS_MS,
   MODEL_CONNECTION_REUSE_OPTIONS,
   MODEL_KEEP_ALIVE_MAX_TIMEOUT_MS,
   createModelDispatcher,
   createModelDnsLookup,
   isConnectionResetError,
   isReplayableModelRequest,
+  isTransientPreflightError,
+  resetModelPreflightCacheForTests,
   resolveModelDispatcherConfig,
+  runModelFetchPreflight,
   shouldProxyModelUrl,
 } from "./modelTransport.js";
 
@@ -183,6 +188,132 @@ describe("连接复用竞态判定", () => {
     expect(isReplayableModelRequest(
       new Request("https://model.test/v1", { method: "POST", body: "x" }),
       undefined,
+    )).toBe(false);
+  });
+});
+
+describe("modelFetch DNS 预检", () => {
+  const PRIVATE_ENV = { QINGAGENT_ALLOW_PRIVATE_MODEL_HOST: "1" } as const;
+  const timeoutError = () => new DOMException("Model DNS preflight timed out", "TimeoutError");
+
+  beforeEach(() => {
+    resetModelPreflightCacheForTests();
+  });
+
+  it("同 host 预检成功后 TTL 内不再重复解析,过期后重新解析", async () => {
+    let calls = 0;
+    let clock = 1_000;
+    const deps = {
+      validate: async () => {
+        calls += 1;
+        return new URL("https://api.model.test/v1");
+      },
+      now: () => clock,
+    };
+    await runModelFetchPreflight("https://api.model.test/v1/chat", {}, undefined, deps);
+    await runModelFetchPreflight("https://api.model.test/v2/other", {}, undefined, deps);
+    expect(calls).toBe(1);
+
+    clock += MODEL_PREFLIGHT_CACHE_TTL_MS + 1;
+    await runModelFetchPreflight("https://api.model.test/v1/chat", {}, undefined, deps);
+    expect(calls).toBe(2);
+  });
+
+  it("不同 host 与不同私网策略各自独立缓存", async () => {
+    const seen: string[] = [];
+    const deps = {
+      validate: async (rawUrl: string) => {
+        seen.push(rawUrl);
+        return new URL(rawUrl);
+      },
+    };
+    await runModelFetchPreflight("https://a.model.test/v1", {}, undefined, deps);
+    await runModelFetchPreflight("https://b.model.test/v1", {}, undefined, deps);
+    await runModelFetchPreflight("https://a.model.test/v1", PRIVATE_ENV, undefined, deps);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("瞬时 DNS 故障重试一次即恢复,并写入缓存", async () => {
+    let calls = 0;
+    const deps = {
+      validate: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("getaddrinfo EAI_AGAIN"), { code: "EAI_AGAIN" });
+        return new URL("https://flaky.model.test/v1");
+      },
+    };
+    await expect(
+      runModelFetchPreflight("https://flaky.model.test/v1", {}, undefined, deps),
+    ).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+
+    await runModelFetchPreflight("https://flaky.model.test/v1", {}, undefined, deps);
+    expect(calls).toBe(2);
+  });
+
+  it("允许私网时预检超时降级为尽力而为,不阻断调用也不落缓存", async () => {
+    let calls = 0;
+    const deps = {
+      validate: async () => {
+        calls += 1;
+        throw timeoutError();
+      },
+    };
+    await expect(
+      runModelFetchPreflight("https://slow.model.test/v1", PRIVATE_ENV, undefined, deps),
+    ).resolves.toBeUndefined();
+    expect(calls).toBe(MODEL_PREFLIGHT_RETRY_DELAYS_MS.length + 1);
+
+    calls = 0;
+    await runModelFetchPreflight("https://slow.model.test/v1", PRIVATE_ENV, undefined, deps);
+    expect(calls).toBe(MODEL_PREFLIGHT_RETRY_DELAYS_MS.length + 1);
+  });
+
+  it("不允许私网时预检超时仍严格阻断", async () => {
+    const deps = {
+      validate: async () => {
+        throw timeoutError();
+      },
+    };
+    await expect(
+      runModelFetchPreflight("https://slow.model.test/v1", {}, undefined, deps),
+    ).rejects.toThrow(/preflight timed out/);
+  });
+
+  it("策略拒绝不是瞬时故障,允许私网时也照样抛出", async () => {
+    const deps = {
+      validate: async () => {
+        throw new Error("Blocked private/non-global-unicast address for evil.test: 10.0.0.1");
+      },
+    };
+    await expect(
+      runModelFetchPreflight("https://evil.test/v1", PRIVATE_ENV, undefined, deps),
+    ).rejects.toThrow(/Blocked private/);
+  });
+
+  it("调用方取消优先于降级,直接抛出取消原因", async () => {
+    const controller = new AbortController();
+    const abortReason = new DOMException("This operation was aborted", "AbortError");
+    const deps = {
+      validate: async () => {
+        controller.abort(abortReason);
+        throw timeoutError();
+      },
+    };
+    await expect(
+      runModelFetchPreflight("https://slow.model.test/v1", PRIVATE_ENV, controller.signal, deps),
+    ).rejects.toBe(abortReason);
+  });
+
+  it("瞬时故障判定只认 DNS 侧超时与临时错误码", () => {
+    expect(isTransientPreflightError(timeoutError())).toBe(true);
+    expect(isTransientPreflightError(
+      Object.assign(new Error("dns"), { code: "EAI_AGAIN" }),
+    )).toBe(true);
+    expect(isTransientPreflightError(new Error("Blocked private address"))).toBe(false);
+    expect(isTransientPreflightError(new Error("Could not resolve hostname: a.test"))).toBe(false);
+    expect(isTransientPreflightError(
+      Object.assign(new Error("abort"), { name: "AbortError" }),
     )).toBe(false);
   });
 });

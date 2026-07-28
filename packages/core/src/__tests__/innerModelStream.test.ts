@@ -140,14 +140,16 @@ describe("streamInnerModel", () => {
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
-  it("BranchCall 见字后失败时完整降级原 streamText 路径，且不重复上报内容启动", async () => {
+  it("BranchCall 见字后失败时先重置候选再降级，且多字节 delta 按新候选重新累积", async () => {
     getSessionSnapshotMock.mockReturnValue({ sessionId: "s" });
     branchCallMock.mockImplementationOnce(async (input: {
       onActivity?: () => void;
       onRawContentStart?: (observedAt: number) => void;
+      onTextDelta?: (delta: string, raw: string, observedAt: number) => void;
     }) => {
       input.onActivity?.();
       input.onRawContentStart?.(Date.now());
+      input.onTextDelta?.("废弃😀", "废弃😀", Date.now());
       return {
         ok: false,
         reason: "tool_call",
@@ -156,11 +158,13 @@ describe("streamInnerModel", () => {
       };
     });
     streamTextMock.mockReturnValue({ fullStream: fullStream([
-      { type: "text-delta", text: "降级成功" },
+      { type: "text-delta", text: "降级" },
+      { type: "text-delta", text: "成功😀" },
       { type: "finish", finishReason: "stop" },
     ]) });
     const starts: number[] = [];
-    const deltas: string[] = [];
+    const events: string[] = [];
+    let currentBytes = 0;
 
     const result = await streamInnerModel({
       callSite: "generateSvg",
@@ -170,12 +174,20 @@ describe("streamInnerModel", () => {
       thinking: false,
       temperature: 0.4,
       onContentStart: (ms) => starts.push(ms),
-      onContentDelta: (delta) => { deltas.push(delta); },
+      onContentReset: () => {
+        currentBytes = 0;
+        events.push("reset");
+      },
+      onContentDelta: (delta) => {
+        currentBytes += Buffer.byteLength(delta, "utf8");
+        events.push(`delta:${delta}`);
+      },
     });
 
-    expect(result.raw).toBe("降级成功");
+    expect(result.raw).toBe("降级成功😀");
     expect(starts).toHaveLength(1);
-    expect(deltas).toEqual(["降级成功"]);
+    expect(events).toEqual(["delta:废弃😀", "reset", "delta:降级", "delta:成功😀"]);
+    expect(currentBytes).toBe(Buffer.byteLength("降级成功😀", "utf8"));
     expect(streamTextMock).toHaveBeenCalledOnce();
     expect(getDeepseekModelMock).toHaveBeenCalledWith(undefined, "flash", expect.objectContaining({
       attempt: 6,

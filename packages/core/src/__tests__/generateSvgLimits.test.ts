@@ -267,18 +267,18 @@ describe("generateSvg direct DeepSeek path", () => {
     expect(writeFileMock).not.toHaveBeenCalled();
   });
 
-  it("分支见字后回退时按当前有效 raw 重算字节，不累计废弃分支", async () => {
-    const abandonedBranch = "a".repeat(GENERATE_SVG_RAW_MAX_BYTES - 1);
+  it("分支见字后回退时响应真实 reset，不累计废弃分支的多字节内容", async () => {
+    const abandonedBranch = "甲".repeat(Math.floor((GENERATE_SVG_RAW_MAX_BYTES - 1) / 3));
     const fallbackSvg =
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">` +
-      `<rect width="10" height="10" fill="#00ff00"/></svg>`;
+      `<text x="10" y="20">回退😀</text></svg>`;
     expect(Buffer.byteLength(abandonedBranch) + Buffer.byteLength(fallbackSvg))
       .toBeGreaterThan(GENERATE_SVG_RAW_MAX_BYTES);
     expect(Buffer.byteLength(fallbackSvg)).toBeLessThan(GENERATE_SVG_RAW_MAX_BYTES);
 
     streamInnerModelMock.mockImplementationOnce(async (input) => {
       input.onContentDelta?.(abandonedBranch, abandonedBranch);
-      // streamInnerModel 的 fallback 从空 raw 重新累积；消费端必须随 raw 一起重置计数。
+      input.onContentReset?.();
       input.onContentDelta?.(fallbackSvg, fallbackSvg);
       return { raw: fallbackSvg, contentStartMs: 0 };
     });
@@ -287,5 +287,20 @@ describe("generateSvg direct DeepSeek path", () => {
 
     expect(result.ok).toBe(true);
     expect(writeFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("增量上限按 UTF-8 字节而非字符数计算", async () => {
+    streamInnerModelMock.mockImplementationOnce(async (input) => {
+      const prefix = "a".repeat(GENERATE_SVG_RAW_MAX_BYTES - 1);
+      input.onContentDelta?.(prefix, prefix);
+      input.onContentDelta?.("甲", `${prefix}甲`);
+      return { raw: "", contentStartMs: 0 };
+    });
+
+    const result = await executeGenerateSvg("多字节超限");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(`${GENERATE_SVG_RAW_MAX_BYTES} 字节上限`);
+    expect(writeFileMock).not.toHaveBeenCalled();
   });
 });

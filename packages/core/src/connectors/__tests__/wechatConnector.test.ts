@@ -39,6 +39,38 @@ describe("WechatConnector", () => {
     await expect(connector.probe()).resolves.toMatchObject({ ...expected, lastCheckedAt: "2026-07-11T12:00:00.000Z" });
   });
 
+  it("probe 检出 reauth 后写回对应凭据并让后续 status 保持失效", async () => {
+    let stored = bundle(7);
+    const markSessionNeedsReauth = vi.fn(async (revision: number, checkedAt: Date) => {
+      expect(revision).toBe(stored.revision);
+      stored = bundle(revision, {
+        sessionIssue: {
+          reasonCode: "needs_reauth",
+          lastCheckedAt: checkedAt.toISOString(),
+        },
+      });
+    });
+    const connector = new WechatConnector({
+      readBundle: async () => stored,
+      probeSearchbiz: async () => ({ ok: false, kind: "reauth", message: "session" }),
+      markSessionNeedsReauth,
+      now,
+    });
+
+    await expect(connector.probe()).resolves.toMatchObject({
+      state: "needs_reauth",
+      statusFreshness: "fresh",
+    });
+    expect(markSessionNeedsReauth).toHaveBeenCalledWith(
+      7,
+      new Date("2026-07-11T12:00:00.000Z"),
+    );
+    await expect(connector.status()).resolves.toMatchObject({
+      state: "needs_reauth",
+      lastCheckedAt: "2026-07-11T12:00:00.000Z",
+    });
+  });
+
   it("pending 轮询透传扫码信号:scanned → reasonCode=WECHAT_SCANNED", async () => {
     const connector = new WechatConnector({ readBundle: async () => null, now });
     const status = vi.mocked(wechatAuthService.status);

@@ -254,6 +254,41 @@ export async function saveConnectorCredentialBundle<T>(
   });
 }
 
+/**
+ * 在不推进凭据 revision 的前提下更新 bundle 附属状态。
+ * expectedRevision 将状态严格绑定到读取它的那代凭据，避免迟到探测污染重连后的新凭据。
+ */
+export async function updateConnectorCredentialBundlePayload<T>(
+  connectorId: string,
+  payload: T,
+  expectedRevision: number,
+  scope = DEFAULT_SCOPE,
+): Promise<ConnectorCredentialBundle<T>> {
+  await ensureMigrated();
+  return withTransaction(async (client) => {
+    const current = await readBundleRow<T>(client, connectorId, scope);
+    const actualRevision = current?.revision ?? null;
+    if (!current || actualRevision !== expectedRevision) {
+      throw new ConnectorCredentialCasError(expectedRevision, actualRevision);
+    }
+    const bundle: ConnectorCredentialBundle<T> = { ...current, payload };
+    const now = new Date().toISOString();
+    await client.execute({
+      sql: `UPDATE sandbox_credentials
+            SET value_enc = ?, updated_at = ?
+            WHERE scope = ? AND platform = ? AND cred_key = ?`,
+      args: [
+        encryptCredential(JSON.stringify(bundle)),
+        now,
+        scope,
+        connectorBundlePlatform(connectorId),
+        CONNECTOR_BUNDLE_KEY,
+      ],
+    });
+    return commitTransaction(bundle);
+  });
+}
+
 export interface ReadThroughBundleMigrationOptions<T> {
   connectorId: string;
   legacyPlatform: string;

@@ -8,8 +8,7 @@ import { registerConnector } from "./registryCore.js";
 import type { ConnectorAdapter, ConnectorDefinition, ConnectorStatusDto } from "./types.js";
 import { wechatAuthService } from "./wechatAuthService.js";
 import {
-  clearWechatSessionIssue,
-  getWechatSessionIssue,
+  markWechatSessionNeedsReauth,
   readWechatCredentialBundle,
   WECHAT_LEGACY_CREDENTIAL_KEYS,
   type WechatCredentialPayload,
@@ -18,6 +17,7 @@ import {
 interface WechatConnectorDependencies {
   readBundle: () => Promise<ConnectorCredentialBundle<WechatCredentialPayload> | null>;
   probeSearchbiz: (token: string, cookie: string) => Promise<WechatAuthProbeResult>;
+  markSessionNeedsReauth: (revision: number, now: Date) => Promise<void>;
   deleteBundle: (revision: number | null) => Promise<void>;
   now: () => Date;
 }
@@ -45,6 +45,7 @@ export class WechatConnector implements ConnectorAdapter {
     this.deps = {
       readBundle: readWechatCredentialBundle,
       probeSearchbiz: probeWechatSearchbiz,
+      markSessionNeedsReauth: markWechatSessionNeedsReauth,
       deleteBundle: (revision) => deleteConnectorCredentialBundle("wechat-mp", {
         expectedRevision: revision,
         legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS },
@@ -82,6 +83,11 @@ export class WechatConnector implements ConnectorAdapter {
     const result = await this.deps.probeSearchbiz(bundle.payload.token, bundle.payload.cookie);
     if (result.ok) return { ...ttlStatus, reasonCode: null, lastCheckedAt: checkedAt, statusFreshness: "fresh" };
     if (result.kind === "reauth") {
+      try {
+        await this.deps.markSessionNeedsReauth(bundle.revision, this.deps.now());
+      } catch {
+        // 持久化异常不遮蔽本次探测已经确定的失效结果。
+      }
       return createConnectorStatus("needs_reauth", { reasonCode: "needs_reauth", account: ttlStatus.account, lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true });
     }
     const reasonCode = result.kind === "rate_limit"
@@ -99,7 +105,6 @@ export class WechatConnector implements ConnectorAdapter {
       // 损坏行没有可信 revision；仓储会在事务内仅删除仍然损坏的原始行。
     }
     await this.deps.deleteBundle(revision);
-    clearWechatSessionIssue();
     return createConnectorStatus("disconnected", { reasonCode: "USER_DISCONNECTED", lastCheckedAt: this.deps.now().toISOString(), statusFreshness: "fresh", canProbe: false });
   }
 
@@ -108,7 +113,7 @@ export class WechatConnector implements ConnectorAdapter {
       return createConnectorStatus("disconnected", { reasonCode: "WECHAT_CREDENTIAL_MISSING", statusFreshness: "ttl", canProbe: false });
     }
     const account = bundle.payload.account ? { displayName: bundle.payload.account } : null;
-    const issue = getWechatSessionIssue(bundle.revision);
+    const issue = bundle.payload.sessionIssue;
     if (issue) return createConnectorStatus("needs_reauth", { reasonCode: issue.reasonCode, account, lastCheckedAt: issue.lastCheckedAt, statusFreshness: "fresh", canProbe: true });
     if (Date.parse(bundle.payload.expiry) <= this.deps.now().getTime()) {
       return createConnectorStatus("needs_reauth", { reasonCode: "needs_reauth", account, statusFreshness: "ttl", canProbe: true });

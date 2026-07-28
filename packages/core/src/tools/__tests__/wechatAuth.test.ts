@@ -9,7 +9,7 @@ import { wechatAuthStartTool, wechatAuthStatusTool } from "../wechatAuth.js";
 vi.mock("@qingagent/doc-render/browser", () => ({ browserLaunchCandidates: vi.fn() }));
 vi.mock("../../credentials/credentialsRepo.js", () => ({ saveConnectorCredentialBundle: vi.fn() }));
 vi.mock("../../connectors/wechatCredentials.js", () => ({
-  readWechatCredentialBundle: vi.fn(), clearWechatSessionIssue: vi.fn(),
+  readWechatCredentialBundle: vi.fn(),
 }));
 vi.mock("../wechatSearch.js", () => ({ probeWechatSearchbiz: vi.fn() }));
 

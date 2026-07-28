@@ -49,10 +49,17 @@ async function requireWechatAuth(): Promise<AuthOk | AuthErr> {
   return { ok: true, token: creds.token, cookie: creds.cookie ?? "", revision: bundle!.revision };
 }
 
-function normalizeWechatBusinessError(error: unknown, revision: number): { state: string; error: string } {
+async function normalizeWechatBusinessError(
+  error: unknown,
+  revision: number,
+): Promise<{ state: string; error: string }> {
   if (error instanceof WechatCgiError) {
     if (error.kind === "SESSION") {
-      markWechatSessionNeedsReauth(revision);
+      try {
+        await markWechatSessionNeedsReauth(revision);
+      } catch {
+        // 状态持久化失败不应覆盖当前请求已经得到的会话失效结果。
+      }
       return { state: "needs_reauth", error: error.message };
     }
     if (error.kind === "RATE_LIMIT") return { state: "rate_limit", error: error.message };
@@ -346,7 +353,7 @@ export const wechatSearchMpTool = createTool({
       if (context?.abortSignal?.aborted) {
         throw context.abortSignal.reason ?? new DOMException("微信搜索已取消", "AbortError");
       }
-      const normalized = normalizeWechatBusinessError(error, credentialRevision);
+      const normalized = await normalizeWechatBusinessError(error, credentialRevision);
       return {
         ok: false,
         state: normalized.state,
@@ -459,7 +466,7 @@ export const wechatListArticlesTool = createTool({
       if (context?.abortSignal?.aborted) {
         throw context.abortSignal.reason ?? new DOMException("微信文章列表已取消", "AbortError");
       }
-      const normalized = normalizeWechatBusinessError(error, credentialRevision);
+      const normalized = await normalizeWechatBusinessError(error, credentialRevision);
       return {
         ok: false,
         state: normalized.state,

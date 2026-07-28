@@ -4,7 +4,7 @@ import {
   saveConnectorCredentialBundle,
 } from "../credentials/credentialsRepo.js";
 import { PendingStore, PendingStoreError } from "./pendingStore.js";
-import { readWechatCredentialBundle, clearWechatSessionIssue } from "./wechatCredentials.js";
+import { readWechatCredentialBundle } from "./wechatCredentials.js";
 import { probeWechatSearchbiz } from "../tools/wechatSearch.js";
 
 // 微信 bundle 本身是单用户全局凭据，因此并发会话共享同一个授权 scope：重复/并发 start
@@ -348,7 +348,6 @@ export class WechatAuthService {
               token,
               expiry,
             }, { writeGuard: () => !signal.aborted });
-            clearWechatSessionIssue();
             console.info("[wechat-auth] credentials saved");
             setAuthTerminalState(pending, "ready");
           } catch (error) {

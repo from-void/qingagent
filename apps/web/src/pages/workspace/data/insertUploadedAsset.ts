@@ -7,8 +7,9 @@ type AssetEditor = Pick<Editor, "chain" | "state" | "view">;
 interface PendingUploadBookmark {
   blockId: string;
   node: PmJsonNode;
-  parentBlockId: string | null;
-  parentIsDoc: boolean;
+  ancestorBlockId: string | null;
+  ancestorIsDoc: boolean;
+  parentPath: number[];
   previousBlockId: string | null;
   nextBlockId: string | null;
   index: number;
@@ -151,9 +152,7 @@ export function replayPendingUploadPlaceholders(
   for (const bookmark of bookmarks) {
     if (containsBlockId(replayed, bookmark.blockId)) continue;
     const inserted = insertPendingUploadBookmark(replayed, bookmark);
-    replayed = inserted.inserted
-      ? inserted.node
-      : insertAtRootFallback(replayed, bookmark);
+    if (inserted.inserted) replayed = inserted.node;
   }
   return replayed as unknown as PmDoc;
 }
@@ -183,14 +182,30 @@ function collectPendingUploadBookmarks(
   blockIds: ReadonlySet<string>,
 ): PendingUploadBookmark[] {
   const bookmarks: PendingUploadBookmark[] = [];
-  editor.state.doc.descendants((node, _pos, parent, index) => {
+  editor.state.doc.descendants((node, pos, parent, index) => {
     const blockId = readBlockId(node.attrs.blockId);
     if (!blockId || !blockIds.has(blockId) || !parent) return true;
+    const $pos = editor.state.doc.resolve(pos);
+    let ancestorDepth = $pos.depth;
+    while (
+      ancestorDepth > 0
+      && readBlockId($pos.node(ancestorDepth).attrs.blockId) === null
+    ) {
+      ancestorDepth -= 1;
+    }
+    const ancestorBlockId = ancestorDepth === 0
+      ? null
+      : readBlockId($pos.node(ancestorDepth).attrs.blockId);
+    const parentPath: number[] = [];
+    for (let depth = ancestorDepth; depth < $pos.depth; depth += 1) {
+      parentPath.push($pos.index(depth));
+    }
     bookmarks.push({
       blockId,
       node: node.toJSON() as PmJsonNode,
-      parentBlockId: readBlockId(parent.attrs.blockId),
-      parentIsDoc: parent.type.name === "doc",
+      ancestorBlockId,
+      ancestorIsDoc: ancestorDepth === 0,
+      parentPath,
       previousBlockId: index > 0
         ? readBlockId(parent.child(index - 1).attrs.blockId)
         : null,
@@ -209,18 +224,12 @@ function insertPendingUploadBookmark(
   bookmark: PendingUploadBookmark,
   root = true,
 ): { node: PmJsonNode; inserted: boolean } {
-  const isTargetParent = bookmark.parentIsDoc
+  const isTargetAncestor = bookmark.ancestorIsDoc
     ? root
-    : bookmark.parentBlockId !== null
-      && readBlockId(node.attrs?.blockId) === bookmark.parentBlockId;
-  if (isTargetParent) {
-    return {
-      node: {
-        ...node,
-        content: insertBookmarkIntoContent(node.content ?? [], bookmark),
-      },
-      inserted: true,
-    };
+    : bookmark.ancestorBlockId !== null
+      && readBlockId(node.attrs?.blockId) === bookmark.ancestorBlockId;
+  if (isTargetAncestor) {
+    return insertBookmarkAtParentPath(node, bookmark.parentPath, bookmark);
   }
 
   const content = node.content;
@@ -238,13 +247,42 @@ function insertPendingUploadBookmark(
   return { node, inserted: false };
 }
 
-function insertAtRootFallback(
-  root: PmJsonNode,
+function insertBookmarkAtParentPath(
+  node: PmJsonNode,
+  parentPath: readonly number[],
   bookmark: PendingUploadBookmark,
-): PmJsonNode {
+): { node: PmJsonNode; inserted: boolean } {
+  if (parentPath.length === 0) {
+    return {
+      node: {
+        ...node,
+        content: insertBookmarkIntoContent(node.content ?? [], bookmark),
+      },
+      inserted: true,
+    };
+  }
+
+  const [childIndex, ...remainingPath] = parentPath;
+  const content = node.content;
+  if (
+    childIndex === undefined
+    || !content
+    || childIndex < 0
+    || childIndex >= content.length
+  ) {
+    return { node, inserted: false };
+  }
+  const child = insertBookmarkAtParentPath(
+    content[childIndex]!,
+    remainingPath,
+    bookmark,
+  );
+  if (!child.inserted) return { node, inserted: false };
+  const nextContent = content.slice();
+  nextContent[childIndex] = child.node;
   return {
-    ...root,
-    content: insertBookmarkIntoContent(root.content ?? [], bookmark),
+    node: { ...node, content: nextContent },
+    inserted: true,
   };
 }
 

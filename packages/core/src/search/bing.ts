@@ -40,7 +40,7 @@ export class BingProvider implements SearchProvider {
         Buffer.from(await resp.arrayBuffer()),
         resp.headers.get("content-type"),
       );
-      return parseBingSerp(html, count);
+      return parseBingSerp(html, count, { strict: options?.strict });
     } catch (error) {
       if (options?.strict) throw error;
       return [];

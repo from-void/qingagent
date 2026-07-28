@@ -70,6 +70,7 @@ export class DuckDuckGoProvider implements SearchProvider {
           query,
           limit,
           options?.signal,
+          options?.strict,
         );
         receivedValidResponse = true;
         if (results.length > 0) return results;
@@ -96,10 +97,15 @@ export class DuckDuckGoProvider implements SearchProvider {
 
   private async searchOne(
     endpoint: string,
-    parse: (html: string, limit: number) => SearchResult[],
+    parse: (
+      html: string,
+      limit: number,
+      options?: { strict?: boolean },
+    ) => SearchResult[],
     query: string,
     limit: number,
     signal?: AbortSignal,
+    strict?: boolean,
   ): Promise<SearchResult[]> {
     const url = await validateFetchUrl(endpoint);
     const response = await fetch(url, {
@@ -121,6 +127,6 @@ export class DuckDuckGoProvider implements SearchProvider {
       Buffer.from(await response.arrayBuffer()),
       response.headers.get("content-type"),
     );
-    return parse(html, limit);
+    return parse(html, limit, { strict });
   }
 }

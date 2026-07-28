@@ -35,4 +35,11 @@ describe("parseBingSerp", () => {
     expect(parseBingSerp("<html><body>no results</body></html>", 5)).toEqual([]);
     expect(parseBingSerp(fixture, 0)).toEqual([]);
   });
+
+  it("严格解析区分有效空结果与无效 HTML", () => {
+    expect(parseBingSerp("<ol id=\"b_results\"></ol>", 5, { strict: true })).toEqual([]);
+    expect(() => parseBingSerp("<html><body>blocked</body></html>", 5, {
+      strict: true,
+    })).toThrow("invalid HTML");
+  });
 });

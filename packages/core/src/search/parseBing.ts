@@ -4,10 +4,21 @@ import * as cheerio from "cheerio";
 import { cleanText } from "@qingagent/doc-render/browser";
 import type { SearchResult } from "./provider.js";
 
-export function parseBingSerp(html: string, limit = 10): SearchResult[] {
-  if (!html || limit <= 0) return [];
+export function parseBingSerp(
+  html: string,
+  limit = 10,
+  options?: { strict?: boolean },
+): SearchResult[] {
+  if (limit <= 0) return [];
+  if (!html) {
+    if (options?.strict) throw new Error("Bing search returned invalid HTML");
+    return [];
+  }
   try {
     const $ = cheerio.load(html);
+    if (options?.strict && $("#b_results").length === 0) {
+      throw new Error("Bing search returned invalid HTML");
+    }
     const results: SearchResult[] = [];
     $("#b_results > li.b_algo").each((_, el) => {
       if (results.length >= limit) return;
@@ -24,7 +35,8 @@ export function parseBingSerp(html: string, limit = 10): SearchResult[] {
       results.push({ title, url: href, snippet });
     });
     return results;
-  } catch {
+  } catch (error) {
+    if (options?.strict) throw error;
     return [];
   }
 }

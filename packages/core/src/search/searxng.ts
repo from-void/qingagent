@@ -42,6 +42,9 @@ export class SearxngProvider implements SearchProvider {
         return [];
       }
       const data = (await resp.json()) as { results?: SearxngJsonResult[] };
+      if (options?.strict && !Array.isArray(data?.results)) {
+        throw new Error("SearXNG search returned an invalid response");
+      }
       const out: SearchResult[] = [];
       for (const r of data.results ?? []) {
         if (out.length >= count) break;

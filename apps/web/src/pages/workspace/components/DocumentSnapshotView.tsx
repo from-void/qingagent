@@ -1061,7 +1061,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       instructions,
       stepDelayMs: timing.stepDelayMs,
       chunkSize: timing.chunkSize,
-      maxDurationMs: timing.totalDurationMs,
+      maxDurationMs: timing.maxDurationMs,
     });
     const rawFinalContent = presentationRun.finalDoc ?? doc.pmDoc;
     const finalContent = rawFinalContent ? flattenNestedTablesInCells(rawFinalContent) : undefined;

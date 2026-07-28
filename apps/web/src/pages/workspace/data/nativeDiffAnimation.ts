@@ -86,6 +86,7 @@ export type NativeDiffInstruction =
 
 export interface NativeTimingPlan {
   totalDurationMs: number;
+  maxDurationMs: number;
   stepDelayMs: number;
   chunkSize: number;
 }
@@ -388,6 +389,7 @@ export function planNativeTiming(
   if (editableUnits === 0) {
     return {
       totalDurationMs: 0,
+      maxDurationMs: 0,
       stepDelayMs,
       chunkSize: timingConfig.chunkSize,
     };
@@ -401,6 +403,7 @@ export function planNativeTiming(
   const stepCount = Math.ceil(editableUnits / chunkSize);
   return {
     totalDurationMs: Math.min(durationBudgetMs, stepCount * stepDelayMs),
+    maxDurationMs: durationBudgetMs,
     stepDelayMs,
     chunkSize,
   };
@@ -709,7 +712,7 @@ function claimNativeTasks(state: NativeConcurrentState): NativeConcurrentState {
       operationIndex: 0,
       charIndex: 0,
       cursorPhase: "typing",
-      startDelayTicks: state.startJitter
+      startDelayTicks: state.startJitter && !isTableCellTask(task)
         ? computeStartJitter(agent.id, agent.assignmentId + 1)
         : 0,
     };
@@ -722,6 +725,15 @@ function claimNativeTasks(state: NativeConcurrentState): NativeConcurrentState {
   };
 }
 
+function isTableCellTask(task: NativeConcurrentTask): boolean {
+  return (
+    task.operations.length > 0
+    && task.operations.every(
+      (operation) => operation.target?.kind === "tableCell",
+    )
+  );
+}
+
 function advanceNativeAgents(
   state: NativeConcurrentState,
 ): NativeConcurrentAdvanceResult {
@@ -731,30 +743,70 @@ function advanceNativeAgents(
   let lastBatchSize = state.lastBatchSize;
 
   const agents = state.agents.map((agent) => {
-    if (agent.cursorPhase !== "typing" || !agent.taskId) return agent;
+    const advanced = advanceNativeAgentForTick(
+      state,
+      agent,
+      taskById,
+      completedTaskIds,
+      steps,
+    );
+    lastBatchSize = Math.max(lastBatchSize, advanced.batchSize);
+    return advanced.agent;
+  });
 
-    // 启动抖动:延迟未到先跳过本帧(不出 step),实现各光标错位启动。
-    if (agent.startDelayTicks > 0) {
-      return { ...agent, startDelayTicks: agent.startDelayTicks - 1 };
+  return {
+    state: {
+      ...state,
+      agents,
+      completedTaskIds,
+      lastBatchSize,
+    },
+    steps,
+  };
+}
+
+function advanceNativeAgentForTick(
+  state: NativeConcurrentState,
+  agent: NativeConcurrentAgent,
+  taskById: ReadonlyMap<string, NativeConcurrentTask>,
+  completedTaskIds: Set<string>,
+  steps: NativeConcurrentStep[],
+): { agent: NativeConcurrentAgent; batchSize: number } {
+  if (agent.cursorPhase !== "typing" || !agent.taskId) {
+    return { agent, batchSize: 0 };
+  }
+
+  // 启动抖动:延迟未到先跳过本帧(不出 step),实现各光标错位启动。
+  if (agent.startDelayTicks > 0) {
+    return {
+      agent: { ...agent, startDelayTicks: agent.startDelayTicks - 1 },
+      batchSize: 0,
+    };
+  }
+
+  let currentAgent = agent;
+  let remainingTableChunk = state.chunkSize;
+  let batchSize = 0;
+
+  while (currentAgent.cursorPhase === "typing" && currentAgent.taskId) {
+    const task = taskById.get(currentAgent.taskId);
+    if (!task) {
+      return { agent: idleNativeAgent(currentAgent), batchSize };
     }
-
-    const task = taskById.get(agent.taskId);
-    if (!task) return idleNativeAgent(agent);
-
-    const operation = task.operations[agent.operationIndex];
+    const operation = task.operations[currentAgent.operationIndex];
     if (!operation) {
       completedTaskIds.add(task.id);
-      return idleNativeAgent(agent);
+      return { agent: idleNativeAgent(currentAgent), batchSize };
     }
 
-    const operationKey = nativeOperationKey(task.id, agent.operationIndex);
+    const operationKey = nativeOperationKey(task.id, currentAgent.operationIndex);
     const baseStep = {
-      agentId: agent.id,
-      assignmentId: agent.assignmentId,
-      label: agent.label,
-      color: agent.color,
+      agentId: currentAgent.id,
+      assignmentId: currentAgent.assignmentId,
+      label: currentAgent.label,
+      color: currentAgent.color,
       taskId: task.id,
-      operationIndex: agent.operationIndex,
+      operationIndex: currentAgent.operationIndex,
       operationKey,
       ...(operation.blockId ? { blockId: operation.blockId } : {}),
       blockIndex: operation.blockIndex,
@@ -771,7 +823,14 @@ function advanceNativeAgents(
         operationLength: 0,
         operationComplete: true,
       });
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
 
     if (operation.kind === "redDot") {
@@ -783,18 +842,31 @@ function advanceNativeAgents(
         operationLength: 0,
         operationComplete: true,
       });
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
 
     if (operation.kind === "insertText") {
       const graphemes = nativeOperationGraphemes(operation);
-      const chunkFrom = agent.charIndex;
-      // cell 必须保持 grapheme 逐字，不能跟随全文 chunkSize 自动放大。
-      const operationChunkSize = operation.target?.kind === "tableCell" ? 1 : state.chunkSize;
-      const chunkTo = Math.min(graphemes.length, chunkFrom + operationChunkSize);
+      const chunkFrom = currentAgent.charIndex;
+      const isTableCell = operation.target?.kind === "tableCell";
+      const operationChunkSize = isTableCell
+        ? remainingTableChunk
+        : state.chunkSize;
+      const chunkTo = Math.min(
+        graphemes.length,
+        chunkFrom + operationChunkSize,
+      );
       const text = graphemes.slice(chunkFrom, chunkTo).join("");
       const operationComplete = chunkTo >= graphemes.length;
-      lastBatchSize = Math.max(lastBatchSize, Math.max(1, chunkTo - chunkFrom));
+      const inserted = Math.max(1, chunkTo - chunkFrom);
+      batchSize += inserted;
       steps.push({
         ...baseStep,
         kind: "insertText",
@@ -807,17 +879,38 @@ function advanceNativeAgents(
         operationComplete,
       });
       if (operationComplete) {
-        return advanceNativeAgentOperation(agent, task, completedTaskIds);
+        const nextAgent = advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        );
+        if (isTableCell) {
+          remainingTableChunk -= inserted;
+          if (
+            remainingTableChunk > 0
+            && nextAgent.cursorPhase === "typing"
+          ) {
+            currentAgent = nextAgent;
+            continue;
+          }
+        }
+        return { agent: nextAgent, batchSize };
       }
-      return { ...agent, charIndex: chunkTo };
+      return {
+        agent: { ...currentAgent, charIndex: chunkTo },
+        batchSize,
+      };
     }
 
     const length = Math.max(0, operation.to - operation.from);
-    const nextDeleted = Math.min(length, agent.charIndex + state.chunkSize);
+    const nextDeleted = Math.min(
+      length,
+      currentAgent.charIndex + state.chunkSize,
+    );
     const chunkFrom = Math.max(operation.from, operation.to - nextDeleted);
-    const chunkTo = operation.to - agent.charIndex;
+    const chunkTo = operation.to - currentAgent.charIndex;
     const operationComplete = nextDeleted >= length;
-    lastBatchSize = Math.max(lastBatchSize, Math.max(1, chunkTo - chunkFrom));
+    batchSize += Math.max(1, chunkTo - chunkFrom);
     steps.push({
       ...baseStep,
       kind: "deleteText",
@@ -829,20 +922,22 @@ function advanceNativeAgents(
       operationComplete,
     });
     if (operationComplete) {
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
-    return { ...agent, charIndex: nextDeleted };
-  });
+    return {
+      agent: { ...currentAgent, charIndex: nextDeleted },
+      batchSize,
+    };
+  }
 
-  return {
-    state: {
-      ...state,
-      agents,
-      completedTaskIds,
-      lastBatchSize,
-    },
-    steps,
-  };
+  return { agent: currentAgent, batchSize };
 }
 
 function nativeOperationGraphemes(

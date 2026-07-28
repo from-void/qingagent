@@ -396,7 +396,7 @@ describe("nativePresentationFrameTape", () => {
     }
   });
 
-  it("普通 3×3 表按物理 cell 逐字，offset/光标不跨格", () => {
+  it("普通 3×3 表按物理 cell 批量推进，offset/光标不跨格", () => {
     const finalSections: ViewBlock[] = [{
       kind: "table",
       head: ["H", "😀", " "],
@@ -432,26 +432,31 @@ describe("nativePresentationFrameTape", () => {
         if (advanced.steps.length === 0) continue;
         runtime.charEnters.length = 0;
         const markers = applyNativeConcurrentFrame(editor, advanced.steps, runtime);
-        expect(advanced.steps).toHaveLength(1);
-        const step = advanced.steps[0]!;
-        expect(step.kind).toBe("insertText");
-        if (step.kind !== "insertText" || step.target?.kind !== "tableCell") continue;
-        expect(step.chunkTo - step.chunkFrom).toBe(1);
-        const key = `${step.target.rowIndex}:${step.target.cellIndex}`;
-        seenTargets.push(key);
-        const row = editor.view.dom.querySelectorAll("tr")[step.target.rowIndex];
-        const cell = row?.querySelectorAll("th,td")[step.target.cellIndex];
-        expect(cell?.textContent).toContain(step.text);
+        expect(advanced.steps.length).toBeGreaterThan(1);
+        for (const step of advanced.steps) {
+          expect(step.kind).toBe("insertText");
+          if (step.kind !== "insertText" || step.target?.kind !== "tableCell") continue;
+          const key = `${step.target.rowIndex}:${step.target.cellIndex}`;
+          seenTargets.push(key);
+          const row = editor.view.dom.querySelectorAll("tr")[step.target.rowIndex];
+          const cell = row?.querySelectorAll("th,td")[step.target.cellIndex];
+          expect(cell?.textContent).toContain(step.text);
+        }
         expect(markers).toHaveLength(1);
         expect(editor.view.dom.querySelectorAll("[data-hc-lane]")).toHaveLength(1);
-        expect(editor.view.dom.querySelector("[data-hc-lane]")?.closest("th,td")).toBe(cell);
+        const lastStep = advanced.steps.at(-1);
+        if (lastStep?.target?.kind === "tableCell") {
+          const row = editor.view.dom.querySelectorAll("tr")[lastStep.target.rowIndex];
+          const cell = row?.querySelectorAll("th,td")[lastStep.target.cellIndex];
+          expect(editor.view.dom.querySelector("[data-hc-lane]")?.closest("th,td")).toBe(cell);
+        }
       }
 
       expect(scheduler.phase).toBe("done");
       expect(Array.from(editor.view.dom.querySelectorAll("th,td"), (cell) => cell.textContent)).toEqual([
         "H", "😀", " ", "A", "BC", "D", "E", "F", "G",
       ]);
-      expect(seenTargets).toEqual(["0:0", "0:1", "0:2", "1:0", "1:1", "1:1", "1:2", "2:0", "2:1", "2:2"]);
+      expect(seenTargets).toEqual(["0:0", "0:1", "0:2", "1:0", "1:1", "1:2", "2:0", "2:1", "2:2"]);
       expect(Array.from(runtime.offsets.keys())).toContain("table:0:1:1:0");
     } finally {
       editor.destroy();

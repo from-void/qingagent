@@ -218,7 +218,7 @@ describe("native PM presentation animation", () => {
     expect(next.steps.length).toBeGreaterThan(0);
   });
 
-  it("表格按 cell 建一个 content task，且 operation 不跟随全局 chunkSize 放大", () => {
+  it("表格按 cell 建一个 content task，且 operation 跟随时长预算放大 chunk", () => {
     const finalSections: ViewBlock[] = [{ kind: "table", head: ["AB"], rows: [["😀C", "D"]] }];
     const run: NativePresentationRun = {
       id: 9,
@@ -246,7 +246,90 @@ describe("native PM presentation animation", () => {
       { kind: "tableCell", rowIndex: 1, cellIndex: 1, textBlockIndex: 0 },
     ]);
     const next = advanceNativeConcurrentState(state, 18);
-    expect(next.steps[0]).toMatchObject({ kind: "insertText", text: "A", chunkFrom: 0, chunkTo: 1 });
+    expect(next.steps[0]).toMatchObject({ kind: "insertText", text: "AB", chunkFrom: 0, chunkTo: 2 });
+  });
+
+  it("预算内的大表按放大 chunk 连续播放完全部字符，不在中途跳终态", () => {
+    const text = "字".repeat(200);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 10,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+    });
+    const emitted: string[] = [];
+    let firstFrame = true;
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        firstFrame ? 1 : state.stepDelayMs,
+      );
+      firstFrame = false;
+      emitted.push(...advanced.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []));
+      state = advanced.state;
+    }
+
+    expect(timing.chunkSize).toBeGreaterThan(1);
+    expect(emitted.some((chunk) => Array.from(chunk).length > 1)).toBe(true);
+    expect(emitted.join("")).toBe(text);
+  });
+
+  it("短 cell 也会在同一拍复用剩余 chunk，阈值内多格表不超时跳终态", () => {
+    const cellText = "字".repeat(12);
+    const rows = Array.from({ length: 120 }, () => [cellText]);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows }];
+    const run: NativePresentationRun = {
+      id: 11,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+    });
+    let firstFrame = true;
+    let emitted = "";
+    let batchedAcrossCells = false;
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        firstFrame ? 1 : state.stepDelayMs,
+      );
+      firstFrame = false;
+      const inserts = advanced.steps.filter((step) => step.kind === "insertText");
+      emitted += inserts.map((step) => step.text).join("");
+      batchedAcrossCells ||= inserts.length > 1;
+      state = advanced.state;
+    }
+
+    expect(timing.chunkSize).toBeGreaterThan(cellText.length);
+    expect(batchedAcrossCells).toBe(true);
+    expect(emitted).toBe(cellText.repeat(rows.length));
   });
 
   it("表格时长只累计 cell grapheme，不把 tab/newline 当字符", () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { routeToHash } from "../../shell";
+import { parseRoute, routeToHash } from "../../shell/Router";
 import type { ChatChip } from "@qingagent/contract-ts";
 import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
@@ -169,6 +169,9 @@ export function NewSessionPage() {
   const busyRef = useRef(false);
   const texturesRef = useRef(buildCardTextures());
   const attachmentSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  const transitionEpochRef = useRef(0);
+  const transitionTimersRef = useRef<Set<number>>(new Set());
 
   const [textLen, setTextLen] = useState(0);
   const [chipCount, setChipCount] = useState(0);
@@ -194,6 +197,16 @@ export function NewSessionPage() {
     () => invocableSkillActionsFromApi(skills),
     [skills],
   );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      transitionEpochRef.current += 1;
+      transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      transitionTimersRef.current.clear();
+    };
+  }, []);
 
   const createAttachmentId = useCallback(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -354,6 +367,8 @@ export function NewSessionPage() {
       return;
     }
     const submissionId = createSubmissionId();
+    const transitionEpoch = transitionEpochRef.current + 1;
+    transitionEpochRef.current = transitionEpoch;
     busyRef.current = true;
     showCcxToast("已起一卷新稿 · 开始读取素材");
     try {
@@ -383,10 +398,27 @@ export function NewSessionPage() {
       });
       return;
     }
+    const canContinueTransition = () =>
+      mountedRef.current &&
+      transitionEpochRef.current === transitionEpoch &&
+      parseRoute(window.location.hash) === "new-session";
+    if (!canContinueTransition()) {
+      busyRef.current = false;
+      return;
+    }
+    const scheduleTransition = (callback: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        transitionTimersRef.current.delete(timer);
+        if (canContinueTransition()) callback();
+      }, delay);
+      transitionTimersRef.current.add(timer);
+    };
     // 离场:左侧文案/输入/返回钮淡出(汉字不在此淡出 —— 改为逐字吸入顶卡)
     pageRef.current?.classList.add("is-leaving");
 
     const goWorkspace = () => {
+      if (!canContinueTransition()) return;
+      transitionEpochRef.current += 1;
       window.location.hash = routeToHash("workspace");
     };
 
@@ -402,17 +434,17 @@ export function NewSessionPage() {
 
       // ① 汉字逐字吸入顶卡(参差);吸入大半后剩余汉字层缓慢隐去
       convergeHanzi(pageRef.current, cx, cy, cardW, cardH);
-      window.setTimeout(() => pageRef.current?.classList.add("is-hz-gone"), 900);
+      scheduleTransition(() => pageRef.current?.classList.add("is-hz-gone"), 900);
 
       // ② 顶卡「掀页」翻转放大成 800 宽文档纸 —— 落点 = 编辑页那张纸的真实 rect。
       //    翻转结束帧 = 编辑页初始帧(computeWorkspaceDocRect 与 workspace-ink-skin.css 同一几何)。
       const docRect = computeWorkspaceDocRect();
-      window.setTimeout(() => {
+      scheduleTransition(() => {
         fly(docRect).then(goWorkspace);
       }, 760);
     } else {
       // 兜底:无叠卡(直链态)时维持原 180ms 快速淡出
-      window.setTimeout(goWorkspace, 180);
+      scheduleTransition(goWorkspace, 180);
     }
   }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden, createSubmissionId, toast]);
 

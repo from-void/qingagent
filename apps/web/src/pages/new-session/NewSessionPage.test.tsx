@@ -47,6 +47,26 @@ describe("NewSessionPage 文件夹弹框键盘行为", () => {
     expect(query("[data-wf='NewSessionFolderIntroOverlay']")).toBeNull();
     expect(window.location.hash).toBe("#/new");
   });
+
+  it("提交动画期间离开新建页后不会被旧回调拉回工作区", async () => {
+    await render(<NewSessionPage />);
+    const editor = query(".starter-edit");
+    if (!editor) throw new Error("editor not found");
+    await act(async () => {
+      editor.textContent = "保留当前导航";
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      await Promise.resolve();
+    });
+
+    click(getButton("[data-wf='StartSession']"));
+    await waitFor(() => query("[data-wf='NewSessionPage']")?.classList.contains("is-leaving") === true);
+    window.location.hash = "#/";
+    await wait(1300);
+
+    expect(window.location.hash).toBe("#/");
+    const { clearPendingSubmission } = await import("../../system");
+    await clearPendingSubmission();
+  });
 });
 
 describe("NewSessionPage 附件校验", () => {

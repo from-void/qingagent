@@ -4,8 +4,8 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const workspaceCss = readFileSync(
-  resolve(process.cwd(), "src/pages/workspace/workspace.css"),
+const inkBubbleCss = readFileSync(
+  resolve(process.cwd(), "src/system/ink-bubble.css"),
   "utf8",
 );
 
@@ -203,7 +203,7 @@ describe("InkBubble WebGL snapshot settling", () => {
     expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
     expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
     expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
-    const compactCss = workspaceCss.replace(/\s+/g, "");
+    const compactCss = inkBubbleCss.replace(/\s+/g, "");
     expect(compactCss).toContain(
       "#view-workspace.ink-bubble.wf-msg.user.ink-bubble--static-fallback{background:var(--ink-1);color:var(--ink-on-dark);}",
     );

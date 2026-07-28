@@ -81,6 +81,13 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     group === "doc" && command === "events"
       ? parseEventTarget(args)
       : null;
+  const preflightStrReplaceValues =
+    group === "doc" &&
+    command === "propose" &&
+    !optionValue(args, "--ops") &&
+    !optionValue(args, "--full")
+      ? parseStrReplaceValues(args)
+      : null;
   const client = await ApiClient.create();
   if (group === "template" && command === "list") {
     const type = optionValue(args, "--type");
@@ -256,7 +263,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "doc" && command === "propose") {
     const sessionId = requireOption(args, "-s");
     const expectedDocVersion = Number(requireOption(args, "--expect-version"));
-    const ops = await parseOps(args);
+    const ops = await parseOps(args, preflightStrReplaceValues ?? undefined);
     const data: ExternalProposalResponse = await client.propose(sessionId, { expectedDocVersion, ops });
     return output(data, hasFlag(args, "--json"));
   }
@@ -436,7 +443,10 @@ async function status(json: boolean): Promise<void> {
   else process.stdout.write(`青简正在运行 version=${info.version} pid=${info.pid}\n`);
 }
 
-async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
+async function parseOps(
+  args: string[],
+  preflightStrReplaceValues?: string[][],
+): Promise<ExternalProposeOp[]> {
   const opsFile = optionValue(args, "--ops");
   if (opsFile) return JSON.parse(await readFile(opsFile, "utf8")) as ExternalProposeOp[];
   const full = optionValue(args, "--full");
@@ -444,14 +454,18 @@ async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
   const append = optionValue(args, "--append");
   const ops: ExternalProposeOp[] = [];
   if (append) ops.push({ kind: "appendSection", markdown: await readFile(append, "utf8") });
-  for (const [oldText, newText] of optionValues(args, "--str-replace", 2, {
-    knownOptionNames: DOC_PROPOSE_OPTION_NAMES,
-    missingMessage: "--str-replace 需要旧文和新文",
-  })) {
+  for (const [oldText, newText] of preflightStrReplaceValues ?? parseStrReplaceValues(args)) {
     ops.push({ kind: "strReplace", old: oldText, new: newText });
   }
   if (ops.length === 0) throw new QaCliError("VALIDATION", "缺少提案 ops");
   return ops;
+}
+
+function parseStrReplaceValues(args: string[]): string[][] {
+  return optionValues(args, "--str-replace", 2, {
+    knownOptionNames: DOC_PROPOSE_OPTION_NAMES,
+    missingMessage: "--str-replace 需要旧文和新文",
+  });
 }
 
 async function events(client: ApiClient, sessionId: string, options: EventOptions): Promise<void> {

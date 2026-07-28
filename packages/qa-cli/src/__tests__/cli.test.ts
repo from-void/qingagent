@@ -423,11 +423,13 @@ describe("qa cli", () => {
     const { main } = await import("../cli.js");
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "proposed" })));
     globalThis.fetch = fetchMock as typeof fetch;
+    vi.mocked(discoverInstance).mockClear();
 
     await expect(main(args)).rejects.toMatchObject({
       code: "VALIDATION",
       message: "--str-replace 需要旧文和新文",
     });
+    expect(discoverInstance).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

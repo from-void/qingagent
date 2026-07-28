@@ -4,6 +4,7 @@ import {
   clearVisionProvider,
   isHttpUrl,
   readVisionProvider,
+  repairBaseUrlScheme,
   visionKeyHeaders,
   writeVisionProvider,
   type VisionProvider,
@@ -96,6 +97,22 @@ describe("visionProviderStore", () => {
     ["https://x.example/v1", true],
   ])("isHttpUrl 脏输入校验:%s", (value, expected) => {
     expect(isHttpUrl(value)).toBe(expected);
+  });
+
+  // 只补 scheme 这一种修复:漏 http(s):// 的地址转成提示继续走测试,别的格式错照旧判非法。
+  it.each([
+    ["api.example.com/v1", "https://api.example.com/v1"],
+    ["api.example.com/v1/chat/completions", "https://api.example.com/v1/chat/completions"],
+    ["localhost:11434/v1", "https://localhost:11434/v1"],
+    ["127.0.0.1:1234/v1", "https://127.0.0.1:1234/v1"],
+    ["  proxy.example.com/v1  ", "https://proxy.example.com/v1"],
+    ["https://x.example/v1", "https://x.example/v1"],
+    ["", null],
+    ["not-a-url", null],
+    ["ftp://x.example", null],
+    ["javascript:alert(1)", null],
+  ])("repairBaseUrlScheme:%s", (value, expected) => {
+    expect(repairBaseUrlScheme(value)).toBe(expected);
   });
 
   it("clear 后 read 返回 null", () => {

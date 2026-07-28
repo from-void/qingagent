@@ -445,6 +445,96 @@ describe("Settings Track B", () => {
     expect(getVisitorDeepseekKey()).toBe("sk-current");
   });
 
+  // 缺陷回归:填完整 endpoint 时"自动处理"要做到底——存的、显示的都必须是服务端归一化后的地址。
+  it("Model 自定义保存服务端归一化地址,并回填输入框 + 明确告知已修正", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/api/v1/settings/model/test-custom")
+        ? Promise.resolve(json({ ok: true, normalizedBaseUrl: "https://api.example.com/v1" }))
+        : fallbackFetch(input, init),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await openVendorConfig();
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(
+      getInputByPlaceholder("https://your-endpoint/v1"),
+      "https://api.example.com/v1/chat/completions",
+    );
+    setInput(getInputByPlaceholder("sk-…"), "sk-testkey");
+    await click(getButtonByText("测试并保存"));
+
+    expect(readCustomProvider("deepseek")?.baseUrl).toBe("https://api.example.com/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent)
+      .toContain("已自动修正为标准地址 https://api.example.com/v1");
+    // 回填:再进配置页看到的就是真正存下来的地址
+    await openVendorConfig();
+    expect(getInputByPlaceholder("https://your-endpoint/v1").value)
+      .toBe("https://api.example.com/v1");
+  });
+
+  it("Model 自定义地址缺 http(s):// 时转成提示,按补齐地址测试并保存", async () => {
+    let resolveTest!: (response: Response) => void;
+    const deferredTest = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/api/v1/settings/model/test-custom")
+        ? deferredTest
+        : fallbackFetch(input, init),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await openVendorConfig();
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "api.example.com/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-testkey");
+
+    // 可修复 → 不判非法:按钮不禁用、不出红字
+    const saveBtn = getButtonByText("测试并保存");
+    expect(saveBtn.hasAttribute("disabled")).toBe(false);
+    expect(host?.querySelector(".sm-field-err")).toBeNull();
+
+    await click(saveBtn);
+    expect(host?.querySelector(".sm-message")?.textContent ?? "")
+      .toContain("将按 https://api.example.com/v1 测试并保存");
+    const testCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("/api/v1/settings/model/test-custom"));
+    expect(JSON.parse(String((testCall?.[1] as RequestInit | undefined)?.body)).baseUrl)
+      .toBe("https://api.example.com/v1");
+
+    await act(async () => {
+      resolveTest(json({ ok: true, normalizedBaseUrl: "https://api.example.com/v1" }));
+      await deferredTest;
+    });
+    await flush();
+    expect(readCustomProvider("deepseek")?.baseUrl).toBe("https://api.example.com/v1");
+  });
+
+  it("Model 自定义地址真格式错时照旧判非法,不放行保存", async () => {
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await openVendorConfig();
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "not-a-url");
+
+    expect(getButtonByText("测试并保存").hasAttribute("disabled")).toBe(true);
+    expect(host?.querySelector(".sm-field-err")?.textContent).toContain("http(s)://");
+  });
+
   it("Model 档位 chip 默认 Flash,选 Pro 后持久化并随请求 header 透传", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(
@@ -1096,6 +1186,35 @@ describe("Settings Track B", () => {
 
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("图像识别已启用");
     expect(host?.querySelector(".sm-message")?.textContent ?? "").not.toContain("测试通过");
+  });
+
+  it("Vision 同样保存服务端归一化地址并回填输入框", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/api/v1/settings/vision/test")
+        ? Promise.resolve(json({ ok: true, normalizedBaseUrl: "https://vision.example/v1" }))
+        : fallbackFetch(input, init),
+    ));
+
+    await render(
+      <ToastProvider>
+        <VisionPanel />
+      </ToastProvider>,
+    );
+    setInput(
+      getInputByPlaceholder("https://your-endpoint/v1"),
+      "https://vision.example/v1/chat/completions",
+    );
+    setInput(getInputByPlaceholder("sk-…"), "sk-vision");
+    setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "qwen-vl-max");
+    await click(getButtonByText("测试并保存"));
+    await flush();
+
+    expect(readVisionProvider()?.baseUrl).toBe("https://vision.example/v1");
+    expect(getInputByPlaceholder("https://your-endpoint/v1").value)
+      .toBe("https://vision.example/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent)
+      .toContain("已自动修正为标准地址");
   });
 
   it("Vision 配置变更后丢弃旧测试成功响应", async () => {

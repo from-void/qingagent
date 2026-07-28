@@ -33,6 +33,33 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * 唯一一种"可修复的格式错误":用户只填了 `host/v1`(漏掉 http(s)://)。
+ * 能补 `https://` 补成合法地址就返回补齐值,否则返回 null(真格式错,照旧按非法提示)。
+ * 刻意收窄,别把任意串都当可修复:
+ * ① 已带任意 scheme(含 ftp:// 之类)一律不改写;
+ * ② 补齐后主机名必须像个主机——带点、或 localhost、或显式端口,
+ *    否则 `not-a-url` 这类明显笔误也会被 new URL 认成合法主机。
+ */
+export function repairBaseUrlScheme(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (isHttpUrl(trimmed)) return trimmed;
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/.exec(trimmed);
+  // 冒号后是纯数字端口(如 localhost:11434/v1)不算 scheme,仍可补;其余已带 scheme 的不改写。
+  if (scheme && !/^\d+(?:\/|$)/.test(scheme[2] ?? "")) return null;
+  const repaired = `https://${trimmed}`;
+  if (!isHttpUrl(repaired)) return null;
+  try {
+    const url = new URL(repaired);
+    const host = url.hostname.toLowerCase();
+    const hostLike = host.includes(".") || host === "localhost" || url.port !== "";
+    return hostLike ? repaired : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readVisionProvider(): VisionProvider | null {
   try {
     const raw = readPersisted(VISION_PROVIDER_KEY);

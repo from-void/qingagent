@@ -340,6 +340,51 @@
   border: 0;
 }
 
+/* 授予/连接类主按钮:暖金实底配深墨字(与设置里的 sm-btn.primary 同一套令牌)。
+   授权不是报错,不能用 danger 的红。 */
+.ws-folder-modal-affirm {
+  padding: 8px 16px;
+  color: #241c0c;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--qj-cinnabar, #c8a96a);
+  border: 1px solid var(--qj-cinnabar, #c8a96a);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.ws-folder-modal-affirm:hover:not(:disabled),
+.ws-folder-modal-affirm:focus-visible {
+  background: var(--qj-cinnabar-lite, #dcc189);
+  border-color: var(--qj-cinnabar-lite, #dcc189);
+}
+
+.ws-folder-modal-affirm:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+/* affirm 卡略宽:比"确定删除吗"多一行路径与一行脚注。 */
+.ws-folder-modal-overlay > .ws-folder-confirm-modal.is-affirm {
+  max-width: 388px;
+}
+
+/* 标题下的路径行:等宽,避免 ~/.lark-cli 被衬线体拉花。 */
+.ws-folder-confirm-subject {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.ws-folder-confirm-foot {
+  margin: 2px 0 0;
+  color: var(--ink-3, var(--ink-2));
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .ws-folder-modal-primary:disabled,
 .ws-folder-modal-secondary:disabled,
 .ws-folder-modal-danger:disabled {

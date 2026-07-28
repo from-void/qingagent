@@ -23,7 +23,6 @@ import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skill
 import { useOverlayDismiss } from "../../system/overlayDismissStack";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
-import { ConfirmOverlay } from "../../pages/workspace/components/ConfirmOverlay";
 import { buildCredentialShareSpec, updateCredentialShare } from "./credentialShare";
 
 ensureSettingsDialogA11y();
@@ -226,14 +225,22 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     setMessage(null);
   }, [message, toast]);
 
-  // 启用后若该技能要共享命令行工具的登录信息,当场弹一张确认卡。
-  const [credentialItems, setCredentialItems] = useState<CredentialShareItem[]>([]);
-  const credentialSpec = buildCredentialShareSpec(credentialItems);
-
-  const handleCredentialDecision = async (accepted: boolean) => {
-    const items = credentialItems;
-    setCredentialItems([]);
-    if (!accepted || items.length === 0) return;
+  // 启用后若该技能要共享命令行工具的登录信息,当场弹确认卡。
+  // 卡面走设置层通用的确认弹层(useConfirm/FolderPromptDialog):有皮肤、有遮罩、
+  // 焦点被困在卡里、Esc 只关它。文案仍由 buildCredentialShareSpec 单点产出。
+  const askCredentialShare = async (items: CredentialShareItem[]) => {
+    const spec = buildCredentialShareSpec(items);
+    if (!spec) return;
+    const accepted = await confirm({
+      title: spec.title,
+      ...(spec.sub ? { subject: spec.sub } : {}),
+      message: spec.say,
+      ...(spec.footHint ? { footHint: spec.footHint } : {}),
+      confirmLabel: spec.primaryLabel,
+      cancelLabel: spec.secondaryLabel,
+      tone: "affirm",
+    });
+    if (!accepted) return;
     try {
       for (const item of items) {
         await updateCredentialShare({
@@ -252,23 +259,15 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     }
   };
 
-  const credentialCard = credentialSpec ? (
-    <ConfirmOverlay
-      sessionId={null}
-      spec={credentialSpec}
-      onDecision={(decision) => void handleCredentialDecision(decision.accepted)}
-    />
-  ) : null;
-
   const toggle = async (name: string, enabled: boolean) => {
     setBusy(name);
     setMessage(null);
     try {
       const pending = (await setSkillEnabled(name, enabled)) ?? [];
-      if (pending.length > 0 && mountedRef.current) setCredentialItems(pending);
       if (detail?.name === name && mountedRef.current) {
         setDetail({ ...detail, enabled });
       }
+      if (pending.length > 0 && mountedRef.current) void askCredentialShare(pending);
     } catch (e) {
       if (mountedRef.current) setMessage(e instanceof Error ? e.message : "操作失败");
     } finally {
@@ -482,7 +481,6 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         ) : (
           <p className="sm-message">{detailError ?? "技能不存在"}</p>
         )}
-        {credentialCard}
       </div>
     );
   }
@@ -590,7 +588,6 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         )}
 
       {!loading && !error && skills.length === 0 && <p className="sm-empty">暂无技能</p>}
-      {credentialCard}
     </div>
   );
 }

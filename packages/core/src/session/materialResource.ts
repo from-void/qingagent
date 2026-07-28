@@ -101,6 +101,17 @@ export function buildMaterialFromParse(
 
   if (failure) {
     const parseError = materialParseErrorText(failure);
+    if (existing && existing.text.trim().length > 0) {
+      return {
+        ...existing,
+        metadata: {
+          ...existing.metadata,
+          parseState: "error",
+          parseError,
+        },
+        updatedAt: now,
+      };
+    }
     return {
       id: materialId,
       filename,

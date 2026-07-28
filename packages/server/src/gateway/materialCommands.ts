@@ -168,10 +168,6 @@ export async function* handleMaterialCommand(
       const filename = existing?.filename || resolved?.filename || fileId;
       const mimeType = existing?.mimeType || resolved?.mimeType || "application/octet-stream";
 
-      if (existing) {
-        clearExtractedTextCacheForMaterial(session, existing, existing.id);
-      }
-
       if (!resolved) {
         console.warn("[materials] reparseMaterial missing upload", {
           sessionId: session.sessionId,
@@ -231,6 +227,9 @@ export async function* handleMaterialCommand(
         mimeType,
         signal: context.commandAbortSignal,
       });
+      if (parseResult.ok && existing) {
+        clearExtractedTextCacheForMaterial(session, existing, existing.id);
+      }
       const { material, frame } = upsertMaterialByFileId(
         session,
         { fileId, filename, mimeType },

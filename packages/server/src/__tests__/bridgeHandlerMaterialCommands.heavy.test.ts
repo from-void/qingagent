@@ -361,6 +361,66 @@ describe("handleCommand material commands", () => {
     expect(schedulePersist).toHaveBeenCalledWith(session, "command:reparseMaterial");
   });
 
+  it("reparseMaterial 失败时保留已有 ready 素材正文、提取元数据与缓存", async () => {
+    const { bridge, schedulePersist } = await loadBridge();
+    const session = await createSession(bridge);
+    const fileId = "77777777-7777-4777-8777-777777777777";
+    const existing = makeMaterial({
+      id: "mat-last-good",
+      filename: "last-good.pdf",
+      text: "LAST_GOOD_BODY",
+      fileId,
+      metadata: {
+        pages: 7,
+        wordCount: 123,
+        title: "Last Good",
+        sourceUrl: "https://example.com/last-good",
+        parseState: "ready",
+        parseError: null,
+      },
+    });
+    session.materials.set(existing.id, existing);
+    session._extractedTexts = new Map([
+      [existing.filename, { text: existing.text, sourceUrl: existing.metadata.sourceUrl ?? null, fileId }],
+      [existing.id, { text: existing.text, sourceUrl: existing.metadata.sourceUrl ?? null, fileId }],
+    ]);
+
+    const frames = await collectFrames(
+      bridge.handleCommand(reparseMaterialCommand(session.sessionId, fileId)),
+    );
+
+    const material = session.materials.get(existing.id);
+    expect(material).toMatchObject({
+      id: existing.id,
+      text: "LAST_GOOD_BODY",
+      summary: "旧摘要",
+      metadata: {
+        pages: 7,
+        wordCount: 123,
+        title: "Last Good",
+        sourceUrl: "https://example.com/last-good",
+        parseState: "error",
+        parseError: "原始文件不存在，无法重试解析",
+      },
+      createdAt: existing.createdAt,
+    });
+    expect(session._extractedTexts?.get(existing.filename)?.text).toBe("LAST_GOOD_BODY");
+    expect(session._extractedTexts?.get(existing.id)?.text).toBe("LAST_GOOD_BODY");
+
+    const resource = singleResourceUpserted(frames);
+    expect(resource.resourceRef.id).toBe(existing.id);
+    expect(resource.byteLen).toBe("LAST_GOOD_BODY".length);
+    expect(resource.metadata).toMatchObject({
+      fileId,
+      pages: 7,
+      wordCount: 123,
+      title: "Last Good",
+      parseState: "error",
+      parseError: "原始文件不存在，无法重试解析",
+    });
+    expect(schedulePersist).toHaveBeenCalledWith(session, "command:reparseMaterial");
+  });
+
   it("reparseMaterial flips an existing error material to ready with the same id", async () => {
     const { bridge, schedulePersist, core } = await loadBridge();
     const session = await createSession(bridge);

@@ -5,12 +5,16 @@ import type { Equal, Expect } from "./typeAssert";
 export const TODO_CONTENT_MAX_LENGTH = 2000;
 export const TODOS_MAX_COUNT = 50;
 
+function hasVisibleTodoContent(content: string): boolean {
+  return content.replace(/[\s\p{Cf}]/gu, "").length > 0;
+}
+
 export const todoItemSchema = z.object({
   content: z
     .string()
     .min(1)
     .max(TODO_CONTENT_MAX_LENGTH)
-    .refine((content) => content.trim().length > 0, "content must not be blank"),
+    .refine(hasVisibleTodoContent, "content must contain a visible character"),
   status: z.enum(["pending", "in_progress", "completed"]),
 }) satisfies z.ZodType<TodoItem>;
 type _TodoItemExact = Expect<Equal<z.infer<typeof todoItemSchema>, TodoItem>>;

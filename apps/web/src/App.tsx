@@ -30,11 +30,7 @@ const styled = <T,>(mod: T): Promise<T> =>
   awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS).then(() => mod);
 const loadHome = onceAsync(() => import("./pages/home/HomePage").then(styled));
 const HomePage = lazy(() => loadHome().then((m) => ({ default: m.HomePage })));
-const loadNewSession = onceAsync(() =>
-  import("./pages/new-session/NewSessionPage").then(styled),
-);
-const NewSessionPage = lazy(() => loadNewSession().then((m) => ({ default: m.NewSessionPage })));
-// 编辑页最重(tiptap 编辑器等),也抽命名工厂供预热,消除「新建页→编辑页」首切白屏。
+// 编辑页最重(tiptap 编辑器等),也抽命名工厂供预热,消除「首页→编辑页」首切白屏。
 const loadWorkspace = onceAsync(() =>
   import("./pages/workspace/WorkspacePage").then(styled),
 );
@@ -80,7 +76,6 @@ const ROUTE_PRESENTATION: Partial<
 > = {
   // 这些纯色来自各懒加载页面 CSS 的最底层；CSS chunk 未到时由主包先铺同色，避免切页露底。
   home: { pageFrameModifier: "web-page-frame--qingjian-home", suspenseBackground: "#1c1915" },
-  "new-session": { suspenseBackground: "#16212c" },
   workspace: { pageFrameModifier: "web-page-frame--workspace", suspenseBackground: "#16212c" },
 };
 
@@ -100,17 +95,15 @@ function AppShell() {
     return () => window.removeEventListener("qa-sse-rate-limited", handleSseRateLimited);
   }, [toast]);
 
-  // 预热路由 chunk:首屏空闲时把后续页面的 JS/CSS/编辑器模块拉好,任意切路由时 chunk 已在内存,
-  // 页面即时挂出「到达态」,不再因 Suspense fallback(空白)露白闪一下。顺序:先热新建页(首页的
-  // 下一步),就绪后接着热编辑页(最重,含 tiptap)——消除「首页→新建页」「新建页→编辑页」两次
-  // 首切白屏;home 兜底「用户先直达文章/编辑页、再返回首页」。同一工厂只拉一次,重复 void 无害。
+  // 预热路由 chunk:首屏空闲时把后续页面的 JS/CSS/编辑器模块拉好,切路由时 chunk 已在内存,
+  // 页面即时挂出「到达态」,不再因 Suspense fallback(空白)露白闪一下。先热首页→编辑页要用的
+  // 墨水过场,再热编辑页(最重,含 tiptap);home 兜底「用户先直达文章/编辑页、再返回首页」。
+  // 同一工厂只拉一次,重复 void 无害。
   useEffect(() => {
     const warm = () => {
-      void loadNewSession().finally(() => {
-        void import("./system/transition/inkWipe").then(({ prewarmInkWipe }) => prewarmInkWipe());
-        void loadWorkspace();
-        void loadHome();
-      });
+      void import("./system/transition/inkWipe").then(({ prewarmInkWipe }) => prewarmInkWipe());
+      void loadWorkspace();
+      void loadHome();
     };
     const ric = (window as typeof window & {
       requestIdleCallback?: (cb: () => void) => number;
@@ -171,7 +164,6 @@ function AppShell() {
           <Router
             routes={{
               home: <HomePage />,
-              "new-session": <NewSessionPage />,
               workspace: <WorkspacePage />,
               ...devRoutes,
             }}

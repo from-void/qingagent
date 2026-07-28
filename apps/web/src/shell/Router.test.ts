@@ -47,6 +47,13 @@ describe("Router dev-only routes", () => {
     expect(parseRoute("#modal-import")).toBe("home");
     expect(parseRoute("#/;anything")).toBe("home");
   });
+
+  it("已拆除的新建页 hash 回落首页(旧链接/书签不白屏)", () => {
+    expect(parseRoute("#/new")).toBe("home");
+    expect(parseRoute("#/new?template=essay")).toBe("home");
+    expect(parseRoute("#/new;modal-import")).toBe("home");
+    expect(parseRoute("#/new", { devRoutesEnabled: true })).toBe("home");
+  });
 });
 
 function RouteProbe() {

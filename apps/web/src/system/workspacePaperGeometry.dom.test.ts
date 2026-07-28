@@ -301,10 +301,6 @@ describe("首页转场纸与工作区真纸几何交接", () => {
       resolve(process.cwd(), "src/pages/home/components/qingjian.css"),
       "utf8",
     );
-    const newSessionCss = readFileSync(
-      resolve(process.cwd(), "src/pages/new-session/new-session-qing.css"),
-      "utf8",
-    );
     const qingjianSource = readFileSync(
       resolve(
         process.cwd(),
@@ -322,9 +318,6 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     const morphFaceRule = homeCss.match(
       /\.qj-root \.ccx-morph-face\s*\{[^}]*\}/,
     )?.[0];
-    const newSessionMorphFaceRule = newSessionCss.match(
-      /\.ccx-morph-face\s*\{[^}]*\}/,
-    )?.[0];
 
     expect(WORKSPACE_PAPER_CSS_VARIABLES["--ws-paper-radius"]).toBe("0px");
     expect(appCss).not.toContain("ws-paper-geometry-probe");
@@ -332,16 +325,9 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     expect(morphFaceRule).toContain(
       "border-radius: var(--ws-paper-radius)",
     );
-    expect(newSessionMorphFaceRule).toContain(
-      "border-radius: var(--ws-paper-radius)",
-    );
     expect(morphRule).toContain("overflow: visible");
     expect(morphRule).not.toMatch(/\b(?:background|box-shadow|border-radius)\s*:/);
-    for (const rule of [
-      paperRule,
-      morphFaceRule,
-      newSessionMorphFaceRule,
-    ]) {
+    for (const rule of [paperRule, morphFaceRule]) {
       expect(rule).not.toMatch(/\b(?:transition|animation)\s*:/);
     }
 

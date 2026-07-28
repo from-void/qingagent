@@ -701,7 +701,6 @@ describe("WorkspacePage review controls", () => {
     window.location.hash = "";
     sessionStorage.clear();
     clearPageExitOutboxStorage();
-    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
     restoreWorkspaceDomMocks = installWorkspaceDomMocks();
   });
@@ -711,7 +710,6 @@ describe("WorkspacePage review controls", () => {
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
     clearPageExitOutboxStorage();
-    localStorage.removeItem("qingagent:pending-submission-claim-v1");
     vi.unstubAllEnvs();
     vi.useRealTimers();
     if (root) {
@@ -3570,170 +3568,6 @@ describe("WorkspacePage review controls", () => {
     expect(workspace.style.getPropertyValue("--doc-right")).toBe("580px");
   });
 
-  it("e2e-loop-0704 R15 回归:#/new 携带的首条消息在建会话完成前就渲染乐观气泡(消除首发空窗)", async () => {
-    // R15 形态:新建页 Ctrl+Enter 跳进工作区后,建会话/传文件在途的头 1-2 秒工作区
-    // 完全空白、用户消息无影,自动化用例把这个空窗当成"首提丢失需重输"(服务端实锤消息
-    // 已在跑)。修法:乐观气泡在任何 await 之前先落地。
-    const { createPendingSubmission } = await import("../../system");
-    await createPendingSubmission({
-      submissionId: "submission-first-message",
-      clientMessageId: "message-first-message",
-      text: "请写一篇短篇小说，题目《雨夜的最后一班公交》，约2000字。",
-      richText: null,
-      chips: [],
-      skills: [],
-      attachments: [],
-      folderSource: null,
-    });
-    let resolveStart: ((sessionId: string) => void) | null = null;
-    serverStreamMock.startSessionImpl = () =>
-      new Promise<string>((resolve) => {
-        resolveStart = resolve;
-      });
-    try {
-      const { WorkspacePage } = await import("./WorkspacePage");
-      await render(<WorkspacePage />);
-      const stream = latestServerStream();
-
-      // 建会话尚未完成(promise 挂起):用户消息气泡必须已在场,且命令尚未发出。
-      expect(host?.textContent).toContain("雨夜的最后一班公交");
-      expect(sendMessageCommands(stream)).toHaveLength(0);
-
-      // 会话就绪后,同一条消息按原文发出(气泡与服务端 user 帧靠 clientMessageId 去重)。
-      await act(async () => {
-        resolveStart?.("s-9");
-      });
-      await flushMicrotasks(5);
-      const sends = sendMessageCommands(stream);
-      expect(sends).toHaveLength(1);
-      const send = sends[0] as Extract<Command, { kind: "sendMessage" }>;
-      expect(send.data.text).toContain("雨夜的最后一班公交");
-      expect(send.data.sessionId).toBe("s-9");
-      expect(send.data.clientMessageId).toBeTruthy();
-    } finally {
-      serverStreamMock.startSessionImpl = null;
-    }
-  });
-
-  it("IDB 写入窗口刷新后经真实路由移交文字与缺失清单，不静默发送无附件首提", async () => {
-    window.location.hash = "#/new";
-    const { PENDING_SUBMISSION_STORAGE_KEY } = await import("../../system");
-    sessionStorage.setItem(PENDING_SUBMISSION_STORAGE_KEY, JSON.stringify({
-      version: 2,
-      submissionId: "submission-idb-writing",
-      clientMessageId: "message-idb-writing",
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 30 * 60 * 1_000,
-      state: "queued",
-      targetSessionId: null,
-      text: "刷新后必须移交到输入框的文字",
-      richText: "刷新后必须移交到输入框的文字{{chip:0}}",
-      chips: [{
-        kind: { kind: "attach" },
-        resourceRef: {
-          id: "attachment-writing",
-          domain: { kind: "file" },
-        },
-        prefix: null,
-        label: "写入中的附件.txt",
-        suffix: null,
-      }],
-      skills: [],
-      attachments: [{
-        id: "attachment-writing",
-        name: "写入中的附件.txt",
-        type: "text/plain",
-        size: 8,
-        lastModified: 123,
-      }],
-      attachmentsPersisted: false,
-      uploadedAssets: [],
-      folderExpected: false,
-      folderPersisted: true,
-      folderAttached: false,
-    }));
-
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    const originalToDataUrl = HTMLCanvasElement.prototype.toDataURL;
-    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-      configurable: true,
-      value: () =>
-        new Proxy(
-          {},
-          {
-            get: (_target, prop) => {
-              if (prop === "createImageData") {
-                return (width: number, height: number) => ({
-                  width,
-                  height,
-                  data: new Uint8ClampedArray(
-                    Math.max(0, width) * Math.max(0, height) * 4,
-                  ),
-                  colorSpace: "srgb",
-                });
-              }
-              if (prop === "measureText") {
-                return () => ({ width: 0 });
-              }
-              return () => undefined;
-            },
-            set: () => true,
-          },
-        ),
-    });
-    Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
-      configurable: true,
-      value: () => "data:image/png;base64,",
-    });
-    try {
-      const [
-        { Router },
-        { NewSessionPage },
-        { WorkspacePage },
-      ] = await Promise.all([
-        import("../../shell/Router"),
-        import("../new-session/NewSessionPage"),
-        import("./WorkspacePage"),
-      ]);
-      await render(
-        <Router
-          routes={{
-            "new-session": <NewSessionPage />,
-            workspace: <WorkspacePage />,
-          }}
-        />,
-      );
-      await act(async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 100));
-      });
-      await flushMicrotasks(10);
-
-      expect(window.location.hash).toBe("#/workspace");
-      expect(getChatEditor().textContent).toContain(
-        "刷新后必须移交到输入框的文字",
-      );
-      expect(host?.textContent).toContain("1 个附件无法恢复");
-      expect(host?.textContent).toContain("请重新添加");
-      expect(
-        serverStreamMock.instances.flatMap((stream) =>
-          sendMessageCommands(stream),
-        ),
-      ).toHaveLength(0);
-      expect(
-        sessionStorage.getItem(PENDING_SUBMISSION_STORAGE_KEY),
-      ).toBeNull();
-    } finally {
-      Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-        configurable: true,
-        value: originalGetContext,
-      });
-      Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
-        configurable: true,
-        value: originalToDataUrl,
-      });
-    }
-  }, 60_000);
-
   it("e2e-0723 停止门二轮:建会话中的规划 turn 停止后不再晚发 sendMessage/问卷", async () => {
     let resolveStart: ((sessionId: string) => void) | null = null;
     serverStreamMock.startSessionImpl = () =>
@@ -3767,74 +3601,6 @@ describe("WorkspacePage review controls", () => {
           (button) => button.textContent === "停止",
         ),
       ).toBe(false);
-    } finally {
-      serverStreamMock.startSessionImpl = null;
-    }
-  });
-
-  it("首提准备期取消后保留原文并提供显式一键重试", async () => {
-    window.history.replaceState(null, "", "#/workspace");
-    const {
-      createPendingSubmission,
-      loadPendingSubmission,
-    } = await import("../../system");
-    await createPendingSubmission({
-      submissionId: "submission-cancelled",
-      clientMessageId: "message-cancelled",
-      text: "取消后仍要保留的首提",
-      richText: null,
-      chips: [],
-      skills: [],
-      attachments: [],
-      folderSource: null,
-    });
-    let resolveStart: ((sessionId: string) => void) | null = null;
-    serverStreamMock.startSessionImpl = () =>
-      new Promise<string>((resolve) => {
-        resolveStart = resolve;
-      });
-    try {
-      const { WorkspacePage } = await import("./WorkspacePage");
-      await render(<WorkspacePage />);
-      const stream = latestServerStream();
-
-      await clickButton("停止");
-      await act(async () => {
-        resolveStart?.("s-cancelled");
-      });
-      await flushMicrotasks(20);
-
-      expect(sendMessageCommands(stream)).toHaveLength(0);
-      const pending = await loadPendingSubmission();
-      expect(pending.kind).toBe("ready");
-      if (pending.kind !== "ready") return;
-      expect(pending.submission).toMatchObject({
-        submissionId: "submission-cancelled",
-        state: "retryable",
-        targetSessionId: "s-cancelled",
-        text: "取消后仍要保留的首提",
-      });
-      expect(window.location.hash).toContain("session=s-cancelled");
-      await flushMicrotasks(20);
-      const toast = host!.querySelector<HTMLElement>(
-        '[data-toast-key="workspace-pending-submission"]',
-      );
-      expect(toast?.textContent).toContain(
-        "已停止，内容与素材已保留",
-      );
-      expect(toast?.textContent).toContain("重试");
-      await clickButton("重试");
-      await flushMicrotasks(10);
-      const sends = sendMessageCommands(stream);
-      expect(sends).toHaveLength(1);
-      expect(sends[0]?.data).toMatchObject({
-        sessionId: "s-cancelled",
-        text: "取消后仍要保留的首提",
-        clientMessageId: "message-cancelled",
-      });
-      await expect(loadPendingSubmission()).resolves.toEqual({
-        kind: "none",
-      });
     } finally {
       serverStreamMock.startSessionImpl = null;
     }

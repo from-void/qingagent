@@ -1,4 +1,4 @@
-// 墨尘粒子(玄青空间景深)。移植自 cc-b demo。返回 start/stop/dispose 控制器。
+// 墨尘粒子(玄青空间景深)。返回 start/stop/dispose 控制器。
 
 export interface DustController {
   start: () => void;

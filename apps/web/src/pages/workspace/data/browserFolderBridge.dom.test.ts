@@ -275,8 +275,8 @@ describe("browser folder handle persistence", () => {
       value: async () => handles[pickerCalls++]!,
     });
 
-    const first = await pickBrowserFolderSource("new-session");
-    const second = await pickBrowserFolderSource("new-session");
+    const first = await pickBrowserFolderSource("s-pick-folder");
+    const second = await pickBrowserFolderSource("s-pick-folder");
 
     expect(first.name).toBe("first-folder");
     expect(second.name).toBe("second-folder");

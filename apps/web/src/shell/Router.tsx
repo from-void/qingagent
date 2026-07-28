@@ -1,13 +1,12 @@
 import { startTransition, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-export type RouteName = "home" | "new-session" | "workspace" | "debug" | "gallery" | "spec" | "uikit";
+export type RouteName = "home" | "workspace" | "debug" | "gallery" | "spec" | "uikit";
 
 const DEV_ONLY_ROUTES = new Set<RouteName>(["debug", "gallery", "spec", "uikit"]);
 
 const ROUTE_TO_HASH: Record<RouteName, string> = {
   home: "#/",
-  "new-session": "#/new",
   workspace: "#/workspace",
   debug: "#/debug",
   gallery: "#/gallery",
@@ -19,7 +18,6 @@ const HASH_TO_ROUTE: Record<string, RouteName> = {
   "": "home",
   "#": "home",
   "#/": "home",
-  "#/new": "new-session",
   "#/workspace": "workspace",
   "#/debug": "debug",
   "#/gallery": "gallery",

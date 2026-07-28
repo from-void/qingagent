@@ -91,10 +91,9 @@ export interface ChatInputProps {
 
 /**
  * Workspace chat input. Wraps a contenteditable element with chip
- * insertion via Range/Selection. Conceptually the same pattern as
- * `pages/new-session/components/StarterEditor.tsx`; once Stage B
- * extracts a shared `ChipEditor` to ui-kit, this component will
- * become the consumer site rather than a parallel implementation.
+ * insertion via Range/Selection. Once a shared `ChipEditor` is
+ * extracted to ui-kit, this component will become the consumer site
+ * rather than a parallel implementation.
  */
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   {
@@ -1215,7 +1214,7 @@ const CHIP_KIND_ICONS: Record<ChatChipSpec["kind"], string> = {
 };
 
 function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
-  // 长文本小条:统一走共享 builder(单行小条 + hover 预览 + data-text),与新建页/气泡一致。
+  // 长文本小条:统一走共享 builder(单行小条 + hover 预览 + data-text),与气泡一致。
   if (spec.kind === "longtext") return buildLongTextChip(spec.text ?? "");
 
   const chip = document.createElement("span");

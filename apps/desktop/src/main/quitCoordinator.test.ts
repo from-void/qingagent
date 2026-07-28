@@ -87,7 +87,9 @@ describe("desktop quit coordinator", () => {
       stopExternalInstance: () => never,
       quit,
       // 生产值为 10 秒；测试缩短同一墙钟 deadline，避免套件平白等待。
-      deadlineMs: 30,
+      // 30ms 在全套并行(27 个测试进程)下会被事件循环饥饿打穿而假红,放宽到 120ms,
+      // 语义不变(清理永不收敛仍须在总期限内写标记放行),外层 <500ms 墙钟断言兜底。
+      deadlineMs: 120,
     });
 
     try {

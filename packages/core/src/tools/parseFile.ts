@@ -58,17 +58,40 @@ type ParseFileToolMetadata = {
   title: string | null;
 };
 
+type ParseFileToolErrorCode =
+  | "FILE_ACCESS_DENIED"
+  | "FILE_NOT_REGULAR"
+  | "FILE_TOO_LARGE";
+
 type ParseFileToolResult = {
-  ok?: true;
+  ok: true;
   text: string;
   metadata: ParseFileToolMetadata;
 } | {
   ok: false;
   error: string;
-  errorCode: "FILE_ACCESS_DENIED" | "FILE_NOT_REGULAR" | "FILE_TOO_LARGE";
+  errorCode?: ParseFileToolErrorCode;
+  failureKind: "unsupported" | "error";
   text: string;
   metadata: ParseFileToolMetadata;
 };
+
+function parseFileToolFailure(
+  error: string,
+  options: {
+    errorCode?: ParseFileToolErrorCode;
+    failureKind?: "unsupported" | "error";
+  } = {},
+): ParseFileToolResult {
+  return {
+    ok: false,
+    error,
+    ...(options.errorCode ? { errorCode: options.errorCode } : {}),
+    failureKind: options.failureKind ?? "error",
+    text: /^\s*\[(?:Error|Unsupported)\]/.test(error) ? error : `[Error] ${error}`,
+    metadata: { pages: null, wordCount: 0, title: null },
+  };
+}
 
 // Office Open XML 本质是 ZIP。这里的限额必须在 mammoth/JSZip 解压任何 entry 之前生效，
 // 避免高压缩比内容把主进程堆内存打满。阈值覆盖正常办公文档，同时给 XML 膨胀留出余量。
@@ -86,29 +109,18 @@ const ZIP_END_OF_CENTRAL_DIRECTORY_BYTES = 22;
 const ZIP_MAX_COMMENT_BYTES = 0xffff;
 const ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES = 46;
 
-const FILE_ACCESS_DENIED_RESULT: ParseFileToolResult = {
-  ok: false,
-  error: "文件不可访问",
+const FILE_ACCESS_DENIED_RESULT = parseFileToolFailure("文件不可访问", {
   errorCode: "FILE_ACCESS_DENIED",
-  text: "[Error] 文件不可访问",
-  metadata: { pages: null, wordCount: 0, title: null },
-};
+});
 
-const FILE_NOT_REGULAR_RESULT: ParseFileToolResult = {
-  ok: false,
-  error: "不是常规文件",
+const FILE_NOT_REGULAR_RESULT = parseFileToolFailure("不是常规文件", {
   errorCode: "FILE_NOT_REGULAR",
-  text: "[Error] 不是常规文件",
-  metadata: { pages: null, wordCount: 0, title: null },
-};
+});
 
-const FILE_TOO_LARGE_RESULT: ParseFileToolResult = {
-  ok: false,
-  error: `文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
-  errorCode: "FILE_TOO_LARGE",
-  text: `[Error] 文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
-  metadata: { pages: null, wordCount: 0, title: null },
-};
+const FILE_TOO_LARGE_RESULT = parseFileToolFailure(
+  `文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
+  { errorCode: "FILE_TOO_LARGE" },
+);
 
 // 路径规则刻意保持短而明确：覆盖操作系统凭据区、常见 CLI 凭据和浏览器凭据库，
 // 不扩展成用户可配置的授权目录/权限系统。
@@ -1744,12 +1756,10 @@ function successResult(text: string, pages: number | null, title: string | null,
 
 function toParseFileToolResult(result: ParseFileBufferOutput): ParseFileToolResult {
   if (!result.ok) {
-    return {
-      text: result.error,
-      metadata: { pages: null, wordCount: 0, title: null },
-    };
+    return parseFileToolFailure(result.error, { failureKind: result.failureKind });
   }
   return {
+    ok: true,
     text: result.text,
     metadata: {
       pages: result.metadata.pages,
@@ -1876,8 +1886,9 @@ export const parseFileTool = createTool({
     mimeType: z.string().optional().describe("MIME 类型；传 fileId 时可省略，由 resolver 提供"),
   }),
   outputSchema: z.object({
-    ok: z.boolean().optional(),
+    ok: z.boolean(),
     error: z.string().optional(),
+    failureKind: z.enum(["unsupported", "error"]).optional(),
     errorCode: z.enum([
       "FILE_ACCESS_DENIED",
       "FILE_NOT_REGULAR",
@@ -1909,10 +1920,9 @@ export const parseFileTool = createTool({
         // realpath 校验防越权)还原真实路径;filename/mimeType 以 resolver 为准。
         const [resolved] = await resolveFileIds([fileId]);
         if (!resolved) {
-          return {
-            text: `[Error] 无法解析 fileId: ${fileId}（上传文件不存在或不可访问）`,
-            metadata: { pages: null, wordCount: 0, title: null },
-          };
+          return parseFileToolFailure(
+            `无法解析 fileId：${fileId}（上传文件不存在或不可访问）`,
+          );
         }
         buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
@@ -1931,29 +1941,24 @@ export const parseFileTool = createTool({
       } else if (fileId) {
         const [resolved] = await resolveFileIds([fileId]);
         if (!resolved) {
-          return {
-            text: `[Error] 无法解析 fileId: ${fileId}（上传文件不存在或不可访问）`,
-            metadata: { pages: null, wordCount: 0, title: null },
-          };
+          return parseFileToolFailure(
+            `无法解析 fileId：${fileId}（上传文件不存在或不可访问）`,
+          );
         }
         buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else {
-        return {
-          text: "[Error] Either filePath, content or fileId must be provided",
-          metadata: { pages: null, wordCount: 0, title: null },
-        };
+        return parseFileToolFailure("必须提供 filePath、content 或 fileId");
       }
 
       if (filename && !mimeType) {
         mimeType = inferMimeTypeFromFilename(filename) ?? undefined;
       }
       if (!filename || !mimeType) {
-        return {
-          text: "[Error] filename 与 mimeType 不能为空（扩展名未知时需显式传入 mimeType）",
-          metadata: { pages: null, wordCount: 0, title: null },
-        };
+        return parseFileToolFailure(
+          "filename 与 mimeType 不能为空（扩展名未知时需显式传入 mimeType）",
+        );
       }
 
       return toParseFileToolResult(

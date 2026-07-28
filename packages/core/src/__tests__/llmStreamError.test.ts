@@ -218,6 +218,52 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(textBodies(frames)).toEqual([]);
   });
 
+  it.each(["", " \n\t", "\u200b", "\u2060", " \u200b\n\u2060\t"])(
+    "首个有效 token 前的空白 delta(%j)不取消瞬态错误重试资格",
+    async (blankText) => {
+      const { createSession, processAgentStream } = await import("../bridge/index.js");
+      const state = createSession("err-blank-delta");
+
+      const { result } = await collectFramesAndReturn(
+        processAgentStream(
+          streamOf(
+            { type: "text-delta", payload: { text: blankText } },
+            errorChunk("read ECONNRESET"),
+          ),
+          {
+            state,
+            agentMessageId: "agent-msg",
+            streamId: "stream-err-blank",
+            runId: "run-err-blank",
+          },
+        ),
+      );
+
+      expect(result.producedVisibleFrame).toBe(false);
+      expect(result.transientErrorChunk).toBeTruthy();
+    },
+  );
+
+  it.each(["中文", "👨‍👩‍👧‍👦"])(
+    "CJK/emoji 正文(%s)仍会取得可见产出资格",
+    async (visibleText) => {
+      const { createSession, processAgentStream } = await import("../bridge/index.js");
+      const { result } = await collectFramesAndReturn(
+        processAgentStream(
+          streamOf({ type: "text-delta", payload: { text: visibleText } }),
+          {
+            state: createSession("visible-unicode-delta"),
+            agentMessageId: "agent-msg",
+            streamId: "stream-visible-unicode",
+            runId: "run-visible-unicode",
+          },
+        ),
+      );
+
+      expect(result.producedVisibleFrame).toBe(true);
+    },
+  );
+
   it("guardrail tripwire abort 必须发前端可见失败帧,不能静默", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("guardrail-tripwire");
@@ -253,7 +299,10 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     streamMock
       .mockResolvedValueOnce({
         runId: "run-retry-0",
-        fullStream: streamOf(errorChunk("read ECONNRESET")),
+        fullStream: streamOf(
+          { type: "text-delta", payload: { text: "\u200b\u2060" } },
+          errorChunk("read ECONNRESET"),
+        ),
       } as never)
       .mockResolvedValueOnce({
         runId: "run-retry-1",

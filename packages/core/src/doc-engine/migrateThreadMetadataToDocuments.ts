@@ -1,5 +1,9 @@
 import type { StorageThreadType } from "@mastra/core/memory";
-import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
+import {
+  getPmContentHash,
+  legacySectionsToPm,
+  pmToLegacySections,
+} from "@qingagent/pm-schema";
 import {
   documentRepo,
   getTombstonedSessionIds,
@@ -31,8 +35,6 @@ export interface MigrationOptions {
   pageSize?: number;
 }
 
-const STARTUP_SAMPLE_LIMIT = 20;
-
 function dateToIso(value: unknown, fallback: string): string {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") return value;
@@ -63,25 +65,8 @@ function metadataToDocumentInput(thread: StorageThreadType): DocumentSaveInput |
 }
 
 function legacySectionsSignature(sections: unknown): string {
-  return JSON.stringify(sections) ?? "";
-}
-
-async function collectSampleThreads(
-  firstPage: Awaited<ReturnType<typeof listSessionThreads>>,
-  pageSize: number,
-): Promise<StorageThreadType[]> {
-  const sampleSize = Math.min(firstPage.total, STARTUP_SAMPLE_LIMIT);
-  const threads = firstPage.threads.slice(0, sampleSize);
-  let page = 0;
-  let currentPage = firstPage;
-
-  while (threads.length < sampleSize && currentPage.hasMore) {
-    page++;
-    currentPage = await listSessionThreads({ page, perPage: pageSize });
-    threads.push(...currentPage.threads.slice(0, sampleSize - threads.length));
-  }
-
-  return threads;
+  const normalized = pmToLegacySections(legacySectionsToPm(sections as never));
+  return JSON.stringify(normalized) ?? "";
 }
 
 function documentMatchesMetadata(
@@ -99,20 +84,22 @@ function documentMatchesMetadata(
 }
 
 async function shouldSkipStartupMigration(
-  firstPage: Awaited<ReturnType<typeof listSessionThreads>>,
-  pageSize: number,
+  snapshot: Awaited<ReturnType<typeof listSessionThreads>>,
 ): Promise<boolean> {
-  if (firstPage.total === 0) return true;
+  if (snapshot.total === 0) return true;
 
   try {
     const existing = await documentRepo.countByResourceId(QINGAGENT_RESOURCE_ID);
-    if (existing !== firstPage.total) return false;
+    if (existing !== snapshot.total) return false;
 
-    const sampleThreads = await collectSampleThreads(firstPage, pageSize);
-    if (sampleThreads.length !== Math.min(firstPage.total, STARTUP_SAMPLE_LIMIT)) {
+    const uniqueThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
+    if (
+      uniqueThreadIds.size !== snapshot.threads.length ||
+      uniqueThreadIds.size !== snapshot.total
+    ) {
       return false;
     }
-    for (const thread of sampleThreads) {
+    for (const thread of snapshot.threads) {
       const input = metadataToDocumentInput(thread);
       if (!input) return false;
       const docRow = await documentRepo.load(input.id);
@@ -182,9 +169,11 @@ export async function migrateThreadMetadataToDocuments(
   opts: MigrationOptions = {},
 ): Promise<MigrationStats> {
   const pageSize = opts.pageSize ?? 200;
-  const firstPage = await listSessionThreads({ page: 0, perPage: pageSize });
+  // Mastra 的 perPage:false 在一次存储查询中取回完整结果，避免 updatedAt 在 offset
+  // 分页期间变化造成重复/漏读；pageSize 只控制后续写入批次。
+  const snapshot = await listSessionThreads({ page: 0, perPage: false });
   const stats: MigrationStats = {
-    total: firstPage.total,
+    total: snapshot.total,
     migrated: 0,
     skipped: 0,
     failed: 0,
@@ -192,16 +181,22 @@ export async function migrateThreadMetadataToDocuments(
     batchFallbacks: 0,
   };
 
-  if (!opts.force && (await shouldSkipStartupMigration(firstPage, pageSize))) {
+  if (!opts.force && (await shouldSkipStartupMigration(snapshot))) {
     return stats;
   }
 
-  let page = 0;
-  let currentPage = firstPage;
   const migratedThreads: MigratedThread[] = [];
-  while (true) {
+  for (
+    let page = 0;
+    page * pageSize < snapshot.threads.length;
+    page += 1
+  ) {
+    const pageThreads = snapshot.threads.slice(
+      page * pageSize,
+      (page + 1) * pageSize,
+    );
     const candidates: Array<{ thread: StorageThreadType; input: DocumentSaveInput }> = [];
-    for (const thread of currentPage.threads) {
+    for (const thread of pageThreads) {
       try {
         const input = metadataToDocumentInput(thread);
         if (input) {
@@ -221,11 +216,29 @@ export async function migrateThreadMetadataToDocuments(
     const tombstoned = await getTombstonedSessionIds(
       candidates.map((row) => row.input.threadId),
     );
-    const rows = candidates.filter((row) => {
+    const eligibleRows = candidates.filter((row) => {
       const blocked = tombstoned.has(row.input.threadId) || isSessionDeleted(row.input.threadId);
       if (blocked) stats.skipped++;
       return !blocked;
     });
+    const rows: typeof eligibleRows = [];
+    for (const row of eligibleRows) {
+      try {
+        const existing = await documentRepo.load(row.input.id);
+        if (!documentMatchesMetadata(row.input, existing)) {
+          rows.push(row);
+        }
+      } catch (err) {
+        // 读取不确定时 fail-open，继续以 metadata 覆盖写入；不能因核验故障漏迁。
+        logger.warn("documents migration row verification failed open", {
+          page,
+          id: row.input.id,
+          threadId: row.input.threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        rows.push(row);
+      }
+    }
 
     if (rows.length > 0) {
       try {
@@ -268,9 +281,6 @@ export async function migrateThreadMetadataToDocuments(
       }
     }
 
-    if (!currentPage.hasMore) break;
-    page++;
-    currentPage = await listSessionThreads({ page, perPage: pageSize });
   }
 
   await markThreadsMigrated(migratedThreads, new Date().toISOString());

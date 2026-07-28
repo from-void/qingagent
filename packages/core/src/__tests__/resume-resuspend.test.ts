@@ -751,7 +751,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     ).toBe(true);
   });
 
-  it("runAgentTurn clears stale runId when the stream throws (no permanent wedge)", async () => {
+  it("runAgentTurn 抛错时清理 runId、脱敏失败帧并补齐空助手消息", async () => {
     const { createSession, runAgentTurn } = await import("../bridge/index.js");
     const { qingagentAgent } = await import("../agents/qingagent.js");
     const state = createSession("throwing-turn");
@@ -760,7 +760,7 @@ describe("processAgentStream resume re-suspend handling", () => {
 
     vi.mocked(qingagentAgent.stream).mockResolvedValueOnce({
       runId: "run-1",
-      fullStream: throwingStream(writeDraftToolCall("write-tc")),
+      fullStream: throwingStream(),
     } as unknown as Awaited<ReturnType<typeof qingagentAgent.stream>>);
 
     const frames = await collectFrames(runAgentTurn(state, "写一篇测试文档"));
@@ -770,9 +770,18 @@ describe("processAgentStream resume re-suspend handling", () => {
         (frame) =>
           frame.kind === "stream" &&
           frame.data.kind === "draftingFailed" &&
-          frame.data.data.reason === "ECONNRESET",
+          frame.data.data.reason === "本轮处理失败，请稍后重试。",
       ),
     ).toBe(true);
+    expect(JSON.stringify(frames)).not.toContain("ECONNRESET");
+    const agentMessage = state.chatHistory.find(
+      (message) => message.role.kind === "agent",
+    );
+    expect(agentMessage?.parts).toContainEqual({
+      kind: "text",
+      data: { body: "本轮处理失败，请稍后重试。" },
+    });
+    expect(JSON.stringify(state.chatHistory)).not.toContain("ECONNRESET");
     expect(state.runId).toBeNull();
     expect(state.toolCallId).toBeNull();
   });

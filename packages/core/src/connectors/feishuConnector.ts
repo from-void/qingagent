@@ -175,18 +175,38 @@ export class FeishuConnector implements ConnectorAdapter {
     if (!parsed.ok) fail(parsed.reasonCode, parsed.message, 502);
     const deviceCode = deviceResult[LARK_DEVICE_CODE];
     if (!deviceCode) fail("LARK_CLI_DIRTY_OUTPUT", "device flow 缺少内部 device code", 502);
-    const providerExpiresAt = this.now() + parsed.value.expiresIn * 1000;
+    const startedAt = this.now();
+    const providerExpiresAt = startedAt + parsed.value.expiresIn * 1000;
+    const authExpiresAt = startedAt + AUTH_TTL_MS;
     const scope = `auth:${domains.join(",")}`;
     let resolveOutcome!: () => void;
     const outcome = new Promise<void>((resolve) => { resolveOutcome = resolve; });
+    const authorizationLaunch: {
+      run?: (effectiveExpiresAt: number) => void;
+    } = {};
     const started = this.pending.start({
       connectorId: "feishu",
       scope,
       create: ({ pendingId, signal }) => {
-        void this.finishAuthorization(pendingId, scope, domains, deviceCode, signal).finally(resolveOutcome);
+        authorizationLaunch.run = (effectiveExpiresAt) => {
+          void this.finishAuthorization(
+            pendingId,
+            scope,
+            domains,
+            deviceCode,
+            signal,
+            effectiveExpiresAt,
+          ).finally(resolveOutcome);
+        };
         return { mode: "authorization", domains, deviceCode, outcome };
       },
     });
+    const effectiveExpiresAt = Math.min(
+      providerExpiresAt,
+      started.entry.expiresAt,
+      authExpiresAt,
+    );
+    authorizationLaunch.run?.(effectiveExpiresAt);
     this.currentPendingId = started.entry.pendingId;
     this.currentScope = scope;
     return {
@@ -194,7 +214,7 @@ export class FeishuConnector implements ConnectorAdapter {
       connectorId: "feishu",
       verification_url: parsed.value.verificationUrl,
       user_code: parsed.value.userCode,
-      expiresAt: new Date(Math.min(providerExpiresAt, started.entry.expiresAt)).toISOString(),
+      expiresAt: new Date(effectiveExpiresAt).toISOString(),
       pendingId: started.entry.pendingId,
       reused: started.reused,
     };
@@ -272,11 +292,19 @@ export class FeishuConnector implements ConnectorAdapter {
     _domains: LarkAuthDomain[],
     deviceCode: string,
     signal: AbortSignal,
+    effectiveExpiresAt: number,
   ): Promise<void> {
     const generation = this.generation;
     const oldStatus = await this.readStatus();
     try {
-      const finish = await this.runner.run(["auth", "login", "--device-code", deviceCode], { signal, timeoutMs: AUTH_TTL_MS });
+      const timeoutMs = effectiveExpiresAt - this.now();
+      if (timeoutMs <= 0) {
+        throw Object.assign(new Error("飞书授权已过期"), { code: "LARK_CLI_TIMEOUT" });
+      }
+      const finish = await this.runner.run(
+        ["auth", "login", "--device-code", deviceCode],
+        { signal, timeoutMs },
+      );
       if (!finish.ok) throw Object.assign(new Error(finish.message), { code: finish.reasonCode });
       const verified = await this.readStatus(signal);
       if (verified.state !== "connected") throw Object.assign(new Error("飞书 user 身份未 ready"), { code: "LARK_AUTH_NOT_READY" });

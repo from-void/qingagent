@@ -37,6 +37,7 @@ import {
   LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
   persistMappedAnnotationGroups,
   replaceRebasedReview,
+  settleRejectedDocumentReview,
   updateDocumentSuggestionStatusInBatch,
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
@@ -257,12 +258,20 @@ function suggestionPersistenceFailedFrame(
 async function* settleResolvedReviewRecords(
   state: SessionState,
   records: readonly SuggestionRecord[],
-  options: { alreadyPersisted?: boolean } = {},
+  options: {
+    alreadyPersisted?: boolean;
+    unresolvedStatus?: Extract<DocSuggestion["status"], "committed" | "rejected">;
+  } = {},
 ): AsyncGenerator<BridgeFrame, boolean> {
   let allPersisted = true;
   for (const record of records) {
     const verdict = state.patchVerdicts.get(record.suggestion.id);
-    const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
+    const terminalStatus =
+      verdict === "rejected"
+        ? "rejected"
+        : verdict === "accepted"
+          ? "committed"
+          : options.unresolvedStatus ?? "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
     if (!options.alreadyPersisted) {
       try {
@@ -677,7 +686,31 @@ export async function* commitPatches(
   const candidateBaseContentHash = getPmContentHash(oldBaseDoc);
 
   if (accepted.length === 0) {
-    const recordsSettled = yield* settleResolvedReviewRecords(state, records);
+    const settlesEntireReview = records.length === state.suggestions.size;
+    if (settlesEntireReview) {
+      const firstSuggestion = records[0]!.suggestion;
+      try {
+        await settleRejectedDocumentReview({
+          docId: state.docId,
+          draft: {
+            batchId:
+              firstSuggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+            baseVersion: firstSuggestion.baseVersion,
+            baseHash: candidateBaseContentHash,
+          },
+          suggestions: records.map((record) => record.suggestion),
+        });
+      } catch (error) {
+        for (const record of records) {
+          yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
+        }
+        yield reviewCommitFailedFrame(state, "rejected_only_atomic_settlement_failed");
+        return;
+      }
+    }
+    const recordsSettled = yield* settleResolvedReviewRecords(state, records, {
+      alreadyPersisted: settlesEntireReview,
+    });
     if (!recordsSettled) {
       yield* finishSettledReviewState(state, "commitPatches:rejected_only_persist_failed");
       return;
@@ -692,6 +725,7 @@ export async function* commitPatches(
         committedDoc: currentPmDoc(state),
         committedVersion: state.docVersion,
         remainingRecords,
+        persist: false,
         persistPending: false,
       });
       if (rebase.status !== "conflict") {
@@ -741,18 +775,31 @@ export async function* commitPatches(
           })),
           "待审草稿更新失败，请重试。",
         );
+      } else {
+        const clearedSettled = yield* settleResolvedReviewRecords(
+          state,
+          remainingRecords.filter((record) => shouldSettleRecord(state, record)),
+          { unresolvedStatus: "rejected" },
+        );
+        if (!clearedSettled) {
+          yield* finishSettledReviewState(state, "commitPatches:rebase_clear_persist_failed");
+          return;
+        }
+        clearReviewDiffState(state);
       }
     } else {
       clearReviewDiffState(state);
     }
     if (state.suggestions.size === 0) {
-      await documentDraftRepo.clear(state.docId).catch((err) => {
-        logger.warn("Failed to clear pending draft after rejected-only commit", {
-          sessionId: state.sessionId,
-          docId: state.docId,
-          error: err instanceof Error ? err.message : String(err),
+      if (!settlesEntireReview) {
+        await documentDraftRepo.clear(state.docId).catch((err) => {
+          logger.warn("Failed to clear pending draft after rejected-only commit", {
+            sessionId: state.sessionId,
+            docId: state.docId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
-      });
+      }
       clearInMemoryDraftDocs(state);
       clearStaleReviewStreamLock(state);
       // 诊断 p01:全拒绝收尾此前只发 docStateChanged 不带正文——若前端 state.doc
@@ -1219,6 +1266,7 @@ export async function* commitPatches(
       committedDoc: result.doc,
       committedVersion: result.docVersion,
       remainingRecords,
+      persist: false,
       persistPending: false,
     });
     if (rebase.status !== "conflict") {
@@ -1264,6 +1312,15 @@ export async function* commitPatches(
         "待审草稿更新失败，请重试。",
       );
     } else {
+      const clearedSettled = yield* settleResolvedReviewRecords(
+        state,
+        remainingRecords.filter((record) => shouldSettleRecord(state, record)),
+        { unresolvedStatus: "committed" },
+      );
+      if (!clearedSettled) {
+        yield* finishSettledReviewState(state, "commitPatches:rebase_clear_persist_failed");
+        return;
+      }
       clearReviewDiffState(state);
     }
   } else {

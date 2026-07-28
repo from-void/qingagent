@@ -73,6 +73,46 @@ function docWithColumnImage(): PmDoc {
   };
 }
 
+function docWithTaskListImage(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "taskList",
+      attrs: { blockId: "tasks-home" },
+      content: [{
+        type: "taskItem",
+        attrs: { blockId: "task-home-1", checked: false },
+        content: [{
+          type: "image",
+          attrs: { blockId: "task-home-img", src: imageUrl, alt: "任务配图" },
+        }],
+      }],
+    }],
+  };
+}
+
+function docWithNonFileImageBeforeLocal(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "blockquote",
+      attrs: { blockId: "quote-home" },
+      content: [
+        {
+          type: "image",
+          attrs: { blockId: "preview-home-img", src: "/preview/generated.svg", alt: "非文件预览图" },
+        },
+        {
+          type: "image",
+          attrs: { blockId: "file-home-img", src: imageUrl, alt: "本地文件图" },
+        },
+      ],
+    }],
+  };
+}
+
 function template(id: string, requiresImage: boolean, dynamicImage: boolean, weight = 1) {
   return {
     id,
@@ -136,6 +176,11 @@ describe("pmToHomeArticleMeta", () => {
       imageUrl,
       description: "左栏正文 分栏图",
     });
+  });
+
+  it("遍历任务列表，并跳过容器内不合格图片继续寻找本地文件图", () => {
+    expect(pmToHomeArticleMeta(docWithTaskListImage())).toMatchObject({ imageUrl });
+    expect(pmToHomeArticleMeta(docWithNonFileImageBeforeLocal())).toMatchObject({ imageUrl });
   });
 
   it("feeds imageUrl into masonry selector requiresImage and dynamic image scores", async () => {

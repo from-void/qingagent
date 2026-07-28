@@ -1,8 +1,13 @@
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { SavePendingDraftInput } from "./documentDraftRepo.js";
-import { savePendingDocumentDraft } from "./documentDraftRepo.js";
+import {
+  clearPendingDocumentDraft,
+  savePendingDocumentDraft,
+} from "./documentDraftRepo.js";
 import {
   ignoreRebasedDocumentSuggestionsInBatch,
+  LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+  updateDocumentSuggestionStatusInBatch,
   upsertDocumentSuggestion,
 } from "./documentSuggestionsRepo.js";
 import { commitTransaction, withTransaction } from "./documentsClient.js";
@@ -24,6 +29,65 @@ export interface ReplaceRebasedReviewInput {
 export interface SaveInitialReviewBatchInput {
   draft: SavePendingDraftInput & { batchId: string };
   suggestions: readonly DocSuggestion[];
+}
+
+export interface SettleRejectedDocumentReviewInput {
+  docId: string;
+  draft: {
+    batchId: string;
+    baseVersion: number;
+    baseHash: string;
+  };
+  suggestions: readonly DocSuggestion[];
+}
+
+/**
+ * accepted/rejected 行是可跨重启恢复的用户裁决，不单独代表审阅已完成；匹配 draft
+ * 的 CAS 删除才是完成点。事务会重申整批 rejected 裁决并删除同一批 draft，
+ * 删除失败时回滚本事务且保留 draft，冷恢复即可继续显示原裁决并重试。
+ */
+export async function settleRejectedDocumentReview(
+  input: SettleRejectedDocumentReviewInput,
+): Promise<void> {
+  await ensureMigrated();
+  if (input.suggestions.length === 0) {
+    throw new Error("Rejected review settlement requires at least one suggestion");
+  }
+  const now = new Date().toISOString();
+  await withTransaction(async (client) => {
+    for (const suggestion of input.suggestions) {
+      const batchId = suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID;
+      if (
+        suggestion.docId !== input.docId
+        || suggestion.baseVersion !== input.draft.baseVersion
+        || batchId !== input.draft.batchId
+      ) {
+        throw new Error(`Rejected review suggestion draft mismatch: ${suggestion.id}`);
+      }
+      const rowsAffected = await updateDocumentSuggestionStatusInBatch(
+        input.docId,
+        suggestion.baseVersion,
+        batchId,
+        suggestion.id,
+        "rejected",
+        undefined,
+        client,
+        now,
+      );
+      if (rowsAffected === 0) {
+        throw new Error(
+          `Document suggestion not found: ${input.docId}@${suggestion.baseVersion}:${batchId}:${suggestion.id}`,
+        );
+      }
+    }
+    await clearPendingDocumentDraft({
+      docId: input.docId,
+      batchId: input.draft.batchId,
+      baseVersion: input.draft.baseVersion,
+      baseHash: input.draft.baseHash,
+    }, client);
+    return commitTransaction(undefined);
+  });
 }
 
 /** 首次进入审阅时原子保存草稿与整批建议，禁止暴露半批次。 */

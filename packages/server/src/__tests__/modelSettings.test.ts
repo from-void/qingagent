@@ -409,6 +409,50 @@ describe("modelSettingsRoutes", () => {
     expect(mockCore.modelFetch).not.toHaveBeenCalled();
   });
 
+  it("Kimi 余额探测的 TimeoutError 返回查询超时，不误报网络无法连接", async () => {
+    const app = await loadApp();
+    await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "kimi", apiKey: "kimi-timeout-key" }),
+    });
+    mockCore.testTextModelConnection.mockRejectedValueOnce(
+      new DOMException("Text connection test timed out", "TimeoutError"),
+    );
+
+    const res = await app.request("/api/v1/settings/model/balance");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      keySource: "db",
+      error: "查询超时,请稍后重试",
+    });
+  });
+
+  it("自定义文本模型的 TimeoutError 返回连接超时，不误报地址无法连接", async () => {
+    const app = await loadApp();
+    mockCore.testTextModelConnection.mockRejectedValueOnce(
+      new DOMException("Text connection test timed out", "TimeoutError"),
+    );
+
+    const res = await app.request("/api/v1/settings/model/test-custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "kimi",
+        baseUrl: "https://api.kimi.com/coding/v1",
+        apiKey: "kimi-timeout-key",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      error: "连接超时(10s)",
+    });
+  });
+
   it.each([
     "http://169.254.169.254/latest/meta-data",
     "http://10.0.0.4/v1",

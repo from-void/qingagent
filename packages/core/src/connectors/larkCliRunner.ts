@@ -74,6 +74,7 @@ export interface LarkCliRunnerOptions {
   execFile?: ExecFile;
   shimPath?: string;
   timeoutMs?: number;
+  configInitUrlTimeoutMs?: number;
   maxOutputBytes?: number;
   platform?: NodeJS.Platform;
   bundledRunJsPath?: string;
@@ -203,6 +204,7 @@ export function resolveLarkCliInvocation(options: {
 export class LarkCliRunner {
   private readonly execFile: ExecFile;
   private readonly timeoutMs: number;
+  private readonly configInitUrlTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly invocation: LarkCliInvocation;
 
@@ -221,6 +223,8 @@ export class LarkCliRunner {
       exists: options.exists,
     });
     this.timeoutMs = options.timeoutMs ?? LARK_CLI_TIMEOUT_MS;
+    this.configInitUrlTimeoutMs =
+      options.configInitUrlTimeoutMs ?? LARK_CLI_TIMEOUT_MS;
     this.maxOutputBytes = options.maxOutputBytes ?? LARK_CLI_MAX_OUTPUT_BYTES;
   }
 
@@ -314,6 +318,29 @@ export class LarkCliRunner {
       let stdout = "";
       let stderr = "";
       let overflow = false;
+      let completionSettled = false;
+      const settleCompletion = (result: LarkCliRunResult): void => {
+        if (completionSettled) return;
+        completionSettled = true;
+        clearTimeout(initialUrlTimeout);
+        if (!initialSettled) {
+          initialSettled = true;
+          resolveInitial(result);
+        }
+        resolve(result);
+      };
+      const initialUrlTimeout = setTimeout(() => {
+        const failed: LarkCliRunResult = {
+          ok: false,
+          reasonCode: "LARK_CLI_TIMEOUT",
+          message: "lark-cli 未及时返回创建应用链接",
+          cliVersion,
+          source,
+        };
+        child.kill();
+        settleCompletion(failed);
+      }, this.configInitUrlTimeoutMs);
+      initialUrlTimeout.unref?.();
       const append = (current: string, chunk: Buffer): string => {
         const next = current + chunk.toString("utf8");
         if (Buffer.byteLength(next) > this.maxOutputBytes) { overflow = true; child.kill(); }
@@ -323,14 +350,14 @@ export class LarkCliRunner {
         stdout = append(stdout, chunk);
         if (!initialSettled && /https?:\/\//i.test(stdout)) {
           initialSettled = true;
+          clearTimeout(initialUrlTimeout);
           resolveInitial({ ok: true, stdout: redactLarkCliOutput(stdout), stderr: redactLarkCliOutput(stderr), cliVersion, source });
         }
       });
       child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
       child.on("error", (error) => {
         const failed = this.failure(error, cliVersion, source);
-        if (!initialSettled) { initialSettled = true; resolveInitial(failed); }
-        resolve(failed);
+        settleCompletion(failed);
       });
       child.on("close", (code) => {
         const result: LarkCliRunResult = overflow
@@ -338,8 +365,7 @@ export class LarkCliRunner {
           : code === 0
             ? { ok: true, stdout: redactLarkCliOutput(stdout), stderr: redactLarkCliOutput(stderr), cliVersion, source }
             : { ok: false, reasonCode: signal.aborted ? "LARK_CLI_TIMEOUT" : "LARK_CLI_FAILED", message: signal.aborted ? "lark-cli 已中止" : `lark-cli 退出码 ${code}`, cliVersion, source };
-        if (!initialSettled) { initialSettled = true; resolveInitial(result); }
-        resolve(result);
+        settleCompletion(result);
       });
     });
     return { initial, completion };

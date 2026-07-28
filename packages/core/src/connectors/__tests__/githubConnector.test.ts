@@ -23,6 +23,10 @@ const h = vi.hoisted(() => ({
       grantedScopes: string[];
       account: { id: string; displayName: string };
       token: string;
+      verification?: {
+        state: "connected" | "needs_reauth";
+        checkedAt: string;
+      };
     };
   } | null,
 }));
@@ -34,7 +38,7 @@ vi.mock("../../credentials/credentialsRepo.js", () => ({
 }));
 
 import { saveConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
-import { GithubConnector } from "../githubConnector.js";
+import { GithubConnector, type GithubCredentialPayload } from "../githubConnector.js";
 import { PendingStore } from "../pendingStore.js";
 
 function fetchOk(body: unknown): typeof globalThis.fetch {
@@ -67,10 +71,20 @@ describe("GithubConnector probe", () => {
   });
 
   it("probe 成功后 status 带 lastCheckedAt(luna e2e 回归)", async () => {
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
     const connector = new GithubConnector({ clientId: "cid", fetch: fetchOk({ id: 1, login: "octo" }) });
     const before = await connector.status();
     expect(before.state).toBe("connected");
     expect(before.lastCheckedAt).toBeNull();
+    expect(before.statusFreshness).toBe("unknown");
 
     const probed = await connector.probe();
     expect(probed.state).toBe("connected");
@@ -80,6 +94,76 @@ describe("GithubConnector probe", () => {
     // 后续 status 查询也应保留探活时间
     const after = await connector.status();
     expect(after.lastCheckedAt).toBe(probed.lastCheckedAt);
+    expect(after.statusFreshness).toBe("fresh");
+  });
+
+  it("已确认失效的凭证在连接器重建后仍保持 needs_reauth", async () => {
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
+    const unauthorized = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 })
+    ) as unknown as typeof globalThis.fetch;
+
+    const connector = new GithubConnector({ clientId: "cid", fetch: unauthorized });
+    await expect(connector.probe()).resolves.toMatchObject({
+      state: "needs_reauth",
+      reasonCode: "NEEDS_REAUTH",
+      statusFreshness: "fresh",
+    });
+
+    const restarted = new GithubConnector({ clientId: "cid", fetch: unauthorized });
+    await expect(restarted.status()).resolves.toMatchObject({
+      state: "needs_reauth",
+      reasonCode: "NEEDS_REAUTH",
+      statusFreshness: "fresh",
+    });
+  });
+
+  it("probe 瞬时异常只向上返回稳定错误，不透传原始 fetch 消息", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed: socket detail");
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({ clientId: "cid", fetch });
+
+    try {
+      await expect(connector.probe()).rejects.toMatchObject({
+        code: "GITHUB_PROBE_FAILED",
+        status: 502,
+        message: "GitHub 连接检查暂时失败，请稍后重试",
+      });
+      expect(log).toHaveBeenCalledWith(
+        "[github-connector] probe failed",
+        { error: "fetch failed: socket detail" },
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("probe 保留无明确限速信号 403 的 ACCESS_DENIED 语义", async () => {
+    const forbidden = vi.fn(async () =>
+      new Response("{}", {
+        status: 403,
+        headers: { "X-RateLimit-Reset": "1780000000" },
+      })
+    ) as unknown as typeof globalThis.fetch;
+    const connector = new GithubConnector({ clientId: "cid", fetch: forbidden });
+
+    await expect(connector.probe()).rejects.toMatchObject({
+      code: "ACCESS_DENIED",
+      status: 403,
+      message: "GitHub 权限不足或访问被拒绝",
+    });
+    expect(forbidden).toHaveBeenCalledTimes(1);
+    expect(saveConnectorCredentialBundle).not.toHaveBeenCalled();
   });
 });
 
@@ -144,6 +228,59 @@ describe("GithubConnector 授权生命周期", () => {
     await vi.waitFor(() => expect(saveConnectorCredentialBundle).toHaveBeenCalledTimes(1));
     await expect(connector.status()).resolves.toMatchObject({ state: "disconnected" });
     expect(h.bundle).toBeNull();
+  });
+
+  it("申请 public_repo 时接受 GitHub 规范化返回的更广 repo scope", async () => {
+    const requestedScopes: string[] = [];
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/login/device/code")) {
+        requestedScopes.push(new URLSearchParams(String(init?.body)).get("scope")!);
+        return new Response(JSON.stringify({
+          device_code: "device-public",
+          user_code: "PUBLIC",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return new Response(JSON.stringify({
+          access_token: "token-repo",
+          token_type: "bearer",
+          scope: "repo",
+        }));
+      }
+      if (url.endsWith("/user")) {
+        return new Response(JSON.stringify({ id: 1, login: "octo" }));
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      apiBaseUrl: "https://api.github.test",
+      fetch,
+      sleep: async () => {},
+    });
+
+    const started = await connector.start({ scope: "public_repo" });
+    await vi.waitFor(() => expect(saveConnectorCredentialBundle).toHaveBeenCalledTimes(1));
+
+    expect(requestedScopes).toEqual(["public_repo"]);
+    await expect(connector.status(started.pendingId)).resolves.toMatchObject({
+      state: "connected",
+      scopes: ["repo"],
+    });
   });
 
   it("不同 scope 的并发 start 不共享授权卡", async () => {

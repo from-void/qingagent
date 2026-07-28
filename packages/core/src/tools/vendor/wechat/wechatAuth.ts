@@ -19,6 +19,7 @@ export const wechatAuthStartTool = createTool({
   inputSchema: z.object({}),
   outputSchema: z.object({
     ok: z.boolean(), imageDataUri: z.string(), expiresInSec: z.number(),
+    expiresAt: z.number(),
     connectorId: z.literal("wechat-mp"), pendingId: z.string(), reused: z.boolean(),
   }),
   execute: async (_input, context) => {

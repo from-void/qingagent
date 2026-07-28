@@ -1,7 +1,14 @@
 import {
+  ConnectorCredentialCasError,
   readThroughMigrateConnectorBundle,
   type ConnectorCredentialBundle,
+  updateConnectorCredentialBundlePayload,
 } from "../credentials/credentialsRepo.js";
+
+export interface WechatSessionIssue {
+  reasonCode: "needs_reauth";
+  lastCheckedAt: string;
+}
 
 export interface WechatCredentialPayload {
   strategy: "qr-session";
@@ -10,11 +17,10 @@ export interface WechatCredentialPayload {
   cookie: string;
   token: string;
   expiry: string;
+  sessionIssue?: WechatSessionIssue;
 }
 
 const LEGACY_KEYS = ["cookie", "expiry", "mp_name", "token"] as const;
-
-let sessionIssue: { revision: number; reasonCode: "needs_reauth"; lastCheckedAt: string } | null = null;
 
 export async function readWechatCredentialBundle(): Promise<ConnectorCredentialBundle<WechatCredentialPayload> | null> {
   const result = await readThroughMigrateConnectorBundle<WechatCredentialPayload>({
@@ -33,16 +39,28 @@ export async function readWechatCredentialBundle(): Promise<ConnectorCredentialB
   return result.bundle;
 }
 
-export function markWechatSessionNeedsReauth(revision: number, now = new Date()): void {
-  sessionIssue = { revision, reasonCode: "needs_reauth", lastCheckedAt: now.toISOString() };
-}
-
-export function getWechatSessionIssue(revision: number) {
-  return sessionIssue?.revision === revision ? sessionIssue : null;
-}
-
-export function clearWechatSessionIssue(): void {
-  sessionIssue = null;
+export async function markWechatSessionNeedsReauth(
+  revision: number,
+  now = new Date(),
+): Promise<void> {
+  const bundle = await readWechatCredentialBundle();
+  if (!bundle || bundle.revision !== revision) return;
+  try {
+    await updateConnectorCredentialBundlePayload(
+      "wechat-mp",
+      {
+        ...bundle.payload,
+        sessionIssue: {
+          reasonCode: "needs_reauth",
+          lastCheckedAt: now.toISOString(),
+        },
+      },
+      revision,
+    );
+  } catch (error) {
+    if (error instanceof ConnectorCredentialCasError) return;
+    throw error;
+  }
 }
 
 export const WECHAT_LEGACY_CREDENTIAL_KEYS = LEGACY_KEYS;

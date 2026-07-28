@@ -4,7 +4,10 @@ import {
   saveConnectorCredentialBundle,
 } from "../credentials/credentialsRepo.js";
 import { PendingStore, PendingStoreError } from "./pendingStore.js";
-import { readWechatCredentialBundle, clearWechatSessionIssue } from "./wechatCredentials.js";
+import {
+  readWechatCredentialBundle,
+  type WechatCredentialPayload,
+} from "./wechatCredentials.js";
 import { probeWechatSearchbiz } from "../tools/wechatSearch.js";
 
 // 微信 bundle 本身是单用户全局凭据，因此并发会话共享同一个授权 scope：重复/并发 start
@@ -25,20 +28,20 @@ const DESKTOP_UA =
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // authorizing:等扫码中;verifying:已扫码落地、正在验证搜索能力;ready:已授权;
-// failed_account_unusable:探针判定当前公众号没有搜索能力;failed_timeout:没等到扫码确认/核验瞬时失败。
-// 后两者供 wechat_auth_status 给不同话术。
+// failed_account_unusable:探针判定当前公众号没有搜索能力；failed_timeout:仅表示用户扫码落地超时；
+// failed_error:二维码交付后的其余中性故障。三者供 wechat_auth_status 给不同话术。
 export type WechatAuthState =
   | "authorizing"
   | "verifying"
   | "ready"
   | "failed_account_unusable"
-  | "failed_timeout";
+  | "failed_timeout"
+  | "failed_error";
 
 interface WechatPendingAuth {
   state: WechatAuthState;
   browser: Browser | null;
   imageDataUri: string | null;
-  generatedAt: number;
   verification: { promise: Promise<void>; resolve: () => void } | null;
   failureMessage: string | null;
   imageReady: Promise<string>;
@@ -53,6 +56,7 @@ export interface WechatAuthStartResult {
   ok: true;
   imageDataUri: string;
   expiresInSec: number;
+  expiresAt: number;
   connectorId: "wechat-mp";
   pendingId: string;
   reused: boolean;
@@ -60,6 +64,29 @@ export interface WechatAuthStartResult {
 
 const pendingStore = new PendingStore<WechatPendingAuth>({ ttlMs: WECHAT_AUTH_TIMEOUT_MS });
 pendingStore.attachProcessCleanup();
+
+function remainingAuthMs(expiresAt: number): number {
+  return Math.max(1, expiresAt - Date.now());
+}
+
+function isWechatCredentialPayload(value: unknown): value is WechatCredentialPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (
+    payload.strategy !== "qr-session"
+    || payload.version !== 1
+    || typeof payload.account !== "string"
+    || typeof payload.cookie !== "string"
+    || typeof payload.token !== "string"
+    || typeof payload.expiry !== "string"
+  ) {
+    return false;
+  }
+  if (payload.sessionIssue === undefined) return true;
+  if (!payload.sessionIssue || typeof payload.sessionIssue !== "object") return false;
+  const issue = payload.sessionIssue as Record<string, unknown>;
+  return issue.reasonCode === "needs_reauth" && typeof issue.lastCheckedAt === "string";
+}
 
 function beginAuthVerification(pending: WechatPendingAuth): void {
   let resolve!: () => void;
@@ -76,7 +103,10 @@ function settleAuthVerification(pending: WechatPendingAuth): void {
 
 function setAuthTerminalState(
   pending: WechatPendingAuth,
-  state: Extract<WechatAuthState, "ready" | "failed_account_unusable" | "failed_timeout">,
+  state: Extract<
+    WechatAuthState,
+    "ready" | "failed_account_unusable" | "failed_timeout" | "failed_error"
+  >,
   message: string | null = null,
 ): void {
   pending.state = state;
@@ -157,6 +187,10 @@ function cookieHeaderFromCookies(cookies: Array<{ name: string; value: string }>
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
 
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === "TimeoutError";
+}
+
 // 扫码专用:独立 launch 一个 browser(复用 pool 的启动候选顺序),与共享抓取池隔离。
 // 扫码要等用户扫码 ~240s,若共用抓取池的并发槽会把槽占满、拖垮文章抓取。
 async function launchStandaloneBrowser(): Promise<Browser> {
@@ -200,7 +234,8 @@ async function extractTokenViaHomeRequest(cookie: string, signal: AbortSignal): 
 export class WechatAuthService {
   async start(): Promise<WechatAuthStartResult> {
     if (process.env.WECHAT_AUTH_EVAL_NOOP === "1") {
-      return { ok: true, imageDataUri: "data:image/png;base64,ZVZBTA==", expiresInSec: 240, connectorId: "wechat-mp", pendingId: "eval-pending", reused: false };
+      const expiresAt = Date.now() + WECHAT_AUTH_TIMEOUT_MS;
+      return { ok: true, imageDataUri: "data:image/png;base64,ZVZBTA==", expiresInSec: WECHAT_AUTH_EXPIRES_IN_SEC, expiresAt, connectorId: "wechat-mp", pendingId: "eval-pending", reused: false };
     }
     const current = pendingStore.current("wechat-mp", WECHAT_SCOPE);
     if (current && current.value.state !== "authorizing" && current.value.state !== "verifying") {
@@ -209,27 +244,36 @@ export class WechatAuthService {
     const started = pendingStore.start({
       connectorId: "wechat-mp",
       scope: WECHAT_SCOPE,
-      create: ({ signal }) => {
+      create: ({ pendingId, signal }) => {
         let resolveImage!: (value: string) => void;
         let rejectImage!: (error: unknown) => void;
         const imageReady = new Promise<string>((resolve, reject) => { resolveImage = resolve; rejectImage = reject; });
         const pending: WechatPendingAuth = {
-          state: "authorizing", browser: null, imageDataUri: null, generatedAt: Date.now(),
+          state: "authorizing", browser: null, imageDataUri: null,
           verification: null, failureMessage: null, imageReady, resolveImage, rejectImage,
           task: Promise.resolve(),
           scanned: false,
         };
-        pending.task = this.runAuth(pending, signal);
+        pending.task = this.runAuth(pending, pendingId, signal);
         return pending;
       },
     });
     const pending = started.entry.value;
     const imageDataUri = pending.imageDataUri ?? await pending.imageReady;
-    const remainingSec = Math.max(1, WECHAT_AUTH_EXPIRES_IN_SEC - Math.floor((Date.now() - pending.generatedAt) / 1000));
-    return { ok: true, imageDataUri, expiresInSec: remainingSec, connectorId: "wechat-mp", pendingId: started.entry.pendingId, reused: started.reused };
+    const expiresAt = pendingStore.get(
+      started.entry.pendingId,
+      "wechat-mp",
+      WECHAT_SCOPE,
+    ).expiresAt;
+    const remainingSec = Math.max(1, Math.ceil(remainingAuthMs(expiresAt) / 1000));
+    return { ok: true, imageDataUri, expiresInSec: remainingSec, expiresAt, connectorId: "wechat-mp", pendingId: started.entry.pendingId, reused: started.reused };
   }
 
-  private async runAuth(pending: WechatPendingAuth, signal: AbortSignal): Promise<void> {
+  private async runAuth(
+    pending: WechatPendingAuth,
+    pendingId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
       let imageSettled = false;
       let authBrowser: Browser | null = null;
       const abort = () => { void authBrowser?.close().catch(() => {}); };
@@ -271,10 +315,14 @@ export class WechatAuthService {
               await page.waitForTimeout(400);
               screenshot = await qrElement.screenshot({ type: "png" });
             }
+            const expiresAt = pendingStore.renew(
+              pendingId,
+              "wechat-mp",
+              WECHAT_SCOPE,
+            ).expiresAt;
             imageSettled = true;
             const dataUri = `data:image/png;base64,${screenshot.toString("base64")}`;
             pending.imageDataUri = dataUri;
-            pending.generatedAt = Date.now();
             console.info(`[wechat-auth] qr screenshot done (${screenshot.length} bytes)`);
             pending.resolveImage(dataUri);
 
@@ -292,13 +340,33 @@ export class WechatAuthService {
                     return text !== initial;
                   },
                   { sel: WECHAT_QR_SELECTOR, initial: initialScanText },
-                  { timeout: WECHAT_AUTH_TIMEOUT_MS },
+                  { timeout: remainingAuthMs(expiresAt) },
                 )
                 .then(() => { pending.scanned = true; })
                 .catch(() => {});
             } catch { /* 扫码信号获取失败不影响授权 */ }
             // 等登录成功落地(任意带 token= 的 mp 页,不限 /cgi-bin/home)。落地只用于取凭据,成败看探针。
-            await page.waitForURL(WECHAT_AUTH_LANDING_RE, { timeout: WECHAT_AUTH_TIMEOUT_MS });
+            try {
+              await page.waitForURL(WECHAT_AUTH_LANDING_RE, {
+                timeout: remainingAuthMs(expiresAt),
+              });
+            } catch (error) {
+              if (signal.aborted) return;
+              if (isTimeoutError(error)) {
+                setAuthTerminalState(
+                  pending,
+                  "failed_timeout",
+                  "没等到扫码确认,请重新发起授权",
+                );
+              } else {
+                setAuthTerminalState(
+                  pending,
+                  "failed_error",
+                  "授权未能完成,请重新发起授权",
+                );
+              }
+              return;
+            }
             pending.scanned = true;
             // waitForURL 返回代表用户已在手机端完成扫码落地。必须在首个 await 前同步改态，
             // 否则紧随「我已扫码完成」发起的 status 会误读为 authorizing。
@@ -326,7 +394,7 @@ export class WechatAuthService {
                 pending,
                 probe.kind === "capability_denied"
                   ? "failed_account_unusable"
-                  : "failed_timeout",
+                  : "failed_error",
                 probe.kind === "capability_denied"
                   ? "当前所选公众号无法使用搜索能力(可能已注销或受限),请重扫并在手机上换一个正常的已认证公众号"
                   : "扫码已收到,但未能完成公众号能力核验,请稍后重新发起授权或换一个正常的公众号",
@@ -348,13 +416,19 @@ export class WechatAuthService {
               token,
               expiry,
             }, { writeGuard: () => !signal.aborted });
-            clearWechatSessionIssue();
             console.info("[wechat-auth] credentials saved");
             setAuthTerminalState(pending, "ready");
           } catch (error) {
-            // 走到这多是 waitForURL 超时(用户没扫完/没在手机点确认)→ 归 timeout 话术。
-            setAuthTerminalState(pending, "failed_timeout", "没等到扫码确认,请重新发起授权");
-            if (!imageSettled) pending.rejectImage(error);
+            if (!imageSettled) {
+              // 二维码尚未生成时属于浏览器/页面加载故障，不得伪装成用户扫码超时。
+              // 立即移除 pending，既允许下一次 start 新建授权，也避免 status 在 TTL 内误报 TIMEOUT。
+              pendingStore.disconnect("wechat-mp", WECHAT_SCOPE);
+              pending.rejectImage(new Error("授权页面加载失败，请稍后重试"));
+            } else if (!signal.aborted) {
+              // waitForURL 的 TimeoutError 已在本阶段内单独处理；其余二维码后故障
+              // 只能进入中性非超时终态，绝不能把 cookie/token/探针/落库失败冒充用户未扫码。
+              setAuthTerminalState(pending, "failed_error", "授权未能完成,请重新发起授权");
+            }
           } finally {
             await authBrowser?.close().catch(() => {});
             pending.browser = null;
@@ -378,7 +452,17 @@ export class WechatAuthService {
       mpName: string;
       message: string;
     }> => {
-      const bundle = await readWechatCredentialBundle();
+      let credentialCorrupt = false;
+      const candidate = await readWechatCredentialBundle().catch(() => {
+        credentialCorrupt = true;
+        return null;
+      });
+      const bundle = candidate && isWechatCredentialPayload(
+        (candidate as { payload?: unknown }).payload,
+      )
+        ? candidate
+        : null;
+      if (candidate && !bundle) credentialCorrupt = true;
       const mpName = bundle?.payload.account ?? "";
       let pending: WechatPendingAuth | null = null;
       if (pendingId) pending = pendingStore.get(pendingId, "wechat-mp", WECHAT_SCOPE).value;
@@ -398,9 +482,6 @@ export class WechatAuthService {
           message: "扫码已收到,正在核验该公众号是否可用,请稍候再检查",
         };
       }
-      if (bundle && new Date(bundle.payload.expiry).getTime() > Date.now()) {
-        return { ok: true, state: "READY", mpName, message: "已授权" };
-      }
       if (st === "failed_account_unusable") {
         return {
           ok: true,
@@ -418,8 +499,35 @@ export class WechatAuthService {
           message: pending?.failureMessage ?? "没等到扫码确认,请重新发起授权",
         };
       }
+      if (st === "failed_error") {
+        return {
+          ok: true,
+          state: "NO_CREDENTIAL",
+          mpName,
+          message: pending?.failureMessage ?? "授权未能完成,请重新发起授权",
+        };
+      }
+      if (bundle?.payload.sessionIssue?.reasonCode === "needs_reauth") {
+        return {
+          ok: true,
+          state: "EXPIRED",
+          mpName,
+          message: "微信登录态已失效,请重新扫码登录",
+        };
+      }
+      if (bundle && new Date(bundle.payload.expiry).getTime() > Date.now()) {
+        return { ok: true, state: "READY", mpName, message: "已授权" };
+      }
       if (bundle) {
         return { ok: true, state: "EXPIRED", mpName, message: "授权已过期" };
+      }
+      if (credentialCorrupt) {
+        return {
+          ok: true,
+          state: "NO_CREDENTIAL",
+          mpName,
+          message: "授权信息已损坏，请重新扫码登录",
+        };
       }
       return { ok: true, state: "NO_CREDENTIAL", mpName, message: "未授权" };
     };

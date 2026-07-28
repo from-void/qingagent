@@ -92,6 +92,19 @@ describe("modelTransport", () => {
     expect(shouldProxyModelUrl(new URL("https://api.example.com"), config)).toBe(true);
   });
 
+  it("NO_PROXY 正确匹配裸 IPv6 与带端口的方括号 IPv6", () => {
+    const config = resolveModelDispatcherConfig({
+      HTTP_PROXY: "http://proxy.test:8080",
+      HTTPS_PROXY: "http://proxy.test:8080",
+      NO_PROXY: "::1,2001:db8::2,[2001:db8::3]:8443",
+    });
+
+    expect(shouldProxyModelUrl(new URL("http://[::1]:11434"), config)).toBe(false);
+    expect(shouldProxyModelUrl(new URL("https://[2001:db8::2]"), config)).toBe(false);
+    expect(shouldProxyModelUrl(new URL("https://[2001:db8::3]:8443"), config)).toBe(false);
+    expect(shouldProxyModelUrl(new URL("https://[2001:db8::3]"), config)).toBe(true);
+  });
+
   it("非法连接超时配置回退到 5s", () => {
     expect(resolveModelDispatcherConfig({ QINGAGENT_MODEL_CONNECT_TIMEOUT_MS: "invalid" }).connectTimeout)
       .toBe(DEFAULT_MODEL_CONNECT_TIMEOUT_MS);

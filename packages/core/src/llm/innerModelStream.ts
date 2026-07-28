@@ -32,6 +32,8 @@ export interface InnerModelStreamCall {
   /** 每次上游流有活动时触发；与只触发一次的内容启动事件分离。 */
   onActivity?: () => void;
   onContentStart?: (elapsedMs: number, observedAt?: number) => void;
+  /** 借道内容判废并切到 fallback 前触发；消费端应清空只属于当前候选的增量状态。 */
+  onContentReset?: () => void;
   onContentDelta?: (delta: string, raw: string, observedAt?: number) => void;
   /** 有主链快照时优先借道；失败则原样回退下面的 streamText 请求。 */
   branchSteeringTail?: string | BranchMessage[];
@@ -103,6 +105,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
     console.warn(
       `[sideChannel] site=${input.callSite} fallback engaged reason=${branched.reason} snapshot=true`,
     );
+    input.onContentReset?.();
   }
   const protocol = resolveProtocol(input.requestContext);
   const result = streamText({

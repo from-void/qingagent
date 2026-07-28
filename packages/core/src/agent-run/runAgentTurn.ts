@@ -105,6 +105,7 @@ import {
 import {
   createTurnCompletion,
   finalizeLingeringRunningToolCalls,
+  turnCompletionOwnsStreamEnd,
 } from "./turnCleanup.js";
 import {
   markDiagramVizEditing,
@@ -131,6 +132,7 @@ import {
 } from "./promiseContinuation.js";
 
 const logger = mastra.getLogger();
+const AGENT_TURN_FAILED_MESSAGE = "本轮处理失败，请稍后重试。";
 
 export interface RunAgentTurnControl {
   /** 当前轮由新消息抢占旧轮而来；只用于注入轮次边界，不改变 FIFO。 */
@@ -190,7 +192,7 @@ export async function* runAgentTurn(
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();
   let turnOwnership = beginTurnOwnership(state, `${streamId}:attempt:0`);
-  const turnCompletion = createTurnCompletion();
+  const turnCompletion = createTurnCompletion(streamId);
   let turnWasUserAborted = false;
   const omSidecarEnabled = isOmSidecarEnabled();
   let omTurnIndex: number | null = null;
@@ -204,33 +206,36 @@ export async function* runAgentTurn(
   state._suspendedThisTurn = false;
   let turnRequestContext: RequestContext | undefined;
   let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
+  let omTurnStartMessageIndex = state.messages.length;
+  const agentMessageId = newId();
 
-  // Resolve workspace skills defensively: skill discovery / maybeRefresh must
-  // never abort the turn. On any failure we log and fall back to the default
-  // capability toolset so static tools (parseFile, …), gated capability tools
-  // (fetchArticle, webSearch, …) and the
-  // normal stream error-frame path still work.
-  let selectedSkillNames: string[] = [];
-  let workspaceSkills: Awaited<ReturnType<typeof getQingagentSkills>> | null = null;
   try {
-    workspaceSkills = await getQingagentSkills();
-    await workspaceSkills.maybeRefresh();
-    selectedSkillNames = await resolveSelectedSkillNames(selectedSkills, workspaceSkills);
-    state.selectedSkills = selectedSkillNames;
-    state.selectedSkillsHadSelection = selectedSkills.length > 0;
-  } catch (error) {
-    logger.error("Skill resolution failed; continuing with default guidance", {
-      sessionId: state.sessionId,
-      error: String(error),
-    });
-    state.selectedSkills = [];
-    state.selectedSkillsHadSelection = false;
-  }
-  const toolSearchEnabled = isQingagentToolSearchEnabled();
-  const capabilityToolSearch = toolSearchEnabled
-    ? await buildCapabilityToolSearchBridge(selectedSkillNames)
-    : null;
-  const capabilityTools = capabilityToolSearch?.alwaysTools ?? await buildCapabilityTools();
+    // Resolve workspace skills defensively: skill discovery / maybeRefresh must
+    // never abort the turn. On any failure we log and fall back to the default
+    // capability toolset so static tools (parseFile, …), gated capability tools
+    // (fetchArticle, webSearch, …) and the
+    // normal stream error-frame path still work.
+    let selectedSkillNames: string[] = [];
+    let workspaceSkills: Awaited<ReturnType<typeof getQingagentSkills>> | null = null;
+    try {
+      workspaceSkills = await getQingagentSkills();
+      await workspaceSkills.maybeRefresh();
+      selectedSkillNames = await resolveSelectedSkillNames(selectedSkills, workspaceSkills);
+      state.selectedSkills = selectedSkillNames;
+      state.selectedSkillsHadSelection = selectedSkills.length > 0;
+    } catch (error) {
+      logger.error("Skill resolution failed; continuing with default guidance", {
+        sessionId: state.sessionId,
+        error: String(error),
+      });
+      state.selectedSkills = [];
+      state.selectedSkillsHadSelection = false;
+    }
+    const toolSearchEnabled = isQingagentToolSearchEnabled();
+    const capabilityToolSearch = toolSearchEnabled
+      ? await buildCapabilityToolSearchBridge(selectedSkillNames)
+      : null;
+    const capabilityTools = capabilityToolSearch?.alwaysTools ?? await buildCapabilityTools();
 
   logger.info("runAgentTurn started", {
     sessionId: state.sessionId,
@@ -439,7 +444,7 @@ export async function* runAgentTurn(
 
   const frozenWorkingMemorySnapshot = await ensureWorkingMemorySnapshot(state);
   ensureWorkingMemoryPromptInPlace(state.messages, frozenWorkingMemorySnapshot);
-  const omTurnStartMessageIndex = state.messages.length;
+  omTurnStartMessageIndex = state.messages.length;
   state.messages.push({ role: "user", content: fullUserText });
 
   // Inject current document snapshot into the last user message when the
@@ -554,7 +559,6 @@ export async function* runAgentTurn(
   state.chatHistory.push(userChatMessage);
   yield chatMessageAdded(userChatMessage);
 
-  const agentMessageId = newId();
   const agentMessage: ChatMessage = {
     id: agentMessageId,
     role: { kind: "agent" },
@@ -572,7 +576,6 @@ export async function* runAgentTurn(
     logger.error("Persist display messages before agent run failed", { error: String(err) }),
   );
 
-  try {
     const omContextForTurn = await prepareOmContextForTurn(state).catch((error) => {
       logger.warn("[omSidecar] prepare context failed; falling back to full messages", {
         sessionId: state.sessionId,
@@ -944,7 +947,7 @@ export async function* runAgentTurn(
       break;
     }
   } catch (err) {
-    const reason =
+    const internalReason =
       err instanceof Error ? err.message : "Unknown error during agent turn";
     if (isUserAbortSignal(abortController.signal)) {
       turnWasUserAborted = true;
@@ -952,92 +955,127 @@ export async function* runAgentTurn(
       logger.info("Agent turn aborted by user; suppressing failure frame", {
         sessionId: state.sessionId,
         streamId,
-        error: reason,
+        error: internalReason,
       });
     } else {
       turnOutcome = "error";
       logger.error("Agent turn failed", {
         sessionId: state.sessionId,
         streamId,
-        error: reason,
+        error: internalReason,
         stack: err instanceof Error ? err.stack : undefined,
       });
 
-      yield {
-        kind: "stream",
-        data: {
-          kind: "draftingFailed",
-          data: { streamId, reason, retriable: true },
-        },
-      };
+      const agentMessage = state.chatHistory.find(
+        (message) => message.id === agentMessageId,
+      );
+      if (agentMessage?.parts.length === 0) {
+        yield appendVisibleStreamErrorText(
+          state,
+          agentMessageId,
+          AGENT_TURN_FAILED_MESSAGE,
+        );
+        state.messages.push({
+          role: "assistant",
+          content: AGENT_TURN_FAILED_MESSAGE,
+        });
+      }
+      yield draftingFailedFrame(streamId, AGENT_TURN_FAILED_MESSAGE);
 
       yield* syncContentAndProjectDocState(state, "agent_turn_failed");
     }
   } finally {
-    sessionWorkspaceLease?.release();
-    if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
-      turnOutcome = "cancelled";
-    }
-    console.info(formatTurnLog("end", {
-      session: state.sessionId,
-      run: activeRunId ?? "unknown",
-      totalMs: Date.now() - turnStartedAt,
-      outcome: turnOutcome,
-    }));
-    // Clear turn-scoped selection chips so they don't leak into the next turn.
-    state._currentChips = null;
-    if (!hasActiveSuspension(state)) {
-      clearSuspension(state);
-    } else if (!activeSuspensionOwnedBy(state, streamId)) {
-      logger.info("runAgentTurn leaving suspension owned by another stream intact", {
-        sessionId: state.sessionId,
-        streamId,
-        ownerStreamId: state._suspensionOwner?.streamId,
-      });
-    }
-
-    if (state.streamId === streamId) {
-      state.streamId = null;
-    }
-    // 残留 running 工具调用落终态,避免"调用完仍 loading"。
-    // 用户主动中止的工具卡由 abortAndCleanupTurn 统一落 failed,不能先在这里补成 done。
-    if (!turnWasUserAborted && !isUserAbortSignal(abortController.signal)) {
-      for (const u of finalizeLingeringRunningToolCalls(state)) {
-        yield toolCallUpdated(u.messageId, u.toolCallId, u.spec);
+    const finalFrames: BridgeFrame[] = [];
+    const releaseTurnResources = () => {
+      turnCompletion.resolve();
+      endTurnOwnership(state, turnOwnership);
+      if (state._abortController === abortController) {
+        state._abortController = null;
       }
-    }
-    yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
-    yield streamEnd(streamId);
+      if (state._activeTurnPromise === turnCompletion.promise) {
+        state._activeTurnPromise = null;
+      }
+      if (
+        state._activeAgentMessageId === agentMessageId &&
+        !turnWasUserAborted &&
+        !isUserAbortSignal(abortController.signal)
+      ) {
+        state._activeAgentMessageId = null;
+      }
+    };
 
-    // Final persist after all state transitions are settled.
-    // This is the safety-net persist for the turn: processAgentStream's
-    // fire-and-forget persist may have been queued but not yet written,
-    // and the catch block has no persist at all.  By persisting here we
-    // guarantee the user message + any agent response from this turn are
-    // captured even if the earlier persist failed or was skipped.
-    await schedulePersist(state, "runAgentTurn:finally").catch((err) =>
-      logger.error("Persist after runAgentTurn finally failed", { error: String(err) }),
-    );
-    if (omSidecarEnabled) {
-      scheduleOmSidecarAfterTurn(state, turnRequestContext, {
-        turnIndex: omTurnIndex,
-        turnStartMessageIndex: omTurnStartMessageIndex,
-      });
+    try {
+      sessionWorkspaceLease?.release();
+      if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
+        turnOutcome = "cancelled";
+      }
+      console.info(formatTurnLog("end", {
+        session: state.sessionId,
+        run: activeRunId ?? "unknown",
+        totalMs: Date.now() - turnStartedAt,
+        outcome: turnOutcome,
+      }));
+      // Clear turn-scoped selection chips so they don't leak into the next turn.
+      state._currentChips = null;
+      if (!hasActiveSuspension(state)) {
+        clearSuspension(state);
+      } else if (!activeSuspensionOwnedBy(state, streamId)) {
+        logger.info("runAgentTurn leaving suspension owned by another stream intact", {
+          sessionId: state.sessionId,
+          streamId,
+          ownerStreamId: state._suspensionOwner?.streamId,
+        });
+      }
+
+      if (state.streamId === streamId) {
+        state.streamId = null;
+      }
+      // 所有权和控制器必须先于任何状态投影/持久化 await 释放；否则外部存储未决会
+      // 让已关闭的生成器继续伪装成活跃 turn。
+      releaseTurnResources();
+
+      // 残留 running 工具调用落终态,避免"调用完仍 loading"。
+      // 用户主动中止的工具卡由 abortAndCleanupTurn 统一落 failed,不能先在这里补成 done。
+      if (!turnWasUserAborted && !isUserAbortSignal(abortController.signal)) {
+        for (const u of finalizeLingeringRunningToolCalls(state)) {
+          finalFrames.push(toolCallUpdated(u.messageId, u.toolCallId, u.spec));
+        }
+      }
+      for await (const frame of syncContentAndProjectDocState(state, "agent_turn_finally_idle")) {
+        finalFrames.push(frame);
+      }
+      // Final persist after all state transitions are settled.
+      // This is the safety-net persist for the turn: processAgentStream's
+      // fire-and-forget persist may have been queued but not yet written,
+      // and the catch block has no persist at all.  By persisting here we
+      // guarantee the user message + any agent response from this turn are
+      // captured even if the earlier persist failed or was skipped.
+      await schedulePersist(state, "runAgentTurn:finally").catch((err) =>
+        logger.error("Persist after runAgentTurn finally failed", { error: String(err) }),
+      );
+      if (omSidecarEnabled) {
+        scheduleOmSidecarAfterTurn(state, turnRequestContext, {
+          turnIndex: omTurnIndex,
+          turnStartMessageIndex: omTurnStartMessageIndex,
+        });
+      }
+    } finally {
+      // 同步收尾本身若抛错也必须释放，且重复调用保持幂等。
+      releaseTurnResources();
     }
-    turnCompletion.resolve();
-    endTurnOwnership(state, turnOwnership);
-    if (state._abortController === abortController) {
-      state._abortController = null;
+
+    // 资源所有权必须在 finally 的首个对外 yield 前结算。即使流消费者用
+    // generator.return() 提前关闭且不再拉取，也不能留下假活跃 turn。
+    for (const frame of finalFrames) {
+      yield frame;
     }
-    if (state._activeTurnPromise === turnCompletion.promise) {
-      state._activeTurnPromise = null;
-    }
-    if (
-      state._activeAgentMessageId === agentMessageId &&
-      !turnWasUserAborted &&
-      !isUserAbortSignal(abortController.signal)
-    ) {
-      state._activeAgentMessageId = null;
+    if (turnCompletionOwnsStreamEnd(turnCompletion.promise, streamId)) {
+      yield streamEnd(
+        streamId,
+        turnOutcome === "cancelled"
+          ? { kind: "cancelled" }
+          : { kind: "done" },
+      );
     }
   }
 }

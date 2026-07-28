@@ -396,6 +396,7 @@ export function missingGenericToolResultFields(
       requireBoolean("ok");
       requireString("imageDataUri");
       requireNumber("expiresInSec");
+      requireNumber("expiresAt");
       break;
     case "wechat_auth_status":
       requireBoolean("ok");
@@ -716,17 +717,21 @@ export function createSessionScopedTools(
         .describe("读取模式：full=全文, summary=摘要"),
     }),
     outputSchema: z.object({
+      ok: z.boolean(),
       text: z.string().describe("素材文本内容或摘要"),
       filename: z.string().describe("原始文件名"),
       wordCount: z.number().describe("字数"),
+      error: z.string().optional(),
     }),
     execute: async (input) => {
       const mat = materials.get(input.materialId);
       if (!mat) {
         return {
+          ok: false,
           text: `[Error] Material not found: ${input.materialId}`,
           filename: "",
           wordCount: 0,
+          error: `素材不存在：${input.materialId}`,
         };
       }
       const text = input.mode === "summary"
@@ -734,7 +739,7 @@ export function createSessionScopedTools(
         : mat.visionSummary
           ? `【图像识别摘要】${mat.visionSummary}\n\n${mat.text}`
           : mat.text;
-      return { text, filename: mat.filename, wordCount: mat.metadata.wordCount };
+      return { ok: true, text, filename: mat.filename, wordCount: mat.metadata.wordCount };
     },
   });
   const createAnnotationGroups = createTool({

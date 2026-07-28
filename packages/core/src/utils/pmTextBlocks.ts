@@ -29,20 +29,20 @@ function nodeSize(node: PmNode | PmDoc): number {
 }
 
 // inlineMath 是原子行内节点(PM nodeSize=1):文本投影用 U+FFFC 占位,保证 offset 与 PM 位置一致。
-const INLINE_ATOM_PLACEHOLDER = "￼";
+export const INLINE_ATOM_PLACEHOLDER = "￼";
 
 export function inlineNodeLen(node: PmInlineNode): number {
   return node.type === "text" ? node.text.length : 1;
 }
 
+export function projectInlineNodeText(node: PmInlineNode): string {
+  if (node.type === "hardBreak") return "\n";
+  if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
+  return node.text;
+}
+
 function inlineText(content: readonly PmInlineNode[] | undefined): string {
-  return (content ?? [])
-    .map((node) => {
-      if (node.type === "hardBreak") return "\n";
-      if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
-      return node.text;
-    })
-    .join("");
+  return (content ?? []).map(projectInlineNodeText).join("");
 }
 
 export function isInlineTextBlock(

@@ -90,12 +90,28 @@ function createBaseDispatcher(
 }
 
 function normalizedHostAndPort(url: URL): { hostname: string; port: number } {
-  let { host: hostname, port } = url;
-  // 与 EnvHttpProxyAgent 保持一致：移除端口但保留 IPv6 方括号。
-  hostname = hostname.replace(/:\d*$/, "").toLowerCase();
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return {
     hostname,
-    port: Number.parseInt(port, 10) || DEFAULT_PORTS[url.protocol] || 0,
+    port: Number.parseInt(url.port, 10) || DEFAULT_PORTS[url.protocol] || 0,
+  };
+}
+
+function parseNoProxyEntry(entry: string): { hostname: string; port: number } {
+  const bracketedIpv6 = entry.match(/^(\[[^\]]+\])(?::(\d+))?$/);
+  if (bracketedIpv6) {
+    return {
+      hostname: bracketedIpv6[1]!.slice(1, -1).toLowerCase(),
+      port: bracketedIpv6[2] ? Number.parseInt(bracketedIpv6[2], 10) : 0,
+    };
+  }
+  // 裸 IPv6 含多个冒号，末段数字仍属于地址，不能按 host:port 拆分。
+  const hostAndPort = entry.indexOf(":") === entry.lastIndexOf(":")
+    ? entry.match(/^(.+):(\d+)$/)
+    : null;
+  return {
+    hostname: (hostAndPort ? hostAndPort[1]! : entry).replace(/^\*?\./, "").toLowerCase(),
+    port: hostAndPort ? Number.parseInt(hostAndPort[2]!, 10) : 0,
   };
 }
 
@@ -105,9 +121,7 @@ function matchesNoProxy(url: URL, noProxy: string | undefined): boolean {
   const { hostname, port } = normalizedHostAndPort(url);
   for (const entry of noProxy.split(/[,\s]/)) {
     if (!entry) continue;
-    const parsed = entry.match(/^(.+):(\d+)$/);
-    const entryHostname = (parsed ? parsed[1]! : entry).replace(/^\*?\./, "").toLowerCase();
-    const entryPort = parsed ? Number.parseInt(parsed[2]!, 10) : 0;
+    const { hostname: entryHostname, port: entryPort } = parseNoProxyEntry(entry);
     if (entryPort && entryPort !== port) continue;
     if (
       hostname === entryHostname ||

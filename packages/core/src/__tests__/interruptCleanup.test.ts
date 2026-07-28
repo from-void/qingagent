@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { qingagentAgent } from "../agents/qingagent.js";
+import { ConfirmService } from "../confirm/confirmService.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -158,6 +159,30 @@ beforeEach(() => {
 });
 
 describe("abortAndCleanupTurn", () => {
+  it("流消费者在首帧后关闭时立即结算 turn 所有权", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const state = createSession("consumer-close-after-start");
+    const generator = runAgentTurn(state, "开始处理");
+
+    const first = await generator.next();
+    expect(first.value).toMatchObject({
+      kind: "stream",
+      data: { kind: "start" },
+    });
+    expect(state.streamId).not.toBeNull();
+    expect(state._abortController).not.toBeNull();
+    expect(state._activeTurnPromise).not.toBeNull();
+    expect(state._turnOwner).not.toBeNull();
+
+    await generator.return(undefined);
+
+    expect(state.streamId).toBeNull();
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(state._turnOwner).toBeNull();
+    await generator.return(undefined);
+  });
+
   it.each([
     ["仍有运行卡", true],
     ["旧进程已退出且无运行卡", false],
@@ -267,6 +292,131 @@ describe("abortAndCleanupTurn", () => {
         kind: "end",
         data: { streamId: "old-stream", reason: { kind: "cancelled" } },
       },
+    });
+  });
+
+  it("中止当前 turn 时精确取消其 pending confirm 并先发 resolved", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("abort-pending-confirm");
+    state.streamId = "stream-confirm";
+    state._activeAgentMessageId = "agent-confirm";
+    setSingleToolCall(state, runningCommand("tool-confirm"));
+    state.chatHistory[0]!.id = "agent-confirm";
+    const pending = {
+      confirmId: "confirm-current",
+      runId: "run-current",
+      toolCallId: "tool-confirm",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-current",
+      spec: {
+        id: "confirm-current",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "sleep 20",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    const unrelated = {
+      ...pending,
+      confirmId: "confirm-unrelated",
+      runId: "run-unrelated",
+      toolCallId: "tool-unrelated",
+      commandDigest: "digest-unrelated",
+      spec: { ...pending.spec, id: "confirm-unrelated" },
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    state.pendingConfirms.set(unrelated.toolCallId, unrelated);
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      appendAudit: async () => undefined,
+      persist: async (_current, persistReason) => {
+        persistReasons.push(persistReason);
+      },
+    });
+
+    const frames = await collectFrames(abortAndCleanupTurn(state, {
+      confirmService: service,
+    }));
+
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+    expect(state.pendingConfirms.get(unrelated.toolCallId)).toBe(unrelated);
+    expect(persistReasons).toEqual(["confirm:aborted:terminal", "confirm:aborted"]);
+    const resolvedIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "confirmResolved" &&
+        frame.data.toolCallId === pending.toolCallId &&
+        frame.data.resolution === "aborted",
+    );
+    const toolUpdateIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === pending.toolCallId,
+    );
+    expect(resolvedIndex).toBeGreaterThanOrEqual(0);
+    expect(toolUpdateIndex).toBeGreaterThan(resolvedIndex);
+    expect(firstToolStatus(state)).toBe("aborted");
+  });
+
+  it("全局停止在活动消息已清空后仍取消 pending confirm 并拒绝迟到接受", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("global-stop-pending-confirm");
+    state._activeAgentMessageId = null;
+    setSingleToolCall(state, runningCommand("tool-global-confirm"));
+    const pending = {
+      confirmId: "confirm-global",
+      runId: "run-global",
+      toolCallId: "tool-global-confirm",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-global",
+      spec: {
+        id: "confirm-global",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "sleep 20",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      appendAudit: async () => undefined,
+      persist: async (_current, persistReason) => {
+        persistReasons.push(persistReason);
+      },
+    });
+
+    const frames = await collectFrames(abortAndCleanupTurn(state, {
+      reason: "globalStop",
+      confirmService: service,
+    }));
+
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+    expect(persistReasons).toEqual(["confirm:aborted:terminal", "confirm:aborted"]);
+    expect(frames).toContainEqual(service.resolvedFrame(pending, "aborted"));
+    await expect(service.beginDecision(state, {
+      sessionId: state.sessionId,
+      toolCallId: pending.toolCallId,
+      decisionId: "late-accept",
+      decision: {
+        id: pending.confirmId,
+        accepted: true,
+      },
+      hasSecretValue: false,
+    })).rejects.toMatchObject({
+      code: "not_found",
+      message: "没有可处理的确认请求",
     });
   });
 
@@ -520,6 +670,63 @@ describe("abortAndCleanupTurn", () => {
       },
     });
     expect(findToolCallSpec(state, "tc-real-abort-reject")?.status).toEqual({ kind: "aborted" });
+  });
+
+  it("真实 runAgentTurn 用户中止时同一 streamId 只发一个 cancelled 终态", async () => {
+    const { abortAndCleanupTurn, createSession, runAgentTurn } = await import("../bridge/index.js");
+    const state = createSession("abort-single-stream-end");
+    let firstChunkProcessed!: () => void;
+    const firstChunkSeen = new Promise<void>((resolve) => {
+      firstChunkProcessed = resolve;
+    });
+
+    qingagentStreamMock().mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[1] as { abortSignal?: AbortSignal };
+      const abortSignal = options.abortSignal;
+      async function* fullStream(): AsyncGenerator<unknown> {
+        yield { type: "text-delta", payload: { text: "中断前正文" } };
+        firstChunkProcessed();
+        if (!abortSignal?.aborted) {
+          await new Promise<void>((resolve) =>
+            abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        }
+      }
+      return {
+        runId: "run-single-stream-end",
+        fullStream: fullStream(),
+      } as unknown as Awaited<ReturnType<typeof qingagentAgent.stream>>;
+    });
+
+    const turnFramesPromise = collectFrames(runAgentTurn(state, "开始处理"));
+    await firstChunkSeen;
+    const abortedStreamId = state.streamId;
+    expect(abortedStreamId).not.toBeNull();
+
+    const cleanupFramesPromise = collectFrames(abortAndCleanupTurn(state));
+    const [turnFrames, cleanupFrames] = await Promise.all([
+      turnFramesPromise,
+      cleanupFramesPromise,
+    ]);
+    const endFrames = [...turnFrames, ...cleanupFrames].filter(
+      (frame) =>
+        frame.kind === "stream" &&
+        frame.data.kind === "end" &&
+        frame.data.data.streamId === abortedStreamId,
+    );
+
+    expect(endFrames).toEqual([
+      {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: abortedStreamId,
+            reason: { kind: "cancelled" },
+          },
+        },
+      },
+    ]);
   });
 });
 

@@ -20,6 +20,7 @@ import {
   DUPLICATE_AUTH_CARD_NOOP,
   showQrDuplicatesTrustedAuthCard,
 } from "./authCardDedup.js";
+import { toolResultSucceededByContract } from "./toolResultStatus.js";
 
 const CONNECTOR_AUTH_START_TOOL_NAMES = new Set([
   "github_auth_start",
@@ -56,9 +57,7 @@ export async function* handleToolResultEvent(
   // Mastra 的宽泛出口允许 result/output 缺失或为标量。分支 handler 统一消费对象，
   // transcript、span 与通用结果摘要仍保留原值，保持旧链路的可观测与展示语义。
   const toolResult = isRecord(rawToolResult) ? rawToolResult : {};
-  const toolResultOk =
-    !isRecord(rawToolResult) ||
-    (toolResult.ok !== false && toolResult.success !== false);
+  const toolResultOk = toolResultSucceededByContract(toolName, rawToolResult);
 
   if (toolName === "search_tools" || toolName === "load_tool") {
     const loadedToolNames = extractLoadedToolNamesFromToolSearchResult(rawToolResult);

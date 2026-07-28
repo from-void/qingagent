@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import {
+  getPmContentHash,
   legacySectionsToPm,
   pmToLegacySections,
   type PmBlockNode,
@@ -17,6 +18,7 @@ import {
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
+  documentDraftRepo,
   documentRepo,
   getDocumentsClient,
   listDocumentSuggestionStatuses,
@@ -232,6 +234,32 @@ function inlineReplaceHunk(input: {
     beforeText: input.before,
     afterText: input.after,
     summary: "替换文本",
+  };
+}
+
+function blockInsertHunk(input: {
+  id: string;
+  anchorBlockId: string;
+  block: PmBlockNode;
+  text: string;
+}): DiffHunk {
+  return {
+    hunkId: input.id,
+    reviewBatchId: input.id,
+    groupMode: "independent",
+    op: "insert",
+    blockPath: [1],
+    anchor: {
+      blockId: input.anchorBlockId,
+      quoteAfter: input.text,
+      anchorKind: "position",
+      gravity: "after",
+    },
+    before: null,
+    after: [input.block] as never,
+    afterBlock: input.block as never,
+    afterText: input.text,
+    summary: "插入块",
   };
 }
 
@@ -630,6 +658,102 @@ describe("commitReviewGroups", () => {
     expect(state.patchVerdicts.size).toBe(0);
   });
 
+  it("接受后剩余建议效果已存在导致 rebase cleared 时统一结算 reviewing 记录", async () => {
+    const state = createSession("cleared-rebase-settlement");
+    const base = doc([paragraph("block-a", "A")]);
+    const inserted = paragraph("block-x", "X");
+    const accepted = blockInsertHunk({
+      id: "h-insert-accepted",
+      anchorBlockId: "block-a",
+      block: inserted,
+      text: "X",
+    });
+    const alreadyEffective = blockInsertHunk({
+      id: "h-insert-already-effective",
+      anchorBlockId: "block-a",
+      block: inserted,
+      text: "X",
+    });
+    await seedHunksState(state, base, [accepted, alreadyEffective]);
+    await seedDocumentRow(state);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [accepted.reviewBatchId],
+      keepPendingReviewBatchIds: [alreadyEffective.reviewBatchId],
+    }));
+
+    expect(docText(state.doc)).toBe("A\nX");
+    expect(state.suggestions.size).toBe(0);
+    expect(state.patchVerdicts.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
+    await expect(
+      listDocumentSuggestionStatuses(
+        state.docId,
+        1,
+        [alreadyEffective.hunkId],
+      ),
+    ).resolves.toEqual([
+      {
+        id: alreadyEffective.hunkId,
+        status: "committed",
+        conflict: undefined,
+      },
+    ]);
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        kind: "toolCallUpdated",
+        data: expect.objectContaining({
+          toolCallId: alreadyEffective.hunkId,
+          spec: expect.objectContaining({ status: { kind: "committed" } }),
+        }),
+      }),
+    );
+  });
+
+  it("拒绝后剩余建议效果已不存在导致 rebase cleared 时按拒绝语义结算", async () => {
+    const state = createSession("cleared-rebase-rejected-settlement");
+    const inserted = paragraph("block-x", "X");
+    const base = doc([paragraph("block-a", "A"), inserted]);
+    const rejected = blockInsertHunk({
+      id: "h-insert-rejected",
+      anchorBlockId: "block-a",
+      block: inserted,
+      text: "X",
+    });
+    const alreadySettled = blockInsertHunk({
+      id: "h-insert-already-settled",
+      anchorBlockId: "block-a",
+      block: inserted,
+      text: "X",
+    });
+    await seedHunksState(state, base, [rejected, alreadySettled]);
+    await seedDocumentRow(state);
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: [rejected.reviewBatchId],
+      keepPendingReviewBatchIds: [alreadySettled.reviewBatchId],
+    }));
+
+    expect(docText(state.doc)).toBe("A\nX");
+    expect(state.suggestions.size).toBe(0);
+    expect(state.patchVerdicts.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
+    await expect(
+      listDocumentSuggestionStatuses(
+        state.docId,
+        1,
+        [alreadySettled.hunkId],
+      ),
+    ).resolves.toEqual([
+      {
+        id: alreadySettled.hunkId,
+        status: "rejected",
+        conflict: undefined,
+      },
+    ]);
+  });
+
   it("结构性整块替换仍作为单 hunk 提交", async () => {
     const state = createSession("block-replace-single-hunk");
     const base = doc([{
@@ -710,6 +834,13 @@ describe("commitReviewGroups", () => {
     ]);
     const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: state.docVersion,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
     const [hunkA, hunkB] = hunks;
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
 

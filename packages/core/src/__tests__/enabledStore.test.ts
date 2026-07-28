@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,6 +15,17 @@ async function withStore() {
   tempDirs.push(dir);
   vi.resetModules();
   process.env.QINGAGENT_USER_SKILLS_DIR = join(dir, "skills");
+  return import("../skills/enabledStore.js");
+}
+
+async function withStoreFile(contents: string) {
+  const dir = await mkdtemp(join(tmpdir(), "qingagent-skills-"));
+  tempDirs.push(dir);
+  const skillsDir = join(dir, "skills");
+  await mkdir(skillsDir, { recursive: true });
+  await writeFile(join(skillsDir, ".disabled.json"), contents, "utf8");
+  vi.resetModules();
+  process.env.QINGAGENT_USER_SKILLS_DIR = skillsDir;
   return import("../skills/enabledStore.js");
 }
 
@@ -37,6 +48,26 @@ describe("enabledStore", () => {
 
     await store.setEnabled("web-search", true);
     expect(await store.readDisabledSet()).toEqual(new Set());
+  });
+
+  it("清单损坏时沿用本进程最近一次有效禁用集合", async () => {
+    const store = await withStore();
+    await store.setEnabled("web-search", false);
+    const disabledFile = join(process.env.QINGAGENT_USER_SKILLS_DIR!, ".disabled.json");
+    await writeFile(disabledFile, "{ invalid json", "utf8");
+
+    expect(await store.readDisabledSet()).toEqual(new Set(["web-search"]));
+  });
+
+  it("冷启动遇到损坏清单时 fail-closed 视为全部技能禁用", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const store = await withStoreFile("{ invalid json");
+
+    const disabled = await store.readDisabledSet();
+
+    expect(disabled.has("web-search")).toBe(true);
+    expect(disabled.has("future-optional-skill")).toBe(true);
+    expect(warn).toHaveBeenCalled();
   });
 
   it("omits disabled capability tools", async () => {

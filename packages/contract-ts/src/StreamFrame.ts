@@ -1,6 +1,6 @@
 import type { EndReason } from "./EndReason";
 
-export type StreamErrorCategory = "auth" | "quota" | "rate_limit" | "timeout" | "upstream" | "network" | "unknown";
+export type StreamErrorCategory = "auth" | "quota" | "request" | "rate_limit" | "timeout" | "upstream" | "network" | "unknown";
 
 export type StreamErrorAction = "retry" | "check_model_settings" | "check_balance" | "reload" | "none";
 

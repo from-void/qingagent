@@ -32,11 +32,44 @@ describe("WechatConnector", () => {
   it.each([
     [{ ok: true } as const, { state: "connected", reasonCode: null, statusFreshness: "fresh" }],
     [{ ok: false, kind: "reauth", message: "session" } as const, { state: "needs_reauth", reasonCode: "needs_reauth", statusFreshness: "fresh" }],
+    [{ ok: false, kind: "capability_denied", message: "denied" } as const, { state: "disconnected", reasonCode: "ACCESS_DENIED", statusFreshness: "fresh" }],
     [{ ok: false, kind: "rate_limit", message: "limited" } as const, { state: "connected", reasonCode: "rate_limit", statusFreshness: "ttl" }],
     [{ ok: false, kind: "transient", message: "network" } as const, { state: "connected", reasonCode: "transient", statusFreshness: "ttl" }],
   ])("probe 归一业务错误: %o", async (probeResult, expected) => {
     const connector = new WechatConnector({ readBundle: async () => bundle(), probeSearchbiz: async () => probeResult, now });
     await expect(connector.probe()).resolves.toMatchObject({ ...expected, lastCheckedAt: "2026-07-11T12:00:00.000Z" });
+  });
+
+  it("probe 检出 reauth 后写回对应凭据并让后续 status 保持失效", async () => {
+    let stored = bundle(7);
+    const markSessionNeedsReauth = vi.fn(async (revision: number, checkedAt: Date) => {
+      expect(revision).toBe(stored.revision);
+      stored = bundle(revision, {
+        sessionIssue: {
+          reasonCode: "needs_reauth",
+          lastCheckedAt: checkedAt.toISOString(),
+        },
+      });
+    });
+    const connector = new WechatConnector({
+      readBundle: async () => stored,
+      probeSearchbiz: async () => ({ ok: false, kind: "reauth", message: "session" }),
+      markSessionNeedsReauth,
+      now,
+    });
+
+    await expect(connector.probe()).resolves.toMatchObject({
+      state: "needs_reauth",
+      statusFreshness: "fresh",
+    });
+    expect(markSessionNeedsReauth).toHaveBeenCalledWith(
+      7,
+      new Date("2026-07-11T12:00:00.000Z"),
+    );
+    await expect(connector.status()).resolves.toMatchObject({
+      state: "needs_reauth",
+      lastCheckedAt: "2026-07-11T12:00:00.000Z",
+    });
   });
 
   it("pending 轮询透传扫码信号:scanned → reasonCode=WECHAT_SCANNED", async () => {

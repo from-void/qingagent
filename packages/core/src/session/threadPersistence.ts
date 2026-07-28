@@ -2082,6 +2082,7 @@ export async function loadSessionFromThread(
     _turnOwner: null,
     _turnGeneration: 0,
     _activeAgentMessageId: null,
+    _pendingDraftRecoveryFrames: [],
     suggestions,
     // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
     annotationGroups: [],
@@ -2137,8 +2138,13 @@ export async function loadSessionFromThread(
   const rebuiltVisibleAnswerCards = appendMissingVisibleAskUserAnswerMessagesFromChatHistory(state);
   const docVersionBeforePendingRehydrate = state.docVersion;
   const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
+  let pendingRehydrateConflict = false;
   try {
-    await rehydratePendingDraft(state, { readOnly: isSnapshot });
+    const pendingRehydrateResult = await rehydratePendingDraft(state, { readOnly: isSnapshot });
+    if (pendingRehydrateResult.kind === "conflict") {
+      pendingRehydrateConflict = true;
+      state._pendingDraftRecoveryFrames.push(...pendingRehydrateResult.frames);
+    }
   } catch (err) {
     logger.error("Failed to rehydrate pending document draft", {
       sessionId,
@@ -2156,6 +2162,7 @@ export async function loadSessionFromThread(
     (
       needsContentTimeBackfill ||
       needsRestoreReconcilePersist ||
+      pendingRehydrateConflict ||
       pendingRehydrateChangedCanonical ||
       rebuiltAskUserState
     )
@@ -2179,7 +2186,7 @@ export async function loadSessionFromThread(
  */
 export async function listSessionThreads(opts: {
   page?: number;
-  perPage?: number;
+  perPage?: number | false;
 } = {}): Promise<{
   threads: StorageThreadType[];
   total: number;

@@ -159,8 +159,11 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
   let disabled = new Set<string>();
   try {
     disabled = await readDisabledSet();
-  } catch {
-    disabled = new Set<string>();
+  } catch (error) {
+    console.error("[skills] Disabled skill state unavailable; disabling workspace skills", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
   }
   const roots = [
     ...BUILTIN_SKILL_CATEGORIES.map((category) => join(BUILTIN_SKILLS_DIR, category)),

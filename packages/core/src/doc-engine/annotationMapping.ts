@@ -3,8 +3,9 @@ import type {
   DiffHunk,
   SuggestionAnchor,
 } from "@qingagent/contract-ts";
-import type { PmDoc, PmStep } from "@qingagent/pm-schema";
+import type { PmDoc, PmInlineNode, PmStep } from "@qingagent/pm-schema";
 import { Mapping, StepMap } from "@tiptap/pm/transform";
+import { projectInlineNodeText } from "../utils/pmTextBlocks.js";
 import { diffHunkToStep } from "./draftReviewSuggestions.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import { normalizeAnnotationQuote } from "./textEditOps.js";
@@ -27,8 +28,12 @@ function textBetweenPmDoc(doc: PmDoc, from: number, to: number): string {
   const visit = (node: unknown, pos: number, isDoc = false): void => {
     if (!node || typeof node !== "object") return;
     const value = node as { type?: unknown; text?: unknown; content?: unknown };
-    if (value.type === "text") {
-      const text = typeof value.text === "string" ? value.text : "";
+    if (
+      value.type === "text" ||
+      value.type === "hardBreak" ||
+      value.type === "inlineMath"
+    ) {
+      const text = projectInlineNodeText(value as PmInlineNode);
       const start = Math.max(0, from - pos);
       const end = Math.min(text.length, to - pos);
       if (start < end) chunks.push(text.slice(start, end));

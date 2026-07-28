@@ -20,8 +20,13 @@ import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
 import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
+import {
+  confirmService,
+  type ConfirmService,
+} from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
+const turnStreamEndOwners = new WeakMap<Promise<void>, string>();
 
 export type TurnCleanupReason =
   | "userAbort"
@@ -34,7 +39,7 @@ function abortReasonForCleanup(reason: TurnCleanupReason): string {
   return USER_ABORT_REASON;
 }
 
-export function createTurnCompletion(): {
+export function createTurnCompletion(streamId: string): {
   promise: Promise<void>;
   resolve: () => void;
 } {
@@ -42,7 +47,15 @@ export function createTurnCompletion(): {
   const promise = new Promise<void>((done) => {
     resolve = done;
   });
+  turnStreamEndOwners.set(promise, streamId);
   return { promise, resolve };
+}
+
+export function turnCompletionOwnsStreamEnd(
+  completion: Promise<void>,
+  streamId: string,
+): boolean {
+  return turnStreamEndOwners.get(completion) === streamId;
 }
 
 function terminalizeInFlightToolCalls(
@@ -81,6 +94,18 @@ function terminalizeInFlightToolCalls(
   }
 
   return updates;
+}
+
+function activeTurnToolCallIds(state: SessionState): Set<string> {
+  const activeAgentMessageId = state._activeAgentMessageId;
+  if (!activeAgentMessageId) return new Set();
+  const message = state.chatHistory.find((item) => item.id === activeAgentMessageId);
+  if (!message) return new Set();
+  return new Set(
+    message.parts
+      .filter((part) => part.kind === "toolCall")
+      .map((part) => part.data.id),
+  );
 }
 
 // 自然收尾时把残留在 running 的工具调用落终态,清掉"工具调用完、对话已回复,
@@ -166,23 +191,47 @@ export async function* abortAndCleanupTurn(
     activeTurnTimeoutMs?: number;
     emitStreamEnd?: boolean;
     reason?: TurnCleanupReason;
+    confirmService?: Pick<
+      ConfirmService,
+      "cancelRequestedCommandConfirm" | "resolvedFrame"
+    >;
   } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
+  const activeTurnOwnsStreamEnd =
+    activeTurnPromise !== null &&
+    abortedStreamId !== null &&
+    turnCompletionOwnsStreamEnd(activeTurnPromise, abortedStreamId);
   const reason = options.reason ?? "userAbort";
+  const currentToolCallIds = activeTurnToolCallIds(state);
+  const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
+    (pending) =>
+      pending.status === "pending" &&
+      (
+        reason === "globalStop" ||
+        currentToolCallIds.has(pending.toolCallId)
+      ),
+  );
   state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);
 
+  let activeTurnOutcome: "absent" | "settled" | "timeout" = "absent";
   if (activeTurnPromise) {
-    const outcome = await waitForActiveTurnCleanup(
+    activeTurnOutcome = await waitForActiveTurnCleanup(
       activeTurnPromise,
       options.activeTurnTimeoutMs ?? ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS,
     );
-    if (outcome === "timeout") {
+    if (activeTurnOutcome === "timeout") {
       logger.warn("Timed out waiting for active turn cleanup; orphaning turn", {
         streamId: abortedStreamId,
       });
+      if (
+        activeTurnOwnsStreamEnd &&
+        options.emitStreamEnd !== false
+      ) {
+        turnStreamEndOwners.delete(activeTurnPromise);
+      }
     }
   }
 
@@ -190,6 +239,26 @@ export async function* abortAndCleanupTurn(
   state._abortController = null;
   state._activeTurnPromise = null;
   state._currentChips = null;
+
+  const confirmationService = options.confirmService ?? confirmService;
+  for (const pending of pendingConfirms) {
+    if (
+      state.pendingConfirms.get(pending.toolCallId) !== pending ||
+      pending.status !== "pending"
+    ) {
+      continue;
+    }
+    try {
+      await confirmationService.cancelRequestedCommandConfirm(state, pending);
+    } catch (error) {
+      logger.error("Failed to persist aborted confirm during turn cleanup", {
+        streamId: abortedStreamId,
+        toolCallId: pending.toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    yield confirmationService.resolvedFrame(pending, "aborted");
+  }
 
   const updates = terminalizeInFlightToolCalls(state, reason);
   for (const update of updates) {
@@ -200,7 +269,13 @@ export async function* abortAndCleanupTurn(
 
   clearDraftConfirmationState(state);
   yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
-  if (abortedStreamId && options.emitStreamEnd !== false) {
+  const settledActiveTurnWillEmitEnd =
+    activeTurnOwnsStreamEnd && activeTurnOutcome === "settled";
+  if (
+    abortedStreamId &&
+    options.emitStreamEnd !== false &&
+    !settledActiveTurnWillEmitEnd
+  ) {
     yield streamEnd(abortedStreamId, { kind: "cancelled" });
   }
 

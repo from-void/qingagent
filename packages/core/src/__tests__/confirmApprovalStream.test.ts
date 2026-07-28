@@ -7,7 +7,12 @@ import {
   cancelConfirmedCommand,
   resumeConfirmDecision,
 } from "../agent-run/confirmResume.js";
-import type { ProcessOutcome } from "../agent-run/agentStreamTurnContext.js";
+import {
+  createAgentStreamTurnContext,
+  type ProcessOutcome,
+} from "../agent-run/agentStreamTurnContext.js";
+import { handleApprovalEvent } from "../agent-run/agentStreamApproval.js";
+import type { AgentStreamEvent } from "../agent-run/agentStreamEvents.js";
 import { consumeApprovalProof } from "../confirm/approvalProof.js";
 
 async function* events(...items: unknown[]): AsyncGenerator<unknown> {
@@ -31,7 +36,11 @@ async function collectWithOutcome(
   }
 }
 
-function approval(toolCallId: string, command: string, toolName = "mastra_workspace_execute_command") {
+function approval(
+  toolCallId: string,
+  command: string,
+  toolName = "mastra_workspace_execute_command",
+): AgentStreamEvent {
   return {
     type: "tool-call-approval",
     runId: "run-confirm",
@@ -264,6 +273,114 @@ describe("processAgentStream tool-call-approval", () => {
     expect(JSON.stringify(frames)).toContain(
       "确认没有完成，命令没有执行。请稍后再试。",
     );
+  });
+
+  it("确认持久化失败且 pending 已删除时不保留挂起语义", async () => {
+    const state = createSession("approval-persist-failed");
+    const service = new ConfirmService({
+      createId: () => "confirm-persist-failed",
+      persist: async () => {
+        throw new Error("storage unavailable");
+      },
+    });
+    const context = await createAgentStreamTurnContext({
+      state,
+      agentMessageId: "agent-message",
+      streamId: "stream-persist-failed",
+      runId: "run-confirm",
+      confirmService: service,
+    });
+
+    await collect(handleApprovalEvent(
+      context,
+      approval("tool-persist-failed", "mv draft.txt final.txt"),
+    ));
+
+    expect(state.pendingConfirms.has("tool-persist-failed")).toBe(false);
+    expect(context.wasSuspended).toBe(false);
+  });
+
+  it.each(["pending", "resuming"] as const)(
+    "确认失败但同一工具仍有 %s pending 时保留挂起语义",
+    async (status) => {
+      const state = createSession(`approval-${status}-remains`);
+      const toolCallId = `tool-${status}-remains`;
+      state.pendingConfirms.set(toolCallId, {
+        confirmId: `confirm-${status}`,
+        runId: "run-confirm",
+        toolCallId,
+        toolName: "mastra_workspace_execute_command",
+        commandDigest: `digest-${status}`,
+        spec: {
+          id: `confirm-${status}`,
+          kind: "command",
+          title: "移动文件",
+          say: "将移动文件",
+          commandPreview: "mv draft.txt final.txt",
+          footHint: "仅本次",
+          primaryLabel: "执行",
+          secondaryLabel: "取消",
+        },
+        requestedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        status,
+      });
+      const context = await createAgentStreamTurnContext({
+        state,
+        agentMessageId: "agent-message",
+        streamId: `stream-${status}-remains`,
+        runId: "run-confirm",
+        confirmService: {
+          requestCommandConfirm: async () => ({
+            ok: false,
+            reason: "确认恢复仍在进行",
+          }),
+        } as unknown as ConfirmService,
+      });
+
+      await collect(handleApprovalEvent(
+        context,
+        approval(toolCallId, "mv draft.txt final.txt"),
+      ));
+
+      expect(context.wasSuspended).toBe(true);
+    },
+  );
+
+  it("A 审批成功挂起后 B 审批失败不会清除同一回合的挂起语义", async () => {
+    const state = createSession("approval-success-then-failure");
+    let nextId = 0;
+    const service = new ConfirmService({
+      createId: () => `confirm-sequence-${++nextId}`,
+      persist: async (current, reason) => {
+        if (reason === "confirm:requested" && current.pendingConfirms.has("tool-b")) {
+          throw new Error("storage unavailable");
+        }
+      },
+    });
+    const context = await createAgentStreamTurnContext({
+      state,
+      agentMessageId: "agent-message",
+      streamId: "stream-success-then-failure",
+      runId: "run-confirm",
+      confirmService: service,
+    });
+
+    await collect(handleApprovalEvent(
+      context,
+      approval("tool-a", "mv a.txt done-a.txt"),
+    ));
+    expect(context.wasSuspended).toBe(true);
+    expect(state.pendingConfirms.has("tool-a")).toBe(true);
+
+    await collect(handleApprovalEvent(
+      context,
+      approval("tool-b", "mv b.txt done-b.txt"),
+    ));
+
+    expect(state.pendingConfirms.has("tool-a")).toBe(true);
+    expect(state.pendingConfirms.has("tool-b")).toBe(false);
+    expect(context.wasSuspended).toBe(true);
   });
 
   it("stored grant 跳过参数流 generic 占位，首帧为排队 commandCard 并恢复到完成态", async () => {

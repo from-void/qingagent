@@ -339,6 +339,97 @@ describe("沙箱命令终端卡", () => {
     }
   });
 
+  it("命令卡收到 tool-error 后收敛为失败终态，迟到 tool-result 不得覆盖", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("command-tool-error-terminal");
+    state.chatHistory.push({
+      id: "agent-command-error",
+      role: { kind: "agent" },
+      ts: new Date().toISOString(),
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: "command-error",
+          name: "mastra_workspace_execute_command",
+          render: { kind: "chatInline" },
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+          body: {
+            kind: "commandCard",
+            data: {
+              title: "运行命令",
+              icon: "TERMINAL",
+              command: "node fail.mjs",
+              exitCode: 0,
+              outputTail: "",
+              phase: "running",
+            },
+          },
+          result: null,
+        },
+      }],
+      chips: null,
+    });
+
+    const frames = await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-error",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "command-error",
+            error: "命令执行异常",
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "command-error",
+            args: { command: "node fail.mjs" },
+            result: {
+              success: true,
+              exitCode: 0,
+              cancelled: false,
+              timedOut: false,
+              output: "迟到成功",
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-command-error",
+        streamId: "stream-command-error",
+        runId: "run-command-error",
+      },
+    ));
+
+    const failed = specs(frames).find((spec) =>
+      spec.id === "command-error" && spec.status.kind === "failed"
+    );
+    expect(failed).toMatchObject({
+      status: { kind: "failed", data: { reason: "命令执行异常" } },
+      body: {
+        kind: "commandCard",
+        data: {
+          phase: "failed",
+          terminalKind: "failed",
+          exitCode: -1,
+          outputTail: "命令执行异常",
+        },
+      },
+    });
+    expect(findSpec(state, "command-error")).toMatchObject({
+      status: { kind: "failed" },
+      body: {
+        kind: "commandCard",
+        data: { phase: "failed", terminalKind: "failed" },
+      },
+      result: null,
+    });
+    expect(JSON.stringify(findSpec(state, "command-error"))).not.toContain("迟到成功");
+  });
+
   it.each([
     ["正常退出", 0, true, "done", "succeeded"],
     ["非零退出", 3, false, "failed", "failed"],

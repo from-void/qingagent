@@ -11,7 +11,11 @@ import {
   saveConnectorCredentialBundle,
   saveCredentialRecordsBatch,
 } from "./credentialsRepo.js";
-import { readWechatCredentialBundle, WECHAT_LEGACY_CREDENTIAL_KEYS } from "../connectors/wechatCredentials.js";
+import {
+  markWechatSessionNeedsReauth,
+  readWechatCredentialBundle,
+  WECHAT_LEGACY_CREDENTIAL_KEYS,
+} from "../connectors/wechatCredentials.js";
 
 let db: TempDocumentsDb;
 
@@ -68,6 +72,44 @@ describe("connector credential bundle", () => {
     await saveCredentialRecordsBatch([{ platform: "wechat", key: "token", value: "t" }]);
     await expect(readWechatCredentialBundle()).resolves.toMatchObject({ revision: 1, payload: { token: "t" } });
   });
+
+  it("微信会话失效状态持久化到对应 revision 的 bundle", async () => {
+    const first = await saveConnectorCredentialBundle("wechat-mp", {
+      strategy: "qr-session" as const,
+      version: 1 as const,
+      account: "测试账号",
+      cookie: "old-cookie",
+      token: "old-token",
+      expiry: "2099-01-01T00:00:00.000Z",
+    });
+
+    await markWechatSessionNeedsReauth(
+      first.revision,
+      new Date("2026-07-11T12:00:00.000Z"),
+    );
+
+    await expect(readWechatCredentialBundle()).resolves.toMatchObject({
+      revision: first.revision,
+      payload: {
+        sessionIssue: {
+          reasonCode: "needs_reauth",
+          lastCheckedAt: "2026-07-11T12:00:00.000Z",
+        },
+      },
+    });
+
+    const reconnected = await saveConnectorCredentialBundle("wechat-mp", {
+      ...first.payload,
+      cookie: "new-cookie",
+      token: "new-token",
+    });
+    await markWechatSessionNeedsReauth(
+      first.revision,
+      new Date("2026-07-11T13:00:00.000Z"),
+    );
+    await expect(readWechatCredentialBundle()).resolves.toEqual(reconnected);
+  });
+
   it("bundle 单行版本化写入，CAS 成功递增且冲突为 409", async () => {
     const first = await saveConnectorCredentialBundle(
       "github",

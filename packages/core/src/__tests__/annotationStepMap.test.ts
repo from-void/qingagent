@@ -5,6 +5,7 @@ import {
   buildAnnotationMappingNotice,
   mapAnnotationGroupsThroughSteps,
 } from "../doc-engine/annotationMapping.js";
+import { collectTopLevelTextBlocks } from "../utils/pmTextBlocks.js";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import { getDocumentsClient, insertAnnotationGroups, persistMappedAnnotationGroups } from "@qingagent/db";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
@@ -191,5 +192,44 @@ describe("annotation StepMap", () => {
       expect.objectContaining({ stepType: "replace", from: 0, to: 4 }),
     ]);
     expect(mapAnnotationGroupsThroughSteps(groups, steps, finalDoc).groups).toEqual(groups);
+  });
+
+  it("脏 step 兜底校验保留含 hardBreak 与 inlineMath 的未改批注", () => {
+    const finalDoc = doc([{
+      type: "paragraph",
+      attrs: { blockId: "rich-inline" },
+      content: [
+        { type: "text", text: "甲" },
+        { type: "hardBreak" },
+        { type: "inlineMath", attrs: { latex: "x^2" } },
+        { type: "text", text: "乙" },
+      ],
+    }]);
+    const block = collectTopLevelTextBlocks(finalDoc)[0]!;
+    expect(block.text).toBe("甲\n￼乙");
+    const groups: AnnotationGroup[] = [{
+      id: "g-rich-inline",
+      summary: "富文本批注",
+      note: "原文未改",
+      origin: "role-review",
+      status: "reviewing",
+      anchors: [anchor(
+        "rich-inline",
+        block.textStart,
+        block.textEnd,
+        block.text,
+      )],
+    }];
+    const dirtyStep: PmStep = { stepType: "annotationMappingUnknown" };
+
+    const mapped = mapAnnotationGroupsThroughSteps(
+      groups,
+      [dirtyStep],
+      finalDoc,
+    );
+
+    expect(mapped.groups).toEqual(groups);
+    expect(mapped.invalidatedAnchorIndexes.size).toBe(0);
+    expect(mapped.unlocatedGroupCount).toBe(0);
   });
 });

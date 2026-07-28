@@ -63,7 +63,7 @@ export class PendingStore<T> {
   constructor(options: PendingStoreOptions = {}) {
     this.ttlMs = options.ttlMs ?? 5 * 60_000;
     this.capacity = options.capacity ?? 100;
-    this.now = options.now ?? Date.now;
+    this.now = options.now ?? (() => Date.now());
     this.createId = options.createId ?? defaultPendingId;
     if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) {
       throw new Error("pending TTL 必须为正数");
@@ -96,7 +96,7 @@ export class PendingStore<T> {
     const createdAt = this.now();
     const expiresAt = createdAt + this.ttlMs;
     const value = input.create({ pendingId, signal: controller.signal });
-    const timer = setTimeout(() => this.expire(pendingId), this.ttlMs);
+    const timer = setTimeout(() => this.expire(pendingId, expiresAt), this.ttlMs);
     timer.unref?.();
     const stored: StoredPending<T> = {
       pendingId,
@@ -112,6 +112,26 @@ export class PendingStore<T> {
     this.entries.set(pendingId, stored);
     this.byBinding.set(binding, pendingId);
     return { entry: this.toEntry(stored), reused: false };
+  }
+
+  renew(pendingId: string, connectorId: string, scope: string): PendingEntry<T> {
+    const stored = this.entries.get(pendingId);
+    if (!stored || stored.connectorId !== connectorId || stored.scope !== scope) {
+      throw new PendingStoreError("授权上下文已丢失，请重新发起", "PENDING_LOST", 410);
+    }
+    if (stored.expiresAt <= this.now()) {
+      this.removeStored(stored, "pending expired");
+      throw new PendingStoreError("授权已过期，请重新发起", "PENDING_EXPIRED", 410);
+    }
+    clearTimeout(stored.timer);
+    stored.expiresAt = this.now() + this.ttlMs;
+    const expectedExpiresAt = stored.expiresAt;
+    stored.timer = setTimeout(
+      () => this.expire(pendingId, expectedExpiresAt),
+      this.ttlMs,
+    );
+    stored.timer.unref?.();
+    return this.toEntry(stored);
   }
 
   get(pendingId: string, connectorId: string, scope: string): PendingEntry<T> {
@@ -184,9 +204,11 @@ export class PendingStore<T> {
     }
   }
 
-  private expire(pendingId: string): void {
+  private expire(pendingId: string, expectedExpiresAt: number): void {
     const stored = this.entries.get(pendingId);
-    if (stored) this.removeStored(stored, "pending expired");
+    if (stored?.expiresAt === expectedExpiresAt) {
+      this.removeStored(stored, "pending expired");
+    }
   }
 
   private removeStored(stored: StoredPending<T>, abortReason?: string): void {

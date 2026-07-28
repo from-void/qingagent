@@ -11,13 +11,18 @@ import {
 } from "../bridge/index.js";
 import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import { compileSuggestionFromBeforeAfter } from "../doc-engine/pmPatch.js";
 import {
   collectTopLevelTextBlocks,
   findLiteralMatches,
 } from "../doc-engine/textEditOps.js";
-import { documentRepo, upsertDocumentSuggestion } from "@qingagent/db";
+import {
+  documentDraftRepo,
+  documentRepo,
+  getDocumentsClient,
+  upsertDocumentSuggestion,
+} from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
@@ -518,6 +523,74 @@ describe("commitPatches", () => {
         expect(sections[2].data.text).toBe("花开时节");
       }
     }
+  });
+
+  it("全拒绝清理 draft 失败时保留审阅态，清理恢复后可原地重试", async () => {
+    const state = createSession("rejected-draft-clear-retry");
+    seedStateWithDoc(state);
+    await addPatch(state, "patch-rejected");
+    const candidateDoc = legacySectionsToPm([
+      { kind: "h1", data: { text: "春天的校园" } },
+      { kind: "p", data: { text: "四月的暖阳透过教学楼的玻璃窗，洒在走廊的地砖上。" } },
+      { kind: "h2", data: { text: "花开时节", anchor: null } },
+      {
+        kind: "p",
+        data: { text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
+      },
+    ] as never);
+    state.docDraftBaseDoc = state.doc!;
+    state.docDraftBaseVersion = state.docVersion;
+    state.docDraftCandidateDoc = candidateDoc;
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: state.docVersion,
+      baseHash: getPmContentHash(state.doc!),
+      draftPmDoc: candidateDoc,
+    });
+    await collectFrames(updatePatchVerdict(state, "patch-rejected", "rejected"));
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_rejected_draft_delete
+      BEFORE DELETE ON document_drafts
+      WHEN OLD.doc_id = '${state.docId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected rejected draft delete failure');
+      END`);
+
+    const failedFrames = await collectAsyncFrames(
+      commitPatches(state, ["patch-rejected"]),
+    );
+
+    expect(state.docState).toEqual({ kind: "pendingReview" });
+    expect(state.suggestions.has("patch-rejected")).toBe(true);
+    expect(state.patchVerdicts.get("patch-rejected")).toBe("rejected");
+    expect(state.docDraftCandidateDoc).toEqual(candidateDoc);
+    await expect(documentDraftRepo.load(state.docId)).resolves.toMatchObject({
+      status: "pending_review",
+    });
+    expect(failedFrames.some((frame) =>
+      frame.kind === "documentSnapshotWritten"
+    )).toBe(false);
+    expect(failedFrames.some((frame) =>
+      frame.kind === "docStateChanged" && frame.data.state.kind === "editing"
+    )).toBe(false);
+    expect(failedFrames.some((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === "patch-rejected" &&
+      frame.data.spec.status.kind === "failed"
+    )).toBe(true);
+
+    await getDocumentsClient().execute("DROP TRIGGER fail_rejected_draft_delete");
+    const retriedFrames = await collectAsyncFrames(
+      commitPatches(state, ["patch-rejected"]),
+    );
+
+    expect(state.docState).toEqual({ kind: "editing" });
+    expect(state.suggestions.size).toBe(0);
+    expect(state.patchVerdicts.size).toBe(0);
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+    expect(retriedFrames.some((frame) =>
+      frame.kind === "documentSnapshotWritten"
+    )).toBe(true);
   });
 
   it("clears patchVerdicts after commit", async () => {

@@ -50,6 +50,36 @@ describe("PendingStore", () => {
     );
   });
 
+  it("续期原位更新唯一 expiresAt，旧定时器不再提前清理", () => {
+    vi.useFakeTimers();
+    let now = 1_000;
+    const store = new PendingStore<string>({ ttlMs: 100, now: () => now });
+    const started = store.start({
+      connectorId: "wechat-mp",
+      scope: "default",
+      create: () => "qr",
+    }).entry;
+
+    vi.advanceTimersByTime(50);
+    now = 1_050;
+    const renewed = store.renew(
+      started.pendingId,
+      "wechat-mp",
+      "default",
+    );
+    expect(renewed.expiresAt).toBe(1_150);
+
+    vi.advanceTimersByTime(50);
+    now = 1_100;
+    expect(renewed.signal.aborted).toBe(false);
+    expect(store.current("wechat-mp", "default")?.expiresAt).toBe(1_150);
+
+    vi.advanceTimersByTime(50);
+    now = 1_150;
+    expect(renewed.signal.aborted).toBe(true);
+    expect(store.current("wechat-mp", "default")).toBeNull();
+  });
+
   it("容量上限、disconnect 与 shutdown 均清理并 abort", () => {
     const store = new PendingStore<string>({ capacity: 2 });
     const first = store.start({ connectorId: "github", scope: "a", create: () => "a" }).entry;

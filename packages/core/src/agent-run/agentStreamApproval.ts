@@ -71,7 +71,10 @@ export async function* handleApprovalEvent(
     );
     yield draftingFailedFrame(context.streamId, safeReason);
     context.outcome.producedVisibleFrame = true;
-    context.wasSuspended = true;
+    const pending = context.state.pendingConfirms.get(toolCallId);
+    if (pending?.status === "pending" || pending?.status === "resuming") {
+      context.wasSuspended = true;
+    }
     return "handled";
   }
 

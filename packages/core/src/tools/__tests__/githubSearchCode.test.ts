@@ -46,7 +46,10 @@ describe("github_search_code fake provider", () => {
 
   it("403 搜索限额携带 resetAt 且不盲重试", async () => {
     vi.mocked(getConnectorCredentialBundle).mockResolvedValue({ payload: { token: "secret" } } as never);
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 403, headers })); vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", {
+      status: 403,
+      headers: { ...headers, "X-RateLimit-Remaining": "0" },
+    })); vi.stubGlobal("fetch", fetchMock);
     await expect(execute({ action: "search", owner: "o", repo: "r", query: "x" })).rejects.toMatchObject({ code: "RATE_LIMIT", resetAt: new Date(1780000000 * 1000).toISOString() });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

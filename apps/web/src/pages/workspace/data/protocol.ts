@@ -1783,7 +1783,7 @@ function findViewTargetByQuote(
       if (!best || score > best.score) {
         best = { blockIndex: i, start: codeUnitOffsetToCharIndex(text, idx), score };
       }
-      from = idx + Math.max(1, quote.length);
+      from = idx + 1;
     }
   }
   if (!best) return null;

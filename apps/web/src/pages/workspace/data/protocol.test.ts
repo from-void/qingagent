@@ -686,6 +686,33 @@ describe("derivePatchPresentation — 单一真相源", () => {
     assertInternallyConsistent(result);
   });
 
+  it("quote 回退扫描重叠候选，并用 suffix 定位第二处匹配", () => {
+    const doc = pdoc("ababaX");
+    const suggestion: DocSuggestion = {
+      id: "s-overlap",
+      docId: "doc-1",
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+      status: "reviewing",
+      anchor: {
+        blockId: "block-drifted",
+        pmFrom: 999,
+        pmTo: 1002,
+        quote: "aba",
+        suffix: "X",
+        textHash: "h",
+      },
+      patch: { kind: "prosemirror_steps", steps: [] },
+      preview: { deleteText: "aba", insertText: "替换" },
+      summary: "改写重叠文本",
+    };
+
+    expect(suggestionToPatchOverlay(doc, suggestion)).toMatchObject({
+      blockIndex: 0,
+      range: { start: 2, end: 5 },
+    });
+  });
+
   it("conflict suggestion 不生成正文标记,通过 conflictIds 显式守恒", () => {
     const { doc, suggestion } = suggestionFromText(
       "s-conflict",

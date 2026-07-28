@@ -11,8 +11,15 @@ function cleanupUrl(raw: string): string {
   return raw.replace(/[)\]\}>,，。；;,.!?！？]+$/u, "");
 }
 
+function isOfficialLarkHost(host: string): boolean {
+  return [
+    "feishu.cn",
+    "larksuite.com",
+    "larkoffice.com",
+  ].some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
 function scoreOnboardingUrl(value: string): number {
-  let score = 0;
   let parsed: URL | null = null;
   try {
     parsed = new URL(value);
@@ -20,19 +27,15 @@ function scoreOnboardingUrl(value: string): number {
     return -1;
   }
   const host = parsed.hostname.toLowerCase();
-  const lower = value.toLowerCase();
-  if (
-    host.endsWith("feishu.cn") ||
-    host.endsWith("larksuite.com") ||
-    host.endsWith("larkoffice.com") ||
-    host.includes("lark")
-  ) {
-    score += 10;
-  }
-  if (lower.includes("verification") || lower.includes("verify")) score += 5;
-  if (lower.includes("console") || lower.includes("open.feishu") || lower.includes("open.larksuite")) {
-    score += 4;
-  }
+  if (!isOfficialLarkHost(host)) return -1;
+  const path = parsed.pathname.toLowerCase();
+  const hasVerificationPath = /\/(?:verification|verify)(?:\/|$)/u.test(path);
+  const hasCreationPath = /\/(?:app\/)?(?:create|init)(?:\/|$)/u.test(path);
+  if (!hasVerificationPath && !hasCreationPath) return -1;
+
+  let score = 10;
+  if (hasVerificationPath || parsed.searchParams.has("verification")) score += 5;
+  if (hasCreationPath) score += 4;
   return score;
 }
 

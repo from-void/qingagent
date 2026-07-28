@@ -5,10 +5,21 @@ import { join } from "node:path";
 import {
   LARK_DEVICE_CODE,
   LarkCliRunner,
+  hasLarkConfigInitUrl,
   resolveLarkCliInvocation,
 } from "../larkCliRunner.js";
 
 describe("LarkCliRunner 固定 argv", () => {
+  it("config init 首段只在出现官方创建链接后结算", () => {
+    expect(hasLarkConfigInitUrl("文档 https://open.feishu.cn/document/home")).toBe(false);
+    expect(hasLarkConfigInitUrl("源码 https://github.com/example/lark-cli")).toBe(false);
+    expect(
+      hasLarkConfigInitUrl(
+        "文档 https://open.feishu.cn/document/home\n创建 https://open.feishu.cn/verification/real",
+      ),
+    ).toBe(true);
+  });
+
   it("Windows 打包态以 Electron-as-Node 直接执行随包 run.js，不启动 .cmd", async () => {
     const execFile = vi.fn(async (_file: string, args: readonly string[]) =>
       args.at(-1) === "--version"

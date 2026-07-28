@@ -23,6 +23,10 @@ const h = vi.hoisted(() => ({
       grantedScopes: string[];
       account: { id: string; displayName: string };
       token: string;
+      verification?: {
+        state: "connected" | "needs_reauth";
+        checkedAt: string;
+      };
     };
   } | null,
 }));
@@ -34,7 +38,7 @@ vi.mock("../../credentials/credentialsRepo.js", () => ({
 }));
 
 import { saveConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
-import { GithubConnector } from "../githubConnector.js";
+import { GithubConnector, type GithubCredentialPayload } from "../githubConnector.js";
 import { PendingStore } from "../pendingStore.js";
 
 function fetchOk(body: unknown): typeof globalThis.fetch {
@@ -67,10 +71,20 @@ describe("GithubConnector probe", () => {
   });
 
   it("probe 成功后 status 带 lastCheckedAt(luna e2e 回归)", async () => {
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
     const connector = new GithubConnector({ clientId: "cid", fetch: fetchOk({ id: 1, login: "octo" }) });
     const before = await connector.status();
     expect(before.state).toBe("connected");
     expect(before.lastCheckedAt).toBeNull();
+    expect(before.statusFreshness).toBe("unknown");
 
     const probed = await connector.probe();
     expect(probed.state).toBe("connected");
@@ -80,6 +94,36 @@ describe("GithubConnector probe", () => {
     // 后续 status 查询也应保留探活时间
     const after = await connector.status();
     expect(after.lastCheckedAt).toBe(probed.lastCheckedAt);
+    expect(after.statusFreshness).toBe("fresh");
+  });
+
+  it("已确认失效的凭证在连接器重建后仍保持 needs_reauth", async () => {
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
+    const unauthorized = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 })
+    ) as unknown as typeof globalThis.fetch;
+
+    const connector = new GithubConnector({ clientId: "cid", fetch: unauthorized });
+    await expect(connector.probe()).resolves.toMatchObject({
+      state: "needs_reauth",
+      reasonCode: "NEEDS_REAUTH",
+      statusFreshness: "fresh",
+    });
+
+    const restarted = new GithubConnector({ clientId: "cid", fetch: unauthorized });
+    await expect(restarted.status()).resolves.toMatchObject({
+      state: "needs_reauth",
+      reasonCode: "NEEDS_REAUTH",
+      statusFreshness: "fresh",
+    });
   });
 });
 

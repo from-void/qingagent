@@ -22,6 +22,10 @@ export interface GithubCredentialPayload {
   grantedScopes: string[];
   account: { id: string; displayName: string };
   token: string;
+  verification?: {
+    state: "connected" | "needs_reauth";
+    checkedAt: string;
+  };
 }
 
 const githubConnectorDefinition = {
@@ -109,12 +113,14 @@ export class GithubConnector implements ConnectorAdapter {
     }
     const bundle = await getConnectorCredentialBundle<GithubCredentialPayload>("github");
     if (!bundle) return createConnectorStatus("disconnected", { reasonCode: this.lastReasonCode, statusFreshness: "fresh", canProbe: false });
-    return createConnectorStatus(this.lastReasonCode === "NEEDS_REAUTH" ? "needs_reauth" : "connected", {
-      reasonCode: this.lastReasonCode,
+    const verification = this.credentialVerification(bundle.payload);
+    const needsReauth = verification?.state === "needs_reauth";
+    return createConnectorStatus(needsReauth ? "needs_reauth" : "connected", {
+      reasonCode: needsReauth ? "NEEDS_REAUTH" : null,
       account: bundle.payload.account,
       scopes: bundle.payload.grantedScopes,
-      lastCheckedAt: this.lastCheckedAt,
-      statusFreshness: "fresh",
+      lastCheckedAt: verification?.checkedAt ?? null,
+      statusFreshness: verification ? "fresh" : "unknown",
       canProbe: true,
     });
   }
@@ -187,14 +193,20 @@ export class GithubConnector implements ConnectorAdapter {
       const account = { id: String(user.id), displayName: `@${user.login}` };
       if (oldBundle && oldBundle.payload.account.id !== account.id) throw new GithubConnectorError("GitHub 授权账号发生变化，需显式确认", "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED", 409);
       if (signal.aborted || generation !== this.generation) return;
+      const checkedAt = new Date().toISOString();
       await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
-        strategy: "oauth2-device", version: 1, grantedScopes, account, token: token.access_token,
+        strategy: "oauth2-device",
+        version: 1,
+        grantedScopes,
+        account,
+        token: token.access_token,
+        verification: { state: "connected", checkedAt },
       }, {
         expectedRevision: oldBundle?.revision ?? null,
         writeGuard: () => !signal.aborted && generation === this.generation,
       });
       this.lastReasonCode = null;
-      this.lastCheckedAt = new Date().toISOString();
+      this.lastCheckedAt = checkedAt;
       this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });
       this.pending.complete(pendingId, "github", this.pendingScope(targetScopes[0] as "public_repo" | "repo"));
     } catch (error) {
@@ -216,16 +228,21 @@ export class GithubConnector implements ConnectorAdapter {
   async probe(): Promise<ConnectorStatusDto> {
     const bundle = await getConnectorCredentialBundle<GithubCredentialPayload>("github");
     if (!bundle) return this.status();
+    const checkedAt = new Date().toISOString();
+    let verificationState: "connected" | "needs_reauth" = "connected";
     try {
       await this.client(bundle.payload.token).user();
-      this.lastReasonCode = null;
-      this.lastCheckedAt = new Date().toISOString();
     } catch (error) {
       if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") {
-        this.lastReasonCode = "NEEDS_REAUTH";
-        this.lastCheckedAt = new Date().toISOString();
+        verificationState = "needs_reauth";
       } else throw error;
     }
+    await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
+      ...bundle.payload,
+      verification: { state: verificationState, checkedAt },
+    }, { expectedRevision: bundle.revision });
+    this.lastReasonCode = verificationState === "needs_reauth" ? "NEEDS_REAUTH" : null;
+    this.lastCheckedAt = checkedAt;
     return this.status();
   }
 
@@ -247,6 +264,17 @@ export class GithubConnector implements ConnectorAdapter {
   }
 
   private client(token?: string) { return new GithubClient({ baseUrl: this.options.apiBaseUrl ?? process.env.QINGAGENT_GITHUB_API_BASE_URL, fetch: this.options.fetch, token }); }
+  private credentialVerification(payload: GithubCredentialPayload): GithubCredentialPayload["verification"] {
+    const verification = payload.verification;
+    if (
+      !verification ||
+      (verification.state !== "connected" && verification.state !== "needs_reauth") ||
+      !Number.isFinite(Date.parse(verification.checkedAt))
+    ) {
+      return undefined;
+    }
+    return verification;
+  }
   private pendingScope(scope: "public_repo" | "repo" | undefined = "public_repo") { return `default:${scope ?? "public_repo"}`; }
   private publicStart(device: GithubDeviceCode, providerExpiresAt: number, pendingId: string, reused: boolean): GithubStartResult {
     return { user_code: device.user_code, verification_uri: device.verification_uri, expiresAt: new Date(providerExpiresAt).toISOString(), pendingId, reused };

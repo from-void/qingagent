@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { GithubClient, encodeGithubFilePath, parseGithubRateLimit } from "../githubClient.js";
+import {
+  GithubClient,
+  encodeGithubFilePath,
+  parseGithubNextPage,
+  parseGithubRateLimit,
+} from "../githubClient.js";
 
 describe("GithubClient", () => {
   it("逐段编码 owner/repo/path/ref，不能注入 query 或路径", async () => {
@@ -89,5 +94,55 @@ describe("GithubClient", () => {
         .user(controller.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("仓库列表传递受控页码并从 Link 解析下一页", async () => {
+    const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response("[]", {
+      status: 200,
+      headers: {
+        Link: '<http://fake/users/octo/repos?per_page=100&page=4>; rel="next", <http://fake/users/octo/repos?per_page=100&page=8>; rel="last"',
+      },
+    }));
+    const client = new GithubClient({ baseUrl: "http://fake", fetch: fetch as typeof globalThis.fetch });
+
+    const response = await client.listRepos("octo", 3);
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("http://fake/users/octo/repos?per_page=100&page=3");
+    expect(response.nextPage).toBe(4);
+    expect(parseGithubNextPage(new Headers())).toBeNull();
+    expect(parseGithubNextPage(new Headers({ Link: '<http://fake/repos?page=0>; rel="next"' }))).toBeNull();
+    expect(parseGithubNextPage(new Headers({ Link: '<not-a-url>; rel="next"' }))).toBeNull();
+    expect(parseGithubNextPage(new Headers({ Link: '<http://fake/repos?page=2>; rel="prev"' }))).toBeNull();
+    expect(() => client.listRepos("octo", 0)).toThrowError(/页码非法/);
+  });
+
+  it("分页仓库请求沿用 403 限速与权限拒绝分类", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("{}", {
+        status: 403,
+        headers: {
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": "1780000000",
+        },
+      }))
+      .mockResolvedValueOnce(new Response("{}", { status: 403 }));
+    const client = new GithubClient({
+      baseUrl: "http://fake",
+      fetch: fetch as typeof globalThis.fetch,
+    });
+
+    await expect(client.listRepos("octo", 2)).rejects.toMatchObject({
+      code: "RATE_LIMIT",
+      resetAt: new Date(1780000000 * 1000).toISOString(),
+      status: 403,
+    });
+    await expect(client.listRepos("octo", 3)).rejects.toMatchObject({
+      code: "ACCESS_DENIED",
+      status: 403,
+    });
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "http://fake/users/octo/repos?per_page=100&page=2",
+      "http://fake/users/octo/repos?per_page=100&page=3",
+    ]);
   });
 });

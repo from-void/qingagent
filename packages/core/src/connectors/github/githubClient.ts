@@ -20,6 +20,7 @@ export interface GithubRateLimit {
 export interface GithubResponse<T> {
   data: T;
   rateLimit: GithubRateLimit;
+  nextPage: number | null;
 }
 
 function finiteHeader(headers: Headers, name: string): number | null {
@@ -60,6 +61,21 @@ async function isGithubRateLimitResponse(
   } catch {
     return false;
   }
+}
+
+export function parseGithubNextPage(headers: Headers): number | null {
+  const link = headers.get("link");
+  if (!link) return null;
+  for (const match of link.matchAll(/<([^>]*)>\s*;\s*rel="([^"]*)"/g)) {
+    if (!match[2]?.split(/\s+/).includes("next")) continue;
+    try {
+      const page = Number(new URL(match[1] ?? "").searchParams.get("page"));
+      return Number.isSafeInteger(page) && page > 0 ? page : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export function encodeGithubPathSegment(value: string): string {
@@ -122,7 +138,7 @@ export class GithubClient {
         throw new GithubConnectorError(`GitHub 返回了畸形 JSON: ${String(cause)}`, "INVALID_RESPONSE", 502);
       }
       if (!response.ok) throw new GithubConnectorError(`GitHub API 请求失败 (${response.status})`, "GITHUB_API_ERROR", response.status);
-      return { data: data as T, rateLimit };
+      return { data: data as T, rateLimit, nextPage: parseGithubNextPage(response.headers) };
     } finally {
       clearTimeout(timer);
       init.signal?.removeEventListener("abort", forwardAbort);
@@ -130,8 +146,13 @@ export class GithubClient {
   }
 
   user(signal?: AbortSignal) { return this.request<{ id: number; login: string }>("/user", { signal }); }
-  listRepos(owner?: string, signal?: AbortSignal) {
-    const path = owner ? `/users/${encodeGithubPathSegment(owner)}/repos?per_page=100` : "/user/repos?per_page=100&sort=updated";
+  listRepos(owner?: string, page = 1, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(page) || page < 1) {
+      throw new GithubConnectorError("GitHub 页码非法", "INVALID_ARGUMENT", 400);
+    }
+    const path = owner
+      ? `/users/${encodeGithubPathSegment(owner)}/repos?per_page=100&page=${page}`
+      : `/user/repos?per_page=100&sort=updated&page=${page}`;
     return this.request<Array<Record<string, unknown>>>(path, { signal });
   }
   tree(owner: string, repo: string, ref: string, signal?: AbortSignal) {

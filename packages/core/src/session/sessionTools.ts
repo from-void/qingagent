@@ -320,6 +320,12 @@ export function missingGenericToolResultFields(
     const value = result[field];
     if (value !== null && typeof value !== "string") missing.push(field);
   };
+  const requireNullableNumber = (field: string) => {
+    const value = result[field];
+    if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+      missing.push(field);
+    }
+  };
 
   switch (toolName) {
     case "github_auth_start":
@@ -332,7 +338,7 @@ export function missingGenericToolResultFields(
       else missing.push("mode:authorization|configuration");
       break;
     case "github_list_repos":
-      requireArray("repos"); requireNumber("count"); requireBoolean("anonymous"); requireRecord("rateLimit");
+      requireArray("repos"); requireNumber("count"); requireNumber("page"); requireNullableNumber("nextPage"); requireBoolean("truncated"); requireBoolean("anonymous"); requireRecord("rateLimit");
       break;
     case "github_repo_tree":
       requireArray("entries"); requireNumber("count"); requireBoolean("truncated"); requireBoolean("providerTruncated"); requireRecord("rateLimit");

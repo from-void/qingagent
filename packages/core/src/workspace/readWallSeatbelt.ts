@@ -64,9 +64,21 @@ function renderDataDeny(
   ];
 }
 
+function renderCredentialAllow(path: ResolvedReadWallAllowPath): string[] {
+  const filter = path.type === "directory" ? "subpath" : "literal";
+  // 读写两条都发:凭证目录要能被 CLI 刷新 token / 写锁文件,只放读会卡在"判未登录"死循环。
+  return pathVariants(path).flatMap((variant) => [
+    `(allow file-read* (${filter} ${sbplString(variant)}))`,
+    `(allow file-write* (${filter} ${sbplString(variant)}))`,
+  ]);
+}
+
 export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): string {
   if (policy.platform !== "darwin") throw new Error("seatbelt policy requires the darwin deny list");
-  const readExceptions = policy.allowPaths.filter((path) => path.kind !== "extra" || path.exists);
+  const readExceptions = policy.allowPaths.filter(
+    (path) => path.kind !== "credential" && (path.kind !== "extra" || path.exists),
+  );
+  const credentialExceptions = policy.allowPaths.filter((path) => path.kind === "credential");
   const session = policy.allowPaths.find((path) => path.kind === "session");
   if (!session) throw new Error("seatbelt policy is missing the session exception");
 
@@ -106,6 +118,22 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
     ...pathVariants(session).map((path) => `(allow file-write* (subpath ${sbplString(path)}))`),
     '(allow file-write* (subpath "/private/tmp"))',
     '(allow file-write* (subpath "/private/var/folders"))',
+    "",
+    "; 用户授权共享的凭证路径:读放行 + 可写,与终端共用同一份登录态。",
+    "; SBPL 后规则覆盖前规则,因此这里能盖掉上面的凭证 deny。",
+    ...credentialExceptions.flatMap(renderCredentialAllow),
+    ...(policy.writableHome
+      ? [
+          "",
+          "; 最宽档:写墙放开到整个用户目录,随后把永久 deny 的写权限再收回去。",
+          `(allow file-write* (subpath ${sbplString(policy.effectiveHome)}))`,
+          ...policy.credentialDenyPaths.flatMap((path) =>
+            pathVariants(path).map((variant) =>
+              `(deny file-write* (${path.type === "directory" ? "subpath" : "literal"} ${sbplString(variant)}))`,
+            ),
+          ),
+        ]
+      : []),
     "",
     "(allow network*)",
   ];

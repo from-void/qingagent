@@ -75,6 +75,8 @@ describe("Linux Bubblewrap deny-aware home 投影", () => {
       "--unshare-uts",
       "--proc",
       "/proc",
+      "--dev",
+      "/dev",
       "--tmpfs",
       "/tmp",
       "--chdir",
@@ -134,6 +136,36 @@ describe("Linux Bubblewrap deny-aware home 投影", () => {
     expect(built.mode).toBe("strict-fallback");
     expect(built.args).not.toContain(fixture.home);
     expect(built.args).toEqual(expect.arrayContaining(["--bind", fixture.sessionDir, fixture.sessionDir]));
+    expect(built.args).toEqual(expect.arrayContaining(["--dev", "/dev"]));
+  });
+
+  it("两种模式都挂 /dev,否则 2>/dev/null 这类最常见写法直接失败", async () => {
+    const fixture = await linuxFixture();
+    for (const built of [
+      await buildBubblewrapReadWallArgs(fixture.policy, process.execPath),
+      await buildStrictFallbackBwrapArgs(fixture.policy, process.execPath),
+    ]) {
+      expect(flagValue(built.args, "--dev")).toBe("/dev");
+      // /dev 是 bwrap 自建的最小 devtmpfs,绝不能变成对宿主 /dev 的绑定。
+      const boundToHostDev = built.args.some(
+        (arg, index) =>
+          (arg === "--bind" || arg === "--ro-bind" || arg === "--ro-bind-try") &&
+          built.args[index + 2] === "/dev",
+      );
+      expect(boundToHostDev).toBe(false);
+    }
+  });
+
+  it("缺 --dev 的 custom args 被契约挡下", () => {
+    expect(() => validateBubblewrapArgsContract([
+      "--unshare-pid",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--proc",
+      "--tmpfs",
+      "--chdir",
+      "--die-with-parent",
+    ], false)).toThrow(/--dev/);
   });
 
   it("custom 行为预检失败时只允许退到已预检的严格 baseline", async () => {
@@ -173,7 +205,8 @@ describe("Linux Bubblewrap deny-aware home 投影", () => {
     expect(() => validateBubblewrapArgsContract(["--unshare-pid"], true)).toThrow(/missing/);
     expect(() => validateBubblewrapArgsContract([
       "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
-      "--proc", "/proc", "--tmpfs", "/tmp", "--chdir", "/tmp", "--die-with-parent", "--",
+      "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+      "--chdir", "/tmp", "--die-with-parent", "--",
     ], true)).toThrow(/terminator/);
   });
 });

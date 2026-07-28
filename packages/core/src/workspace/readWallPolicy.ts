@@ -27,7 +27,21 @@ export interface ResolvedReadWallPath extends ReadWallPath {
   canonicalPath: string;
 }
 
-export type ReadWallAllowKind = "session" | "bin" | "builtin-skills" | "user-skills" | "extra";
+export type ReadWallAllowKind =
+  | "session"
+  | "bin"
+  | "builtin-skills"
+  | "user-skills"
+  | "extra"
+  /** 技能声明 + 用户授权的凭证路径:读放行且可写,让 CLI 与终端共享同一份登录态。 */
+  | "credential";
+
+/**
+ * 凭证墙档位。standard = 产品默认(黑名单照旧,只按授权开口子);
+ * wide = 最宽档(YOLO):凭证类黑名单整体豁免、写墙放开到 HOME,
+ * 但"浏览器数据/系统钥匙串"永远 deny,不随档位豁免。
+ */
+export type CredentialWallMode = "standard" | "wide";
 
 export interface ResolvedReadWallAllowPath extends ResolvedReadWallPath {
   kind: ReadWallAllowKind;
@@ -43,6 +57,9 @@ export interface ReadWallResolvedPolicy {
   credentialDenyPaths: ResolvedReadWallPath[];
   dataDenyPath: ResolvedReadWallPath;
   allowPaths: ResolvedReadWallAllowPath[];
+  credentialWallMode: CredentialWallMode;
+  /** wide 档下整个 HOME 可写(等价 codex danger 语义);standard 档恒为 false。 */
+  writableHome: boolean;
   warnings: string[];
   hash: string;
 }
@@ -56,12 +73,20 @@ export interface ResolveReadWallPolicyOptions {
   builtinSkillsDir: string;
   userSkillsDir: string;
   extraReadOnlyPaths: string[];
+  /** 已授权的凭证路径(绝对路径,由技能声明 + 用户授权得出)。 */
+  grantedCredentialPaths?: string[];
+  credentialWallMode?: CredentialWallMode;
   effectiveUid?: number;
   effectiveHome?: string;
 }
 
 interface RawDenyPath extends ReadWallPath {
   home: string;
+  /**
+   * hard = 浏览器数据 / 系统钥匙串 / 部署方追加的 deny:授权不放行、YOLO 也不豁免。
+   * 非 hard = 凭证类黑名单:可被"技能声明 + 用户授权"开口子,YOLO 档整体豁免。
+   */
+  hard: boolean;
 }
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
@@ -139,12 +164,16 @@ export async function resolveReadWallPath(
 
 function addHomeDenyPaths(target: RawDenyPath[], home: string, configHome: string): void {
   const add = (path: string, type: ReadWallPathType): void => {
-    target.push({ path, type, home });
+    target.push({ path, type, home, hard: false });
   };
   add(join(home, ".ssh"), "directory");
   add(join(home, ".aws"), "directory");
   add(join(home, ".gnupg"), "directory");
   add(join(home, ".kube"), "directory");
+  // .lark-cli 与 .aws/.ssh 同属凭证类默认 deny(非 hard),它的放行已完全交给
+  // 「feishu 技能声明 credential-paths + 用户授权」这条通道,代码里不再有任何
+  // 针对 lark-cli 的特判。这一行留着是"未授权即读拒"的来源——删掉会把
+  // ~/.lark-cli 直接降级成沙箱内可读,与方案第 2/3 节"授权前读拒"自相矛盾。
   add(join(home, ".lark-cli"), "directory");
   add(join(configHome, "gcloud"), "directory");
   add(join(home, ".config", "gcloud"), "directory");
@@ -162,7 +191,7 @@ function addHomeDenyPaths(target: RawDenyPath[], home: string, configHome: strin
 
 function addLinuxDenyPaths(target: RawDenyPath[], home: string, configHome: string): void {
   const add = (path: string, type: ReadWallPathType = "directory"): void => {
-    target.push({ path, type, home });
+    target.push({ path, type, home, hard: true });
   };
   add(join(home, ".local", "share", "keyrings"));
   add(join(home, ".local", "share", "kwalletd"));
@@ -180,7 +209,7 @@ function addLinuxDenyPaths(target: RawDenyPath[], home: string, configHome: stri
 
 function addMacDenyPaths(target: RawDenyPath[], home: string): void {
   const add = (path: string): void => {
-    target.push({ path, type: "directory", home });
+    target.push({ path, type: "directory", home, hard: true });
   };
   add(join(home, "Library", "Application Support", "Google", "Chrome"));
   add(join(home, "Library", "Application Support", "Chromium"));
@@ -211,7 +240,12 @@ function addCustomEnvironmentDenyPaths(
   const addEnv = (variable: string, type: ReadWallPathType): void => {
     const value = env[variable]?.trim();
     if (!value) return;
-    target.push({ path: parseAbsoluteEnvPath(value, effectiveHome, variable), type, home: effectiveHome });
+    target.push({
+      path: parseAbsoluteEnvPath(value, effectiveHome, variable),
+      type,
+      home: effectiveHome,
+      hard: false,
+    });
   };
   addEnv("AWS_SHARED_CREDENTIALS_FILE", "file");
   addEnv("AWS_CONFIG_FILE", "file");
@@ -228,6 +262,7 @@ function addCustomEnvironmentDenyPaths(
         path: parseAbsoluteEnvPath(trimmed, effectiveHome, "KUBECONFIG"),
         type: "file",
         home: effectiveHome,
+        hard: false,
       });
     }
   }
@@ -256,7 +291,13 @@ function addAppendOnlyDenyPaths(
       throw new Error("read-wall extra deny entries require path and directory/file type");
     }
     const path = parseAbsoluteEnvPath((entry as { path: string }).path, effectiveHome, "extra deny path");
-    target.push({ path, type: (entry as { type: ReadWallPathType }).type, home: effectiveHome });
+    // 部署方追加的 deny 是逃生阀,不可被用户授权反向打开。
+    target.push({
+      path,
+      type: (entry as { type: ReadWallPathType }).type,
+      home: effectiveHome,
+      hard: true,
+    });
   }
 }
 
@@ -333,7 +374,11 @@ async function validateAllowedPathOwnership(
 ): Promise<void> {
   if (!path.exists) return;
   const info = await stat(path.canonicalPath);
-  if (!info.isDirectory()) throw new Error("read-wall allow exception must be a directory");
+  // 凭证例外允许是单个文件(~/.netrc 形态);其余例外仍必须是目录。
+  const typeOk = path.kind === "credential"
+    ? (path.type === "file" ? info.isFile() : info.isDirectory())
+    : info.isDirectory();
+  if (!typeOk) throw new Error("read-wall allow exception has an unexpected file type");
   const writableTarget = path.writable || path.kind === "bin";
   if (writableTarget && info.uid !== effectiveUid) {
     throw new Error("read-wall writable exception is not owned by the effective UID");
@@ -359,11 +404,44 @@ async function resolveAllowPath(
   return { ...resolved, kind, writable, exists: await pathExists(resolved.lexicalPath) };
 }
 
+/**
+ * 凭证例外可以是目录也可以是单个文件(如 ~/.netrc 形态的凭证文件),
+ * 因此类型按磁盘实况判定;尚不存在时按目录处理,由调用方先行创建。
+ */
+async function resolveCredentialAllowPath(
+  path: string,
+  home: string,
+): Promise<ResolvedReadWallAllowPath> {
+  const lexicalPath = expandPolicyPath(path, home);
+  const canonicalPath = await canonicalizeWithMissingTail(lexicalPath);
+  let type: ReadWallPathType = "directory";
+  let exists = false;
+  try {
+    const info = await lstat(lexicalPath);
+    exists = true;
+    type = info.isDirectory() ? "directory" : "file";
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? String(error.code) : "";
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+  }
+  return {
+    path: lexicalPath,
+    lexicalPath,
+    canonicalPath,
+    type,
+    kind: "credential",
+    writable: true,
+    exists,
+  };
+}
+
 function assertNoCredentialExceptionConflicts(
   allowPaths: ResolvedReadWallAllowPath[],
   credentialDenyPaths: ResolvedReadWallPath[],
 ): void {
-  for (const allowed of allowPaths) {
+  // kind=credential 就是"用户明确授权放行的凭证路径",与 deny 相交是它存在的意义;
+  // 相交是否安全已在 selectGrantedCredentialPaths 里按 hard/非 hard 判过。
+  for (const allowed of allowPaths.filter((path) => path.kind !== "credential")) {
     for (const denied of credentialDenyPaths) {
       if (pathFallsInside(allowed, denied)) {
         throw new Error("read-wall allow path overlaps a credential deny path");
@@ -372,11 +450,58 @@ function assertNoCredentialExceptionConflicts(
   }
 }
 
+interface GrantedCredentialSelection {
+  granted: ResolvedReadWallAllowPath[];
+  warnings: string[];
+}
+
+/**
+ * 从"已授权路径"里筛出真正可以生效的:
+ * - 落在 hard deny(浏览器数据 / 钥匙串 / 部署方追加)之内或之外包住它的,一律丢弃;
+ * - 其余保留,并把被它覆盖的凭证类 deny 从读墙里摘掉。
+ * 丢弃只记 warning 不抛错:一条声明写歪不该让整个会话失去命令能力。
+ */
+function selectGrantedCredentialPaths(
+  granted: ResolvedReadWallAllowPath[],
+  hardDenyPaths: ResolvedReadWallPath[],
+  effectiveHome: string,
+): GrantedCredentialSelection {
+  const kept: ResolvedReadWallAllowPath[] = [];
+  const warnings: string[] = [];
+  for (const candidate of granted) {
+    if (!isPathInside(candidate.lexicalPath, effectiveHome)
+      || !isPathInside(candidate.canonicalPath, effectiveHome)
+      || candidate.lexicalPath === effectiveHome) {
+      warnings.push("CREDENTIAL_GRANT_OUTSIDE_HOME");
+      continue;
+    }
+    if (hardDenyPaths.some((denied) => pathsOverlap(candidate, denied))) {
+      warnings.push("CREDENTIAL_GRANT_HITS_PERMANENT_DENY");
+      continue;
+    }
+    kept.push(candidate);
+  }
+  return { granted: kept, warnings };
+}
+
+/** 凭证类 deny 中被已授权路径覆盖的条目直接摘除;hard deny 永远保留。 */
+function applyCredentialGrantsToDeny(
+  denyPaths: { resolved: ResolvedReadWallPath; hard: boolean }[],
+  granted: ResolvedReadWallAllowPath[],
+): ResolvedReadWallPath[] {
+  return denyPaths
+    .filter((entry) =>
+      entry.hard || !granted.some((allowed) => pathsOverlap(entry.resolved, allowed)),
+    )
+    .map((entry) => entry.resolved);
+}
+
 function assertDataExceptionRules(
   allowPaths: ResolvedReadWallAllowPath[],
   dataDenyPath: ResolvedReadWallPath,
 ): void {
   const fixedExceptions = new Set<ReadWallAllowKind>(["session", "bin", "builtin-skills", "user-skills"]);
+  // 凭证例外恒在 HOME 下,不可能落进数据目录;真落进去说明配置串了,照旧按下面的规则拒。
   for (const allowed of allowPaths) {
     if (pathFallsInside(allowed, dataDenyPath) && !fixedExceptions.has(allowed.kind)) {
       throw new Error("read-wall data directory may only reopen session, bin, or skills");
@@ -403,7 +528,10 @@ function policyHash(input: Omit<ReadWallResolvedPolicy, "hash">): string {
       path.lexicalPath,
       path.canonicalPath,
       path.exists,
+      path.type,
     ]),
+    credentialWallMode: input.credentialWallMode,
+    writableHome: input.writableHome,
   };
   return createHash("sha256").update(JSON.stringify(serializable)).digest("hex");
 }
@@ -447,8 +575,35 @@ export async function resolveReadWallPolicy(
     effectiveHome,
   );
 
+  const credentialWallMode: CredentialWallMode = options.credentialWallMode ?? "standard";
+  // 最宽档:凭证类黑名单整体豁免,只留浏览器数据/钥匙串这类永久 deny。
+  const effectiveRawDenyPaths = credentialWallMode === "wide"
+    ? rawDenyPaths.filter((entry) => entry.hard)
+    : rawDenyPaths;
+  const resolvedDenyPaths = await Promise.all(
+    effectiveRawDenyPaths.map(async (entry) => ({
+      resolved: await resolveReadWallPath(entry.path, entry.type, entry.home),
+      hard: entry.hard,
+    })),
+  );
+  const hardDenyPaths = resolvedDenyPaths
+    .filter((entry) => entry.hard)
+    .map((entry) => entry.resolved);
+
+  const requestedCredentialPaths = await Promise.all(
+    (options.grantedCredentialPaths ?? []).map((path) =>
+      resolveCredentialAllowPath(path, effectiveHome),
+    ),
+  );
+  const credentialSelection = selectGrantedCredentialPaths(
+    requestedCredentialPaths,
+    hardDenyPaths,
+    effectiveHome,
+  );
+  warnings.push(...credentialSelection.warnings);
+
   const credentialDenyPaths = compressDenyPaths(
-    await Promise.all(rawDenyPaths.map((entry) => resolveReadWallPath(entry.path, entry.type, entry.home))),
+    applyCredentialGrantsToDeny(resolvedDenyPaths, credentialSelection.granted),
   );
   const dataDenyPath = await resolveReadWallPath(options.dataDir, "directory", effectiveHome);
   const allowPaths = await Promise.all([
@@ -458,6 +613,7 @@ export async function resolveReadWallPolicy(
     resolveAllowPath(options.userSkillsDir, "user-skills", false, effectiveHome),
     ...options.extraReadOnlyPaths.map((path) => resolveAllowPath(path, "extra", false, effectiveHome)),
   ]);
+  allowPaths.push(...credentialSelection.granted);
 
   assertNoCredentialExceptionConflicts(allowPaths, credentialDenyPaths);
   assertDataExceptionRules(allowPaths, dataDenyPath);
@@ -483,6 +639,8 @@ export async function resolveReadWallPolicy(
     credentialDenyPaths,
     dataDenyPath,
     allowPaths,
+    credentialWallMode,
+    writableHome: credentialWallMode === "wide",
     warnings,
   };
   return { ...withoutHash, hash: policyHash(withoutHash) };

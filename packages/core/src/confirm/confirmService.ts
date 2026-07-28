@@ -29,11 +29,21 @@ import {
   commandConfirmationDigest,
   executeCommandInputSchema,
 } from "./commandConfirmation.js";
+import {
+  buildCredentialAccessConfirmSpec,
+  checkRequestedCredentialAccess,
+  credentialAccessDigest,
+  effectiveCredentialHome,
+  requestCredentialAccessInputSchema,
+  REQUEST_CREDENTIAL_ACCESS_TOOL,
+} from "./credentialAccessConfirmation.js";
+import { markCredentialAccessRejected } from "./credentialAccessCooldown.js";
 import { secretLeaseStore, type SecretLeaseStore } from "./secretLeaseStore.js";
 
 export const CONFIRM_TTL_MS = 10 * 60 * 1_000;
 export const CONFIRM_CAPABLE_TOOLS = new Set<string>([
   WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
+  REQUEST_CREDENTIAL_ACCESS_TOOL,
 ]);
 
 export interface SafeSubmitConfirmDecision {
@@ -154,15 +164,36 @@ export class ConfirmService {
     if (!input.runId || !input.toolCallId) {
       return { ok: false, reason: "确认请求缺少运行标识" };
     }
-    const parsed = executeCommandInputSchema.safeParse(input.args);
-    if (!parsed.success) return { ok: false, reason: "确认请求参数无效" };
-    const decision = evaluateCommandPolicy(parsed.data.command, {
-      workspaceCwd: sessionWorkspaceDir(input.state.sessionId),
-      background: parsed.data.background === true,
-      sandboxBinDir: input.sandboxBinDir ?? SANDBOX_BIN_DIR,
-    });
-    if (decision.action !== "confirm") {
-      return { ok: false, reason: "确认请求与当前命令策略不匹配" };
+    // 凭证共享申请与命令确认共用同一条确认流水线,只是卡面与摘要口径不同。
+    let confirmReason = "";
+    const credentialAccess = input.toolName === REQUEST_CREDENTIAL_ACCESS_TOOL;
+    let credential: { declared: string; reason: string; digest: string } | null = null;
+    let parsed: ReturnType<typeof executeCommandInputSchema.safeParse> | null = null;
+    if (credentialAccess) {
+      const credentialArgs = requestCredentialAccessInputSchema.safeParse(input.args);
+      if (!credentialArgs.success) return { ok: false, reason: "确认请求参数无效" };
+      const checked = checkRequestedCredentialAccess(
+        credentialArgs.data,
+        effectiveCredentialHome(),
+      );
+      if (!checked.ok) return { ok: false, reason: "确认请求与当前共享规则不匹配" };
+      credential = {
+        declared: checked.declared,
+        reason: checked.reason,
+        digest: credentialAccessDigest(input.state.sessionId, credentialArgs.data),
+      };
+    } else {
+      parsed = executeCommandInputSchema.safeParse(input.args);
+      if (!parsed.success) return { ok: false, reason: "确认请求参数无效" };
+      const decision = evaluateCommandPolicy(parsed.data.command, {
+        workspaceCwd: sessionWorkspaceDir(input.state.sessionId),
+        background: parsed.data.background === true,
+        sandboxBinDir: input.sandboxBinDir ?? SANDBOX_BIN_DIR,
+      });
+      if (decision.action !== "confirm") {
+        return { ok: false, reason: "确认请求与当前命令策略不匹配" };
+      }
+      confirmReason = decision.reason;
     }
 
     const existing = input.state.pendingConfirms.get(input.toolCallId);
@@ -179,7 +210,9 @@ export class ConfirmService {
     const confirmId = this.#createId();
     let spec;
     try {
-      spec = buildCommandConfirmSpec(parsed.data, decision.reason, confirmId);
+      spec = credential
+        ? buildCredentialAccessConfirmSpec(credential, confirmId)
+        : buildCommandConfirmSpec(parsed!.data, confirmReason, confirmId);
     } catch {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
@@ -208,7 +241,9 @@ export class ConfirmService {
       runId: input.runId,
       toolCallId: input.toolCallId,
       toolName: input.toolName,
-      commandDigest: commandConfirmationDigest(input.state.sessionId, parsed.data),
+      commandDigest: credential
+        ? credential.digest
+        : commandConfirmationDigest(input.state.sessionId, parsed!.data),
       spec,
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CONFIRM_TTL_MS).toISOString(),
@@ -301,7 +336,7 @@ export class ConfirmService {
     if (
       state.pendingConfirms.get(pending.toolCallId) !== pending ||
       pending.status !== "pending" ||
-      pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
+      !CONFIRM_CAPABLE_TOOLS.has(pending.toolName) ||
       pending.spec.kind !== grant.kind ||
       !Number.isFinite(pendingExpiresAt) ||
       pendingExpiresAt <= this.#now()
@@ -391,7 +426,7 @@ export class ConfirmService {
       state.pendingConfirms.get(pending.toolCallId) !== pending ||
       pending.status !== "resuming" ||
       pending.decisionAccepted !== true ||
-      pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
+      !CONFIRM_CAPABLE_TOOLS.has(pending.toolName) ||
       !Number.isFinite(pendingExpiresAt) ||
       pendingExpiresAt <= this.#now()
     ) {
@@ -582,7 +617,7 @@ export class ConfirmService {
       throw new ConfirmDecisionError("conflict", "确认状态无法安全持久化");
     }
 
-    if (submission.decision.accepted && pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) {
+    if (submission.decision.accepted && CONFIRM_CAPABLE_TOOLS.has(pending.toolName)) {
       try {
         this.#issueProof(state, {
           sessionId: state.sessionId,
@@ -605,6 +640,10 @@ export class ConfirmService {
       }
     } else {
       clearApprovalProof(state, pending.toolCallId);
+      // 拒绝共享后同一位置进入冷却,模型再申请也不再弹卡骚扰。
+      if (pending.toolName === REQUEST_CREDENTIAL_ACCESS_TOOL && pending.spec.sub) {
+        markCredentialAccessRejected(state, pending.spec.sub, this.#now());
+      }
     }
     await this.#safeAppendAudit(state, pending, {
       eventType: "decision_started",

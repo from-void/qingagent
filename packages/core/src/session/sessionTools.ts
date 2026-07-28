@@ -12,6 +12,8 @@ import {
 } from "../agents/toolSearch.js";
 import { createGatedExecuteCommandTool } from "../workspace/gatedExecuteCommandTool.js";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
+import { createRequestCredentialAccessTool } from "../tools/requestCredentialAccess.js";
+import { createCredentialGrant } from "@qingagent/db";
 import {
   createProtectedFolderSourceEditFileTool,
   createProtectedFolderSourceGrepTool,
@@ -1383,6 +1385,14 @@ export function createSessionScopedTools(
         getWorkspace: getWorkspace!,
       })
     : null;
+  // 按需授权兜底:任意 CLI 撞凭证墙时模型就地申请,和技能声明通道共用同一张表。
+  const requestCredentialAccess = state
+    ? createRequestCredentialAccessTool({
+        sessionId: state.sessionId,
+        state,
+        store: { createGrant: (input) => createCredentialGrant(input) },
+      })
+    : null;
   // 文件夹资料库 agent 工具:仅当会话连了文件夹源时注入(读文档/检索 + 受保护的工作区文件操作)。
   const hasFolderSources = state ? state.folderSources.size > 0 : false;
   const readDocument = state && hasFolderSources
@@ -1431,6 +1441,7 @@ export function createSessionScopedTools(
     readDiff,
     executeCommand,
     getProcessOutput,
+    requestCredentialAccess,
     readDocument,
     searchDocuments,
     workspaceReadFile,

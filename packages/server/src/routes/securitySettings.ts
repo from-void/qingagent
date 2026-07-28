@@ -12,6 +12,7 @@ import {
   revokeConfirmGrantWithState,
   type ConfirmGrantKind,
 } from "@qingagent/db";
+import { listCredentialShareItems } from "./credentialShare";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 const updateSecuritySchema = z.object({
@@ -21,6 +22,7 @@ const updateSecuritySchema = z.object({
 const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command", "send", "connect"]);
 
 interface SecuritySettingsRoutesDependencies {
+  listCredentialShare?: typeof listCredentialShareItems;
   listGrantStates?: typeof listConfirmGrantStates;
   createGrant?: typeof createConfirmGrantCanonical;
   revokeGrant?: typeof revokeConfirmGrantWithState;
@@ -33,6 +35,7 @@ export function createSecuritySettingsRoutes(
   const listGrantStates = dependencies.listGrantStates ?? listConfirmGrantStates;
   const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
   const revokeGrant = dependencies.revokeGrant ?? revokeConfirmGrantWithState;
+  const listCredentialShare = dependencies.listCredentialShare ?? listCredentialShareItems;
 
   routes.get("/settings/security", async (c) => {
     const states = await listGrantStates();
@@ -53,6 +56,8 @@ export function createSecuritySettingsRoutes(
         version: state.version,
       };
     };
+    // 共享条目随设置一起返回:安全页只发一次请求,读失败也不拖垮整页。
+    const credentialShare = await listCredentialShare().catch(() => []);
     const body: SecuritySettingsResponse = {
       categories: [
         category("install", "安装"),
@@ -60,6 +65,7 @@ export function createSecuritySettingsRoutes(
         category("send", "向外发送内容"),
         category("connect", "连接账号"),
       ],
+      credentialShare,
     };
     return c.json(body);
   });

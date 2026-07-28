@@ -7,6 +7,7 @@ import type {
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
+import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 import crypto from "node:crypto";
 import { qingagentAgent } from "../agents/qingagent.js";
 import type { ConfirmService } from "../confirm/confirmService.js";
@@ -174,6 +175,9 @@ function buildResumeTools(session: SessionState): Promise<{
   }
   if (sessionTools.getProcessOutput) {
     sessionScoped[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
+  }
+  if (sessionTools.requestCredentialAccess) {
+    sessionScoped[REQUEST_CREDENTIAL_ACCESS_TOOL] = sessionTools.requestCredentialAccess;
   }
   if (sessionTools.writeDraft) sessionScoped.writeDraft = sessionTools.writeDraft;
   if (sessionTools.updateWorkingMemory) {

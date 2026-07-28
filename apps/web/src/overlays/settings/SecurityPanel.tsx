@@ -7,6 +7,8 @@ import type {
   SecuritySettingsResponse,
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
+import type { CredentialShareItem } from "@qingagent/contract-ts";
+import { parseCredentialShareItems, updateCredentialShare } from "./credentialShare";
 import { useToast } from "../../system/ToastProvider";
 import { SkinSelect } from "../../system/SkinSelect";
 import {
@@ -57,7 +59,10 @@ function parseSettings(value: unknown): SecuritySettingsResponse {
   if (!Array.isArray(input.categories) || !input.categories.every(isCategory)) {
     throw new Error("invalid security settings");
   }
-  return { categories: input.categories };
+  return {
+    categories: input.categories,
+    credentialShare: parseCredentialShareItems({ items: input.credentialShare }),
+  };
 }
 
 function parseCanonical(
@@ -95,6 +100,8 @@ function mergeSettings(
       const previous = currentByKind.get(item.kind);
       return previous && previous.version > item.version ? previous : item;
     }),
+    // 共享条目没有版本线,服务端最新一次结果即真值。
+    credentialShare: incoming.credentialShare ?? [],
   };
 }
 
@@ -109,6 +116,7 @@ export function SecurityPanel() {
 
   const applyCanonical = useCallback((state: RememberGrantCanonical) => {
     setSettings((current) => current ? {
+      ...current,
       categories: current.categories.map((item) => {
         if (item.kind !== state.kind || item.version > state.version) return item;
         return {
@@ -252,6 +260,72 @@ export function SecurityPanel() {
           );
         }) ?? (showLoading ? <p className="security-loading">正在加载…</p> : null)}
       </div>
+      <CredentialSharePanel
+        items={settings?.credentialShare ?? []}
+        onChanged={() => void readSettings().catch(() => undefined)}
+      />
     </div>
+  );
+}
+
+/** 已允许与命令行工具共享的登录信息:逐条可收回。没有任何条目时整段不显示。 */
+function CredentialSharePanel({
+  items,
+  onChanged,
+}: {
+  items: CredentialShareItem[];
+  onChanged: () => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const shared = items.filter((item) => item.granted);
+  if (shared.length === 0) return null;
+
+  const revoke = async (item: CredentialShareItem) => {
+    setBusy(item.declared);
+    try {
+      await updateCredentialShare({
+        skillName: item.skillName,
+        declared: item.declared,
+        granted: false,
+      });
+      onChanged();
+      toast.show({
+        message: `已收回「${item.skillLabel}」的共享。下次用到时会重新询问。`,
+        tone: "success",
+      });
+    } catch {
+      toast.show({ message: "收回没有成功，请再试一次", tone: "warn" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="security-credential" data-wf="CredentialSharePanel">
+      <header className="security-head">
+        <h2>已共享的登录信息</h2>
+        <p>这些技能用的命令行工具，和你在终端里用的是同一个账号。收回后下次会重新询问。</p>
+      </header>
+      <div className="security-list">
+        {shared.map((item) => (
+          <div className="security-row" key={`${item.skillName}:${item.declared}`}>
+            <div className="security-copy">
+              <span className="security-label">{item.skillLabel}</span>
+              <span className="security-description">{item.declared}</span>
+            </div>
+            <button
+              type="button"
+              className="security-revoke"
+              disabled={busy === item.declared}
+              onClick={() => void revoke(item)}
+            >
+              收回
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

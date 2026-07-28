@@ -50,6 +50,9 @@ interface ProjectionContext {
   projectedDestinations: Set<string>;
   visitedSources: Set<string>;
   remountReadOnly: Set<string>;
+  /** 最宽档:HOME 投影内的条目直接以可写方式 bind,且不再只读重挂。 */
+  writableHome: boolean;
+  homeRoot: string;
 }
 
 function variants(path: ResolvedReadWallPath): string[] {
@@ -136,10 +139,13 @@ async function projectDirectory(
       await projectDirectory(canonicalSource, destinationPath, context);
       continue;
     }
-    context.args.push("--ro-bind", canonicalSource, destinationPath);
+    const writable = context.writableHome && readWallPathIsInside(destinationPath, context.homeRoot);
+    context.args.push(writable ? "--bind" : "--ro-bind", canonicalSource, destinationPath);
     context.safeBindings.push(destinationPath);
   }
-  context.remountReadOnly.add(destinationRoot);
+  if (!(context.writableHome && readWallPathIsInside(destinationRoot, context.homeRoot))) {
+    context.remountReadOnly.add(destinationRoot);
+  }
 }
 
 function isCoveredByRoot(path: string, roots: string[]): boolean {
@@ -197,6 +203,10 @@ function baselinePrefix(): string[] {
     "--unshare-uts",
     "--proc",
     "/proc",
+    // bwrap 自建的最小 devtmpfs(null/zero/full/random/urandom/tty)。缺了它 /dev 整个不存在,
+    // 任何一句 `2>/dev/null` 都会以 "cannot create /dev/null" 直接失败。
+    "--dev",
+    "/dev",
     "--tmpfs",
     "/tmp",
   ];
@@ -213,9 +223,11 @@ export async function buildBubblewrapReadWallArgs(
     args,
     denyPaths,
     safeBindings: [],
-    projectedDestinations: new Set(["/tmp", "/proc"]),
+    projectedDestinations: new Set(["/tmp", "/proc", "/dev"]),
     visitedSources: new Set(),
     remountReadOnly: new Set(),
+    writableHome: policy.writableHome,
+    homeRoot: policy.effectiveHome,
   };
 
   for (const systemPath of SYSTEM_READONLY_BINDS) {
@@ -230,7 +242,7 @@ export async function buildBubblewrapReadWallArgs(
 
   const mountedRoots = [...SYSTEM_READONLY_BINDS, "/opt", "/snap", policy.effectiveHome];
   const explicitReadOnly = policy.allowPaths.filter(
-    (path) => path.exists && !allowInsideData(path, policy.dataDenyPath),
+    (path) => path.exists && path.kind !== "credential" && !allowInsideData(path, policy.dataDenyPath),
   );
   for (const allowed of explicitReadOnly) {
     if (isCoveredByRoot(allowed.lexicalPath, mountedRoots)) continue;
@@ -249,6 +261,14 @@ export async function buildBubblewrapReadWallArgs(
       throw new Error("bubblewrap node runtime overlaps a deny path");
     }
     await appendReadonlyRoot(nodeDir, nodeDir, denyPaths, context, false);
+  }
+
+  // 用户授权共享的凭证路径:在 HOME 投影之上叠一层可写 bind。
+  // bwrap 按顺序执行,后来的 --bind 盖住投影里的只读副本;--remount-ro 非递归,
+  // 不会把这层子挂载改回只读,于是 CLI 能像在终端里一样刷新 token / 写锁文件。
+  for (const credential of policy.allowPaths.filter((path) => path.kind === "credential")) {
+    if (!credential.exists) continue;
+    context.args.push("--bind", credential.canonicalPath, credential.lexicalPath);
   }
 
   const session = policy.allowPaths.find((path) => path.kind === "session");
@@ -290,7 +310,17 @@ export async function buildStrictFallbackBwrapArgs(
   nodeExecutable: string,
 ): Promise<BuiltBubblewrapPolicy> {
   if (!fallbackAllowed(policy)) throw new Error("strict bwrap fallback would reopen a deny descendant");
-  const args = ["--unshare-pid", "--unshare-ipc", "--unshare-uts", "--proc", "/proc", "--tmpfs", "/tmp"];
+  const args = [
+    "--unshare-pid",
+    "--unshare-ipc",
+    "--unshare-uts",
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "--tmpfs",
+    "/tmp",
+  ];
   const denyPaths = [...policy.credentialDenyPaths, policy.dataDenyPath];
   const fallbackRoots = [...SYSTEM_READONLY_BINDS, "/opt", "/snap"];
   if (denyPaths.some((denied) =>
@@ -313,8 +343,13 @@ export async function buildStrictFallbackBwrapArgs(
     args.push("--ro-bind", nodeDir, nodeDir);
   }
   args.push("--ro-bind-try", "/opt", "/opt", "--ro-bind-try", "/snap", "/snap");
-  for (const allowed of policy.allowPaths.filter((path) => !path.writable && path.exists)) {
+  for (const allowed of policy.allowPaths.filter(
+    (path) => !path.writable && path.exists && path.kind !== "credential",
+  )) {
     args.push("--ro-bind", allowed.canonicalPath, allowed.lexicalPath);
+  }
+  for (const credential of policy.allowPaths.filter((path) => path.kind === "credential" && path.exists)) {
+    args.push("--bind", credential.canonicalPath, credential.lexicalPath);
   }
   const session = policy.allowPaths.find((path) => path.kind === "session");
   if (!session) throw new Error("strict bwrap fallback is missing the session exception");
@@ -353,6 +388,9 @@ async function probeBubblewrapPolicy(
     `test "$(cat ${shellQuoteReadWallPath(sessionProbe)})" = qingagent-read-wall`,
     `rm -f ${shellQuoteReadWallPath(sessionProbe)}`,
     "test -r /proc/self/status",
+    // /dev 缺失会让 `2>/dev/null` 这类最常见写法直接失败,预检必须覆盖。
+    "test -w /dev/null && test -r /dev/urandom",
+    "printf probe 2>/dev/null >/dev/null",
     "node -e 'process.stdout.write(\"node-ok\")'",
   ];
   if (built.mode === "read-wall" && built.safeHomeBindings[0]) {
@@ -406,6 +444,7 @@ export function validateBubblewrapArgsContract(args: string[], requireUserNamesp
     "--unshare-ipc",
     "--unshare-uts",
     "--proc",
+    "--dev",
     "--tmpfs",
     "--chdir",
     "--die-with-parent",

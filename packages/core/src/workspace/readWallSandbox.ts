@@ -13,7 +13,11 @@ import {
   validateBubblewrapArgsContract,
 } from "./readWallBubblewrap.js";
 import type { ReadWallProcessRunner } from "./readWallProcess.js";
-import { resolveReadWallPolicy, type ReadWallPlatform } from "./readWallPolicy.js";
+import {
+  resolveReadWallPolicy,
+  type CredentialWallMode,
+  type ReadWallPlatform,
+} from "./readWallPolicy.js";
 import { prepareSeatbeltReadWallPolicy, verifySeatbeltProfileHash } from "./readWallSeatbelt.js";
 
 export interface PrepareReadWallOptions {
@@ -28,6 +32,9 @@ export interface PrepareReadWallOptions {
   builtinSkillsDir: string;
   userSkillsDir: string;
   extraReadOnlyPaths: string[];
+  /** 已授权可与终端共享的凭证路径(绝对路径)。 */
+  grantedCredentialPaths?: string[];
+  credentialWallMode?: CredentialWallMode;
   nodeExecutable: string;
   runner?: ReadWallProcessRunner;
   effectiveUid?: number;
@@ -41,6 +48,9 @@ export interface PreparedReadWall {
   ruleCount: number;
   warnings: string[];
   mode: "seatbelt" | "bwrap-read-wall" | "bwrap-strict-fallback";
+  /** 本次实际生效的凭证共享路径,用于日志与自检。 */
+  credentialPaths: string[];
+  credentialWallMode: CredentialWallMode;
   verifyIntegrity: () => Promise<void>;
 }
 
@@ -54,11 +64,16 @@ export async function prepareReadWall(options: PrepareReadWallOptions): Promise<
     builtinSkillsDir: options.builtinSkillsDir,
     userSkillsDir: options.userSkillsDir,
     extraReadOnlyPaths: options.extraReadOnlyPaths,
+    grantedCredentialPaths: options.grantedCredentialPaths,
+    credentialWallMode: options.credentialWallMode,
     effectiveUid: options.effectiveUid,
     effectiveHome: options.effectiveHome,
   });
   const readOnlyPaths = policy.allowPaths.filter((path) => !path.writable).map((path) => path.lexicalPath);
   const readWritePaths = policy.allowPaths.filter((path) => path.writable).map((path) => path.lexicalPath);
+  const credentialPaths = policy.allowPaths
+    .filter((path) => path.kind === "credential")
+    .map((path) => path.lexicalPath);
   const sandboxEnv = { ...options.sandboxEnv, HOME: policy.effectiveHome };
 
   if (options.platform === "darwin") {
@@ -80,6 +95,8 @@ export async function prepareReadWall(options: PrepareReadWallOptions): Promise<
       ruleCount: policy.credentialDenyPaths.length + 1,
       warnings: policy.warnings,
       mode: "seatbelt",
+      credentialPaths,
+      credentialWallMode: policy.credentialWallMode,
       verifyIntegrity: () => verifySeatbeltProfileHash(seatbelt.profilePath, seatbelt.profileHash),
     };
   }
@@ -104,6 +121,8 @@ export async function prepareReadWall(options: PrepareReadWallOptions): Promise<
     ruleCount: policy.credentialDenyPaths.length + 1,
     warnings: policy.warnings,
     mode: bubblewrap.mode === "read-wall" ? "bwrap-read-wall" : "bwrap-strict-fallback",
+    credentialPaths,
+    credentialWallMode: policy.credentialWallMode,
     verifyIntegrity: async () => {
       const actualHash = createHash("sha256").update(JSON.stringify(bubblewrap.args)).digest("hex");
       if (actualHash !== expectedArgsHash) throw new Error("bubblewrap policy arguments changed after preflight");

@@ -22,7 +22,8 @@ import { useClientCapabilities, useConfirm } from "../../system";
 import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
 import { useOverlayDismiss } from "../../system/overlayDismissStack";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
-import type { ConnectorId } from "@qingagent/contract-ts";
+import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
+import { buildCredentialShareSpec, updateCredentialShare } from "./credentialShare";
 
 ensureSettingsDialogA11y();
 
@@ -224,14 +225,49 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     setMessage(null);
   }, [message, toast]);
 
+  // 启用后若该技能要共享命令行工具的登录信息,当场弹确认卡。
+  // 卡面走设置层通用的确认弹层(useConfirm/FolderPromptDialog):有皮肤、有遮罩、
+  // 焦点被困在卡里、Esc 只关它。文案仍由 buildCredentialShareSpec 单点产出。
+  const askCredentialShare = async (items: CredentialShareItem[]) => {
+    const spec = buildCredentialShareSpec(items);
+    if (!spec) return;
+    const accepted = await confirm({
+      title: spec.title,
+      ...(spec.sub ? { subject: spec.sub } : {}),
+      message: spec.say,
+      ...(spec.footHint ? { footHint: spec.footHint } : {}),
+      confirmLabel: spec.primaryLabel,
+      cancelLabel: spec.secondaryLabel,
+      tone: "affirm",
+    });
+    if (!accepted) return;
+    try {
+      for (const item of items) {
+        await updateCredentialShare({
+          skillName: item.skillName,
+          declared: item.declared,
+          granted: true,
+        });
+      }
+      if (mountedRef.current) {
+        setMessage(`已允许「${items[0]!.skillLabel}」共享登录信息`);
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setMessage(error instanceof Error ? error.message : "共享没有开启成功");
+      }
+    }
+  };
+
   const toggle = async (name: string, enabled: boolean) => {
     setBusy(name);
     setMessage(null);
     try {
-      await setSkillEnabled(name, enabled);
+      const pending = (await setSkillEnabled(name, enabled)) ?? [];
       if (detail?.name === name && mountedRef.current) {
         setDetail({ ...detail, enabled });
       }
+      if (pending.length > 0 && mountedRef.current) void askCredentialShare(pending);
     } catch (e) {
       if (mountedRef.current) setMessage(e instanceof Error ? e.message : "操作失败");
     } finally {

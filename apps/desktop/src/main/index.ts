@@ -141,6 +141,10 @@ if (!process.env.DATABASE_URL) {
 
 // 沙箱凭据密钥(.cred-key)与会话工作目录的根:落在 userData,避免打包后写到
 // 安装目录/cwd(Windows 下常不可写,会导致凭据/沙箱创建失败)。
+// TODO(windows 写墙):Windows 目前没有 seatbelt/bubblewrap 对应的文件隔离层
+// (resolveIsolation 在 win32 落到 "none"、命令靠 QINGAGENT_ALLOW_UNISOLATED_COMMANDS 放开),
+// 因此凭证共享在 Windows 上是"本来就通"——声明与授权照常记录、安全页照常可收回,
+// 但没有一层墙可以据此收紧。补上 Windows 文件隔离层时,再把 credential 例外接进去。
 // TODO(P2 feishu-byo-app):决定桌面端 lark-cli 配置目录策略。当前沙箱透传宿主 HOME,
 // lark-cli 会写用户真实 ~/.lark-cli;单机交付前需决定保持真实 HOME,还是隔离到 userData 下。
 if (!process.env.QINGAGENT_DATA_DIR) {
@@ -263,6 +267,9 @@ if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
             path.dirname(nodeShimPath),
           );
         }
+        // 随包 lark-cli 一直在用宿主真实 ~/.lark-cli;改成声明式共享后,给它预置一条授权,
+        // 老用户升级不会突然被一张确认卡拦住(仍可在 设置 → 安全 里收回)。
+        process.env.QINGAGENT_PRESET_CREDENTIAL_PATHS = "~/.lark-cli";
         ensureLarkCliShim({ runJsPath: larkRunJs, nodePath: nodeShimPath });
       } catch (err) {
         console.warn("[lark-cli] shim 写入失败,飞书命令可能不可用:", err);

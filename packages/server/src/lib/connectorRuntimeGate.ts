@@ -1,3 +1,5 @@
+import { isLoopbackHost } from "./debugGate";
+
 export interface ConnectorRuntimeCapabilityDto {
   mutationEnabled: boolean;
   reasonCode:
@@ -24,7 +26,6 @@ export interface ConnectorRuntimeAccess {
 }
 
 type RuntimeEnv = Readonly<Record<string, string | undefined>>;
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
  * capability DTO 与 mutation 守卫的单一判定源。M1b handler 必须调用同一返回值的
@@ -33,7 +34,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 export function getConnectorRuntimeAccess(env: RuntimeEnv = process.env): ConnectorRuntimeAccess {
   const host = env.QINGAGENT_HOST ?? "127.0.0.1";
   const publicDeployment = env.QINGAGENT_PUBLIC_DEPLOYMENT === "1";
-  const externallyExposed = !LOOPBACK_HOSTS.has(host);
+  const externallyExposed = !isLoopbackHost(host);
 
   let capability: ConnectorRuntimeCapabilityDto;
   if (publicDeployment) {

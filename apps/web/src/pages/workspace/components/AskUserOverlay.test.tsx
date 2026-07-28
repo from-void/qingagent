@@ -430,6 +430,26 @@ describe("AskUserOverlay", () => {
     workspace.remove();
   });
 
+  it("无 preview 时首项可由 Tab 进入，方向键继续推进 roving tabindex", async () => {
+    await renderOverlay(focusSpec);
+    const inputs = host!.querySelectorAll<HTMLInputElement>('.wf-chip input');
+
+    expect(inputs[0]?.tabIndex).toBe(0);
+    expect(inputs[1]?.tabIndex).toBe(-1);
+
+    inputs[0]!.focus();
+    await act(async () => {
+      inputs[0]!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+      }));
+    });
+
+    expect(document.activeElement).toBe(inputs[1]);
+    expect(inputs[0]?.tabIndex).toBe(-1);
+    expect(inputs[1]?.tabIndex).toBe(0);
+  });
+
   it("无 preview 的题保持原窄浮层且不 portal", async () => {
     const workspace = document.createElement("div");
     workspace.id = "view-workspace";

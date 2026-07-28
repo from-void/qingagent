@@ -114,7 +114,7 @@ describe("bounded get_process_output", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(96);
     const output = await result;
     expect(output).toContain("请扫码完成授权：https://example.test/device-auth");
     expect(output).not.toContain("进程仍在运行");
@@ -136,7 +136,7 @@ describe("bounded get_process_output", () => {
     const result = executeTool(tool, { pid: handle.pid, wait: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(handle.wait).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(8);
+    await vi.advanceTimersByTimeAsync(100);
     const output = await result;
 
     expect(output).toContain("stderr:");
@@ -145,7 +145,7 @@ describe("bounded get_process_output", () => {
     expect(handle.kill).not.toHaveBeenCalled();
   });
 
-  it("调用 wait 前已有授权信号时立即返回，仍保留迟到退出事件", async () => {
+  it("调用 wait 前已有授权信号时立即返回，退出后不再写入旧 writer", async () => {
     let resolveWait: ((result: CommandResult) => void) | undefined;
     const custom = vi.fn(async () => {});
     const handle = neverSettlingHandle(
@@ -163,6 +163,7 @@ describe("bounded get_process_output", () => {
     } as never);
     expect(output).toContain("Authorize this login");
     expect(output).not.toContain("进程仍在运行");
+    const callsAfterReturn = custom.mock.calls.length;
 
     handle.exitCode = 3;
     resolveWait?.({
@@ -172,17 +173,9 @@ describe("bounded get_process_output", () => {
       stderr: handle.stderr,
       executionTimeMs: 25,
     });
-    await vi.waitFor(() => expect(custom).toHaveBeenCalledWith({
-      type: "data-sandbox-exit",
-      data: {
-        pid: handle.pid,
-        exitCode: 3,
-        success: false,
-        timedOut: false,
-        executionTimeMs: 25,
-        toolCallId: "auth-signal-read",
-      },
-    }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(custom).toHaveBeenCalledTimes(callsAfterReturn);
   });
 
   it("wait:true 且上限内退出时返回输出和 Exit code，并发退出事件", async () => {
@@ -264,7 +257,7 @@ describe("bounded get_process_output", () => {
     });
   });
 
-  it("wait 有界返回后进程才退出时补发同一原生退出事件", async () => {
+  it("wait 有界返回后进程才退出时由下次轮询发送退出事件", async () => {
     vi.useFakeTimers();
     let resolveWait: ((result: CommandResult) => void) | undefined;
     const custom = vi.fn(async () => {});
@@ -281,6 +274,7 @@ describe("bounded get_process_output", () => {
     } as never);
     await vi.advanceTimersByTimeAsync(10);
     await expect(result).resolves.toContain("进程仍在运行");
+    const callsAfterReturn = custom.mock.calls.length;
 
     handle.exitCode = 3;
     resolveWait?.({
@@ -290,17 +284,25 @@ describe("bounded get_process_output", () => {
       stderr: handle.stderr,
       executionTimeMs: 25,
     });
-    await vi.waitFor(() => expect(custom).toHaveBeenCalledWith({
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(custom).toHaveBeenCalledTimes(callsAfterReturn);
+
+    await expect(executeTool(tool, { pid: handle.pid }, {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "poll-late-exit" },
+      writer: { custom, write: vi.fn() },
+    } as never)).resolves.toContain("Exit code: 3");
+    expect(custom).toHaveBeenCalledWith({
       type: "data-sandbox-exit",
       data: {
         pid: handle.pid,
         exitCode: 3,
         success: false,
         timedOut: false,
-        executionTimeMs: 25,
-        toolCallId: "late-exit-read",
+        toolCallId: "poll-late-exit",
       },
-    }));
+    });
   });
 
   it("首次无 wait 仍在运行，下一次轮询发现已退出时补发退出事件", async () => {
@@ -378,6 +380,23 @@ describe("bounded get_process_output", () => {
     expect(output).toContain("do not rerun the command");
   });
 
+  it("连续有界等待复用单一退出观察且不注册流回调", async () => {
+    vi.useFakeTimers();
+    const handle = neverSettlingHandle("working\n");
+    const { tool } = createHarness(handle, 10);
+
+    const first = executeTool(tool, { pid: handle.pid, wait: true });
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(first).resolves.toContain("进程仍在运行");
+
+    const second = executeTool(tool, { pid: handle.pid, wait: true });
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(second).resolves.toContain("进程仍在运行");
+
+    expect(handle.wait).toHaveBeenCalledOnce();
+    expect(handle.wait).toHaveBeenCalledWith();
+  });
+
   it("等待期间发送 tool-heartbeat，execute 收尾后停止", async () => {
     vi.useFakeTimers();
     const handle = neverSettlingHandle();
@@ -430,7 +449,7 @@ describe("bounded get_process_output", () => {
     await Promise.resolve();
   });
 
-  it("有界返回后悬挂 wait 的迟到回调和 rejection 不产生未捕获异常", async () => {
+  it("有界返回后退出观察不持有流回调或旧 writer", async () => {
     let callbacks: WaitOptions | undefined;
     let rejectWait: ((reason: unknown) => void) | undefined;
     let writerClosed = false;
@@ -451,11 +470,12 @@ describe("bounded get_process_output", () => {
       writer: { custom, write: vi.fn() },
     } as never)).resolves.toContain("进程仍在运行");
 
+    expect(callbacks).toBeUndefined();
+    const callsAfterReturn = custom.mock.calls.length;
     writerClosed = true;
-    await expect(callbacks?.onStdout?.("late stdout\n")).resolves.toBeUndefined();
-    await expect(callbacks?.onStderr?.("late stderr\n")).resolves.toBeUndefined();
     rejectWait?.(new Error("late wait failure"));
     await Promise.resolve();
-    expect(custom).toHaveBeenCalledTimes(3);
+    await Promise.resolve();
+    expect(custom).toHaveBeenCalledTimes(callsAfterReturn);
   });
 });

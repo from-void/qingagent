@@ -4,6 +4,7 @@ import {
   SandboxNotAvailableError,
   WORKSPACE_TOOLS,
   type CommandResult,
+  type ProcessHandle,
   type Workspace,
 } from "@mastra/core/workspace";
 import { z } from "zod";
@@ -39,6 +40,8 @@ export const INTERACTIVE_AUTH_OUTPUT_KEYWORDS: readonly RegExp[] = [
 ];
 
 const INTERACTIVE_AUTH_URL_PATTERN = /https?:\/\/[^\s"'<>]+/iu;
+const PROCESS_OUTPUT_POLL_INTERVAL_MS = 100;
+const processExitPromises = new WeakMap<ProcessHandle, Promise<CommandResult>>();
 
 function hasInteractiveAuthOutputSignal(stdout: string, stderr: string): boolean {
   const output = [stdout, stderr].filter(Boolean).join("\n");
@@ -46,6 +49,23 @@ function hasInteractiveAuthOutputSignal(stdout: string, stderr: string): boolean
     INTERACTIVE_AUTH_URL_PATTERN.test(output) &&
     INTERACTIVE_AUTH_OUTPUT_KEYWORDS.some((keyword) => keyword.test(output))
   );
+}
+
+function observeProcessExit(handle: ProcessHandle): Promise<CommandResult> {
+  const existing = processExitPromises.get(handle);
+  if (existing) return existing;
+  const waitPromise = handle.wait();
+  processExitPromises.set(handle, waitPromise);
+  void waitPromise.then(
+    () => processExitPromises.delete(handle),
+    () => processExitPromises.delete(handle),
+  );
+  return waitPromise;
+}
+
+function retainedOutputDelta(previous: string, current: string): string {
+  if (current === previous) return "";
+  return current.startsWith(previous) ? current.slice(previous.length) : current;
 }
 
 /**
@@ -123,10 +143,6 @@ function abortError(signal: AbortSignal): Error {
   return error;
 }
 
-/**
- * wait race 超时后，ProcessHandle 仍保留回调直到进程退出。writer 此时可能已经收尾，
- * 所以所有流式回调必须同时吞掉同步异常和异步 rejection，不能污染后续 agent 轮次。
- */
 async function safeCustom(
   writer: SandboxWriter | undefined,
   chunk: Record<string, unknown>,
@@ -204,37 +220,34 @@ Use this after starting a background command with execute_command (background: t
           };
           detectAuthorizationSignal();
 
-          const waitPromise = handle.wait({
-            onStdout: (data) => {
-              observedStdout = handle.stdout !== observedStdout
-                ? handle.stdout
-                : `${observedStdout}${data}`;
-              detectAuthorizationSignal();
-              return writer
-                ? safeCustom(writer, {
-                  type: "data-sandbox-stdout",
-                  data: { output: data, timestamp: Date.now(), toolCallId },
-                  transient: true,
-                })
-                : undefined;
-            },
-            onStderr: (data) => {
-              observedStderr = handle.stderr !== observedStderr
-                ? handle.stderr
-                : `${observedStderr}${data}`;
-              detectAuthorizationSignal();
-              return writer
-                ? safeCustom(writer, {
-                  type: "data-sandbox-stderr",
-                  data: { output: data, timestamp: Date.now(), toolCallId },
-                  transient: true,
-                })
-                : undefined;
-            },
-          });
-          // race 输掉后 wait 仍会在进程退出时 settle；显式挂 rejection handler，避免
-          // provider 的 wait 实现或迟到 writer 回调形成 unhandled rejection。
-          void waitPromise.catch(() => {});
+          const waitPromise = observeProcessExit(handle);
+          const pollRetainedOutput = async () => {
+            const nextStdout = handle.stdout;
+            const nextStderr = handle.stderr;
+            const stdoutDelta = retainedOutputDelta(observedStdout, nextStdout);
+            const stderrDelta = retainedOutputDelta(observedStderr, nextStderr);
+            observedStdout = nextStdout;
+            observedStderr = nextStderr;
+            detectAuthorizationSignal();
+            if (stdoutDelta) {
+              await safeCustom(writer, {
+                type: "data-sandbox-stdout",
+                data: { output: stdoutDelta, timestamp: Date.now(), toolCallId },
+                transient: true,
+              });
+            }
+            if (stderrDelta) {
+              await safeCustom(writer, {
+                type: "data-sandbox-stderr",
+                data: { output: stderrDelta, timestamp: Date.now(), toolCallId },
+                transient: true,
+              });
+            }
+          };
+          const pollInterval = setInterval(
+            () => void pollRetainedOutput(),
+            Math.min(PROCESS_OUTPUT_POLL_INTERVAL_MS, waitMaxMs),
+          );
 
           let timeout: ReturnType<typeof setTimeout> | undefined;
           const abortSignal = context?.abortSignal;
@@ -261,6 +274,7 @@ Use this after starting a background command with execute_command (background: t
             }
 
             const outcome = await Promise.race(races);
+            await pollRetainedOutput();
             if (outcome.kind === "exited") {
               await safeCustom(writer, {
                 type: "data-sandbox-exit",
@@ -280,27 +294,9 @@ Use this after starting a background command with execute_command (background: t
             } else {
               waitTimedOut =
                 outcome.kind === "timeout" && handle.exitCode === undefined;
-              if (handle.exitCode === undefined) {
-                // 有界读取或授权信号提前返回后，原 wait 仍掌握真实退出结果。若 agent 流尚存活，
-                // 用同一原生退出帧补发；writer 已关闭时 safeCustom 安静降级到下次轮询。
-                void waitPromise.then(async (result) => {
-                  if (exitEventEmitted) return;
-                  exitEventEmitted = true;
-                  await safeCustom(writer, {
-                    type: "data-sandbox-exit",
-                    data: {
-                      pid,
-                      exitCode: result.exitCode,
-                      success: result.success,
-                      timedOut: result.timedOut === true,
-                      executionTimeMs: result.executionTimeMs,
-                      toolCallId,
-                    },
-                  });
-                }).catch(() => {});
-              }
             }
           } finally {
+            clearInterval(pollInterval);
             if (timeout) clearTimeout(timeout);
             if (abortListener) {
               abortSignal?.removeEventListener("abort", abortListener);

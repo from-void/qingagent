@@ -44,8 +44,8 @@ export function dedupeResults(results: SearchResult[]): SearchResult[] {
 }
 
 /**
- * 竞速取优:并行跑所有 promise,任一源率先返回 ≥ count 条即立即采用(低时延);
- * 若无源达标,则等全部结束、按源顺序合并全部结果返回(交给上层去重/截断)。
+ * 竞速取优:并行跑所有 promise,已完成来源合并后的规范化唯一结果达到 count 即立即采用;
+ * 若最终仍未达标,则按源顺序合并全部结果返回(交给上层去重/截断)。
  * 单个源抛错视为空结果(best-effort),绝不让整体 reject。
  */
 export async function raceToGood(
@@ -63,12 +63,13 @@ export async function raceToGood(
         collected[i] = r;
         remaining -= 1;
         if (done) return;
-        if (count > 0 && r.length >= count) {
+        const merged = collected.filter(Boolean).flat();
+        if (count > 0 && dedupeResults(merged).length >= count) {
           done = true;
-          resolve(r);
+          resolve(merged);
         } else if (remaining === 0) {
           done = true;
-          resolve(collected.filter(Boolean).flat());
+          resolve(merged);
         }
       });
     });

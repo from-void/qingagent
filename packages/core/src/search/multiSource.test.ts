@@ -74,6 +74,26 @@ describe("raceToGood", () => {
     const out = await raceToGood([a, b], 5);
     expect(out.map((x) => x.url)).toEqual(["https://a.com/1", "https://b.com/1"]);
   });
+  it("快源原始足量但规范化重复时等待慢源补齐唯一结果", async () => {
+    let resolveSlow: ((results: SearchResult[]) => void) | undefined;
+    const fast = Promise.resolve([
+      r("https://a.com/x?utm_source=fast"),
+      r("https://a.com/x"),
+    ]);
+    const slow = new Promise<SearchResult[]>((resolve) => {
+      resolveSlow = resolve;
+    });
+    const pending = raceToGood([fast, slow], 2);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    resolveSlow?.([r("https://b.com/y")]);
+
+    expect(dedupeResults(await pending).map((result) => result.url)).toEqual([
+      "https://a.com/x?utm_source=fast",
+      "https://b.com/y",
+    ]);
+  });
   it("空输入 → []", async () => {
     expect(await raceToGood([], 3)).toEqual([]);
   });

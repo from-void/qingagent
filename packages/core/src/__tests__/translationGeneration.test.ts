@@ -22,12 +22,12 @@ function emptySse(): Response {
   });
 }
 
-function textSse(chunks: string[]): Response {
+function textSse(chunks: string[], finishReason = "stop"): Response {
   const events = chunks.map((content) => `data: ${JSON.stringify({
     choices: [{ index: 0, delta: { content }, finish_reason: null }],
   })}\n\n`).join("");
   const finish = `data: ${JSON.stringify({
-    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
     usage: {
       prompt_tokens: 120,
       completion_tokens: 20,
@@ -243,6 +243,41 @@ describe("generateTranslations 并发旁支", () => {
       { temperature: 0.73, topP: 0.82, maxTokens: 3456 },
       { temperature: 0.73, topP: 0.82, maxTokens: 3456 },
     ]);
+  });
+
+  it("主分支 QingML 验证失败时丢弃其 delta，展示缓冲只接收 fallback", async () => {
+    const { english } = await targets();
+    let translationRequestCount = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { stream_options?: unknown };
+      if (!body.stream_options) return emptySse();
+      translationRequestCount += 1;
+      return translationRequestCount === 1
+        ? textSse(["<h1>截断坏首稿", "</h1><p>不应展示"], "length")
+        : textSse(["<h1>English</h1>", "<p>valid fallback 42</p>"]);
+    }));
+    const requestContext = new RequestContext([
+      ["sessionId", sessionId],
+      ["streamId", "main-stream"],
+      ["runId", "translate-buffer-run"],
+    ] as never) as RequestContext;
+    await captureMainSnapshot(requestContext);
+
+    const frames = await collectFrames(generateTranslations({
+      sessionId,
+      targets: [{ docId: english.docId, targetLang: "英语" }],
+      requestContext,
+    }));
+    const displayed = frames
+      .filter((frame): frame is Extract<BridgeFrame, { kind: "derivativeGenDelta" }> =>
+        frame.kind === "derivativeGenDelta")
+      .map((frame) => frame.data.text)
+      .join("");
+
+    expect(translationRequestCount).toBe(2);
+    expect(displayed).toBe("<h1>English</h1><p>valid fallback 42</p>");
+    expect(displayed).not.toContain("这不是 QingML");
+    expect(frames.some((frame) => frame.kind === "derivativeGenFinished")).toBe(true);
   });
 
   it("delta batcher 的 200ms 与 2KB 两条门均会 flush", () => {

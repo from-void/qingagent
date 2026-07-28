@@ -228,6 +228,7 @@ export async function generateTranslationDerivative(input: {
   const temperature = overrides.temperature ?? TRANSLATION_TEMPERATURE;
   const topP = overrides.topP;
   const maxTokens = overrides.maxOutputTokens ?? TRANSLATION_MAX_TOKENS;
+  let bufferedBranchText = "";
   const result = await runSideChannel({
     callSite: "translateDerivative",
     requestContext: input.requestContext,
@@ -235,7 +236,10 @@ export async function generateTranslationDerivative(input: {
     abortSignal: input.abortSignal,
     steeringTail,
     streamTextDeltas: true,
-    onTextDelta: async (delta) => input.onTextDelta(delta),
+    // 主分支必须先验真再展示；格式失败时整段缓冲直接丢弃，fallback 从空展示缓冲开始。
+    onTextDelta: async (delta) => {
+      bufferedBranchText += delta;
+    },
     thinking: false,
     temperature,
     topP,
@@ -252,6 +256,9 @@ export async function generateTranslationDerivative(input: {
       maxTokens,
     }),
   });
+  if (result.transport === "branch") {
+    await input.onTextDelta(bufferedBranchText || result.value);
+  }
   const committed = await commitDerivativeQingml(input.docId, input.sessionId, result.value);
   if (!committed.ok || !committed.generatedAt || committed.docVersion === undefined) {
     throw new Error("translation commit failed");

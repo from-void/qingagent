@@ -11,6 +11,8 @@ const threeMockState = vi.hoisted(() => ({
     forceContextLoss: ReturnType<typeof vi.fn>;
   }>,
   operations: [] as string[],
+  constructorError: null as Error | null,
+  renderError: null as Error | null,
 }));
 
 vi.mock("three", async (importOriginal) => {
@@ -22,6 +24,7 @@ vi.mock("three", async (importOriginal) => {
     private pixelRatio = 1;
 
     constructor(parameters: Record<string, unknown>) {
+      if (threeMockState.constructorError) throw threeMockState.constructorError;
       this.parameters = parameters;
       this.domElement = document.createElement("canvas");
       this.domElement.dataset.renderer = "webgl";
@@ -42,6 +45,7 @@ vi.mock("three", async (importOriginal) => {
     setClearColor = vi.fn();
 
     render = vi.fn(() => {
+      if (threeMockState.renderError) throw threeMockState.renderError;
       threeMockState.operations.push("render");
     });
 
@@ -74,6 +78,8 @@ describe("InkBubble WebGL snapshot settling", () => {
   beforeEach(() => {
     threeMockState.instances.length = 0;
     threeMockState.operations.length = 0;
+    threeMockState.constructorError = null;
+    threeMockState.renderError = null;
     nowMs = 0;
     rafId = 1;
     rafCallbacks = new Map();
@@ -181,6 +187,32 @@ describe("InkBubble WebGL snapshot settling", () => {
     expect(rafCallbacks.size).toBe(0);
     expect(threeMockState.operations).toEqual(["render", "render", "drawImage", "dispose", "forceContextLoss"]);
   });
+
+  it("WebGL 初始化失败时退化为正文可见的静态气泡", async () => {
+    threeMockState.constructorError = new Error("webgl unavailable");
+
+    await render(<InkBubble animate>初始化失败气泡</InkBubble>);
+
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
+    expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getCanvasContainer().querySelector("canvas")).toBeNull();
+    expect(rafCallbacks.size).toBe(0);
+  });
+
+  it("动画帧渲染失败时显示正文并释放已创建的 WebGL context", async () => {
+    await render(<InkBubble animate>渲染失败气泡</InkBubble>);
+    const renderer = getRenderer();
+    threeMockState.renderError = new Error("webgl render failed");
+
+    runNextAnimationFrame(100);
+
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
+    expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getCanvasContainer().querySelector("canvas")).toBeNull();
+    expect(renderer.dispose).toHaveBeenCalledTimes(1);
+    expect(renderer.forceContextLoss).toHaveBeenCalledTimes(1);
+    expect(rafCallbacks.size).toBe(0);
+  });
 });
 
 async function render(element: ReactNode): Promise<void> {
@@ -202,6 +234,12 @@ function getCanvasContainer(): HTMLDivElement {
   const container = host?.querySelector<HTMLDivElement>(".ink-bubble__canvas");
   if (!container) throw new Error("canvas container not found");
   return container;
+}
+
+function getWrap(): HTMLDivElement {
+  const wrap = host?.querySelector<HTMLDivElement>(".ink-bubble");
+  if (!wrap) throw new Error("ink bubble not found");
+  return wrap;
 }
 
 function getCanvas(): HTMLCanvasElement {

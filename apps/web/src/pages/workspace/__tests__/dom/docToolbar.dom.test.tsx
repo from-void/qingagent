@@ -261,6 +261,30 @@ describe("DocToolbar round-1 regressions", () => {
     });
   });
 
+  it("链接气泡打开后文档发生程序化更新会静默关闭", async () => {
+    editor = createSelectedEditor();
+    vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
+      .mockImplementation(() => undefined);
+
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+    await act(async () => getButtonByText("链接").click());
+    expect(host?.querySelector(".link-hover-card")).not.toBeNull();
+
+    await act(async () => {
+      editor?.commands.insertContentAt(1, "前");
+    });
+
+    expect(host?.querySelector(".link-hover-card")).toBeNull();
+    expect(JSON.stringify(editor.getJSON())).not.toContain('"type":"link"');
+  });
+
   it("insertDiagram 只在选区是合法 Mermaid 时沿用源码", async () => {
     await expect(resolveDiagramSourceForInsert("普通正文，不是 mermaid")).resolves.toBeUndefined();
     await expect(resolveDiagramSourceForInsert("flowchart LR\nA-->B")).resolves.toBe("flowchart LR\nA-->B");

@@ -10,6 +10,20 @@ interface LinkEditBubble {
   to: number;
 }
 
+function isValidLinkRange(editor: Editor, range: Pick<LinkEditBubble, "from" | "to">): boolean {
+  const { from, to } = range;
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > editor.state.doc.content.size) {
+    return false;
+  }
+  try {
+    editor.state.doc.resolve(from);
+    editor.state.doc.resolve(to);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function useToolbarLinkEditor({
   editor,
   onToast,
@@ -67,8 +81,23 @@ export function useToolbarLinkEditor({
     if (!editor?.isEditable) setBubble(null);
   }, [editor, editor?.isEditable]);
 
+  useEffect(() => {
+    if (!editor || !bubble) return;
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (transaction.docChanged) setBubble(null);
+    };
+    editor.on("transaction", onTransaction);
+    return () => {
+      editor.off("transaction", onTransaction);
+    };
+  }, [bubble, editor]);
+
   const applyLink = useCallback(() => {
     if (!editor || !bubble || !editor.isEditable) return;
+    if (!isValidLinkRange(editor, bubble)) {
+      setBubble(null);
+      return;
+    }
     const value = draft.trim();
     const chain = editor.chain().focus().setTextSelection({ from: bubble.from, to: bubble.to }).extendMarkRange("link");
     if (!value) {

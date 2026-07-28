@@ -27,6 +27,36 @@ afterEach(() => {
 });
 
 describe("MermaidPreview", () => {
+  it("切到缓存的新图后忽略旧异步渲染结果", async () => {
+    const oldSource = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="旧图" vertex="1" parent="1"/></root></mxGraphModel>';
+    let resolveOldRender!: (svg: string) => void;
+    vi.mocked(renderDrawio).mockReturnValueOnce(new Promise((resolve) => {
+      resolveOldRender = resolve;
+    }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(<MermaidPreview source={oldSource} lang="drawio" />);
+      await Promise.resolve();
+    });
+    expect(renderDrawio).toHaveBeenCalledWith(oldSource);
+
+    await act(async () => {
+      root?.render(
+        <MermaidPreview source="新图源码" cachedSvg='<svg data-version="new"></svg>' lang="drawio" />,
+      );
+    });
+    await act(async () => {
+      resolveOldRender('<svg data-version="old"></svg>');
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-version="new"]')).not.toBeNull();
+    expect(host.querySelector('[data-version="old"]')).toBeNull();
+  });
+
   it("合法空 drawio 显示占位而非渲染错误", async () => {
     const source = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
     host = document.createElement("div");

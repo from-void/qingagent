@@ -29,6 +29,7 @@ import type { SessionState } from "../session/sessionState.js";
 import {
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
+  bindTurnWriteGuardFactoryToRequestContext,
   endTurnOwnership,
 } from "../session/turnOwnership.js";
 import { isDirectionReset } from "./questionnaireTools.js";
@@ -659,6 +660,7 @@ export async function* runAgentTurn(
       );
     }
     bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
+    bindTurnWriteGuardFactoryToRequestContext(state, requestContext);
     if (selectionDiagramLanguages.size > 0) {
       markDiagramVizEditing(requestContext, selectionDiagramLanguages);
     }

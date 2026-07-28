@@ -12,7 +12,13 @@ import {
   TRANSLATION_DELTA_FLUSH_BYTES,
   generateTranslations,
 } from "../session/translationGeneration.js";
-import { createDerivativeDoc, documentRepo, getDerivativeDocument, getDerivativeMeta } from "@qingagent/db";
+import {
+  createDerivativeDoc,
+  documentRepo,
+  getDerivativeDocument,
+  getDerivativeMeta,
+  getDocumentsClient,
+} from "@qingagent/db";
 import { documentInput, prepareTempDocumentsDb, section, type TempDocumentsDb } from "@qingagent/db/testing";
 
 function emptySse(): Response {
@@ -278,6 +284,39 @@ describe("generateTranslations 并发旁支", () => {
     expect(displayed).toBe("<h1>English</h1><p>valid fallback 42</p>");
     expect(displayed).not.toContain("这不是 QingML");
     expect(frames.some((frame) => frame.kind === "derivativeGenFinished")).toBe(true);
+  });
+
+  it("生成期间版本已推进时，翻译提交不得用最新版本覆盖", async () => {
+    const { english } = await targets();
+    let advanced = false;
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { stream_options?: unknown };
+      if (!body.stream_options) return emptySse();
+      if (!advanced) {
+        advanced = true;
+        await getDocumentsClient().execute({
+          sql: "UPDATE documents SET doc_version = 1 WHERE id = ?",
+          args: [english.docId],
+        });
+      }
+      return textSse(["<h1>Late translation</h1>", "<p>must not overwrite</p>"]);
+    }));
+    const requestContext = new RequestContext([
+      ["sessionId", sessionId],
+      ["streamId", "main-stream"],
+      ["runId", "translate-version-race-run"],
+    ] as never) as RequestContext;
+    await captureMainSnapshot(requestContext);
+
+    const frames = await collectFrames(generateTranslations({
+      sessionId,
+      targets: [{ docId: english.docId, targetLang: "英语" }],
+      requestContext,
+    }));
+
+    expect(frames.some((frame) => frame.kind === "derivativeGenFinished")).toBe(false);
+    expect(frames.some((frame) => frame.kind === "derivativeGenFailed")).toBe(true);
+    expect((await getDerivativeDocument(english.docId))?.docVersion).toBe(1);
   });
 
   it("delta batcher 的 200ms 与 2KB 两条门均会 flush", () => {

@@ -4,6 +4,7 @@ import { pmToPlainText } from "@qingagent/pm-schema";
 import { streamText } from "../llm/streamTextCompat.js";
 import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
+  getDerivativeDocument,
   getDerivativeMeta,
   getDocumentsClient,
   getStyleTemplate,
@@ -222,7 +223,11 @@ export async function generateTranslationDerivative(input: {
   abortSignal: AbortSignal;
   onTextDelta: (delta: string) => void | Promise<void>;
 }): Promise<{ generatedAt: string; docVersion: number }> {
-  const brief = await loadTranslationBrief(input.sessionId, input.docId);
+  const [brief, startingDocument] = await Promise.all([
+    loadTranslationBrief(input.sessionId, input.docId),
+    getDerivativeDocument(input.docId),
+  ]);
+  if (!startingDocument) throw new Error("translation target unavailable");
   const steeringTail = buildTranslationSteeringTail(brief);
   const overrides = resolveModelParams(input.requestContext);
   const temperature = overrides.temperature ?? TRANSLATION_TEMPERATURE;
@@ -259,7 +264,15 @@ export async function generateTranslationDerivative(input: {
   if (result.transport === "branch") {
     await input.onTextDelta(bufferedBranchText || result.value);
   }
-  const committed = await commitDerivativeQingml(input.docId, input.sessionId, result.value);
+  const committed = await commitDerivativeQingml(
+    input.docId,
+    input.sessionId,
+    result.value,
+    {
+      expectedDocVersion: startingDocument.docVersion,
+      abortSignal: input.abortSignal,
+    },
+  );
   if (!committed.ok || !committed.generatedAt || committed.docVersion === undefined) {
     throw new Error("translation commit failed");
   }

@@ -2,6 +2,8 @@ import type { SessionState } from "./sessionState.js";
 
 export const TURN_OWNER_REQUEST_CONTEXT_KEY = "qingagentTurnOwner";
 export const TURN_GENERATION_REQUEST_CONTEXT_KEY = "qingagentTurnGeneration";
+export const TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY =
+  "qingagentTurnWriteGuardFactory";
 
 export interface TurnOwnership {
   owner: string;
@@ -23,6 +25,11 @@ interface ToolExecutionContextLike {
   abortSignal?: AbortSignal;
   requestContext?: RequestContextLike;
 }
+
+export type TurnWriteGuardAssertion = () => void;
+type TurnWriteGuardFactory = (
+  abortSignal?: AbortSignal,
+) => TurnWriteGuardAssertion;
 
 function isAbortSignal(value: unknown): value is AbortSignal {
   return Boolean(
@@ -58,6 +65,37 @@ export function bindTurnOwnershipToRequestContext(
     TURN_GENERATION_REQUEST_CONTEXT_KEY,
     ownership.generation,
   );
+}
+
+/**
+ * 把会话态写入所有权桥接给全局工具。factory 在工具 execute 入口调用并立即快照本轮
+ * owner/generation；返回的断言可安全带到异步编译后的最终写点，不能被后续重试冒领。
+ */
+export function bindTurnWriteGuardFactoryToRequestContext(
+  state: SessionState,
+  requestContext: RequestContextLike,
+): void {
+  requestContext.set?.(
+    TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
+    ((abortSignal?: AbortSignal) => {
+      const guard = captureTurnWriteGuard(state, {
+        abortSignal,
+        requestContext,
+      });
+      return () => assertTurnWriteAllowed(state, guard);
+    }) satisfies TurnWriteGuardFactory,
+  );
+}
+
+export function captureBoundTurnWriteGuard(
+  context?: ToolExecutionContextLike,
+): TurnWriteGuardAssertion | undefined {
+  const factory = context?.requestContext?.get(
+    TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
+  );
+  return typeof factory === "function"
+    ? (factory as TurnWriteGuardFactory)(context?.abortSignal)
+    : undefined;
 }
 
 export function turnOwnershipFromRequestContext(

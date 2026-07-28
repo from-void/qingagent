@@ -140,6 +140,8 @@ export function glyphForBlock(node: { type: { name: string }; attrs?: Record<str
       return "task";
     case "table":
       return "table";
+    case "horizontalRule":
+      return "divider";
     default:
       return "T";
   }
@@ -153,6 +155,7 @@ export function glyphForListItem(item: DraggableListItem): string {
 /** 托柄左侧"格式图标"(对齐飞书:无序列表用列表图标、待办用方框勾、其余用文字徽标如 H1/1./T)。 */
 export function HandleTypeIcon({ glyph }: { glyph: string }): JSX.Element {
   if (glyph === "table") return <BlockHandleIcon name="table" />;
+  if (glyph === "divider") return <BlockHandleIcon name="divider" />;
   if (glyph === "•") {
     return (
       <svg className="bh-type-svg" width="13" height="11" viewBox="0 0 13 11" aria-hidden="true" focusable="false">

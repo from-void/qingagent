@@ -185,7 +185,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         const blockDom = editor.view.nodeDOM(block.pos);
         if (!(blockDom instanceof HTMLElement)) return null;
         const geometry = blockHandleGeometry(blockDom, block.node.type.name);
-        const isEmpty = block.node.type.name !== "table" && (
+        const isEmpty = block.node.isTextblock && (
           blockDom.textContent?.trim() === "" ||
           (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR")
         );

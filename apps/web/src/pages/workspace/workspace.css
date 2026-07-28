@@ -441,6 +441,13 @@
     margin-left:auto;
     max-width:78%;
   }
+  #view-workspace .ink-bubble.wf-msg.user.ink-bubble--static-fallback{
+    background:var(--ink-1);
+    color:var(--ink-on-dark);
+  }
+  #view-workspace .ink-bubble.wf-msg.user.ink-bubble--static-fallback .ink-bubble__content{
+    padding:10px 14px;
+  }
   #view-workspace .wf-msg.agent > .wf-msg.tool{
     margin:12px 0 !important;
   }

@@ -37,6 +37,16 @@
   padding: 6px 25px;
 }
 
+.ink-bubble--static-fallback {
+  background: var(--ink-1);
+  color: var(--ink-on-dark);
+  border-radius: 6px;
+}
+
+.ink-bubble--static-fallback .ink-bubble__content {
+  padding: 10px 14px;
+}
+
 /* Text reveal: starts hidden, revealed via class after ink settles */
 .ink-bubble--animate .ink-bubble__content {
   opacity: 0;

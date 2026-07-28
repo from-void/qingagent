@@ -254,6 +254,7 @@ export function InkBubble({
     const container = canvasContainerRef.current;
     const contentEl = contentRef.current;
     if (!wrap || !container || !contentEl) return;
+    wrap.classList.remove("ink-bubble--static-fallback");
 
     // Canvas dimensions = content + overflow padding on each side
     const contentW = wrap.offsetWidth;
@@ -279,6 +280,7 @@ export function InkBubble({
       }
       contentEl.classList.add("ink-bubble__content--visible");
       wrap.classList.remove("ink-bubble--animate");
+      wrap.classList.add("ink-bubble--static-fallback");
       container.replaceChildren();
     };
 

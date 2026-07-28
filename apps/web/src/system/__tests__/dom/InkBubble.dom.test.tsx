@@ -1,6 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const workspaceCss = readFileSync(
+  resolve(process.cwd(), "src/pages/workspace/workspace.css"),
+  "utf8",
+);
 
 const threeMockState = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -191,10 +198,18 @@ describe("InkBubble WebGL snapshot settling", () => {
   it("WebGL 初始化失败时退化为正文可见的静态气泡", async () => {
     threeMockState.constructorError = new Error("webgl unavailable");
 
-    await render(<InkBubble animate>初始化失败气泡</InkBubble>);
+    await render(<InkBubble animate className="wf-msg user">初始化失败气泡</InkBubble>);
 
     expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
     expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
+    const compactCss = workspaceCss.replace(/\s+/g, "");
+    expect(compactCss).toContain(
+      "#view-workspace.ink-bubble.wf-msg.user.ink-bubble--static-fallback{background:var(--ink-1);color:var(--ink-on-dark);}",
+    );
+    expect(compactCss).toContain(
+      "#view-workspace.ink-bubble.wf-msg.user.ink-bubble--static-fallback.ink-bubble__content{padding:10px14px;}",
+    );
     expect(getCanvasContainer().querySelector("canvas")).toBeNull();
     expect(rafCallbacks.size).toBe(0);
   });
@@ -208,6 +223,7 @@ describe("InkBubble WebGL snapshot settling", () => {
 
     expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
     expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
     expect(getCanvasContainer().querySelector("canvas")).toBeNull();
     expect(renderer.dispose).toHaveBeenCalledTimes(1);
     expect(renderer.forceContextLoss).toHaveBeenCalledTimes(1);
@@ -217,6 +233,9 @@ describe("InkBubble WebGL snapshot settling", () => {
 
 async function render(element: ReactNode): Promise<void> {
   host = document.createElement("div");
+  host.id = "view-workspace";
+  host.style.setProperty("--ink-1", "#1f2a31");
+  host.style.setProperty("--ink-on-dark", "#fffaf0");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {

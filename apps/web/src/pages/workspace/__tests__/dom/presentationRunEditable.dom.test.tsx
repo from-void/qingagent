@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
+import { nativePresentationDecorationKey } from "../../data/nativePresentationPm";
 import { pmDocToViewDocumentSnapshot, type ViewDocumentSnapshot } from "../../data/protocol";
 import { shouldRetainPresentationRun } from "../../data/reviewActions";
 
@@ -239,6 +240,80 @@ describe("presentationRun editable unlock", () => {
     expect(lengths.every((length, index) => index === 0 || length >= lengths[index - 1]!)).toBe(true);
     expect(revealWrites.at(-1)).toBe(finalText);
     expect(revealWrites.indexOf(finalText)).toBe(revealWrites.length - 1);
+  });
+
+  it("首帧超 deadline 后每批提交间恰有一次 rAF 让渡", async () => {
+    const finalText = "逐帧可见连续性".repeat(80);
+    const doc = pmDocToViewDocumentSnapshot(pmDoc(finalText), 24, "deadline");
+    const run = presentationRunFor(doc);
+    const onPresentationFinish = vi.fn();
+    const batchFrames: number[] = [];
+    const batchTexts: string[] = [];
+    let editor: Editor | null = null;
+    let rafTurn = 0;
+
+    await act(async () => {
+      root?.render(createElement(DocumentSnapshotView, {
+        doc,
+        editable: false,
+        interactiveEditable: false,
+        showPatches: false,
+        acceptedPatches: new Set<string>(),
+        rejectedPatches: new Set<string>(),
+        onEditorReady: (nextEditor) => {
+          if (!nextEditor || nextEditor === editor) return;
+          editor = nextEditor;
+          nextEditor.on("transaction", ({ transaction }) => {
+            const decorationMeta = transaction.getMeta(
+              nativePresentationDecorationKey,
+            ) as { kind?: string } | undefined;
+            if (decorationMeta?.kind !== "set") return;
+            batchFrames.push(rafTurn);
+            batchTexts.push(nextEditor.state.doc.textContent);
+          });
+        },
+        presentationRun: run,
+        presentationReducedMotion: false,
+        onPresentationFinish,
+      }));
+    });
+    await flush(2);
+
+    expect(editor).not.toBeNull();
+    expect(onPresentationFinish).not.toHaveBeenCalled();
+
+    const runNextFrame = async (advanceMs: number) => {
+      const callbacks = Array.from(rafCallbacks.values());
+      rafCallbacks.clear();
+      expect(callbacks.length).toBeGreaterThan(0);
+      rafTurn += 1;
+      await act(async () => {
+        frameTime += advanceMs;
+        callbacks.forEach((callback) => callback(frameTime));
+      });
+      await flush(1);
+    };
+
+    // 首个浏览器帧直接越过允许的最大 deadline，强制走逐帧 drain。
+    await runNextFrame(60_001);
+    for (let i = 0; i < 20 && onPresentationFinish.mock.calls.length === 0; i++) {
+      await runNextFrame(16);
+    }
+
+    expect(onPresentationFinish).toHaveBeenCalledTimes(1);
+    expect(batchFrames.length).toBeGreaterThanOrEqual(3);
+    expect(batchFrames[0]).toBe(1);
+    expect(
+      batchFrames.every(
+        (frame, index) => index === 0 || frame === batchFrames[index - 1]! + 1,
+      ),
+    ).toBe(true);
+    expect(batchTexts.at(-1)).toBe(finalText);
+    expect(
+      batchTexts.every(
+        (text, index) => index === 0 || text.length >= batchTexts[index - 1]!.length,
+      ),
+    ).toBe(true);
   });
 
   it("generation_finished 后异步标题的 locked 空窗保留 run，并最终完成揭示", async () => {

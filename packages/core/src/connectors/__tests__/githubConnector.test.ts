@@ -147,6 +147,24 @@ describe("GithubConnector probe", () => {
       log.mockRestore();
     }
   });
+
+  it("probe 保留无明确限速信号 403 的 ACCESS_DENIED 语义", async () => {
+    const forbidden = vi.fn(async () =>
+      new Response("{}", {
+        status: 403,
+        headers: { "X-RateLimit-Reset": "1780000000" },
+      })
+    ) as unknown as typeof globalThis.fetch;
+    const connector = new GithubConnector({ clientId: "cid", fetch: forbidden });
+
+    await expect(connector.probe()).rejects.toMatchObject({
+      code: "ACCESS_DENIED",
+      status: 403,
+      message: "GitHub 权限不足或访问被拒绝",
+    });
+    expect(forbidden).toHaveBeenCalledTimes(1);
+    expect(saveConnectorCredentialBundle).not.toHaveBeenCalled();
+  });
 });
 
 describe("GithubConnector 授权生命周期", () => {

@@ -238,33 +238,38 @@ export class GithubConnector implements ConnectorAdapter {
   }
 
   async probe(): Promise<ConnectorStatusDto> {
-    const bundle = await getConnectorCredentialBundle<GithubCredentialPayload>("github");
-    if (!bundle) return this.status();
-    const checkedAt = new Date().toISOString();
-    let verificationState: "connected" | "needs_reauth" = "connected";
     try {
-      await this.client(bundle.payload.token).user();
-    } catch (error) {
-      if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") {
-        verificationState = "needs_reauth";
-      } else {
-        console.error("[github-connector] probe failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw new GithubConnectorError(
-          "GitHub 连接检查暂时失败，请稍后重试",
-          "GITHUB_PROBE_FAILED",
-          502,
-        );
+      const bundle = await getConnectorCredentialBundle<GithubCredentialPayload>("github");
+      if (!bundle) return this.status();
+      const checkedAt = new Date().toISOString();
+      let verificationState: "connected" | "needs_reauth" = "connected";
+      try {
+        await this.client(bundle.payload.token).user();
+      } catch (error) {
+        if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") {
+          verificationState = "needs_reauth";
+        } else {
+          throw error;
+        }
       }
+      await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
+        ...bundle.payload,
+        verification: { state: verificationState, checkedAt },
+      }, { expectedRevision: bundle.revision });
+      this.lastReasonCode = verificationState === "needs_reauth" ? "NEEDS_REAUTH" : null;
+      this.lastCheckedAt = checkedAt;
+      return this.status();
+    } catch (error) {
+      if (error instanceof GithubConnectorError) throw error;
+      console.error("[github-connector] probe failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new GithubConnectorError(
+        "GitHub 连接检查暂时失败，请稍后重试",
+        "GITHUB_PROBE_FAILED",
+        502,
+      );
     }
-    await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
-      ...bundle.payload,
-      verification: { state: verificationState, checkedAt },
-    }, { expectedRevision: bundle.revision });
-    this.lastReasonCode = verificationState === "needs_reauth" ? "NEEDS_REAUTH" : null;
-    this.lastCheckedAt = checkedAt;
-    return this.status();
   }
 
   async disconnect(): Promise<ConnectorStatusDto> {

@@ -6,6 +6,8 @@ export interface PmToPlainTextOptions {
    *  搜索命中 / AI 定位 / 导出等其它用途不传该选项,仍把图注 caption/alt、
    *  图表源码、附件名作为可检索文本取出。 */
   skipMedia?: boolean;
+  /** 跳过 taskItem 的 [ ]/[x] 展示装饰，仅保留任务正文与子块。 */
+  skipTaskMarkers?: boolean;
 }
 
 export function pmToPlainText(doc: PmDoc, opts?: PmToPlainTextOptions): string {
@@ -40,8 +42,10 @@ function nodeToText(node: PmNode, opts?: PmToPlainTextOptions): string {
       return "";
     case "taskList":
       return node.content.map((child) => nodeToText(child, opts)).join("\n");
-    case "taskItem":
-      return `${node.attrs.checked ? "[x]" : "[ ]"} ${node.content.map((child) => nodeToText(child, opts)).join("\n")}`;
+    case "taskItem": {
+      const content = node.content.map((child) => nodeToText(child, opts)).join("\n");
+      return opts?.skipTaskMarkers ? content : `${node.attrs.checked ? "[x]" : "[ ]"} ${content}`;
+    }
     case "callout":
       return node.content.map((child) => nodeToText(child, opts)).join("\n");
     case "columnList":

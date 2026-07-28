@@ -125,6 +125,48 @@ describe("countDocVisibleChars", () => {
     // 只算"项一"(2)+"格"(1)=3;嵌套的两张图 alt 都不计入
     expect(countDocVisibleChars(nested)).toBe(3);
   });
+
+  it.each([false, true])("空任务 checked=%s 时字数均为 0", (checked) => {
+    const taskDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "taskList",
+        attrs: { blockId: "tasks" },
+        content: [{
+          type: "taskItem",
+          attrs: { blockId: "task", checked },
+          content: [{ type: "paragraph", attrs: { blockId: "task-p" }, content: [] }],
+        }],
+      }],
+    };
+
+    expect(countDocVisibleChars(taskDoc)).toBe(0);
+    expect(pmToPlainText(taskDoc)).toBe(checked ? "[x] " : "[ ] ");
+  });
+
+  it("切换任务勾选状态不改变正文字数", () => {
+    const taskDoc = (checked: boolean): PmDoc => ({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "taskList",
+        attrs: { blockId: "tasks" },
+        content: [{
+          type: "taskItem",
+          attrs: { blockId: "task", checked },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "task-p" },
+            content: [{ type: "text", text: "完成正文" }],
+          }],
+        }],
+      }],
+    });
+
+    expect(countDocVisibleChars(taskDoc(false))).toBe(4);
+    expect(countDocVisibleChars(taskDoc(true))).toBe(4);
+  });
 });
 
 describe("pmToPlainText 媒体口径", () => {

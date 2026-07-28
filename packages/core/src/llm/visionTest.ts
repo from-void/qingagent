@@ -64,9 +64,15 @@ export async function testVisionConnection(
     // maxOutputTokens 很小时正文可能为空,但"请求成功往返、无 error"即视为连通。
     for await (const part of result.fullStream) {
       if (part.type === "error") {
+        controller.signal.throwIfAborted();
         throw part.error instanceof Error ? part.error : new Error(String(part.error));
       }
+      if (part.type === "abort") {
+        controller.signal.throwIfAborted();
+        throw new DOMException("Vision connection test aborted", "AbortError");
+      }
     }
+    controller.signal.throwIfAborted();
   } finally {
     clearTimeout(timer);
     abortSignal?.removeEventListener("abort", relayAbort);

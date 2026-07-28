@@ -30,7 +30,10 @@ export async function testTextModelConnection(input: TextConnectionTestInput): P
     ["runId", `connection-test:${Date.now()}`],
   ] as never);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 12_000);
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("Text connection test timed out", "TimeoutError")),
+    input.timeoutMs ?? 12_000,
+  );
   try {
     const result = streamText({
       // 保留既有 callSite，避免 DeepSeek usage 维度和覆盖矩阵发生兼容性变化。
@@ -46,9 +49,15 @@ export async function testTextModelConnection(input: TextConnectionTestInput): P
     });
     for await (const part of result.fullStream) {
       if (part.type === "error") {
+        controller.signal.throwIfAborted();
         throw part.error instanceof Error ? part.error : new Error(String(part.error));
       }
+      if (part.type === "abort") {
+        controller.signal.throwIfAborted();
+        throw new DOMException("Text connection test aborted", "AbortError");
+      }
     }
+    controller.signal.throwIfAborted();
   } finally {
     clearTimeout(timer);
   }

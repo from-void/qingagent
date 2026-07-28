@@ -16,7 +16,11 @@ vi.mock("../llm/modelConfig.js", async (importActual) => {
 const { testVisionConnection, VISION_TEST_TIMEOUT_MS } =
   await import("../llm/visionTest.js");
 
-type Part = { type: "text-delta"; textDelta: string } | { type: "finish"; finishReason: string } | { type: "error"; error: unknown };
+type Part =
+  | { type: "text-delta"; textDelta: string }
+  | { type: "finish"; finishReason: string }
+  | { type: "error"; error: unknown }
+  | { type: "abort" };
 function fullStream(parts: Part[]): AsyncIterable<Part> {
   return (async function* () {
     for (const p of parts) yield p;
@@ -51,6 +55,27 @@ describe("testVisionConnection", () => {
       fullStream: fullStream([{ type: "text-delta", textDelta: "ok" }, { type: "finish", finishReason: "stop" }]),
     });
     await expect(testVisionConnection(VISION)).resolves.toBeUndefined();
+  });
+
+  it("fullStream abort part 判为失败，不把中止闭流当成功", async () => {
+    streamTextMock.mockReturnValue({ fullStream: fullStream([{ type: "abort" }]) });
+
+    await expect(testVisionConnection(VISION)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("调用方中止后 fullStream 静默闭流仍抛原始原因", async () => {
+    const caller = new AbortController();
+    const reason = new DOMException("用户取消图像连接测试", "AbortError");
+    streamTextMock.mockReturnValue({
+      fullStream: (async function* () {
+        caller.abort(reason);
+        if (false) yield { type: "abort" as const };
+      })(),
+    });
+
+    const pending = testVisionConnection(VISION, caller.signal);
+
+    await expect(pending).rejects.toBe(reason);
   });
 
   it("getVisionModel 返回 null(配置未生效)→ 抛错", async () => {

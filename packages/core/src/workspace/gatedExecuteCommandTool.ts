@@ -24,6 +24,7 @@ import {
   formatCommandDuration,
   SANDBOX_BACKGROUND_TTL_MS,
 } from "./backgroundCommandLimits.js";
+import { formatRetainedOutputNotice } from "./retainedOutputNotice.js";
 
 function positiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -96,11 +97,16 @@ function formatCommandOutput(result: {
   exitCode: number;
   stdout: string;
   stderr: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  stdoutDroppedBytes?: number;
+  stderrDroppedBytes?: number;
 }, tail?: number | null): string {
   const stdoutTail = tailLines(result.stdout, tail);
   const stderrTail = tailLines(result.stderr, tail);
   const stdout = stdoutTail.output.trimEnd();
   const stderr = stderrTail.output.trimEnd();
+  const retainedOutputNotice = formatRetainedOutputNotice(result);
   if (result.success) {
     const output = stdout && stderr
       ? [`stdout:\n${stdout}\n\nstderr:\n${stderr}`]
@@ -112,6 +118,7 @@ function formatCommandOutput(result: {
     return [
       ...output,
       stdoutTail.truncated || stderrTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
+      retainedOutputNotice,
     ].filter(Boolean).join("\n");
   }
   return [
@@ -119,6 +126,7 @@ function formatCommandOutput(result: {
     stderr,
     `Exit code: ${result.exitCode}`,
     stdoutTail.truncated || stderrTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
+    retainedOutputNotice,
   ].filter(Boolean).join("\n");
 }
 

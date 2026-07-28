@@ -13,6 +13,10 @@ interface FakeProcessHandle {
   stdout: string;
   stderr: string;
   exitCode: number | undefined;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  stdoutDroppedBytes?: number;
+  stderrDroppedBytes?: number;
   wait: (options?: WaitOptions) => Promise<CommandResult>;
   kill: ReturnType<typeof vi.fn>;
 }
@@ -354,6 +358,24 @@ describe("bounded get_process_output", () => {
     const untruncated = await executeTool(tool, { pid: handle.pid, tail: 201 });
     expect(untruncated).toBe(allLines);
     expect(untruncated).not.toContain("do not rerun the command");
+  });
+
+  it("底层保留上限丢弃前缀时不受 tail=0 影响并显示丢弃字节数", async () => {
+    const handle = {
+      ...neverSettlingHandle("retained tail\n"),
+      stdoutTruncated: true,
+      stderrTruncated: true,
+      stdoutDroppedBytes: 8_192,
+      stderrDroppedBytes: 1_024,
+    };
+    const { tool } = createHarness(handle);
+
+    const output = await executeTool(tool, { pid: handle.pid, tail: 0 });
+    expect(output).toContain("retained tail");
+    expect(output).toContain("stdout: 8192 bytes");
+    expect(output).toContain("stderr: 1024 bytes");
+    expect(output).toContain("permanently dropped");
+    expect(output).toContain("do not rerun the command");
   });
 
   it("等待期间发送 tool-heartbeat，execute 收尾后停止", async () => {

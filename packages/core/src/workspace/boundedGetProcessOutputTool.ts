@@ -8,6 +8,10 @@ import {
 } from "@mastra/core/workspace";
 import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
+import {
+  formatRetainedOutputNotice,
+  type RetainedOutputState,
+} from "./retainedOutputNotice.js";
 
 /** 与 Mastra 1.49.0 workspace get_process_output 的默认 tail 行数一致。 */
 export const GET_PROCESS_OUTPUT_DEFAULT_TAIL_LINES = 200;
@@ -84,10 +88,12 @@ function formatOutput(
   stdout: string,
   stderr: string,
   exitCode: number | undefined,
+  retainedOutputState: RetainedOutputState,
 ): string {
-  if (!stdout && !stderr) return "(no output yet)";
   const parts: string[] = [];
-  if (stdout && stderr) {
+  if (!stdout && !stderr) {
+    parts.push("(no output yet)");
+  } else if (stdout && stderr) {
     parts.push("stdout:", stdout, "", "stderr:", stderr);
   } else if (stdout) {
     parts.push(stdout);
@@ -96,6 +102,10 @@ function formatOutput(
   }
   if (exitCode !== undefined) {
     parts.push("", `Exit code: ${exitCode}`);
+  }
+  const retainedOutputNotice = formatRetainedOutputNotice(retainedOutputState);
+  if (retainedOutputNotice) {
+    parts.push("", retainedOutputNotice);
   }
   return parts.join("\n");
 }
@@ -316,7 +326,7 @@ Use this after starting a background command with execute_command (background: t
         const currentStderr = authorizationSignalDetected ? observedStderr : handle.stderr;
         const stdout = applyTail(currentStdout, tail);
         const stderr = applyTail(currentStderr, tail);
-        const output = formatOutput(stdout, stderr, handle.exitCode);
+        const output = formatOutput(stdout, stderr, handle.exitCode, handle);
         if (!waitTimedOut) return output;
         return [
           output,

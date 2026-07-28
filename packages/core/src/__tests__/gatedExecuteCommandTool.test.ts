@@ -93,6 +93,10 @@ function createToolHarness(
       executionTimeMs: number;
       timedOut?: boolean;
       killed?: boolean;
+      stdoutTruncated?: boolean;
+      stderrTruncated?: boolean;
+      stdoutDroppedBytes?: number;
+      stderrDroppedBytes?: number;
     };
   } = {},
 ) {
@@ -228,6 +232,7 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+    expect(validateToolInput(tool, { command: allowedFileCommand, tail: 0 }).success).toBe(true);
     expect(validateToolInput(tool, {
       command: "npm install zod",
       reason: "你".repeat(80),
@@ -662,6 +667,33 @@ describe("gated execute_command tool cwd 约束", () => {
     });
     expect(output).toContain("out-2\nerr-2\nExit code: 9");
     expect(output.match(/do not rerun the command/g)).toHaveLength(1);
+  });
+
+  it("底层保留上限丢弃前缀时即使 tail 为 0 也标明通道和字节数", async () => {
+    const { tool } = createToolHarness("gated-retained-truncation", {
+      commandResult: {
+        success: true,
+        exitCode: 0,
+        stdout: "retained stdout\n",
+        stderr: "retained stderr\n",
+        executionTimeMs: 5,
+        stdoutTruncated: true,
+        stderrTruncated: true,
+        stdoutDroppedBytes: 4_096,
+        stderrDroppedBytes: 512,
+      },
+    });
+
+    const output = await executeTool(tool, {
+      command: allowedFileCommand,
+      tail: 0,
+    });
+    expect(output).toContain("retained stdout");
+    expect(output).toContain("retained stderr");
+    expect(output).toContain("stdout: 4096 bytes");
+    expect(output).toContain("stderr: 512 bytes");
+    expect(output).toContain("permanently dropped");
+    expect(output).toContain("do not rerun the command");
   });
 
   it("沙箱超时结果保留 timedOut，不以输出字符串猜测", async () => {

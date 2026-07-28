@@ -80,17 +80,18 @@ const ALLOWED_ATTRS = new Set([
 const BAD_STYLE = /(?:url\s*\(|expression\s*\(|@import|javascript:|<)/i;
 const BAD_URL_VALUE = /url\(\s*['"]?\s*(?:https?:|data:|javascript:|#?\/\/)/i;
 const LOCAL_URL_VALUE = /^url\(\s*['"]?#[A-Za-z][\w:.-]*['"]?\s*\)$/;
-const VISIBLE_ELEMENTS = new Set([
-  "path",
-  "rect",
-  "circle",
-  "ellipse",
-  "line",
-  "polyline",
-  "polygon",
-  "text",
-  "tspan",
-]);
+
+interface SvgPaintState {
+  hidden: boolean;
+  opacity: number;
+  visibility: string;
+  fill: string;
+  fillOpacity: number;
+  stroke: string;
+  strokeOpacity: number;
+  strokeWidth: number;
+  fontSize: number;
+}
 
 export function utf8ByteLength(value: string): number {
   return textEncoder.encode(value).length;
@@ -111,6 +112,107 @@ function normalizeCssEscapes(value: string): string {
   });
 }
 
+function inlineStyleValue(el: XmlElement, prop: string): string | null {
+  const style = el.getAttribute("style");
+  if (!style) return null;
+  for (const declaration of style.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon === -1) continue;
+    if (declaration.slice(0, colon).trim().toLowerCase() === prop) {
+      return declaration.slice(colon + 1).trim();
+    }
+  }
+  return null;
+}
+
+function svgPresentationValue(el: XmlElement, prop: string): string | null {
+  return inlineStyleValue(el, prop) ?? el.getAttribute(prop);
+}
+
+function finiteSvgNumber(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const number = Number.parseFloat(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function svgOpacity(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, trimmed.endsWith("%") ? parsed / 100 : parsed));
+}
+
+function hasVisiblePaint(value: string, opacity: number): boolean {
+  const normalized = value.trim().toLowerCase();
+  return opacity > 0 && normalized !== "none" && normalized !== "transparent";
+}
+
+function distinctPoints(el: XmlElement): Array<[number, number]> {
+  const values = ((el.getAttribute("points") ?? "").match(/-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [])
+    .map(Number)
+    .filter(Number.isFinite);
+  const points: Array<[number, number]> = [];
+  for (let i = 0; i + 1 < values.length; i += 2) {
+    const point: [number, number] = [values[i]!, values[i + 1]!];
+    if (!points.some(([x, y]) => x === point[0] && y === point[1])) points.push(point);
+  }
+  return points;
+}
+
+function polygonArea(points: Array<[number, number]>): number {
+  let twiceArea = 0;
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i]!;
+    const next = points[(i + 1) % points.length]!;
+    twiceArea += current[0] * next[1] - next[0] * current[1];
+  }
+  return Math.abs(twiceArea) / 2;
+}
+
+function pathHasNonzeroGeometry(d: string): boolean {
+  if (!/[lhvcsqta]/i.test(d)) return false;
+  const values = (d.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [])
+    .map(Number)
+    .filter(Number.isFinite);
+  return values.length >= 2 && Math.max(...values) > Math.min(...values);
+}
+
+function isDrawableSvgElement(el: XmlElement, state: SvgPaintState): boolean {
+  const name = el.tagName.toLowerCase();
+  const fillVisible = hasVisiblePaint(state.fill, state.opacity * state.fillOpacity);
+  const strokeVisible =
+    state.strokeWidth > 0 &&
+    hasVisiblePaint(state.stroke, state.opacity * state.strokeOpacity);
+  const positive = (attr: string) => finiteSvgNumber(el.getAttribute(attr), 0) > 0;
+
+  if (name === "rect") return positive("width") && positive("height") && (fillVisible || strokeVisible);
+  if (name === "circle") return positive("r") && (fillVisible || strokeVisible);
+  if (name === "ellipse") return positive("rx") && positive("ry") && (fillVisible || strokeVisible);
+  if (name === "line") {
+    const x1 = finiteSvgNumber(el.getAttribute("x1"), 0);
+    const y1 = finiteSvgNumber(el.getAttribute("y1"), 0);
+    const x2 = finiteSvgNumber(el.getAttribute("x2"), 0);
+    const y2 = finiteSvgNumber(el.getAttribute("y2"), 0);
+    return strokeVisible && (x1 !== x2 || y1 !== y2);
+  }
+  if (name === "polyline" || name === "polygon") {
+    const points = distinctPoints(el);
+    const hasStrokeGeometry = points.length >= 2;
+    const hasFillGeometry = points.length >= 3 && polygonArea(points) > 0;
+    return (strokeVisible && hasStrokeGeometry) || (fillVisible && hasFillGeometry);
+  }
+  if (name === "path") {
+    const d = (el.getAttribute("d") ?? "").trim();
+    if (!pathHasNonzeroGeometry(d)) return false;
+    return strokeVisible || (fillVisible && /[cqsa]|z/i.test(d));
+  }
+  if (name === "text" || name === "tspan") {
+    return state.fontSize > 0 && Boolean(el.textContent?.trim()) && (fillVisible || strokeVisible);
+  }
+  return false;
+}
+
 export function hasVisibleSvgContent(svg: string): boolean {
   try {
     if (typeof svg !== "string" || svg.length === 0 || exceedsSvgByteLimit(svg)) {
@@ -120,20 +222,50 @@ export function hasVisibleSvgContent(svg: string): boolean {
     const root = doc.documentElement;
     if (!root || root.tagName.toLowerCase() !== "svg") return false;
 
-    const visit = (el: XmlElement): boolean => {
+    const initialState: SvgPaintState = {
+      hidden: false,
+      opacity: 1,
+      visibility: "visible",
+      fill: "black",
+      fillOpacity: 1,
+      stroke: "none",
+      strokeOpacity: 1,
+      strokeWidth: 1,
+      fontSize: 16,
+    };
+    const visit = (el: XmlElement, inherited: SvgPaintState): boolean => {
       const name = el.tagName.toLowerCase();
-      if (VISIBLE_ELEMENTS.has(name)) return true;
+      if (name === "defs") return false;
+
+      const display = svgPresentationValue(el, "display")?.trim().toLowerCase();
+      const visibility =
+        svgPresentationValue(el, "visibility")?.trim().toLowerCase() || inherited.visibility;
+      const state: SvgPaintState = {
+        hidden: inherited.hidden || display === "none",
+        opacity: inherited.opacity * svgOpacity(svgPresentationValue(el, "opacity"), 1),
+        visibility,
+        fill: svgPresentationValue(el, "fill") ?? inherited.fill,
+        fillOpacity: svgOpacity(svgPresentationValue(el, "fill-opacity"), inherited.fillOpacity),
+        stroke: svgPresentationValue(el, "stroke") ?? inherited.stroke,
+        strokeOpacity: svgOpacity(svgPresentationValue(el, "stroke-opacity"), inherited.strokeOpacity),
+        strokeWidth: finiteSvgNumber(svgPresentationValue(el, "stroke-width"), inherited.strokeWidth),
+        fontSize: finiteSvgNumber(svgPresentationValue(el, "font-size"), inherited.fontSize),
+      };
+      if (state.hidden || state.opacity <= 0 || visibility === "hidden" || visibility === "collapse") {
+        return false;
+      }
+      if (isDrawableSvgElement(el, state)) return true;
 
       for (let i = 0; i < el.childNodes.length; i++) {
         const child = el.childNodes.item(i);
-        if (child?.nodeType === 1 && visit(child as XmlElement)) {
+        if (child?.nodeType === 1 && visit(child as XmlElement, state)) {
           return true;
         }
       }
       return false;
     };
 
-    return visit(root);
+    return visit(root, initialState);
   } catch {
     return false;
   }

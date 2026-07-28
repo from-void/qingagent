@@ -61,6 +61,9 @@ const serverStreamMock = vi.hoisted(() => ({
   // 可控 startSession(e2e-loop-0704 R15 回归用):置非 null 时替代默认的立即 resolve,
   // 用于模拟"建会话在途"窗口。用完的测试负责在 finally 里清回 null。
   startSessionImpl: null as (() => Promise<string>) | null,
+  listDerivativesImpl: null as
+    | ((sessionId: string) => Promise<unknown[]>)
+    | null,
 }));
 
 vi.mock("./data/serverStream", () => {
@@ -81,7 +84,11 @@ vi.mock("./data/serverStream", () => {
     startSession = vi.fn(async () =>
       serverStreamMock.startSessionImpl ? serverStreamMock.startSessionImpl() : "s-1",
     );
-    listDerivatives = vi.fn(async () => []);
+    listDerivatives = vi.fn(async (sessionId: string) =>
+      serverStreamMock.listDerivativesImpl
+        ? serverStreamMock.listDerivativesImpl(sessionId)
+        : [],
+    );
     getDerivativeDoc = vi.fn(async () => null);
     commitReviewGroups = vi.fn(async () => []);
     ignoreAnnotationGroups = vi.fn(async () => undefined);
@@ -688,6 +695,7 @@ describe("WorkspacePage review controls", () => {
   beforeEach(() => {
     vi.resetModules();
     serverStreamMock.instances.length = 0;
+    serverStreamMock.listDerivativesImpl = null;
     window.location.hash = "";
     sessionStorage.clear();
     clearPageExitOutboxStorage();
@@ -3151,6 +3159,95 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(host?.textContent).toContain("主文档");
     expect(host?.textContent).toContain("公众号文章");
+  });
+
+  it("切到 B 会话后忽略 A 会话迟到的衍生稿列表", async () => {
+    serverStreamMock.startSessionImpl = async () => "session-a";
+    let resolveA!: (value: unknown[]) => void;
+    let resolveB!: (value: unknown[]) => void;
+    const listA = new Promise<unknown[]>((resolve) => {
+      resolveA = resolve;
+    });
+    const listB = new Promise<unknown[]>((resolve) => {
+      resolveB = resolve;
+    });
+    serverStreamMock.listDerivativesImpl = (sessionId) => {
+      if (sessionId === "session-a") return listA;
+      if (sessionId === "session-b") return listB;
+      return Promise.resolve([]);
+    };
+    window.location.hash = "#/workspace?session=session-a";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const streamA = latestServerStream();
+
+    await emitFrames(streamA, [
+      { kind: "sessionMeta", data: { sessionId: "session-a", title: "会话 A" } },
+    ]);
+    serverStreamMock.startSessionImpl = async () => "session-b";
+    await act(async () => {
+      window.location.hash = "#/workspace?session=session-b";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flushMicrotasks(5);
+    const streamB = latestServerStream();
+    expect(streamB).not.toBe(streamA);
+    await emitFrames(streamB, [
+      { kind: "sessionMeta", data: { sessionId: "session-b", title: "会话 B" } },
+    ]);
+    expect(streamB.listDerivatives).toHaveBeenCalledWith("session-b");
+    expect(captured.current?.state.sessionId).toBe("session-b");
+
+    await act(async () => {
+      resolveB([{
+        docId: "derivative-b",
+        dtype: "xhs",
+        templateId: "xhs-note",
+        templateName: "小红书笔记",
+        privatePrompt: "",
+        sourceVersion: null,
+        currentSourceVersion: 0,
+        generatedAt: null,
+        stale: false,
+      }]);
+      await listB;
+    });
+    await flushMicrotasks(5);
+    expect(captured.current?.derivatives).toHaveLength(1);
+    expect(host?.textContent).toContain("小红书");
+
+    await act(async () => {
+      resolveA([{
+        docId: "derivative-a",
+        dtype: "gzh",
+        templateId: "gzh-deep",
+        templateName: "深度长文",
+        privatePrompt: "",
+        sourceVersion: null,
+        currentSourceVersion: 0,
+        generatedAt: null,
+        stale: false,
+      }]);
+      await listA;
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.textContent).toContain("小红书");
+    expect(host?.textContent).not.toContain("公众号文章");
+    serverStreamMock.startSessionImpl = null;
+    serverStreamMock.listDerivativesImpl = null;
   });
 
   it("#29 回归:整篇改写 busy 发光层独立覆盖编辑视口,不被审阅条或编辑锁条接管", async () => {

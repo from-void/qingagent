@@ -455,6 +455,7 @@ export function useWorkspacePageController() {
   const replaySessionIdRef = useRef<string | null>(state.sessionId);
   const activeWorkspaceSessionTargetRef = useRef<string | null>(null);
   const streamGenerationRef = useRef(0);
+  const derivativeListGenerationRef = useRef(0);
   const streamDisposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -2714,9 +2715,18 @@ export function useWorkspacePageController() {
 
   const refreshDerivatives = useCallback(async () => {
     const stream = streamRef.current;
-    const sessionId = stateRef.current.sessionId;
-    if (!stream || !sessionId) return;
-    setDerivatives(await stream.listDerivatives(sessionId));
+    const requestSessionId = stateRef.current.sessionId;
+    if (!stream || !requestSessionId) return;
+    const requestGeneration = derivativeListGenerationRef.current + 1;
+    derivativeListGenerationRef.current = requestGeneration;
+    const nextDerivatives = await stream.listDerivatives(requestSessionId);
+    if (
+      stateRef.current.sessionId !== requestSessionId ||
+      derivativeListGenerationRef.current !== requestGeneration
+    ) {
+      return;
+    }
+    setDerivatives(nextDerivatives);
   }, []);
 
   useEffect(() => {

@@ -15,6 +15,12 @@ export type PmTextNode = {
   marks?: Array<PmMark>;
 };
 
+/** codeBlock 只允许 ProseMirror 的纯文本内容，不能携带行内 marks。 */
+export type PmCodeTextNode = {
+  type: "text";
+  text: string;
+};
+
 export type PmInlineMathNode = {
   type: "inlineMath";
   attrs: { latex: string };
@@ -51,7 +57,7 @@ export type PmHeadingNode = {
 export type PmCodeBlockNode = {
   type: "codeBlock";
   attrs: PmBlockAttrs & { language?: string | null };
-  content?: Array<PmTextNode>;
+  content?: Array<PmCodeTextNode>;
 };
 
 export type PmBlockquoteNode = {

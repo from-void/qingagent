@@ -806,7 +806,8 @@ function collectBlockCoverage(
     return;
   }
   if (block.type === "codeBlock") {
-    for (const text of block.content ?? []) markMasks.add(markMask(text.marks));
+    // codeBlock 的专用文本类型禁止 marks；仍记录 plain mask 覆盖。
+    if ((block.content ?? []).length > 0) markMasks.add(0);
     return;
   }
   if (block.type === "blockquote") {

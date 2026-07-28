@@ -93,6 +93,14 @@ const textNodeSchema = z.object({
   marks: z.array(markSchema).optional(),
 });
 
+const codeTextNodeSchema = z.object({
+  type: z.literal("text"),
+  text: z.string(),
+  // ProseMirror codeBlock 的 content 是 text* 且 marks 为空；显式声明 never，
+  // 避免 Zod 默认剥离未知字段后把非法存量误判为合法。
+  marks: z.never().optional(),
+});
+
 const inlineMathNodeSchema = z.object({
   type: z.literal("inlineMath"),
   attrs: z.object({ latex: z.string() }),
@@ -310,7 +318,7 @@ const blockNodeSchema: LazyNode = z.lazy(() =>
     z.object({
       type: z.literal("codeBlock"),
       attrs: blockIdSchema.extend({ language: z.string().nullable().optional() }),
-      content: z.array(textNodeSchema).optional(),
+      content: z.array(codeTextNodeSchema).optional(),
     }),
     z.object({
       type: z.literal("table"),
@@ -555,7 +563,8 @@ export function normalizePmDoc(value: unknown): PmDoc {
 // 读取时先做 P2-16 无损规整，再只兼容既有的两类网格 issue；其它结构、
 // 安全上限与内容规则仍严格校验，所有写入继续走 normalizePmDoc。
 export function normalizeStoredPmDoc(value: unknown): PmDoc {
-  const legacyListNormalized = normalizeLegacyListItemFirstChildPmDoc(value);
+  const legacyCodeNormalized = normalizeLegacyCodeBlockMarksPmDoc(value);
+  const legacyListNormalized = normalizeLegacyListItemFirstChildPmDoc(legacyCodeNormalized.value);
   const normalized = normalizePmDocShape(legacyListNormalized.value);
   const parsed = pmDocSchema.safeParse(normalized);
   if (parsed.success) return parsed.data as PmDoc;
@@ -565,6 +574,49 @@ export function normalizeStoredPmDoc(value: unknown): PmDoc {
   );
   if (containsOnlyLegacyGridIssues) return normalized as PmDoc;
   throw new Error(`Invalid PM doc: ${parsed.error.message}`);
+}
+
+/**
+ * 存量兼容：旧 validator 曾允许 codeBlock 的文本携带 marks，而 ProseMirror
+ * codeBlock 禁止 marks。读取时只移除这些无渲染语义的 marks，源码文本及其余结构原样保留。
+ */
+export function normalizeLegacyCodeBlockMarksPmDoc(
+  value: unknown,
+): { value: unknown; changed: boolean } {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const normalized = value.map((child) => {
+      const result = normalizeLegacyCodeBlockMarksPmDoc(child);
+      changed ||= result.changed;
+      return result.value;
+    });
+    return { value: changed ? normalized : value, changed };
+  }
+  if (!value || typeof value !== "object") return { value, changed: false };
+
+  const record = value as Record<string, unknown>;
+  if (record.type === "codeBlock" && Array.isArray(record.content)) {
+    let changed = false;
+    const content = record.content.map((child) => {
+      if (!child || typeof child !== "object" || !("marks" in child)) return child;
+      const { marks: _marks, ...text } = child as Record<string, unknown>;
+      changed = true;
+      return text;
+    });
+    return {
+      value: changed ? { ...record, content } : value,
+      changed,
+    };
+  }
+
+  let changed = false;
+  const output: Record<string, unknown> = { ...record };
+  if (Array.isArray(record.content)) {
+    const result = normalizeLegacyCodeBlockMarksPmDoc(record.content);
+    output.content = result.value;
+    changed = result.changed;
+  }
+  return { value: changed ? output : value, changed };
 }
 
 function normalizePmDocShape(value: unknown): unknown {

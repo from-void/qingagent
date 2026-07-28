@@ -114,12 +114,13 @@ function validMetadata(
 }
 
 function addThread(id: string, metadata: Partial<QingagentThreadMetadata>): void {
+  const offsetMs = threads.size * 1_000;
   threads.set(id, {
     id,
     title: metadata.title ?? id,
     resourceId: "qingagent-user",
-    createdAt: new Date(`2026-01-01T00:00:0${threads.size}.000Z`),
-    updatedAt: new Date(`2026-01-02T00:00:0${threads.size}.000Z`),
+    createdAt: new Date(Date.parse("2026-01-01T00:00:00.000Z") + offsetMs),
+    updatedAt: new Date(Date.parse("2026-01-02T00:00:00.000Z") + offsetMs),
     metadata,
   });
 }
@@ -271,7 +272,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     });
   }, 10_000);
 
-  it("skips startup migration only when sampled documents match metadata", async () => {
+  it("skips startup migration only when every document matches metadata", async () => {
     const metaA = validMetadata("same-a", { docId: "doc-a", docVersion: 2 });
     const metaB = validMetadata("same-b", { docId: "doc-b", docVersion: 3 });
     addThread("thread-a", metaA);
@@ -290,7 +291,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(memory.updateThread).not.toHaveBeenCalled();
   });
 
-  it("does not skip when sampled legacySections have the same length but different text", async () => {
+  it("does not skip when legacySections have the same length but different text", async () => {
     const meta = validMetadata("aa", { docId: "doc-stale", docVersion: 5 });
     addThread("thread-stale", meta);
     await saveDocumentFromMetadata("thread-stale", meta, {
@@ -308,7 +309,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(updatedMeta.migratedToDocumentsAt).toEqual(expect.any(String));
   });
 
-  it("does not skip when sampled docVersion differs", async () => {
+  it("does not skip when docVersion differs", async () => {
     const meta = validMetadata("versioned", { docId: "doc-version", docVersion: 7 });
     addThread("thread-version", meta);
     await saveDocumentFromMetadata("thread-version", meta, { docVersion: 6 });
@@ -322,7 +323,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect((await documentRepo.load("doc-version"))?.docVersion).toBe(7);
   });
 
-  it("does not skip when sampled docState differs", async () => {
+  it("does not skip when docState differs", async () => {
     const meta = validMetadata("stateful", {
       docId: "doc-state",
       docState: legacyDocState("review"),
@@ -339,7 +340,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect((await documentRepo.load("doc-state"))?.docState).toBe("pendingReview");
   });
 
-  it("does not skip when sampled title differs", async () => {
+  it("does not skip when title differs", async () => {
     const meta = validMetadata("新标题", { docId: "doc-title" });
     addThread("thread-title", meta);
     await saveDocumentFromMetadata("thread-title", meta, { title: "旧标题" });
@@ -353,7 +354,32 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect((await documentRepo.load("doc-title"))?.title).toBe("新标题");
   });
 
-  it("does not skip when counts match but a sampled document row is missing", async () => {
+  it("does not skip when a document outside the first twenty rows is stale", async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => {
+      const suffix = String(index + 1).padStart(2, "0");
+      const metadata = validMetadata(`content-${suffix}`, {
+        docId: `doc-${suffix}`,
+        docVersion: index + 1,
+      });
+      addThread(`thread-${suffix}`, metadata);
+      return { suffix, metadata };
+    });
+    for (const { suffix, metadata } of rows) {
+      await saveDocumentFromMetadata(`thread-${suffix}`, metadata, suffix === "01"
+        ? { title: "stale-title" }
+        : {});
+    }
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments({ pageSize: 7 });
+
+    expect(stats.migrated).toBe(21);
+    expect((await documentRepo.load("doc-01"))?.title).toBe("content-01");
+  });
+
+  it("does not skip when counts match but a document row is missing", async () => {
     const metaA = validMetadata("present", { docId: "doc-present" });
     const metaB = validMetadata("missing", { docId: "doc-missing" });
     const extra = validMetadata("extra", { docId: "doc-extra" });
@@ -374,7 +400,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     });
   });
 
-  it("fails open when the sampled document load throws", async () => {
+  it("fails open when a document load throws", async () => {
     const meta = validMetadata("load-error", { docId: "doc-load-error" });
     addThread("thread-load-error", meta);
     await saveDocumentFromMetadata("thread-load-error", meta);

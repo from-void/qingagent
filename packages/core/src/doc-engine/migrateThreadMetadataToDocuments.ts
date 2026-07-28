@@ -31,8 +31,6 @@ export interface MigrationOptions {
   pageSize?: number;
 }
 
-const STARTUP_SAMPLE_LIMIT = 20;
-
 function dateToIso(value: unknown, fallback: string): string {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") return value;
@@ -66,19 +64,18 @@ function legacySectionsSignature(sections: unknown): string {
   return JSON.stringify(sections) ?? "";
 }
 
-async function collectSampleThreads(
+async function collectAllThreads(
   firstPage: Awaited<ReturnType<typeof listSessionThreads>>,
   pageSize: number,
 ): Promise<StorageThreadType[]> {
-  const sampleSize = Math.min(firstPage.total, STARTUP_SAMPLE_LIMIT);
-  const threads = firstPage.threads.slice(0, sampleSize);
+  const threads = [...firstPage.threads];
   let page = 0;
   let currentPage = firstPage;
 
-  while (threads.length < sampleSize && currentPage.hasMore) {
+  while (currentPage.hasMore) {
     page++;
     currentPage = await listSessionThreads({ page, perPage: pageSize });
-    threads.push(...currentPage.threads.slice(0, sampleSize - threads.length));
+    threads.push(...currentPage.threads);
   }
 
   return threads;
@@ -108,11 +105,11 @@ async function shouldSkipStartupMigration(
     const existing = await documentRepo.countByResourceId(QINGAGENT_RESOURCE_ID);
     if (existing !== firstPage.total) return false;
 
-    const sampleThreads = await collectSampleThreads(firstPage, pageSize);
-    if (sampleThreads.length !== Math.min(firstPage.total, STARTUP_SAMPLE_LIMIT)) {
+    const threads = await collectAllThreads(firstPage, pageSize);
+    if (threads.length !== firstPage.total) {
       return false;
     }
-    for (const thread of sampleThreads) {
+    for (const thread of threads) {
       const input = metadataToDocumentInput(thread);
       if (!input) return false;
       const docRow = await documentRepo.load(input.id);

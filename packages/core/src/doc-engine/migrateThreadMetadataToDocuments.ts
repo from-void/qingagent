@@ -1,5 +1,9 @@
 import type { StorageThreadType } from "@mastra/core/memory";
-import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
+import {
+  getPmContentHash,
+  legacySectionsToPm,
+  pmToLegacySections,
+} from "@qingagent/pm-schema";
 import {
   documentRepo,
   getTombstonedSessionIds,
@@ -61,7 +65,8 @@ function metadataToDocumentInput(thread: StorageThreadType): DocumentSaveInput |
 }
 
 function legacySectionsSignature(sections: unknown): string {
-  return JSON.stringify(sections) ?? "";
+  const normalized = pmToLegacySections(legacySectionsToPm(sections as never));
+  return JSON.stringify(normalized) ?? "";
 }
 
 async function collectAllThreads(

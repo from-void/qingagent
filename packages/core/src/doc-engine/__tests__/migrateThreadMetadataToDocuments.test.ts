@@ -291,6 +291,38 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(memory.updateThread).not.toHaveBeenCalled();
   });
 
+  it("已规范化的富文本 legacySections 与 metadata 等价时跳过启动迁移", async () => {
+    const meta = validMetadata("rich-sections", {
+      docId: "doc-rich-sections",
+      legacySections: [
+        { kind: "quote", data: { text: "引用正文" } },
+        { kind: "code", data: { body: "const answer = 42;" } },
+        {
+          kind: "image",
+          data: {
+            src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png",
+            alt: "",
+            caption: null,
+            width: null,
+            height: null,
+          },
+        },
+      ],
+    });
+    addThread("thread-rich-sections", meta);
+    await saveDocumentFromMetadata("thread-rich-sections", meta);
+    const saveManySpy = vi.spyOn(documentRepo, "saveMany");
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments();
+
+    expect(stats.migrated).toBe(0);
+    expect(saveManySpy).not.toHaveBeenCalled();
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
   it("does not skip when legacySections have the same length but different text", async () => {
     const meta = validMetadata("aa", { docId: "doc-stale", docVersion: 5 });
     addThread("thread-stale", meta);

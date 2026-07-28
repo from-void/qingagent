@@ -142,7 +142,7 @@ describe("HTML 表格列宽正确性", () => {
               },
               {
                 type: "tableHeader",
-                attrs: { colspan: 2, colwidth: [140, 180] },
+                attrs: { colspan: 2 },
                 content: [paragraph("h-bc", "B+C")],
               },
             ],

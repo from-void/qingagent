@@ -22,7 +22,9 @@ export async function* handleTextAndReasoningEvent(
     const seq = nextSeq(state, agentMessageId);
     const textPart: MessagePart = { kind: "text", data: { body: text } };
     yield chatMessageAppended(agentMessageId, seq, textPart);
-    context.outcome.producedVisibleFrame = true;
+    if (/\S/u.test(text)) {
+      context.outcome.producedVisibleFrame = true;
+    }
     appendPartToChatHistory(state, agentMessageId, textPart);
     return true;
   }

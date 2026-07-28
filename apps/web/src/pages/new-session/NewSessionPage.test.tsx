@@ -7,7 +7,6 @@ import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
   NewSessionPage,
   newSessionCommandLengthError,
-  partitionNewSessionAttachmentFiles,
 } from "./NewSessionPage";
 
 let root: Root | null = null;
@@ -88,16 +87,76 @@ describe("NewSessionPage 文件夹弹框键盘行为", () => {
 });
 
 describe("NewSessionPage 附件校验", () => {
-  it("超过 50 MB 的受支持文件不会进入待提交附件", () => {
-    const atLimit = new File([""], "limit.pdf", { type: "application/pdf" });
-    const oversized = new File([""], "oversized.pdf", { type: "application/pdf" });
-    Object.defineProperty(atLimit, "size", { value: 50 * 1024 * 1024 });
-    Object.defineProperty(oversized, "size", { value: 50 * 1024 * 1024 + 1 });
+  beforeEach(() => {
+    installBrowserPolyfills();
+    window.localStorage.clear();
+    window.location.hash = "#/new";
+  });
 
-    const result = partitionNewSessionAttachmentFiles([atLimit, oversized]);
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
 
-    expect(result.accepted).toEqual([atLimit]);
-    expect(result.sizeErrorMessage).toBe("文件过大（上限 50 MB）");
+  it("文件选择入口拒绝超限文件，不插 chip 或进入待提交态", async () => {
+    await render(<NewSessionPage />);
+    const file = oversizedFile("oversized.pdf", "application/pdf");
+    const input = host!.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(query(".src-chip")).toBeNull();
+    expect(getButton("[data-wf='StartSession']").getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("拖拽入口拒绝超限文件，不插 chip 或进入待提交态", async () => {
+    await render(<NewSessionPage />);
+    const file = oversizedFile("oversized.pdf", "application/pdf");
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      value: { types: ["Files"], files: [file] },
+    });
+
+    await act(async () => {
+      window.dispatchEvent(event);
+      await Promise.resolve();
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(query(".src-chip")).toBeNull();
+    expect(getButton("[data-wf='StartSession']").getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("粘贴入口拒绝超限图片，不插 chip 或进入待提交态", async () => {
+    await render(<NewSessionPage />);
+    const file = oversizedFile("oversized.png", "image/png", true);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [file],
+        getData: () => "",
+      },
+    });
+
+    await act(async () => {
+      query("[data-wf='StarterInput']")!.dispatchEvent(event);
+      await Promise.resolve();
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(query(".src-chip")).toBeNull();
+    expect(getButton("[data-wf='StartSession']").getAttribute("aria-disabled")).toBe("true");
   });
 });
 
@@ -149,6 +208,18 @@ async function keyDown(key: string): Promise<KeyboardEvent> {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function oversizedFile(name: string, type: string, useRealBytes = false): File {
+  const file = new File(
+    useRealBytes ? [new Uint8Array(50 * 1024 * 1024 + 1)] : [""],
+    name,
+    { type },
+  );
+  if (!useRealBytes) {
+    Object.defineProperty(file, "size", { value: 50 * 1024 * 1024 + 1 });
+  }
+  return file;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

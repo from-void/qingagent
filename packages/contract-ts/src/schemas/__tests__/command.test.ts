@@ -265,6 +265,61 @@ describe("commandSchema", () => {
     })).success).toBe(false);
   });
 
+  it.each([
+    ["selection 缺 ref", { kind: { kind: "selection" }, resourceRef: null }],
+    ["selection 域错误", {
+      kind: { kind: "selection" },
+      resourceRef: { id: "position-1", domain: { kind: "docPosition" } },
+    }],
+    ["insertion 缺 ref", { kind: { kind: "insertion" }, resourceRef: null }],
+    ["insertion 域错误", {
+      kind: { kind: "insertion" },
+      resourceRef: { id: "span-1", domain: { kind: "docSpan" } },
+    }],
+    ["attach 缺 ref", { kind: { kind: "attach" }, resourceRef: null }],
+    ["attach 域错误", {
+      kind: { kind: "attach" },
+      resourceRef: { id: "source-1", domain: { kind: "source" } },
+    }],
+    ["mention 缺 ref", { kind: { kind: "mention" }, resourceRef: null }],
+    ["ref id 为空", {
+      kind: { kind: "mention" },
+      resourceRef: { id: "", domain: { kind: "mention" } },
+    }],
+    ["skill 携带 ref", {
+      kind: { kind: "skill" },
+      resourceRef: { id: "skill-1", domain: { kind: "mention" } },
+    }],
+    ["text 携带 ref", {
+      kind: { kind: "text" },
+      resourceRef: { id: "text-1", domain: { kind: "mention" } },
+    }],
+  ])("服务端命令边界拒绝 kind/ref 关系错误:%s", (_label, partialChip) => {
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      prefix: null,
+      label: "引用",
+      suffix: null,
+      ...partialChip,
+    })).success).toBe(false);
+  });
+
+  it.each([
+    ["selection", "docSpan"],
+    ["insertion", "docPosition"],
+    ["attach", "file"],
+    ["attach", "image"],
+    ["attach", "url"],
+    ["mention", "source"],
+  ])("服务端命令边界接受 %s/%s chip", (kind, domain) => {
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      kind: { kind },
+      resourceRef: { id: "resource-1", domain: { kind: domain } },
+      prefix: null,
+      label: "引用",
+      suffix: null,
+    })).success).toBe(true);
+  });
+
   it("表格选区签名按单元格边界和顺序稳定区分", () => {
     expect(tableSelectionTextSignature(["ab", "c"])).not.toBe(tableSelectionTextSignature(["a", "bc"]));
     expect(tableSelectionTextSignature(["A", "B"])).not.toBe(tableSelectionTextSignature(["B", "A"]));

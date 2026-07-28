@@ -105,5 +105,57 @@ export const chatChipSchema = z.object({
 }).refine(
   (chip) => chip.tableSelection === undefined || chip.kind.kind === "selection",
   { path: ["tableSelection"], message: "tableSelection is only allowed on selection chips" },
-) satisfies z.ZodType<ChatChip>;
+).superRefine((chip, context) => {
+  const resourceRef = chip.resourceRef;
+  if (resourceRef?.id.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["resourceRef", "id"],
+      message: "resourceRef.id must be non-empty",
+    });
+  }
+
+  const requireResourceRef = (allowedDomains?: readonly ResourceDomain["kind"][]): void => {
+    if (!resourceRef) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resourceRef"],
+        message: `resourceRef is required for ${chip.kind.kind} chips`,
+      });
+      return;
+    }
+    if (allowedDomains && !allowedDomains.includes(resourceRef.domain.kind)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resourceRef", "domain"],
+        message: `resourceRef.domain must be ${allowedDomains.join("|")} for ${chip.kind.kind} chips`,
+      });
+    }
+  };
+
+  switch (chip.kind.kind) {
+    case "selection":
+      requireResourceRef(["docSpan"]);
+      break;
+    case "insertion":
+      requireResourceRef(["docPosition"]);
+      break;
+    case "attach":
+      requireResourceRef(["file", "image", "url"]);
+      break;
+    case "mention":
+      requireResourceRef();
+      break;
+    case "skill":
+    case "text":
+      if (resourceRef) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resourceRef"],
+          message: `resourceRef is not allowed for ${chip.kind.kind} chips`,
+        });
+      }
+      break;
+  }
+}) satisfies z.ZodType<ChatChip>;
 type _ChatChipExact = Expect<Equal<z.infer<typeof chatChipSchema>, ChatChip>>;

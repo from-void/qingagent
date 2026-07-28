@@ -23,7 +23,23 @@ export function WorkspaceTopbar({
         title="返回首页"
         onClick={handleBackHome}
       >
-        ←
+        {/* 字符 ← 的字形基线会让视觉重心偏下偏右;换成 viewBox 内几何居中的线条箭头,
+            块级化后由容器 place-items:center 精确居中。 */}
+        <svg
+          width="17"
+          height="17"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ display: "block" }}
+          aria-hidden="true"
+        >
+          <path d="M19 12H5" />
+          <path d="M11 6l-6 6 6 6" />
+        </svg>
       </button>
 
       {/* 文档纸顶部带:右上角图标按钮(无文字)—— 历史 / 导出 */}

@@ -38,7 +38,7 @@ usageRoutes.get("/usage/summary", async (c) => {
   // 会话视图沿用 bucket→标题；按天视图在 documents.title 为空时兼容旧线程 metadata 标题。
   let titleMap: Map<string, string> | null = null;
   if (view === "session" || view === "day") {
-    const { threads } = await listSessionThreads({ page: 0, perPage: 200 });
+    const { threads } = await listSessionThreads({ page: 0, perPage: false });
     titleMap = new Map(
       threads.map((t) => {
         const meta = (t.metadata ?? {}) as unknown as QingagentThreadMetadata;
@@ -78,7 +78,7 @@ usageRoutes.get("/usage/summary", async (c) => {
 usageRoutes.get("/usage/docstats", async (c) => {
   const days = Math.max(1, Math.min(90, Math.round(Number(c.req.query("days") ?? 7)) || 7));
   const cutoff = Date.now() - days * 86_400_000;
-  const { threads } = await listSessionThreads({ page: 0, perPage: 200 });
+  const { threads } = await listSessionThreads({ page: 0, perPage: false });
   let docs = 0;
   let words = 0;
   for (const t of threads) {

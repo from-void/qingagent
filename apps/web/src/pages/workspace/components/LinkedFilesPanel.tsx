@@ -29,12 +29,12 @@ interface FolderEntry {
 interface FolderEntriesResponse {
   entries: FolderEntry[];
   truncated: boolean;
+  nextCursor: string | null;
 }
 
 interface DirState {
   entries: FolderEntry[];
-  truncated: boolean;
-  limit: number;
+  nextCursor: string | null;
   loading: boolean;
   error: string | null;
 }
@@ -157,7 +157,7 @@ export function LinkedFilesPanel({
   }, []);
 
   const loadEntries = useCallback(
-    async (relPath: string, limit = DEFAULT_ENTRY_LIMIT) => {
+    async (relPath: string, cursor: string | null = null) => {
       if (!folderSource || !folderIdentity) return;
       const requestFolderIdentity = folderIdentity;
       const stateKey = buildDirStateKey(requestFolderIdentity, relPath);
@@ -165,13 +165,13 @@ export function LinkedFilesPanel({
         ...prev,
         [stateKey]: {
           entries: prev[stateKey]?.entries ?? [],
-          truncated: prev[stateKey]?.truncated ?? false,
-          limit,
+          nextCursor: prev[stateKey]?.nextCursor ?? cursor,
           loading: true,
           error: null,
         },
       }));
-      const params = new URLSearchParams({ path: relPath, limit: String(limit) });
+      const params = new URLSearchParams({ path: relPath, limit: String(DEFAULT_ENTRY_LIMIT) });
+      if (cursor !== null) params.set("cursor", cursor);
       const controller = new AbortController();
       entryControllersRef.current.add(controller);
       let timedOut = false;
@@ -204,9 +204,12 @@ export function LinkedFilesPanel({
         setDirStates((prev) => ({
           ...prev,
           [stateKey]: {
-            entries: Array.isArray(body.entries) ? body.entries : [],
-            truncated: body.truncated === true,
-            limit,
+            entries: cursor === null
+              ? (Array.isArray(body.entries) ? body.entries : [])
+              : [...(prev[stateKey]?.entries ?? []), ...(Array.isArray(body.entries) ? body.entries : [])],
+            nextCursor: typeof body.nextCursor === "string" && body.nextCursor.length > 0
+              ? body.nextCursor
+              : null,
             loading: false,
             error: null,
           },
@@ -221,8 +224,7 @@ export function LinkedFilesPanel({
           ...prev,
           [stateKey]: {
             entries: prev[stateKey]?.entries ?? [],
-            truncated: prev[stateKey]?.truncated ?? false,
-            limit,
+            nextCursor: prev[stateKey]?.nextCursor ?? cursor,
             loading: false,
             error: message,
           },
@@ -628,7 +630,7 @@ function DirChildren({
   disabled: boolean;
   onHover: (text: string) => void;
   onToggleDir: (relPath: string) => void;
-  onLoad: (relPath: string, limit?: number) => void;
+  onLoad: (relPath: string, cursor?: string | null) => void;
   onReference: (label: string) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
   onToast?: (message: string) => void;
@@ -651,7 +653,7 @@ function DirChildren({
           type="button"
           className="lf-retry"
           disabled={disabled}
-          onClick={() => onLoad(relPath, state.limit)}
+          onClick={() => onLoad(relPath, state.nextCursor)}
         >
           重试
         </button>
@@ -737,13 +739,13 @@ function DirChildren({
           </div>
         );
       })}
-      {state.truncated && (
+      {state.nextCursor !== null && (
         <button
           type="button"
           className={`lf-row lf-subrow lf-more ${levelClass(level)}`}
           data-wf="LinkedFolderMore"
           disabled={disabled || state.loading}
-          onClick={() => onLoad(relPath, Math.min(state.limit * 2, 500))}
+          onClick={() => onLoad(relPath, state.nextCursor)}
         >
           <span className="lf-tw" />
           <span className="lf-name">还有更多项…点击继续加载</span>

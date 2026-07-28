@@ -170,14 +170,14 @@ describe("LinkedFilesPanel", () => {
           { name: "问卷汇总.xlsx", kind: "file", childCount: null, byteLen: 2048 },
         ],
         truncated: true,
+        nextCursor: "500",
       }))
       .mockResolvedValueOnce(jsonResponse({
         entries: [
-          { name: "用户访谈", kind: "dir", childCount: 12, byteLen: null },
-          { name: "问卷汇总.xlsx", kind: "file", childCount: null, byteLen: 2048 },
           { name: "行业综述.md", kind: "file", childCount: null, byteLen: 88 },
         ],
         truncated: false,
+        nextCursor: null,
       }));
     vi.stubGlobal("fetch", fetchMock);
     const onReference = vi.fn();
@@ -197,7 +197,9 @@ describe("LinkedFilesPanel", () => {
 
     await clickAsync(getMoreRow());
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("limit=400");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("limit=200");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("cursor=500");
+    expect(host?.textContent).toContain("问卷汇总.xlsx");
     expect(host?.textContent).toContain("行业综述.md");
     expect(host?.textContent).not.toContain("还有更多项");
   });

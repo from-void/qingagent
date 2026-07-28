@@ -40,6 +40,13 @@ function parseLimit(raw: string | undefined): number {
   return Math.min(parsed, MAX_LIMIT);
 }
 
+function parseCursor(raw: string | undefined): number | null {
+  if (raw === undefined || raw === "") return 0;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
 function fileSize(stat: { size?: unknown }): number | null {
   return typeof stat.size === "number" && Number.isFinite(stat.size) && stat.size >= 0
     ? stat.size
@@ -152,6 +159,8 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
   if (!source) return jsonError(c, "Session or folder source not found", 404);
 
   const limit = parseLimit(c.req.query("limit"));
+  const offset = parseCursor(c.req.query("cursor"));
+  if (offset === null) return jsonError(c, "Invalid cursor", 400);
   const workspace = await getQingagentSessionWorkspace(sessionId);
   const filesystem = workspace.filesystem;
   if (!filesystem) return jsonError(c, "Workspace filesystem is unavailable", 502);
@@ -175,8 +184,9 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
       if (typeOrder !== 0) return typeOrder;
       return a.name.localeCompare(b.name, "zh-Hans-CN");
     });
-  const truncated = visibleEntries.length > limit;
-  const slice = visibleEntries.slice(0, limit);
+  const slice = visibleEntries.slice(offset, offset + limit);
+  const truncated = offset + slice.length < visibleEntries.length;
+  const nextCursor = truncated ? String(offset + slice.length) : null;
 
   const entries = await mapWithConcurrency(slice, ENTRY_CONCURRENCY, async (entry): Promise<FolderEntryResponseItem> => {
     const entryPath = targetPath(dirPath, entry.name);
@@ -212,7 +222,7 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
     };
   });
 
-  return c.json({ entries, truncated });
+  return c.json({ entries, truncated, nextCursor });
 });
 
 folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/file", async (c) => {

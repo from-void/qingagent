@@ -119,6 +119,7 @@ describe("folderEntriesRoutes", () => {
       const body = await res.json() as {
         entries: Array<{ name: string; kind: "dir" | "file"; childCount: number | null; byteLen: number | null }>;
         truncated: boolean;
+        nextCursor: string | null;
       };
 
       expect(body.truncated).toBe(false);
@@ -147,6 +148,52 @@ describe("folderEntriesRoutes", () => {
       const body = await res.json() as { entries: Array<{ name: string }>; truncated: boolean };
       expect(body.entries.map((entry) => entry.name)).toEqual(["a.md", "b.md", "c.md"]);
       expect(body.truncated).toBe(true);
+    } finally {
+      unregisterSessionFolderSources(sessionId);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("目录超过单页上限时可用 nextCursor 读取 500 项之后的条目", async () => {
+    const sessionId = "entries_cursor_after_max";
+    const { root, source } = registerFixture(sessionId);
+    const app = makeApp();
+    try {
+      for (let index = 0; index < 503; index += 1) {
+        const name = `file-${String(index).padStart(3, "0")}.txt`;
+        writeFileSync(join(root, name), name);
+      }
+
+      const first = await app.request(
+        `/api/v1/sessions/${sessionId}/folder-sources/${source.id}/entries?limit=500`,
+      );
+      expect(first.status).toBe(200);
+      const firstBody = await first.json() as {
+        entries: Array<{ name: string }>;
+        truncated: boolean;
+        nextCursor: string | null;
+      };
+      expect(firstBody.entries).toHaveLength(500);
+      expect(firstBody.entries.at(-1)?.name).toBe("file-499.txt");
+      expect(firstBody.truncated).toBe(true);
+      expect(firstBody.nextCursor).toBe("500");
+
+      const second = await app.request(
+        `/api/v1/sessions/${sessionId}/folder-sources/${source.id}/entries?limit=500&cursor=${firstBody.nextCursor}`,
+      );
+      expect(second.status).toBe(200);
+      const secondBody = await second.json() as {
+        entries: Array<{ name: string }>;
+        truncated: boolean;
+        nextCursor: string | null;
+      };
+      expect(secondBody.entries.map((entry) => entry.name)).toEqual([
+        "file-500.txt",
+        "file-501.txt",
+        "file-502.txt",
+      ]);
+      expect(secondBody.truncated).toBe(false);
+      expect(secondBody.nextCursor).toBeNull();
     } finally {
       unregisterSessionFolderSources(sessionId);
       rmSync(root, { recursive: true, force: true });
@@ -362,6 +409,7 @@ describe("folderEntriesRoutes", () => {
           { name: "cat.png", kind: "file", childCount: null, byteLen: 4 },
         ],
         truncated: false,
+        nextCursor: null,
       });
     } finally {
       close();

@@ -803,6 +803,45 @@ describe("ChatInput", () => {
     expect(host?.querySelector('[data-wf="LinkedFolderRootRow"]')?.classList.contains("is-located")).toBe(true);
   });
 
+  it("文件夹子文件引用把 folderId 与完整相对路径写入 chip", async () => {
+    const ref = createRef<ChatInputHandle>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      return Promise.resolve(new Response(JSON.stringify({
+        entries: url.includes("path=%E9%83%A8%E9%97%A8%E7%94%B2")
+          ? [{ name: "报告.md", kind: "file", childCount: null, byteLen: 12 }]
+          : [{ name: "部门甲", kind: "dir", childCount: 1, byteLen: null }],
+        truncated: false,
+        nextCursor: null,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }));
+    await render(
+      <ChatInput
+        {...baseFolderProps({ folderSource: mockFolderSource })}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    clickElement(getLinkedFilesBar());
+    await clickElementAsync(host!.querySelector<HTMLElement>('[data-wf="LinkedFolderRootRow"]')!);
+    await clickElementAsync(rowByText("部门甲"));
+    clickElement(
+      Array.from(rowByText("报告.md").querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes("引用"))!,
+    );
+
+    expect(ref.current?.snapshot().chips).toEqual([expect.objectContaining({
+      kind: "attach",
+      label: "部门甲/报告.md",
+      resourceId: "folder:fld_test:%E9%83%A8%E9%97%A8%E7%94%B2%2F%E6%8A%A5%E5%91%8A.md",
+    })]);
+  });
+
   it("已关联素材行点击会透传 onPreviewMaterial", async () => {
     const onPreviewMaterial = vi.fn();
     await render(

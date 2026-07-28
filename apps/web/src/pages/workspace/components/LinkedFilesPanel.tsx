@@ -39,6 +39,12 @@ interface DirState {
   error: string | null;
 }
 
+export interface LinkedFileReference {
+  label: string;
+  folderId?: string;
+  childRelPath?: string;
+}
+
 interface LinkedFilesPanelProps {
   materialRows: readonly MaterialParseRow[];
   folderSource: FolderSource | null;
@@ -49,7 +55,7 @@ interface LinkedFilesPanelProps {
    * 只有它出现过,后续 folderSource 首次到达才自动展开;进入已关联会话的数据加载不会触发。
    */
   folderAttachSignal?: number;
-  onReference: (label: string) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewMaterial?: (source: AssetSource) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
   onRemoveMaterial?: (source: AssetSource) => void;
@@ -299,13 +305,6 @@ export function LinkedFilesPanel({
     [expandedDirs, loadEntries, visibleDirStates],
   );
 
-  const handleReference = useCallback(
-    (label: string) => {
-      onReference(label);
-    },
-    [onReference],
-  );
-
   if (!hasContent) return null;
 
   if (!renderPanel) {
@@ -362,7 +361,7 @@ export function LinkedFilesPanel({
                 level={1}
                 disabled={disabled}
                 onHover={setHoverInfo}
-                onReference={handleReference}
+                onReference={onReference}
                 onPreviewMaterial={onPreviewMaterial}
                 onRemoveMaterial={onRemoveMaterial}
                 onRetryMaterialParse={onRetryMaterialParse}
@@ -395,7 +394,7 @@ export function LinkedFilesPanel({
                 onHover={setHoverInfo}
                 onToggleDir={toggleDir}
                 onLoad={loadEntries}
-                onReference={handleReference}
+                onReference={onReference}
                 onPreviewFolderFile={onPreviewFolderFile}
                 onToast={onToast}
                 folderSource={folderSource}
@@ -451,7 +450,7 @@ function MaterialTreeRow({
   level?: number;
   disabled: boolean;
   onHover: (text: string) => void;
-  onReference: (label: string) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewMaterial?: (source: AssetSource) => void;
   onRemoveMaterial?: (source: AssetSource) => void;
   onRetryMaterialParse?: (fileId: string) => void;
@@ -512,7 +511,7 @@ function MaterialTreeRow({
               disabled={disabled}
               onClick={(event) => {
                 event.stopPropagation();
-                onReference(row.filename);
+                onReference({ label: row.filename });
               }}
             >
               <RefIcon />
@@ -633,7 +632,7 @@ function DirChildren({
   onHover: (text: string) => void;
   onToggleDir: (relPath: string) => void;
   onLoad: (relPath: string, cursor?: string | null) => void;
-  onReference: (label: string) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
   onToast?: (message: string) => void;
 }) {
@@ -731,7 +730,11 @@ function DirChildren({
                 disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onReference(entry.name);
+                  onReference({
+                    label: entry.name,
+                    folderId: folderSource.id,
+                    childRelPath,
+                  });
                 }}
               >
                 <RefIcon />

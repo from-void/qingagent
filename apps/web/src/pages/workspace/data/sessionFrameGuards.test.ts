@@ -44,6 +44,23 @@ describe("toContractChip", () => {
       text: "按批注修改:「2025年入职」——改为2024年（原因:履历原文为2024年）",
     });
   });
+
+  it("文件夹子文件引用保留稳定资源身份与完整相对路径", () => {
+    expect(toContractChip({
+      kind: "attach",
+      label: "部门甲/报告.md",
+      resourceId: "folder:fld_test:%E9%83%A8%E9%97%A8%E7%94%B2%2F%E6%8A%A5%E5%91%8A.md",
+    })).toEqual({
+      kind: { kind: "attach" },
+      resourceRef: {
+        id: "folder:fld_test:%E9%83%A8%E9%97%A8%E7%94%B2%2F%E6%8A%A5%E5%91%8A.md",
+        domain: { kind: "file" },
+      },
+      prefix: null,
+      label: "部门甲/报告.md",
+      suffix: null,
+    });
+  });
 });
 
 describe("uploadFiles", () => {

@@ -32,6 +32,8 @@ export interface ChatChipSpec {
    * 文件名仍只负责展示，不参与去重或删除定位。
    */
   attachmentId?: string;
+  /** 已关联资源的稳定身份；文件夹子文件由 folderId + childRelPath 生成。 */
+  resourceId?: string;
   /**
    * 长文本折叠卡片(kind="longtext")承载完整原文；批注标记(kind="annotation")承载完整修改指令。
    * 发送时由 snapshot() 原位展开回 text 进入模型上下文；卡片本身只是输入区/气泡的短展示。

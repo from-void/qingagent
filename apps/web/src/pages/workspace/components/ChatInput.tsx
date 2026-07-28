@@ -42,7 +42,7 @@ import {
   LongTextFullscreen,
 } from "../../../system/longText";
 import { FileActionMenu } from "./FileActionMenu";
-import { LinkedFilesPanel } from "./LinkedFilesPanel";
+import { LinkedFilesPanel, type LinkedFileReference } from "./LinkedFilesPanel";
 import { uploadFailureMessage, uploadFileSizeError } from "../data/uploadAsset";
 import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../data/chatInputTypes";
 export type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../data/chatInputTypes";
@@ -927,18 +927,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     [disabled, onToast, restoreOrEndRange, reportChange],
   );
 
-  // 引用:把素材作为下一条消息上下文,在编辑器末尾插入 attach chip(文件名)。
+  // 引用:文件夹文件用完整相对路径进入模型上下文，folderId + childRelPath 提供稳定身份。
   const insertAttachChip = useCallback(
-    (label: string) => {
+    (reference: LinkedFileReference) => {
       const edit = editRef.current;
       if (!edit || disabled) return;
-      // 同名 attach chip 已存在则不重复插(避免「引用」多次留下重复 chip)。
-      if (hasReferencedAttachChip(edit, label)) {
+      const label = reference.childRelPath ?? reference.label;
+      const resourceId = reference.folderId && reference.childRelPath
+        ? folderFileResourceId(reference.folderId, reference.childRelPath)
+        : undefined;
+      // 同一资源的 attach chip 已存在则不重复插(普通素材沿用文件名去重)。
+      if (hasReferencedAttachChip(edit, label, resourceId)) {
         edit.focus();
         reportChange();
         return;
       }
-      const chip = makeChatChipNode({ kind: "attach", label });
+      const chip = makeChatChipNode({ kind: "attach", label, resourceId });
       const hasContent = !!(edit.textContent && edit.textContent.trim().length > 0);
       if (hasContent) edit.appendChild(document.createElement("br"));
       edit.appendChild(chip);
@@ -1230,6 +1234,7 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   if (spec.attachmentId !== undefined) {
     chip.dataset.attachmentId = spec.attachmentId;
   }
+  if (spec.resourceId !== undefined) chip.dataset.resourceId = spec.resourceId;
   if (spec.text !== undefined) chip.dataset.text = spec.text;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) {
     chip.dataset.selectionRefs = JSON.stringify(spec.selectionRefs);
@@ -1335,13 +1340,17 @@ function hasLocalAttachChip(edit: HTMLElement, attachmentId: string): boolean {
   );
 }
 
-function hasReferencedAttachChip(edit: HTMLElement, label: string): boolean {
+function hasReferencedAttachChip(edit: HTMLElement, label: string, resourceId?: string): boolean {
   return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).some(
     (chip) =>
       chip.dataset.kind === "attach" &&
       chip.dataset.attachmentId === undefined &&
-      chip.dataset.label === label,
+      (resourceId ? chip.dataset.resourceId === resourceId : chip.dataset.label === label),
   );
+}
+
+function folderFileResourceId(folderId: string, childRelPath: string): string {
+  return `folder:${encodeURIComponent(folderId)}:${encodeURIComponent(childRelPath)}`;
 }
 
 function removeAttachChips(edit: HTMLElement, attachmentId: string): void {
@@ -1546,6 +1555,7 @@ function readChipNode(el: HTMLElement): ChatChipSpec {
   if (el.dataset.attachmentId !== undefined) {
     spec.attachmentId = el.dataset.attachmentId;
   }
+  if (el.dataset.resourceId !== undefined) spec.resourceId = el.dataset.resourceId;
   if (el.dataset.text !== undefined) spec.text = el.dataset.text;
   const selectionRefs = parseSelectionRefs(el.dataset.selectionRefs);
   if (selectionRefs) spec.selectionRefs = selectionRefs;

@@ -53,7 +53,7 @@ export function toContractChip(spec: ChatChipSpec): ChatChip {
     // 选区/块引用:resourceRef.id 直接承载稳定 blockId(后端按 id 精确找回引用的块);
     // 缺 blockId(老链路/异常)才退回时间戳占位 id,后端找不到该 id 时自然降级到位置/文本。
     sel: { id: spec.blockId ?? spec.selectionRefs?.[0] ?? `sel-${Date.now()}`, domain: { kind: "docSpan" } },
-    attach: { id: `att-${Date.now()}`, domain: { kind: "file" } },
+    attach: { id: spec.resourceId ?? `att-${Date.now()}`, domain: { kind: "file" } },
     mention: { id: `men-${Date.now()}`, domain: { kind: "mention" } },
   };
   const chip: ChatChip = {

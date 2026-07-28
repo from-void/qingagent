@@ -310,7 +310,10 @@ export function pendingSubmissionToChatInputSnapshot(
         kind: "attach" as const,
         label: chip.label,
         ...(chip.resourceRef
-          ? { attachmentId: chip.resourceRef.id }
+          ? {
+              attachmentId: chip.resourceRef.id,
+              resourceId: chip.resourceRef.id,
+            }
           : {}),
       };
     }),

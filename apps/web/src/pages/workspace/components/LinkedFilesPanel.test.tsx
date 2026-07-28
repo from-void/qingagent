@@ -193,7 +193,11 @@ describe("LinkedFilesPanel", () => {
     expect(host?.textContent).toContain("还有更多项");
 
     click(buttonByText(host!, "引用"));
-    expect(onReference).toHaveBeenCalledWith("问卷汇总.xlsx");
+    expect(onReference).toHaveBeenCalledWith({
+      label: "问卷汇总.xlsx",
+      folderId: "fld_test",
+      childRelPath: "问卷汇总.xlsx",
+    });
 
     await clickAsync(getMoreRow());
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -268,7 +272,8 @@ describe("LinkedFilesPanel", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await render(panel({ folderSource: mockFolderSource }));
+    const onReference = vi.fn();
+    await render(panel({ folderSource: mockFolderSource, onReference }));
     click(getBar());
     await clickAsync(getFolderRoot());
     await clickAsync(rowByText("images"));
@@ -276,6 +281,12 @@ describe("LinkedFilesPanel", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("path=images"))).toBe(true);
     expect(host?.textContent).toContain("hero.png");
     expect(host?.querySelector('[data-wf="LinkedFolderLoading"]')).toBeNull();
+    click(buttonByText(rowByText("hero.png"), "引用"));
+    expect(onReference).toHaveBeenCalledWith({
+      label: "hero.png",
+      folderId: "fld_test",
+      childRelPath: "images/hero.png",
+    });
   });
 
   it("entries 请求超时后显示可重试错误，避免无限 loading", async () => {
@@ -472,7 +483,7 @@ describe("LinkedFilesPanel", () => {
     click(getBar());
     click(buttonByText(rowByText("ready.pdf"), "引用"));
 
-    expect(onReference).toHaveBeenCalledWith("ready.pdf");
+    expect(onReference).toHaveBeenCalledWith({ label: "ready.pdf" });
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
     expect(rowByText("ready.pdf")).not.toBeNull();
   });
@@ -492,7 +503,11 @@ describe("LinkedFilesPanel", () => {
     await clickAsync(getFolderRoot());
     click(buttonByText(rowByText("问卷汇总.xlsx"), "引用"));
 
-    expect(onReference).toHaveBeenCalledWith("问卷汇总.xlsx");
+    expect(onReference).toHaveBeenCalledWith({
+      label: "问卷汇总.xlsx",
+      folderId: "fld_test",
+      childRelPath: "问卷汇总.xlsx",
+    });
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
     expect(rowByText("问卷汇总.xlsx")).not.toBeNull();
   });

@@ -1,5 +1,6 @@
 import type { CoreMessage } from "ai";
 import type {
+  BridgeFrame,
   ChatChip,
   ChatMessage,
   FolderSourceRecord,
@@ -175,6 +176,8 @@ export interface SessionState {
   _turnGeneration: number;
   /** Runtime-only：当前轮助手消息；抢占清理用它给旧轮追加可见收尾。 */
   _activeAgentMessageId: string | null;
+  /** Runtime-only：冷恢复草稿冲突的一次性失败帧；正常 restore 消费，只读快照不消费。 */
+  _pendingDraftRecoveryFrames: BridgeFrame[];
   /** Runtime-only creation promise for the backing Mastra thread. Not persisted. */
   threadCreatePromise?: Promise<void>;
   /** PM-native review suggestions keyed by suggestion id. */
@@ -362,6 +365,7 @@ export function createSession(
     _turnOwner: null,
     _turnGeneration: 0,
     _activeAgentMessageId: null,
+    _pendingDraftRecoveryFrames: [],
     suggestions: new Map(),
     annotationGroups: [],
     patchVerdicts: new Map(),

@@ -232,6 +232,9 @@ export function* emitRestoreFrames(
   // gap/epoch restore 必须纯读；restoreReset 已先清空前端队列，无需消费一次性恢复终态帧。
   if (!readOnly) {
     for (const frame of takeConfirmRecoveryFrames(session)) yield frame;
+    const pendingDraftRecoveryFrames = session._pendingDraftRecoveryFrames;
+    session._pendingDraftRecoveryFrames = [];
+    for (const frame of pendingDraftRecoveryFrames) yield frame;
   }
 
   // 回放 AI 任务清单(与 docStateChanged 同路数:会话状态帧,页面刷新/重连恢复 pill)。

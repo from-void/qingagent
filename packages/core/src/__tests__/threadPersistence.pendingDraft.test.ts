@@ -189,6 +189,55 @@ describe("pending draft rehydrate", () => {
     expect(restored?.suggestionBaseDoc).toEqual(base);
   });
 
+  it("loadSessionFromThread 冷恢复冲突时保留 draftingFailed 恢复帧", async () => {
+    const sessionId = "rehy-load-conflict";
+    const persistedBase = doc([paragraph("block-a", "旧基线")]);
+    const current = doc([paragraph("block-a", "已变化正文")]);
+    const draft = doc([paragraph("block-a", "待审草稿")]);
+    await seedDocument(sessionId, current, 5);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 4,
+      baseHash: getPmContentHash(persistedBase),
+      draftPmDoc: draft,
+    });
+    threads.set(sessionId, {
+      id: sessionId,
+      title: "冲突恢复测试",
+      resourceId: "qingagent-user",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      metadata: {
+        docId: sessionId,
+        docState: { kind: "pendingReview" },
+        docVersion: 4,
+        doc: persistedBase,
+        legacySections: pmToLegacySections(persistedBase),
+        messages: [],
+      },
+    });
+
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(restored?.docState).toEqual({ kind: "editing" });
+    expect(restored?.suggestions.size).toBe(0);
+    expect(restored?._pendingDraftRecoveryFrames).toEqual([
+      {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: `restored-pending-review:${sessionId}`,
+            reason: "正文已变化，请重新生成本轮审阅。",
+            retriable: false,
+          },
+        },
+      },
+    ]);
+  });
+
   it("rehydrate 直接路径 hash 一致时发 docDiffReady 且不改 state.doc", async () => {
     const state = createSession("rehy-direct");
     const base = doc([paragraph("block-a", "旧正文")]);

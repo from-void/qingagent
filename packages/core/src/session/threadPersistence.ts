@@ -2082,6 +2082,7 @@ export async function loadSessionFromThread(
     _turnOwner: null,
     _turnGeneration: 0,
     _activeAgentMessageId: null,
+    _pendingDraftRecoveryFrames: [],
     suggestions,
     // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
     annotationGroups: [],
@@ -2138,7 +2139,10 @@ export async function loadSessionFromThread(
   const docVersionBeforePendingRehydrate = state.docVersion;
   const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
   try {
-    await rehydratePendingDraft(state, { readOnly: isSnapshot });
+    const pendingRehydrateResult = await rehydratePendingDraft(state, { readOnly: isSnapshot });
+    if (!isSnapshot && pendingRehydrateResult.kind === "conflict") {
+      state._pendingDraftRecoveryFrames.push(...pendingRehydrateResult.frames);
+    }
   } catch (err) {
     logger.error("Failed to rehydrate pending document draft", {
       sessionId,

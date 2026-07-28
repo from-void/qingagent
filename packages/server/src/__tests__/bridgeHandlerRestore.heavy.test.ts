@@ -641,6 +641,50 @@ describe("handleCommand existing-session restore", () => {
     expect(diffFrame.data.editedDoc).toEqual(editedDoc);
   });
 
+  it("冷恢复冲突只补发一次 draftingFailed，不生成 docDiffReady", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    session.docState = { kind: "editing" };
+    session._pendingDraftRecoveryFrames = [{
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: `restored-pending-review:${session.sessionId}`,
+          reason: "正文已变化，请重新生成本轮审阅。",
+          retriable: false,
+        },
+      },
+    }];
+
+    const firstFrames = await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+    const secondFrames = await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+
+    expect(firstFrames).toContainEqual(expect.objectContaining({
+      kind: "stream",
+      data: expect.objectContaining({
+        kind: "draftingFailed",
+        data: expect.objectContaining({
+          reason: "正文已变化，请重新生成本轮审阅。",
+        }),
+      }),
+    }));
+    expect(firstFrames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
+    expect(secondFrames.some(
+      (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+    )).toBe(false);
+  });
+
   // 回归(0702 桌面验收发现):重进现有会话必须先发 restoreReset,再发 sessionMeta + 还原帧。
   // 根因:直播 sendMessage 只把 agent 消息作为帧写进 FrameLog(user 消息只进 chatHistory、不发帧)。
   // 重进(startSession existing)把 emitRestoreFrames 追加到同一条 FrameLog 尾部;前端 after=0 重放时

@@ -288,6 +288,27 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain("项目复盘");
   });
 
+  it("按 Enter 提交标题后即使继续触发 blur 也只重命名一次", async () => {
+    const onRename = vi.fn();
+    await act(async () => root.render(
+      <DerivTabBar title="旧标题" items={[]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={onRename} />,
+    ));
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="修改标题"]')!.click());
+    const input = host.querySelector<HTMLInputElement>('[aria-label="修改文档标题"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "新标题");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    });
+
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(onRename).toHaveBeenCalledWith("新标题");
+  });
+
   it("有衍生稿时无标题主文档 Tab 常显，保留多 Tab 导航", async () => {
     await act(async () => root.render(
       <DerivTabBar title="" items={[item]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} />,

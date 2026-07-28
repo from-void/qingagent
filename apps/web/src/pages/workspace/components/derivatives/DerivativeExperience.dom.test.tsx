@@ -1045,6 +1045,33 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe("这篇想怎么写，例如：语气再活泼一点，多用短句");
   });
 
+  it("小红书话题随稳定 blockId 声明式更新且不会重复嵌套", async () => {
+    const Preview = DTYPE_REGISTRY.xhs.PhonePreview!;
+    const makeDoc = (text: string) => ({
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: "stable-paragraph" },
+        content: [{ type: "text" as const, text }],
+      }],
+    });
+
+    await act(async () => root.render(
+      <Preview doc={makeDoc("旧正文 #旧话题")} title="测试" articleRef={() => undefined} />,
+    ));
+    expect(host.querySelector(".xhs-body")?.textContent).toBe("旧正文 #旧话题");
+    expect(host.querySelector(".xhs-topic")?.textContent).toBe("#旧话题");
+
+    await act(async () => root.render(
+      <Preview doc={makeDoc("新正文 #新话题 #第二个")} title="测试" articleRef={() => undefined} />,
+    ));
+    expect(host.querySelector(".xhs-body")?.textContent).toBe("新正文 #新话题 #第二个");
+    expect(host.textContent).not.toContain("旧正文");
+    expect(Array.from(host.querySelectorAll(".xhs-topic")).map((node) => node.textContent)).toEqual(["#新话题", "#第二个"]);
+    expect(host.querySelector(".xhs-topic .xhs-topic")).toBeNull();
+  });
+
   it("快速切换封面时旧请求迟到失败不能覆盖后一次成功选择", async () => {
     const xhsItem: DerivativeItem = {
       ...item,

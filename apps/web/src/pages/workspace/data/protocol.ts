@@ -776,7 +776,7 @@ function singleColumnListPmBlock(nodes: DiffHunk["before"] | DiffHunk["after"]):
 function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
   if (node.type === "taskList") {
     return node.content.map((item) => {
-      const spans = pmBlocksInlineSpans(item.content);
+      const spans = pmBlocksInlineSpans(item.content.filter((block) => !isListPmBlock(block)));
       return {
         node: item,
         text: viewSpansText(spans),
@@ -787,7 +787,7 @@ function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
     });
   }
   return node.content.map((item) => {
-    const spans = pmBlocksInlineSpans(item.content);
+    const spans = pmBlocksInlineSpans(item.content.filter((block) => !isListPmBlock(block)));
     return {
       node: item,
       text: viewSpansText(spans),

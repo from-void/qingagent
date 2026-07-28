@@ -1329,6 +1329,31 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     ]);
   });
 
+  it.each([
+    ["新增", false, true, "added"],
+    ["删除", true, false, "removed"],
+  ] as const)("嵌套列表%s时父项正文保持 same，仅子列表记录变化", (_, beforeHasChild, afterHasChild, childStatus) => {
+    const nested = pmNestedListRows("bulletList", "nested-child", [{ text: "子项" }]);
+    const list = (hasChild: boolean) => pmNestedListRows("bulletList", "nested-parent", [{
+      text: "父项",
+      ...(hasChild ? { children: [nested] } : {}),
+    }]);
+    const before = list(beforeHasChild);
+    const after = list(afterHasChild);
+    const inputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-nested-presence", replaceHunk("rep-nested-presence", "nested-parent", before, after)),
+      0,
+    );
+    const block = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    const parentRow = block.rowDiff?.[0];
+
+    expect(parentRow).toMatchObject({
+      status: "same",
+      spans: [{ kind: "text", text: "父项" }],
+    });
+    expect(parentRow?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual([childStatus]);
+  });
+
   it("三级嵌套 bulletList 只改三个叶子行时递归标记叶子 changed,其余分支 same 且 granular", () => {
     const branch = (id: string, title: string, leaves: string[]) => ({
       text: title,

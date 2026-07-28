@@ -79,7 +79,9 @@ describe("uploadRoutes 下载响应头", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
-    expect(res.headers.get("content-disposition")).toBe('attachment; filename="xss.html"');
+    expect(res.headers.get("content-disposition")).toBe(
+      "attachment; filename=\"xss.html\"; filename*=UTF-8''xss.html",
+    );
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
@@ -91,7 +93,9 @@ describe("uploadRoutes 下载响应头", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("image/svg+xml");
-    expect(res.headers.get("content-disposition")).toBe('attachment; filename="xss.svg"');
+    expect(res.headers.get("content-disposition")).toBe(
+      "attachment; filename=\"xss.svg\"; filename*=UTF-8''xss.svg",
+    );
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
@@ -103,7 +107,9 @@ describe("uploadRoutes 下载响应头", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/pdf");
-    expect(res.headers.get("content-disposition")).toBe('inline; filename="report.pdf"');
+    expect(res.headers.get("content-disposition")).toBe(
+      "inline; filename=\"report.pdf\"; filename*=UTF-8''report.pdf",
+    );
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
@@ -115,7 +121,9 @@ describe("uploadRoutes 下载响应头", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/octet-stream");
-    expect(res.headers.get("content-disposition")).toBe('attachment; filename="payload.bin"');
+    expect(res.headers.get("content-disposition")).toBe(
+      "attachment; filename=\"payload.bin\"; filename*=UTF-8''payload.bin",
+    );
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
@@ -138,6 +146,70 @@ describe("uploadRoutes 下载响应头", () => {
     expect(second.body.fileId).toBe(first.body.fileId);
     expect(second.body.filename).toBe("逐宁简历.pdf");
     expect(await uploadDirs(uploadDir)).toEqual([first.body.fileId]);
+  });
+
+  it("无扩展名文件下载时优先采用持久化 MIME", async () => {
+    const { app } = await createUploadApp();
+    const uploaded = await postUpload(app, {
+      filename: "preview",
+      mimeType: "application/pdf",
+      content: "%PDF-1.4",
+    });
+
+    const res = await app.request(`/api/v1/files/${uploaded.body.fileId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/pdf");
+    expect(res.headers.get("content-disposition")).toContain("inline");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("扩展名与持久化 MIME 不一致时按持久化 MIME 判定响应类型", async () => {
+    const { app } = await createUploadApp();
+    const uploaded = await postUpload(app, {
+      filename: "renamed.txt",
+      mimeType: "image/png",
+      content: "png bytes",
+    });
+
+    const res = await app.request(`/api/v1/files/${uploaded.body.fileId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    expect(res.headers.get("content-disposition")).toContain("inline");
+  });
+
+  it("中文和空格文件名同时提供安全 ASCII fallback 与 UTF-8 filename*", async () => {
+    const { app } = await createUploadApp();
+    const uploaded = await postUpload(app, {
+      filename: "项目 报告.pdf",
+      mimeType: "application/pdf",
+      content: "%PDF-1.4",
+    });
+
+    const res = await app.request(`/api/v1/files/${uploaded.body.fileId}`);
+
+    expect(res.headers.get("content-disposition")).toBe(
+      "inline; filename=\"_____.pdf\"; " +
+      "filename*=UTF-8''%E9%A1%B9%E7%9B%AE%20%E6%8A%A5%E5%91%8A.pdf",
+    );
+  });
+
+  it("MIME 与文件名中的控制字符不能注入下载响应头", async () => {
+    const { app } = await createUploadApp();
+    const uploaded = await postUpload(app, {
+      filename: "报告\r\nX-Test: yes.txt",
+      mimeType: "image/png\r\nX-Evil: yes",
+      content: "safe text",
+    });
+
+    const res = await app.request(`/api/v1/files/${uploaded.body.fileId}`);
+    const contentDisposition = res.headers.get("content-disposition") ?? "";
+
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(contentDisposition).not.toMatch(/[\r\n]/);
+    expect(res.headers.has("x-test")).toBe(false);
+    expect(res.headers.has("x-evil")).toBe(false);
   });
 
   it("两个会话共享同一 fileId 时，首个会话删除后另一个仍可下载，最后删除才移除文件", async () => {

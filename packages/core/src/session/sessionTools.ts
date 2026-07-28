@@ -959,7 +959,11 @@ export function createSessionScopedTools(
           );
           if (!result.ok) return { ok: false, error: result.error };
           const matchedRefs = new Set(
-            result.matches.map((match) => match.block.topBlockId),
+            result.matches.flatMap((match) => [
+              match.block.topBlockId,
+              match.block.nodeBlockId,
+              ...match.block.ancestorBlockIds,
+            ]),
           );
           selected = selected.filter((item) => matchedRefs.has(item.ref));
         } else {

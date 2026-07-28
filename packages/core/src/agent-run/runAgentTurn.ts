@@ -104,6 +104,7 @@ import {
 import {
   createTurnCompletion,
   finalizeLingeringRunningToolCalls,
+  turnCompletionOwnsStreamEnd,
 } from "./turnCleanup.js";
 import {
   markDiagramVizEditing,
@@ -190,7 +191,7 @@ export async function* runAgentTurn(
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();
   let turnOwnership = beginTurnOwnership(state, `${streamId}:attempt:0`);
-  const turnCompletion = createTurnCompletion();
+  const turnCompletion = createTurnCompletion(streamId);
   let turnWasUserAborted = false;
   const omSidecarEnabled = isOmSidecarEnabled();
   let omTurnIndex: number | null = null;
@@ -1016,8 +1017,6 @@ export async function* runAgentTurn(
     for await (const frame of syncContentAndProjectDocState(state, "agent_turn_finally_idle")) {
       finalFrames.push(frame);
     }
-    finalFrames.push(streamEnd(streamId));
-
     // Final persist after all state transitions are settled.
     // This is the safety-net persist for the turn: processAgentStream's
     // fire-and-forget persist may have been queued but not yet written,
@@ -1052,6 +1051,14 @@ export async function* runAgentTurn(
     // generator.return() 提前关闭且不再拉取，也不能留下假活跃 turn。
     for (const frame of finalFrames) {
       yield frame;
+    }
+    if (turnCompletionOwnsStreamEnd(turnCompletion.promise, streamId)) {
+      yield streamEnd(
+        streamId,
+        turnOutcome === "cancelled"
+          ? { kind: "cancelled" }
+          : { kind: "done" },
+      );
     }
   }
 }

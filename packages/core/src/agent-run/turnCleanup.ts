@@ -26,6 +26,7 @@ import {
 } from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
+const turnStreamEndOwners = new WeakMap<Promise<void>, string>();
 
 export type TurnCleanupReason =
   | "userAbort"
@@ -38,7 +39,7 @@ function abortReasonForCleanup(reason: TurnCleanupReason): string {
   return USER_ABORT_REASON;
 }
 
-export function createTurnCompletion(): {
+export function createTurnCompletion(streamId: string): {
   promise: Promise<void>;
   resolve: () => void;
 } {
@@ -46,7 +47,15 @@ export function createTurnCompletion(): {
   const promise = new Promise<void>((done) => {
     resolve = done;
   });
+  turnStreamEndOwners.set(promise, streamId);
   return { promise, resolve };
+}
+
+export function turnCompletionOwnsStreamEnd(
+  completion: Promise<void>,
+  streamId: string,
+): boolean {
+  return turnStreamEndOwners.get(completion) === streamId;
 }
 
 function terminalizeInFlightToolCalls(
@@ -190,6 +199,10 @@ export async function* abortAndCleanupTurn(
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
+  const activeTurnOwnsStreamEnd =
+    activeTurnPromise !== null &&
+    abortedStreamId !== null &&
+    turnCompletionOwnsStreamEnd(activeTurnPromise, abortedStreamId);
   const reason = options.reason ?? "userAbort";
   const currentToolCallIds = activeTurnToolCallIds(state);
   const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
@@ -200,15 +213,22 @@ export async function* abortAndCleanupTurn(
   state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);
 
+  let activeTurnOutcome: "absent" | "settled" | "timeout" = "absent";
   if (activeTurnPromise) {
-    const outcome = await waitForActiveTurnCleanup(
+    activeTurnOutcome = await waitForActiveTurnCleanup(
       activeTurnPromise,
       options.activeTurnTimeoutMs ?? ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS,
     );
-    if (outcome === "timeout") {
+    if (activeTurnOutcome === "timeout") {
       logger.warn("Timed out waiting for active turn cleanup; orphaning turn", {
         streamId: abortedStreamId,
       });
+      if (
+        activeTurnOwnsStreamEnd &&
+        options.emitStreamEnd !== false
+      ) {
+        turnStreamEndOwners.delete(activeTurnPromise);
+      }
     }
   }
 
@@ -246,7 +266,13 @@ export async function* abortAndCleanupTurn(
 
   clearDraftConfirmationState(state);
   yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
-  if (abortedStreamId && options.emitStreamEnd !== false) {
+  const settledActiveTurnWillEmitEnd =
+    activeTurnOwnsStreamEnd && activeTurnOutcome === "settled";
+  if (
+    abortedStreamId &&
+    options.emitStreamEnd !== false &&
+    !settledActiveTurnWillEmitEnd
+  ) {
     yield streamEnd(abortedStreamId, { kind: "cancelled" });
   }
 

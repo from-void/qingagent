@@ -614,6 +614,63 @@ describe("abortAndCleanupTurn", () => {
     });
     expect(findToolCallSpec(state, "tc-real-abort-reject")?.status).toEqual({ kind: "aborted" });
   });
+
+  it("真实 runAgentTurn 用户中止时同一 streamId 只发一个 cancelled 终态", async () => {
+    const { abortAndCleanupTurn, createSession, runAgentTurn } = await import("../bridge/index.js");
+    const state = createSession("abort-single-stream-end");
+    let firstChunkProcessed!: () => void;
+    const firstChunkSeen = new Promise<void>((resolve) => {
+      firstChunkProcessed = resolve;
+    });
+
+    qingagentStreamMock().mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[1] as { abortSignal?: AbortSignal };
+      const abortSignal = options.abortSignal;
+      async function* fullStream(): AsyncGenerator<unknown> {
+        yield { type: "text-delta", payload: { text: "中断前正文" } };
+        firstChunkProcessed();
+        if (!abortSignal?.aborted) {
+          await new Promise<void>((resolve) =>
+            abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        }
+      }
+      return {
+        runId: "run-single-stream-end",
+        fullStream: fullStream(),
+      } as unknown as Awaited<ReturnType<typeof qingagentAgent.stream>>;
+    });
+
+    const turnFramesPromise = collectFrames(runAgentTurn(state, "开始处理"));
+    await firstChunkSeen;
+    const abortedStreamId = state.streamId;
+    expect(abortedStreamId).not.toBeNull();
+
+    const cleanupFramesPromise = collectFrames(abortAndCleanupTurn(state));
+    const [turnFrames, cleanupFrames] = await Promise.all([
+      turnFramesPromise,
+      cleanupFramesPromise,
+    ]);
+    const endFrames = [...turnFrames, ...cleanupFrames].filter(
+      (frame) =>
+        frame.kind === "stream" &&
+        frame.data.kind === "end" &&
+        frame.data.data.streamId === abortedStreamId,
+    );
+
+    expect(endFrames).toEqual([
+      {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: abortedStreamId,
+            reason: { kind: "cancelled" },
+          },
+        },
+      },
+    ]);
+  });
 });
 
 describe("finalizeLingeringRunningToolCalls", () => {

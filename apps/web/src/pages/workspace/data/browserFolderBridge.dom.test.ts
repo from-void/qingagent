@@ -24,6 +24,11 @@ class FakeIDBRequest<T = unknown> {
     this.result = value;
     queueMicrotask(() => this.onsuccess?.({ target: this }));
   }
+
+  fail(error: Error): void {
+    this.error = error;
+    queueMicrotask(() => this.onerror?.({ target: this }));
+  }
 }
 
 class FakeIDBOpenRequest<T = unknown> extends FakeIDBRequest<T> {
@@ -43,6 +48,7 @@ class FakeIDBTransaction {
     private readonly stores: StoreDump,
     storeNames: readonly string[],
     private readonly failPutStore: string | null,
+    private readonly failGetStore: string | null,
   ) {
     this.stagedStores = Object.fromEntries(
       storeNames.map((name) => [name, new Map(stores[name] ?? [])]),
@@ -55,7 +61,11 @@ class FakeIDBTransaction {
     return {
       get: (key: string) => {
         const request = new FakeIDBRequest<unknown>();
-        request.succeed(store.get(key));
+        if (name === this.failGetStore) {
+          request.fail(new Error("indexeddb read failed"));
+        } else {
+          request.succeed(store.get(key));
+        }
         return request;
       },
       getAll: () => {
@@ -115,6 +125,7 @@ class FakeIDBDatabase {
   constructor(
     private readonly stores: StoreDump,
     private readonly failPutStore: () => string | null,
+    private readonly failGetStore: () => string | null,
   ) {}
 
   createObjectStore(name: string): void {
@@ -124,7 +135,12 @@ class FakeIDBDatabase {
   transaction(storeNames: string | string[]): FakeIDBTransaction {
     const names = Array.isArray(storeNames) ? storeNames : [storeNames];
     for (const name of names) this.stores[name] ??= new Map<string, unknown>();
-    return new FakeIDBTransaction(this.stores, names, this.failPutStore());
+    return new FakeIDBTransaction(
+      this.stores,
+      names,
+      this.failPutStore(),
+      this.failGetStore(),
+    );
   }
 
   close(): void {}
@@ -159,13 +175,18 @@ class FakeEventSource {
 
 const fakeEventSources: FakeEventSource[] = [];
 let failedPutStore: string | null = null;
+let failedGetStore: string | null = null;
 
 function installFakeIndexedDb(stores: StoreDump): void {
   let upgraded = false;
   const indexedDB = {
     open: (_name: string, _version?: number) => {
       const request = new FakeIDBOpenRequest<FakeIDBDatabase>();
-      const db = new FakeIDBDatabase(stores, () => failedPutStore);
+      const db = new FakeIDBDatabase(
+        stores,
+        () => failedPutStore,
+        () => failedGetStore,
+      );
       queueMicrotask(() => {
         request.result = db;
         if (!upgraded) {
@@ -217,6 +238,7 @@ describe("browser folder handle persistence", () => {
     stores = {};
     uuidSeq = 0;
     failedPutStore = null;
+    failedGetStore = null;
     fakeEventSources.length = 0;
     installFakeIndexedDb(stores);
     Object.defineProperty(window, "crypto", {
@@ -346,12 +368,45 @@ describe("browser folder handle persistence", () => {
 
     await expect(ensureBrowserFolderBridge(source)).resolves.toEqual({
       status: "error",
-      error: "query permission failed",
+      error: "文件夹连接异常，请稍后重试",
     });
     await expect(requestBrowserFolderPermission(source)).resolves.toEqual({
       status: "error",
-      error: "request permission failed",
+      error: "文件夹连接异常，请稍后重试",
     });
+  });
+
+  it("IndexedDB 读取拒绝时返回固定中性提示且不泄露内部错误", async () => {
+    const source: FolderSource = {
+      id: "fld-idb-error",
+      sessionId: "sess-idb-error",
+      provider: "browser-fs-access",
+      name: "idb-error-folder",
+      pathLabel: "idb-error-folder",
+      mountName: "source_idb_error",
+      mountPath: "/sources/source_idb_error",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    failedGetStore = "sources";
+
+    const ensure = await ensureBrowserFolderBridge(source);
+    const request = await requestBrowserFolderPermission(source);
+
+    expect(ensure).toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+    expect(request).toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+    expect(JSON.stringify([ensure, request])).not.toContain("indexeddb");
   });
 
   it("同一文件夹并发启动只注册一次并只建立一个 SSE", async () => {

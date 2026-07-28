@@ -61,6 +61,7 @@ const HANDLE_STORE = "handles";
 const SOURCE_STORE = "sources";
 const activeBridges = new Map<string, ActiveBrowserBridge>();
 const pendingBridgeStarts = new Map<string, PendingBrowserBridgeStart>();
+const BROWSER_FOLDER_STATUS_ERROR = "文件夹连接异常，请稍后重试";
 
 class BrowserBridgeTooLargeError extends Error {
   constructor() {
@@ -679,7 +680,8 @@ export async function ensureBrowserFolderBridge(
     }, signal);
     return { status: "connected", error: null };
   } catch (error) {
-    return { status: "error", error: browserBridgeErrorMessage(error) };
+    console.error("[browserFolderBridge] ensure failed", error);
+    return { status: "error", error: BROWSER_FOLDER_STATUS_ERROR };
   }
 }
 
@@ -706,7 +708,8 @@ export async function requestBrowserFolderPermission(source: FolderSource): Prom
     });
     return { status: "connected", error: null };
   } catch (error) {
-    return { status: "error", error: browserBridgeErrorMessage(error) };
+    console.error("[browserFolderBridge] permission request failed", error);
+    return { status: "error", error: BROWSER_FOLDER_STATUS_ERROR };
   }
 }
 

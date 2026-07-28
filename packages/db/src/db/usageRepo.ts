@@ -134,13 +134,34 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
   };
 }
 
-/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 天)。 */
-export async function aggregateUsageByDay(days = 30): Promise<UsageAggRow[]> {
+function normalizeTimezoneOffsetMinutes(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-840, Math.min(840, Math.round(value)));
+}
+
+function usageDayWindowStart(days: number, timezoneOffsetMinutes: number): string {
+  const offset = normalizeTimezoneOffsetMinutes(timezoneOffsetMinutes);
+  const shiftedNow = new Date(Date.now() - offset * 60_000);
+  const localMidnightUtc = Date.UTC(
+    shiftedNow.getUTCFullYear(),
+    shiftedNow.getUTCMonth(),
+    shiftedNow.getUTCDate() - Math.max(0, Math.round(days) - 1),
+  );
+  return new Date(localMidnightUtc + offset * 60_000).toISOString();
+}
+
+/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 个客户端日历日)。 */
+export async function aggregateUsageByDay(
+  days = 30,
+  timezoneOffsetMinutes = 0,
+): Promise<UsageAggRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const offset = normalizeTimezoneOffsetMinutes(timezoneOffsetMinutes);
+  const sqliteLocalTimeModifier = `${offset > 0 ? "-" : "+"}${Math.abs(offset)} minutes`;
+  const since = usageDayWindowStart(days, offset);
   const result = await client.execute({
-    sql: `SELECT date(usage.created_at) AS bucket,
+    sql: `SELECT date(usage.created_at, ?) AS bucket,
         usage.session_id,
         COALESCE(document.id, usage.session_id) AS document_id,
         NULLIF(document.title, '') AS document_title,
@@ -160,10 +181,10 @@ export async function aggregateUsageByDay(days = 30): Promise<UsageAggRow[]> {
       LEFT JOIN documents document
         ON document.thread_id = usage.session_id AND document.role = 'main'
       WHERE usage.created_at >= ?
-      GROUP BY date(usage.created_at), usage.session_id, document.id, document.title,
+      GROUP BY date(usage.created_at, ?), usage.session_id, document.id, document.title,
         usage.call_site, usage.model_id
       ORDER BY bucket DESC, document_title, document_id, usage.call_site, usage.model_id`,
-    args: [since],
+    args: [sqliteLocalTimeModifier, since, sqliteLocalTimeModifier],
   });
   return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));
 }

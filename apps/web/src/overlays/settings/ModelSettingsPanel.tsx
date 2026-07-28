@@ -337,7 +337,11 @@ export function ModelSettingsPanel() {
     setUsage(null);
     setUsageStatus("loading");
     try {
-      const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
+      const timezoneOffsetMinutes = new Date().getTimezoneOffset();
+      const res = await fetch(
+        `/api/v1/usage/summary?view=${view}&timezoneOffsetMinutes=${timezoneOffsetMinutes}`,
+        { signal },
+      );
       if (!res.ok) {
         if (mountedRef.current && !signal?.aborted) setUsageStatus("error");
         return;
@@ -357,7 +361,11 @@ export function ModelSettingsPanel() {
   // 看板用:按天 / 总计两份数据一次性拉取(图表始终展示这两份,与明细视图解耦)
   const loadDashboardUsage = useCallback(async (view: "day" | "total", signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
+      const timezoneOffsetMinutes = new Date().getTimezoneOffset();
+      const res = await fetch(
+        `/api/v1/usage/summary?view=${view}&timezoneOffsetMinutes=${timezoneOffsetMinutes}`,
+        { signal },
+      );
       const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
       if (mountedRef.current && !signal?.aborted) {
         if (view === "day") setDayUsage(rows);

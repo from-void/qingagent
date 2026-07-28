@@ -358,7 +358,7 @@ describe("Settings Track B", () => {
     const staleDay = new Date(today);
     staleDay.setDate(today.getDate() - 8);
     const fallbackFetch = makeFetchMock();
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
         return json({
           rows: [
@@ -368,10 +368,18 @@ describe("Settings Track B", () => {
         });
       }
       return fallbackFetch(input, init);
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     await render(<ModelSettingsPanel />);
 
+    const dayRequest = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes("/api/v1/usage/summary?view=day")
+    );
+    expect(dayRequest).toBeDefined();
+    expect(new URL(String(dayRequest![0]), "http://localhost").searchParams.get(
+      "timezoneOffsetMinutes",
+    )).toBe(String(new Date().getTimezoneOffset()));
     const recentMetric = host?.querySelector(".md-metric");
     expect(recentMetric?.textContent).toContain("100 tokens");
     expect(recentMetric?.textContent).not.toContain("1.1k tokens");

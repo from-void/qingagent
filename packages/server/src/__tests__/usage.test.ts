@@ -59,9 +59,12 @@ describe("usageRoutes", () => {
 
   it("按天响应新增真实文档 ID/标题且不泄露内部 sessionId", async () => {
     const app = await loadApp();
-    const response = await app.request("/api/v1/usage/summary?view=day");
+    const response = await app.request(
+      "/api/v1/usage/summary?view=day&timezoneOffsetMinutes=420",
+    );
 
     expect(response.status).toBe(200);
+    expect(mockCore.aggregateUsageByDay).toHaveBeenCalledWith(30, 420);
     await expect(response.json()).resolves.toEqual({
       view: "day",
       rows: [
@@ -85,6 +88,16 @@ describe("usageRoutes", () => {
         },
       ],
     });
+  });
+
+  it("拒绝越界的客户端时区偏移", async () => {
+    const app = await loadApp();
+    const response = await app.request(
+      "/api/v1/usage/summary?view=day&timezoneOffsetMinutes=900",
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockCore.aggregateUsageByDay).not.toHaveBeenCalled();
   });
 
   it("旧文档主表标题缺失时用真实线程标题兼容补齐", async () => {

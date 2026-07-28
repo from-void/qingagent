@@ -976,8 +976,9 @@ export function useWorkspacePageController() {
       return next;
     });
     let cancelled = false;
+    const bridgeLifecycle = new AbortController();
     for (const source of browserSources) {
-      void ensureBrowserFolderBridge(source).then((result) => {
+      void ensureBrowserFolderBridge(source, bridgeLifecycle.signal).then((result) => {
         if (cancelled) return;
         const key = `${source.sessionId}\0${source.id}`;
         if (result.status === "connected") {
@@ -1006,6 +1007,7 @@ export function useWorkspacePageController() {
     }
     return () => {
       cancelled = true;
+      bridgeLifecycle.abort();
       for (const source of browserSources) {
         const key = `${source.sessionId}\0${source.id}`;
         stopBrowserFolderBridge(source.sessionId, source.id);

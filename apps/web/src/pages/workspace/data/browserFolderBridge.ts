@@ -476,11 +476,13 @@ async function startBridgeOnce(
     handle: FileSystemDirectoryHandle;
   },
   pending: PendingBrowserBridgeStart,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) return;
   const key = bridgeKey(args.sessionId, args.folderId);
   const existing = activeBridges.get(key);
   if (existing) await closeActiveBridge(key, existing);
-  if (pending.cancelled) return;
+  if (pending.cancelled || signal?.aborted) return;
 
   let registered = false;
   let adopted = false;
@@ -488,7 +490,7 @@ async function startBridgeOnce(
   try {
     await registerBridge(args.sessionId, args.folderId, args.clientId);
     registered = true;
-    if (pending.cancelled) return;
+    if (pending.cancelled || signal?.aborted) return;
 
     const url = `/api/v1/folder-bridge/events?sessionId=${encodeURIComponent(args.sessionId)}&clientId=${encodeURIComponent(args.clientId)}`;
     eventSource = new EventSource(url);
@@ -517,8 +519,12 @@ async function startBridgeOnce(
         folderId: args.folderId,
       });
     };
+    if (pending.cancelled || signal?.aborted) return;
     activeBridges.set(key, bridge);
     adopted = true;
+    if (pending.cancelled || signal?.aborted) {
+      await closeActiveBridge(key, bridge);
+    }
   } finally {
     if (!adopted) {
       eventSource?.close();
@@ -534,7 +540,8 @@ async function startBridge(args: {
   folderId: string;
   clientId: string;
   handle: FileSystemDirectoryHandle;
-}): Promise<void> {
+}, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
   const key = bridgeKey(args.sessionId, args.folderId);
   const existing = activeBridges.get(key);
   if (
@@ -549,7 +556,8 @@ async function startBridge(args: {
   const inFlight = pendingBridgeStarts.get(key);
   if (inFlight) {
     await inFlight.promise;
-    if (inFlight.cancelled) return startBridge(args);
+    if (signal?.aborted) return;
+    if (inFlight.cancelled) return startBridge(args, signal);
     const started = activeBridges.get(key);
     if (
       started &&
@@ -559,14 +567,14 @@ async function startBridge(args: {
     ) {
       return;
     }
-    return startBridge(args);
+    return startBridge(args, signal);
   }
 
   const pending: PendingBrowserBridgeStart = {
     cancelled: false,
     promise: Promise.resolve(),
   };
-  const promise = startBridgeOnce(args, pending).finally(() => {
+  const promise = startBridgeOnce(args, pending, signal).finally(() => {
     if (pendingBridgeStarts.get(key) === pending) {
       pendingBridgeStarts.delete(key);
     }
@@ -641,18 +649,25 @@ export async function rememberAttachedBrowserFolderSource(args: {
   });
 }
 
-export async function ensureBrowserFolderBridge(source: FolderSource): Promise<BrowserBridgeStatus> {
+export async function ensureBrowserFolderBridge(
+  source: FolderSource,
+  signal?: AbortSignal,
+): Promise<BrowserBridgeStatus> {
   if (source.provider !== "browser-fs-access") return { status: "connected", error: null };
   try {
+    if (signal?.aborted) return { status: "connected", error: null };
     const index = await getSourceIndex(source.sessionId, source.id);
+    if (signal?.aborted) return { status: "connected", error: null };
     if (!index) {
       return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
     }
     const handle = await getStoredHandle(index.handleKey);
+    if (signal?.aborted) return { status: "connected", error: null };
     if (!handle) {
       return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
     }
     const permission = await queryReadPermission(handle);
+    if (signal?.aborted) return { status: "connected", error: null };
     if (permission !== "granted") {
       return { status: "permission_required", error: "需要重新授权浏览器读取这个文件夹" };
     }
@@ -661,7 +676,7 @@ export async function ensureBrowserFolderBridge(source: FolderSource): Promise<B
       folderId: source.id,
       clientId: index.clientId,
       handle,
-    });
+    }, signal);
     return { status: "connected", error: null };
   } catch (error) {
     return { status: "error", error: browserBridgeErrorMessage(error) };

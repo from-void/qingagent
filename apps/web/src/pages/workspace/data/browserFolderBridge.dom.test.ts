@@ -417,6 +417,66 @@ describe("browser folder handle persistence", () => {
     await forgetBrowserFolderSource(source.sessionId, source.id);
   });
 
+  it("ensure 在权限查询期间被取消后不再注册 bridge 或建立 SSE", async () => {
+    let releasePermission!: () => void;
+    const permissionGate = new Promise<void>((resolve) => {
+      releasePermission = resolve;
+    });
+    const source: FolderSource = {
+      id: "fld-abort",
+      sessionId: "sess-abort",
+      provider: "browser-fs-access",
+      name: "abort-folder",
+      pathLabel: "abort-folder",
+      mountName: "source_abort",
+      mountPath: "/sources/source_abort",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    const handleKey = `${window.location.origin}:sess-abort:handle:root`;
+    stores.sources = new Map([[
+      `${window.location.origin}:${source.sessionId}:${source.id}`,
+      {
+        key: `${window.location.origin}:${source.sessionId}:${source.id}`,
+        sessionId: source.sessionId,
+        folderId: source.id,
+        handleKey,
+        clientId: "browser_client_abort",
+        name: source.name,
+        updatedAt: "2026-07-28T00:00:00.000Z",
+      },
+    ]]);
+    stores.handles = new Map([[handleKey, {
+      ...makeDirectoryHandle(source.name),
+      queryPermission: async () => {
+        await permissionGate;
+        return "granted";
+      },
+    }]]);
+
+    const controller = new AbortController();
+    const ensuring = ensureBrowserFolderBridge(source, controller.signal);
+    await flushBridgeTasks();
+    controller.abort();
+    stopBrowserFolderBridge(source.sessionId, source.id);
+    releasePermission();
+
+    await expect(ensuring).resolves.toEqual({
+      status: "connected",
+      error: null,
+    });
+    expect(fakeEventSources).toHaveLength(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      "/api/v1/folder-bridge/register",
+      expect.anything(),
+    );
+  });
+
   it("启动注册在途时停止会注销旧连接，随后重启不会被旧竞争者覆盖", async () => {
     const picked: PickedBrowserFolderSource = {
       handle: makeDirectoryHandle("cancelled-folder"),

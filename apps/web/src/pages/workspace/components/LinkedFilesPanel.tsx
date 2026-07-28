@@ -94,6 +94,7 @@ export function LinkedFilesPanel({
   const pendingAttachExpandRef = useRef(false);
   const entryControllersRef = useRef<Set<AbortController>>(new Set());
   const locateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocateFolderSignalRef = useRef(0);
   const visibleDirStates = useMemo(() => {
     if (!folderIdentity) return {};
     const prefix = `${folderIdentity}\u0000`;
@@ -269,7 +270,8 @@ export function LinkedFilesPanel({
   }, [expandFolderRoot, folderIdentity]);
 
   useEffect(() => {
-    if (locateFolderSignal <= 0) return;
+    if (locateFolderSignal <= lastLocateFolderSignalRef.current) return;
+    lastLocateFolderSignalRef.current = locateFolderSignal;
     expandFolderRoot();
   }, [expandFolderRoot, locateFolderSignal]);
 

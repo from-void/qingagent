@@ -537,6 +537,30 @@ describe("LinkedFilesPanel", () => {
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
   });
 
+  it("同一个目录定位信号只消费一次，目录状态变化不会反复滚动", async () => {
+    const requestAnimationFrame = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    const fetchMock = vi.fn(async () => jsonResponse({
+      entries: [{ name: "子目录", kind: "dir", childCount: 1, byteLen: null }],
+      truncated: false,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(panel({
+      folderSource: mockFolderSource,
+      locateFolderSignal: 1,
+    }));
+
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await rerender(panel({
+      folderSource: mockFolderSource,
+      locateFolderSignal: 2,
+    }));
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+  });
+
   it("切换文件夹来源会取消旧请求且迟到响应不覆盖新来源", async () => {
     const first = deferred<Response>();
     const second = deferred<Response>();

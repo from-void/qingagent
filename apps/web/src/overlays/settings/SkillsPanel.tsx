@@ -207,13 +207,21 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMenu(null);
+    };
     window.addEventListener("click", close);
     window.addEventListener("contextmenu", close);
     window.addEventListener("scroll", close, true);
+    document.addEventListener("keydown", closeOnEscape);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("contextmenu", close);
       window.removeEventListener("scroll", close, true);
+      document.removeEventListener("keydown", closeOnEscape);
     };
   }, [menu]);
 
@@ -725,6 +733,7 @@ function SkillDetail({
               onKeyDown={(event) => {
                 if (event.key !== "Escape") return;
                 event.preventDefault();
+                event.stopPropagation();
                 cancelLabelEdit();
               }}
               onBlur={(event) => {

@@ -572,7 +572,8 @@ modelSettingsRoutes.post("/settings/vision/test", async (c) => {
       model,
       protocol: parsed.value.protocol,
     }, c.req.raw.signal);
-    return c.json({ ok: true });
+    // 回传归一化地址:客户端保存的必须是"实际被请求的那个地址",而不是用户原始输入。
+    return c.json({ ok: true, normalizedBaseUrl: baseUrl });
   } catch (error) {
     const classified = classifyVisionTestError(error);
     return c.json({ ok: false, errorKind: classified.kind, message: classified.message }, 200);

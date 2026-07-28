@@ -57,12 +57,21 @@ function sanitizeModelProvider(raw: string | undefined | null): ModelProvider | 
 
 async function validateVisitorBaseUrl(raw: string | undefined): Promise<string | undefined> {
   if (!raw) return undefined;
+  // 入口就归一化(全栈 canonical 同一口径:补 /v1、剥用户多填的 endpoint 段、去 query/hash),
+  // 这样所有 modelOverrides.baseUrl 消费口(余额接口拼路径等)天然拿到 canonical 形态,
+  // 不必各自再 sanitize 一遍;core resolveBaseUrl 的 sanitize 保留作最后兜底。
+  const normalized = sanitizeBaseUrl(raw);
+  if (!normalized) return undefined;
   try {
-    await validateModelFetchUrl(raw);
-    return raw;
+    await validateModelFetchUrl(normalized);
+    return normalized;
   } catch {
     // 访客自定义 endpoint 不可信:非法 / 内网 / 云元数据地址直接回退默认模型地址。
     // localhost / 127.0.0.1 / ::1 是 Ollama、LM Studio 的合法主场景。
+    // 回退是静默的(不给用户红色报错),但服务端必须留痕——否则表现成"莫名其妙调用失败"无从排查。
+    console.warn(
+      `[modelOverrides] 自定义 baseURL 被安全策略拒绝,已回退默认端点: ${normalized}(原始输入: ${raw})`,
+    );
     return undefined;
   }
 }

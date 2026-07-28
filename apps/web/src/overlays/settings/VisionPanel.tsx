@@ -106,18 +106,20 @@ export function VisionPanel() {
 
   // 测试并保存:先调后端 test 路由(代理避免 CORS、做真实 image part 连通性检查),通了再落本机。
   const handleTestAndSave = async () => {
-    const base = baseUrl.trim();
+    const rawBase = baseUrl.trim();
     // 留空则沿用已存 key(不要求每次重输);只有从未存过 key 才报"缺 key"。
     const key = apiKey.trim() || saved?.apiKey || "";
     const mdl = model.trim();
-    if (!base || !key || !mdl) {
+    if (!rawBase || !key || !mdl) {
       setMessage("请填写 API 地址、API key 与模型名");
       return;
     }
-    if (!isHttpUrl(base)) {
+    // 注:这里维持严格 scheme 校验(模型设置页的"补 https:// 再测"暂未推广到视觉配置)。
+    if (!isHttpUrl(rawBase)) {
       setMessage("API 地址格式不对:需以 http(s):// 开头");
       return;
     }
+    const base = rawBase;
     testControllerRef.current?.abort();
     const revision = ++testRevisionRef.current;
     setTesting(true);
@@ -143,13 +145,26 @@ export function VisionPanel() {
         setMessage("配置无效,请检查 API 地址 / 模型名格式");
         return;
       }
-      const body = (await res.json()) as { ok?: boolean; errorKind?: VisionTestErrorKind };
+      const body = (await res.json()) as {
+        ok?: boolean;
+        errorKind?: VisionTestErrorKind;
+        // 服务端归一化后的 canonical 地址(测连接实际打的就是它)
+        normalizedBaseUrl?: string;
+      };
       if (!canCommit()) return;
       if (!body.ok) {
         setMessage(`测试失败:${testErrorLabel(body.errorKind)}`);
         return;
       }
-      const next: VisionProvider = { enabled: true, protocol, baseUrl: base, apiKey: key, model: mdl };
+      // 存"实际会被请求的地址",而非用户原始输入(前端不自造第二套归一化)。
+      const savedBase = body.normalizedBaseUrl?.trim() || base;
+      const next: VisionProvider = {
+        enabled: true,
+        protocol,
+        baseUrl: savedBase,
+        apiKey: key,
+        model: mdl,
+      };
       setPersisting(true);
       const persisted = await writeVisionProvider(next);
       if (!canCommit()) return;
@@ -158,8 +173,13 @@ export function VisionPanel() {
         return;
       }
       setSaved(next);
+      setBaseUrl(savedBase);
       setMessage(null);
-      toast.show("测试通过,图像识别已启用");
+      toast.show(
+        savedBase === rawBase
+          ? "测试通过,图像识别已启用"
+          : `已自动修正为标准地址 ${savedBase},测试通过并已启用`,
+      );
     } catch (e) {
       if (canCommit())
         setMessage(

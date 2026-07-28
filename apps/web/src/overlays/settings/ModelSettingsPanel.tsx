@@ -37,7 +37,7 @@ import {
   writeCustomProvider,
   writeOfficialModelOverride,
 } from "./visitorKeyStore";
-import { isHttpUrl } from "./visionProviderStore";
+import { repairBaseUrlScheme } from "./visionProviderStore";
 
 ensureSettingsDialogA11y();
 
@@ -769,22 +769,29 @@ export function ModelSettingsPanel() {
   const handleSaveCustom = async () => {
     const target = configProvider;
     const activeConfigured = vendorConfigured(effectiveProvider);
-    const baseUrl = customBaseUrl.trim();
+    const rawBaseUrl = customBaseUrl.trim();
     const apiKey = customKey.trim();
-    if (!baseUrl || !apiKey) {
+    if (!rawBaseUrl || !apiKey) {
       setMessage("请填写:API 地址、API key");
       return;
     }
-    if (!isHttpUrl(baseUrl)) {
+    // 可修复的格式错误(只漏 scheme)不再一口回绝:补 https:// 后照常去测,通了就按修复值保存。
+    const baseUrl = repairBaseUrlScheme(rawBaseUrl);
+    if (!baseUrl) {
       setMessage("API 地址格式不对:需以 http(s):// 开头");
       return;
     }
+    const schemeRepaired = baseUrl !== rawBaseUrl;
     const modelFlash = customModelFlash.trim() || MODEL_DEFAULTS[target].flash;
     const modelPro = customModelPro.trim() || MODEL_DEFAULTS[target].pro;
     customTestControllerRef.current?.abort();
     const revision = ++customTestRevisionRef.current;
     setCustomTesting(true);
-    setMessage("正在测试接口连通性…");
+    setMessage(
+      schemeRepaired
+        ? `将按 ${baseUrl} 测试并保存,正在测试接口连通性…`
+        : "正在测试接口连通性…",
+    );
     // 超时保护:测连接打的是用户填的第三方 baseUrl,不可信(可能不通/极慢)。
     // 无 AbortController 时 fetch 会无限挂起,按钮永远卡"测试中…"=整页假死(e2e E1-h2)。
     const testCtrl = new AbortController();
@@ -814,6 +821,8 @@ export function ModelSettingsPanel() {
         keyInvalid?: boolean;
         permissionDenied?: boolean;
         error?: string;
+        // 服务端归一化后的 canonical 地址(补 /v1、剥多填的 endpoint 段、去 query/hash)
+        normalizedBaseUrl?: string;
       };
       if (!canCommit()) return;
       if (!body.ok) {
@@ -826,9 +835,12 @@ export function ModelSettingsPanel() {
         );
         return;
       }
+      // 存的必须是"实际会被请求的那个地址":服务端测连接用的就是它归一化后的值,
+      // 前端不自造第二套归一化逻辑,直接采信服务端回传的 canonical 值(缺字段才退回本地已修复值)。
+      const savedBaseUrl = body.normalizedBaseUrl?.trim() || baseUrl;
       const provider: CustomProvider = {
         protocol: target === "kimi" ? "openai" : customProtocol,
-        baseUrl,
+        baseUrl: savedBaseUrl,
         apiKey,
         modelFlash,
         modelPro,
@@ -849,9 +861,15 @@ export function ModelSettingsPanel() {
       }
       setCustomProviders((current) => ({ ...current, [target]: provider }));
       setVisitorKeys((current) => ({ ...current, [target]: null }));
+      // 回填:让用户看到的就是真正存下来的地址,别留着原始输入造成"存的和显示的不一样"。
+      setCustomBaseUrl(savedBaseUrl);
       setMessage(null);
       setView("main");
-      toast.show("接口测试通过,已保存并启用自定义模型");
+      toast.show(
+        savedBaseUrl === rawBaseUrl
+          ? "接口测试通过,已保存并启用自定义模型"
+          : `已自动修正为标准地址 ${savedBaseUrl},接口测试通过并已保存启用`,
+      );
       if (!activeConfigured && target !== effectiveProvider) {
         void handleProviderChange(target, true);
       }
@@ -976,7 +994,9 @@ export function ModelSettingsPanel() {
 
   // 官方 DeepSeek key 表单(未配置态官方 tab 与 editing 态共用)。配置只存本机,无 scope 选择。
   const keyFormatOk = keyInput.trim() === "" ? null : true;
-  const customBaseUrlValid = customBaseUrl.trim() === "" ? null : isHttpUrl(customBaseUrl.trim());
+  // 只漏 scheme 属于"可修复",不判非法(点击时会补 https:// 再测),否则按钮被禁死、修复无从发生。
+  const customBaseUrlValid =
+    customBaseUrl.trim() === "" ? null : repairBaseUrlScheme(customBaseUrl.trim()) !== null;
   const officialKeyForm = (
     <>
       <div className="sm-keyrow">

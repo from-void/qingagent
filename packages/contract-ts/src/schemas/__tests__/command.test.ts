@@ -417,6 +417,21 @@ describe("commandSchema", () => {
         rejectReviewBatchIds: ["batch-2"],
       },
     }],
+    ["commitReviewGroups accept/keep-pending 重叠", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["batch-1", "batch-2"],
+        keepPendingReviewBatchIds: ["batch-2"],
+      },
+    }],
+    ["commitReviewGroups reject/keep-pending 重叠", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: [],
+        rejectReviewBatchIds: ["batch-1", "batch-2"],
+        keepPendingReviewBatchIds: ["batch-2"],
+      },
+    }],
     ["resumeAskUser 缺 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", answers: { q1: { chosen: [], freeText: "x" } } } }],
     ["resumeAskUser 空 answers", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: {} } }],
     ["resumeAskUser 空 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "", answers: { q1: { chosen: [], freeText: "x" } } } }],

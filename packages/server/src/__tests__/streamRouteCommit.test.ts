@@ -262,18 +262,41 @@ describe("POST /api/v1/commit", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("accept/reject 批次重叠在进入 actor 前返回稳定 400", async () => {
+  it.each([
+    [
+      "accept/reject",
+      {
+        acceptReviewBatchIds: ["batch-1", "batch-overlap"],
+        rejectReviewBatchIds: ["batch-overlap"],
+      },
+      "acceptReviewBatchIds and rejectReviewBatchIds must not overlap",
+    ],
+    [
+      "accept/keep-pending",
+      {
+        acceptReviewBatchIds: ["batch-1", "batch-overlap"],
+        keepPendingReviewBatchIds: ["batch-overlap"],
+      },
+      "acceptReviewBatchIds and keepPendingReviewBatchIds must not overlap",
+    ],
+    [
+      "reject/keep-pending",
+      {
+        acceptReviewBatchIds: [],
+        rejectReviewBatchIds: ["batch-overlap"],
+        keepPendingReviewBatchIds: ["batch-overlap"],
+      },
+      "rejectReviewBatchIds and keepPendingReviewBatchIds must not overlap",
+    ],
+  ])("%s 批次重叠在进入 actor 前返回稳定 400", async (_label, payload, error) => {
     const submit = vi.spyOn(sessionManager, "submit");
     const res = await request("POST", "/api/v1/commit", {
       sessionId: "commit-overlap-test",
-      acceptReviewBatchIds: ["batch-1", "batch-overlap"],
-      rejectReviewBatchIds: ["batch-overlap"],
+      ...payload,
     });
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: "acceptReviewBatchIds and rejectReviewBatchIds must not overlap",
-    });
+    expect(await res.json()).toEqual({ error });
     expect(submit).not.toHaveBeenCalled();
   });
 

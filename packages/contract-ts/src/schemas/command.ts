@@ -210,6 +210,26 @@ const commitReviewGroupsDataSchema = z
       path: ["rejectReviewBatchIds"],
       message: "must not overlap with acceptReviewBatchIds",
     },
+  )
+  .refine(
+    (data) => {
+      const accepted = new Set(data.acceptReviewBatchIds);
+      return !(data.keepPendingReviewBatchIds ?? []).some((id) => accepted.has(id));
+    },
+    {
+      path: ["keepPendingReviewBatchIds"],
+      message: "must not overlap with acceptReviewBatchIds",
+    },
+  )
+  .refine(
+    (data) => {
+      const rejected = new Set(data.rejectReviewBatchIds ?? []);
+      return !(data.keepPendingReviewBatchIds ?? []).some((id) => rejected.has(id));
+    },
+    {
+      path: ["keepPendingReviewBatchIds"],
+      message: "must not overlap with rejectReviewBatchIds",
+    },
   ) satisfies z.ZodType<CommitReviewGroups>;
 type _CommitReviewGroupsExact = Expect<
   Equal<z.infer<typeof commitReviewGroupsDataSchema>, CommitReviewGroups>

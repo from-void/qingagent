@@ -457,6 +457,39 @@ describe("pmMarkdownRoundTrip", () => {
     });
   });
 
+  it("链接、删除线及含反引号的行内代码经 Markdown 往返保留", () => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "rich-inline" },
+        content: [
+          {
+            type: "text",
+            text: String.raw`链接]\文字`,
+            marks: [{ type: "link", attrs: { href: "https://example.com/a_(b)" } }],
+          },
+          { type: "text", text: "、" },
+          { type: "text", text: "已删除", marks: [{ type: "strike" }] },
+          { type: "text", text: "、" },
+          { type: "text", text: "`a``b`", marks: [{ type: "code" }] },
+        ],
+      }],
+    };
+
+    const markdown = pmToMarkdown(source);
+    const roundTrip = markdownToPm(markdown);
+    const sourceParagraph = source.content[0];
+    if (sourceParagraph?.type !== "paragraph") throw new Error("missing source paragraph");
+
+    expect(safeParsePmDoc(roundTrip).success).toBe(true);
+    expect(roundTrip.content[0]).toMatchObject({
+      type: "paragraph",
+      content: sourceParagraph.content,
+    });
+  });
+
   it("R4-013 解析 markdown task item 为 taskList/taskItem", () => {
     const pm = markdownToPm(["- [ ] 未完成", "- [x] 已完成", "- [X] 也完成"].join("\n"));
 

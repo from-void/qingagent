@@ -516,6 +516,10 @@ function parseInlineMarkdown(text: string): PmInlineNode[] {
       nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "bold" }));
     } else if (match.kind === "italic") {
       nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "italic" }));
+    } else if (match.kind === "strike") {
+      nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "strike" }));
+    } else if (match.kind === "link") {
+      nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "link", attrs: { href: match.href } }));
     } else {
       nodes.push({ type: "inlineMath", attrs: { latex: match.body } });
     }
@@ -524,8 +528,11 @@ function parseInlineMarkdown(text: string): PmInlineNode[] {
   return nodes;
 }
 
-/** 粗体/斜体包裹的内容仍先识别行内 code 与数学公式；Markdown 包裹仅映射到文本叶子。 */
-function addInlineMark(nodes: readonly PmInlineNode[], mark: Extract<PmMark, { type: "bold" | "italic" }>): PmInlineNode[] {
+/** Markdown 包裹内仍递归识别其它行内 token；外层 mark 仅映射到非代码文本叶子。 */
+function addInlineMark(
+  nodes: readonly PmInlineNode[],
+  mark: Extract<PmMark, { type: "bold" | "italic" | "strike" | "link" }>,
+): PmInlineNode[] {
   return nodes.map((node) => {
     if (node.type !== "text" || node.marks?.some((current) => current.type === "code")) return node;
     const marks = node.marks ?? [];
@@ -535,25 +542,107 @@ function addInlineMark(nodes: readonly PmInlineNode[], mark: Extract<PmMark, { t
   });
 }
 
+type InlineKind = "code" | "bold" | "italic" | "strike" | "link" | "math";
 type InlineMatch = {
-  kind: "code" | "bold" | "italic" | "math";
   index: number;
   end: number;
   body: string;
-};
+} & ({ kind: "link"; href: string } | { kind: Exclude<InlineKind, "link">; href?: never });
 
 function nextInlineToken(text: string, from: number): InlineMatch | null {
   const candidates: InlineMatch[] = [];
-  const code = boundedToken(text, from, "`", "`", "code");
+  const code = codeSpanToken(text, from);
   if (code) candidates.push(code);
   const bold = boundedToken(text, from, "**", "**", "bold");
   if (bold) candidates.push(bold);
   const italic = boundedToken(text, from, "*", "*", "italic", { avoidDoubleAsterisk: true });
   if (italic) candidates.push(italic);
+  const strike = boundedToken(text, from, "~~", "~~", "strike");
+  if (strike) candidates.push(strike);
+  const link = linkToken(text, from);
+  if (link) candidates.push(link);
   const math = boundedToken(text, from, "$", "$", "math", { avoidDoubleDollar: true });
   if (math) candidates.push(math);
   candidates.sort((a, b) => a.index - b.index || a.end - b.end);
   return candidates[0] ?? null;
+}
+
+function codeSpanToken(text: string, from: number): InlineMatch | null {
+  const openingPattern = /`+/g;
+  openingPattern.lastIndex = from;
+  for (let opening = openingPattern.exec(text); opening; opening = openingPattern.exec(text)) {
+    const delimiter = opening[0];
+    const bodyStart = opening.index + delimiter.length;
+    const closingPattern = /`+/g;
+    closingPattern.lastIndex = bodyStart;
+    for (let closing = closingPattern.exec(text); closing; closing = closingPattern.exec(text)) {
+      if (closing[0].length !== delimiter.length) continue;
+      let body = text.slice(bodyStart, closing.index);
+      if (body.startsWith(" ") && body.endsWith(" ") && body.trim().length > 0) {
+        body = body.slice(1, -1);
+      }
+      if (body.length > 0) {
+        return {
+          kind: "code",
+          index: opening.index,
+          end: closing.index + delimiter.length,
+          body,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function linkToken(text: string, from: number): InlineMatch | null {
+  let index = text.indexOf("[", from);
+  while (index >= 0) {
+    if (text[index - 1] === "!" || isEscaped(text, index)) {
+      index = text.indexOf("[", index + 1);
+      continue;
+    }
+    const labelEnd = findUnescaped(text, "]", index + 1);
+    if (labelEnd < 0 || text[labelEnd + 1] !== "(") {
+      index = text.indexOf("[", index + 1);
+      continue;
+    }
+    const hrefEnd = findUnescaped(text, ")", labelEnd + 2);
+    if (hrefEnd < 0) return null;
+    const body = unescapeLinkPart(text.slice(index + 1, labelEnd), new Set(["\\", "]"]));
+    const href = unescapeLinkPart(text.slice(labelEnd + 2, hrefEnd), new Set(["\\", ")"]));
+    if (body && isAllowedLinkHref(href)) {
+      return { kind: "link", index, end: hrefEnd + 1, body, href };
+    }
+    index = text.indexOf("[", index + 1);
+  }
+  return null;
+}
+
+function findUnescaped(text: string, token: string, from: number): number {
+  let index = text.indexOf(token, from);
+  while (index >= 0 && isEscaped(text, index)) index = text.indexOf(token, index + token.length);
+  return index;
+}
+
+function isEscaped(text: string, index: number): boolean {
+  let slashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) slashes += 1;
+  return slashes % 2 === 1;
+}
+
+function unescapeLinkPart(value: string, escapable: ReadonlySet<string>): string {
+  let out = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+    const next = value[index + 1];
+    if (char === "\\" && next && escapable.has(next)) {
+      out += next;
+      index += 1;
+    } else {
+      out += char;
+    }
+  }
+  return out;
 }
 
 function boundedToken(
@@ -561,7 +650,7 @@ function boundedToken(
   from: number,
   open: string,
   close: string,
-  kind: InlineMatch["kind"],
+  kind: Exclude<InlineKind, "link">,
   options: { avoidDoubleAsterisk?: boolean; avoidDoubleDollar?: boolean } = {},
 ): InlineMatch | null {
   let index = text.indexOf(open, from);

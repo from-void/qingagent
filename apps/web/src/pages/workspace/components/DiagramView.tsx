@@ -329,7 +329,21 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
   // 自定义"圆点"右下角拖拽改尺寸:替代原生 resize:vertical 的双斜线句柄(用户嫌它像"两个拖拽点")。
   // 右下角同时调宽+高:横向拖→宽度,纵向拖→高度。拖动时直接改内联 style(顺滑),松手时落进 attrs 持久化。
   // 宽度上限为父级(占满栏宽)实测宽度,避免拖出栏外溢出。
-  const resizeDragRef = useRef<{ startX: number; startY: number; startW: number; startH: number; maxW: number } | null>(null);
+  const resizeDragRef = useRef<{
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+    maxW: number;
+    movedX: boolean;
+    movedY: boolean;
+  } | null>(null);
+  const restoreResizePreview = () => {
+    const el = viewRef.current;
+    if (!el) return;
+    el.style.height = storedHeight ? `${storedHeight}px` : "";
+    el.style.width = storedWidth ? `${storedWidth}px` : "";
+  };
   const onResizeHandleDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!editable) return;
     const el = viewRef.current;
@@ -338,7 +352,15 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     event.stopPropagation();
     const rect = el.getBoundingClientRect();
     const maxW = el.parentElement?.clientWidth ?? rect.width;
-    resizeDragRef.current = { startX: event.clientX, startY: event.clientY, startW: rect.width, startH: rect.height, maxW };
+    resizeDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startW: rect.width,
+      startH: rect.height,
+      maxW,
+      movedX: false,
+      movedY: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onResizeHandleMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -347,6 +369,8 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     if (!drag || !el) return;
     const nextH = Math.max(160, Math.round(drag.startH + (event.clientY - drag.startY)));
     const nextW = Math.min(drag.maxW, Math.max(200, Math.round(drag.startW + (event.clientX - drag.startX))));
+    drag.movedX ||= nextW !== Math.round(drag.startW);
+    drag.movedY ||= nextH !== Math.round(drag.startH);
     el.style.height = `${nextH}px`;
     el.style.width = `${nextW}px`;
   };
@@ -360,17 +384,43 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     } catch {
       /* 指针已释放,忽略 */
     }
+    if (!drag.movedX && !drag.movedY) {
+      restoreResizePreview();
+      return;
+    }
     const rect = el.getBoundingClientRect();
     const h = Math.round(rect.height);
     const w = Math.round(rect.width);
     const patch: { height?: number; width?: number } = {};
-    if (h > 0 && h !== storedHeight) patch.height = h;
+    if (drag.movedY && h > 0 && h !== Math.round(drag.startH)) patch.height = h;
     // 宽度接近父级满宽时视为"不限宽",回写 null 让其继续占满栏(响应式)。
     const maxW = el.parentElement?.clientWidth ?? drag.maxW;
     const nextWidth = w > 0 && w < maxW - 8 ? w : null;
-    if (nextWidth !== storedWidth) patch.width = nextWidth ?? (null as unknown as number);
+    if (
+      drag.movedX &&
+      w !== Math.round(drag.startW) &&
+      nextWidth !== storedWidth
+    ) {
+      patch.width = nextWidth ?? (null as unknown as number);
+    }
+    if (!Object.prototype.hasOwnProperty.call(patch, "height")) {
+      el.style.height = storedHeight ? `${storedHeight}px` : "";
+    }
+    if (!Object.prototype.hasOwnProperty.call(patch, "width")) {
+      el.style.width = storedWidth ? `${storedWidth}px` : "";
+    }
     if (Object.keys(patch).length > 0) {
       updateDiagramAttributes(patch, { visualWrite: true });
+    }
+  };
+  const cancelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeDragRef.current) return;
+    resizeDragRef.current = null;
+    restoreResizePreview();
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* 指针已释放,忽略 */
     }
   };
 
@@ -580,6 +630,8 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
               onPointerDown={onResizeHandleDown}
               onPointerMove={onResizeHandleMove}
               onPointerUp={onResizeHandleUp}
+              onPointerCancel={cancelResize}
+              onLostPointerCapture={cancelResize}
               onDoubleClick={(event) => event.stopPropagation()}
             />
           )}

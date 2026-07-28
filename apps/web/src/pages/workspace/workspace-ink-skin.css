@@ -16,7 +16,7 @@
   background: transparent !important;
 }
 
-/* —— 玄青桌面(与新建页 .ccx-space 同色系) —— */
+/* —— 玄青桌面(与首页过场 .ccx-space 同色系) —— */
 #view-workspace {
   /* 玄青桌面基色 = 纹理槽:整块背景的最底层。以后要在"整个后边"铺纹理,
      就把纹理作为 background-image 的最后一层(压在色斑/暗角之下)叠到这里即可。
@@ -1037,7 +1037,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   margin-top: 4px !important;
   padding-top: 2px !important;
 }
-/* 文件/技能按钮对齐新建页 .ccx-tool>button:透明无边、直角、hover 才出描边(不再是药丸) */
+/* 文件/技能按钮:透明无边、直角、hover 才出描边(不再是药丸) */
 #view-workspace .ws-input-tools .ws-pill {
   background: transparent !important;
   border: 1px solid transparent !important;
@@ -1059,7 +1059,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   border-color: rgba(184, 169, 140, 0.5) !important;
   background: rgba(184, 169, 140, 0.18) !important;
 }
-/* 发送按钮:套新建页 .ccx-send 同款(带边框的大红半透,圆角 2) */
+/* 发送按钮:带边框的大红半透,圆角 2 */
 #view-workspace .ws-input-tools .wf-btn.primary {
   border-radius:0 !important;
   border: 1px solid var(--ws-red) !important;
@@ -1525,189 +1525,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   border-color: rgba(184, 169, 140, 0.28) !important;
 }
 
-#view-workspace .ws-folder-wrap {
-  position: relative;
-  display: inline-flex;
-}
-#view-workspace .ws-input-tools .ws-folder-btn {
-  gap: 6px;
-}
-#view-workspace .ws-input-tools .ws-folder-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-#view-workspace .ws-input-tools .ws-folder-btn.is-active {
-  color: #f6efdf !important;
-  border-color: rgba(184, 169, 140, 0.5) !important;
-  background: rgba(184, 169, 140, 0.18) !important;
-}
-#view-workspace .ws-folder-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: -1px;
-  border-radius: 50%;
-  background: #6fae6a;
-  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.22);
-}
-#view-workspace .ws-folder-popover {
-  position: absolute;
-  left: 0;
-  bottom: 34px;
-  z-index: 8;
-  width: 230px;
-  min-width: 230px;
-  max-height: none;
-  padding: 11px 13px;
-  overflow: visible;
-  /* 与新建页/技能菜单统一成暖白纸面(去掉原深色 !important,交给共享 folder-control.css 统一治理)。 */
-  color: var(--ink-1);
-  background: var(--bg-canvas);
-  border: 1px solid rgba(120, 90, 50, 0.22);
-  border-radius:0;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition:
-    opacity 0.14s ease,
-    transform 0.14s ease;
-}
-#view-workspace .ws-folder-wrap:hover .ws-folder-popover,
-#view-workspace .ws-folder-wrap:focus-within .ws-folder-popover {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-#view-workspace .ws-folder-popover-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-#view-workspace .ws-folder-popover-icon {
-  flex: 0 0 auto;
-  color: #b59a63;
-}
-#view-workspace .ws-folder-popover-name {
-  min-width: 0;
-  overflow: hidden;
-  color: #f3ecdb;
-  font-size: 13.5px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#view-workspace .ws-folder-popover-path {
-  margin: 6px 0 2px;
-  overflow: hidden;
-  color: rgba(236, 227, 208, 0.55);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#view-workspace .ws-folder-popover-meta {
-  color: rgba(236, 227, 208, 0.62);
-  font-size: 11.5px;
-}
-#view-workspace .ws-folder-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 9px;
-  padding: 3px 9px;
-  color: #86c980;
-  font-size: 11.5px;
-  font-weight: 600;
-  background: rgba(111, 174, 106, 0.12);
-  border: 1px solid rgba(111, 174, 106, 0.34);
-  border-radius:0;
-}
-#view-workspace .ws-folder-badge span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #6fae6a;
-  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.2);
-}
-#view-workspace .ws-folder-badge.is-warn {
-  color: #d9ad58;
-  background: rgba(217, 173, 88, 0.13);
-  border-color: rgba(217, 173, 88, 0.34);
-}
-#view-workspace .ws-folder-badge.is-warn span {
-  background: #d9ad58;
-  box-shadow: 0 0 0 3px rgba(217, 173, 88, 0.18);
-}
-#view-workspace .ws-folder-badge.is-error {
-  color: #e48a7d;
-  background: rgba(192, 57, 43, 0.14);
-  border-color: rgba(192, 57, 43, 0.34);
-}
-#view-workspace .ws-folder-badge.is-error span {
-  background: #d85f52;
-  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.18);
-}
-#view-workspace .ws-folder-badge.is-muted {
-  color: rgba(236, 227, 208, 0.62);
-  background: rgba(236, 227, 208, 0.08);
-  border-color: rgba(236, 227, 208, 0.18);
-}
-#view-workspace .ws-folder-badge.is-muted span {
-  background: rgba(236, 227, 208, 0.48);
-  box-shadow: 0 0 0 3px rgba(236, 227, 208, 0.12);
-}
-#view-workspace .ws-folder-popover-error {
-  margin-top: 7px;
-  color: #e48a7d;
-  font-size: 11px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-#view-workspace .ws-folder-popover-hint {
-  margin-top: 10px;
-  padding-top: 8px;
-  color: #b59a63;
-  font-size: 11px;
-  border-top: 1px solid rgba(184, 169, 140, 0.18);
-}
-#view-workspace .ws-folder-popover-arrow {
-  position: absolute;
-  left: 24px;
-  bottom: -6px;
-  width: 11px;
-  height: 11px;
-  background: #1f262d;
-  border-right: 1px solid rgba(184, 169, 140, 0.34);
-  border-bottom: 1px solid rgba(184, 169, 140, 0.34);
-  transform: rotate(45deg);
-}
-#view-workspace .ws-folder-tooltip {
-  position: absolute;
-  left: 0;
-  bottom: 34px;
-  z-index: 8;
-  width: max-content;
-  max-width: 220px;
-  padding: 7px 9px;
-  color: rgba(236, 227, 208, 0.76);
-  font-size: 11.5px;
-  line-height: 1.5;
-  background: #1f262d;
-  border: 1px solid rgba(184, 169, 140, 0.24);
-  border-radius:0;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition:
-    opacity 0.14s ease,
-    transform 0.14s ease;
-}
-#view-workspace .ws-folder-wrap:hover .ws-folder-tooltip {
-  opacity: 1;
-  transform: translateY(0);
-}
 #view-workspace .ws-folder-modal-overlay {
   position: fixed;
   inset: 0;

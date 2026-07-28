@@ -7,7 +7,6 @@ export {
   FolderDisconnectDialog,
   FolderIntroDialog,
   FolderPromptDialog,
-  FolderSourceControl,
   deriveFolderCapability,
   deriveFolderCapabilityFromEnv,
   useFolderSourceActions,

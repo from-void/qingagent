@@ -146,7 +146,7 @@ export function useConfirm() {
 function getConfirmAnchor(): HTMLElement | null {
   if (typeof document === "undefined") return null;
   return (
-    document.querySelector<HTMLElement>("#view-workspace, .ccx-page, #view-home") ??
+    document.querySelector<HTMLElement>("#view-workspace, #view-home") ??
     document.querySelector<HTMLElement>("[data-view]") ??
     document.getElementById("web-app-shell")
   );

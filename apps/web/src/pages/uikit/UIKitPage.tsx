@@ -2126,9 +2126,8 @@ export function UIKitPage() {
           <p className="uk-cap uk-lead">
             现役菜单的真相源:<code>qa-skill-menu</code>(技能菜单真组件,见 <b>35 节</b>)、
             <code>ws-export-menu</code>(导出菜单,见 <b>30 节</b>)、文件菜单双态(见 <b>35 节</b>)。
-            墓碑:旧「插入菜单」demo 是虚构内容,已撤下;<code>.wf-floaty</code> 当前唯一活消费者是
-            FolderSourceControl 的已连接文件夹 hover 卡(35 节以该真实形态陈列),随「文件入口融合」
-            退役后转死件(A2-2)。
+            墓碑:旧「插入菜单」demo 是虚构内容,已撤下;<code>.wf-floaty</code> 随
+            FolderSourceControl 已连接 hover 卡下线而删除(A2-2 完成)。
           </p>
         </Section>
 
@@ -2208,8 +2207,7 @@ export function UIKitPage() {
             (金=告知 / 绿=成功 / 橙=有损降级 / 红=失败)。位置统一:底部居中、输入区上方,向上堆叠,
             同屏至多 3 条(新顶旧)。瞬时 2.4s 自动退场、hover 暂停计时;失败默认走常驻。
             现已迁入生产 <code>ToastProvider</code>，流级错误也已归入本族常驻形态；
-            旧 <code>wf-toast</code> / <code>doc-ver-toast</code> 不再渲染；
-            <code>ccx-toast</code> 属新建页硬豁免，留待用户自迁。
+            旧 <code>wf-toast</code> / <code>doc-ver-toast</code> / <code>ccx-toast</code> 均已不再渲染。
           </p>
           <Group title="瞬时 · 自动退场" code=".qa-toast · role=status · 2.4s · 无关闭钮">
             <div className="uk-col" style={{ gap: 8 }}>
@@ -2413,9 +2411,9 @@ export function UIKitPage() {
         <Section idx="35" zh="菜单浮层原子" en="Menu / Floaty atoms" id="menuatom">
           <p className="uk-cap uk-lead">
             技能菜单走生产 <code>SkillMenu</code> 真组件(行态:普通 / 键盘高亮 is-active / 空);
-            文件菜单按已定稿的「文件入口融合」双态——未连接=首连引导弹层(<code>ws-folder-intro-modal</code>),
-            已连接=hover 卡(含断开)。文件样本皮肤来自 <code>#view-workspace .ws-folder-*</code> 与共享
-            <code>folder-control.css</code>,故各自包工作区作用域小舞台。
+            文件入口的未连接首连引导弹层(<code>ws-folder-intro-modal</code>)皮肤来自
+            <code>#view-workspace .ws-folder-modal-*</code>,故包一层工作区作用域小舞台;
+            已连接态自「文件入口融合」后改由文件菜单状态行承载,原 hover 卡已随新建页拆除下线。
           </p>
           <Group title="技能菜单 SkillMenu(真组件)" code=".qa-skill-menu / .qa-skill-row.is-active / .qa-skill-empty">
             <div className="uk-row" style={{ alignItems: "flex-start", gap: 28 }}>
@@ -2429,15 +2427,8 @@ export function UIKitPage() {
               </div>
             </div>
           </Group>
-          <Group title="文件菜单 · 未连接(首连引导弹层)" code=".ws-folder-wrap / .ws-folder-intro-modal / .ws-folder-intro-point / .ws-folder-check">
+          <Group title="文件菜单 · 未连接(首连引导弹层)" code=".ws-folder-intro-modal / .ws-folder-intro-point / .ws-folder-check">
             <div id="view-workspace" className="uk-portal uk-folder-demo" style={{ height: 320 }}>
-              <div className="ws-input-tools uk-folder-tools">
-                <span className="ws-folder-wrap">
-                  <button className="wf-btn small ghost ws-pill ws-folder-btn" type="button">
-                    <span className="ws-tool-ico">🗀</span>文件夹
-                  </button>
-                </span>
-              </div>
               <div className="ws-folder-modal-overlay" style={{ position: "absolute" }}>
                 <div className="ws-folder-intro-modal">
                   <div className="ws-folder-modal-icon" aria-hidden="true">🗀</div>
@@ -2456,36 +2447,7 @@ export function UIKitPage() {
               </div>
             </div>
             <div className="uk-row">
-              <span className="uk-cap">FolderSourceControl.tsx:465 · 首连引导弹层; 同一 modal family 也被 HomePage 删除确认复用。</span>
-            </div>
-          </Group>
-          <Group title="文件菜单 · 已连接(hover 卡 · 含断开)" code=".wf-floaty.ws-folder-popover(FolderSourceControl.tsx:424 · hover 才现,census 采不到)">
-            <div id="view-workspace" className="uk-portal uk-folder-demo uk-force-popover" style={{ height: 280 }}>
-              <div className="ws-input-tools uk-folder-tools uk-folder-tools--connected">
-                <span className="ws-folder-wrap">
-                  <button className="wf-btn small ghost ws-pill ws-folder-btn is-active" type="button">
-                    <span className="ws-tool-ico">🗀</span>文件夹
-                    <span className="ws-folder-dot" aria-hidden="true" />
-                  </button>
-                  <div className="wf-floaty ws-folder-popover" role="tooltip">
-                    <div className="ws-folder-popover-head">
-                      <span className="ws-folder-popover-icon">🗀</span>
-                      <span className="ws-folder-popover-name">亚运素材</span>
-                    </div>
-                    <div className="ws-folder-popover-path">~/Documents/亚运素材</div>
-                    <div className="ws-folder-popover-meta">32 个文件</div>
-                    <div className="ws-folder-popover-divider" aria-hidden="true" />
-                    <button type="button" className="ws-folder-popover-disconnect">断开连接</button>
-                    <div className="ws-folder-popover-arrow" aria-hidden="true" />
-                  </div>
-                </span>
-              </div>
-            </div>
-            <div className="uk-row">
-              <span className="uk-cap">
-                现役·条件变体:hover 才出现,census 42 态采不到;生产渲染点 FolderSourceControl.tsx:424。
-                该卡随「文件入口融合」退役后连同 .wf-floaty 转死件(A2-2)。
-              </span>
+              <span className="uk-cap">FolderSourceControl.tsx FolderIntroDialog · 首连引导弹层; 同一 modal family 也被 HomePage 删除确认复用。</span>
             </div>
           </Group>
         </Section>

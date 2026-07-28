@@ -103,10 +103,10 @@ const RENDERED_QJ = new Set([
 // —— 豁免规则:命中即豁免,必须带原因。整页场景类不是「控件」,归属于其页面本身。——
 const EXEMPTIONS = [
   { test: (c) => c.startsWith("qj-") && !RENDERED_QJ.has(c), reason: "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染" },
-  { test: (c) => c.startsWith("ccx-"), reason: "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖" },
+  { test: (c) => c.startsWith("ccx-"), reason: "整页场景类·首页→工作区过场舞台(墨水/飞卡),整页构图非控件" },
   { test: (c) => c.startsWith("md-"), reason: "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件" },
   { test: (c) => c.startsWith("sm-"), reason: "整页场景类·设置-模型/密钥配置页,表单排布归属其页面" },
-  { test: (c) => c.startsWith("sk-"), reason: "整页场景类·新建页技能卡网格(skill card grid),归属新建页构图" },
+  { test: (c) => c.startsWith("sk-"), reason: "已下线·随独立新建页拆除退役的技能卡网格,census 快照残留" },
   { test: (c) => c.startsWith("dt-"), reason: "文档顶栏(doc-topbar)内部件,归属工作区文档区页面构图" },
   { test: (c) => c.startsWith("sc-"), reason: "快捷键面板(shortcuts)整块,归属设置页" },
   { test: (c) => c.startsWith("qt-"), reason: "首页题字/引文装饰(quote title),装饰非控件" },
@@ -129,7 +129,8 @@ const EXEMPTIONS = [
   { test: (c) => ["em", "insert", "light", "inactive", "show-sb"].includes(c), reason: "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉" },
   { test: (c) => ["ai-cursor", "human-cursor-layer"].includes(c), reason: "编辑器 AI 光标 / 协作光标层,运行时装饰,当前无多人协作场景" },
   { test: (c) => ["seal-img", "sfx-blur", "sfx-seg"].includes(c), reason: "首页印章图 / 转场特效层(sfx),整页视觉装饰非控件" },
-  { test: (c) => ["src-chip", "starter-edit", "workspace-tooltip"].includes(c), reason: "来源内联标签(citation 外壳已在19节活渲染)/ 新建页可编辑体 / 全局 tooltip 运行时浮层" },
+  { test: (c) => ["src-chip", "workspace-tooltip"].includes(c), reason: "来源内联标签(citation 外壳已在19节活渲染)/ 全局 tooltip 运行时浮层" },
+  { test: (c) => ["starter-edit", "ws-folder-wrap", "ws-folder-btn", "ws-folder-dot", "ws-folder-tooltip"].includes(c), reason: "已下线·独立新建页与文件夹 hover 卡拆除后不再渲染,census 快照残留" },
 ];
 
 const forwardRows = [];
@@ -294,19 +295,6 @@ const CONDITIONAL_LIVE = {
   "patch-popup-original": "doc/patchHover.tsx:264/269",
   "patch-popup-label": "doc/patchHover.tsx:265/270",
   "patch-popup-original-text": "doc/patchHover.tsx:13/266/271",
-  // 已连接文件夹 hover 卡(hover 才现)
-  "wf-floaty": "FolderSourceControl.tsx:424(ws-folder-popover 外壳;A2-2 待随文件入口融合退役)",
-  "ws-folder-popover": "FolderSourceControl.tsx:424",
-  "ws-folder-popover-head": "FolderSourceControl.tsx:425",
-  "ws-folder-popover-icon": "FolderSourceControl.tsx:426",
-  "ws-folder-popover-name": "FolderSourceControl.tsx:427",
-  "ws-folder-popover-path": "FolderSourceControl.tsx:429",
-  "ws-folder-popover-meta": "FolderSourceControl.tsx:430",
-  "ws-folder-popover-divider": "FolderSourceControl.tsx:437",
-  "ws-folder-popover-disconnect": "FolderSourceControl.tsx:440",
-  "ws-folder-popover-hint": "FolderSourceControl.tsx:450",
-  "ws-folder-popover-arrow": "FolderSourceControl.tsx:452",
-  "ws-folder-dot": "FolderSourceControl.tsx:421",
   // 图表节点形状(选中/特定 Mermaid 形状才现;--rect 在 census,其余形状变体不在)
   "graph-diagram-node--circle": "GraphDiagramView.tsx:317(`graph-diagram-node--${shape}`)",
   "graph-diagram-node--diamond": "GraphDiagramView.tsx:317",

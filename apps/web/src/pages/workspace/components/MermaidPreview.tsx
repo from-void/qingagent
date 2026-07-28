@@ -214,6 +214,7 @@ export function MermaidPreview({
   }, []);
 
   useEffect(() => {
+    const token = ++tokenRef.current;
     const trimmed = (source ?? "").trim();
     if (!trimmed) {
       setSvg(null);
@@ -234,7 +235,6 @@ export function MermaidPreview({
       setError(`暂不支持的图表语言:${lang}`);
       return;
     }
-    const token = ++tokenRef.current;
     const render = lang === "drawio" ? renderDrawio : renderMermaid;
     void render(trimmed)
       .then((out) => {

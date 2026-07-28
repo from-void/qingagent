@@ -3,6 +3,7 @@
 import { Editor, type JSONContent } from "@tiptap/core";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, safeParsePmDoc, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -644,9 +645,34 @@ describe("列表行 DnD 事务", () => {
     const before = JSON.stringify(normalized(editor));
 
     dispatchListItemReorder(editor, "li-b", "li-a", "after", 2);
+    const afterDrag = JSON.stringify(normalized(editor));
 
     expect(editor.commands.undo()).toBe(true);
     expect(JSON.stringify(normalized(editor))).toBe(before);
+    expect(editor.commands.redo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(afterDrag);
+  });
+
+  it("文档末尾就是 list 时,中间编辑不会提前消费拖拽 undo 的 TrailingNode 保护", () => {
+    const editor = createEditor(
+      doc([bulletList("list", [listItem("li-a", "A"), listItem("li-b", "B"), listItem("li-c", "C")])]),
+    );
+    const before = JSON.stringify(normalized(editor));
+
+    dispatchListItemReorder(editor, "li-b", "li-a", "after", 2);
+    const afterDrag = JSON.stringify(normalized(editor));
+    const paragraphPos = findNodePosition(editor, "paragraph", "li-a-p");
+    editor.view.dispatch(closeHistory(editor.state.tr.insertText("!", paragraphPos + 1)));
+    const afterEdit = JSON.stringify(normalized(editor));
+
+    expect(editor.commands.undo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(afterDrag);
+    expect(editor.commands.undo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(before);
+    expect(editor.commands.redo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(afterDrag);
+    expect(editor.commands.redo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(afterEdit);
   });
 
   it("columnList 内列表行重排不触发 columnEdge,也不破坏分栏结构", () => {

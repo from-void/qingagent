@@ -27,8 +27,10 @@ export interface FlyRect {
 }
 
 export interface CardSwapHandle {
-  /** 量出顶层卡当前屏幕 rect(用于 morph 飞入落点)。会瞬时禁过渡 reflow 后测量再还原。 */
+  /** 纯读取顶层卡当前屏幕 rect(用于 morph 飞入落点)，不收束轮换或改写布局。 */
   topCardRect: () => DOMRect | null;
+  /** 提交前原子收束轮换、锁定顶卡并返回同一张卡的屏幕 rect。 */
+  prepareTopCard: () => DOMRect | null;
   pause: () => void;
   resume: () => void;
   /**
@@ -59,6 +61,10 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
   const orderRef = useRef<number[]>([0, 1, 2, 3]);
   const pausedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
+  const cycleLayoutTimerRef = useRef<number | null>(null);
+  const cycleFinishTimerRef = useRef<number | null>(null);
+  const cyclingCardRef = useRef<number | null>(null);
+  const preparedTopCardRef = useRef<HTMLDivElement | null>(null);
   // 仅用于强制重渲染 ribbon 的 top 标记(布局本身走命令式 transform)
   const [, force] = useState(0);
 
@@ -73,30 +79,62 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
     });
   }, []);
 
+  const cancelCycleTransition = useCallback(
+    (restore: boolean) => {
+      if (cycleLayoutTimerRef.current != null) {
+        window.clearTimeout(cycleLayoutTimerRef.current);
+        cycleLayoutTimerRef.current = null;
+      }
+      if (cycleFinishTimerRef.current != null) {
+        window.clearTimeout(cycleFinishTimerRef.current);
+        cycleFinishTimerRef.current = null;
+      }
+      const cyclingCard = cyclingCardRef.current;
+      cyclingCardRef.current = null;
+      if (!restore || cyclingCard == null) return;
+      if (!orderRef.current.includes(cyclingCard)) {
+        orderRef.current = [...orderRef.current, cyclingCard];
+      }
+      const el = cardRefs.current[cyclingCard];
+      if (el) el.style.transition = "";
+      layout();
+    },
+    [layout],
+  );
+
   const cycle = useCallback(() => {
-    const order = orderRef.current;
-    const top = order.shift();
+    cancelCycleTransition(true);
+    const [top, ...rest] = orderRef.current;
     if (top == null) return;
+    orderRef.current = rest;
     const el = cardRefs.current[top];
     if (!el) {
-      order.push(top);
+      orderRef.current = [...orderRef.current, top];
       return;
     }
+    cyclingCardRef.current = top;
     el.classList.remove("top");
     el.style.zIndex = "0";
     el.style.transition = "transform .6s cubic-bezier(.4,0,.55,1), opacity .42s ease";
     el.style.transform = `translate(${-CARD_W / 2}px,${-CARD_H / 2 + 150}px) translateZ(-220px) rotateX(12deg) skewY(0deg) scale(.9)`;
     el.style.opacity = "0";
-    window.setTimeout(layout, 30);
-    window.setTimeout(() => {
-      order.push(top);
+    cycleLayoutTimerRef.current = window.setTimeout(() => {
+      cycleLayoutTimerRef.current = null;
+      layout();
+    }, 30);
+    cycleFinishTimerRef.current = window.setTimeout(() => {
+      cycleFinishTimerRef.current = null;
+      cyclingCardRef.current = null;
+      if (!orderRef.current.includes(top)) {
+        orderRef.current = [...orderRef.current, top];
+      }
       el.style.transition = "none";
       layout();
       requestAnimationFrame(() => {
         el.style.transition = "";
       });
     }, 420);
-  }, [layout]);
+  }, [cancelCycleTransition, layout]);
 
   const startSwap = useCallback(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -112,6 +150,7 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
 
   const promoteTo = useCallback(
     (cardIdx: number) => {
+      cancelCycleTransition(true);
       orderRef.current = [cardIdx, ...orderRef.current.filter((x) => x !== cardIdx)];
       cardRefs.current.forEach((c) => {
         if (c) c.style.transition = "";
@@ -119,7 +158,7 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
       layout();
       force((n) => n + 1);
     },
-    [layout],
+    [cancelCycleTransition, layout],
   );
 
   useImperativeHandle(
@@ -128,32 +167,37 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
       topCardRect() {
         const swap = swapRef.current;
         if (!swap) return null;
-        orderRef.current = [0, 1, 2, 3];
-        cardRefs.current.forEach((el) => {
-          if (el) el.style.transition = "none";
-        });
-        layout();
-        void swap.offsetWidth; // 强制 reflow,确保读到末态
-        const top = cardRefs.current[0];
-        const rect = top ? top.getBoundingClientRect() : null;
-        cardRefs.current.forEach((el) => {
-          if (el) el.style.transition = "";
-        });
-        return rect;
+        const topIdx = orderRef.current[0];
+        const top = topIdx == null ? null : cardRefs.current[topIdx];
+        return top ? top.getBoundingClientRect() : null;
+      },
+      prepareTopCard() {
+        pausedRef.current = true;
+        stopSwap();
+        cancelCycleTransition(true);
+        const swap = swapRef.current;
+        const topIdx = orderRef.current[0];
+        const top = topIdx == null ? null : cardRefs.current[topIdx];
+        preparedTopCardRef.current = swap ? top ?? null : null;
+        return preparedTopCardRef.current?.getBoundingClientRect() ?? null;
       },
       pause() {
         pausedRef.current = true;
       },
       resume() {
+        preparedTopCardRef.current = null;
         pausedRef.current = false;
       },
       flyTopCard(target) {
         return new Promise<void>((resolve) => {
           pausedRef.current = true;
           stopSwap();
+          cancelCycleTransition(true);
           const swap = swapRef.current;
           const topIdx = orderRef.current[0];
-          const el = topIdx == null ? null : cardRefs.current[topIdx];
+          const currentTop = topIdx == null ? null : cardRefs.current[topIdx];
+          const el = preparedTopCardRef.current ?? currentTop;
+          preparedTopCardRef.current = null;
           if (!swap || !el) {
             resolve();
             return;
@@ -236,14 +280,18 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
         });
       },
     }),
-    [layout, stopSwap],
+    [cancelCycleTransition, stopSwap],
   );
 
   useEffect(() => {
     layout();
     startSwap();
-    return () => stopSwap();
-  }, [layout, startSwap, stopSwap]);
+    return () => {
+      stopSwap();
+      cancelCycleTransition(false);
+      preparedTopCardRef.current = null;
+    };
+  }, [cancelCycleTransition, layout, startSwap, stopSwap]);
 
   return (
     <div

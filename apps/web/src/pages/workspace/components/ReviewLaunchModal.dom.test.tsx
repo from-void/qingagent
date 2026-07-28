@@ -143,6 +143,141 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("每类至少保留一个模板");
   });
 
+  it("旧模板选择晚失败不会回滚较新的成功选择", async () => {
+    const balanced = {
+      ...builtins[1]!,
+      id: "source-balanced",
+      name: "均衡来源核查",
+    };
+    let rejectStrict!: (error: Error) => void;
+    let resolveBalanced!: () => void;
+    const strictRequest = new Promise<void>((_resolve, reject) => {
+      rejectStrict = reject;
+    });
+    const balancedRequest = new Promise<void>((resolve) => {
+      resolveBalanced = resolve;
+    });
+    const selectTemplate = vi.fn((_type: string, id: string) => (
+      id === "source-strict" ? strictRequest : balancedRequest
+    ));
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [...builtins, balanced],
+        selectedTemplateId: builtins[0]!.id,
+      }),
+      selectTemplate,
+    })} />));
+    const card = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => card("严格来源核查").click());
+    act(() => card("均衡来源核查").click());
+    await act(async () => {
+      resolveBalanced();
+      await balancedRequest;
+    });
+    await act(async () => {
+      rejectStrict(new Error("旧请求失败"));
+      await strictRequest.catch(() => undefined);
+    });
+
+    expect(card("均衡来源核查").getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("连续两次乐观选择均失败时回滚到最后确认持久化的模板", async () => {
+    const balanced = {
+      ...builtins[1]!,
+      id: "source-balanced-failed",
+      name: "均衡来源核查",
+    };
+    let rejectStrict!: (error: Error) => void;
+    let rejectBalanced!: (error: Error) => void;
+    const strictRequest = new Promise<void>((_resolve, reject) => {
+      rejectStrict = reject;
+    });
+    const balancedRequest = new Promise<void>((_resolve, reject) => {
+      rejectBalanced = reject;
+    });
+    const selectTemplate = vi.fn((_type: string, id: string) => (
+      id === "source-strict" ? strictRequest : balancedRequest
+    ));
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [...builtins, balanced],
+        selectedTemplateId: "source-default",
+      }),
+      selectTemplate,
+    })} />));
+    const card = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => card("严格来源核查").click());
+    act(() => card("均衡来源核查").click());
+    await act(async () => {
+      rejectBalanced(new Error("最新选择失败"));
+      await balancedRequest.catch(() => undefined);
+    });
+    await act(async () => {
+      rejectStrict(new Error("旧选择晚失败"));
+      await strictRequest.catch(() => undefined);
+    });
+
+    expect(card("标准来源核查").getAttribute("aria-checked")).toBe("true");
+    expect(card("严格来源核查").getAttribute("aria-checked")).toBe("false");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("模板选择保存失败，请重试");
+  });
+
+  it("新模板已保存但设默认失败时,重试只选择已有模板而不重复创建", async () => {
+    const saveTemplate = vi.fn().mockResolvedValue({
+      id: "source-saved-once",
+      type: "source",
+      name: "已落库模板",
+      prompt: "只保存一次",
+      builtin: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const selectTemplate = vi.fn()
+      .mockRejectedValueOnce(new Error("设置默认失败"))
+      .mockResolvedValueOnce(undefined);
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({ saveTemplate, selectTemplate })} />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-template-new")?.click());
+    const name = host.querySelector<HTMLInputElement>(".ws-launch-editor input")!;
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(name, "已落库模板");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(prompt, "只保存一次");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+        .find((button) => button.textContent === "保存")
+        ?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const savedCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes("已落库模板"));
+    expect(savedCard).toBeTruthy();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("模板已保存");
+
+    await act(async () => {
+      savedCard?.click();
+      await Promise.resolve();
+    });
+
+    expect(saveTemplate).toHaveBeenCalledTimes(1);
+    expect(saveTemplate.mock.calls[0]?.[0]).not.toHaveProperty("id");
+    expect(selectTemplate).toHaveBeenNthCalledWith(1, "source", "source-saved-once");
+    expect(selectTemplate).toHaveBeenNthCalledWith(2, "source", "source-saved-once");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("文档级补充自动带出、确认即持久化；敏感词弹窗内含词库管理", async () => {
     let stored = "上次重点核对品牌口号";
     const modalProps = props({
@@ -177,6 +312,60 @@ describe("ReviewLaunchModal", () => {
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
     expect(modalProps.saveSupplement).toHaveBeenCalledWith("sensitive", "这次只看引述");
     expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
+  });
+
+  it("切换词库会清除旧错误，且旧词条请求晚失败不会污染当前词库", async () => {
+    const availableLexicons = [
+      lexicons[0]!,
+      { id: "lexicon-brand", name: "品牌禁用词", description: "品牌规范", entryCount: 1 },
+    ];
+    let rejectOldRequest!: (error: Error) => void;
+    let resolveCurrentRequest!: (items: Array<{ word: string; replacement: string | null; note: string | null }>) => void;
+    const oldRequest = new Promise<Array<{ word: string; replacement: string | null; note: string | null }>>((_resolve, reject) => {
+      rejectOldRequest = reject;
+    });
+    const currentRequest = new Promise<Array<{ word: string; replacement: string | null; note: string | null }>>((resolve) => {
+      resolveCurrentRequest = resolve;
+    });
+    const loadLexiconEntries = vi.fn()
+      .mockImplementationOnce(() => oldRequest)
+      .mockRejectedValueOnce(new Error("当前请求失败"))
+      .mockImplementationOnce(() => currentRequest);
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      type: "sensitive",
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [{ ...builtins[0]!, id: "sensitive-default", type: "sensitive", name: "标准敏感词审查" }],
+        selectedTemplateId: "sensitive-default",
+      }),
+      loadLexicons: vi.fn().mockResolvedValue(availableLexicons),
+      loadLexiconEntries,
+    })} />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-resource-row .ws-launch-link")?.click());
+    const openLexicon = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-lexicon-open"))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => openLexicon("广告法极限词").click());
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    await act(async () => {
+      openLexicon("品牌禁用词").click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("词条加载失败，请重试");
+
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    act(() => openLexicon("广告法极限词").click());
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+
+    await act(async () => {
+      resolveCurrentRequest([{ word: "第一", replacement: "领先", note: null }]);
+      await currentRequest;
+      rejectOldRequest(new Error("旧请求晚失败"));
+      await oldRequest.catch(() => undefined);
+    });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector(".ws-lexicon-entry-list")?.textContent).toContain("第一");
   });
 
   it("菜单无省略号和词库项，query 用完整载荷而卡片只呈现摘要", async () => {

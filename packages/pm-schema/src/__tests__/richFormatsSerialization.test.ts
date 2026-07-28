@@ -297,7 +297,7 @@ describe("rich format serialization", () => {
     expect(list?.type === "orderedList" ? list.attrs.listStyle : null).toBe("decimal");
   });
 
-  it("normalizePmDoc 丢弃上传中、失败及遗留的图片占位节点", () => {
+  it("normalizePmDoc 丢弃上传中、失败及遗留的素材占位节点", () => {
     const normalized = normalizePmDoc(docWith([
       {
         type: "image",
@@ -327,6 +327,17 @@ describe("rich format serialization", () => {
           blockId: "upload-image-legacy-placeholder",
           src: "data:image/svg+xml,%3Csvg%2F%3E",
           alt: "状态已被旧规范化移除的占位图",
+        },
+      },
+      {
+        type: "fileAttachment",
+        attrs: {
+          blockId: "upload-file-pending",
+          fileId: "upload-file-pending",
+          filename: "上传中的附件.pdf",
+          mimeType: "application/pdf",
+          size: 42,
+          uploading: true,
         },
       },
       {

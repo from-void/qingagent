@@ -92,6 +92,42 @@ describe("FeedbackPanel", () => {
       expect.objectContaining({ privacyLevel: "L2" }),
     );
   });
+
+  it("文档列表加载失败时显示失败态，并允许按 L1 空 sessionIds 导出", async () => {
+    const exportDiagnostics = vi.fn(async () => ({ saved: true, path: "/tmp/diag.zip" }));
+    (window as unknown as { electron?: unknown }).electron = {
+      isDesktop: true,
+      platform: "darwin",
+      exportDiagnostics,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/home")) return json({ error: "unavailable" }, 503);
+      return json({});
+    }));
+
+    await render(<FeedbackPanel />);
+
+    expect(host?.textContent).toContain("文档列表暂时无法加载");
+    expect(host?.textContent).not.toContain("暂无文档");
+    expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
+
+    await click(buttonByWf("FeedbackExportButton"));
+
+    expect(exportDiagnostics).toHaveBeenCalledWith({
+      privacyLevel: "L1",
+      sessionIds: [],
+    });
+  });
+
+  it("文档列表成功返回空数组时仍显示真实空态并禁用导出", async () => {
+    vi.stubGlobal("fetch", makeFetchMock(0));
+
+    await render(<FeedbackPanel />);
+
+    expect(host?.textContent).toContain("暂无文档");
+    expect(host?.textContent).not.toContain("文档列表暂时无法加载");
+    expect(buttonByWf("FeedbackExportButton").disabled).toBe(true);
+  });
 });
 
 async function render(element: ReactElement): Promise<void> {

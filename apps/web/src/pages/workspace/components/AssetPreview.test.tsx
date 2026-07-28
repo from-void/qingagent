@@ -70,6 +70,19 @@ describe("toAssetSource 来源链接映射", () => {
     } as unknown as Resource);
     expect(source.sourceUrl).toBeUndefined();
   });
+
+  it("metadata.updatedAt 透传为正文版本号", () => {
+    const source = toAssetSource({
+      ...baseResource,
+      metadata: {
+        fileId: "f-1",
+        updatedAt: "2026-07-28T01:02:03.000Z",
+      },
+    } as unknown as Resource);
+
+    expect(source.updatedAt).toBe("2026-07-28T01:02:03.000Z");
+    expect(source.bodyText).toBe("");
+  });
 });
 
 describe("AssetPreview 摘要编辑", () => {
@@ -199,8 +212,14 @@ describe("AssetPreview 连接文件夹预览来源", () => {
     expect(host?.querySelector("img")?.getAttribute("src")).toBe(fileUrl);
   });
 
-  it("PDF 文件直接用 folder /file URL 作为 iframe src", async () => {
+  it("PDF 文件校验响应与签名后使用 Blob URL，并在卸载时释放", async () => {
     const fileUrl = "/api/v1/sessions/s1/folder-sources/fld/file?path=report.pdf&maxBytes=20971520";
+    const fetchMock = vi.fn(async () => new Response("%PDF-1.7\n内容", {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    }));
+    const { createObjectURL, revokeObjectURL } = mockObjectUrl();
+    vi.stubGlobal("fetch", fetchMock);
 
     await render(
       <AssetPreview
@@ -215,8 +234,131 @@ describe("AssetPreview 连接文件夹预览来源", () => {
         onClose={() => undefined}
       />,
     );
+    await flushMicrotasks(8);
 
-    expect(host?.querySelector("iframe")?.getAttribute("src")).toBe(fileUrl);
+    expect(fetchMock).toHaveBeenCalledWith(fileUrl);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector("iframe")?.getAttribute("src")).toBe("blob:validated-pdf");
+
+    await act(async () => {
+      root?.unmount();
+      root = null;
+    });
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:validated-pdf");
+  });
+
+  it.each([
+    ["请求失败", new Response("missing", { status: 404 })],
+    ["类型错误", new Response("%PDF-1.7", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    })],
+    ["签名错误", new Response("<html>not pdf</html>", {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    })],
+  ])("PDF %s 时显示现有内联不可用状态", async (_caseName, response) => {
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+    mockObjectUrl();
+
+    await render(
+      <AssetPreview
+        source={assetSource({
+          id: "folder:fld:report.pdf",
+          tag: "pdf",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          preview: {
+            kind: "url",
+            url: "/api/v1/sessions/s1/folder-sources/fld/file?path=report.pdf&maxBytes=20971520",
+          },
+        })}
+        sessionId="s1"
+        onClose={() => undefined}
+      />,
+    );
+    await flushMicrotasks(8);
+
+    expect(host?.querySelector("iframe")).toBeNull();
+    expect(host?.querySelector(".fd-rp-body-text")?.textContent).toBe("预览不可用");
+  });
+});
+
+describe("AssetPreview 内部素材正文", () => {
+  it("无 scoped 请求上下文的静态来源仍使用自身完整 bodyText", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(
+      <AssetPreview
+        source={assetSource({ bodyText: "静态来源完整正文" })}
+        sessionId={null}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(host?.querySelector(".fd-rp-body-text")?.textContent).toBe("静态来源完整正文");
+  });
+
+  it("正文请求失败时不把摘要伪装成正文", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 404 })));
+
+    await render(
+      <AssetPreview
+        source={assetSource({
+          abstract: "仅供列表展示的短摘要",
+          bodyText: "仅供列表展示的短摘要",
+        })}
+        sessionId="s1"
+        onClose={() => undefined}
+      />,
+    );
+    await flushMicrotasks();
+
+    const body = host?.querySelector(".fd-rp-body-text");
+    expect(body?.textContent).toBe("预览不可用");
+    expect(body?.textContent).not.toContain("仅供列表展示的短摘要");
+  });
+
+  it("同一素材 updatedAt 推进时清空旧正文并重新拉取", async () => {
+    let resolveUpdated: (response: Response) => void = () => undefined;
+    const updatedResponse = new Promise<Response>((resolve) => {
+      resolveUpdated = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ text: "旧正文", summary: null }))
+      .mockReturnValueOnce(updatedResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const source = assetSource({ updatedAt: "2026-07-28T01:00:00.000Z" });
+
+    await render(
+      <AssetPreview source={source} sessionId="s1" onClose={() => undefined} />,
+    );
+    await flushMicrotasks();
+    expect(host?.querySelector(".fd-rp-body-text")?.textContent).toBe("旧正文");
+
+    await act(async () => {
+      root?.render(
+        <AssetPreview
+          source={{ ...source, updatedAt: "2026-07-28T01:00:01.000Z" }}
+          sessionId="s1"
+          onClose={() => undefined}
+        />,
+      );
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(host?.querySelector(".fd-rp-body-text")?.textContent).toBe("加载中...");
+    expect(host?.textContent).not.toContain("旧正文");
+
+    await act(async () => {
+      resolveUpdated(Response.json({ text: "新正文", summary: null }));
+      await updatedResponse;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host?.querySelector(".fd-rp-body-text")?.textContent).toBe("新正文");
   });
 });
 
@@ -259,4 +401,19 @@ function assetSource(overrides: Partial<AssetSource> = {}): AssetSource {
     bodyText: "",
     ...overrides,
   };
+}
+
+function mockObjectUrl(): {
+  createObjectURL: ReturnType<typeof vi.fn>;
+  revokeObjectURL: ReturnType<typeof vi.fn>;
+} {
+  const NativeURL = URL;
+  const createObjectURL = vi.fn(() => "blob:validated-pdf");
+  const revokeObjectURL = vi.fn();
+  class MockURL extends NativeURL {
+    static createObjectURL = createObjectURL;
+    static revokeObjectURL = revokeObjectURL;
+  }
+  vi.stubGlobal("URL", MockURL);
+  return { createObjectURL, revokeObjectURL };
 }

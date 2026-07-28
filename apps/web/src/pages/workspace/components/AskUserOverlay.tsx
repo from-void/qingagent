@@ -531,6 +531,10 @@ function ChoiceQuestionFields({
   const previewOption = question.options.find((option) => option.value === highlightedValue && option.preview?.trim())
     ?? selectedPreview
     ?? question.options.find((option) => Boolean(option.preview?.trim()));
+  const rovingOptionValue = highlightedValue
+    ?? answer.chosen.find((value) => question.options.some((option) => option.value === value))
+    ?? previewOption?.value
+    ?? question.options[0]?.value;
   const hasDescriptions = question.options.some((option) => Boolean(option.description?.trim()));
   const options = (
     <div
@@ -544,7 +548,7 @@ function ChoiceQuestionFields({
           option={option}
           isMulti={question.kind.kind === "multi"}
           selectedValues={answer.chosen ?? []}
-          previewFocused={previewOption?.value === option.value && hasPreview}
+          previewFocused={rovingOptionValue === option.value}
           onPreviewFocus={setHighlightedValue}
           onSingle={onSingle}
           onMulti={onMulti}
@@ -644,7 +648,7 @@ function OptionChip({
         type={isMulti ? "checkbox" : "radio"}
         name={qid}
         checked={checked}
-        onFocus={() => onPreviewFocus(option.preview?.trim() ? option.value : null)}
+        onFocus={() => onPreviewFocus(option.value)}
         onBlur={() => onPreviewFocus(null)}
         tabIndex={previewFocused ? 0 : -1}
         onKeyDown={(event) => {

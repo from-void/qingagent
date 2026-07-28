@@ -29,14 +29,20 @@ interface FolderEntry {
 interface FolderEntriesResponse {
   entries: FolderEntry[];
   truncated: boolean;
+  nextCursor: string | null;
 }
 
 interface DirState {
   entries: FolderEntry[];
-  truncated: boolean;
-  limit: number;
+  nextCursor: string | null;
   loading: boolean;
   error: string | null;
+}
+
+export interface LinkedFileReference {
+  label: string;
+  folderId?: string;
+  childRelPath?: string;
 }
 
 interface LinkedFilesPanelProps {
@@ -49,7 +55,7 @@ interface LinkedFilesPanelProps {
    * 只有它出现过,后续 folderSource 首次到达才自动展开;进入已关联会话的数据加载不会触发。
    */
   folderAttachSignal?: number;
-  onReference: (label: string) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewMaterial?: (source: AssetSource) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
   onRemoveMaterial?: (source: AssetSource) => void;
@@ -94,6 +100,7 @@ export function LinkedFilesPanel({
   const pendingAttachExpandRef = useRef(false);
   const entryControllersRef = useRef<Set<AbortController>>(new Set());
   const locateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocateFolderSignalRef = useRef(0);
   const visibleDirStates = useMemo(() => {
     if (!folderIdentity) return {};
     const prefix = `${folderIdentity}\u0000`;
@@ -157,7 +164,7 @@ export function LinkedFilesPanel({
   }, []);
 
   const loadEntries = useCallback(
-    async (relPath: string, limit = DEFAULT_ENTRY_LIMIT) => {
+    async (relPath: string, cursor: string | null = null) => {
       if (!folderSource || !folderIdentity) return;
       const requestFolderIdentity = folderIdentity;
       const stateKey = buildDirStateKey(requestFolderIdentity, relPath);
@@ -165,13 +172,13 @@ export function LinkedFilesPanel({
         ...prev,
         [stateKey]: {
           entries: prev[stateKey]?.entries ?? [],
-          truncated: prev[stateKey]?.truncated ?? false,
-          limit,
+          nextCursor: prev[stateKey]?.nextCursor ?? cursor,
           loading: true,
           error: null,
         },
       }));
-      const params = new URLSearchParams({ path: relPath, limit: String(limit) });
+      const params = new URLSearchParams({ path: relPath, limit: String(DEFAULT_ENTRY_LIMIT) });
+      if (cursor !== null) params.set("cursor", cursor);
       const controller = new AbortController();
       entryControllersRef.current.add(controller);
       let timedOut = false;
@@ -204,9 +211,12 @@ export function LinkedFilesPanel({
         setDirStates((prev) => ({
           ...prev,
           [stateKey]: {
-            entries: Array.isArray(body.entries) ? body.entries : [],
-            truncated: body.truncated === true,
-            limit,
+            entries: cursor === null
+              ? (Array.isArray(body.entries) ? body.entries : [])
+              : [...(prev[stateKey]?.entries ?? []), ...(Array.isArray(body.entries) ? body.entries : [])],
+            nextCursor: typeof body.nextCursor === "string" && body.nextCursor.length > 0
+              ? body.nextCursor
+              : null,
             loading: false,
             error: null,
           },
@@ -221,8 +231,7 @@ export function LinkedFilesPanel({
           ...prev,
           [stateKey]: {
             entries: prev[stateKey]?.entries ?? [],
-            truncated: prev[stateKey]?.truncated ?? false,
-            limit,
+            nextCursor: prev[stateKey]?.nextCursor ?? cursor,
             loading: false,
             error: message,
           },
@@ -267,7 +276,8 @@ export function LinkedFilesPanel({
   }, [expandFolderRoot, folderIdentity]);
 
   useEffect(() => {
-    if (locateFolderSignal <= 0) return;
+    if (locateFolderSignal <= lastLocateFolderSignalRef.current) return;
+    lastLocateFolderSignalRef.current = locateFolderSignal;
     expandFolderRoot();
   }, [expandFolderRoot, locateFolderSignal]);
 
@@ -293,13 +303,6 @@ export function LinkedFilesPanel({
       if (shouldLoad) void loadEntries(relPath);
     },
     [expandedDirs, loadEntries, visibleDirStates],
-  );
-
-  const handleReference = useCallback(
-    (label: string) => {
-      onReference(label);
-    },
-    [onReference],
   );
 
   if (!hasContent) return null;
@@ -358,7 +361,7 @@ export function LinkedFilesPanel({
                 level={1}
                 disabled={disabled}
                 onHover={setHoverInfo}
-                onReference={handleReference}
+                onReference={onReference}
                 onPreviewMaterial={onPreviewMaterial}
                 onRemoveMaterial={onRemoveMaterial}
                 onRetryMaterialParse={onRetryMaterialParse}
@@ -391,7 +394,7 @@ export function LinkedFilesPanel({
                 onHover={setHoverInfo}
                 onToggleDir={toggleDir}
                 onLoad={loadEntries}
-                onReference={handleReference}
+                onReference={onReference}
                 onPreviewFolderFile={onPreviewFolderFile}
                 onToast={onToast}
                 folderSource={folderSource}
@@ -447,7 +450,7 @@ function MaterialTreeRow({
   level?: number;
   disabled: boolean;
   onHover: (text: string) => void;
-  onReference: (label: string) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewMaterial?: (source: AssetSource) => void;
   onRemoveMaterial?: (source: AssetSource) => void;
   onRetryMaterialParse?: (fileId: string) => void;
@@ -508,7 +511,7 @@ function MaterialTreeRow({
               disabled={disabled}
               onClick={(event) => {
                 event.stopPropagation();
-                onReference(row.filename);
+                onReference({ label: row.filename });
               }}
             >
               <RefIcon />
@@ -628,8 +631,8 @@ function DirChildren({
   disabled: boolean;
   onHover: (text: string) => void;
   onToggleDir: (relPath: string) => void;
-  onLoad: (relPath: string, limit?: number) => void;
-  onReference: (label: string) => void;
+  onLoad: (relPath: string, cursor?: string | null) => void;
+  onReference: (reference: LinkedFileReference) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
   onToast?: (message: string) => void;
 }) {
@@ -651,7 +654,7 @@ function DirChildren({
           type="button"
           className="lf-retry"
           disabled={disabled}
-          onClick={() => onLoad(relPath, state.limit)}
+          onClick={() => onLoad(relPath, state.nextCursor)}
         >
           重试
         </button>
@@ -727,7 +730,11 @@ function DirChildren({
                 disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onReference(entry.name);
+                  onReference({
+                    label: entry.name,
+                    folderId: folderSource.id,
+                    childRelPath,
+                  });
                 }}
               >
                 <RefIcon />
@@ -737,13 +744,13 @@ function DirChildren({
           </div>
         );
       })}
-      {state.truncated && (
+      {state.nextCursor !== null && (
         <button
           type="button"
           className={`lf-row lf-subrow lf-more ${levelClass(level)}`}
           data-wf="LinkedFolderMore"
           disabled={disabled || state.loading}
-          onClick={() => onLoad(relPath, Math.min(state.limit * 2, 500))}
+          onClick={() => onLoad(relPath, state.nextCursor)}
         >
           <span className="lf-tw" />
           <span className="lf-name">还有更多项…点击继续加载</span>

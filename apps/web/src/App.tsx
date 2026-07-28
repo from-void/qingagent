@@ -131,7 +131,16 @@ function AppShell() {
   }`;
   const suspenseBackground = routePresentation?.suspenseBackground ?? "var(--app-boot-bg, #ece4d3)";
   if (isMobileViewport) {
-    return <MobileOpenOnDesktopNotice onCopied={() => action("复制成功")} />;
+    return (
+      <MobileOpenOnDesktopNotice
+        onCopied={() => action("复制成功")}
+        onCopyFailed={() => toast.show({
+          message: "自动复制失败，请长按上方网址手动复制",
+          tone: "warn",
+          dedupeKey: "desktop-url-copy-failed",
+        })}
+      />
+    );
   }
   const devRoutes: Partial<Record<RouteName, ReactNode>> = devPages
     ? {
@@ -186,30 +195,46 @@ function useIsMobileViewport() {
   return isMobileViewport;
 }
 
-function MobileOpenOnDesktopNotice({ onCopied }: { onCopied: () => void }) {
+export function MobileOpenOnDesktopNotice({
+  onCopied,
+  onCopyFailed,
+  url = DESKTOP_SITE_URL,
+}: {
+  onCopied: () => void;
+  onCopyFailed: () => void;
+  url?: string;
+}) {
   const copyUrl = async () => {
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(DESKTOP_SITE_URL);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
     } catch {
-      // 移动端非安全上下文 / 不支持 Clipboard API 时,回退到 execCommand 复制
+      // 移动端非安全上下文可能拒绝 Clipboard API，继续走兼容回退。
+    }
+    if (!copied) {
       const ta = document.createElement("textarea");
-      ta.value = DESKTOP_SITE_URL;
+      ta.value = url;
       ta.style.position = "fixed";
       ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
       try {
-        document.execCommand("copy");
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        copied = document.execCommand("copy");
       } catch {
-        /* 忽略:即便复制失败也提示用户网址已显示在页面上 */
+        copied = false;
+      } finally {
+        ta.remove();
       }
-      document.body.removeChild(ta);
     }
-    onCopied();
+    if (copied) onCopied();
+    else onCopyFailed();
   };
 
-  const hasUrl = DESKTOP_SITE_URL.length > 0;
+  const hasUrl = url.length > 0;
   return (
     <main className="mobile-desktop-notice" aria-labelledby="mobile-desktop-notice-title">
       <section className="mobile-desktop-notice__content">
@@ -218,7 +243,7 @@ function MobileOpenOnDesktopNotice({ onCopied }: { onCopied: () => void }) {
         </p>
         {hasUrl && (
           <>
-            <p className="mobile-desktop-notice__url">{DESKTOP_SITE_URL}</p>
+            <p className="mobile-desktop-notice__url">{url}</p>
             <button type="button" className="mobile-desktop-notice__button" onClick={copyUrl}>
               复制网址
             </button>

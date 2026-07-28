@@ -209,6 +209,32 @@ function resolveListItemBlockIdAtPos(editor: Pick<Editor, "state">, pos: number)
   }
 }
 
+interface ListItemPosition {
+  parentListPos: number;
+  itemIndex: number;
+}
+
+function resolveListItemPositionAtPos(
+  editor: Pick<Editor, "state">,
+  pos: number,
+): ListItemPosition | null {
+  try {
+    const $pos = editor.state.doc.resolve(clampDocPos(editor, pos));
+    for (let depth = $pos.depth; depth >= 1; depth -= 1) {
+      const node = $pos.node(depth);
+      if (!isListItemNodeType(node.type.name) || depth < 2) continue;
+      const parentDepth = depth - 1;
+      return {
+        parentListPos: $pos.before(parentDepth),
+        itemIndex: $pos.index(parentDepth),
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** 取某位置所在 listItem/taskItem 的 blockId；不在 item 内时保持旧行为返回顶层块 id。 */
 export function resolveItemBlockIdAtPos(editor: Pick<Editor, "state">, pos: number): string | undefined {
   return resolveListItemBlockIdAtPos(editor, pos) ?? resolveTopBlockIdAtPos(editor, pos);
@@ -221,24 +247,21 @@ export function resolveListItemSelectionRefs(
 ): string[] {
   if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return [];
   const endPos = Math.max(from, to - 1);
-  const fromItem = resolveListItemBlockIdAtPos(editor, from);
-  const toItem = resolveListItemBlockIdAtPos(editor, endPos);
-  if (!fromItem || !toItem) return [];
-
+  const fromItem = resolveListItemPositionAtPos(editor, from);
+  const toItem = resolveListItemPositionAtPos(editor, endPos);
+  if (!fromItem || !toItem || fromItem.parentListPos !== toItem.parentListPos) return [];
+  const parentList = editor.state.doc.nodeAt(fromItem.parentListPos);
+  if (!parentList) return [];
+  const firstIndex = Math.min(fromItem.itemIndex, toItem.itemIndex);
+  const lastIndex = Math.max(fromItem.itemIndex, toItem.itemIndex);
   const refs: string[] = [];
-  const seen = new Set<string>();
-  editor.state.doc.descendants((node, pos) => {
-    if (!isListItemNodeType(node.type.name)) return true;
+  for (let index = firstIndex; index <= lastIndex; index += 1) {
+    const node = parentList.child(index);
+    if (!isListItemNodeType(node.type.name)) return [];
     const blockId = node.attrs?.blockId;
-    if (typeof blockId !== "string" || !blockId || seen.has(blockId)) return true;
-    const nodeFrom = pos;
-    const nodeTo = pos + node.nodeSize;
-    if (nodeTo > from && nodeFrom < to) {
-      seen.add(blockId);
-      refs.push(blockId);
-    }
-    return true;
-  });
+    if (typeof blockId !== "string" || !blockId) return [];
+    refs.push(blockId);
+  }
   return refs;
 }
 
@@ -788,7 +811,11 @@ export function DocToolbar({
           const { from, to } = editor.state.selection;
           const selected = editor.state.doc.textBetween(from, to, "\n").trim();
           const source = await resolveDiagramSourceForInsert(selected);
-          run("插入图表", () => chain.insertDiagram(source ? { source } : undefined).run());
+          // Mermaid 动态加载/解析期间编辑器可能已产生新事务；旧 chain 持有旧 state，
+          // 此处必须从最新 state 重建，否则 ProseMirror 会拒绝 mismatched transaction。
+          run("插入图表", () =>
+            editor.chain().insertDiagram(source ? { source } : undefined).run(),
+          );
           break;
         }
         case "insertDrawio": {

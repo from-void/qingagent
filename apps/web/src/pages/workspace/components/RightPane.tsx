@@ -251,7 +251,14 @@ export function RightPane({
   const showLock = dimensions.overlay === "imageProgress" && !viewingHistory;
   const reviewMode = dimensions.content.kind === "pendingReview";
   if (dimensions.agentBusy && !showLock && !viewingHistory && !reviewMode) {
-    const busyDoc = generationDraftDoc ?? doc;
+    const busyDoc = selectRenderDoc({
+      viewingHistory,
+      viewingSnapshotDoc,
+      doc,
+      generationDraftDoc,
+      showPatches: false,
+      overlay: dimensions.overlay,
+    });
     if (!busyDoc) return <QingLoading reasoning />;
     const runMatchesBusyDoc = presentationRun?.docVersion === busyDoc.version;
     if (runMatchesBusyDoc) {

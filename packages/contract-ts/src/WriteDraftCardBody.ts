@@ -10,6 +10,8 @@ export type WriteDraftCardBody = {
   charCount: number;
   /** 正文滚动摘录(最近写出的一小段),done/failed 后为 null。 */
   excerpt: string | null;
+  /** 展示 lane 切换或 winner 全文帧；前端须直接替换摘录缓冲，不能按字符重叠续接。 */
+  resetExcerpt?: boolean;
   /** 长度规格(用户没给字数时全为 null)。 */
   targetLength: number | null;
   minLength: number | null;

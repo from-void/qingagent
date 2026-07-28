@@ -1573,6 +1573,39 @@ describe("WorkspacePage review controls", () => {
     expect(loading!.classList.contains("is-static")).toBe(false);
   });
 
+  it("已有正文开始新一轮生成时,空草稿不会在首块到达前遮住正文", async () => {
+    const { RightPane } = await import("./WorkspacePage");
+    const doc = pmDocToViewDocumentSnapshot(
+      pmDoc([pmParagraph("busy-canonical", "生成前已有正文")]),
+      8,
+      "t-busy-canonical",
+    );
+    const emptyDraft = pmDocToViewDocumentSnapshot(pmDoc([]), 9, "t-busy-empty-draft");
+
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            dimensions: reviewDimensions({
+              content: { kind: "editing" },
+              editor: "locked",
+              overlay: null,
+              agentBusy: true,
+            }),
+            doc,
+            generationDraftDoc: emptyDraft,
+            effectiveReview: false,
+            remainingCount: 0,
+            visiblePatchCount: 0,
+          })}
+        />
+      </section>,
+    );
+
+    expect(host?.querySelector('[data-wf="DocumentSnapshotView"]')).not.toBeNull();
+    expect(host?.textContent).toContain("生成前已有正文");
+  });
+
   it("inline askUser 暂停时若已有文档,右侧保持只读正文而不是回到 loading", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const doc = pmDocToViewDocumentSnapshot(

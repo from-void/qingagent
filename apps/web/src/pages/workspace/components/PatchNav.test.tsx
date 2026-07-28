@@ -68,7 +68,8 @@ describe("PatchNav", () => {
   it("用剩余口径展示待处理处数", async () => {
     await renderPatchNav(baseProps({ totalCount: 3, remainingCount: 2 }));
 
-    expect(host?.textContent).toContain("剩余 · 3 处");
+    expect(host?.textContent).toContain("剩余 · 2 处");
+    expect(host?.textContent).not.toContain("剩余 · 3 处");
     expect(host?.querySelector(".pn-label")?.getAttribute("title")).toBe("剩余 2 处");
   });
 

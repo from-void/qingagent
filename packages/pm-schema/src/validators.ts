@@ -596,9 +596,23 @@ function isTransientUploadImageNode(value: unknown): boolean {
   );
 }
 
+function isTransientUploadFileNode(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== "fileAttachment" || !record.attrs || typeof record.attrs !== "object") {
+    return false;
+  }
+  const attrs = record.attrs as Record<string, unknown>;
+  return attrs.uploading === true || (
+    typeof attrs.blockId === "string" &&
+    attrs.blockId.startsWith("upload-file-") &&
+    attrs.fileId === attrs.blockId
+  );
+}
+
 function normalizeNodeContent(content: unknown[], path: number[]): unknown[] {
   return content.flatMap((child, index) =>
-    isTransientUploadImageNode(child)
+    isTransientUploadImageNode(child) || isTransientUploadFileNode(child)
       ? []
       : [normalizeNodeShape(child, [...path, index])],
   );

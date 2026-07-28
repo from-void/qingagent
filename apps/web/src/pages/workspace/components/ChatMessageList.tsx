@@ -8,7 +8,7 @@ import type {
   MessagePart,
   ToolCallSpec,
 } from "../data/protocol";
-import { sanitizeVisibleText } from "@qingagent/contract-ts";
+import { parseChipRichText, sanitizeVisibleText } from "@qingagent/contract-ts";
 import { InkBubble } from "../../../system";
 import { SparkleIcon, FileChipIcon } from "../../../system/SkillMenu";
 import { StreamingChars, useStreamFxConfig } from "./StreamingText";
@@ -1331,21 +1331,17 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
 }
 
 function UserPartWithChips({ body, chips }: { body: string; chips: ChatChip[] }) {
-  // Split body by chip markers, preserving the markers as separate tokens
-  const segments = body.split(/(\{\{chip:\d+\}\})/);
+  const parts = parseChipRichText(body);
   return (
     <div style={{ marginBottom: 2, whiteSpace: "pre-wrap" }}>
-      {segments.map((seg, i) => {
-        const markerMatch = seg.match(/^\{\{chip:(\d+)\}\}$/);
-        if (markerMatch) {
-          const chipIdx = parseInt(markerMatch[1]!, 10);
-          const chip = chips[chipIdx];
+      {parts.map((part, i) => {
+        if (part.kind === "chip") {
+          const chip = chips[part.index];
           if (!chip) return null;
           return <ChatChipBadge key={`chip-${i}`} chip={chip} inline />;
         }
         // Render text segment, preserving newlines
-        if (seg === "") return null;
-        const lines = seg.split("\n");
+        const lines = part.text.split("\n");
         return (
           <span key={`text-${i}`}>
             {lines.map((line, j) => (

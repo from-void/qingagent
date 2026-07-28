@@ -69,6 +69,38 @@ function editorWithList(items: string[]) {
   });
 }
 
+function editorWithSeparatedLists() {
+  const list = (id: string, itemId: string, text: string) => ({
+    type: "bulletList" as const,
+    attrs: { blockId: id },
+    content: [{
+      type: "listItem" as const,
+      attrs: { blockId: itemId },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: `${itemId}-p` },
+        content: [{ type: "text" as const, text }],
+      }],
+    }],
+  });
+  return new Editor({
+    extensions: createQingagentExtensions(),
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        list("list-1", "item-1", "第一行"),
+        {
+          type: "paragraph",
+          attrs: { blockId: "between" },
+          content: [{ type: "text", text: "中间段落" }],
+        },
+        list("list-2", "item-2", "第二行"),
+      ],
+    } satisfies PmDoc,
+  });
+}
+
 function selectedEditor(text = "目标文本") {
   const editor = editorWithText(text);
   editor.commands.setTextSelection({ from: 1, to: text.length + 1 });
@@ -281,6 +313,21 @@ describe("DocToolbar AI 修改选区", () => {
       expect(resolveAiModifyLiveSelection(editor)).toMatchObject({
         kind: "ready",
         selectionRefs: ["item-1", "item-2"],
+      });
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("跨两个列表且夹普通段落的选区沿用跨段落拒绝,不提交残缺 item refs", () => {
+    const editor = editorWithSeparatedLists();
+    try {
+      const [first, , second] = textBlockRanges(editor);
+      if (!first || !second) throw new Error("fixture missing separated list ranges");
+      editor.commands.setTextSelection({ from: first.from, to: second.to });
+
+      expect(resolveAiModifyLiveSelection(editor)).toEqual({
+        kind: "crossBlockSelection",
       });
     } finally {
       editor.destroy();

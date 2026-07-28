@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mergeDraftExcerpt } from "@qingagent/contract-ts";
 
 // writeDraft 赛马:固定一轮 4 路并发生成,字数只参与 best-of 选优;
 // 4 路全废直接返回 ok:false,由 agent 重新调用 writeDraft 做工具维度重试。
@@ -97,7 +98,12 @@ async function runWithContext(tool: unknown, input: Record<string, unknown>, ctx
 function progressEvents(writes: Array<Record<string, unknown>>) {
   return writes
     .filter((w) => w.type === "writedraft-progress")
-    .map((w) => w.progress as { phase: string; charCount: number; excerpt?: string | null });
+    .map((w) => w.progress as {
+      phase: string;
+      charCount: number;
+      excerpt?: string | null;
+      resetExcerpt?: boolean;
+    });
 }
 
 describe("writeDraft 赛马式字数控制", () => {
@@ -311,9 +317,12 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(writingCounts).toContain(40);
     // lane a 完稿(40 字,脱靶)后移交:仍在写的 lane 的进度接续出现,不再卡在 40
     expect(Math.max(...writingCounts)).toBeGreaterThan(40);
+    const handoffEvent = events.find((event) => event.phase === "writing" && event.charCount > 40);
+    expect(handoffEvent?.resetExcerpt).toBe(true);
     // 赢家 c(100 字命中)最终整帧锁定
     expect(events.at(-1)).toMatchObject({ phase: "finalizing", charCount: 100 });
     expect(events.at(-1)?.excerpt).toContain("c".repeat(20));
+    expect(events.at(-1)?.resetExcerpt).toBe(true);
   });
 
   it("流式展示初选只认首个正文 lane,不被先注册的空 lane 锁住", async () => {
@@ -408,6 +417,61 @@ describe("writeDraft 赛马式字数控制", () => {
       expect.arrayContaining([40, 80]),
     );
     expect(events.at(-1)).toMatchObject({ phase: "finalizing", charCount: 100 });
+  });
+
+  it("展示 lane 死亡且暂无接手正文时，下一 lane 首帧强制重置旧摘录", async () => {
+    const { tool } = await makeTool();
+    const brokenA = "<pre>旧尾共享<p>坏块</p></pre>";
+    const validB = qingmlParagraph("共享新正文");
+    streamInnerModelMock
+      .mockImplementationOnce((input: InnerModelCall) => {
+        input.onContentStart?.();
+        input.onContentDelta?.(brokenA, brokenA);
+        return new Promise((resolve) => setTimeout(
+          () => resolve({ raw: brokenA, contentStartMs: 0, finishReason: "stop" }),
+          10,
+        ));
+      })
+      .mockImplementationOnce((input: InnerModelCall) =>
+        new Promise((resolve) => setTimeout(() => {
+          input.onContentStart?.();
+          input.onContentDelta?.(validB, validB);
+          resolve({ raw: validB, contentStartMs: 0, finishReason: "stop" });
+        }, 40)),
+      )
+      .mockImplementationOnce((input: InnerModelCall) =>
+        new Promise((_resolve, reject) => {
+          input.abortSignal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+      )
+      .mockImplementationOnce((input: InnerModelCall) =>
+        new Promise((_resolve, reject) => {
+          input.abortSignal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+      );
+    const writes: Array<Record<string, unknown>> = [];
+    const ctx = { writer: { write: (chunk: Record<string, unknown>) => void writes.push(chunk) } };
+
+    const out = await runWithContext(tool, { title: "t", outline: "o" }, ctx);
+
+    expect(out.ok).toBe(true);
+    const writingEvents = progressEvents(writes).filter((event) => event.phase === "writing");
+    const oldEventIndex = writingEvents.findIndex((event) => event.excerpt?.includes("旧尾共享"));
+    const newEventIndex = writingEvents.findIndex((event) => event.excerpt?.includes("共享新正文"));
+    expect(oldEventIndex).toBeGreaterThanOrEqual(0);
+    expect(newEventIndex).toBeGreaterThan(oldEventIndex);
+    expect(writingEvents[newEventIndex]?.resetExcerpt).toBe(true);
+
+    const merged = writingEvents
+      .slice(0, newEventIndex + 1)
+      .reduce(
+        (buffer, event) => event.excerpt == null
+          ? buffer
+          : mergeDraftExcerpt(buffer, event.excerpt, event.resetExcerpt === true),
+        "",
+      );
+    expect(merged).toContain("共享新正文");
+    expect(merged).not.toContain("旧尾共享");
   });
 
   it("正文 delta 进度按 200ms 或新增 24 字节流", async () => {

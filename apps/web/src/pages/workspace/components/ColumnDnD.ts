@@ -265,17 +265,20 @@ export function resolveDropIntent(input: ResolveDropIntentInput): DropIntent {
   const side: ColumnDropSide = coords.left < middle ? "left" : "right";
   const distance = side === "left" ? coords.left - rect.left : rect.right - coords.left;
   if (distance > edgePx) return { kind: "vertical", source, target, placement };
-  // MAX_COLUMNS:目标列所在 columnList 已满,且不是同列表内重排(重排不增列)→ 不建栏,
-  // 降级竖直(让原生 dropcursor 接管),避免画了"建栏"金边却在 drop 时无法建栏。
+  // MAX_COLUMNS:按删源后的列数判断是否还有建栏槽位。同列表只有源列会因删掉
+  // 唯一块而塌陷时才会空出一列；否则降级竖直，避免画了金边却在 drop 时无法建栏。
   if (target.parentType === "column" && target.columnListPos != null) {
     const list = state.doc.nodeAt(target.columnListPos);
-    if (
-      list &&
-      list.type.name === "columnList" &&
-      list.childCount >= MAX_COLUMNS &&
-      source.columnListPos !== target.columnListPos
-    ) {
-      return { kind: "vertical", source, target, placement };
+    if (list && list.type.name === "columnList") {
+      const sourceColumn =
+        source.columnListPos === target.columnListPos && source.columnIndex != null
+          ? list.child(source.columnIndex)
+          : null;
+      const sourceColumnWillCollapse = sourceColumn?.type.name === "column" && sourceColumn.childCount === 1;
+      const columnsAfterSourceRemoval = list.childCount - (sourceColumnWillCollapse ? 1 : 0);
+      if (columnsAfterSourceRemoval >= MAX_COLUMNS) {
+        return { kind: "vertical", source, target, placement };
+      }
     }
   }
   return { kind: "columnEdge", source, target, side, edgePx };

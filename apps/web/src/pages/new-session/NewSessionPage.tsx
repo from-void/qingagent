@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { routeToHash } from "../../shell";
+import { parseRoute, routeToHash } from "../../shell/Router";
 import type { ChatChip } from "@qingagent/contract-ts";
+import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
   ACCEPTED_UPLOAD_ACCEPT_ATTR,
   ACCEPTED_UPLOAD_LABEL,
@@ -42,6 +43,7 @@ import {
 } from "./transition/origin";
 import { pickBrowserFolderSource } from "../workspace/data/browserFolderBridge";
 import { DEFAULT_CHAT_INPUT_PLACEHOLDER } from "../workspace/data/chatInputBlockReason";
+import { uploadFileSizeError } from "../workspace/data/uploadAsset";
 import { useModelKeyConfigured, goConfigureModel, NoKeyTip } from "../../system/modelKeyGate";
 
 // 占位符与编辑页统一(用编辑页默认提示)。
@@ -51,6 +53,46 @@ const EASE = "cubic-bezier(.2,.8,.2,1)";
 export interface PendingAttachmentEntry {
   id: string;
   file: File;
+}
+
+export interface NewSessionAttachmentPartition {
+  accepted: File[];
+  unsupportedCount: number;
+  sizeErrorMessage: string | null;
+}
+
+export function partitionNewSessionAttachmentFiles(
+  files: readonly File[],
+): NewSessionAttachmentPartition {
+  const accepted: File[] = [];
+  let unsupportedCount = 0;
+  let sizeErrorMessage: string | null = null;
+  for (const file of files) {
+    if (!isAcceptedUploadFile(file)) {
+      unsupportedCount += 1;
+      continue;
+    }
+    const sizeError = uploadFileSizeError(file);
+    if (sizeError) {
+      sizeErrorMessage = sizeError.message;
+      continue;
+    }
+    accepted.push(file);
+  }
+  return { accepted, unsupportedCount, sizeErrorMessage };
+}
+
+export function newSessionCommandLengthError(
+  text: string,
+  richText: string | null,
+): string | null {
+  if (
+    text.length > MAX_COMMAND_STRING_LENGTH ||
+    (richText != null && richText.length > MAX_COMMAND_STRING_LENGTH)
+  ) {
+    return "内容过长，请缩短后再发送";
+  }
+  return null;
 }
 
 export function pendingFilesVisibleInSnapshot(
@@ -127,6 +169,9 @@ export function NewSessionPage() {
   const busyRef = useRef(false);
   const texturesRef = useRef(buildCardTextures());
   const attachmentSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  const transitionEpochRef = useRef(0);
+  const transitionTimersRef = useRef<Set<number>>(new Set());
 
   const [textLen, setTextLen] = useState(0);
   const [chipCount, setChipCount] = useState(0);
@@ -152,6 +197,16 @@ export function NewSessionPage() {
     () => invocableSkillActionsFromApi(skills),
     [skills],
   );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      transitionEpochRef.current += 1;
+      transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      transitionTimersRef.current.clear();
+    };
+  }, []);
 
   const createAttachmentId = useCallback(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -256,6 +311,12 @@ export function NewSessionPage() {
       showCcxToast("先写点描述,或者加个素材吧");
       return;
     }
+    const richText = snap.chips.length > 0 ? snap.richText : null;
+    const lengthError = newSessionCommandLengthError(snap.text, richText);
+    if (lengthError) {
+      showCcxToast(lengthError);
+      return;
+    }
     // WYSIWYG(0702 重构):气泡与输入框所见完全一致——text=打字文本、chips 按原位置内联
     // ({{chip:N}} 占位,可穿插在文本任意处),**不再有任何"替用户说话"的兜底文案**
     // (旧"请帮我分析以下素材"/"请使用「」技能"都删了:前者把模型带偏找不存在的素材,
@@ -306,6 +367,8 @@ export function NewSessionPage() {
       return;
     }
     const submissionId = createSubmissionId();
+    const transitionEpoch = transitionEpochRef.current + 1;
+    transitionEpochRef.current = transitionEpoch;
     busyRef.current = true;
     showCcxToast("已起一卷新稿 · 开始读取素材");
     try {
@@ -313,7 +376,7 @@ export function NewSessionPage() {
         submissionId,
         clientMessageId: submissionId,
         text: snap.text,
-        richText: snap.chips.length > 0 ? snap.richText : null,
+        richText,
         chips: contractChips,
         skills: skillRefs,
         attachments: visiblePendingAttachments,
@@ -335,18 +398,34 @@ export function NewSessionPage() {
       });
       return;
     }
+    const canContinueTransition = () =>
+      mountedRef.current &&
+      transitionEpochRef.current === transitionEpoch &&
+      parseRoute(window.location.hash) === "new-session";
+    if (!canContinueTransition()) {
+      busyRef.current = false;
+      return;
+    }
+    const scheduleTransition = (callback: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        transitionTimersRef.current.delete(timer);
+        if (canContinueTransition()) callback();
+      }, delay);
+      transitionTimersRef.current.add(timer);
+    };
     // 离场:左侧文案/输入/返回钮淡出(汉字不在此淡出 —— 改为逐字吸入顶卡)
     pageRef.current?.classList.add("is-leaving");
 
     const goWorkspace = () => {
+      if (!canContinueTransition()) return;
+      transitionEpochRef.current += 1;
       window.location.hash = routeToHash("workspace");
     };
 
     const fly = swapRef.current?.flyTopCard;
     if (fly && !swapHidden) {
-      // 停轮换、量出顶卡 rect(= 汉字吸入的汇聚点 + 翻转起点)
-      swapRef.current?.pause();
-      const cardRect = swapRef.current?.topCardRect();
+      // 原子收束轮换并锁定顶卡；测量与稍后的飞卡始终使用同一张 DOM 卡。
+      const cardRect = swapRef.current?.prepareTopCard();
       const cx = cardRect ? cardRect.left + cardRect.width / 2 : window.innerWidth * 0.72;
       const cy = cardRect ? cardRect.top + cardRect.height / 2 : window.innerHeight / 2;
       const cardW = cardRect?.width ?? 300;
@@ -354,17 +433,17 @@ export function NewSessionPage() {
 
       // ① 汉字逐字吸入顶卡(参差);吸入大半后剩余汉字层缓慢隐去
       convergeHanzi(pageRef.current, cx, cy, cardW, cardH);
-      window.setTimeout(() => pageRef.current?.classList.add("is-hz-gone"), 900);
+      scheduleTransition(() => pageRef.current?.classList.add("is-hz-gone"), 900);
 
       // ② 顶卡「掀页」翻转放大成 800 宽文档纸 —— 落点 = 编辑页那张纸的真实 rect。
       //    翻转结束帧 = 编辑页初始帧(computeWorkspaceDocRect 与 workspace-ink-skin.css 同一几何)。
       const docRect = computeWorkspaceDocRect();
-      window.setTimeout(() => {
+      scheduleTransition(() => {
         fly(docRect).then(goWorkspace);
       }, 760);
     } else {
       // 兜底:无叠卡(直链态)时维持原 180ms 快速淡出
-      window.setTimeout(goWorkspace, 180);
+      scheduleTransition(goWorkspace, 180);
     }
   }, [hasModelKey, flashKeyTip, pendingAttachments, pendingFolder, showCcxToast, swapHidden, createSubmissionId, toast]);
 
@@ -379,29 +458,31 @@ export function NewSessionPage() {
 
   // 接收一批文件(选择/拖拽/粘贴图片共用):过滤可接受类型、为每个生成 id、插引用 chip、落待解析。
   const addAttachmentFiles = useCallback(
-    (files: File[]) => {
+    (files: File[], successAction = "插入") => {
       if (files.length === 0) return;
-      let n = 0;
-      let skipped = 0;
+      const partition = partitionNewSessionAttachmentFiles(files);
       const acceptedEntries: PendingAttachmentEntry[] = [];
-      for (const f of files) {
-        if (!isAcceptedUploadFile(f)) {
-          skipped += 1;
-          continue;
-        }
+      for (const f of partition.accepted) {
         const id = createAttachmentId();
         const ext = acceptedDocumentExtension(f.name).replace(/^\./, "") || "file";
         editorRef.current?.insertChip({ id, type: ext.length <= 5 ? ext : "file", name: f.name });
-        n += 1;
         acceptedEntries.push({ id, file: f });
       }
       if (acceptedEntries.length > 0) {
         setPendingAttachments((prev) => [...prev, ...acceptedEntries]);
+        showCcxToast(
+          successAction === "拖入"
+            ? `+ 已拖入 ${acceptedEntries.length} 个文件`
+            : `+ 已插入 ${acceptedEntries.length} 个本地文件`,
+        );
       }
-      if (n > 0) showCcxToast(`+ 已插入 ${n} 个本地文件`);
-      if (skipped > 0) showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      if (partition.sizeErrorMessage) {
+        toast.show({ message: partition.sizeErrorMessage, tone: "warn" });
+      } else if (partition.unsupportedCount > 0) {
+        showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      }
     },
-    [createAttachmentId, showCcxToast],
+    [createAttachmentId, showCcxToast, toast],
   );
 
   const handleFilesPicked = useCallback(
@@ -600,25 +681,7 @@ export function NewSessionPage() {
       e.preventDefault();
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
-      let n = 0;
-      let skipped = 0;
-      const acceptedEntries: PendingAttachmentEntry[] = [];
-      for (const f of Array.from(files)) {
-        if (!isAcceptedUploadFile(f)) {
-          skipped += 1;
-          continue;
-        }
-        const id = createAttachmentId();
-        const ext = acceptedDocumentExtension(f.name).replace(/^\./, "") || "file";
-        editorRef.current?.insertChip({ id, type: ext.length <= 5 ? ext : "file", name: f.name });
-        n += 1;
-        acceptedEntries.push({ id, file: f });
-      }
-      if (acceptedEntries.length > 0) {
-        setPendingAttachments((prev) => [...prev, ...acceptedEntries]);
-      }
-      if (n > 0) showCcxToast(`+ 已拖入 ${n} 个文件`);
-      if (skipped > 0) showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      addAttachmentFiles(Array.from(files), "拖入");
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);
@@ -630,7 +693,7 @@ export function NewSessionPage() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [createAttachmentId, showCcxToast]);
+  }, [addAttachmentFiles]);
 
   // 点空白关菜单
   useEffect(() => {
@@ -849,11 +912,16 @@ export function NewSessionPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.key !== "Escape") return;
       if (document.querySelector('[aria-modal="true"], [role="dialog"]')) return;
+      if (menu === "skill") {
+        e.preventDefault();
+        setMenu(null);
+        return;
+      }
       goBack();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [goBack]);
+  }, [goBack, menu]);
 
   const canSubmit =
     textLen > 0 ||

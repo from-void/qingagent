@@ -43,9 +43,11 @@ import type { SessionMeta } from "@qingagent/contract-ts";
 
 /** Convert a server SessionMeta to the UI HomeSession shape. */
 export function sessionMetaToHomeSession(s: SessionMeta): HomeSession {
-  const createdTs = new Date(s.created_at).getTime() / 1000;
+  const createdTs = finiteTimestampSeconds(s.created_at, 0);
   // recentEditedAt 用后端的 updated_at(最近编辑);缺省回退到创建时间
-  const editedTs = s.updated_at ? new Date(s.updated_at).getTime() / 1000 : createdTs;
+  const editedTs = s.updated_at
+    ? finiteTimestampSeconds(s.updated_at, createdTs)
+    : createdTs;
   const title = normalizeHomeTitle(s.title);
   const brief = buildHomeBrief(s.summary, s.created_at);
   return {
@@ -64,6 +66,11 @@ export function sessionMetaToHomeSession(s: SessionMeta): HomeSession {
   };
 }
 
+function finiteTimestampSeconds(iso: string, fallback: number): number {
+  const timestamp = new Date(iso).getTime() / 1000;
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
 function normalizeHomeTitle(rawTitle: string): string {
   const title = rawTitle.trim();
   if (!title || title === "未命名草稿" || title === "无标题") return "无题";
@@ -80,7 +87,7 @@ function buildHomeBrief(rawSummary: string, createdAtIso: string): string {
 
 function formatCreatedDate(iso: string): string {
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "未知日期";
+  if (!Number.isFinite(d.getTime())) return "未知日期";
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
@@ -92,10 +99,15 @@ function generateGhostLines(summary: string): SessionGhostLine[] {
 
 function formatRelativeDate(iso: string): string {
   const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "未知日期";
   const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays === 0) return "今天";
+  const localDayNumber = (value: Date) =>
+    Math.floor(
+      Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) /
+        (1000 * 60 * 60 * 24),
+    );
+  const diffDays = localDayNumber(now) - localDayNumber(d);
+  if (diffDays <= 0) return "今天";
   if (diffDays === 1) return "昨天";
   if (diffDays < 7) return `${diffDays} 天前`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)} 周前`;

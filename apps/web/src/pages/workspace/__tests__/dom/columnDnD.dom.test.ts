@@ -598,6 +598,36 @@ describe("分栏 DnD 命中判定", () => {
     expect(intent.kind).toBe("vertical"); // 满列降级,不返回 columnEdge
   });
 
+  it("回归:同一满列列表仅在删源会塌列时允许边缘建栏,源列仍有块则降级竖直", () => {
+    const editor = createEditor(
+      doc([
+        columnList("cl", [
+          {
+            id: "c-a",
+            ratio: 0.25,
+            blocks: [paragraph("p-a1", "A1"), paragraph("p-a2", "A2")],
+          },
+          { id: "c-b", ratio: 0.25, blocks: [paragraph("p-b", "B")] },
+          { id: "c-c", ratio: 0.25, blocks: [paragraph("p-c", "C")] },
+          { id: "c-d", ratio: 0.25, blocks: [paragraph("p-d", "D")] },
+        ]),
+      ]),
+    );
+    const targetPos = findNodePosition(editor, "paragraph", "p-c");
+    const targetRect = rect(100, 10, 200, 40);
+    const intentFor = (sourceId: string) =>
+      resolveDropIntent({
+        state: editor.state,
+        source: resolveBlockAtPos(editor.state, findNodePosition(editor, "paragraph", sourceId)),
+        coords: { left: 108, top: 20 },
+        posAtCoords: () => ({ pos: targetPos + 1 }),
+        getRect: (block: { pos: number }) => (block.pos === targetPos ? targetRect : null),
+      });
+
+    expect(intentFor("p-a1").kind).toBe("vertical");
+    expect(intentFor("p-b").kind).toBe("columnEdge");
+  });
+
   it("叶子块(horizontalRule / diagram 等 atom)也能被块手柄命中:findDraggableBlock 经 nodeAfter 命中", () => {
     // 叶子块无法从"内部位置"解析到自身(向上走只会拿到父节点),修复前块手柄拖不到图表/分割线。
     const editor = createEditor(

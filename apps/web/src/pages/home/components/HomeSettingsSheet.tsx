@@ -121,8 +121,8 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
       }
       handleClose();
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [handleClose]);
 
   // 焦点恢复(WCAG):挂载时记下打开弹层的触发元素(齿轮按钮),卸载时把焦点还回去——

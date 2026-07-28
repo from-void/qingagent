@@ -507,6 +507,50 @@ describe("SkillsPanel 导入门控", () => {
     expect(q('[data-wf="SkillLabelEdit"]')?.textContent).toContain("研资料");
   });
 
+  it("技能右键菜单消费 Escape 并只关闭自身", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "custom-research",
+        description: "自装研究技能",
+        label: "研资料",
+        summary: "整理用户资料",
+        icon: "star",
+        source: "installed",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+    ];
+    await render();
+
+    const card = q('[data-wf="SkillEntry"]');
+    if (!card) throw new Error("custom skill card not found");
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 40,
+        clientY: 60,
+      }));
+    });
+    expect(document.body.querySelector(".sk-ctxmenu")).not.toBeNull();
+
+    const escapedToWindow = vi.fn();
+    window.addEventListener("keydown", escapedToWindow);
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    window.removeEventListener("keydown", escapedToWindow);
+
+    expect(document.body.querySelector(".sk-ctxmenu")).toBeNull();
+    expect(escapedToWindow).not.toHaveBeenCalled();
+  });
+
   it("点击开关只启停，不进入详情页", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = sampleSkills();

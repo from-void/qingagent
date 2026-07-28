@@ -5,7 +5,6 @@ import {
   useVisibilityPausedRaf,
 } from "../../../system/perf/visibilityScheduler";
 import {
-  CALLIGRAPHY_POOL_KEYS,
   HANZI_MATRIX_POOLS,
   HANZI_MATRIX_PRESETS,
   HANZI_PULSE_DURATION_MAX_S,
@@ -449,12 +448,7 @@ export function shouldSkipThrottledPulseFrame(input: {
 
 export function HanziMatrix({ seed }: HanziMatrixProps = {}) {
   const perfTier = usePerfTier();
-  const [config, setConfig] = useState<HanziMatrixConfig>(() => {
-    // 新建页背景每次进入随机选一篇「天下三大行书」(兰亭序 / 祭侄文稿 / 黄州寒食帖)。
-    const base = getHanziMatrixConfig();
-    const pick = CALLIGRAPHY_POOL_KEYS[Math.floor(Math.random() * CALLIGRAPHY_POOL_KEYS.length)]!;
-    return { ...base, pool: pick };
-  });
+  const [config, setConfig] = useState<HanziMatrixConfig>(() => getHanziMatrixConfig());
   const [reducedMotion, setReducedMotion] = useState(
     () => typeof window !== "undefined" && (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false),
   );

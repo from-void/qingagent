@@ -80,6 +80,19 @@ function polyfillLayout() {
 }
 polyfillLayout();
 
+function resizePointerEvent(type: string, clientX: number, clientY: number): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
+    clientX,
+    clientY,
+  });
+  Object.defineProperty(event, "pointerId", { configurable: true, value: 1 });
+  return event;
+}
+
 // React NodeView 的 portal 只有当 editor 被 React 的 <EditorContent> 托管
 // (editor.contentComponent 被设置)时才会真正渲染到 DOM。所以必须用 react-dom
 // 真挂载 EditorContent,而不是裸 new Editor()。
@@ -270,7 +283,13 @@ async function waitForSelector(selector: string, root: ParentNode = document.bod
   throw new Error(`selector not found: ${selector}`);
 }
 
-function firstDiagramAttrs(editor: Editor): { lang: string; source: string; svg: string | null } | null {
+function firstDiagramAttrs(editor: Editor): {
+  lang: string;
+  source: string;
+  svg: string | null;
+  height: number | null;
+  width: number | null;
+} | null {
   const doc = editor.getJSON() as {
     content?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
   };
@@ -280,6 +299,8 @@ function firstDiagramAttrs(editor: Editor): { lang: string; source: string; svg:
     lang: String(block.attrs.lang ?? ""),
     source: String(block.attrs.source ?? ""),
     svg: typeof block.attrs.svg === "string" ? block.attrs.svg : null,
+    height: typeof block.attrs.height === "number" ? block.attrs.height : null,
+    width: typeof block.attrs.width === "number" ? block.attrs.width : null,
   };
 }
 
@@ -472,6 +493,54 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const json = editor.getJSON() as { content?: { type: string; attrs?: { height?: number } }[] };
       const diagram = json.content?.find((n) => n.type === "diagram");
       expect(diagram?.attrs?.height).toBe(360);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("图表尺寸把手单击不固化自然尺寸,取消或丢失捕获会回滚预览", async () => {
+    const editor = await mountEditor(diagramDoc("graph TD;A-->B;", null));
+    try {
+      const handle = await waitForSelector(".pm-diagram-resize-handle", editor.view.dom) as HTMLElement;
+      const view = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-view");
+      expect(view).not.toBeNull();
+      Object.defineProperty(view!.parentElement, "clientWidth", {
+        configurable: true,
+        value: 800,
+      });
+      vi.spyOn(view!, "getBoundingClientRect").mockImplementation(() => {
+        const width = Number.parseFloat(view!.style.width) || 400;
+        const height = Number.parseFloat(view!.style.height) || 300;
+        return DOMRect.fromRect({ width, height });
+      });
+      Object.defineProperties(handle, {
+        setPointerCapture: { configurable: true, value: vi.fn() },
+        releasePointerCapture: { configurable: true, value: vi.fn() },
+      });
+
+      await act(async () => {
+        handle.dispatchEvent(resizePointerEvent("pointerdown", 400, 300));
+        handle.dispatchEvent(resizePointerEvent("pointerup", 400, 300));
+      });
+      expect(firstDiagramAttrs(editor)).toMatchObject({ height: null, width: null });
+      expect(view!.style.height).toBe("");
+      expect(view!.style.width).toBe("");
+
+      for (const cancelType of ["pointercancel", "lostpointercapture"]) {
+        await act(async () => {
+          handle.dispatchEvent(resizePointerEvent("pointerdown", 400, 300));
+          handle.dispatchEvent(resizePointerEvent("pointermove", 460, 360));
+        });
+        expect(view!.style.height).toBe("360px");
+        expect(view!.style.width).toBe("460px");
+
+        await act(async () => {
+          handle.dispatchEvent(resizePointerEvent(cancelType, 460, 360));
+        });
+        expect(view!.style.height).toBe("");
+        expect(view!.style.width).toBe("");
+        expect(firstDiagramAttrs(editor)).toMatchObject({ height: null, width: null });
+      }
     } finally {
       await unmount(editor);
     }

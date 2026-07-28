@@ -879,6 +879,26 @@ describe("richFormatsInteraction 代码块命令", () => {
     }
   });
 
+  it.each([
+    ["c++", "cpp"],
+    ["Proto3", "proto3"],
+    ["objective-c", "objective-c"],
+  ])("三反引号输入规则接受语言标签 %s 并归一为 %s", (input, expected) => {
+    const editor = createCodeBlockEditor(docWithParagraph(`\`\`\`${input}`));
+
+    try {
+      setTextSelection(editor, findTextPosition(editor, `\`\`\`${input}`, "end"));
+      fireTextInput(editor, " ");
+
+      expect(normalized(editor).content[0]).toMatchObject({
+        type: "codeBlock",
+        attrs: { language: expected },
+      });
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
   it("data-language 与 code.language-* 都能解析,序列化仍输出 data-language + code class", () => {
     const editor = createCodeBlockEditor();
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 import { __resetMigrationsForTest } from "../migrations.js";
 import { getDocumentsClient } from "../documentsClient.js";
@@ -20,6 +20,7 @@ afterEach(() => {
   tempDb?.cleanup();
   tempDb = null;
   __resetMigrationsForTest();
+  vi.useRealTimers();
 });
 
 describe("usageRepo", () => {
@@ -151,6 +152,72 @@ describe("usageRepo", () => {
         }),
       ]),
     );
+  });
+
+  it("按 IANA 日界聚合跨 UTC 午夜用量，并保留窗口首日早晨", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T20:00:00-07:00"));
+    for (const sessionId of ["local-evening", "window-first-morning", "outside-window"]) {
+      await recordUsageEvent({
+        sessionId,
+        callSite: "agent",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+    }
+    for (const [sessionId, createdAt] of [
+      ["local-evening", "2026-07-29T03:00:00.000Z"],
+      ["window-first-morning", "2026-07-22T07:30:00.000Z"],
+      ["outside-window", "2026-07-22T06:59:00.000Z"],
+    ] as const) {
+      await getDocumentsClient().execute({
+        sql: "UPDATE llm_usage_events SET created_at = ? WHERE session_id = ?",
+        args: [createdAt, sessionId],
+      });
+    }
+
+    const rows = await aggregateUsageByDay(7, "America/Los_Angeles");
+
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bucket: "2026-07-28", sessionId: "local-evening" }),
+      expect.objectContaining({ bucket: "2026-07-22", sessionId: "window-first-morning" }),
+    ]));
+    expect(rows.some((row) => row.sessionId === "outside-window")).toBe(false);
+  });
+
+  it("洛杉矶 DST 结束日按事件实际偏移分桶并保留窗口首日凌晨", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-03T20:00:00-08:00"));
+    for (const sessionId of ["dst-first-midnight", "post-dst-midnight", "outside-window"]) {
+      await recordUsageEvent({
+        sessionId,
+        callSite: "agent",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+    }
+    for (const [sessionId, createdAt] of [
+      ["dst-first-midnight", "2026-11-01T07:30:00.000Z"],
+      ["post-dst-midnight", "2026-11-03T08:30:00.000Z"],
+      ["outside-window", "2026-11-01T06:59:00.000Z"],
+    ] as const) {
+      await getDocumentsClient().execute({
+        sql: "UPDATE llm_usage_events SET created_at = ? WHERE session_id = ?",
+        args: [createdAt, sessionId],
+      });
+    }
+
+    const rows = await aggregateUsageByDay(3, "America/Los_Angeles");
+
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bucket: "2026-11-01", sessionId: "dst-first-midnight" }),
+      expect.objectContaining({ bucket: "2026-11-03", sessionId: "post-dst-midnight" }),
+    ]));
+    expect(rows.some((row) => row.sessionId === "outside-window")).toBe(false);
   });
 
   it("Anthropic 只有 cache read/creation、miss 未知时命中率保持 null", async () => {

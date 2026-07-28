@@ -167,6 +167,7 @@ export function ModelSettingsPanel() {
   const [expandedUsageGroups, setExpandedUsageGroups] = useState<Set<string>>(() => new Set());
   const [usage, setUsage] = useState<UsageRow[] | null>(null);
   const [usageSettled, setUsageSettled] = useState(false);
+  const [usageStatus, setUsageStatus] = useState<"loading" | "ready" | "error">("loading");
   const [usageDate, setUsageDate] = useState("");
   // 模型多选筛选:记"被取消勾选的模型",这样用量里新出现的模型天然算已勾选(默认全选)。
   const [excludedModels, setExcludedModels] = useState<ReadonlySet<string>>(() => new Set());
@@ -333,14 +334,25 @@ export function ModelSettingsPanel() {
   }, []);
 
   const loadUsage = useCallback(async (view: UsageView, signal?: AbortSignal) => {
+    setUsage(null);
+    setUsageStatus("loading");
     try {
-      const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
-      if (res.ok) {
-        const body = (await res.json()) as Partial<UsageSummaryResponse>;
-        if (mountedRef.current && !signal?.aborted) setUsage(body.rows ?? []);
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch(
+        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(timeZone)}`,
+        { signal },
+      );
+      if (!res.ok) {
+        if (mountedRef.current && !signal?.aborted) setUsageStatus("error");
+        return;
+      }
+      const body = (await res.json()) as Partial<UsageSummaryResponse>;
+      if (mountedRef.current && !signal?.aborted) {
+        setUsage(body.rows ?? []);
+        setUsageStatus("ready");
       }
     } catch {
-      if (mountedRef.current && !signal?.aborted) setUsage(null);
+      if (mountedRef.current && !signal?.aborted) setUsageStatus("error");
     } finally {
       if (mountedRef.current && !signal?.aborted) setUsageSettled(true);
     }
@@ -349,7 +361,11 @@ export function ModelSettingsPanel() {
   // 看板用:按天 / 总计两份数据一次性拉取(图表始终展示这两份,与明细视图解耦)
   const loadDashboardUsage = useCallback(async (view: "day" | "total", signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch(
+        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(timeZone)}`,
+        { signal },
+      );
       const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
       if (mountedRef.current && !signal?.aborted) {
         if (view === "day") setDayUsage(rows);
@@ -959,6 +975,15 @@ export function ModelSettingsPanel() {
     setUsageMode(nextMode);
     setExpandedUsageGroups(new Set());
     persistUsageMode(nextMode);
+  };
+
+  const switchUsageView = (nextView: UsageView) => {
+    if (nextView === usageView) return;
+    // 点击当帧先撤掉旧口径数据，避免 effect 发起新请求前按新视图解释旧 rows。
+    setUsage(null);
+    setUsageStatus("loading");
+    setExpandedUsageGroups(new Set());
+    setUsageView(nextView);
   };
 
   const toggleUsageGroup = (key: string) => {
@@ -1683,7 +1708,7 @@ export function ModelSettingsPanel() {
                       type="button"
                       aria-pressed={usageView === v}
                       className={`md-view-btn${usageView === v ? " md-active" : ""}`}
-                      onClick={() => setUsageView(v)}
+                      onClick={() => switchUsageView(v)}
                     >
                       {v === "day" ? "按天" : v === "session" ? "按文档" : "总计"}
                     </button>
@@ -1696,8 +1721,10 @@ export function ModelSettingsPanel() {
               )}
               {!usageSettled ? (
                 showUsageLoading ? <p className="md-empty">加载中…</p> : null
-              ) : filteredUsage === null ? (
-                <p className="md-empty">用量数据加载失败或暂不可用</p>
+              ) : usageStatus === "loading" ? (
+                <p className="md-empty">正在加载用量数据</p>
+              ) : usageStatus === "error" || filteredUsage === null ? (
+                <p className="md-empty">用量数据暂时无法加载，请稍后重试</p>
               ) : usageGroups?.length === 0 ? (
                 <p className="md-empty">
                   {usageDate && usageView === "day"
@@ -2095,10 +2122,18 @@ function formatTokens(n: number): string {
 // 只给已知的官方档位起中文短名;不认识的模型(第三方中转别名等)原样显示 id——
 // 猜成「V4 Flash」会让模型多选里两个不同模型顶着同一个名字,分不清也点不明白。
 function modelLabel(modelId: string): string {
-  if (modelId === "k3") return "K3";
-  if (modelId.includes("kimi-for-coding")) return "K2.7 Code";
-  if (modelId.includes("deepseek")) return modelId.includes("pro") ? "V4 PRO" : "V4 Flash";
-  return modelId;
+  switch (modelId) {
+    case "deepseek-v4-flash":
+      return "V4 Flash";
+    case "deepseek-v4-pro":
+      return "V4 PRO";
+    case "kimi-for-coding":
+      return "K2.7 Code";
+    case "k3":
+      return "K3";
+    default:
+      return modelId;
+  }
 }
 
 // 按模型分布饼图:conic-gradient 分段 + 图例配色
@@ -2147,15 +2182,18 @@ function summarizeRecentDays(
 ): { cost: number; tokens: number; calls: number; hasPriced: boolean } | null {
   if (rows === null) return null;
   if (rows.length === 0) return { cost: 0, tokens: 0, calls: 0, hasPriced: false };
-  // bucket 是 YYYY-MM-DD;取按日期倒序后最近 N 天涉及的所有行
-  const dates = Array.from(new Set(rows.map((r) => r.bucket))).sort().reverse().slice(0, days);
-  const keep = new Set(dates);
+  // bucket 是本地日历日 YYYY-MM-DD；窗口固定为“今天及之前 N-1 天”，不按有数据日期倒推。
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  start.setDate(start.getDate() - Math.max(0, days - 1));
+  const startYmd = toYMD(start);
+  const endYmd = toYMD(today);
   let cost = 0;
   let tokens = 0;
   let calls = 0;
   let hasPriced = false;
   for (const r of rows) {
-    if (!keep.has(r.bucket)) continue;
+    if (r.bucket < startYmd || r.bucket > endYmd) continue;
     cost += r.costCny ?? 0;
     if (r.costCny != null) hasPriced = true;
     tokens += r.inputTokens + r.outputTokens;
@@ -2172,17 +2210,16 @@ function buildModelDistribution(
   if (rows === null) return null;
   const map = new Map<string, { tokens: number; cost: number }>();
   for (const r of rows) {
-    const name = modelLabel(r.modelId);
-    const prev = map.get(name) ?? { tokens: 0, cost: 0 };
+    const prev = map.get(r.modelId) ?? { tokens: 0, cost: 0 };
     prev.tokens += r.inputTokens + r.outputTokens;
     prev.cost += r.costCny ?? 0;
-    map.set(name, prev);
+    map.set(r.modelId, prev);
   }
   const priced = Array.from(map.entries()).filter(([, m]) => m.cost > 0);
   const total = priced.reduce((sum, [, m]) => sum + m.cost, 0);
   return priced
-    .map(([name, m]) => ({
-      name,
+    .map(([modelId, m]) => ({
+      name: modelLabel(modelId),
       tokens: m.tokens,
       cost: m.cost,
       pct: total > 0 ? (m.cost / total) * 100 : 0,

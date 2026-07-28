@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseChipRichText } from "@qingagent/contract-ts";
 import { buildLongTextChip } from "../../../system/longText";
 import { pendingFilesVisibleInSnapshot } from "../NewSessionPage";
 import { StarterEditor } from "./StarterEditor";
@@ -130,6 +131,24 @@ describe("StarterEditor 快照", () => {
       chips: [{ type: "txt", name: "资料.txt" }],
     });
     expect(editorRef.current?.snapshot().text).not.toContain("点击查看全文");
+  });
+
+  it("snapshot 转义用户字面 chip marker，避免与来源 chip 占位冲突", async () => {
+    const editorRef = createRef<StarterEditorHandle>();
+    await render(<StarterEditor ref={editorRef} placeholder="输入" onChange={() => undefined} onSubmit={() => undefined} />);
+    const editor = host?.querySelector<HTMLElement>(".starter-edit");
+    if (!editor) throw new Error("editor not found");
+    const sourceChip = document.createElement("span");
+    sourceChip.className = "src-chip";
+    sourceChip.dataset.type = "txt";
+    sourceChip.dataset.name = "资料.txt";
+    sourceChip.textContent = "[资料.txt]×";
+    editor.append(document.createTextNode("字面 {{chip:0}} "), sourceChip);
+
+    expect(parseChipRichText(editorRef.current?.snapshot().richText ?? "")).toEqual([
+      { kind: "text", text: "字面 {{chip:0}} " },
+      { kind: "chip", index: 0, marker: "{{chip:0}}" },
+    ]);
   });
 });
 

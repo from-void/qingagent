@@ -134,38 +134,146 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
   };
 }
 
-/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 天)。 */
-export async function aggregateUsageByDay(days = 30): Promise<UsageAggRow[]> {
+function usageDayFormatter(timeZone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    calendar: "iso8601",
+    numberingSystem: "latn",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function usageDayBucket(
+  value: string | number | Date,
+  formatter: Intl.DateTimeFormat,
+): string | null {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function usageDayWindowStart(days: number, formatter: Intl.DateTimeFormat): string {
+  const today = usageDayBucket(Date.now(), formatter);
+  if (!today) throw new Error("无法计算用量统计日历窗口");
+  const [year, month, day] = today.split("-").map(Number);
+  const start = new Date(Date.UTC(
+    year!,
+    month! - 1,
+    day! - Math.max(0, Math.round(days) - 1),
+  ));
+  return start.toISOString().slice(0, 10);
+}
+
+/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 个客户端日历日)。 */
+export async function aggregateUsageByDay(
+  days = 30,
+  timeZone = "UTC",
+): Promise<UsageAggRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const normalizedDays = Math.max(1, Math.round(days));
+  const formatter = usageDayFormatter(timeZone);
+  const firstBucket = usageDayWindowStart(normalizedDays, formatter);
+  // SQL 只做保守裁剪；精确窗口由 IANA 日历日键过滤，避免 DST 变更日误用当前偏移。
+  const since = new Date(Date.now() - (normalizedDays + 2) * 86_400_000).toISOString();
   const result = await client.execute({
-    sql: `SELECT date(usage.created_at) AS bucket,
+    sql: `SELECT usage.created_at,
         usage.session_id,
         COALESCE(document.id, usage.session_id) AS document_id,
         NULLIF(document.title, '') AS document_title,
         usage.call_site,
         usage.model_id,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
-        COUNT(*) AS calls,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_hit_tokens,
+        usage.cache_miss_tokens,
+        usage.cache_creation_tokens,
+        usage.cache_accounting_state,
+        usage.usage_state
       FROM llm_usage_events usage
       LEFT JOIN documents document
         ON document.thread_id = usage.session_id AND document.role = 'main'
       WHERE usage.created_at >= ?
-      GROUP BY date(usage.created_at), usage.session_id, document.id, document.title,
-        usage.call_site, usage.model_id
-      ORDER BY bucket DESC, document_title, document_id, usage.call_site, usage.model_id`,
+      ORDER BY usage.created_at DESC`,
     args: [since],
   });
-  return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const raw of result.rows) {
+    const row = raw as unknown as Record<string, unknown>;
+    const bucket = usageDayBucket(String(row.created_at ?? ""), formatter);
+    if (!bucket || bucket < firstBucket) continue;
+    const key = JSON.stringify([
+      bucket,
+      row.session_id,
+      row.document_id,
+      row.document_title,
+      row.call_site,
+      row.model_id,
+    ]);
+    const aggregate = grouped.get(key) ?? {
+      bucket,
+      session_id: row.session_id,
+      document_id: row.document_id,
+      document_title: row.document_title,
+      call_site: row.call_site,
+      model_id: row.model_id,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_hit_tokens: 0,
+      cache_miss_tokens: 0,
+      cache_creation_tokens: 0,
+      known_cache_hit_tokens: 0,
+      known_cache_total_tokens: 0,
+      calls: 0,
+      recorded_calls: 0,
+      missing_calls: 0,
+    };
+    aggregate.calls = Number(aggregate.calls) + 1;
+    if (row.usage_state === "recorded") {
+      aggregate.recorded_calls = Number(aggregate.recorded_calls) + 1;
+      aggregate.input_tokens = Number(aggregate.input_tokens) + Number(row.input_tokens ?? 0);
+      aggregate.output_tokens = Number(aggregate.output_tokens) + Number(row.output_tokens ?? 0);
+      aggregate.cache_hit_tokens =
+        Number(aggregate.cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
+      aggregate.cache_miss_tokens =
+        Number(aggregate.cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
+      aggregate.cache_creation_tokens =
+        Number(aggregate.cache_creation_tokens) + Number(row.cache_creation_tokens ?? 0);
+      if (row.cache_accounting_state === "known") {
+        aggregate.known_cache_hit_tokens =
+          Number(aggregate.known_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
+        aggregate.known_cache_total_tokens =
+          Number(aggregate.known_cache_total_tokens) +
+          Number(row.cache_hit_tokens ?? 0) +
+          Number(row.cache_miss_tokens ?? 0);
+      }
+    } else if (row.usage_state === "missing") {
+      aggregate.missing_calls = Number(aggregate.missing_calls) + 1;
+    }
+    grouped.set(key, aggregate);
+  }
+  return [...grouped.values()]
+    .map((row) => ({
+      ...rowToAgg({
+        ...row,
+        cache_hit_rate: Number(row.known_cache_total_tokens) > 0
+          ? Number(row.known_cache_hit_tokens) / Number(row.known_cache_total_tokens)
+          : null,
+      }),
+    }))
+    .sort((left, right) =>
+      right.bucket.localeCompare(left.bucket) ||
+      (left.documentTitle ?? "").localeCompare(right.documentTitle ?? "") ||
+      (left.documentId ?? "").localeCompare(right.documentId ?? "") ||
+      left.callSite.localeCompare(right.callSite) ||
+      left.modelId.localeCompare(right.modelId)
+    );
 }
 
 /** 会话级 × 模型聚合(默认最近 200 个会话桶)。 */

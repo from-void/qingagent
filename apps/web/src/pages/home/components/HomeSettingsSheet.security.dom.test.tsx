@@ -27,22 +27,31 @@ describe("HomeSettingsSheet 安全页", () => {
   });
 
   it("安全 Tab 接入真实授权下拉，恢复每次询问调用设置端点", async () => {
-    const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as {
+          operationId: string;
+          baseVersion: number;
+        };
+        return new Response(JSON.stringify({
+          kind: "command",
+          grantMode: "ask",
+          present: false,
+          grantId: null,
+          version: 2,
+          operationId: body.operationId,
+          baseVersion: body.baseVersion,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
         categories: [
           { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
           { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },
           { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
           { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
         ],
-      }), { status: 200 }))
-      .mockResolvedValue(new Response(JSON.stringify({
-        kind: "command",
-        grantMode: "ask",
-        present: false,
-        grantId: null,
-        version: 2,
-      }), { status: 200 }));
+      }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -89,7 +98,13 @@ describe("HomeSettingsSheet 安全页", () => {
     });
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/command",
-      expect.objectContaining({ body: JSON.stringify({ grantMode: "ask" }) }),
+      expect.objectContaining({ body: expect.any(String) }),
     );
+    const [, request] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      grantMode: "ask",
+      operationId: expect.any(String),
+      baseVersion: 1,
+    });
   });
 });

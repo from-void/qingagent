@@ -133,11 +133,11 @@ export function HomePage() {
     suppressFor24h: boolean,
     afterSuccess?: () => void,
   ) => {
-    if (suppressFor24h) setDeleteConfirmSkipFor24h();
     setDeleteConfirm((state) => (state ? { ...state, isDeleting: true } : state));
     setArticleMenu((menu) => (menu ? { ...menu, isDeleting: true } : menu));
     try {
       await removeSession(session.id);
+      if (suppressFor24h) setDeleteConfirmSkipFor24h();
       setArticleMenu(null);
       if (afterSuccess) {
         afterSuccess();

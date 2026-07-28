@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ChatChip } from "@qingagent/contract-ts";
+import { parseChipRichText, type ChatChip } from "@qingagent/contract-ts";
 
 export const DEFAULT_SKILL_CHIP_INSTRUCTION_CHAR_LIMIT = 200_000;
 
@@ -166,26 +166,24 @@ export async function composeInlineChipText(
   const warnings: SkillChipWarning[] = [];
   const maxChars = options.maxSkillInstructionChars ?? DEFAULT_SKILL_CHIP_INSTRUCTION_CHAR_LIMIT;
   const firstSkillIndexById = new Map<string, number>();
-  const markerRe = /\{\{chip:(\d+)\}\}/g;
   let out = "";
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = markerRe.exec(richText)) !== null) {
-    out += richText.slice(lastIndex, match.index);
-    const marker = match[0];
-    const chipIndex = Number(match[1]);
+  for (const part of parseChipRichText(richText)) {
+    if (part.kind === "text") {
+      out += part.text;
+      continue;
+    }
+    const marker = part.marker;
+    const chipIndex = part.index;
     const chip = chips[chipIndex];
     if (!chip) {
       out += marker;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
 
     const anchor = plainChipAnchor(chip);
     if (!isSkillLikeChip(chip)) {
       out += inlineTextChipContent(chip) ?? anchor;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
 
@@ -199,14 +197,12 @@ export async function composeInlineChipText(
         message,
       });
       out += `${anchor}\n[系统：${message}]`;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
 
     const firstIndex = firstSkillIndexById.get(skillId);
     if (firstIndex !== undefined) {
       out += `${anchor}<qa_chip_ref target="skill:${escapeXmlAttr(skillId)}" firstIndex="${firstIndex}" />`;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
     firstSkillIndexById.set(skillId, chipIndex);
@@ -221,7 +217,6 @@ export async function composeInlineChipText(
         message,
       });
       out += `${anchor}\n[系统：${message}]`;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
 
@@ -247,7 +242,6 @@ export async function composeInlineChipText(
         message,
       });
       out += `${anchor}\n[系统：${message}]`;
-      lastIndex = markerRe.lastIndex;
       continue;
     }
 
@@ -260,10 +254,8 @@ export async function composeInlineChipText(
       maxChars,
       warnings,
     })}`;
-    lastIndex = markerRe.lastIndex;
   }
 
-  out += richText.slice(lastIndex);
   return { text: out, warnings };
 }
 

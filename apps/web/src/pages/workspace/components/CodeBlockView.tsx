@@ -262,7 +262,7 @@ function CodeBlockComponent(props: CodeBlockNodeViewProps) {
 /* ───────────── TipTap Extension ───────────── */
 
 // Input rule: ```lang + space/newline triggers code block
-const backtickInputRegex = /^```([a-z]*)[\s\n]$/;
+const backtickInputRegex = /^```([^`\s]*)[\s\n]$/;
 
 export const CodeBlockCM = CodeBlockLowlight.extend({
   name: "codeBlock",

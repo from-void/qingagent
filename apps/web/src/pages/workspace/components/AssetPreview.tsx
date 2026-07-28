@@ -218,20 +218,17 @@ function previewContentUrl(source: AssetSource): string | null {
 }
 
 function PdfFrame({ source, pdfUrl }: { source: AssetSource; pdfUrl: string }) {
+  const { objectUrl, loading, unavailable } = useValidatedPdfUrl(pdfUrl);
   return (
     <div>
       <div className="fd-rp-section-label">PDF 原件</div>
-      <iframe
-        src={pdfUrl}
-        title={source.name}
-        style={{
-          width: "100%",
-          height: "80vh",
-          minHeight: 560,
-          border: "1px solid var(--line-1)",
-          borderRadius: 0,
-        }}
-      />
+      {loading ? (
+        <PreviewStatus>加载中...</PreviewStatus>
+      ) : unavailable || !objectUrl ? (
+        <PreviewStatus unavailable>预览不可用</PreviewStatus>
+      ) : (
+        <PdfIframe source={source} objectUrl={objectUrl} />
+      )}
     </div>
   );
 }
@@ -278,18 +275,7 @@ function PdfWithTextTabs({
       {/* key={tab}:切 tab 时整块重挂 → 触发淡入滑入动画;数据在父级缓存,不会丢正文。 */}
       <div key={tab} className="fd-tab-pane">
         {tab === "pdf" ? (
-          // 整页随 .ws-right 滚动:iframe 给固定高度(PDF 自带 viewer 翻页),不再 height:100% 撑满
-          <iframe
-            src={pdfUrl}
-            title={source.name}
-            style={{
-              width: "100%",
-              height: "80vh",
-              minHeight: 560,
-              border: "1px solid var(--line-1)",
-              borderRadius: 0,
-            }}
-          />
+          <PdfFrame source={source} pdfUrl={pdfUrl} />
         ) : (
           <TextPane
             text={text}
@@ -310,17 +296,20 @@ export function shouldShowAiSummary(summary: string | null, abstract: string): b
   return Boolean(summary) && summary !== abstract;
 }
 
-/** Fetch text content from API if fileId is available, otherwise use static bodyText. */
-/** 拉取素材正文全文 + AI 摘要。注意 source.bodyText 实际是摘要(短),全文只能从接口拿;
- *  调用方(PdfWithTextTabs)把它放在父级缓存,这样切 tab 重挂展示层也不会把正文回落成摘要。 */
+/** 拉取素材正文全文 + AI 摘要。内部 Material 全文只能从接口拿；bodyText 仅供
+ *  没有 scoped 请求上下文的静态来源使用。调用方把结果放在父级缓存，切 tab 时不丢正文。 */
 function useMaterialText(source: AssetSource, sessionId: string | null) {
-  const [text, setText] = useState<string>(source.bodyText ?? "");
-  const [summary, setSummary] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [unavailable, setUnavailable] = useState(false);
   const previewTextUrl = source.preview?.kind === "url"
     ? source.preview.textUrl ?? source.preview.url
     : null;
+  const fetchesInternalMaterial = !previewTextUrl && Boolean(source.id && sessionId);
+  const staticBodyText = !previewTextUrl && !fetchesInternalMaterial
+    ? source.bodyText ?? ""
+    : "";
+  const [text, setText] = useState<string>(staticBodyText);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState(fetchesInternalMaterial || Boolean(previewTextUrl));
+  const [unavailable, setUnavailable] = useState(false);
   const strictTextContentType = source.preview?.kind === "url" &&
     source.preview.strictTextContentType === true;
 
@@ -357,9 +346,17 @@ function useMaterialText(source: AssetSource, sessionId: string | null) {
       };
     }
 
-    if (!source.id || !sessionId) return;
+    if (!source.id || !sessionId) {
+      setText(staticBodyText);
+      setSummary(null);
+      setLoading(false);
+      setUnavailable(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
+    setText("");
+    setSummary(null);
     setUnavailable(false);
     fetch(`/api/v1/materials/${source.id}/text?sessionId=${encodeURIComponent(sessionId)}`)
       .then((res) => {
@@ -368,11 +365,14 @@ function useMaterialText(source: AssetSource, sessionId: string | null) {
       })
       .then((data) => {
         if (cancelled) return;
-        if (data.text) setText(data.text);
-        if (data.summary) setSummary(data.summary);
+        setText(data.text ?? "");
+        setSummary(data.summary ?? null);
       })
       .catch(() => {
-        // Fallback to static bodyText — no error to show
+        if (cancelled) return;
+        setText("");
+        setSummary(null);
+        setUnavailable(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -380,9 +380,121 @@ function useMaterialText(source: AssetSource, sessionId: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [previewTextUrl, sessionId, source.id, strictTextContentType]);
+  }, [
+    previewTextUrl,
+    sessionId,
+    source.id,
+    source.updatedAt,
+    staticBodyText,
+    strictTextContentType,
+  ]);
 
   return { text, summary, loading, unavailable };
+}
+
+function useValidatedPdfUrl(pdfUrl: string): {
+  objectUrl: string | null;
+  loading: boolean;
+  unavailable: boolean;
+} {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let createdObjectUrl: string | null = null;
+    setObjectUrl(null);
+    setLoading(true);
+    setUnavailable(false);
+
+    fetch(pdfUrl)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("pdf unavailable");
+        if (!isPdfContentType(response.headers.get("Content-Type"))) {
+          throw new Error("invalid pdf content type");
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!hasPdfSignature(bytes.subarray(0, 1024))) {
+          throw new Error("invalid pdf signature");
+        }
+        return new Blob([bytes], { type: "application/pdf" });
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        createdObjectUrl = URL.createObjectURL(blob);
+        setObjectUrl(createdObjectUrl);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setObjectUrl(null);
+        setUnavailable(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
+    };
+  }, [pdfUrl]);
+
+  return { objectUrl, loading, unavailable };
+}
+
+function isPdfContentType(contentType: string | null): boolean {
+  return (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase() === "application/pdf";
+}
+
+function hasPdfSignature(bytes: Uint8Array): boolean {
+  const signature = [0x25, 0x50, 0x44, 0x46, 0x2d];
+  return bytes.some((_, start) =>
+    start + signature.length <= bytes.length &&
+    signature.every((value, offset) => bytes[start + offset] === value),
+  );
+}
+
+function PreviewStatus({
+  children,
+  unavailable = false,
+}: {
+  children: string;
+  unavailable?: boolean;
+}) {
+  return (
+    <div
+      className="fd-rp-body-text"
+      style={{
+        color: unavailable ? "var(--ink-3)" : "var(--ink-4)",
+        fontStyle: unavailable ? "italic" : undefined,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function PdfIframe({
+  source,
+  objectUrl,
+}: {
+  source: AssetSource;
+  objectUrl: string;
+}) {
+  return (
+    <iframe
+      src={objectUrl}
+      title={source.name}
+      style={{
+        width: "100%",
+        height: "80vh",
+        minHeight: 560,
+        border: "1px solid var(--line-1)",
+        borderRadius: 0,
+      }}
+    />
+  );
 }
 
 function isTextualContentType(contentType: string | null): boolean {

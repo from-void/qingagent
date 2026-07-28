@@ -65,6 +65,34 @@ describe("DocFindBar", () => {
     }
   });
 
+  it("全部替换独立重扫超过装饰上限的所有命中,并保持单次撤销", async () => {
+    const source = Array.from({ length: 1001 }, () => "a").join(" ");
+    const editor = editorWithText(source);
+    const onToast = vi.fn();
+    try {
+      await renderDocFind(
+        <Harness editor={editor} mode="full" onToast={onToast} />,
+      );
+      await inputText(findInput(), "a");
+      await flushSearch();
+
+      expect(countText()).toBe("1/1000+");
+      expect(editor.view.dom.querySelectorAll(".ws-find-hit")).toHaveLength(1000);
+
+      await openReplaceWith("omega");
+      await click(buttonByText("全部替换"));
+
+      expect(onToast).toHaveBeenCalledWith("已替换 1001 处");
+      expect(editor.getText().split(" ")).toEqual(
+        Array.from({ length: 1001 }, () => "omega"),
+      );
+      expect(editor.commands.undo()).toBe(true);
+      expect(editor.getText()).toBe(source);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("find-only 模式不出替换入口(⇄ 与替换行都不渲染)", async () => {
     const editor = editorWithText("alpha");
     try {

@@ -8,7 +8,7 @@ import { EditorContent } from "@tiptap/react";
 import type { Node as PmModelNode } from "@tiptap/pm/model";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   calculateColumnResizeRatios,
   ColumnCM,
@@ -30,6 +30,21 @@ function polyfillLayout() {
   (document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => [];
 }
 polyfillLayout();
+
+function columnPointerEvent(type: string, clientX: number): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
+    clientX,
+  });
+  Object.defineProperties(event, {
+    pointerId: { configurable: true, value: 1 },
+    pointerType: { configurable: true, value: "mouse" },
+  });
+  return event;
+}
 
 interface MountedEditor {
   editor: Editor;
@@ -228,6 +243,41 @@ describe("分栏 NodeView", () => {
     it("都不够近时对齐到整数百分比", () => {
       expect(snapBoundaryRatio(0.444, 1, 0.12)).toBe(0.44);
       expect(snapBoundaryRatio(0.567, 1, 0.12)).toBe(0.57);
+    });
+
+    it("拖动预览吸附回原比例时显式回滚 DOM,无需事务也不残留原始比例", async () => {
+      const mounted = await mountEditor(columnDoc([0.5, 0.5]));
+      try {
+        const columns = Array.from(
+          mounted.container.querySelectorAll<HTMLElement>(".pm-column[data-pm-node='column']"),
+        );
+        const handle = columns[0]?.querySelector<HTMLElement>(".pm-column-resize-handle");
+        expect(columns).toHaveLength(2);
+        expect(handle).not.toBeNull();
+        vi.spyOn(columns[0]!.parentElement!, "getBoundingClientRect").mockReturnValue(
+          DOMRect.fromRect({ width: 1000 }),
+        );
+        Object.defineProperties(handle!, {
+          setPointerCapture: { configurable: true, value: vi.fn() },
+          releasePointerCapture: { configurable: true, value: vi.fn() },
+        });
+
+        await act(async () => {
+          handle!.dispatchEvent(columnPointerEvent("pointerdown", 0));
+          document.dispatchEvent(columnPointerEvent("pointermove", 20));
+        });
+        expect(columns[0]!.style.flex).toBe("0.52 1 0%");
+        expect(columns[1]!.style.flex).toBe("0.48 1 0%");
+
+        await act(async () => {
+          document.dispatchEvent(columnPointerEvent("pointerup", 20));
+        });
+        expect(columnRatios(mounted.editor)).toEqual([0.5, 0.5]);
+        expect(columns[0]!.style.flex).toBe("0.5 1 0%");
+        expect(columns[1]!.style.flex).toBe("0.5 1 0%");
+      } finally {
+        await unmount(mounted);
+      }
     });
   });
 });

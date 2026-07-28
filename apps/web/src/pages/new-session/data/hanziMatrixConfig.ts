@@ -10,7 +10,7 @@ export type HanziMatrixPoolKey =
   | "jizhiwengao"
   | "hanshitie";
 
-/** 天下三大行书:新建页背景随机从这三篇里选一篇。 */
+/** 天下三大行书:无持久化配置时随机选一篇作为初始字符池。 */
 export const CALLIGRAPHY_POOL_KEYS = ["lanting", "jizhiwengao", "hanshitie"] as const;
 
 export interface HanziMatrixConfig {
@@ -247,7 +247,13 @@ function hydrate(): void {
   hydrated = true;
   try {
     const raw = window.localStorage.getItem(HANZI_MATRIX_CONFIG_STORAGE_KEY);
-    if (raw) currentConfig = sanitize(JSON.parse(raw) as Partial<HanziMatrixConfig>);
+    if (raw) {
+      currentConfig = sanitize(JSON.parse(raw) as Partial<HanziMatrixConfig>);
+      return;
+    }
+    const pool = CALLIGRAPHY_POOL_KEYS[Math.floor(Math.random() * CALLIGRAPHY_POOL_KEYS.length)]!;
+    currentConfig = sanitize({ ...DEFAULT_HANZI_MATRIX_CONFIG, pool });
+    window.localStorage.setItem(HANZI_MATRIX_CONFIG_STORAGE_KEY, JSON.stringify(currentConfig));
   } catch {
     // 存储不可用/损坏:保持默认
   }

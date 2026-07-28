@@ -130,6 +130,30 @@ describe("HomeSettingsSheet 浮层关闭栈", () => {
     await escapeOn(document.body);
     expect(isSheetClosing()).toBe(true);
   });
+
+  it("技能显示名编辑时 Esc 只取消编辑，不关闭设置面板", async () => {
+    await render("skills");
+    await flush();
+
+    const skillCard = host?.querySelector<HTMLElement>('[data-wf="SkillEntry"]');
+    if (!skillCard) throw new Error("技能卡未找到");
+    await act(async () => {
+      skillCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const editButton = host?.querySelector<HTMLButtonElement>('[data-wf="SkillLabelEdit"]');
+    if (!editButton) throw new Error("技能显示名编辑入口未找到");
+    await click(editButton);
+
+    const input = host?.querySelector<HTMLInputElement>('[data-wf="SkillLabelInput"]');
+    if (!input) throw new Error("技能显示名输入框未找到");
+    await escapeOn(input);
+
+    expect(host?.querySelector('[data-wf="SkillLabelInput"]')).toBeNull();
+    expect(isSheetClosing()).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 async function render(tab: SettingsSheetTab): Promise<void> {
@@ -212,6 +236,39 @@ async function flush(): Promise<void> {
 function makeFetchMock() {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/v1/capabilities")) {
+      return json({ skills: { mutationEnabled: true } });
+    }
+    if (url.includes("/api/v1/skills/custom-research")) {
+      return json({
+        name: "custom-research",
+        description: "自装研究技能",
+        label: "研资料",
+        summary: "整理用户资料",
+        icon: "star",
+        source: "installed",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+        body: "# 研资料",
+      });
+    }
+    if (url.endsWith("/api/v1/skills")) {
+      return json({
+        skills: [{
+          name: "custom-research",
+          description: "自装研究技能",
+          label: "研资料",
+          summary: "整理用户资料",
+          icon: "star",
+          source: "installed",
+          userInvocable: true,
+          tools: [],
+          enabled: true,
+          children: [],
+        }],
+      });
+    }
     if (url.includes("/api/v1/settings/security")) {
       return json({
         categories: [

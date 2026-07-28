@@ -1,4 +1,10 @@
-import type { ChatChip, SkillRef } from "@qingagent/contract-ts";
+import {
+  parseChipRichText,
+  serializeChipRichText,
+  type ChatChip,
+  type ChipRichTextPart,
+  type SkillRef,
+} from "@qingagent/contract-ts";
 import {
   browserCrossTabLockManager,
   withCrossTabLock,
@@ -333,10 +339,15 @@ function sanitizeMissingAttachmentChips(
   const nextRichText =
     richText === null
       ? null
-      : richText.replace(/\{\{chip:(\d+)\}\}/g, (_marker, indexRaw) => {
-          const nextIndex = nextIndexByOldIndex.get(Number(indexRaw));
-          return nextIndex === undefined ? "" : `{{chip:${nextIndex}}}`;
-        });
+      : serializeChipRichText(
+          parseChipRichText(richText).flatMap<ChipRichTextPart>((part) => {
+            if (part.kind === "text") return [part];
+            const nextIndex = nextIndexByOldIndex.get(part.index);
+            return nextIndex === undefined
+              ? []
+              : [{ kind: "chip" as const, index: nextIndex, marker: `{{chip:${nextIndex}}}` }];
+          }),
+        );
   return { chips: nextChips, richText: nextRichText };
 }
 

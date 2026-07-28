@@ -928,8 +928,15 @@ function buildLayout(
   });
 
   const realEntries = entries.filter((e) => e.kind === "real");
-  const dateMin = realEntries[0]?.date ?? "";
-  const dateMax = realEntries[realEntries.length - 1]?.date ?? "";
+  let earliestEntry: CardEntry | undefined;
+  let latestEntry: CardEntry | undefined;
+  for (const entry of realEntries) {
+    if (!Number.isFinite(entry.createdAt)) continue;
+    if (!earliestEntry || entry.createdAt < earliestEntry.createdAt) earliestEntry = entry;
+    if (!latestEntry || entry.createdAt > latestEntry.createdAt) latestEntry = entry;
+  }
+  const dateMin = earliestEntry?.date ?? "";
+  const dateMax = latestEntry?.date ?? "";
   const stageOccupiedRects: StageRect[] = [];
   const preludeStageMoments: StageMoment[] = [];
   // 第一列「新建文档」卡上下固定放当季首株(seasonFirst,已在上方按今日种子选定)
@@ -1111,8 +1118,9 @@ export function QingjianScroll({
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  // 进度条 hover 预览小卡:命中的卡片索引 + 水平定位(相对 dock 容器左侧)
-  const [preview, setPreview] = useState<{ idx: number; left: number } | null>(null);
+  const effectiveSearchQueryRef = useRef("");
+  // 进度条 hover 预览小卡:稳定文章 id + 水平定位(相对 dock 容器左侧)
+  const [preview, setPreview] = useState<{ entryId: string; left: number } | null>(null);
 
   useEffect(() => {
     if (!openingScroll) return;
@@ -1178,9 +1186,20 @@ export function QingjianScroll({
   // 每次去程与舞台生命周期绑定；卸载/重建会使旧 Promise 的 finally 无权再提交导航。
   const transitionGenerationRef = useRef(0);
   const initialHomeViewXRef = useRef<number | null>(null);
+  const scrollPositionRef = useRef({ viewX: 0, targetX: 0 });
 
   const [containerH, setContainerH] = useState(0);
   const [containerW, setContainerW] = useState(0);
+
+  const updateSearchQuery = useCallback((nextQuery: string) => {
+    const nextEffectiveQuery = nextQuery.trim().toLowerCase();
+    if (nextEffectiveQuery !== effectiveSearchQueryRef.current) {
+      // 有效搜索条件变化会重排文章，属于明确回卷首场景。
+      initialHomeViewXRef.current = 0;
+      effectiveSearchQueryRef.current = nextEffectiveQuery;
+    }
+    setSearchQuery(nextQuery);
+  }, []);
 
   const replayVisibleCards = useCallback(() => {
     const stage = stageRef.current;
@@ -1536,10 +1555,12 @@ export function QingjianScroll({
 
     const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    const initialViewX = initialHomeViewXRef.current ?? 0;
+    const explicitInitialViewX = initialHomeViewXRef.current;
     initialHomeViewXRef.current = null;
+    const initialViewX = explicitInitialViewX ?? scrollPositionRef.current.viewX;
+    const initialTargetX = explicitInitialViewX ?? scrollPositionRef.current.targetX;
     let viewX = initialViewX;
-    let targetX = initialViewX;
+    let targetX = initialTargetX;
     let velocity = 0;
     let maxX = 1;
     let dragging = false;
@@ -1562,7 +1583,7 @@ export function QingjianScroll({
     const momentNodes = Array.from(stage.querySelectorAll<HTMLElement>(".qj-stage-moment"));
 
     // scrollIndex: 让某卡居中所需的 viewX(供进度条 hover / 跳转 / 预览)
-    let scrollIndex: { idx: number; x: number }[] = [];
+    let scrollIndex: { entryId: string; kind: CardEntry["kind"]; x: number }[] = [];
     function buildScrollIndex() {
       if (!stage || !inner || !scroller) return;
       const stageRect = stage.getBoundingClientRect();
@@ -1571,10 +1592,12 @@ export function QingjianScroll({
       const vw = scroller.clientWidth;
       scrollIndex = [];
       stage.querySelectorAll<HTMLElement>(".qj-card-slot").forEach((slot) => {
-        const idx = Number(slot.dataset.idx);
+        const entryId = slot.dataset.id;
+        const kind = slot.dataset.kind;
+        if (!entryId || (kind !== "new" && kind !== "real")) return;
         const left = parseFloat(slot.style.left) || 0;
         const centerInScroll = stageOffset + left + CARD_WIDTH / 2;
-        scrollIndex.push({ idx, x: centerInScroll - vw / 2 });
+        scrollIndex.push({ entryId, kind, x: centerInScroll - vw / 2 });
       });
       scrollIndex.sort((a, b) => a.x - b.x);
     }
@@ -1927,6 +1950,19 @@ export function QingjianScroll({
       // 只在长卷可见且未聚焦输入框时响应
       const active = document.activeElement;
       if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        const target = e.target instanceof Element ? e.target : null;
+        const slot = target?.closest<HTMLElement>(".qj-card-slot");
+        if (!slot || slot.getAttribute("aria-disabled") === "true") return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (slot.dataset.kind === "new") {
+          triggerNewSession();
+        } else if (slot.dataset.id) {
+          triggerOpenSession(slot.dataset.id);
+        }
+        return;
+      }
       if (e.key === "ArrowRight") {
         targetX = clamp(targetX + 320, 0, maxX);
         velocity = 12;
@@ -2008,14 +2044,14 @@ export function QingjianScroll({
     const onProgMove = (e: PointerEvent) => {
       if (!dockProg || !dock) return;
       const hit = cardAtRatio(ratioFromEvent(e));
-      // 新建卡(globalIdx 0)不预览
-      if (!hit || hit.idx <= 0) {
+      // 新建卡不预览
+      if (!hit || hit.kind !== "real") {
         setPreview(null);
         return;
       }
       const dockRect = dock.getBoundingClientRect();
       const px = clamp(e.clientX - dockRect.left, 80, dockRect.width - 80);
-      setPreview({ idx: hit.idx, left: px });
+      setPreview({ entryId: hit.entryId, left: px });
     };
     const onProgLeave = () => setPreview(null);
     dockProg?.addEventListener("pointermove", onProgMove);
@@ -2057,6 +2093,7 @@ export function QingjianScroll({
     }, 400);
 
     return () => {
+      scrollPositionRef.current = { viewX, targetX };
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);
@@ -2085,11 +2122,11 @@ export function QingjianScroll({
   const onSearchToggle = useCallback(() => {
     setSearchOpen((v) => {
       const next = !v;
-      if (!next) setSearchQuery("");
+      if (!next) updateSearchQuery("");
       return next;
     });
     dockRef.current?.classList.add("qj-show");
-  }, []);
+  }, [updateSearchQuery]);
 
   return (
     <div
@@ -2214,6 +2251,9 @@ export function QingjianScroll({
                   data-layer={slot.layer}
                   data-title={slot.entry.title}
                   data-category={slot.entry.category}
+                  role="button"
+                  tabIndex={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? -1 : 0}
+                  aria-label={slot.entry.kind === "new" ? "新建文档" : `打开文章：${slot.entry.title}`}
                   aria-disabled={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? "true" : undefined}
                   style={{
                     left: `${slot.left}px`,
@@ -2260,7 +2300,9 @@ export function QingjianScroll({
       <div className="qj-dock" ref={dockRef} aria-label="展卷进度与搜索">
         {/* hover 预览小卡(进度条上方) */}
         {(() => {
-          const entry = preview ? entries[preview.idx] : undefined;
+          const entry = preview
+            ? entries.find((candidate) => candidate.id === preview.entryId)
+            : undefined;
           if (!preview || !entry || !entry.article || !entry.template) return null;
           const previewText = entry.brief.trim() || entry.article.description?.trim() || "暂无正文预览";
           const previewDate = formatPreviewDate(entry.createdAt);
@@ -2311,10 +2353,10 @@ export function QingjianScroll({
               placeholder="搜标题 / 分类…"
               autoComplete="off"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => updateSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
-                  setSearchQuery("");
+                  updateSearchQuery("");
                   setSearchOpen(false);
                 }
               }}

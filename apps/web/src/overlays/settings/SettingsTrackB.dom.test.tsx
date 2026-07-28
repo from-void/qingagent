@@ -352,6 +352,66 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
+  it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    const today = new Date();
+    const staleDay = new Date(today);
+    staleDay.setDate(today.getDate() - 8);
+    const fallbackFetch = makeFetchMock();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [
+            usageRow(localYmd(today), "deepseek-v4-flash", 100, 0, 0.001),
+            usageRow(localYmd(staleDay), "deepseek-v4-flash", 1000, 0, 0.01),
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(<ModelSettingsPanel />);
+
+    const dayRequest = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes("/api/v1/usage/summary?view=day")
+    );
+    expect(dayRequest).toBeDefined();
+    expect(new URL(String(dayRequest![0]), "http://localhost").searchParams.get(
+      "timeZone",
+    )).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const recentMetric = host?.querySelector(".md-metric");
+    expect(recentMetric?.textContent).toContain("100 tokens");
+    expect(recentMetric?.textContent).not.toContain("1.1k tokens");
+  });
+
+  it("模型分布按原始 modelId 聚合，未知模型保留原名且互不合并", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=total")) {
+        return json({
+          rows: [
+            usageRow("total", "custom-alpha", 100, 0, 0.003),
+            usageRow("total", "custom-beta", 200, 0, 0.002),
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+
+    const legend = Array.from(host?.querySelectorAll(".md-legend-item") ?? [])
+      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    expect(legend).toHaveLength(2);
+    expect(legend[0]).toContain("custom-alpha");
+    expect(legend[0]).toContain("60%");
+    expect(legend[1]).toContain("custom-beta");
+    expect(legend[1]).toContain("40%");
+    expect(legend.join(" ")).not.toContain("V4 Flash");
+  });
+
   it("SecretInput 默认遮挡,眼睛按钮可切明文且保留 data-wf", async () => {
     await render(
       <SecretInput
@@ -1118,6 +1178,33 @@ describe("Settings Track B", () => {
     expect(host?.querySelector(".ss-card .ss-badge")?.textContent).toContain(badge);
   });
 
+  it("Kimi 原生识图复用服务端活动 provider 与 DB/env key 状态", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/settings/model")) {
+        return json({
+          provider: "kimi",
+          apiKeyConfigured: true,
+          maskedTail: "7788",
+          source: "env",
+          providers: {
+            deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+            kimi: { apiKeyConfigured: true, maskedTail: "7788", source: "env" },
+          },
+          params: null,
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<VisionPanel />);
+
+    const nativeCard = host?.querySelector(".ss-card");
+    expect(nativeCard?.textContent).toContain("Kimi 原生图像识别");
+    expect(nativeCard?.querySelector(".ss-badge")?.textContent).toContain("自动启用");
+    expect(host?.textContent).toContain("默认复用");
+  });
+
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
@@ -1509,6 +1596,37 @@ describe("Settings Track B", () => {
     await flush();
     expect(host?.textContent).toContain("日期筛选仅支持按天视图");
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.includes("date="))).toBe(false);
+  });
+
+  it("用量视图切换立即清除旧行，非 2xx 后显示中性失败态", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    let resolveSession!: (response: Response) => void;
+    const sessionRequest = new Promise<Response>((resolve) => {
+      resolveSession = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=session")) {
+        return sessionRequest;
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+    expect(getTable().textContent).toContain("2026-06-24");
+
+    await click(getButtonByText("按文档"));
+    expect(host?.textContent).toContain("正在加载用量数据");
+    expect(host?.querySelector(".md-table")).toBeNull();
+    expect(host?.textContent).not.toContain("2026-06-24");
+
+    await act(async () => {
+      resolveSession(json({ error: "temporary unavailable" }, 503));
+      await sessionRequest;
+    });
+    await flush();
+
+    expect(host?.textContent).toContain("用量数据暂时无法加载，请稍后重试");
+    expect(host?.querySelector(".md-table")).toBeNull();
   });
 
   it("用量明细默认小白模式只展示聚合列", async () => {
@@ -1933,6 +2051,13 @@ function usageRow(
     coverageRate: 1,
     costCny,
   };
+}
+
+function localYmd(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function json(body: unknown, status = 200): Response {

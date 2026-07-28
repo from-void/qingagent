@@ -42,7 +42,7 @@ export function PatchNav({
           className="pn-label"
           title={remainingCount === totalCount ? undefined : `剩余 ${remainingCount} 处`}
         >
-          剩余 · <b>{totalCount}</b> 处
+          剩余 · <b>{remainingCount}</b> 处
         </span>
       )}
       {/* 上/下一处:仅当修改位置多于 1 处时才有意义,单处时不渲染 */}

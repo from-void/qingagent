@@ -143,10 +143,13 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const templateSelectionEpochRef = useRef(0);
+  const confirmedTemplateIdRef = useRef("");
 
   useEffect(() => {
     if (!props.open) return;
     const requestId = ++requestRef.current;
+    templateSelectionEpochRef.current += 1;
     setLoading(true);
     setError(null);
     setPage("launch");
@@ -159,6 +162,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
         const selected = config.items.some((item) => item.id === config.selectedTemplateId)
           ? config.selectedTemplateId!
           : config.items[0]?.id ?? "";
+        confirmedTemplateIdRef.current = selected;
         setSelectedId(selected);
         setSupplement(savedSupplement);
         setLexicons(availableLexicons);
@@ -190,13 +194,18 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     setError(null);
   };
   const chooseTemplate = (id: string) => {
-    const previous = selectedId;
+    const selectionEpoch = ++templateSelectionEpochRef.current;
     setSelectedId(id);
     setError(null);
-    void props.selectTemplate(props.type, id).catch(() => {
-      setSelectedId(previous);
-      setError("模板选择保存失败，请重试");
-    });
+    void props.selectTemplate(props.type, id)
+      .then(() => {
+        confirmedTemplateIdRef.current = id;
+      })
+      .catch(() => {
+        if (templateSelectionEpochRef.current !== selectionEpoch) return;
+        setSelectedId(confirmedTemplateIdRef.current);
+        setError("模板选择保存失败，请重试");
+      });
   };
   const storeTemplate = (id?: string) => {
     if (!editor) return;
@@ -206,7 +215,19 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
       setTemplates((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       if (!id) {
         setSelectedId(saved.id);
-        await props.selectTemplate(props.type, saved.id);
+        setEditor({ source: saved, name: saved.name, prompt: saved.prompt });
+        const selectionEpoch = ++templateSelectionEpochRef.current;
+        try {
+          await props.selectTemplate(props.type, saved.id);
+          confirmedTemplateIdRef.current = saved.id;
+        } catch {
+          setEditor(null);
+          setPage("launch");
+          if (templateSelectionEpochRef.current === selectionEpoch) {
+            setError("模板已保存，但设为默认失败，请再次选择");
+          }
+          return;
+        }
       }
       setEditor(null);
       setPage("launch");
@@ -218,8 +239,11 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     setError(null);
     void props.deleteTemplate(editor.source.id).then((nextSelectedId) => {
       const remaining = templates.filter((item) => item.id !== editor.source?.id);
+      const selectedAfterDelete =
+        nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "";
       setTemplates(remaining);
-      setSelectedId(nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "");
+      confirmedTemplateIdRef.current = selectedAfterDelete;
+      setSelectedId(selectedAfterDelete);
       setEditor(null);
       setPage("launch");
     }).catch((deleteError) => setError(deleteErrorMessage(deleteError))).finally(() => setSaving(false));
@@ -233,11 +257,14 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     const requestId = ++requestRef.current;
     setActiveLexicon(lexicon);
     setEntries([]);
+    setError(null);
     setLoading(true);
     setPage("entries");
     void props.loadLexiconEntries(lexicon.id).then((items) => {
       if (requestRef.current === requestId) setEntries(items);
-    }).catch(() => setError("词条加载失败，请重试")).finally(() => {
+    }).catch(() => {
+      if (requestRef.current === requestId) setError("词条加载失败，请重试");
+    }).finally(() => {
       if (requestRef.current === requestId) setLoading(false);
     });
   };

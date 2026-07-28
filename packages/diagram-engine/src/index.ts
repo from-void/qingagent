@@ -2954,6 +2954,38 @@ function unwrapMindmapNode(text: string): {
   return { id: text, label: text, open: "", close: "", wrapped: false };
 }
 
+function safeMindmapLabel(label: string): string {
+  const entities: Record<string, string> = {
+    "&": "&amp;",
+    '"': "&quot;",
+    "'": "&apos;",
+    "\\": "&#92;",
+    "[": "&#91;",
+    "]": "&#93;",
+    "(": "&#40;",
+    ")": "&#41;",
+    "{": "&#123;",
+    "}": "&#125;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "#": "&#35;",
+    ":": "&#58;",
+    "%": "&#37;",
+    "\r": "&#13;",
+    "\n": "<br>",
+  };
+  const encoded = label.replace(/[&"'\\[\](){}<>#:%\r\n]/g, (char) => entities[char]!);
+  return encoded.replace(/^\s+|\s+$/g, (whitespace) =>
+    [...whitespace].map((char) => `&#${char.codePointAt(0)};`).join("")
+  );
+}
+
+function displayMindmapLabel(value: string): string {
+  // 先还原编码器生成的真实换行，再解实体；这样用户输入的字面量 `<br>`
+  // 会以 `&lt;br&gt;` 往返，不会被误解码成换行。
+  return decodeMermaidEntities(value.replace(/<br\s*\/?>/gi, "\n"));
+}
+
 function parseMindmap(source: string): ParseResult {
   const lines = getLines(source);
   const header = lines.find((line) => /^\s*mindmap\b/.test(line.text));
@@ -2992,7 +3024,7 @@ function parseMindmap(source: string): ParseResult {
     const id = `mind-${hashText(path.join("/"))}`;
     const node: MindNode = {
       id,
-      label: parts.label,
+      label: displayMindmapLabel(parts.label),
       line: lineSpan(line),
       indent,
       children: [],
@@ -3051,7 +3083,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     if (!parent) return { ok: false, source, error: "父节点不存在" };
     const insertAt = subtreeEnd(source, parent);
     const indent = " ".repeat(parent.indent + 2);
-    const text = `${indent}${safeMermaidLabel(op.label)}\n`;
+    const text = `${indent}${safeMindmapLabel(op.label)}\n`;
     const beforeIds = new Set(nodes.map((item) => item.id));
     const newSource = insertAtLineBoundary(source, insertAt, text);
     const reparsed = parseMindmap(newSource);
@@ -3060,6 +3092,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     }
     const reparsedTree = reparsed.model as MindmapTree;
     const newNode = flattenMindmap(reparsedTree.root).find((n) => !beforeIds.has(n.id) && n.label === op.label && n.parentId === parent.id);
+    if (!newNode) return { ok: false, source, error: "mindmap 新节点标签无法完整往返" };
     return { ok: true, newNodeId: newNode?.id, source: newSource };
   }
   if (op.kind === "deleteNode") {
@@ -3078,10 +3111,17 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     // 保留原节点的 id 与形状包裹,只替换内部文本(否则改名会丢掉圆形/方形等形状)。
     const parts = unwrapMindmapNode(lineText.trim());
     const body = parts.wrapped
-      ? `${parts.id}${parts.open}${safeMermaidLabel(op.label)}${parts.close}`
-      : safeMermaidLabel(op.label);
+      ? `${parts.id}${parts.open}${safeMindmapLabel(op.label)}${parts.close}`
+      : safeMindmapLabel(op.label);
     const replacement = `${leading}${body}${newline}`;
     const newSource = applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: replacement }]);
+    const reparsed = parseMindmap(newSource);
+    const renamedNode = reparsed.ok && reparsed.model.type === "mindmap"
+      ? flattenMindmap(reparsed.model.root).find((item) => item.line.start === node!.line.start)
+      : undefined;
+    if (renamedNode?.label !== op.label) {
+      return { ok: false, source, error: "mindmap 节点标签无法完整往返" };
+    }
     const lengthDelta = replacement.length - (node!.line.end - node!.line.start);
     return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart === node!.line.start) return node!.line.start;

@@ -1407,6 +1407,21 @@ flowchart TD
     for (const label of beforeLabels) expect(afterNodes.map((node) => node.label)).toContain(label);
   });
 
+  it("mindmap 新增和改名可往返引号、反斜杠与换行", () => {
+    const label = '引号"、反斜杠\\与\n换行';
+    const source = "mindmap\n  root((中心))\n";
+    const root = (parseDiagram(source).model as MindmapTree).root;
+
+    const added = applyEdit(source, { kind: "addNode", parentId: root.id, label });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).toBeDefined();
+    expect(flattenMindmap((parseDiagram(added.source).model as MindmapTree).root).find((node) => node.id === added.newNodeId)?.label).toBe(label);
+
+    const renamed = applyEdit(source, { kind: "relabelNode", nodeId: root.id, label });
+    expect(renamed.ok).toBe(true);
+    expect((parseDiagram(renamed.source).model as MindmapTree).root.label).toBe(label);
+  });
+
   it("mindmap moveNode 暴露能力并把节点改挂到新父下", () => {
     const source = "mindmap\n  根\n    素材\n      访谈\n    大纲\n      结构\n";
     const parsed = parseDiagram(source);

@@ -70,6 +70,7 @@ const FILE_ACCESS_DENIED_RESULT = {
   ok: false,
   error: "文件不可访问",
   errorCode: "FILE_ACCESS_DENIED",
+  failureKind: "error",
   text: "[Error] 文件不可访问",
   metadata: { pages: null, wordCount: 0, title: null },
 };
@@ -78,6 +79,7 @@ const FILE_NOT_REGULAR_RESULT = {
   ok: false,
   error: "不是常规文件",
   errorCode: "FILE_NOT_REGULAR",
+  failureKind: "error",
   text: "[Error] 不是常规文件",
   metadata: { pages: null, wordCount: 0, title: null },
 };
@@ -86,6 +88,7 @@ const FILE_TOO_LARGE_RESULT = {
   ok: false,
   error: "文件过大（上限 64MiB）",
   errorCode: "FILE_TOO_LARGE",
+  failureKind: "error",
   text: "[Error] 文件过大（上限 64MiB）",
   metadata: { pages: null, wordCount: 0, title: null },
 };
@@ -564,8 +567,9 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "mat-read-1", mode: "full" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as { ok: boolean; text: string; filename: string; wordCount: number };
 
+    expect(result.ok).toBe(true);
     expect(result.text).toBe("这是文章全文内容，包含很多段落。");
     expect(result.filename).toBe("article.pdf");
     expect(result.wordCount).toBe(5000);
@@ -576,8 +580,9 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "mat-read-1", mode: "summary" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as { ok: boolean; text: string; filename: string; wordCount: number };
 
+    expect(result.ok).toBe(true);
     expect(result.text).toBe("这是文章摘要");
     expect(result.filename).toBe("article.pdf");
     expect(result.wordCount).toBe(5000);
@@ -588,8 +593,9 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "mat-read-image", mode: "full" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as { ok: boolean; text: string; filename: string; wordCount: number };
 
+    expect(result.ok).toBe(true);
     expect(result.text).toBe("【图像识别摘要】图片里有一张手写会议纪要。\n\n原始图片素材正文占位");
     expect(result.filename).toBe("photo.png");
     expect(result.wordCount).toBe(12);
@@ -600,8 +606,9 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "mat-read-image", mode: "summary" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as { ok: boolean; text: string; filename: string; wordCount: number };
 
+    expect(result.ok).toBe(true);
     expect(result.text).toBe("图片摘要");
     expect(result.text).not.toContain("【图像识别摘要】");
   });
@@ -611,8 +618,9 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "mat-read-2", mode: "summary" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as { ok: boolean; text: string; filename: string; wordCount: number };
 
+    expect(result.ok).toBe(true);
     expect(result.text).toBe("(No summary)");
     expect(result.filename).toBe("notes.txt");
     expect(result.wordCount).toBe(20);
@@ -623,10 +631,17 @@ describe("readMaterial execute — session-scoped closure", () => {
       { materialId: "nonexistent", mode: "full" },
       ctx,
     );
-    const result = raw as { text: string; filename: string; wordCount: number };
+    const result = raw as {
+      ok: boolean;
+      text: string;
+      filename: string;
+      wordCount: number;
+      error?: string;
+    };
 
+    expect(result.ok).toBe(false);
     expect(result.text).toContain("[Error]");
-    expect(result.text).toContain("nonexistent");
+    expect(result.error).toContain("nonexistent");
     expect(result.filename).toBe("");
     expect(result.wordCount).toBe(0);
   });

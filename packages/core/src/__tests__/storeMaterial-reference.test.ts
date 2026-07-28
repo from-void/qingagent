@@ -118,6 +118,7 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
             ok: false,
             error: "文件过大（上限 64MiB）",
             errorCode: "FILE_TOO_LARGE",
+            failureKind: "error",
             text: "[Error] 文件过大（上限 64MiB）",
             metadata: { pages: null, wordCount: 0, title: null },
           }),

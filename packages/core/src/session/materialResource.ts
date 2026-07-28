@@ -25,30 +25,19 @@ export type UpsertMaterialByFileIdResult = {
   frame: BridgeFrame;
 };
 
-function parseFileFailurePrefixKind(text: string): MaterialParseFailureKind | null {
-  const trimmed = text.trimStart();
-  if (trimmed.startsWith("[Unsupported]")) return "unsupported";
-  if (trimmed.startsWith("[Error]")) return "error";
-  return null;
-}
-
 export function parseFileFailureFromResult(
   result: Record<string, unknown>,
 ): MaterialParseFailure | null {
+  if (result.ok !== false) return null;
   const text = typeof result.text === "string" ? result.text : "";
   const error = typeof result.error === "string" ? result.error : "";
   const message = text || error;
-  const prefixKind = message ? parseFileFailurePrefixKind(message) : null;
-  if (prefixKind) return { kind: prefixKind, message };
-  if (result.ok === false) {
-    const rawKind = result.failureKind;
-    const kind: MaterialParseFailureKind = rawKind === "unsupported" ? "unsupported" : "error";
-    return {
-      kind,
-      message: message || (kind === "unsupported" ? "[Unsupported] 文件格式暂不支持解析。" : "[Error] 文件解析失败。"),
-    };
-  }
-  return null;
+  const rawKind = result.failureKind;
+  const kind: MaterialParseFailureKind = rawKind === "unsupported" ? "unsupported" : "error";
+  return {
+    kind,
+    message: message || (kind === "unsupported" ? "文件格式暂不支持解析。" : "文件解析失败。"),
+  };
 }
 
 function stripParseFailurePrefix(message: string): string {

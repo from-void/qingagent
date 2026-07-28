@@ -274,14 +274,22 @@ describe("DocToolbar round-1 regressions", () => {
         onAiModify={async () => true}
       />,
     );
-    await act(async () => getButtonByText("链接").click());
-    expect(host?.querySelector(".link-hover-card")).not.toBeNull();
-
     await act(async () => {
-      editor?.commands.insertContentAt(1, "前");
+      getButtonByText("链接").click();
+      editor?.commands.setContent({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "programmatic-replacement" },
+          content: [{ type: "text", text: "程序化替换正文" }],
+        }],
+      });
+      await Promise.resolve();
     });
 
     expect(host?.querySelector(".link-hover-card")).toBeNull();
+    expect(host?.querySelector(".link-hover-card .lhc-btn.primary")).toBeNull();
     expect(JSON.stringify(editor.getJSON())).not.toContain('"type":"link"');
   });
 

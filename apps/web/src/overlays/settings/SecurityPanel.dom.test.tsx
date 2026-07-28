@@ -344,4 +344,64 @@ describe("SecurityPanel", () => {
       tone: "success",
     });
   });
+
+  it("本操作 pending 时不借外部版本变化判定，直至 operationId 明确失败", async () => {
+    vi.useFakeTimers();
+    const operationId = "security-op-external-version";
+    vi.stubGlobal("crypto", { randomUUID: () => operationId });
+    const externallyChanged = categories.map((item) => item.kind === "install"
+      ? { ...item, grantMode: "always", present: true, grantId: "grant-other-tab", version: 9 }
+      : item);
+    let reconcileReads = 0;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST") return new Promise<Response>(() => undefined);
+      if (!url.includes("operationId=")) return response({ categories });
+      reconcileReads += 1;
+      if (reconcileReads === 1) {
+        return response({
+          categories: externallyChanged,
+          operation: {
+            operationId,
+            kind: "install",
+            grantMode: "always",
+            baseVersion: 0,
+            status: "pending",
+          },
+        });
+      }
+      return response({
+        categories: externallyChanged,
+        operation: {
+          operationId,
+          kind: "install",
+          grantMode: "always",
+          baseVersion: 0,
+          status: "failed",
+        },
+      });
+    });
+    await renderWithFetch(fetchMock);
+    await choose(categorySelect("安装"), "always");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+    expect(reconcileReads).toBe(1);
+    expect(categorySelect("安装").disabled).toBe(true);
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "success" }));
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({
+      message: "设置保存失败，请再试一次",
+    }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(750);
+    });
+    expect(reconcileReads).toBe(2);
+    expect(categorySelect("安装").disabled).toBe(false);
+    expect(toast).toHaveBeenCalledWith({
+      message: "设置保存失败，请再试一次",
+      tone: "error",
+    });
+  });
 });

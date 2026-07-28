@@ -319,26 +319,6 @@ export function SecurityPanel() {
               outcome = { status: "failed" };
               break;
             }
-            const canonicalCategory = snapshot.categories.find(
-              (item) => item.kind === category.kind,
-            );
-            if (canonicalCategory && canonicalCategory.version > baseVersion) {
-              outcome = canonicalCategory.grantMode === grantMode
-                ? {
-                    status: "committed",
-                    canonical: {
-                      kind: category.kind,
-                      grantMode: canonicalCategory.grantMode,
-                      present: canonicalCategory.present,
-                      grantId: canonicalCategory.grantId,
-                      version: canonicalCategory.version,
-                      operationId,
-                      baseVersion,
-                    },
-                  }
-                : { status: "failed" };
-              break;
-            }
           } catch {
             // 网络恢复前保持结果未定，不把旧 canonical 误报为保存失败。
           }

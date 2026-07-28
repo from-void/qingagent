@@ -45,6 +45,7 @@ QINGAGENT_MAC_DIST=1 bash apps/desktop/build-mac.sh
 | 签名相关报错（identity/codesign） | 本地包不签名：脚本已设 `CSC_IDENTITY_AUTO_DISCOVERY=false`；手拼命令时自己带上 |
 | `Cannot find module '@libsql/darwin-arm64'` | `pnpm install` 没在 mac 上重跑过（把 Linux/别的机器的 node_modules 拷过来了）。删 node_modules 重新 `pnpm install` |
 | electron-builder 下载 app-builder 等二进制失败 | 同镜像问题；或公司代理拦截，试 `HTTPS_PROXY` |
+| 连接页飞书显示「此环境不可用」 | 客户端在**未打包形态**(纯 dev/`electron .`)运行——lark-cli 随包资产只在 `app.isPackaged` 时接线。用本脚本快速模式(`--dir` 出 .app,不算二进制安装包但 isPackaged=true,飞书可用);或纯 dev 下 `npm i -g @larksuite/cli` 走 PATH 兜底 |
 | Intel/Apple Silicon 弄混 | 默认打本机架构。给 Intel 同学打包加 `--x64`（编辑脚本内 electron-builder 行）或让对方自己构建 |
 
 ## 4. 心智模型（30 秒）

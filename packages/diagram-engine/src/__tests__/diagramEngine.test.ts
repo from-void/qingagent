@@ -633,6 +633,26 @@ describe("diagram-engine", () => {
     expect(connected.source).toContain("Inside --> Outside");
   });
 
+  it("flowchart 新节点 ID 同时避让节点与 subgraph", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Group["分区"]',
+      "    Inside[内部]",
+      "  end",
+      "",
+    ].join("\n");
+
+    const added = applyEdit(source, { kind: "addNode", label: "Group" });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).not.toBe("Group");
+
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const model = reparsed.model as FlowGraph;
+    const allIds = [...model.nodes.map((node) => node.id), ...model.subgraphs.map((subgraph) => subgraph.id)];
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+
   it("wrapNodesInSubgraph 原位包裹连续节点并以中文标题 round-trip", () => {
     const source = [
       "flowchart TD",

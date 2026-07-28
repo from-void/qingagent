@@ -2017,8 +2017,24 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  ${id}["${safeMermaidLabel(op.label)}"]\n`) };
+    const reservedIds = [
+      ...model.nodes.map((node) => node.id),
+      ...model.subgraphs.map((subgraph) => subgraph.id),
+    ];
+    const id = uniqueId(reservedIds, safeMermaidId(op.label));
+    const newSource = insertBeforeSourceEnd(source, `  ${id}["${safeMermaidLabel(op.label)}"]\n`);
+    const reparsed = parseFlowchart(newSource);
+    if (!reparsed.ok || reparsed.model.type !== "flowchart") {
+      return { ok: false, source, error: reparsed.error ?? "新节点写回后无法重新解析" };
+    }
+    const allIds = [
+      ...reparsed.model.nodes.map((node) => node.id),
+      ...reparsed.model.subgraphs.map((subgraph) => subgraph.id),
+    ];
+    if (new Set(allIds).size !== allIds.length) {
+      return { ok: false, source, error: "节点与分区 ID 写回后仍有冲突" };
+    }
+    return { ok: true, newNodeId: id, source: newSource };
   }
   if (op.kind === "deleteNode") {
     const node = model.nodes.find((n) => n.id === op.nodeId)!;

@@ -221,7 +221,7 @@ export async function updateParams(docId: string, writingStyleId: string, privat
       throw new Error("未知的写作风格模板");
     }
     const layout = layoutStyleId == null ? null : await getStyleTemplate(layoutStyleId, client);
-    if (layout && (layout.slot !== "layout" || layout.dtype !== dtype)) {
+    if (layoutStyleId != null && (!layout || layout.slot !== "layout" || layout.dtype !== dtype)) {
       throw new Error("未知的排版风格模板");
     }
     const now = new Date().toISOString();

@@ -160,6 +160,30 @@ describe("documentDerivativesRepo", () => {
     });
   });
 
+  it("参数更新拒绝不存在的排版模板且保留原参数", async () => {
+    await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
+    const meta = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "原指令",
+    });
+
+    await expect(updateParams(
+      meta.docId,
+      "gzh-tutorial",
+      "不应写入",
+      "missing-layout",
+    )).rejects.toThrow("未知的排版风格模板");
+
+    expect(await getDerivativeMeta(meta.docId)).toMatchObject({
+      writingStyleId: meta.writingStyleId,
+      layoutStyleId: meta.layoutStyleId,
+      privatePrompt: "原指令",
+    });
+  });
+
   it("get-or-create 对已存在实例刷新模板与私有指令(调整模板后重生成读到新参数)", async () => {
     await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
     const first = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-opinion", privatePrompt: "克制" });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { toMarkdown, toTxt } from "../export/index.js";
+import { toHtml, toMarkdown, toTxt } from "../export/index.js";
 
 function doc(content: PmDoc["content"]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
@@ -81,5 +81,60 @@ describe("TXT 块结构正确性", () => {
     expect(toTxt(source)).toBe(
       "代码如下：\n\nfunction run() {\n  first();\n\n    return second();\n}\n\n代码结束。",
     );
+  });
+});
+
+describe("HTML 表格列宽正确性", () => {
+  it("按逻辑列输出 colgroup，并兼容 colspan 与 rowspan 合并单元格", () => {
+    const paragraph = (blockId: string, text: string) => ({
+      type: "paragraph" as const,
+      attrs: { blockId },
+      content: [{ type: "text" as const, text }],
+    });
+    const source = doc([
+      {
+        type: "table",
+        attrs: { blockId: "table" },
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableHeader",
+                attrs: { rowspan: 2, colwidth: [100] },
+                content: [paragraph("h-a", "A")],
+              },
+              {
+                type: "tableHeader",
+                attrs: { colspan: 2, colwidth: [140, 180] },
+                content: [paragraph("h-bc", "B+C")],
+              },
+            ],
+          },
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                attrs: { colwidth: [140] },
+                content: [paragraph("b", "B")],
+              },
+              {
+                type: "tableCell",
+                attrs: { colwidth: [180] },
+                content: [paragraph("c", "C")],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const html = toHtml(source);
+    expect(html).toContain(
+      '<colgroup><col style="width:100px"><col style="width:140px"><col style="width:180px"></colgroup>',
+    );
+    expect(html).toContain('<th colspan="2">');
+    expect(html).toContain('<th rowspan="2">');
   });
 });

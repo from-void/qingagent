@@ -5,6 +5,8 @@ import {
   type LocalSandboxOptions,
   type MountResult,
   type NativeSandboxConfig,
+  type ProcessHandle,
+  type SpawnProcessOptions,
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import { createHash } from "node:crypto";
@@ -152,11 +154,11 @@ export class ReadWallLocalSandbox extends LocalSandbox {
     const { verifyReadWallIntegrity, ...sandboxOptions } = options;
     super(sandboxOptions);
     this.verifyReadWallIntegrity = verifyReadWallIntegrity;
-    this.executeCommand = async (
+    const spawnProcess = this.processes.spawn.bind(this.processes);
+    this.processes.spawn = async (
       command: string,
-      args?: string[],
-      executeOptions?: ExecuteCommandOptions,
-    ): Promise<CommandResult> => {
+      spawnOptions?: SpawnProcessOptions,
+    ): Promise<ProcessHandle> => {
       this.assertReadWallHealthy();
       try {
         await this.verifyReadWallIntegrity();
@@ -164,6 +166,19 @@ export class ReadWallLocalSandbox extends LocalSandbox {
         this.markReadWallUnhealthy();
         throw error;
       }
+      try {
+        return await spawnProcess(command, spawnOptions);
+      } catch (error) {
+        this.markReadWallUnhealthy();
+        throw error;
+      }
+    };
+    this.executeCommand = async (
+      command: string,
+      args?: string[],
+      executeOptions?: ExecuteCommandOptions,
+    ): Promise<CommandResult> => {
+      this.assertReadWallHealthy();
 
       const fullCommand = args?.length
         ? `${command} ${args.map(shellQuoteCommandArg).join(" ")}`

@@ -24,6 +24,47 @@ afterEach(async () => {
 });
 
 describe("read-wall fail-closed 与 mount 升级锁", () => {
+  it("后台 spawn 与前台命令共享完整性复核和熔断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-background-"));
+    roots.push(root);
+    let intact = true;
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: async () => {
+        if (!intact) throw new Error("profile hash changed");
+      },
+    });
+
+    const handle = await sandbox.processes.spawn("printf background-ok");
+    await expect(handle.wait()).resolves.toMatchObject({ exitCode: 0, stdout: "background-ok" });
+    intact = false;
+    await expect(sandbox.processes.spawn("printf leaked")).rejects.toThrow(/hash changed/);
+    expect(sandbox.isReadWallHealthy()).toBe(false);
+    await expect(sandbox.processes.spawn("printf retry")).rejects.toThrow(/commands are disabled/);
+    await expect(sandbox.executeCommand!("printf foreground-retry")).rejects.toThrow(
+      /commands are disabled/,
+    );
+  });
+
+  it("后台进程启动失败后永久熔断 Workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-background-launch-"));
+    roots.push(root);
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: async () => undefined,
+    });
+
+    await expect(
+      sandbox.processes.spawn("printf unreachable", { cwd: join(root, "missing") }),
+    ).rejects.toThrow();
+    expect(sandbox.isReadWallHealthy()).toBe(false);
+    await expect(sandbox.processes.spawn("printf retry")).rejects.toThrow(/commands are disabled/);
+  });
+
   it("策略完整性变化后当前与后续命令均熔断", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-sandbox-"));
     roots.push(root);

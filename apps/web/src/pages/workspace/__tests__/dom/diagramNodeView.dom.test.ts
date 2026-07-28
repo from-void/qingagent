@@ -955,7 +955,9 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(button?.getAttribute("aria-label")).toBe("块操作菜单(转换格式 / 插入)");
       expect(button?.getAttribute("aria-haspopup")).toBe("menu");
       expect(button?.getAttribute("aria-expanded")).toBe("true");
-      const menu = container.querySelector(".block-handle-menu");
+      // 主菜单自"块手柄菜单与表格 chrome 同容器 portal"起挂在 #view-workspace/body 上,
+      // 不再内联在编辑器容器里;按真实挂载点取。
+      const menu = document.querySelector(".block-handle-menu");
       expect(menu?.getAttribute("role")).toBe("menu");
       const items = menu?.querySelectorAll('[role="menuitem"]') ?? [];
       expect(items.length).toBeGreaterThan(0);

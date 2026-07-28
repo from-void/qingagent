@@ -105,8 +105,9 @@
 }
 
 .qr-card__refresh-icon {
-  font-size: 22px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .qr-card__usercode {

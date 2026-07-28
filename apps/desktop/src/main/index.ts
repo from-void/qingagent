@@ -991,7 +991,10 @@ async function createWindowOnce() {
 
   // 仅主应用窗口开放文本编辑右键菜单；可信确认模态窗和 PDF 离屏窗保持无右键交互面。
   mainWindow.webContents.on("context-menu", (_event, params) => {
-    Menu.buildFromTemplate(buildEditContextMenuTemplate(params)).popup({
+    const template = buildEditContextMenuTemplate(params);
+    // 空模板 = 可编辑区域,由渲染进程自绘宋体菜单;这里再弹就成了双菜单。
+    if (template.length === 0) return;
+    Menu.buildFromTemplate(template).popup({
       window: contentWindow,
       frame: params.frame ?? undefined,
       x: params.x,

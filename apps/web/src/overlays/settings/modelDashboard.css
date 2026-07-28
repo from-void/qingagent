@@ -585,16 +585,15 @@
 }
 .qj-sheet-body .md-usage-group-arrow {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--qj-header-sub);
-  font-family: var(--font-zh-serif);
-  font-size: 18px;
-  line-height: 12px;
-  transform: translateY(-1px);
   transform-origin: center;
   transition: transform 0.16s ease;
 }
 .qj-sheet-body .md-usage-group-toggle[aria-expanded="true"] .md-usage-group-arrow {
-  transform: translateY(-1px) rotate(90deg);
+  transform: rotate(90deg);
 }
 .qj-sheet-body .md-usage-group-toggle--document {
   position: relative;
@@ -927,6 +926,10 @@
   color: var(--qj-header-sub);
 }
 .qj-sheet-body .sm-back {
+  /* 返回箭头改 SVG 后按 flex 排:图标与文字基线不再靠字符高度硬凑 */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin: 0 0 12px;
   padding: 0;
   border: none;

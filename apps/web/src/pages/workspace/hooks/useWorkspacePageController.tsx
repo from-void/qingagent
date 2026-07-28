@@ -712,6 +712,18 @@ export function useWorkspacePageController() {
     });
   }, []);
 
+  // 恢复失败态的重试:右侧文档面板的「重试」按钮与左下角 toast 的「重试」共用这条路径。
+  // 先清掉 streamError,面板立刻从错误态切回等待态(重试失败会重新 dispatch 出错误)。
+  const handleRetryRestore = useCallback(() => {
+    const sessionId =
+      restoreExistingSessionIdRef.current ?? stateRef.current.sessionId;
+    if (!sessionId) return;
+    dispatch({ kind: "streamErrorCleared" });
+    restoreExistingSession(sessionId).catch((error) => {
+      console.error("[workspace] session restore retry failed", error);
+    });
+  }, [restoreExistingSession]);
+
   const createAttachFolderResultWaiter = useCallback(
     (
       stream: ServerStream,
@@ -3578,6 +3590,7 @@ export function useWorkspacePageController() {
     dim,
     handleFillTemplate,
     handleCreateBlankDoc,
+    handleRetryRestore,
     wholeDocVersion,
     editedNewDoc,
     handleWholeDocVersionChange,

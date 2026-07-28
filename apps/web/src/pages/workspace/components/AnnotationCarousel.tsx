@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { AnnotationGroup } from "@qingagent/contract-ts";
+import { CaretIcon } from "./icons";
 
 const SHOW_DELAY_MS = 80;
 const HIDE_DELAY_MS = 150;
@@ -231,8 +232,8 @@ export function AnnotationCarousel(props: {
             <span className="ahc-count">{hasOverlap
               ? <>此处 {hitGroups.length} 条 · 第 {hitIndex + 1} / 共 {hitGroups.length} 条{severitySummary ? ` · ${severitySummary}` : ""}</>
               : <>第 {groupIndex + 1} / 共 {reviewingGroups.length} 处{severitySummary ? ` · ${severitySummary}` : ""}</>}</span>
-            <button type="button" aria-label="上一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(-1)}>‹</button>
-            <button type="button" aria-label="下一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(1)}>›</button>
+            <button type="button" aria-label="上一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(-1)}><CaretIcon size={13} direction="left" /></button>
+            <button type="button" aria-label="下一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(1)}><CaretIcon size={13} direction="right" /></button>
           </div>
         </div>
         <div className="ahc-meta">

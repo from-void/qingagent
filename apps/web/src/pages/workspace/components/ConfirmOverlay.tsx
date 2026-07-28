@@ -372,7 +372,7 @@ export function ConfirmRecordBar({ record }: { record: ConfirmRecord }) {
     <div className="cf-record u-scope" data-wf="ConfirmRecordBar" role="status">
       <div className="u-bar">
         <span className="u-ico cf-record-check" aria-hidden="true">
-          ✓
+          <CheckIcon size={12} />
         </span>
         <span className="u-lbl">{record.label}</span>
         <span className="u-seg">{record.segment}</span>

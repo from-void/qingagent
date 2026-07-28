@@ -1031,8 +1031,10 @@
 }
 
 .graph-diagram-toolbar__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: rgba(255, 250, 240, 0.62);
-  font-size: 10px;
 }
 
 .graph-diagram-popover {

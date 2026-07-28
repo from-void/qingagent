@@ -110,6 +110,7 @@ export function HumanCursorTuningPanel({ canReplay, onReplay }: HumanCursorTunin
         <div className="ptp-body">
           <label className="ptp-toggle">
             <input
+              className="wf-checkbox"
               type="checkbox"
               checked={config.enabled}
               onChange={(e) => updateConfig({ enabled: e.currentTarget.checked })}
@@ -149,6 +150,7 @@ export function HumanCursorTuningPanel({ canReplay, onReplay }: HumanCursorTunin
           />
           <label className="ptp-toggle">
             <input
+              className="wf-checkbox"
               type="checkbox"
               checked={config.edgeBubble}
               onChange={(e) => updateConfig({ edgeBubble: e.currentTarget.checked })}

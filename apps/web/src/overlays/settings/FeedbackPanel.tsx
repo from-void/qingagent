@@ -130,6 +130,7 @@ export function FeedbackPanel() {
             docs.map((d) => (
               <label key={d.id} className="fb-doc">
                 <input
+                  className="wf-checkbox"
                   type="checkbox"
                   checked={checked.has(d.id)}
                   onChange={() => toggleDoc(d.id)}
@@ -143,6 +144,7 @@ export function FeedbackPanel() {
 
         <label className="fb-check" data-wf="FeedbackIncludeContent">
           <input
+            className="wf-checkbox"
             type="checkbox"
             checked={includeContent}
             disabled={loadFailed}

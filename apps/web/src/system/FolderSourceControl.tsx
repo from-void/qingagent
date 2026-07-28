@@ -463,6 +463,7 @@ export function FolderIntroDialog({
           <div className="ws-folder-modal-foot">
             <label className="ws-folder-check">
               <input
+                className="wf-checkbox"
                 type="checkbox"
                 checked={dismissChecked}
                 onChange={(event) => onDismissCheckedChange(event.target.checked)}

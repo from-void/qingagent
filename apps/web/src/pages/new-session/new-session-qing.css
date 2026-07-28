@@ -830,6 +830,11 @@
 /* —— 右下角调参面板(Ctrl+Shift+H 唤起,
 默认隐藏) —— */
 .ccx-hzpanel {
+  /* 深底面板:统一勾选框(.wf-checkbox)改用浅描边 + 朱红填充 + 深底勾 */
+  --wf-checkbox-border: rgba(236, 227, 208, 0.34);
+  --wf-checkbox-border-hover: rgba(236, 227, 208, 0.62);
+  --wf-checkbox-fill: var(--ccx-cinnabar);
+  --wf-checkbox-tick: #f7f1e4;
   position: fixed;
   right: 18px;
   bottom: 18px;
@@ -873,9 +878,6 @@
   gap: 7px;
   cursor: pointer;
   margin-bottom: 4px;
-}
-.ccx-hzpanel-toggle input {
-  accent-color: var(--ccx-cinnabar);
 }
 .ccx-hzpanel-group {
   margin-top: 8px;

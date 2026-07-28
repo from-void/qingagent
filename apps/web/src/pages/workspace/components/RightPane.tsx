@@ -101,6 +101,8 @@ interface RightPaneProps {
   onEditorChange: EditorDocChange;
   onPresentationFinish: () => void;
   onPresentationCancel: () => void;
+  /** 会话恢复失败时,错误态卡面上「重试」按钮的动作(不给则不渲染按钮)。 */
+  onRetryRestore?: () => void;
 }
 
 function RightPaneBranchLog({
@@ -188,13 +190,16 @@ export function RightPane({
   onEditorChange,
   onPresentationFinish,
   onPresentationCancel,
+  onRetryRestore,
 }: RightPaneProps) {
   if (streamError?.kind === "failed" && !doc && !generationDraftDoc) {
+    // 行动入口就在卡面上:曾经写「请点击上方重试」,但上方从来没有重试按钮,
+    // 唯一入口是会自动消失的左下角 toast——文案撒谎。现在错误态自带按钮。
     return (
       <DocInit
         mode="error"
         title="恢复失败"
-        subtitle="请点击上方重试"
+        onRetry={onRetryRestore}
       />
     );
   }

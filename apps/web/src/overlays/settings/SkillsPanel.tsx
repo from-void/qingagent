@@ -21,6 +21,7 @@ import { VisionPanel } from "./VisionPanel";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
 import { useOverlayDismiss } from "../../system/overlayDismissStack";
+import { CaretIcon } from "../../system/icons";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
 import { buildCredentialShareSpec, updateCredentialShare } from "./credentialShare";
@@ -95,7 +96,7 @@ function ConnectorDependency({
     >
       <span className="sk-dep-dot" aria-hidden="true" />
       依赖连接：<span className="sk-dep-name">{CONNECTOR_NAMES[connectorId]}</span>
-      <span className="sk-dep-go" aria-hidden="true">›</span>
+      <span className="sk-dep-go" aria-hidden="true"><CaretIcon size={13} direction="right" /></span>
     </button>
   );
 }
@@ -411,7 +412,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             }}
           >
             <span className="sk-back-arrow" aria-hidden="true">
-              ‹
+              <CaretIcon size={14} direction="left" />
             </span>
             {selectedChild ? "返回母技能" : "返回技能"}
           </button>
@@ -467,7 +468,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
                         <span className="sk-child-title">{child.label}</span>
                         <span className="sk-child-summary">{child.summary || child.description}</span>
                       </span>
-                      <span className="sk-child-go" aria-hidden="true">›</span>
+                      <span className="sk-child-go" aria-hidden="true"><CaretIcon size={14} direction="right" /></span>
                     </button>
                   ))}
                 </div>

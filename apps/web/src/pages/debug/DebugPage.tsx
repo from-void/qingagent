@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CaretIcon } from "../../system/icons";
 import "./debug.css";
 
 // F7 debug 页:skill / tool 原始视图(需求:能看到所有 skill 和 tool 的原始数据)。
@@ -73,7 +74,7 @@ export function DebugPage() {
     <section className="debug-page" data-wf="DebugPage">
       <header className="dbg-head">
         <button type="button" className="dbg-back" onClick={() => (window.location.hash = "#/")}>
-          ◂ 首页
+          <CaretIcon size={12} direction="left" />首页
         </button>
         <h1 className="dbg-title">Debug · Skill / Tool 原始视图</h1>
       </header>

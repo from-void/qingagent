@@ -9,7 +9,9 @@ import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
-import { CheckIcon } from "./icons";
+import { AlignIcon, CaretIcon, CheckIcon } from "./icons";
+import { headingLevelLabel, HeadingLevelPicker } from "./HeadingLevelPicker";
+import type { AlignVariant } from "./icons";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import {
   createDrawioBlockId,
@@ -80,6 +82,13 @@ const COMMAND_SHORTCUTS: Record<string, string[]> = {
   orderedList: ["Mod", "Shift", "7"],
   blockquote: ["Mod", "Shift", "B"],
   codeBlock: ["Mod", "Alt", "C"],
+  // 标题 1~6 走 TipTap Heading 扩展内建的 Mod-Alt-N
+  heading1: ["Mod", "Alt", "1"],
+  heading2: ["Mod", "Alt", "2"],
+  heading3: ["Mod", "Alt", "3"],
+  heading4: ["Mod", "Alt", "4"],
+  heading5: ["Mod", "Alt", "5"],
+  heading6: ["Mod", "Alt", "6"],
 };
 
 export type SavedToolbarSelection =
@@ -1016,6 +1025,10 @@ export function DocToolbar({
   const activeOrderedListStyle = editor?.isActive("orderedList")
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"
     : null;
+  // 当前光标所在标题层级(高亮六格里的那一格)
+  const activeHeadingLevel = editor?.isActive("heading")
+    ? Number(editor.getAttributes("heading").level) || null
+    : null;
 
   if (
     !active ||
@@ -1061,26 +1074,15 @@ export function DocToolbar({
         active={Boolean(editor?.isActive("heading"))}
       >
         <span className="dt-lbl">T</span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "heading"}>
-          <MenuItem k="H1" onPick={() => runCommand("formatBlock", "H1")} disabled={!editorEditable}>
-            大标题
-          </MenuItem>
-          <MenuItem k="H2" onPick={() => runCommand("formatBlock", "H2")} disabled={!editorEditable}>
-            二级标题
-          </MenuItem>
-          <MenuItem k="H3" onPick={() => runCommand("formatBlock", "H3")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            三级标题
-          </MenuItem>
-          <MenuItem k="H4" onPick={() => runCommand("formatBlock", "H4")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            四级标题
-          </MenuItem>
-          <MenuItem k="H5" onPick={() => runCommand("formatBlock", "H5")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            五级标题
-          </MenuItem>
-          <MenuItem k="H6" onPick={() => runCommand("formatBlock", "H6")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            六级标题
-          </MenuItem>
+          {/* 六级标题紧凑排一行(旧版是六行长列表,菜单被撑得又高又散) */}
+          <HeadingLevelPicker
+            activeLevel={activeHeadingLevel}
+            isDisabled={(level) => !editorEditable || (level >= 3 && !toolbarUnlock.headings)}
+            titleOf={(level) => toolbarTitle(headingLevelLabel(level), `heading${level}`)}
+            onPick={(level) => runCommand("formatBlock", `H${level}`)}
+          />
           <MenuItem k="¶" onPick={() => runCommand("formatBlock", "P")} disabled={!editorEditable}>
             正文
           </MenuItem>
@@ -1122,17 +1124,17 @@ export function DocToolbar({
         disabled={!editorEditable || !toolbarUnlock.align}
         active={Boolean(editor?.isActive({ textAlign: "center" }) || editor?.isActive({ textAlign: "right" }))}
       >
-        <span className="dt-lbl">≡</span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-lbl dt-lbl-icon"><AlignIcon align="justify" size={15} /></span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "align"}>
           <MenuItem onPick={() => runCommand("justifyLeft")}>
-            ⬅ 左对齐
+            <MenuAlignIcon align="left" />左对齐
           </MenuItem>
           <MenuItem onPick={() => runCommand("justifyCenter")}>
-            ↔ 居中
+            <MenuAlignIcon align="center" />居中
           </MenuItem>
           <MenuItem onPick={() => runCommand("justifyRight")}>
-            ➡ 右对齐
+            <MenuAlignIcon align="right" />右对齐
           </MenuItem>
         </Menu>
       </Group>
@@ -1211,7 +1213,7 @@ export function DocToolbar({
         <span className="dt-lbl dt-hi-lbl">
           A<span className="dt-hi-bar" />
         </span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "colors"} className="dt-menu-colors">
           <ColorPaletteMenu
             disabled={!editorEditable || !toolbarUnlock.marks}
@@ -1230,7 +1232,7 @@ export function DocToolbar({
         disabled={!editorEditable}
       >
         <ToolbarIcon name="insert" />
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "insert"}>
           <MenuItem onPick={handleInsertImage} disabled={!editorEditable}><MenuIcon name="image" />插入图片</MenuItem>
           <MenuItem onPick={handleInsertFile} disabled={!editorEditable || !toolbarUnlock.resourceRef}><MenuIcon name="file" />插入文件</MenuItem>
@@ -1241,7 +1243,7 @@ export function DocToolbar({
           <MenuItem
             onPreview={(anchor, autoFocus) => setTablePicker({ anchor, autoFocus })}
             disabled={!editorEditable || !toolbarUnlock.blocks}
-          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer">›</span></MenuItem>
+          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer"><CaretIcon size={12} direction="right" /></span></MenuItem>
           <MenuItem onPick={() => runCommand("insertColumns")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="columns" />插入分栏</MenuItem>
           <MenuItem onPick={() => runCommand("codeBlock")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="code" />代码块</MenuItem>
           <MenuItem onPick={() => runCommand("horizontalRule")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="divider" />分隔线</MenuItem>
@@ -1486,6 +1488,15 @@ function ColorPaletteMenu({
         </div>
       </div>
     </div>
+  );
+}
+
+/** 菜单行里的对齐图标:复用共用 AlignIcon,套 dt-menu-icon 盒子与其它菜单图标同列对齐。 */
+function MenuAlignIcon({ align }: { align: AlignVariant }) {
+  return (
+    <span className="dt-menu-icon" aria-hidden="true">
+      <AlignIcon align={align} size={15} />
+    </span>
   );
 }
 

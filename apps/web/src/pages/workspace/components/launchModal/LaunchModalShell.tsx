@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from "react";
+import { CaretIcon } from "../icons";
 
 export function LaunchModalShell(props: {
   title: ReactNode;
@@ -28,7 +29,7 @@ export function LaunchModalShell(props: {
       >
         <header className="ws-launch-head">
           {props.onBack ? (
-            <button type="button" className="ws-launch-back" disabled={props.closeDisabled} onClick={props.onBack}>‹ 返回</button>
+            <button type="button" className="ws-launch-back" disabled={props.closeDisabled} onClick={props.onBack}><CaretIcon size={13} direction="left" />返回</button>
           ) : null}
           <h2 id={titleId}>{props.title}</h2>
           {props.subtitle ? <span className="ws-launch-subtitle">{props.subtitle}</span> : null}

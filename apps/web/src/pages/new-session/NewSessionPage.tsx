@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { parseRoute, routeToHash } from "../../shell/Router";
+import { ArrowLeftIcon } from "../../system/icons";
 import type { ChatChip } from "@qingagent/contract-ts";
 import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
@@ -963,7 +964,7 @@ export function NewSessionPage() {
 
       {/* 返回按钮 */}
       <button type="button" className="ccx-back" title="返回首页" onClick={goBack}>
-        <span className="a">←</span>
+        <span className="a"><ArrowLeftIcon size={17} /></span>
       </button>
 
       {/* 新建页内容 */}

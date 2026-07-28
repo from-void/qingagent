@@ -20,7 +20,9 @@ import { MediaBlockToolbar } from "../workspace/components/MediaBlockToolbar";
 // —— 本页真实引用的生产组件(mock props 驱动,零重写)——
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
 import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
-import { CheckIcon } from "../workspace/components/icons";
+import { AlignIcon, ArrowRightIcon, CaretIcon, CheckIcon } from "../workspace/components/icons";
+import { HeadingLevelPicker } from "../workspace/components/HeadingLevelPicker";
+import { BlockHandleIcon } from "../workspace/components/doc/BlockHandleIcons";
 import { PatchNav } from "../workspace/components/PatchNav";
 import { WholeDocReviewNav } from "../workspace/components/WholeDocReviewNav";
 import { LinkedFilesPanel } from "../workspace/components/LinkedFilesPanel";
@@ -554,9 +556,9 @@ const BTN_MATRIX_GROUPS: Array<{ title: string; code: string; dark?: boolean; sa
     samples: [
       { className: "wf-btn primary", label: "primary", text: "确认方向", cap: "primary · BigPlanPanel 确认方向" },
       { className: "wf-btn ghost", label: "ghost", text: "问我更多", cap: "ghost · BigPlanPanel 问我更多/放弃本轮" },
-      { className: "wf-btn primary small", label: "primary small", text: "发送 →", cap: "primary small · ChatInput 发送按钮" },
+      { className: "wf-btn primary small", label: "primary small", text: "发送", cap: "primary small · ChatInput 发送按钮" },
       { className: "wf-btn small ghost", label: "small ghost", text: "技能", cap: "small ghost · ChatInput 技能/文件/文件夹/停止" },
-      { className: "wf-btn primary small", label: "disabled", text: "发送 →", cap: ":disabled · ChatInput 未配置 key / BigPlanPanel 未就绪", disabled: true },
+      { className: "wf-btn primary small", label: "disabled", text: "发送", cap: ":disabled · ChatInput 未配置 key / BigPlanPanel 未就绪", disabled: true },
     ],
   },
 ];
@@ -1098,7 +1100,7 @@ export function UIKitPage() {
                 <div className="settings-skills uk-sheet-demo-block">
                   <div className="sk-subhead">
                     <button className="sk-back" type="button">
-                      <span className="sk-back-arrow">‹</span>
+                      <span className="sk-back-arrow"><CaretIcon size={14} direction="left" /></span>
                       返回技能
                     </button>
                     <span className="sk-subtitle">联网搜索</span>
@@ -1115,7 +1117,7 @@ export function UIKitPage() {
                       </div>
                       <p className="sk-card-desc">调用搜索源补齐事实、日期与出处。</p>
                       <button className="sk-search-toggle" type="button">
-                        配置搜索引擎 <span className="sk-card-arrow">›</span>
+                        配置搜索引擎 <span className="sk-card-arrow"><CaretIcon size={12} direction="right" /></span>
                       </button>
                       <div className="sk-card-foot">
                         <span className="sk-card-tag">可配置</span>
@@ -1197,7 +1199,7 @@ export function UIKitPage() {
             <Group title="删除确认控件" code=".home-delete-confirm-actions / .ws-folder-check">
               <div className="uk-home-confirm-card">
                 <label className="ws-folder-check">
-                  <input type="checkbox" defaultChecked />
+                  <input className="wf-checkbox" type="checkbox" defaultChecked />
                   <span>24小时内不再提醒</span>
                 </label>
                 <div className="home-delete-confirm-actions">
@@ -1570,18 +1572,17 @@ export function UIKitPage() {
                 <div className="dt-group dt-dropdown open">
                   <button className="dt-btn active" type="button">
                     <span className="dt-lbl">T</span>
-                    <span className="dt-caret">▾</span>
+                    <span className="dt-caret"><CaretIcon size={11} /></span>
                   </button>
                   <div className="dt-menu" role="menu">
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">H1</span>大标题</button>
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">H2</span>二级标题</button>
+                    <HeadingLevelPicker activeLevel={2} onPick={() => {}} />
                     <button className="dt-mi disabled" role="menuitem" type="button" disabled><span className="dt-mi-k">¶</span>正文</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">•</span>无序列表</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k"><CheckIcon size={12} /></span>待办清单</button>
                   </div>
                 </div>
                 <span className="dt-divider" />
-                <button className="dt-btn" type="button"><span className="dt-lbl">≡</span><span className="dt-caret">▾</span></button>
+                <button className="dt-btn" type="button"><span className="dt-lbl dt-lbl-icon"><AlignIcon align="justify" size={15} /></span><span className="dt-caret"><CaretIcon size={11} /></span></button>
                 <span className="dt-divider" />
                 <button className="dt-btn" type="button"><b>B</b></button>
                 <button className="dt-btn active" type="button"><i>I</i></button>
@@ -1650,8 +1651,9 @@ export function UIKitPage() {
               </div>
               <div className="block-handle-menu" role="menu">
                 <div className="bh-section-label">转换为</div>
+                <HeadingLevelPicker activeLevel={1} onPick={() => {}} />
                 <div className="bh-grid">
-                  {["正文", "H1", "H2", "H3", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
+                  {["正文", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
                     <button key={i} className="bh-grid-btn" role="menuitem" type="button" aria-label={`转换 ${g}`}>
                       {g === "task" ? <CheckIcon size={12} /> : <span dangerouslySetInnerHTML={{ __html: g }} />}
                     </button>
@@ -1660,29 +1662,29 @@ export function UIKitPage() {
                 <div className="bh-divider" />
                 <div className="bh-submenu">
                   <button className="block-handle-item bh-submenu-trigger" role="menuitem" type="button" aria-haspopup="menu">
-                    <span className="bh-icon">≡</span>
+                    <span className="bh-icon"><AlignIcon align="justify" size={15} /></span>
                     对齐
-                    <span className="bh-caret">›</span>
+                    <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
                   </button>
                 </div>
                 <button className="block-handle-item" role="menuitem" type="button">
-                  <span className="bh-icon">⧉</span>
+                  <span className="bh-icon"><BlockHandleIcon name="copy" /></span>
                   复制
                 </button>
                 <button className="block-handle-item" role="menuitem" type="button">
-                  <span className="bh-icon">✂</span>
+                  <span className="bh-icon"><BlockHandleIcon name="cut" /></span>
                   剪切
                 </button>
                 <button className="block-handle-item is-danger" role="menuitem" type="button">
-                  <span className="bh-icon">🗑</span>
+                  <span className="bh-icon"><BlockHandleIcon name="delete" /></span>
                   删除
                 </button>
               </div>
               {/* 对齐二级面板(hover 子菜单展开态) */}
               <div className="bh-submenu-panel" role="menu">
-                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon">⬅</span>左对齐</button>
-                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon">↔</span>居中</button>
-                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon">➡</span>右对齐</button>
+                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon"><AlignIcon align="left" size={15} /></span>左对齐</button>
+                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon"><AlignIcon align="center" size={15} /></span>居中</button>
+                <button className="block-handle-item" role="menuitem" type="button"><span className="bh-icon"><AlignIcon align="right" size={15} /></span>右对齐</button>
               </div>
             </div>
             <p className="uk-cap uk-lead">
@@ -1817,7 +1819,7 @@ export function UIKitPage() {
                 <button className="dt-btn" type="button" title="合并单元格" aria-label="合并单元格">⇥▦⇤</button>
                 <button className="dt-btn" type="button" title="删除列" aria-label="删除列" style={{ color: "var(--mark)" }}>⌫</button>
                 <div className="dt-group dt-dropdown">
-                  <button className="dt-btn" type="button" title="对齐方式：左对齐">≡<span className="dt-caret">▾</span></button>
+                  <button className="dt-btn" type="button" title="对齐方式：左对齐"><span className="dt-lbl dt-lbl-icon"><AlignIcon align="justify" size={15} /></span><span className="dt-caret"><CaretIcon size={11} /></span></button>
                 </div>
                 <div className="dt-divider" />
                 <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
@@ -1935,15 +1937,15 @@ export function UIKitPage() {
                   <button className="graph-diagram-toolbar__button is-active" type="button" aria-haspopup="dialog">
                     <svg className="graph-diagram-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
                     <span className="graph-diagram-toolbar__value">矩形</span>
-                    <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
+                    <span className="graph-diagram-toolbar__caret" aria-hidden="true"><CaretIcon size={10} /></span>
                   </button>
                   <button className="graph-diagram-toolbar__button" type="button">
                     <svg className="graph-diagram-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
-                    <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
+                    <span className="graph-diagram-toolbar__caret" aria-hidden="true"><CaretIcon size={10} /></span>
                   </button>
                   <button className="graph-diagram-toolbar__button" type="button">
                     <svg className="graph-diagram-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16M4 12l4-6h8l4 6-4 6H8Z" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
-                    <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
+                    <span className="graph-diagram-toolbar__caret" aria-hidden="true"><CaretIcon size={10} /></span>
                   </button>
                   <button className="graph-diagram-toolbar__button" type="button">…更多</button>
                 </div>
@@ -2091,9 +2093,9 @@ export function UIKitPage() {
           <Group title="发送 / 停止互斥" code="#view-workspace .ws-input-tools .wf-btn.primary(发送)/ .wf-btn.ghost.small(停止)">
             <div id="view-workspace" className="uk-portal uk-send-demo" style={{ height: 120 }}>
               <div className="ws-input-tools">
-                <button className="wf-btn primary small" type="button">发送 →</button>
+                <button className="wf-btn primary small" type="button">发送<ArrowRightIcon size={12} /></button>
                 <button className="wf-btn ghost small" type="button">停止</button>
-                <button className="wf-btn primary small" type="button" disabled>发送 →</button>
+                <button className="wf-btn primary small" type="button" disabled>发送<ArrowRightIcon size={12} /></button>
               </div>
             </div>
             <p className="uk-cap uk-lead">
@@ -2105,10 +2107,10 @@ export function UIKitPage() {
             <div id="view-workspace" className="uk-portal uk-send-demo" style={{ height: 150 }}>
               <div className="ws-input-tools">
                 <span className="nokey-gate is-forced">
-                  <button className="wf-btn primary small" type="button" disabled>发送 →</button>
+                  <button className="wf-btn primary small" type="button" disabled>发送<ArrowRightIcon size={12} /></button>
                   <span className="nokey-tip" role="tooltip">
                     <span className="nokey-tip-text">还没配置模型 key,无法开始写作。</span>
-                    <button className="nokey-tip-btn" type="button">去首页配置 →</button>
+                    <button className="nokey-tip-btn" type="button">去首页配置<ArrowRightIcon size={12} /></button>
                   </span>
                 </span>
               </div>
@@ -2445,7 +2447,7 @@ export function UIKitPage() {
                   <div className="ws-folder-intro-point"><span>·</span><p>文件夹里的增删改,助手下次都能读到最新。</p></div>
                   <div className="ws-folder-modal-foot">
                     <label className="ws-folder-check">
-                      <input type="checkbox" />不再提示
+                      <input className="wf-checkbox" type="checkbox" />不再提示
                     </label>
                     <button type="button" className="ws-folder-modal-primary">选择文件夹</button>
                     <button type="button" className="ws-folder-modal-secondary">以后再说</button>

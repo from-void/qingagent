@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "./useAnchoredPopover";
 import { useOverlayDismiss } from "./overlayDismissStack";
+import { CaretIcon } from "./icons";
 import "./skinControls.css";
 
 interface CalendarDatePickerProps {
@@ -115,9 +116,9 @@ export function CalendarDatePicker({
       }}
     >
       <div className="skin-calendar__head">
-        <button type="button" aria-label="上个月" onClick={() => shiftMonth(-1)}>‹</button>
+        <button type="button" aria-label="上个月" onClick={() => shiftMonth(-1)}><CaretIcon size={15} direction="left" /></button>
         <strong>{view.getFullYear()} 年 {view.getMonth() + 1} 月</strong>
-        <button type="button" aria-label="下个月" onClick={() => shiftMonth(1)}>›</button>
+        <button type="button" aria-label="下个月" onClick={() => shiftMonth(1)}><CaretIcon size={15} direction="right" /></button>
       </div>
       <div className="skin-calendar__week" aria-hidden>
         {WEEKDAYS.map((day) => <span key={day}>{day}</span>)}

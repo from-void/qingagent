@@ -178,12 +178,6 @@
   cursor: pointer;
   white-space: nowrap;
 }
-#view-home .ws-folder-check input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--ink-1);
-}
 #view-home .home-delete-confirm-actions {
   display: flex;
   gap: 10px;

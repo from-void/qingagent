@@ -1,0 +1,48 @@
+/* 可编辑区域自绘右键菜单:替代 Electron 原生菜单(原生菜单改不了字体,与全应用宋体割裂)。
+   风格对齐水墨皮肤的浮层(参考设置页 .sk-ctxmenu):无圆角、暖描边、深墨底、宋体。 */
+.wf-editmenu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid rgba(236, 227, 208, 0.16);
+  border-radius: 0;
+  background: rgba(18, 22, 26, 0.98);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-zh-serif);
+  user-select: none;
+}
+.wf-editmenu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(236, 227, 208, 0.88);
+  font-family: var(--font-zh-serif);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.wf-editmenu-item:hover:not(:disabled),
+.wf-editmenu-item:focus-visible:not(:disabled) {
+  outline: none;
+  background: rgba(236, 227, 208, 0.09);
+  color: #f3ead8;
+}
+.wf-editmenu-item:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.wf-editmenu-key {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: rgba(236, 227, 208, 0.5);
+}

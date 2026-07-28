@@ -63,6 +63,7 @@ export function HanziMatrixPanel() {
 
       <label className="ccx-hzpanel-toggle">
         <input
+          className="wf-checkbox"
           type="checkbox"
           checked={config.enabled}
           onChange={(e) => update({ enabled: e.currentTarget.checked })}

@@ -31,7 +31,7 @@ import {
   getThinkingSummaryLabel,
 } from "./chatMessageThinking";
 import { ThinkingMarquee } from "./ThinkingMarquee";
-import { CheckIcon } from "./icons";
+import { CaretIcon, CheckIcon } from "./icons";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources";
 
@@ -1470,7 +1470,9 @@ const PartView = memo(function PartView({
             }}
             style={{ cursor: "pointer", userSelect: "none" }}
           >
-            <span className="caret" style={{ fontSize: 10, marginRight: 4 }}>{open ? "▾" : "▸"}</span>
+            <span className="caret" style={{ display: "inline-flex", alignItems: "center", marginRight: 4 }}>
+              <CaretIcon size={11} direction={open ? "down" : "right"} />
+            </span>
             <span style={{ color: "var(--ink-3)", fontSize: 13 }}>
               {summaryLabel}
             </span>

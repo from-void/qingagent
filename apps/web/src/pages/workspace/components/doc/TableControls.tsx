@@ -31,6 +31,7 @@ import {
 } from "../../data/toolbarUnlock";
 import { floatingAnchorFromElement, useToolbarLinkEditor } from "./ToolbarLinkEditor";
 import { applyTableAxisDrop, inspectTableAxisDrop, type TableDragAxis } from "../../data/tableAxisDrag";
+import { CaretIcon } from "../icons";
 import {
   resolveTableChromeViewport,
   TABLE_COLUMN_HEADER_SIZE,
@@ -704,7 +705,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
               onClick={() => setOpenTableMenu((value) => value === "align" ? null : "align")}
             >
               <AlignmentIcon mode={currentAlignment} />
-              <span className="dt-caret">▾</span>
+              <span className="dt-caret"><CaretIcon size={11} /></span>
             </button>
             {openTableMenu === "align" ? (
               <div className="dt-menu" role="menu">

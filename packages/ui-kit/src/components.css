@@ -369,3 +369,50 @@
   overflow-y: auto;
   padding: 6px 0;
 }
+
+/* ============ Checkbox ============
+   全应用统一勾选框：基准取自文档待办清单（暖描边方框 + 勾选后金底白勾），
+   原生控件各处样式不一（accent-color / 系统默认）被用户点名过。
+   颜色走变量，深底面板（设置弹层、新建页面板等）只需在容器上覆盖这四个变量。 */
+.wf-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 16px;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--wf-checkbox-border, rgba(120, 90, 50, 0.45));
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.wf-checkbox:hover:not(:disabled) {
+  border-color: var(--wf-checkbox-border-hover, rgba(120, 90, 50, 0.7));
+}
+.wf-checkbox:checked {
+  background: var(--wf-checkbox-fill, var(--mark));
+  border-color: var(--wf-checkbox-fill, var(--mark));
+}
+.wf-checkbox:checked::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  margin-top: -1px;
+  border: solid var(--wf-checkbox-tick, #fff);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.wf-checkbox:focus-visible {
+  outline: 2px solid var(--wf-checkbox-fill, var(--mark));
+  outline-offset: 2px;
+}
+.wf-checkbox:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

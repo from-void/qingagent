@@ -353,6 +353,7 @@ export function HomePage() {
               <div className="ws-folder-modal-foot home-delete-confirm-foot">
                 <label className="ws-folder-check">
                   <input
+                    className="wf-checkbox"
                     type="checkbox"
                     checked={deleteConfirm.suppressFor24h}
                     onChange={toggleDeleteConfirmSkip}

@@ -381,9 +381,11 @@ export const generateSvgTool = createTool({
                 observedAt,
               );
             },
-            onContentDelta: (delta, raw, observedAt) => {
+            onContentDelta: (_delta, raw, observedAt) => {
               armIdleTimer();
-              rawBytes += utf8ByteLength(delta);
+              // branch 判废后 fallback 会从空 raw 重新生成；字节上限只约束当前有效候选，
+              // 不能把已废弃分支的 delta 累加到 fallback。
+              rawBytes = utf8ByteLength(raw);
               if (rawBytes > GENERATE_SVG_RAW_MAX_BYTES) {
                 const error = new Error(`SVG 生成输出超过 ${GENERATE_SVG_RAW_MAX_BYTES} 字节上限`);
                 linked.controller.abort(error);

@@ -255,7 +255,8 @@ describe("generateSvg direct DeepSeek path", () => {
 
   it("流式输出超过原始字节上限时中止并失败", async () => {
     streamInnerModelMock.mockImplementationOnce(async (input) => {
-      input.onContentDelta?.("a".repeat(GENERATE_SVG_RAW_MAX_BYTES + 1), "");
+      const raw = "a".repeat(GENERATE_SVG_RAW_MAX_BYTES + 1);
+      input.onContentDelta?.(raw, raw);
       return { raw: "", contentStartMs: 0 };
     });
 
@@ -264,5 +265,27 @@ describe("generateSvg direct DeepSeek path", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain(`${GENERATE_SVG_RAW_MAX_BYTES} 字节上限`);
     expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("分支见字后回退时按当前有效 raw 重算字节，不累计废弃分支", async () => {
+    const abandonedBranch = "a".repeat(GENERATE_SVG_RAW_MAX_BYTES - 1);
+    const fallbackSvg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">` +
+      `<rect width="10" height="10" fill="#00ff00"/></svg>`;
+    expect(Buffer.byteLength(abandonedBranch) + Buffer.byteLength(fallbackSvg))
+      .toBeGreaterThan(GENERATE_SVG_RAW_MAX_BYTES);
+    expect(Buffer.byteLength(fallbackSvg)).toBeLessThan(GENERATE_SVG_RAW_MAX_BYTES);
+
+    streamInnerModelMock.mockImplementationOnce(async (input) => {
+      input.onContentDelta?.(abandonedBranch, abandonedBranch);
+      // streamInnerModel 的 fallback 从空 raw 重新累积；消费端必须随 raw 一起重置计数。
+      input.onContentDelta?.(fallbackSvg, fallbackSvg);
+      return { raw: fallbackSvg, contentStartMs: 0 };
+    });
+
+    const result = await executeGenerateSvg("分支失败后回退的绿色方块");
+
+    expect(result.ok).toBe(true);
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -13,9 +13,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const workspaceCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
+const mermaidParse = vi.hoisted(() => vi.fn());
 
 vi.mock("../../components/drawioEditorLauncher", () => ({
   openDrawioEditor: vi.fn(async () => null),
+}));
+vi.mock("mermaid", () => ({
+  default: { parse: mermaidParse },
 }));
 
 import {
@@ -39,6 +43,9 @@ let editor: Editor | null = null;
 describe("DocToolbar round-1 regressions", () => {
   beforeEach(() => {
     vi.mocked(openDrawioEditor).mockReset().mockResolvedValue(null);
+    mermaidParse.mockReset().mockImplementation(async (source: string) =>
+      source.startsWith("flowchart") ? { diagramType: "flowchart-v2" } : false,
+    );
   });
 
   afterEach(() => {
@@ -257,6 +264,45 @@ describe("DocToolbar round-1 regressions", () => {
   it("insertDiagram 只在选区是合法 Mermaid 时沿用源码", async () => {
     await expect(resolveDiagramSourceForInsert("普通正文，不是 mermaid")).resolves.toBeUndefined();
     await expect(resolveDiagramSourceForInsert("flowchart LR\nA-->B")).resolves.toBe("flowchart LR\nA-->B");
+  });
+
+  it("Mermaid 异步校验期间正文变化后基于最新 state 重建 chain", async () => {
+    let finishParse: ((value: { diagramType: string }) => void) | undefined;
+    mermaidParse.mockImplementationOnce(() => new Promise((resolve) => {
+      finishParse = resolve;
+    }));
+    const commandEditor = createVersionedDiagramCommandEditor();
+    const onToast = vi.fn();
+
+    await render(
+      <DocToolbar
+        active
+        editor={commandEditor.editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+        onToast={onToast}
+      />,
+    );
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => {
+      getButtonByText("插入 Mermaid 图表").click();
+      await Promise.resolve();
+    });
+    expect(finishParse).toBeTypeOf("function");
+
+    await act(async () => {
+      commandEditor.advanceState();
+      finishParse?.({ diagramType: "flowchart-v2" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(commandEditor.chain).toHaveBeenCalledTimes(2);
+    expect(commandEditor.insertDiagram).toHaveBeenCalledWith({
+      source: "flowchart LR\nA-->B",
+    });
+    expect(commandEditor.run).toHaveBeenCalledWith(true);
+    expect(onToast).not.toHaveBeenCalledWith("无法执行：插入图表");
   });
 
   it("R2-08 选区转行内公式会剥 $ 定界符并替换原文", async () => {
@@ -935,6 +981,58 @@ function createCommandEditor(runResult: boolean): Editor {
       coordsAtPos: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
     },
   } as unknown as Editor;
+}
+
+function createVersionedDiagramCommandEditor() {
+  let stateVersion = 0;
+  const insertDiagram = vi.fn();
+  const run = vi.fn();
+  const chain = vi.fn(() => {
+    const chainVersion = stateVersion;
+    const currentChain = {
+      insertDiagram: (attrs?: { source?: string }) => {
+        insertDiagram(attrs);
+        return currentChain;
+      },
+      run: () => {
+        const result = chainVersion === stateVersion;
+        run(result);
+        return result;
+      },
+    };
+    return currentChain;
+  });
+  const editor = {
+    isEditable: true,
+    isFocused: false,
+    isDestroyed: false,
+    isActive: () => false,
+    getAttributes: () => ({}),
+    on: vi.fn(),
+    off: vi.fn(),
+    chain,
+    state: {
+      selection: { from: 0, to: 1, empty: false },
+      doc: {
+        textBetween: () => "flowchart LR\nA-->B",
+        descendants: () => undefined,
+        content: { size: 1 },
+      },
+    },
+    view: {
+      dom: document.createElement("div"),
+      coordsAtPos: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    },
+  } as unknown as Editor;
+  return {
+    editor,
+    chain,
+    insertDiagram,
+    run,
+    advanceState: () => {
+      stateVersion += 1;
+    },
+  };
 }
 
 function getButtonByText(text: string): HTMLButtonElement {

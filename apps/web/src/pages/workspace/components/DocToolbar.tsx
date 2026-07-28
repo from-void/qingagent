@@ -788,7 +788,11 @@ export function DocToolbar({
           const { from, to } = editor.state.selection;
           const selected = editor.state.doc.textBetween(from, to, "\n").trim();
           const source = await resolveDiagramSourceForInsert(selected);
-          run("插入图表", () => chain.insertDiagram(source ? { source } : undefined).run());
+          // Mermaid 动态加载/解析期间编辑器可能已产生新事务；旧 chain 持有旧 state，
+          // 此处必须从最新 state 重建，否则 ProseMirror 会拒绝 mismatched transaction。
+          run("插入图表", () =>
+            editor.chain().insertDiagram(source ? { source } : undefined).run(),
+          );
           break;
         }
         case "insertDrawio": {

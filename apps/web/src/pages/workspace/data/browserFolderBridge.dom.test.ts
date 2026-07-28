@@ -7,6 +7,7 @@ import {
   ensureBrowserFolderBridge,
   pickBrowserFolderSource,
   rememberAttachedBrowserFolderSource,
+  requestBrowserFolderPermission,
   stopBrowserFolderBridge,
   type PickedBrowserFolderSource,
 } from "./browserFolderBridge";
@@ -305,6 +306,52 @@ describe("browser folder handle persistence", () => {
 
     expect(sourceStore(stores).size).toBe(0);
     expect(handleStore(stores).size).toBe(0);
+  });
+
+  it("权限 API 拒绝时 ensure 与 request 都返回错误状态，不逃逸 rejected Promise", async () => {
+    const source: FolderSource = {
+      id: "fld-permission-error",
+      sessionId: "sess-permission-error",
+      provider: "browser-fs-access",
+      name: "permission-error-folder",
+      pathLabel: "permission-error-folder",
+      mountName: "source_permission_error",
+      mountPath: "/sources/source_permission_error",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    const handleKey = `${window.location.origin}:sess-permission-error:handle:root`;
+    stores.sources = new Map([[
+      `${window.location.origin}:${source.sessionId}:${source.id}`,
+      {
+        key: `${window.location.origin}:${source.sessionId}:${source.id}`,
+        sessionId: source.sessionId,
+        folderId: source.id,
+        handleKey,
+        clientId: "browser_client_permission_error",
+        name: source.name,
+        updatedAt: "2026-07-28T00:00:00.000Z",
+      },
+    ]]);
+    stores.handles = new Map([[handleKey, {
+      ...makeDirectoryHandle(source.name),
+      queryPermission: async () => { throw new Error("query permission failed"); },
+      requestPermission: async () => { throw new Error("request permission failed"); },
+    }]]);
+
+    await expect(ensureBrowserFolderBridge(source)).resolves.toEqual({
+      status: "error",
+      error: "query permission failed",
+    });
+    await expect(requestBrowserFolderPermission(source)).resolves.toEqual({
+      status: "error",
+      error: "request permission failed",
+    });
   });
 
   it("同一文件夹并发启动只注册一次并只建立一个 SSE", async () => {

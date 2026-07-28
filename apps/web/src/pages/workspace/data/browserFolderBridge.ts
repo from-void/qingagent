@@ -643,19 +643,19 @@ export async function rememberAttachedBrowserFolderSource(args: {
 
 export async function ensureBrowserFolderBridge(source: FolderSource): Promise<BrowserBridgeStatus> {
   if (source.provider !== "browser-fs-access") return { status: "connected", error: null };
-  const index = await getSourceIndex(source.sessionId, source.id);
-  if (!index) {
-    return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const handle = await getStoredHandle(index.handleKey);
-  if (!handle) {
-    return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const permission = await queryReadPermission(handle);
-  if (permission !== "granted") {
-    return { status: "permission_required", error: "需要重新授权浏览器读取这个文件夹" };
-  }
   try {
+    const index = await getSourceIndex(source.sessionId, source.id);
+    if (!index) {
+      return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const handle = await getStoredHandle(index.handleKey);
+    if (!handle) {
+      return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const permission = await queryReadPermission(handle);
+    if (permission !== "granted") {
+      return { status: "permission_required", error: "需要重新授权浏览器读取这个文件夹" };
+    }
     await startBridge({
       sessionId: source.sessionId,
       folderId: source.id,
@@ -670,19 +670,19 @@ export async function ensureBrowserFolderBridge(source: FolderSource): Promise<B
 
 export async function requestBrowserFolderPermission(source: FolderSource): Promise<BrowserBridgeStatus> {
   if (source.provider !== "browser-fs-access") return { status: "connected", error: null };
-  const index = await getSourceIndex(source.sessionId, source.id);
-  if (!index) {
-    return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const handle = await getStoredHandle(index.handleKey);
-  if (!handle) {
-    return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const permission = await requestReadPermission(handle);
-  if (permission !== "granted") {
-    return { status: "permission_required", error: "未获得文件夹读取权限" };
-  }
   try {
+    const index = await getSourceIndex(source.sessionId, source.id);
+    if (!index) {
+      return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const handle = await getStoredHandle(index.handleKey);
+    if (!handle) {
+      return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const permission = await requestReadPermission(handle);
+    if (permission !== "granted") {
+      return { status: "permission_required", error: "未获得文件夹读取权限" };
+    }
     await startBridge({
       sessionId: source.sessionId,
       folderId: source.id,

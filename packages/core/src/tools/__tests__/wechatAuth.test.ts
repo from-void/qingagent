@@ -52,6 +52,23 @@ describe("wechat auth connector service thin tools", () => {
       .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
   });
 
+  it("损坏凭据返回可恢复的未授权状态，不抛出或暴露原始异常", async () => {
+    vi.mocked(readWechatCredentialBundle).mockRejectedValue(
+      new Error("decrypt failed: legacy-secret"),
+    );
+
+    const result = await status();
+
+    expect(result).toMatchObject({
+      state: "NO_CREDENTIAL",
+      mpName: "",
+      message: "授权信息已损坏，请重新扫码登录",
+      questionnaire: expect.any(Object),
+    });
+    expect(JSON.stringify(result)).not.toContain("decrypt failed");
+    expect(JSON.stringify(result)).not.toContain("legacy-secret");
+  });
+
   it("READY 状态不再携带路由问卷", async () => {
     vi.mocked(readWechatCredentialBundle).mockResolvedValue({
       version: 1,

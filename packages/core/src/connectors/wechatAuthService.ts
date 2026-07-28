@@ -397,7 +397,11 @@ export class WechatAuthService {
       mpName: string;
       message: string;
     }> => {
-      const bundle = await readWechatCredentialBundle();
+      let credentialCorrupt = false;
+      const bundle = await readWechatCredentialBundle().catch(() => {
+        credentialCorrupt = true;
+        return null;
+      });
       const mpName = bundle?.payload.account ?? "";
       let pending: WechatPendingAuth | null = null;
       if (pendingId) pending = pendingStore.get(pendingId, "wechat-mp", WECHAT_SCOPE).value;
@@ -447,6 +451,14 @@ export class WechatAuthService {
       }
       if (bundle) {
         return { ok: true, state: "EXPIRED", mpName, message: "授权已过期" };
+      }
+      if (credentialCorrupt) {
+        return {
+          ok: true,
+          state: "NO_CREDENTIAL",
+          mpName,
+          message: "授权信息已损坏，请重新扫码登录",
+        };
       }
       return { ok: true, state: "NO_CREDENTIAL", mpName, message: "未授权" };
     };

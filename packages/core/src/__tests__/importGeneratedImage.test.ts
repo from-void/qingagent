@@ -17,6 +17,10 @@ const ONE_PIXEL_JPEG = Buffer.from([
   0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
   0xff, 0xd9,
 ]);
+const ONE_PIXEL_WEBP = Buffer.from(
+  "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==",
+  "base64",
+).subarray(0, 42);
 const tempDirs: string[] = [];
 
 async function fixture(): Promise<{
@@ -108,7 +112,57 @@ describe("importGeneratedImage", () => {
 
     await expect(
       importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
-    ).rejects.toThrow("JPEG 文件头无效");
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+  });
+
+  it("拒绝只有 SOI 或缺少 EOI 的截断 JPEG", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const onlySoiPath = join(workspaceRoot, "only-soi.jpg");
+    const missingEoiPath = join(workspaceRoot, "missing-eoi.jpg");
+    await writeFile(onlySoiPath, Buffer.from([0xff, 0xd8]));
+    await writeFile(missingEoiPath, ONE_PIXEL_JPEG.subarray(0, -2));
+
+    await expect(
+      importGeneratedImageFromPath({ path: onlySoiPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+    await expect(
+      importGeneratedImageFromPath({ path: missingEoiPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+  });
+
+  it("导入 RIFF 长度和 VP8 区块完整的 WebP 并返回正尺寸", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "one-pixel.webp");
+    await writeFile(sourcePath, ONE_PIXEL_WEBP);
+
+    const result = await importGeneratedImageFromPath(
+      { path: sourcePath },
+      { workspaceRoot, uploadsRoot },
+    );
+
+    expect(result).toMatchObject({ width: 1, height: 1 });
+    await expect(
+      readFile(join(uploadsRoot, result.imageId, "generated-image.webp")),
+    ).resolves.toEqual(ONE_PIXEL_WEBP);
+  });
+
+  it("拒绝只有 RIFF/WEBP 魔数或声明长度超过实长的截断 WebP", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const magicOnlyPath = join(workspaceRoot, "magic-only.webp");
+    const truncatedPath = join(workspaceRoot, "truncated.webp");
+    const magicOnly = Buffer.alloc(12);
+    magicOnly.write("RIFF", 0, "ascii");
+    magicOnly.writeUInt32LE(4, 4);
+    magicOnly.write("WEBP", 8, "ascii");
+    await writeFile(magicOnlyPath, magicOnly);
+    await writeFile(truncatedPath, ONE_PIXEL_WEBP.subarray(0, -1));
+
+    await expect(
+      importGeneratedImageFromPath({ path: magicOnlyPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或尺寸无效");
+    await expect(
+      importGeneratedImageFromPath({ path: truncatedPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或尺寸无效");
   });
 
   it("拒绝图片白名单之外的扩展名", async () => {

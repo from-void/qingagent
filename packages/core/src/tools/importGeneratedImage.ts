@@ -92,12 +92,29 @@ function hasJpegSignature(buffer: Buffer): boolean {
 function jpegDimensions(buffer: Buffer): { width: number; height: number } | null {
   if (!hasJpegSignature(buffer)) return null;
   let offset = 2;
-  while (offset + 3 < buffer.length) {
+  let dimensions: { width: number; height: number } | null = null;
+  let hasEndOfImage = false;
+  while (offset < buffer.length) {
     while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
     if (offset >= buffer.length) break;
     const marker = buffer[offset]!;
     offset += 1;
-    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0xd9) {
+      hasEndOfImage = true;
+      break;
+    }
+    if (marker === 0xda) {
+      if (offset + 1 >= buffer.length) break;
+      const segmentLength = buffer.readUInt16BE(offset);
+      if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+      const endOfImage = buffer.indexOf(
+        Buffer.from([0xff, 0xd9]),
+        offset + segmentLength,
+      );
+      if (endOfImage === -1) break;
+      hasEndOfImage = true;
+      break;
+    }
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
     if (offset + 1 >= buffer.length) break;
     const segmentLength = buffer.readUInt16BE(offset);
@@ -105,17 +122,65 @@ function jpegDimensions(buffer: Buffer): { width: number; height: number } | nul
     if (isJpegStartOfFrame(marker) && segmentLength >= 7) {
       const height = buffer.readUInt16BE(offset + 3);
       const width = buffer.readUInt16BE(offset + 5);
-      return width > 0 && height > 0 ? { width, height } : null;
+      if (width <= 0 || height <= 0) return null;
+      dimensions = { width, height };
     }
     offset += segmentLength;
   }
-  return null;
+  return hasEndOfImage ? dimensions : null;
 }
 
-function hasWebpSignature(buffer: Buffer): boolean {
-  return buffer.length >= 12 &&
-    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
-    buffer.subarray(8, 12).toString("ascii") === "WEBP";
+function readUInt24LE(buffer: Buffer, offset: number): number {
+  return buffer[offset]! | (buffer[offset + 1]! << 8) | (buffer[offset + 2]! << 16);
+}
+
+function webpDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (
+    buffer.length < 20 ||
+    buffer.subarray(0, 4).toString("ascii") !== "RIFF" ||
+    buffer.subarray(8, 12).toString("ascii") !== "WEBP" ||
+    buffer.readUInt32LE(4) + 8 !== buffer.length
+  ) {
+    return null;
+  }
+
+  let offset = 12;
+  let dimensions: { width: number; height: number } | null = null;
+  while (offset < buffer.length) {
+    if (offset + 8 > buffer.length) return null;
+    const chunkType = buffer.subarray(offset, offset + 4).toString("ascii");
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const dataOffset = offset + 8;
+    const dataEnd = dataOffset + chunkSize;
+    if (dataEnd > buffer.length) return null;
+
+    let width = 0;
+    let height = 0;
+    if (
+      chunkType === "VP8 " &&
+      chunkSize >= 10 &&
+      buffer[dataOffset + 3] === 0x9d &&
+      buffer[dataOffset + 4] === 0x01 &&
+      buffer[dataOffset + 5] === 0x2a
+    ) {
+      width = buffer.readUInt16LE(dataOffset + 6) & 0x3fff;
+      height = buffer.readUInt16LE(dataOffset + 8) & 0x3fff;
+    } else if (chunkType === "VP8L" && chunkSize >= 5 && buffer[dataOffset] === 0x2f) {
+      const bits = buffer.readUInt32LE(dataOffset + 1);
+      width = (bits & 0x3fff) + 1;
+      height = ((bits >>> 14) & 0x3fff) + 1;
+    } else if (chunkType === "VP8X" && chunkSize >= 10) {
+      width = readUInt24LE(buffer, dataOffset + 4) + 1;
+      height = readUInt24LE(buffer, dataOffset + 7) + 1;
+    }
+    if (width > 0 && height > 0 && dimensions === null) {
+      dimensions = { width, height };
+    }
+
+    offset = dataEnd + (chunkSize % 2);
+    if (offset > buffer.length) return null;
+  }
+  return dimensions;
 }
 
 function validateAndPrepareImage(
@@ -132,12 +197,14 @@ function validateAndPrepareImage(
     return { buffer, dimensions };
   }
   if (extension === "jpg" || extension === "jpeg") {
-    if (!hasJpegSignature(buffer)) throw new Error("JPEG 文件头无效");
-    return { buffer, dimensions: jpegDimensions(buffer) };
+    const dimensions = jpegDimensions(buffer);
+    if (!dimensions) throw new Error("JPEG 段结构或尺寸无效");
+    return { buffer, dimensions };
   }
   if (extension === "webp") {
-    if (!hasWebpSignature(buffer)) throw new Error("WebP 文件头无效");
-    return { buffer, dimensions: null };
+    const dimensions = webpDimensions(buffer);
+    if (!dimensions) throw new Error("WebP RIFF 结构、图像区块或尺寸无效");
+    return { buffer, dimensions };
   }
 
   const hardened = hardenInlineSvg(buffer.toString("utf8"), { maxBytes });

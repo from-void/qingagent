@@ -52,17 +52,32 @@ function sanitizeMarkdownLine(line: string): string {
 
 export function sanitizeMarkdownInline(text: string): string {
   const parts = text.split(/(\r\n|\n|\r)/);
-  let inCodeFence = false;
+  let codeFence: { marker: "`" | "~"; length: number } | null = null;
 
   return parts
     .map((part, index) => {
       if (index % 2 === 1) return part;
-      const fenceMatch = part.match(/^\s*(`{3,}|~{3,})/);
-      if (fenceMatch) {
-        inCodeFence = !inCodeFence;
+      if (codeFence) {
+        const closingMatch = part.match(/^\s*(`{3,}|~{3,})\s*$/);
+        const closingFence = closingMatch?.[1];
+        if (
+          closingFence &&
+          closingFence[0] === codeFence.marker &&
+          closingFence.length >= codeFence.length
+        ) {
+          codeFence = null;
+        }
         return part;
       }
-      if (inCodeFence) return part;
+      const openingMatch = part.match(/^\s*(`{3,}|~{3,})/);
+      const openingFence = openingMatch?.[1];
+      if (openingFence) {
+        codeFence = {
+          marker: openingFence[0] as "`" | "~",
+          length: openingFence.length,
+        };
+        return part;
+      }
       return sanitizeMarkdownLine(part);
     })
     .join("");

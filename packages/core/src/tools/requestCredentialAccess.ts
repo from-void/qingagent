@@ -1,4 +1,4 @@
-import { createTool } from "@mastra/core/tools";
+import { createTool, type ToolExecutionContext } from "@mastra/core/tools";
 import { z } from "zod";
 import {
   checkRequestedCredentialAccess,
@@ -32,7 +32,6 @@ export interface RequestCredentialAccessToolOptions {
   sessionId: string;
   /** proof 只绑当前内存会话;缺失时一律 fail-closed。 */
   state?: ApprovalProofSession;
-  runId?: () => string;
   store: CredentialAccessGrantStore;
   now?: () => number;
   home?: string;
@@ -65,7 +64,10 @@ export function createRequestCredentialAccessTool(
       if (!checked.ok) return false;
       return !cooling(checked.declared);
     },
-    execute: async (input: RequestCredentialAccessInput, context?: unknown) => {
+    execute: async (
+      input: RequestCredentialAccessInput,
+      context?: ToolExecutionContext,
+    ) => {
       const checked = checkRequestedCredentialAccess(input, home);
       if (!checked.ok) {
         return { granted: false, message: `不能共享这个位置:${checked.message}` };
@@ -79,17 +81,20 @@ export function createRequestCredentialAccessTool(
       // 走到这里说明确认卡已被用户点了「允许」(Mastra 只在批准后才执行本工具);
       // proof 再核一次,确保批准的正是这份参数。
       const state = options.state;
-      const toolCallId = readToolCallId(context);
-      if (state && toolCallId) {
-        const ok = consumeApprovalProof(state, {
+      const runId = context?.requestContext?.get("runId");
+      const toolCallId = context?.agent?.toolCallId;
+      const hasProof =
+        state !== undefined &&
+        typeof runId === "string" && runId.length > 0 &&
+        typeof toolCallId === "string" && toolCallId.length > 0 &&
+        consumeApprovalProof(state, {
           sessionId: options.sessionId,
-          runId: options.runId?.() ?? readRunId(context),
+          runId,
           toolCallId,
           commandDigest: credentialAccessDigest(options.sessionId, input),
         });
-        if (!ok) {
-          return { granted: false, message: "这次授权没有完成，请让用户重新确认后再试。" };
-        }
+      if (!hasProof) {
+        return { granted: false, message: "这次授权没有完成，请让用户重新确认后再试。" };
       }
 
       await ensureCredentialPathExists(checked.path);
@@ -100,23 +105,12 @@ export function createRequestCredentialAccessTool(
         declared: checked.declared,
         source: "card",
       });
-      // 沙箱按会话缓存;作废后下一条命令重建时就带上这条新放行。
-      invalidateSessionWorkspace(options.sessionId);
+      // credential_grants 是全局表;作废全部会话缓存,让其它会话的下一条命令也重建策略。
+      invalidateSessionWorkspace();
       return {
         granted: true,
         message: `已可以读写 ${checked.declared}，现在重试刚才被拒的命令。`,
       };
     },
   });
-}
-
-
-function readToolCallId(context: unknown): string {
-  const value = (context as { toolCallId?: unknown })?.toolCallId;
-  return typeof value === "string" ? value : "";
-}
-
-function readRunId(context: unknown): string {
-  const value = (context as { runId?: unknown })?.runId;
-  return typeof value === "string" ? value : "";
 }

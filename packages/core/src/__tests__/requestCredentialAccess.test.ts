@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { RequestContext } from "@mastra/core/request-context";
 import {
   buildCredentialAccessConfirmSpec,
   checkRequestedCredentialAccess,
@@ -135,7 +136,7 @@ describe("按需授权工具", () => {
     expect(createGrant).not.toHaveBeenCalled();
   });
 
-  it("批准后落授权、作废会话沙箱缓存,并让模型重试", async () => {
+  it("按真实 Mastra 上下文核销 proof、落授权并作废全部会话沙箱缓存", async () => {
     const state = session();
     const { instance, createGrant } = tool(state);
     const input = { path: "~/.yuque", reason: "语雀要读登录" };
@@ -146,8 +147,8 @@ describe("按需授权工具", () => {
       commandDigest: credentialAccessDigest("s1", input),
     });
     const result = await instance.execute!(input as never, {
-      toolCallId: "call-1",
-      runId: "r1",
+      requestContext: new RequestContext([["runId", "r1"]]),
+      agent: { toolCallId: "call-1" },
     } as never);
     expect(result).toEqual({
       granted: true,
@@ -160,7 +161,7 @@ describe("按需授权工具", () => {
       declared: "~/.yuque",
       source: "card",
     });
-    expect(invalidateSessionWorkspace).toHaveBeenCalledWith("s1");
+    expect(invalidateSessionWorkspace).toHaveBeenCalledWith();
   });
 
   it("没有对应批准凭证时不落授权", async () => {
@@ -168,10 +169,35 @@ describe("按需授权工具", () => {
     const { instance, createGrant } = tool(state);
     const result = await instance.execute!(
       { path: "~/.yuque", reason: "r" } as never,
-      { toolCallId: "call-x", runId: "r1" } as never,
+      {
+        requestContext: new RequestContext([["runId", "r1"]]),
+        agent: { toolCallId: "call-x" },
+      } as never,
     );
     expect(result).toMatchObject({ granted: false });
     expect(createGrant).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["runId", { agent: { toolCallId: "call-1" } }],
+    ["toolCallId", { requestContext: new RequestContext([["runId", "r1"]]) }],
+  ])("存在 proof state 但 Mastra 上下文缺少 %s 时 fail-closed", async (_missing, context) => {
+    const state = session();
+    const { instance, createGrant } = tool(state);
+    const input = { path: "~/.yuque", reason: "r" };
+    issueApprovalProof(state as never, {
+      sessionId: "s1",
+      runId: "r1",
+      toolCallId: "call-1",
+      commandDigest: credentialAccessDigest("s1", input),
+    });
+
+    const result = await instance.execute!(input as never, context as never);
+
+    expect(result).toMatchObject({ granted: false });
+    expect(ensureCredentialPathExists).not.toHaveBeenCalled();
+    expect(createGrant).not.toHaveBeenCalled();
+    expect(invalidateSessionWorkspace).not.toHaveBeenCalled();
   });
 
   it("拒绝后同一位置进入冷却:不再弹卡,也不再落授权", async () => {

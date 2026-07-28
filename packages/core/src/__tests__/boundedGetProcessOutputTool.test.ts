@@ -396,6 +396,39 @@ describe("bounded get_process_output", () => {
     expect(output).toContain("do not rerun the command");
   });
 
+  it("保留缓冲区滚动后只按绝对偏移发送新增输出", async () => {
+    vi.useFakeTimers();
+    const custom = vi.fn(async (_chunk: Record<string, unknown>) => {});
+    const handle = {
+      ...neverSettlingHandle("abcdefgh"),
+      stdoutDroppedBytes: 0,
+      stderrDroppedBytes: 0,
+    };
+    const { tool } = createHarness(handle, 210);
+
+    const result = executeTool(tool, { pid: handle.pid, wait: true }, {
+      ...toolInvocationOptions,
+      writer: { custom, write: vi.fn() },
+    } as never);
+    await vi.advanceTimersByTimeAsync(0);
+    handle.stdout = "efghIJ";
+    handle.stdoutDroppedBytes = 4;
+    handle.stdoutTruncated = true;
+    await vi.advanceTimersByTimeAsync(100);
+
+    const stdoutDeltas = custom.mock.calls
+      .map(([chunk]) => chunk)
+      .filter((chunk) => chunk.type === "data-sandbox-stdout")
+      .map((chunk) => (chunk.data as { output: string }).output);
+    expect(stdoutDeltas).toEqual(["IJ"]);
+
+    await vi.advanceTimersByTimeAsync(110);
+    await expect(result).resolves.toContain("进程仍在运行");
+    expect(custom.mock.calls.filter(([chunk]) =>
+      chunk.type === "data-sandbox-stdout"
+    )).toHaveLength(1);
+  });
+
   it("连续有界等待复用单一退出观察且不注册流回调", async () => {
     vi.useFakeTimers();
     const handle = neverSettlingHandle("working\n");
@@ -464,6 +497,76 @@ describe("bounded get_process_output", () => {
     rejectWait?.(new Error("late wait failure after abort"));
     await Promise.resolve();
   });
+
+  it.each(["timeout", "abort"] as const)(
+    "慢 writer 在 %s 后串行收尾且不再调用旧 writer",
+    async (mode) => {
+      vi.useFakeTimers();
+      let resolveCustom: (() => void) | undefined;
+      let activeCustomCalls = 0;
+      let maxActiveCustomCalls = 0;
+      const custom = vi.fn(async (chunk: Record<string, unknown>) => {
+        if (chunk.type !== "data-sandbox-stdout") return;
+        activeCustomCalls += 1;
+        maxActiveCustomCalls = Math.max(maxActiveCustomCalls, activeCustomCalls);
+        await new Promise<void>((resolve) => {
+          resolveCustom = resolve;
+        });
+        activeCustomCalls -= 1;
+      });
+      const handle = neverSettlingHandle("");
+      handle.command = undefined;
+      const controller = new AbortController();
+      const { tool } = createHarness(handle, 150);
+      const result = executeTool(tool, { pid: handle.pid, wait: true }, {
+        ...toolInvocationOptions,
+        abortSignal: controller.signal,
+        writer: { custom, write: vi.fn() },
+      } as never);
+      const observedResult = result.then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      handle.stdout = "first";
+      await vi.advanceTimersByTimeAsync(100);
+      expect(custom).toHaveBeenCalledOnce();
+      if (mode === "abort") {
+        controller.abort("preemptedByNewMessage");
+        await Promise.resolve();
+      } else {
+        await vi.advanceTimersByTimeAsync(50);
+      }
+
+      handle.stdout = "firstsecond";
+      await vi.advanceTimersByTimeAsync(500);
+      expect(custom).toHaveBeenCalledOnce();
+      expect(maxActiveCustomCalls).toBe(1);
+
+      resolveCustom?.();
+      await vi.advanceTimersByTimeAsync(0);
+      const outcome = await observedResult;
+      if (mode === "abort") {
+        expect(outcome).toMatchObject({
+          status: "rejected",
+          error: {
+            name: "AbortError",
+            message: "preemptedByNewMessage",
+          },
+        });
+      } else {
+        expect(outcome).toMatchObject({
+          status: "fulfilled",
+          value: expect.stringContaining("进程仍在运行"),
+        });
+      }
+      const callsAfterReturn = custom.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(custom).toHaveBeenCalledTimes(callsAfterReturn);
+      expect(activeCustomCalls).toBe(0);
+    },
+  );
 
   it("有界返回后退出观察不持有流回调或旧 writer", async () => {
     let callbacks: WaitOptions | undefined;

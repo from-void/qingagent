@@ -63,9 +63,27 @@ function observeProcessExit(handle: ProcessHandle): Promise<CommandResult> {
   return waitPromise;
 }
 
-function retainedOutputDelta(previous: string, current: string): string {
+function retainedOutputDelta(
+  previous: string,
+  current: string,
+  previousDroppedBytes: number | undefined,
+  currentDroppedBytes: number | undefined,
+): string {
+  if (
+    Number.isSafeInteger(previousDroppedBytes) &&
+    previousDroppedBytes! >= 0 &&
+    Number.isSafeInteger(currentDroppedBytes) &&
+    currentDroppedBytes! >= previousDroppedBytes!
+  ) {
+    const previousEnd = previousDroppedBytes! + Buffer.byteLength(previous);
+    const currentStart = currentDroppedBytes!;
+    const currentBuffer = Buffer.from(current, "utf8");
+    const currentEnd = currentStart + currentBuffer.length;
+    if (currentEnd <= previousEnd || previousEnd < currentStart) return "";
+    return currentBuffer.subarray(previousEnd - currentStart).toString("utf8");
+  }
   if (current === previous) return "";
-  return current.startsWith(previous) ? current.slice(previous.length) : current;
+  return current.startsWith(previous) ? current.slice(previous.length) : "";
 }
 
 /**
@@ -202,6 +220,8 @@ Use this after starting a background command with execute_command (background: t
         let authorizationSignalDetected = false;
         let observedStdout = handle.stdout;
         let observedStderr = handle.stderr;
+        let observedStdoutDroppedBytes = handle.stdoutDroppedBytes;
+        let observedStderrDroppedBytes = handle.stderrDroppedBytes;
         if (shouldWait && handle.exitCode === undefined) {
           let resolveAuthorizationSignal: (() => void) | undefined;
           const authorizationSignalPromise = new Promise<{ kind: "authorizationSignal" }>(
@@ -224,10 +244,24 @@ Use this after starting a background command with execute_command (background: t
           const pollRetainedOutput = async () => {
             const nextStdout = handle.stdout;
             const nextStderr = handle.stderr;
-            const stdoutDelta = retainedOutputDelta(observedStdout, nextStdout);
-            const stderrDelta = retainedOutputDelta(observedStderr, nextStderr);
+            const nextStdoutDroppedBytes = handle.stdoutDroppedBytes;
+            const nextStderrDroppedBytes = handle.stderrDroppedBytes;
+            const stdoutDelta = retainedOutputDelta(
+              observedStdout,
+              nextStdout,
+              observedStdoutDroppedBytes,
+              nextStdoutDroppedBytes,
+            );
+            const stderrDelta = retainedOutputDelta(
+              observedStderr,
+              nextStderr,
+              observedStderrDroppedBytes,
+              nextStderrDroppedBytes,
+            );
             observedStdout = nextStdout;
             observedStderr = nextStderr;
+            observedStdoutDroppedBytes = nextStdoutDroppedBytes;
+            observedStderrDroppedBytes = nextStderrDroppedBytes;
             detectAuthorizationSignal();
             if (stdoutDelta) {
               await safeCustom(writer, {
@@ -244,10 +278,30 @@ Use this after starting a background command with execute_command (background: t
               });
             }
           };
-          const pollInterval = setInterval(
-            () => void pollRetainedOutput(),
-            Math.min(PROCESS_OUTPUT_POLL_INTERVAL_MS, waitMaxMs),
-          );
+          let pollingStopped = false;
+          let pollTimer: ReturnType<typeof setTimeout> | undefined;
+          let wakePoll: (() => void) | undefined;
+          const pollIntervalMs = Math.min(PROCESS_OUTPUT_POLL_INTERVAL_MS, waitMaxMs);
+          const pollingTask = (async () => {
+            while (!pollingStopped) {
+              await new Promise<void>((resolve) => {
+                wakePoll = resolve;
+                pollTimer = setTimeout(resolve, pollIntervalMs);
+              });
+              pollTimer = undefined;
+              wakePoll = undefined;
+              if (pollingStopped) break;
+              await pollRetainedOutput();
+            }
+          })();
+          const stopPolling = async () => {
+            if (!pollingStopped) {
+              pollingStopped = true;
+              if (pollTimer) clearTimeout(pollTimer);
+              wakePoll?.();
+            }
+            await pollingTask;
+          };
 
           let timeout: ReturnType<typeof setTimeout> | undefined;
           const abortSignal = context?.abortSignal;
@@ -274,8 +328,9 @@ Use this after starting a background command with execute_command (background: t
             }
 
             const outcome = await Promise.race(races);
-            await pollRetainedOutput();
+            await stopPolling();
             if (outcome.kind === "exited") {
+              await pollRetainedOutput();
               await safeCustom(writer, {
                 type: "data-sandbox-exit",
                 data: {
@@ -296,7 +351,7 @@ Use this after starting a background command with execute_command (background: t
                 outcome.kind === "timeout" && handle.exitCode === undefined;
             }
           } finally {
-            clearInterval(pollInterval);
+            await stopPolling();
             if (timeout) clearTimeout(timeout);
             if (abortListener) {
               abortSignal?.removeEventListener("abort", abortListener);

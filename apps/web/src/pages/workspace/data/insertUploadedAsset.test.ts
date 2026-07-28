@@ -7,6 +7,7 @@ import {
   insertFileAsset,
   insertImageAsset,
   insertImageAssets,
+  replayPendingUploadPlaceholders,
   UPLOAD_PLACEHOLDER_IMAGE_SRC,
 } from "./insertUploadedAsset";
 
@@ -115,6 +116,64 @@ describe("insertUploadedAsset", () => {
       "/api/v1/files/550e8400-e29b-41d4-a716-446655440001/first.png",
       "/api/v1/files/550e8400-e29b-41d4-a716-446655440002/second.png",
     ]);
+  });
+
+  it("图片上传完成时若占位已被外部正文替换，必须抛错而非静默成功", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createEditor();
+
+    const pending = insertImageAsset(editor, imageFile());
+    const xhr = await waitForRequest();
+    editor.commands.setContent({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "external" },
+        content: [{ type: "text", text: "外部版本" }],
+      }],
+    });
+    xhr.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440000",
+      filename: "figure.png",
+      mimeType: "image/png",
+      size: 3,
+    });
+
+    await expect(pending).rejects.toThrow("placeholder");
+    expect(editor.getText()).toBe("外部版本");
+  });
+
+  it("外部正文同步时按原块位置重放在途图片占位，完成后仍能原位写回", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createEditor();
+
+    const pending = insertImageAsset(editor, imageFile());
+    const xhr = await waitForRequest();
+    const liveContent = editor.getJSON().content ?? [];
+    const originalIndex = liveContent.findIndex((node) => node.type === "image");
+    const incoming = normalizePmDoc(editor.getJSON());
+    expect(incoming.content.some((node) => node.type === "image")).toBe(false);
+
+    const replayed = replayPendingUploadPlaceholders(editor, incoming);
+    expect(replayed.content.findIndex((node) => node.type === "image")).toBe(
+      originalIndex,
+    );
+    editor.commands.setContent(replayed);
+    xhr.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440000",
+      filename: "figure.png",
+      mimeType: "image/png",
+      size: 3,
+    });
+
+    const src = await pending;
+    expect(firstImageAttrs(editor)).toMatchObject({
+      src,
+      uploading: false,
+      progress: 100,
+      error: false,
+    });
   });
 
   it("文件上传时立即在发起位置插入稳定占位,移动光标后仍按 blockId 回写", async () => {

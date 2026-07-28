@@ -94,7 +94,11 @@ import type {
   DocSuggestion,
   PatchOverlayInput,
 } from "../data/protocol";
-import { insertFileAsset, insertImageAssets } from "../data/insertUploadedAsset";
+import {
+  insertFileAsset,
+  insertImageAssets,
+  replayPendingUploadPlaceholders,
+} from "../data/insertUploadedAsset";
 import { MathEditPopover, type MathEditTarget } from "./MathEditPopover";
 import { DocColophon } from "./DocColophon";
 import {
@@ -946,7 +950,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             pendingSelfDocKeysRef.current = [];
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
-            setRemoteEditorContent(editor, normalizedIncoming);
+            setRemoteEditorContent(
+              editor,
+              replayPendingUploadPlaceholders(editor, normalizedIncoming),
+            );
             lastVersionRef.current = scheduledVersion;
             lastSyncedDocRevisionRef.current = scheduledRevision;
             if (hadFocus) {

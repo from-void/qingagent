@@ -122,6 +122,30 @@ describe("hasVisibleSvgContent", () => {
     expect(hasVisibleSvgContent(`<svg><path d="M0 0 L10 10" stroke="#000"/></svg>`)).toBe(true);
     expect(hasVisibleSvgContent(`<svg><text x="1" y="8">正文</text></svg>`)).toBe(true);
   });
+
+  it("按真实填充面积、描边长度与颜色透明度判定清洗后的 SVG", () => {
+    const visibleAfterSanitize = (inner: string) =>
+      hasVisibleSvgContent(sanitizeSvg(`<svg>${inner}</svg>`, size));
+
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0 L20 0 Z" fill="#000"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0 L10 10" fill="#000"/>`,
+    )).toBe(true);
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0" fill="none" stroke="#000"/>`,
+    )).toBe(true);
+    expect(visibleAfterSanitize(
+      `<rect width="10" height="10" fill="rgba(0,0,0,0)"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<rect width="10" height="10" fill="#00000000"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<defs><linearGradient id="clear"><stop offset="0" stop-color="#0000"/><stop offset="1" stop-color="rgba(0,0,0,0)"/></linearGradient></defs><rect width="10" height="10" fill="url(#clear)"/>`,
+    )).toBe(false);
+  });
 });
 
 describe("buildPartialSvgDraft", () => {

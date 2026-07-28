@@ -257,12 +257,20 @@ function suggestionPersistenceFailedFrame(
 async function* settleResolvedReviewRecords(
   state: SessionState,
   records: readonly SuggestionRecord[],
-  options: { alreadyPersisted?: boolean } = {},
+  options: {
+    alreadyPersisted?: boolean;
+    unresolvedStatus?: Extract<DocSuggestion["status"], "committed" | "rejected">;
+  } = {},
 ): AsyncGenerator<BridgeFrame, boolean> {
   let allPersisted = true;
   for (const record of records) {
     const verdict = state.patchVerdicts.get(record.suggestion.id);
-    const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
+    const terminalStatus =
+      verdict === "rejected"
+        ? "rejected"
+        : verdict === "accepted"
+          ? "committed"
+          : options.unresolvedStatus ?? "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
     if (!options.alreadyPersisted) {
       try {
@@ -692,6 +700,7 @@ export async function* commitPatches(
         committedDoc: currentPmDoc(state),
         committedVersion: state.docVersion,
         remainingRecords,
+        persist: false,
         persistPending: false,
       });
       if (rebase.status !== "conflict") {
@@ -741,6 +750,17 @@ export async function* commitPatches(
           })),
           "待审草稿更新失败，请重试。",
         );
+      } else {
+        const clearedSettled = yield* settleResolvedReviewRecords(
+          state,
+          remainingRecords.filter((record) => shouldSettleRecord(state, record)),
+          { unresolvedStatus: "rejected" },
+        );
+        if (!clearedSettled) {
+          yield* finishSettledReviewState(state, "commitPatches:rebase_clear_persist_failed");
+          return;
+        }
+        clearReviewDiffState(state);
       }
     } else {
       clearReviewDiffState(state);
@@ -1219,6 +1239,7 @@ export async function* commitPatches(
       committedDoc: result.doc,
       committedVersion: result.docVersion,
       remainingRecords,
+      persist: false,
       persistPending: false,
     });
     if (rebase.status !== "conflict") {
@@ -1264,6 +1285,15 @@ export async function* commitPatches(
         "待审草稿更新失败，请重试。",
       );
     } else {
+      const clearedSettled = yield* settleResolvedReviewRecords(
+        state,
+        remainingRecords.filter((record) => shouldSettleRecord(state, record)),
+        { unresolvedStatus: "committed" },
+      );
+      if (!clearedSettled) {
+        yield* finishSettledReviewState(state, "commitPatches:rebase_clear_persist_failed");
+        return;
+      }
       clearReviewDiffState(state);
     }
   } else {

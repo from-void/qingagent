@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import {
   arrayBufferToDataUrl,
@@ -36,5 +38,22 @@ describe("衍生稿 PNG 导出资源自包含", () => {
     expect(() => svgMarkupToDataUrl('<svg><foreignObject><div style="background-image:url(&quot;/paper.png&quot;)"/></foreignObject></svg>')).toThrow("/paper.png");
     expect(() => svgMarkupToDataUrl('<svg><use href="https://cdn.example/symbols.svg#star"/></svg>')).toThrow("https://cdn.example/symbols.svg#star");
     expect(() => svgMarkupToDataUrl("<svg><style>@import '/font.css';</style></svg>")).toThrow("@import");
+  });
+
+  it("正文中的 CSS 和资源标签示例不被误判为真实外链", () => {
+    const tutorialSvg = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      "<foreignObject>",
+      '<article xmlns="http://www.w3.org/1999/xhtml">',
+      "<p>背景示例：url(https://example.com/a.png)</p>",
+      "<pre>@import 'https://example.com/theme.css';</pre>",
+      "<code>&lt;img src=\"https://example.com/demo.png\"&gt;</code>",
+      "</article>",
+      "</foreignObject>",
+      "</svg>",
+    ].join("");
+
+    expect(externalSvgResourceReferences(tutorialSvg)).toEqual([]);
+    expect(() => svgMarkupToDataUrl(tutorialSvg)).not.toThrow();
   });
 });

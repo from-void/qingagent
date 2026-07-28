@@ -1,9 +1,15 @@
 import { XHS_COVER_FONT_FACES, xhsCoverFontFaceCss, type XhsCoverFontFace } from "./xhsCoverFonts";
 
 const RESOURCE_URL_PATTERN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/gi;
-const LOADABLE_ATTRIBUTE_PATTERN = /\s(?:src|srcset|poster|data|xlink:href)=["']([^"']+)["']/gi;
-const EXTERNAL_HREF_ELEMENT_PATTERN = /<(?:image|use|link)\b[^>]*\shref=["']([^"']+)["']/gi;
 const BLOB_URL_PATTERN = /\bblob:[^\s"'<>)]*/gi;
+const LOADABLE_ATTRIBUTE_NAMES = new Set([
+  "data",
+  "poster",
+  "src",
+  "srcset",
+  "xlink:href",
+]);
+const RESOURCE_HREF_ELEMENTS = new Set(["image", "link", "use"]);
 const resourceDataUrls = new Map<string, Promise<string>>();
 
 function mimeTypeForUrl(url: string): string {
@@ -132,25 +138,42 @@ async function embeddedFontCss(usedFontFamilies: ReadonlySet<string>): Promise<s
 }
 
 export function externalSvgResourceReferences(svg: string): string[] {
-  // XMLSerializer 会把 style 属性里的引号转义，检查前还原这些实体，避免漏掉 url(&quot;…&quot;)。
-  const normalized = svg
-    .replace(/&quot;|&#34;/gi, "\"")
-    .replace(/&apos;|&#39;/gi, "'");
+  const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
+  if (parsed.querySelector("parsererror")) return ["SVG 解析失败"];
   const references: string[] = [];
-  for (const match of normalized.matchAll(RESOURCE_URL_PATTERN)) {
-    const url = match[1] ?? match[2] ?? match[3] ?? "";
-    if (!isEmbeddedResourceUrl(url)) references.push(url);
+
+  const collectCssReferences = (cssText: string) => {
+    for (const match of cssText.matchAll(RESOURCE_URL_PATTERN)) {
+      const url = match[1] ?? match[2] ?? match[3] ?? "";
+      if (!isEmbeddedResourceUrl(url)) references.push(url);
+    }
+    for (const match of cssText.matchAll(BLOB_URL_PATTERN)) {
+      references.push(match[0]);
+    }
+    if (/@import\b/i.test(cssText)) references.push("@import");
+  };
+
+  for (const element of Array.from(parsed.querySelectorAll("*"))) {
+    const style = element.getAttribute("style");
+    if (style) collectCssReferences(style);
+    if (element.localName.toLowerCase() === "style") {
+      collectCssReferences(element.textContent ?? "");
+    }
+
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const isResourceHref =
+        name === "href" &&
+        RESOURCE_HREF_ELEMENTS.has(element.localName.toLowerCase());
+      if (
+        (LOADABLE_ATTRIBUTE_NAMES.has(name) || isResourceHref) &&
+        !isEmbeddedResourceUrl(attribute.value)
+      ) {
+        references.push(attribute.value);
+      }
+    }
   }
-  for (const match of normalized.matchAll(LOADABLE_ATTRIBUTE_PATTERN)) {
-    const url = match[1] ?? "";
-    if (!isEmbeddedResourceUrl(url)) references.push(url);
-  }
-  for (const match of normalized.matchAll(EXTERNAL_HREF_ELEMENT_PATTERN)) {
-    const url = match[1] ?? "";
-    if (!isEmbeddedResourceUrl(url)) references.push(url);
-  }
-  for (const match of normalized.matchAll(BLOB_URL_PATTERN)) references.push(match[0]);
-  if (/@import\b/i.test(normalized)) references.push("@import");
+
   return [...new Set(references)];
 }
 

@@ -30,6 +30,7 @@ import {
   workspaceMutations,
 } from "../data/revisionedMutation";
 import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
+import { isCurrentSessionTitleRename } from "../data/sessionTitleRename";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
 import type { DerivativeDocument } from "./derivatives/types";
@@ -164,7 +165,10 @@ export function WorkspaceDocumentPane({
     chatInputRef,
   } = controller;
   const currentSessionIdRef = useRef(state.sessionId);
+  const currentTitleRef = useRef(title);
+  const renameGenerationBySessionRef = useRef(new Map<string, number>());
   currentSessionIdRef.current = state.sessionId;
+  currentTitleRef.current = title;
 
   useEffect(() => {
     derivativeTabRequestRef.current += 1;
@@ -343,14 +347,40 @@ export function WorkspaceDocumentPane({
               createDisabledReason={derivativeCreateDisabledReason}
               isStaleDismissed={isStaleDismissed}
               onRename={async (nextTitle) => {
+                const requestSessionId = state.sessionId;
+                const stream = streamRef.current;
+                if (!stream || !requestSessionId) {
+                  showToast("标题修改失败 · 请重试");
+                  return;
+                }
                 const previousTitle = title;
+                const requestGeneration =
+                  (renameGenerationBySessionRef.current.get(requestSessionId) ??
+                    0) + 1;
+                renameGenerationBySessionRef.current.set(
+                  requestSessionId,
+                  requestGeneration,
+                );
+                currentTitleRef.current = nextTitle;
                 setTitle(nextTitle);
                 try {
-                  const stream = streamRef.current;
-                  if (!stream || !state.sessionId) throw new Error("会话未就绪");
-                  await stream.renameSession(state.sessionId, nextTitle);
+                  await stream.renameSession(requestSessionId, nextTitle);
                 } catch (error) {
-                  setTitle(previousTitle);
+                  if (!isCurrentSessionTitleRename({
+                    currentGeneration:
+                      renameGenerationBySessionRef.current.get(requestSessionId),
+                    currentSessionId: currentSessionIdRef.current,
+                    currentTitle: currentTitleRef.current,
+                    requestGeneration,
+                    requestSessionId,
+                    requestTitle: nextTitle,
+                  })) {
+                    return;
+                  }
+                  currentTitleRef.current = previousTitle;
+                  setTitle((currentTitle) =>
+                    currentTitle === nextTitle ? previousTitle : currentTitle,
+                  );
                   console.error("[workspace] rename session failed", error);
                   showToast("标题修改失败 · 请重试");
                 }

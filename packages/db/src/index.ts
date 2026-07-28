@@ -1,4 +1,5 @@
 export * from "./db/appSettingsRepo.js";
+export * from "./db/credentialGrantRepo.js";
 export * from "./db/confirmGrantRepo.js";
 export * from "./db/clientMessageIdempotencyRepo.js";
 export * from "./db/documentDraftRepo.js";

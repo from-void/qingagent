@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   __resetBrowserFolderBridgeForTest,
+  __browserFolderBridgeStatsForTest,
   getQingagentSessionWorkspace,
   openBrowserFolderBridgeConnection,
   registerSessionFolderSources,
@@ -339,6 +340,91 @@ describe("folderEntriesRoutes", () => {
       filesystem.stat = originalStat;
       unregisterSessionFolderSources(sessionId);
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("browser bridge 子项软超时会取消底层 pending 请求", async () => {
+    const sessionId = "entries_browser_soft_timeout";
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    process.env.QINGAGENT_FOLDER_ENTRY_STAT_TIMEOUT_MS = "30";
+    const source = makeBrowserSource(sessionId);
+    registerSessionFolderSources(sessionId, [source]);
+    const app = makeApp();
+    const close = openBrowserFolderBridgeConnection({
+      sessionId,
+      clientId: source.browserClientSourceId!,
+      send: async (request) => {
+        if (request.op !== "readdir" || request.relPath !== "") return;
+        resolveBrowserFolderBridgeResponse(request.requestId, {
+          sessionId,
+          folderId: source.id,
+          clientId: source.browserClientSourceId!,
+          response: {
+            ok: true,
+            op: "readdir",
+            entries: [{ name: "slow.txt", type: "file", size: 9 }],
+          },
+        });
+      },
+    });
+
+    try {
+      const res = await app.request(
+        `/api/v1/sessions/${sessionId}/folder-sources/${source.id}/entries`,
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        entries: [
+          { name: "slow.txt", kind: "file", childCount: null, byteLen: 9 },
+        ],
+      });
+      expect(__browserFolderBridgeStatsForTest()).toMatchObject({
+        queued: 0,
+        pending: 0,
+      });
+    } finally {
+      close();
+      unregisterSessionFolderSources(sessionId);
+    }
+  });
+
+  it("HTTP 中止会取消正在等待的 browser bridge 请求", async () => {
+    const sessionId = "entries_browser_http_abort";
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    const source = makeBrowserSource(sessionId);
+    registerSessionFolderSources(sessionId, [source]);
+    const app = makeApp();
+    const delivered: string[] = [];
+    const close = openBrowserFolderBridgeConnection({
+      sessionId,
+      clientId: source.browserClientSourceId!,
+      send: async (request) => {
+        delivered.push(request.requestId);
+      },
+    });
+    const controller = new AbortController();
+    const request = new Request(
+      `http://localhost/api/v1/sessions/${sessionId}/folder-sources/${source.id}/entries`,
+      { signal: controller.signal },
+    );
+
+    try {
+      const pending = Promise.resolve(app.request(request)).catch((error: unknown) => error);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(delivered).toHaveLength(1);
+      expect(__browserFolderBridgeStatsForTest()).toMatchObject({ pending: 1 });
+
+      controller.abort(new DOMException("client disconnected", "AbortError"));
+
+      await pending;
+      expect(__browserFolderBridgeStatsForTest()).toMatchObject({
+        queued: 0,
+        pending: 0,
+      });
+    } finally {
+      close();
+      unregisterSessionFolderSources(sessionId);
     }
   });
 

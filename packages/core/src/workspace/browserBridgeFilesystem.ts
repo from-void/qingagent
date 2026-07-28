@@ -11,6 +11,7 @@ import type {
   WriteOptions,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
 
@@ -102,6 +103,8 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
   firstConnectionGraceTimer?: ReturnType<typeof setTimeout>;
   deliveryConnection?: BrowserBridgeConnection;
+  abortSignal?: AbortSignal;
+  abortListener?: () => void;
 }
 
 const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
@@ -138,6 +141,18 @@ const connections = new Map<string, Set<BrowserBridgeConnection>>();
 const clientsWithSeenConnection = new Set<string>();
 const queuedRequests = new Map<string, BrowserFolderBridgeRequest[]>();
 const pendingRequests = new Map<string, PendingRequest>();
+const browserBridgeAbortContext = new AsyncLocalStorage<AbortSignal>();
+
+/**
+ * 在不扩张 Mastra WorkspaceFilesystem 公共接口的前提下，把请求取消信号贯穿复合挂载层。
+ */
+export function withBrowserFolderBridgeAbortSignal<T>(
+  signal: AbortSignal,
+  operation: () => Promise<T>,
+): Promise<T> {
+  signal.throwIfAborted();
+  return browserBridgeAbortContext.run(signal, operation);
+}
 
 function sourceKey(sessionId: string, folderId: string): string {
   return `${sessionId}\0${folderId}`;
@@ -442,6 +457,9 @@ function removeQueuedRequest(requestId: string): void {
 function clearPendingTimers(pending: PendingRequest): void {
   clearTimeout(pending.timer);
   if (pending.firstConnectionGraceTimer) clearTimeout(pending.firstConnectionGraceTimer);
+  if (pending.abortSignal && pending.abortListener) {
+    pending.abortSignal.removeEventListener("abort", pending.abortListener);
+  }
 }
 
 function clearPendingFirstConnectionGraceTimer(requestId: string): void {
@@ -672,7 +690,9 @@ export async function requestBrowserFolderBridge(
   request: Omit<BrowserFolderBridgeRequest, "requestId">,
   timeoutMs = DEFAULT_BRIDGE_TIMEOUT_MS,
   firstConnectionGraceMs = readFirstConnectionGraceMs(),
+  signal?: AbortSignal,
 ): Promise<BrowserFolderBridgeSuccessResponse> {
+  signal?.throwIfAborted();
   const requestId = crypto.randomUUID();
   const targetClientId = selectBrowserFolderClient(request.sessionId, request.folderId, request.clientId);
   const registeredClientId =
@@ -693,8 +713,25 @@ export async function requestBrowserFolderBridge(
       resolve,
       reject,
       timer,
+      ...(signal ? { abortSignal: signal } : {}),
     });
+    if (signal) {
+      const abortListener = () => {
+        const reason = signal.reason;
+        rejectPendingRequest(
+          requestId,
+          reason instanceof Error
+            ? reason
+            : new DOMException("browser folder bridge request aborted", "AbortError"),
+        );
+      };
+      const pending = pendingRequests.get(requestId);
+      if (pending) pending.abortListener = abortListener;
+      signal.addEventListener("abort", abortListener, { once: true });
+      if (signal.aborted) abortListener();
+    }
   });
+  if (signal?.aborted) return promise;
   if (!targetClientId) {
     queueRequest(fullRequest);
     const pending = pendingRequests.get(requestId);
@@ -863,6 +900,7 @@ export class BrowserBridgeFilesystem implements WorkspaceFilesystem {
     op: BrowserFolderBridgeOperation,
     relPath: string,
   ): Promise<BrowserFolderBridgeSuccessResponse> {
+    const signal = browserBridgeAbortContext.getStore();
     const response = await requestBrowserFolderBridge({
       sessionId: this.source.sessionId,
       folderId: this.source.id,
@@ -870,7 +908,7 @@ export class BrowserBridgeFilesystem implements WorkspaceFilesystem {
       op,
       relPath,
       ...(op === "readFile" ? { maxBytes: DEFAULT_READ_MAX_BYTES } : {}),
-    });
+    }, undefined, undefined, signal);
     return response;
   }
 

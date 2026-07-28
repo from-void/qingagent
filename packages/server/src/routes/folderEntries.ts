@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import {
   getQingagentSessionWorkspace,
   getSessionFolderSources,
+  withBrowserFolderBridgeAbortSignal,
 } from "@qingagent/core";
 import { Buffer } from "node:buffer";
 import { posix } from "node:path";
@@ -67,18 +68,43 @@ function entryStatTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : ENTRY_STAT_TIMEOUT_MS;
 }
 
-async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
-  if (timeoutMs <= 0) return await promise;
+async function withSoftTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+  requestSignal: AbortSignal,
+): Promise<T | null> {
+  requestSignal.throwIfAborted();
+  const controller = new AbortController();
+  let rejectRequestAbort!: (reason: unknown) => void;
+  const requestAbort = new Promise<never>((_resolve, reject) => {
+    rejectRequestAbort = reject;
+  });
+  const relayRequestAbort = () => {
+    controller.abort(requestSignal.reason);
+    rejectRequestAbort(requestSignal.reason);
+  };
+  requestSignal.addEventListener("abort", relayRequestAbort, { once: true });
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
   try {
-    return await Promise.race([
-      promise,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
-      }),
-    ]);
+    const task = withBrowserFolderBridgeAbortSignal(controller.signal, operation).catch(
+      (error) => {
+        if (timedOut) return null;
+        throw error;
+      },
+    );
+    if (timeoutMs <= 0) return await Promise.race([task, requestAbort]);
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(new DOMException("folder entry probe timed out", "TimeoutError"));
+        resolve(null);
+      }, timeoutMs);
+    });
+    return await Promise.race([task, requestAbort, timeout]);
   } finally {
     if (timer) clearTimeout(timer);
+    requestSignal.removeEventListener("abort", relayRequestAbort);
   }
 }
 
@@ -86,12 +112,14 @@ async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
   worker: (item: T) => Promise<R>,
+  signal: AbortSignal,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let nextIndex = 0;
   const workerCount = Math.min(Math.max(1, concurrency), items.length);
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (nextIndex < items.length) {
+      signal.throwIfAborted();
       const index = nextIndex;
       nextIndex += 1;
       results[index] = await worker(items[index] as T);
@@ -165,11 +193,16 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
   const filesystem = workspace.filesystem;
   if (!filesystem) return jsonError(c, "Workspace filesystem is unavailable", 502);
   const dirPath = targetPath(source.mountPath, relPath);
+  const requestSignal = c.req.raw.signal;
 
   let rawEntries: Awaited<ReturnType<typeof filesystem.readdir>>;
   try {
-    rawEntries = await filesystem.readdir(dirPath);
+    rawEntries = await withBrowserFolderBridgeAbortSignal(
+      requestSignal,
+      () => filesystem.readdir(dirPath),
+    );
   } catch (error) {
+    requestSignal.throwIfAborted();
     return jsonError(
       c,
       publicFolderSourceErrorMessage(error),
@@ -193,23 +226,33 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
     let kind: FolderEntryKind = entry.type === "directory" ? "dir" : "file";
     let byteLen: number | null = entry.type === "directory" ? null : fileSize(entry);
     try {
-      const stat = await withSoftTimeout(filesystem.stat(entryPath), entryStatTimeoutMs());
+      const stat = await withSoftTimeout(
+        () => filesystem.stat(entryPath),
+        entryStatTimeoutMs(),
+        requestSignal,
+      );
       if (stat) {
         kind = stat.type === "directory" ? "dir" : "file";
         byteLen = kind === "file" ? fileSize(stat) : null;
       }
     } catch {
+      requestSignal.throwIfAborted();
       // 子项在 readdir 和 stat 之间消失时不让整层失败；保留 readdir 能给出的廉价事实。
     }
 
     let childCount: number | null = null;
     if (kind === "dir") {
       try {
-        const children = await withSoftTimeout(filesystem.readdir(entryPath), childCountTimeoutMs());
+        const children = await withSoftTimeout(
+          () => filesystem.readdir(entryPath),
+          childCountTimeoutMs(),
+          requestSignal,
+        );
         childCount = children
           ? children.filter((child) => !shouldHideEntry(child.name)).length
           : null;
       } catch {
+        requestSignal.throwIfAborted();
         childCount = null;
       }
     }
@@ -220,8 +263,9 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
       childCount,
       byteLen,
     };
-  });
+  }, requestSignal);
 
+  requestSignal.throwIfAborted();
   return c.json({ entries, truncated, nextCursor });
 });
 

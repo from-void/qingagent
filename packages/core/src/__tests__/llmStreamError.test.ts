@@ -218,7 +218,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(textBodies(frames)).toEqual([]);
   });
 
-  it.each(["", " \n\t"])(
+  it.each(["", " \n\t", "\u200b", "\u2060", " \u200b\n\u2060\t"])(
     "首个有效 token 前的空白 delta(%j)不取消瞬态错误重试资格",
     async (blankText) => {
       const { createSession, processAgentStream } = await import("../bridge/index.js");
@@ -241,6 +241,26 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
 
       expect(result.producedVisibleFrame).toBe(false);
       expect(result.transientErrorChunk).toBeTruthy();
+    },
+  );
+
+  it.each(["中文", "👨‍👩‍👧‍👦"])(
+    "CJK/emoji 正文(%s)仍会取得可见产出资格",
+    async (visibleText) => {
+      const { createSession, processAgentStream } = await import("../bridge/index.js");
+      const { result } = await collectFramesAndReturn(
+        processAgentStream(
+          streamOf({ type: "text-delta", payload: { text: visibleText } }),
+          {
+            state: createSession("visible-unicode-delta"),
+            agentMessageId: "agent-msg",
+            streamId: "stream-visible-unicode",
+            runId: "run-visible-unicode",
+          },
+        ),
+      );
+
+      expect(result.producedVisibleFrame).toBe(true);
     },
   );
 
@@ -279,7 +299,10 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     streamMock
       .mockResolvedValueOnce({
         runId: "run-retry-0",
-        fullStream: streamOf(errorChunk("read ECONNRESET")),
+        fullStream: streamOf(
+          { type: "text-delta", payload: { text: "\u200b\u2060" } },
+          errorChunk("read ECONNRESET"),
+        ),
       } as never)
       .mockResolvedValueOnce({
         runId: "run-retry-1",

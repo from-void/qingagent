@@ -268,7 +268,7 @@ describe("migrateThreadMetadataToDocuments", () => {
 
     expect(first.migrated).toBe(2);
     expect(first.failed).toBe(0);
-    expect(second.migrated).toBe(2);
+    expect(second.migrated).toBe(0);
     const listed = await documentRepo.list({ resourceId: "qingagent-user" });
     expect(listed.total).toBe(2);
     expect(await documentRepo.load("doc-1")).toMatchObject({
@@ -328,6 +328,43 @@ describe("migrateThreadMetadataToDocuments", () => {
     expect(stats.migrated).toBe(0);
     expect(saveManySpy).not.toHaveBeenCalled();
     expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("同批仅保存并标记 stale 线程，不刷新富文本等价线程", async () => {
+    const stale = validMetadata("stale-current", {
+      docId: "doc-stale-only",
+    });
+    const richEquivalent = validMetadata("rich-equivalent", {
+      docId: "doc-rich-equivalent",
+      legacySections: [
+        { kind: "quote", data: { text: "引用正文" } },
+        { kind: "code", data: { body: "const value = 1;" } },
+      ],
+    });
+    addThread("thread-stale-only", stale);
+    addThread("thread-rich-equivalent", richEquivalent);
+    await saveDocumentFromMetadata("thread-stale-only", stale, {
+      title: "stale-old",
+    });
+    await saveDocumentFromMetadata("thread-rich-equivalent", richEquivalent);
+    const saveManySpy = vi.spyOn(documentRepo, "saveMany");
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments({ force: true });
+
+    expect(stats.migrated).toBe(1);
+    expect(saveManySpy).toHaveBeenCalledTimes(1);
+    expect(saveManySpy.mock.calls[0]?.[0].map((row) => row.threadId)).toEqual([
+      "thread-stale-only",
+    ]);
+    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect(memory.updateThread).toHaveBeenCalledWith(expect.objectContaining({
+      id: "thread-stale-only",
+    }));
+    expect((threads.get("thread-rich-equivalent")?.metadata as QingagentThreadMetadata)
+      .migratedToDocumentsAt).toBeUndefined();
   });
 
   it("does not skip when legacySections have the same length but different text", async () => {
@@ -414,7 +451,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     );
     const stats = await migrateThreadMetadataToDocuments({ pageSize: 7 });
 
-    expect(stats.migrated).toBe(21);
+    expect(stats.migrated).toBe(1);
     expect((await documentRepo.load("doc-01"))?.title).toBe("content-01");
   });
 
@@ -474,7 +511,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     const stats = await migrateThreadMetadataToDocuments({ pageSize: 200 });
 
     expect(offsetPaginationCalls).toBe(0);
-    expect(stats.migrated).toBe(201);
+    expect(stats.migrated).toBe(1);
     expect((await documentRepo.load("doc-001"))?.title).toBe("content-1");
     expect(memory.listThreads).toHaveBeenCalledWith(expect.objectContaining({
       page: 0,
@@ -496,7 +533,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     );
     const stats = await migrateThreadMetadataToDocuments({ pageSize: 1 });
 
-    expect(stats.migrated).toBe(2);
+    expect(stats.migrated).toBe(1);
     expect(await documentRepo.load("doc-missing")).toMatchObject({
       threadId: "thread-missing",
       legacySections: [section("missing")],
@@ -514,7 +551,7 @@ describe("migrateThreadMetadataToDocuments", () => {
     );
     const stats = await migrateThreadMetadataToDocuments();
 
-    expect(stats.migrated).toBe(1);
+    expect(stats.migrated).toBe(0);
   });
 
   it("reruns safely after a partial single-row failure", async () => {
@@ -539,7 +576,7 @@ describe("migrateThreadMetadataToDocuments", () => {
 
     expect(first.failed).toBe(1);
     expect(first.migrated).toBe(1);
-    expect(second.migrated).toBe(2);
+    expect(second.migrated).toBe(1);
     expect(await documentRepo.load("doc-first")).toMatchObject({
       threadId: "thread-first",
       legacySections: [section("first")],

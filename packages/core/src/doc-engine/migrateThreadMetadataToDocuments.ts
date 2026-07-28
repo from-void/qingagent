@@ -216,11 +216,29 @@ export async function migrateThreadMetadataToDocuments(
     const tombstoned = await getTombstonedSessionIds(
       candidates.map((row) => row.input.threadId),
     );
-    const rows = candidates.filter((row) => {
+    const eligibleRows = candidates.filter((row) => {
       const blocked = tombstoned.has(row.input.threadId) || isSessionDeleted(row.input.threadId);
       if (blocked) stats.skipped++;
       return !blocked;
     });
+    const rows: typeof eligibleRows = [];
+    for (const row of eligibleRows) {
+      try {
+        const existing = await documentRepo.load(row.input.id);
+        if (!documentMatchesMetadata(row.input, existing)) {
+          rows.push(row);
+        }
+      } catch (err) {
+        // 读取不确定时 fail-open，继续以 metadata 覆盖写入；不能因核验故障漏迁。
+        logger.warn("documents migration row verification failed open", {
+          page,
+          id: row.input.id,
+          threadId: row.input.threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        rows.push(row);
+      }
+    }
 
     if (rows.length > 0) {
       try {

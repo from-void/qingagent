@@ -88,6 +88,65 @@ describe("公众号稿生成体验", () => {
     expect(host.textContent).toContain("预取正文首帧可见");
   });
 
+  it("首次正文刷新失败时保留已有稿面并给出统一短提示", async () => {
+    const generated = {
+      ...item,
+      sourceVersion: 1,
+      generatedAt: "2026-07-28T09:00:00.000Z",
+    };
+    const initialDocument = {
+      meta: generated,
+      docPm: JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "existing" },
+            content: [{ type: "text", text: "可用旧稿不能被清空" }],
+          },
+        ],
+      }),
+      docVersion: 1,
+      title: "已有稿",
+    };
+    const requestError = new Error("temporary request failure");
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => {
+        throw requestError;
+      }),
+    };
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={generated}
+            initialDocument={initialDocument}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={onToast}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("可用旧稿不能被清空");
+    expect(onToast).toHaveBeenCalledWith("稿件加载失败，请重试");
+    expect(consoleError).toHaveBeenCalledWith(
+      "[workspace] load derivative document failed",
+      requestError,
+    );
+    consoleError.mockRestore();
+  });
+
   it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
     const legacyBrokenTable = JSON.stringify({
       type: "doc", attrs: { schemaVersion: 1 }, content: [{

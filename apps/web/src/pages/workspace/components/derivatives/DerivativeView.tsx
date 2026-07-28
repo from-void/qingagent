@@ -98,6 +98,7 @@ export function DerivativeView(props: {
   const streamingTextRef = useRef<HTMLDivElement>(null);
   const streamActiveRef = useRef(props.streamActive);
   const sawActiveRef = useRef(props.streamActive);
+  const documentRequestGenerationRef = useRef(0);
   const translationFlightsRef = useRef(new Map<string, Promise<void>>());
   useEffect(() => {
     if (!props.items?.length || props.items.some((candidate) => candidate.docId === effectiveDocId)) return;
@@ -108,15 +109,37 @@ export function DerivativeView(props: {
     props.onActiveDocIdChange?.(item.docId);
   }, [item.docId, props.onActiveDocIdChange]);
   useEffect(() => {
+    const requestGeneration = documentRequestGenerationRef.current + 1;
+    documentRequestGenerationRef.current = requestGeneration;
     let current = true;
     if (props.initialDocument?.meta.docId === item.docId) {
       setDocument(props.initialDocument);
     } else {
-      setDocument(null);
+      setDocument((existing) =>
+        existing?.meta.docId === item.docId ? existing : null,
+      );
     }
-    void props.stream.getDerivativeDoc(props.sessionId, item.docId).then((next) => {
-      if (current && next?.meta.docId === item.docId) setDocument(next);
-    });
+    void props.stream
+      .getDerivativeDoc(props.sessionId, item.docId)
+      .then((next) => {
+        if (
+          current &&
+          documentRequestGenerationRef.current === requestGeneration &&
+          next?.meta.docId === item.docId
+        ) {
+          setDocument(next);
+        }
+      })
+      .catch((error) => {
+        if (
+          !current ||
+          documentRequestGenerationRef.current !== requestGeneration
+        ) {
+          return;
+        }
+        console.error("[workspace] load derivative document failed", error);
+        props.onToast("稿件加载失败，请重试");
+      });
     return () => { current = false; };
   }, [
     item.docId,

@@ -688,9 +688,16 @@ export async function* commitPatches(
   if (accepted.length === 0) {
     const settlesEntireReview = records.length === state.suggestions.size;
     if (settlesEntireReview) {
+      const firstSuggestion = records[0]!.suggestion;
       try {
         await settleRejectedDocumentReview({
           docId: state.docId,
+          draft: {
+            batchId:
+              firstSuggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+            baseVersion: firstSuggestion.baseVersion,
+            baseHash: candidateBaseContentHash,
+          },
           suggestions: records.map((record) => record.suggestion),
         });
       } catch (error) {

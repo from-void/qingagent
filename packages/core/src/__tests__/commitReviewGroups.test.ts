@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import {
+  getPmContentHash,
   legacySectionsToPm,
   pmToLegacySections,
   type PmBlockNode,
@@ -17,6 +18,7 @@ import {
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
+  documentDraftRepo,
   documentRepo,
   getDocumentsClient,
   listDocumentSuggestionStatuses,
@@ -832,6 +834,13 @@ describe("commitReviewGroups", () => {
     ]);
     const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: state.docVersion,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
     const [hunkA, hunkB] = hunks;
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
 

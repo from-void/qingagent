@@ -21,6 +21,7 @@ import {
   findOpByDocumentVersion,
   getDocumentsClient,
   listDocumentSuggestionStatuses,
+  listDocumentSuggestionStatusesInBatch,
   listVersions,
   runMigrations,
   upsertDocumentSuggestion,
@@ -492,6 +493,105 @@ describe("pending draft rehydrate", () => {
       // 提交完整消费。
     }
     expect(docText(afterRestart.doc)).toBe("甲旧\n乙新");
+  });
+
+  it("全拒绝删除失败后冷启动恢复裁决与重试态，不误报审阅完成", async () => {
+    const sessionId = "rehy-rejected-settlement-retry";
+    const base = doc([paragraph("block-a", "旧正文")]);
+    const draft = doc([paragraph("block-a", "待拒绝正文")]);
+    const batchId = "rejected-retry-batch";
+    await seedDocument(sessionId, base);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+      batchId,
+    });
+    const [hunk] = buildDraftDiff(base, draft, { baseVersion: 1 });
+    if (!hunk) throw new Error("fixture missing hunk");
+    const suggestion = createSuggestionFromDiffHunk({
+      hunk,
+      docId: sessionId,
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+      batchId,
+    });
+    await upsertDocumentSuggestion(suggestion);
+
+    const beforeRestart = createSession(sessionId);
+    beforeRestart.doc = base;
+    beforeRestart.legacySections = pmToLegacySections(base) as never;
+    beforeRestart.docVersion = 1;
+    await rehydratePendingDraft(beforeRestart);
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_rejected_review_delete
+      BEFORE DELETE ON document_drafts
+      WHEN OLD.doc_id = '${sessionId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected rejected review delete failure');
+      END`);
+
+    const failedFrames: BridgeFrame[] = [];
+    for await (const frame of commitReviewGroups(beforeRestart, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: [hunk.reviewBatchId],
+    })) {
+      failedFrames.push(frame);
+    }
+
+    expect(beforeRestart.docState).toEqual({ kind: "pendingReview" });
+    expect(beforeRestart.suggestions.has(suggestion.id)).toBe(true);
+    expect(beforeRestart.patchVerdicts.get(suggestion.id)).toBe("rejected");
+    expect(failedFrames.some(
+      (frame) => frame.kind === "documentSnapshotWritten",
+    )).toBe(false);
+    expect(failedFrames.some(
+      (frame) =>
+        frame.kind === "docStateChanged"
+        && frame.data.state.kind === "editing",
+    )).toBe(false);
+    expect(failedFrames.some(
+      (frame) =>
+        frame.kind === "toolCallUpdated"
+        && frame.data.toolCallId === suggestion.id
+        && frame.data.spec.status.kind === "failed",
+    )).toBe(true);
+    await expect(documentDraftRepo.load(sessionId)).resolves.toMatchObject({
+      batchId,
+      status: "pending_review",
+    });
+    await expect(listDocumentSuggestionStatusesInBatch(
+      sessionId,
+      1,
+      batchId,
+      [suggestion.id],
+    )).resolves.toEqual([
+      { id: suggestion.id, status: "rejected", conflict: undefined },
+    ]);
+
+    const afterRestart = createSession(sessionId);
+    afterRestart.doc = base;
+    afterRestart.legacySections = pmToLegacySections(base) as never;
+    afterRestart.docVersion = 1;
+    const restored = await rehydratePendingDraft(afterRestart);
+
+    expect(restored.kind).toBe("restored");
+    expect(afterRestart.docState).toEqual({ kind: "pendingReview" });
+    expect(afterRestart.patchVerdicts.get(suggestion.id)).toBe("rejected");
+    expect(afterRestart.suggestions.get(suggestion.id)?.suggestion.status).toBe("rejected");
+
+    await getDocumentsClient().execute("DROP TRIGGER fail_rejected_review_delete");
+    for await (const _frame of commitReviewGroups(afterRestart, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: [hunk.reviewBatchId],
+    })) {
+      // 冷恢复的 rejected 是可重试裁决；CAS 删除成功后才完成审阅。
+    }
+
+    expect(afterRestart.docState).toEqual({ kind: "editing" });
+    expect(afterRestart.suggestions.size).toBe(0);
+    await expect(documentDraftRepo.load(sessionId)).resolves.toBeNull();
   });
 
   it("分批提交 rebase 后新批次裁决落库并可在重启后恢复", async () => {

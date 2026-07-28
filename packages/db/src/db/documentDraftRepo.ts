@@ -62,6 +62,22 @@ export interface MarkDraftConflictInput {
   conflict: unknown;
 }
 
+export interface PendingDocumentDraftIdentity {
+  docId: string;
+  batchId: string;
+  baseVersion: number;
+  baseHash: string;
+}
+
+export class DocumentDraftSettlementConflictError extends Error {
+  readonly code = "DOCUMENT_DRAFT_SETTLEMENT_CONFLICT";
+
+  constructor(readonly identity: PendingDocumentDraftIdentity) {
+    super(`Pending document draft changed before settlement: ${identity.docId}`);
+    this.name = "DocumentDraftSettlementConflictError";
+  }
+}
+
 function valueAsString(value: unknown): string {
   return value == null ? "" : String(value);
 }
@@ -295,10 +311,44 @@ export async function clearDocumentDraft(
   });
 }
 
+/** 全拒绝结算专用 CAS：只能删除调用方实际审阅的那一批 pending draft。 */
+export async function clearPendingDocumentDraft(
+  identity: PendingDocumentDraftIdentity,
+  client?: Client,
+): Promise<void> {
+  const c = await readyClient(client);
+  await withWriteRetry(async () => {
+    const target = {
+      docId: identity.docId,
+      operation: "documentDraft.clear" as const,
+    };
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
+    const result = await c.execute({
+      sql: `DELETE FROM document_drafts
+        WHERE doc_id = ?
+          AND batch_id = ?
+          AND base_version = ?
+          AND base_hash = ?
+          AND status = 'pending_review'`,
+      args: [
+        identity.docId,
+        identity.batchId,
+        identity.baseVersion,
+        identity.baseHash,
+      ],
+    });
+    if (result.rowsAffected !== 1) {
+      throw new DocumentDraftSettlementConflictError(identity);
+    }
+  });
+}
+
 export const documentDraftRepo = {
   load: loadDocumentDraft,
   savePending: savePendingDocumentDraft,
   saveCandidate: saveCandidateDocumentDraft,
   markConflict: markDocumentDraftConflict,
   clear: clearDocumentDraft,
+  clearPending: clearPendingDocumentDraft,
 };

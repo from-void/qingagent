@@ -1,7 +1,7 @@
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { SavePendingDraftInput } from "./documentDraftRepo.js";
 import {
-  clearDocumentDraft,
+  clearPendingDocumentDraft,
   savePendingDocumentDraft,
 } from "./documentDraftRepo.js";
 import {
@@ -33,24 +33,37 @@ export interface SaveInitialReviewBatchInput {
 
 export interface SettleRejectedDocumentReviewInput {
   docId: string;
+  draft: {
+    batchId: string;
+    baseVersion: number;
+    baseHash: string;
+  };
   suggestions: readonly DocSuggestion[];
 }
 
 /**
- * 全拒绝审阅的终态建议与 draft 必须原子结算。删除 draft 失败时回滚建议终态，
- * 调用方即可保留原审阅运行态重试，避免重启后从遗留 draft 复活已完成审阅。
+ * accepted/rejected 行是可跨重启恢复的用户裁决，不单独代表审阅已完成；匹配 draft
+ * 的 CAS 删除才是完成点。事务会重申整批 rejected 裁决并删除同一批 draft，
+ * 删除失败时回滚本事务且保留 draft，冷恢复即可继续显示原裁决并重试。
  */
 export async function settleRejectedDocumentReview(
   input: SettleRejectedDocumentReviewInput,
 ): Promise<void> {
   await ensureMigrated();
+  if (input.suggestions.length === 0) {
+    throw new Error("Rejected review settlement requires at least one suggestion");
+  }
   const now = new Date().toISOString();
   await withTransaction(async (client) => {
     for (const suggestion of input.suggestions) {
-      if (suggestion.docId !== input.docId) {
-        throw new Error(`Rejected review suggestion document mismatch: ${suggestion.id}`);
-      }
       const batchId = suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID;
+      if (
+        suggestion.docId !== input.docId
+        || suggestion.baseVersion !== input.draft.baseVersion
+        || batchId !== input.draft.batchId
+      ) {
+        throw new Error(`Rejected review suggestion draft mismatch: ${suggestion.id}`);
+      }
       const rowsAffected = await updateDocumentSuggestionStatusInBatch(
         input.docId,
         suggestion.baseVersion,
@@ -67,7 +80,12 @@ export async function settleRejectedDocumentReview(
         );
       }
     }
-    await clearDocumentDraft(input.docId, client);
+    await clearPendingDocumentDraft({
+      docId: input.docId,
+      batchId: input.draft.batchId,
+      baseVersion: input.draft.baseVersion,
+      baseHash: input.draft.baseHash,
+    }, client);
     return commitTransaction(undefined);
   });
 }

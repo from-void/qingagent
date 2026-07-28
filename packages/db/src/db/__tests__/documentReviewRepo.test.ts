@@ -152,11 +152,12 @@ describe("settleRejectedDocumentReview", () => {
   it("draft 删除失败时终态建议与删除整体回滚，重试后一起落地", async () => {
     const docId = "doc-atomic-rejected-review";
     const pendingSuggestion = suggestion("rejected-1", docId, 1);
+    const baseHash = getPmContentHash(pmDocFromText("旧正文"));
     await documentDraftRepo.savePending({
       docId,
       threadId: "thread-atomic-rejected-review",
       baseVersion: 1,
-      baseHash: getPmContentHash(pmDocFromText("旧正文")),
+      baseHash,
       draftPmDoc: pmDocFromText("待拒绝草稿"),
     });
     await upsertDocumentSuggestion(pendingSuggestion);
@@ -169,6 +170,7 @@ describe("settleRejectedDocumentReview", () => {
 
     await expect(settleRejectedDocumentReview({
       docId,
+      draft: { batchId: "legacy", baseVersion: 1, baseHash },
       suggestions: [pendingSuggestion],
     })).rejects.toThrow("injected rejected draft delete failure");
 
@@ -183,12 +185,66 @@ describe("settleRejectedDocumentReview", () => {
     await getDocumentsClient().execute("DROP TRIGGER fail_rejected_draft_delete");
     await settleRejectedDocumentReview({
       docId,
+      draft: { batchId: "legacy", baseVersion: 1, baseHash },
       suggestions: [pendingSuggestion],
     });
 
     await expect(documentDraftRepo.load(docId)).resolves.toBeNull();
     await expect(listDocumentSuggestionStatuses(docId, 1)).resolves.toEqual([
       { id: pendingSuggestion.id, status: "rejected", conflict: undefined },
+    ]);
+  });
+
+  it("旧批次结算 CAS 失败时保留新批次草稿", async () => {
+    const docId = "doc-stale-rejected-review";
+    const oldBaseHash = getPmContentHash(pmDocFromText("旧批次正文"));
+    const newBaseHash = getPmContentHash(pmDocFromText("新批次正文"));
+    const oldSuggestion = {
+      ...suggestion("old-rejected", docId, 1),
+      batchId: "batch-a",
+    };
+    await documentDraftRepo.savePending({
+      docId,
+      threadId: "thread-stale-rejected-review",
+      baseVersion: 1,
+      baseHash: oldBaseHash,
+      draftPmDoc: pmDocFromText("批次 A 草稿"),
+      batchId: "batch-a",
+    });
+    await upsertDocumentSuggestion(oldSuggestion);
+    await documentDraftRepo.savePending({
+      docId,
+      threadId: "thread-stale-rejected-review",
+      baseVersion: 2,
+      baseHash: newBaseHash,
+      draftPmDoc: pmDocFromText("批次 B 草稿"),
+      batchId: "batch-b",
+    });
+
+    await expect(settleRejectedDocumentReview({
+      docId,
+      draft: {
+        batchId: "batch-a",
+        baseVersion: 1,
+        baseHash: oldBaseHash,
+      },
+      suggestions: [oldSuggestion],
+    })).rejects.toMatchObject({
+      code: "DOCUMENT_DRAFT_SETTLEMENT_CONFLICT",
+    });
+
+    await expect(documentDraftRepo.load(docId)).resolves.toMatchObject({
+      batchId: "batch-b",
+      baseVersion: 2,
+      baseHash: newBaseHash,
+      status: "pending_review",
+    });
+    await expect(listDocumentSuggestionStatusesInBatch(
+      docId,
+      1,
+      "batch-a",
+    )).resolves.toEqual([
+      { id: oldSuggestion.id, status: "reviewing", conflict: undefined },
     ]);
   });
 });

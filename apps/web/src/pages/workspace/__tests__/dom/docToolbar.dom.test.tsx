@@ -669,13 +669,17 @@ describe("DocToolbar round-1 regressions", () => {
 
     const menu = host?.querySelector('[role="menu"].dt-menu');
     expect(menu).not.toBeNull();
+    // 标题层级扩到六级且紧凑排一行
+    const levels = [...(menu?.querySelectorAll(".wf-hlevel") ?? [])].map((n) => n.textContent);
+    expect(levels).toEqual(["H1", "H2", "H3", "H4", "H5", "H6"]);
     expect(headingButton?.getAttribute("aria-expanded")).toBe("true");
     expect(document.activeElement).toBe(menu?.querySelector('[role="menuitem"]'));
 
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
     });
-    expect(document.activeElement?.textContent).toContain("二级标题");
+    // 六级标题已收成横排紧凑格(不参与 .dt-mi 纵向漫游),纵向第二行是无序列表
+    expect(document.activeElement?.textContent).toContain("无序列表");
 
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));

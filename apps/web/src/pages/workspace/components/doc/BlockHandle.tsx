@@ -23,6 +23,7 @@ import {
 import { writeBlockClipboardPayload } from "./blockClipboard";
 import { readTableBlockMenuState, setEvenTableColumnWidths, toggleTableHeader } from "./blockHandleTable";
 import { BlockHandleIcon } from "./BlockHandleIcons";
+import { HeadingLevelPicker } from "../HeadingLevelPicker";
 import { TableSizePicker, type TableSize } from "./TableSizePicker";
 import {
   computeBlockMenuPlacement,
@@ -944,6 +945,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   const tableMenuState = liveHandle?.kind === "block" && liveHandle.nodeType === "table"
     ? readTableBlockMenuState(getCurrentHandleNode(editor.state.doc, liveHandle))
     : null;
+  // 当前块若已是标题,在六格选择器里高亮那一级
+  const activeHeadingLevel = (() => {
+    if (!liveHandle || liveHandle.kind !== "block") return null;
+    const node = getCurrentHandleNode(editor.state.doc, liveHandle);
+    if (!node || node.type.name !== "heading") return null;
+    return Number(node.attrs.level) || null;
+  })();
 
   const runTableMenuCommand = useCallback((command: "headerRow" | "headerColumn" | "evenColumns") => {
     if (!handle || handle.kind !== "block" || handle.nodeType !== "table" || !editor.isEditable) return;
@@ -1274,11 +1282,16 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           onMouseOver={closeTablePickerOnOtherMenuItem}
         >
           {tableMenuState ? null : <div className="bh-section-label">转换为</div>}
+          {/* 标题六级与工具栏共用同一个紧凑选择器(一行六格),不再只给到三级 */}
+          {tableMenuState ? null : (
+            <HeadingLevelPicker
+              itemRole="menuitem"
+              activeLevel={activeHeadingLevel}
+              onPick={(level) => convertBlock("heading", level)}
+            />
+          )}
           {tableMenuState ? null : <div className="bh-grid">
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
-            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="一级标题" title="一级标题" onClick={() => convertBlock("heading", 1)}><BlockHandleIcon name="heading1" /></button>
-            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="二级标题" title="二级标题" onClick={() => convertBlock("heading", 2)}><BlockHandleIcon name="heading2" /></button>
-            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="三级标题" title="三级标题" onClick={() => convertBlock("heading", 3)}><BlockHandleIcon name="heading3" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="无序列表" title="无序列表" onClick={() => convertBlock("bulletList")}><BlockHandleIcon name="bulletList" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="有序列表" title="有序列表" onClick={() => convertBlock("orderedList")}><BlockHandleIcon name="orderedList" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="引用" title="引用" onClick={() => convertBlock("blockquote")}><BlockHandleIcon name="quote" /></button>

@@ -10,6 +10,7 @@ import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
 import { AlignIcon, CaretIcon, CheckIcon } from "./icons";
+import { headingLevelLabel, HeadingLevelPicker } from "./HeadingLevelPicker";
 import type { AlignVariant } from "./icons";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import {
@@ -81,6 +82,13 @@ const COMMAND_SHORTCUTS: Record<string, string[]> = {
   orderedList: ["Mod", "Shift", "7"],
   blockquote: ["Mod", "Shift", "B"],
   codeBlock: ["Mod", "Alt", "C"],
+  // 标题 1~6 走 TipTap Heading 扩展内建的 Mod-Alt-N
+  heading1: ["Mod", "Alt", "1"],
+  heading2: ["Mod", "Alt", "2"],
+  heading3: ["Mod", "Alt", "3"],
+  heading4: ["Mod", "Alt", "4"],
+  heading5: ["Mod", "Alt", "5"],
+  heading6: ["Mod", "Alt", "6"],
 };
 
 export type SavedToolbarSelection =
@@ -1017,6 +1025,10 @@ export function DocToolbar({
   const activeOrderedListStyle = editor?.isActive("orderedList")
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"
     : null;
+  // 当前光标所在标题层级(高亮六格里的那一格)
+  const activeHeadingLevel = editor?.isActive("heading")
+    ? Number(editor.getAttributes("heading").level) || null
+    : null;
 
   if (
     !active ||
@@ -1064,24 +1076,13 @@ export function DocToolbar({
         <span className="dt-lbl">T</span>
         <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "heading"}>
-          <MenuItem k="H1" onPick={() => runCommand("formatBlock", "H1")} disabled={!editorEditable}>
-            大标题
-          </MenuItem>
-          <MenuItem k="H2" onPick={() => runCommand("formatBlock", "H2")} disabled={!editorEditable}>
-            二级标题
-          </MenuItem>
-          <MenuItem k="H3" onPick={() => runCommand("formatBlock", "H3")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            三级标题
-          </MenuItem>
-          <MenuItem k="H4" onPick={() => runCommand("formatBlock", "H4")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            四级标题
-          </MenuItem>
-          <MenuItem k="H5" onPick={() => runCommand("formatBlock", "H5")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            五级标题
-          </MenuItem>
-          <MenuItem k="H6" onPick={() => runCommand("formatBlock", "H6")} disabled={!editorEditable || !toolbarUnlock.headings}>
-            六级标题
-          </MenuItem>
+          {/* 六级标题紧凑排一行(旧版是六行长列表,菜单被撑得又高又散) */}
+          <HeadingLevelPicker
+            activeLevel={activeHeadingLevel}
+            isDisabled={(level) => !editorEditable || (level >= 3 && !toolbarUnlock.headings)}
+            titleOf={(level) => toolbarTitle(headingLevelLabel(level), `heading${level}`)}
+            onPick={(level) => runCommand("formatBlock", `H${level}`)}
+          />
           <MenuItem k="¶" onPick={() => runCommand("formatBlock", "P")} disabled={!editorEditable}>
             正文
           </MenuItem>

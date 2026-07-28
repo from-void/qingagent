@@ -21,6 +21,7 @@ import { MediaBlockToolbar } from "../workspace/components/MediaBlockToolbar";
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
 import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
 import { AlignIcon, ArrowRightIcon, CaretIcon, CheckIcon } from "../workspace/components/icons";
+import { HeadingLevelPicker } from "../workspace/components/HeadingLevelPicker";
 import { BlockHandleIcon } from "../workspace/components/doc/BlockHandleIcons";
 import { PatchNav } from "../workspace/components/PatchNav";
 import { WholeDocReviewNav } from "../workspace/components/WholeDocReviewNav";
@@ -1574,8 +1575,7 @@ export function UIKitPage() {
                     <span className="dt-caret"><CaretIcon size={11} /></span>
                   </button>
                   <div className="dt-menu" role="menu">
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">H1</span>大标题</button>
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">H2</span>二级标题</button>
+                    <HeadingLevelPicker activeLevel={2} onPick={() => {}} />
                     <button className="dt-mi disabled" role="menuitem" type="button" disabled><span className="dt-mi-k">¶</span>正文</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">•</span>无序列表</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k"><CheckIcon size={12} /></span>待办清单</button>
@@ -1651,8 +1651,9 @@ export function UIKitPage() {
               </div>
               <div className="block-handle-menu" role="menu">
                 <div className="bh-section-label">转换为</div>
+                <HeadingLevelPicker activeLevel={1} onPick={() => {}} />
                 <div className="bh-grid">
-                  {["正文", "H1", "H2", "H3", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
+                  {["正文", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
                     <button key={i} className="bh-grid-btn" role="menuitem" type="button" aria-label={`转换 ${g}`}>
                       {g === "task" ? <CheckIcon size={12} /> : <span dangerouslySetInnerHTML={{ __html: g }} />}
                     </button>

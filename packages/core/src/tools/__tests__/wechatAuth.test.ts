@@ -69,6 +69,45 @@ describe("wechat auth connector service thin tools", () => {
     expect(JSON.stringify(result)).not.toContain("legacy-secret");
   });
 
+  it.each([
+    ["payload 为 null", null],
+    [
+      "payload 缺少 token",
+      {
+        strategy: "qr-session",
+        version: 1,
+        account: "测试公众号",
+        cookie: "sid=secret-cookie",
+        expiry: new Date(Date.now() + 60_000).toISOString(),
+      },
+    ],
+    [
+      "payload 字段类型错误",
+      {
+        strategy: "qr-session",
+        version: 1,
+        account: "测试公众号",
+        cookie: "sid=secret-cookie",
+        token: 123,
+        expiry: new Date(Date.now() + 60_000).toISOString(),
+      },
+    ],
+  ])("已读出的损坏凭据（%s）仍返回可恢复的未授权状态", async (_label, payload) => {
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue({
+      version: 1,
+      connectorId: "wechat-mp",
+      revision: 1,
+      payload,
+    } as never);
+
+    await expect(status()).resolves.toMatchObject({
+      state: "NO_CREDENTIAL",
+      mpName: "",
+      message: "授权信息已损坏，请重新扫码登录",
+      questionnaire: expect.any(Object),
+    });
+  });
+
   it("READY 状态不再携带路由问卷", async () => {
     vi.mocked(readWechatCredentialBundle).mockResolvedValue({
       version: 1,

@@ -4,7 +4,10 @@ import {
   saveConnectorCredentialBundle,
 } from "../credentials/credentialsRepo.js";
 import { PendingStore, PendingStoreError } from "./pendingStore.js";
-import { readWechatCredentialBundle } from "./wechatCredentials.js";
+import {
+  readWechatCredentialBundle,
+  type WechatCredentialPayload,
+} from "./wechatCredentials.js";
 import { probeWechatSearchbiz } from "../tools/wechatSearch.js";
 
 // 微信 bundle 本身是单用户全局凭据，因此并发会话共享同一个授权 scope：重复/并发 start
@@ -63,6 +66,25 @@ pendingStore.attachProcessCleanup();
 
 function remainingAuthMs(expiresAt: number): number {
   return Math.max(1, expiresAt - Date.now());
+}
+
+function isWechatCredentialPayload(value: unknown): value is WechatCredentialPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (
+    payload.strategy !== "qr-session"
+    || payload.version !== 1
+    || typeof payload.account !== "string"
+    || typeof payload.cookie !== "string"
+    || typeof payload.token !== "string"
+    || typeof payload.expiry !== "string"
+  ) {
+    return false;
+  }
+  if (payload.sessionIssue === undefined) return true;
+  if (!payload.sessionIssue || typeof payload.sessionIssue !== "object") return false;
+  const issue = payload.sessionIssue as Record<string, unknown>;
+  return issue.reasonCode === "needs_reauth" && typeof issue.lastCheckedAt === "string";
 }
 
 function beginAuthVerification(pending: WechatPendingAuth): void {
@@ -404,10 +426,16 @@ export class WechatAuthService {
       message: string;
     }> => {
       let credentialCorrupt = false;
-      const bundle = await readWechatCredentialBundle().catch(() => {
+      const candidate = await readWechatCredentialBundle().catch(() => {
         credentialCorrupt = true;
         return null;
       });
+      const bundle = candidate && isWechatCredentialPayload(
+        (candidate as { payload?: unknown }).payload,
+      )
+        ? candidate
+        : null;
+      if (candidate && !bundle) credentialCorrupt = true;
       const mpName = bundle?.payload.account ?? "";
       let pending: WechatPendingAuth | null = null;
       if (pendingId) pending = pendingStore.get(pendingId, "wechat-mp", WECHAT_SCOPE).value;

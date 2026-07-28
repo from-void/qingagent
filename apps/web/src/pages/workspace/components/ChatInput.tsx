@@ -8,7 +8,15 @@ import {
   useState,
 } from "react";
 import { Button } from "@qingagent/ui-kit";
-import type { FolderSource, Resource, SkillRef, TableSelection } from "@qingagent/contract-ts";
+import {
+  parseChipRichText,
+  serializeChipRichText,
+  type ChipRichTextPart,
+  type FolderSource,
+  type Resource,
+  type SkillRef,
+  type TableSelection,
+} from "@qingagent/contract-ts";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources/hooks";
 import { invocableSkillActionsFromApi } from "../../../system/skillDisplay";
@@ -1370,19 +1378,30 @@ function serializeChatInputContent(edit: HTMLElement): {
   richText: string;
 } {
   let text = "";
-  let richText = "";
+  const richTextParts: ChipRichTextPart[] = [];
+  let richTextHasContent = false;
+  let richTextEndsWithBreak = false;
   let chipIndex = 0;
+
+  const appendRichText = (value: string) => {
+    if (!value) return;
+    const last = richTextParts.at(-1);
+    if (last?.kind === "text") last.text += value;
+    else richTextParts.push({ kind: "text", text: value });
+    richTextHasContent = true;
+    richTextEndsWithBreak = value.endsWith("\n");
+  };
 
   const appendBreak = () => {
     if (text.length > 0 && !text.endsWith("\n")) text += "\n";
-    if (richText.length > 0 && !richText.endsWith("\n")) richText += "\n";
+    if (richTextHasContent && !richTextEndsWithBreak) appendRichText("\n");
   };
 
   const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
       const value = node.textContent ?? "";
       text += value;
-      richText += value;
+      appendRichText(value);
       return;
     }
     if (!(node instanceof HTMLElement)) return;
@@ -1394,7 +1413,10 @@ function serializeChatInputContent(edit: HTMLElement): {
       ) {
         text += node.dataset.text;
       }
-      richText += `{{chip:${chipIndex++}}}`;
+      const index = chipIndex++;
+      richTextParts.push({ kind: "chip", index, marker: `{{chip:${index}}}` });
+      richTextHasContent = true;
+      richTextEndsWithBreak = false;
       return;
     }
     if (node.tagName === "BR") {
@@ -1411,7 +1433,7 @@ function serializeChatInputContent(edit: HTMLElement): {
   edit.childNodes.forEach(walk);
   return {
     text: text.trim(),
-    richText: richText.trim(),
+    richText: serializeChipRichText(trimChipRichTextParts(richTextParts)),
   };
 }
 
@@ -1419,26 +1441,23 @@ function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot):
   while (edit.firstChild) edit.removeChild(edit.firstChild);
 
   const source = snapshot.richText || snapshot.text;
-  const marker = /\{\{chip:(\d+)\}\}/g;
-  let lastIndex = 0;
-  let matched = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = marker.exec(source)) !== null) {
-    matched = true;
-    appendTextPreservingLines(edit, source.slice(lastIndex, match.index));
-    const chip = snapshot.chips[Number(match[1])];
+  const parts = parseChipRichText(source);
+  const matched = parts.some((part) => part.kind === "chip");
+  parts.forEach((part, index) => {
+    if (part.kind === "text") {
+      appendTextPreservingLines(edit, part.text);
+      return;
+    }
+    const chip = snapshot.chips[part.index];
     if (chip) {
       edit.appendChild(makeChatChipNode(chip));
-      const nextChar = source[marker.lastIndex] ?? "";
+      const nextPart = parts[index + 1];
+      const nextChar = nextPart?.kind === "text" ? nextPart.text[0] ?? "" : "";
       if (nextChar === "" || !/\s/.test(nextChar)) {
         edit.appendChild(document.createTextNode("\u00a0"));
       }
     }
-    lastIndex = marker.lastIndex;
-  }
-
-  appendTextPreservingLines(edit, source.slice(lastIndex));
+  });
   if (!matched && source === snapshot.text) {
     for (const chip of snapshot.chips) {
       if (edit.childNodes.length > 0) edit.appendChild(document.createElement("br"));
@@ -1446,6 +1465,15 @@ function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot):
       edit.appendChild(document.createTextNode("\u00a0"));
     }
   }
+}
+
+function trimChipRichTextParts(parts: ChipRichTextPart[]): ChipRichTextPart[] {
+  const next = parts.map((part) => ({ ...part }));
+  const first = next[0];
+  if (first?.kind === "text") first.text = first.text.trimStart();
+  const last = next.at(-1);
+  if (last?.kind === "text") last.text = last.text.trimEnd();
+  return next.filter((part) => part.kind === "chip" || part.text.length > 0);
 }
 
 function appendTextPreservingLines(parent: HTMLElement, text: string): void {

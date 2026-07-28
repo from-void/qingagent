@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChatChip } from "@qingagent/contract-ts";
+import { serializeChipRichText, type ChatChip } from "@qingagent/contract-ts";
 import {
   buildChipOnlyGuidance,
   composeInlineChipText,
@@ -116,6 +116,18 @@ describe("composeInlineChipText", () => {
   it("无占位符原文返回", async () => {
     const { text } = await compose("纯文本", [skillChip("抓网页", "browser-ops")]);
     expect(text).toBe("纯文本");
+  });
+
+  it("转义后的字面 marker 原样交给模型，只展开未转义 marker", async () => {
+    const { text } = await compose(
+      serializeChipRichText([
+        { kind: "text", text: "字面 {{chip:0}}，反斜杠 \\，真实 " },
+        { kind: "chip", index: 0, marker: "{{chip:0}}" },
+      ]),
+      [attachChip("报告.pdf")],
+    );
+
+    expect(text).toBe("字面 {{chip:0}}，反斜杠 \\，真实 「文件：报告.pdf」");
   });
 
   it("label/source/正文 XML 转义,闭合串注入不能逃逸 trusted_skill_instruction", async () => {

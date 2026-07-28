@@ -2,7 +2,11 @@
 import { act, createRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FolderSource, Resource } from "@qingagent/contract-ts";
+import {
+  parseChipRichText,
+  type FolderSource,
+  type Resource,
+} from "@qingagent/contract-ts";
 import { SKILLS_CHANGED_EVENT } from "../../../overlays/settings/useSkills";
 import { resources } from "../../../system/resources";
 import type { MaterialParseRow } from "../data/useMaterialParseTracker";
@@ -159,6 +163,38 @@ describe("ChatInput", () => {
       richText: "第一行\n第二行{{chip:0}}",
       chips: [{ kind: "attach", label: "资料.pdf" }],
     });
+  });
+
+  it("序列化并恢复时不把用户字面 chip marker 当成真实 chip", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    edit.innerHTML = [
+      "请保留字面 {{chip:0}} ",
+      '<span class="chat-chip" data-kind="attach" data-label="资料.pdf"></span>',
+    ].join("");
+
+    const snapshot = ref.current?.snapshot();
+    expect(parseChipRichText(snapshot?.richText ?? "")).toEqual([
+      { kind: "text", text: "请保留字面 {{chip:0}} " },
+      { kind: "chip", index: 0, marker: "{{chip:0}}" },
+    ]);
+
+    await act(async () => {
+      ref.current?.clear();
+      ref.current?.restore(snapshot!);
+    });
+
+    expect(ref.current?.snapshot().richText).toBe(snapshot?.richText);
+    expect(edit.textContent).toContain("请保留字面 {{chip:0}}");
+    expect(edit.querySelectorAll(".chat-chip")).toHaveLength(1);
   });
 
   it("IME 组合态 Enter 与 keyCode 229 只选字，compositionend 后首个独立 Enter 才发送", async () => {

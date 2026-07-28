@@ -16,6 +16,7 @@ export * from "./ChatChip";
 export * from "./ChatChipKind";
 export * from "./ChatMessage";
 export * from "./ChatRole";
+export * from "./ChipRichText";
 export * from "./Citation";
 export * from "./ClientCapabilities";
 export * from "./Connector";

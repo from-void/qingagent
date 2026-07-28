@@ -8,7 +8,7 @@ import type {
   ToolCallSpec,
   WorkspaceAction,
 } from "../data/protocol";
-import { sanitizeVisibleText } from "@qingagent/contract-ts";
+import { sanitizeVisibleText, serializeChipRichText } from "@qingagent/contract-ts";
 import {
   buildWholeDocReviewKey,
   buildEmptyHintTypewriterPlan,
@@ -618,6 +618,37 @@ describe("ChatMessageList", () => {
     const chip = host?.querySelector<HTMLElement>(".chat-chip");
     expect(chip?.dataset.kind).toBe("mention");
     expect(host?.textContent ?? "").toContain("用连飞书写摘要");
+  });
+
+  it("用户气泡保留转义后的字面 chip marker，只渲染真实 marker", async () => {
+    const messages: ChatMessage[] = [{
+      id: "m-user-literal-chip-marker",
+      role: { kind: "user" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [{
+        kind: "text",
+        data: {
+          body: serializeChipRichText([
+            { kind: "text", text: "字面 {{chip:0}}，真实 " },
+            { kind: "chip", index: 0, marker: "{{chip:0}}" },
+          ]),
+        },
+      }],
+      chips: [{
+        kind: { kind: "attach" },
+        resourceRef: { id: "file-1", domain: { kind: "file" } },
+        prefix: null,
+        label: "资料.pdf",
+        suffix: null,
+        text: null,
+      }],
+    }];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    expect(host?.textContent).toContain("字面 {{chip:0}}，真实");
+    expect(host?.querySelectorAll(".chat-chip")).toHaveLength(1);
+    expect(host?.textContent).toContain("资料.pdf");
   });
 
   it("用户气泡里的批注 text chip 只回显短标签，不退化成长文本卡或泄露完整指令", async () => {

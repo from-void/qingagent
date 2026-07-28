@@ -13,6 +13,10 @@ import {
   shouldCollapsePastedText,
   LongTextFullscreen,
 } from "../../../system/longText";
+import {
+  serializeChipRichText,
+  type ChipRichTextPart,
+} from "@qingagent/contract-ts";
 
 export interface ChipSpec {
   /** chip 的稳定 id；附件 chip 用它同步父组件状态。 */
@@ -204,24 +208,31 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
           if (!edit) return { text: "", richText: "", chips: [] };
           reconcileRemovedChips();
           let text = "";
-          let richText = "";
+          const richTextParts: ChipRichTextPart[] = [];
           const chips: ChipSpec[] = [];
+          const appendRichText = (value: string) => {
+            if (!value) return;
+            const last = richTextParts.at(-1);
+            if (last?.kind === "text") last.text += value;
+            else richTextParts.push({ kind: "text", text: value });
+          };
           walkEditorContent(edit, {
             text: (value) => {
               const t = value.replace(/\r?\n/g, "");
               text += t;
-              richText += t;
+              appendRichText(t);
             },
             longText: (value) => {
               text += value;
-              richText += value;
+              appendRichText(value);
             },
             sourceChip: (chip) => {
-              richText += `{{chip:${chips.length}}}`;
+              const index = chips.length;
+              richTextParts.push({ kind: "chip", index, marker: `{{chip:${index}}}` });
               chips.push(readChipNode(chip));
             },
           });
-          return { text, richText, chips };
+          return { text, richText: serializeChipRichText(richTextParts), chips };
         },
         insertText(text) {
           const edit = editRef.current;

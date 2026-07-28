@@ -1,4 +1,8 @@
-import type { ChatChip } from "@qingagent/contract-ts";
+import {
+  parseChipRichText,
+  serializeChipRichText,
+  type ChatChip,
+} from "@qingagent/contract-ts";
 import { describe, expect, it } from "vitest";
 import {
   PENDING_SUBMISSION_CLAIM_STORAGE_KEY,
@@ -318,6 +322,46 @@ describe("pending submission 持久化与归属", () => {
       expect(repeated.missingAttachmentCount).toBe(1);
       expect(repeated.submission.text).toBe("前文后文");
     }
+  });
+
+  it("附件缺失重排 marker 时保留用户转义的字面 marker", async () => {
+    const storage = createStorage();
+    const payloadStore = createPayloadStore({
+      persistAttachments: false,
+    });
+    const beforeRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 1_000,
+    });
+    await beforeRefresh.create(submissionInput("submission-literal-marker", {
+      text: "字面 {{chip:0}} 后文",
+      richText: serializeChipRichText([
+        { kind: "text", text: "字面 {{chip:0}} " },
+        { kind: "chip", index: 0, marker: "{{chip:0}}" },
+        { kind: "text", text: " 后文 " },
+        { kind: "chip", index: 1, marker: "{{chip:1}}" },
+      ]),
+      chips: [
+        attachChip("attachment-1"),
+        skillChip("skill-research"),
+      ],
+      skills: [{ id: "skill-research", version: null }],
+    }));
+
+    const afterRefresh = createPendingSubmissionManager({
+      storage,
+      payloadStore,
+      now: () => 2_000,
+    });
+    const result = await afterRefresh.load();
+
+    expect(result.kind).toBe("degraded");
+    if (result.kind !== "degraded") return;
+    expect(parseChipRichText(result.submission.richText ?? "")).toEqual([
+      { kind: "text", text: "字面 {{chip:0}}  后文 " },
+      { kind: "chip", index: 0, marker: "{{chip:0}}" },
+    ]);
   });
 
   it("目录句柄不可持久化时仍恢复普通文件，并明确标记文件夹缺失", async () => {

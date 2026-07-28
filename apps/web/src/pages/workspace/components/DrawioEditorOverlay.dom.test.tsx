@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DRAWIO_AUTOSAVE_DEBOUNCE_MS,
+  DRAWIO_CLOSE_WATCHDOG_MS,
   DRAWIO_EXPORT_TIMEOUT_MS,
   DRAWIO_FALLBACK_TIMEOUT_MS,
   type DrawioEditorResult,
@@ -181,7 +182,7 @@ describe("drawio 全屏编辑面板", () => {
     });
   });
 
-  it("点击关闭会跳过剩余防抖时间，flush 最后一版后才关闭", async () => {
+  it("点击关闭当场退出，防抖中的最后一版源码仍然落盘", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     const onClose = vi.fn();
@@ -193,18 +194,13 @@ describe("drawio 全屏编辑面板", () => {
     await act(async () => {
       requireCloseButton().click();
     });
-    expect(fake.postedActions().slice(-2)).toEqual([
-      { action: "status", modified: true },
-      { action: "snapshot" },
-    ]);
-    expect(onClose).not.toHaveBeenCalled();
 
-    await fake.exportSvg(svgDataUri("关闭前最后一版"));
-    expect(onSave).toHaveBeenCalledWith({
-      source: latest,
-      svg: expect.stringContaining("关闭前最后一版"),
-    });
+    // 关闭不再等任何一拍导出：当场结算，只把最后一版源码尽力写出去。
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ source: latest, svg: null }));
     expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
+    expect(fake.postedActions().some((action) => action.action === "snapshot")).toBe(false);
+    await expectQuiescent(fake, onSave, onClose);
   });
 
   it("保存不退出时按 snapshot 握手立即回写，并保持编辑器打开", async () => {
@@ -574,7 +570,7 @@ describe("drawio 全屏编辑面板", () => {
     expect(secondClose).toHaveBeenCalledWith(null);
   });
 
-  it("写回等待期间点击关闭会等待降级落盘后再关闭", async () => {
+  it("等待原生导出期间点击关闭当场退出，pending 源码落盘且不再触发本地渲染", async () => {
     vi.useFakeTimers();
     vi.mocked(renderDrawio).mockResolvedValue(
       '<svg xmlns="http://www.w3.org/2000/svg"><text>不应写入</text></svg>',
@@ -583,22 +579,214 @@ describe("drawio 全屏编辑面板", () => {
     const onClose = vi.fn();
     const fake = await createFakeV31Embed(onSave, onClose);
     await fake.init();
-    await fake.save(drawioSource("取消修改"), true);
+    await fake.save(drawioSource("取消修改"), false);
 
     await act(async () => {
       requireCloseButton().click();
-      await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       source: drawioSource("取消修改"),
-      svg: expect.stringContaining("不应写入"),
+      svg: null,
     }));
-    expect(renderDrawio).toHaveBeenCalledOnce();
+
+    // 退出后既有的导出/回退定时器全部作废，不会再有第二次结算。
+    await expectQuiescent(fake, onSave, onClose);
+    expect(renderDrawio).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 关闭路径异常态矩阵：浮层在任何异常态下都必须可关闭（用户拍板的铁律）。
+ * 每种状态下点 ✕ 都必须：onClose 被调用一次、卸载后浮层消失、不留会继续干活的
+ * 定时器、也不留还会响应的全局监听。
+ */
+describe("drawio 关闭路径异常态矩阵", () => {
+  const DUPLICATED_PAGE_MODEL = `<mxGraphModel dx="0" dy="0" grid="1" page="1">
+  <root>
+    <mxCell id="0Bx9pQ-1-0"/>
+    <mxCell id="0Bx9pQ-1-1" parent="0Bx9pQ-1-0"/>
+    <mxCell id="0Bx9pQ-1-2" value="副本页" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#efe3cc;strokeColor=#b08a3e;fontColor=#2f2a22;" vertex="1" parent="0Bx9pQ-1-1">
+      <mxGeometry x="40" y="40" width="120" height="60" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>`;
+  const twoPageFile = (firstPageLabel: string) =>
+    `<mxfile host="localhost" pages="2"><diagram id="page-1" name="第 1 页">${drawioSource(firstPageLabel)}</diagram><diagram id="page-2" name="第 1 页 的副本">${DUPLICATED_PAGE_MODEL}</diagram></mxfile>`;
+
+  it("① 建了第 1 页的副本(多页文档)后仍可关闭，两页源码一起落盘", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose, twoPageFile("开始"));
+    await fake.init();
+
+    await fake.autosave(twoPageFile("多页改动"));
+    await act(async () => requireCloseButton().click());
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const saved = onSave.mock.calls[0]?.[0]?.source as string;
+    expect(saved).toContain("多页改动");
+    expect(saved).toContain("副本页");
+    expect(saved.match(/<diagram\b/g)).toHaveLength(2);
+    await expectClosedCleanly(fake, onSave, onClose);
+  });
+
+  it("② 保存请求 pending 未返回时可关闭", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.save(drawioSource("请求未返回"), false);
+    expect(fake.postedActions().some((action) => action.action === "snapshot")).toBe(true);
+    await act(async () => requireCloseButton().click());
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ source: drawioSource("请求未返回") }));
+    await expectClosedCleanly(fake, onSave, onClose);
+  });
+
+  it("③ 写回抛错(网络失败)后仍可关闭", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn(() => {
+      throw new Error("网络错误：写回失败");
+    });
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.save(drawioSource("写回会失败"), false);
+    await fake.exportSvg(svgDataUri("写回会失败"));
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    await fake.autosave(drawioSource("失败后又改了"));
+    await act(async () => requireCloseButton().click());
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await expectClosedCleanly(fake, onSave, onClose);
+  });
+
+  it("④ iframe 还没加载完/加载失败时可关闭", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    await renderOverlay(onSave, onClose);
+    // 没有 init、没有 load：boot 遮罩还盖着。
+    expect(document.querySelector(".drawio-editor-overlay__boot")).not.toBeNull();
+
+    await act(async () => requireCloseButton().click());
+    expect(onClose).toHaveBeenCalledWith(null);
+    expect(onSave).not.toHaveBeenCalled();
+    await expectQuiescentWithoutEmbed(onSave, onClose);
+  });
+
+  it("⑤ postMessage 状态机停在中间态(init 后没有 load)时可关闭", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+    // 只走到 init，没有 load，也没有任何 export 回声。
+    await fake.autosave(drawioSource("半路状态机"));
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS));
+    expect(fake.postedActions().some((action) => action.action === "snapshot")).toBe(true);
+
+    await act(async () => requireCloseButton().click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await expectClosedCleanly(fake, onSave, onClose);
+  });
+
+  it("⑥ 有未保存改动(防抖未到点)时可关闭且改动不丢", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.autosave(drawioSource("未保存改动"));
+    await act(async () => requireCloseButton().click());
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      source: drawioSource("未保存改动"),
+    }));
+    await expectClosedCleanly(fake, onSave, onClose);
+  });
+
+  it("⑦ 「完成」等原生 SVG 超时也会被看门狗强制退出", async () => {
+    vi.useFakeTimers();
+    vi.mocked(renderDrawio).mockImplementation(() => new Promise(() => {}));
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.save(drawioSource("完成但没回声"), true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_CLOSE_WATCHDOG_MS));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      source: drawioSource("完成但没回声"),
+    }));
+  });
+});
+
+/** 关闭后既不该再有后续结算，卸载后也不该再有任何全局监听在响应。 */
+async function expectClosedCleanly(
+  fake: FakeV31Embed,
+  onSave: ReturnType<typeof vi.fn>,
+  onClose: ReturnType<typeof vi.fn>,
+) {
+  await expectQuiescent(fake, onSave, onClose);
+  act(() => root?.unmount());
+  root = null;
+  host?.remove();
+  host = null;
+  expect(document.querySelector(".drawio-editor-overlay")).toBeNull();
+  expect(document.body.style.overflow).toBe("");
+  await expectQuiescentWithoutEmbed(onSave, onClose);
+}
+
+/** 时间快进到所有超时都过期，仍不该再触发任何回调或 postMessage。 */
+async function expectQuiescent(
+  fake: FakeV31Embed,
+  onSave: ReturnType<typeof vi.fn>,
+  onClose: ReturnType<typeof vi.fn>,
+) {
+  const saves = onSave.mock.calls.length;
+  const closes = onClose.mock.calls.length;
+  const posts = fake.postMessage.mock.calls.length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DRAWIO_CLOSE_WATCHDOG_MS * 2);
+  });
+  expect(onSave.mock.calls.length).toBe(saves);
+  expect(onClose.mock.calls.length).toBe(closes);
+  expect(fake.postMessage.mock.calls.length).toBe(posts);
+}
+
+async function expectQuiescentWithoutEmbed(
+  onSave: ReturnType<typeof vi.fn>,
+  onClose: ReturnType<typeof vi.fn>,
+) {
+  const saves = onSave.mock.calls.length;
+  const closes = onClose.mock.calls.length;
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    window.dispatchEvent(new MessageEvent("message", {
+      source: window,
+      origin: window.location.origin,
+      data: JSON.stringify({ event: "exit" }),
+    }));
+    await vi.advanceTimersByTimeAsync(DRAWIO_CLOSE_WATCHDOG_MS * 2);
+  });
+  expect(onSave.mock.calls.length).toBe(saves);
+  expect(onClose.mock.calls.length).toBe(closes);
+}
 
 type FakeV31Embed = {
   iframe: HTMLIFrameElement;
@@ -616,8 +804,9 @@ type FakeV31Embed = {
 async function createFakeV31Embed(
   onSave: (result: DrawioEditorResult) => void,
   onClose: (result: DrawioEditorResult | null) => void,
+  source: string = DEFAULT_DRAWIO_SOURCE,
 ): Promise<FakeV31Embed> {
-  await renderOverlay(onSave, onClose);
+  await renderOverlay(onSave, onClose, source);
   const iframe = requireIframe();
   const frameWindow = iframe.contentWindow;
   if (!frameWindow) throw new Error("iframe contentWindow 缺失");
@@ -658,6 +847,7 @@ async function createFakeV31Embed(
 async function renderOverlay(
   onSave: (result: DrawioEditorResult) => void,
   onClose: (result: DrawioEditorResult | null) => void,
+  source: string = DEFAULT_DRAWIO_SOURCE,
 ) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -665,7 +855,7 @@ async function renderOverlay(
   await act(async () => {
     root?.render(
       <DrawioEditorOverlay
-        source={DEFAULT_DRAWIO_SOURCE}
+        source={source}
         title="测试 drawio"
         onSave={onSave}
         onClose={onClose}

@@ -10,6 +10,13 @@ export const DRAWIO_EMBED_PATH =
 export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
 export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;
 export const DRAWIO_AUTOSAVE_DEBOUNCE_MS = 1_000;
+/**
+ * 「完成」按钮走 save+exit，会先等这一拍原生 SVG 落定；等不到就必须强制退出。
+ * 上限 = 原生导出超时 + 本地回退渲染超时 + 一点余量，保证浮层不会因为任何
+ * 保存状态机的中间态被永久钉住。
+ */
+export const DRAWIO_CLOSE_WATCHDOG_MS =
+  DRAWIO_EXPORT_TIMEOUT_MS + DRAWIO_FALLBACK_TIMEOUT_MS + 2_000;
 const MAX_SVG_DATA_URI_CHARS = INLINE_SVG_MAX_BYTES * 4 + 256;
 
 export type DrawioEditorResult = {

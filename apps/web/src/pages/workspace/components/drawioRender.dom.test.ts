@@ -76,4 +76,15 @@ describe("drawio 离线渲染器", () => {
     expect(svg).toContain("应用区");
     expect(svg).toContain("数据区");
   });
+
+  it("多页文档只渲染第一页", async () => {
+    const secondPage = `<mxGraphModel><root><mxCell id="cp-0"/><mxCell id="cp-1" parent="cp-0"/><mxCell id="cp-2" value="第二页专属" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#efe3cc;strokeColor=#b08a3e;fontColor=#2f2a22;" vertex="1" parent="cp-1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel>`;
+    const svg = await renderDrawio(
+      `<mxfile pages="2"><diagram id="p1" name="第 1 页">${DEFAULT_DRAWIO_SOURCE}</diagram><diagram id="p2" name="第 1 页 的副本">${secondPage}</diagram></mxfile>`,
+    );
+
+    expect(svg).toContain("开始");
+    expect(svg).toContain("结束");
+    expect(svg).not.toContain("第二页专属");
+  });
 });

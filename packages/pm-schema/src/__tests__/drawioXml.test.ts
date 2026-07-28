@@ -201,3 +201,44 @@ describe("drawio XML 明文归一化与安全边界", () => {
     );
   });
 });
+
+describe("drawio 多页文档（复制页面）", () => {
+  // draw.io「复制第 1 页」会用一个新建 mxGraphModel 重编 id：根单元与图层变成
+  // `<guid>-0` / `<guid>-1`，而不是字面量 0/1。这是用户真机建副本页后再也存不进去的原形。
+  const DUPLICATED_PAGE_MODEL = `<mxGraphModel dx="0" dy="0" grid="1" page="1">
+  <root>
+    <mxCell id="0Bx9pQ-1-0"/>
+    <mxCell id="0Bx9pQ-1-1" parent="0Bx9pQ-1-0"/>
+    <mxCell id="0Bx9pQ-1-2" value="开始" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#efe3cc;strokeColor=#b08a3e;fontColor=#2f2a22;" vertex="1" parent="0Bx9pQ-1-1">
+      <mxGeometry x="40" y="40" width="120" height="60" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>`;
+  const TWO_PAGE_FILE = `<mxfile host="localhost" pages="2"><diagram id="page-1" name="第 1 页">${DEFAULT_DRAWIO_SOURCE}</diagram><diagram id="page-2" name="第 1 页 的副本">${DUPLICATED_PAGE_MODEL}</diagram></mxfile>`;
+
+  it("带前缀 id 的复制页单独校验通过", () => {
+    expect(validateDrawioSource(DUPLICATED_PAGE_MODEL)).toMatchObject({ ok: true });
+  });
+
+  it("两页 mxfile 原样归一化，两页都保留", () => {
+    const normalized = normalizeDrawioSource(TWO_PAGE_FILE);
+    expect(normalized).toContain('name="第 1 页"');
+    expect(normalized).toContain('name="第 1 页 的副本"');
+    expect(normalized.match(/<diagram\b/g)).toHaveLength(2);
+    // 再次归一化保持稳定，避免自动保存把同一份内容反复判成"有变化"而循环写回。
+    expect(normalizeDrawioSource(normalized)).toBe(normalized);
+  });
+
+  it("渲染只取第一页", () => {
+    const { modelXml } = readDrawioModel(TWO_PAGE_FILE);
+    expect(modelXml).toContain('value="开始"');
+    expect(modelXml).toContain('value="结束"');
+    expect(modelXml).not.toContain("0Bx9pQ-1-");
+    expect(prepareDrawioModelXmlForRender(TWO_PAGE_FILE).modelXml).toContain('id="start"');
+  });
+
+  it("缺少图层的页仍然被拒", () => {
+    const broken = `<mxfile><diagram id="p1"><mxGraphModel><root><mxCell id="only"/></root></mxGraphModel></diagram></mxfile>`;
+    expect(validateDrawioSource(broken)).toMatchObject({ ok: false });
+  });
+});

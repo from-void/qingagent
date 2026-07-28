@@ -59,12 +59,11 @@
   background: var(--bg-window);
 }
 
-/* 未配置 key 的发送按钮引导气泡(新建页 / 编辑页共用) */
+/* 未配置 key 的发送按钮引导气泡 */
 .nokey-gate {
   position: relative;
   display: inline-flex;
-  /* 接管被包裹发送按钮原有的 margin-left:auto(新建页 .ccx-send 靠它右对齐),
-     避免包一层后按钮从右下角左移;编辑页发送在独立容器内,此 auto 无副作用。 */
+  /* 接管被包裹发送按钮原有的 margin-left:auto;编辑页发送在独立容器内,此 auto 无副作用。 */
   margin-left: auto;
 }
 .nokey-gate .nokey-tip {

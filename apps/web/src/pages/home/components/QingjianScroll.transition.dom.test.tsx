@@ -11,7 +11,7 @@ const stageMock = vi.hoisted(() => ({
   dispose: vi.fn(),
 }));
 
-vi.mock("../../new-session/transition/homeStage", () => ({
+vi.mock("../../../system/transition/homeStage", () => ({
   createHomeTransitionStage: () => stageMock,
 }));
 

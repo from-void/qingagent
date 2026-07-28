@@ -6,7 +6,7 @@ import {
   peekHomeArrive,
   peekWorkspaceArrive,
   setWorkspaceArrive,
-} from "../../new-session/transition/origin";
+} from "../../../system/transition/origin";
 import { useWorkspaceChrome } from "./useWorkspaceChrome";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

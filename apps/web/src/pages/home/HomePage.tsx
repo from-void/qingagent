@@ -119,8 +119,7 @@ export function HomePage() {
   }, [sessions]);
 
   const handleCreate = useCallback(() => {
-    // 断掉新建页流程:点「新建」直接进编辑页空态(惰性创建 + 空引导态);
-    // 新建页代码保留(待移官网),不再出现在主流程里。
+    // 点「新建」直接进编辑页空态(惰性创建 + 空引导态)。
     window.location.hash = routeToHash("workspace");
   }, []);
 

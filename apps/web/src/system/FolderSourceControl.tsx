@@ -20,14 +20,14 @@ export const FOLDER_INTRO_STORAGE_KEY = "qingagent:folder-source-intro-dismissed
 const FOLDER_PROMPT_EXIT_MS = 240;
 
 /**
- * 引导/确认弹框 portal 到所在页面根容器(#view-workspace / .ccx-page),而不是留在输入框内部渲染。
+ * 引导/确认弹框 portal 到所在页面根容器(#view-workspace / #view-home),而不是留在输入框内部渲染。
  * 输入栏用了 backdrop-filter/transform,会成为 position:fixed 的包含块,导致弹框只在输入栏范围内
  * "居中"、像是浮在按钮上方且没有全屏蒙层。页面根容器没有这类属性,portal 到它之后 fixed 相对视口,
- * 蒙层铺满整屏、弹框真正居中;且 #view-workspace/.ccx-page 作用域的样式仍然命中(弹框仍是其后代)。
+ * 蒙层铺满整屏、弹框真正居中;且 #view-workspace 作用域的样式仍然命中(弹框仍是其后代)。
  * 从按钮节点向上 closest 找容器:测试环境没有页面容器时回退为就地渲染,保证现有按 host 查询的测试不破。
  */
 function maybePortalFolderModal(node: ReactNode, anchor: HTMLElement | null): ReactNode {
-  const host = anchor?.closest<HTMLElement>("#view-workspace, .ccx-page, #view-home") ?? null;
+  const host = anchor?.closest<HTMLElement>("#view-workspace, #view-home") ?? null;
   return host ? createPortal(node, host) : node;
 }
 
@@ -196,22 +196,6 @@ export interface FolderCapabilityEnv {
   maxTouchPoints?: number;
   serverDesktopFolderSourcesEnabled?: boolean | null;
   serverBrowserFolderSourcesEnabled?: boolean | null;
-}
-
-interface FolderSourceControlProps {
-  rootClassName: string;
-  buttonClassName: (state: { active: boolean; selecting: boolean }) => string;
-  folderSource: FolderSourceControlSource | null;
-  folderCapability: FolderCapability;
-  onAttachFolder: () => Promise<void>;
-  onDetachFolder?: (folderId: string) => Promise<void>;
-  disabled?: boolean;
-  dataWfPrefix: string;
-  tooltipId: string;
-  introTitleId: string;
-  disconnectTitleId: string;
-  connectedBehavior?: "confirm-detach" | "attach";
-  connectedHint?: string;
 }
 
 export type FolderSourceActionKind = "attach" | "detach";
@@ -586,153 +570,6 @@ export function deriveFolderCapabilityFromEnv(env: FolderCapabilityEnv): FolderC
   return { enabled: false, reason: "当前浏览器不支持本地文件夹访问" };
 }
 
-export function FolderSourceControl({
-  rootClassName,
-  buttonClassName,
-  folderSource,
-  folderCapability,
-  onAttachFolder,
-  onDetachFolder,
-  disabled = false,
-  dataWfPrefix,
-  tooltipId,
-  introTitleId,
-  disconnectTitleId,
-  connectedBehavior = "confirm-detach",
-  connectedHint,
-}: FolderSourceControlProps) {
-  const folderButtonRef = useRef<HTMLButtonElement>(null);
-  const folderIntroPrimaryRef = useRef<HTMLButtonElement>(null);
-  const folderDisconnectCancelRef = useRef<HTMLButtonElement>(null);
-  const [suppressConnectedPopover, setSuppressConnectedPopover] = useState(false);
-  const {
-    folderDialog,
-    folderActionPending,
-    requestPrimaryAction,
-    requestDetach,
-    confirmDetach,
-    introDialogProps,
-    disconnectDialogProps,
-  } = useFolderSourceActions({
-    folderSource,
-    folderCapability,
-    onAttachFolder,
-    onDetachFolder,
-    disabled,
-    connectedBehavior,
-    restoreFocusRef: folderButtonRef,
-    onAttachSuccess: () => setSuppressConnectedPopover(true),
-  });
-
-  const folderButtonDisabled =
-    disabled || folderActionPending !== null || !folderCapability.enabled;
-  const folderUnsupportedReason =
-    !folderCapability.enabled && folderCapability.reason ? folderCapability.reason : null;
-  const folderStatus = folderSource ? folderStatusView(folderSource, connectedHint) : null;
-
-  // 弹层里的「断开连接」按钮:confirm-detach 走二次确认弹窗;否则(如新建页 attach 模式)直接断联。
-  const handlePopoverDetach = useCallback(() => {
-    if (!folderSource) return;
-    if (connectedBehavior === "confirm-detach") {
-      requestDetach();
-      return;
-    }
-    confirmDetach();
-  }, [folderSource, connectedBehavior, confirmDetach, requestDetach]);
-
-  useEffect(() => {
-    if (!folderSource) setSuppressConnectedPopover(false);
-  }, [folderSource]);
-
-  const rootClasses = [
-    rootClassName,
-    folderSource ? "is-connected" : "",
-    folderUnsupportedReason ? "is-unsupported" : "",
-    folderSource && suppressConnectedPopover ? "is-popover-suppressed" : "",
-  ].filter(Boolean).join(" ");
-
-  return (
-    <div
-      className={rootClasses}
-      onMouseLeave={() => setSuppressConnectedPopover(false)}
-      onFocusCapture={() => setSuppressConnectedPopover(false)}
-    >
-      <button
-        ref={folderButtonRef}
-        type="button"
-        className={buttonClassName({
-          active: folderSource !== null,
-          selecting: folderActionPending === "attach",
-        })}
-        onClick={requestPrimaryAction}
-        disabled={folderButtonDisabled}
-        aria-busy={folderActionPending !== null}
-        aria-describedby={folderUnsupportedReason ? tooltipId : undefined}
-        data-wf={`${dataWfPrefix}FolderBtn`}
-      >
-        <FolderSvg className="ws-tool-ico ccx-ico" />
-        <span data-wf={`${dataWfPrefix}FolderLabel`}>文件夹</span>
-        {folderSource && <span className="ws-folder-dot" data-wf={`${dataWfPrefix}FolderDot`} aria-hidden="true" />}
-      </button>
-      {folderSource && (
-        <div className="wf-floaty ws-folder-popover" data-wf={`${dataWfPrefix}FolderPopover`} role="tooltip">
-          <div className="ws-folder-popover-head">
-            <FolderSvg className="ws-folder-popover-icon" width={18} height={18} />
-            <span className="ws-folder-popover-name">{folderSource.name}</span>
-          </div>
-          <div className="ws-folder-popover-path">{folderSource.pathLabel ?? folderSource.mountPath}</div>
-          <div className="ws-folder-popover-meta">{formatFolderFileCount(folderSource)}</div>
-          {folderStatus && (
-            <div className={`ws-folder-badge is-${folderStatus.tone}`}><span />{folderStatus.label}</div>
-          )}
-          {folderSource.error && <div className="ws-folder-popover-error">{folderSource.error}</div>}
-          {folderStatus?.tone === "ok" && (onDetachFolder || connectedBehavior === "confirm-detach") ? (
-            <>
-              <div className="ws-folder-popover-divider" aria-hidden="true" />
-              <button
-                type="button"
-                className="ws-folder-popover-disconnect"
-                onClick={handlePopoverDetach}
-                disabled={folderActionPending !== null}
-                data-wf={`${dataWfPrefix}FolderDisconnect`}
-              >
-                <span aria-hidden="true">×</span>
-                断开连接
-              </button>
-            </>
-          ) : (
-            <div className="ws-folder-popover-hint">{folderStatus?.hint ?? "点击「文件夹」可断开连接"}</div>
-          )}
-          <div className="ws-folder-popover-arrow" aria-hidden="true" />
-        </div>
-      )}
-      {folderUnsupportedReason && (
-        <span id={tooltipId} className="ws-folder-tooltip" role="tooltip">
-          {folderUnsupportedReason}
-        </span>
-      )}
-      {folderDialog === "intro" && (
-        <FolderIntroDialog
-          anchor={folderButtonRef.current}
-          dataWf={`${dataWfPrefix}FolderIntroOverlay`}
-          titleId={introTitleId}
-          initialFocusRef={folderIntroPrimaryRef}
-          {...introDialogProps}
-        />
-      )}
-      {folderDialog === "disconnectConfirm" && disconnectDialogProps && (
-        <FolderDisconnectDialog
-          anchor={folderButtonRef.current}
-          dataWf={`${dataWfPrefix}FolderDisconnectOverlay`}
-          titleId={disconnectTitleId}
-          initialFocusRef={folderDisconnectCancelRef}
-          {...disconnectDialogProps}
-        />
-      )}
-    </div>
-  );
-}
-
 export function readFolderIntroDismissed(): boolean {
   try {
     return window.localStorage.getItem(FOLDER_INTRO_STORAGE_KEY) === "1";
@@ -816,30 +653,6 @@ function isolateDialogSiblings(dialog: HTMLElement): () => void {
       }
     }
   };
-}
-
-export function formatFolderFileCount(source: Pick<FolderSourceControlSource, "fileCount" | "fileCountCapped">): string {
-  if (source.fileCount === null) return "文件数暂未统计";
-  return `${source.fileCount}${source.fileCountCapped ? "+" : ""} 个文件`;
-}
-
-export function folderStatusView(
-  source: Pick<FolderSourceControlSource, "status">,
-  connectedHint?: string,
-): { label: string; hint: string; tone: "ok" | "warn" | "error" | "muted" } {
-  switch (source.status) {
-    case "connected":
-      return { label: "已连接为资料库", hint: connectedHint ?? "点击「文件夹」可断开连接", tone: "ok" };
-    case "missing":
-      return { label: "文件夹找不到", hint: "检查本地路径后可断开并重新连接", tone: "warn" };
-    case "permission_required":
-      return { label: "需要重新授权", hint: "授予权限后可重新连接资料库", tone: "warn" };
-    case "error":
-      return { label: "连接异常", hint: "断开后可重新连接", tone: "error" };
-    case "offline":
-    default:
-      return { label: "连接已离线", hint: "本地桥接恢复后可继续使用", tone: "muted" };
-  }
 }
 
 function isLikelyMobileDevice(userAgent: string, touchPoints: number): boolean {

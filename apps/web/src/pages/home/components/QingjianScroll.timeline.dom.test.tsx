@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HomeSession } from "../data/sessions";
 import { QingjianScroll } from "./QingjianScroll";
 
-vi.mock("../../new-session/transition/homeStage", () => ({
+vi.mock("../../../system/transition/homeStage", () => ({
   createHomeTransitionStage: () => ({
     playForward: vi.fn(() => Promise.resolve({ left: 0, top: 0, width: 800, height: 600 })),
     playReturn: vi.fn(() => Promise.resolve()),

@@ -1,4 +1,4 @@
-// 墨水(水墨渗墨)转场引擎 —— 移植自 cc-b demo 的 v9 WebGL fbm reveal。
+// 墨水(水墨渗墨)转场引擎 —— v9 WebGL fbm reveal。
 // 全屏 quad,片元用 hash/vnoise/fbm 生成不规则渗墨边界,从 uOrigin(点击点)
 // 向外渗染:mask=0 透明(露出底下首页宣纸),mask=1 显出「玄青夜空」深色空间。
 // 锋面带湿浓墨环 + 极淡朱砂,颜色取自玄青夜空主题,与现有配色协调。

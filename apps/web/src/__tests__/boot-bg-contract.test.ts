@@ -14,7 +14,6 @@ const viteConfig = readFileSync(path.join(webRoot, "vite.config.ts"), "utf8");
 const appCss = readFileSync(path.join(webRoot, "src/app.css"), "utf8");
 const desktopMain = readFileSync(path.join(webRoot, "../desktop/src/main/index.ts"), "utf8");
 const homeCss = readFileSync(path.join(webRoot, "src/pages/home/components/qingjian.css"), "utf8");
-const newSessionCss = readFileSync(path.join(webRoot, "src/pages/new-session/new-session-qing.css"), "utf8");
 const workspaceCss = readFileSync(path.join(webRoot, "src/pages/workspace/workspace-ink-skin.css"), "utf8");
 
 const BOOT_LIGHT = "#ece4d3";
@@ -38,9 +37,8 @@ describe("boot 与切页底色契约", () => {
     expect(shellHtml).not.toContain("#1a1a1a");
   });
 
-  it("Suspense 按 home/new-session/workspace 的真实底色映射", () => {
+  it("Suspense 按 home/workspace 的真实底色映射", () => {
     expect(appTsx).toContain('home: { pageFrameModifier: "web-page-frame--qingjian-home", suspenseBackground: "#1c1915" }');
-    expect(appTsx).toContain('"new-session": { suspenseBackground: "#16212c" }');
     expect(appTsx).toContain('workspace: { pageFrameModifier: "web-page-frame--workspace", suspenseBackground: "#16212c" }');
     expect(appTsx).toContain("background: suspenseBackground");
   });
@@ -48,7 +46,6 @@ describe("boot 与切页底色契约", () => {
   it("路由映射值与对应页面 CSS 的底层色一致", () => {
     expect(homeCss).toMatch(/#view-home\.home-qingjian\s*\{[^}]*background:\s*#1c1915/s);
     expect(appCss).toContain("--desk-base: #16212c");
-    expect(newSessionCss).toMatch(/\.ccx-space\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
     expect(workspaceCss).toMatch(/#view-workspace\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
   });
 
@@ -61,13 +58,12 @@ describe("boot 与切页底色契约", () => {
     expect(appTsx).toContain('import { onceAsync } from "./system/onceAsync"');
     for (const factory of [
       'onceAsync(() => import("./pages/home/HomePage").then(styled))',
-      'import("./pages/new-session/NewSessionPage").then(styled),',
       'import("./pages/workspace/WorkspacePage").then(styled),',
     ]) {
       expect(appTsx).toContain(factory);
     }
-    // 三个工厂都得包上,别漏
-    expect(appTsx.match(/onceAsync\(/g)?.length).toBeGreaterThanOrEqual(3);
+    // 两个生产页面工厂都得包上,别漏
+    expect(appTsx.match(/onceAsync\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it("CSS 保持按页分割:首屏不该被全站样式拖重", () => {

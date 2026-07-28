@@ -399,25 +399,6 @@
 #view-workspace.uk-folder-demo .ws-folder-modal-overlay {
   position: absolute;
 }
-#view-workspace.uk-folder-demo .uk-folder-tools {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: auto;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  justify-content: flex-start;
-}
-#view-workspace.uk-folder-demo .uk-folder-tools--connected {
-  top: 200px;
-  left: 24px;
-}
-#view-workspace.uk-force-popover .ws-folder-popover {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
 #view-workspace.uk-export-sep-scope {
   width: 160px;
   padding: 6px 0;

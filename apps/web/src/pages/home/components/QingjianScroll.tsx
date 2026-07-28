@@ -37,12 +37,12 @@ import {
   computeWorkspaceDocRect,
   peekHomeArrive,
   setWorkspaceArrive,
-} from "../../new-session/transition/origin";
+} from "../../../system/transition/origin";
 import {
   createHomeTransitionStage,
   type HomeTransitionStage,
   type StageRect as TransitionStageRect,
-} from "../../new-session/transition/homeStage";
+} from "../../../system/transition/homeStage";
 import "./qingjian.css";
 import { HomeSettingsSheet, type SettingsSheetTab } from "./HomeSettingsSheet";
 import {

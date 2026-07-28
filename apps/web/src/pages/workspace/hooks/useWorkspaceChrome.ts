@@ -11,7 +11,7 @@ import {
   computeWorkspaceDocRect,
   peekWorkspaceArrive,
   setHomeArrive,
-} from "../../new-session/transition/origin";
+} from "../../../system/transition/origin";
 import { workspaceSessionIdFromHash } from "../data/workspacePageView";
 
 /**

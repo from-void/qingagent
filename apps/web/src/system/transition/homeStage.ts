@@ -1,10 +1,10 @@
 // 方案4:首页一侧的「核心动效」舞台。
 // 卡飞(morph)+ 墨水渗染/退去(inkWipe)+ 玄青夜空/墨尘(space/dust)整段在首页跑完;
-// forward 跑到「卡落定 + 背景已深」的静止帧后回调 → 调用方此刻才切路由(#/new);
-// return 由首页挂载后跑反向(卡飞回新建卡固定位 + 墨退回宣纸)settle 成正常首页。
+// forward 跑到「纸落定 + 背景已深」的静止帧后回调 → 调用方此刻才切到工作区;
+// return 由首页挂载后跑反向(纸飞回新建卡固定位 + 墨退回宣纸)settle 成正常首页。
 //
-// 复用与新建页完全相同的引擎(inkWipe/dust)与 CSS class(ccx-space/ccx-dust/ccx-ink/
-// ccx-morph),所以首页最后一帧的卡盒/背景深度 = 新建页第一帧 → 切换肉眼无缝。
+// 过场沿用 inkWipe/dust 引擎与 ccx-space/ccx-dust/ccx-ink/ccx-morph 视觉层,
+// 首页最后一帧的纸盒/背景深度 = 工作区第一帧 → 切换肉眼无缝。
 
 import { createInkWipe } from "./inkWipe";
 import type { InkWipeHandle } from "./inkWipe";
@@ -41,7 +41,7 @@ export interface HomeTransitionStage {
     from: StageRect,
     to: StageRect,
     inkOrigin: { x: number; y: number },
-    // animate=true(从新建页返回):保留「卡飞回新建卡位 + 墨退回宣纸」的形变动效;
+    // animate=true(从工作区返回):保留「纸飞回新建卡位 + 墨退回宣纸」的形变动效;
     // animate=false(从文档编辑页返回):不做形变,就地淡出。
     animate?: boolean,
   ) => Promise<void>;
@@ -70,7 +70,7 @@ const FORWARD_SETTLE_TIMEOUT_MS = 3_000;
 
 /**
  * 在 host(首页根容器)内挂出固定覆盖层(space/dust/ink/morph),返回过渡控制器。
- * 这些层与新建页同名同样式,position:fixed 覆盖整屏,脱离首页画框。
+ * 这些层 position:fixed 覆盖整屏,脱离首页画框。
  */
 export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStage {
   const textures = buildCardTextures();
@@ -84,7 +84,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   // —— 墨水 reveal canvas ——
   const inkCanvas = document.createElement("canvas");
   inkCanvas.className = "ccx-ink";
-  // —— morph 飞卡(与新建页 .ccx-morph 同构) ——
+  // —— morph 飞卡(.ccx-morph) ——
   // .ccx-morph 只负责承载装饰；真正可见的纸边界由 face 独占。几何只写 face，
   // 避免外盒的光晕/边衬盒模型混进工作区纸壳的交接矩形。
   const morph = document.createElement("div");
@@ -200,7 +200,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     face.style.opacity = "1";
   }
 
-  // morph 飞行补间(与新建页 runMorph 同款弧线:升起 + 透视微转 + skew)
+  // morph 飞行补间(弧线:升起 + 透视微转 + skew)
   function tweenMorph(
     from: StageRect,
     to: StageRect,
@@ -432,7 +432,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   // 返回首页,按来源分流:
   //  · animate=false(文档编辑页返回):不做"卡飞回卡片位置"的形变(落点常不稳/找不到),
   //    纸停在工作区文档落点、往下滑出视口收起,深背景与墨层同步平滑退去,首页内容随后淡入。
-  //  · animate=true(新建页返回):保留原动效——卡飞回新建卡固定位 + 墨退回宣纸。
+  //  · animate=true(工作区返回):保留原动效——纸飞回新建卡固定位 + 墨退回宣纸。
   function playReturn(
     from: StageRect,
     to: StageRect,
@@ -489,7 +489,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
           return;
         }
 
-        // 新建页返回:卡从落点飞回新建卡固定位(与去程同款弧线),落定后淡出。
+        // 工作区返回:纸从落点飞回新建卡固定位(与去程同款弧线),落定后淡出。
         tweenMorph(from, to, 760, () => {
           if (!isCurrent()) return;
           setMorphRect(to); // 精确停在新建卡位(去弧线残留)

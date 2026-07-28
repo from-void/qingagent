@@ -1,5 +1,4 @@
 import type { Command, FolderSourceOperationResult } from "@qingagent/contract-ts";
-import type { PendingFolderSource } from "../../../system";
 import type { PickedBrowserFolderSource } from "./browserFolderBridge";
 
 export function folderSourceOperationFailureToast(
@@ -32,13 +31,6 @@ export type FolderAttachSelection =
 
 export function newFolderAttachRequestId(): string {
   return `folder_attach_${crypto.randomUUID()}`;
-}
-
-export function folderAttachSelectionFromPending(source: PendingFolderSource): FolderAttachSelection {
-  if (source.provider === "desktop-local") {
-    return { provider: "desktop-local", selectionToken: source.selection.selectionToken };
-  }
-  return { provider: "browser-fs-access", picked: source.picked };
 }
 
 export function buildAttachFolderCommand(

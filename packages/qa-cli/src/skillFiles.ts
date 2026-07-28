@@ -1,5 +1,9 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import {
+  credentialPathError,
+  readCredentialPathsFromFrontmatter,
+} from "./credentialPaths.js";
 import { QaCliError } from "./errors.js";
 import type { ExternalSkillFile } from "./generated/externalApi.js";
 
@@ -34,6 +38,9 @@ export async function validateSkillDirectory(
         throw new QaCliError("VALIDATION", `${file.path} frontmatter 不合法`);
       }
     }
+    if (file.path === "SKILL.md" || file.path.endsWith("/SKILL.md")) {
+      assertCredentialPathsValid(file.content, file.path);
+    }
   }
   return { name: rootMeta.name, files };
 }
@@ -46,7 +53,21 @@ export async function validateSkillMarkdownFile(
   const skillMd = await readFile(filePath, "utf8");
   const metadata = parseSkillIdentity(skillMd);
   if (!metadata) throw new QaCliError("VALIDATION", "SKILL.md frontmatter 不合法");
+  assertCredentialPathsValid(skillMd, "SKILL.md");
   return { name: metadata.name, skillMd };
+}
+
+/** credential-paths 声明必须能通过与服务端同一套边界;非法即拒绝上传/安装。 */
+export function assertCredentialPathsValid(source: string, filePath: string): void {
+  for (const declared of readCredentialPathsFromFrontmatter(source)) {
+    const error = credentialPathError(declared);
+    if (error) {
+      throw new QaCliError(
+        "VALIDATION",
+        `${filePath} 的 credential-paths 不合法(${declared}):${error}`,
+      );
+    }
+  }
 }
 
 async function collectFiles(

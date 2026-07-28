@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { hardenInlineSvg } from "@qingagent/doc-render/browser";
 import { uploadsBaseDir } from "@qingagent/doc-render/paths";
+import { decode as decodeJpeg } from "jpeg-js";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -127,11 +128,68 @@ function jpegDimensions(buffer: Buffer): { width: number; height: number } | nul
     }
     offset += segmentLength;
   }
-  return hasEndOfImage ? dimensions : null;
+  if (!hasEndOfImage || !dimensions) return null;
+  try {
+    const decoded = decodeJpeg(buffer, {
+      useTArray: true,
+      tolerantDecoding: false,
+      maxResolutionInMP: 40,
+      maxMemoryUsageInMB: 256,
+    });
+    if (decoded.width !== dimensions.width || decoded.height !== dimensions.height) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return dimensions;
 }
 
 function readUInt24LE(buffer: Buffer, offset: number): number {
   return buffer[offset]! | (buffer[offset + 1]! << 8) | (buffer[offset + 2]! << 16);
+}
+
+function vp8Dimensions(
+  buffer: Buffer,
+  dataOffset: number,
+  chunkSize: number,
+): { width: number; height: number } | null {
+  if (
+    chunkSize < 11 ||
+    buffer[dataOffset + 3] !== 0x9d ||
+    buffer[dataOffset + 4] !== 0x01 ||
+    buffer[dataOffset + 5] !== 0x2a
+  ) {
+    return null;
+  }
+  const frameTag = readUInt24LE(buffer, dataOffset);
+  const firstPartitionLength = frameTag >>> 5;
+  if (
+    (frameTag & 0x01) !== 0 ||
+    ((frameTag >>> 1) & 0x07) > 3 ||
+    ((frameTag >>> 4) & 0x01) !== 1 ||
+    firstPartitionLength === 0 ||
+    10 + firstPartitionLength >= chunkSize
+  ) {
+    return null;
+  }
+  const width = buffer.readUInt16LE(dataOffset + 6) & 0x3fff;
+  const height = buffer.readUInt16LE(dataOffset + 8) & 0x3fff;
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function vp8lDimensions(
+  buffer: Buffer,
+  dataOffset: number,
+  chunkSize: number,
+): { width: number; height: number } | null {
+  if (chunkSize < 6 || buffer[dataOffset] !== 0x2f) return null;
+  const bits = buffer.readUInt32LE(dataOffset + 1);
+  if ((bits >>> 29) !== 0) return null;
+  return {
+    width: (bits & 0x3fff) + 1,
+    height: ((bits >>> 14) & 0x3fff) + 1,
+  };
 }
 
 function webpDimensions(buffer: Buffer): { width: number; height: number } | null {
@@ -145,7 +203,8 @@ function webpDimensions(buffer: Buffer): { width: number; height: number } | nul
   }
 
   let offset = 12;
-  let dimensions: { width: number; height: number } | null = null;
+  let canvasDimensions: { width: number; height: number } | null = null;
+  let imageDimensions: { width: number; height: number } | null = null;
   while (offset < buffer.length) {
     if (offset + 8 > buffer.length) return null;
     const chunkType = buffer.subarray(offset, offset + 4).toString("ascii");
@@ -154,33 +213,43 @@ function webpDimensions(buffer: Buffer): { width: number; height: number } | nul
     const dataEnd = dataOffset + chunkSize;
     if (dataEnd > buffer.length) return null;
 
-    let width = 0;
-    let height = 0;
-    if (
-      chunkType === "VP8 " &&
-      chunkSize >= 10 &&
-      buffer[dataOffset + 3] === 0x9d &&
-      buffer[dataOffset + 4] === 0x01 &&
-      buffer[dataOffset + 5] === 0x2a
-    ) {
-      width = buffer.readUInt16LE(dataOffset + 6) & 0x3fff;
-      height = buffer.readUInt16LE(dataOffset + 8) & 0x3fff;
-    } else if (chunkType === "VP8L" && chunkSize >= 5 && buffer[dataOffset] === 0x2f) {
-      const bits = buffer.readUInt32LE(dataOffset + 1);
-      width = (bits & 0x3fff) + 1;
-      height = ((bits >>> 14) & 0x3fff) + 1;
-    } else if (chunkType === "VP8X" && chunkSize >= 10) {
-      width = readUInt24LE(buffer, dataOffset + 4) + 1;
-      height = readUInt24LE(buffer, dataOffset + 7) + 1;
-    }
-    if (width > 0 && height > 0 && dimensions === null) {
-      dimensions = { width, height };
+    if (chunkType === "VP8 " || chunkType === "VP8L") {
+      if (imageDimensions) return null;
+      imageDimensions = chunkType === "VP8 "
+        ? vp8Dimensions(buffer, dataOffset, chunkSize)
+        : vp8lDimensions(buffer, dataOffset, chunkSize);
+      if (!imageDimensions) return null;
+    } else if (chunkType === "VP8X") {
+      if (
+        canvasDimensions ||
+        chunkSize !== 10 ||
+        (buffer[dataOffset]! & 0xc1) !== 0 ||
+        buffer[dataOffset + 1] !== 0 ||
+        buffer[dataOffset + 2] !== 0 ||
+        buffer[dataOffset + 3] !== 0
+      ) {
+        return null;
+      }
+      canvasDimensions = {
+        width: readUInt24LE(buffer, dataOffset + 4) + 1,
+        height: readUInt24LE(buffer, dataOffset + 7) + 1,
+      };
     }
 
     offset = dataEnd + (chunkSize % 2);
     if (offset > buffer.length) return null;
   }
-  return dimensions;
+  if (!imageDimensions) return null;
+  if (
+    canvasDimensions &&
+    (
+      canvasDimensions.width !== imageDimensions.width ||
+      canvasDimensions.height !== imageDimensions.height
+    )
+  ) {
+    return null;
+  }
+  return canvasDimensions ?? imageDimensions;
 }
 
 function validateAndPrepareImage(

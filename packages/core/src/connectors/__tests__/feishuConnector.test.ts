@@ -1,14 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
-import { FeishuConnector } from "../feishuConnector.js";
+import {
+  FeishuConnector,
+  type FeishuConnectorOptions,
+} from "../feishuConnector.js";
 import { LARK_DEVICE_CODE, type LarkCliCommand, type LarkCliRunResult } from "../larkCliRunner.js";
+import { PendingStore } from "../pendingStore.js";
 
 const ok = (stdout = ""): LarkCliRunResult => ({ ok: true, stdout, stderr: "", cliVersion: "1.0.65", source: "path" });
 const configured = JSON.stringify({ appId: "cli_test_app", brand: "feishu" });
 const unconfigured = JSON.stringify({ appId: null, brand: "feishu" });
 const ready = (scopes = ["docs:document:readonly"]) => JSON.stringify({ identities: { user: { available: true, status: "ready", userName: "测试用户", openId: "ou_test", scopes } } });
 const missing = JSON.stringify({ identities: { user: { available: false, status: "missing" } } });
-const device = JSON.stringify({ verification_url: "https://accounts.feishu.cn/device", user_code: "ABCD-EFGH", device_code: "secret-device-code", expires_in: 300 });
-const deviceResult = (): LarkCliRunResult => ({ ok: true, stdout: device, stderr: "", cliVersion: "1.0.65", source: "path", [LARK_DEVICE_CODE]: "secret-device-code" });
+const deviceResult = (expiresIn = 300): LarkCliRunResult => ({
+  ok: true,
+  stdout: JSON.stringify({
+    verification_url: "https://accounts.feishu.cn/device",
+    user_code: "ABCD-EFGH",
+    device_code: "secret-device-code",
+    expires_in: expiresIn,
+  }),
+  stderr: "",
+  cliVersion: "1.0.65",
+  source: "path",
+  [LARK_DEVICE_CODE]: "secret-device-code",
+});
+type FeishuPendingValue = NonNullable<
+  FeishuConnectorOptions["pendingStore"]
+> extends PendingStore<infer Value> ? Value : never;
 
 async function eventually<T>(read: () => Promise<T>, accept: (value: T) => boolean): Promise<T> {
   for (let i = 0; i < 30; i += 1) {
@@ -20,6 +38,60 @@ async function eventually<T>(read: () => Promise<T>, accept: (value: T) => boole
 }
 
 describe("FeishuConnector 授权编排", () => {
+  it.each([
+    ["后台授权时限", 900, 15 * 60_000, 10 * 60_000],
+    ["provider 时限", 300, 15 * 60_000, 5 * 60_000],
+    ["pending 时限", 900, 2 * 60_000, 2 * 60_000],
+  ] as const)(
+    "展示与轮询共同使用三方最短的%s",
+    async (_name, providerExpiresIn, pendingTtlMs, expectedTtlMs) => {
+      const now = 1_800_000_000_000;
+      const run = vi.fn(async (
+        command: LarkCliCommand,
+        options?: { signal?: AbortSignal; timeoutMs?: number },
+      ): Promise<LarkCliRunResult> => {
+        const key = command.join(" ");
+        if (key === "config show") return ok(configured);
+        if (key === "auth status --json") return ok(missing);
+        if (key.includes("--no-wait")) return deviceResult(providerExpiresIn);
+        if (key.includes("--device-code")) {
+          return new Promise<LarkCliRunResult>((resolve) => {
+            options?.signal?.addEventListener("abort", () => resolve({
+              ok: false,
+              reasonCode: "LARK_CLI_FAILED",
+              message: "aborted",
+              cliVersion: "1.0.65",
+              source: "path",
+            }), { once: true });
+          });
+        }
+        if (key === "auth logout") return ok();
+        throw new Error(`unexpected ${key}`);
+      });
+      const pendingStore = new PendingStore<FeishuPendingValue>({
+        ttlMs: pendingTtlMs,
+        now: () => now,
+        createId: () => `pending-${expectedTtlMs}`,
+      });
+      const connector = new FeishuConnector({
+        runner: { run },
+        pendingStore,
+        now: () => now,
+      });
+
+      const started = await connector.start({ domains: ["docs"] });
+      expect(started.expiresAt).toBe(new Date(now + expectedTtlMs).toISOString());
+      await vi.waitFor(() => {
+        expect(run).toHaveBeenCalledWith(
+          ["auth", "login", "--device-code", "secret-device-code"],
+          expect.objectContaining({ timeoutMs: expectedTtlMs }),
+        );
+      });
+      await connector.disconnect();
+      pendingStore.shutdown();
+    },
+  );
+
   it("不同 domains 的并发 start 不共享授权卡", async () => {
     let releaseConfig!: () => void;
     const configGate = new Promise<void>((resolve) => { releaseConfig = resolve; });

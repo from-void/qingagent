@@ -20,11 +20,56 @@ describe("GithubClient", () => {
     await new GithubClient({ baseUrl: "https://fake.example", token: "secret", fetch: fetch as typeof globalThis.fetch }).user();
   });
 
-  it("403 映射 RATE_LIMIT/resetAt，缺失 header 保持 null，不重试", async () => {
+  it("无明确限速信号的 403 映射为权限拒绝", async () => {
     const fetch = vi.fn(async () => new Response("{}", { status: 403, headers: { "X-RateLimit-Reset": "1780000000" } }));
-    await expect(new GithubClient({ baseUrl: "http://fake", fetch: fetch as typeof globalThis.fetch }).user()).rejects.toMatchObject({ code: "RATE_LIMIT", resetAt: new Date(1780000000 * 1000).toISOString() });
+    await expect(new GithubClient({ baseUrl: "http://fake", fetch: fetch as typeof globalThis.fetch }).user()).rejects.toMatchObject({
+      code: "ACCESS_DENIED",
+      message: "GitHub 权限不足或访问被拒绝",
+      status: 403,
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(parseGithubRateLimit(new Headers())).toEqual({ limit: null, remaining: null, resetAt: null, resource: null });
+  });
+
+  it.each([
+    [
+      "remaining=0",
+      { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1780000000" },
+      "{}",
+    ],
+    ["Retry-After", { "Retry-After": "60" }, "{}"],
+    [
+      "明确限速响应",
+      {},
+      JSON.stringify({
+        message: "You have exceeded a secondary rate limit.",
+        documentation_url: "https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api",
+      }),
+    ],
+  ])("403 带 %s 时才映射 RATE_LIMIT", async (_name, headers, body) => {
+    const fetch = vi.fn(async () => new Response(body, { status: 403, headers }));
+    await expect(
+      new GithubClient({
+        baseUrl: "http://fake",
+        fetch: fetch as typeof globalThis.fetch,
+      }).user(),
+    ).rejects.toMatchObject({
+      code: "RATE_LIMIT",
+      status: 403,
+    });
+  });
+
+  it("429 无需额外 header 即映射 RATE_LIMIT", async () => {
+    const fetch = vi.fn(async () => new Response("{}", { status: 429 }));
+    await expect(
+      new GithubClient({
+        baseUrl: "http://fake",
+        fetch: fetch as typeof globalThis.fetch,
+      }).user(),
+    ).rejects.toMatchObject({
+      code: "RATE_LIMIT",
+      status: 429,
+    });
   });
 
   it("畸形 JSON 稳定失败", async () => {

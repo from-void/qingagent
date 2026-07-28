@@ -39,6 +39,29 @@ export function parseGithubRateLimit(headers: Headers): GithubRateLimit {
   };
 }
 
+async function isGithubRateLimitResponse(
+  response: Response,
+  rateLimit: GithubRateLimit,
+): Promise<boolean> {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  if (rateLimit.remaining === 0 || response.headers.has("retry-after")) {
+    return true;
+  }
+  try {
+    const payload = await response.clone().json() as {
+      message?: unknown;
+      documentation_url?: unknown;
+    };
+    const detail = [payload.message, payload.documentation_url]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+    return /(?:secondary\s+)?rate\s*limit|abuse\s+detection/i.test(detail);
+  } catch {
+    return false;
+  }
+}
+
 export function encodeGithubPathSegment(value: string): string {
   if (!value || value.includes("\0")) throw new GithubConnectorError("GitHub 路径参数非法", "INVALID_ARGUMENT", 400);
   return encodeURIComponent(value);
@@ -86,8 +109,11 @@ export class GithubClient {
       if (response.status >= 300 && response.status < 400) throw new GithubConnectorError("拒绝 GitHub API 重定向", "UNSAFE_REDIRECT", 502);
       const rateLimit = parseGithubRateLimit(response.headers);
       if (response.status === 401) throw new GithubConnectorError("GitHub 授权已失效", "NEEDS_REAUTH", 401);
-      if (response.status === 403 || response.status === 429) {
+      if (await isGithubRateLimitResponse(response, rateLimit)) {
         throw new GithubConnectorError("GitHub 请求已限速", "RATE_LIMIT", response.status, rateLimit.resetAt);
+      }
+      if (response.status === 403) {
+        throw new GithubConnectorError("GitHub 权限不足或访问被拒绝", "ACCESS_DENIED", 403);
       }
       let data: unknown;
       try {

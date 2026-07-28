@@ -3,6 +3,7 @@
 import { Editor, type JSONContent } from "@tiptap/core";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, safeParsePmDoc, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -645,6 +646,21 @@ describe("列表行 DnD 事务", () => {
 
     dispatchListItemReorder(editor, "li-b", "li-a", "after", 2);
 
+    expect(editor.commands.undo()).toBe(true);
+    expect(JSON.stringify(normalized(editor))).toBe(before);
+  });
+
+  it("文档末尾就是 list 时,中间编辑不会提前消费拖拽 undo 的 TrailingNode 保护", () => {
+    const editor = createEditor(
+      doc([bulletList("list", [listItem("li-a", "A"), listItem("li-b", "B"), listItem("li-c", "C")])]),
+    );
+    const before = JSON.stringify(normalized(editor));
+
+    dispatchListItemReorder(editor, "li-b", "li-a", "after", 2);
+    const paragraphPos = findNodePosition(editor, "paragraph", "li-a-p");
+    editor.view.dispatch(closeHistory(editor.state.tr.insertText("!", paragraphPos + 1)));
+
+    expect(editor.commands.undo()).toBe(true);
     expect(editor.commands.undo()).toBe(true);
     expect(JSON.stringify(normalized(editor))).toBe(before);
   });

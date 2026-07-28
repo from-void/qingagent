@@ -77,6 +77,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       hasFlag(args, "--json"),
     );
   }
+  const preflightEventTarget =
+    group === "doc" && command === "events"
+      ? parseEventTarget(args)
+      : null;
   const client = await ApiClient.create();
   if (group === "template" && command === "list") {
     const type = optionValue(args, "--type");
@@ -259,7 +263,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "doc" && command === "events") {
     const sessionId = requireOption(args, "-s");
     const explicitAfter = optionValue(args, "--after");
-    const until = parseEventTarget(args);
+    const until = preflightEventTarget;
     const after = explicitAfter ?? (until ? "tip" : "0");
     if (until && !explicitAfter) {
       process.stderr.write("[qa] warning: --until 未提供 --after,将从当前 tip 开始监听;提案闭环请优先使用 propose 返回的 seq\n");
@@ -755,15 +759,20 @@ function parseDuration(value: string | undefined): number | null {
 }
 
 function parseEventTarget(args: string[]): EventTarget | null {
-  if (!hasFlag(args, "--until")) return null;
-  const value = optionValue(args, "--until");
-  if (value === "reviewed" || value === "committed" || value === "review") {
-    return value;
+  let target: EventTarget | null = null;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== "--until") continue;
+    const value = args[index + 1];
+    if (value === "reviewed" || value === "committed" || value === "review") {
+      target ??= value;
+      continue;
+    }
+    throw new QaCliError(
+      "VALIDATION",
+      "--until 必须是 reviewed、committed 或 review",
+    );
   }
-  throw new QaCliError(
-    "VALIDATION",
-    "--until 必须是 reviewed、committed 或 review",
-  );
+  return target;
 }
 
 function untilHit(until: EventTarget | null, data: string): string | null {

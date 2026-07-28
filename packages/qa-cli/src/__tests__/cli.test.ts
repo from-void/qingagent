@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { discoverInstance } from "../discovery.js";
 
 vi.mock("../discovery.js", () => ({
   discoverInstance: vi.fn(async () => ({
@@ -795,15 +796,20 @@ describe("qa cli", () => {
     ["后续 flag 不能充当目标值", [
       "doc", "events", "-s", "s1", "--until", "--timeout", "10ms",
     ]],
+    ["后一个重复值非法", [
+      "doc", "events", "-s", "s1", "--until", "reviewed", "--until", "reviewd",
+    ]],
   ])("doc events --until %s 时在连接前拒绝", async (_label, args) => {
     const { main } = await import("../cli.js");
     const fetchMock = vi.fn(async () => new Response());
     globalThis.fetch = fetchMock as typeof fetch;
+    vi.mocked(discoverInstance).mockClear();
 
     await expect(main(args)).rejects.toMatchObject({
       code: "VALIDATION",
       message: "--until 必须是 reviewed、committed 或 review",
     });
+    expect(discoverInstance).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

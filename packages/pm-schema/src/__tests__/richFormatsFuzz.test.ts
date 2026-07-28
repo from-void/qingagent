@@ -312,7 +312,7 @@ describe("rich format fuzz round trips", () => {
         compileOk: false,
       },
       {
-        name: "link href 含空格:AI-IR schema 粗收,PM validator/compile 拒",
+        name: "link href 含空格:AI-IR schema 与 PM validator/compile 统一拒绝",
         pmDoc: docWith([
           {
             type: "paragraph",
@@ -324,7 +324,7 @@ describe("rich format fuzz round trips", () => {
         ]),
         aiBlock: { type: "paragraph", runs: [{ text: "bad link", marks: [{ type: "link", href: "https://example.com/a b" }] }] },
         pmOk: false,
-        aiSchemaOk: true,
+        aiSchemaOk: false,
         compileOk: false,
       },
     ];

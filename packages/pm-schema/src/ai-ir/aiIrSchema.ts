@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { PM_CALLOUT_TONES, PM_DIAGRAM_LANGS, PM_HIGHLIGHT_COLORS, PM_IMAGE_ALIGN_VALUES, PM_ORDERED_LIST_STYLES, PM_TEXT_ALIGN_VALUES, PM_TEXT_COLORS } from "../spec";
 import type { PmDiagramLang } from "../types";
-import { isAllowedImageSrc } from "../validators";
+import { isAllowedImageSrc, isAllowedLinkHref } from "../validators";
 
 const linkHrefSchema = z
   .string()
-  .refine((href) => /^https?:\/\//.test(href) || href.startsWith("/") || href.startsWith("#"), {
+  .refine(isAllowedLinkHref, {
     message: "link href must be http(s), root-relative, or hash-relative",
   });
 

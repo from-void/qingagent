@@ -62,7 +62,7 @@ export class DuckDuckGoProvider implements SearchProvider {
     let receivedValidResponse = false;
     let lastError: unknown;
     for (const endpoint of ENDPOINTS) {
-      if (shouldSkipSearchProvider(endpoint.healthId)) continue;
+      if (!options?.strict && shouldSkipSearchProvider(endpoint.healthId)) continue;
       try {
         const results = await this.searchOne(
           endpoint.url,

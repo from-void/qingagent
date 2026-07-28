@@ -47,6 +47,26 @@ describe("streamErrorPresenter", () => {
     expect(streamErrorToastMessage(quota)).toContain("余额/配额不足");
   });
 
+  it("内网地址被本地策略拦截:独立 label,不给无用的重试入口", () => {
+    const reason =
+      "模型地址解析为内网地址，被本地安全策略拦截。" +
+      "若这是公司或自建的内网模型服务：桌面客户端请更新到最新版（已默认放行）；" +
+      "自部署请设置 QINGAGENT_ALLOW_PRIVATE_MODEL_HOST=1。";
+    const blocked = {
+      kind: "draftingFailed" as const,
+      reason,
+      retriable: false,
+      category: "blocked_address" as const,
+      userMessage: reason,
+      action: "check_model_settings" as const,
+    };
+
+    expect(streamErrorLabel(blocked)).toBe("模型地址被安全策略拦截");
+    expect(canRetryStreamError(blocked)).toBe(false);
+    expect(streamErrorActionLabel(blocked)).toBe("检查模型设置");
+    expect(streamErrorToastMessage(blocked)).toContain("内网地址");
+  });
+
   it("cancelled 是用户主动中止:走瞬时 warn status 而非常驻失败", () => {
     const cancelled = {
       kind: "cancelled" as const,

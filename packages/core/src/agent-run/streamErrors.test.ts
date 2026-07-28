@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  isBlockedAddressStreamErrorChunk,
   isTransientStreamErrorChunk,
   streamErrorDetails,
   withIdleTimeout,
@@ -95,5 +96,65 @@ describe("stream error 分类", () => {
 
   it("明确的连接重置错误仍可触发自动瞬态重试", () => {
     expect(isTransientStreamErrorChunk(errorChunk("read ECONNRESET"))).toBe(true);
+  });
+
+  it("普通网络错误仍是笼统的可重试连接失败", () => {
+    expect(streamErrorDetails(errorChunk("fetch failed"))).toEqual({
+      reason: "模型服务连接失败，请重试。",
+      retriable: true,
+      category: "network",
+      userMessage: "模型服务连接失败，请重试。",
+      action: "retry",
+    });
+  });
+
+  it.each([
+    [
+      "预检直抛原文",
+      errorChunk(
+        "Blocked private/non-global-unicast address for api.example.com: 10.20.30.40",
+      ),
+    ],
+    [
+      "AI SDK 包装成 Cannot connect to API",
+      errorChunk(
+        "Cannot connect to API: Blocked private/non-global-unicast address for api.example.com: 10.20.30.40",
+      ),
+    ],
+    [
+      "原始错误只挂在 cause 链上",
+      {
+        type: "error",
+        payload: {
+          error: new Error("fetch failed", {
+            cause: new Error(
+              "Blocked private/non-global-unicast address for api.example.com: 10.20.30.40",
+            ),
+          }),
+        },
+      },
+    ],
+  ])("内网地址被本地策略拦截时透出真实原因(%s)", (_case, chunk) => {
+    expect(streamErrorDetails(chunk)).toEqual({
+      reason:
+        "模型地址解析为内网地址，被本地安全策略拦截。" +
+        "若这是公司或自建的内网模型服务：桌面客户端请更新到最新版（已默认放行）；" +
+        "自部署请设置 QINGAGENT_ALLOW_PRIVATE_MODEL_HOST=1。",
+      retriable: false,
+      category: "blocked_address",
+      userMessage:
+        "模型地址解析为内网地址，被本地安全策略拦截。" +
+        "若这是公司或自建的内网模型服务：桌面客户端请更新到最新版（已默认放行）；" +
+        "自部署请设置 QINGAGENT_ALLOW_PRIVATE_MODEL_HOST=1。",
+      action: "check_model_settings",
+    });
+    expect(isBlockedAddressStreamErrorChunk(chunk)).toBe(true);
+    expect(isTransientStreamErrorChunk(chunk)).toBe(false);
+  });
+
+  it("上游返回的 HTTP 状态码优先，不被地址拦截判别抢走", () => {
+    expect(
+      streamErrorDetails(errorChunk("Blocked loopback address for x: 127.0.0.1", 500)),
+    ).toMatchObject({ category: "upstream", statusCode: 500 });
   });
 });

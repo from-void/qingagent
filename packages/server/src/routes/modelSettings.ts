@@ -455,7 +455,9 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
       ok: false,
       error:
         "API 地址不可用或被安全策略拒绝：仅允许公网地址及本机 localhost/127.0.0.1/[::1]；" +
-        "内网、链路本地和云元数据地址默认禁止",
+        "内网、链路本地和云元数据地址默认禁止。" +
+        "若这是公司或自建的内网模型服务：桌面客户端请更新到最新版（已默认放行）；" +
+        "自部署请设置 QINGAGENT_ALLOW_PRIVATE_MODEL_HOST=1",
     }, 400);
   }
   const isAnthropic = provider === "deepseek" && body.protocol === "anthropic";

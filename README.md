@@ -78,7 +78,7 @@ pnpm dev          # 前端 http://localhost:6173(web 代理 /api → :8080)
 | `PORT` | server 为 `8080`;Web 为 `6173` | server 进程把它用作后端端口;Vite 进程也把它用作 Web 端口兜底。并行启动时不要给两者共用同一个 `PORT`,Web 端优先用 `QINGAGENT_WEB_PORT`。 |
 | `QINGAGENT_WEB_PORT` | `6173` | Vite dev/preview 端口,优先级高于 `PORT` |
 | `QINGAGENT_DEEPSEEK_BASE_URL` | 官方端点 | 自定义模型网关 |
-| `QINGAGENT_ALLOW_PRIVATE_MODEL_HOST` | 关 | 仅 `=1` 放行主模型访问私网/链路本地（含云元数据）；loopback 无需开启 |
+| `QINGAGENT_ALLOW_PRIVATE_MODEL_HOST` | Web/自部署关；桌面客户端默认 `1` | 仅 `=1` 放行主模型访问私网/链路本地（含云元数据）；loopback 无需开启。桌面端为支持公司内网/自建模型网关默认开启，显式设 `0` 可关；只影响主模型出站，不放宽网页/文档抓取的 SSRF 防线 |
 | `QINGAGENT_MODEL_FLASH` / `QINGAGENT_MODEL_PRO` | deepseek 系 | 快/强两档模型 id |
 | `QINGAGENT_MODEL_PROTOCOL` | `openai` | 模型协议(`openai`/`anthropic`) |
 

@@ -167,13 +167,17 @@ function normalizedStreamErrorStatusCode(chunk: unknown): number | undefined {
   return undefined;
 }
 
+function streamErrorValue(chunk: unknown): unknown {
+  if (!chunk || typeof chunk !== "object") return undefined;
+  const payload = (chunk as { payload?: unknown }).payload;
+  return payload && typeof payload === "object"
+    ? (payload as { error?: unknown }).error
+    : undefined;
+}
+
 export function streamErrorMessage(chunk: unknown): string {
   if (!chunk || typeof chunk !== "object") return String(chunk);
-  const payload = (chunk as { payload?: unknown }).payload;
-  const error =
-    payload && typeof payload === "object"
-      ? (payload as { error?: unknown }).error
-      : undefined;
+  const error = streamErrorValue(chunk);
   if (error instanceof Error) return error.message;
   if (error !== undefined) return String(error);
   return String(chunk);
@@ -200,6 +204,7 @@ export type StreamErrorCategory =
   | "timeout"
   | "upstream"
   | "network"
+  | "blocked_address"
   | "unknown";
 
 export type StreamErrorAction =
@@ -239,8 +244,41 @@ function isAbortOrCancelErrorChunk(chunk: unknown): boolean {
   );
 }
 
+/**
+ * 出站地址策略拦截时 doc-render/fetchUrlPolicy 抛出的稳定文案前缀（小写比对）。
+ * 该错误有两条到达路径，措辞都保留原文：
+ * 1. modelFetch 的 DNS 预检直接抛出，message 即原文；
+ * 2. undici DNS 拦截器在连接期抛出，被 AI SDK 包成 `Cannot connect to API: <原文>`，
+ *    原始 Error 还挂在 cause 上。
+ * 因此匹配用「包含 + 沿 cause 链回溯」，不依赖具体包装层。
+ */
+const BLOCKED_ADDRESS_MARKERS = [
+  "blocked private/non-global-unicast address",
+  "blocked private address",
+  "blocked loopback address",
+] as const;
+
+function hasBlockedAddressMarker(text: string): boolean {
+  const lower = text.toLowerCase();
+  return BLOCKED_ADDRESS_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/** 模型出站被本地地址策略（内网/链路本地/loopback）拦截，而非真的网络不通。 */
+export function isBlockedAddressStreamErrorChunk(chunk: unknown): boolean {
+  if (hasBlockedAddressMarker(streamErrorMessage(chunk))) return true;
+  let current = streamErrorValue(chunk);
+  for (let depth = 0; current !== null && typeof current === "object" && depth < 5; depth += 1) {
+    const message = (current as { message?: unknown }).message;
+    if (typeof message === "string" && hasBlockedAddressMarker(message)) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function isTransientStreamErrorChunk(chunk: unknown): boolean {
   if (isIdleTimeoutChunk(chunk) || isAbortOrCancelErrorChunk(chunk)) return false;
+  // 本地策略拦截是确定性失败，重试只会原样再失败一次，必须直接把原因透给用户。
+  if (isBlockedAddressStreamErrorChunk(chunk)) return false;
   if (normalizedStreamErrorStatusCode(chunk) !== undefined) return false;
   const message = streamErrorMessage(chunk).toLowerCase();
   return [
@@ -317,6 +355,21 @@ export function streamErrorDetails(chunk: unknown): StreamErrorDetails {
       category: "upstream",
       userMessage,
       action: "retry",
+    };
+  }
+  // 放在网络兜底之前：请求根本没出机器，是本地地址策略拦下的，笼统的"连接失败，请重试"
+  // 会让用户在网络侧空转，必须把真实原因和出路说清楚。
+  if (isBlockedAddressStreamErrorChunk(chunk)) {
+    const userMessage =
+      "模型地址解析为内网地址，被本地安全策略拦截。" +
+      "若这是公司或自建的内网模型服务：桌面客户端请更新到最新版（已默认放行）；" +
+      "自部署请设置 QINGAGENT_ALLOW_PRIVATE_MODEL_HOST=1。";
+    return {
+      reason: userMessage,
+      retriable: false,
+      category: "blocked_address",
+      userMessage,
+      action: "check_model_settings",
     };
   }
   const userMessage = "模型服务连接失败，请重试。";

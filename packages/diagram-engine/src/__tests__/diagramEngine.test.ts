@@ -1300,6 +1300,34 @@ flowchart TD
     ]);
   });
 
+  it("stateDiagram-v2 嵌套复合状态在最外层闭合前持续保护 transition", () => {
+    const source = [
+      "stateDiagram-v2",
+      "  state Outer {",
+      "    state Inner {",
+      "      A --> B",
+      "    }",
+      "    C --> D",
+      "  }",
+      "  E --> F",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    const model = parsed.model as StateGraph;
+    const innerEdge = model.edges.find((item) => item.source === "A")!;
+    const outerEdge = model.edges.find((item) => item.source === "C")!;
+    const rootEdge = model.edges.find((item) => item.source === "E")!;
+
+    expect(innerEdge.rewritable).toBe(false);
+    expect(outerEdge.rewritable).toBe(false);
+    expect(rootEdge.rewritable).toBe(true);
+    expect(getCapabilities(parsed, { edgeId: outerEdge.id }).find((cap) => cap.op === "deleteEdge")?.enabled).toBe(false);
+    expect(applyEdit(source, { kind: "deleteEdge", edgeId: outerEdge.id })).toMatchObject({
+      ok: false,
+      source,
+    });
+  });
+
   it("state/ER/class 的 Unicode、混合和数字开头 id 与 flowchart 口径一致", () => {
     const state = parseDiagram(`stateDiagram-v2
   123状态 --> 中英State_2

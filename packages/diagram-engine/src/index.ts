@@ -2509,7 +2509,7 @@ function parseState(source: string): ParseResult {
   let edgeOrder = 0;
   let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("state");
-  let inComposite = false;
+  let compositeDepth = 0;
   const ensureNode = (id: string, label = id, declared = false, span?: Span, labelSpan?: Span, kind: "state" | "start" | "end" | "choice" | "fork" | "composite" = "state") => {
     const existing = nodes.get(id);
     if (existing) {
@@ -2537,11 +2537,13 @@ function parseState(source: string): ParseResult {
       );
       if (specialDeclaration) deleteProtectedNodeIds.add(specialDeclaration[1]!);
       protectedSpans.push(lineSpan(line));
-      if (/\{/.test(trimmed)) inComposite = true;
+      const opened = (trimmed.match(/{/g) ?? []).length;
+      const closed = (trimmed.match(/}/g) ?? []).length;
+      compositeDepth = Math.max(0, compositeDepth + opened - closed);
       continue;
     }
     if (/^}$/.test(trimmed)) {
-      inComposite = false;
+      compositeDepth = Math.max(0, compositeDepth - 1);
       protectedSpans.push(lineSpan(line));
       continue;
     }
@@ -2569,7 +2571,7 @@ function parseState(source: string): ParseResult {
         syntaxKind: "-->",
         orderIndex,
         scopePath: [],
-        rewritable: !inComposite && !from.pseudo && !to.pseudo,
+        rewritable: compositeDepth === 0 && !from.pseudo && !to.pseudo,
         stmt: lineSpan(line),
       });
       continue;

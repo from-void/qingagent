@@ -113,6 +113,39 @@ describe("diagram overlay 数据域", () => {
     expect(block.attrs.overlay?.edgeHandles?.ORPHAN).toBeUndefined();
   });
 
+  it.each([false, true])("replaceBlock 在 overlay=%s 时均继承图表持久化高度", (withOverlay) => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-height",
+          lang: "mermaid",
+          source: "flowchart TD\n  A --> B\n",
+          svg: null,
+          height: 360,
+          ...(withOverlay ? { overlay: { positions: { A: { x: 10, y: 20 } } } } : {}),
+        },
+      }],
+    };
+
+    const result = applyBlockEdits(source, [{
+      action: "replaceBlock",
+      ref: "diagram-height",
+      block: {
+        type: "diagram",
+        lang: "mermaid",
+        source: "flowchart TD\n  A[新开始] --> B[结束]\n",
+      },
+    }]);
+
+    expect(result.ok).toBe(true);
+    const block = firstDiagram(result.doc!);
+    expect(block.attrs.height).toBe(360);
+    expect(block.attrs.overlay?.positions?.A).toEqual(withOverlay ? { x: 10, y: 20 } : undefined);
+  });
+
   it("replaceBlock 删除无关早序边后继承未改边 edgeStyles", () => {
     const styledEdgeId = stableEdgeId("flow", { source: "B", target: "C", syntaxKind: "-->" }, 0);
     const base: PmDoc = {

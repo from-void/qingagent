@@ -1,4 +1,4 @@
-import { truncateGraphemes } from "@qingagent/contract-ts";
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 
 export type DiagramType = "flowchart" | "state" | "er" | "class" | "mindmap";
 
@@ -374,6 +374,7 @@ type EdgeIdFactory = (input: EdgeIdInput) => string;
 // 短形 `<--|x|`/`<==|x|` 直接解析失败(已实测),故反向回写一律用长形(见 flowArrowToken)。
 const FLOW_ARROW_TOKEN_RE = /(?:<-.->|<-->|<==>|<---|<===|<-.-|<==|<--|-.->|==>|---|-.-|===|-->)/g;
 const MERMAID_ID_SOURCE = String.raw`[\p{L}\p{N}_][\p{L}\p{N}_-]*`;
+const MAX_MERMAID_ID_GRAPHEMES = 64;
 const MERMAID_ID_LIST_SOURCE = String.raw`${MERMAID_ID_SOURCE}(?:\s*,\s*${MERMAID_ID_SOURCE})*`;
 const MERMAID_ID_RE = new RegExp(String.raw`^${MERMAID_ID_SOURCE}$`, "u");
 const FLOW_NODE_REF_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})(.*)$`, "u");
@@ -782,7 +783,7 @@ export function safeMermaidId(label: string, prefix = "n"): string {
   if (!/^[A-Za-z_]/.test(id)) id = `${prefix}_${id}`;
   if (/^end$/i.test(id)) id = `${id}_node`;
   if (/^[ox]/i.test(id)) id = `${prefix}_${id}`;
-  const truncated = truncateGraphemes(id, 64);
+  const truncated = truncateGraphemes(id, MAX_MERMAID_ID_GRAPHEMES);
   return isStableMermaidId(truncated) ? truncated : "n";
 }
 
@@ -2069,7 +2070,7 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
       ...model.nodes.map((node) => node.id),
       ...model.subgraphs.map((subgraph) => subgraph.id),
     ];
-    const id = uniqueId(reservedIds, safeMermaidId(op.label));
+    const id = boundedUniqueMermaidId(reservedIds, safeMermaidId(op.label));
     const newSource = insertBeforeSourceEnd(source, `  ${id}["${safeMermaidLabel(op.label)}"]\n`);
     const reparsed = parseFlowchart(newSource);
     if (!reparsed.ok || reparsed.model.type !== "flowchart") {
@@ -2675,7 +2676,10 @@ function rewriteState(source: string, p: ParseResult, op: EditOp): RewriteResult
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label, "state"));
+    const id = boundedUniqueMermaidId(
+      model.nodes.map((n) => n.id),
+      safeMermaidId(op.label, "state"),
+    );
     const nextSource = insertBeforeSourceEnd(source, `  state "${safeMermaidLabel(op.label)}" as ${id}\n`);
     return addedNodeRewriteResult(source, nextSource, "state", id);
   }
@@ -2843,7 +2847,7 @@ function rewriteEr(source: string, p: ParseResult, op: EditOp): RewriteResult {
   }
   if (op.kind === "addNode") {
     const baseId = safeMermaidId(safeMermaidId(op.label, "entity").toUpperCase(), "ENTITY");
-    const id = uniqueId(model.entities.map((n) => n.id), baseId);
+    const id = boundedUniqueMermaidId(model.entities.map((n) => n.id), baseId);
     const nextSource = insertBeforeSourceEnd(source, `  ${id}\n`);
     return addedNodeRewriteResult(source, nextSource, "er", id);
   }
@@ -3008,7 +3012,10 @@ function rewriteClass(source: string, p: ParseResult, op: EditOp): RewriteResult
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.classes.map((n) => n.id), safeMermaidId(op.label, "Class"));
+    const id = boundedUniqueMermaidId(
+      model.classes.map((n) => n.id),
+      safeMermaidId(op.label, "Class"),
+    );
     const nextSource = insertBeforeSourceEnd(source, `  class ${id}\n`);
     return addedNodeRewriteResult(source, nextSource, "class", id);
   }
@@ -4234,6 +4241,22 @@ function uniqueId(existing: Iterable<string>, base: string): string {
   return `${base}_${i}`;
 }
 
+function boundedUniqueMermaidId(
+  existing: Iterable<string>,
+  base: string,
+): string {
+  const used = new Set(existing);
+  if (!used.has(base)) return base;
+  let index = 2;
+  while (true) {
+    const suffix = `_${index}`;
+    const baseLimit = MAX_MERMAID_ID_GRAPHEMES - countGraphemes(suffix);
+    const candidate = `${truncateGraphemes(base, baseLimit)}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+    index += 1;
+  }
+}
+
 function spanContains(container: Span, inner: Span): boolean {
   return container.start <= inner.start && inner.end <= container.end;
 }
@@ -4262,6 +4285,12 @@ function addedNodeRewriteResult(
   const reparsed = parseDiagram(nextSource);
   if (!reparsed.ok || reparsed.model.type !== expectedType) {
     return { ok: false, source, error: reparsed.error ?? "新节点写回后无法重新解析" };
+  }
+  if (
+    countGraphemes(id) > MAX_MERMAID_ID_GRAPHEMES ||
+    !isStableMermaidId(id)
+  ) {
+    return { ok: false, source, error: "新节点 ID 写回校验失败" };
   }
   const matchingNodes = modelNodes(reparsed.model).filter((node) => node.id === id);
   if (matchingNodes.length !== 1) {

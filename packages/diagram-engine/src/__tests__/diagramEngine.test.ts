@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { countGraphemes } from "@qingagent/contract-ts";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
@@ -1396,6 +1397,39 @@ flowchart TD
       : [];
     expect(ids).toContain(added.newNodeId);
     expect(Array.from(added.newNodeId ?? "")).toHaveLength(64);
+  });
+
+  it.each([
+    ["flowchart", (id: string) => `flowchart TD\n  ${id}[既有]\n`],
+    ["state", (id: string) => `stateDiagram-v2\n  ${id}\n`],
+    ["er", (id: string) => `erDiagram\n  ${id}\n`],
+    ["class", (id: string) => `classDiagram\n  class ${id}\n`],
+  ] as const)("%s addNode 冲突后缀仍保持 64 字素 ID 上限", (_type, sourceForId) => {
+    const label = `A${"𠮷".repeat(70)}`;
+    const existingId = `A${"𠮷".repeat(63)}`;
+    const source = sourceForId(existingId);
+
+    const added = applyEdit(source, { kind: "addNode", label });
+
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).not.toBe(existingId);
+    expect(added.newNodeId).toMatch(/_2$/);
+    expect(countGraphemes(added.newNodeId ?? "")).toBeLessThanOrEqual(64);
+    expect(added.newNodeId).toMatch(/^[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u);
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const ids = reparsed.ok
+      ? reparsed.model.type === "flowchart" || reparsed.model.type === "state"
+        ? reparsed.model.nodes.map((node) => node.id)
+        : reparsed.model.type === "er"
+          ? reparsed.model.entities.map((node) => node.id)
+          : reparsed.model.type === "class"
+            ? reparsed.model.classes.map((node) => node.id)
+            : []
+      : [];
+    expect(ids.filter((id) => id === existingId)).toHaveLength(1);
+    expect(ids.filter((id) => id === added.newNodeId)).toHaveLength(1);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("er/class rename 默认拒绝", () => {

@@ -70,6 +70,18 @@ export interface GithubConnectorOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
+function githubScopesCover(
+  requiredScopes: readonly string[],
+  grantedScopes: readonly string[],
+): boolean {
+  const granted = new Set(grantedScopes);
+  return requiredScopes.every(
+    (scope) =>
+      granted.has(scope) ||
+      (scope === "public_repo" && granted.has("repo")),
+  );
+}
+
 export class GithubConnector implements ConnectorAdapter {
   private readonly clientId: string;
   private readonly pending: PendingStore<GithubPendingValue>;
@@ -188,7 +200,7 @@ export class GithubConnector implements ConnectorAdapter {
     try {
       const token = await this.auth.poll(device.device_code, device.interval ?? 5, Date.now() + device.expires_in * 1000, signal);
       const grantedScopes = token.scope.split(/[ ,]+/).map((value) => value.trim()).filter(Boolean);
-      if (!targetScopes.every((scope) => grantedScopes.includes(scope))) throw new GithubConnectorError("GitHub 实际授权范围不足", "INSUFFICIENT_SCOPE", 409);
+      if (!githubScopesCover(targetScopes, grantedScopes)) throw new GithubConnectorError("GitHub 实际授权范围不足", "INSUFFICIENT_SCOPE", 409);
       const user = (await this.client(token.access_token).user(signal)).data;
       const account = { id: String(user.id), displayName: `@${user.login}` };
       if (oldBundle && oldBundle.payload.account.id !== account.id) throw new GithubConnectorError("GitHub 授权账号发生变化，需显式确认", "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED", 409);

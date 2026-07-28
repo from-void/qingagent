@@ -212,6 +212,59 @@ describe("GithubConnector 授权生命周期", () => {
     expect(h.bundle).toBeNull();
   });
 
+  it("申请 public_repo 时接受 GitHub 规范化返回的更广 repo scope", async () => {
+    const requestedScopes: string[] = [];
+    vi.mocked(saveConnectorCredentialBundle).mockImplementationOnce(async (_connectorId, payload) => {
+      h.bundle = {
+        version: 1,
+        connectorId: "github",
+        revision: 2,
+        payload: payload as GithubCredentialPayload,
+      };
+      return h.bundle as never;
+    });
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/login/device/code")) {
+        requestedScopes.push(new URLSearchParams(String(init?.body)).get("scope")!);
+        return new Response(JSON.stringify({
+          device_code: "device-public",
+          user_code: "PUBLIC",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return new Response(JSON.stringify({
+          access_token: "token-repo",
+          token_type: "bearer",
+          scope: "repo",
+        }));
+      }
+      if (url.endsWith("/user")) {
+        return new Response(JSON.stringify({ id: 1, login: "octo" }));
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      apiBaseUrl: "https://api.github.test",
+      fetch,
+      sleep: async () => {},
+    });
+
+    const started = await connector.start({ scope: "public_repo" });
+    await vi.waitFor(() => expect(saveConnectorCredentialBundle).toHaveBeenCalledTimes(1));
+
+    expect(requestedScopes).toEqual(["public_repo"]);
+    await expect(connector.status(started.pendingId)).resolves.toMatchObject({
+      state: "connected",
+      scopes: ["repo"],
+    });
+  });
+
   it("不同 scope 的并发 start 不共享授权卡", async () => {
     const publicStarted = deferred();
     const releasePublic = deferred();

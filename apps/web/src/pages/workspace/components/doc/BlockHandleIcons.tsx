@@ -28,7 +28,8 @@ export type BlockHandleIconName =
   | "delete"
   | "insert"
   | "equalColumns"
-  | "chevron";
+  | "chevron"
+  | "check";
 
 export function BlockHandleIcon({ name }: { name: BlockHandleIconName }) {
   switch (name) {
@@ -214,6 +215,12 @@ export function BlockHandleIcon({ name }: { name: BlockHandleIconName }) {
       return (
         <svg className="bh-svg" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M6.2 4.2L10 8l-3.8 3.8" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg className="bh-svg" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3.4 8.4l3.1 3.2 6.1-7" />
         </svg>
       );
     default:

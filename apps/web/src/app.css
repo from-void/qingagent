@@ -143,6 +143,9 @@
 }
 .nokey-tip-btn {
   /* 右对齐:气泡锚在发送按钮上方,按钮贴右最贴近光标来向,移过去最快 */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   align-self: flex-end;
   height: 27px;
   padding: 0 13px;

@@ -9,7 +9,8 @@ import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
-import { CheckIcon } from "./icons";
+import { AlignIcon, CaretIcon, CheckIcon } from "./icons";
+import type { AlignVariant } from "./icons";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import {
   createDrawioBlockId,
@@ -1061,7 +1062,7 @@ export function DocToolbar({
         active={Boolean(editor?.isActive("heading"))}
       >
         <span className="dt-lbl">T</span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "heading"}>
           <MenuItem k="H1" onPick={() => runCommand("formatBlock", "H1")} disabled={!editorEditable}>
             大标题
@@ -1122,17 +1123,17 @@ export function DocToolbar({
         disabled={!editorEditable || !toolbarUnlock.align}
         active={Boolean(editor?.isActive({ textAlign: "center" }) || editor?.isActive({ textAlign: "right" }))}
       >
-        <span className="dt-lbl">≡</span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-lbl dt-lbl-icon"><AlignIcon align="justify" size={15} /></span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "align"}>
           <MenuItem onPick={() => runCommand("justifyLeft")}>
-            ⬅ 左对齐
+            <MenuAlignIcon align="left" />左对齐
           </MenuItem>
           <MenuItem onPick={() => runCommand("justifyCenter")}>
-            ↔ 居中
+            <MenuAlignIcon align="center" />居中
           </MenuItem>
           <MenuItem onPick={() => runCommand("justifyRight")}>
-            ➡ 右对齐
+            <MenuAlignIcon align="right" />右对齐
           </MenuItem>
         </Menu>
       </Group>
@@ -1211,7 +1212,7 @@ export function DocToolbar({
         <span className="dt-lbl dt-hi-lbl">
           A<span className="dt-hi-bar" />
         </span>
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "colors"} className="dt-menu-colors">
           <ColorPaletteMenu
             disabled={!editorEditable || !toolbarUnlock.marks}
@@ -1230,7 +1231,7 @@ export function DocToolbar({
         disabled={!editorEditable}
       >
         <ToolbarIcon name="insert" />
-        <span className="dt-caret">▾</span>
+        <span className="dt-caret"><CaretIcon size={11} /></span>
         <Menu open={openDd === "insert"}>
           <MenuItem onPick={handleInsertImage} disabled={!editorEditable}><MenuIcon name="image" />插入图片</MenuItem>
           <MenuItem onPick={handleInsertFile} disabled={!editorEditable || !toolbarUnlock.resourceRef}><MenuIcon name="file" />插入文件</MenuItem>
@@ -1486,6 +1487,15 @@ function ColorPaletteMenu({
         </div>
       </div>
     </div>
+  );
+}
+
+/** 菜单行里的对齐图标:复用共用 AlignIcon,套 dt-menu-icon 盒子与其它菜单图标同列对齐。 */
+function MenuAlignIcon({ align }: { align: AlignVariant }) {
+  return (
+    <span className="dt-menu-icon" aria-hidden="true">
+      <AlignIcon align={align} size={15} />
+    </span>
   );
 }
 

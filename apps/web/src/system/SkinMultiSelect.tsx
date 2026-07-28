@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "./useAnchoredPopover";
 import { useOverlayDismiss } from "./overlayDismissStack";
+import { CaretIcon, CheckIcon } from "./icons";
 import "./skinControls.css";
 
 export interface SkinMultiSelectOption {
@@ -143,7 +144,7 @@ export function SkinMultiSelect({
       onClick={() => choose(index)}
     >
       <span>{label}</span>
-      <span className="skin-select__check" aria-hidden>{checked ? "✓" : ""}</span>
+      <span className="skin-select__check" aria-hidden>{checked ? <CheckIcon size={11} /> : null}</span>
     </button>
   );
 
@@ -183,7 +184,7 @@ export function SkinMultiSelect({
         onKeyDown={handleKeyDown}
       >
         <span className="skin-select__value">{summaryLabel}</span>
-        <span className="skin-select__caret" aria-hidden>⌄</span>
+        <span className="skin-select__caret" aria-hidden><CaretIcon size={13} /></span>
       </button>
       {menu ? createPortal(menu, document.body) : null}
     </span>

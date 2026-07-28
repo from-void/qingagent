@@ -1303,11 +1303,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               </button>
               <div className="bh-divider" />
               <button type="button" role="menuitemcheckbox" aria-checked={tableMenuState.hasHeaderRow} className="block-handle-item" onClick={() => runTableMenuCommand("headerRow")}>
-                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderRow ? "✓" : ""}</span>
+                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderRow ? <BlockHandleIcon name="check" /> : null}</span>
                 标题行
               </button>
               <button type="button" role="menuitemcheckbox" aria-checked={tableMenuState.hasHeaderColumn} className="block-handle-item" onClick={() => runTableMenuCommand("headerColumn")}>
-                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderColumn ? "✓" : ""}</span>
+                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderColumn ? <BlockHandleIcon name="check" /> : null}</span>
                 标题列
               </button>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => runTableMenuCommand("evenColumns")}>

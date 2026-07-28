@@ -17,6 +17,7 @@ import {
   type SkillRef,
   type TableSelection,
 } from "@qingagent/contract-ts";
+import { ArrowRightIcon } from "../../../system/icons";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources/hooks";
 import { invocableSkillActionsFromApi } from "../../../system/skillDisplay";
@@ -1130,7 +1131,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             // 正在输出中 且 输入框为空 → 停止;其余情况(含输出中但已输入新内容,
             // 即中断改写)→ 发送。
             // 停止是常规操作不是危险操作 → 走次级按钮盒(墨色描边浅底),禁用红色;
-            // 几何与「发送 →」对齐(同字号/同内距/同高),样式落 workspace 皮肤的
+            // 几何与「发送」按钮对齐(同字号/同内距/同高),样式落 workspace 皮肤的
             // [data-wf="WsStopBtn"] 选择器,不动 ui-kit 全局 ghost 定义。
             <Button
               size="small"
@@ -1163,7 +1164,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 disabled={sendDisabled || noModelKey}
                 title={noModelKey ? "还没配置模型 key" : "Enter 发送 · Shift+Enter 换行"}
               >
-                发送 →
+                发送<ArrowRightIcon size={12} />
               </Button>
             </NoKeyTip>
           )}

@@ -927,6 +927,10 @@
   color: var(--qj-header-sub);
 }
 .qj-sheet-body .sm-back {
+  /* 返回箭头改 SVG 后按 flex 排:图标与文字基线不再靠字符高度硬凑 */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin: 0 0 12px;
   padding: 0;
   border: none;

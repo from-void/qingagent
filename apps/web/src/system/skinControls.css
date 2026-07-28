@@ -50,10 +50,12 @@
 }
 
 .skin-select__caret {
+  /* SVG 尖角:块级 + flex 居中，横竖都正（旧文字字符 ⌄ 靠 translateY 硬凑，永远偏） */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   color: var(--skin-control-accent);
-  font-size: 13px;
-  transform: translateY(-1px);
 }
 
 .skin-select--paper,
@@ -140,10 +142,13 @@
 }
 
 .skin-select__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
+  height: 12px;
   flex: 0 0 12px;
   color: var(--skin-menu-accent);
-  font-weight: 800;
 }
 
 .skin-date__trigger {

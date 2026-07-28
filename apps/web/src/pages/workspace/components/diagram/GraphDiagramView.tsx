@@ -86,6 +86,7 @@ import {
 } from "@qingagent/diagram-engine";
 import { useToast } from "../../../../system";
 import { MediaBlockToolbar } from "../MediaBlockToolbar";
+import { CaretIcon } from "../icons";
 import type { DiagramVisualChange } from "./DiagramRenderer";
 import "./graphDiagram.css";
 import "../diagramEditorChrome.css";
@@ -4215,7 +4216,7 @@ function ToolbarDropdownButton({
       {iconNode ?? <GraphIcon name={icon} color={swatchColor} />}
       {valueLabel ? <span className="graph-diagram-toolbar__value">{valueLabel}</span> : null}
       {/* 「…」溢出钮本身就是"更多"的语义,再挂一个下拉尖角是重复噪点。 */}
-      {icon === "more" ? null : <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>}
+      {icon === "more" ? null : <span className="graph-diagram-toolbar__caret" aria-hidden="true"><CaretIcon size={10} /></span>}
     </button>
   );
 }

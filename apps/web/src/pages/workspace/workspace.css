@@ -1354,7 +1354,11 @@
   }
   #view-workspace .dt-btn:disabled:hover{background:transparent}
   #view-workspace .dt-btn .dt-lbl{font-family:var(--font-zh-serif);font-weight:500;font-size:14px;line-height:1}
-  #view-workspace .dt-btn .dt-caret{font-size:9px;color:var(--ink-3)}
+  /* 尖角/对齐改成 SVG 图标(旧的 ▾ ≡ 是文字字符,字形随系统字体、粗细不一也不居中) */
+  #view-workspace .dt-btn .dt-caret{
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3);
+  }
+  #view-workspace .dt-btn .dt-lbl-icon{display:inline-flex;align-items:center;justify-content:center}
   #view-workspace .dt-svg{
     width:16px;height:16px;display:block;fill:none;
     stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;

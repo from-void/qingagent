@@ -4,7 +4,7 @@ import type { ConnectorState, QrCardBody } from "@qingagent/contract-ts";
 import { chatInputBus } from "../../../system";
 import { useVisibilityPausedInterval } from "../../../system/perf/visibilityScheduler";
 import { sanitizeToolbarLinkHref } from "../data/toolbarUnlock";
-import { CheckIcon } from "./icons";
+import { CheckIcon, RefreshIcon } from "./icons";
 import "./QrCard.css";
 
 /**
@@ -251,7 +251,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
             disabled={refreshSent}
             aria-label={refreshSent ? "已请求刷新二维码" : "重新获取已失效二维码"}
           >
-            <span className="qr-card__refresh-icon">↻</span>
+            <span className="qr-card__refresh-icon"><RefreshIcon size={18} /></span>
             <span>{refreshSent ? "已请求刷新" : "二维码已失效，可点此重新获取"}</span>
           </button>
         )}

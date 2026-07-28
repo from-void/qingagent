@@ -1,6 +1,7 @@
 // 模型 key 门禁:检测是否已配置可用 key;未配置时发送按钮 disable + hover 引导气泡,
 // 「去配置」按钮带转场返回首页并打开设置(定位第一个 tab)。新建页与编辑页共用。
 import { useEffect, useState, type ReactNode } from "react";
+import { ArrowRightIcon } from "./icons";
 import {
   getVisitorModelKey,
   readCustomProvider,
@@ -138,7 +139,7 @@ export function NoKeyTip({
       <span className="nokey-tip" role="tooltip">
         <span className="nokey-tip-text">还没配置模型 key,无法开始写作。</span>
         <button type="button" className="nokey-tip-btn" onClick={onConfigure}>
-          去首页配置 →
+          去首页配置<ArrowRightIcon size={12} />
         </button>
       </span>
     </span>

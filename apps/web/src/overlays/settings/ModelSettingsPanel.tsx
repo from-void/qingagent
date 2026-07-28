@@ -3,6 +3,7 @@ import type { UsageSummaryResponse, UsageSummaryRow } from "@qingagent/contract-
 import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
 import { CalendarDatePicker } from "../../system/CalendarDatePicker";
+import { ArrowLeftIcon } from "../../system/icons";
 import { SkinSelect } from "../../system/SkinSelect";
 import { SkinMultiSelect } from "../../system/SkinMultiSelect";
 import { useDelayedVisible } from "../../system/useDelayedVisible";
@@ -1458,7 +1459,7 @@ export function ModelSettingsPanel() {
               disabled={persisting}
               data-wf="ModelConfigBack"
             >
-              ← 返回
+              <ArrowLeftIcon size={13} />返回
             </button>
             {!anyConfigured && (
               <div className="sm-faq">

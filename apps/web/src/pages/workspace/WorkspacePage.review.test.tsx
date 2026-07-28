@@ -2804,7 +2804,7 @@ describe("WorkspacePage review controls", () => {
       editor.innerText = "继续追问";
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await clickButton("发送 →");
+    await clickButton("发送");
     await flushMicrotasks(5);
 
     const sends = sendMessageCommands(stream);
@@ -2824,7 +2824,7 @@ describe("WorkspacePage review controls", () => {
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    await clickButton("发送 →");
+    await clickButton("发送");
     await flushMicrotasks(5);
     expect(host?.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
     expect(sendMessageCommands(stream)).toHaveLength(1);
@@ -2841,7 +2841,7 @@ describe("WorkspacePage review controls", () => {
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    await clickButton("发送 →");
+    await clickButton("发送");
     await flushMicrotasks(5);
     expect(host?.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
     expect(sendMessageCommands(stream)).toHaveLength(1);
@@ -2929,7 +2929,7 @@ describe("WorkspacePage review controls", () => {
     expect(editor.textContent).not.toContain("时间与资料不一致");
 
     vi.useRealTimers();
-    await clickButton("发送 →");
+    await clickButton("发送");
     await flushMicrotasks(5);
     const send = sendMessageCommands(stream)[0];
     expect(send?.kind).toBe("sendMessage");
@@ -3751,7 +3751,7 @@ describe("WorkspacePage review controls", () => {
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       });
 
-      await clickButton("发送 →");
+      await clickButton("发送");
       expect(sendMessageCommands(stream)).toHaveLength(0);
       await clickButton("停止");
 

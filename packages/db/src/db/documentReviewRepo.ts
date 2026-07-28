@@ -1,8 +1,13 @@
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { SavePendingDraftInput } from "./documentDraftRepo.js";
-import { savePendingDocumentDraft } from "./documentDraftRepo.js";
+import {
+  clearDocumentDraft,
+  savePendingDocumentDraft,
+} from "./documentDraftRepo.js";
 import {
   ignoreRebasedDocumentSuggestionsInBatch,
+  LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+  updateDocumentSuggestionStatusInBatch,
   upsertDocumentSuggestion,
 } from "./documentSuggestionsRepo.js";
 import { commitTransaction, withTransaction } from "./documentsClient.js";
@@ -24,6 +29,47 @@ export interface ReplaceRebasedReviewInput {
 export interface SaveInitialReviewBatchInput {
   draft: SavePendingDraftInput & { batchId: string };
   suggestions: readonly DocSuggestion[];
+}
+
+export interface SettleRejectedDocumentReviewInput {
+  docId: string;
+  suggestions: readonly DocSuggestion[];
+}
+
+/**
+ * 全拒绝审阅的终态建议与 draft 必须原子结算。删除 draft 失败时回滚建议终态，
+ * 调用方即可保留原审阅运行态重试，避免重启后从遗留 draft 复活已完成审阅。
+ */
+export async function settleRejectedDocumentReview(
+  input: SettleRejectedDocumentReviewInput,
+): Promise<void> {
+  await ensureMigrated();
+  const now = new Date().toISOString();
+  await withTransaction(async (client) => {
+    for (const suggestion of input.suggestions) {
+      if (suggestion.docId !== input.docId) {
+        throw new Error(`Rejected review suggestion document mismatch: ${suggestion.id}`);
+      }
+      const batchId = suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID;
+      const rowsAffected = await updateDocumentSuggestionStatusInBatch(
+        input.docId,
+        suggestion.baseVersion,
+        batchId,
+        suggestion.id,
+        "rejected",
+        undefined,
+        client,
+        now,
+      );
+      if (rowsAffected === 0) {
+        throw new Error(
+          `Document suggestion not found: ${input.docId}@${suggestion.baseVersion}:${batchId}:${suggestion.id}`,
+        );
+      }
+    }
+    await clearDocumentDraft(input.docId, client);
+    return commitTransaction(undefined);
+  });
 }
 
 /** 首次进入审阅时原子保存草稿与整批建议，禁止暴露半批次。 */

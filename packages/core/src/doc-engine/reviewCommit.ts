@@ -37,6 +37,7 @@ import {
   LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
   persistMappedAnnotationGroups,
   replaceRebasedReview,
+  settleRejectedDocumentReview,
   updateDocumentSuggestionStatusInBatch,
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
@@ -685,7 +686,24 @@ export async function* commitPatches(
   const candidateBaseContentHash = getPmContentHash(oldBaseDoc);
 
   if (accepted.length === 0) {
-    const recordsSettled = yield* settleResolvedReviewRecords(state, records);
+    const settlesEntireReview = records.length === state.suggestions.size;
+    if (settlesEntireReview) {
+      try {
+        await settleRejectedDocumentReview({
+          docId: state.docId,
+          suggestions: records.map((record) => record.suggestion),
+        });
+      } catch (error) {
+        for (const record of records) {
+          yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
+        }
+        yield reviewCommitFailedFrame(state, "rejected_only_atomic_settlement_failed");
+        return;
+      }
+    }
+    const recordsSettled = yield* settleResolvedReviewRecords(state, records, {
+      alreadyPersisted: settlesEntireReview,
+    });
     if (!recordsSettled) {
       yield* finishSettledReviewState(state, "commitPatches:rejected_only_persist_failed");
       return;
@@ -766,13 +784,15 @@ export async function* commitPatches(
       clearReviewDiffState(state);
     }
     if (state.suggestions.size === 0) {
-      await documentDraftRepo.clear(state.docId).catch((err) => {
-        logger.warn("Failed to clear pending draft after rejected-only commit", {
-          sessionId: state.sessionId,
-          docId: state.docId,
-          error: err instanceof Error ? err.message : String(err),
+      if (!settlesEntireReview) {
+        await documentDraftRepo.clear(state.docId).catch((err) => {
+          logger.warn("Failed to clear pending draft after rejected-only commit", {
+            sessionId: state.sessionId,
+            docId: state.docId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
-      });
+      }
       clearInMemoryDraftDocs(state);
       clearStaleReviewStreamLock(state);
       // 诊断 p01:全拒绝收尾此前只发 docStateChanged 不带正文——若前端 state.doc

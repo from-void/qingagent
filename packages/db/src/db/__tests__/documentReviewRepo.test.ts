@@ -5,6 +5,7 @@ import { documentDraftRepo } from "../documentDraftRepo.js";
 import {
   replaceRebasedReview,
   saveInitialReviewBatch,
+  settleRejectedDocumentReview,
 } from "../documentReviewRepo.js";
 import {
   listDocumentSuggestionStatuses,
@@ -139,5 +140,55 @@ describe("saveInitialReviewBatch", () => {
       1,
       "initial-batch",
     )).resolves.toEqual([]);
+  });
+});
+
+describe("settleRejectedDocumentReview", () => {
+  let db: TempDocumentsDb;
+
+  beforeEach(() => { db = prepareTempDocumentsDb("qa-rejected-review-"); });
+  afterEach(() => db.cleanup());
+
+  it("draft 删除失败时终态建议与删除整体回滚，重试后一起落地", async () => {
+    const docId = "doc-atomic-rejected-review";
+    const pendingSuggestion = suggestion("rejected-1", docId, 1);
+    await documentDraftRepo.savePending({
+      docId,
+      threadId: "thread-atomic-rejected-review",
+      baseVersion: 1,
+      baseHash: getPmContentHash(pmDocFromText("旧正文")),
+      draftPmDoc: pmDocFromText("待拒绝草稿"),
+    });
+    await upsertDocumentSuggestion(pendingSuggestion);
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_rejected_draft_delete
+      BEFORE DELETE ON document_drafts
+      WHEN OLD.doc_id = '${docId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected rejected draft delete failure');
+      END`);
+
+    await expect(settleRejectedDocumentReview({
+      docId,
+      suggestions: [pendingSuggestion],
+    })).rejects.toThrow("injected rejected draft delete failure");
+
+    await expect(documentDraftRepo.load(docId)).resolves.toMatchObject({
+      docId,
+      status: "pending_review",
+    });
+    await expect(listDocumentSuggestionStatuses(docId, 1)).resolves.toEqual([
+      { id: pendingSuggestion.id, status: "reviewing", conflict: undefined },
+    ]);
+
+    await getDocumentsClient().execute("DROP TRIGGER fail_rejected_draft_delete");
+    await settleRejectedDocumentReview({
+      docId,
+      suggestions: [pendingSuggestion],
+    });
+
+    await expect(documentDraftRepo.load(docId)).resolves.toBeNull();
+    await expect(listDocumentSuggestionStatuses(docId, 1)).resolves.toEqual([
+      { id: pendingSuggestion.id, status: "rejected", conflict: undefined },
+    ]);
   });
 });

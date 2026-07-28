@@ -50,24 +50,43 @@ export async function insertImageAsset(editor: AssetEditor, file: File): Promise
 }
 
 export async function insertFileAsset(editor: AssetEditor, file: File): Promise<UploadedAsset> {
-  const uploaded = await uploadAssetFile(file);
-  editor.chain().focus().insertContent({
+  const blockId = createUploadBlockId("file");
+  const inserted = editor.chain().focus().insertContent({
     type: "fileAttachment",
     attrs: {
-      fileId: uploaded.fileId,
-      filename: uploaded.filename,
-      mimeType: uploaded.mimeType,
-      size: uploaded.size,
+      blockId,
+      fileId: blockId,
+      filename: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      uploading: true,
     },
   }).run();
+  if (!inserted) throw new Error("Insert file placeholder failed");
+
+  const uploaded = await uploadAssetFile(file).catch((error) => {
+    deleteNodeByBlockId(editor, "fileAttachment", blockId);
+    throw error;
+  });
+  updateNodeAttrsByBlockId(editor, "fileAttachment", blockId, {
+    fileId: uploaded.fileId,
+    filename: uploaded.filename,
+    mimeType: uploaded.mimeType,
+    size: uploaded.size,
+    uploading: false,
+  });
   return uploaded;
 }
 
 function createUploadImageBlockId(): string {
+  return createUploadBlockId("image");
+}
+
+function createUploadBlockId(kind: "image" | "file"): string {
   const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return `upload-image-${random}`;
+  return `upload-${kind}-${random}`;
 }
 
 function updateImageAttrsByBlockId(
@@ -75,12 +94,39 @@ function updateImageAttrsByBlockId(
   blockId: string,
   attrs: Record<string, unknown>,
 ): boolean {
+  return updateNodeAttrsByBlockId(editor, "image", blockId, attrs);
+}
+
+function updateNodeAttrsByBlockId(
+  editor: AssetEditor,
+  nodeType: "image" | "fileAttachment",
+  blockId: string,
+  attrs: Record<string, unknown>,
+): boolean {
   let found = false;
   const tr = editor.state.tr;
   editor.state.doc.descendants((node, pos) => {
     if (found) return false;
-    if (node.type.name !== "image" || node.attrs.blockId !== blockId) return true;
+    if (node.type.name !== nodeType || node.attrs.blockId !== blockId) return true;
     tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...attrs });
+    found = true;
+    return false;
+  });
+  if (!found || !tr.docChanged) return false;
+  editor.view.dispatch(tr);
+  return true;
+}
+
+function deleteNodeByBlockId(
+  editor: AssetEditor,
+  nodeType: "image" | "fileAttachment",
+  blockId: string,
+): boolean {
+  let found = false;
+  const tr = editor.state.tr;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== nodeType || node.attrs.blockId !== blockId) return true;
+    tr.delete(pos, pos + node.nodeSize);
     found = true;
     return false;
   });

@@ -778,6 +778,11 @@ const FileAttachmentNode = Node.create({
       filename: { default: null },
       mimeType: { default: null },
       size: { default: 0 },
+      uploading: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
+      },
     };
   },
 

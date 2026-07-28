@@ -70,11 +70,28 @@ describe("insertUploadedAsset", () => {
     ).toBe(false);
   });
 
-  it("文件仍在 durable upload 后插入 fileAttachment 节点", async () => {
+  it("文件上传时立即在发起位置插入稳定占位,移动光标后仍按 blockId 回写", async () => {
     vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
     editor = createEditor();
 
     const pending = insertFileAsset(editor, new File(["data"], "report.pdf", { type: "application/pdf" }));
+    const placeholder = firstAttachmentAttrs(editor);
+    expect(placeholder).toMatchObject({
+      blockId: expect.stringMatching(/^upload-file-/),
+      fileId: expect.stringMatching(/^upload-file-/),
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      size: 4,
+      uploading: true,
+    });
+    expect(normalizePmDoc(editor.getJSON()).content.some((node) => node.type === "fileAttachment")).toBe(false);
+
+    editor.commands.insertContentAt(editor.state.doc.content.size, {
+      type: "paragraph",
+      attrs: { blockId: "p-after-upload" },
+      content: [{ type: "text", text: "继续编辑" }],
+    });
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
     const xhr = await waitForRequest();
     xhr.resolve({
       fileId: "550e8400-e29b-41d4-a716-446655440000",
@@ -88,6 +105,7 @@ describe("insertUploadedAsset", () => {
     expect(attachment).toMatchObject({
       type: "fileAttachment",
       attrs: {
+        blockId: placeholder.blockId,
         fileId: "550e8400-e29b-41d4-a716-446655440000",
         filename: "report.pdf",
         mimeType: "application/pdf",
@@ -117,6 +135,14 @@ function firstImage(editor: Editor) {
 
 function firstImageAttrs(editor: Editor): Record<string, unknown> {
   const attrs = firstImage(editor)?.attrs;
+  expect(attrs).toBeDefined();
+  return attrs as Record<string, unknown>;
+}
+
+function firstAttachmentAttrs(editor: Editor): Record<string, unknown> {
+  const attrs = (editor.getJSON().content ?? []).find(
+    (node) => node.type === "fileAttachment",
+  )?.attrs;
   expect(attrs).toBeDefined();
   return attrs as Record<string, unknown>;
 }

@@ -1668,15 +1668,15 @@ export function UIKitPage() {
                   </button>
                 </div>
                 <button className="block-handle-item" role="menuitem" type="button">
-                  <span className="bh-icon">⧉</span>
+                  <span className="bh-icon"><BlockHandleIcon name="copy" /></span>
                   复制
                 </button>
                 <button className="block-handle-item" role="menuitem" type="button">
-                  <span className="bh-icon">✂</span>
+                  <span className="bh-icon"><BlockHandleIcon name="cut" /></span>
                   剪切
                 </button>
                 <button className="block-handle-item is-danger" role="menuitem" type="button">
-                  <span className="bh-icon">🗑</span>
+                  <span className="bh-icon"><BlockHandleIcon name="delete" /></span>
                   删除
                 </button>
               </div>

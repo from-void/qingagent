@@ -63,8 +63,23 @@ const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
 const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
+const SESSION_SNAPSHOT_CURSOR_START = "start";
+const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
+const MAX_SESSION_SNAPSHOT_CURSORS = 32;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
+const sessionSnapshotCursors = new Map<string, {
+  sessions: ExternalSessionSummary[];
+  offset: number;
+  expiresAt: number;
+}>();
+
+type ExternalSessionSummary = {
+  id: string;
+  title: string;
+  state: ContentDocState["kind"];
+  updatedAt: string;
+};
 
 type ReviewOutcomeCompletionResult =
   | { status: "completed" }
@@ -133,13 +148,60 @@ externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
   const limit = clampedQueryInteger(c.req.query("limit"), DEFAULT_SESSIONS_LIMIT, 1, MAX_SESSIONS_LIMIT);
   const offset = clampedQueryInteger(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const cursor = c.req.query("cursor");
+  if (cursor !== undefined) {
+    let snapshot: { sessions: ExternalSessionSummary[]; offset: number } | null;
+    if (cursor === SESSION_SNAPSHOT_CURSOR_START) {
+      const all = await listExternalSessions(Number.MAX_SAFE_INTEGER, 0);
+      snapshot = { sessions: all.sessions, offset: 0 };
+    } else {
+      snapshot = takeSessionSnapshotCursor(cursor);
+    }
+    if (!snapshot) {
+      return externalError(
+        c,
+        400,
+        "VALIDATION",
+        "会话分页游标已失效",
+        "重新运行 `qa sessions list --all`",
+      );
+    }
+    const page = sessionSnapshotPage(snapshot.sessions, snapshot.offset, limit);
+    externalLog("sessions", {
+      ms: elapsed(startedAt),
+      result: "ok",
+      count: page.sessions.length,
+      total: page.total,
+      hasMore: page.hasMore,
+    });
+    return c.json(page);
+  }
+  const page = await listExternalSessions(limit, offset);
+  externalLog("sessions", {
+    ms: elapsed(startedAt),
+    result: "ok",
+    count: page.sessions.length,
+    total: page.total,
+    hasMore: page.hasMore,
+  });
+  return c.json(page);
+});
+
+async function listExternalSessions(
+  limit: number,
+  offset: number,
+): Promise<{
+  sessions: ExternalSessionSummary[];
+  total: number;
+  hasMore: boolean;
+}> {
   // documents 与 Mastra thread 同库关联后再分页，孤儿行不会占用 total/offset。
   const { rows, total: persistedTotal } = await documentRepo.listWithExistingThreads({
     resourceId: QINGAGENT_RESOURCE_ID,
     perPage: limit,
     offset,
   });
-  const sessions: Array<{ id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }> = [];
+  const sessions: ExternalSessionSummary[] = [];
   for (const row of rows) {
     const session = await getOrRestoreSessionReadOnly(row.id);
     if (!session) continue;
@@ -150,12 +212,7 @@ externalRoutes.get("/sessions", async (c) => {
       updatedAt: row.updatedAt,
     });
   }
-  const memoryOnlySessions: Array<{
-    id: string;
-    title: string;
-    state: ContentDocState["kind"];
-    updatedAt: string;
-  }> = [];
+  const memoryOnlySessions: ExternalSessionSummary[] = [];
   const memorySessionIds = sessionManager.listSessionIds(50);
   // 当前页之外的真实落盘会话也不能作为内存会话重复出现；但仅有 documents
   // 孤儿行不算落盘列表会话，必须经同一条 thread 恢复路径确认。
@@ -198,19 +255,71 @@ externalRoutes.get("/sessions", async (c) => {
   sessions.push(...memoryPage);
   const mergedTotal = persistedTotal + memoryOnlySessions.length;
   const hasMore = offset + sessions.length < mergedTotal;
-  externalLog("sessions", {
-    ms: elapsed(startedAt),
-    result: "ok",
-    count: sessions.length,
-    total: mergedTotal,
-    hasMore,
-  });
-  return c.json({
+  return {
     sessions,
     total: mergedTotal,
     hasMore,
+  };
+}
+
+function sessionSnapshotPage(
+  sessions: ExternalSessionSummary[],
+  offset: number,
+  limit: number,
+): {
+  sessions: ExternalSessionSummary[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+} {
+  const page = sessions.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const hasMore = nextOffset < sessions.length;
+  return {
+    sessions: page,
+    total: sessions.length,
+    hasMore,
+    nextCursor: hasMore
+      ? storeSessionSnapshotCursor(sessions, nextOffset)
+      : null,
+  };
+}
+
+function storeSessionSnapshotCursor(
+  sessions: ExternalSessionSummary[],
+  offset: number,
+): string {
+  pruneSessionSnapshotCursors();
+  while (sessionSnapshotCursors.size >= MAX_SESSION_SNAPSHOT_CURSORS) {
+    const oldest = sessionSnapshotCursors.keys().next().value as string | undefined;
+    if (!oldest) break;
+    sessionSnapshotCursors.delete(oldest);
+  }
+  const cursor = crypto.randomUUID();
+  sessionSnapshotCursors.set(cursor, {
+    sessions,
+    offset,
+    expiresAt: Date.now() + SESSION_SNAPSHOT_TTL_MS,
   });
-});
+  return cursor;
+}
+
+function takeSessionSnapshotCursor(
+  cursor: string,
+): { sessions: ExternalSessionSummary[]; offset: number } | null {
+  pruneSessionSnapshotCursors();
+  const snapshot = sessionSnapshotCursors.get(cursor);
+  if (!snapshot) return null;
+  sessionSnapshotCursors.delete(cursor);
+  return { sessions: snapshot.sessions, offset: snapshot.offset };
+}
+
+function pruneSessionSnapshotCursors(): void {
+  const now = Date.now();
+  for (const [cursor, snapshot] of sessionSnapshotCursors) {
+    if (snapshot.expiresAt <= now) sessionSnapshotCursors.delete(cursor);
+  }
+}
 
 externalRoutes.post("/sessions", async (c) => {
   const startedAt = Date.now();

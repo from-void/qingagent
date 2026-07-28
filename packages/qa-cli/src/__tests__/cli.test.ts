@@ -363,14 +363,14 @@ describe("qa cli", () => {
     ]);
   });
 
-  it("sessions list --all 自动翻页并输出全量 JSON 元信息", async () => {
+  it("sessions list --all 按服务端快照游标翻页并输出全量 JSON 元信息", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const requestedUrls: string[] = [];
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input);
       requestedUrls.push(url);
-      if (url.endsWith("?limit=2&offset=0")) {
+      if (url.endsWith("?limit=2&cursor=start")) {
         return new Response(JSON.stringify({
           sessions: [
             { id: "s1", title: "会话一", state: "empty", updatedAt: "2026-07-25T00:00:00.000Z" },
@@ -378,23 +378,25 @@ describe("qa cli", () => {
           ],
           total: 3,
           hasMore: true,
+          nextCursor: "snapshot-page-2",
         }));
       }
-      expect(url.endsWith("?limit=2&offset=2")).toBe(true);
+      expect(url.endsWith("?limit=2&cursor=snapshot-page-2")).toBe(true);
       return new Response(JSON.stringify({
         sessions: [
           { id: "s3", title: "会话三", state: "pendingReview", updatedAt: "2026-07-23T00:00:00.000Z" },
         ],
         total: 3,
         hasMore: false,
+        nextCursor: null,
       }));
     }) as typeof fetch;
 
     await main(["sessions", "list", "--all", "--limit", "2", "--json"]);
 
     expect(requestedUrls).toEqual([
-      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&offset=0",
-      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&offset=2",
+      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&cursor=start",
+      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&cursor=snapshot-page-2",
     ]);
     expect(JSON.parse(stdout.mock.calls.map((call) => call[0]).join(""))).toMatchObject({
       sessions: [{ id: "s1" }, { id: "s2" }, { id: "s3" }],

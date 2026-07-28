@@ -338,6 +338,79 @@ describe("external sessions", () => {
     expect(secondBody.total).toBeGreaterThanOrEqual(ids.length);
     expect(secondBody.hasMore).toBe(102 < secondBody.total);
   });
+
+  it("快照游标在页间更新时间变化时不重复或遗漏会话", async () => {
+    vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([]);
+    const prefix = `cursor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const ids = [`${prefix}-a`, `${prefix}-b`, `${prefix}-c`];
+    const updatedAt = [
+      "2030-01-03T00:00:00.000Z",
+      "2030-01-02T00:00:00.000Z",
+      "2030-01-01T00:00:00.000Z",
+    ];
+    for (let index = 0; index < ids.length; index += 1) {
+      const id = ids[index]!;
+      const session = createSession(id, updatedAt[index]!);
+      session.title = `游标会话 ${index + 1}`;
+      sessions.set(id, session);
+      syntheticSessionIds.push(id);
+      await markThreadExistsInDocumentsDb(id);
+    }
+    await documentRepo.saveMany(ids.map((id, index) => ({
+      id,
+      threadId: id,
+      resourceId: QINGAGENT_RESOURCE_ID,
+      title: `游标会话 ${index + 1}`,
+      docState: "editing",
+      docVersion: 1,
+      lastSyncedVersion: 1,
+      pmDoc: normalizePmDoc(markdownToPm(`正文 ${index + 1}`)),
+      createdAt: updatedAt[index]!,
+      updatedAt: updatedAt[index]!,
+    })));
+
+    const first = await app.request(
+      "/api/v1/external/sessions?limit=1&cursor=start",
+      { headers: authHeaders() },
+    );
+    const firstBody = await first.json() as {
+      sessions: Array<{ id: string }>;
+      hasMore: boolean;
+      nextCursor?: string | null;
+    };
+    expect(firstBody.sessions.map((session) => session.id)).toEqual([ids[0]]);
+    expect(firstBody.hasMore).toBe(true);
+    expect(firstBody.nextCursor).toEqual(expect.any(String));
+
+    const last = await documentRepo.load(ids[2]!);
+    expect(last).toBeDefined();
+    await documentRepo.save({
+      ...last!,
+      pmDoc: last!.pmDoc!,
+      updatedAt: "2030-01-04T00:00:00.000Z",
+    });
+
+    const collected = [ids[0]!];
+    let cursor = firstBody.nextCursor!;
+    while (cursor) {
+      const page = await app.request(
+        `/api/v1/external/sessions?limit=1&cursor=${encodeURIComponent(cursor)}`,
+        { headers: authHeaders() },
+      );
+      expect(page.status).toBe(200);
+      const body = await page.json() as {
+        sessions: Array<{ id: string }>;
+        hasMore: boolean;
+        nextCursor?: string | null;
+      };
+      collected.push(...body.sessions.map((session) => session.id));
+      cursor = body.nextCursor ?? "";
+      if (!body.hasMore) break;
+    }
+
+    expect(collected).toEqual(ids);
+    expect(new Set(collected).size).toBe(ids.length);
+  });
 });
 
 function authHeaders(): HeadersInit {

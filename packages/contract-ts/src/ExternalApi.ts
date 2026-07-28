@@ -46,6 +46,7 @@ export interface ExternalSessionsListResponse {
   sessions: ExternalSession[];
   total: number;
   hasMore: boolean;
+  nextCursor?: string | null;
 }
 export interface ExternalSessionCreateRequest {}
 export interface ExternalSessionCreateResponse { sessionId: string; seq: number | null }

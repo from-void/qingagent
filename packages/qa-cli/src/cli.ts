@@ -686,17 +686,22 @@ async function listAllSessions(
   limit: number,
 ): Promise<ExternalSessionsListResponse> {
   const sessions: ExternalSessionsListResponse["sessions"] = [];
-  let offset = 0;
+  let cursor: string | null = "start";
   let total = 0;
-  let hasMore = true;
-  while (hasMore) {
-    const page = await client.request<ExternalSessionsListResponse>(
-      `/sessions?limit=${limit}&offset=${offset}`,
+  while (cursor) {
+    const page: ExternalSessionsListResponse = await client.request<ExternalSessionsListResponse>(
+      `/sessions?limit=${limit}&cursor=${encodeURIComponent(cursor)}`,
     );
     sessions.push(...page.sessions);
     total = page.total;
-    hasMore = page.hasMore;
-    offset += limit;
+    if (!page.hasMore) break;
+    if (!page.nextCursor) {
+      throw new QaCliError(
+        "SERVICE_UNAVAILABLE",
+        "青简会话分页响应不完整",
+      );
+    }
+    cursor = page.nextCursor;
   }
   return { sessions, total, hasMore: false };
 }

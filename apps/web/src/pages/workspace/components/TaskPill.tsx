@@ -23,6 +23,13 @@ export function TaskPill({ todos, inputHidden = false }: TaskPillProps) {
     () => todos.filter((todo) => todo.status === "completed").length,
     [todos],
   );
+  const todoContentKey = useMemo(
+    () =>
+      todos
+        .map((todo) => `${todo.status}\u0000${todo.content}`)
+        .join("\u0001"),
+    [todos],
+  );
   const allCompleted = total > 0 && completed === total;
   // 初始装载(含帧回放/restore 还原出的初始 todos):若一上来就全完成,
   // 视为该清单生命周期已结束,直接不展示(避免强刷后 pill 又闪现再淡出)。
@@ -57,6 +64,7 @@ export function TaskPill({ todos, inputHidden = false }: TaskPillProps) {
       return;
     }
 
+    armedRef.current = false;
     setVisible(true);
     setDismissing(false);
     const fadeTimer = window.setTimeout(() => {
@@ -70,7 +78,7 @@ export function TaskPill({ todos, inputHidden = false }: TaskPillProps) {
       window.clearTimeout(fadeTimer);
       window.clearTimeout(hideTimer);
     };
-  }, [allCompleted, total, todos]);
+  }, [allCompleted, total, todoContentKey]);
 
   // 输入框被接管隐藏时,pill 一律不出现(即使有进行中的任务清单)。
   if (inputHidden || total === 0 || !visible) return null;

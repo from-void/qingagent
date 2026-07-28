@@ -6,23 +6,14 @@ const mockCore = vi.hoisted(() => {
   return { store, getAppSetting: vi.fn(async (key: string) => store.get(key) ?? null) };
 });
 
-vi.mock("@qingagent/core", () => ({
+vi.mock("@qingagent/core", async () => ({
   SETTING_DEEPSEEK_GLOBAL_KEY: "deepseek_global_key",
   SETTING_KIMI_GLOBAL_KEY: "kimi_global_key",
   SETTING_MODEL_PROVIDER: "model_provider",
   SETTING_MODEL_PARAMS: "model_params",
   getAppSetting: mockCore.getAppSetting,
-  sanitizeBaseUrl: (raw: string | undefined) => {
-    const value = raw?.trim();
-    if (!value) return undefined;
-    try {
-      const url = new URL(value);
-      if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-      return value.replace(/\/+$/, "");
-    } catch {
-      return undefined;
-    }
-  },
+  // 归一化用真实 canonical 实现(纯函数、无 DB 依赖),避免测试里另写一套口径失真。
+  sanitizeBaseUrl: (await import("../../../core/src/llm/modelBaseUrl.js")).sanitizeBaseUrl,
   sanitizeModelId: (raw: string | undefined) => {
     const value = raw?.trim();
     return value && /^[A-Za-z0-9._:\/-]+$/.test(value) ? value : undefined;
@@ -128,7 +119,8 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
       protocol: "anthropic",
     });
     expect(r.visitorApiKey).toBe(VKEY);
-    expect(r.baseUrl).toBe("https://open.bigmodel.cn/api/anthropic");
+    // 入口即归一化:没有版本段就补 /v1(与 core resolveBaseUrl 同一 canonical 口径)
+    expect(r.baseUrl).toBe("https://open.bigmodel.cn/api/anthropic/v1");
     expect(r.modelIds).toEqual({ flash: "glm-5.2", pro: "glm-5.2" });
     expect(r.protocol).toBe("anthropic");
   });
@@ -187,6 +179,32 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
 
     expect(r.baseUrl).toBe(baseUrl);
     expect(r.modelIds).toEqual({ flash: "local-model" });
+  });
+
+  // 回归:用户把完整 endpoint(含 /chat/completions)填进 API 地址时,
+  // overrides.baseUrl 必须已是 canonical 形态——下游消费口(如余额接口拼 `${baseUrl}/...`)
+  // 直接用它,拿到未归一化值就会拼出坏路径。
+  it.each([
+    ["https://api.example.com/v1/chat/completions", "https://api.example.com/v1"],
+    ["https://api.example.com/v1/chat/completions/", "https://api.example.com/v1"],
+    ["https://proxy.example.com/openai/v1/messages", "https://proxy.example.com/openai/v1"],
+    ["https://proxy.example.com/api?key=abc#frag", "https://proxy.example.com/api/v1"],
+    ["https://proxy.example.com", "https://proxy.example.com/v1"],
+  ])("baseUrl 入口归一化:%s → %s", async (input, expected) => {
+    const r = await resolveRequestModelOverrides({ visitorKey: VKEY, baseUrl: input });
+    expect(r.baseUrl).toBe(expected);
+  });
+
+  it("归一化后仍指向内网时照旧丢弃,并留服务端日志(不冒用户可见报错)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await resolveRequestModelOverrides({
+      visitorKey: VKEY,
+      baseUrl: "http://10.0.0.8/v1/chat/completions",
+    });
+    expect(r.baseUrl).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("已回退默认端点");
+    warn.mockRestore();
   });
 
   it("带 visitor key 但 protocol 非 anthropic → 不设 protocol(默认 openai)", async () => {

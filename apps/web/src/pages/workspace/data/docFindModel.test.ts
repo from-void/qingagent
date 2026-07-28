@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DocDimensions } from "./docDimensions";
 import {
   FIND_MATCH_LIMIT,
@@ -85,6 +85,26 @@ describe("docFindModel", () => {
     expect(
       collectMatches([{ text: "ΟΣ", pos: 30 }], "ος", false).matches,
     ).toEqual([{ from: 30, to: 32 }]);
+  });
+
+  it("土耳其语折叠吞掉组合点时命中与替换完整覆盖源字符", () => {
+    const originalToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+    const localeSpy = vi
+      .spyOn(String.prototype, "toLocaleLowerCase")
+      .mockImplementation(function toTurkishLowerCase(this: string) {
+        return originalToLocaleLowerCase.call(String(this), "tr-TR");
+      });
+    try {
+      const segments = [{ text: "I\u0307", pos: 7 }];
+      expect(collectMatches(segments, "i", false).matches).toEqual([
+        { from: 7, to: 9 },
+      ]);
+      expect(collectReplaceAllPlans(segments, "i", false, "X")).toEqual([
+        { from: 7, to: 9, insert: "X" },
+      ]);
+    } finally {
+      localeSpy.mockRestore();
+    }
   });
 
   it("空 query 返回空结果", () => {

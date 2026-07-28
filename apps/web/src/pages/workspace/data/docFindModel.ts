@@ -107,22 +107,48 @@ function foldFindTextFromPrefixes(
   const starts: number[] = [];
   const ends: number[] = [];
   let originalOffset = 0;
-  let foldedOffset = 0;
+  let foldedPrefix = "";
 
   for (const char of value) {
     const originalFrom = originalOffset;
     originalOffset += char.length;
-    const nextFoldedOffset = value
+    const nextFoldedPrefix = value
       .slice(0, originalOffset)
-      .toLocaleLowerCase()
-      .length;
-    const from = Math.min(foldedOffset, text.length);
-    const to = Math.min(Math.max(from, nextFoldedOffset), text.length);
-    for (let index = from; index < to; index += 1) {
-      starts[index] = originalFrom;
+      .toLocaleLowerCase();
+    let commonPrefix = 0;
+    while (
+      commonPrefix < foldedPrefix.length &&
+      commonPrefix < nextFoldedPrefix.length &&
+      foldedPrefix[commonPrefix] === nextFoldedPrefix[commonPrefix]
+    ) {
+      commonPrefix += 1;
+    }
+    let commonSuffix = 0;
+    while (
+      commonSuffix < foldedPrefix.length - commonPrefix &&
+      commonSuffix < nextFoldedPrefix.length - commonPrefix &&
+      foldedPrefix[foldedPrefix.length - 1 - commonSuffix] ===
+        nextFoldedPrefix[nextFoldedPrefix.length - 1 - commonSuffix]
+    ) {
+      commonSuffix += 1;
+    }
+    const changedFrom = Math.min(commonPrefix, text.length);
+    const changedTo = Math.min(
+      Math.max(changedFrom, nextFoldedPrefix.length - commonSuffix),
+      text.length,
+    );
+    for (let index = changedFrom; index < changedTo; index += 1) {
+      starts[index] ??= originalFrom;
       ends[index] = originalOffset;
     }
-    foldedOffset = nextFoldedOffset;
+    // 条件折叠可能吞掉当前源码字符，或用它改写既有输出而不增加长度。
+    // 这类零宽源字符必须并入相邻折叠字符的结束边界，替换时才能完整覆盖原文。
+    if (changedFrom === changedTo && nextFoldedPrefix.length > 0) {
+      const anchor = Math.min(changedFrom, nextFoldedPrefix.length - 1);
+      starts[anchor] ??= starts[anchor - 1] ?? originalFrom;
+      ends[anchor] = originalOffset;
+    }
+    foldedPrefix = nextFoldedPrefix;
   }
 
   for (let index = 0; index < text.length; index += 1) {

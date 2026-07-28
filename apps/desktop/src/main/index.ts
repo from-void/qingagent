@@ -4,6 +4,8 @@ import {
   dialog,
   ipcMain,
   Menu,
+  net,
+  protocol,
   safeStorage,
   screen,
   shell,
@@ -28,6 +30,12 @@ import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import { persistClientConfigValue } from "./clientConfigPersistence.js";
+import {
+  createDesktopAppProxyHandler,
+  DESKTOP_APP_ORIGIN,
+  DESKTOP_APP_SCHEME,
+  DESKTOP_APP_URL,
+} from "./desktopAppProtocol.js";
 import {
   readPrivateStringMap,
   writePrivateStringMap,
@@ -123,6 +131,22 @@ const runningFromUncPath = __dirname.startsWith("\\\\");
 if (process.platform === "linux" || runningFromUncPath) {
   app.disableHardwareAcceleration();
 }
+
+// 打包 renderer 使用固定标准 scheme，保证 Web Storage 的 origin 不随内置服务监听端口变化。
+// 必须在 app ready 前登记；实际转发 handler 要等随机监听端口确定后再安装。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: DESKTOP_APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      codeCache: true,
+    },
+  },
+]);
 
 // 用户级配置:从 userData/.env 读密钥等(如 DEEPSEEK_API_KEY)。这样打包后的客户端
 // 无需重新构建即可配置(把 .env 放进 %APPDATA%/<app>/ 即可)。必须在 import server 之前
@@ -894,6 +918,16 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
   }
 }
 
+function installPackagedRendererProtocol(port: number): void {
+  if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
+  protocol.handle(
+    DESKTOP_APP_SCHEME,
+    createDesktopAppProxyHandler(port, (request) =>
+      net.fetch(request, { bypassCustomProtocolHandlers: true }),
+    ),
+  );
+}
+
 async function createWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1047,6 +1081,10 @@ async function createWindowOnce() {
   embeddedServerPort = port;
   addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
   addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
+  if (!isDev) {
+    installPackagedRendererProtocol(port);
+    allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
+  }
   installNetProbe();
   // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
   warmUpModelEndpoint(resolveBaseUrl());
@@ -1070,8 +1108,8 @@ async function createWindowOnce() {
   const contentUrl = isDev
     // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
     ? devContentUrl
-    // 打包态由内置 Hono 同时提供 API 与静态文件。
-    : `http://localhost:${port}`;
+    // 打包态由固定可信 origin 转发到内置 Hono，Web Storage 不再受随机监听端口影响。
+    : DESKTOP_APP_URL;
 
   let contentRecoveryActive = false;
   const recoverContentLoad = async (reason: unknown): Promise<void> => {

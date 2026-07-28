@@ -83,3 +83,25 @@ test("启动壳切入已登记的内置服务 origin，同时继续拒绝非 Web
     false,
   );
 });
+
+test("启动壳只允许登记后的固定桌面 scheme 与精确 host", () => {
+  const allowedAppOrigins = new Set(["qingagent://app"]);
+  assert.equal(
+    isAllowedMainFrameNavigation(
+      "qingagent://app/#/workspace",
+      "data:text/html,loading",
+      undefined,
+      allowedAppOrigins,
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedMainFrameNavigation(
+      "qingagent://other/#/workspace",
+      "data:text/html,loading",
+      undefined,
+      allowedAppOrigins,
+    ),
+    false,
+  );
+});

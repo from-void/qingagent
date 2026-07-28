@@ -917,6 +917,206 @@ function parseDiagramThemeMetadata(
   };
 }
 
+const REPRESENTED_THEME_VARIABLES = new Set([
+  "clusterBkg",
+  "clusterBorder",
+  "lineColor",
+  "mainBkg",
+  "nodeBorder",
+  "primaryBorderColor",
+  "primaryColor",
+  "primaryTextColor",
+  "textColor",
+]);
+const REPRESENTED_NODE_STYLE_PROPERTIES = new Set([
+  "color",
+  "fill",
+  "font-size",
+  "height",
+  "stroke",
+  "stroke-dasharray",
+  "stroke-width",
+  "width",
+]);
+const REPRESENTED_EDGE_STYLE_PROPERTIES = new Set([
+  "color",
+  "curve",
+  "stroke",
+  "stroke-dasharray",
+  "stroke-width",
+]);
+
+function objectKeysAtTopLevel(source: string): string[] {
+  const keys: string[] = [];
+  let index = 0;
+  while (index < source.length) {
+    while (/[\s,]/.test(source[index] ?? "")) index += 1;
+    if (index >= source.length) break;
+    let key = "";
+    const quote = source[index];
+    if (quote === "'" || quote === '"') {
+      index += 1;
+      while (index < source.length && source[index] !== quote) {
+        if (source[index] === "\\") index += 1;
+        key += source[index] ?? "";
+        index += 1;
+      }
+      index += 1;
+    } else {
+      const match = source.slice(index).match(/^[\w-]+/);
+      if (!match) return [];
+      key = match[0];
+      index += key.length;
+    }
+    while (/\s/.test(source[index] ?? "")) index += 1;
+    if (source[index] !== ":") return [];
+    keys.push(key);
+    index += 1;
+
+    let braces = 0;
+    let brackets = 0;
+    let valueQuote: "'" | '"' | null = null;
+    let escaped = false;
+    while (index < source.length) {
+      const char = source[index]!;
+      if (valueQuote) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === valueQuote) {
+          valueQuote = null;
+        }
+      } else if (char === "'" || char === '"') {
+        valueQuote = char;
+      } else if (char === "{") {
+        braces += 1;
+      } else if (char === "}") {
+        braces -= 1;
+      } else if (char === "[") {
+        brackets += 1;
+      } else if (char === "]") {
+        brackets -= 1;
+      } else if (char === "," && braces === 0 && brackets === 0) {
+        index += 1;
+        break;
+      }
+      index += 1;
+    }
+  }
+  return keys;
+}
+
+function stylePropertiesFullyRepresented(
+  source: string,
+  representedProperties: ReadonlySet<string>,
+): boolean {
+  const declarations = splitStyleDeclarations(source);
+  if (declarations.length === 0) return false;
+  return declarations.every((declaration) => {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) return false;
+    return representedProperties.has(
+      declaration.slice(0, colon).trim().toLowerCase(),
+    );
+  });
+}
+
+function initDirectiveFullyRepresented(source: string): boolean {
+  const initMatches = [...source.matchAll(/%%\{\s*init\s*:/gi)];
+  if (initMatches.length === 0) return true;
+  if (initMatches.length !== 1) return false;
+  const initStart = initMatches[0]!;
+  const payloadStart = initStart.index + initStart[0].length;
+  const directiveEnd = /\}\s*%%/g;
+  directiveEnd.lastIndex = payloadStart;
+  const endMatch = directiveEnd.exec(source);
+  if (!endMatch) return false;
+  const payload = source.slice(payloadStart, endMatch.index);
+  const objectStart = payload.indexOf("{");
+  if (objectStart < 0) return false;
+  const initBody = extractBalancedObjectBody(payload, objectStart);
+  if (initBody === null) return false;
+  const initKeys = objectKeysAtTopLevel(initBody);
+  if (
+    initKeys.length === 0 ||
+    initKeys.some((key) => key !== "theme" && key !== "themeVariables")
+  ) {
+    return false;
+  }
+  const theme = readObjectValue(initBody, "theme");
+  if (theme !== undefined && theme.toLowerCase() !== "base") return false;
+
+  const themeVariablesKey =
+    /(?:["']themeVariables["']|\bthemeVariables\b)\s*:/i.exec(initBody);
+  if (!themeVariablesKey) return false;
+  const variablesStart = initBody.indexOf(
+    "{",
+    themeVariablesKey.index + themeVariablesKey[0].length,
+  );
+  if (variablesStart < 0) return false;
+  const variablesBody = extractBalancedObjectBody(initBody, variablesStart);
+  if (variablesBody === null) return false;
+  const variableKeys = objectKeysAtTopLevel(variablesBody);
+  if (
+    variableKeys.length === 0 ||
+    variableKeys.some((key) => !REPRESENTED_THEME_VARIABLES.has(key)) ||
+    variableKeys.some(
+      (key) => !sanitizeColor(readObjectValue(variablesBody, key)),
+    )
+  ) {
+    return false;
+  }
+
+  const palette = parseThemePalette(source);
+  return !!(
+    palette?.nodeFill &&
+    palette.nodeStroke &&
+    palette.lineColor &&
+    palette.textColor &&
+    palette.clusterFill &&
+    palette.clusterStroke
+  );
+}
+
+function presentationSyntaxFullyRepresented(source: string): boolean {
+  if (!initDirectiveFullyRepresented(source)) return false;
+  for (const line of getLines(source)) {
+    const trimmed = stripTrailingComment(line.text).trim();
+    const classDefinition = trimmed.match(CLASS_DEFINITION_RE);
+    if (
+      classDefinition &&
+      !stylePropertiesFullyRepresented(
+        classDefinition[2]!,
+        REPRESENTED_NODE_STYLE_PROPERTIES,
+      )
+    ) {
+      return false;
+    }
+    const inlineStyle = trimmed.match(INLINE_STYLE_RE);
+    if (
+      inlineStyle &&
+      !stylePropertiesFullyRepresented(
+        inlineStyle[2]!,
+        REPRESENTED_NODE_STYLE_PROPERTIES,
+      )
+    ) {
+      return false;
+    }
+    const linkStyle = trimmed.match(/^linkStyle\s+\S+\s+(.+?)\s*;?$/i);
+    if (
+      linkStyle &&
+      !stylePropertiesFullyRepresented(
+        linkStyle[1]!,
+        REPRESENTED_EDGE_STYLE_PROPERTIES,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseThemePalette(source: string): ThemePalette | undefined {
   const initStart = /%%\{\s*init\s*:/i.exec(source);
   if (!initStart) return undefined;
@@ -1323,6 +1523,7 @@ function parseFlowchart(source: string): ParseResult {
     ok: true,
     fullyRepresented:
       !/^\s*click\b/im.test(source)
+      && presentationSyntaxFullyRepresented(source)
       && !parsedNodes.some((node) => node.shape === "icon" || node.shape === "image"),
     ...themeMetadata,
     model: { type: "flowchart", direction, nodes: parsedNodes, edges, subgraphs, hasLinkStyle, ...themeMetadata },
@@ -2279,7 +2480,8 @@ function parseState(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys());
   return {
     ok: true,
-    fullyRepresented,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: {
       type: "state",
@@ -2455,7 +2657,8 @@ function parseEr(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, entities.keys());
   return {
     ok: true,
-    fullyRepresented,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: { type: "er", entities: [...entities.values()], rels, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
@@ -2603,7 +2806,8 @@ function parseClass(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, classes.keys());
   return {
     ok: true,
-    fullyRepresented,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: {
       type: "class",
@@ -2767,7 +2971,8 @@ function parseMindmap(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
   return {
     ok: true,
-    fullyRepresented,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: { type: "mindmap", root, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },

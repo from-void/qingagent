@@ -1150,6 +1150,37 @@ describe("diagram-engine", () => {
     });
   });
 
+  it("未建模的 init 配置与样式属性不宣称完整表示", () => {
+    const cases = [
+      `%%{init: {"theme":"dark"}}%%
+flowchart TD
+  A --> B
+`,
+      `%%{init: {"flowchart":{"curve":"basis"}}}%%
+flowchart TD
+  A --> B
+`,
+      `flowchart TD
+  A --> B
+  style A rx:24,ry:24
+`,
+      `flowchart TD
+  A --> B
+  classDef rounded fill:#fff,rx:24
+  class A rounded
+`,
+      `flowchart TD
+  A --> B
+  linkStyle 0 stroke:#333,animation:fast
+`,
+    ];
+
+    for (const source of cases) {
+      expect(parseDiagram(source).ok, source).toBe(true);
+      expect(parseDiagram(source).fullyRepresented, source).toBe(false);
+    }
+  });
+
   it("stateDiagram-v2 支持 [*] 起止和中文状态名", () => {
     const source = [
       "stateDiagram-v2",

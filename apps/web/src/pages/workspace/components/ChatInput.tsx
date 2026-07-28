@@ -1117,13 +1117,26 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           {showStop && isEmpty ? (
             // 正在输出中 且 输入框为空 → 停止;其余情况(含输出中但已输入新内容,
             // 即中断改写)→ 发送。
+            // 停止是常规操作不是危险操作 → 走次级按钮盒(墨色描边浅底),禁用红色;
+            // 几何与「发送 →」对齐(同字号/同内距/同高),样式落 workspace 皮肤的
+            // [data-wf="WsStopBtn"] 选择器,不动 ui-kit 全局 ghost 定义。
             <Button
-              variant="ghost"
               size="small"
               onClick={onStop}
               disabled={!onStop}
               data-wf="WsStopBtn"
+              title="停止本次输出"
             >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="currentColor"
+                aria-hidden="true"
+                style={{ display: "block", flex: "0 0 auto" }}
+              >
+                <rect x="0.5" y="0.5" width="9" height="9" rx="1.6" />
+              </svg>
               停止
             </Button>
           ) : (

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ServerStream } from "../serverStream";
+import {
+  isStreamStalled,
+  ServerStream,
+  STREAM_STALL_TIMEOUT_MS,
+} from "../serverStream";
 import type { AskUserQuestion, BridgeFrame } from "@qingagent/contract-ts";
 import type { WorkspaceLocalAction } from "../protocol";
 
@@ -46,6 +50,12 @@ class MockEventSource extends EventTarget {
       lastEventId: id,
     });
     this.dispatchEvent(event);
+  }
+
+  /** 服务端 15s 心跳帧(stream.ts 的 `event: ping`)。 */
+  emitPing(): void {
+    if (this.closed) return;
+    this.dispatchEvent(new MessageEvent("ping", { data: "{}" }));
   }
 }
 
@@ -102,6 +112,22 @@ async function waitForEventSource(): Promise<MockEventSource> {
   }
   throw new Error("EventSource was not created");
 }
+
+describe("isStreamStalled", () => {
+  it("阈值是 3 个心跳周期(45 秒)", () => {
+    expect(STREAM_STALL_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it("刚好卡在阈值上不判死，超过才判死", () => {
+    expect(isStreamStalled(45_000, 1)).toBe(false);
+    expect(isStreamStalled(45_002, 1)).toBe(true);
+  });
+
+  it("没有活动基线(尚未建立连接)时永不判死", () => {
+    expect(isStreamStalled(10_000_000, 0)).toBe(false);
+    expect(isStreamStalled(10_000_000, Number.NaN)).toBe(false);
+  });
+});
 
 describe("ServerStream", () => {
   const originalFetch = globalThis.fetch;
@@ -389,9 +415,11 @@ describe("ServerStream", () => {
     vi.useFakeTimers();
     let requestSignal: AbortSignal | undefined;
     globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
-      requestSignal = init.signal as AbortSignal;
+      const signal = init.signal as AbortSignal;
+      // 只认第一发(draftTemplate 命令本身)：等待期间心跳看门狗会补发 /health 探活。
+      requestSignal ??= signal;
       return new Promise((_resolve, reject) => {
-        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+        signal?.addEventListener("abort", () => reject(signal?.reason), {
           once: true,
         });
       });
@@ -536,6 +564,154 @@ describe("ServerStream", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(MockEventSource.instances).toHaveLength(2);
     expect(MockEventSource.instances[1]!.url).toContain("after=7");
+
+    stream.dispose();
+  });
+
+  it("心跳 ping 持续到达时看门狗不误判半开", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "7");
+    await started;
+
+    // 只有心跳、没有业务帧的静默期(真实场景:AI 还在思考)不得被判死。
+    for (let i = 0; i < 8; i += 1) {
+      await vi.advanceTimersByTimeAsync(14_000);
+      source.emitPing();
+    }
+
+    expect(source.closed).toBe(false);
+    expect(MockEventSource.instances).toHaveLength(1);
+    // 只有 startSession 的命令请求，没有 /health 探活。
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    stream.dispose();
+  });
+
+  it("半开连接下 45 秒无任何帧会主动断开并走既有退避重连", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "9");
+    await started;
+
+    // 阈值内不动手(onerror 在半开时永不触发，这里全靠时间判定)。
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(source.closed).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(source.closed).toBe(true);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/health",
+      expect.objectContaining({ method: "HEAD", signal: expect.any(AbortSignal) }),
+    );
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(MockEventSource.instances).toHaveLength(2);
+    // 续传游标带上，服务端按 after 补发漏掉的帧(有 gap/epoch 变更时补 restoreReset + 权威快照)。
+    expect(MockEventSource.instances[1]!.url).toContain("after=9");
+
+    stream.dispose();
+  });
+
+  it("标签页从后台切回且超阈值时立即补判半开", async () => {
+    vi.useFakeTimers();
+    const doc = new EventTarget() as EventTarget & { visibilityState: string };
+    doc.visibilityState = "visible";
+    vi.stubGlobal("document", doc);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "3");
+    await started;
+
+    // 模拟休眠/后台降频：墙钟前进 5 分钟但定时器没被调度。
+    doc.visibilityState = "hidden";
+    vi.setSystemTime(Date.now() + 300_000);
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(source.closed).toBe(false);
+
+    doc.visibilityState = "visible";
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(source.closed).toBe(true);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/health",
+      expect.objectContaining({ method: "HEAD", signal: expect.any(AbortSignal) }),
+    );
+
+    stream.dispose();
+  });
+
+  it("dispose() 停掉心跳看门狗，不留定时器也不再重连", async () => {
+    vi.useFakeTimers();
+    const doc = new EventTarget() as EventTarget & { visibilityState: string };
+    doc.visibilityState = "visible";
+    vi.stubGlobal("document", doc);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "1");
+    await started;
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    stream.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(source.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("会话切换后旧连接的看门狗不残留", async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "1");
+    await started;
+
+    stream.detach();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(MockEventSource.instances).toHaveLength(1);
 
     stream.dispose();
   });

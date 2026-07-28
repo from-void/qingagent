@@ -209,6 +209,28 @@ async function parseCommitResponseArray(res: Response): Promise<unknown[]> {
   return parsed;
 }
 
+/** 服务端 /events 心跳周期(stream.ts 每 15s 发一个 ping 帧)。 */
+export const STREAM_HEARTBEAT_INTERVAL_MS = 15_000;
+/** 连续 3 个心跳周期收不到任何帧(含 ping)即判定连接半开。 */
+export const STREAM_STALL_TIMEOUT_MS = 3 * STREAM_HEARTBEAT_INTERVAL_MS;
+/** 看门狗轮询间隔:比心跳密,保证最坏 55s 内发现半开。 */
+export const STREAM_WATCHDOG_INTERVAL_MS = 10_000;
+
+/**
+ * 半开连接判定(纯函数,便于单测):对端静默消失(沙箱网络/弱网/笔记本休眠唤醒)时
+ * TCP 无 FIN/RST,EventSource 的 onerror 永不触发,只能靠"多久没收到帧"来判死。
+ * lastActivityAt 非正数=还没建立过活动基线,不判定。
+ */
+export function isStreamStalled(
+  nowMs: number,
+  lastActivityAt: number,
+  timeoutMs: number = STREAM_STALL_TIMEOUT_MS,
+): boolean {
+  if (!Number.isFinite(lastActivityAt) || lastActivityAt <= 0) return false;
+  if (!Number.isFinite(nowMs)) return false;
+  return nowMs - lastActivityAt > timeoutMs;
+}
+
 /**
  * Real server stream — sends `Command` objects to `POST /api/v1/stream`
  * and parses the SSE response, validating each frame with the wire
@@ -249,6 +271,9 @@ export class ServerStream {
   private eventReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private eventProbeController: AbortController | null = null;
   private eventReconnectAttempt = 0;
+  /** 最近一次收到任何 SSE 活动(open/frame/ping)的时间戳;0 = 无活跃连接。 */
+  private lastStreamActivityAt = 0;
+  private streamWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private activeSessionId: string | null = null;
   private lastSeq = 0;
   private epoch: number | null = null;
@@ -258,12 +283,24 @@ export class ServerStream {
     this.detach();
     this.connectEvents(this.activeSessionId, { resetCursor: false });
   };
+  /**
+   * 休眠唤醒/切回标签页兜底:后台标签的定时器会被浏览器降频到分钟级,
+   * 看门狗轮询未必及时;回到前台立刻按同一阈值补判一次。
+   */
+  private readonly handleVisibilityChange = () => {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState !== "visible") return;
+    this.checkStreamLiveness();
+  };
 
   constructor(
     private readonly dispatchLocal?: (action: WorkspaceLocalAction) => void,
   ) {
     if (typeof window !== "undefined") {
       window.addEventListener("qa-auth-changed", this.handleAuthChanged);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.handleVisibilityChange);
     }
   }
 
@@ -948,6 +985,7 @@ export class ServerStream {
   }
 
   detach(): void {
+    this.stopStreamWatchdog();
     if (this.eventReconnectTimer) clearTimeout(this.eventReconnectTimer);
     this.eventReconnectTimer = null;
     this.eventProbeController?.abort();
@@ -960,6 +998,9 @@ export class ServerStream {
   dispose(): void {
     if (typeof window !== "undefined") {
       window.removeEventListener("qa-auth-changed", this.handleAuthChanged);
+    }
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     }
     this.detach();
     this.abortAskMoreRequests();
@@ -1071,9 +1112,16 @@ export class ServerStream {
     const url = `/api/v1/events?${query.toString()}`;
     const source = new EventSource(url);
     source.addEventListener("open", () => {
-      if (this.eventSource === source) this.eventReconnectAttempt = 0;
+      if (this.eventSource !== source) return;
+      this.eventReconnectAttempt = 0;
+      this.markStreamActivity(source);
+    });
+    // 服务端 15s 一个 ping:它是半开检测唯一的常态信号,必须显式监听刷新活动时间。
+    source.addEventListener("ping", () => {
+      this.markStreamActivity(source);
     });
     source.addEventListener("frame", (event) => {
+      this.markStreamActivity(source);
       const message = event as MessageEvent<string>;
       const seq = Number(message.lastEventId);
       const json = message.data;
@@ -1092,6 +1140,44 @@ export class ServerStream {
       void this.scheduleEventReconnect(sessionId);
     };
     this.eventSource = source;
+    this.startStreamWatchdog();
+  }
+
+  /** 任何 SSE 活动(open/frame/ping)都刷新看门狗基线;陈旧连接的事件不算数。 */
+  private markStreamActivity(source: EventSource): void {
+    if (this.eventSource !== source) return;
+    this.lastStreamActivityAt = Date.now();
+  }
+
+  /** 看门狗只在有活跃会话+活跃连接时起转;重复调用不会叠加 timer。 */
+  private startStreamWatchdog(): void {
+    this.lastStreamActivityAt = Date.now();
+    if (this.streamWatchdogTimer) return;
+    this.streamWatchdogTimer = setInterval(() => {
+      this.checkStreamLiveness();
+    }, STREAM_WATCHDOG_INTERVAL_MS);
+  }
+
+  private stopStreamWatchdog(): void {
+    if (this.streamWatchdogTimer) clearInterval(this.streamWatchdogTimer);
+    this.streamWatchdogTimer = null;
+    this.lastStreamActivityAt = 0;
+  }
+
+  /**
+   * 半开连接兜底:超过 3 个心跳周期没有任何帧就主动断开,复用既有 onerror 的重连通道
+   * (/health 探活 + 指数退避 + after=lastSeq 续传;有 gap/epoch 变更时服务端会补发
+   * restoreReset + 权威快照)。重连排程期间 eventSource 为 null,不会重复判定。
+   */
+  private checkStreamLiveness(): void {
+    const sessionId = this.activeSessionId;
+    const source = this.eventSource;
+    if (!sessionId || !source) return;
+    if (!isStreamStalled(Date.now(), this.lastStreamActivityAt)) return;
+    this.lastStreamActivityAt = 0;
+    source.close();
+    this.eventSource = null;
+    void this.scheduleEventReconnect(sessionId);
   }
 
   private reconnectAfterRestoreReset(): void {

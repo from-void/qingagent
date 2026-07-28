@@ -353,7 +353,7 @@ export function WorkspaceDocumentPane({
                   showToast("标题修改失败 · 请重试");
                   return;
                 }
-                const previousTitle = title;
+                const previousTitle = currentTitleRef.current;
                 const requestGeneration =
                   (renameGenerationBySessionRef.current.get(requestSessionId) ??
                     0) + 1;

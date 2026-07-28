@@ -47,6 +47,7 @@ type MockServerStreamInstance = {
   startSession: ReturnType<typeof vi.fn>;
   listDerivatives: ReturnType<typeof vi.fn>;
   getDerivativeDoc: ReturnType<typeof vi.fn>;
+  renameSession: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
   ignoreAnnotationGroups: ReturnType<typeof vi.fn>;
   updateMaterialSummary: ReturnType<typeof vi.fn>;
@@ -90,6 +91,7 @@ vi.mock("./data/serverStream", () => {
         : [],
     );
     getDerivativeDoc = vi.fn(async () => null);
+    renameSession = vi.fn(async () => undefined);
     commitReviewGroups = vi.fn(async () => []);
     ignoreAnnotationGroups = vi.fn(async () => undefined);
     updateMaterialSummary = vi.fn(
@@ -3248,6 +3250,97 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).not.toContain("公众号文章");
     serverStreamMock.startSessionImpl = null;
     serverStreamMock.listDerivativesImpl = null;
+  });
+
+  it("连续重命名中 T1 成功、T2 失败时回滚到即时标题 T1", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "标题 T0" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("rename-title", "正文")]),
+            1,
+          ),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+    ]);
+
+    let resolveT1!: () => void;
+    let rejectT2!: (error: unknown) => void;
+    const renameT1 = new Promise<void>((resolve) => {
+      resolveT1 = resolve;
+    });
+    const renameT2 = new Promise<void>((_resolve, reject) => {
+      rejectT2 = reject;
+    });
+    stream.renameSession
+      .mockReturnValueOnce(renameT1)
+      .mockReturnValueOnce(renameT2);
+
+    const submitTitle = async (nextTitle: string) => {
+      await clickElement(
+        host!.querySelector<HTMLButtonElement>('[aria-label="修改标题"]')!,
+      );
+      const input = host!.querySelector<HTMLInputElement>(
+        '[aria-label="修改文档标题"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set?.call(input, nextTitle);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flushMicrotasks(3);
+    };
+
+    await submitTitle("标题 T1");
+    await submitTitle("标题 T2");
+    expect(stream.renameSession.mock.calls).toEqual([
+      ["s-1", "标题 T1"],
+      ["s-1", "标题 T2"],
+    ]);
+
+    await act(async () => {
+      resolveT1();
+      await renameT1;
+      rejectT2(new Error("rename failed"));
+      await renameT2.catch(() => undefined);
+    });
+    await flushMicrotasks(5);
+
+    expect(
+      host!.querySelector(".ws-deriv-tab.is-main")?.textContent,
+    ).toContain("标题 T1");
+    expect(
+      host!.querySelector(".ws-deriv-tab.is-main")?.textContent,
+    ).not.toContain("标题 T0");
   });
 
   it("#29 回归:整篇改写 busy 发光层独立覆盖编辑视口,不被审阅条或编辑锁条接管", async () => {

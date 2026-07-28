@@ -16,7 +16,10 @@ import {
   readDisabledSet,
   setEnabled,
   listConnectorDefinitions,
+  listCredentialRequests,
 } from "@qingagent/core";
+import { listCredentialGrants } from "@qingagent/db";
+import type { CredentialShareItem } from "@qingagent/contract-ts";
 import type { ParsedSkillFrontmatter } from "@qingagent/core";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
@@ -66,6 +69,28 @@ const BUILTIN_SKILL_ORDER = [
 export { parseSkillFrontmatter };
 
 export const skillsRoutes = new Hono();
+
+/** 某个技能声明了、但还没被授权的共享条目。查询失败不阻断启用,按"无待授权"处理。 */
+async function pendingCredentialShareItems(skillName: string): Promise<CredentialShareItem[]> {
+  try {
+    const [requests, grants] = await Promise.all([
+      listCredentialRequests(),
+      listCredentialGrants(),
+    ]);
+    const grantedPaths = new Set(grants.map((grant) => grant.path));
+    return requests
+      .filter((request) => request.skillName === skillName && !grantedPaths.has(request.path))
+      .map((request) => ({
+        skillName: request.skillName,
+        skillLabel: request.skillLabel,
+        declared: request.declared,
+        granted: false,
+        grantedAt: null,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 export function connectorIdForSkill(skillName: string): string | undefined {
   return listConnectorDefinitions().find((connector) =>
@@ -226,7 +251,12 @@ skillsRoutes.post("/skills/:name/:action", async (c) => {
     if (!exists) return c.json({ error: "not found" }, 404);
     await setEnabled(name, action === "enable");
     await refreshSkills();
-    return c.json({ name, enabled: action === "enable" });
+    // 刚启用的技能若声明了要与终端共享的登录信息,把还没授权的条目带回给客户端,
+    // 由它当场弹确认卡;停用不询问。
+    const credentialRequests = action === "enable"
+      ? await pendingCredentialShareItems(name)
+      : [];
+    return c.json({ name, enabled: action === "enable", credentialRequests });
   } catch {
     return c.json({ error: "not found" }, 404);
   }

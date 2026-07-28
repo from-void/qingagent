@@ -13,7 +13,8 @@ export interface ParsedLarkAuthStatus {
 
 export interface ParsedLarkDeviceFlow {
   verificationUrl: string;
-  userCode: string;
+  /** 真实 CLI 顶层可能不带 user_code(嵌在 verification_url 查询参数里),可为 null。 */
+  userCode: string | null;
   deviceCode: string;
   expiresIn: number;
 }
@@ -136,15 +137,19 @@ export function parseLarkDeviceFlowOutput(output: string): LarkParseResult<Parse
     const root = record(extractFirstJsonObject(output));
     if (!root) throw new Error("device flow 根节点不是对象");
     const verificationUrl = stringField(root, "verification_url", "verification_uri", "verificationUrl");
-    const userCode = stringField(root, "user_code", "userCode");
     const deviceCode = stringField(root, "device_code", "deviceCode");
     const expiresIn = root.expires_in ?? root.expiresIn;
-    if (!verificationUrl || !userCode || !deviceCode || typeof expiresIn !== "number" ||
+    // user_code 不是必填:真实 lark-cli(实测 1.0.53 `auth login --no-wait --json`)顶层
+    // 只有 device_code/expires_in/hint/verification_url,user_code 仅作为查询参数嵌在
+    // verification_url 里。此前把它当必填导致飞书授权在真机上必死(核心字段缺失)。
+    if (!verificationUrl || !deviceCode || typeof expiresIn !== "number" ||
         !Number.isFinite(expiresIn) || expiresIn <= 0) {
       throw new Error("device flow 核心字段缺失或类型非法");
     }
     const url = new URL(verificationUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("verification_url 协议非法");
+    const userCode = stringField(root, "user_code", "userCode") ??
+      (url.searchParams.get("user_code")?.trim() || null);
     return { ok: true, value: { verificationUrl, userCode, deviceCode, expiresIn } };
   } catch (error) {
     return dirty(error);

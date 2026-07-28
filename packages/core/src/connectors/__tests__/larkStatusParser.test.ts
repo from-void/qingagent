@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { FeishuConnector } from "../feishuConnector.js";
 import { LarkCliRunner, redactLarkCliOutput } from "../larkCliRunner.js";
-import { parseLarkAuthStatusOutput, parseLarkConfigOutput } from "../larkStatusParser.js";
+import { parseLarkAuthStatusOutput, parseLarkConfigOutput, parseLarkDeviceFlowOutput } from "../larkStatusParser.js";
 
 const fixture = (name: string) => readFileSync(
   fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)),
@@ -113,5 +113,52 @@ describe("FeishuConnector", () => {
     const status = await new FeishuConnector({ run }).status();
     expect(status).toMatchObject({ state: "unavailable", reasonCode: "LARK_CLI_DIRTY_OUTPUT" });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("parseLarkDeviceFlowOutput", () => {
+  // 形状取自真机实测 lark-cli 1.0.53 `auth login --no-wait --json` 的原始 stdout:
+  // 顶层只有 device_code/expires_in/hint/verification_url,user_code 嵌在 URL 查询参数里。
+  it("接受真实 CLI 输出:顶层无 user_code,从 verification_url 派生", () => {
+    const real = JSON.stringify({
+      device_code: "O04p0Ry4tuIP.example",
+      expires_in: 600,
+      hint: "**MUST generate QR code AND display it:** ...",
+      verification_url: "https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=ONMIOg&user_code=J2KQ",
+    });
+    const parsed = parseLarkDeviceFlowOutput(real);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.deviceCode).toBe("O04p0Ry4tuIP.example");
+      expect(parsed.value.expiresIn).toBe(600);
+      expect(parsed.value.userCode).toBe("J2KQ");
+    }
+  });
+
+  it("顶层带 user_code 时优先用顶层值", () => {
+    const parsed = parseLarkDeviceFlowOutput(JSON.stringify({
+      device_code: "d", expires_in: 300, user_code: "TOP",
+      verification_url: "https://accounts.feishu.cn/verify?user_code=URL",
+    }));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.userCode).toBe("TOP");
+  });
+
+  it("URL 里也没有 user_code 时为 null 而不判脏", () => {
+    const parsed = parseLarkDeviceFlowOutput(JSON.stringify({
+      device_code: "d", expires_in: 300,
+      verification_url: "https://accounts.feishu.cn/verify?flow_id=x",
+    }));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.userCode).toBeNull();
+  });
+
+  it("缺 device_code 或 expires_in 非法仍判脏", () => {
+    expect(parseLarkDeviceFlowOutput(JSON.stringify({
+      expires_in: 600, verification_url: "https://a.b/v",
+    })).ok).toBe(false);
+    expect(parseLarkDeviceFlowOutput(JSON.stringify({
+      device_code: "d", expires_in: "600", verification_url: "https://a.b/v",
+    })).ok).toBe(false);
   });
 });

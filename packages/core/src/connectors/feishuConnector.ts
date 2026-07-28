@@ -48,7 +48,8 @@ export type FeishuStartResult =
       mode: "authorization";
       connectorId: "feishu";
       verification_url: string;
-      user_code: string;
+      /** 真实 CLI 可能不给顶层 user_code(嵌在 URL 里),卡片侧 code 本就允许 null。 */
+      user_code: string | null;
       expiresAt: string;
       pendingId: string;
       reused: boolean;

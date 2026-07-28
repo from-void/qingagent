@@ -54,3 +54,32 @@ describe("R20门 TXT 字面尖括号正确性", () => {
     expect(toTxt(sections)).toBe("正文 加粗下一行 <name> <你的名字> 1 < 2");
   });
 });
+
+describe("TXT 块结构正确性", () => {
+  it("仅在块之间插入空行，并保留多行代码的缩进与空行", () => {
+    const source = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "before" },
+        content: [{ type: "text", text: "代码如下：" }],
+      },
+      {
+        type: "codeBlock",
+        attrs: { blockId: "code", language: "ts" },
+        content: [{
+          type: "text",
+          text: "function run() {\n  first();\n\n    return second();\n}",
+        }],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "after" },
+        content: [{ type: "text", text: "代码结束。" }],
+      },
+    ]);
+
+    expect(toTxt(source)).toBe(
+      "代码如下：\n\nfunction run() {\n  first();\n\n    return second();\n}\n\n代码结束。",
+    );
+  });
+});

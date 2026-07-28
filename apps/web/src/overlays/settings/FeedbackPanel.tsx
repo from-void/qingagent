@@ -22,6 +22,7 @@ export function FeedbackPanel() {
   const [loading, setLoading] = useState(true);
   // 首拉通常几毫秒就回来,「读取文档列表中」一挂载就渲染 = 闪一帧;延迟 250ms 才显形。
   const showLoading = useDelayedVisible(loading);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
 
@@ -40,11 +41,17 @@ export function FeedbackPanel() {
         const recent: SessionRow[] = (body.recent_sessions ?? [])
           .slice(0, MAX_DOCS)
           .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updated_at ?? null }));
+        setLoadFailed(false);
         setDocs(recent);
         // 默认预勾选最近 DEFAULT_CHECKED 篇(用户可自行增减)。
         setChecked(new Set(recent.slice(0, DEFAULT_CHECKED).map((s) => s.id)));
       } catch {
-        if (!controller.signal.aborted) setDocs([]);
+        if (!controller.signal.aborted) {
+          setDocs([]);
+          setChecked(new Set());
+          setIncludeContent(false);
+          setLoadFailed(true);
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -63,8 +70,9 @@ export function FeedbackPanel() {
 
   const exportReport = useCallback(async () => {
     setExporting(true);
-    const privacyLevel = includeContent ? "L2" : "L1";
-    const sessionIds = Array.from(checked);
+    // 列表失败时服务端以空 sessionIds 回退最近会话；此时没有明确文档授权，只允许 L1。
+    const privacyLevel = loadFailed ? "L1" : includeContent ? "L2" : "L1";
+    const sessionIds = loadFailed ? [] : Array.from(checked);
     try {
       if (window.electron?.isDesktop && typeof window.electron.exportDiagnostics === "function") {
         const result = await window.electron.exportDiagnostics({ privacyLevel, sessionIds });
@@ -85,7 +93,7 @@ export function FeedbackPanel() {
     } finally {
       setExporting(false);
     }
-  }, [includeContent, checked, toast]);
+  }, [includeContent, checked, loadFailed, toast]);
 
   return (
     <div className="settings-feedback" data-wf="FeedbackPanel">
@@ -114,6 +122,8 @@ export function FeedbackPanel() {
         <div className="fb-doclist" data-wf="FeedbackDocList">
           {loading ? (
             showLoading ? <div className="sm-empty">读取文档列表中</div> : null
+          ) : loadFailed ? (
+            <div className="sm-empty">文档列表暂时无法加载，仍可导出系统日志和最近会话诊断</div>
           ) : docs.length === 0 ? (
             <div className="sm-empty">暂无文档</div>
           ) : (
@@ -135,11 +145,16 @@ export function FeedbackPanel() {
           <input
             type="checkbox"
             checked={includeContent}
+            disabled={loadFailed}
             onChange={(event) => setIncludeContent(event.target.checked)}
           />
           <span className="fb-check-label">
             一并导出聊天记录与正文
-            <em className="fb-check-hint">勾选后能帮助更快定位问题；不勾选则只导出运行记录，不含正文与对话。</em>
+            <em className="fb-check-hint">
+              {loadFailed
+                ? "文档列表加载失败时仅导出 L1 诊断，不含正文与对话。"
+                : "勾选后能帮助更快定位问题；不勾选则只导出运行记录，不含正文与对话。"}
+            </em>
           </span>
         </label>
 
@@ -148,7 +163,7 @@ export function FeedbackPanel() {
             type="button"
             className="sm-btn primary"
             data-wf="FeedbackExportButton"
-            disabled={exporting || checked.size === 0}
+            disabled={exporting || (!loadFailed && checked.size === 0)}
             onClick={exportReport}
           >
             {exporting ? "导出中" : "导出报错记录"}

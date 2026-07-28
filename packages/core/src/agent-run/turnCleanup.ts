@@ -20,6 +20,10 @@ import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
 import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
+import {
+  confirmService,
+  type ConfirmService,
+} from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
 
@@ -81,6 +85,18 @@ function terminalizeInFlightToolCalls(
   }
 
   return updates;
+}
+
+function activeTurnToolCallIds(state: SessionState): Set<string> {
+  const activeAgentMessageId = state._activeAgentMessageId;
+  if (!activeAgentMessageId) return new Set();
+  const message = state.chatHistory.find((item) => item.id === activeAgentMessageId);
+  if (!message) return new Set();
+  return new Set(
+    message.parts
+      .filter((part) => part.kind === "toolCall")
+      .map((part) => part.data.id),
+  );
 }
 
 // 自然收尾时把残留在 running 的工具调用落终态,清掉"工具调用完、对话已回复,
@@ -166,11 +182,21 @@ export async function* abortAndCleanupTurn(
     activeTurnTimeoutMs?: number;
     emitStreamEnd?: boolean;
     reason?: TurnCleanupReason;
+    confirmService?: Pick<
+      ConfirmService,
+      "cancelRequestedCommandConfirm" | "resolvedFrame"
+    >;
   } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
   const reason = options.reason ?? "userAbort";
+  const currentToolCallIds = activeTurnToolCallIds(state);
+  const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
+    (pending) =>
+      pending.status === "pending" &&
+      currentToolCallIds.has(pending.toolCallId),
+  );
   state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);
 
@@ -190,6 +216,26 @@ export async function* abortAndCleanupTurn(
   state._abortController = null;
   state._activeTurnPromise = null;
   state._currentChips = null;
+
+  const confirmationService = options.confirmService ?? confirmService;
+  for (const pending of pendingConfirms) {
+    if (
+      state.pendingConfirms.get(pending.toolCallId) !== pending ||
+      pending.status !== "pending"
+    ) {
+      continue;
+    }
+    try {
+      await confirmationService.cancelRequestedCommandConfirm(state, pending);
+    } catch (error) {
+      logger.error("Failed to persist aborted confirm during turn cleanup", {
+        streamId: abortedStreamId,
+        toolCallId: pending.toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    yield confirmationService.resolvedFrame(pending, "aborted");
+  }
 
   const updates = terminalizeInFlightToolCalls(state, reason);
   for (const update of updates) {

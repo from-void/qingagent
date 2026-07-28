@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { qingagentAgent } from "../agents/qingagent.js";
+import { ConfirmService } from "../confirm/confirmService.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -292,6 +293,74 @@ describe("abortAndCleanupTurn", () => {
         data: { streamId: "old-stream", reason: { kind: "cancelled" } },
       },
     });
+  });
+
+  it("中止当前 turn 时精确取消其 pending confirm 并先发 resolved", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("abort-pending-confirm");
+    state.streamId = "stream-confirm";
+    state._activeAgentMessageId = "agent-confirm";
+    setSingleToolCall(state, runningCommand("tool-confirm"));
+    state.chatHistory[0]!.id = "agent-confirm";
+    const pending = {
+      confirmId: "confirm-current",
+      runId: "run-current",
+      toolCallId: "tool-confirm",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-current",
+      spec: {
+        id: "confirm-current",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "sleep 20",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    const unrelated = {
+      ...pending,
+      confirmId: "confirm-unrelated",
+      runId: "run-unrelated",
+      toolCallId: "tool-unrelated",
+      commandDigest: "digest-unrelated",
+      spec: { ...pending.spec, id: "confirm-unrelated" },
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    state.pendingConfirms.set(unrelated.toolCallId, unrelated);
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      appendAudit: async () => undefined,
+      persist: async (_current, persistReason) => {
+        persistReasons.push(persistReason);
+      },
+    });
+
+    const frames = await collectFrames(abortAndCleanupTurn(state, {
+      confirmService: service,
+    }));
+
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+    expect(state.pendingConfirms.get(unrelated.toolCallId)).toBe(unrelated);
+    expect(persistReasons).toEqual(["confirm:aborted:terminal", "confirm:aborted"]);
+    const resolvedIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "confirmResolved" &&
+        frame.data.toolCallId === pending.toolCallId &&
+        frame.data.resolution === "aborted",
+    );
+    const toolUpdateIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === pending.toolCallId,
+    );
+    expect(resolvedIndex).toBeGreaterThanOrEqual(0);
+    expect(toolUpdateIndex).toBeGreaterThan(resolvedIndex);
+    expect(firstToolStatus(state)).toBe("aborted");
   });
 
   it("R2-22 active turn 不 resolve 时也会超时孤儿化并投影 idle", async () => {

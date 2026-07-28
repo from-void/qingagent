@@ -523,35 +523,75 @@ export function advanceNativeConcurrentState(
   let next = startNextNativePhaseIfSettled(state);
   if (next.phase === "done") return { state: next, steps: [] };
 
+  const safeDtMs = Math.max(0, dtMs);
+  const isBootstrapTick = next.tick === 0;
+  const accumulatedMs = isBootstrapTick
+    ? safeDtMs
+    : next.stepAccumulatorMs + safeDtMs;
   next = {
     ...next,
-    elapsedMs: next.elapsedMs + Math.max(0, dtMs),
-    stepAccumulatorMs: next.stepAccumulatorMs + Math.max(0, dtMs),
+    elapsedMs: next.elapsedMs + safeDtMs,
+    stepAccumulatorMs: accumulatedMs,
     tick: next.tick + 1,
   };
 
-  if (next.elapsedMs >= next.maxDurationMs) {
-    return { state: completeNativeConcurrentState(next), steps: [] };
+  const steps: NativeConcurrentStep[] = [];
+  const dueTicks = isBootstrapTick
+    ? Math.max(1, Math.floor(next.stepAccumulatorMs / next.stepDelayMs))
+    : Math.floor(next.stepAccumulatorMs / next.stepDelayMs);
+  for (let index = 0; index < dueTicks && next.phase !== "done"; index += 1) {
+    next = {
+      ...next,
+      stepAccumulatorMs: next.stepAccumulatorMs - next.stepDelayMs,
+    };
+    const advanced = advanceNativeConcurrentTick(next);
+    next = advanced.state;
+    steps.push(...advanced.steps);
   }
 
-  if (next.stepAccumulatorMs < next.stepDelayMs) {
-    return { state: next, steps: [] };
+  if (next.elapsedMs >= next.maxDurationMs && next.phase !== "done") {
+    const drained = drainNativeConcurrentStateAtDeadline(next);
+    next = drained.state;
+    steps.push(...drained.steps);
   }
 
-  next = {
-    ...next,
-    stepAccumulatorMs: Math.min(
-      next.stepDelayMs,
-      next.stepAccumulatorMs - next.stepDelayMs,
-    ),
-  };
+  return { state: next, steps };
+}
 
-  next = claimNativeTasks(next);
-  const advanced = advanceNativeAgents(next);
+function advanceNativeConcurrentTick(
+  state: NativeConcurrentState,
+): NativeConcurrentAdvanceResult {
+  const claimed = claimNativeTasks(state);
+  const advanced = advanceNativeAgents(claimed);
   return {
     state: startNextNativePhaseIfSettled(advanced.state),
     steps: advanced.steps,
   };
+}
+
+function drainNativeConcurrentStateAtDeadline(
+  state: NativeConcurrentState,
+): NativeConcurrentAdvanceResult {
+  let next: NativeConcurrentState = {
+    ...state,
+    // 到达时限后仍必须通过正常 step 交付剩余内容，不能直接跳到终态文档。
+    chunkSize: Number.MAX_SAFE_INTEGER,
+    startJitter: false,
+    agents: state.agents.map((agent) => ({ ...agent, startDelayTicks: 0 })),
+  };
+  const steps: NativeConcurrentStep[] = [];
+  const maxDrainTicks = state.tasks.reduce(
+    (total, task) => total + task.operations.length + 1,
+    state.tasks.length + 4,
+  );
+
+  for (let index = 0; index < maxDrainTicks && next.phase !== "done"; index += 1) {
+    const advanced = advanceNativeConcurrentTick(next);
+    next = advanced.state;
+    steps.push(...advanced.steps);
+  }
+
+  return { state: next, steps };
 }
 
 export function completeNativeConcurrentState(

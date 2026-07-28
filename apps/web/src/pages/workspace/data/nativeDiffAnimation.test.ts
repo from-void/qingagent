@@ -335,6 +335,75 @@ describe("native PM presentation animation", () => {
     expect(emitted.join("")).toBe(text);
   });
 
+  it("30fps 双 tick 积压会被消费，完整表格文本先发出再进入终态", () => {
+    const text = "字".repeat(200);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 12,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+      startJitter: false,
+    });
+    const chunks: string[] = [];
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        state.stepDelayMs * 2,
+      );
+      chunks.push(...advanced.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []));
+      state = advanced.state;
+    }
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("到达 deadline 时通过 step 发出剩余表格内容，不以零步骤跳终态", () => {
+    const text = "截止时仍须完整发出".repeat(30);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 13,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: 48,
+      chunkSize: 1,
+      maxDurationMs: 1_000,
+      startJitter: false,
+    });
+
+    const advanced = advanceNativeConcurrentState(state, 1_000);
+    const emitted = advanced.steps.flatMap((step) =>
+      step.kind === "insertText" ? [step.text] : []).join("");
+
+    expect(advanced.state.phase).toBe("done");
+    expect(advanced.steps.length).toBeGreaterThan(0);
+    expect(emitted).toBe(text);
+  });
+
   it("短 cell 也会在同一拍复用剩余 chunk，阈值内多格表不超时跳终态", () => {
     const cellText = "字".repeat(12);
     const rows = Array.from({ length: 120 }, () => [cellText]);

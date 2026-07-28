@@ -48,6 +48,24 @@ describe("NewSessionPage 文件夹弹框键盘行为", () => {
     expect(window.location.hash).toBe("#/new");
   });
 
+  it("工具栏技能菜单打开时按 Escape 只关闭菜单，不触发新建页返回", async () => {
+    await render(<NewSessionPage />);
+
+    const skillButton = Array.from(host?.querySelectorAll<HTMLButtonElement>(".ccx-toolbar button") ?? [])
+      .find((button) => button.textContent?.includes("技能"));
+    if (!skillButton) throw new Error("skill button not found");
+
+    click(skillButton);
+    expect(query("[data-wf='NsSkillMenu']")).not.toBeNull();
+
+    const event = await keyDown("Escape");
+    await wait(520);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(query("[data-wf='NsSkillMenu']")).toBeNull();
+    expect(window.location.hash).toBe("#/new");
+  });
+
   it("提交动画期间离开新建页后不会被旧回调拉回工作区", async () => {
     await render(<NewSessionPage />);
     const editor = query(".starter-edit");
@@ -120,11 +138,13 @@ function click(element: HTMLElement): void {
   });
 }
 
-async function keyDown(key: string): Promise<void> {
+async function keyDown(key: string): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    document.dispatchEvent(event);
     await Promise.resolve();
   });
+  return event;
 }
 
 function wait(ms: number): Promise<void> {

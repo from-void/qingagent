@@ -912,12 +912,17 @@ export function NewSessionPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.key !== "Escape") return;
+      if (menu === "skill") {
+        e.preventDefault();
+        setMenu(null);
+        return;
+      }
       if (document.querySelector('[aria-modal="true"], [role="dialog"]')) return;
       goBack();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [goBack]);
+  }, [goBack, menu]);
 
   const canSubmit =
     textLen > 0 ||

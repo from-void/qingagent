@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { findMaterial } from "../gateway/bridgeHandler";
+import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
   UPLOAD_DIR,
   findOrStoreUploadedFile,
@@ -245,7 +245,8 @@ uploadRoutes.get("/materials/:materialId/text", async (c) => {
     return c.json({ error: "sessionId query parameter required" }, 400);
   }
 
-  const material = findMaterial(sessionId, materialId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
+  const material = session?.materials.get(materialId);
 
   if (!material) {
     return c.json({ error: "not found" }, 404);

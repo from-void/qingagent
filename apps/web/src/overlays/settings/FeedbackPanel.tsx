@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../system/ToastProvider";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 
 // 「提需求」跳转的反馈站(独立网页,后续单独承载);「报bug」排查不了时的联系邮箱。
 const FEEDBACK_URL = "https://qingagent.com/feedback";
@@ -19,6 +20,8 @@ export function FeedbackPanel() {
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [includeContent, setIncludeContent] = useState(false);
   const [loading, setLoading] = useState(true);
+  // 首拉通常几毫秒就回来,「读取文档列表中」一挂载就渲染 = 闪一帧;延迟 250ms 才显形。
+  const showLoading = useDelayedVisible(loading);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
 
@@ -110,7 +113,7 @@ export function FeedbackPanel() {
 
         <div className="fb-doclist" data-wf="FeedbackDocList">
           {loading ? (
-            <div className="sm-empty">读取文档列表中</div>
+            showLoading ? <div className="sm-empty">读取文档列表中</div> : null
           ) : docs.length === 0 ? (
             <div className="sm-empty">暂无文档</div>
           ) : (

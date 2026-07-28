@@ -60,7 +60,7 @@ function StarterPreviewBlock({ block, index }: { block: StarterTemplateBlock; in
           {block.items.slice(0, 3).map((item) => (
             <li key={item.text} data-checked={item.checked ? "true" : "false"}>
               <label>
-                <input type="checkbox" checked={!!item.checked} readOnly tabIndex={-1} />
+                <input className="wf-checkbox" type="checkbox" checked={!!item.checked} readOnly tabIndex={-1} />
               </label>
               <div>
                 <p>{item.text}</p>

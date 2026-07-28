@@ -1197,7 +1197,7 @@ export function UIKitPage() {
             <Group title="删除确认控件" code=".home-delete-confirm-actions / .ws-folder-check">
               <div className="uk-home-confirm-card">
                 <label className="ws-folder-check">
-                  <input type="checkbox" defaultChecked />
+                  <input className="wf-checkbox" type="checkbox" defaultChecked />
                   <span>24小时内不再提醒</span>
                 </label>
                 <div className="home-delete-confirm-actions">
@@ -2445,7 +2445,7 @@ export function UIKitPage() {
                   <div className="ws-folder-intro-point"><span>·</span><p>文件夹里的增删改,助手下次都能读到最新。</p></div>
                   <div className="ws-folder-modal-foot">
                     <label className="ws-folder-check">
-                      <input type="checkbox" />不再提示
+                      <input className="wf-checkbox" type="checkbox" />不再提示
                     </label>
                     <button type="button" className="ws-folder-modal-primary">选择文件夹</button>
                     <button type="button" className="ws-folder-modal-secondary">以后再说</button>

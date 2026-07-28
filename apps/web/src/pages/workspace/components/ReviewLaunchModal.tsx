@@ -359,7 +359,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
             {lexicons.map((lexicon) => (
               <div className="ws-lexicon-option" key={lexicon.id}>
                 <label className="ws-lexicon-check" aria-label={`启用${lexicon.name}`}>
-                  <input type="checkbox" checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
+                  <input className="wf-checkbox" type="checkbox" checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
                     const checked = event.currentTarget.checked;
                     setSelectedLexicons((current) => {
                       const next = new Set(current);

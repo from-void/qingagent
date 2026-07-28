@@ -164,6 +164,7 @@ export function RevealTuningPanel({ canReplay, onReplay }: RevealTuningPanelProp
 
           <label className="ptp-toggle">
             <input
+              className="wf-checkbox"
               type="checkbox"
               checked={config.glow}
               onChange={(event) => updateConfig({ glow: event.currentTarget.checked })}

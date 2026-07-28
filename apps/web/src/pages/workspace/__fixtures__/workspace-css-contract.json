@@ -1,7 +1,7 @@
 {
   "file": "apps/web/src/pages/workspace/workspace.css",
-  "sha256": "5c1f6ddcf6553873f9bb753aa466b03c51aa7db320280ae157e67f3ac51c5159",
-  "lineCount": 3613,
+  "sha256": "e1e1b4e23ac6ba631f4aa1e13abbfe41d576941a61cb854dc62c0d5c9b04fe43",
+  "lineCount": 3609,
   "selectors": [
     ".wf-doc",
     ".dt-btn",
@@ -25,8 +25,8 @@
     ".link-hover-card"
   ],
   "skinFile": "apps/web/src/pages/workspace/workspace-ink-skin.css",
-  "skinSha256": "b0eae612427e694c746c32571d95b8ef66850dd6054ac1b129bc3014fab28c81",
-  "skinLineCount": 3669,
+  "skinSha256": "feae206f33c94e51e60eef0b2243c99258b11942f2651bbf4403f159502b84c1",
+  "skinLineCount": 3634,
   "xhsPreviewFile": "apps/web/src/pages/workspace/components/derivatives/xhsPreview.css",
   "xhsPreviewSha256": "81859058fc6601737dd152a39420c225db66a710da59f93b9154864714f41fb7",
   "xhsPreviewLineCount": 7

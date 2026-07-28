@@ -92,6 +92,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
               <div className="ws-lexicon-option" key={lexicon.id}>
                 <label className="ws-lexicon-check" aria-label={`启用${lexicon.name}`}>
                 <input
+                  className="wf-checkbox"
                   type="checkbox"
                   checked={selected.has(lexicon.id)}
                   onChange={(event) => {

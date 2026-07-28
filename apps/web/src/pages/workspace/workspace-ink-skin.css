@@ -1797,12 +1797,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   cursor: pointer;
   white-space: nowrap;
 }
-#view-workspace .ws-folder-check input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--ink-1);
-}
 #view-workspace .ws-folder-modal-primary,
 #view-workspace .ws-folder-modal-secondary,
 #view-workspace .ws-folder-modal-danger {
@@ -2178,36 +2172,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   align-self: stretch;
   cursor: pointer;
 }
-#view-workspace .ws-lexicon-check input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-grid;
-  place-content: center;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  background: transparent;
-  border: 1px solid var(--line-2);
-  border-radius: 0;
-  cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-#view-workspace .ws-lexicon-check input[type="checkbox"]:checked {
-  background: var(--mark);
-  border-color: var(--mark);
-}
-#view-workspace .ws-lexicon-check input[type="checkbox"]::after {
-  content: "";
-  width: 4px;
-  height: 8px;
-  margin-top: -1px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  opacity: 0;
-  transform: rotate(45deg);
-}
-#view-workspace .ws-lexicon-check input[type="checkbox"]:checked::after { opacity: 1; }
-#view-workspace .ws-lexicon-check input[type="checkbox"]:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+/* 勾选框本体统一走 .wf-checkbox(ui-kit components.css),这里只留容器排布 */
 #view-workspace .ws-lexicon-open {
   display: grid;
   grid-template-columns: 1fr auto 18px;

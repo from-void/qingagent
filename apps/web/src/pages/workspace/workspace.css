@@ -2617,11 +2617,7 @@
     cursor:pointer;
     flex-wrap:wrap;
   }
-  #view-workspace .ptp-toggle input[type="checkbox"]{
-    accent-color:#4d6dff;
-    cursor:pointer;
-    margin:0;
-  }
+  /* 勾选框样式统一由 .wf-checkbox(ui-kit components.css)提供,这里不再各自设 accent-color */
   #view-workspace .ptp-toggle small{
     flex-basis:100%;
     font-size:10.5px;

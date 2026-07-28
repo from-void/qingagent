@@ -15,6 +15,11 @@
   transition:opacity .16s ease, transform .2s ease;
 }
 .qj-sheet{
+  /* 深底弹层:统一勾选框(.wf-checkbox)改用浅描边 + 金填充 + 深底勾 */
+  --wf-checkbox-border:rgba(236,227,208,.34);
+  --wf-checkbox-border-hover:rgba(236,227,208,.62);
+  --wf-checkbox-fill:var(--qj-cinnabar);
+  --wf-checkbox-tick:#16212c;
   --qj-ink:#f3ead8;
   /* 暗墨底说明文字专用档：不用浅色页面的深棕 --ink-2，确保最浅墨色 #332b25 上也过 AA。 */
   --ink-desc:#d9ccb2;
@@ -527,7 +532,7 @@
 }
 .settings-feedback .fb-doc:last-child{border-bottom:none}
 .settings-feedback .fb-doc:hover{background:var(--qj-switch-active-bg)}
-.settings-feedback .fb-doc input{width:15px;height:15px;margin:0;flex:none;accent-color:var(--qj-cinnabar)}
+.settings-feedback .fb-doc input{flex:none}
 /* 三档层级(与模型/安全页一致):主文案 --qj-ink 13px > 说明 --ink-desc 13px > 辅助 11-12px 弱色。
    文档名是这一行的主字,日期是辅助;两者原来同字号同色,整行没有重点。 */
 .settings-feedback .fb-doc-title{
@@ -540,7 +545,7 @@
   display:flex;align-items:flex-start;gap:9px;
   font-size:13px;color:var(--qj-ink);cursor:pointer;
 }
-.settings-feedback .fb-check input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:var(--qj-cinnabar)}
+.settings-feedback .fb-check input{margin-top:2px;flex:none}
 .settings-feedback .fb-check-label{display:flex;flex-direction:column;gap:3px;line-height:1.5}
 .settings-feedback .fb-check-hint{font-style:normal;font-size:12px;color:var(--ink-desc);line-height:1.5}
 .settings-feedback .fb-contact{

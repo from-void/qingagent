@@ -4,7 +4,7 @@ import {
   aggregateUsageBySession,
   aggregateUsageTotal,
   estimateCostCny,
-  hasDeepseekPricing,
+  hasModelPricing,
   listSessionThreads,
 } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
@@ -51,7 +51,7 @@ usageRoutes.get("/usage/summary", async (c) => {
         ...(view === "day"
           ? { documentTitle: row.documentTitle || fallbackTitle }
           : {}),
-        ...(hasDeepseekPricing(row.modelId)
+        ...(hasModelPricing(row.modelId)
           ? {
               costCny: estimateCostCny(row.modelId, {
                 input: row.inputTokens,

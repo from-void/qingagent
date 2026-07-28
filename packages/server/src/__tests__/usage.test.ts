@@ -5,7 +5,7 @@ const mockCore = vi.hoisted(() => ({
   aggregateUsageBySession: vi.fn(),
   aggregateUsageTotal: vi.fn(),
   estimateCostCny: vi.fn(() => 0.123),
-  hasDeepseekPricing: vi.fn(() => true),
+  hasModelPricing: vi.fn(() => true),
   listSessionThreads: vi.fn(),
 }));
 

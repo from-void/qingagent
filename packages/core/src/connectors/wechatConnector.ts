@@ -90,9 +90,16 @@ export class WechatConnector implements ConnectorAdapter {
       }
       return createConnectorStatus("needs_reauth", { reasonCode: "needs_reauth", account: ttlStatus.account, lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true });
     }
-    const reasonCode = result.kind === "rate_limit"
-      ? "rate_limit"
-      : result.kind === "capability_denied" ? "ACCESS_DENIED" : "transient";
+    if (result.kind === "capability_denied") {
+      return createConnectorStatus("disconnected", {
+        reasonCode: "ACCESS_DENIED",
+        account: ttlStatus.account,
+        lastCheckedAt: checkedAt,
+        statusFreshness: "fresh",
+        canProbe: false,
+      });
+    }
+    const reasonCode = result.kind === "rate_limit" ? "rate_limit" : "transient";
     return { ...ttlStatus, reasonCode, lastCheckedAt: checkedAt, statusFreshness: "ttl" };
   }
 

@@ -32,6 +32,7 @@ describe("WechatConnector", () => {
   it.each([
     [{ ok: true } as const, { state: "connected", reasonCode: null, statusFreshness: "fresh" }],
     [{ ok: false, kind: "reauth", message: "session" } as const, { state: "needs_reauth", reasonCode: "needs_reauth", statusFreshness: "fresh" }],
+    [{ ok: false, kind: "capability_denied", message: "denied" } as const, { state: "disconnected", reasonCode: "ACCESS_DENIED", statusFreshness: "fresh" }],
     [{ ok: false, kind: "rate_limit", message: "limited" } as const, { state: "connected", reasonCode: "rate_limit", statusFreshness: "ttl" }],
     [{ ok: false, kind: "transient", message: "network" } as const, { state: "connected", reasonCode: "transient", statusFreshness: "ttl" }],
   ])("probe 归一业务错误: %o", async (probeResult, expected) => {

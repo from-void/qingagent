@@ -13,6 +13,7 @@ import { laneColor } from "./humanCursorLanes";
 import * as presentationSpans from "./presentationSpans";
 import { sectionText } from "./presentationSpans";
 import type { ViewBlock } from "./protocol";
+import { viewSectionsToHtml } from "./viewDocHtml";
 
 function p(text: string): ViewBlock {
   return { kind: "p", spans: [{ kind: "text", text }] };
@@ -154,6 +155,54 @@ describe("native PM presentation animation", () => {
     expect(safeSeed.node).toBeUndefined();
     expect(complexSeed.rows).toEqual([["复杂单元"]]);
     expect(complexSeed.node).toEqual(complexTable);
+  });
+
+  it("带 marks、列宽和底色的表格从真实动画种子入口保留 node 与保真 HTML", () => {
+    const formattedTable = {
+      type: "table",
+      attrs: { blockId: "formatted-table" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          attrs: {
+            colspan: 1,
+            rowspan: 1,
+            colwidth: [120],
+            backgroundColor: "sky",
+          },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "formatted-p", textAlign: null },
+            content: [{
+              type: "text",
+              text: "格式保真",
+              marks: [{ type: "bold" }],
+            }],
+          }],
+        }],
+      }],
+    } as unknown as PmBlockNode;
+    const finalSections: ViewBlock[] = [{
+      kind: "table",
+      head: [],
+      rows: [["格式保真"]],
+      node: formattedTable,
+    }];
+    const finalDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [formattedTable],
+    } as PmDoc;
+
+    const seed = buildNativePresentationSeedSections({ finalSections, finalDoc });
+    const tableSeed = seed[0] as Extract<ViewBlock, { kind: "table" }>;
+    const html = viewSectionsToHtml(seed);
+
+    expect(tableSeed.node).toEqual(formattedTable);
+    expect(html).toContain('colwidth="120"');
+    expect(html).toContain('data-bg-color="sky"');
+    expect(html).toContain("<strong>格式保真</strong>");
   });
 
   it("clones presentation runs without sharing section references", () => {

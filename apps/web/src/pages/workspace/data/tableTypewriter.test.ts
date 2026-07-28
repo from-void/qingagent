@@ -12,7 +12,15 @@ import {
 
 const table = (head: string[], rows: string[][]): ViewBlock => ({ kind: "table", head, rows });
 
-function pmTable(attrs: { colspan?: number; rowspan?: number } = {}, blocks = 1): PmBlockNode {
+function pmTable(
+  attrs: {
+    colspan?: number;
+    rowspan?: number;
+    colwidth?: number[] | null;
+    backgroundColor?: string | null;
+  } = {},
+  blocks = 1,
+): PmBlockNode {
   return {
     type: "table",
     attrs: { blockId: "table" },
@@ -26,6 +34,40 @@ function pmTable(attrs: { colspan?: number; rowspan?: number } = {}, blocks = 1)
           attrs: { blockId: `p-${index}` },
           content: [],
         })),
+      }],
+    }],
+  } as PmBlockNode;
+}
+
+function pmFormattedTable({
+  blockType = "paragraph",
+  textAlign = null,
+  marks = [],
+}: {
+  blockType?: "paragraph" | "heading" | "codeBlock" | "penNote";
+  textAlign?: string | null;
+  marks?: Array<Record<string, unknown>>;
+} = {}): PmBlockNode {
+  const blockAttrs = blockType === "heading"
+    ? { blockId: "formatted-p", level: 2, textAlign }
+    : blockType === "codeBlock"
+      ? { blockId: "formatted-p", language: "plaintext" }
+      : blockType === "paragraph"
+        ? { blockId: "formatted-p", textAlign }
+        : { blockId: "formatted-p" };
+  return {
+    type: "table",
+    attrs: { blockId: "formatted-table" },
+    content: [{
+      type: "tableRow",
+      content: [{
+        type: "tableCell",
+        attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+        content: [{
+          type: blockType,
+          attrs: blockAttrs,
+          content: [{ type: "text", text: "格式", ...(marks.length > 0 ? { marks } : {}) }],
+        }],
       }],
     }],
   } as PmBlockNode;
@@ -56,6 +98,41 @@ describe("table typewriter policy", () => {
     expect(tableTypewriterFallbackReason(table([], [["甲"]]), pmTable({ colspan: 2 }))).toBe("span");
     expect(tableTypewriterFallbackReason(table([], [["甲"]]), pmTable({}, 2))).toBe("multi-block-cell");
     expect(tableTypewriterFallbackReason(table([], [["x^2"]]), pmTableWithInlineMath())).toBe("non-text-cell");
+  });
+
+  it("仅放行无样式普通段落：单元格属性、块类型、对齐与文字 marks 均整表 fallback", () => {
+    expect(tableTypewriterFallbackReason(
+      table([], [["列宽"]]),
+      pmTable({ colwidth: [120] }),
+    )).toBe("cell-style");
+    expect(tableTypewriterFallbackReason(
+      table([], [["底色"]]),
+      pmTable({ backgroundColor: "sky" }),
+    )).toBe("cell-style");
+    expect(tableTypewriterFallbackReason(
+      table([], [["标题"]]),
+      pmFormattedTable({ blockType: "heading" }),
+    )).toBe("non-paragraph-cell");
+    expect(tableTypewriterFallbackReason(
+      table([], [["代码"]]),
+      pmFormattedTable({ blockType: "codeBlock" }),
+    )).toBe("non-paragraph-cell");
+    expect(tableTypewriterFallbackReason(
+      table([], [["笔记"]]),
+      pmFormattedTable({ blockType: "penNote" }),
+    )).toBe("non-paragraph-cell");
+    expect(tableTypewriterFallbackReason(
+      table([], [["居中"]]),
+      pmFormattedTable({ textAlign: "center" }),
+    )).toBe("formatted-text");
+    expect(tableTypewriterFallbackReason(
+      table([], [["粗体"]]),
+      pmFormattedTable({ marks: [{ type: "bold" }] }),
+    )).toBe("formatted-text");
+    expect(tableTypewriterFallbackReason(
+      table([], [["链接"]]),
+      pmFormattedTable({ marks: [{ type: "link", attrs: { href: "https://example.com" } }] }),
+    )).toBe("formatted-text");
   });
 
   it("cell 数和 grapheme 超阈值时整块 fallback", () => {

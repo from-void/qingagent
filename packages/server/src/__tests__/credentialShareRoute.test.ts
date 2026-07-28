@@ -70,7 +70,8 @@ describe("凭证共享设置接口", () => {
       created: true,
     }));
     const ensurePath = vi.fn(async () => undefined);
-    const response = await app({ createGrant, ensurePath }).request(
+    const invalidateWorkspaces = vi.fn();
+    const response = await app({ createGrant, ensurePath, invalidateWorkspaces }).request(
       post({ skillName: "feishu", declared: "~/.lark-cli", granted: true }),
     );
     expect(response.status).toBe(200);
@@ -78,16 +79,19 @@ describe("凭证共享设置接口", () => {
     expect(createGrant).toHaveBeenCalledWith(
       expect.objectContaining({ path: request.path, skillName: "feishu", source: "settings" }),
     );
+    expect(invalidateWorkspaces).toHaveBeenCalledWith();
     expect(await response.json()).toMatchObject({ granted: true });
   });
 
   it("回收授权", async () => {
     const revokeGrant = vi.fn(async () => null);
-    const response = await app({ revokeGrant }).request(
+    const invalidateWorkspaces = vi.fn();
+    const response = await app({ revokeGrant, invalidateWorkspaces }).request(
       post({ skillName: "feishu", declared: "~/.lark-cli", granted: false }),
     );
     expect(response.status).toBe(200);
     expect(revokeGrant).toHaveBeenCalledWith(request.path);
+    expect(invalidateWorkspaces).toHaveBeenCalledWith();
     expect(await response.json()).toMatchObject({ granted: false, grantedAt: null });
   });
 
@@ -111,7 +115,12 @@ describe("凭证共享设置接口", () => {
       source: "card" as const,
     };
     const revokeGrant = vi.fn(async () => null);
-    const server = app({ listGrants: async () => [adhoc], revokeGrant });
+    const invalidateWorkspaces = vi.fn();
+    const server = app({
+      listGrants: async () => [adhoc],
+      revokeGrant,
+      invalidateWorkspaces,
+    });
 
     const listed = await server.request("http://localhost/api/v1/settings/credential-share");
     expect((await listed.json()).items).toContainEqual({
@@ -127,6 +136,7 @@ describe("凭证共享设置接口", () => {
     );
     expect(revoked.status).toBe(200);
     expect(revokeGrant).toHaveBeenCalledWith("/home/tester/.fakecli");
+    expect(invalidateWorkspaces).toHaveBeenCalledWith();
     expect(await revoked.json()).toMatchObject({ granted: false, skillLabel: "命令行工具" });
   });
 

@@ -18,7 +18,11 @@ import {
   TableAxisSelectionExtension,
   type TableToolbarFormatCommand,
 } from "../../data/tableToolbar";
-import { handleQingagentPaste, writeSelectionToClipboard } from "../../components/doc/clipboardPaste";
+import {
+  handleQingagentPaste,
+  parsePlainTextClipboard,
+  writeSelectionToClipboard,
+} from "../../components/doc/clipboardPaste";
 import { resolveWorkspaceFloatingPortalTarget } from "../../components/DocumentSnapshotView";
 
 function createTableEditor() {
@@ -132,6 +136,21 @@ function rowCellTexts(editor: Editor, rowIndex: number): string[] {
 }
 
 describe("tableToolbar PM-010", () => {
+  it("纯文本粘贴保留连续换行与首尾空段落", () => {
+    const editor = createTableEditor();
+    try {
+      const slice = parsePlainTextClipboard("\n甲\n\n乙\n", editor.view);
+      expect(slice).not.toBeNull();
+      type ClipboardJsonNode = { text?: string; content?: ClipboardJsonNode[] };
+      const nodes = slice?.content.toJSON() as ClipboardJsonNode[] | undefined;
+      expect(nodes?.map((node) =>
+        node.content?.map((child) => child.text ?? "").join("") ?? "",
+      )).toEqual(["", "甲", "", "乙", ""]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it.each([
     ["column", 1],
     ["row", 1],

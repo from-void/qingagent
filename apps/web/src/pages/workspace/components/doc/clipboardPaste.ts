@@ -50,7 +50,7 @@ export function parsePlainTextClipboard(text: string, view: EditorView): Slice |
     return new Slice(parsed.content, 0, 0);
   }
   const dom = document.createElement("div");
-  for (const block of text.replace(/\r\n?/g, "\n").split(/\n+/)) {
+  for (const block of text.replace(/\r\n?/g, "\n").split("\n")) {
     const p = document.createElement("p");
     if (block) p.appendChild(document.createTextNode(block));
     dom.appendChild(p);

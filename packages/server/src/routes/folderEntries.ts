@@ -6,8 +6,7 @@ import {
 import { Buffer } from "node:buffer";
 import { posix } from "node:path";
 import {
-  isBrowserBridgeOfflineError,
-  isNotFoundError,
+  folderSourceErrorStatus,
   jsonError,
   normalizeRelPath,
   publicFolderSourceErrorMessage,
@@ -162,7 +161,11 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries",
   try {
     rawEntries = await filesystem.readdir(dirPath);
   } catch (error) {
-    return jsonError(c, publicFolderSourceErrorMessage(error), 502);
+    return jsonError(
+      c,
+      publicFolderSourceErrorMessage(error),
+      folderSourceErrorStatus(error),
+    );
   }
 
   const visibleEntries = rawEntries
@@ -237,9 +240,11 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/file", as
       return jsonError(c, "File exceeds maxBytes", 413);
     }
   } catch (error) {
-    if (isBrowserBridgeOfflineError(error)) return jsonError(c, publicFolderSourceErrorMessage(error), 502);
-    if (isNotFoundError(error)) return jsonError(c, "File not found", 404);
-    return jsonError(c, publicFolderSourceErrorMessage(error), 502);
+    return jsonError(
+      c,
+      publicFolderSourceErrorMessage(error),
+      folderSourceErrorStatus(error),
+    );
   }
 
   try {
@@ -251,8 +256,10 @@ folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/file", as
       "Cache-Control": "no-store",
     });
   } catch (error) {
-    if (isBrowserBridgeOfflineError(error)) return jsonError(c, publicFolderSourceErrorMessage(error), 502);
-    if (isNotFoundError(error)) return jsonError(c, "File not found", 404);
-    return jsonError(c, publicFolderSourceErrorMessage(error), 502);
+    return jsonError(
+      c,
+      publicFolderSourceErrorMessage(error),
+      folderSourceErrorStatus(error),
+    );
   }
 });

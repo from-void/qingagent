@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FolderSource } from "@qingagent/contract-ts";
 import {
+  browserBridgeFailureReasonCode,
   cleanupOrphanBrowserFolderHandles,
   forgetBrowserFolderSource,
   ensureBrowserFolderBridge,
@@ -193,6 +194,16 @@ describe("browser folder handle persistence", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ["NotFoundError", "not_found"],
+    ["NotAllowedError", "permission_denied"],
+    ["SecurityError", "permission_denied"],
+    ["AbortError", "unknown"],
+  ] as const)("浏览器异常 %s 只映射为安全 reasonCode %s", (name, expected) => {
+    const error = new DOMException("/Users/alice/Private/leak.md", name);
+    expect(browserBridgeFailureReasonCode(error)).toBe(expected);
   });
 
   it("选择阶段不持久化 handle，取消或重选不会留下 orphan", async () => {
@@ -521,10 +532,12 @@ describe("browser folder handle persistence", () => {
     );
     expect(responseCalls).toHaveLength(2);
     expect(responseCalls[0]?.init?.body).toBeInstanceOf(ArrayBuffer);
-    expect(JSON.parse(String(responseCalls[1]?.init?.body))).toMatchObject({
+    const failure = JSON.parse(String(responseCalls[1]?.init?.body)) as Record<string, unknown>;
+    expect(failure).toMatchObject({
       ok: false,
-      error: expect.stringContaining("413"),
+      reasonCode: "too_large",
     });
+    expect(failure).not.toHaveProperty("error");
 
     await forgetBrowserFolderSource(source.sessionId, source.id);
   });

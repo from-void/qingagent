@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import {
+  BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES,
   browserFolderSourcesEnabled,
   getBrowserFolderBridgeClientFolderIds,
   getBrowserFolderBridgePendingRequest,
@@ -14,6 +15,7 @@ import {
   unregisterBrowserFolderSource,
   type BrowserFolderBridgeBoundResponse,
   type BrowserFolderBridgeEntry,
+  type BrowserFolderBridgeFailureReasonCode,
   type BrowserFolderBridgeResponse,
   type BrowserFolderBridgeStat,
 } from "@qingagent/core";
@@ -35,6 +37,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+const browserFailureReasonCodes = new Set<string>(
+  BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES,
+);
+
+function browserFailureReasonCode(value: unknown): BrowserFolderBridgeFailureReasonCode {
+  return typeof value === "string" && browserFailureReasonCodes.has(value)
+    ? value as BrowserFolderBridgeFailureReasonCode
+    : "unknown";
 }
 
 function requireBrowserBridgeEnabled(c: Context): Response | null {
@@ -131,7 +143,10 @@ function validateJsonResponse(value: unknown): BrowserFolderBridgeBoundResponse 
   if (!nonEmptyString(value.clientId)) return null;
   let response: BrowserFolderBridgeResponse | null = null;
   if (value.ok === false) {
-    response = { ok: false, error: nonEmptyString(value.error) ? value.error : "browser bridge request failed" };
+    response = {
+      ok: false,
+      reasonCode: browserFailureReasonCode(value.reasonCode),
+    };
   } else if (value.ok === true && value.op === "stat") {
     const stat = validateStat(value.stat);
     if (!stat) return null;
@@ -292,7 +307,7 @@ folderBridgeRoutes.post("/folder-bridge/responses/:requestId", async (c) => {
         sessionId,
         folderId,
         clientId,
-        response: { ok: false, error: "readFile response exceeds maxBytes" },
+        response: { ok: false, reasonCode: "too_large" },
       });
       return responseTooLarge(c, "readFile response exceeds maxBytes");
     }
@@ -302,7 +317,7 @@ folderBridgeRoutes.post("/folder-bridge/responses/:requestId", async (c) => {
         sessionId,
         folderId,
         clientId,
-        response: { ok: false, error: "readFile response exceeds maxBytes" },
+        response: { ok: false, reasonCode: "too_large" },
       });
       return responseTooLarge(c, "readFile response exceeds maxBytes");
     }

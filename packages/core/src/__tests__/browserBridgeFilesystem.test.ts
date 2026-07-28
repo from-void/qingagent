@@ -259,6 +259,47 @@ describe("BrowserBridgeFilesystem", () => {
     }
   });
 
+  it.each([
+    ["not_found", "not_found"],
+    ["permission_denied", "permission_denied"],
+    ["too_large", "too_large"],
+    ["unknown", "client_error"],
+  ] as const)("客户端 reasonCode=%s 映射为安全类别 %s", async (reasonCode, expectedCode) => {
+    const source = makeSource();
+    const filesystem = new BrowserBridgeFilesystem(source);
+    const requests: Array<{ requestId: string }> = [];
+    const close = openBrowserFolderBridgeConnection({
+      sessionId: source.sessionId,
+      clientId: source.browserClientSourceId!,
+      send: async (request) => {
+        requests.push({ requestId: request.requestId });
+      },
+    });
+    const leak = "/Users/alice/Private/leak.md CLIENT_ERROR_BODY";
+
+    try {
+      const statPromise = filesystem.stat("/missing.md");
+      await flushPromises();
+      expect(resolveBrowserFolderBridgeResponse(requests[0]!.requestId, {
+        sessionId: source.sessionId,
+        folderId: source.id,
+        clientId: source.browserClientSourceId!,
+        response: { ok: false, reasonCode, error: leak },
+      })).toBe(true);
+      const error = await statPromise.then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toMatchObject({
+        name: "BrowserFolderBridgeError",
+        code: expectedCode,
+      });
+      expect(String(error)).not.toContain(leak);
+    } finally {
+      close();
+    }
+  });
+
   it("请求超时后同步清理 queuedRequests，晚到连接不接收过期请求", async () => {
     registerBrowserFolderSource("sess_timeout", "fld_timeout", "client_timeout");
     const closeSeen = openBrowserFolderBridgeConnection({

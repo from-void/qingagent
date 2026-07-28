@@ -46,9 +46,24 @@ type BrowserFolderBridgeSuccessResponse =
   | { ok: true; op: "readdir"; entries: BrowserFolderBridgeEntry[] }
   | { ok: true; op: "readFile"; bytes: Uint8Array };
 
+export const BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES = [
+  "not_found",
+  "permission_denied",
+  "too_large",
+  "unknown",
+] as const;
+
+export type BrowserFolderBridgeFailureReasonCode =
+  typeof BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES[number];
+
 export type BrowserFolderBridgeResponse =
   | BrowserFolderBridgeSuccessResponse
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      reasonCode?: BrowserFolderBridgeFailureReasonCode;
+      /** 兼容旧客户端；核心层始终丢弃该字段，不得向上透传。 */
+      error?: string;
+    };
 
 export interface BrowserFolderBridgeBoundResponse {
   sessionId: string;
@@ -60,7 +75,15 @@ export interface BrowserFolderBridgeBoundResponse {
 export class BrowserFolderBridgeError extends Error {
   constructor(
     message: string,
-    readonly code: "bridge_offline" | "timeout" | "protocol_error" | "read_only",
+    readonly code:
+      | "bridge_offline"
+      | "timeout"
+      | "protocol_error"
+      | "read_only"
+      | "not_found"
+      | "permission_denied"
+      | "too_large"
+      | "client_error",
   ) {
     super(message);
     this.name = "BrowserFolderBridgeError";
@@ -83,6 +106,27 @@ const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
 const DEFAULT_FIRST_CONNECTION_GRACE_MS = 3_000;
 const DEFAULT_READ_MAX_BYTES = 50 * 1024 * 1024 + 1;
 const CLIENT_FAILURE_MESSAGE = "browser folder request failed";
+const CLIENT_FAILURES: Record<
+  BrowserFolderBridgeFailureReasonCode,
+  { code: BrowserFolderBridgeError["code"]; message: string }
+> = {
+  not_found: {
+    code: "not_found",
+    message: "browser folder entry was not found",
+  },
+  permission_denied: {
+    code: "permission_denied",
+    message: "browser folder permission was denied",
+  },
+  too_large: {
+    code: "too_large",
+    message: "browser folder file exceeds the size limit",
+  },
+  unknown: {
+    code: "client_error",
+    message: CLIENT_FAILURE_MESSAGE,
+  },
+};
 
 const sourceKeys = new Set<string>();
 const detachedSourceKeys = new Set<string>();
@@ -636,7 +680,8 @@ export function resolveBrowserFolderBridgeResponse(
   pendingRequests.delete(requestId);
   removeQueuedRequest(requestId);
   if (!bound.response.ok) {
-    pending.reject(new BrowserFolderBridgeError(CLIENT_FAILURE_MESSAGE, "bridge_offline"));
+    const failure = CLIENT_FAILURES[bound.response.reasonCode ?? "unknown"];
+    pending.reject(new BrowserFolderBridgeError(failure.message, failure.code));
     return true;
   }
   try {

@@ -353,7 +353,10 @@ describe("folderBridgeRoutes", () => {
     await expect(oversize.json()).resolves.toMatchObject({
       error: expect.stringContaining("maxBytes"),
     });
-    await expect(pending).rejects.toThrow("browser folder request failed");
+    await expect(pending).rejects.toMatchObject({
+      name: "BrowserFolderBridgeError",
+      code: "too_large",
+    });
     close();
   });
 

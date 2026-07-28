@@ -390,6 +390,47 @@ describe("folderEntriesRoutes", () => {
     }
   });
 
+  it.each([
+    ["not_found", "entries", 404],
+    ["permission_denied", "file?path=private.md", 403],
+    ["too_large", "file?path=large.bin", 413],
+  ] as const)(
+    "browser bridge 客户端 %s 在 %s 映射为 HTTP %s",
+    async (reasonCode, endpoint, expectedStatus) => {
+      const sessionId = `entries_browser_${reasonCode}`;
+      process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+      const source = makeBrowserSource(sessionId);
+      registerSessionFolderSources(sessionId, [source]);
+      const leak = "/Users/alice/Private/leak.md CLIENT_ERROR_BODY";
+      const close = openBrowserFolderBridgeConnection({
+        sessionId,
+        clientId: source.browserClientSourceId!,
+        send: async (request) => {
+          resolveBrowserFolderBridgeResponse(request.requestId, {
+            sessionId,
+            folderId: source.id,
+            clientId: source.browserClientSourceId!,
+            response: { ok: false, reasonCode, error: leak },
+          });
+        },
+      });
+      const app = makeApp();
+
+      try {
+        const res = await app.request(
+          `/api/v1/sessions/${sessionId}/folder-sources/${source.id}/${endpoint}`,
+        );
+        expect(res.status).toBe(expectedStatus);
+        const body = await res.json() as { message: string };
+        expect(body.message).not.toContain(leak);
+        expect(body.message).not.toContain("断开后重新连接");
+      } finally {
+        close();
+        unregisterSessionFolderSources(sessionId);
+      }
+    },
+  );
+
   it("读取文件预览端点返回文本内容和 Content-Type", async () => {
     const sessionId = "entries_file_text";
     const { root, source } = registerFixture(sessionId);

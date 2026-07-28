@@ -43,6 +43,12 @@ interface BrowserBridgeRequest {
   maxBytes?: number;
 }
 
+export type BrowserBridgeFailureReasonCode =
+  | "not_found"
+  | "permission_denied"
+  | "too_large"
+  | "unknown";
+
 type BrowserBridgeStatus =
   | { status: "connected"; error: null }
   | { status: "permission_required"; error: string }
@@ -55,6 +61,30 @@ const HANDLE_STORE = "handles";
 const SOURCE_STORE = "sources";
 const activeBridges = new Map<string, ActiveBrowserBridge>();
 const pendingBridgeStarts = new Map<string, PendingBrowserBridgeStart>();
+
+class BrowserBridgeTooLargeError extends Error {
+  constructor() {
+    super("browser folder file exceeds the size limit");
+    this.name = "BrowserBridgeTooLargeError";
+  }
+}
+
+export function browserBridgeFailureReasonCode(
+  error: unknown,
+): BrowserBridgeFailureReasonCode {
+  const name = error !== null && typeof error === "object" &&
+      typeof (error as { name?: unknown }).name === "string"
+    ? (error as { name: string }).name
+    : "";
+  if (name === "NotFoundError") return "not_found";
+  if (name === "NotAllowedError" || name === "SecurityError") return "permission_denied";
+  if (name === "BrowserBridgeTooLargeError") return "too_large";
+  return "unknown";
+}
+
+function browserBridgeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function bridgeKey(sessionId: string, folderId: string): string {
   return `${sessionId}\0${folderId}`;
@@ -284,11 +314,11 @@ async function readFileEntry(
   const { parent, name } = await parentAndName(root, relPath);
   const file = await (await parent.getFileHandle(name)).getFile();
   if (typeof maxBytes === "number" && Number.isFinite(maxBytes) && file.size > maxBytes) {
-    throw new Error("unsupported: file is too large for browser folder bridge");
+    throw new BrowserBridgeTooLargeError();
   }
   const buffer = await file.arrayBuffer();
   if (typeof maxBytes === "number" && Number.isFinite(maxBytes) && buffer.byteLength > maxBytes) {
-    throw new Error("unsupported: file is too large for browser folder bridge");
+    throw new BrowserBridgeTooLargeError();
   }
   return buffer;
 }
@@ -349,12 +379,10 @@ async function postBinaryResponse(request: BrowserBridgeRequest, bytes: ArrayBuf
     },
     body: bytes,
   });
-  if (!response.ok) throw new Error(`folder bridge binary response failed: ${response.status}`);
-}
-
-function browserBridgeErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
+  if (!response.ok) {
+    if (response.status === 413) throw new BrowserBridgeTooLargeError();
+    throw new Error(`folder bridge binary response failed: ${response.status}`);
+  }
 }
 
 async function handleBridgeRequest(bridge: ActiveBrowserBridge, raw: unknown): Promise<void> {
@@ -390,7 +418,10 @@ async function handleBridgeRequest(bridge: ActiveBrowserBridge, raw: unknown): P
   } catch (error) {
     if (request && !bridge.closed) {
       try {
-        await postJsonResponse(request, { ok: false, error: browserBridgeErrorMessage(error) });
+        await postJsonResponse(request, {
+          ok: false,
+          reasonCode: browserBridgeFailureReasonCode(error),
+        });
       } catch (postError) {
         console.error("[browserFolderBridge] failed to report bridge error", postError);
       }

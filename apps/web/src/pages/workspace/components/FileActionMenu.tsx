@@ -43,7 +43,7 @@ export function FileActionMenu({
         <FileLineIcon />
         <span className="qa-file-copy">
           <span className="qa-file-name">选择文件</span>
-          <span className="qa-file-desc">PDF / Word / Excel / PPT / 图片…随消息发给 AI</span>
+          <span className="qa-file-desc">支持 PDF、Word、Excel、PPT、TXT、Markdown、图片等</span>
         </span>
       </button>
 
@@ -93,7 +93,7 @@ export function FileActionMenu({
             <span className="qa-file-name">连接本地文件夹</span>
             <span className="qa-file-desc">
               {folderBusyText ?? (folderCapability.enabled
-                ? "AI 可直接读取该文件夹，文件不复制不上传"
+                ? "青简会自动读取文件夹下所有文件"
                 : folderReason)}
             </span>
           </span>

@@ -378,8 +378,8 @@ describe("Settings Track B", () => {
     );
     expect(dayRequest).toBeDefined();
     expect(new URL(String(dayRequest![0]), "http://localhost").searchParams.get(
-      "timezoneOffsetMinutes",
-    )).toBe(String(new Date().getTimezoneOffset()));
+      "timeZone",
+    )).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     const recentMetric = host?.querySelector(".md-metric");
     expect(recentMetric?.textContent).toContain("100 tokens");
     expect(recentMetric?.textContent).not.toContain("1.1k tokens");

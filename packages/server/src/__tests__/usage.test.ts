@@ -60,11 +60,11 @@ describe("usageRoutes", () => {
   it("按天响应新增真实文档 ID/标题且不泄露内部 sessionId", async () => {
     const app = await loadApp();
     const response = await app.request(
-      "/api/v1/usage/summary?view=day&timezoneOffsetMinutes=420",
+      "/api/v1/usage/summary?view=day&timeZone=America%2FLos_Angeles",
     );
 
     expect(response.status).toBe(200);
-    expect(mockCore.aggregateUsageByDay).toHaveBeenCalledWith(30, 420);
+    expect(mockCore.aggregateUsageByDay).toHaveBeenCalledWith(30, "America/Los_Angeles");
     await expect(response.json()).resolves.toEqual({
       view: "day",
       rows: [
@@ -90,10 +90,10 @@ describe("usageRoutes", () => {
     });
   });
 
-  it("拒绝越界的客户端时区偏移", async () => {
+  it("拒绝无效的 IANA 时区", async () => {
     const app = await loadApp();
     const response = await app.request(
-      "/api/v1/usage/summary?view=day&timezoneOffsetMinutes=900",
+      "/api/v1/usage/summary?view=day&timeZone=Invalid%2FTimezone",
     );
 
     expect(response.status).toBe(400);

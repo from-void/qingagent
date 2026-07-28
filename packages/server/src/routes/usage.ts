@@ -20,21 +20,17 @@ usageRoutes.get("/usage/summary", async (c) => {
   if (view !== "day" && view !== "session" && view !== "total") {
     return c.json({ error: "view must be day, session, or total" }, 400);
   }
-  const timezoneOffsetRaw = c.req.query("timezoneOffsetMinutes");
-  const timezoneOffsetMinutes = timezoneOffsetRaw == null
-    ? 0
-    : Number(timezoneOffsetRaw);
-  if (
-    !Number.isInteger(timezoneOffsetMinutes) ||
-    timezoneOffsetMinutes < -840 ||
-    timezoneOffsetMinutes > 840
-  ) {
-    return c.json({ error: "timezoneOffsetMinutes must be an integer between -840 and 840" }, 400);
+  const timeZone = c.req.query("timeZone") ?? "UTC";
+  try {
+    if (!timeZone || timeZone.length > 128 || timeZone.trim() !== timeZone) throw new Error();
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(0);
+  } catch {
+    return c.json({ error: "timeZone must be a valid IANA time zone" }, 400);
   }
 
   const rows =
     view === "day"
-      ? await aggregateUsageByDay(30, timezoneOffsetMinutes)
+      ? await aggregateUsageByDay(30, timeZone)
       : view === "session"
         ? await aggregateUsageBySession()
         : await aggregateUsageTotal();

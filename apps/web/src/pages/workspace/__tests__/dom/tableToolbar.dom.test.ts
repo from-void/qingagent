@@ -181,6 +181,39 @@ describe("tableToolbar PM-010", () => {
     }
   });
 
+  it("最后逻辑列由 colspan 单元格覆盖时仍可从右边界插入列", () => {
+    const editor = new Editor({
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "table",
+          attrs: { blockId: "table-colspan" },
+          content: [{
+            type: "tableRow",
+            content: [{
+              ...cell("merged"),
+              attrs: {
+                colspan: 2,
+                rowspan: 1,
+                colwidth: null,
+                backgroundColor: null,
+              },
+            }],
+          }],
+        }],
+      } satisfies PmDoc,
+    });
+    try {
+      expect(insertTableAxisAtBoundary(editor, "table-colspan", "column", 2)).toBe(true);
+      const tableNode = editor.state.doc.firstChild;
+      expect(tableNode && TableMap.get(tableNode).width).toBe(3);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("merge/split 仅在原生命令满足选区前置条件时可用", () => {
     const editor = createTableEditor();
     try {

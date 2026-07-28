@@ -178,7 +178,10 @@ export function insertTableAxisAtBoundary(
   let offset: number | null = null;
   for (const candidate of new Set(map.map)) {
     const rect = map.findCell(candidate);
-    if ((axis === "column" ? rect.left : rect.top) !== (atEnd ? boundary - 1 : boundary)) continue;
+    const edge = atEnd
+      ? axis === "column" ? rect.right : rect.bottom
+      : axis === "column" ? rect.left : rect.top;
+    if (edge !== boundary) continue;
     offset ??= candidate;
     if ((axis === "column" ? rect.right - rect.left : rect.bottom - rect.top) === 1) {
       offset = candidate;

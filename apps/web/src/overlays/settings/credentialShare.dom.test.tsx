@@ -82,31 +82,29 @@ describe("安全页的已共享列表", () => {
     ));
   }
 
+  const connectCategory = {
+    kind: "connect",
+    label: "连接账号",
+    grantMode: "ask",
+    grantModes: ["ask", "always"],
+    present: false,
+    grantId: null,
+    version: 0,
+  };
+
   it("列出已共享条目,点收回后从列表消失", async () => {
     let granted = true;
     const calls: unknown[] = [];
     stubFetch((url, init) => {
-      if (url.includes("/settings/security")) {
-        return {
-          categories: [
-            {
-              kind: "connect",
-              label: "连接账号",
-              grantMode: "ask",
-              grantModes: ["ask", "always"],
-              present: false,
-              grantId: null,
-              version: 0,
-            },
-          ],
-        };
-      }
       if (init?.method === "POST") {
         calls.push(JSON.parse(String(init.body)));
         granted = false;
         return { ...item, granted: false, grantedAt: null };
       }
-      return { items: [{ ...item, granted, grantedAt: granted ? item.grantedAt : null }] };
+      return {
+        categories: [connectCategory],
+        credentialShare: [{ ...item, granted, grantedAt: granted ? item.grantedAt : null }],
+      };
     });
 
     await act(async () => {
@@ -128,11 +126,10 @@ describe("安全页的已共享列表", () => {
   });
 
   it("没有已共享条目时整段不显示", async () => {
-    stubFetch((url) =>
-      url.includes("/settings/security")
-        ? { categories: [] }
-        : { items: [{ ...item, granted: false, grantedAt: null }] },
-    );
+    stubFetch(() => ({
+      categories: [],
+      credentialShare: [{ ...item, granted: false, grantedAt: null }],
+    }));
     await act(async () => {
       root.render(<SecurityPanel />);
       await new Promise((resolve) => setTimeout(resolve, 0));

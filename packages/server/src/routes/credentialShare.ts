@@ -40,6 +40,13 @@ function toItem(request: CredentialRequest, grantedAt: string | null): Credentia
   };
 }
 
+/** 共享条目 + 授权状态。安全页与 credential-share 路由共用同一口径。 */
+export async function listCredentialShareItems(): Promise<CredentialShareItem[]> {
+  const [requests, grants] = await Promise.all([listCredentialRequests(), listCredentialGrants()]);
+  const grantedAtByPath = new Map(grants.map((grant) => [grant.path, grant.createdAt]));
+  return requests.map((request) => toItem(request, grantedAtByPath.get(request.path) ?? null));
+}
+
 export function createCredentialShareRoutes(
   dependencies: CredentialShareDependencies = {},
 ): Hono {

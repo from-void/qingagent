@@ -8,7 +8,7 @@ import type {
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
 import type { CredentialShareItem } from "@qingagent/contract-ts";
-import { fetchCredentialShareItems, updateCredentialShare } from "./credentialShare";
+import { parseCredentialShareItems, updateCredentialShare } from "./credentialShare";
 import { useToast } from "../../system/ToastProvider";
 import { SkinSelect } from "../../system/SkinSelect";
 import {
@@ -59,7 +59,10 @@ function parseSettings(value: unknown): SecuritySettingsResponse {
   if (!Array.isArray(input.categories) || !input.categories.every(isCategory)) {
     throw new Error("invalid security settings");
   }
-  return { categories: input.categories };
+  return {
+    categories: input.categories,
+    credentialShare: parseCredentialShareItems({ items: input.credentialShare }),
+  };
 }
 
 function parseCanonical(
@@ -97,6 +100,8 @@ function mergeSettings(
       const previous = currentByKind.get(item.kind);
       return previous && previous.version > item.version ? previous : item;
     }),
+    // 共享条目没有版本线,服务端最新一次结果即真值。
+    credentialShare: incoming.credentialShare ?? [],
   };
 }
 
@@ -111,6 +116,7 @@ export function SecurityPanel() {
 
   const applyCanonical = useCallback((state: RememberGrantCanonical) => {
     setSettings((current) => current ? {
+      ...current,
       categories: current.categories.map((item) => {
         if (item.kind !== state.kind || item.version > state.version) return item;
         return {
@@ -254,26 +260,26 @@ export function SecurityPanel() {
           );
         }) ?? (showLoading ? <p className="security-loading">正在加载…</p> : null)}
       </div>
-      <CredentialSharePanel />
+      <CredentialSharePanel
+        items={settings?.credentialShare ?? []}
+        onChanged={() => void readSettings().catch(() => undefined)}
+      />
     </div>
   );
 }
 
 /** 已允许与命令行工具共享的登录信息:逐条可收回。没有任何条目时整段不显示。 */
-function CredentialSharePanel() {
+function CredentialSharePanel({
+  items,
+  onChanged,
+}: {
+  items: CredentialShareItem[];
+  onChanged: () => void;
+}) {
   const toast = useToast();
-  const [items, setItems] = useState<CredentialShareItem[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
-    setItems(await fetchCredentialShareItems());
-  }, []);
-
-  useEffect(() => {
-    void reload().catch(() => setItems([]));
-  }, [reload]);
-
-  const shared = items?.filter((item) => item.granted) ?? [];
+  const shared = items.filter((item) => item.granted);
   if (shared.length === 0) return null;
 
   const revoke = async (item: CredentialShareItem) => {
@@ -284,7 +290,7 @@ function CredentialSharePanel() {
         declared: item.declared,
         granted: false,
       });
-      await reload();
+      onChanged();
       toast.show({
         message: `已收回「${item.skillLabel}」的共享。下次用到时会重新询问。`,
         tone: "success",

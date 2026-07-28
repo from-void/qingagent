@@ -14,6 +14,8 @@ export interface SecurityGrantCategory {
 
 export interface SecuritySettingsResponse {
   categories: SecurityGrantCategory[];
+  /** 已声明的「与命令行工具共享登录信息」条目;随设置一次取回,不额外多一次请求。 */
+  credentialShare?: CredentialShareItem[];
 }
 
 export interface UpdateSecurityGrantRequest {

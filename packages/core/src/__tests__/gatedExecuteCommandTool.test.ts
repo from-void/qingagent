@@ -598,6 +598,51 @@ describe("gated execute_command tool cwd 约束", () => {
     });
   });
 
+  it("成功命令的退出帧一次写入失败时仍保留真实成功终态", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-exit-frame-once");
+    const writer = {
+      custom: vi.fn()
+        .mockRejectedValueOnce(new Error("writer closed once"))
+        .mockResolvedValue(undefined),
+    };
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand }, {
+      toolCallId: "gated-exit-frame-once",
+      messages: [],
+      writer,
+      agent: { toolCallId: "gated-exit-frame-once" },
+    } as never)).resolves.toEqual({
+      success: true,
+      exitCode: 0,
+      cancelled: false,
+      timedOut: false,
+      output: "ok",
+    });
+    expect(executeCalls).toHaveLength(1);
+    expect(writer.custom).toHaveBeenCalledTimes(1);
+  });
+
+  it("成功命令的退出帧持续写入失败时工具也不 reject", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-exit-frame-always");
+    const writer = {
+      custom: vi.fn().mockRejectedValue(new Error("writer permanently closed")),
+    };
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand }, {
+      toolCallId: "gated-exit-frame-always",
+      messages: [],
+      writer,
+      agent: { toolCallId: "gated-exit-frame-always" },
+    } as never)).resolves.toMatchObject({
+      success: true,
+      exitCode: 0,
+      cancelled: false,
+      timedOut: false,
+      output: "ok",
+    });
+    expect(executeCalls).toHaveLength(1);
+  });
+
   it.each([
     {
       label: "stdout 与 stderr 都非空",

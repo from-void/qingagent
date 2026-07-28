@@ -92,6 +92,21 @@ export interface GatedCommandResult {
   background?: true;
 }
 
+type SandboxWriter = {
+  custom: (chunk: Record<string, unknown>) => Promise<unknown> | unknown;
+};
+
+async function safeCustom(
+  writer: SandboxWriter | undefined,
+  chunk: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await writer?.custom(chunk);
+  } catch {
+    // 流式帧只是附加信息；writer 故障不得改写已经确定的命令终态。
+  }
+}
+
 function formatCommandOutput(result: {
   success: boolean;
   exitCode: number;
@@ -361,6 +376,7 @@ export function createGatedExecuteCommandTool({
       const backgroundTimeoutClamped =
         explicitTimeout !== undefined && explicitTimeout > SANDBOX_BACKGROUND_TTL_MS;
       const toolCallId = context?.agent?.toolCallId;
+      const writer = context?.writer as SandboxWriter | undefined;
 
       if (input.background) {
         if (!sandbox.processes) {
@@ -446,21 +462,32 @@ export function createGatedExecuteCommandTool({
           maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
           abortSignal: context?.abortSignal,
           onStdout: async (data) => {
-            await context?.writer?.custom({
+            await safeCustom(writer, {
               type: "data-sandbox-stdout",
               data: { output: data, timestamp: Date.now(), toolCallId },
               transient: true,
             });
           },
           onStderr: async (data) => {
-            await context?.writer?.custom({
+            await safeCustom(writer, {
               type: "data-sandbox-stderr",
               data: { output: data, timestamp: Date.now(), toolCallId },
               transient: true,
             });
           },
         });
-        await context?.writer?.custom({
+        const timedOut = result.timedOut === true;
+        const cancelled = !timedOut && (
+          context?.abortSignal?.aborted === true || result.killed === true
+        );
+        const terminalResult = commandResult({
+          success: result.success && result.exitCode === 0 && !cancelled && !timedOut,
+          exitCode: result.exitCode,
+          cancelled,
+          timedOut,
+          output: formatCommandOutput(result, input.tail),
+        });
+        await safeCustom(writer, {
           type: "data-sandbox-exit",
           data: {
             exitCode: result.exitCode,
@@ -469,31 +496,12 @@ export function createGatedExecuteCommandTool({
             toolCallId,
           },
         });
-        const timedOut = result.timedOut === true;
-        const cancelled = !timedOut && (
-          context?.abortSignal?.aborted === true || result.killed === true
-        );
-        return commandResult({
-          success: result.success && result.exitCode === 0 && !cancelled && !timedOut,
-          exitCode: result.exitCode,
-          cancelled,
-          timedOut,
-          output: formatCommandOutput(result, input.tail),
-        });
+        return terminalResult;
       } catch (error) {
         const timedOut = error instanceof SandboxTimeoutError;
         const cancelled = !timedOut && context?.abortSignal?.aborted === true;
         const reason = error instanceof Error ? error.message : String(error);
-        await context?.writer?.custom({
-          type: "data-sandbox-exit",
-          data: {
-            exitCode: -1,
-            success: false,
-            executionTimeMs: Date.now() - startedAt,
-            toolCallId,
-          },
-        });
-        return commandResult({
+        const terminalResult = commandResult({
           success: false,
           exitCode: -1,
           cancelled,
@@ -504,6 +512,16 @@ export function createGatedExecuteCommandTool({
               ? `命令已取消: ${reason}`
               : `Error: ${reason}`,
         });
+        await safeCustom(writer, {
+          type: "data-sandbox-exit",
+          data: {
+            exitCode: -1,
+            success: false,
+            executionTimeMs: Date.now() - startedAt,
+            toolCallId,
+          },
+        });
+        return terminalResult;
       }
       } finally {
         stopHeartbeat();

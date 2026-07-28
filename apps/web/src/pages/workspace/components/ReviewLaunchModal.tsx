@@ -210,7 +210,18 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
       setTemplates((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       if (!id) {
         setSelectedId(saved.id);
-        await props.selectTemplate(props.type, saved.id);
+        setEditor({ source: saved, name: saved.name, prompt: saved.prompt });
+        const selectionEpoch = ++templateSelectionEpochRef.current;
+        try {
+          await props.selectTemplate(props.type, saved.id);
+        } catch {
+          setEditor(null);
+          setPage("launch");
+          if (templateSelectionEpochRef.current === selectionEpoch) {
+            setError("模板已保存，但设为默认失败，请再次选择");
+          }
+          return;
+        }
       }
       setEditor(null);
       setPage("launch");

@@ -186,6 +186,55 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("新模板已保存但设默认失败时,重试只选择已有模板而不重复创建", async () => {
+    const saveTemplate = vi.fn().mockResolvedValue({
+      id: "source-saved-once",
+      type: "source",
+      name: "已落库模板",
+      prompt: "只保存一次",
+      builtin: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const selectTemplate = vi.fn()
+      .mockRejectedValueOnce(new Error("设置默认失败"))
+      .mockResolvedValueOnce(undefined);
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({ saveTemplate, selectTemplate })} />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-template-new")?.click());
+    const name = host.querySelector<HTMLInputElement>(".ws-launch-editor input")!;
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(name, "已落库模板");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(prompt, "只保存一次");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+        .find((button) => button.textContent === "保存")
+        ?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const savedCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes("已落库模板"));
+    expect(savedCard).toBeTruthy();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("模板已保存");
+
+    await act(async () => {
+      savedCard?.click();
+      await Promise.resolve();
+    });
+
+    expect(saveTemplate).toHaveBeenCalledTimes(1);
+    expect(saveTemplate.mock.calls[0]?.[0]).not.toHaveProperty("id");
+    expect(selectTemplate).toHaveBeenNthCalledWith(1, "source", "source-saved-once");
+    expect(selectTemplate).toHaveBeenNthCalledWith(2, "source", "source-saved-once");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("文档级补充自动带出、确认即持久化；敏感词弹窗内含词库管理", async () => {
     let stored = "上次重点核对品牌口号";
     const modalProps = props({

@@ -56,6 +56,28 @@ describe("CardSwap 当前顺序", () => {
     expect(cards[3]?.classList.contains("top")).toBe(true);
     expect(cards[0]?.classList.contains("top")).toBe(false);
   });
+
+  it("自动轮换 420ms 窗口内测量只读，不改变顺序和视觉布局", async () => {
+    vi.useFakeTimers();
+    const swapRef = createRef<CardSwapHandle>();
+    await renderCardSwap(swapRef);
+    const cards = getCards();
+    const expected = new DOMRect(50, 60, 300, 380);
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = vi.fn(() =>
+        index === 1 ? expected : new DOMRect(index, index, 300, 380),
+      );
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    const before = cardLayoutSnapshot(cards);
+    const rect = swapRef.current?.topCardRect();
+
+    expect(rect).toBe(expected);
+    expect(cardLayoutSnapshot(cards)).toEqual(before);
+  });
 });
 
 async function renderCardSwap(ref = createRef<CardSwapHandle>()): Promise<void> {
@@ -75,4 +97,13 @@ async function renderCardSwap(ref = createRef<CardSwapHandle>()): Promise<void> 
 
 function getCards(): HTMLDivElement[] {
   return Array.from(host?.querySelectorAll<HTMLDivElement>(".ccx-tcard") ?? []);
+}
+
+function cardLayoutSnapshot(cards: HTMLDivElement[]) {
+  return cards.map((card) => ({
+    transform: card.style.transform,
+    opacity: card.style.opacity,
+    zIndex: card.style.zIndex,
+    top: card.classList.contains("top"),
+  }));
 }

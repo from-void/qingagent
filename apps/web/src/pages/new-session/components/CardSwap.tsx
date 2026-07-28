@@ -27,7 +27,7 @@ export interface FlyRect {
 }
 
 export interface CardSwapHandle {
-  /** 量出顶层卡当前屏幕 rect(用于 morph 飞入落点)。会瞬时禁过渡 reflow 后测量再还原。 */
+  /** 纯读取顶层卡当前屏幕 rect(用于 morph 飞入落点)，不收束轮换或改写布局。 */
   topCardRect: () => DOMRect | null;
   pause: () => void;
   resume: () => void;
@@ -164,7 +164,6 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
       topCardRect() {
         const swap = swapRef.current;
         if (!swap) return null;
-        cancelCycleTransition(true);
         const topIdx = orderRef.current[0];
         const top = topIdx == null ? null : cardRefs.current[topIdx];
         return top ? top.getBoundingClientRect() : null;

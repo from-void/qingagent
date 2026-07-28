@@ -363,6 +363,63 @@ describe("abortAndCleanupTurn", () => {
     expect(firstToolStatus(state)).toBe("aborted");
   });
 
+  it("全局停止在活动消息已清空后仍取消 pending confirm 并拒绝迟到接受", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("global-stop-pending-confirm");
+    state._activeAgentMessageId = null;
+    setSingleToolCall(state, runningCommand("tool-global-confirm"));
+    const pending = {
+      confirmId: "confirm-global",
+      runId: "run-global",
+      toolCallId: "tool-global-confirm",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-global",
+      spec: {
+        id: "confirm-global",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "sleep 20",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      appendAudit: async () => undefined,
+      persist: async (_current, persistReason) => {
+        persistReasons.push(persistReason);
+      },
+    });
+
+    const frames = await collectFrames(abortAndCleanupTurn(state, {
+      reason: "globalStop",
+      confirmService: service,
+    }));
+
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+    expect(persistReasons).toEqual(["confirm:aborted:terminal", "confirm:aborted"]);
+    expect(frames).toContainEqual(service.resolvedFrame(pending, "aborted"));
+    await expect(service.beginDecision(state, {
+      sessionId: state.sessionId,
+      toolCallId: pending.toolCallId,
+      decisionId: "late-accept",
+      decision: {
+        id: pending.confirmId,
+        accepted: true,
+      },
+      hasSecretValue: false,
+    })).rejects.toMatchObject({
+      code: "not_found",
+      message: "没有可处理的确认请求",
+    });
+  });
+
   it("R2-22 active turn 不 resolve 时也会超时孤儿化并投影 idle", async () => {
     const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
     const state = createSession("abort-cleanup-timeout");

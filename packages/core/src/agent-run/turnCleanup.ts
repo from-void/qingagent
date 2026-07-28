@@ -208,7 +208,10 @@ export async function* abortAndCleanupTurn(
   const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
     (pending) =>
       pending.status === "pending" &&
-      currentToolCallIds.has(pending.toolCallId),
+      (
+        reason === "globalStop" ||
+        currentToolCallIds.has(pending.toolCallId)
+      ),
   );
   state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);

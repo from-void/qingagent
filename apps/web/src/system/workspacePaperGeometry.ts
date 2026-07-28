@@ -68,11 +68,18 @@ function rectFromElement(element: Element | null): WorkspacePaperRect | null {
 }
 
 function findMountedPaper(view: HTMLElement): Element | null {
-  // 真正文已经挂出时以用户实际看到的 `.wf-doc` 为准；hydration 首帧只有壳时，
-  // shell 与 wf-doc 命中同一份纸面 CSS 声明，可直接接住交接。
+  const paperColumn = view.querySelector(
+    `.${WORKSPACE_PAPER_DOM.paperColumnClass}`,
+  );
+  if (!paperColumn) return null;
+
+  // 左侧问卷/模板预览也会复用 `.wf-doc` 排版类，测量只能落在右栏正文容器。
+  // hydration 首帧正文尚未挂出时，再以同一右栏的纸壳接住交接。
   return (
-    view.querySelector(`.${WORKSPACE_PAPER_DOM.documentClass}`) ??
-    view.querySelector(
+    paperColumn.querySelector(
+      `.${WORKSPACE_PAPER_DOM.documentContentClass} .${WORKSPACE_PAPER_DOM.documentClass}`,
+    ) ??
+    paperColumn.querySelector(
       `[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"]`,
     )
   );

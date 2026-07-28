@@ -520,16 +520,21 @@
 .settings-feedback .fb-doc:last-child{border-bottom:none}
 .settings-feedback .fb-doc:hover{background:var(--qj-switch-active-bg)}
 .settings-feedback .fb-doc input{width:15px;height:15px;margin:0;flex:none;accent-color:var(--qj-cinnabar)}
-.settings-feedback .fb-doc-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 三档层级(与模型/安全页一致):主文案 --qj-ink 13px > 说明 --ink-desc 13px > 辅助 11-12px 弱色。
+   文档名是这一行的主字,日期是辅助;两者原来同字号同色,整行没有重点。 */
+.settings-feedback .fb-doc-title{
+  flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:13px;color:var(--qj-ink);
+}
 .settings-feedback .fb-doc-date{flex:none;font-size:11px;color:var(--qj-header-sub);font-variant-numeric:tabular-nums}
-/* 勾选框:是否一并导出正文与对话 */
+/* 勾选框:是否一并导出正文与对话。勾选行本身是主文案,解释句降一档转弱色。 */
 .settings-feedback .fb-check{
   display:flex;align-items:flex-start;gap:9px;
-  font-size:12px;color:var(--qj-switch-text);cursor:pointer;
+  font-size:13px;color:var(--qj-ink);cursor:pointer;
 }
 .settings-feedback .fb-check input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:var(--qj-cinnabar)}
 .settings-feedback .fb-check-label{display:flex;flex-direction:column;gap:3px;line-height:1.5}
-.settings-feedback .fb-check-hint{font-style:normal;font-size:13px;color:var(--ink-desc);line-height:1.5}
+.settings-feedback .fb-check-hint{font-style:normal;font-size:12px;color:var(--ink-desc);line-height:1.5}
 .settings-feedback .fb-contact{
   margin:0;font-size:13px;line-height:1.6;color:var(--ink-desc);
 }

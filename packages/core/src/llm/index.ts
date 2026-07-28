@@ -1,4 +1,4 @@
-export * from "./deepseekPricing.js";
+export * from "./modelPricing.js";
 export * from "./modelBaseUrl.js";
 export * from "./modelConfig.js";
 export * from "./modelFetchUrl.js";

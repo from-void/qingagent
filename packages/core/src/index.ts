@@ -167,7 +167,7 @@ export {
   beginSessionSnapshotTurn,
   clearSessionSnapshot,
   estimateCostCny,
-  hasDeepseekPricing,
+  hasModelPricing,
   guardContext,
   guardReset,
   installNetProbe,

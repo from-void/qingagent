@@ -194,6 +194,113 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
   });
 
+  // —— 「使用中」不变式:只要存在已配置的厂商,必须有且恰好一家在使用中 ——
+
+  it("不变式 · 仅一家已配:那家必然使用中,不出现无处可切的「启 用」", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelUsingDeepseek").textContent).toContain("使用中");
+    expect(host?.querySelector('[data-wf="ModelEnableDeepseek"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="ModelEnableKimi"]')).toBeNull();
+    expect(getButtonByWf("ModelConfigKimi").textContent).toContain("去配置");
+  });
+
+  it("不变式 · 使用中指向未配置那家时自动回落到有配置的一家并落盘", async () => {
+    // 非法态复现:modelProvider=kimi(如早前启用过后又清了 kimi key),但只有 DeepSeek 有配置
+    await setSelectedModelProvider("kimi");
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelUsingDeepseek").textContent).toContain("使用中");
+    expect(host?.querySelector('[data-wf="ModelEnableDeepseek"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="ModelUsingKimi"]')).toBeNull();
+    // 与「启 用」同一条持久化通道,回落结果要落盘
+    expect(getStoredModelProvider()).toBe("deepseek");
+  });
+
+  it("不变式 · 清掉使用中那家的 key 后,当场回落到另一家而不是无人使用", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    await setSelectedModelProvider("kimi");
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
+    await openVendorConfig("kimi");
+    await click(getButtonByWf("ModelClearKey"));
+    await click(getButtonByText("清除 key"));
+    await click(getButtonByWf("ModelConfigBack"));
+
+    expect(getVisitorModelKey("kimi")).toBeNull();
+    expect(getButtonByWf("ModelUsingDeepseek").textContent).toContain("使用中");
+    expect(host?.querySelector('[data-wf="ModelEnableDeepseek"]')).toBeNull();
+    expect(getStoredModelProvider()).toBe("deepseek");
+  });
+
+  it("不变式 · 两家都已配时正常切换不受归一化干扰", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelUsingDeepseek")).toBeTruthy();
+    await click(getButtonByWf("ModelEnableKimi"));
+    expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
+    expect(getStoredModelProvider()).toBe("kimi");
+
+    await click(getButtonByWf("ModelEnableDeepseek"));
+    expect(getButtonByWf("ModelUsingDeepseek")).toBeTruthy();
+    expect(getStoredModelProvider()).toBe("deepseek");
+  });
+
+  it("首拉在途:模型面板不渲染任何空态/错误占位文案(切 tab 闪帧根治)", async () => {
+    // 所有首拉都挂着不回:此刻面板对"有没有配置/有没有用量"都还没有结论,
+    // 不许渲染任何会被数据顶掉的空态或错误文案(<250ms 连「加载中…」也不显形)。
+    const pending = new Promise<Response>(() => {});
+    vi.stubGlobal("fetch", vi.fn(() => pending));
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    const text = host?.textContent ?? "";
+    for (const flash of [
+      "还没有可用的模型",
+      "去配置",
+      "加载失败或暂不可用",
+      "用量数据加载失败或暂不可用",
+      "还没有用量记录",
+      "暂无记录",
+      "需有消耗与文档",
+      "正在检测连接",
+      "加载中…",
+    ]) {
+      expect(text, flash).not.toContain(flash);
+    }
+    // 卡片骨架仍在(不是整块空白),只是先不下结论
+    expect(host?.querySelectorAll(".vd-card")).toHaveLength(2);
+    expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.getAttribute("aria-busy"))
+      .toBe("true");
+  });
+
   it("已配厂商的二级页:清除 key 与模型名前缀都在,且不外露本机分层", async () => {
     await setVisitorDeepseekKey("deepseek-local-key");
     await render(
@@ -1178,6 +1285,84 @@ describe("Settings Track B", () => {
     expect(host?.querySelector(".sm-message")?.textContent).toContain("请填写 API 地址");
   });
 
+  it("用量明细头部:日期控件只在按天视图出现,模型多选三视图常驻", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    // 按天:日期 + 模型多选都在
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="UsageModelFilter"]')).not.toBeNull();
+    // 头部不再有独立「清除」按钮(清除并入日历浮层内部)
+    expect(host?.querySelector(".md-date-clear")).toBeNull();
+    // 「日期」文字标签已撤:容器里只剩日历控件本体
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')?.children).toHaveLength(1);
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')?.firstElementChild?.className)
+      .toContain("skin-date");
+
+    await click(getButtonByText("按文档"));
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="UsageModelFilter"]')).not.toBeNull();
+
+    await click(getButtonByText("总计"));
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="UsageModelFilter"]')).not.toBeNull();
+
+    await click(getButtonByText("按天"));
+    expect(host?.querySelector('[data-wf="UsageDateFilter"]')).not.toBeNull();
+  });
+
+  it("用量明细模型多选:默认全部,取消一档后聚合口径变局部,重新全选复原", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    const trigger = getButtonByWf("UsageModelFilter");
+    expect(trigger.textContent).toContain("全部");
+    // 2026-06-24 三行:flash 1000 + pro 600 + flash 400 = 2.0k 输入
+    expect(getTable().textContent).toContain("2.0k");
+
+    await click(trigger);
+    await click(getMenuOption("V4 PRO"));
+    // 取消 PRO 后该天只剩两条 flash:1000 + 400 = 1.4k
+    expect(getTable().textContent).toContain("1.4k");
+    expect(getTable().textContent).not.toContain("2.0k");
+    expect(getButtonByWf("UsageModelFilter").textContent).toContain("1 个模型");
+
+    // 「全部」项回到全选
+    await click(getMenuOption("全部"));
+    expect(getButtonByWf("UsageModelFilter").textContent).toContain("全部");
+    expect(getTable().textContent).toContain("2.0k");
+  });
+
+  it("用量明细模型多选:切到按文档视图后筛选仍生效", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/usage/summary?view=session")) {
+        return json({
+          rows: [
+            { ...usageRow("session-1", "deepseek-v4-flash", 1200, 500, 0.001), label: "测试文档" },
+            { ...usageRow("session-1", "k3", 800, 300, 0.002), label: "测试文档" },
+          ],
+        });
+      }
+      return makeFetchMock()(input);
+    }));
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    await click(getButtonByText("按文档"));
+    await flush();
+    // 1200 + 800 = 2.0k
+    expect(getTable().textContent).toContain("2.0k");
+
+    await click(getButtonByWf("UsageModelFilter"));
+    await click(getMenuOption("K3"));
+    expect(getTable().textContent).toContain("1.2k");
+    expect(getTable().textContent).not.toContain("2.0k");
+  });
+
   it("用量明细日期选择器只客户端过滤 day rows,不向服务端追加 date 参数", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     const fetchMock = makeFetchMock();
@@ -1697,6 +1882,14 @@ function getButtonByLabel(label: string): HTMLButtonElement {
   const button = document.body.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
   if (!button) throw new Error(`${label} button not found`);
   return button;
+}
+
+// 多选浮层 portal 到 body:按可见文案取选项
+function getMenuOption(label: string): HTMLButtonElement {
+  const option = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+    .find((node) => (node.textContent ?? "").replace(/[✓\s]/g, "") === label.replace(/\s/g, ""));
+  if (!option) throw new Error(`${label} option not found`);
+  return option;
 }
 
 function getTable(): HTMLTableElement {

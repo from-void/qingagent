@@ -62,6 +62,17 @@ describe("FeedbackPanel", () => {
     expect(host?.textContent).toContain("报错记录已导出");
   });
 
+  it("首拉在途:文档列表不渲染「读取文档列表中」占位(切 tab 闪帧根治)", async () => {
+    const pending = new Promise<Response>(() => {});
+    vi.stubGlobal("fetch", vi.fn(() => pending));
+    await render(<FeedbackPanel />);
+
+    const list = host?.querySelector('[data-wf="FeedbackDocList"]');
+    expect(list?.textContent).toBe("");
+    expect(host?.textContent).not.toContain("读取文档列表中");
+    expect(host?.textContent).not.toContain("暂无文档");
+  });
+
   it("勾选“一并导出正文与对话”后走 L2", async () => {
     const exportDiagnostics = vi.fn(async () => ({ saved: true, path: "/tmp/x.zip" }));
     (window as unknown as { electron?: unknown }).electron = {

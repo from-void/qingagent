@@ -4,6 +4,8 @@ import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
 import { CalendarDatePicker } from "../../system/CalendarDatePicker";
 import { SkinSelect } from "../../system/SkinSelect";
+import { SkinMultiSelect } from "../../system/SkinMultiSelect";
+import { useDelayedVisible } from "../../system/useDelayedVisible";
 import "./modelDashboard.css";
 import { ModelTierChip } from "./ModelTierChip";
 import {
@@ -85,6 +87,9 @@ type UsageMode = "simple" | "expert";
 
 const USAGE_MODE_STORAGE_KEY = "qingagent:model-usage-mode";
 
+// 首拉在途时指标副行的占位:不写任何文案(空态/错误都算结论),用不换行空格撑住行高不塌。
+const PENDING_SUB = "\u00a0";
+
 interface BalanceState {
   ok: boolean;
   keySource?: string;
@@ -105,6 +110,9 @@ export function ModelSettingsPanel() {
   const [view, setView] = useState<"main" | "config">("main");
   const [configProvider, setConfigProvider] = useState<ModelProvider>(initialProvider);
   const [server, setServer] = useState<ServerModelSettings | null>(null);
+  // 首拉是否已 settled(成功/失败都算)。口径:数据未定时一律不渲染空态/错误文案,
+  // 否则切到本 tab 的头几十毫秒会闪出"加载失败或暂不可用""还没有可用的模型"等错误信息。
+  const [serverSettled, setServerSettled] = useState(false);
   // 两张卡并列,两家的 key / 自定义配置都要在主视图上显示,故各存一份
   const [visitorKeys, setVisitorKeys] = useState<Record<ModelProvider, string | null>>(() => ({
     deepseek: getVisitorModelKey("deepseek"),
@@ -158,11 +166,20 @@ export function ModelSettingsPanel() {
   const [usageMode, setUsageMode] = useState<UsageMode>(() => readUsageMode());
   const [expandedUsageGroups, setExpandedUsageGroups] = useState<Set<string>>(() => new Set());
   const [usage, setUsage] = useState<UsageRow[] | null>(null);
+  const [usageSettled, setUsageSettled] = useState(false);
   const [usageDate, setUsageDate] = useState("");
+  // 模型多选筛选:记"被取消勾选的模型",这样用量里新出现的模型天然算已勾选(默认全选)。
+  const [excludedModels, setExcludedModels] = useState<ReadonlySet<string>>(() => new Set());
   // 看板专用:按天(趋势 + 近 7 天消耗)与总计(按模型分布)
   const [dayUsage, setDayUsage] = useState<UsageRow[] | null>(null);
   const [totalUsage, setTotalUsage] = useState<UsageRow[] | null>(null);
   const [docStats, setDocStats] = useState<{ docs: number; words: number } | null>(null);
+  // 看板三份数据(按天 / 总计 / 文档统计)首拉是否都已 settled
+  const [dashboardSettled, setDashboardSettled] = useState<{
+    day: boolean;
+    total: boolean;
+    docs: boolean;
+  }>({ day: false, total: false, docs: false });
   const [message, setMessage] = useState<string | null>(null);
   const [balance, setBalance] = useState<BalanceState | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -310,6 +327,8 @@ export function ModelSettingsPanel() {
       }
     } catch {
       if (mountedRef.current && !signal?.aborted) setServer(null);
+    } finally {
+      if (mountedRef.current && !signal?.aborted) setServerSettled(true);
     }
   }, []);
 
@@ -322,6 +341,8 @@ export function ModelSettingsPanel() {
       }
     } catch {
       if (mountedRef.current && !signal?.aborted) setUsage(null);
+    } finally {
+      if (mountedRef.current && !signal?.aborted) setUsageSettled(true);
     }
   }, []);
 
@@ -339,6 +360,10 @@ export function ModelSettingsPanel() {
         if (view === "day") setDayUsage(null);
         else setTotalUsage(null);
       }
+    } finally {
+      if (mountedRef.current && !signal?.aborted) {
+        setDashboardSettled((current) => ({ ...current, [view]: true }));
+      }
     }
   }, []);
 
@@ -349,6 +374,10 @@ export function ModelSettingsPanel() {
       if (mountedRef.current && !signal?.aborted) setDocStats(body);
     } catch {
       if (mountedRef.current && !signal?.aborted) setDocStats(null);
+    } finally {
+      if (mountedRef.current && !signal?.aborted) {
+        setDashboardSettled((current) => ({ ...current, docs: true }));
+      }
     }
   }, []);
 
@@ -401,6 +430,8 @@ export function ModelSettingsPanel() {
       readCustomProvider("deepseek") ||
       readOfficialModelOverride("deepseek")
     ) return;
+    // server 默认厂商自己没配置时不跟随——那正是"使用中指向未配置家"非法态的病根之一。
+    if (!vendorConfigured(server.provider)) return;
     void handleProviderChange(server.provider, true);
   }, [server]);
   useEffect(() => {
@@ -488,13 +519,39 @@ export function ModelSettingsPanel() {
     Boolean(visitorKeys[provider]) ||
     Boolean(serverStateOf(provider)?.apiKeyConfigured) ||
     Boolean(customProviders[provider]);
+  // 本机就能确定"已配置"的那部分(不依赖 server 首拉),用于首拉在途时先渲染确定为真的卡面
+  const locallyConfigured = (provider: ModelProvider) =>
+    Boolean(visitorKeys[provider]) || Boolean(customProviders[provider]);
+  // server 首拉未回来前,只有本机已配置的厂商配置态是确定的;其余厂商先不渲染卡内主体,
+  // 免得「去配置 / 还没有可用的模型」闪一帧再被服务端 key 顶掉。
+  const vendorStateKnown = (provider: ModelProvider) =>
+    serverSettled || locallyConfigured(provider);
   const customProvider = customProviders[configProvider];
   const visitorKey = visitorKeys[configProvider];
   const serverProviderState = serverStateOf(configProvider);
   const configProviderConfigured = vendorConfigured(configProvider);
-  const anyConfigured = MODEL_VENDORS.some((provider) => vendorConfigured(provider));
+  const configuredVendors = MODEL_VENDORS.filter((provider) => vendorConfigured(provider));
+  const anyConfigured = configuredVendors.length > 0;
+  // 「使用中」不变式:只要存在已配置的厂商,就必须恰好有一家在使用中。
+  // 当前 active 那家没有有效配置时(清掉了该家 key / 旧数据残留 / server 默认指向未配置家),
+  // 渲染立刻回落到有配置的那家(MODEL_VENDORS 顺序 = DeepSeek 优先),落盘由下方 effect 补。
+  const effectiveProvider = vendorConfigured(modelProvider)
+    ? modelProvider
+    : configuredVendors[0] ?? modelProvider;
   const deepseekAutoBalance =
     view === "main" && vendorConfigured("deepseek") && !customProviders.deepseek;
+
+  // 归一化落盘:渲染层已用 effectiveProvider 保证"恰有一家在使用中",这里把结果写回持久化,
+  // 走的是与「启 用」按钮同一条通道(setSelectedModelProvider),不另造第二套写入路径。
+  // 时机:面板挂载后 server 首拉 settled 时跑一次;之后任何配置变更(存/清 key、存/清自定义)
+  // 改变 effectiveProvider 时再跑——两个时机都被 deps 覆盖。
+  useEffect(() => {
+    if (!serverSettled) return;
+    if (effectiveProvider === modelProvider) return;
+    void handleProviderChange(effectiveProvider, true);
+    // handleProviderChange 每次渲染重建,放进 deps 会自激;它只依赖下面三个值的当前快照。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverSettled, effectiveProvider, modelProvider]);
 
   // 主视图上 DeepSeek 卡要显示余额:进主视图自动查一次连通性 + 余额(与"使用中"哪家无关)。
   // 其他云厂商不查(DeepSeek 余额接口测不了)。
@@ -590,7 +647,7 @@ export function ModelSettingsPanel() {
       if (!proceed) return;
     }
     const target = configProvider;
-    const activeConfigured = vendorConfigured(modelProvider);
+    const activeConfigured = vendorConfigured(effectiveProvider);
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
@@ -624,7 +681,7 @@ export function ModelSettingsPanel() {
     setView("main");
     toast.show(verifyStatus === "ok" ? "key 已验证并保存到本机" : "key 已保存到本机，尚未验证通过");
     // 原来那家还没配好时,刚配好的这家直接成为"使用中",省掉一次多余的「启 用」
-    if (!activeConfigured && target !== modelProvider) {
+    if (!activeConfigured && target !== effectiveProvider) {
       void handleProviderChange(target, true);
     }
     // 保存后回到主视图:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
@@ -711,7 +768,7 @@ export function ModelSettingsPanel() {
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
     const target = configProvider;
-    const activeConfigured = vendorConfigured(modelProvider);
+    const activeConfigured = vendorConfigured(effectiveProvider);
     const baseUrl = customBaseUrl.trim();
     const apiKey = customKey.trim();
     if (!baseUrl || !apiKey) {
@@ -795,7 +852,7 @@ export function ModelSettingsPanel() {
       setMessage(null);
       setView("main");
       toast.show("接口测试通过,已保存并启用自定义模型");
-      if (!activeConfigured && target !== modelProvider) {
+      if (!activeConfigured && target !== effectiveProvider) {
         void handleProviderChange(target, true);
       }
     } catch (e) {
@@ -820,6 +877,11 @@ export function ModelSettingsPanel() {
   const recent = useMemo(() => summarizeRecentDays(dayUsage, 7), [dayUsage]);
   const modelDist = useMemo(() => buildModelDistribution(totalUsage), [totalUsage]);
   const trend = useMemo(() => buildDailyTrend(dayUsage, 15), [dayUsage]);
+  // 看板 / 明细的首拉判定:未 settled 一律不下"没有数据 / 加载失败"的结论,
+  // 只有拖过 250ms 才显形一个中性「加载中…」——快请求全程无占位。
+  const dashboardReady = dashboardSettled.day && dashboardSettled.total && dashboardSettled.docs;
+  const showDashboardLoading = useDelayedVisible(!dashboardReady);
+  const showUsageLoading = useDelayedVisible(!usageSettled);
   const todayYmd = useMemo(() => toYMD(new Date()), []);
   const usageDates = useMemo(
     () => new Set(
@@ -835,10 +897,44 @@ export function ModelSettingsPanel() {
     return usage;
   }, [usage, usageDate, usageView]);
   const usageDateUnsupported = usageDate !== "" && usageView !== "day";
-  const usageGroups = useMemo(
-    () => visibleUsage === null ? null : buildUsageGroups(visibleUsage, usageView),
-    [visibleUsage, usageView],
+  // 明细卡的模型多选:选项动态取自当前视图数据里真实出现过的模型(含 DeepSeek / Kimi 各档)。
+  const usageModelIds = useMemo(
+    () => Array.from(new Set((usage ?? []).map((row) => row.modelId))).sort(),
+    [usage],
   );
+  const selectedModelIds = useMemo(
+    () => usageModelIds.filter((modelId) => !excludedModels.has(modelId)),
+    [usageModelIds, excludedModels],
+  );
+  const allModelsSelected =
+    usageModelIds.length > 0 && selectedModelIds.length === usageModelIds.length;
+  // 模型筛选落在明细卡内部:明细表、分组聚合、请求覆盖都跟着变成局部口径;
+  // 上方用量看板是另一张卡、另一份数据源,不受这里影响。
+  const filteredUsage = useMemo(() => {
+    if (visibleUsage === null) return null;
+    if (allModelsSelected || selectedModelIds.length === 0) return visibleUsage;
+    const keep = new Set(selectedModelIds);
+    return visibleUsage.filter((row) => keep.has(row.modelId));
+  }, [visibleUsage, allModelsSelected, selectedModelIds]);
+  const usageGroups = useMemo(
+    () => filteredUsage === null ? null : buildUsageGroups(filteredUsage, usageView),
+    [filteredUsage, usageView],
+  );
+  const toggleUsageModel = useCallback((modelId: string) => {
+    setExcludedModels((current) => {
+      const next = new Set(current);
+      if (next.has(modelId)) {
+        next.delete(modelId);
+        return next;
+      }
+      // 至少保留一个模型:全部取消等于空表,没有意义,末一个不让取消。
+      const remaining = usageModelIds.filter((id) => id !== modelId && !next.has(id));
+      if (remaining.length === 0) return current;
+      next.add(modelId);
+      return next;
+    });
+  }, [usageModelIds]);
+  const selectAllUsageModels = useCallback(() => setExcludedModels(new Set()), []);
 
   const toggleUsageMode = () => {
     const nextMode: UsageMode = usageMode === "simple" ? "expert" : "simple";
@@ -857,7 +953,15 @@ export function ModelSettingsPanel() {
   };
 
   // —— 连通性状态:自动 checkBalance 结果 → 色点 + 文案 ——
-  const deepseekStatus = deriveConnectivity(balance, balanceLoading, "deepseek");
+  // 首次探测通常几十毫秒就回来,「正在检测连接…」一闪而过反而像抖动;
+  // 250ms 内先按中性「已配置」显示,超过 250ms 才显形为检测中。
+  const showConnectivityProbe = useDelayedVisible(balance === null || balanceLoading);
+  const deepseekStatus = deriveConnectivity(
+    balance,
+    balanceLoading,
+    "deepseek",
+    showConnectivityProbe,
+  );
   const balanceVal = balance?.ok ? balance.balances?.[0] : undefined;
   const lowBalance = balanceVal != null && balance?.isAvailable === false;
 
@@ -1171,8 +1275,11 @@ export function ModelSettingsPanel() {
   const renderVendorCard = (provider: ModelProvider) => {
     const meta = VENDOR_META[provider];
     const wf = providerWfKey(provider);
+    const stateKnown = vendorStateKnown(provider);
     const configuredVendor = vendorConfigured(provider);
-    const isActive = configuredVendor && modelProvider === provider;
+    // 使用中按 effectiveProvider 判定:配置了模型却没有任何一家在使用是非法态,
+    // 只配了一家时那家必然「使用中」,不会出现无处可切的「启 用」按钮。
+    const isActive = configuredVendor && effectiveProvider === provider;
     const vendorCustom = customProviders[provider];
     const balanceText = balanceVal
       ? balanceVal.currency === "CNY"
@@ -1191,6 +1298,7 @@ export function ModelSettingsPanel() {
         key={provider}
         className={`md-card vd-card${isActive ? " vd-card--on" : ""}`}
         data-wf={`ModelVendorCard${wf}`}
+        aria-busy={stateKnown ? undefined : true}
       >
         <div className="vd-head">
           <img
@@ -1200,7 +1308,7 @@ export function ModelSettingsPanel() {
             aria-hidden="true"
           />
           <span className="md-card-title">{meta.name}</span>
-          {configuredVendor ? (
+          {!stateKnown ? null : configuredVendor ? (
             <ModelTierChip
               provider={provider}
               tier={tiers[provider]}
@@ -1212,7 +1320,9 @@ export function ModelSettingsPanel() {
           ) : null}
         </div>
 
-        {configuredVendor ? (
+        {/* server 首拉未回来且本机也判不出配置态时,卡内主体先留空——
+            宁可空 30ms,也不闪一帧「去配置 / 未配置介绍」再被服务端 key 顶掉。 */}
+        {!stateKnown ? null : configuredVendor ? (
           <>
             <div className="md-status-row">
               <span className={`md-dot md-dot--${cardStatus.tone}`} aria-hidden="true" />
@@ -1240,7 +1350,7 @@ export function ModelSettingsPanel() {
           <p className="vd-intro">{VENDOR_INTRO[provider]}</p>
         )}
 
-        {configuredVendor ? (
+        {!stateKnown ? null : configuredVendor ? (
           isActive ? (
             <button
               type="button"
@@ -1273,7 +1383,7 @@ export function ModelSettingsPanel() {
           </button>
         )}
 
-        {configuredVendor && (
+        {stateKnown && configuredVendor && (
           <span className="md-keyops vd-cfg">
             <button
               type="button"
@@ -1372,7 +1482,9 @@ export function ModelSettingsPanel() {
         </section>
       ) : (
         <section className="sm-configured">
-          {!anyConfigured && (
+          {/* 「还没有可用的模型」只在 server 首拉 settled 后才敢下结论——
+              否则站点全局 / env 配的 key 还没回来就先闪一条错误引导(真机闪帧实证)。 */}
+          {serverSettled && !anyConfigured && (
             <div className="vd-onboard" data-wf="ModelOnboardHint">
               还没有可用的模型。<b>推荐先接 DeepSeek</b>——写作最便宜;需要模型看图再接 Kimi。配置任意一家即可开始写作。
             </div>
@@ -1393,7 +1505,7 @@ export function ModelSettingsPanel() {
                     : "—"}
                 </div>
                 <div className="md-metric-sub">
-                  {recent ? `${formatTokens(recent.tokens)} tokens` : "暂无记录"}
+                  {!dashboardReady ? PENDING_SUB : recent ? `${formatTokens(recent.tokens)} tokens` : "暂无记录"}
                 </div>
               </div>
 
@@ -1402,7 +1514,9 @@ export function ModelSettingsPanel() {
                 <div className="md-metric-value font-mono">
                   {docStats ? <AnimatedNumber value={docs7} format={(n) => `${Math.round(n)} 篇`} /> : "—"}
                 </div>
-                <div className="md-metric-sub">{docStats ? fmtWords(words7) : "暂无记录"}</div>
+                <div className="md-metric-sub">
+                  {!dashboardReady ? PENDING_SUB : docStats ? fmtWords(words7) : "暂无记录"}
+                </div>
               </div>
 
               <div className="md-metric">
@@ -1411,7 +1525,11 @@ export function ModelSettingsPanel() {
                   {avgPerDoc != null ? <AnimatedNumber value={avgPerDoc} format={fmtMoney} /> : "—"}
                 </div>
                 <div className="md-metric-sub">
-                  {docsPer10 != null ? `每 10 元约可写 ${Math.floor(docsPer10)} 篇` : "需有消耗与文档"}
+                  {!dashboardReady
+                    ? PENDING_SUB
+                    : docsPer10 != null
+                      ? `每 10 元约可写 ${Math.floor(docsPer10)} 篇`
+                      : "需有消耗与文档"}
                 </div>
               </div>
             </div>
@@ -1422,7 +1540,9 @@ export function ModelSettingsPanel() {
                   <span className="md-block-title">按模型分布</span>
                   <span className="md-block-sub">累计费用占比</span>
                 </div>
-                {modelDist === null ? (
+                {!dashboardReady ? (
+                  showDashboardLoading ? <p className="md-empty">加载中…</p> : null
+                ) : modelDist === null ? (
                   <p className="md-empty">加载失败或暂不可用</p>
                 ) : modelDist.length === 0 ? (
                   <p className="md-empty">还没有用量记录,对话后出现</p>
@@ -1453,7 +1573,9 @@ export function ModelSettingsPanel() {
                   <span className="md-block-title">按天趋势</span>
                   <span className="md-block-sub">近 {trend?.days.length ?? 15} 天</span>
                 </div>
-                {trend === null ? (
+                {!dashboardReady ? (
+                  showDashboardLoading ? <p className="md-empty">加载中…</p> : null
+                ) : trend === null ? (
                   <p className="md-empty">加载失败或暂不可用</p>
                 ) : trend.days.length === 0 ? (
                   <p className="md-empty">还没有用量记录,对话后出现</p>
@@ -1497,25 +1619,43 @@ export function ModelSettingsPanel() {
                 <span className="md-card-title">用量明细</span>
               </button>
               <span className="md-detail-filters">
-                <label className="md-date-filter">
-                  <span>日期</span>
-                  <CalendarDatePicker
-                    value={usageDate}
-                    max={todayYmd}
-                    disabled={usageView !== "day"}
-                    markedDates={usageDates}
-                    onlyMarkedDatesSelectable
-                    title={usageView === "day" ? "仅筛选已加载的按天用量" : "日期筛选仅支持按天视图"}
-                    ariaLabel="筛选用量日期"
-                    skin="ink"
-                    onChange={setUsageDate}
-                  />
-                </label>
-                {usageDate && (
-                  <button type="button" className="md-date-clear" onClick={() => setUsageDate("")}>
-                    清除
-                  </button>
+                {/* 日期只对「按天」有意义:按文档 / 总计是服务端聚合结果,整控件隐藏。
+                    清除语义并入日历浮层内部的「清除日期」,头部不再另放清除钮。 */}
+                {usageView === "day" && (
+                  <span className="md-date-filter" data-wf="UsageDateFilter">
+                    <CalendarDatePicker
+                      value={usageDate}
+                      max={todayYmd}
+                      markedDates={usageDates}
+                      onlyMarkedDatesSelectable
+                      title="仅筛选已加载的按天用量"
+                      ariaLabel="筛选用量日期"
+                      skin="ink"
+                      onChange={setUsageDate}
+                    />
+                  </span>
                 )}
+                {/* 模型多选:选项动态取自统计里出现过的模型,默认全选,三种视图都保留 */}
+                <SkinMultiSelect
+                  className="md-model-filter"
+                  ariaLabel="筛选用量模型"
+                  skin="ink"
+                  allLabel="全部"
+                  disabled={usageModelIds.length === 0}
+                  options={usageModelIds.map((modelId) => ({
+                    value: modelId,
+                    label: modelLabel(modelId),
+                  }))}
+                  selected={selectedModelIds}
+                  onToggle={toggleUsageModel}
+                  onSelectAll={selectAllUsageModels}
+                  summaryLabel={
+                    allModelsSelected || usageModelIds.length === 0
+                      ? "全部"
+                      : `${selectedModelIds.length} 个模型`
+                  }
+                  dataWf="UsageModelFilter"
+                />
                 <span className="md-views md-views--right">
                   {(["day", "session", "total"] as const).map((v) => (
                     <button
@@ -1534,11 +1674,17 @@ export function ModelSettingsPanel() {
               {usageDateUnsupported && (
                 <p className="md-filter-note">日期筛选仅支持按天视图;按文档和总计是服务端聚合结果,不会按日期裁剪。</p>
               )}
-              {visibleUsage === null ? (
+              {!usageSettled ? (
+                showUsageLoading ? <p className="md-empty">加载中…</p> : null
+              ) : filteredUsage === null ? (
                 <p className="md-empty">用量数据加载失败或暂不可用</p>
               ) : usageGroups?.length === 0 ? (
                 <p className="md-empty">
-                  {usageDate && usageView === "day" ? "该日期暂无用量记录" : "还没有用量记录,开始一次对话后这里会出现消耗明细"}
+                  {usageDate && usageView === "day"
+                    ? "该日期暂无用量记录"
+                    : allModelsSelected || usageModelIds.length === 0
+                      ? "还没有用量记录,开始一次对话后这里会出现消耗明细"
+                      : "所选模型暂无用量记录"}
                 </p>
               ) : (
                 <div className="md-table-scroll">
@@ -1596,7 +1742,7 @@ export function ModelSettingsPanel() {
                       <th>
                         <span className="md-th-label">
                           估算费用
-                          <HelpMark label="估算费用" text="仅收录已核实价目的 DeepSeek 模型；Kimi 暂只记 token。" />
+                          <HelpMark label="估算费用" text="按各厂商已核实的公开单价估算；未收录价目的自定义模型只记 token。" />
                         </span>
                       </th>
                     </tr>
@@ -1667,7 +1813,7 @@ export function ModelSettingsPanel() {
                   </table>
                 </div>
               )}
-            <p className="md-foot-note">DeepSeek 费用按已核实公开单价估算；Kimi 暂无价目表，只记录 token，不估算金额。</p>
+            <p className="md-foot-note">费用按各厂商已核实的公开单价估算；未收录价目的自定义模型只记录 token，不估算金额。</p>
           </div>
         </section>
       )}
@@ -1926,10 +2072,13 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+// 只给已知的官方档位起中文短名;不认识的模型(第三方中转别名等)原样显示 id——
+// 猜成「V4 Flash」会让模型多选里两个不同模型顶着同一个名字,分不清也点不明白。
 function modelLabel(modelId: string): string {
   if (modelId === "k3") return "K3";
   if (modelId.includes("kimi-for-coding")) return "K2.7 Code";
-  return modelId.includes("pro") ? "V4 PRO" : "V4 Flash";
+  if (modelId.includes("deepseek")) return modelId.includes("pro") ? "V4 PRO" : "V4 Flash";
+  return modelId;
 }
 
 // 按模型分布饼图:conic-gradient 分段 + 图例配色
@@ -1955,12 +2104,15 @@ function deriveConnectivity(
   balance: BalanceState | null,
   loading: boolean,
   provider: ModelProvider,
+  probeVisible = true,
 ): { tone: "ok" | "bad" | "idle"; text: string } {
-  if (loading) return { tone: "idle", text: "正在检测连接…" };
+  // probeVisible=false:首拉在途且还没超过延迟阈值,先给中性「已配置」,别闪"正在检测连接…"
+  const probing = { tone: "idle" as const, text: probeVisible ? "正在检测连接…" : "已配置" };
+  if (loading) return probing;
   if (balance === null) {
     return provider === "kimi"
       ? { tone: "idle", text: "已配置 · Kimi 连接测试需手动触发" }
-      : { tone: "idle", text: "正在检测连接…" };
+      : probing;
   }
   if (balance.permissionDenied) return { tone: "bad", text: "Kimi 套餐或模型权限不足" };
   if (balance.keyInvalid) return { tone: "bad", text: "key 无效,请检查" };

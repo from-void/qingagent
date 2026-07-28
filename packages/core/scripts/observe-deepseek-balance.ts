@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import { getAppSetting, SETTING_DEEPSEEK_GLOBAL_KEY } from "../src/db/appSettingsRepo.js";
 import { getDocumentsClient } from "../src/db/documentsClient.js";
 import { ensureMigrated } from "../src/db/migrations.js";
-import { estimateCostCny } from "../src/llm/deepseekPricing.js";
+import { estimateCostCny } from "../src/llm/modelPricing.js";
 
 interface Baseline {
   capturedAt: string;

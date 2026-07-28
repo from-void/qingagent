@@ -32,7 +32,9 @@ export interface SkillInstallResult {
 
 export function useSkills() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [loading, setLoading] = useState(false);
+  // 初值必须是 true:首拉由挂载后的 effect 发起,若初值 false,首帧就会命中
+  // 「!loading && skills.length === 0」渲染出「暂无技能」,切到技能 tab 闪一帧再被列表顶掉。
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {

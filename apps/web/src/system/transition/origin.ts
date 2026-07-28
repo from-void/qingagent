@@ -4,7 +4,7 @@
 import {
   measureWorkspacePaperRect,
   WORKSPACE_PAPER_GEOMETRY,
-} from "../../../system/workspacePaperGeometry";
+} from "../workspacePaperGeometry";
 
 const NP_ARRIVE_KEY = "qingagent:np-arrive";
 const HOME_ARRIVE_KEY = "qingagent:home-arrive";

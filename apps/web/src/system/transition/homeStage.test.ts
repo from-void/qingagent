@@ -14,7 +14,7 @@ describe("ccx-stage-host 的归属", () => {
     // 实测(逐帧):擦掉后 op 恒 0;写进 className 后 op 在 0.32s 内 0 → 1。
     const here = path.dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(
-      path.resolve(here, "../../home/components/QingjianScroll.tsx"),
+      path.resolve(here, "../../pages/home/components/QingjianScroll.tsx"),
       "utf8",
     );
     expect(src).toMatch(/className=\{`qj-root ccx-stage-host/);

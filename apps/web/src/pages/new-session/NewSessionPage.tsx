@@ -30,10 +30,10 @@ import { SkillMenu, SparkleIcon, SKILL_MENU_WIDTH, type SkillMenuAction } from "
 import { invocableSkillActionsFromApi } from "../../system/skillDisplay";
 import { useSkills } from "../../overlays/settings/useSkills";
 import type { TemplateEntry } from "./data/templates";
-import { buildCardTextures } from "./transition/textures";
-import { createInkWipe } from "./transition/inkWipe";
-import type { InkWipeHandle } from "./transition/inkWipe";
-import { createDust } from "./transition/dust";
+import { buildCardTextures } from "../../system/transition/textures";
+import { createInkWipe } from "../../system/transition/inkWipe";
+import type { InkWipeHandle } from "../../system/transition/inkWipe";
+import { createDust } from "../../system/transition/dust";
 import {
   clearNpArrive,
   computeNewCardLandingRect,
@@ -41,7 +41,7 @@ import {
   peekNpArrive,
   setHomeArrive,
   setNpLandingRect,
-} from "./transition/origin";
+} from "../../system/transition/origin";
 import { pickBrowserFolderSource } from "../workspace/data/browserFolderBridge";
 import { DEFAULT_CHAT_INPUT_PLACEHOLDER } from "../workspace/data/chatInputBlockReason";
 import { uploadFileSizeError } from "../workspace/data/uploadAsset";

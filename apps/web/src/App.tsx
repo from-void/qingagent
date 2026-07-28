@@ -107,7 +107,7 @@ function AppShell() {
   useEffect(() => {
     const warm = () => {
       void loadNewSession().finally(() => {
-        void import("./pages/new-session/transition/inkWipe").then(({ prewarmInkWipe }) => prewarmInkWipe());
+        void import("./system/transition/inkWipe").then(({ prewarmInkWipe }) => prewarmInkWipe());
         void loadWorkspace();
         void loadHome();
       });

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHomeTransitionStage } from "../pages/new-session/transition/homeStage";
+import { createHomeTransitionStage } from "./transition/homeStage";
 import {
   measureWorkspacePaperRect,
   WORKSPACE_PAPER_CSS_VARIABLES,

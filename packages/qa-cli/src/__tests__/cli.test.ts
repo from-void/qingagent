@@ -403,6 +403,31 @@ describe("qa cli", () => {
     });
   });
 
+  it.each([
+    ["后续 flag", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文", "--json",
+    ]],
+    ["下一个多值选项", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文", "--str-replace", "另一处旧文", "另一处新文",
+    ]],
+    ["参数结尾", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文",
+    ]],
+  ])("doc propose --str-replace 缺值时不把%s当替换文本", async (_label, args) => {
+    const { main } = await import("../cli.js");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "proposed" })));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    await expect(main(args)).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: "--str-replace 需要旧文和新文",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("chat log 请求 /chat 并打印可读角色", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

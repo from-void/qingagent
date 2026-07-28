@@ -44,6 +44,16 @@ interface EventOptions {
 
 type EventTarget = "reviewed" | "committed" | "review";
 
+const DOC_PROPOSE_OPTION_NAMES = new Set([
+  "-s",
+  "--expect-version",
+  "--ops",
+  "--full",
+  "--append",
+  "--str-replace",
+  "--json",
+]);
+
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.length === 0 || hasFlag(args, "--help") || hasFlag(args, "-h")) return help();
   const [group, command] = args;
@@ -430,7 +440,10 @@ async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
   const append = optionValue(args, "--append");
   const ops: ExternalProposeOp[] = [];
   if (append) ops.push({ kind: "appendSection", markdown: await readFile(append, "utf8") });
-  for (const [oldText, newText] of optionValues(args, "--str-replace", 2)) {
+  for (const [oldText, newText] of optionValues(args, "--str-replace", 2, {
+    knownOptionNames: DOC_PROPOSE_OPTION_NAMES,
+    missingMessage: "--str-replace 需要旧文和新文",
+  })) {
     ops.push({ kind: "strReplace", old: oldText, new: newText });
   }
   if (ops.length === 0) throw new QaCliError("VALIDATION", "缺少提案 ops");

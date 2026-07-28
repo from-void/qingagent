@@ -347,6 +347,42 @@ describe("processAgentStream tool-call-approval", () => {
     },
   );
 
+  it("A 审批成功挂起后 B 审批失败不会清除同一回合的挂起语义", async () => {
+    const state = createSession("approval-success-then-failure");
+    let nextId = 0;
+    const service = new ConfirmService({
+      createId: () => `confirm-sequence-${++nextId}`,
+      persist: async (current, reason) => {
+        if (reason === "confirm:requested" && current.pendingConfirms.has("tool-b")) {
+          throw new Error("storage unavailable");
+        }
+      },
+    });
+    const context = await createAgentStreamTurnContext({
+      state,
+      agentMessageId: "agent-message",
+      streamId: "stream-success-then-failure",
+      runId: "run-confirm",
+      confirmService: service,
+    });
+
+    await collect(handleApprovalEvent(
+      context,
+      approval("tool-a", "mv a.txt done-a.txt"),
+    ));
+    expect(context.wasSuspended).toBe(true);
+    expect(state.pendingConfirms.has("tool-a")).toBe(true);
+
+    await collect(handleApprovalEvent(
+      context,
+      approval("tool-b", "mv b.txt done-b.txt"),
+    ));
+
+    expect(state.pendingConfirms.has("tool-a")).toBe(true);
+    expect(state.pendingConfirms.has("tool-b")).toBe(false);
+    expect(context.wasSuspended).toBe(true);
+  });
+
   it("stored grant 跳过参数流 generic 占位，首帧为排队 commandCard 并恢复到完成态", async () => {
     const state = createSession("approval-stream-stored");
     let now = Date.now();

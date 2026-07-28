@@ -230,6 +230,9 @@
 /* —— 技能 tab:卡片网格 —— */
 .qj-sheet-body .sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:2px 6px 0 0;align-items:stretch}
 .qj-sheet-body .sk-card{
+  /* 导入卡是 <button>:不写 font 就吃 UA 默认无衬线字体,标题/正文整块跳出全应用宋体
+     (用户亲测点名)。与 .sk-child-item 同法用 font:inherit 承接面板宋体。 */
+  font:inherit;
   display:flex;flex-direction:column;gap:7px;min-width:0;text-align:left;
   padding:11px 13px;border-radius:0;
   border:1px solid var(--qj-switch-border);

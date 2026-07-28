@@ -56,6 +56,13 @@ export interface DocumentSaveInput {
   updatedAt: string;
 }
 
+export interface DocumentSessionSummaryRow {
+  id: string;
+  title: string;
+  docState: string;
+  updatedAt: string;
+}
+
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
   findIdByThreadId(threadId: string): Promise<string | null>;
@@ -74,6 +81,10 @@ export interface DocumentRepo {
     perPage?: number;
     offset?: number;
   }): Promise<{ rows: DocumentRow[]; total: number }>;
+  listSessionSummariesWithExistingThreads(opts: {
+    resourceId: string;
+    limit: number;
+  }): Promise<DocumentSessionSummaryRow[]>;
   countByResourceId(resourceId: string): Promise<number>;
 }
 
@@ -879,6 +890,38 @@ export const documentRepo: DocumentRepo = {
       if (isMissingMastraThreadsTableError(error)) {
         return { rows: [], total: 0 };
       }
+      throw error;
+    }
+  },
+
+  async listSessionSummariesWithExistingThreads(opts) {
+    const client = await readyClient();
+    try {
+      const result = await client.execute({
+        // 稳定快照只读列表所需的四个小字段；禁止读取/解析 doc_pm，
+        // 标题直接取权威 thread，避免逐会话冷恢复。
+        sql: `SELECT
+            d.id,
+            t.title AS thread_title,
+            d.doc_state,
+            d.updated_at
+          FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ?
+            AND d.role = 'main'
+            AND ${sqlValidPmCondition("d")}
+          ORDER BY d.updated_at DESC, d.id ASC
+          LIMIT ?`,
+        args: [opts.resourceId, opts.limit],
+      });
+      return result.rows.map((row) => ({
+        id: valueAsString(row.id),
+        title: valueAsString(row.thread_title),
+        docState: valueAsString(row.doc_state),
+        updatedAt: valueAsString(row.updated_at),
+      }));
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) return [];
       throw error;
     }
   },

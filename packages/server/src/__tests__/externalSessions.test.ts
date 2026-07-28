@@ -24,7 +24,9 @@ let token = "";
 
 async function markThreadExistsInDocumentsDb(threadId: string): Promise<void> {
   const client = getDocumentsClient();
-  await client.execute("CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY)");
+  await client.execute(
+    "CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '')",
+  );
   await client.execute({
     sql: "INSERT OR IGNORE INTO mastra_threads (id) VALUES (?)",
     args: [threadId],

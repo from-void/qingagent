@@ -343,6 +343,52 @@ describe("documentRepo", () => {
     ))).toBe(true);
   });
 
+  it("会话快照摘要只读取有界小字段并采用 thread 标题", async () => {
+    await documentRepo.saveMany([
+      input("summary-new", {
+        resourceId: "summary-resource",
+        threadId: "summary-thread-new",
+        title: "文档旧标题",
+        docState: "pendingReview",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      }),
+      input("summary-old", {
+        resourceId: "summary-resource",
+        threadId: "summary-thread-old",
+        title: "文档标题",
+        docState: "editing",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "CREATE TABLE mastra_threads (id TEXT PRIMARY KEY, title TEXT NOT NULL)",
+    );
+    await client.execute(
+      `INSERT INTO mastra_threads (id, title) VALUES
+        ('summary-thread-new', '线程新标题'),
+        ('summary-thread-old', '线程旧标题')`,
+    );
+    const execute = vi.spyOn(client, "execute");
+
+    const rows = await documentRepo.listSessionSummariesWithExistingThreads({
+      resourceId: "summary-resource",
+      limit: 1,
+    });
+
+    expect(rows).toEqual([{
+      id: "summary-new",
+      title: "线程新标题",
+      docState: "pendingReview",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    }]);
+    const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
+    const projection = sql.split(/\bFROM\b/i)[0] ?? "";
+    expect(projection).not.toContain("d.*");
+    expect(projection).not.toContain("doc_pm");
+    expect(sql).toMatch(/\bLIMIT\s+\?/i);
+  });
+
   it("单行与列表读取逐行隔离坏 PM，其他文档继续可读", async () => {
     await documentRepo.saveMany([
       input("valid-row", { resourceId: "dirty-read" }),

@@ -66,8 +66,10 @@ const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
 const SESSION_SNAPSHOT_CURSOR_START = "start";
 const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
+const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
+let storedSessionSnapshotItems = 0;
 const sessionSnapshotCursors = new Map<string, {
   sessions: ExternalSessionSummary[];
   offset: number;
@@ -152,8 +154,17 @@ externalRoutes.get("/sessions", async (c) => {
   if (cursor !== undefined) {
     let snapshot: { sessions: ExternalSessionSummary[]; offset: number } | null;
     if (cursor === SESSION_SNAPSHOT_CURSOR_START) {
-      const all = await listExternalSessions(Number.MAX_SAFE_INTEGER, 0);
-      snapshot = { sessions: all.sessions, offset: 0 };
+      const sessions = await snapshotExternalSessions();
+      if (!sessions) {
+        return externalError(
+          c,
+          409,
+          "CONFLICT",
+          "会话数量过多，暂时无法建立稳定列表",
+          "请稍后重试",
+        );
+      }
+      snapshot = { sessions, offset: 0 };
     } else {
       snapshot = takeSessionSnapshotCursor(cursor);
     }
@@ -262,6 +273,48 @@ async function listExternalSessions(
   };
 }
 
+async function snapshotExternalSessions(): Promise<ExternalSessionSummary[] | null> {
+  const persistedRows = await documentRepo.listSessionSummariesWithExistingThreads({
+    resourceId: QINGAGENT_RESOURCE_ID,
+    limit: MAX_SESSION_SNAPSHOT_ITEMS + 1,
+  });
+  if (persistedRows.length > MAX_SESSION_SNAPSHOT_ITEMS) return null;
+
+  const sessions: ExternalSessionSummary[] = persistedRows.map((row) => ({
+    id: row.id,
+    title: row.title || "未命名草稿",
+    state: normalizedExternalSessionState(row.docState),
+    updatedAt: row.updatedAt,
+  }));
+  const persistedSessionIds = new Set(sessions.map((session) => session.id));
+  for (const sessionId of sessionManager.listSessionIds(50)) {
+    if (persistedSessionIds.has(sessionId)) continue;
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) continue;
+    sessions.push({
+      id: sessionId,
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
+      updatedAt: new Date().toISOString(),
+    });
+    if (sessions.length > MAX_SESSION_SNAPSHOT_ITEMS) return null;
+  }
+  return sessions;
+}
+
+function normalizedExternalSessionState(docState: string): ContentDocState["kind"] {
+  switch (docState) {
+    case "empty":
+    case "init":
+      return "empty";
+    case "pendingReview":
+    case "review":
+      return "pendingReview";
+    default:
+      return "editing";
+  }
+}
+
 function sessionSnapshotPage(
   sessions: ExternalSessionSummary[],
   offset: number,
@@ -290,10 +343,13 @@ function storeSessionSnapshotCursor(
   offset: number,
 ): string {
   pruneSessionSnapshotCursors();
-  while (sessionSnapshotCursors.size >= MAX_SESSION_SNAPSHOT_CURSORS) {
+  while (
+    sessionSnapshotCursors.size >= MAX_SESSION_SNAPSHOT_CURSORS ||
+    storedSessionSnapshotItems + sessions.length > MAX_SESSION_SNAPSHOT_ITEMS
+  ) {
     const oldest = sessionSnapshotCursors.keys().next().value as string | undefined;
     if (!oldest) break;
-    sessionSnapshotCursors.delete(oldest);
+    deleteSessionSnapshotCursor(oldest);
   }
   const cursor = crypto.randomUUID();
   sessionSnapshotCursors.set(cursor, {
@@ -301,6 +357,7 @@ function storeSessionSnapshotCursor(
     offset,
     expiresAt: Date.now() + SESSION_SNAPSHOT_TTL_MS,
   });
+  storedSessionSnapshotItems += sessions.length;
   return cursor;
 }
 
@@ -310,15 +367,25 @@ function takeSessionSnapshotCursor(
   pruneSessionSnapshotCursors();
   const snapshot = sessionSnapshotCursors.get(cursor);
   if (!snapshot) return null;
-  sessionSnapshotCursors.delete(cursor);
+  deleteSessionSnapshotCursor(cursor);
   return { sessions: snapshot.sessions, offset: snapshot.offset };
 }
 
 function pruneSessionSnapshotCursors(): void {
   const now = Date.now();
   for (const [cursor, snapshot] of sessionSnapshotCursors) {
-    if (snapshot.expiresAt <= now) sessionSnapshotCursors.delete(cursor);
+    if (snapshot.expiresAt <= now) deleteSessionSnapshotCursor(cursor);
   }
+}
+
+function deleteSessionSnapshotCursor(cursor: string): void {
+  const snapshot = sessionSnapshotCursors.get(cursor);
+  if (!snapshot) return;
+  sessionSnapshotCursors.delete(cursor);
+  storedSessionSnapshotItems = Math.max(
+    0,
+    storedSessionSnapshotItems - snapshot.sessions.length,
+  );
 }
 
 externalRoutes.post("/sessions", async (c) => {

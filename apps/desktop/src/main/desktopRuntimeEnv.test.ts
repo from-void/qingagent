@@ -11,6 +11,7 @@ test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力、技能和�
   const savedMutation = process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
   const savedTemplateMutation = process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION;
   const savedConnectors = process.env.QINGAGENT_CONNECTORS_ENABLED;
+  const savedPrivateModelHost = process.env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST;
   t.after(() => {
     if (savedRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
     else process.env.QINGAGENT_RUNTIME = savedRuntime;
@@ -29,6 +30,11 @@ test("configureDesktopRuntimeEnv 打开桌面本地文件夹能力、技能和�
     else process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION = savedTemplateMutation;
     if (savedConnectors === undefined) delete process.env.QINGAGENT_CONNECTORS_ENABLED;
     else process.env.QINGAGENT_CONNECTORS_ENABLED = savedConnectors;
+    if (savedPrivateModelHost === undefined) {
+      delete process.env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST;
+    } else {
+      process.env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST = savedPrivateModelHost;
+    }
   });
 
   delete process.env.QINGAGENT_RUNTIME;
@@ -53,6 +59,18 @@ test("configureDesktopRuntimeEnv 保留显式 connector kill switch", () => {
   const env = { QINGAGENT_CONNECTORS_ENABLED: "0" };
   configureDesktopRuntimeEnv(env);
   assert.equal(env.QINGAGENT_CONNECTORS_ENABLED, "0");
+});
+
+test("configureDesktopRuntimeEnv 默认放行内网模型主机", () => {
+  const env: Record<string, string | undefined> = {};
+  configureDesktopRuntimeEnv(env);
+  assert.equal(env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST, "1");
+});
+
+test("configureDesktopRuntimeEnv 保留显式关闭的内网模型主机开关", () => {
+  const env = { QINGAGENT_ALLOW_PRIVATE_MODEL_HOST: "0" };
+  configureDesktopRuntimeEnv(env);
+  assert.equal(env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST, "0");
 });
 
 test("configureDesktopRuntimeEnv 在打包态清除不安全记忆开关并锁定运行信号", () => {

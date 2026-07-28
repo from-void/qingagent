@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { routeToHash } from "../../shell";
 import type { ChatChip } from "@qingagent/contract-ts";
+import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
   ACCEPTED_UPLOAD_ACCEPT_ATTR,
   ACCEPTED_UPLOAD_LABEL,
@@ -79,6 +80,19 @@ export function partitionNewSessionAttachmentFiles(
     accepted.push(file);
   }
   return { accepted, unsupportedCount, sizeErrorMessage };
+}
+
+export function newSessionCommandLengthError(
+  text: string,
+  richText: string | null,
+): string | null {
+  if (
+    text.length > MAX_COMMAND_STRING_LENGTH ||
+    (richText != null && richText.length > MAX_COMMAND_STRING_LENGTH)
+  ) {
+    return "内容过长，请缩短后再发送";
+  }
+  return null;
 }
 
 export function pendingFilesVisibleInSnapshot(
@@ -284,6 +298,12 @@ export function NewSessionPage() {
       showCcxToast("先写点描述,或者加个素材吧");
       return;
     }
+    const richText = snap.chips.length > 0 ? snap.richText : null;
+    const lengthError = newSessionCommandLengthError(snap.text, richText);
+    if (lengthError) {
+      showCcxToast(lengthError);
+      return;
+    }
     // WYSIWYG(0702 重构):气泡与输入框所见完全一致——text=打字文本、chips 按原位置内联
     // ({{chip:N}} 占位,可穿插在文本任意处),**不再有任何"替用户说话"的兜底文案**
     // (旧"请帮我分析以下素材"/"请使用「」技能"都删了:前者把模型带偏找不存在的素材,
@@ -341,7 +361,7 @@ export function NewSessionPage() {
         submissionId,
         clientMessageId: submissionId,
         text: snap.text,
-        richText: snap.chips.length > 0 ? snap.richText : null,
+        richText,
         chips: contractChips,
         skills: skillRefs,
         attachments: visiblePendingAttachments,

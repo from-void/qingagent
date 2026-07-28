@@ -3,8 +3,10 @@ import { act } from "react";
 import type { ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 import {
   NewSessionPage,
+  newSessionCommandLengthError,
   partitionNewSessionAttachmentFiles,
 } from "./NewSessionPage";
 
@@ -58,6 +60,17 @@ describe("NewSessionPage 附件校验", () => {
 
     expect(result.accepted).toEqual([atLimit]);
     expect(result.sizeErrorMessage).toBe("文件过大（上限 50 MB）");
+  });
+});
+
+describe("NewSessionPage 正文校验", () => {
+  it("正文或富文本超过命令上限时会在持久化前拦截", () => {
+    const atLimit = "字".repeat(MAX_COMMAND_STRING_LENGTH);
+    const oversized = `${atLimit}字`;
+
+    expect(newSessionCommandLengthError(atLimit, atLimit)).toBeNull();
+    expect(newSessionCommandLengthError(oversized, null)).toBe("内容过长，请缩短后再发送");
+    expect(newSessionCommandLengthError("", oversized)).toBe("内容过长，请缩短后再发送");
   });
 });
 

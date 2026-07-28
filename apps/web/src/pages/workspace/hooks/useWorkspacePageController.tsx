@@ -2700,11 +2700,10 @@ export function useWorkspacePageController() {
   }, []);
 
   useEffect(() => {
-    if (!state.sessionId) {
-      setDerivatives([]);
-      setActiveTab("main");
-      return;
-    }
+    setDerivatives([]);
+    setActiveTab("main");
+    setActiveTranslationDocId(null);
+    if (!state.sessionId) return;
     void refreshDerivatives().catch((error) =>
       console.error("[workspace] list derivatives failed", error),
     );

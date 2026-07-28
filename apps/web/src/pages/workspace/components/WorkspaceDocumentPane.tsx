@@ -29,6 +29,7 @@ import {
   annotationMutationKey,
   workspaceMutations,
 } from "../data/revisionedMutation";
+import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
 import type { DerivativeDocument } from "./derivatives/types";
@@ -162,6 +163,12 @@ export function WorkspaceDocumentPane({
     chatInputEditorDisabled,
     chatInputRef,
   } = controller;
+  const currentSessionIdRef = useRef(state.sessionId);
+  currentSessionIdRef.current = state.sessionId;
+
+  useEffect(() => {
+    derivativeTabRequestRef.current += 1;
+  }, [state.sessionId]);
 
   useEffect(() => {
     if (
@@ -247,13 +254,18 @@ export function WorkspaceDocumentPane({
       }
 
       // 既有衍生稿先取正文再换 tab：网络等待期保留当前稳定纸面，避免先挂空纸再替换。
+      const requestSessionId = state.sessionId;
       void streamRef.current
-        .getDerivativeDoc(state.sessionId, target.docId)
+        .getDerivativeDoc(requestSessionId, target.docId)
         .then((document) => {
-          if (
-            derivativeTabRequestRef.current !== requestId ||
-            document?.meta.docId !== target.docId
-          ) {
+          if (!isCurrentDerivativePrefetch({
+            currentRequestId: derivativeTabRequestRef.current,
+            currentSessionId: currentSessionIdRef.current,
+            documentDocId: document?.meta.docId,
+            requestDocId: target.docId,
+            requestId,
+            requestSessionId,
+          })) {
             return;
           }
           setDerivativeDocCache((current) => {
@@ -264,7 +276,12 @@ export function WorkspaceDocumentPane({
           setActiveTab(nextTab);
         })
         .catch((error) => {
-          if (derivativeTabRequestRef.current !== requestId) return;
+          if (
+            derivativeTabRequestRef.current !== requestId ||
+            currentSessionIdRef.current !== requestSessionId
+          ) {
+            return;
+          }
           console.error("[workspace] preload derivative tab failed", error);
           showToast("稿件打开失败 · 请重试");
         });

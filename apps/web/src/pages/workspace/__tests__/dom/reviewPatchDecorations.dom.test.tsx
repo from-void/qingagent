@@ -964,6 +964,71 @@ describe("审阅态 PM patch decorations", () => {
     expect(popups[0]?.textContent).toContain("合并表头");
   });
 
+  it("删除含 colspan 的表格行时游标覆盖该行全部逻辑列", async () => {
+    const paragraph = (text: string) => ({
+      type: "paragraph",
+      attrs: {},
+      content: [{ type: "text", text }],
+    });
+    const beforeNode = {
+      type: "table",
+      attrs: { blockId: "table-removed-colspan" },
+      content: [
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", attrs: { colspan: 2 }, content: [paragraph("合并旧格")] },
+            { type: "tableCell", attrs: {}, content: [paragraph("末格")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: ["甲", "乙", "丙"].map((text) => ({
+            type: "tableCell",
+            attrs: {},
+            content: [paragraph(text)],
+          })),
+        },
+      ],
+    } as unknown as import("@qingagent/pm-schema").PmBlockNode;
+    const afterNode = {
+      ...beforeNode,
+      content: [(beforeNode as Extract<typeof beforeNode, { content: unknown }>).content[1]],
+    } as unknown as import("@qingagent/pm-schema").PmBlockNode;
+    const block = {
+      kind: "table",
+      blockId: "table-removed-colspan",
+      head: [],
+      rows: [["甲", "乙", "丙"]],
+      node: afterNode,
+      cellDiff: [
+        { status: "removed", cells: [] },
+        {
+          status: "same",
+          cells: ["甲", "乙", "丙"].map((text) => ({
+            status: "same",
+            spans: [{ kind: "text", text }],
+          })),
+        },
+      ],
+    } as unknown as ViewBlock;
+    const { ReviewBlockView } = await import("../../components/doc/reviewBlockDiff");
+
+    act(() => {
+      root.render(
+        <ReviewBlockView
+          block={block}
+          beforeNode={beforeNode}
+          targetPrefix="table-removed-colspan"
+        />,
+      );
+    });
+    await flush();
+
+    const cursor = host.querySelector(".wf-table-row--removed .wf-table-delete-cell") as HTMLTableCellElement | null;
+    expect(cursor?.colSpan).toBe(3);
+  });
+
   it("changed table cell 用 after PM node 渲染，段尾删除不丢审阅且 hardBreak/inlineMath/marks 不折叠", async () => {
     const baselineDoc = paragraphDoc("正文");
     const beforeNode = {

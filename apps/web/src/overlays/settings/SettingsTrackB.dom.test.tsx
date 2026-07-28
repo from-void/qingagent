@@ -377,6 +377,33 @@ describe("Settings Track B", () => {
     expect(recentMetric?.textContent).not.toContain("1.1k tokens");
   });
 
+  it("模型分布按原始 modelId 聚合，未知模型保留原名且互不合并", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=total")) {
+        return json({
+          rows: [
+            usageRow("total", "custom-alpha", 100, 0, 0.003),
+            usageRow("total", "custom-beta", 200, 0, 0.002),
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+
+    const legend = Array.from(host?.querySelectorAll(".md-legend-item") ?? [])
+      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    expect(legend).toHaveLength(2);
+    expect(legend[0]).toContain("custom-alpha");
+    expect(legend[0]).toContain("60%");
+    expect(legend[1]).toContain("custom-beta");
+    expect(legend[1]).toContain("40%");
+    expect(legend.join(" ")).not.toContain("V4 Flash");
+  });
+
   it("SecretInput 默认遮挡,眼睛按钮可切明文且保留 data-wf", async () => {
     await render(
       <SecretInput

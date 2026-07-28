@@ -43,8 +43,8 @@ export function useWorkspaceFind(input: {
       if (active?.closest?.("#view-workspace .ws-left")) return;
 
       const shouldOpen = shouldInterceptFindShortcut(event, false, findMode);
-      event.preventDefault();
       if (!shouldOpen) return;
+      event.preventDefault();
 
       const editor = input.editorRef.current;
       let selectedText = "";

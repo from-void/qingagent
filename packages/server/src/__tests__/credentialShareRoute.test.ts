@@ -101,6 +101,44 @@ describe("凭证共享设置接口", () => {
     expect(await response.json()).toEqual({ error: "这个技能现在没有请求共享这个位置。" });
   });
 
+  it("按需申请拿到的授权(没有技能声明)也列得出、收得回", async () => {
+    const adhoc = {
+      path: "/home/tester/.fakecli",
+      grantId: "g2",
+      skillName: "",
+      declared: "~/.fakecli",
+      createdAt: "2026-07-29T02:00:00.000Z",
+      source: "card" as const,
+    };
+    const revokeGrant = vi.fn(async () => null);
+    const server = app({ listGrants: async () => [adhoc], revokeGrant });
+
+    const listed = await server.request("http://localhost/api/v1/settings/credential-share");
+    expect((await listed.json()).items).toContainEqual({
+      skillName: "",
+      skillLabel: "命令行工具",
+      declared: "~/.fakecli",
+      granted: true,
+      grantedAt: "2026-07-29T02:00:00.000Z",
+    });
+
+    const revoked = await server.request(
+      post({ skillName: "", declared: "~/.fakecli", granted: false }),
+    );
+    expect(revoked.status).toBe(200);
+    expect(revokeGrant).toHaveBeenCalledWith("/home/tester/.fakecli");
+    expect(await revoked.json()).toMatchObject({ granted: false, skillLabel: "命令行工具" });
+  });
+
+  it("按需授权不能靠这个接口新增:授权仍只认技能声明", async () => {
+    const createGrant = vi.fn();
+    const response = await app({ createGrant }).request(
+      post({ skillName: "", declared: "~/.fakecli", granted: true }),
+    );
+    expect(response.status).toBe(404);
+    expect(createGrant).not.toHaveBeenCalled();
+  });
+
   it("请求体不合法时给中文提示", async () => {
     const response = await app().request(post({ skillName: "feishu" }));
     expect(response.status).toBe(400);

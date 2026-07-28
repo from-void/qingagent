@@ -17,7 +17,8 @@ import {
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 const updateSchema = z.object({
-  skillName: z.string().min(1).max(64),
+  // 空串 = 按需申请拿到的授权,不绑技能;它只能被收回,不能靠本接口新增。
+  skillName: z.string().max(64),
   declared: z.string().min(1).max(512),
   granted: z.boolean(),
 }).strict();
@@ -46,8 +47,14 @@ export const ADHOC_CREDENTIAL_SKILL_LABEL = "命令行工具";
  * 共享条目 + 授权状态。两条通道合流:技能声明的条目 + 按需申请拿到的授权
  * (后者没有技能,统一挂在「命令行工具」名下)。安全页与 credential-share 路由共用同一口径。
  */
-export async function listCredentialShareItems(): Promise<CredentialShareItem[]> {
-  const [requests, grants] = await Promise.all([listCredentialRequests(), listCredentialGrants()]);
+export async function listCredentialShareItems(deps: {
+  listRequests?: () => Promise<CredentialRequest[]>;
+  listGrants?: typeof listCredentialGrants;
+} = {}): Promise<CredentialShareItem[]> {
+  const [requests, grants] = await Promise.all([
+    (deps.listRequests ?? listCredentialRequests)(),
+    (deps.listGrants ?? listCredentialGrants)(),
+  ]);
   const grantedAtByPath = new Map(grants.map((grant) => [grant.path, grant.createdAt]));
   const declaredPaths = new Set(requests.map((request) => request.path));
   const items = requests.map((request) => toItem(request, grantedAtByPath.get(request.path) ?? null));
@@ -76,10 +83,8 @@ export function createCredentialShareRoutes(
 
   // 只列出「当前已启用技能确实声明了的」条目:声明没了就不该继续出现在设置里。
   routes.get("/settings/credential-share", async (c) => {
-    const [requests, grants] = await Promise.all([listRequests(), listGrants()]);
-    const grantedAtByPath = new Map(grants.map((grant) => [grant.path, grant.createdAt]));
     const body: CredentialShareResponse = {
-      items: requests.map((request) => toItem(request, grantedAtByPath.get(request.path) ?? null)),
+      items: await listCredentialShareItems({ listRequests, listGrants }),
     };
     return c.json(body);
   });

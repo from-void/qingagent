@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ConfirmGrant,
   ConfirmGrantKind,
+  ConfirmGrantMutation,
   ConfirmGrantSource,
   ConfirmGrantState,
 } from "@qingagent/db";
@@ -82,7 +83,11 @@ function makeHarness(initial: ConfirmGrant[] = []) {
 async function post(
   app: Hono,
   kind: string,
-  body: { grantMode: "ask" | "always" },
+  body: {
+    grantMode: "ask" | "always";
+    operationId?: string;
+    baseVersion?: number;
+  },
 ) {
   return app.request(`/api/v1/settings/security/${kind}`, {
     method: "POST",
@@ -220,5 +225,102 @@ describe("安全设置路由", () => {
     }));
     expect((await post(app, "command", { grantMode: "always" })).status).toBe(200);
     expect(createGrant).toHaveBeenCalledOnce();
+  });
+
+  it("写入响应超时期间可按操作 ID 查询 pending，提交后返回对应版本", async () => {
+    let releaseCreate: ((value: ConfirmGrantMutation) => void) | undefined;
+    let markCreateStarted: (() => void) | undefined;
+    const createResult = new Promise<ConfirmGrantMutation>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const createStarted = new Promise<void>((resolve) => {
+      markCreateStarted = resolve;
+    });
+    const createGrant = vi.fn(async () => {
+      markCreateStarted?.();
+      return createResult;
+    });
+    const app = new Hono();
+    app.route("/api/v1", createSecuritySettingsRoutes({
+      listGrantStates: async () => (["install", "command", "send", "connect"] as const).map((kind) => ({
+        kind,
+        present: false,
+        grantId: null,
+        version: 0,
+        revocationEpoch: 0,
+        grant: null,
+      })),
+      createGrant,
+    }));
+
+    const operationId = "security-operation-late";
+    const pendingPost = post(app, "install", {
+      grantMode: "always",
+      operationId,
+      baseVersion: 0,
+    });
+    await createStarted;
+
+    const pending = await app.request(
+      `/api/v1/settings/security?operationId=${operationId}`,
+    );
+    expect(await pending.json()).toMatchObject({
+      operation: {
+        operationId,
+        kind: "install",
+        grantMode: "always",
+        baseVersion: 0,
+        status: "pending",
+      },
+    });
+    const duplicate = await post(app, "install", {
+      grantMode: "always",
+      operationId,
+      baseVersion: 0,
+    });
+    expect(duplicate.status).toBe(202);
+    expect(createGrant).toHaveBeenCalledOnce();
+
+    const grant = {
+      grantId: "grant-install-late",
+      kind: "install" as const,
+      source: "settings" as const,
+      createdAt: new Date().toISOString(),
+    };
+    releaseCreate?.({
+      grant,
+      created: true,
+      stale: false,
+      state: {
+        kind: "install",
+        present: true,
+        grantId: grant.grantId,
+        version: 1,
+        revocationEpoch: 0,
+        grant,
+      },
+    });
+    const postResponse = await pendingPost;
+    expect(await postResponse.json()).toMatchObject({
+      operationId,
+      baseVersion: 0,
+      version: 1,
+      grantMode: "always",
+    });
+
+    const committed = await app.request(
+      `/api/v1/settings/security?operationId=${operationId}`,
+    );
+    expect(await committed.json()).toMatchObject({
+      operation: {
+        operationId,
+        status: "committed",
+        result: {
+          operationId,
+          baseVersion: 0,
+          version: 1,
+        },
+      },
+    });
   });
 });

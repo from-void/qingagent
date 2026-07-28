@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDelayedVisible } from "../../system/useDelayedVisible";
 import type {
   SecurityGrantCategory,
   SecurityGrantKind,
   SecurityGrantMode,
+  SecuritySettingsOperation,
   SecuritySettingsResponse,
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
@@ -17,9 +18,10 @@ import {
   type RememberGrantCanonical,
 } from "../../system/confirmGrantState";
 
-type UpdatePhase = "idle" | "updating" | "settled";
+type UpdatePhase = "idle" | "updating" | "uncertain" | "settled";
 
 const POST_TIMEOUT_MS = 8_000;
+const RECONCILE_INTERVAL_MS = 750;
 const modeLabels: Record<SecurityGrantMode, string> = {
   ask: "每次询问",
   always: "总是允许",
@@ -62,6 +64,9 @@ function parseSettings(value: unknown): SecuritySettingsResponse {
   return {
     categories: input.categories,
     credentialShare: parseCredentialShareItems({ items: input.credentialShare }),
+    operation: input.operation === undefined
+      ? undefined
+      : parseOperation(input.operation),
   };
 }
 
@@ -76,7 +81,11 @@ function parseCanonical(
     typeof input.present !== "boolean" ||
     (input.grantId !== null && typeof input.grantId !== "string") ||
     !Number.isSafeInteger(input.version) ||
-    Number(input.version) < 0
+    Number(input.version) < 0 ||
+    typeof input.operationId !== "string" ||
+    input.operationId.length === 0 ||
+    !Number.isSafeInteger(input.baseVersion) ||
+    Number(input.baseVersion) < 0
   ) {
     throw new Error("invalid grant state");
   }
@@ -86,7 +95,57 @@ function parseCanonical(
     present: input.present,
     grantId: input.grantId as string | null,
     version: Number(input.version),
+    operationId: input.operationId,
+    baseVersion: Number(input.baseVersion),
   };
+}
+
+function parseOperation(value: unknown): SecuritySettingsOperation {
+  if (!value || typeof value !== "object") throw new Error("invalid operation state");
+  const input = value as Record<string, unknown>;
+  if (
+    typeof input.operationId !== "string" ||
+    input.operationId.length === 0 ||
+    !(input.kind === "install" || input.kind === "command" || input.kind === "send" || input.kind === "connect") ||
+    !isGrantMode(input.grantMode) ||
+    !Number.isSafeInteger(input.baseVersion) ||
+    Number(input.baseVersion) < 0 ||
+    !(input.status === "pending" || input.status === "failed" || input.status === "committed")
+  ) {
+    throw new Error("invalid operation state");
+  }
+  const kind = input.kind as SecurityGrantKind;
+  const operation = {
+    operationId: input.operationId,
+    kind,
+    grantMode: input.grantMode,
+    baseVersion: Number(input.baseVersion),
+  };
+  if (input.status !== "committed") {
+    return { ...operation, status: input.status };
+  }
+  return {
+    ...operation,
+    status: "committed",
+    result: parseCanonical(kind, input.result),
+  };
+}
+
+type UpdateOutcome =
+  | { status: "committed"; canonical: UpdateSecurityGrantResponse }
+  | { status: "failed" }
+  | { status: "uncertain" };
+
+function waitForReconcile(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, RECONCILE_INTERVAL_MS));
+}
+
+function createOperationId(): string {
+  try {
+    return globalThis.crypto.randomUUID();
+  } catch {
+    return `security-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
 }
 
 function mergeSettings(
@@ -113,6 +172,14 @@ export function SecurityPanel() {
   const [updatePhases, setUpdatePhases] = useState<
     Partial<Record<SecurityGrantKind, UpdatePhase>>
   >({});
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const applyCanonical = useCallback((state: RememberGrantCanonical) => {
     setSettings((current) => current ? {
@@ -130,8 +197,14 @@ export function SecurityPanel() {
     } : current);
   }, []);
 
-  const readSettings = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch("/api/v1/settings/security", { signal });
+  const readSettings = useCallback(async (
+    signal?: AbortSignal,
+    operationId?: string,
+  ) => {
+    const url = operationId
+      ? `/api/v1/settings/security?operationId=${encodeURIComponent(operationId)}`
+      : "/api/v1/settings/security";
+    const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(String(response.status));
     const body = parseSettings(await response.json());
     setSettings((current) => mergeSettings(current, body));
@@ -175,38 +248,119 @@ export function SecurityPanel() {
       grantMode === category.grantMode ||
       !category.grantModes.includes(grantMode) ||
       category.grantModes.length === 1 ||
-      updatePhases[category.kind] === "updating"
+      updatePhases[category.kind] === "updating" ||
+      updatePhases[category.kind] === "uncertain"
     ) return;
 
     setUpdatePhase(category.kind, "updating");
-    try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
+    const operationId = createOperationId();
+    const baseVersion = category.version;
+    let directOutcome: UpdateOutcome | undefined;
+    const postOutcome = (async (): Promise<UpdateOutcome> => {
       try {
         const response = await fetch(`/api/v1/settings/security/${category.kind}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ grantMode }),
-          signal: controller.signal,
+          body: JSON.stringify({ grantMode, operationId, baseVersion }),
         });
-        if (!response.ok) throw new Error(String(response.status));
+        if (!response.ok) return { status: "failed" };
         const canonical = parseCanonical(category.kind, await response.json());
-        applyCanonical(canonical);
-        publishRememberGrantState(canonical);
+        if (
+          canonical.operationId !== operationId ||
+          canonical.baseVersion !== baseVersion
+        ) return { status: "failed" };
+        return { status: "committed", canonical };
+      } catch {
+        return { status: "uncertain" };
+      }
+    })();
+    void postOutcome.then((outcome) => {
+      directOutcome = outcome;
+    });
+
+    try {
+      let timeout: number | undefined;
+      const initialOutcome = await Promise.race([
+        postOutcome,
+        new Promise<UpdateOutcome>((resolve) => {
+          timeout = window.setTimeout(
+            () => resolve({ status: "uncertain" }),
+            POST_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      if (timeout !== undefined) window.clearTimeout(timeout);
+
+      let outcome = initialOutcome;
+      if (outcome.status === "uncertain") {
+        setUpdatePhase(category.kind, "uncertain");
+        while (mountedRef.current) {
+          if (
+            directOutcome?.status === "committed" ||
+            directOutcome?.status === "failed"
+          ) {
+            outcome = directOutcome;
+            break;
+          }
+          try {
+            const snapshot = await readSettings(undefined, operationId);
+            const operation = snapshot.operation;
+            if (
+              operation?.operationId === operationId &&
+              operation.status === "committed"
+            ) {
+              outcome = { status: "committed", canonical: operation.result };
+              break;
+            }
+            if (
+              operation?.operationId === operationId &&
+              operation.status === "failed"
+            ) {
+              outcome = { status: "failed" };
+              break;
+            }
+            const canonicalCategory = snapshot.categories.find(
+              (item) => item.kind === category.kind,
+            );
+            if (canonicalCategory && canonicalCategory.version > baseVersion) {
+              outcome = canonicalCategory.grantMode === grantMode
+                ? {
+                    status: "committed",
+                    canonical: {
+                      kind: category.kind,
+                      grantMode: canonicalCategory.grantMode,
+                      present: canonicalCategory.present,
+                      grantId: canonicalCategory.grantId,
+                      version: canonicalCategory.version,
+                      operationId,
+                      baseVersion,
+                    },
+                  }
+                : { status: "failed" };
+              break;
+            }
+          } catch {
+            // 网络恢复前保持结果未定，不把旧 canonical 误报为保存失败。
+          }
+          await waitForReconcile();
+        }
+      }
+
+      if (outcome.status === "committed") {
+        applyCanonical(outcome.canonical);
+        publishRememberGrantState(outcome.canonical);
         toast.show({
-          message: canonical.grantMode === "always"
+          message: outcome.canonical.grantMode === "always"
             ? `${category.label}已设为总是允许。`
             : `${category.label}已恢复每次询问。已在执行的不受影响。`,
           tone: "success",
         });
-      } finally {
-        window.clearTimeout(timeout);
+      } else if (outcome.status === "failed") {
+        toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
+        await readSettings().catch(() => undefined);
       }
-    } catch {
-      toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
-      await readSettings().catch(() => undefined);
     } finally {
-      setUpdatePhase(category.kind, "settled");
+      if (mountedRef.current) setUpdatePhase(category.kind, "settled");
     }
   };
 
@@ -246,9 +400,9 @@ export function SecurityPanel() {
                 className="security-select"
                 ariaLabel={`${category.label}的确认方式`}
                 ariaDescribedBy={[descriptionId, effectId].filter(Boolean).join(" ")}
-                ariaBusy={phase === "updating"}
+                ariaBusy={phase === "updating" || phase === "uncertain"}
                 value={category.grantMode}
-                disabled={!mutable || phase === "updating"}
+                disabled={!mutable || phase === "updating" || phase === "uncertain"}
                 onChange={(value) => void updateGrantMode(category, value as SecurityGrantMode)}
                 skin="ink"
                 options={category.grantModes.map((mode) => ({

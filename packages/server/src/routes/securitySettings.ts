@@ -3,9 +3,11 @@ import { z } from "zod";
 import type {
   SecurityGrantCategory,
   SecurityGrantMode,
+  SecuritySettingsOperation,
   SecuritySettingsResponse,
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
+import { randomUUID } from "node:crypto";
 import {
   createConfirmGrantCanonical,
   listConfirmGrantStates,
@@ -17,6 +19,8 @@ import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 const updateSecuritySchema = z.object({
   grantMode: z.enum(["ask", "always"]),
+  operationId: z.string().min(1).max(128).optional(),
+  baseVersion: z.number().int().nonnegative().optional(),
 }).strict();
 
 const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command", "send", "connect"]);
@@ -36,6 +40,13 @@ export function createSecuritySettingsRoutes(
   const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
   const revokeGrant = dependencies.revokeGrant ?? revokeConfirmGrantWithState;
   const listCredentialShare = dependencies.listCredentialShare ?? listCredentialShareItems;
+  const operations = new Map<string, SecuritySettingsOperation>();
+  const rememberOperation = (operation: SecuritySettingsOperation) => {
+    operations.delete(operation.operationId);
+    operations.set(operation.operationId, operation);
+    const oldest = operations.keys().next().value as string | undefined;
+    if (operations.size > 256 && oldest) operations.delete(oldest);
+  };
 
   routes.get("/settings/security", async (c) => {
     const states = await listGrantStates();
@@ -67,6 +78,9 @@ export function createSecuritySettingsRoutes(
       ],
       credentialShare,
     };
+    const operationId = c.req.query("operationId");
+    const operation = operationId ? operations.get(operationId) : undefined;
+    if (operation) body.operation = operation;
     return c.json(body);
   });
 
@@ -81,28 +95,88 @@ export function createSecuritySettingsRoutes(
     if (!parsed.success) return c.json({ error: "设置内容不完整，请再试一次。" }, 400);
     const grantKind = kind as ConfirmGrantKind;
     const grantMode: SecurityGrantMode = parsed.data.grantMode;
+    const operationId = parsed.data.operationId ?? randomUUID();
+    const baseVersion = parsed.data.baseVersion ?? 0;
+    const existingOperation = operations.get(operationId);
+    if (
+      existingOperation &&
+      (
+        existingOperation.kind !== grantKind ||
+        existingOperation.grantMode !== grantMode ||
+        existingOperation.baseVersion !== baseVersion
+      )
+    ) {
+      return c.json({ error: "设置请求已失效，请刷新后重试。" }, 409);
+    }
+    if (existingOperation?.status === "committed") {
+      return c.json(existingOperation.result);
+    }
+    if (existingOperation?.status === "failed") {
+      return c.json({ error: "设置保存失败，请再试一次。" }, 500);
+    }
+    if (existingOperation?.status === "pending") {
+      return c.json({ operation: existingOperation }, 202);
+    }
+    rememberOperation({
+      operationId,
+      kind: grantKind,
+      grantMode,
+      baseVersion,
+      status: "pending",
+    });
 
-    if (grantMode === "ask") {
-      const result = await revokeGrant(grantKind, "settings");
+    try {
+      if (grantMode === "ask") {
+        const result = await revokeGrant(grantKind, "settings");
+        const body: UpdateSecurityGrantResponse = {
+          kind: grantKind,
+          grantMode,
+          present: result.state.present,
+          grantId: result.state.grantId,
+          version: result.state.version,
+          operationId,
+          baseVersion,
+        };
+        rememberOperation({
+          operationId,
+          kind: grantKind,
+          grantMode,
+          baseVersion,
+          status: "committed",
+          result: body,
+        });
+        return c.json(body);
+      }
+
+      const result = await createGrant({ kind: grantKind, source: "settings" });
       const body: UpdateSecurityGrantResponse = {
         kind: grantKind,
-        grantMode,
+        grantMode: result.state.present ? "always" : "ask",
         present: result.state.present,
         grantId: result.state.grantId,
         version: result.state.version,
+        operationId,
+        baseVersion,
       };
+      rememberOperation({
+        operationId,
+        kind: grantKind,
+        grantMode,
+        baseVersion,
+        status: "committed",
+        result: body,
+      });
       return c.json(body);
+    } catch {
+      rememberOperation({
+        operationId,
+        kind: grantKind,
+        grantMode,
+        baseVersion,
+        status: "failed",
+      });
+      return c.json({ error: "设置保存失败，请再试一次。" }, 500);
     }
-
-    const result = await createGrant({ kind: grantKind, source: "settings" });
-    const body: UpdateSecurityGrantResponse = {
-      kind: grantKind,
-      grantMode: result.state.present ? "always" : "ask",
-      present: result.state.present,
-      grantId: result.state.grantId,
-      version: result.state.version,
-    };
-    return c.json(body);
   });
 
   return routes;

@@ -41,13 +41,19 @@ async function renderPanel() {
       if (!init?.method || init.method === "GET") return response({ categories });
       const kind = String(input).split("/").at(-1) as
         | "install" | "command" | "send" | "connect";
-      const body = JSON.parse(String(init.body)) as { grantMode: "ask" | "always" };
+      const body = JSON.parse(String(init.body)) as {
+        grantMode: "ask" | "always";
+        operationId: string;
+        baseVersion: number;
+      };
       return response({
         kind,
         grantMode: body.grantMode,
         present: body.grantMode === "always",
         grantId: body.grantMode === "always" ? `grant-${kind}` : null,
         version: kind === "command" ? 2 : 1,
+        operationId: body.operationId,
+        baseVersion: body.baseVersion,
       });
     });
   await renderWithFetch(fetchMock);
@@ -89,6 +95,7 @@ describe("SecurityPanel", () => {
     host = null;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("每类一行使用暗墨自定义下拉，说明无重复状态且采用暗底说明色", async () => {
@@ -126,10 +133,16 @@ describe("SecurityPanel", () => {
     const command = categorySelect("同类操作");
     await choose(command, "ask");
 
+    const [, request] = fetchMock.mock.calls.at(-1)!;
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/command",
-      expect.objectContaining({ body: JSON.stringify({ grantMode: "ask" }) }),
+      expect.objectContaining({ body: expect.any(String) }),
     );
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      grantMode: "ask",
+      operationId: expect.any(String),
+      baseVersion: 1,
+    });
     expect(command.textContent).toContain("每次询问");
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       tone: "success",
@@ -142,10 +155,16 @@ describe("SecurityPanel", () => {
     const install = categorySelect("安装");
     await choose(install, "always");
 
+    const [, request] = fetchMock.mock.calls.at(-1)!;
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/install",
-      expect.objectContaining({ body: JSON.stringify({ grantMode: "always" }) }),
+      expect.objectContaining({ body: expect.any(String) }),
     );
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      grantMode: "always",
+      operationId: expect.any(String),
+      baseVersion: 0,
+    });
     expect(install.textContent).toContain("总是允许");
     expect(host!.querySelector("#security-install-effect")?.textContent).toContain(
       "已记住，之后同类操作直接执行；可随时改回。",
@@ -166,7 +185,7 @@ describe("SecurityPanel", () => {
 
     expect(fetchMock).toHaveBeenLastCalledWith(
       `/api/v1/settings/security/${kind}`,
-      expect.objectContaining({ body: JSON.stringify({ grantMode: "always" }) }),
+      expect.objectContaining({ body: expect.any(String) }),
     );
     expect(select.textContent).toContain("总是允许");
     expect(host!.querySelector(`#security-${kind}-effect`)?.textContent).toContain(
@@ -252,5 +271,77 @@ describe("SecurityPanel", () => {
       });
     });
     expect(categorySelect("安装").textContent).toContain("每次询问");
+  });
+
+  it("POST 超时后不 abort，保持未定态轮询到该操作提交", async () => {
+    vi.useFakeTimers();
+    const operationId = "security-op-timeout";
+    vi.stubGlobal("crypto", { randomUUID: () => operationId });
+    const committedCategories = categories.map((item) => item.kind === "install"
+      ? { ...item, grantMode: "always", present: true, grantId: "grant-late", version: 1 }
+      : item);
+    let reconcileReads = 0;
+    let postSignal: AbortSignal | null | undefined;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        postSignal = init.signal;
+        return new Promise<Response>(() => undefined);
+      }
+      if (!url.includes("operationId=")) return response({ categories });
+      reconcileReads += 1;
+      if (reconcileReads === 1) {
+        return response({
+          categories,
+          operation: {
+            operationId,
+            kind: "install",
+            grantMode: "always",
+            baseVersion: 0,
+            status: "pending",
+          },
+        });
+      }
+      return response({
+        categories: committedCategories,
+        operation: {
+          operationId,
+          kind: "install",
+          grantMode: "always",
+          baseVersion: 0,
+          status: "committed",
+          result: {
+            kind: "install",
+            grantMode: "always",
+            present: true,
+            grantId: "grant-late",
+            version: 1,
+            operationId,
+            baseVersion: 0,
+          },
+        },
+      });
+    });
+    await renderWithFetch(fetchMock);
+    await choose(categorySelect("安装"), "always");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+    expect(postSignal).toBeUndefined();
+    expect(reconcileReads).toBe(1);
+    expect(categorySelect("安装").disabled).toBe(true);
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(750);
+    });
+    expect(reconcileReads).toBe(2);
+    expect(categorySelect("安装").textContent).toContain("总是允许");
+    expect(categorySelect("安装").disabled).toBe(false);
+    expect(toast).toHaveBeenCalledWith({
+      message: "安装已设为总是允许。",
+      tone: "success",
+    });
   });
 });

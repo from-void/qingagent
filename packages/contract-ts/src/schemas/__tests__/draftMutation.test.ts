@@ -56,7 +56,7 @@ describe("editDraftInputSchema", () => {
       action: "insertTableRow",
       ref: "table-a",
       at: "before",
-      rowIndex: 1,
+      rowIndex: 0,
       cells: "<td>新增</td>",
     }],
     ["table row end 无 index", {
@@ -69,7 +69,7 @@ describe("editDraftInputSchema", () => {
       action: "insertTableColumn",
       ref: "table-a",
       at: "after",
-      columnIndex: 1,
+      columnIndex: 0,
       cells: "<td>新增</td>",
     }],
     ["table column end 无 index", {
@@ -170,6 +170,50 @@ describe("editDraftInputSchema", () => {
       cells: "<td>新增</td>",
     }],
   ])("rejects inconsistent position fields before execution: %s", (_label, op) => {
+    expect(editDraftInputSchema.safeParse({ ops: [op] }).success).toBe(false);
+  });
+
+  it.each([
+    ["block 空串", {
+      action: "insertBlock",
+      position: "before",
+      ref: "",
+      blocks: "<p>新增</p>",
+    }],
+    ["block 空白", {
+      action: "insertBlock",
+      position: "after",
+      ref: " \n\t ",
+      blocks: "<p>新增</p>",
+    }],
+    ["block 零宽", {
+      action: "insertBlock",
+      position: "before",
+      ref: "\u200B\u2060",
+      blocks: "<p>新增</p>",
+    }],
+    ["list 空串", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "before",
+      ref: "",
+      item: "<li>新增</li>",
+    }],
+    ["list 空白", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "after",
+      ref: "  ",
+      item: "<li>新增</li>",
+    }],
+    ["list 零宽", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "before",
+      ref: "\u200B",
+      item: "<li>新增</li>",
+    }],
+  ])("rejects blank positional ref before execution: %s", (_label, op) => {
     expect(editDraftInputSchema.safeParse({ ops: [op] }).success).toBe(false);
   });
 

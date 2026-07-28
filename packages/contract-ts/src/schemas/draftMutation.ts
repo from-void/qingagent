@@ -95,7 +95,10 @@ export const editDraftInputSchema = z.object({
       target: string | number | undefined,
     ): void => {
       const requiresTarget = position === "before" || position === "after";
-      if (requiresTarget && target === undefined) {
+      const targetMissing = target === undefined ||
+        (typeof target === "string" &&
+          target.replace(/[\s\p{Cf}]/gu, "").length === 0);
+      if (requiresTarget && targetMissing) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: [targetField],

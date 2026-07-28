@@ -14,6 +14,7 @@ import {
 import { handleApprovalEvent } from "../agent-run/agentStreamApproval.js";
 import type { AgentStreamEvent } from "../agent-run/agentStreamEvents.js";
 import { consumeApprovalProof } from "../confirm/approvalProof.js";
+import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 
 async function* events(...items: unknown[]): AsyncGenerator<unknown> {
   for (const item of items) yield item;
@@ -45,6 +46,18 @@ function approval(
     type: "tool-call-approval",
     runId: "run-confirm",
     payload: { toolCallId, toolName, args: { command } },
+  };
+}
+
+function credentialApproval(toolCallId: string): AgentStreamEvent {
+  return {
+    type: "tool-call-approval",
+    runId: "run-confirm",
+    payload: {
+      toolCallId,
+      toolName: REQUEST_CREDENTIAL_ACCESS_TOOL,
+      args: { path: "~/.fakecli", reason: "假 CLI 要读已有的登录" },
+    },
   };
 }
 
@@ -347,7 +360,7 @@ describe("processAgentStream tool-call-approval", () => {
     },
   );
 
-  it("A 审批成功挂起后 B 审批失败不会清除同一回合的挂起语义", async () => {
+  it("凭证 A 挂起后审批 B 失败不会清除同一回合的挂起语义", async () => {
     const state = createSession("approval-success-then-failure");
     let nextId = 0;
     const service = new ConfirmService({
@@ -368,10 +381,11 @@ describe("processAgentStream tool-call-approval", () => {
 
     await collect(handleApprovalEvent(
       context,
-      approval("tool-a", "mv a.txt done-a.txt"),
+      credentialApproval("tool-a"),
     ));
     expect(context.wasSuspended).toBe(true);
     expect(state.pendingConfirms.has("tool-a")).toBe(true);
+    expect(state.pendingConfirms.get("tool-a")?.toolName).toBe(REQUEST_CREDENTIAL_ACCESS_TOOL);
 
     await collect(handleApprovalEvent(
       context,

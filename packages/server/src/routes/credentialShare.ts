@@ -6,6 +6,7 @@ import type {
 } from "@qingagent/contract-ts";
 import {
   ensureCredentialPathExists,
+  invalidateSessionWorkspace,
   listCredentialRequests,
   type CredentialRequest,
 } from "@qingagent/core";
@@ -29,6 +30,7 @@ export interface CredentialShareDependencies {
   createGrant?: typeof createCredentialGrant;
   revokeGrant?: typeof revokeCredentialGrant;
   ensurePath?: typeof ensureCredentialPathExists;
+  invalidateWorkspaces?: typeof invalidateSessionWorkspace;
 }
 
 function toItem(request: CredentialRequest, grantedAt: string | null): CredentialShareItem {
@@ -80,6 +82,8 @@ export function createCredentialShareRoutes(
   const createGrant = dependencies.createGrant ?? createCredentialGrant;
   const revokeGrant = dependencies.revokeGrant ?? revokeCredentialGrant;
   const ensurePath = dependencies.ensurePath ?? ensureCredentialPathExists;
+  const invalidateWorkspaces =
+    dependencies.invalidateWorkspaces ?? invalidateSessionWorkspace;
 
   // 只列出「当前已启用技能确实声明了的」条目:声明没了就不该继续出现在设置里。
   routes.get("/settings/credential-share", async (c) => {
@@ -110,6 +114,7 @@ export function createCredentialShareRoutes(
         );
         if (grant) {
           await revokeGrant(grant.path);
+          invalidateWorkspaces();
           return c.json({
             skillName: grant.skillName,
             skillLabel: grant.skillName || ADHOC_CREDENTIAL_SKILL_LABEL,
@@ -124,6 +129,7 @@ export function createCredentialShareRoutes(
 
     if (!parsed.data.granted) {
       await revokeGrant(request.path);
+      invalidateWorkspaces();
       return c.json({ ...toItem(request, null) });
     }
     await ensurePath(request.path);
@@ -133,6 +139,7 @@ export function createCredentialShareRoutes(
       declared: request.declared,
       source: "settings",
     });
+    invalidateWorkspaces();
     return c.json({ ...toItem(request, mutation.grant.createdAt) });
   });
 

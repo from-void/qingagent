@@ -31,4 +31,18 @@ describe("GithubClient", () => {
     const fetch = vi.fn(async () => new Response("{bad", { status: 200 }));
     await expect(new GithubClient({ baseUrl: "http://fake", fetch: fetch as typeof globalThis.fetch }).user()).rejects.toMatchObject({ code: "INVALID_RESPONSE", status: 502 });
   });
+
+  it("调用前已取消时不发送请求", async () => {
+    const fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ id: 1, login: "qa" }), { status: 200 })
+    );
+    const controller = new AbortController();
+    controller.abort(new DOMException("已取消", "AbortError"));
+
+    await expect(
+      new GithubClient({ baseUrl: "http://fake", fetch: fetch as typeof globalThis.fetch })
+        .user(controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

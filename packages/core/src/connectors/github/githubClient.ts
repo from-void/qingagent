@@ -70,6 +70,7 @@ export class GithubClient {
 
   async request<T>(path: string, init: RequestInit = {}): Promise<GithubResponse<T>> {
     if (!path.startsWith("/") || path.startsWith("//")) throw new GithubConnectorError("GitHub API 路径非法", "INVALID_ARGUMENT", 400);
+    init.signal?.throwIfAborted();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort("github request timeout"), this.timeoutMs);
     timer.unref?.();

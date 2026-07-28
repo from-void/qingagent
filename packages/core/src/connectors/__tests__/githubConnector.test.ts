@@ -125,6 +125,28 @@ describe("GithubConnector probe", () => {
       statusFreshness: "fresh",
     });
   });
+
+  it("probe 瞬时异常只向上返回稳定错误，不透传原始 fetch 消息", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed: socket detail");
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({ clientId: "cid", fetch });
+
+    try {
+      await expect(connector.probe()).rejects.toMatchObject({
+        code: "GITHUB_PROBE_FAILED",
+        status: 502,
+        message: "GitHub 连接检查暂时失败，请稍后重试",
+      });
+      expect(log).toHaveBeenCalledWith(
+        "[github-connector] probe failed",
+        { error: "fetch failed: socket detail" },
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("GithubConnector 授权生命周期", () => {

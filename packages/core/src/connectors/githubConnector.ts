@@ -235,7 +235,16 @@ export class GithubConnector implements ConnectorAdapter {
     } catch (error) {
       if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") {
         verificationState = "needs_reauth";
-      } else throw error;
+      } else {
+        console.error("[github-connector] probe failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new GithubConnectorError(
+          "GitHub 连接检查暂时失败，请稍后重试",
+          "GITHUB_PROBE_FAILED",
+          502,
+        );
+      }
     }
     await saveConnectorCredentialBundle<GithubCredentialPayload>("github", {
       ...bundle.payload,

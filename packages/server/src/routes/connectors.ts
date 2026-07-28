@@ -39,17 +39,32 @@ function errorResponse(c: Context, error: unknown) {
   if (error instanceof ConnectorMutationForbiddenError) {
     return c.json({ error: error.code, message: error.message, reasonCode: error.reasonCode }, 403);
   }
+  const hasStableCode =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string";
   const status = typeof error === "object" && error !== null && "status" in error
     ? Number((error as { status?: unknown }).status)
     : 500;
-  const code = typeof error === "object" && error !== null && "code" in error
+  const code = hasStableCode
     ? String((error as { code?: unknown }).code)
     : "CONNECTOR_OPERATION_FAILED";
-  const message = error instanceof Error
-    ? error.message
-    : typeof error === "object" && error !== null && typeof (error as { message?: unknown }).message === "string"
-      ? (error as { message: string }).message
-      : "连接操作失败，请稍后重试。";
+  const errorMessage =
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+      ? error.message
+      : null;
+  if (!hasStableCode) {
+    console.error("[connector-route] operation failed", {
+      error: errorMessage ?? String(error),
+    });
+  }
+  const message = hasStableCode && errorMessage
+    ? errorMessage
+    : "连接操作失败，请稍后重试。";
   const responseStatus = status >= 400 && status <= 599 ? status : 500;
   return c.json({ error: code, message }, responseStatus as 400);
 }

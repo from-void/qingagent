@@ -136,6 +136,34 @@ describe("/api/v1/connectors 安全矩阵", () => {
     });
   });
 
+  it("probe 未分类异常不向前端回显原始内部消息", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { app, service } = setup({
+      authOn: false,
+      gateOn: true,
+      publicDeployment: false,
+    });
+    service.probe.mockRejectedValueOnce(new TypeError("fetch failed: socket detail"));
+
+    try {
+      const response = await app.request("/api/v1/connectors/github/probe", {
+        method: "POST",
+        headers: { Origin: "http://localhost:5173" },
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: "CONNECTOR_OPERATION_FAILED",
+        message: "连接操作失败，请稍后重试。",
+      });
+      expect(log).toHaveBeenCalledWith(
+        "[connector-route] operation failed",
+        { error: "fetch failed: socket detail" },
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("gate 关闭时 list/detail 只回 unavailable，adapter 零调用", async () => {
     const { app, service } = setup({ authOn: false, gateOn: false, publicDeployment: false });
     const list = await app.request("/api/v1/connectors");

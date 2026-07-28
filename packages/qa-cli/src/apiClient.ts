@@ -1,5 +1,6 @@
 import { discoverInstance, type InstanceInfo } from "./discovery.js";
 import { QaCliError } from "./errors.js";
+import { createRequestDeadline } from "./requestDeadline.js";
 import type {
   ExternalAnnotationIgnoreRequest,
   ExternalAnnotationIgnoreResponse,
@@ -23,24 +24,36 @@ export class ApiClient {
   }
 
   async request<T extends ExternalSuccessResponse>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetchWithRateLimitRetry(
-      `http://127.0.0.1:${this.instance.port}/api/v1/external${path}`,
-      {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${this.instance.token}`,
-          ...(init.body ? { "Content-Type": "application/json" } : {}),
-          ...(init.method && init.method !== "GET"
-            ? { "X-QA-Client": detectQaClient(process.env) }
-            : {}),
-          ...(init.headers ?? {}),
+    const deadline = createRequestDeadline(init.signal, API_REQUEST_DEADLINE_MS);
+    try {
+      const res = await fetchWithRateLimitRetry(
+        `http://127.0.0.1:${this.instance.port}/api/v1/external${path}`,
+        {
+          ...init,
+          signal: deadline.signal,
+          headers: {
+            Authorization: `Bearer ${this.instance.token}`,
+            ...(init.body ? { "Content-Type": "application/json" } : {}),
+            ...(init.method && init.method !== "GET"
+              ? { "X-QA-Client": detectQaClient(process.env) }
+              : {}),
+            ...(init.headers ?? {}),
+          },
         },
-      },
-    );
-    await this.assertResponseOk(res);
-    const text = await res.text();
-    const json = parseJsonResponse(text);
-    return json as T;
+      );
+      await this.assertResponseOk(res);
+      const text = await res.text();
+      const json = parseJsonResponse(text);
+      return json as T;
+    } catch (error) {
+      if (error instanceof QaCliError) throw error;
+      throw new QaCliError(
+        "NO_INSTANCE",
+        deadline.timedOut() ? "实例请求超时" : "实例不可达",
+      );
+    } finally {
+      deadline.dispose();
+    }
   }
 
   async openEvents(sessionId: string, after: string | undefined, signal: AbortSignal): Promise<Response> {
@@ -132,6 +145,9 @@ export class ApiClient {
   private async assertResponseOk(response: Response): Promise<void> {
     if (response.ok) return;
     const text = await response.text();
+    if (response.status >= 500) {
+      throw new QaCliError("SERVICE_UNAVAILABLE", "青简服务暂时不可用");
+    }
     const json = parseJsonResponse(text);
     const body = json as Partial<ExternalErrorResponse> | null;
     const fallbackCode = response.status === 401
@@ -149,6 +165,7 @@ export class ApiClient {
 const MAX_RATE_LIMIT_RETRIES = 6;
 const INITIAL_RETRY_DELAY_MS = 250;
 const MAX_RETRY_DELAY_MS = 4_000;
+export const API_REQUEST_DEADLINE_MS = 15_000;
 
 export async function fetchWithRateLimitRetry(
   input: string,

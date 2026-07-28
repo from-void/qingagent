@@ -14,6 +14,7 @@ describe("qa CLI 错误文案", () => {
     expect(writerSkillMarkdown()).toContain(NEXT_STEP.AUTH_FAILED);
     expect(writerSkillMarkdown()).toContain(NEXT_STEP.SESSION_NOT_FOUND);
     expect(writerSkillMarkdown()).toContain(NEXT_STEP.MATERIAL_NOT_FOUND);
+    expect(writerSkillMarkdown()).toContain(NEXT_STEP.SERVICE_UNAVAILABLE);
     expect(writerSkillMarkdown()).toContain(NEXT_STEP.VALIDATION);
     expect(writerSkillMarkdown()).toContain("reason=gap");
     expect(writerSkillMarkdown()).toContain("qa doc state -s <id> --json");

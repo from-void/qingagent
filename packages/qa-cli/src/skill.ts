@@ -143,6 +143,7 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 | \`EVENT_TARGET_NOT_REACHED\` | 事件流 EOF 且监听目标未命中 | ${NEXT_STEP.EVENT_TARGET_NOT_REACHED} |
 | \`SESSION_NOT_FOUND\` | 会话不存在 | ${NEXT_STEP.SESSION_NOT_FOUND} |
 | \`MATERIAL_NOT_FOUND\` | 材料不存在 | ${NEXT_STEP.MATERIAL_NOT_FOUND} |
+| \`SERVICE_UNAVAILABLE\` | 青简服务暂时不可用 | ${NEXT_STEP.SERVICE_UNAVAILABLE} |
 | \`VALIDATION\` | 提案不合法 | ${NEXT_STEP.VALIDATION} |
 
 ## 5. 指挥模式(备用,不默认)

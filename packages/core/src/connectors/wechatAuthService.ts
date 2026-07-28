@@ -371,9 +371,15 @@ export class WechatAuthService {
             console.info("[wechat-auth] credentials saved");
             setAuthTerminalState(pending, "ready");
           } catch (error) {
-            // 走到这多是 waitForURL 超时(用户没扫完/没在手机点确认)→ 归 timeout 话术。
-            setAuthTerminalState(pending, "failed_timeout", "没等到扫码确认,请重新发起授权");
-            if (!imageSettled) pending.rejectImage(error);
+            if (!imageSettled) {
+              // 二维码尚未生成时属于浏览器/页面加载故障，不得伪装成用户扫码超时。
+              // 立即移除 pending，既允许下一次 start 新建授权，也避免 status 在 TTL 内误报 TIMEOUT。
+              pendingStore.disconnect("wechat-mp", WECHAT_SCOPE);
+              pending.rejectImage(new Error("授权页面加载失败，请稍后重试"));
+            } else {
+              // 二维码已交付后，主流程停在 waitForURL 才是用户未完成手机确认。
+              setAuthTerminalState(pending, "failed_timeout", "没等到扫码确认,请重新发起授权");
+            }
           } finally {
             await authBrowser?.close().catch(() => {});
             pending.browser = null;

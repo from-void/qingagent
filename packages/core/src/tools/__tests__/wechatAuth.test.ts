@@ -191,6 +191,40 @@ describe("wechat auth connector service thin tools", () => {
     }), expect.objectContaining({ writeGuard: expect.any(Function) })));
   });
 
+  it("浏览器启动失败时立即清理 pending，并只返回中性页面加载失败", async () => {
+    vi.mocked(browserLaunchCandidates).mockReturnValue([
+      {
+        kind: "default",
+        label: "test",
+        launch: vi.fn().mockRejectedValue(
+          new Error("browser executable missing: /private/runtime/path"),
+        ),
+      },
+    ]);
+
+    await expect(start()).rejects.toThrow("授权页面加载失败，请稍后重试");
+    await expect(status()).resolves.toMatchObject({
+      state: "NO_CREDENTIAL",
+      message: "未授权",
+    });
+
+    browserMock();
+    await expect(start()).resolves.toMatchObject({ reused: false });
+  });
+
+  it("登录页导航失败时立即清理 pending，不误报扫码超时", async () => {
+    const { page } = browserMock();
+    page.goto.mockRejectedValueOnce(
+      new Error("net::ERR_CONNECTION_RESET at https://mp.weixin.qq.com/"),
+    );
+
+    await expect(start()).rejects.toThrow("授权页面加载失败，请稍后重试");
+    await expect(status()).resolves.toMatchObject({
+      state: "NO_CREDENTIAL",
+      message: "未授权",
+    });
+  });
+
   it("并发/重复 start 单飞复用同一 pending 与二维码，不互关 browser", async () => {
     let resolveLanding!: () => void;
     const { launch, browser } = browserMock(new Promise<void>((resolve) => { resolveLanding = resolve; }));

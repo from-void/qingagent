@@ -38,6 +38,46 @@ describe("lintSvg", () => {
     expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
   });
 
+  it("官方双栏骨架的深色卡片白字不误报低对比度", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/><text x="48" y="56" font-size="30" fill="#2b2b2b">标题</text>
+        <rect x="48" y="96" width="320" height="270" fill="#ffffff"/><text x="72" y="138" font-size="20" fill="#2b2b2b">左栏</text>
+        <text x="72" y="178" font-size="16" fill="#333333"><tspan x="72">要点</tspan><tspan x="72" dy="1.4em">换行</tspan></text>
+        <rect x="432" y="96" width="320" height="270" fill="#2f5d62"/><text x="456" y="138" font-size="20" fill="#ffffff">右栏</text>
+        <text x="456" y="178" font-size="16" fill="#ffffff"><tspan x="456">要点</tspan><tspan x="456" dy="1.4em">换行</tspan></text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
+  it("命中局部深色卡片上的深色文字", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+        <rect x="48" y="96" width="320" height="180" fill="#2f5d62"/>
+        <text x="72" y="140" font-size="18" fill="#333333">局部低对比</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
+  });
+
+  it("无法可靠确定非矩形局部背景时跳过对比度判定", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <circle cx="200" cy="160" r="100" fill="#2f5d62"/>
+        <text x="150" y="170" font-size="20" fill="#ffffff">圆形承载</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
   it("干净网格 SVG 零违规", () => {
     const issues = lintSvg(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
@@ -46,7 +86,7 @@ describe("lintSvg", () => {
         <rect x="48" y="96" width="300" height="180" fill="#ffffff"/>
         <text x="72" y="140" font-size="18" fill="#333333">短文本</text>
         <rect x="432" y="96" width="300" height="180" fill="#315c72"/>
-        <text x="456" y="140" font-size="18" fill="#2b2b2b">高对比</text>
+        <text x="456" y="140" font-size="18" fill="#ffffff">高对比</text>
       </svg>`,
       size,
     );

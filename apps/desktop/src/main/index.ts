@@ -9,7 +9,6 @@ import {
   safeStorage,
   screen,
   shell,
-  type Event,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type WebContents,
@@ -44,8 +43,9 @@ import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
+  handleMainWindowWillNavigate,
   isAllowedMainFrameNavigation,
-  shouldOpenMainWindowNavigationExternally,
+  type MainFrameNavigationEvent,
 } from "./navigationPolicy.js";
 import {
   getCurrentUpdateStatus,
@@ -1032,7 +1032,7 @@ async function createWindowOnce() {
   });
   // 整页导航与服务端重定向：显式放行内置服务、开发服务器和当前同源；file:、about:、
   // 跨源及畸形 URL 都不能接管主窗口。用户主动点出的外部 Web 链接交给系统浏览器。
-  const guardMainFrameNavigation = (event: Event, url: string): void => {
+  const guardMainFrameNavigation = (event: MainFrameNavigationEvent, url: string): void => {
     if (
       !isAllowedMainFrameNavigation(
         url,
@@ -1045,11 +1045,14 @@ async function createWindowOnce() {
     }
   };
   contentWindow.webContents.on("will-navigate", (event, url) => {
-    guardMainFrameNavigation(event, url);
-    if (shouldOpenMainWindowNavigationExternally(url, allowedAppOrigins)) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
+    handleMainWindowWillNavigate(
+      event,
+      url,
+      contentWindow.webContents.getURL(),
+      isDev ? devContentUrl : undefined,
+      allowedAppOrigins,
+      (targetUrl) => shell.openExternal(targetUrl),
+    );
   });
   contentWindow.webContents.on("will-redirect", guardMainFrameNavigation);
 

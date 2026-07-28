@@ -51,8 +51,37 @@ export function shouldOpenMainWindowNavigationExternally(
   try {
     const target = new URL(targetUrl);
     const isWeb = target.protocol === "http:" || target.protocol === "https:";
+    if (target.protocol === "mailto:") return true;
     return isWeb && !allowedAppOrigins.has(target.origin);
   } catch {
     return false;
   }
+}
+
+export interface MainFrameNavigationEvent {
+  preventDefault(): void;
+}
+
+export function handleMainWindowWillNavigate(
+  event: MainFrameNavigationEvent,
+  targetUrl: string,
+  currentUrl: string,
+  devUrl: string | undefined,
+  allowedAppOrigins: ReadonlySet<string>,
+  openExternal: (url: string) => void | Promise<unknown>,
+): boolean {
+  const shouldOpenExternally = shouldOpenMainWindowNavigationExternally(
+    targetUrl,
+    allowedAppOrigins,
+  );
+  if (
+    shouldOpenExternally ||
+    !isAllowedMainFrameNavigation(targetUrl, currentUrl, devUrl, allowedAppOrigins)
+  ) {
+    event.preventDefault();
+  }
+  if (shouldOpenExternally) {
+    void openExternal(targetUrl);
+  }
+  return shouldOpenExternally;
 }

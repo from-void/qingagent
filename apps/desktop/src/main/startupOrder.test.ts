@@ -90,9 +90,9 @@ test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () =
   const guardSource = source.slice(guardLine, shellLoadLine);
 
   assert.ok(guardLine >= 0 && guardLine < shellLoadLine, "will-navigate 必须在 data: 启动壳加载前挂载");
-  assert.match(guardSource, /shouldOpenMainWindowNavigationExternally\(url, allowedAppOrigins\)/);
-  assert.match(guardSource, /event\.preventDefault\(\)/);
-  assert.match(guardSource, /shell\.openExternal\(url\)/);
+  assert.match(guardSource, /handleMainWindowWillNavigate\(/);
+  assert.match(guardSource, /allowedAppOrigins,/);
+  assert.match(guardSource, /shell\.openExternal\(targetUrl\)/);
   assert.doesNotMatch(guardSource, /currentIsWeb|current\.protocol/);
   assert.match(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/localhost:\$\{port\}`\)/);
   assert.match(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/127\.0\.0\.1:\$\{port\}`\)/);

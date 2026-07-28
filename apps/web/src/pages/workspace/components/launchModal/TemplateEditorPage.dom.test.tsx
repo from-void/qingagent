@@ -59,6 +59,29 @@ describe("TemplateEditorPage AI 起草", () => {
     expect(rendered.onPromptChange).toHaveBeenCalledWith("逐项检查市场、壁垒与回报。");
   });
 
+  it("等待 AI 起草期间用户改过输入时静默丢弃迟到结果", async () => {
+    let resolve!: (value: { name: string; prompt: string }) => void;
+    const onAiDraft = vi.fn(() => new Promise<{ name: string; prompt: string }>((done) => { resolve = done; }));
+    const rendered = render(onAiDraft);
+    const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent?.includes("AI 起草"))!;
+    act(() => button.click());
+
+    const input = host.querySelector<HTMLInputElement>("input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "用户新名称");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(input.value).toBe("用户新名称");
+
+    await act(async () => resolve({ name: "迟到名称", prompt: "迟到提示词" }));
+
+    expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("用户新名称");
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("已有提示词");
+    expect(rendered.onNameChange).not.toHaveBeenCalledWith("迟到名称");
+    expect(rendered.onPromptChange).not.toHaveBeenCalledWith("迟到提示词");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("失败显示既有错误行，卸载会 abort 在途请求", async () => {
     let signal: AbortSignal | undefined;
     const onAiDraft = vi.fn((_intent, abortSignal) => {

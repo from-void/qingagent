@@ -64,6 +64,29 @@ export function shouldShowPreTokenLoading(messages: ChatMessage[], streamActive:
   return streamActive && messages.length > 0 && messages[messages.length - 1]?.role.kind === "user";
 }
 
+/**
+ * 尾段是否代表「模型请求已发出、但这一段还没吐出任何正文」。
+ *
+ * 原来只认 `thinking` 尾段,于是「思考中」只在模型真吐 reasoning_content 时才出现:
+ * 自定义 OpenAI 协议网关/多数 openai 协议模型压根不吐 reasoning,指示条永远不出;
+ * 更常见的是工具跑完等模型续写的那几秒到几十秒,界面完全静默(用户报的"看不出在干活")。
+ * 判据改成「没有正在流的正文,也没有在等用户/在跑的工具」:
+ * - 无 part:空的 agent 消息刚建好,请求刚发出;
+ * - thinking:reasoning 在流,marquee 同时滚 reasoning 首句;
+ * - 工具已结束(done/failed/aborted/accepted/rejected/committed):模型正在生成下一段;
+ * - text/code 尾段:正文已在逐字出现,自带可视反馈,不再叠指示条;
+ * - 工具 pending/running/reviewing:工具条自己有运行态/待办文案,叠"思考中"是谎报。
+ */
+export function isAwaitingModelSegment(lastPart: MessagePart | undefined): boolean {
+  if (!lastPart) return true;
+  if (lastPart.kind === "text" || lastPart.kind === "code") return false;
+  if (lastPart.kind === "toolCall") {
+    const status = lastPart.data.status.kind;
+    return status !== "pending" && status !== "running" && status !== "reviewing";
+  }
+  return true;
+}
+
 export function ChatMessageList({
   messages,
   showLoading,
@@ -114,6 +137,7 @@ export function ChatMessageList({
     () => computeTurnFlags(messages, lastAssistantMessageId, streamActive, liveHunkKey),
     [messages, lastAssistantMessageId, streamActive, liveHunkKey],
   );
+  const trailingMessageId = messages[messages.length - 1]?.id;
   const messageRows = useMemo(
     () =>
       messages.map((m) => {
@@ -131,6 +155,7 @@ export function ChatMessageList({
             isNew={!initialIdsRef.current!.has(m.id)}
             streamActive={rowStreamActive}
             isLastAssistantMessage={m.id === lastAssistantMessageId}
+            isTrailingMessage={m.id === trailingMessageId}
             turnSettled={flags?.turnSettled ?? false}
             turnReasoningDone={flags?.turnReasoningDone ?? false}
             isFinalAgentMsg={flags?.isFinalAgentMsg ?? false}
@@ -158,6 +183,7 @@ export function ChatMessageList({
       sessionId,
       streamActive,
       skillLabels,
+      trailingMessageId,
       turnFlags,
       visibleAskUserAnswerToolCallIds,
       wholeDocReview,
@@ -196,6 +222,8 @@ type MessageRowProps = {
   isNew: boolean;
   streamActive: boolean;
   isLastAssistantMessage: boolean;
+  /** 是否为整条列表的最后一条消息(等待态指示条只挂在真正的队尾)。 */
+  isTrailingMessage?: boolean;
   turnSettled?: boolean;
   turnReasoningDone?: boolean;
   isFinalAgentMsg?: boolean;
@@ -335,6 +363,7 @@ const MessageRow = memo(function MessageRow({
   isNew,
   streamActive,
   isLastAssistantMessage,
+  isTrailingMessage = false,
   turnSettled = false,
   turnReasoningDone = false,
   isFinalAgentMsg = false,
@@ -423,12 +452,19 @@ const MessageRow = memo(function MessageRow({
     return null;
   }
   // 非 debug 模式:思考条不各自渲染,统一合并成一条放在**消息最底部**(永远在最新内容下面,跟着流走);
-  // 只要「尾段 part 是 thinking」(= 当前正在返回 reasoning)就出「思考中」——不依赖是否解析到中文句子,
-  // 下面那行文案只是辅助。一旦尾段变成文本回复/工具调用(下一轮输出开始),思考条立即掐断。
+  // 只要「模型正在跑但这一段还没吐正文」(见 isAwaitingModelSegment)就出「思考中」——不依赖模型
+  // 是否返回 reasoning,下面那行滚动文案只是有 reasoning 时的辅助。一旦正文开始逐字出现,或工具进入
+  // 运行/待用户处理态(它们自带文案),思考条立即掐断。
   // debug 模式:思考 part 照旧各自渲染(可展开)。
   const lastPart = message.parts[message.parts.length - 1];
+  // isTrailingMessage:流在跑但新一轮的 agent 消息还没建时,最后一条 agent 消息是上一轮的,
+  // 不能让它冒出「思考中」(那一窗由底部"正在连接模型…"负责)。
   const thinkingTailActive =
-    !debugMode && streamActive && isLastAssistantMessage && lastPart?.kind === "thinking";
+    !debugMode &&
+    streamActive &&
+    isLastAssistantMessage &&
+    isTrailingMessage &&
+    isAwaitingModelSegment(lastPart);
   // 只取「尾部连续的 thinking part」= 当前这一轮的 reasoning。多 step turn 里
   // parts 形如 [思考1, 工具调用, 思考2, ...];历史轮的 thinking 被工具调用隔开,
   // 绝不能把它们一起拼进 marquee —— 否则进入新一轮思考时会把上一轮的句子又轮播一遍

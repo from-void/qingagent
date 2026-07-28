@@ -51,6 +51,27 @@ function errorCodes(error: unknown): string[] {
   return codes;
 }
 
+/**
+ * 按 Content-Length 切出完整 HTTP/1.1 请求再回调。undici 可能把请求头与请求体分成
+ * 多个 TCP 段，直接数 data 事件会把一个请求算成两个。
+ */
+function onHttpRequest(socket: Socket, handler: () => void): void {
+  let buffered = Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buffered = Buffer.concat([buffered, chunk]);
+    for (;;) {
+      const headerEnd = buffered.indexOf("\r\n\r\n");
+      if (headerEnd < 0) return;
+      const header = buffered.subarray(0, headerEnd).toString("latin1");
+      const contentLength = Number(/content-length:\s*(\d+)/i.exec(header)?.[1] ?? "0");
+      const total = headerEnd + 4 + contentLength;
+      if (buffered.length < total) return;
+      buffered = buffered.subarray(total);
+      handler();
+    }
+  });
+}
+
 async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
   for (const socket of sockets) socket.destroy();
   if (!server.listening) return;
@@ -167,4 +188,81 @@ describe.sequential("modelTransport 集成", () => {
     const { error } = await fetchBlackholeError(requestThroughMainModel);
     expect(isRetryableModelError(error)).toBe(true);
   }, 4_000);
+
+  it("复用连接被对端掐断时自动换新连接重试，且只产出一份内容", async () => {
+    // 复刻真机路径：工具执行期间连接空闲，网关掐掉它；下一次续写请求写在这条已死的
+    // 连接上，对端直接 FIN（other side closed），此时一个字节的响应都还没到。
+    const sockets = new Set<Socket>();
+    let requestsSeen = 0;
+    let responsesSent = 0;
+    const origin = createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      let handledOnThisSocket = 0;
+      onHttpRequest(socket, () => {
+        requestsSeen += 1;
+        handledOnThisSocket += 1;
+        if (handledOnThisSocket > 1) {
+          // 这条连接被“网关”回收：收到复用请求后只回 FIN，不回任何响应。
+          socket.end();
+          return;
+        }
+        const body = `第 ${responsesSent + 1} 次响应`;
+        responsesSent += 1;
+        socket.write(
+          `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: keep-alive\r\n\r\n${body}`,
+        );
+      });
+    });
+    await listen(origin);
+    cleanups.push(() => closeServer(origin, sockets));
+    process.env.no_proxy = "*";
+
+    const first = await modelFetch(`${serverUrl(origin)}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [] }),
+    });
+    expect(first.status).toBe(200);
+    await expect(first.text()).resolves.toBe("第 1 次响应");
+    // 模拟工具执行的空闲间隔：连接归池、下一次续写必然复用它。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const second = await modelFetch(`${serverUrl(origin)}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [] }),
+    });
+    expect(second.status).toBe(200);
+    // 换新连接后又是这条连接上的第一次请求，服务端正常应答。
+    await expect(second.text()).resolves.toBe("第 2 次响应");
+    // 服务端一共看到 3 个请求：首次 + 撞死连接的那次 + 重试；但只回了 2 份内容。
+    expect(requestsSeen).toBe(3);
+    expect(responsesSent).toBe(2);
+  }, 10_000);
+
+  it("请求体不可原样重放时不做连接重试，错误如实抛出", async () => {
+    const sockets = new Set<Socket>();
+    let requestsSeen = 0;
+    const origin = createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      onHttpRequest(socket, () => {
+        requestsSeen += 1;
+        socket.end();
+      });
+    });
+    await listen(origin);
+    cleanups.push(() => closeServer(origin, sockets));
+    process.env.no_proxy = "*";
+
+    const form = new FormData();
+    form.append("prompt", "不可重放请求体");
+    await expect(modelFetch(`${serverUrl(origin)}/v1/chat/completions`, {
+      method: "POST",
+      body: form,
+    })).rejects.toThrow();
+    expect(requestsSeen).toBe(1);
+  }, 10_000);
 });

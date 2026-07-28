@@ -40,9 +40,23 @@ import {
   getCurrentHandleNode,
   resolveHandleRangeByStableId,
   resolveDocumentPositionSafely,
+  resolveInlineInsertPos,
 } from "./blockHandlePosition";
 
 type SubmenuKey = "align" | "insert";
+
+/** 块命令的中文名，失败提示要说清是哪一项。 */
+const BLOCK_COMMAND_LABELS: Readonly<Record<string, string>> = {
+  paragraph: "正文",
+  heading: "标题",
+  bulletList: "无序列表",
+  orderedList: "有序列表",
+  blockquote: "引用",
+  codeBlock: "代码块",
+  taskList: "待办清单",
+  callout: "高亮块",
+  inlineMath: "行内公式",
+};
 
 export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (message: string) => void }) {
   const [handle, setHandle] = useState<HandleState | null>(null);
@@ -618,7 +632,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       const node = getCurrentHandleNode(editor.state.doc, h);
       if (!node) return null;
       const chain = editor.chain().focus();
-      if (h.isEmpty) return chain.setTextSelection(h.insertPos);
+      if (h.isEmpty) {
+        const anchor = resolveInlineInsertPos(editor.state.doc, h.blockPos, h.insertPos);
+        return anchor === null ? null : chain.setTextSelection(anchor);
+      }
       const after = h.blockPos + node.nodeSize;
       return chain.insertContentAt(after, { type: "paragraph" }).setTextSelection(after + 1);
     },
@@ -627,7 +644,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
   const runHandleCommand = useCallback(
     (ok: boolean, label: string) => {
-      if (!ok) onToast?.(`无法执行：${label}`);
+      // 位置歪掉导致的失败已在命令前归一（resolveInlineInsertPos）；走到这里的失败都是
+      // schema 真的不允许（高亮块里塞代码块、嵌套高亮块、分隔线之类没有正文的叶子块）。
+      // 文案要说清是「这个块不行」而不是笼统的“无法执行”，用户才知道换个块再试。
+      if (!ok) onToast?.(`当前块不支持「${label}」`);
       return ok;
     },
     [onToast],
@@ -714,7 +734,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       }
 
       const chain = seedInsertChain(h);
-      if (!chain) return;
+      if (!chain) {
+        runHandleCommand(false, BLOCK_COMMAND_LABELS[type] ?? type);
+        return;
+      }
       switch (type) {
         case "heading":
           runHandleCommand(chain.setHeading({ level: (opts ?? 1) as 1 | 2 | 3 | 4 | 5 | 6 }).run(), "标题");
@@ -768,7 +791,14 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       setMenuOpen(false);
       const h = handle;
       setHandle(null);
-      const chain = editor.chain().focus().setTextSelection(h.insertPos);
+      // 手柄的 insertPos 可能是块边界（gutter 命中 / 容器块兜底）；命令只在行内位置上成立，
+      // 这里统一归一，否则整条 chain 直接 false，用户只会看到一句「无法执行」。
+      const anchor = resolveInlineInsertPos(editor.state.doc, h.blockPos, h.insertPos);
+      if (anchor === null) {
+        runHandleCommand(false, BLOCK_COMMAND_LABELS[type] ?? type);
+        return;
+      }
+      const chain = editor.chain().focus().setTextSelection(anchor);
       switch (type) {
         case "paragraph":
           runHandleCommand(chain.setParagraph().run(), "正文");
@@ -792,8 +822,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           runHandleCommand(chain.toggleTaskList().run(), "待办清单");
           break;
         case "callout":
-          if (editor.isActive("callout")) runHandleCommand(chain.lift("callout").run(), "高亮块");
-          else runHandleCommand(chain.wrapIn("callout").run(), "高亮块");
+          // 不能用 editor.isActive:它读的是命令执行前的旧选区,而 lift/wrapIn 作用在链上的新选区,
+          // 两者不一致时必然返回 false(引用用的 toggleBlockquote 内部就是在链上判 active)。
+          runHandleCommand(chain.toggleWrap("callout").run(), "高亮块");
           break;
       }
     },
@@ -944,6 +975,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   const tableMenuState = liveHandle?.kind === "block" && liveHandle.nodeType === "table"
     ? readTableBlockMenuState(getCurrentHandleNode(editor.state.doc, liveHandle))
     : null;
+  // 分隔线/图片/图表/公式块这类叶子块没有可转换的正文，「转换为」整排按钮点了必然失败。
+  // 表格早就是这么处理的(整排不出)——对齐它，不给用户能点但只会弹提示的死按钮。
+  const convertibleHandle =
+    liveHandle?.kind === "block" &&
+    resolveInlineInsertPos(editor.state.doc, liveHandle.blockPos, liveHandle.insertPos) !== null;
 
   const runTableMenuCommand = useCallback((command: "headerRow" | "headerColumn" | "evenColumns") => {
     if (!handle || handle.kind !== "block" || handle.nodeType !== "table" || !editor.isEditable) return;
@@ -1273,8 +1309,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           onMouseLeave={scheduleSubmenuClose}
           onMouseOver={closeTablePickerOnOtherMenuItem}
         >
-          {tableMenuState ? null : <div className="bh-section-label">转换为</div>}
-          {tableMenuState ? null : <div className="bh-grid">
+          {tableMenuState || !convertibleHandle ? null : <div className="bh-section-label">转换为</div>}
+          {tableMenuState || !convertibleHandle ? null : <div className="bh-grid">
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="一级标题" title="一级标题" onClick={() => convertBlock("heading", 1)}><BlockHandleIcon name="heading1" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="二级标题" title="二级标题" onClick={() => convertBlock("heading", 2)}><BlockHandleIcon name="heading2" /></button>
@@ -1286,7 +1322,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="待办清单" title="待办清单" onClick={() => convertBlock("taskList")}><BlockHandleIcon name="task" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="高亮块" title="高亮块" onClick={() => convertBlock("callout")}><BlockHandleIcon name="callout" /></button>
           </div>}
-          {tableMenuState ? null : <div className="bh-divider" />}
+          {tableMenuState || !convertibleHandle ? null : <div className="bh-divider" />}
           {tableMenuState ? (
             <>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(true)}>

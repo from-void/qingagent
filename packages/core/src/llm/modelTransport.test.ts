@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { Dispatcher } from "undici";
 import {
   DEFAULT_MODEL_CONNECT_TIMEOUT_MS,
+  MODEL_CONNECTION_REUSE_OPTIONS,
+  MODEL_KEEP_ALIVE_MAX_TIMEOUT_MS,
   createModelDispatcher,
   createModelDnsLookup,
+  isConnectionResetError,
+  isReplayableModelRequest,
   resolveModelDispatcherConfig,
   shouldProxyModelUrl,
 } from "./modelTransport.js";
@@ -108,5 +112,77 @@ describe("modelTransport", () => {
   it("非法连接超时配置回退到 5s", () => {
     expect(resolveModelDispatcherConfig({ QINGAGENT_MODEL_CONNECT_TIMEOUT_MS: "invalid" }).connectTimeout)
       .toBe(DEFAULT_MODEL_CONNECT_TIMEOUT_MS);
+  });
+
+  it("模型出站关闭 H2 并压住 keep-alive 可信上限", () => {
+    // undici 8 的 allowH2 默认是 true；一旦复活 H2 会话复用，工具执行后的续写就会
+    // 撞上被网关掐掉的空闲会话（other side closed）。
+    expect(MODEL_CONNECTION_REUSE_OPTIONS.allowH2).toBe(false);
+    expect(MODEL_CONNECTION_REUSE_OPTIONS.keepAliveMaxTimeout)
+      .toBe(MODEL_KEEP_ALIVE_MAX_TIMEOUT_MS);
+    expect(MODEL_KEEP_ALIVE_MAX_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
+  });
+});
+
+describe("连接复用竞态判定", () => {
+  function wrapFetchFailed(cause: unknown): Error {
+    const error = new TypeError("fetch failed");
+    (error as { cause?: unknown }).cause = cause;
+    return error;
+  }
+
+  it("识别 undici SocketError 的 other side closed（含 fetch 包装层）", () => {
+    const socketError = Object.assign(new Error("other side closed"), {
+      name: "SocketError",
+      code: "UND_ERR_SOCKET",
+    });
+    expect(isConnectionResetError(socketError)).toBe(true);
+    expect(isConnectionResetError(wrapFetchFailed(socketError))).toBe(true);
+  });
+
+  it("识别 socket hang up / ECONNRESET / EPIPE", () => {
+    expect(isConnectionResetError(wrapFetchFailed(new Error("socket hang up")))).toBe(true);
+    expect(isConnectionResetError(
+      wrapFetchFailed(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" })),
+    )).toBe(true);
+    expect(isConnectionResetError(
+      wrapFetchFailed(Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+    )).toBe(true);
+  });
+
+  it("取消/超时/普通失败不算连接复用竞态", () => {
+    expect(isConnectionResetError(
+      Object.assign(new Error("This operation was aborted"), { name: "AbortError" }),
+    )).toBe(false);
+    expect(isConnectionResetError(
+      Object.assign(new Error("Model DNS preflight timed out"), { name: "TimeoutError" }),
+    )).toBe(false);
+    expect(isConnectionResetError(
+      wrapFetchFailed(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" })),
+    )).toBe(false);
+    expect(isConnectionResetError(new Error("Blocked private address"))).toBe(false);
+  });
+
+  it("cause 环不会导致死循环", () => {
+    const a = new Error("a") as Error & { cause?: unknown };
+    const b = new Error("b") as Error & { cause?: unknown };
+    a.cause = b;
+    b.cause = a;
+    expect(isConnectionResetError(a)).toBe(false);
+  });
+
+  it("只有可原样重放的请求体才允许重试", () => {
+    expect(isReplayableModelRequest("https://model.test/v1", undefined)).toBe(true);
+    expect(isReplayableModelRequest("https://model.test/v1", { body: "{\"a\":1}" })).toBe(true);
+    expect(isReplayableModelRequest(new URL("https://model.test/v1"), {
+      body: new Uint8Array([1, 2, 3]),
+    })).toBe(true);
+    expect(isReplayableModelRequest("https://model.test/v1", {
+      body: new ReadableStream(),
+    } as RequestInit)).toBe(false);
+    expect(isReplayableModelRequest(
+      new Request("https://model.test/v1", { method: "POST", body: "x" }),
+      undefined,
+    )).toBe(false);
   });
 });

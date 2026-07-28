@@ -3,7 +3,10 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_HANZI_MATRIX_CONFIG } from "../data/hanziMatrixConfig";
+import {
+  DEFAULT_HANZI_MATRIX_CONFIG,
+  setHanziMatrixConfig,
+} from "../data/hanziMatrixConfig";
 import {
   HanziMatrix,
   buildHanziMatrixLayout,
@@ -227,6 +230,31 @@ describe("HanziMatrix 运行时性能覆盖层", () => {
       cell: 60,
       maskBlur: 0,
     });
+  });
+
+  it("首次渲染直接使用面板持久化的字符池", async () => {
+    installReducedMotionMatchMedia(true);
+    const canvas = installCanvasContextMock();
+    const raf = createRafHarness();
+    setHanziMatrixConfig({ pool: "writing" });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(createElement(HanziMatrix));
+    });
+    await flushRafUntilIdle(raf);
+
+    const drawnChars = vi.mocked(canvas.context.fillText).mock.calls.map(([char]) => char);
+    await act(async () => {
+      root.unmount();
+    });
+    setHanziMatrixConfig({ pool: DEFAULT_HANZI_MATRIX_CONFIG.pool });
+
+    expect(drawnChars).toContain("文");
+    expect(drawnChars).not.toContain("永");
   });
 
   it("reduced-motion 静止态绘完首帧后不保留持续 RAF", async () => {

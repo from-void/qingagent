@@ -344,6 +344,17 @@ describe("builtin skills", () => {
     expect(parsed?.description).toBe(expected);
   });
 
+  it.each([">-", ">+"])(
+    "folded 块标量 %s 保留更深缩进行前后的换行",
+    (marker) => {
+      const parsed = parseSkillFrontmatter(
+        `---\nname: folded-more-indented-${marker.charCodeAt(1)}\ndescription: ${marker}\n  第一行\n    代码行\n  第三行\n---\n`,
+      );
+
+      expect(parsed?.description).toBe("第一行\n  代码行\n第三行");
+    },
+  );
+
   it("归档清单为空时仍正常发现内置技能", async () => {
     const skillDirs = await resolveEnabledSkillDirsFromRoots(
       [

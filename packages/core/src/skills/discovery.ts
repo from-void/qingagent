@@ -212,7 +212,11 @@ function readFrontmatterBlockScalar(
     value: parts.reduce((value, part, index) => {
       if (index === 0) return part;
       const previous = parts[index - 1]!;
-      return `${value}${previous === "" || part === "" ? "\n" : " "}${part}`;
+      const preservesLineBreak = previous === ""
+        || part === ""
+        || /^\s/.test(previous)
+        || /^\s/.test(part);
+      return `${value}${preservesLineBreak ? "\n" : " "}${part}`;
     }, ""),
     endIndex,
   };

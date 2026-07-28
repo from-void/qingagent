@@ -1307,7 +1307,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         </button>
       )}
     </div>
-      {menuOpen && liveHandle.kind === "block" && (
+      {/* 主菜单必须与表格 chrome 同容器 portal:内联在编辑器 DOM 里会被祖先 z-index:1
+          的层叠上下文封顶,再高的 z-index 也压不过 portal 出去的表格行列悬浮控件(100010+)。 */}
+      {menuOpen && liveHandle.kind === "block" && submenuPortalTarget ? createPortal(
         <div
           ref={menuRef}
           className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`}
@@ -1497,8 +1499,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               </button>
             </div>
           ) : null}
-        </div>
-      )}
+        </div>,
+        submenuPortalTarget,
+      ) : null}
       {menuOpen && liveHandle.kind === "block" && submenuPortalTarget
         ? createPortal(submenuPanels, submenuPortalTarget)
         : null}

@@ -1628,9 +1628,9 @@
   }
   #view-workspace .wf-hlevel:disabled{opacity:.32;cursor:not-allowed}
 
-  /* Icon grid */
+  /* Icon grid:7 列让转换宫格(正文/无序/有序/引用/代码/待办/高亮)单行排下,配合 H1~H6 行共两行 */
   #view-workspace .bh-grid{
-    display:grid;grid-template-columns:repeat(6,32px);grid-auto-rows:28px;
+    display:grid;grid-template-columns:repeat(7,32px);grid-auto-rows:28px;
     gap:2px;padding:2px 10px 4px;
   }
   #view-workspace .bh-grid-btn{

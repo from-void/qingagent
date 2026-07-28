@@ -158,6 +158,74 @@ describe("MediaZoomFullscreen", () => {
     }
   });
 
+  it("内容首次出现非零尺寸时自动居中，之后停止观察以保留用户变换", async () => {
+    let resetFrame: FrameRequestCallback | undefined;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      disconnect() {
+        disconnect();
+      }
+      unobserve() {}
+    });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      resetFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      const content = document.body.querySelector<HTMLElement>(".media-zoom-content")!;
+      let contentWidth = 0;
+      let contentHeight = 0;
+      Object.defineProperty(viewport, "offsetWidth", { configurable: true, value: 1000 });
+      Object.defineProperty(viewport, "offsetHeight", { configurable: true, value: 800 });
+      Object.defineProperty(content, "offsetWidth", { configurable: true, get: () => contentWidth });
+      Object.defineProperty(content, "offsetHeight", { configurable: true, get: () => contentHeight });
+
+      await act(async () => {
+        resetFrame!(0);
+      });
+      expect(content.style.transform).toBe("translate(0px, 0px) scale(1)");
+      expect(disconnect).not.toHaveBeenCalled();
+
+      contentWidth = 400;
+      contentHeight = 200;
+      await act(async () => {
+        resizeCallback!([], {} as ResizeObserver);
+      });
+      expect(content.style.transform).toBe("translate(300px, 300px) scale(1)");
+      expect(disconnect).toHaveBeenCalledTimes(1);
+
+      contentWidth = 800;
+      contentHeight = 600;
+      await act(async () => {
+        resizeCallback!([], {} as ResizeObserver);
+      });
+      expect(content.style.transform).toBe("translate(300px, 300px) scale(1)");
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it("静止时不挂 will-change:transform(矢量 SVG 全屏保持清晰),仅拖拽平移期间挂(防全屏发糊回归)", async () => {
     const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);
@@ -196,6 +264,61 @@ describe("MediaZoomFullscreen", () => {
       });
       expect(content.style.willChange === "transform").toBe(false);
       expect(viewport.classList.contains("is-panning")).toBe(false);
+    } finally {
+      rafSpy.mockRestore();
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it("拖拽中关闭会释放 pointer capture，重新打开不保留手势状态", async () => {
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Element.prototype.setPointerCapture = setPointerCapture;
+    Element.prototype.hasPointerCapture = () => true;
+    Element.prototype.releasePointerCapture = releasePointerCapture;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const pointerEvent = (type: string, pointerId: number, init: MouseEventInit = {}) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, ...init });
+      Object.defineProperty(event, "pointerId", { value: pointerId });
+      return event;
+    };
+
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      let viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      await act(async () => {
+        viewport.dispatchEvent(pointerEvent("pointerdown", 9, { button: 0 }));
+        viewport.dispatchEvent(pointerEvent("pointermove", 9, { clientX: 8, clientY: 8 }));
+      });
+      expect(viewport.classList.contains("is-panning")).toBe(true);
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(releasePointerCapture).toHaveBeenCalledWith(9);
+      expect(document.body.querySelector(".media-zoom-fullscreen")).toBeNull();
+
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      expect(viewport.classList.contains("is-panning")).toBe(false);
+      expect(document.body.querySelector<HTMLElement>(".media-zoom-content")!.style.willChange).toBe("");
     } finally {
       rafSpy.mockRestore();
       await act(async () => {

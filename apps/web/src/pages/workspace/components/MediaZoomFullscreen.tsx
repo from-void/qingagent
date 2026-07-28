@@ -30,6 +30,7 @@ export function MediaZoomFullscreen({
   const contentRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dragRef = useRef<{
+    target: HTMLDivElement;
     pointerId: number;
     startX: number;
     startY: number;
@@ -41,6 +42,15 @@ export function MediaZoomFullscreen({
   // 仅拖拽平移期间挂 will-change:transform(合成层让拖拽顺滑);静止/缩放后撤掉,
   // 让 SVG 回到矢量渲染、保持清晰(否则常驻合成层会把矢量栅格化 → 全屏看图发糊)。
   const [panning, setPanning] = useState(false);
+
+  const clearDrag = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setPanning(false);
+    if (drag?.target.hasPointerCapture?.(drag.pointerId)) {
+      drag.target.releasePointerCapture(drag.pointerId);
+    }
+  }, []);
 
   const reset = useCallback(() => {
     const viewport = viewportRef.current;
@@ -71,9 +81,46 @@ export function MediaZoomFullscreen({
 
   useLayoutEffect(() => {
     if (!open) return;
-    const frame = window.requestAnimationFrame(reset);
-    return () => window.cancelAnimationFrame(frame);
+    setTransform({ x: 0, y: 0, scale: 1 });
+    const content = contentRef.current;
+    let centered = false;
+    let observer: ResizeObserver | null = null;
+    const centerWhenReady = () => {
+      const viewport = viewportRef.current;
+      if (
+        centered ||
+        !viewport ||
+        !content ||
+        viewport.offsetWidth <= 0 ||
+        viewport.offsetHeight <= 0 ||
+        content.offsetWidth <= 0 ||
+        content.offsetHeight <= 0
+      ) {
+        return;
+      }
+      centered = true;
+      reset();
+      observer?.disconnect();
+    };
+    if (content && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(centerWhenReady);
+      observer.observe(content);
+    }
+    const frame = window.requestAnimationFrame(() => {
+      centerWhenReady();
+      if (!observer && !centered) reset();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [open, reset]);
+
+  useLayoutEffect(() => {
+    clearDrag();
+    if (!open) return;
+    return clearDrag;
+  }, [clearDrag, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -170,6 +217,7 @@ export function MediaZoomFullscreen({
           if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           dragRef.current = {
+            target: event.currentTarget,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
@@ -194,14 +242,17 @@ export function MediaZoomFullscreen({
         }}
         onPointerUp={(event) => {
           if (dragRef.current?.pointerId === event.pointerId) {
-            dragRef.current = null;
-            setPanning(false);
+            clearDrag();
           }
         }}
         onPointerCancel={(event) => {
           if (dragRef.current?.pointerId === event.pointerId) {
-            dragRef.current = null;
-            setPanning(false);
+            clearDrag();
+          }
+        }}
+        onLostPointerCapture={(event) => {
+          if (dragRef.current?.pointerId === event.pointerId) {
+            clearDrag();
           }
         }}
       >

@@ -844,7 +844,8 @@ describe("TableControls AI 修改", () => {
 });
 
 describe("TableControls 大表拖选基准", () => {
-  it("100×100 表拖选 20 步按 rAF 合并 dispatch，且不超时", async () => {
+  // 沿轴范围拖选自真机 P1 修复起收敛到 Shift + 拖（裸拖＝整列/整行排序）。
+  it("100×100 表 Shift 拖选 20 步按 rAF 合并 dispatch，且不超时", async () => {
     const startedAt = performance.now();
     const portal = document.createElement("div");
     portal.id = "view-workspace";
@@ -889,7 +890,12 @@ describe("TableControls 大表拖选基准", () => {
     await mouseDown(portal.querySelector(".tbl-col-hdr"));
     await act(async () => {
       for (let step = 1; step <= 20; step++) {
-        document.dispatchEvent(new MouseEvent("mousemove", { clientX: step * 10 - 1, clientY: 20, bubbles: true }));
+        document.dispatchEvent(new MouseEvent("mousemove", {
+          clientX: step * 10 - 1,
+          clientY: 20,
+          shiftKey: true,
+          bubbles: true,
+        }));
       }
       flushAnimationFrames();
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));

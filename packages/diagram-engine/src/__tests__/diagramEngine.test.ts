@@ -1525,15 +1525,32 @@ flowchart TD
     for (const label of beforeLabels) expect(afterNodes.map((node) => node.label)).toContain(label);
   });
 
-  it("mindmap 新增和改名可往返引号、反斜杠与换行", () => {
-    const label = '引号"、反斜杠\\与\n换行';
+  it("mindmap 新增特殊标签后仍可继续改名和删除", () => {
+    const label = '  引号"、反斜杠\\、[方括号]与#号\n换行  ';
     const source = "mindmap\n  root((中心))\n";
     const root = (parseDiagram(source).model as MindmapTree).root;
 
     const added = applyEdit(source, { kind: "addNode", parentId: root.id, label });
     expect(added.ok).toBe(true);
     expect(added.newNodeId).toBeDefined();
-    expect(flattenMindmap((parseDiagram(added.source).model as MindmapTree).root).find((node) => node.id === added.newNodeId)?.label).toBe(label);
+    const addedNode = flattenMindmap(
+      (parseDiagram(added.source).model as MindmapTree).root,
+    ).find((node) => node.id === added.newNodeId);
+    expect(addedNode).toMatchObject({ label, hasStableId: true });
+    const renamedAgain = applyEdit(added.source, {
+      kind: "relabelNode",
+      nodeId: addedNode!.id,
+      label: "再次改名",
+    });
+    expect(renamedAgain.ok).toBe(true);
+    const renamedNode = flattenMindmap(
+      (parseDiagram(renamedAgain.source).model as MindmapTree).root,
+    ).find((node) => node.label === "再次改名");
+    expect(renamedNode?.hasStableId).toBe(true);
+    expect(applyEdit(renamedAgain.source, {
+      kind: "deleteNode",
+      nodeId: renamedNode!.id,
+    }).ok).toBe(true);
 
     const renamed = applyEdit(source, { kind: "relabelNode", nodeId: root.id, label });
     expect(renamed.ok).toBe(true);

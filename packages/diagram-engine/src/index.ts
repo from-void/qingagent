@@ -3076,7 +3076,8 @@ function parseMindmap(source: string): ParseResult {
     }
     // ::class / #id::class / icon(...) 这类装饰语法仍不支持;形状包裹(`((..))` 等)
     // 现在能解析,不再标记为 unsupported(否则圆形根节点变只读且显示字面量)。
-    const unsupported = /::|#|^icon\(/i.test(trimmed);
+    const decorationProbe = trimmed.replace(/&#(?:\d+|x[0-9a-f]+);/gi, "");
+    const unsupported = /::|#|^icon\(/i.test(decorationProbe);
     if (unsupported) {
       protectedSpans.push(lineSpan(line));
       fullyRepresented = false;

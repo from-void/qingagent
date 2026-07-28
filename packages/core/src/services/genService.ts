@@ -80,6 +80,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function createQuestionIdAllocator(): (preferred: string) => string {
+  const used = new Set<string>();
+  return (preferred) => {
+    if (!used.has(preferred)) {
+      used.add(preferred);
+      return preferred;
+    }
+    let suffix = 2;
+    while (used.has(`${preferred}-${suffix}`)) suffix += 1;
+    const allocated = `${preferred}-${suffix}`;
+    used.add(allocated);
+    return allocated;
+  };
+}
+
 function normalizeQuestion(raw: unknown, index = 0): GeneratedQuestion | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.label !== "string" || !raw.label.trim()) return null;
@@ -129,7 +144,11 @@ export function parseGeneratedQuestions(raw: string): GeneratedQuestion[] | null
   try {
     const parsed = JSON.parse(repaired.ok ? repaired.json : extracted);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    const questions = parsed.map((question, index) => normalizeQuestion(question, index));
+    const allocateId = createQuestionIdAllocator();
+    const questions = parsed.map((question, index) => {
+      const normalized = normalizeQuestion(question, index);
+      return normalized ? { ...normalized, id: allocateId(normalized.id) } : null;
+    });
     return questions.every((question): question is GeneratedQuestion => question !== null)
       ? questions
       : null;
@@ -142,6 +161,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
   const start = raw.indexOf("[");
   if (start < 0) return [];
   const questions: GeneratedQuestion[] = [];
+  const allocateId = createQuestionIdAllocator();
   const content = raw.slice(start + 1);
   let position = 0;
   while (position < content.length) {
@@ -152,7 +172,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
     const objectEnd = findMatchingBrace(content, position);
     if (objectEnd < 0) {
       const partial = normalizePartialQuestion(content.slice(position), questions.length);
-      if (partial) questions.push(partial);
+      if (partial) questions.push({ ...partial, id: allocateId(partial.id) });
       break;
     }
     try {
@@ -160,7 +180,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
         JSON.parse(content.slice(position, objectEnd + 1)),
         questions.length,
       );
-      if (normalized) questions.push(normalized);
+      if (normalized) questions.push({ ...normalized, id: allocateId(normalized.id) });
     } catch {
       // 已闭合但畸形的问题不影响此前成功解析的题目。
     }

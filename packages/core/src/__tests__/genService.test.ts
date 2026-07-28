@@ -192,6 +192,25 @@ describe("GenService", () => {
     ]);
   });
 
+  it("完整与流式解析对重复及补位冲突 id 使用同一稳定后缀", () => {
+    const raw = `[
+      {"id":"q2","label":"第一题？","kind":"text","options":[]},
+      {"label":"第二题？","kind":"text","options":[]},
+      {"id":"q2","label":"第三题？","kind":"text","options":[]}
+    ]`;
+
+    expect(parseGeneratedQuestions(raw)?.map((question) => question.id)).toEqual([
+      "q2",
+      "q2-2",
+      "q2-3",
+    ]);
+    expect(parsePartialGeneratedQuestions(raw).map((question) => question.id)).toEqual([
+      "q2",
+      "q2-2",
+      "q2-3",
+    ]);
+  });
+
   it("fallback 最终 JSON 截断时保留已流出的完整问题", async () => {
     mocks.getSessionSnapshot.mockReturnValue(null);
     mocks.streamText.mockReturnValue({

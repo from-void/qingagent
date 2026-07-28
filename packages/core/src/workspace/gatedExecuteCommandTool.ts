@@ -98,15 +98,22 @@ function formatCommandOutput(result: {
   stderr: string;
 }, tail?: number | null): string {
   const stdoutTail = tailLines(result.stdout, tail);
+  const stderrTail = tailLines(result.stderr, tail);
   const stdout = stdoutTail.output.trimEnd();
+  const stderr = stderrTail.output.trimEnd();
   if (result.success) {
+    const output = stdout && stderr
+      ? [`stdout:\n${stdout}\n\nstderr:\n${stderr}`]
+      : stdout
+        ? [stdout]
+        : stderr
+          ? ["stderr:", stderr]
+          : ["(no output)"];
     return [
-      stdout || "(no output)",
-      stdoutTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
+      ...output,
+      stdoutTail.truncated || stderrTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
     ].filter(Boolean).join("\n");
   }
-  const stderrTail = tailLines(result.stderr, tail);
-  const stderr = stderrTail.output.trimEnd();
   return [
     stdout,
     stderr,

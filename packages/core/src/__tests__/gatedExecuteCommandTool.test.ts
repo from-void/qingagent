@@ -593,6 +593,33 @@ describe("gated execute_command tool cwd 约束", () => {
     });
   });
 
+  it.each([
+    {
+      label: "stdout 与 stderr 都非空",
+      stdout: "command result\n",
+      stderr: "deprecation warning\n",
+      expected: "stdout:\ncommand result\n\nstderr:\ndeprecation warning",
+    },
+    {
+      label: "仅 stderr 非空",
+      stdout: "",
+      stderr: "Authorize at https://example.test/device\n",
+      expected: "stderr:\nAuthorize at https://example.test/device",
+    },
+  ])("成功命令会保留并标注 stderr：$label", async ({ stdout, stderr, expected }) => {
+    const { tool } = createToolHarness("gated-success-stderr", {
+      commandResult: {
+        success: true,
+        exitCode: 0,
+        stdout,
+        stderr,
+        executionTimeMs: 5,
+      },
+    });
+
+    await expect(executeTool(tool, { command: allowedFileCommand })).resolves.toBe(expected);
+  });
+
   it("tail 截断时附带禁止重跑提示，未截断时返回逐字不变", async () => {
     const commandResult = {
       success: true,

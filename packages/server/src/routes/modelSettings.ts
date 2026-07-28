@@ -69,6 +69,11 @@ function parseModelProvider(raw: unknown): ModelProvider | null {
   return raw === "deepseek" || raw === "kimi" ? raw : null;
 }
 
+function isConnectionTimeout(error: unknown): boolean {
+  return error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
 function sanitizeApiKey(raw: unknown): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== "string") return { ok: false, error: "apiKey must be a string" };
   const value = raw.trim();
@@ -414,7 +419,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     return c.json({
       ok: false,
       keySource,
-      error: err instanceof Error && err.name === "AbortError"
+      error: isConnectionTimeout(err)
         ? "查询超时,请稍后重试"
         : `无法连接 ${provider === "kimi" ? "Kimi" : "DeepSeek"},请检查网络`,
     }, 200);
@@ -526,7 +531,7 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
   } catch (err) {
     return c.json({
       ok: false,
-      error: err instanceof Error && err.name === "AbortError" ? "连接超时(10s)" : "无法连接该地址",
+      error: isConnectionTimeout(err) ? "连接超时(10s)" : "无法连接该地址",
     });
   } finally {
     clearTimeout(timer);

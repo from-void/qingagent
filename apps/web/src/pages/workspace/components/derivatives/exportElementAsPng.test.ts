@@ -55,6 +55,7 @@ describe("衍生稿 PNG 导出资源自包含", () => {
     expect(() => svgMarkupToDataUrl('<svg><foreignObject><img src="https://cdn.example/a.png"/></foreignObject></svg>')).toThrow("https://cdn.example/a.png");
     expect(() => svgMarkupToDataUrl('<svg><foreignObject><div style="background-image:url(&quot;/paper.png&quot;)"/></foreignObject></svg>')).toThrow("/paper.png");
     expect(() => svgMarkupToDataUrl('<svg><use href="https://cdn.example/symbols.svg#star"/></svg>')).toThrow("https://cdn.example/symbols.svg#star");
+    expect(() => svgMarkupToDataUrl('<svg><filter><feImage href="https://cdn.example/filter.png"/></filter></svg>')).toThrow("https://cdn.example/filter.png");
     expect(() => svgMarkupToDataUrl("<svg><style>@import '/font.css';</style></svg>")).toThrow("@import");
   });
 

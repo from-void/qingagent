@@ -9,7 +9,22 @@ const LOADABLE_ATTRIBUTE_NAMES = new Set([
   "srcset",
   "xlink:href",
 ]);
-const RESOURCE_HREF_ELEMENTS = new Set(["image", "link", "use"]);
+const RESOURCE_HREF_ELEMENTS = new Set([
+  "animate",
+  "animatemotion",
+  "animatetransform",
+  "feimage",
+  "image",
+  "lineargradient",
+  "link",
+  "mpath",
+  "pattern",
+  "radialgradient",
+  "script",
+  "set",
+  "textpath",
+  "use",
+]);
 const FONT_CACHE_MAX_ENTRIES = Object.keys(XHS_COVER_FONT_FACES).length;
 const FONT_CACHE_MAX_BYTES = 6 * 1024 * 1024;
 

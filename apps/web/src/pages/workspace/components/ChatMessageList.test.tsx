@@ -14,6 +14,7 @@ import {
   buildEmptyHintTypewriterPlan,
   ChatMessageList,
   EMPTY_HINT_TEXT,
+  isAwaitingModelSegment,
   parseExternalClient,
   renderSimpleMarkdown,
   shouldShowPreTokenLoading,
@@ -185,6 +186,113 @@ describe("ChatMessageList", () => {
     expect(shouldShowPreTokenLoading([message], false)).toBe(false);
     expect(shouldShowPreTokenLoading([message], true)).toBe(true);
     expect(shouldShowPreTokenLoading([message, agentMessage], true)).toBe(false);
+  });
+
+  it("isAwaitingModelSegment 覆盖无 reasoning 的等待窗,不误报正文/运行中工具", () => {
+    const tool = (status: ToolCallSpec["status"]): ToolCallSpec => ({
+      id: `t-${status.kind}`,
+      name: "webSearch",
+      render: { kind: "chatInline" },
+      status,
+      body: { kind: "generic", data: { argsJson: "{}" } },
+      result: null,
+    });
+
+    // 空 agent 消息 = 请求已发出、一个 part 都没回。
+    expect(isAwaitingModelSegment(undefined)).toBe(true);
+    expect(isAwaitingModelSegment({ kind: "thinking", data: { id: "t", steps: ["嗯"] } })).toBe(true);
+    // 工具跑完等模型续写:这正是自定义网关最常静默的那几十秒。
+    expect(isAwaitingModelSegment({ kind: "toolCall", data: tool({ kind: "done" }) })).toBe(true);
+    expect(isAwaitingModelSegment({ kind: "toolCall", data: tool({ kind: "aborted" }) })).toBe(true);
+    expect(isAwaitingModelSegment({ kind: "toolCall", data: tool({ kind: "committed" }) })).toBe(true);
+
+    // 正文已在逐字出现,自带可视反馈。
+    expect(isAwaitingModelSegment({ kind: "text", data: { body: "写好了" } })).toBe(false);
+    expect(isAwaitingModelSegment({ kind: "code", data: { lang: "ts", body: "x" } })).toBe(false);
+    // 工具自己有运行态/待用户处理文案,叠"思考中"是谎报。
+    expect(isAwaitingModelSegment({
+      kind: "toolCall",
+      data: tool({ kind: "running", data: { progressPct: null, etaSec: null } }),
+    })).toBe(false);
+    expect(isAwaitingModelSegment({ kind: "toolCall", data: tool({ kind: "pending" }) })).toBe(false);
+    expect(isAwaitingModelSegment({ kind: "toolCall", data: tool({ kind: "reviewing" }) })).toBe(false);
+  });
+
+  it("模型不吐 reasoning 时,空 agent 消息与工具结束后的续写窗都出「思考中」", async () => {
+    const emptyAgent: ChatMessage = {
+      id: "m-agent",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:01.000Z",
+      parts: [],
+      chips: null,
+    };
+
+    await render(
+      <ChatMessageList messages={[userMessage(), emptyAgent]} streamActive />,
+    );
+    expect(host?.textContent ?? "").toContain("思考中");
+
+    const afterTool: ChatMessage = {
+      ...emptyAgent,
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: "t-1",
+          name: "webSearch",
+          render: { kind: "chatInline" },
+          status: { kind: "done" },
+          body: { kind: "generic", data: { argsJson: "{}" } },
+          result: null,
+        },
+      }],
+    };
+    await act(async () => {
+      root?.render(
+        <ChatMessageList messages={[userMessage(), afterTool]} streamActive />,
+      );
+    });
+    expect(host?.textContent ?? "").toContain("思考中");
+
+    // 正文开始逐字出现后立刻掐断,不与正文并存。
+    await act(async () => {
+      root?.render(
+        <ChatMessageList
+          messages={[userMessage(), {
+            ...afterTool,
+            parts: [...afterTool.parts, { kind: "text", data: { body: "查到了三条" } }],
+          }]}
+          streamActive
+        />,
+      );
+    });
+    expect(host?.textContent ?? "").toContain("查到了三条");
+    expect(host?.textContent ?? "").not.toContain("思考中");
+  });
+
+  it("流在跑但新一轮 agent 消息未建时,上一轮消息不冒「思考中」", async () => {
+    const previousTurn: ChatMessage = {
+      id: "m-agent-prev",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:01.000Z",
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: "t-prev",
+          name: "webSearch",
+          render: { kind: "chatInline" },
+          status: { kind: "done" },
+          body: { kind: "generic", data: { argsJson: "{}" } },
+          result: null,
+        },
+      }],
+      chips: null,
+    };
+    const newUserTurn: ChatMessage = { ...userMessage(), id: "m-user-2" };
+
+    await render(
+      <ChatMessageList messages={[previousTurn, newUserTurn]} streamActive />,
+    );
+    expect(host?.textContent ?? "").not.toContain("思考中");
   });
 
   it("首 token 前 loading 文案 2 秒后切换", async () => {

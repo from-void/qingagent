@@ -158,6 +158,30 @@ beforeEach(() => {
 });
 
 describe("abortAndCleanupTurn", () => {
+  it("流消费者在首帧后关闭时立即结算 turn 所有权", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const state = createSession("consumer-close-after-start");
+    const generator = runAgentTurn(state, "开始处理");
+
+    const first = await generator.next();
+    expect(first.value).toMatchObject({
+      kind: "stream",
+      data: { kind: "start" },
+    });
+    expect(state.streamId).not.toBeNull();
+    expect(state._abortController).not.toBeNull();
+    expect(state._activeTurnPromise).not.toBeNull();
+    expect(state._turnOwner).not.toBeNull();
+
+    await generator.return(undefined);
+
+    expect(state.streamId).toBeNull();
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(state._turnOwner).toBeNull();
+    await generator.return(undefined);
+  });
+
   it.each([
     ["仍有运行卡", true],
     ["旧进程已退出且无运行卡", false],

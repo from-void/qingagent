@@ -203,33 +203,36 @@ export async function* runAgentTurn(
   state._suspendedThisTurn = false;
   let turnRequestContext: RequestContext | undefined;
   let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
+  let omTurnStartMessageIndex = state.messages.length;
+  const agentMessageId = newId();
 
-  // Resolve workspace skills defensively: skill discovery / maybeRefresh must
-  // never abort the turn. On any failure we log and fall back to the default
-  // capability toolset so static tools (parseFile, …), gated capability tools
-  // (fetchArticle, webSearch, …) and the
-  // normal stream error-frame path still work.
-  let selectedSkillNames: string[] = [];
-  let workspaceSkills: Awaited<ReturnType<typeof getQingagentSkills>> | null = null;
   try {
-    workspaceSkills = await getQingagentSkills();
-    await workspaceSkills.maybeRefresh();
-    selectedSkillNames = await resolveSelectedSkillNames(selectedSkills, workspaceSkills);
-    state.selectedSkills = selectedSkillNames;
-    state.selectedSkillsHadSelection = selectedSkills.length > 0;
-  } catch (error) {
-    logger.error("Skill resolution failed; continuing with default guidance", {
-      sessionId: state.sessionId,
-      error: String(error),
-    });
-    state.selectedSkills = [];
-    state.selectedSkillsHadSelection = false;
-  }
-  const toolSearchEnabled = isQingagentToolSearchEnabled();
-  const capabilityToolSearch = toolSearchEnabled
-    ? await buildCapabilityToolSearchBridge(selectedSkillNames)
-    : null;
-  const capabilityTools = capabilityToolSearch?.alwaysTools ?? await buildCapabilityTools();
+    // Resolve workspace skills defensively: skill discovery / maybeRefresh must
+    // never abort the turn. On any failure we log and fall back to the default
+    // capability toolset so static tools (parseFile, …), gated capability tools
+    // (fetchArticle, webSearch, …) and the
+    // normal stream error-frame path still work.
+    let selectedSkillNames: string[] = [];
+    let workspaceSkills: Awaited<ReturnType<typeof getQingagentSkills>> | null = null;
+    try {
+      workspaceSkills = await getQingagentSkills();
+      await workspaceSkills.maybeRefresh();
+      selectedSkillNames = await resolveSelectedSkillNames(selectedSkills, workspaceSkills);
+      state.selectedSkills = selectedSkillNames;
+      state.selectedSkillsHadSelection = selectedSkills.length > 0;
+    } catch (error) {
+      logger.error("Skill resolution failed; continuing with default guidance", {
+        sessionId: state.sessionId,
+        error: String(error),
+      });
+      state.selectedSkills = [];
+      state.selectedSkillsHadSelection = false;
+    }
+    const toolSearchEnabled = isQingagentToolSearchEnabled();
+    const capabilityToolSearch = toolSearchEnabled
+      ? await buildCapabilityToolSearchBridge(selectedSkillNames)
+      : null;
+    const capabilityTools = capabilityToolSearch?.alwaysTools ?? await buildCapabilityTools();
 
   logger.info("runAgentTurn started", {
     sessionId: state.sessionId,
@@ -438,7 +441,7 @@ export async function* runAgentTurn(
 
   const frozenWorkingMemorySnapshot = await ensureWorkingMemorySnapshot(state);
   ensureWorkingMemoryPromptInPlace(state.messages, frozenWorkingMemorySnapshot);
-  const omTurnStartMessageIndex = state.messages.length;
+  omTurnStartMessageIndex = state.messages.length;
   state.messages.push({ role: "user", content: fullUserText });
 
   // Inject current document snapshot into the last user message when the
@@ -553,7 +556,6 @@ export async function* runAgentTurn(
   state.chatHistory.push(userChatMessage);
   yield chatMessageAdded(userChatMessage);
 
-  const agentMessageId = newId();
   const agentMessage: ChatMessage = {
     id: agentMessageId,
     role: { kind: "agent" },
@@ -571,7 +573,6 @@ export async function* runAgentTurn(
     logger.error("Persist display messages before agent run failed", { error: String(err) }),
   );
 
-  try {
     const omContextForTurn = await prepareOmContextForTurn(state).catch((error) => {
       logger.warn("[omSidecar] prepare context failed; falling back to full messages", {
         sessionId: state.sessionId,
@@ -995,15 +996,18 @@ export async function* runAgentTurn(
     if (state.streamId === streamId) {
       state.streamId = null;
     }
+    const finalFrames: BridgeFrame[] = [];
     // 残留 running 工具调用落终态,避免"调用完仍 loading"。
     // 用户主动中止的工具卡由 abortAndCleanupTurn 统一落 failed,不能先在这里补成 done。
     if (!turnWasUserAborted && !isUserAbortSignal(abortController.signal)) {
       for (const u of finalizeLingeringRunningToolCalls(state)) {
-        yield toolCallUpdated(u.messageId, u.toolCallId, u.spec);
+        finalFrames.push(toolCallUpdated(u.messageId, u.toolCallId, u.spec));
       }
     }
-    yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
-    yield streamEnd(streamId);
+    for await (const frame of syncContentAndProjectDocState(state, "agent_turn_finally_idle")) {
+      finalFrames.push(frame);
+    }
+    finalFrames.push(streamEnd(streamId));
 
     // Final persist after all state transitions are settled.
     // This is the safety-net persist for the turn: processAgentStream's
@@ -1034,6 +1038,11 @@ export async function* runAgentTurn(
       !isUserAbortSignal(abortController.signal)
     ) {
       state._activeAgentMessageId = null;
+    }
+    // 资源所有权必须在 finally 的首个对外 yield 前结算。即使流消费者用
+    // generator.return() 提前关闭且不再拉取，也不能留下假活跃 turn。
+    for (const frame of finalFrames) {
+      yield frame;
     }
   }
 }

@@ -1,4 +1,7 @@
-import type { Resource } from "@qingagent/contract-ts";
+import type {
+  MaterialResourceMetadata,
+  Resource,
+} from "@qingagent/contract-ts";
 
 export type SourceTag = "yuque" | "pdf" | "png" | "feishu";
 
@@ -10,6 +13,8 @@ export interface AssetSource {
   abstract: string;
   /** Plain-text body shown in the right-side preview panel. */
   bodyText: string;
+  /** 素材正文版本；同一 id 更新时用于触发已打开预览重新拉取。 */
+  updatedAt?: string;
   /** Server-assigned file ID for uploaded files (used for preview URL). */
   fileId?: string;
   /** MIME type of the uploaded file. */
@@ -60,9 +65,10 @@ export function toAssetSource(resource: Resource): AssetSource {
   const metaLine = [friendlyTypeLabel(resource), byteLabel].filter(Boolean).join(" · ");
 
   // Extract fileId / sourceUrl from metadata if present (set by server-side storeMaterial handler)
-  const metadata = resource.metadata as { fileId?: string; sourceUrl?: string | null } | null;
+  const metadata = resource.metadata as MaterialResourceMetadata | null;
   const fileId = metadata?.fileId ?? undefined;
   const sourceUrl = metadata?.sourceUrl ?? undefined;
+  const updatedAt = metadata?.updatedAt ?? undefined;
 
   return {
     id: resource.resourceRef.id,
@@ -70,7 +76,9 @@ export function toAssetSource(resource: Resource): AssetSource {
     name: resource.displayName,
     meta: metaLine,
     abstract: resource.summary || "",
-    bodyText: resource.summary || "",
+    // Material Resource 只携带摘要，不携带全文；正文必须走 scoped text API。
+    bodyText: "",
+    updatedAt,
     fileId,
     mimeType: resource.mime ?? undefined,
     sourceUrl,

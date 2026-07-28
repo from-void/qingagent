@@ -903,7 +903,8 @@ export function useWorkspacePageController() {
     if (
       authoritative.abstract === previewSource.abstract &&
       authoritative.fileId === previewSource.fileId &&
-      authoritative.sourceUrl === previewSource.sourceUrl
+      authoritative.sourceUrl === previewSource.sourceUrl &&
+      authoritative.updatedAt === previewSource.updatedAt
     ) {
       return;
     }
@@ -3385,7 +3386,7 @@ export function useWorkspacePageController() {
             resources.applyUpdate(ref, summary);
             setPreviewSource((current) =>
               current?.id === materialId
-                ? { ...current, abstract: summary, bodyText: summary }
+                ? { ...current, abstract: summary }
                 : current,
             );
           },
@@ -3402,7 +3403,6 @@ export function useWorkspacePageController() {
                 ? {
                     ...current,
                     abstract: previous.summary ?? "",
-                    bodyText: previous.summary ?? "",
                   }
                 : current,
             );

@@ -173,6 +173,8 @@ export interface ParseResult extends DiagramThemeMetadata {
   model: DiagramModel;
   spanMap: SpanMap;
   ok: boolean;
+  /** 内部图模型是否完整承载了源码的可见语义；false 时应回退原生 Mermaid 渲染。 */
+  fullyRepresented: boolean;
   error?: string;
   errorSpan?: Span;
 }
@@ -1316,10 +1318,14 @@ function parseFlowchart(source: string): ParseResult {
     edges,
     subgraphs.map((subgraph) => subgraph.id),
   );
+  const parsedNodes = [...nodes.values()];
   const result: ParseResult = {
     ok: true,
+    fullyRepresented:
+      !/^\s*click\b/im.test(source)
+      && !parsedNodes.some((node) => node.shape === "icon" || node.shape === "image"),
     ...themeMetadata,
-    model: { type: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, hasLinkStyle, ...themeMetadata },
+    model: { type: "flowchart", direction, nodes: parsedNodes, edges, subgraphs, hasLinkStyle, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
   return firstUnparsedLine ? withUnparsedLineError(result, firstUnparsedLine) : result;
@@ -2195,6 +2201,7 @@ function parseState(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const deleteProtectedNodeIds = new Set<string>();
   let edgeOrder = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("state");
   let inComposite = false;
   const ensureNode = (id: string, label = id, declared = false, span?: Span, labelSpan?: Span, kind: "state" | "start" | "end" | "choice" | "fork" | "composite" = "state") => {
@@ -2218,6 +2225,7 @@ function parseState(source: string): ParseResult {
       continue;
     }
     if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+      fullyRepresented = false;
       const specialDeclaration = trimmed.match(
         /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
       );
@@ -2266,10 +2274,12 @@ function parseState(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys());
   return {
     ok: true,
+    fullyRepresented,
     ...themeMetadata,
     model: {
       type: "state",
@@ -2354,6 +2364,7 @@ function parseEr(source: string): ParseResult {
   const rels: ErGraph["rels"] = [];
   const protectedSpans: Span[] = [];
   let order = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("er");
   let inAttrs: string | null = null;
   const ensureEntity = (id: string, span?: Span, declared = false) => {
@@ -2388,6 +2399,7 @@ function parseEr(source: string): ParseResult {
       const entity = ensureEntity(inlineBlock[1]!, lineSpan(line), true);
       const attr = parseErAttr(inlineBlock[2] ?? "", lineSpan(line));
       if (attr) entity.attrs.push(attr);
+      if (!attr || attr.keys?.length) fullyRepresented = false;
       protectedSpans.push(lineSpan(line));
       continue;
     }
@@ -2402,6 +2414,7 @@ function parseEr(source: string): ParseResult {
       if (!/^}/.test(trimmed)) {
         const attr = parseErAttr(trimmed, lineSpan(line));
         if (attr) entities.get(inAttrs)?.attrs.push(attr);
+        if (!attr || attr.keys?.length) fullyRepresented = false;
       }
       protectedSpans.push(lineSpan(line));
       if (/^}/.test(trimmed)) inAttrs = null;
@@ -2437,10 +2450,12 @@ function parseEr(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, entities.keys());
   return {
     ok: true,
+    fullyRepresented,
     ...themeMetadata,
     model: { type: "er", entities: [...entities.values()], rels, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
@@ -2511,6 +2526,7 @@ function parseClass(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const deleteProtectedNodeIds = new Set<string>();
   let order = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("class");
   let inClass: string | null = null;
   const ensureClass = (id: string, span?: Span, declared = false) => {
@@ -2533,6 +2549,7 @@ function parseClass(source: string): ParseResult {
     }
     const block = trimmed.match(/^class\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)(?:~[^~]+~)?\s*\{\s*$/u);
     if (block) {
+      if (trimmed.includes("~")) fullyRepresented = false;
       inClass = block[1]!;
       ensureClass(inClass, lineSpan(line), true);
       protectedSpans.push(lineSpan(line));
@@ -2546,6 +2563,7 @@ function parseClass(source: string): ParseResult {
     }
     const colonMember = trimmed.match(/^([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*:\s*\S.*$/u);
     if (colonMember) {
+      fullyRepresented = false;
       deleteProtectedNodeIds.add(colonMember[1]!);
       protectedSpans.push(lineSpan(line));
       continue;
@@ -2580,10 +2598,12 @@ function parseClass(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, classes.keys());
   return {
     ok: true,
+    fullyRepresented,
     ...themeMetadata,
     model: {
       type: "class",
@@ -2693,6 +2713,7 @@ function parseMindmap(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const stack: MindNode[] = [];
   let root: MindNode | null = null;
+  let fullyRepresented = true;
   const siblingCounters = new Map<string, Map<string, number>>();
   for (const line of lines) {
     if (line === header) continue;
@@ -2706,7 +2727,10 @@ function parseMindmap(source: string): ParseResult {
     // ::class / #id::class / icon(...) 这类装饰语法仍不支持;形状包裹(`((..))` 等)
     // 现在能解析,不再标记为 unsupported(否则圆形根节点变只读且显示字面量)。
     const unsupported = /::|#|^icon\(/i.test(trimmed);
-    if (unsupported) protectedSpans.push(lineSpan(line));
+    if (unsupported) {
+      protectedSpans.push(lineSpan(line));
+      fullyRepresented = false;
+    }
     const parts = unwrapMindmapNode(trimmed);
     const indent = raw.match(/^\s*/)?.[0].length ?? 0;
     while (stack.length > 0 && stack[stack.length - 1]!.indent >= indent) stack.pop();
@@ -2743,6 +2767,7 @@ function parseMindmap(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
   return {
     ok: true,
+    fullyRepresented,
     ...themeMetadata,
     model: { type: "mindmap", root, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
@@ -3228,7 +3253,7 @@ function emptyParse(type: DiagramType, error: string): ParseResult {
           : type === "mindmap"
             ? ({ type: "mindmap", root: { id: "mind-root", label: "", line: { start: 0, end: 0 }, indent: 0, children: [], hasStableId: true, parentId: null, scopePath: [], sourceRefs: [] } } as MindmapTree)
             : ({ type: "flowchart", direction: "TD", nodes: [], edges: [], subgraphs: [] } as FlowGraph);
-  return { ok: false, error, model, spanMap: { directives: [], protectedSpans: [] } };
+  return { ok: false, fullyRepresented: false, error, model, spanMap: { directives: [], protectedSpans: [] } };
 }
 
 function withUnparsedLineError(result: ParseResult, line: LineInfo): ParseResult {
@@ -3236,6 +3261,7 @@ function withUnparsedLineError(result: ParseResult, line: LineInfo): ParseResult
   return {
     ...result,
     ok: false,
+    fullyRepresented: false,
     error: `无法解析第 ${line.index + 1} 行: ${sourceText}`,
     errorSpan: { start: line.start, end: line.bodyEnd },
   };

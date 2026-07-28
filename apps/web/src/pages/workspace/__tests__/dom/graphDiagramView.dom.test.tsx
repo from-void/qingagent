@@ -439,9 +439,25 @@ describe("GraphDiagramView", () => {
   });
 
   it("未闭合 flowchart 节点仍显示解析错误而非空画布", async () => {
-    await render(<DiagramRenderer source="graph TD; A[未闭合 --> B" readOnly />);
-    await waitForSelector(".pm-diagram-error");
-    expect(container?.textContent).toContain("节点 A 的形状未闭合");
+    const cachedSvg = "<svg xmlns='http://www.w3.org/2000/svg'><text>缓存中的完整图表</text></svg>";
+    await render(<DiagramRenderer source="graph TD; A[未闭合 --> B" cachedSvg={cachedSvg} readOnly />);
+    await waitForSelector(".pm-diagram-svg");
+    expect(container?.textContent).toContain("缓存中的完整图表");
+    expect(container?.querySelector(".graph-diagram")).toBeNull();
+    expect(container?.querySelector(".react-flow__node")).toBeNull();
+  });
+
+  it("内部模型无法完整表示合法 Mermaid 时使用已有 SVG 缓存降级", async () => {
+    const source = `stateDiagram-v2
+  [*] --> Active
+  note right of Active: 保留这段说明
+  Active --> [*]
+`;
+    const cachedSvg = "<svg xmlns='http://www.w3.org/2000/svg'><text>带说明的缓存图</text></svg>";
+    await render(<DiagramRenderer source={source} cachedSvg={cachedSvg} readOnly />);
+    await waitForSelector(".pm-diagram-svg");
+
+    expect(container?.textContent).toContain("带说明的缓存图");
     expect(container?.querySelector(".graph-diagram")).toBeNull();
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });

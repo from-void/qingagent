@@ -1125,6 +1125,7 @@ describe("diagram-engine", () => {
       ["stateDiagram-v2\n  state Group {\n    Inner\n  }\n  Group --> Done\n", "Group"],
     ];
     for (const [source, specialId] of stateCases) {
+      expect(parseDiagram(source).fullyRepresented).toBe(false);
       expect(getCapabilities(parseDiagram(source), { nodeId: specialId }).find((cap) => cap.op === "deleteNode")).toMatchObject({
         enabled: false,
         reason: "该节点含未完整建模的特殊 State 声明，暂不可删除",
@@ -1137,6 +1138,7 @@ describe("diagram-engine", () => {
     }
 
     const classSource = "classDiagram\n  Customer : +String name\n  Customer --> Order\n";
+    expect(parseDiagram(classSource).fullyRepresented).toBe(false);
     expect(getCapabilities(parseDiagram(classSource), { nodeId: "Customer" }).find((cap) => cap.op === "deleteNode")).toMatchObject({
       enabled: false,
       reason: "该 class 含未完整建模的冒号式成员，暂不可删除",

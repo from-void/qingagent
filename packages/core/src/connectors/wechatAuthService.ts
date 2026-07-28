@@ -397,9 +397,6 @@ export class WechatAuthService {
           message: "扫码已收到,正在核验该公众号是否可用,请稍候再检查",
         };
       }
-      if (bundle && new Date(bundle.payload.expiry).getTime() > Date.now()) {
-        return { ok: true, state: "READY", mpName, message: "已授权" };
-      }
       if (st === "failed_account_unusable") {
         return {
           ok: true,
@@ -416,6 +413,17 @@ export class WechatAuthService {
           mpName,
           message: pending?.failureMessage ?? "没等到扫码确认,请重新发起授权",
         };
+      }
+      if (bundle?.payload.sessionIssue?.reasonCode === "needs_reauth") {
+        return {
+          ok: true,
+          state: "EXPIRED",
+          mpName,
+          message: "微信登录态已失效,请重新扫码登录",
+        };
+      }
+      if (bundle && new Date(bundle.payload.expiry).getTime() > Date.now()) {
+        return { ok: true, state: "READY", mpName, message: "已授权" };
       }
       if (bundle) {
         return { ok: true, state: "EXPIRED", mpName, message: "授权已过期" };

@@ -73,6 +73,68 @@ describe("wechat auth connector service thin tools", () => {
     });
   });
 
+  it("有效期内 bundle 已标记会话失效时返回 EXPIRED", async () => {
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue({
+      version: 1,
+      connectorId: "wechat-mp",
+      revision: 3,
+      payload: {
+        strategy: "qr-session",
+        version: 1,
+        account: "测试公众号",
+        cookie: "sid=secret-cookie",
+        token: "ABC",
+        expiry: new Date(Date.now() + 60_000).toISOString(),
+        sessionIssue: {
+          reasonCode: "needs_reauth",
+          lastCheckedAt: "2026-07-11T12:00:00.000Z",
+        },
+      },
+    });
+
+    await expect(status()).resolves.toMatchObject({
+      state: "EXPIRED",
+      mpName: "测试公众号",
+      questionnaire: expect.any(Object),
+    });
+  });
+
+  it.each([
+    [
+      { ok: false, kind: "capability_denied", message: "denied" } as const,
+      "CAPABILITY_DENIED",
+    ],
+    [
+      { ok: false, kind: "reauth", message: "expired" } as const,
+      "TIMEOUT",
+    ],
+  ])("本轮授权终态 %s 优先于有效旧 bundle", async (probeResult, expectedState) => {
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue({
+      version: 1,
+      connectorId: "wechat-mp",
+      revision: 2,
+      payload: {
+        strategy: "qr-session",
+        version: 1,
+        account: "旧公众号",
+        cookie: "sid=old-cookie",
+        token: "OLD",
+        expiry: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    vi.mocked(probeWechatSearchbiz).mockResolvedValue(probeResult);
+    browserMock();
+
+    await start();
+
+    await vi.waitFor(async () => {
+      await expect(status()).resolves.toMatchObject({
+        state: expectedState,
+        questionnaire: expect.any(Object),
+      });
+    });
+  });
+
   it.each([
     ["NO_CREDENTIAL", true],
     ["AUTHORIZING", false],

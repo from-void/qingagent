@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createWorkspaceTools, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
 import {
@@ -16,11 +16,13 @@ import {
   getSessionWorkspace,
   invalidateSessionWorkspace,
   resolveIsolation,
+  QINGAGENT_DATA_DIR,
   sandboxExtraReadOnlyPaths,
   sessionWorkspaceDir,
   sessionWorkspaceDirName,
   shouldInjectCredentials,
 } from "../workspace/sessionWorkspace.js";
+import { loadFolderSourceCachedText } from "../folderSources/cache.js";
 
 // 沙箱 P0:会话级 Workspace 装配——目录命名防穿越/最小 env/隔离解析/实例缓存
 
@@ -459,6 +461,79 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(existsSync(dir)).toBe(true);
     await cleanupSessionWorkspace("sess-cleanup");
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it("升级迁移旧键工作区与资料库缓存，删除会话时清理新旧两种键", async () => {
+    const sessionId = "sess-legacy-storage-upgrade";
+    const legacyName = `sid_${Buffer.from(sessionId, "utf16le").toString("hex")}`;
+    const currentWorkspaceDir = sessionWorkspaceDir(sessionId);
+    const legacyWorkspaceDir = join(dirname(currentWorkspaceDir), legacyName);
+    const currentCacheDir = join(
+      QINGAGENT_DATA_DIR,
+      "folder-source-cache",
+      sessionWorkspaceDirName(sessionId),
+    );
+    const legacyCacheDir = join(QINGAGENT_DATA_DIR, "folder-source-cache", legacyName);
+    const folderId = "fld_legacy";
+    const parsedFile = "legacy.txt";
+
+    for (const dir of [
+      currentWorkspaceDir,
+      legacyWorkspaceDir,
+      currentCacheDir,
+      legacyCacheDir,
+    ]) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    mkdirSync(legacyWorkspaceDir, { recursive: true });
+    writeFileSync(join(legacyWorkspaceDir, "artifact.txt"), "旧工作区产物");
+    mkdirSync(join(legacyCacheDir, folderId, "parsed"), { recursive: true });
+    writeFileSync(
+      join(legacyCacheDir, folderId, "parsed", parsedFile),
+      "旧资料库缓存",
+    );
+
+    try {
+      const workspace = await getSessionWorkspace(sessionId, opts);
+      await expect(
+        workspace.filesystem!.readFile("/workspace/artifact.txt", { encoding: "utf8" }),
+      ).resolves.toBe("旧工作区产物");
+      await expect(loadFolderSourceCachedText(sessionId, folderId, {
+        folderId,
+        relPath: "legacy.md",
+        path: "/redacted/legacy.md",
+        size: 1,
+        modifiedAtMs: 1,
+        contentSha256: "legacy",
+        parserVersion: "legacy",
+        metadata: { pages: null, wordCount: 1, title: null },
+        parsedFile,
+        lastAccessAt: "2026-01-01T00:00:00.000Z",
+      })).resolves.toBe("旧资料库缓存");
+      expect(existsSync(legacyWorkspaceDir)).toBe(false);
+      expect(existsSync(legacyCacheDir)).toBe(false);
+
+      mkdirSync(legacyWorkspaceDir, { recursive: true });
+      mkdirSync(legacyCacheDir, { recursive: true });
+      await cleanupSessionWorkspace(sessionId);
+      for (const dir of [
+        currentWorkspaceDir,
+        legacyWorkspaceDir,
+        currentCacheDir,
+        legacyCacheDir,
+      ]) {
+        expect(existsSync(dir)).toBe(false);
+      }
+    } finally {
+      for (const dir of [
+        currentWorkspaceDir,
+        legacyWorkspaceDir,
+        currentCacheDir,
+        legacyCacheDir,
+      ]) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("cleanupSessionWorkspace 与 reset 会清理 generation key，避免长跑保留", async () => {

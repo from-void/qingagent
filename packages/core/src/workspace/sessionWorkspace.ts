@@ -32,7 +32,7 @@ import { listCredentialGrants } from "@qingagent/db";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { cp, lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import {
   getSessionFolderSources,
@@ -99,6 +99,63 @@ export function sessionWorkspaceDirName(sessionId: string): string {
 
 export function sessionWorkspaceDir(sessionId: string): string {
   return join(SANDBOX_SESSIONS_BASE, sessionWorkspaceDirName(sessionId));
+}
+
+function legacySessionWorkspaceDirName(sessionId: string): string | null {
+  const name = `sid_${Buffer.from(sessionId, "utf16le").toString("hex")}`;
+  return Buffer.byteLength(name) <= 255 ? name : null;
+}
+
+async function migrateLegacySessionDirectory(
+  parent: string,
+  sessionId: string,
+): Promise<void> {
+  const legacyName = legacySessionWorkspaceDirName(sessionId);
+  if (!legacyName) return;
+  const currentName = sessionWorkspaceDirName(sessionId);
+  if (legacyName === currentName) return;
+  const legacyDir = join(parent, legacyName);
+  const currentDir = join(parent, currentName);
+  const legacyStat = await lstat(legacyDir).catch(() => null);
+  if (!legacyStat?.isDirectory()) return;
+
+  const currentStat = await lstat(currentDir).catch(() => null);
+  if (!currentStat) {
+    try {
+      await rename(legacyDir, currentDir);
+      return;
+    } catch {
+      // 可能有并发进程先创建了新目录；下方按“新目录优先”合并。
+    }
+  } else if (!currentStat.isDirectory()) {
+    throw new Error("新会话存储路径不是目录");
+  }
+
+  await mkdir(currentDir, { recursive: true });
+  await cp(legacyDir, currentDir, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+  });
+  await rm(legacyDir, { recursive: true, force: true });
+}
+
+async function migrateLegacySessionStorage(sessionId: string): Promise<void> {
+  const targets = [
+    { parent: SANDBOX_SESSIONS_BASE, storage: "workspace" },
+    { parent: join(QINGAGENT_DATA_DIR, "folder-source-cache"), storage: "folder-source-cache" },
+  ];
+  await Promise.all(targets.map(async ({ parent, storage }) => {
+    try {
+      await migrateLegacySessionDirectory(parent, sessionId);
+    } catch (error) {
+      console.error("[sessionWorkspace] 迁移旧会话存储失败", {
+        sessionId,
+        storage,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }));
 }
 
 // 沙箱必需的系统 env 白名单(命令解析/临时目录/可执行查找所需),按平台不同;
@@ -458,20 +515,22 @@ export function invalidateSessionWorkspace(sessionId?: string): void {
 export async function cleanupSessionWorkspace(sessionId: string): Promise<void> {
   invalidateSessionWorkspace(sessionId);
   const key = sessionWorkspaceDirName(sessionId);
-  const dir = sessionWorkspaceDir(sessionId);
-  const { rm } = await import("node:fs/promises");
-  try {
-    await rm(dir, { recursive: true, force: true });
-  } catch (error) {
-    console.error("[sessionWorkspace] 清理会话沙箱目录失败", { sessionId, error });
-  }
-  try {
-    await rm(join(QINGAGENT_DATA_DIR, "folder-source-cache", sessionWorkspaceDirName(sessionId)), {
-      recursive: true,
-      force: true,
-    });
-  } catch (error) {
-    console.error("[sessionWorkspace] 清理资料库解析缓存失败", { sessionId, error });
+  const names = [
+    sessionWorkspaceDirName(sessionId),
+    legacySessionWorkspaceDirName(sessionId),
+  ].filter((name): name is string => name !== null);
+  const roots = [
+    { root: SANDBOX_SESSIONS_BASE, storage: "会话沙箱目录" },
+    { root: join(QINGAGENT_DATA_DIR, "folder-source-cache"), storage: "资料库解析缓存" },
+  ];
+  for (const { root, storage } of roots) {
+    for (const name of new Set(names)) {
+      try {
+        await rm(join(root, name), { recursive: true, force: true });
+      } catch (error) {
+        console.error(`[sessionWorkspace] 清理${storage}失败`, { sessionId, error });
+      }
+    }
   }
   trimGenerationKey(key);
 }
@@ -557,6 +616,7 @@ async function buildSessionWorkspace(
   opts: SessionWorkspaceFactoryOptions,
 ): Promise<Workspace> {
   const sessionDir = sessionWorkspaceDir(sessionId);
+  await migrateLegacySessionStorage(sessionId);
   // 同步确保目录存在:Workspace 装配在 stream 起步路径上,异步竞态不值得
   mkdirSync(sessionDir, { recursive: true });
 

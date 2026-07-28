@@ -55,6 +55,36 @@ describe("fillLocalSvgImageDimensions", () => {
     expect(collectImages(result.doc!)[0]?.attrs).toMatchObject({ width: 640, height: 360 });
   });
 
+  it("已有单边宽度时保留宽度并按 viewBox 比例补高度", async () => {
+    await writeUpload(SVG_ID, "width-only.svg", '<svg viewBox="0 0 640 360"></svg>');
+    const block = {
+      type: "image" as const,
+      src: `/api/v1/files/${SVG_ID}/width-only.svg`,
+      alt: "固定宽度",
+      width: 320,
+    };
+    const ops: BlockEdit[] = [{ action: "insertBlock", position: "end", blocks: [block] }];
+
+    await fillLocalSvgImageDimensions(ops);
+
+    expect(block).toMatchObject({ width: 320, height: 180 });
+  });
+
+  it("已有单边高度时保留高度并按 viewBox 比例补宽度", async () => {
+    await writeUpload(SVG_ID, "height-only.svg", '<svg viewBox="0 0 640 360"></svg>');
+    const block = {
+      type: "image" as const,
+      src: `/api/v1/files/${SVG_ID}/height-only.svg`,
+      alt: "固定高度",
+      height: 90,
+    };
+    const ops: BlockEdit[] = [{ action: "insertBlock", position: "end", blocks: [block] }];
+
+    await fillLocalSvgImageDimensions(ops);
+
+    expect(block).toMatchObject({ width: 160, height: 90 });
+  });
+
   it("src 含路径穿越时不读文件,块保持无尺寸", async () => {
     const block = {
       type: "image",

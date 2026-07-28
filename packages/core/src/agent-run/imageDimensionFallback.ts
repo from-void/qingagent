@@ -77,8 +77,16 @@ async function fillImageBlock(block: MutableImageBlock): Promise<void> {
 
     const svg = await readFile(path, "utf8");
     const dimensions = viewBoxDimensions(svg) ?? { width: DEFAULT_SVG_WIDTH, height: DEFAULT_SVG_HEIGHT };
-    block.width = dimensions.width;
-    block.height = dimensions.height;
+    const width = positiveDimension(block.width);
+    const height = positiveDimension(block.height);
+    if (width !== null) {
+      block.height = Math.max(1, Math.round(width * dimensions.height / dimensions.width));
+    } else if (height !== null) {
+      block.width = Math.max(1, Math.round(height * dimensions.width / dimensions.height));
+    } else {
+      block.width = dimensions.width;
+      block.height = dimensions.height;
+    }
   } catch {
     // 文件缺失、不可读或竞态删除时保持原块不变。
   }
@@ -97,7 +105,13 @@ function isFillableImageBlock(block: unknown): block is MutableImageBlock {
   if (!isRecord(block)) return false;
   return block.type === "image" &&
     typeof block.src === "string" &&
-    (!block.width || !block.height);
+    (positiveDimension(block.width) === null || positiveDimension(block.height) === null);
+}
+
+function positiveDimension(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -84,3 +84,24 @@ export function toAssetSource(resource: Resource): AssetSource {
     sourceUrl,
   };
 }
+
+/** 用素材注册表的权威快照同步普通预览；连接文件夹的临时 URL 预览不受影响。 */
+export function reconcileAssetPreview(
+  preview: AssetSource | null,
+  fileResources: readonly Resource[],
+): AssetSource | null {
+  if (!preview || preview.preview) return preview;
+  const current = fileResources.find(
+    (resource) => resource.resourceRef.id === preview.id,
+  );
+  if (!current) return null;
+  const authoritative = toAssetSource(current);
+  return (
+    authoritative.abstract === preview.abstract &&
+    authoritative.fileId === preview.fileId &&
+    authoritative.sourceUrl === preview.sourceUrl &&
+    authoritative.updatedAt === preview.updatedAt
+  )
+    ? preview
+    : authoritative;
+}

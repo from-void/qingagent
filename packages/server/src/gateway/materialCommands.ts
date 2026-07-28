@@ -97,6 +97,15 @@ export async function* handleMaterialCommand(
 
       const mat = session.materials.get(command.data.materialId);
       if (!mat) {
+        yield {
+          kind: "resourceRemoved",
+          data: {
+            resourceRef: {
+              id: command.data.materialId,
+              domain: { kind: "file" },
+            },
+          },
+        };
         throw new Error(`Material not found: ${command.data.materialId}`);
       }
 

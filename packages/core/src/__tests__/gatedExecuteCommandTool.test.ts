@@ -93,6 +93,10 @@ function createToolHarness(
       executionTimeMs: number;
       timedOut?: boolean;
       killed?: boolean;
+      stdoutTruncated?: boolean;
+      stderrTruncated?: boolean;
+      stdoutDroppedBytes?: number;
+      stderrDroppedBytes?: number;
     };
   } = {},
 ) {
@@ -228,6 +232,7 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+    expect(validateToolInput(tool, { command: allowedFileCommand, tail: 0 }).success).toBe(true);
     expect(validateToolInput(tool, {
       command: "npm install zod",
       reason: "你".repeat(80),
@@ -593,6 +598,78 @@ describe("gated execute_command tool cwd 约束", () => {
     });
   });
 
+  it("成功命令的退出帧一次写入失败时仍保留真实成功终态", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-exit-frame-once");
+    const writer = {
+      custom: vi.fn()
+        .mockRejectedValueOnce(new Error("writer closed once"))
+        .mockResolvedValue(undefined),
+    };
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand }, {
+      toolCallId: "gated-exit-frame-once",
+      messages: [],
+      writer,
+      agent: { toolCallId: "gated-exit-frame-once" },
+    } as never)).resolves.toEqual({
+      success: true,
+      exitCode: 0,
+      cancelled: false,
+      timedOut: false,
+      output: "ok",
+    });
+    expect(executeCalls).toHaveLength(1);
+    expect(writer.custom).toHaveBeenCalledTimes(1);
+  });
+
+  it("成功命令的退出帧持续写入失败时工具也不 reject", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-exit-frame-always");
+    const writer = {
+      custom: vi.fn().mockRejectedValue(new Error("writer permanently closed")),
+    };
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand }, {
+      toolCallId: "gated-exit-frame-always",
+      messages: [],
+      writer,
+      agent: { toolCallId: "gated-exit-frame-always" },
+    } as never)).resolves.toMatchObject({
+      success: true,
+      exitCode: 0,
+      cancelled: false,
+      timedOut: false,
+      output: "ok",
+    });
+    expect(executeCalls).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      label: "stdout 与 stderr 都非空",
+      stdout: "command result\n",
+      stderr: "deprecation warning\n",
+      expected: "stdout:\ncommand result\n\nstderr:\ndeprecation warning",
+    },
+    {
+      label: "仅 stderr 非空",
+      stdout: "",
+      stderr: "Authorize at https://example.test/device\n",
+      expected: "stderr:\nAuthorize at https://example.test/device",
+    },
+  ])("成功命令会保留并标注 stderr：$label", async ({ stdout, stderr, expected }) => {
+    const { tool } = createToolHarness("gated-success-stderr", {
+      commandResult: {
+        success: true,
+        exitCode: 0,
+        stdout,
+        stderr,
+        executionTimeMs: 5,
+      },
+    });
+
+    await expect(executeTool(tool, { command: allowedFileCommand })).resolves.toBe(expected);
+  });
+
   it("tail 截断时附带禁止重跑提示，未截断时返回逐字不变", async () => {
     const commandResult = {
       success: true,
@@ -635,6 +712,33 @@ describe("gated execute_command tool cwd 约束", () => {
     });
     expect(output).toContain("out-2\nerr-2\nExit code: 9");
     expect(output.match(/do not rerun the command/g)).toHaveLength(1);
+  });
+
+  it("底层保留上限丢弃前缀时即使 tail 为 0 也标明通道和字节数", async () => {
+    const { tool } = createToolHarness("gated-retained-truncation", {
+      commandResult: {
+        success: true,
+        exitCode: 0,
+        stdout: "retained stdout\n",
+        stderr: "retained stderr\n",
+        executionTimeMs: 5,
+        stdoutTruncated: true,
+        stderrTruncated: true,
+        stdoutDroppedBytes: 4_096,
+        stderrDroppedBytes: 512,
+      },
+    });
+
+    const output = await executeTool(tool, {
+      command: allowedFileCommand,
+      tail: 0,
+    });
+    expect(output).toContain("retained stdout");
+    expect(output).toContain("retained stderr");
+    expect(output).toContain("stdout: 4096 bytes");
+    expect(output).toContain("stderr: 512 bytes");
+    expect(output).toContain("permanently dropped");
+    expect(output).toContain("do not rerun the command");
   });
 
   it("沙箱超时结果保留 timedOut，不以输出字符串猜测", async () => {

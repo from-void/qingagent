@@ -262,10 +262,12 @@ export type { Material } from "./types/material.js";
 export type {
   BrowserFolderBridgeBoundResponse,
   BrowserFolderBridgeEntry,
+  BrowserFolderBridgeFailureReasonCode,
   BrowserFolderBridgeResponse,
   BrowserFolderBridgeStat,
 } from "./workspace/index.js";
 export {
+  BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES,
   SANDBOX_BIN_DIR,
   __resetBrowserFolderBridgeForTest,
   buildSandboxEnv,

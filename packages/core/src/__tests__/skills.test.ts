@@ -331,6 +331,30 @@ describe("builtin skills", () => {
     expect(parseSkillFrontmatter("---\ndescription: 缺少名称\n---\n")).toBeNull();
   });
 
+  it.each([
+    ["|-", "第一行\n第二行"],
+    ["|+", "第一行\n第二行"],
+    [">-", "第一行 第二行"],
+    [">+", "第一行 第二行"],
+  ])("frontmatter description 支持 YAML 块标量 %s", (marker, expected) => {
+    const parsed = parseSkillFrontmatter(
+      `---\nname: scalar-${marker.charCodeAt(0)}-${marker.charCodeAt(1)}\ndescription: ${marker}\n  第一行\n  第二行\n---\n`,
+    );
+
+    expect(parsed?.description).toBe(expected);
+  });
+
+  it.each([">-", ">+"])(
+    "folded 块标量 %s 保留更深缩进行前后的换行",
+    (marker) => {
+      const parsed = parseSkillFrontmatter(
+        `---\nname: folded-more-indented-${marker.charCodeAt(1)}\ndescription: ${marker}\n  第一行\n    代码行\n  第三行\n---\n`,
+      );
+
+      expect(parsed?.description).toBe("第一行\n  代码行\n第三行");
+    },
+  );
+
   it("归档清单为空时仍正常发现内置技能", async () => {
     const skillDirs = await resolveEnabledSkillDirsFromRoots(
       [

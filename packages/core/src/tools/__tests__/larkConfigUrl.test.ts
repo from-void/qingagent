@@ -23,9 +23,9 @@ describe("extractLarkConfigInitUrl", () => {
     );
   });
 
-  it("larksuite / larkoffice / 含 lark 的域名也命中", () => {
-    expect(extractLarkConfigInitUrl("url: https://open.larksuite.com/console/x")).toBe(
-      "https://open.larksuite.com/console/x",
+  it("larksuite / larkoffice 官方域名上的创建路径也命中", () => {
+    expect(extractLarkConfigInitUrl("url: https://open.larksuite.com/app/create")).toBe(
+      "https://open.larksuite.com/app/create",
     );
   });
 
@@ -44,10 +44,24 @@ describe("extractLarkConfigInitUrl", () => {
     );
   });
 
-  it("只有非飞书域时仍返回得分最高(>=0)的那条", () => {
-    // 非飞书域 score=0(>=0 保留),仍可能是有效创建链接的兜底
-    expect(extractLarkConfigInitUrl("go https://example.com/create")).toBe(
-      "https://example.com/create",
+  it("只有非官方域、伪装域或官方文档路径时返回 null", () => {
+    expect(extractLarkConfigInitUrl("go https://example.com/create")).toBeNull();
+    expect(extractLarkConfigInitUrl("go https://open.feishu.cn.evil.test/app/create")).toBeNull();
+    expect(extractLarkConfigInitUrl("go https://lark.evil.test/verification/x")).toBeNull();
+    expect(extractLarkConfigInitUrl("docs https://open.feishu.cn/document/home")).toBeNull();
+    expect(
+      extractLarkConfigInitUrl("docs https://open.feishu.cn/document/verification/guide"),
+    ).toBeNull();
+  });
+
+  it("忽略先出现的文档链接并选择后续官方创建链接", () => {
+    const output = [
+      "文档：https://open.feishu.cn/document/home",
+      "创建：https://open.feishu.cn/verification/real",
+    ].join("\n");
+
+    expect(extractLarkConfigInitUrl(output)).toBe(
+      "https://open.feishu.cn/verification/real",
     );
   });
 });

@@ -15,6 +15,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commitCompiledDerivative,
+  commitDerivativeQingml,
   derivativeBriefTool,
   generateDerivativeTool,
   updateDerivativeParamsTool,
@@ -164,6 +165,7 @@ describe("derivative Agent tools", () => {
       derivativeDocId: "derivative-race",
       sessionId: "thread",
       doc: pmDocFromText("不会被写入"),
+      expectedDocVersion: 4,
     });
     expect(result).toEqual({
       ok: false,
@@ -180,6 +182,111 @@ describe("derivative Agent tools", () => {
         String(statement.sql).includes("generated_at"),
       ),
     ).toBe(false);
+  });
+
+  it("事务在实际 UPDATE 前再次执行最终写入 guard", async () => {
+    let guarded = false;
+    const execute = vi.fn(async (statement: { sql: string }) => {
+      if (statement.sql.includes("SELECT derivative.doc_version")) {
+        return { rows: [{ doc_version: 2, source_version: 9 }] };
+      }
+      expect(statement.sql).toContain("UPDATE documents SET");
+      expect(guarded).toBe(true);
+      return { rows: [], rowsAffected: 0 };
+    });
+
+    const result = await commitCompiledDerivative({ execute } as never, {
+      derivativeDocId: "derivative-final-guard",
+      sessionId: "thread",
+      doc: pmDocFromText("不会被写入"),
+      expectedDocVersion: 2,
+      writeGuard: () => {
+        guarded = true;
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(guarded).toBe(true);
+  });
+
+  it("提交入口在编译后拒绝 abort，并以启动版本阻止迟到覆盖", async () => {
+    await documentRepo.save(
+      documentInput("main", { threadId: "thread", docVersion: 1 }),
+    );
+    const meta = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "",
+    });
+    const controller = new AbortController();
+    controller.abort(new DOMException("用户已停止", "AbortError"));
+
+    await expect(commitDerivativeQingml(
+      meta.docId,
+      "thread",
+      "<h2>不应落库</h2><p>正文</p>",
+      {
+        abortSignal: controller.signal,
+        expectedDocVersion: 0,
+      },
+    )).rejects.toMatchObject({ name: "AbortError" });
+    expect((await getDerivativeDocument(meta.docId))?.docVersion).toBe(0);
+
+    const client = (await import("@qingagent/db")).getDocumentsClient();
+    await client.execute({
+      sql: "UPDATE documents SET doc_version = 1 WHERE id = ?",
+      args: [meta.docId],
+    });
+    const stale = await commitDerivativeQingml(
+      meta.docId,
+      "thread",
+      "<h2>迟到旧稿</h2><p>正文</p>",
+      { expectedDocVersion: 0 },
+    );
+    expect(stale).toEqual({
+      ok: false,
+      error: "衍生稿版本已变化,请重试",
+    });
+    expect((await getDerivativeDocument(meta.docId))?.docVersion).toBe(1);
+  });
+
+  it("generate_derivative 在最终提交前执行本轮写入 guard", async () => {
+    await documentRepo.save(
+      documentInput("main", { threadId: "thread", docVersion: 1 }),
+    );
+    const meta = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "",
+    });
+    const writeGuard = vi.fn(() => {
+      throw new DOMException("旧轮次", "AbortError");
+    });
+    const context = {
+      requestContext: {
+        get: (key: string) => {
+          if (key === "sessionId") return "thread";
+          if (key === "qingagentTurnWriteGuardFactory") {
+            return () => writeGuard;
+          }
+          return undefined;
+        },
+      },
+    };
+
+    await expect(runGenerate(
+      {
+        derivativeDocId: meta.docId,
+        qingml: "<h2>不应落库</h2><p>正文</p>",
+      },
+      context,
+    )).rejects.toMatchObject({ name: "AbortError" });
+    expect(writeGuard).toHaveBeenCalled();
+    expect((await getDerivativeDocument(meta.docId))?.docVersion).toBe(0);
   });
 });
 

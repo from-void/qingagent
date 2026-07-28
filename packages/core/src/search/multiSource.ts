@@ -10,20 +10,22 @@ export interface SearchSource {
 }
 
 /**
- * 规范化结果 URL 用于去重:去协议大小写、去末尾斜杠、去常见跟踪参数、去 fragment。
- * 解析失败则返回原串的小写 trim。
+ * 规范化结果 URL 用于去重:仅统一协议/主机大小写、去末尾斜杠、常见跟踪参数与 fragment。
+ * pathname 和 query 保留原始大小写；解析失败则只 trim。
  */
 export function normalizeResultUrl(url: string): string {
   try {
     const u = new URL(url);
+    u.protocol = u.protocol.toLowerCase();
+    u.hostname = u.hostname.toLowerCase();
     u.hash = "";
     const drop = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "spm"];
     for (const k of drop) u.searchParams.delete(k);
     let s = u.toString();
     s = s.replace(/\/$/, "");
-    return s.toLowerCase();
+    return s;
   } catch {
-    return url.trim().toLowerCase();
+    return url.trim();
   }
 }
 
@@ -42,8 +44,8 @@ export function dedupeResults(results: SearchResult[]): SearchResult[] {
 }
 
 /**
- * 竞速取优:并行跑所有 promise,任一源率先返回 ≥ count 条即立即采用(低时延);
- * 若无源达标,则等全部结束、按源顺序合并全部结果返回(交给上层去重/截断)。
+ * 竞速取优:并行跑所有 promise,已完成来源合并后的规范化唯一结果达到 count 即立即采用;
+ * 若最终仍未达标,则按源顺序合并全部结果返回(交给上层去重/截断)。
  * 单个源抛错视为空结果(best-effort),绝不让整体 reject。
  */
 export async function raceToGood(
@@ -61,12 +63,13 @@ export async function raceToGood(
         collected[i] = r;
         remaining -= 1;
         if (done) return;
-        if (count > 0 && r.length >= count) {
+        const merged = collected.filter(Boolean).flat();
+        if (count > 0 && dedupeResults(merged).length >= count) {
           done = true;
-          resolve(r);
+          resolve(merged);
         } else if (remaining === 0) {
           done = true;
-          resolve(collected.filter(Boolean).flat());
+          resolve(merged);
         }
       });
     });

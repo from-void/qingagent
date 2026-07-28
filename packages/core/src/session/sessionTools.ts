@@ -320,6 +320,12 @@ export function missingGenericToolResultFields(
     const value = result[field];
     if (value !== null && typeof value !== "string") missing.push(field);
   };
+  const requireNullableNumber = (field: string) => {
+    const value = result[field];
+    if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+      missing.push(field);
+    }
+  };
 
   switch (toolName) {
     case "github_auth_start":
@@ -332,7 +338,7 @@ export function missingGenericToolResultFields(
       else missing.push("mode:authorization|configuration");
       break;
     case "github_list_repos":
-      requireArray("repos"); requireNumber("count"); requireBoolean("anonymous"); requireRecord("rateLimit");
+      requireArray("repos"); requireNumber("count"); requireNumber("page"); requireNullableNumber("nextPage"); requireBoolean("truncated"); requireBoolean("anonymous"); requireRecord("rateLimit");
       break;
     case "github_repo_tree":
       requireArray("entries"); requireNumber("count"); requireBoolean("truncated"); requireBoolean("providerTruncated"); requireRecord("rateLimit");
@@ -748,6 +754,9 @@ export function createSessionScopedTools(
     inputSchema: createAnnotationGroupsInputSchema,
     outputSchema: z.object({ ok: z.boolean(), groupCount: z.number(), anchorCount: z.number(), errors: z.array(z.string()) }),
     execute: async (input, context) => {
+      const writeGuard = state
+        ? captureTurnWriteGuard(state, context)
+        : null;
       if (input._parseFailure) {
         logger.warn("[review] create_annotation_groups 参数 JSON 无法安全修复", {
           groupIndex: input._parseFailure.groupIndex,
@@ -756,7 +765,7 @@ export function createSessionScopedTools(
         });
         return { ok: false, groupCount: 0, anchorCount: 0, errors: [input._parseFailure.message] };
       }
-      if (!state?.doc) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
+      if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
       const blocks = collectTopLevelTextBlocks(state.doc);
       const documentText = blocks.map((block) => block.text).join("\n");
       const materialTexts = [...materials.values()].map((material) => material.text);
@@ -832,7 +841,7 @@ export function createSessionScopedTools(
       });
       if (groups.length) {
         const write = annotationGroupWriteQueue.then(async () => {
-          const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
+          const turnOrigins = state._annotationOriginsReplacedThisTurn ?? new Set<string>();
           const origins = new Set(groups.map((group) => group.origin));
           const originsToReplace = new Set(
             [...origins].filter((origin) => !turnOrigins.has(origin)),
@@ -840,17 +849,21 @@ export function createSessionScopedTools(
           const replacing = groups.filter((group) => originsToReplace.has(group.origin));
           const appending = groups.filter((group) => !originsToReplace.has(group.origin));
           if (replacing.length > 0) {
+            assertTurnWriteAllowed(state, writeGuard);
             await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, replacing);
           }
           if (appending.length > 0) {
+            assertTurnWriteAllowed(state, writeGuard);
             await insertAnnotationGroups(state.docId, state.docVersion, appending);
           }
+          assertTurnWriteAllowed(state, writeGuard);
           state.annotationGroups = [
             ...state.annotationGroups.filter((group) => !originsToReplace.has(group.origin)),
             ...replacing,
             ...appending,
           ];
           origins.forEach((origin) => turnOrigins.add(origin));
+          state._annotationOriginsReplacedThisTurn = turnOrigins;
         });
         annotationGroupWriteQueue = write.catch(() => undefined);
         await write;
@@ -959,7 +972,11 @@ export function createSessionScopedTools(
           );
           if (!result.ok) return { ok: false, error: result.error };
           const matchedRefs = new Set(
-            result.matches.map((match) => match.block.topBlockId),
+            result.matches.flatMap((match) => [
+              match.block.topBlockId,
+              match.block.nodeBlockId,
+              ...match.block.ancestorBlockIds,
+            ]),
           );
           selected = selected.filter((item) => matchedRefs.has(item.ref));
         } else {

@@ -97,6 +97,41 @@ describe("adaptAskUserQuestionInput", () => {
     expect(adapted.questions.map((question) => question.id)).toEqual(["q1", "q2", "q3", "q4"]);
   });
 
+  it("按 value 稳定去重后再校验数量并截断选项", () => {
+    const adapted = adaptAskUserQuestionInput({
+      id: "dedupe",
+      rationale: "r",
+      questions: [
+        {
+          question: "保留首次出现",
+          options: [
+            option("甲", { value: "same" }),
+            option("甲的重复视觉项", { value: "same" }),
+            option("乙", { value: "b" }),
+            option("丙", { value: "c" }),
+            option("丁", { value: "d" }),
+            option("戊", { value: "e" }),
+          ],
+        },
+        {
+          question: "唯一值不足两个",
+          options: [
+            option("甲", { value: "same" }),
+            option("仍是甲", { value: "same" }),
+          ],
+        },
+      ],
+    });
+
+    expect(adapted.questions).toHaveLength(1);
+    expect(adapted.questions[0]!.options.map((item) => [item.value, item.label])).toEqual([
+      ["same", "甲"],
+      ["b", "乙"],
+      ["c", "丙"],
+      ["d", "丁"],
+    ]);
+  });
+
   it("header 按 code point 截到 12，preview 截到 800 后加省略号", () => {
     const preview = "🙂".repeat(801);
     const [question] = adaptAskUserQuestionInput({

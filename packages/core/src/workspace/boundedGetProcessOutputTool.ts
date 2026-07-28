@@ -4,10 +4,15 @@ import {
   SandboxNotAvailableError,
   WORKSPACE_TOOLS,
   type CommandResult,
+  type ProcessHandle,
   type Workspace,
 } from "@mastra/core/workspace";
 import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
+import {
+  formatRetainedOutputNotice,
+  type RetainedOutputState,
+} from "./retainedOutputNotice.js";
 
 /** 与 Mastra 1.49.0 workspace get_process_output 的默认 tail 行数一致。 */
 export const GET_PROCESS_OUTPUT_DEFAULT_TAIL_LINES = 200;
@@ -35,6 +40,8 @@ export const INTERACTIVE_AUTH_OUTPUT_KEYWORDS: readonly RegExp[] = [
 ];
 
 const INTERACTIVE_AUTH_URL_PATTERN = /https?:\/\/[^\s"'<>]+/iu;
+const PROCESS_OUTPUT_POLL_INTERVAL_MS = 100;
+const processExitPromises = new WeakMap<ProcessHandle, Promise<CommandResult>>();
 
 function hasInteractiveAuthOutputSignal(stdout: string, stderr: string): boolean {
   const output = [stdout, stderr].filter(Boolean).join("\n");
@@ -42,6 +49,41 @@ function hasInteractiveAuthOutputSignal(stdout: string, stderr: string): boolean
     INTERACTIVE_AUTH_URL_PATTERN.test(output) &&
     INTERACTIVE_AUTH_OUTPUT_KEYWORDS.some((keyword) => keyword.test(output))
   );
+}
+
+function observeProcessExit(handle: ProcessHandle): Promise<CommandResult> {
+  const existing = processExitPromises.get(handle);
+  if (existing) return existing;
+  const waitPromise = handle.wait();
+  processExitPromises.set(handle, waitPromise);
+  void waitPromise.then(
+    () => processExitPromises.delete(handle),
+    () => processExitPromises.delete(handle),
+  );
+  return waitPromise;
+}
+
+function retainedOutputDelta(
+  previous: string,
+  current: string,
+  previousDroppedBytes: number | undefined,
+  currentDroppedBytes: number | undefined,
+): string {
+  if (
+    Number.isSafeInteger(previousDroppedBytes) &&
+    previousDroppedBytes! >= 0 &&
+    Number.isSafeInteger(currentDroppedBytes) &&
+    currentDroppedBytes! >= previousDroppedBytes!
+  ) {
+    const previousEnd = previousDroppedBytes! + Buffer.byteLength(previous);
+    const currentStart = currentDroppedBytes!;
+    const currentBuffer = Buffer.from(current, "utf8");
+    const currentEnd = currentStart + currentBuffer.length;
+    if (currentEnd <= previousEnd || previousEnd < currentStart) return "";
+    return currentBuffer.subarray(previousEnd - currentStart).toString("utf8");
+  }
+  if (current === previous) return "";
+  return current.startsWith(previous) ? current.slice(previous.length) : "";
 }
 
 /**
@@ -84,10 +126,12 @@ function formatOutput(
   stdout: string,
   stderr: string,
   exitCode: number | undefined,
+  retainedOutputState: RetainedOutputState,
 ): string {
-  if (!stdout && !stderr) return "(no output yet)";
   const parts: string[] = [];
-  if (stdout && stderr) {
+  if (!stdout && !stderr) {
+    parts.push(exitCode === undefined ? "(no output yet)" : "(no output)");
+  } else if (stdout && stderr) {
     parts.push("stdout:", stdout, "", "stderr:", stderr);
   } else if (stdout) {
     parts.push(stdout);
@@ -96,6 +140,10 @@ function formatOutput(
   }
   if (exitCode !== undefined) {
     parts.push("", `Exit code: ${exitCode}`);
+  }
+  const retainedOutputNotice = formatRetainedOutputNotice(retainedOutputState);
+  if (retainedOutputNotice) {
+    parts.push("", retainedOutputNotice);
   }
   return parts.join("\n");
 }
@@ -113,10 +161,6 @@ function abortError(signal: AbortSignal): Error {
   return error;
 }
 
-/**
- * wait race 超时后，ProcessHandle 仍保留回调直到进程退出。writer 此时可能已经收尾，
- * 所以所有流式回调必须同时吞掉同步异常和异步 rejection，不能污染后续 agent 轮次。
- */
 async function safeCustom(
   writer: SandboxWriter | undefined,
   chunk: Record<string, unknown>,
@@ -176,6 +220,8 @@ Use this after starting a background command with execute_command (background: t
         let authorizationSignalDetected = false;
         let observedStdout = handle.stdout;
         let observedStderr = handle.stderr;
+        let observedStdoutDroppedBytes = handle.stdoutDroppedBytes;
+        let observedStderrDroppedBytes = handle.stderrDroppedBytes;
         if (shouldWait && handle.exitCode === undefined) {
           let resolveAuthorizationSignal: (() => void) | undefined;
           const authorizationSignalPromise = new Promise<{ kind: "authorizationSignal" }>(
@@ -194,37 +240,68 @@ Use this after starting a background command with execute_command (background: t
           };
           detectAuthorizationSignal();
 
-          const waitPromise = handle.wait({
-            onStdout: (data) => {
-              observedStdout = handle.stdout !== observedStdout
-                ? handle.stdout
-                : `${observedStdout}${data}`;
-              detectAuthorizationSignal();
-              return writer
-                ? safeCustom(writer, {
-                  type: "data-sandbox-stdout",
-                  data: { output: data, timestamp: Date.now(), toolCallId },
-                  transient: true,
-                })
-                : undefined;
-            },
-            onStderr: (data) => {
-              observedStderr = handle.stderr !== observedStderr
-                ? handle.stderr
-                : `${observedStderr}${data}`;
-              detectAuthorizationSignal();
-              return writer
-                ? safeCustom(writer, {
-                  type: "data-sandbox-stderr",
-                  data: { output: data, timestamp: Date.now(), toolCallId },
-                  transient: true,
-                })
-                : undefined;
-            },
-          });
-          // race 输掉后 wait 仍会在进程退出时 settle；显式挂 rejection handler，避免
-          // provider 的 wait 实现或迟到 writer 回调形成 unhandled rejection。
-          void waitPromise.catch(() => {});
+          const waitPromise = observeProcessExit(handle);
+          const pollRetainedOutput = async () => {
+            const nextStdout = handle.stdout;
+            const nextStderr = handle.stderr;
+            const nextStdoutDroppedBytes = handle.stdoutDroppedBytes;
+            const nextStderrDroppedBytes = handle.stderrDroppedBytes;
+            const stdoutDelta = retainedOutputDelta(
+              observedStdout,
+              nextStdout,
+              observedStdoutDroppedBytes,
+              nextStdoutDroppedBytes,
+            );
+            const stderrDelta = retainedOutputDelta(
+              observedStderr,
+              nextStderr,
+              observedStderrDroppedBytes,
+              nextStderrDroppedBytes,
+            );
+            observedStdout = nextStdout;
+            observedStderr = nextStderr;
+            observedStdoutDroppedBytes = nextStdoutDroppedBytes;
+            observedStderrDroppedBytes = nextStderrDroppedBytes;
+            detectAuthorizationSignal();
+            if (stdoutDelta) {
+              await safeCustom(writer, {
+                type: "data-sandbox-stdout",
+                data: { output: stdoutDelta, timestamp: Date.now(), toolCallId },
+                transient: true,
+              });
+            }
+            if (stderrDelta) {
+              await safeCustom(writer, {
+                type: "data-sandbox-stderr",
+                data: { output: stderrDelta, timestamp: Date.now(), toolCallId },
+                transient: true,
+              });
+            }
+          };
+          let pollingStopped = false;
+          let pollTimer: ReturnType<typeof setTimeout> | undefined;
+          let wakePoll: (() => void) | undefined;
+          const pollIntervalMs = Math.min(PROCESS_OUTPUT_POLL_INTERVAL_MS, waitMaxMs);
+          const pollingTask = (async () => {
+            while (!pollingStopped) {
+              await new Promise<void>((resolve) => {
+                wakePoll = resolve;
+                pollTimer = setTimeout(resolve, pollIntervalMs);
+              });
+              pollTimer = undefined;
+              wakePoll = undefined;
+              if (pollingStopped) break;
+              await pollRetainedOutput();
+            }
+          })();
+          const stopPolling = async () => {
+            if (!pollingStopped) {
+              pollingStopped = true;
+              if (pollTimer) clearTimeout(pollTimer);
+              wakePoll?.();
+            }
+            await pollingTask;
+          };
 
           let timeout: ReturnType<typeof setTimeout> | undefined;
           const abortSignal = context?.abortSignal;
@@ -251,7 +328,9 @@ Use this after starting a background command with execute_command (background: t
             }
 
             const outcome = await Promise.race(races);
+            await stopPolling();
             if (outcome.kind === "exited") {
+              await pollRetainedOutput();
               await safeCustom(writer, {
                 type: "data-sandbox-exit",
                 data: {
@@ -270,27 +349,9 @@ Use this after starting a background command with execute_command (background: t
             } else {
               waitTimedOut =
                 outcome.kind === "timeout" && handle.exitCode === undefined;
-              if (handle.exitCode === undefined) {
-                // 有界读取或授权信号提前返回后，原 wait 仍掌握真实退出结果。若 agent 流尚存活，
-                // 用同一原生退出帧补发；writer 已关闭时 safeCustom 安静降级到下次轮询。
-                void waitPromise.then(async (result) => {
-                  if (exitEventEmitted) return;
-                  exitEventEmitted = true;
-                  await safeCustom(writer, {
-                    type: "data-sandbox-exit",
-                    data: {
-                      pid,
-                      exitCode: result.exitCode,
-                      success: result.success,
-                      timedOut: result.timedOut === true,
-                      executionTimeMs: result.executionTimeMs,
-                      toolCallId,
-                    },
-                  });
-                }).catch(() => {});
-              }
             }
           } finally {
+            await stopPolling();
             if (timeout) clearTimeout(timeout);
             if (abortListener) {
               abortSignal?.removeEventListener("abort", abortListener);
@@ -316,7 +377,7 @@ Use this after starting a background command with execute_command (background: t
         const currentStderr = authorizationSignalDetected ? observedStderr : handle.stderr;
         const stdout = applyTail(currentStdout, tail);
         const stderr = applyTail(currentStderr, tail);
-        const output = formatOutput(stdout, stderr, handle.exitCode);
+        const output = formatOutput(stdout, stderr, handle.exitCode, handle);
         if (!waitTimedOut) return output;
         return [
           output,

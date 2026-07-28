@@ -64,7 +64,7 @@ export const executeCommandInputSchema = z.object({
     .optional(),
   timeout: secondsSchema.nullish(),
   cwd: z.string().max(1_024).nullish(),
-  tail: z.number().int().positive().max(100_000).nullish(),
+  tail: z.number().int().nonnegative().max(100_000).nullish(),
   background: z.boolean().optional(),
 }).strict();
 

@@ -28,8 +28,13 @@ describe("normalizeResultUrl", () => {
       "https://a.com/p?q=1",
     );
   });
-  it("非法 URL 回退小写 trim", () => {
-    expect(normalizeResultUrl("  NotAUrl ")).toBe("notaurl");
+  it("非法 URL 仅回退 trim，不破坏原串大小写", () => {
+    expect(normalizeResultUrl("  NotAUrl ")).toBe("NotAUrl");
+  });
+  it("仅归一化协议与主机，保留 path 和 query 的大小写语义", () => {
+    expect(normalizeResultUrl("HTTPS://A.COM/Docs/Read?Mode=Full")).toBe(
+      "https://a.com/Docs/Read?Mode=Full",
+    );
   });
 });
 
@@ -44,6 +49,13 @@ describe("dedupeResults", () => {
   });
   it("跳过空 url", () => {
     expect(dedupeResults([r(""), r("https://a.com")])).toHaveLength(1);
+  });
+  it("不合并仅 path 或 query 大小写不同的合法资源", () => {
+    expect(dedupeResults([
+      r("https://a.com/Docs?mode=full"),
+      r("https://a.com/docs?mode=full"),
+      r("https://a.com/Docs?Mode=full"),
+    ])).toHaveLength(3);
   });
 });
 
@@ -61,6 +73,26 @@ describe("raceToGood", () => {
     const b = Promise.resolve([r("https://b.com/1")]);
     const out = await raceToGood([a, b], 5);
     expect(out.map((x) => x.url)).toEqual(["https://a.com/1", "https://b.com/1"]);
+  });
+  it("快源原始足量但规范化重复时等待慢源补齐唯一结果", async () => {
+    let resolveSlow: ((results: SearchResult[]) => void) | undefined;
+    const fast = Promise.resolve([
+      r("https://a.com/x?utm_source=fast"),
+      r("https://a.com/x"),
+    ]);
+    const slow = new Promise<SearchResult[]>((resolve) => {
+      resolveSlow = resolve;
+    });
+    const pending = raceToGood([fast, slow], 2);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    resolveSlow?.([r("https://b.com/y")]);
+
+    expect(dedupeResults(await pending).map((result) => result.url)).toEqual([
+      "https://a.com/x?utm_source=fast",
+      "https://b.com/y",
+    ]);
   });
   it("空输入 → []", async () => {
     expect(await raceToGood([], 3)).toEqual([]);

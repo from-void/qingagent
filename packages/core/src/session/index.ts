@@ -18,9 +18,12 @@ export type { PendingConfirm, SessionState, SuggestionRecord, SuspensionLiveness
 export {
   TURN_GENERATION_REQUEST_CONTEXT_KEY,
   TURN_OWNER_REQUEST_CONTEXT_KEY,
+  TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
   assertTurnWriteAllowed,
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
+  bindTurnWriteGuardFactoryToRequestContext,
+  captureBoundTurnWriteGuard,
   captureTurnWriteGuard,
   endTurnOwnership,
   invalidateTurnOwnership,
@@ -29,6 +32,7 @@ export {
 export type {
   TurnOwnership,
   TurnWriteGuard,
+  TurnWriteGuardAssertion,
 } from "./turnOwnership.js";
 
 export {

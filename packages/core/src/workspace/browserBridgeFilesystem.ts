@@ -46,9 +46,24 @@ type BrowserFolderBridgeSuccessResponse =
   | { ok: true; op: "readdir"; entries: BrowserFolderBridgeEntry[] }
   | { ok: true; op: "readFile"; bytes: Uint8Array };
 
+export const BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES = [
+  "not_found",
+  "permission_denied",
+  "too_large",
+  "unknown",
+] as const;
+
+export type BrowserFolderBridgeFailureReasonCode =
+  typeof BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES[number];
+
 export type BrowserFolderBridgeResponse =
   | BrowserFolderBridgeSuccessResponse
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      reasonCode?: BrowserFolderBridgeFailureReasonCode;
+      /** 兼容旧客户端；核心层始终丢弃该字段，不得向上透传。 */
+      error?: string;
+    };
 
 export interface BrowserFolderBridgeBoundResponse {
   sessionId: string;
@@ -60,7 +75,15 @@ export interface BrowserFolderBridgeBoundResponse {
 export class BrowserFolderBridgeError extends Error {
   constructor(
     message: string,
-    readonly code: "bridge_offline" | "timeout" | "protocol_error" | "read_only",
+    readonly code:
+      | "bridge_offline"
+      | "timeout"
+      | "protocol_error"
+      | "read_only"
+      | "not_found"
+      | "permission_denied"
+      | "too_large"
+      | "client_error",
   ) {
     super(message);
     this.name = "BrowserFolderBridgeError";
@@ -69,6 +92,7 @@ export class BrowserFolderBridgeError extends Error {
 
 interface BrowserBridgeConnection {
   send(request: BrowserFolderBridgeRequest): Promise<void>;
+  closed: boolean;
 }
 
 interface PendingRequest {
@@ -77,12 +101,34 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   firstConnectionGraceTimer?: ReturnType<typeof setTimeout>;
+  deliveryConnection?: BrowserBridgeConnection;
 }
 
 const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
 const DEFAULT_FIRST_CONNECTION_GRACE_MS = 3_000;
 const DEFAULT_READ_MAX_BYTES = 50 * 1024 * 1024 + 1;
 const CLIENT_FAILURE_MESSAGE = "browser folder request failed";
+const CLIENT_FAILURES: Record<
+  BrowserFolderBridgeFailureReasonCode,
+  { code: BrowserFolderBridgeError["code"]; message: string }
+> = {
+  not_found: {
+    code: "not_found",
+    message: "browser folder entry was not found",
+  },
+  permission_denied: {
+    code: "permission_denied",
+    message: "browser folder permission was denied",
+  },
+  too_large: {
+    code: "too_large",
+    message: "browser folder file exceeds the size limit",
+  },
+  unknown: {
+    code: "client_error",
+    message: CLIENT_FAILURE_MESSAGE,
+  },
+};
 
 const sourceKeys = new Set<string>();
 const detachedSourceKeys = new Set<string>();
@@ -224,6 +270,30 @@ function selectBrowserFolderClient(
   folderId: string,
   preferredClientId?: string,
 ): string | null {
+  const connectedClientId = selectConnectedBrowserFolderClient(
+    sessionId,
+    folderId,
+    preferredClientId,
+  );
+  if (connectedClientId) return connectedClientId;
+  if (detachedSourceKeys.has(sourceKey(sessionId, folderId))) return null;
+  const clients = sourceClientRefs(sessionId, folderId);
+  if (!clients || clients.size === 0) return null;
+  const ordered = [...clients.keys()];
+  if (preferredClientId && clients.has(preferredClientId) && clientHadConnection(sessionId, preferredClientId)) {
+    return preferredClientId;
+  }
+  for (const clientId of ordered.slice().reverse()) {
+    if (clientHadConnection(sessionId, clientId)) return clientId;
+  }
+  return null;
+}
+
+function selectConnectedBrowserFolderClient(
+  sessionId: string,
+  folderId: string,
+  preferredClientId?: string,
+): string | null {
   if (detachedSourceKeys.has(sourceKey(sessionId, folderId))) return null;
   const clients = sourceClientRefs(sessionId, folderId);
   if (!clients || clients.size === 0) return null;
@@ -237,12 +307,6 @@ function selectBrowserFolderClient(
   }
   for (const clientId of ordered.slice().reverse()) {
     if (connectionCountForClient(sessionId, clientId) > 0) return clientId;
-  }
-  if (preferredClientId && clients.has(preferredClientId) && clientHadConnection(sessionId, preferredClientId)) {
-    return preferredClientId;
-  }
-  for (const clientId of ordered.slice().reverse()) {
-    if (clientHadConnection(sessionId, clientId)) return clientId;
   }
   return null;
 }
@@ -274,15 +338,59 @@ async function deliverRequest(request: BrowserFolderBridgeRequest): Promise<bool
   const set = connections.get(key);
   if (!set || set.size === 0) return false;
   for (const connection of [...set]) {
+    if (connection.closed) continue;
+    const pending = pendingRequests.get(request.requestId);
+    if (!pending) return false;
+    if (pending.deliveryConnection) return true;
+    pending.deliveryConnection = connection;
     try {
       await connection.send(request);
       return true;
     } catch {
-      set.delete(connection);
+      disconnectBrowserBridgeConnection(
+        request.sessionId,
+        request.clientId,
+        connection,
+      );
+      return true;
     }
   }
   if (set.size === 0) connections.delete(key);
   return false;
+}
+
+function disconnectBrowserBridgeConnection(
+  sessionId: string,
+  clientId: string,
+  connection: BrowserBridgeConnection,
+): void {
+  if (connection.closed) return;
+  connection.closed = true;
+  const key = clientKey(sessionId, clientId);
+  const current = connections.get(key);
+  current?.delete(connection);
+  if (current?.size === 0) connections.delete(key);
+
+  for (const [requestId, pending] of [...pendingRequests]) {
+    if (pending.deliveryConnection !== connection) continue;
+    pending.deliveryConnection = undefined;
+    removeQueuedRequest(requestId);
+    clearPendingFirstConnectionGraceTimer(requestId);
+    const nextClientId = selectConnectedBrowserFolderClient(
+      pending.request.sessionId,
+      pending.request.folderId,
+    );
+    if (!nextClientId) {
+      rejectPendingRequest(
+        requestId,
+        new BrowserFolderBridgeError("browser folder bridge disconnected", "bridge_offline"),
+      );
+      continue;
+    }
+    pending.request = { ...pending.request, clientId: nextClientId };
+    queueRequest(pending.request);
+    void flushClientQueue(pending.request.sessionId, nextClientId);
+  }
 }
 
 async function flushClientQueue(sessionId: string, clientId: string): Promise<void> {
@@ -549,17 +657,14 @@ export function openBrowserFolderBridgeConnection(args: {
   send: (request: BrowserFolderBridgeRequest) => Promise<void>;
 }): () => void {
   const key = clientKey(args.sessionId, args.clientId);
-  const connection: BrowserBridgeConnection = { send: args.send };
+  const connection: BrowserBridgeConnection = { send: args.send, closed: false };
   const set = connections.get(key) ?? new Set<BrowserBridgeConnection>();
   set.add(connection);
   connections.set(key, set);
   clientsWithSeenConnection.add(key);
   void flushClientQueue(args.sessionId, args.clientId);
   return () => {
-    const current = connections.get(key);
-    if (!current) return;
-    current.delete(connection);
-    if (current.size === 0) connections.delete(key);
+    disconnectBrowserBridgeConnection(args.sessionId, args.clientId, connection);
   };
 }
 
@@ -636,7 +741,8 @@ export function resolveBrowserFolderBridgeResponse(
   pendingRequests.delete(requestId);
   removeQueuedRequest(requestId);
   if (!bound.response.ok) {
-    pending.reject(new BrowserFolderBridgeError(CLIENT_FAILURE_MESSAGE, "bridge_offline"));
+    const failure = CLIENT_FAILURES[bound.response.reasonCode ?? "unknown"];
+    pending.reject(new BrowserFolderBridgeError(failure.message, failure.code));
     return true;
   }
   try {

@@ -80,6 +80,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function createQuestionIdAllocator(): (preferred: string) => string {
+  const used = new Set<string>();
+  return (preferred) => {
+    if (!used.has(preferred)) {
+      used.add(preferred);
+      return preferred;
+    }
+    let suffix = 2;
+    while (used.has(`${preferred}-${suffix}`)) suffix += 1;
+    const allocated = `${preferred}-${suffix}`;
+    used.add(allocated);
+    return allocated;
+  };
+}
+
+function isAnswerableQuestionnaire(questions: GeneratedQuestion[]): boolean {
+  return questions.length > 0 && questions.every((question) =>
+    (question.kind !== "single" && question.kind !== "multi") || question.options.length > 0
+  );
+}
+
 function normalizeQuestion(raw: unknown, index = 0): GeneratedQuestion | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.label !== "string" || !raw.label.trim()) return null;
@@ -129,7 +150,11 @@ export function parseGeneratedQuestions(raw: string): GeneratedQuestion[] | null
   try {
     const parsed = JSON.parse(repaired.ok ? repaired.json : extracted);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    const questions = parsed.map((question, index) => normalizeQuestion(question, index));
+    const allocateId = createQuestionIdAllocator();
+    const questions = parsed.map((question, index) => {
+      const normalized = normalizeQuestion(question, index);
+      return normalized ? { ...normalized, id: allocateId(normalized.id) } : null;
+    });
     return questions.every((question): question is GeneratedQuestion => question !== null)
       ? questions
       : null;
@@ -142,6 +167,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
   const start = raw.indexOf("[");
   if (start < 0) return [];
   const questions: GeneratedQuestion[] = [];
+  const allocateId = createQuestionIdAllocator();
   const content = raw.slice(start + 1);
   let position = 0;
   while (position < content.length) {
@@ -152,7 +178,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
     const objectEnd = findMatchingBrace(content, position);
     if (objectEnd < 0) {
       const partial = normalizePartialQuestion(content.slice(position), questions.length);
-      if (partial) questions.push(partial);
+      if (partial) questions.push({ ...partial, id: allocateId(partial.id) });
       break;
     }
     try {
@@ -160,7 +186,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
         JSON.parse(content.slice(position, objectEnd + 1)),
         questions.length,
       );
-      if (normalized) questions.push(normalized);
+      if (normalized) questions.push({ ...normalized, id: allocateId(normalized.id) });
     } catch {
       // 已闭合但畸形的问题不影响此前成功解析的题目。
     }
@@ -417,8 +443,9 @@ async function runFallback(
   input: GenerateQuestionsInput,
   // 去重态由调用方传入、与主路径共用:各自持一份的话,降级后收尾那帧会把同一套问卷重复发一次。
   progressState: { signature: string },
+  onUnanswerableQuestionnaire: () => void,
 ): Promise<GeneratedQuestion[]> {
-  let last: GeneratedQuestion[] = [];
+  let lastAnswerable: GeneratedQuestion[] = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = streamText({
       model: getDeepseekModel(input.requestContext, "flash", {
@@ -432,17 +459,18 @@ async function runFallback(
     for await (const delta of result.textStream) {
       raw += delta;
       const partial = parsePartialGeneratedQuestions(raw);
-      if (partial.length > 0) last = partial;
+      if (isAnswerableQuestionnaire(partial)) lastAnswerable = partial;
       await emitQuestionProgress(input, partial, progressState);
     }
     const parsed = parseGeneratedQuestions(raw);
-    if (parsed) {
-      last = parsed;
+    if (parsed && isAnswerableQuestionnaire(parsed)) {
+      lastAnswerable = parsed;
       await emitQuestionProgress(input, parsed, progressState);
       break;
     }
+    if (parsed) onUnanswerableQuestionnaire();
   }
-  return last;
+  return lastAnswerable;
 }
 
 function rememberFallbackQuestions(
@@ -481,6 +509,7 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
   const progressState = prepared?.progressState ?? { signature: "" };
   let lastPartial: GeneratedQuestion[] = [];
   let branchText = "";
+  let sawUnanswerableQuestionnaire = false;
   const result = await runSideChannel({
     callSite: input.mode === "initial" ? "planDraft" : "askMore",
     requestContext: input.requestContext,
@@ -504,15 +533,28 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
     },
     parse: (text) => {
       branchText = text;
-      const questions = parseGeneratedQuestions(text) ?? lastPartial;
-      return questions.length > 0 ? questions : null;
+      const parsed = parseGeneratedQuestions(text);
+      if (parsed) {
+        if (isAnswerableQuestionnaire(parsed)) return parsed;
+        sawUnanswerableQuestionnaire = true;
+        return null;
+      }
+      return isAnswerableQuestionnaire(lastPartial) ? lastPartial : null;
     },
     fallback: async () => {
-      const questions = await runFallback(input, progressState);
+      const questions = await runFallback(input, progressState, () => {
+        sawUnanswerableQuestionnaire = true;
+      });
       if (snapshot) rememberFallbackQuestions(snapshot, input, questions);
       return questions;
     },
   });
+  if (
+    !isAnswerableQuestionnaire(result.value) &&
+    (result.value.length > 0 || sawUnanswerableQuestionnaire)
+  ) {
+    throw new Error("问卷生成结果不可回答，请重试。");
+  }
   if (result.transport === "branch" && snapshot && prepared) {
     questionBranches.delete(snapshot.sessionId);
     questionBranches.set(snapshot.sessionId, {

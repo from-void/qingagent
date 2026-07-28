@@ -829,6 +829,48 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")).toBeNull();
   });
 
+  it("planDraft 执行中用户取消不产生 rejected 或失败卡", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("planning-abort-during-questionnaire");
+    const abortController = new AbortController();
+    async function* planDraftThenAbort(): AsyncGenerator<unknown> {
+      yield {
+        type: "tool-call",
+        payload: {
+          toolName: "planDraft",
+          toolCallId: "plan-user-stop",
+          args: {
+            id: "direction",
+            rationale: "确认方向",
+            topic: "项目总结",
+          },
+        },
+      };
+      abortController.abort("user_abort");
+      yield errorChunk("用户取消", { name: "AbortError" });
+    }
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(planDraftThenAbort(), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-planning-cancelled",
+        runId: "run-planning-cancelled",
+        abortController,
+      }),
+    );
+
+    expect(result.streamWasUserAborted).toBe(true);
+    expect(draftingFailures(frames)).toHaveLength(0);
+    expect(frames.some((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === "plan-user-stop" &&
+      frame.data.spec.status.kind === "failed"
+    )).toBe(false);
+    expect(findToolCallSpec(state.chatHistory, "plan-user-stop")?.status.kind).not.toBe("failed");
+    expect(JSON.stringify(frames)).not.toContain("写作方向问卷生成失败");
+  });
+
   it("规划首步后用户 abort 会终止同一 agent turn，不再消费下一步 planDraft 问卷", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("planning-abort-before-questionnaire");

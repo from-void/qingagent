@@ -137,6 +137,49 @@ describe("GenService", () => {
     expect(mocks.branchCall).toHaveBeenCalledTimes(1);
   });
 
+  it("主路径选择题无选项时转入 fallback，不把不可回答问卷作为终态", async () => {
+    mocks.branchCall.mockResolvedValue({
+      ok: true,
+      text: '[{"id":"q-tone","label":"语气？","kind":"single","options":[]}]',
+      assistantMessage: {
+        role: "assistant",
+        content: '[{"id":"q-tone","label":"语气？","kind":"single","options":[]}]',
+      },
+      attempts: 1,
+      toolCallRetries: 0,
+    });
+    mocks.streamText.mockReturnValue({
+      textStream: textStream(
+        '[{"id":"q-note","label":"还有什么要求？","kind":"text","options":[]}]',
+      ),
+    });
+
+    const result = await generateQuestions({ mode: "initial", rationale: "r", topic: "t" });
+
+    expect(result).toMatchObject({
+      transport: "fallback",
+      branchFailure: "parse_failed",
+      questions: [expect.objectContaining({ id: "q-note", kind: "text" })],
+    });
+    expect(mocks.streamText).toHaveBeenCalledTimes(1);
+  });
+
+  it("主路径与两次 fallback 都不可回答时返回可重试失败", async () => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    mocks.streamText.mockReturnValue({
+      textStream: textStream(
+        '[{"id":"q-tone","label":"语气？","kind":"multi","options":[]}]',
+      ),
+    });
+
+    await expect(generateQuestions({
+      mode: "initial",
+      rationale: "r",
+      topic: "t",
+    })).rejects.toThrow("问卷生成结果不可回答，请重试");
+    expect(mocks.streamText).toHaveBeenCalledTimes(2);
+  });
+
   it("真实脏输出支持 fence、尾随散文与 nested kind", () => {
     expect(parseGeneratedQuestions(`前导话\n\`\`\`json
 [{"id":"q-extra-note","label":"补充？","kind":{"kind":"text"},"options":[],"placeholder":"可含 ] 字符"}]
@@ -189,6 +232,25 @@ describe("GenService", () => {
     ]`)).toEqual([
       expect.objectContaining({ id: "q1", kind: "single" }),
       expect.objectContaining({ id: "q2", kind: "text" }),
+    ]);
+  });
+
+  it("完整与流式解析对重复及补位冲突 id 使用同一稳定后缀", () => {
+    const raw = `[
+      {"id":"q2","label":"第一题？","kind":"text","options":[]},
+      {"label":"第二题？","kind":"text","options":[]},
+      {"id":"q2","label":"第三题？","kind":"text","options":[]}
+    ]`;
+
+    expect(parseGeneratedQuestions(raw)?.map((question) => question.id)).toEqual([
+      "q2",
+      "q2-2",
+      "q2-3",
+    ]);
+    expect(parsePartialGeneratedQuestions(raw).map((question) => question.id)).toEqual([
+      "q2",
+      "q2-2",
+      "q2-3",
     ]);
   });
 

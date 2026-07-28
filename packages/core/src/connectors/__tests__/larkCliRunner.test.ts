@@ -5,10 +5,55 @@ import { join } from "node:path";
 import {
   LARK_DEVICE_CODE,
   LarkCliRunner,
+  hasLarkConfigInitUrl,
   resolveLarkCliInvocation,
 } from "../larkCliRunner.js";
 
 describe("LarkCliRunner 固定 argv", () => {
+  it("config init 首段只在出现官方创建链接后结算", () => {
+    expect(hasLarkConfigInitUrl("文档 https://open.feishu.cn/document/home")).toBe(false);
+    expect(
+      hasLarkConfigInitUrl("文档 https://open.feishu.cn/document/verification/guide"),
+    ).toBe(false);
+    expect(hasLarkConfigInitUrl("源码 https://github.com/example/lark-cli")).toBe(false);
+    expect(
+      hasLarkConfigInitUrl(
+        "文档 https://open.feishu.cn/document/home\n创建 https://open.feishu.cn/verification/real",
+      ),
+    ).toBe(true);
+  });
+
+  it("config init 的 URL 分片未遇终止符时不提前结算", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lark-cli-fragmented-url-"));
+    const stub = join(dir, "lark-cli");
+    writeFileSync(stub, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "lark-cli version 1.0.65"; exit 0; fi
+printf '创建 https://open.feishu.cn/console/app/init?verification=abc'
+sleep 0.15
+printf '123\\n'
+exit 0
+`);
+    chmodSync(stub, 0o755);
+    try {
+      const runner = new LarkCliRunner({ shimPath: stub });
+      const run = await runner.startConfigInit(new AbortController().signal);
+      const early = await Promise.race([
+        run.initial.then(() => "settled"),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 30)),
+      ]);
+      expect(early).toBe("pending");
+      await expect(run.initial).resolves.toMatchObject({
+        ok: true,
+        stdout: expect.stringContaining(
+          "https://open.feishu.cn/console/app/init?verification=abc123",
+        ),
+      });
+      await expect(run.completion).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("Windows 打包态以 Electron-as-Node 直接执行随包 run.js，不启动 .cmd", async () => {
     const execFile = vi.fn(async (_file: string, args: readonly string[]) =>
       args.at(-1) === "--version"

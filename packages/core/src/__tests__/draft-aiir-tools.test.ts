@@ -195,6 +195,33 @@ describe("QingML draft tools", () => {
     expect(item.blocks[0].qingml).toBeUndefined();
   });
 
+  it("readDraft range+regex 可按列表项 ref 保留该行命中", async () => {
+    const state = createSession("s-read-list-item-regex");
+    bindDoc(state, doc([
+      bulletList("list-1", [
+        { blockId: "item-1", paragraphId: "item-1-p", text: "第一行" },
+        { blockId: "item-2", paragraphId: "item-2-p", text: "订单号 QA-2048" },
+      ]),
+    ]));
+    const { readDraftAiIr } = createSessionScopedTools(state);
+
+    const item = await readDraftAiIr.execute!({
+      mode: "range",
+      from: "item-2",
+      to: "item-2",
+      query: "QA-\\d+",
+      isRegex: true,
+      includeText: true,
+    }, ctx) as any;
+
+    expect(item.ok).toBe(true);
+    expect(item.blocks).toMatchObject([{
+      ref: "item-2",
+      type: "listItem",
+      text: "订单号 QA-2048",
+    }]);
+  });
+
   it("editDraft 混合事务先块后文本,成功后直接写候选", async () => {
     const state = createSession("s-edit");
     bindDoc(state, doc([paragraph("block-a", "旧文本"), paragraph("block-b", "保留")]));

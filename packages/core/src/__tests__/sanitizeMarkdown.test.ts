@@ -24,6 +24,57 @@ describe("sanitizeMarkdownInline", () => {
       "前言\n```ts\n## x\nconst value = '**x**';\n```\n· 尾注",
     );
   });
+
+  it("不同字符的围栏不会关闭当前代码块", () => {
+    const text = [
+      "~~~md",
+      "```ts",
+      "## code heading",
+      "**code emphasis**",
+      "```",
+      "~~~",
+      "- 尾注",
+    ].join("\n");
+
+    expect(sanitizeMarkdownInline(text)).toBe([
+      "~~~md",
+      "```ts",
+      "## code heading",
+      "**code emphasis**",
+      "```",
+      "~~~",
+      "· 尾注",
+    ].join("\n"));
+  });
+
+  it("较短的同字符围栏不会关闭更长 opener", () => {
+    const text = [
+      "````md",
+      "```ts",
+      "## code heading",
+      "**code emphasis**",
+      "```",
+      "````",
+      "- 尾注",
+    ].join("\n");
+
+    expect(sanitizeMarkdownInline(text)).toBe([
+      "````md",
+      "```ts",
+      "## code heading",
+      "**code emphasis**",
+      "```",
+      "````",
+      "· 尾注",
+    ].join("\n"));
+  });
+
+  it("同字符且不短于 opener 的围栏可以关闭代码块", () => {
+    const text = "```md\n## code heading\n````\n- 尾注";
+    expect(sanitizeMarkdownInline(text)).toBe(
+      "```md\n## code heading\n````\n· 尾注",
+    );
+  });
 });
 
 describe("sanitizeSectionMarkdown", () => {

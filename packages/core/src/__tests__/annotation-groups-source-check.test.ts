@@ -38,6 +38,18 @@ function reviewCtx(reviewContext: ReviewContext) {
   } as never;
 }
 
+function turnCtx(owner: string, generation: number) {
+  return {
+    requestContext: {
+      get: (key: string) => {
+        if (key === "qingagentTurnOwner") return owner;
+        if (key === "qingagentTurnGeneration") return generation;
+        return undefined;
+      },
+    },
+  } as never;
+}
+
 function material(id: string, text: string, summary = "无关摘要"): Material {
   return {
     id,
@@ -165,6 +177,48 @@ describe("create_annotation_groups 来源引句校验", () => {
     ]);
     expect(vi.mocked(replaceAnnotationGroupsByOrigin)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(insertAnnotationGroups)).toHaveBeenCalledTimes(1);
+  });
+
+  it("旧轮写入在持久化阻塞后不得回填运行态，排队旧写不得触达数据库", async () => {
+    const { state, tool } = setup();
+    state._turnOwner = "review-turn";
+    state._turnGeneration = 1;
+
+    let releasePersistence!: () => void;
+    const persistenceBlocked = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
+    let notifyPersistenceStarted!: () => void;
+    const persistenceStarted = new Promise<void>((resolve) => {
+      notifyPersistenceStarted = resolve;
+    });
+    vi.mocked(replaceAnnotationGroupsByOrigin).mockImplementationOnce(async () => {
+      notifyPersistenceStarted();
+      await persistenceBlocked;
+    });
+
+    const first = tool.execute!({
+      groups: [group({ summary: "旧轮首批问题" })],
+    }, turnCtx("review-turn", 1));
+    await persistenceStarted;
+    const queued = tool.execute!({
+      groups: [group({ summary: "旧轮排队问题" })],
+    }, turnCtx("review-turn", 1));
+
+    state._turnGeneration = 2;
+    releasePersistence();
+
+    const settled = await Promise.allSettled([first, queued]);
+    expect(settled.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    for (const result of settled) {
+      expect(result.status === "rejected" ? result.reason : null).toMatchObject({
+        name: "AbortError",
+      });
+    }
+    expect(replaceAnnotationGroupsByOrigin).toHaveBeenCalledTimes(1);
+    expect(insertAnnotationGroups).not.toHaveBeenCalled();
+    expect(state.annotationGroups).toEqual([]);
+    expect(state._annotationOriginsReplacedThisTurn).toBeUndefined();
   });
 
   it("八类菜单审查均按结构化上下文强制 origin，忽略模型错填", async () => {

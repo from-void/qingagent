@@ -5,6 +5,8 @@ import {
   type LocalSandboxOptions,
   type MountResult,
   type NativeSandboxConfig,
+  type ProcessHandle,
+  type SpawnProcessOptions,
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import { createHash } from "node:crypto";
@@ -146,24 +148,40 @@ function shellQuoteCommandArg(arg: string): string {
  */
 export class ReadWallLocalSandbox extends LocalSandbox {
   private readWallHealthy = true;
+  private processStartTail: Promise<void> = Promise.resolve();
   private readonly verifyReadWallIntegrity: () => Promise<void>;
 
   constructor(options: ReadWallLocalSandboxOptions) {
     const { verifyReadWallIntegrity, ...sandboxOptions } = options;
     super(sandboxOptions);
     this.verifyReadWallIntegrity = verifyReadWallIntegrity;
+    const spawnProcess = this.processes.spawn.bind(this.processes);
+    this.processes.spawn = async (
+      command: string,
+      spawnOptions?: SpawnProcessOptions,
+    ): Promise<ProcessHandle> => {
+      return this.serializeProcessStart(async () => {
+        this.assertReadWallHealthy();
+        try {
+          await this.verifyReadWallIntegrity();
+        } catch (error) {
+          this.markReadWallUnhealthy();
+          throw error;
+        }
+        try {
+          return await spawnProcess(command, spawnOptions);
+        } catch (error) {
+          this.markReadWallUnhealthy();
+          throw error;
+        }
+      });
+    };
     this.executeCommand = async (
       command: string,
       args?: string[],
       executeOptions?: ExecuteCommandOptions,
     ): Promise<CommandResult> => {
       this.assertReadWallHealthy();
-      try {
-        await this.verifyReadWallIntegrity();
-      } catch (error) {
-        this.markReadWallUnhealthy();
-        throw error;
-      }
 
       const fullCommand = args?.length
         ? `${command} ${args.map(shellQuoteCommandArg).join(" ")}`
@@ -202,6 +220,20 @@ export class ReadWallLocalSandbox extends LocalSandbox {
 
   private assertReadWallHealthy(): void {
     if (!this.readWallHealthy) throw new Error("read-wall is unhealthy; commands are disabled for this Workspace");
+  }
+
+  private async serializeProcessStart<T>(startProcess: () => Promise<T>): Promise<T> {
+    const previousStart = this.processStartTail;
+    let releaseStart!: () => void;
+    this.processStartTail = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    await previousStart;
+    try {
+      return await startProcess();
+    } finally {
+      releaseStart();
+    }
   }
 
   private markReadWallUnhealthy(): void {

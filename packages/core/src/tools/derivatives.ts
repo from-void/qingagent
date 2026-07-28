@@ -6,6 +6,7 @@ import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
   buildPmProjection,
   commitTransaction,
+  getDerivativeDocument,
   getDerivativeMeta,
   getStyleTemplate,
   listDerivativesByThread,
@@ -14,6 +15,10 @@ import {
   withTransaction,
 } from "@qingagent/db";
 import { compileAiDocumentWithBlockRetry, parseAiDocumentFromQingml } from "./generateDoc.js";
+import {
+  captureBoundTurnWriteGuard,
+  type TurnWriteGuardAssertion,
+} from "../session/turnOwnership.js";
 
 type TransactionClient = Parameters<Parameters<typeof withTransaction>[0]>[0];
 
@@ -85,13 +90,30 @@ export interface CommitDerivativeQingmlResult {
   error?: string;
 }
 
+export interface DerivativeCommitGuard {
+  expectedDocVersion: number;
+  abortSignal?: AbortSignal;
+  writeGuard?: TurnWriteGuardAssertion;
+}
+
+function assertDerivativeCommitAllowed(
+  guard: Pick<DerivativeCommitGuard, "abortSignal" | "writeGuard">,
+): void {
+  guard.abortSignal?.throwIfAborted();
+  guard.writeGuard?.();
+}
+
 /**
  * 已编译衍生稿的短事务写入体。单独导出是为了让工具与并发旁支共享完全相同的
  * CAS / 版本快照 / 源版本盖章语义，并可直接覆盖 CAS 未命中的脏路径测试。
  */
 export async function commitCompiledDerivative(
   client: Pick<TransactionClient, "execute">,
-  input: { derivativeDocId: string; sessionId: string; doc: PmDoc },
+  input: {
+    derivativeDocId: string;
+    sessionId: string;
+    doc: PmDoc;
+  } & DerivativeCommitGuard,
 ): Promise<CommitDerivativeQingmlResult> {
   const rows = await client.execute({
     sql: `SELECT derivative.doc_version, source.doc_version AS source_version
@@ -103,10 +125,14 @@ export async function commitCompiledDerivative(
   const row = rows.rows[0];
   if (!row) return { ok: false, error: "衍生稿不存在或不属于当前会话" };
   const previousVersion = Number(row.doc_version);
+  if (previousVersion !== input.expectedDocVersion) {
+    return { ok: false, error: "衍生稿版本已变化,请重试" };
+  }
   const docVersion = previousVersion + 1;
   const sourceVersion = Number(row.source_version);
   const now = new Date().toISOString();
   const projection = buildPmProjection({ pmDoc: input.doc });
+  assertDerivativeCommitAllowed(input);
   const updated = await client.execute({
     sql: `UPDATE documents SET doc_pm = ?, doc_schema_version = ?, content_hash = ?,
       doc_format = ?, doc_version = ?, version = version + 1, updated_at = ?
@@ -138,6 +164,7 @@ export async function commitDerivativeQingml(
   derivativeDocId: string,
   sessionId: string,
   qingml: string,
+  guard: DerivativeCommitGuard,
 ): Promise<CommitDerivativeQingmlResult> {
   let compiled;
   try {
@@ -147,10 +174,12 @@ export async function commitDerivativeQingml(
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
   if (!compiled.success) return { ok: false, error: compiled.error };
+  assertDerivativeCommitAllowed(guard);
   return withTransaction(async (client) => commitTransaction(await commitCompiledDerivative(client, {
     derivativeDocId,
     sessionId,
     doc: compiled.doc,
+    ...guard,
   })));
 }
 
@@ -160,10 +189,20 @@ export const generateDerivativeTool = createTool({
   inputSchema: z.object({ derivativeDocId: z.string().min(1), qingml: z.string().min(1) }),
   outputSchema: z.object({ ok: z.boolean(), wroteBlocks: z.number().optional(), docVersion: z.number().optional(), error: z.string().optional() }),
   execute: async (input, context) => {
+    const writeGuard = captureBoundTurnWriteGuard(context);
     const sessionId = sessionIdFrom(context);
-    const meta = await getDerivativeMeta(input.derivativeDocId);
-    if (!sessionId || !meta || meta.threadId !== sessionId) return { ok: false, error: "衍生稿不存在或不属于当前会话" };
-    const result = await commitDerivativeQingml(input.derivativeDocId, sessionId, input.qingml);
+    const [meta, startingDocument] = await Promise.all([
+      getDerivativeMeta(input.derivativeDocId),
+      getDerivativeDocument(input.derivativeDocId),
+    ]);
+    if (!sessionId || !meta || meta.threadId !== sessionId || !startingDocument) {
+      return { ok: false, error: "衍生稿不存在或不属于当前会话" };
+    }
+    const result = await commitDerivativeQingml(input.derivativeDocId, sessionId, input.qingml, {
+      expectedDocVersion: startingDocument.docVersion,
+      abortSignal: context?.abortSignal,
+      writeGuard,
+    });
     // 工具协议行为零变化：generatedAt 只供旁支 finished 帧使用，不扩展工具 output。
     const { generatedAt: _generatedAt, ...toolResult } = result;
     return toolResult;

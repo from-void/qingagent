@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,11 +12,37 @@ const ONE_PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
-const ONE_PIXEL_JPEG = Buffer.from([
+const ONE_PIXEL_JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAAAAAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8Af3//2Q==",
+  "base64",
+);
+const JPEG_WITHOUT_SCAN = Buffer.from([
   0xff, 0xd8,
   0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
   0xff, 0xd9,
 ]);
+const ONE_PIXEL_WEBP = Buffer.from(
+  "UklGRhoAAABXRUJQVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==",
+  "base64",
+);
+const INVALID_VP8_WEBP = Buffer.from(
+  "524946461800000057454250565038200c0000003000009d012a01000100ffff",
+  "hex",
+);
+const INVALID_VP8L_WEBP = Buffer.from(
+  "5249464612000000574542505650384c060000002f00000000ff",
+  "hex",
+);
+const TWO_FRAME_ANIMATED_WEBP = Buffer.from(
+  "UklGRoAAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GJgAAAAAAAAAAAAAAAAAAAGQAAABWUDhMDgAAAC8AAAAABxAR/Q9ERP8DQU5NRiYAAAAAAAAAAAAAAAAAAABkAAAAVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==",
+  "base64",
+);
+const VP8X_ONLY_WEBP = Buffer.alloc(30);
+VP8X_ONLY_WEBP.write("RIFF", 0, "ascii");
+VP8X_ONLY_WEBP.writeUInt32LE(VP8X_ONLY_WEBP.length - 8, 4);
+VP8X_ONLY_WEBP.write("WEBP", 8, "ascii");
+VP8X_ONLY_WEBP.write("VP8X", 12, "ascii");
+VP8X_ONLY_WEBP.writeUInt32LE(10, 16);
 const tempDirs: string[] = [];
 
 async function fixture(): Promise<{
@@ -108,7 +134,111 @@ describe("importGeneratedImage", () => {
 
     await expect(
       importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
-    ).rejects.toThrow("JPEG 文件头无效");
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+  });
+
+  it("拒绝只有 SOI 或缺少 EOI 的截断 JPEG", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const onlySoiPath = join(workspaceRoot, "only-soi.jpg");
+    const missingEoiPath = join(workspaceRoot, "missing-eoi.jpg");
+    await writeFile(onlySoiPath, Buffer.from([0xff, 0xd8]));
+    await writeFile(missingEoiPath, ONE_PIXEL_JPEG.subarray(0, -2));
+
+    await expect(
+      importGeneratedImageFromPath({ path: onlySoiPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+    await expect(
+      importGeneratedImageFromPath({ path: missingEoiPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+  });
+
+  it("拒绝有 SOF 和 EOI 但没有扫描数据的伪 JPEG 且不落盘", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "without-scan.jpg");
+    await writeFile(sourcePath, JPEG_WITHOUT_SCAN);
+
+    await expect(
+      importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("JPEG 段结构或尺寸无效");
+    await expect(readdir(uploadsRoot)).resolves.toEqual([]);
+  });
+
+  it("完整解码 WebP 后导入并返回正尺寸", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "one-pixel.webp");
+    await writeFile(sourcePath, ONE_PIXEL_WEBP);
+
+    const result = await importGeneratedImageFromPath(
+      { path: sourcePath },
+      { workspaceRoot, uploadsRoot },
+    );
+
+    expect(result).toMatchObject({ width: 1, height: 1 });
+    await expect(
+      readFile(join(uploadsRoot, result.imageId, "generated-image.webp")),
+    ).resolves.toEqual(ONE_PIXEL_WEBP);
+  });
+
+  it("拒绝头部与尺寸伪装合法但码流不可解码的 VP8/VP8L 且不落盘", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const invalidVp8Path = join(workspaceRoot, "invalid-vp8.webp");
+    const invalidVp8lPath = join(workspaceRoot, "invalid-vp8l.webp");
+    await writeFile(invalidVp8Path, INVALID_VP8_WEBP);
+    await writeFile(invalidVp8lPath, INVALID_VP8L_WEBP);
+
+    await expect(
+      importGeneratedImageFromPath({ path: invalidVp8Path }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+    await expect(
+      importGeneratedImageFromPath({ path: invalidVp8lPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+    await expect(readdir(uploadsRoot)).resolves.toEqual([]);
+  });
+
+  it("完整解码并导入 VP8X/ANIM/ANMF 动画 WebP", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "animated.webp");
+    await writeFile(sourcePath, TWO_FRAME_ANIMATED_WEBP);
+
+    const result = await importGeneratedImageFromPath(
+      { path: sourcePath },
+      { workspaceRoot, uploadsRoot },
+    );
+
+    expect(result).toMatchObject({ width: 1, height: 1 });
+    await expect(
+      readFile(join(uploadsRoot, result.imageId, "generated-image.webp")),
+    ).resolves.toEqual(TWO_FRAME_ANIMATED_WEBP);
+  });
+
+  it("拒绝只有 RIFF/WEBP 魔数或声明长度超过实长的截断 WebP", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const magicOnlyPath = join(workspaceRoot, "magic-only.webp");
+    const truncatedPath = join(workspaceRoot, "truncated.webp");
+    const magicOnly = Buffer.alloc(12);
+    magicOnly.write("RIFF", 0, "ascii");
+    magicOnly.writeUInt32LE(4, 4);
+    magicOnly.write("WEBP", 8, "ascii");
+    await writeFile(magicOnlyPath, magicOnly);
+    await writeFile(truncatedPath, ONE_PIXEL_WEBP.subarray(0, -1));
+
+    await expect(
+      importGeneratedImageFromPath({ path: magicOnlyPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+    await expect(
+      importGeneratedImageFromPath({ path: truncatedPath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+  });
+
+  it("拒绝只有 VP8X 画布而没有图像码流的 WebP 且不落盘", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "vp8x-only.webp");
+    await writeFile(sourcePath, VP8X_ONLY_WEBP);
+
+    await expect(
+      importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
+    ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+    await expect(readdir(uploadsRoot)).resolves.toEqual([]);
   });
 
   it("拒绝图片白名单之外的扩展名", async () => {

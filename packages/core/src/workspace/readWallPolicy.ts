@@ -142,6 +142,18 @@ async function canonicalizeWithMissingTail(lexicalPath: string): Promise<string>
         throw new Error("read-wall path has a non-directory ancestor");
       }
       if (code !== "ENOENT") throw error;
+      let unresolvedExistingEntry = false;
+      try {
+        await lstat(cursor);
+        unresolvedExistingEntry = true;
+      } catch (lstatError) {
+        const lstatCode =
+          lstatError instanceof Error && "code" in lstatError ? String(lstatError.code) : "";
+        if (lstatCode !== "ENOENT" && lstatCode !== "ENOTDIR") throw lstatError;
+      }
+      if (unresolvedExistingEntry) {
+        throw new Error("read-wall cannot resolve an existing path entry");
+      }
       const parent = dirname(cursor);
       if (parent === cursor) {
         throw new Error("read-wall cannot find an existing ancestor for a path");
@@ -509,7 +521,12 @@ function assertDataExceptionRules(
   }
   const session = allowPaths.find((path) => path.kind === "session");
   const bin = allowPaths.find((path) => path.kind === "bin");
-  if (!session || !bin || !pathFallsInside(session, dataDenyPath) || !pathFallsInside(bin, dataDenyPath)) {
+  if (
+    !session ||
+    !bin ||
+    !isPathInside(session.canonicalPath, dataDenyPath.canonicalPath) ||
+    !isPathInside(bin.canonicalPath, dataDenyPath.canonicalPath)
+  ) {
     throw new Error("read-wall session and bin must be canonically contained by the data directory");
   }
 }

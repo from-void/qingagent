@@ -39,6 +39,7 @@ interface CachedPrimaryConfig {
 }
 
 let cachedConfig: CachedConfig | null = null;
+let lastGoodConfig: Pick<CachedConfig, "config" | "signature"> | null = null;
 let cachedProvider: { signature: string; provider: SearchProvider } | null = null;
 let cachedPrimaryConfig: CachedPrimaryConfig | null = null;
 let lastGoodPrimaryConfig: PrimarySearchConfig | null = null;
@@ -141,15 +142,18 @@ export async function getSearchProviderConfig(): Promise<SearchProviderConfigMap
     const config = parseSearchProviderConfig(
       await getAppSetting(SETTING_SEARCH_PROVIDER_CONFIG),
     );
+    const signature = JSON.stringify(config);
     cachedConfig = {
       expiresAt: now + CACHE_TTL_MS,
       config,
-      signature: JSON.stringify(config),
+      signature,
     };
+    lastGoodConfig = { config, signature };
     return config;
   } catch {
-    cachedConfig = { expiresAt: now + CACHE_TTL_MS, config: {}, signature: "{}" };
-    return {};
+    const fallback = lastGoodConfig ?? { config: {}, signature: "{}" };
+    cachedConfig = { expiresAt: now + CACHE_TTL_MS, ...fallback };
+    return fallback.config;
   }
 }
 

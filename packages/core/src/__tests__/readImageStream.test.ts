@@ -233,6 +233,35 @@ describe("readImage stream error handling", () => {
     expect(streamTextMock).toHaveBeenCalledTimes(2);
   });
 
+  it("首调 429 后重试遇到鉴权错误时返回鉴权提示而非伪装成限流", async () => {
+    vi.useFakeTimers();
+    streamTextMock
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: rateLimitError() }]) })
+      .mockReturnValueOnce({
+        fullStream: fullStream([{
+          type: "error",
+          error: Object.assign(new Error("upstream unauthorized: invalid api key"), {
+            statusCode: 401,
+          }),
+        }]),
+      });
+
+    const pending = run("img-rate-limit-then-auth");
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r = await pending;
+
+    expect(r).toEqual({
+      ok: false,
+      text: "",
+      error: "图像识别模型鉴权失败，请检查模型配置。",
+      materialId: null,
+    });
+    expect(r.error).not.toContain("限流");
+    expect(r.error).not.toContain("upstream");
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
   it("非限流错误 → 不重试", async () => {
     streamTextMock.mockReturnValue({
       fullStream: fullStream([{ type: "error", error: new Error("模型鉴权失败") }]),

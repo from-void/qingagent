@@ -23,7 +23,9 @@ export function targetPath(mountPath: string, relPath: string): string {
   return relPath ? posix.join(mountPath, relPath) : mountPath;
 }
 
-export function jsonError(c: Context, error: string, status: 400 | 404 | 413 | 502): Response {
+export type FolderSourceErrorStatus = 400 | 403 | 404 | 413 | 502;
+
+export function jsonError(c: Context, error: string, status: FolderSourceErrorStatus): Response {
   return c.json({ error, message: error }, status);
 }
 
@@ -36,11 +38,41 @@ export function isBrowserBridgeOfflineError(error: unknown): boolean {
 }
 
 export function publicFolderSourceErrorMessage(error: unknown): string {
-  if (isBrowserBridgeOfflineError(error)) return FOLDER_BRIDGE_OFFLINE_MESSAGE;
+  switch (browserBridgeErrorCode(error)) {
+    case "bridge_offline":
+      return FOLDER_BRIDGE_OFFLINE_MESSAGE;
+    case "not_found":
+      return "File or folder not found";
+    case "permission_denied":
+      return "Browser folder permission denied";
+    case "too_large":
+      return "File exceeds maxBytes";
+    case "client_error":
+      return "浏览器文件读取失败";
+  }
   return error instanceof Error ? error.message : String(error);
+}
+
+function browserBridgeErrorCode(error: unknown): string | null {
+  if (!(error instanceof Error) || error.name !== "BrowserFolderBridgeError") return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
 }
 
 export function isNotFoundError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /\b(ENOENT|not_found|not found|no such file|does not exist)\b/i.test(message);
+}
+
+export function folderSourceErrorStatus(error: unknown): FolderSourceErrorStatus {
+  switch (browserBridgeErrorCode(error)) {
+    case "not_found":
+      return 404;
+    case "permission_denied":
+      return 403;
+    case "too_large":
+      return 413;
+    default:
+      return isNotFoundError(error) ? 404 : 502;
+  }
 }

@@ -255,6 +255,9 @@ importers:
       diff-match-patch:
         specifier: ^1.0.5
         version: 1.0.5
+      jpeg-js:
+        specifier: 0.4.4
+        version: 0.4.4
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -270,6 +273,9 @@ importers:
       undici:
         specifier: ^8.4.1
         version: 8.4.1
+      webp-wasm:
+        specifier: 1.0.6
+        version: 1.0.6
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -5283,6 +5289,9 @@ packages:
   webidl-conversions@7.0.0:
     resolution: {integrity: sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==}
     engines: {node: '>=12'}
+
+  webp-wasm@1.0.6:
+    resolution: {}
 
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
@@ -10765,6 +10774,8 @@ snapshots:
       - utf-8-validate
 
   webidl-conversions@7.0.0: {}
+
+  webp-wasm@1.0.6: {}
 
   whatwg-encoding@3.1.1:
     dependencies:

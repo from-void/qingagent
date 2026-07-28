@@ -4,6 +4,7 @@ import { pmToPlainText } from "@qingagent/pm-schema";
 import { streamText } from "../llm/streamTextCompat.js";
 import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
+  getDerivativeDocument,
   getDerivativeMeta,
   getDocumentsClient,
   getStyleTemplate,
@@ -222,12 +223,17 @@ export async function generateTranslationDerivative(input: {
   abortSignal: AbortSignal;
   onTextDelta: (delta: string) => void | Promise<void>;
 }): Promise<{ generatedAt: string; docVersion: number }> {
-  const brief = await loadTranslationBrief(input.sessionId, input.docId);
+  const [brief, startingDocument] = await Promise.all([
+    loadTranslationBrief(input.sessionId, input.docId),
+    getDerivativeDocument(input.docId),
+  ]);
+  if (!startingDocument) throw new Error("translation target unavailable");
   const steeringTail = buildTranslationSteeringTail(brief);
   const overrides = resolveModelParams(input.requestContext);
   const temperature = overrides.temperature ?? TRANSLATION_TEMPERATURE;
   const topP = overrides.topP;
   const maxTokens = overrides.maxOutputTokens ?? TRANSLATION_MAX_TOKENS;
+  let bufferedBranchText = "";
   const result = await runSideChannel({
     callSite: "translateDerivative",
     requestContext: input.requestContext,
@@ -235,7 +241,10 @@ export async function generateTranslationDerivative(input: {
     abortSignal: input.abortSignal,
     steeringTail,
     streamTextDeltas: true,
-    onTextDelta: async (delta) => input.onTextDelta(delta),
+    // 主分支必须先验真再展示；格式失败时整段缓冲直接丢弃，fallback 从空展示缓冲开始。
+    onTextDelta: async (delta) => {
+      bufferedBranchText += delta;
+    },
     thinking: false,
     temperature,
     topP,
@@ -252,7 +261,18 @@ export async function generateTranslationDerivative(input: {
       maxTokens,
     }),
   });
-  const committed = await commitDerivativeQingml(input.docId, input.sessionId, result.value);
+  if (result.transport === "branch") {
+    await input.onTextDelta(bufferedBranchText || result.value);
+  }
+  const committed = await commitDerivativeQingml(
+    input.docId,
+    input.sessionId,
+    result.value,
+    {
+      expectedDocVersion: startingDocument.docVersion,
+      abortSignal: input.abortSignal,
+    },
+  );
   if (!committed.ok || !committed.generatedAt || committed.docVersion === undefined) {
     throw new Error("translation commit failed");
   }

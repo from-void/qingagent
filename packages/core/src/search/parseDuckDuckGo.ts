@@ -90,10 +90,17 @@ export function parseLiteSerp(html: string, limit = 10): SearchResult[] {
     $("a.result-link").each((_, element) => {
       const anchor = $(element);
       const row = anchor.closest("tr");
-      const snippet =
-        anchor.nextAll(".result-snippet").first().text() ||
-        row.nextAll("tr").find(".result-snippet").first().text() ||
-        anchor.parent().nextAll().find(".result-snippet").first().text();
+      let snippet = row.find(".result-snippet").first().text();
+      if (!snippet) {
+        row.nextAll("tr").each((_, candidate) => {
+          const candidateRow = $(candidate);
+          if (candidateRow.find("a.result-link").length > 0) return false;
+          const candidateSnippet = candidateRow.find(".result-snippet").first().text();
+          if (!candidateSnippet) return;
+          snippet = candidateSnippet;
+          return false;
+        });
+      }
 
       pushResult(results, anchor.text(), toHttpUrl(anchor.attr("href")), snippet, limit);
     });

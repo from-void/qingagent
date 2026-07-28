@@ -137,6 +137,21 @@ describe("read-wall deny v1 与路径解析", () => {
     );
   });
 
+  it.each(["sessionDir", "sandboxBinDir"] as const)(
+    "%s 词法位于 dataDir 但真实路径经符号链接逃逸时拒绝",
+    async (pathKey) => {
+      const options = await fixture();
+      const outside = join(options.effectiveHome!, `outside-${pathKey}`);
+      const link = join(options.dataDir, `outside-link-${pathKey}`);
+      await mkdir(outside, { recursive: true });
+      await symlink(outside, link);
+
+      await expect(
+        resolveReadWallPolicy({ ...options, [pathKey]: join(link, "not-created-yet") }),
+      ).rejects.toThrow(/canonically contained/);
+    },
+  );
+
   it("非法 XDG、相对 env 路径、坏 append-only JSON 与控制字符全部拒绝", async () => {
     const options = await fixture();
     await expect(resolveReadWallPolicy({ ...options, env: { ...options.env, XDG_CONFIG_HOME: "relative" } }))

@@ -158,13 +158,11 @@ function parseFrontmatterBlock(block: string): Record<string, FrontmatterValue> 
     if (!keyMatch) continue;
     const key = keyMatch[1]!;
     let rawValue = (keyMatch[2] ?? "").trim();
-    if (rawValue === ">-" || rawValue === ">" || rawValue === "|") {
-      const parts: string[] = [];
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1]!)) {
-        i += 1;
-        parts.push(lines[i]!.trim());
-      }
-      data[key] = rawValue === "|" ? parts.join("\n") : parts.join(" ");
+    const blockScalar = rawValue.match(/^([>|])([+-])?$/);
+    if (blockScalar) {
+      const parsed = readFrontmatterBlockScalar(lines, i, blockScalar[1] === ">");
+      i = parsed.endIndex;
+      data[key] = applyBlockScalarChomping(parsed.value, blockScalar[2]);
       continue;
     }
     if (rawValue === "" && LIST_FRONTMATTER_KEYS.has(key)) {
@@ -182,6 +180,55 @@ function parseFrontmatterBlock(block: string): Record<string, FrontmatterValue> 
     data[key] = LIST_FRONTMATTER_KEYS.has(key) ? parseStringArray(rawValue) : parseScalar(rawValue);
   }
   return data;
+}
+
+function readFrontmatterBlockScalar(
+  lines: string[],
+  markerIndex: number,
+  folded: boolean,
+): { value: string; endIndex: number } {
+  let indentation: number | null = null;
+  let endIndex = markerIndex;
+  const parts: string[] = [];
+  for (let index = markerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (line.trim() === "") {
+      parts.push("");
+      endIndex = index;
+      continue;
+    }
+    const leading = line.match(/^\s*/)?.[0].length ?? 0;
+    if (indentation === null) {
+      if (leading === 0) break;
+      indentation = leading;
+    }
+    if (leading < indentation) break;
+    parts.push(line.slice(indentation));
+    endIndex = index;
+  }
+  const literal = parts.join("\n");
+  if (!folded) return { value: literal, endIndex };
+  return {
+    value: parts.reduce((value, part, index) => {
+      if (index === 0) return part;
+      const previous = parts[index - 1]!;
+      const preservesLineBreak = previous === ""
+        || part === ""
+        || /^\s/.test(previous)
+        || /^\s/.test(part);
+      return `${value}${preservesLineBreak ? "\n" : " "}${part}`;
+    }, ""),
+    endIndex,
+  };
+}
+
+function applyBlockScalarChomping(
+  value: string,
+  chomping: string | undefined,
+): string {
+  if (chomping === "-") return value.replace(/\n+$/, "");
+  if (chomping === "+") return `${value}\n`;
+  return `${value.replace(/\n+$/, "")}\n`;
 }
 
 function parseScalar(rawValue: string): string | boolean {

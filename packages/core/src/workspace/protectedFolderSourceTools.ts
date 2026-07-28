@@ -57,17 +57,6 @@ export function isFolderSourceVirtualPath(value: unknown): boolean {
   return normalized === "/sources" || normalized.startsWith("/sources/");
 }
 
-function rawPathMentionsFolderSources(value: string): boolean {
-  const slashPath = value.replace(/\\/g, "/");
-  return (
-    slashPath === "sources" ||
-    slashPath.startsWith("sources/") ||
-    slashPath === "/sources" ||
-    slashPath.startsWith("/sources/") ||
-    slashPath.includes("/sources/")
-  );
-}
-
 function isWorkspaceOrSkillsPath(value: string): boolean {
   const normalized = normalizeVirtualPathForDecision(value);
   return (
@@ -80,7 +69,7 @@ function isWorkspaceOrSkillsPath(value: string): boolean {
 
 function shouldRejectGrepPath(rawPath: string | undefined): string | null {
   const path = rawPath ?? ".";
-  if (rawPathMentionsFolderSources(path) || isFolderSourceVirtualPath(path)) {
+  if (isFolderSourceVirtualPath(path)) {
     return FOLDER_SOURCE_DENY_ERROR;
   }
   if (!isWorkspaceOrSkillsPath(path)) {

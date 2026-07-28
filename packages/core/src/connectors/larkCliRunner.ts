@@ -1,6 +1,7 @@
 import { execFile as execFileCallback, spawn as spawnChild } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { extractLarkConfigInitUrl } from "../tools/larkConfigUrl.js";
 import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
 
 export const LARK_CLI_TIMEOUT_MS = 8_000;
@@ -82,6 +83,13 @@ export interface LarkCliRunnerOptions {
   nodeOptions?: string;
   electronAsNode?: boolean;
   exists?: (path: string) => boolean;
+}
+
+export function hasLarkConfigInitUrl(
+  output: string,
+  options: { requireTerminator?: boolean } = {},
+): boolean {
+  return extractLarkConfigInitUrl(output, options) !== null;
 }
 
 interface LarkCliInvocation {
@@ -348,7 +356,10 @@ export class LarkCliRunner {
       };
       child.stdout.on("data", (chunk: Buffer) => {
         stdout = append(stdout, chunk);
-        if (!initialSettled && /https?:\/\//i.test(stdout)) {
+        if (
+          !initialSettled &&
+          hasLarkConfigInitUrl(stdout, { requireTerminator: true })
+        ) {
           initialSettled = true;
           clearTimeout(initialUrlTimeout);
           resolveInitial({ ok: true, stdout: redactLarkCliOutput(stdout), stderr: redactLarkCliOutput(stderr), cliVersion, source });

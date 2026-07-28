@@ -92,6 +92,11 @@ describe("folder source generic workspace tool gate", () => {
     const getSources = () => getSessionFolderSources(sessionId);
     const workspace = await getWorkspace();
     await workspace.filesystem!.writeFile("/workspace/work.txt", "WORKSPACE_TOKEN\n", { recursive: true });
+    await workspace.filesystem!.writeFile(
+      "/workspace/project/sources/lib/hit.txt",
+      "ORDINARY_SOURCES_TOKEN\n",
+      { recursive: true },
+    );
     await workspace.index("/workspace/work.txt", "WORKSPACE_TOKEN\n", { metadata: { path: "/workspace/work.txt" } });
     await workspace.index(`${source.mountPath}/nested/hit.txt`, "ROUND16_GENERIC_GREP_SECRET stale index", {
       metadata: { path: `${source.mountPath}/nested/hit.txt` },
@@ -178,6 +183,14 @@ describe("folder source generic workspace tool gate", () => {
       { pattern: "WORKSPACE_EDITED_TOKEN", path: "/workspace" },
       { workspace } as never,
     );
+    const ordinarySourcesGrep = await tools[WORKSPACE_TOOLS.FILESYSTEM.GREP]?.execute?.(
+      { pattern: "ORDINARY_SOURCES_TOKEN", path: "/workspace/project/sources/lib" },
+      { workspace } as never,
+    );
+    const deniedTraversalAliasGrep = await tools[WORKSPACE_TOOLS.FILESYSTEM.GREP]?.execute?.(
+      { pattern: "ROUND16_GENERIC_GREP_SECRET", path: "/workspace/project/../../sources/source_gate" },
+      { workspace } as never,
+    );
     const deniedWorkspaceSearch = await tools[WORKSPACE_TOOLS.SEARCH.SEARCH]?.execute?.(
       { query: "ROUND16_GENERIC_GREP_SECRET", topK: 5, mode: "bm25" },
       { workspace } as never,
@@ -206,6 +219,9 @@ describe("folder source generic workspace tool gate", () => {
     expect(JSON.stringify(workspaceEdit)).not.toContain("read-only");
     expect(String(workspaceReadAfterEdit)).toContain("WORKSPACE_EDITED_TOKEN");
     expect(String(workspaceGrepSearch)).toContain("WORKSPACE_EDITED_TOKEN");
+    expect(String(ordinarySourcesGrep)).toContain("ORDINARY_SOURCES_TOKEN");
+    expect(deniedTraversalAliasGrep).toMatchObject({ ok: false });
+    expect(JSON.stringify(deniedTraversalAliasGrep)).not.toContain("ROUND16_GENERIC_GREP_SECRET");
     expect(String(deniedWorkspaceSearch)).not.toContain("ROUND16_GENERIC_GREP_SECRET");
     expect(String(deniedWorkspaceSearch)).not.toContain(source.mountPath);
     expect(String(allowedWorkspaceSearch)).toContain("WORKSPACE_TOKEN");

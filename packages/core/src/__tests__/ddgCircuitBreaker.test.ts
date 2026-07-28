@@ -27,23 +27,52 @@ describe("DuckDuckGo 快速熔断", () => {
     __resetSearchProviderHealthForTest();
   });
 
-  it("fetch TimeoutError 触发 ddg 冷却,构建多源时跳过 ddg 且保留 bing,10 分钟后恢复", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new DOMException("timeout", "TimeoutError");
-      }),
-    );
+  it("HTML 端点超时但 Lite 成功时只冷却失败端点，后续直用 Lite", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
+      .mockImplementation(async () => new Response(
+        '<table><tr><td><a class="result-link" href="https://example.com/Healthy">健康结果</a></td></tr>' +
+        '<tr><td class="result-snippet">摘要</td></tr></table>',
+        { headers: { "content-type": "text/html; charset=utf-8" } },
+      ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new DuckDuckGoProvider().search("健康端点", 3)).resolves.toEqual([
+      expect.objectContaining({ url: "https://example.com/Healthy" }),
+    ]);
+    expect(shouldSkipSearchProvider("ddg")).toBe(false);
+
+    await expect(new DuckDuckGoProvider().search("再次搜索", 3)).resolves.toEqual([
+      expect.objectContaining({ url: "https://example.com/Healthy" }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      "https://html.duckduckgo.com/html/",
+      "https://lite.duckduckgo.com/lite/",
+      "https://lite.duckduckgo.com/lite/",
+    ]);
+  });
+
+  it("两个端点均超时时分别冷却，provider 仍可参与并在 10 分钟后探测", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new DOMException("timeout", "TimeoutError");
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     await expect(new DuckDuckGoProvider().search("特斯拉 Q4 财报", 3)).resolves.toEqual([]);
-    expect(shouldSkipSearchProvider("ddg")).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(shouldSkipSearchProvider("ddg")).toBe(false);
 
     const cooledSources = sourceNames(__buildManagedProviderForTest({}));
     expect(cooledSources).toContain("bing");
-    expect(cooledSources).not.toContain("ddg");
+    expect(cooledSources).toContain("ddg");
+
+    await expect(new DuckDuckGoProvider().search("冷却期间", 3)).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
-    expect(shouldSkipSearchProvider("ddg")).toBe(false);
+    await expect(new DuckDuckGoProvider().search("恢复探测", 3)).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     const restoredSources = sourceNames(__buildManagedProviderForTest({}));
     expect(restoredSources).toContain("bing");

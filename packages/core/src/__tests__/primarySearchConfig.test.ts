@@ -21,7 +21,9 @@ vi.mock("@qingagent/db", () => ({
 }));
 
 import {
+  getSearchProviderConfig,
   getPrimarySearchConfig,
+  invalidateManagedSearchConfig,
   invalidatePrimarySearchConfig,
   parsePrimarySearchConfig,
 } from "../search/managedSearch.js";
@@ -69,5 +71,30 @@ describe("parsePrimarySearchConfig — 主搜索配置脏路径", () => {
       enabled: false,
       apiKey: "sk-last-good",
     });
+  });
+});
+
+describe("getSearchProviderConfig — provider 配置缓存", () => {
+  beforeEach(() => {
+    mockAppSettings.state.raw = null;
+    mockAppSettings.state.fail = false;
+    mockAppSettings.getAppSetting.mockClear();
+    invalidateManagedSearchConfig();
+  });
+
+  it("DB 瞬时读取异常时复用上次成功配置", async () => {
+    const lastGood = {
+      searxng: {
+        enabled: true,
+        url: "https://search.example.com/internal/",
+      },
+    };
+    mockAppSettings.state.raw = JSON.stringify(lastGood);
+    await expect(getSearchProviderConfig()).resolves.toEqual(lastGood);
+
+    mockAppSettings.state.fail = true;
+    invalidateManagedSearchConfig();
+
+    await expect(getSearchProviderConfig()).resolves.toEqual(lastGood);
   });
 });

@@ -2,6 +2,7 @@ import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import {
   commitPatches as commitPatchesBridge,
   commitReviewGroups,
+  expandReviewIds,
   ignoreAnnotationGroups,
   insertReviewDismissalSignal,
   updatePatchVerdict,
@@ -107,18 +108,31 @@ export async function* handleReviewCommand(
       }
       const session = await restoreReviewSession(command, context);
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-      if (command.data.reviewBatchIds && command.data.reviewBatchIds.length > 0) {
-        for await (const frame of commitReviewGroups(session, {
-          acceptReviewBatchIds: command.data.reviewBatchIds,
-          keepPendingReviewBatchIds: [],
-        })) {
-          yield frame;
+      const batchPatchIds = expandReviewIds(
+        session,
+        [],
+        command.data.reviewBatchIds ?? [],
+        { command: "commit", skipped: "acceptReviewBatchId" },
+      );
+      for (const id of batchPatchIds) {
+        if (session.patchVerdicts.get(id) !== "accepted") {
+          for await (const frame of updatePatchVerdict(
+            session,
+            id,
+            "accepted",
+          )) {
+            yield frame;
+          }
         }
       }
-      if (command.data.ids.length > 0) {
-        for await (const frame of commitPatchesBridge(session, command.data.ids)) {
-          yield frame;
-        }
+      const commitIds = [...new Set([
+        ...command.data.ids,
+        ...batchPatchIds.filter(
+          (id) => session.patchVerdicts.get(id) === "accepted",
+        ),
+      ])];
+      for await (const frame of commitPatchesBridge(session, commitIds)) {
+        yield frame;
       }
       return;
     }

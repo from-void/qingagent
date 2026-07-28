@@ -48,6 +48,7 @@ export {
   drainSessionPersistence,
   drainSessionPersistenceForSession,
   emitProjectedDocState,
+  expandReviewIds,
   enrichAskUserResumeAnswersWithLabels,
   ensureDraftCandidateDoc,
   ensureWorkingMemorySnapshot,

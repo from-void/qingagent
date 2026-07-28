@@ -12,19 +12,59 @@ function normalizeName(name: string): string {
   return name.trim();
 }
 
+class AllSkillsDisabledSet extends Set<string> {
+  override has(_name: string): boolean {
+    return true;
+  }
+}
+
+let lastValidDisabledSet: Set<string> | null = null;
+
+function cloneAndCacheDisabledSet(disabled: Set<string>): Set<string> {
+  lastValidDisabledSet = new Set(disabled);
+  return new Set(disabled);
+}
+
+function isMissingDisabledFile(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function logReadFallback(error: unknown, usingCache: boolean): void {
+  console.warn("[skills] Failed to read disabled skill state; using safe fallback", {
+    usingCache,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
 export async function readDisabledSet(): Promise<Set<string>> {
   try {
     const raw = await readFile(DISABLED_FILE, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== "string")
+    ) {
+      throw new Error("disabled skill state must be a string array");
+    }
+    return cloneAndCacheDisabledSet(new Set(
       parsed
-        .filter((item): item is string => typeof item === "string")
         .map(normalizeName)
         .filter(Boolean),
-    );
-  } catch {
-    return new Set();
+    ));
+  } catch (error) {
+    if (isMissingDisabledFile(error)) {
+      return cloneAndCacheDisabledSet(new Set());
+    }
+    if (lastValidDisabledSet) {
+      logReadFallback(error, true);
+      return new Set(lastValidDisabledSet);
+    }
+    logReadFallback(error, false);
+    return new AllSkillsDisabledSet();
   }
 }
 
@@ -38,6 +78,7 @@ export async function writeDisabledSet(set: Set<string>): Promise<void> {
     const tmp = `${DISABLED_FILE}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, `${JSON.stringify(names, null, 2)}\n`, "utf8");
     await rename(tmp, DISABLED_FILE);
+    lastValidDisabledSet = new Set(names);
   } catch {
     // Enable/disable state must not make agent startup or turns fail.
   }
@@ -57,6 +98,10 @@ export async function setEnabled(name: string, enabled: boolean): Promise<void> 
   if (!normalized) return;
   const run = writeChain.then(async () => {
     const disabled = await readDisabledSet();
+    if (disabled instanceof AllSkillsDisabledSet) {
+      console.warn("[skills] Refusing to change skill state without a readable baseline");
+      return;
+    }
     if (enabled) disabled.delete(normalized);
     else disabled.add(normalized);
     await writeDisabledSet(disabled);

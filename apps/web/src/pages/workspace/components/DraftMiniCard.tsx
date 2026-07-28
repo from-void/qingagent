@@ -59,8 +59,10 @@ export function DraftMiniCard({
   // done / 历史重开没有直播重建 → 退回 body.excerpt(服务端存的开头预览)。
   const [fullText, setFullText] = useState("");
   useEffect(() => {
-    if (active && body.excerpt) setFullText((prev) => mergeTail(prev, body.excerpt!));
-  }, [active, body.excerpt]);
+    if (active && body.excerpt != null) {
+      setFullText((prev) => mergeDraftExcerpt(prev, body.excerpt!, body.resetExcerpt === true));
+    }
+  }, [active, body.excerpt, body.resetExcerpt]);
 
   // 高频打字机:不再随 chunk「一节一节」整段跳出,而是逐字平滑揭示到 fullText 末尾。
   // rAF 每帧推进,落后越多追越快(gap/10)、最少每帧 1 字 → 稳态下显示略落后并「连续流出」,
@@ -178,4 +180,9 @@ export function mergeTail(buffer: string, tail: string): string {
     if (buffer.endsWith(tail.slice(0, k))) return buffer + tail.slice(k);
   }
   return tail;
+}
+
+/** lane 切换或 winner 全文帧必须替换缓冲；普通同 lane 尾帧才允许重叠续接。 */
+export function mergeDraftExcerpt(buffer: string, excerpt: string, reset: boolean): string {
+  return reset ? excerpt : mergeTail(buffer, excerpt);
 }

@@ -517,6 +517,7 @@ describe("validateBridgeFrame", () => {
         phase: "done" as const,
         charCount: 120,
         excerpt: null,
+        resetExcerpt: true,
         targetLength: 100,
         minLength: 80,
         maxLength: 140,
@@ -607,6 +608,25 @@ describe("validateBridgeFrame", () => {
     expect(() =>
       validateBridgeFrame(toolBodyFrame(body as ToolCallBody)),
     ).toThrow(BridgeFrameValidationError);
+  });
+
+  it("rejects writeDraftCard with a non-boolean resetExcerpt marker", () => {
+    const body: ToolCallBody = {
+      kind: "writeDraftCard",
+      data: {
+        title: "测试稿",
+        phase: "writing",
+        charCount: 10,
+        excerpt: "正文",
+        resetExcerpt: "yes",
+        targetLength: null,
+        minLength: null,
+        maxLength: null,
+        revisionCount: 0,
+        lengthStatus: null,
+      },
+    } as unknown as ToolCallBody;
+    expect(() => validateBridgeFrame(toolBodyFrame(body))).toThrow(BridgeFrameValidationError);
   });
 
   it("未知 ToolCallBody kind fail-closed", () => {

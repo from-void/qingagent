@@ -399,6 +399,9 @@ function checkToolBody(b: ToolCallBody): void {
         }
       }
       if (!nullableString(data.excerpt)) fail("WriteDraftCard.excerpt must be string|null");
+      if (data.resetExcerpt !== undefined && typeof data.resetExcerpt !== "boolean") {
+        fail("WriteDraftCard.resetExcerpt must be a boolean");
+      }
       if (!nullableString(data.lengthStatus)) {
         fail("WriteDraftCard.lengthStatus must be string|null");
       }

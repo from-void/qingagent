@@ -97,7 +97,12 @@ async function runWithContext(tool: unknown, input: Record<string, unknown>, ctx
 function progressEvents(writes: Array<Record<string, unknown>>) {
   return writes
     .filter((w) => w.type === "writedraft-progress")
-    .map((w) => w.progress as { phase: string; charCount: number; excerpt?: string | null });
+    .map((w) => w.progress as {
+      phase: string;
+      charCount: number;
+      excerpt?: string | null;
+      resetExcerpt?: boolean;
+    });
 }
 
 describe("writeDraft 赛马式字数控制", () => {
@@ -311,9 +316,12 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(writingCounts).toContain(40);
     // lane a 完稿(40 字,脱靶)后移交:仍在写的 lane 的进度接续出现,不再卡在 40
     expect(Math.max(...writingCounts)).toBeGreaterThan(40);
+    const handoffEvent = events.find((event) => event.phase === "writing" && event.charCount > 40);
+    expect(handoffEvent?.resetExcerpt).toBe(true);
     // 赢家 c(100 字命中)最终整帧锁定
     expect(events.at(-1)).toMatchObject({ phase: "finalizing", charCount: 100 });
     expect(events.at(-1)?.excerpt).toContain("c".repeat(20));
+    expect(events.at(-1)?.resetExcerpt).toBe(true);
   });
 
   it("流式展示初选只认首个正文 lane,不被先注册的空 lane 锁住", async () => {

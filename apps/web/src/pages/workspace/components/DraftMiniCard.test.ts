@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeTail, targetDescLine, lengthStatusLabel } from "./DraftMiniCard";
+import { mergeDraftExcerpt, mergeTail, targetDescLine, lengthStatusLabel } from "./DraftMiniCard";
 
 describe("mergeTail 流式尾巴重建全文", () => {
   it("空缓冲 → 首个尾巴原样", () => {
@@ -39,6 +39,16 @@ describe("mergeTail 流式尾巴重建全文", () => {
       buf = mergeTail(buf, tail);
     }
     expect(buf).toBe(full);
+  });
+});
+
+describe("mergeDraftExcerpt 展示 lane 边界", () => {
+  it("切换 lane 时即使前后缀碰巧重叠也直接替换,不混入旧 lane", () => {
+    expect(mergeDraftExcerpt("旧赛道结尾共享", "共享新赛道正文", true)).toBe("共享新赛道正文");
+  });
+
+  it("同 lane 普通尾帧仍按重叠续接", () => {
+    expect(mergeDraftExcerpt("同赛道内容共享", "共享继续写", false)).toBe("同赛道内容共享继续写");
   });
 });
 

@@ -443,6 +443,7 @@ export function createWriteDraftTool(opts: {
         revisionCount: number,
         force = false,
         fullExcerpt = false,
+        resetExcerpt = false,
       ) => {
         const text = aiIrStreamPreviewFromMarkup(rawSoFar);
         const charCount = countVisibleChars(text);
@@ -459,6 +460,7 @@ export function createWriteDraftTool(opts: {
           phase,
           charCount,
           excerpt: phase === "failed" ? null : fullExcerpt ? text : tailExcerpt(text, 220),
+          resetExcerpt,
           targetLength: lengthSpec?.target ?? null,
           minLength: lengthSpec?.min ?? null,
           maxLength: lengthSpec?.max ?? null,
@@ -477,13 +479,13 @@ export function createWriteDraftTool(opts: {
         if (displayLaneKey !== laneKey) return;
         const next = selectAliveLeadLane();
         displayLaneKey = next?.key ?? null;
-        if (next) void emitProgress("writing", next.raw, 0, true);
+        if (next) void emitProgress("writing", next.raw, 0, true, false, true);
       };
       const emitWinnerFrame = (winnerLaneKey: number, raw: string, revisionCount: number) => {
         const previousDisplay = displayLaneKey;
         updateLaneRaw(winnerLaneKey, raw);
         displayLaneKey = winnerLaneKey;
-        return emitProgress("finalizing", raw, revisionCount, previousDisplay !== winnerLaneKey, true);
+        return emitProgress("finalizing", raw, revisionCount, previousDisplay !== winnerLaneKey, true, true);
       };
       const emitFailureFrame = () => {
         const displayLane = currentDisplayLane();
@@ -501,7 +503,7 @@ export function createWriteDraftTool(opts: {
         const next = selectAliveLeadLane();
         if (!next) return;
         displayLaneKey = next.key;
-        void emitProgress("writing", next.raw, 0, true);
+        void emitProgress("writing", next.raw, 0, true, false, true);
       };
 
       // ---- 赛马式生成:固定一轮 4 路并发,不因字数脱靶加赛;全废快速返回让 agent 重调工具。----

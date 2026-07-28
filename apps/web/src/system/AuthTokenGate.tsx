@@ -27,6 +27,7 @@ export function AuthTokenGate({ forceOpen = false }: { forceOpen?: boolean } = {
   }, [forceOpen]);
 
   const close = () => {
+    if (submitting) return;
     if (forceOpen) {
       setOpen(false);
       setToken("");
@@ -67,7 +68,7 @@ export function AuthTokenGate({ forceOpen = false }: { forceOpen?: boolean } = {
   };
 
   return (
-    <Modal open={open} title="需要访问令牌" onClose={close}>
+    <Modal open={open} title="需要访问令牌" onClose={submitting ? undefined : close}>
       {open ? (
         <form
           data-wf="AuthTokenGate"

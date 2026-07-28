@@ -130,6 +130,7 @@ import {
 } from "./promiseContinuation.js";
 
 const logger = mastra.getLogger();
+const AGENT_TURN_FAILED_MESSAGE = "本轮处理失败，请稍后重试。";
 
 export interface RunAgentTurnControl {
   /** 当前轮由新消息抢占旧轮而来；只用于注入轮次边界，不改变 FIFO。 */
@@ -941,7 +942,7 @@ export async function* runAgentTurn(
       break;
     }
   } catch (err) {
-    const reason =
+    const internalReason =
       err instanceof Error ? err.message : "Unknown error during agent turn";
     if (isUserAbortSignal(abortController.signal)) {
       turnWasUserAborted = true;
@@ -949,24 +950,32 @@ export async function* runAgentTurn(
       logger.info("Agent turn aborted by user; suppressing failure frame", {
         sessionId: state.sessionId,
         streamId,
-        error: reason,
+        error: internalReason,
       });
     } else {
       turnOutcome = "error";
       logger.error("Agent turn failed", {
         sessionId: state.sessionId,
         streamId,
-        error: reason,
+        error: internalReason,
         stack: err instanceof Error ? err.stack : undefined,
       });
 
-      yield {
-        kind: "stream",
-        data: {
-          kind: "draftingFailed",
-          data: { streamId, reason, retriable: true },
-        },
-      };
+      const agentMessage = state.chatHistory.find(
+        (message) => message.id === agentMessageId,
+      );
+      if (agentMessage?.parts.length === 0) {
+        yield appendVisibleStreamErrorText(
+          state,
+          agentMessageId,
+          AGENT_TURN_FAILED_MESSAGE,
+        );
+        state.messages.push({
+          role: "assistant",
+          content: AGENT_TURN_FAILED_MESSAGE,
+        });
+      }
+      yield draftingFailedFrame(streamId, AGENT_TURN_FAILED_MESSAGE);
 
       yield* syncContentAndProjectDocState(state, "agent_turn_failed");
     }

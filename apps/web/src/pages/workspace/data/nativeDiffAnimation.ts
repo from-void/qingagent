@@ -248,6 +248,7 @@ export interface NativeConcurrentState {
   chunkSize: number;
   lastBatchSize: number;
   startJitter: boolean;
+  deadlineDrainFramesRemaining: number | null;
 }
 
 export interface CreateNativeConcurrentStateOptions {
@@ -511,8 +512,11 @@ export function createNativeConcurrentState({
     startJitter,
     chunkSize: stateConfig.chunkSize,
     lastBatchSize: 1,
+    deadlineDrainFramesRemaining: null,
   };
 }
+
+const MIN_DEADLINE_DRAIN_FRAMES = 3;
 
 export function advanceNativeConcurrentState(
   state: NativeConcurrentState,
@@ -524,6 +528,10 @@ export function advanceNativeConcurrentState(
   if (next.phase === "done") return { state: next, steps: [] };
 
   const safeDtMs = Math.max(0, dtMs);
+  if (next.deadlineDrainFramesRemaining !== null) {
+    return advanceNativeDeadlineDrainFrame(next, safeDtMs);
+  }
+
   const isBootstrapTick = next.tick === 0;
   const accumulatedMs = isBootstrapTick
     ? safeDtMs
@@ -535,63 +543,122 @@ export function advanceNativeConcurrentState(
     tick: next.tick + 1,
   };
 
-  const steps: NativeConcurrentStep[] = [];
+  if (next.elapsedMs >= next.maxDurationMs) {
+    return startNativeDeadlineDrain(next);
+  }
+
   const dueTicks = isBootstrapTick
     ? Math.max(1, Math.floor(next.stepAccumulatorMs / next.stepDelayMs))
     : Math.floor(next.stepAccumulatorMs / next.stepDelayMs);
-  for (let index = 0; index < dueTicks && next.phase !== "done"; index += 1) {
-    next = {
-      ...next,
-      stepAccumulatorMs: next.stepAccumulatorMs - next.stepDelayMs,
-    };
-    const advanced = advanceNativeConcurrentTick(next);
-    next = advanced.state;
-    steps.push(...advanced.steps);
+  if (dueTicks <= 0) {
+    return { state: next, steps: [] };
   }
 
-  if (next.elapsedMs >= next.maxDurationMs && next.phase !== "done") {
-    const drained = drainNativeConcurrentStateAtDeadline(next);
-    next = drained.state;
-    steps.push(...drained.steps);
-  }
-
-  return { state: next, steps };
+  const remainingUnits = remainingNativeConcurrentUnits(next);
+  const remainingDurationMs = Math.max(1, next.maxDurationMs - next.elapsedMs);
+  const observedFrameMs = Math.max(next.stepDelayMs, safeDtMs);
+  const budgetedFrames = Math.max(
+    remainingUnits > next.chunkSize ? MIN_DEADLINE_DRAIN_FRAMES : 1,
+    Math.ceil(remainingDurationMs / observedFrameMs),
+  );
+  const frameUnitBudget = Math.max(
+    next.chunkSize,
+    Math.ceil(remainingUnits / budgetedFrames),
+  );
+  next = {
+    ...next,
+    // 帧率下降时用更大的单帧批次追赶预算，但一个 rAF 仍只提交一次事务。
+    stepAccumulatorMs: Math.max(
+      0,
+      next.stepAccumulatorMs - dueTicks * next.stepDelayMs,
+    ),
+    chunkSize: frameUnitBudget,
+  };
+  return advanceNativeConcurrentTick(next, frameUnitBudget);
 }
 
 function advanceNativeConcurrentTick(
   state: NativeConcurrentState,
+  frameUnitBudget = Number.POSITIVE_INFINITY,
 ): NativeConcurrentAdvanceResult {
   const claimed = claimNativeTasks(state);
-  const advanced = advanceNativeAgents(claimed);
+  const advanced = advanceNativeAgents(claimed, frameUnitBudget);
   return {
     state: startNextNativePhaseIfSettled(advanced.state),
     steps: advanced.steps,
   };
 }
 
-function drainNativeConcurrentStateAtDeadline(
+function startNativeDeadlineDrain(
   state: NativeConcurrentState,
 ): NativeConcurrentAdvanceResult {
-  let next: NativeConcurrentState = {
+  return advanceNativeDeadlineDrainFrame({
     ...state,
-    // 到达时限后仍必须通过正常 step 交付剩余内容，不能直接跳到终态文档。
-    chunkSize: Number.MAX_SAFE_INTEGER,
+    // deadline 只切换到逐帧加速态，不能在当前事务里 drain 完余量。
+    deadlineDrainFramesRemaining: MIN_DEADLINE_DRAIN_FRAMES,
+    startJitter: false,
+    agents: state.agents.map((agent) => ({ ...agent, startDelayTicks: 0 })),
+    stepAccumulatorMs: 0,
+  }, 0);
+}
+
+function advanceNativeDeadlineDrainFrame(
+  state: NativeConcurrentState,
+  dtMs: number,
+): NativeConcurrentAdvanceResult {
+  const framesRemaining = Math.max(
+    1,
+    state.deadlineDrainFramesRemaining ?? MIN_DEADLINE_DRAIN_FRAMES,
+  );
+  const remainingUnits = remainingNativeConcurrentUnits(state);
+  const frameUnitBudget = Math.max(1, Math.ceil(remainingUnits / framesRemaining));
+  const accelerated: NativeConcurrentState = {
+    ...state,
+    elapsedMs: state.elapsedMs + dtMs,
+    tick: state.tick + 1,
+    stepAccumulatorMs: 0,
+    chunkSize: Math.max(state.chunkSize, frameUnitBudget),
     startJitter: false,
     agents: state.agents.map((agent) => ({ ...agent, startDelayTicks: 0 })),
   };
-  const steps: NativeConcurrentStep[] = [];
-  const maxDrainTicks = state.tasks.reduce(
-    (total, task) => total + task.operations.length + 1,
-    state.tasks.length + 4,
+  const advanced = advanceNativeConcurrentTick(accelerated, frameUnitBudget);
+  if (advanced.state.phase === "done") return advanced;
+
+  return {
+    state: {
+      ...advanced.state,
+      deadlineDrainFramesRemaining: Math.max(1, framesRemaining - 1),
+    },
+    steps: advanced.steps,
+  };
+}
+
+function remainingNativeConcurrentUnits(state: NativeConcurrentState): number {
+  const assignedAgentByTask = new Map(
+    state.agents.flatMap((agent) =>
+      agent.taskId ? [[agent.taskId, agent] as const] : []),
   );
 
-  for (let index = 0; index < maxDrainTicks && next.phase !== "done"; index += 1) {
-    const advanced = advanceNativeConcurrentTick(next);
-    next = advanced.state;
-    steps.push(...advanced.steps);
-  }
-
-  return { state: next, steps };
+  return state.tasks.reduce((total, task) => {
+    if (state.completedTaskIds.has(task.id)) return total;
+    const agent = assignedAgentByTask.get(task.id);
+    return total + task.operations.reduce((taskTotal, operation, operationIndex) => {
+      if (agent && operationIndex < agent.operationIndex) return taskTotal;
+      const consumed = agent && operationIndex === agent.operationIndex
+        ? agent.charIndex
+        : 0;
+      if (operation.kind === "insertText") {
+        return taskTotal + Math.max(
+          0,
+          nativeOperationGraphemes(operation).length - consumed,
+        );
+      }
+      if (operation.kind === "deleteText") {
+        return taskTotal + Math.max(0, operation.to - operation.from - consumed);
+      }
+      return taskTotal;
+    }, 0);
+  }, 0);
 }
 
 export function completeNativeConcurrentState(
@@ -782,20 +849,27 @@ function isTableCellTask(task: NativeConcurrentTask): boolean {
 
 function advanceNativeAgents(
   state: NativeConcurrentState,
+  frameUnitBudget = Number.POSITIVE_INFINITY,
 ): NativeConcurrentAdvanceResult {
   const taskById = new Map(state.tasks.map((task) => [task.id, task]));
   const completedTaskIds = new Set(state.completedTaskIds);
   const steps: NativeConcurrentStep[] = [];
   let lastBatchSize = state.lastBatchSize;
+  let remainingFrameUnits = frameUnitBudget;
 
   const agents = state.agents.map((agent) => {
+    if (remainingFrameUnits <= 0) return agent;
     const advanced = advanceNativeAgentForTick(
-      state,
+      {
+        ...state,
+        chunkSize: Math.min(state.chunkSize, remainingFrameUnits),
+      },
       agent,
       taskById,
       completedTaskIds,
       steps,
     );
+    remainingFrameUnits -= advanced.batchSize;
     lastBatchSize = Math.max(lastBatchSize, advanced.batchSize);
     return advanced.agent;
   });

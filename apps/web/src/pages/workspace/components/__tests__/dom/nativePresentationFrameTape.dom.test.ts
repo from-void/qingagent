@@ -463,6 +463,67 @@ describe("nativePresentationFrameTape", () => {
     }
   });
 
+  it("deadline 余量逐帧提交，终态前保留多次可见绘制机会", () => {
+    const text = "逐帧可见推进".repeat(50);
+    const finalText = `表头${text}`;
+    const run: NativePresentationRun = {
+      id: 47,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections: [{ kind: "table", head: ["表头"], rows: [[text]] }],
+    };
+    let scheduler = createNativeConcurrentState({
+      run,
+      instructions: buildNativeDiffInstructions(run),
+      agentCount: 1,
+      stepDelayMs: 48,
+      chunkSize: 1,
+      maxDurationMs: 1_000,
+      startJitter: false,
+    });
+    const editor = createEditor(
+      viewSectionsToHtml(buildNativePresentationSeedSections(run)),
+    );
+    const runtime = createRuntime();
+    const dispatch = vi.spyOn(editor.view, "dispatch");
+    const visibleFrames: string[] = [];
+
+    try {
+      let dtMs = 1_000;
+      while (scheduler.phase !== "done") {
+        const advanced = advanceNativeConcurrentState(scheduler, dtMs);
+        scheduler = advanced.state;
+        dtMs = 16;
+        if (advanced.steps.length === 0) continue;
+
+        runtime.charEnters.length = 0;
+        dispatch.mockClear();
+        applyNativeConcurrentFrame(editor, advanced.steps, runtime);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        visibleFrames.push(editor.state.doc.textContent);
+      }
+
+      expect(visibleFrames.length).toBeGreaterThanOrEqual(3);
+      expect(visibleFrames.at(-1)).toBe(finalText);
+      expect(
+        visibleFrames
+          .slice(0, -1)
+          .every((value) => value.length < finalText.length),
+      ).toBe(true);
+      expect(
+        visibleFrames.every(
+          (value, index) =>
+            index === 0 || value.length > visibleFrames[index - 1]!.length,
+        ),
+      ).toBe(true);
+    } finally {
+      dispatch.mockRestore();
+      editor.destroy();
+    }
+  });
+
   it("表格坐标失配在开播前判为不可解析", () => {
     const run: NativePresentationRun = {
       id: 46,

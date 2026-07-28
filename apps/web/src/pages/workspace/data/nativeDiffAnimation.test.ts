@@ -422,7 +422,7 @@ describe("native PM presentation animation", () => {
     expect(chunks.join("")).toBe(text);
   });
 
-  it("到达 deadline 时通过 step 发出剩余表格内容，不以零步骤跳终态", () => {
+  it("到达 deadline 时把剩余内容分成多个帧批次，不在一次 advance 中跳终态", () => {
     const text = "截止时仍须完整发出".repeat(30);
     const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
     const run: NativePresentationRun = {
@@ -444,13 +444,20 @@ describe("native PM presentation animation", () => {
       startJitter: false,
     });
 
-    const advanced = advanceNativeConcurrentState(state, 1_000);
-    const emitted = advanced.steps.flatMap((step) =>
-      step.kind === "insertText" ? [step.text] : []).join("");
+    const frames: string[] = [];
+    let next = advanceNativeConcurrentState(state, 1_000);
+    while (next.state.phase !== "done") {
+      frames.push(next.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []).join(""));
+      next = advanceNativeConcurrentState(next.state, 16);
+    }
+    frames.push(next.steps.flatMap((step) =>
+      step.kind === "insertText" ? [step.text] : []).join(""));
 
-    expect(advanced.state.phase).toBe("done");
-    expect(advanced.steps.length).toBeGreaterThan(0);
-    expect(emitted).toBe(text);
+    expect(frames.length).toBeGreaterThanOrEqual(3);
+    expect(frames.every((frame) => frame.length > 0)).toBe(true);
+    expect(frames.some((frame) => Array.from(frame).length > 1)).toBe(true);
+    expect(frames.join("")).toBe(text);
   });
 
   it("短 cell 也会在同一拍复用剩余 chunk，阈值内多格表不超时跳终态", () => {

@@ -6,6 +6,7 @@ import {
   readRevealPresentationConfig,
   resetRevealPresentationConfigForTest,
   setRevealPresentationConfig,
+  subscribeRevealPresentationConfig,
   writeRevealPresentationConfig,
   type RevealPresentationConfigStorage,
 } from "./revealPresentationConfig";
@@ -32,6 +33,20 @@ describe("revealPresentationConfig", () => {
     );
 
     storage.setItem(REVEAL_PRESENTATION_CONFIG_STORAGE_KEY, "{bad json");
+    expect(readRevealPresentationConfig(storage)).toEqual(
+      DEFAULT_REVEAL_PRESENTATION_CONFIG,
+    );
+  });
+
+  it("falls back to defaults when storage read throws", () => {
+    const storage: RevealPresentationConfigStorage = {
+      getItem: () => {
+        throw new Error("storage unavailable");
+      },
+      setItem: () => {},
+      removeItem: () => {},
+    };
+
     expect(readRevealPresentationConfig(storage)).toEqual(
       DEFAULT_REVEAL_PRESENTATION_CONFIG,
     );
@@ -97,5 +112,31 @@ describe("revealPresentationConfig", () => {
     expect(next.glow).toBe(false);
     expect(getRevealPresentationConfig()).toEqual(next);
     expect(readRevealPresentationConfig(storage)).toEqual(next);
+  });
+
+  it("keeps runtime state and subscribers updated when storage write throws", () => {
+    const storage: RevealPresentationConfigStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("storage unavailable");
+      },
+      removeItem: () => {},
+    };
+    resetRevealPresentationConfigForTest(DEFAULT_REVEAL_PRESENTATION_CONFIG, null);
+    const observed: number[] = [];
+    const unsubscribe = subscribeRevealPresentationConfig((config) => {
+      observed.push(config.concurrency);
+    });
+    try {
+      let next: ReturnType<typeof setRevealPresentationConfig> | undefined;
+      expect(() => {
+        next = setRevealPresentationConfig({ concurrency: 4 }, storage);
+      }).not.toThrow();
+      expect(next?.concurrency).toBe(4);
+      expect(getRevealPresentationConfig().concurrency).toBe(4);
+      expect(observed).toEqual([DEFAULT_REVEAL_PRESENTATION_CONFIG.concurrency, 4]);
+    } finally {
+      unsubscribe();
+    }
   });
 });

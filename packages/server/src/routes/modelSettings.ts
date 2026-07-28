@@ -387,7 +387,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
           balances: [],
         });
       }
-      const res = await fetch("https://api.deepseek.com/user/balance", {
+      const res = await modelFetch("https://api.deepseek.com/user/balance", {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });

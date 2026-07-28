@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { DOMParser } from "@xmldom/xmldom";
+import { describe, expect, it, vi } from "vitest";
 import { estimateTextWidth, lintSvg } from "../browser/svgQualityLint.js";
 
 const size = { width: 800, height: 450 };
@@ -81,8 +82,8 @@ describe("lintSvg", () => {
   it("defs 中未绘制矩形不得覆盖实际米黄背景判断", () => {
     const issues = lintSvg(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
-        <defs><rect x="0" y="0" width="800" height="450" fill="#2f5d62"/></defs>
         <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+        <defs><rect x="0" y="0" width="800" height="450" fill="#2f5d62"/></defs>
         <text x="80" y="80" font-size="18" fill="#ffffff">米黄底白字</text>
       </svg>`,
       size,
@@ -105,21 +106,49 @@ describe("lintSvg", () => {
   });
 
   it("大元素集合只需一次绘制顺序扫描即可完成对比度检查", () => {
+    const originalParseFromString = DOMParser.prototype.parseFromString;
+    let rootChildCount = 0;
+    let rootChildReads = 0;
+    const parseSpy = vi
+      .spyOn(DOMParser.prototype, "parseFromString")
+      .mockImplementation(function (source, mimeType) {
+        const document = originalParseFromString.call(this, source, mimeType);
+        const childNodes = document.documentElement.childNodes;
+        rootChildCount = childNodes.length;
+        const originalItem = childNodes.item.bind(childNodes);
+        vi.spyOn(childNodes, "item").mockImplementation((index) => {
+          rootChildReads++;
+          return originalItem(index);
+        });
+        return document;
+      });
     const shapes = Array.from(
       { length: 2_500 },
       (_, index) =>
         `<rect x="${index % 800}" y="${index % 450}" width="1" height="1" fill="#ffffff"/>`,
     ).join("");
-    const issues = lintSvg(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
-        ${shapes}
-        <rect x="48" y="48" width="320" height="180" fill="#2f5d62"/>
-        <text x="72" y="100" font-size="18" fill="#ffffff">高对比文字</text>
-      </svg>`,
-      size,
-    );
+    const texts = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `<text x="72" y="${80 + index * 28}" font-size="18" fill="#ffffff">高对比文字${index}</text>`,
+    ).join("");
 
-    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+    try {
+      const issues = lintSvg(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+          ${shapes}
+          <rect x="48" y="48" width="320" height="360" fill="#2f5d62"/>
+          ${texts}
+        </svg>`,
+        size,
+      );
+
+      expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+      // 根节点会被文本收集扫描一次；其余仅允许预计算绘制顺序时再扫描一次。
+      expect(rootChildReads).toBe(rootChildCount * 2);
+    } finally {
+      parseSpy.mockRestore();
+    }
   });
 
   it("干净网格 SVG 零违规", () => {

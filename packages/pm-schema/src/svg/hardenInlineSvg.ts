@@ -81,11 +81,19 @@ export function hardenInlineSvg(raw: string, options: { maxBytes?: number } = {}
         }
         if (attrName === "style" && !isSafeStyleText(value)) {
           element.removeAttribute(attr.name);
+          continue;
         }
+        const flattened = flattenAdaptiveSvgColors(attr.value);
+        if (flattened !== attr.value) element.setAttribute(attr.name, flattened);
       }
 
-      if (name === "style" && !isSafeStyleText(normalizeCssEscapes(element.textContent ?? ""))) {
-        element.textContent = "";
+      if (name === "style") {
+        const styleText = element.textContent ?? "";
+        if (!isSafeStyleText(normalizeCssEscapes(styleText))) element.textContent = "";
+        else {
+          const normalizedStyle = flattenAdaptiveSvgColors(dropColorSchemeMediaBlocks(styleText));
+          if (normalizedStyle !== styleText) element.textContent = normalizedStyle;
+        }
       }
       for (let index = element.childNodes.length - 1; index >= 0; index -= 1) {
         const child = element.childNodes.item(index);
@@ -97,6 +105,68 @@ export function hardenInlineSvg(raw: string, options: { maxBytes?: number } = {}
     return new XMLSerializer().serializeToString(root);
   } catch {
     return null;
+  }
+}
+
+/**
+ * 把随查看者主题变脸的自适应颜色压成浅色一版。
+ *
+ * draw.io 8.x 导出 SVG 时会给每个形状写 `style="fill: light-dark(浅色, 深色)"`
+ * （深色由 getInverseColor 反相算出），内联 style 又盖过 fill 属性里的浅色。
+ * 一旦查看端的 color-scheme 落到 dark，同一张图在文档里就渲染成几乎全黑的方块
+ * （用户真机反馈：编辑器里是浅暖色，退出后开始/结束变成两个黑块）。
+ * 我们的文档面是恒定纸墨浅色，缓存进文档的 SVG 必须与查看者主题无关，
+ * 因此统一取 light-dark 的浅色分支，并丢掉 dark 配色的媒体查询覆盖。
+ */
+export function flattenAdaptiveSvgColors(value: string): string {
+  const index = value.search(/light-dark\s*\(/i);
+  if (index === -1) return value;
+  const openParen = value.indexOf("(", index);
+  let depth = 0;
+  let end = -1;
+  let separator = -1;
+  for (let cursor = openParen; cursor < value.length; cursor += 1) {
+    const character = value[cursor];
+    if (character === "(") depth += 1;
+    else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        end = cursor;
+        break;
+      }
+    } else if (character === "," && depth === 1 && separator === -1) separator = cursor;
+  }
+  // 括号不闭合属于畸形表达式，原样保留交给后续安全检查处置。
+  if (end === -1) return value;
+  const light = value.slice(openParen + 1, separator === -1 ? end : separator).trim();
+  return flattenAdaptiveSvgColors(`${value.slice(0, index)}${light}${value.slice(end + 1)}`);
+}
+
+/** 丢掉 `@media (prefers-color-scheme: ...)` 整块，内联缓存不跟随查看者主题变色。 */
+export function dropColorSchemeMediaBlocks(css: string): string {
+  let result = "";
+  let cursor = 0;
+  for (;;) {
+    const at = css.toLowerCase().indexOf("@media", cursor);
+    if (at === -1) return result + css.slice(cursor);
+    const braceStart = css.indexOf("{", at);
+    if (braceStart === -1) return result + css.slice(cursor);
+    const prelude = css.slice(at, braceStart).toLowerCase();
+    let depth = 0;
+    let braceEnd = -1;
+    for (let index = braceStart; index < css.length; index += 1) {
+      if (css[index] === "{") depth += 1;
+      else if (css[index] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          braceEnd = index;
+          break;
+        }
+      }
+    }
+    if (braceEnd === -1) return result + css.slice(cursor);
+    result += css.slice(cursor, prelude.includes("prefers-color-scheme") ? at : braceEnd + 1);
+    cursor = braceEnd + 1;
   }
 }
 

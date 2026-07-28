@@ -282,8 +282,6 @@ function validateMxGraphModel(model: XmlElement): void {
   if (model.tagName !== "mxGraphModel") throw new Error("diagram 内容必须是 mxGraphModel");
   let elementCount = 0;
   let cellCount = 0;
-  let hasRootCell = false;
-  let hasLayerCell = false;
   walkElements(model, (element, depth) => {
     elementCount += 1;
     if (elementCount > DRAWIO_MAX_ELEMENTS) throw new Error("drawio XML 元素过多");
@@ -291,14 +289,25 @@ function validateMxGraphModel(model: XmlElement): void {
     if (element.tagName === "mxCell") {
       cellCount += 1;
       if (cellCount > DRAWIO_MAX_CELLS) throw new Error("drawio XML 单元格过多");
-      const id = element.getAttribute("id");
-      if (id === "0") hasRootCell = true;
-      if (id === "1" && element.getAttribute("parent") === "0") hasLayerCell = true;
     }
   });
   const root = directChildren(model, "root")[0];
   if (!root) throw new Error("mxGraphModel 缺少 root");
-  if (!hasRootCell || !hasLayerCell) throw new Error("mxGraphModel 必须包含 id=0 根单元与 parent=0 的 id=1 图层");
+  // 只按结构判定根单元与图层，不写死 id=0/1：draw.io「复制页面」会用新建 mxGraphModel
+  // 的 `<guid>-0` / `<guid>-1` 前缀 id 重建整页，写死字面量会把合法的多页文档判为非法，
+  // 进而让保存链路整条失败（实测表现为副本页建出来后编辑器再也存不进去）。
+  const cells = directChildren(root, "mxCell");
+  const rootCell = cells.find((cell) => {
+    const parent = cell.getAttribute("parent");
+    return parent === null || parent === "";
+  });
+  const rootCellId = rootCell?.getAttribute("id") ?? "";
+  if (!rootCell || rootCellId === "") {
+    throw new Error("mxGraphModel 缺少根单元（root 下需有一个不带 parent 且带 id 的 mxCell）");
+  }
+  if (!cells.some((cell) => cell !== rootCell && cell.getAttribute("parent") === rootCellId)) {
+    throw new Error("mxGraphModel 缺少挂在根单元下的图层");
+  }
 }
 
 function walkElements(

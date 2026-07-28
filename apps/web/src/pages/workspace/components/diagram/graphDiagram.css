@@ -10,6 +10,9 @@
   --graph-cluster-stroke: #cdbfa3;
   /* 连线圆点与其命中盒统一悬在元素外侧的距离:不骑边框,也不与四角 resize 方块重叠。 */
   --graph-handle-offset: 11px;
+  /* 命中盒边长必须 ≥ offset*2:命中盒以锚点为中心,只有铺满 offset 这段距离才能紧贴
+     节点边框。留空档的话鼠标从节点走向圆点途中会同时脱离两者,hover 当场丢失。 */
+  --graph-handle-hit: 22px;
   /* 选中包围盒(以及挂在同一圈上的 resize 四角把手)相对元素边框外移的距离。 */
   --graph-select-inset: 3px;
 }
@@ -324,8 +327,8 @@
 .graph-diagram .react-flow__handle,
 .graph-diagram-editor .react-flow__handle {
   z-index: 7;
-  width: 16px;
-  height: 16px;
+  width: var(--graph-handle-hit);
+  height: var(--graph-handle-hit);
   border: 0;
   background: transparent;
   opacity: 0;
@@ -429,9 +432,16 @@
 
 .graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-handle-dot,
 .graph-diagram-canvas--editor .react-flow__node.is-selected .graph-diagram-handle-dot,
-.graph-diagram-canvas--editor .react-flow__node.selected .graph-diagram-handle-dot {
+.graph-diagram-canvas--editor .react-flow__node.selected .graph-diagram-handle-dot,
+.graph-diagram-canvas--editor .graph-diagram-node-shell[data-handle-zone="active"] .graph-diagram-handle-dot {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* 带宽限期的悬停区(节点 + 四个外挂把手)激活时,把手一直可点:纯 :hover 判定在
+   指针离开节点包围盒的那一刻就会收走命中能力,导致圆点永远按不下去。 */
+.graph-diagram-canvas--editor .graph-diagram-node-shell[data-handle-zone="active"] .react-flow__handle {
+  pointer-events: auto;
 }
 
 .graph-diagram-handle-slot[data-handle-state="plus"] .graph-diagram-handle-dot,

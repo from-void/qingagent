@@ -337,6 +337,12 @@ const NODE_SHAPE_OPTIONS: Array<{ shape: FlowNodeShape; label: string }> = [
 ];
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_CANVAS_FRAME: CanvasFrame = { width: 0, height: 0, left: 0, top: 0 };
+/**
+ * 鼠标离开"节点 + 把手"外扩区后仍保留把手的宽限时长。圆点悬在包围盒外,
+ * 指针在两者之间不可避免要掠过一小段空白;没有宽限期,把手就会在半路收起,
+ * 用户永远按不到它(真机反馈"圆点够不着")。
+ */
+export const GRAPH_HANDLE_ZONE_GRACE_MS = 220;
 const GRAPH_HANDLES: Array<{ id: GraphHandleId; position: Position }> = [
   { id: "t", position: Position.Top },
   { id: "r", position: Position.Right },
@@ -410,14 +416,35 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   const blurArmedRef = useRef(false);
   const handlePointerRef = useRef<{ id: GraphHandleId; x: number; y: number; moved: boolean } | null>(null);
   const handlePreviewTimerRef = useRef<number | null>(null);
+  const handleZoneTimerRef = useRef<number | null>(null);
   const [handleHover, setHandleHover] = useState<{ id: GraphHandleId; phase: "plus" | "preview" } | null>(null);
+  // 圆点挂在节点包围盒之外:只靠 :hover 判定,鼠标从节点走向圆点的途中会先离开节点、
+  // 把手当场消失,根本按不下去(用户真机反馈"够不着")。这里用一段带宽限期的
+  // JS 悬停态覆盖整个"节点 + 四个把手"的外扩区,途中掉一帧也不会收起把手。
+  const [handleZoneActive, setHandleZoneActive] = useState(false);
 
   const ghostPreviewChangeRef = useRef(data.onGhostPreviewChange);
   ghostPreviewChangeRef.current = data.onGhostPreviewChange;
   // 连线进行中:把手只当连线落点,不再触发快速新增的加号/幽灵(拖线经过目标节点会误弹)。
   const connectionInProgress = useStore((state) => state.connection.inProgress);
 
+  const enterHandleZone = () => {
+    if (handleZoneTimerRef.current !== null) {
+      window.clearTimeout(handleZoneTimerRef.current);
+      handleZoneTimerRef.current = null;
+    }
+    setHandleZoneActive(true);
+  };
+  const leaveHandleZone = () => {
+    if (handleZoneTimerRef.current !== null) window.clearTimeout(handleZoneTimerRef.current);
+    handleZoneTimerRef.current = window.setTimeout(() => {
+      handleZoneTimerRef.current = null;
+      setHandleZoneActive(false);
+    }, GRAPH_HANDLE_ZONE_GRACE_MS);
+  };
+
   useEffect(() => () => {
+    if (handleZoneTimerRef.current !== null) window.clearTimeout(handleZoneTimerRef.current);
     if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
     // 卸载时兜底收回"幽灵预览活跃"信号,避免工具栏被永久顶远。
     ghostPreviewChangeRef.current?.(false);
@@ -538,6 +565,9 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
       data-mermaid-shape={data.rawShape ?? undefined}
       data-node-width={data.width}
       data-node-height={data.height}
+      data-handle-zone={handleZoneActive ? "active" : undefined}
+      onMouseEnter={enterHandleZone}
+      onMouseLeave={leaveHandleZone}
       onClickCapture={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.detail >= 2) requestRename(event);
       }}
@@ -620,6 +650,8 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
           key={handle.id}
           className={`graph-diagram-handle-slot graph-diagram-handle-slot--${handle.id}`}
           data-handle-state={handleHover?.id === handle.id ? handleHover.phase : "dot"}
+          onMouseEnter={enterHandleZone}
+          onMouseLeave={leaveHandleZone}
         >
           <span
             className={`graph-diagram-handle-dot graph-diagram-handle-dot--${handle.id}`}

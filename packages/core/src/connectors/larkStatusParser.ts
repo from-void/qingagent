@@ -93,6 +93,15 @@ export function parseLarkConfigOutput(output: string): LarkParseResult<ParsedLar
   }
 }
 
+const LARK_CONNECTED_STATUSES = ["ready", "needs_refresh", "active", "valid"];
+const LARK_NEEDS_REAUTH_STATUSES = [
+  "expired",
+  "revoked",
+  "invalid",
+  "unauthorized",
+  "needs_reauth",
+];
+
 export function parseLarkAuthStatusOutput(output: string): LarkParseResult<ParsedLarkAuthStatus> {
   try {
     const root = record(extractFirstJsonObject(output));
@@ -104,8 +113,17 @@ export function parseLarkAuthStatusOutput(output: string): LarkParseResult<Parse
       throw new Error("auth status 核心状态字段缺失");
     }
     const normalized = status.toLowerCase();
-    const connected = user.available && ["ready", "needs_refresh", "active", "valid"].includes(normalized);
-    const needsReauth = ["expired", "revoked", "invalid", "unauthorized", "needs_reauth"].includes(normalized);
+    const connected = user.available && LARK_CONNECTED_STATUSES.includes(normalized);
+    // 真实 lark-cli(实测 1.0.65 `auth status --json`)在用户身份不可用时一律给
+    // status:"missing";光看 status 分不出"从没登录过"和"令牌过期了",而 token 维度
+    // (tokenStatus:"expired"/"revoked")才是那条真信号。旧逻辑只认 status,过期账号
+    // 会被判成 needsReauth:false。这里改成:status 不是已知连接态时回退看 token 维度;
+    // 没有 token 痕迹的 missing 仍是"未连接",不谎称"授权已失效"。
+    const tokenStatus = stringField(user, "tokenStatus", "token_status")?.toLowerCase() ?? null;
+    const needsReauth = LARK_NEEDS_REAUTH_STATUSES.includes(normalized) ||
+      (!LARK_CONNECTED_STATUSES.includes(normalized) &&
+        tokenStatus !== null &&
+        LARK_NEEDS_REAUTH_STATUSES.includes(tokenStatus));
     const userName = stringField(user, "userName", "user_name");
     const openId = stringField(user, "openId", "open_id");
     const rawScopes = user.scope ?? user.scopes;

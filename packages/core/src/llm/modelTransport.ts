@@ -358,6 +358,114 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
+ * 预检成功缓存的存活时长。同一 host 在窗口内不再重复付 DNS 成本：偶发的慢解析被缓存
+ * 兜住，不会让每一次模型调用都赌一遍 DNS。安全性不受影响——连接层 DNS 拦截器
+ * （createModelDnsLookup / ModelDispatcher.dispatch）每次连接仍按同一策略校验地址，
+ * 缓存只省掉「预检」这一层重复解析。
+ */
+export const MODEL_PREFLIGHT_CACHE_TTL_MS = 5 * 60_000;
+
+/** 预检撞上瞬时 DNS 故障时的重试退避；严格模式不能降级，只能靠重试兜。 */
+export const MODEL_PREFLIGHT_RETRY_DELAYS_MS = [120] as const;
+
+/** hostname 粒度的预检成功缓存：key -> 过期时间戳。只缓存成功，失败绝不缓存。 */
+const preflightSuccessCache = new Map<string, number>();
+
+/** DNS 侧的瞬时故障：重试一次通常就好，不该让整次模型调用直接失败。 */
+const TRANSIENT_DNS_ERROR_CODES = new Set([
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "ETIMEOUT",
+  "ESERVFAIL",
+  "EREFUSED",
+  "ECONNREFUSED",
+]);
+
+/** 预检超时/瞬时 DNS 故障 → 可重试；策略拒绝、非法 URL、解析不到主机 → 确定性失败。 */
+export function isTransientPreflightError(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown };
+  if (candidate.name === "TimeoutError") return true;
+  return typeof candidate.code === "string" && TRANSIENT_DNS_ERROR_CODES.has(candidate.code);
+}
+
+function preflightCacheKey(rawUrl: string, env: Env): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  // 策略维度进 key：放行私网与否会改变同一 host 的判定结论，不能互相污染。
+  return `${allowsPrivateModelHost(env) ? "private" : "strict"}|${url.protocol}//${url.hostname.toLowerCase()}`;
+}
+
+export interface ModelPreflightDeps {
+  validate?: (rawUrl: string, env: Env, signal?: AbortSignal) => Promise<unknown>;
+  now?: () => number;
+}
+
+/**
+ * 模型出站前的 URL 策略预检。三层护栏依次生效：
+ * 1. host 成功缓存（TTL 内直接放行，避免高频调用重复付 DNS 成本）；
+ * 2. 瞬时故障（超时 / EAI_AGAIN 等）重试；
+ * 3. 允许私网时（桌面端默认）预检结论本就放行一切地址，其超时再阻断调用没有任何安全
+ *    收益，降级为尽力而为；不允许私网的 Web/自部署维持严格阻断语义。
+ */
+export async function runModelFetchPreflight(
+  rawUrl: string,
+  env: Env = process.env,
+  requestSignal?: AbortSignal,
+  deps: ModelPreflightDeps = {},
+): Promise<void> {
+  const validate = deps.validate ?? validateModelFetchUrl;
+  const now = deps.now ?? Date.now;
+  const cacheKey = preflightCacheKey(rawUrl, env);
+  if (cacheKey !== null) {
+    const expiresAt = preflightSuccessCache.get(cacheKey);
+    if (expiresAt !== undefined) {
+      if (expiresAt > now()) return;
+      preflightSuccessCache.delete(cacheKey);
+    }
+  }
+  const timeoutMs = resolveModelConnectTimeoutMs(env);
+  for (let attempt = 0; ; attempt += 1) {
+    const controller = new AbortController();
+    const relayAbort = () => controller.abort(requestSignal?.reason);
+    if (requestSignal?.aborted) relayAbort();
+    else requestSignal?.addEventListener("abort", relayAbort, { once: true });
+    const timer = setTimeout(
+      () => controller.abort(new DOMException("Model DNS preflight timed out", "TimeoutError")),
+      timeoutMs,
+    );
+    try {
+      await validate(rawUrl, env, controller.signal);
+      if (cacheKey !== null) preflightSuccessCache.set(cacheKey, now() + MODEL_PREFLIGHT_CACHE_TTL_MS);
+      return;
+    } catch (error) {
+      // 调用方主动取消照原样抛出，不算 DNS 故障。
+      requestSignal?.throwIfAborted();
+      if (!isTransientPreflightError(error)) throw error;
+      if (attempt < MODEL_PREFLIGHT_RETRY_DELAYS_MS.length) {
+        await sleep(MODEL_PREFLIGHT_RETRY_DELAYS_MS[attempt]!, requestSignal);
+        continue;
+      }
+      if (allowsPrivateModelHost(env)) return;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      requestSignal?.removeEventListener("abort", relayAbort);
+    }
+  }
+}
+
+/** 仅供测试隔离预检缓存。 */
+export function resetModelPreflightCacheForTests(): void {
+  preflightSuccessCache.clear();
+}
+
+/**
  * 模型专用 fetch。npm undici 的 fetch 与 dispatcher 来自同一包，避免 Node 24 内建
  * fetch 的 undici.globalDispatcher.1 与 npm undici@8 的 .2 符号/handler 协议不兼容。
  */
@@ -372,22 +480,7 @@ export const modelFetch: typeof globalThis.fetch = async (input, init) => {
     : input.url;
   const requestSignal = init?.signal ??
     (typeof input === "string" || input instanceof URL ? undefined : input.signal);
-  const preflightController = new AbortController();
-  const relayAbort = () => preflightController.abort(requestSignal?.reason);
-  if (requestSignal?.aborted) relayAbort();
-  else requestSignal?.addEventListener("abort", relayAbort, { once: true });
-  const preflightTimer = setTimeout(
-    () => preflightController.abort(
-      new DOMException("Model DNS preflight timed out", "TimeoutError"),
-    ),
-    resolveModelConnectTimeoutMs(),
-  );
-  try {
-    await validateModelFetchUrl(rawUrl, process.env, preflightController.signal);
-  } finally {
-    clearTimeout(preflightTimer);
-    requestSignal?.removeEventListener("abort", relayAbort);
-  }
+  await runModelFetchPreflight(rawUrl, process.env, requestSignal);
   requestSignal?.throwIfAborted();
   const dispatcher = getModelDispatcher();
   const replayable = isReplayableModelRequest(input, init);
@@ -420,5 +513,6 @@ export const modelFetch: typeof globalThis.fetch = async (input, init) => {
 export async function resetModelTransportForTests(): Promise<void> {
   const previous = activeTransport?.dispatcher;
   activeTransport = null;
+  preflightSuccessCache.clear();
   if (previous) await previous.destroy();
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DRAWIO_AUTOSAVE_DEBOUNCE_MS,
+  DRAWIO_CLOSE_WATCHDOG_MS,
   DRAWIO_EMBED_PATH,
   DRAWIO_EXPORT_TIMEOUT_MS,
   DRAWIO_FALLBACK_TIMEOUT_MS,
@@ -44,6 +45,7 @@ export function DrawioEditorOverlay({
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestCloseRef = useRef<() => void>(() => undefined);
   const [saving, setSaving] = useState(false);
   const [frameReady, setFrameReady] = useState(false);
@@ -82,12 +84,18 @@ export function DrawioEditorOverlay({
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
     };
+    const clearCloseWatchdog = () => {
+      if (closeWatchdogRef.current === null) return;
+      clearTimeout(closeWatchdogRef.current);
+      closeWatchdogRef.current = null;
+    };
     const finish = (result: DrawioEditorResult | null) => {
       if (settledRef.current) return;
       settledRef.current = true;
       clearExportTimer();
       clearAutosaveTimer();
       clearRetryTimer();
+      clearCloseWatchdog();
       setSaving(false);
       onClose(result);
     };
@@ -258,20 +266,60 @@ export function DrawioEditorOverlay({
       }, DRAWIO_AUTOSAVE_DEBOUNCE_MS);
       setStatus("更改待实时写入…");
     };
-    const requestClose = () => {
+    /**
+     * 关闭永远立即生效：能不能退出与保存状态机彻底解耦。退出前只做一次「尽力而为」的
+     * 源码落盘（拿不到原生 SVG 就沿用上一版预览缓存，文档下次打开会自行补渲染），
+     * 绝不等待任何 pending 的导出/渲染/写回——等待过的那条路正是 ✕ 点不动的病根。
+     */
+    const flushSourceBeforeClose = () => {
+      const rawSource = queuedSourceRef.current ?? pendingSourceRef.current;
+      if (rawSource === null) return;
+      queuedSourceRef.current = null;
+      pendingSourceRef.current = null;
+      try {
+        const { source } = createDrawioSnapshotRequest(rawSource);
+        if (source === lastWrittenSourceRef.current) return;
+        const result: DrawioEditorResult = {
+          source,
+          svg: latestResultRef.current?.svg ?? null,
+          warning: "已保存最新源码，预览缓存将在下次渲染时补全",
+        };
+        latestResultRef.current = result;
+        lastWrittenSourceRef.current = source;
+        onSave?.(result);
+      } catch {
+        // 源码本身非法（或写回抛错）时也不能堵住退出，交由文档保留上一版可用内容。
+      }
+    };
+    const armCloseWatchdog = () => {
+      if (closeWatchdogRef.current !== null || settledRef.current) return;
+      closeWatchdogRef.current = setTimeout(() => {
+        closeWatchdogRef.current = null;
+        if (settledRef.current) return;
+        flushSourceBeforeClose();
+        finish(latestResultRef.current);
+      }, DRAWIO_CLOSE_WATCHDOG_MS);
+    };
+    /**
+     * immediate=true 是用户亲手点 ✕ / 按 Esc：任何状态下都必须当场退出，绝不等待。
+     * immediate=false 是编辑器自己发的 exit（「完成」按钮）：允许等这一拍原生 SVG 落定，
+     * 但由看门狗兜住上限，等不到照样退出。
+     */
+    const requestClose = (immediate: boolean) => {
       if (settledRef.current) return;
       closeRequestedRef.current = true;
       clearAutosaveTimer();
-      if (queuedSourceRef.current !== null) {
+      if (!immediate && pendingSaveIdRef.current !== null) {
+        armCloseWatchdog();
         setStatus("正在落定最后更改…");
-        startQueuedSave();
-      } else if (pendingSaveIdRef.current === null) {
-        finish(latestResultRef.current);
-      } else {
-        setStatus("正在落定最后更改…");
+        return;
       }
+      clearRetryTimer();
+      clearExportTimer();
+      flushSourceBeforeClose();
+      finish(latestResultRef.current);
     };
-    requestCloseRef.current = requestClose;
+    requestCloseRef.current = () => requestClose(true);
 
     const onMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow;
@@ -302,7 +350,12 @@ export function DrawioEditorOverlay({
         return;
       }
       if (message.event === "save") {
-        if (message.exit === true) closeRequestedRef.current = true;
+        // 「完成」走的是带 exit 的 save：优先等这一拍原生 SVG 落定，但绝不无限期等——
+        // 看门狗到点就按 ✕ 的同一套语义强制退出。
+        if (message.exit === true) {
+          closeRequestedRef.current = true;
+          armCloseWatchdog();
+        }
         queueSave(message.xml, true);
         return;
       }
@@ -326,13 +379,13 @@ export function DrawioEditorOverlay({
         }
         return;
       }
-      if (message.event === "exit") requestClose();
+      if (message.event === "exit") requestClose(false);
       // openLink 在 suppressNewWindows + 离线模式下故意不转交系统浏览器。
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      requestClose();
+      requestClose(true);
     };
 
     window.addEventListener("message", onMessage);
@@ -341,6 +394,7 @@ export function DrawioEditorOverlay({
       clearExportTimer();
       clearAutosaveTimer();
       clearRetryTimer();
+      clearCloseWatchdog();
       requestCloseRef.current = () => undefined;
       window.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", onKeyDown);

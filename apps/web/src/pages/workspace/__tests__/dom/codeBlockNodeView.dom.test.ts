@@ -7,6 +7,8 @@ import { Editor } from "@tiptap/core";
 import { EditorContent } from "@tiptap/react";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { PmDoc } from "@qingagent/pm-schema";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodeBlockCM } from "../../components/CodeBlockView";
 
@@ -215,6 +217,35 @@ describe("代码块语言选择器(自定义下拉,非原生 select):闭合不�
 
     expect(firstCodeLanguage(editor)).toBe("python");
     expect(editor.state).toBe(before);
+    await unmount(editor);
+  });
+
+  it("语言菜单吃到暖墨样式:选项自带 mono 小号字体,当前语言打勾(回归\"白底大号无衬线\")", async () => {
+    const workspaceCss = readFileSync(
+      path.join(process.cwd(), "src/pages/workspace/workspace.css"),
+      "utf8",
+    );
+    const optionRule = /\.code-block-language-option\{([^}]*)\}/.exec(workspaceCss)?.[1] ?? "";
+    // <button> 不继承容器字体,浏览器默认塞系统无衬线 13.3px;选项规则必须自带字族与字号。
+    expect(optionRule).toMatch(/font-family:\s*var\(--font-mono\)/);
+    expect(optionRule).toMatch(/font-size:\s*11px/);
+    expect(workspaceCss).toMatch(/\.code-block-language-menu\{[^}]*font-family:\s*var\(--font-mono\)/);
+    expect(workspaceCss).toMatch(/\.code-block-language-option:hover\{[^}]*background:\s*var\(--mark-soft\)/);
+
+    const editor = await mountEditor(codeDoc("python"));
+    const container = mounted!.container;
+    await click(container.querySelector(".code-block-language-select") as HTMLElement);
+    const options = Array.from(
+      document.querySelectorAll<HTMLElement>(".code-block-language-option"),
+    );
+    const active = options.filter((option) => option.dataset.active === "true");
+    expect(active).toHaveLength(1);
+    expect(active[0]?.textContent).toContain("Python");
+    // 勾用仓库统一 SVG 图标,且每个选项都留出等宽勾位,避免选中时其余项位移。
+    expect(active[0]?.querySelector(".code-block-language-option__check svg")).toBeTruthy();
+    expect(options.every((option) => option.querySelector(".code-block-language-option__check"))).toBe(true);
+    expect(options.filter((option) => option.querySelector(".code-block-language-option__check svg")))
+      .toHaveLength(1);
     await unmount(editor);
   });
 });

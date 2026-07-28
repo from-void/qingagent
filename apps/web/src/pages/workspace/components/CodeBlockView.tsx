@@ -17,6 +17,7 @@ import {
 } from "@tiptap/react";
 import type { NodeViewContentProps } from "@tiptap/react";
 import { common, createLowlight } from "lowlight";
+import { CheckIcon } from "./icons";
 
 /* ───────────── Language registry ───────────── */
 
@@ -220,6 +221,9 @@ function LanguageSelect(props: {
                   setOpen(false);
                 }}
               >
+                <span className="code-block-language-option__check" aria-hidden="true">
+                  {key === language ? <CheckIcon size={10} /> : null}
+                </span>
                 {languageLabel(key)}
               </button>
             ))}

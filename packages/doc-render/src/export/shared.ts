@@ -139,10 +139,16 @@ export function pmDocToPlainExportText(doc: PmDoc): string {
   // 会把用户手打的 `<name>` 等字面内容误删。
   // 逐个顶层块序列化，只由导出层在块之间补一个空行。不能把整篇文本拆行后 trim，
   // 否则 codeBlock 内的缩进、空行与相邻代码行都会被破坏。
-  return doc.content
+  const blocks = doc.content
     .map((node) => pmToPlainText({ ...doc, content: [node] }).replace(/\r\n?/g, "\n"))
-    .filter((text) => text.length > 0)
-    .join("\n\n");
+    .filter((text) => text.length > 0);
+  return blocks.reduce(
+    (output, text) =>
+      output.length === 0
+        ? text
+        : `${output}${output.endsWith("\n") ? "\n" : "\n\n"}${text}`,
+    "",
+  );
 }
 
 // 上传 id 必须是 UUID（generateSvg 用 randomUUID 生成）；文件名只解码最后一个 URL segment，

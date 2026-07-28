@@ -94,6 +94,30 @@ describe("TXT 块结构正确性", () => {
       "代码如下：\n\nfunction run() {\n  first();\n\n    return second();\n}\n\n代码结束。",
     );
   });
+
+  it.each([
+    ["单个尾随换行", "x\n", "x\n\nafter"],
+    ["两个尾随换行", "x\n\n", "x\n\n\nafter"],
+  ])("代码块含%s时不把既有换行裁掉或重复补双换行", (
+    _label,
+    code,
+    expected,
+  ) => {
+    const source = doc([
+      {
+        type: "codeBlock",
+        attrs: { blockId: "code", language: null },
+        content: [{ type: "text", text: code }],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "after" },
+        content: [{ type: "text", text: "after" }],
+      },
+    ]);
+
+    expect(toTxt(source)).toBe(expected);
+  });
 });
 
 describe("HTML 表格列宽正确性", () => {

@@ -144,6 +144,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const templateSelectionEpochRef = useRef(0);
+  const confirmedTemplateIdRef = useRef("");
 
   useEffect(() => {
     if (!props.open) return;
@@ -161,6 +162,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
         const selected = config.items.some((item) => item.id === config.selectedTemplateId)
           ? config.selectedTemplateId!
           : config.items[0]?.id ?? "";
+        confirmedTemplateIdRef.current = selected;
         setSelectedId(selected);
         setSupplement(savedSupplement);
         setLexicons(availableLexicons);
@@ -192,15 +194,18 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     setError(null);
   };
   const chooseTemplate = (id: string) => {
-    const previous = selectedId;
     const selectionEpoch = ++templateSelectionEpochRef.current;
     setSelectedId(id);
     setError(null);
-    void props.selectTemplate(props.type, id).catch(() => {
-      if (templateSelectionEpochRef.current !== selectionEpoch) return;
-      setSelectedId(previous);
-      setError("模板选择保存失败，请重试");
-    });
+    void props.selectTemplate(props.type, id)
+      .then(() => {
+        confirmedTemplateIdRef.current = id;
+      })
+      .catch(() => {
+        if (templateSelectionEpochRef.current !== selectionEpoch) return;
+        setSelectedId(confirmedTemplateIdRef.current);
+        setError("模板选择保存失败，请重试");
+      });
   };
   const storeTemplate = (id?: string) => {
     if (!editor) return;
@@ -214,6 +219,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
         const selectionEpoch = ++templateSelectionEpochRef.current;
         try {
           await props.selectTemplate(props.type, saved.id);
+          confirmedTemplateIdRef.current = saved.id;
         } catch {
           setEditor(null);
           setPage("launch");
@@ -233,8 +239,11 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     setError(null);
     void props.deleteTemplate(editor.source.id).then((nextSelectedId) => {
       const remaining = templates.filter((item) => item.id !== editor.source?.id);
+      const selectedAfterDelete =
+        nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "";
       setTemplates(remaining);
-      setSelectedId(nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "");
+      confirmedTemplateIdRef.current = selectedAfterDelete;
+      setSelectedId(selectedAfterDelete);
       setEditor(null);
       setPage("launch");
     }).catch((deleteError) => setError(deleteErrorMessage(deleteError))).finally(() => setSaving(false));

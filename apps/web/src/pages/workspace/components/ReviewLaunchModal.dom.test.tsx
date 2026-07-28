@@ -186,6 +186,49 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("连续两次乐观选择均失败时回滚到最后确认持久化的模板", async () => {
+    const balanced = {
+      ...builtins[1]!,
+      id: "source-balanced-failed",
+      name: "均衡来源核查",
+    };
+    let rejectStrict!: (error: Error) => void;
+    let rejectBalanced!: (error: Error) => void;
+    const strictRequest = new Promise<void>((_resolve, reject) => {
+      rejectStrict = reject;
+    });
+    const balancedRequest = new Promise<void>((_resolve, reject) => {
+      rejectBalanced = reject;
+    });
+    const selectTemplate = vi.fn((_type: string, id: string) => (
+      id === "source-strict" ? strictRequest : balancedRequest
+    ));
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [...builtins, balanced],
+        selectedTemplateId: "source-default",
+      }),
+      selectTemplate,
+    })} />));
+    const card = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => card("严格来源核查").click());
+    act(() => card("均衡来源核查").click());
+    await act(async () => {
+      rejectBalanced(new Error("最新选择失败"));
+      await balancedRequest.catch(() => undefined);
+    });
+    await act(async () => {
+      rejectStrict(new Error("旧选择晚失败"));
+      await strictRequest.catch(() => undefined);
+    });
+
+    expect(card("标准来源核查").getAttribute("aria-checked")).toBe("true");
+    expect(card("严格来源核查").getAttribute("aria-checked")).toBe("false");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("模板选择保存失败，请重试");
+  });
+
   it("新模板已保存但设默认失败时,重试只选择已有模板而不重复创建", async () => {
     const saveTemplate = vi.fn().mockResolvedValue({
       id: "source-saved-once",

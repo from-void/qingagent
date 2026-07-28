@@ -50,3 +50,23 @@ test("固定协议拒绝其他 host，避免变成任意本机代理", async () 
   assert.equal(response.status, 404);
   assert.equal(fetchCalls, 0);
 });
+
+test("正确 host 的双斜杠路径仍只能转发到实际回环端口", async () => {
+  const forwarded: Request[] = [];
+  const handler = createDesktopAppProxyHandler(43127, async (request) => {
+    forwarded.push(request);
+    return new Response("ok");
+  });
+
+  const response = await handler(
+    new Request("qingagent://app//example.invalid/steal?x=1"),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.length, 1);
+  assert.equal(
+    forwarded[0]?.url,
+    "http://127.0.0.1:43127//example.invalid/steal?x=1",
+  );
+  assert.equal(new URL(forwarded[0]!.url).origin, "http://127.0.0.1:43127");
+});

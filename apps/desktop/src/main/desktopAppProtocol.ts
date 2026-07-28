@@ -22,7 +22,9 @@ export function createDesktopAppProxyHandler(
       return new Response("Not found", { status: 404 });
     }
 
-    const targetUrl = new URL(`${sourceUrl.pathname}${sourceUrl.search}`, serverOrigin);
+    const targetUrl = new URL(serverOrigin);
+    targetUrl.pathname = sourceUrl.pathname;
+    targetUrl.search = sourceUrl.search;
     const headers = new Headers(request.headers);
     headers.delete("host");
     // 服务端继续按实际回环 Host 执行 CSRF 校验，不把自定义 scheme 扩入公网 Origin 白名单。

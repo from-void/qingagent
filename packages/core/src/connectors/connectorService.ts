@@ -1,11 +1,15 @@
 import { listConnectorDefinitions } from "./registry.js";
 import { createConnectorAdapters } from "./registryCore.js";
+import { mastra } from "../mastra.js";
+import { createConnectorStatus } from "./service.js";
 import type {
   ConnectorAdapter,
   ConnectorAuthPresentation,
   ConnectorId,
   ConnectorStatusDto,
 } from "./types.js";
+
+const logger = mastra.getLogger();
 
 export interface ConnectorInfoDto {
   id: ConnectorId;
@@ -26,7 +30,30 @@ export class ConnectorService {
   constructor(private readonly adapters: Readonly<Record<ConnectorId, ConnectorAdapter>>) {}
 
   async list(): Promise<ConnectorInfoDto[]> {
-    return Promise.all(listConnectorDefinitions().map((definition) => this.info(definition.id)));
+    return Promise.all(listConnectorDefinitions().map(async (definition) => {
+      try {
+        return await this.info(definition.id);
+      } catch (error) {
+        logger.error("Connector status lookup failed", {
+          connectorId: definition.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          id: definition.id,
+          name: definition.name,
+          icon: definition.icon,
+          official: definition.official,
+          authPresentation: definition.authPresentation,
+          riskNote: definition.riskNote ?? null,
+          usedBySkills: [...definition.usedBySkills],
+          status: createConnectorStatus("unavailable", {
+            reasonCode: "CONNECTOR_STATUS_UNAVAILABLE",
+            statusFreshness: "unknown",
+            canProbe: false,
+          }),
+        };
+      }
+    }));
   }
 
   async info(id: ConnectorId, pendingId?: string): Promise<ConnectorInfoDto> {

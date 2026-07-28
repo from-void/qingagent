@@ -522,6 +522,10 @@ function metadataUpdateStatement(input: DocumentSaveInput): InStatement {
       WHERE id = ?
         AND doc_version = ?
         AND content_hash IS ?
+        AND NOT EXISTS (
+          SELECT 1 FROM deleted_sessions
+          WHERE session_id IN (?, ?)
+        )
         AND (
           title IS NOT ?
           OR doc_state IS NOT ?
@@ -535,6 +539,8 @@ function metadataUpdateStatement(input: DocumentSaveInput): InStatement {
       input.id,
       input.docVersion,
       projection.contentHash,
+      input.threadId,
+      input.id,
       input.title,
       input.docState,
       input.lastSyncedVersion,
@@ -552,6 +558,14 @@ async function assertZeroWriteIsResolved(
   client: Awaited<ReturnType<typeof readyClient>>,
   input: DocumentSaveInput,
 ): Promise<void> {
+  const tombstone = await client.execute({
+    sql: `SELECT 1 FROM deleted_sessions
+      WHERE session_id IN (?, ?)
+      LIMIT 1`,
+    args: [input.threadId, input.id],
+  });
+  if (tombstone.rows.length > 0) return;
+
   const projection = buildPmProjection(input);
   const result = await client.execute({
     sql: `SELECT title, doc_state, doc_version, last_synced_version, content_hash

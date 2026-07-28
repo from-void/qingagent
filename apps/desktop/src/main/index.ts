@@ -27,6 +27,7 @@ import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
+import { persistClientConfigValue } from "./clientConfigPersistence.js";
 import {
   readPrivateStringMap,
   writePrivateStringMap,
@@ -785,20 +786,16 @@ function writeClientConfigValue(key: unknown, value: unknown): boolean {
   try {
     const isSecret = DESKTOP_MODEL_SECRET_KEYS.has(key);
     const encryptionAvailable = isDesktopModelEncryptionAvailable();
-    // 删除不需要解密/加密能力：即使 Linux 没有 keyring，也必须能清掉旧明文和密文项。
-    if (isSecret && nextValue !== null && !encryptionAvailable) return false;
-    if (encryptionAvailable) migratePlaintextClientSecrets();
-
-    const cfg = readClientConfig();
-    if (isSecret) {
-      delete cfg[key];
-      desktopClientSecretStore.write(key, nextValue);
-    } else if (nextValue === null) {
-      delete cfg[key];
-    } else {
-      cfg[key] = nextValue;
-    }
-    writeClientConfig(cfg);
+    persistClientConfigValue({
+      key,
+      nextValue,
+      isSecret,
+      encryptionAvailable,
+      migratePlaintextSecrets: migratePlaintextClientSecrets,
+      readConfig: readClientConfig,
+      writeConfig: writeClientConfig,
+      secretStore: desktopClientSecretStore,
+    });
     return true;
   } catch {
     return false;

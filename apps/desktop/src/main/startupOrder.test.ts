@@ -173,6 +173,7 @@ test("desktop PDF 导出使用私有临时目录、随机文件名和最小文�
 test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文且不可用时 fail-closed", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const secretStoreSource = readFileSync(path.join(__dirname, "clientSecretStore.ts"), "utf8");
+  const persistenceSource = readFileSync(path.join(__dirname, "clientConfigPersistence.ts"), "utf8");
 
   for (const key of [
     "qingagent.deepseek_api_key",
@@ -205,9 +206,10 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
     /return cfg/,
     "不得向 renderer 返回整份配置",
   );
-  assert.match(source, /isSecret && nextValue !== null && !encryptionAvailable\) return false/);
-  assert.match(source, /desktopClientSecretStore\.write\(key, nextValue\)/);
-  assert.match(source, /delete cfg\[key\]/);
+  assert.match(persistenceSource, /isSecret && options\.nextValue !== null && !options\.encryptionAvailable/);
+  assert.match(persistenceSource, /options\.secretStore\.write\(options\.key, options\.nextValue\)/);
+  assert.match(persistenceSource, /delete config\[options\.key\]/);
+  assert.match(persistenceSource, /options\.secretStore\.writeWithRollback/);
   assert.match(secretStoreSource, /delete ciphertexts\[key\]/);
   assert.match(source, /\^client-config\(\?:\\\.secrets\)\?\\\.json/);
   assert.match(source, /cleanupClientConfigTempFiles\(\)/);

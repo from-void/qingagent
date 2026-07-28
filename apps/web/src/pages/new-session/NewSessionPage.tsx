@@ -42,6 +42,7 @@ import {
 } from "./transition/origin";
 import { pickBrowserFolderSource } from "../workspace/data/browserFolderBridge";
 import { DEFAULT_CHAT_INPUT_PLACEHOLDER } from "../workspace/data/chatInputBlockReason";
+import { uploadFileSizeError } from "../workspace/data/uploadAsset";
 import { useModelKeyConfigured, goConfigureModel, NoKeyTip } from "../../system/modelKeyGate";
 
 // 占位符与编辑页统一(用编辑页默认提示)。
@@ -51,6 +52,33 @@ const EASE = "cubic-bezier(.2,.8,.2,1)";
 export interface PendingAttachmentEntry {
   id: string;
   file: File;
+}
+
+export interface NewSessionAttachmentPartition {
+  accepted: File[];
+  unsupportedCount: number;
+  sizeErrorMessage: string | null;
+}
+
+export function partitionNewSessionAttachmentFiles(
+  files: readonly File[],
+): NewSessionAttachmentPartition {
+  const accepted: File[] = [];
+  let unsupportedCount = 0;
+  let sizeErrorMessage: string | null = null;
+  for (const file of files) {
+    if (!isAcceptedUploadFile(file)) {
+      unsupportedCount += 1;
+      continue;
+    }
+    const sizeError = uploadFileSizeError(file);
+    if (sizeError) {
+      sizeErrorMessage = sizeError.message;
+      continue;
+    }
+    accepted.push(file);
+  }
+  return { accepted, unsupportedCount, sizeErrorMessage };
 }
 
 export function pendingFilesVisibleInSnapshot(
@@ -379,29 +407,31 @@ export function NewSessionPage() {
 
   // 接收一批文件(选择/拖拽/粘贴图片共用):过滤可接受类型、为每个生成 id、插引用 chip、落待解析。
   const addAttachmentFiles = useCallback(
-    (files: File[]) => {
+    (files: File[], successAction = "插入") => {
       if (files.length === 0) return;
-      let n = 0;
-      let skipped = 0;
+      const partition = partitionNewSessionAttachmentFiles(files);
       const acceptedEntries: PendingAttachmentEntry[] = [];
-      for (const f of files) {
-        if (!isAcceptedUploadFile(f)) {
-          skipped += 1;
-          continue;
-        }
+      for (const f of partition.accepted) {
         const id = createAttachmentId();
         const ext = acceptedDocumentExtension(f.name).replace(/^\./, "") || "file";
         editorRef.current?.insertChip({ id, type: ext.length <= 5 ? ext : "file", name: f.name });
-        n += 1;
         acceptedEntries.push({ id, file: f });
       }
       if (acceptedEntries.length > 0) {
         setPendingAttachments((prev) => [...prev, ...acceptedEntries]);
+        showCcxToast(
+          successAction === "拖入"
+            ? `+ 已拖入 ${acceptedEntries.length} 个文件`
+            : `+ 已插入 ${acceptedEntries.length} 个本地文件`,
+        );
       }
-      if (n > 0) showCcxToast(`+ 已插入 ${n} 个本地文件`);
-      if (skipped > 0) showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      if (partition.sizeErrorMessage) {
+        toast.show({ message: partition.sizeErrorMessage, tone: "warn" });
+      } else if (partition.unsupportedCount > 0) {
+        showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      }
     },
-    [createAttachmentId, showCcxToast],
+    [createAttachmentId, showCcxToast, toast],
   );
 
   const handleFilesPicked = useCallback(
@@ -600,25 +630,7 @@ export function NewSessionPage() {
       e.preventDefault();
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
-      let n = 0;
-      let skipped = 0;
-      const acceptedEntries: PendingAttachmentEntry[] = [];
-      for (const f of Array.from(files)) {
-        if (!isAcceptedUploadFile(f)) {
-          skipped += 1;
-          continue;
-        }
-        const id = createAttachmentId();
-        const ext = acceptedDocumentExtension(f.name).replace(/^\./, "") || "file";
-        editorRef.current?.insertChip({ id, type: ext.length <= 5 ? ext : "file", name: f.name });
-        n += 1;
-        acceptedEntries.push({ id, file: f });
-      }
-      if (acceptedEntries.length > 0) {
-        setPendingAttachments((prev) => [...prev, ...acceptedEntries]);
-      }
-      if (n > 0) showCcxToast(`+ 已拖入 ${n} 个文件`);
-      if (skipped > 0) showCcxToast(`仅支持上传 ${ACCEPTED_UPLOAD_LABEL}`);
+      addAttachmentFiles(Array.from(files), "拖入");
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);
@@ -630,7 +642,7 @@ export function NewSessionPage() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [createAttachmentId, showCcxToast]);
+  }, [addAttachmentFiles]);
 
   // 点空白关菜单
   useEffect(() => {

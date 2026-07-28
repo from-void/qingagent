@@ -3,7 +3,10 @@ import { act } from "react";
 import type { ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NewSessionPage } from "./NewSessionPage";
+import {
+  NewSessionPage,
+  partitionNewSessionAttachmentFiles,
+} from "./NewSessionPage";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -41,6 +44,20 @@ describe("NewSessionPage 文件夹弹框键盘行为", () => {
 
     expect(query("[data-wf='NewSessionFolderIntroOverlay']")).toBeNull();
     expect(window.location.hash).toBe("#/new");
+  });
+});
+
+describe("NewSessionPage 附件校验", () => {
+  it("超过 50 MB 的受支持文件不会进入待提交附件", () => {
+    const atLimit = new File([""], "limit.pdf", { type: "application/pdf" });
+    const oversized = new File([""], "oversized.pdf", { type: "application/pdf" });
+    Object.defineProperty(atLimit, "size", { value: 50 * 1024 * 1024 });
+    Object.defineProperty(oversized, "size", { value: 50 * 1024 * 1024 + 1 });
+
+    const result = partitionNewSessionAttachmentFiles([atLimit, oversized]);
+
+    expect(result.accepted).toEqual([atLimit]);
+    expect(result.sizeErrorMessage).toBe("文件过大（上限 50 MB）");
   });
 });
 

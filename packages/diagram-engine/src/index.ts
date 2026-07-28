@@ -928,24 +928,6 @@ const REPRESENTED_THEME_VARIABLES = new Set([
   "primaryTextColor",
   "textColor",
 ]);
-const REPRESENTED_NODE_STYLE_PROPERTIES = new Set([
-  "color",
-  "fill",
-  "font-size",
-  "height",
-  "stroke",
-  "stroke-dasharray",
-  "stroke-width",
-  "width",
-]);
-const REPRESENTED_EDGE_STYLE_PROPERTIES = new Set([
-  "color",
-  "curve",
-  "stroke",
-  "stroke-dasharray",
-  "stroke-width",
-]);
-
 function objectKeysAtTopLevel(source: string): string[] {
   const keys: string[] = [];
   let index = 0;
@@ -1007,17 +989,79 @@ function objectKeysAtTopLevel(source: string): string[] {
   return keys;
 }
 
+type RepresentedStyleTarget = "node" | "edge";
+
+function exactPixelValueInRange(
+  source: string,
+  min: number,
+  max: number,
+  integer = false,
+): boolean {
+  const match = source.trim().match(/^(\d+(?:\.\d+)?|\.\d+)(?:px)?$/i);
+  if (!match) return false;
+  const value = Number(match[1]);
+  return (
+    Number.isFinite(value)
+    && value >= min
+    && value <= max
+    && (!integer || Number.isInteger(value))
+  );
+}
+
+function styleValueFullyRepresented(
+  property: string,
+  rawValue: string,
+  target: RepresentedStyleTarget,
+): boolean {
+  const value = rawValue.trim().replace(/;$/, "");
+  if (property === "color" || property === "stroke") {
+    return sanitizeColor(value) !== null;
+  }
+  if (property === "stroke-dasharray") {
+    return sanitizeDashArray(value) !== null;
+  }
+  if (property === "stroke-width") {
+    return exactPixelValueInRange(value, 1, 8);
+  }
+  if (target === "edge") {
+    // renderer 只分别实现直线和居中阶梯线；其余 Mermaid 曲线会被统一成
+    // 同一条通用 Bézier，无法保真表达原始 curve 取值。
+    return property === "curve" && (value === "linear" || value === "step");
+  }
+  if (property === "fill") return sanitizeColor(value) !== null;
+  if (property === "font-size") return exactPixelValueInRange(value, 9, 28);
+  if (property === "width") {
+    return exactPixelValueInRange(
+      value,
+      GRAPH_LAYOUT_NODE_MIN_WIDTH,
+      GRAPH_LAYOUT_NODE_MAX_WIDTH,
+      true,
+    );
+  }
+  if (property === "height") {
+    return exactPixelValueInRange(
+      value,
+      GRAPH_LAYOUT_NODE_MIN_HEIGHT,
+      GRAPH_LAYOUT_NODE_MAX_HEIGHT,
+      true,
+    );
+  }
+  return false;
+}
+
 function stylePropertiesFullyRepresented(
   source: string,
-  representedProperties: ReadonlySet<string>,
+  target: RepresentedStyleTarget,
 ): boolean {
   const declarations = splitStyleDeclarations(source);
   if (declarations.length === 0) return false;
   return declarations.every((declaration) => {
     const colon = declaration.indexOf(":");
     if (colon < 0) return false;
-    return representedProperties.has(
+    return styleValueFullyRepresented(
       declaration.slice(0, colon).trim().toLowerCase(),
+      declaration.slice(colon + 1),
+      target,
     );
   });
 }
@@ -1088,7 +1132,7 @@ function presentationSyntaxFullyRepresented(source: string): boolean {
       classDefinition &&
       !stylePropertiesFullyRepresented(
         classDefinition[2]!,
-        REPRESENTED_NODE_STYLE_PROPERTIES,
+        "node",
       )
     ) {
       return false;
@@ -1098,7 +1142,7 @@ function presentationSyntaxFullyRepresented(source: string): boolean {
       inlineStyle &&
       !stylePropertiesFullyRepresented(
         inlineStyle[2]!,
-        REPRESENTED_NODE_STYLE_PROPERTIES,
+        "node",
       )
     ) {
       return false;
@@ -1108,7 +1152,7 @@ function presentationSyntaxFullyRepresented(source: string): boolean {
       linkStyle &&
       !stylePropertiesFullyRepresented(
         linkStyle[1]!,
-        REPRESENTED_EDGE_STYLE_PROPERTIES,
+        "edge",
       )
     ) {
       return false;

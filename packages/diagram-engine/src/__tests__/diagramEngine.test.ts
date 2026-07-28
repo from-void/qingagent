@@ -1181,6 +1181,30 @@ flowchart TD
     }
   });
 
+  it("无法保真渲染的 bumpX 边曲线不宣称完整表示", () => {
+    const source = `flowchart TD
+  A --> B
+  linkStyle 0 curve:bumpX
+`;
+
+    expect(parseDiagram(source)).toMatchObject({
+      ok: true,
+      fullyRepresented: false,
+    });
+  });
+
+  it("会被钳制的 99px 节点线宽不宣称完整表示", () => {
+    const source = `flowchart TD
+  A --> B
+  style A stroke-width:99px
+`;
+
+    expect(parseDiagram(source)).toMatchObject({
+      ok: true,
+      fullyRepresented: false,
+    });
+  });
+
   it("stateDiagram-v2 支持 [*] 起止和中文状态名", () => {
     const source = [
       "stateDiagram-v2",

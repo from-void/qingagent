@@ -815,7 +815,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     void pickFile("image/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
-      if (!seedInsertChain(h)?.run()) return;
+      if (!seedInsertChain(h)?.run()) {
+        onToast?.("图片上传失败，请重试");
+        return;
+      }
       try {
         await insertImageAsset(editor, file);
       } catch (error) {
@@ -840,7 +843,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     void pickFile("*/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
-      if (!seedInsertChain(h)?.run()) return;
+      if (!seedInsertChain(h)?.run()) {
+        onToast?.("文件上传失败，请重试");
+        return;
+      }
       try {
         await insertFileAsset(editor, file);
       } catch (error) {

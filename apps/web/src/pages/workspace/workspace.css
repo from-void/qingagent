@@ -2427,19 +2427,28 @@
   /* 自定义语言下拉菜单(portal 到 body,正文树之外,不污染正文 innerText) */
   .code-block-language-menu{
     z-index:1000;max-height:260px;overflow-y:auto;
-    min-width:120px;padding:4px;
-    background:var(--paper, var(--bg-canvas));
-    border:1px solid rgba(168,130,63,.32);border-radius:var(--r-sm, 6px);
-    box-shadow:0 6px 24px rgba(60,48,30,.18);
+    min-width:132px;padding:5px;
+    background:var(--bg-canvas);
+    border:1px solid var(--line-2);border-radius:var(--r-sm, 0);
+    box-shadow:0 8px 26px rgba(60,48,30,.20);
     font-family:var(--font-mono);font-size:11px;
   }
+  /* 选项是 <button>:浏览器默认给按钮塞系统无衬线 13.3px,且 font 不从菜单容器继承。
+     不在选项自身写死字族/字号,菜单就退化成"白底大号无衬线"的裸样子(用户真机反馈)。 */
   .code-block-language-option{
-    display:block;width:100%;text-align:left;
-    padding:4px 8px;border:none;background:transparent;cursor:pointer;
-    color:#6b6253;border-radius:0;white-space:nowrap;
+    display:flex;align-items:center;gap:6px;width:100%;
+    padding:4px 8px 4px 6px;border:none;background:transparent;cursor:pointer;
+    color:var(--ink-2);border-radius:0;white-space:nowrap;text-align:left;
+    font-family:var(--font-mono);font-size:11px;line-height:1.6;
   }
-  .code-block-language-option:hover{ background:rgba(168,130,63,.12);color:var(--ink-1); }
-  .code-block-language-option[data-active="true"]{ color:#b08a3e;font-weight:600; }
+  .code-block-language-option:hover{ background:var(--mark-soft);color:var(--ink-1); }
+  .code-block-language-option:focus-visible{ outline:1px solid var(--line-3);outline-offset:-1px; }
+  .code-block-language-option[data-active="true"]{ color:var(--mark);font-weight:600; }
+  /* 勾选位固定占位:当前语言打勾时其余选项不左右位移 */
+  .code-block-language-option__check{
+    display:inline-flex;width:12px;flex:none;align-items:center;justify-content:center;
+    color:var(--mark);
+  }
   /* Read-only pre blocks (static render) keep basic style */
   #view-workspace .wf-doc pre{
     position:relative;

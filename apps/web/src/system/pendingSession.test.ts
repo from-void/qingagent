@@ -325,6 +325,7 @@ describe("pending submission 持久化与归属", () => {
   });
 
   it("附件缺失重排 marker 时保留用户转义的字面 marker", async () => {
+    const protocolPrefix = "\u001eqa-chip-rich-text-v1\u001f";
     const storage = createStorage();
     const payloadStore = createPayloadStore({
       persistAttachments: false,
@@ -335,9 +336,9 @@ describe("pending submission 持久化与归属", () => {
       now: () => 1_000,
     });
     await beforeRefresh.create(submissionInput("submission-literal-marker", {
-      text: "字面 {{chip:0}} 后文",
+      text: `${protocolPrefix}字面 {{chip:0}} 后文`,
       richText: serializeChipRichText([
-        { kind: "text", text: "字面 {{chip:0}} " },
+        { kind: "text", text: `${protocolPrefix}字面 {{chip:0}} ` },
         { kind: "chip", index: 0, marker: "{{chip:0}}" },
         { kind: "text", text: " 后文 " },
         { kind: "chip", index: 1, marker: "{{chip:1}}" },
@@ -359,7 +360,7 @@ describe("pending submission 持久化与归属", () => {
     expect(result.kind).toBe("degraded");
     if (result.kind !== "degraded") return;
     expect(parseChipRichText(result.submission.richText ?? "")).toEqual([
-      { kind: "text", text: "字面 {{chip:0}}  后文 " },
+      { kind: "text", text: `${protocolPrefix}字面 {{chip:0}}  后文 ` },
       { kind: "chip", index: 0, marker: "{{chip:0}}" },
     ]);
   });

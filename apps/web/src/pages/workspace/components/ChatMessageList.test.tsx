@@ -621,6 +621,7 @@ describe("ChatMessageList", () => {
   });
 
   it("用户气泡保留转义后的字面 chip marker，只渲染真实 marker", async () => {
+    const protocolPrefix = "\u001eqa-chip-rich-text-v1\u001f";
     const messages: ChatMessage[] = [{
       id: "m-user-literal-chip-marker",
       role: { kind: "user" },
@@ -629,7 +630,7 @@ describe("ChatMessageList", () => {
         kind: "text",
         data: {
           body: serializeChipRichText([
-            { kind: "text", text: "字面 {{chip:0}}，真实 " },
+            { kind: "text", text: `${protocolPrefix}字面 {{chip:0}}，真实 ` },
             { kind: "chip", index: 0, marker: "{{chip:0}}" },
           ]),
         },
@@ -646,7 +647,7 @@ describe("ChatMessageList", () => {
 
     await render(<ChatMessageList messages={messages} streamActive={false} />);
 
-    expect(host?.textContent).toContain("字面 {{chip:0}}，真实");
+    expect(host?.textContent).toContain(`${protocolPrefix}字面 {{chip:0}}，真实`);
     expect(host?.querySelectorAll(".chat-chip")).toHaveLength(1);
     expect(host?.textContent).toContain("资料.pdf");
   });

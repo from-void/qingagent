@@ -197,6 +197,38 @@ describe("ChatInput", () => {
     expect(edit.querySelectorAll(".chat-chip")).toHaveLength(1);
   });
 
+  it("序列化并恢复时保留用户字面协议前缀与真实 chip", async () => {
+    const protocolPrefix = "\u001eqa-chip-rich-text-v1\u001f";
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    edit.innerHTML = [
+      `${protocolPrefix}原文`,
+      '<span class="chat-chip" data-kind="attach" data-label="资料.pdf"></span>',
+    ].join("");
+
+    const snapshot = ref.current?.snapshot();
+    expect(parseChipRichText(snapshot?.richText ?? "")).toEqual([
+      { kind: "text", text: `${protocolPrefix}原文` },
+      { kind: "chip", index: 0, marker: "{{chip:0}}" },
+    ]);
+
+    await act(async () => {
+      ref.current?.clear();
+      ref.current?.restore(snapshot!);
+    });
+    expect(ref.current?.snapshot().richText).toBe(snapshot?.richText);
+    expect(edit.textContent).toContain(`${protocolPrefix}原文`);
+    expect(edit.querySelectorAll(".chat-chip")).toHaveLength(1);
+  });
+
   it("IME 组合态 Enter 与 keyCode 229 只选字，compositionend 后首个独立 Enter 才发送", async () => {
     const onSubmit = vi.fn();
     await render(

@@ -11,9 +11,14 @@ const ESCAPED_RICH_TEXT_PREFIX = "\u001eqa-chip-rich-text-v1\u001f";
  * 同时转义反斜杠；不含冲突字面量时保持历史 wire 文本完全不变。
  */
 export function serializeChipRichText(parts: readonly ChipRichTextPart[]): string {
+  let rawStart = "";
+  for (const part of parts) {
+    rawStart += part.kind === "chip" ? `{{chip:${part.index}}}` : part.text;
+    if (rawStart.length >= ESCAPED_RICH_TEXT_PREFIX.length) break;
+  }
   const escaped = parts.some(
     (part) => part.kind === "text" && CHIP_MARKER_ANYWHERE.test(part.text),
-  );
+  ) || rawStart.startsWith(ESCAPED_RICH_TEXT_PREFIX);
   let output = escaped ? ESCAPED_RICH_TEXT_PREFIX : "";
   for (const part of parts) {
     if (part.kind === "chip") {

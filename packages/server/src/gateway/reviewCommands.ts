@@ -114,10 +114,11 @@ export async function* handleReviewCommand(
         })) {
           yield frame;
         }
-        return;
       }
-      for await (const frame of commitPatchesBridge(session, command.data.ids)) {
-        yield frame;
+      if (command.data.ids.length > 0) {
+        for await (const frame of commitPatchesBridge(session, command.data.ids)) {
+          yield frame;
+        }
       }
       return;
     }

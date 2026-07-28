@@ -99,6 +99,7 @@ export function DerivativeView(props: {
   const streamActiveRef = useRef(props.streamActive);
   const sawActiveRef = useRef(props.streamActive);
   const documentRequestGenerationRef = useRef(0);
+  const coverTemplateRequestGenerationRef = useRef(0);
   const translationFlightsRef = useRef(new Map<string, Promise<void>>());
   useEffect(() => {
     if (!props.items?.length || props.items.some((candidate) => candidate.docId === effectiveDocId)) return;
@@ -151,7 +152,10 @@ export function DerivativeView(props: {
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
   useEffect(() => { if (generating && generationComplete && !props.streamActive) setGenerating(false); }, [generating, generationComplete, props.streamActive]);
   useEffect(() => { if (item.generatedAt != null || item.sourceVersion != null) setAbortedEmpty(false); }, [item.generatedAt, item.sourceVersion]);
-  useEffect(() => { setCoverTemplate(item.coverTemplate ?? "poster"); }, [item.coverTemplate, item.docId]);
+  useEffect(() => {
+    coverTemplateRequestGenerationRef.current += 1;
+    setCoverTemplate(item.coverTemplate ?? "poster");
+  }, [item.coverTemplate, item.docId]);
   useEffect(() => {
     if (!exportOpen) return;
     const close = (event: MouseEvent) => { if (!exportRef.current?.contains(event.target as Node)) setExportOpen(false); };
@@ -282,10 +286,15 @@ export function DerivativeView(props: {
   };
   const changeCoverTemplate = (next: XhsCoverTemplate) => {
     const previous = coverTemplate;
+    const requestGeneration = coverTemplateRequestGenerationRef.current + 1;
+    coverTemplateRequestGenerationRef.current = requestGeneration;
     setCoverTemplate(next);
     void props.stream.updateDerivativeCoverTemplate(props.sessionId, item.docId, next).catch((error) => {
+      if (coverTemplateRequestGenerationRef.current !== requestGeneration) {
+        return;
+      }
       console.error("[workspace] persist cover template failed", error);
-      setCoverTemplate(previous);
+      setCoverTemplate((current) => (current === next ? previous : current));
       props.onToast("封面选择保存失败，请重试");
     });
   };

@@ -1024,6 +1024,88 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe("这篇想怎么写，例如：语气再活泼一点，多用短句");
   });
 
+  it("快速切换封面时旧请求迟到失败不能覆盖后一次成功选择", async () => {
+    const xhsItem: DerivativeItem = {
+      ...item,
+      dtype: "xhs",
+      templateId: "xhs-recommend",
+      templateName: "种草安利",
+      sourceVersion: 1,
+      generatedAt: "now",
+      coverTemplate: "poster",
+    };
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, blockId: "h1" },
+          content: [{ type: "text", text: "封面竞态测试" }],
+        },
+      ],
+    });
+    let rejectOldSave!: (error: Error) => void;
+    const oldSave = new Promise<never>((_resolve, reject) => {
+      rejectOldSave = reject;
+    });
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({
+        meta: xhsItem,
+        docPm,
+        docVersion: 1,
+        title: "",
+      })),
+      updateDerivativeCoverTemplate: vi.fn(
+        async (_sessionId: string, _docId: string, template: string) => {
+          if (template === "magazine") return oldSave;
+          return { ...xhsItem, coverTemplate: template };
+        },
+      ),
+    };
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={xhsItem}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={onToast}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="下一款封面"]')!.click();
+    });
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("magazine");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="下一款封面"]')!.click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("wenkai");
+
+    await act(async () => {
+      rejectOldSave(new Error("old save failed"));
+      await oldSave.catch(() => undefined);
+    });
+
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("wenkai");
+    expect(onToast).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("微信手机预览包含真实 meta 形态和四组底栏操作", async () => {
     const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "正文" }] }] } as never;
     await act(async () => root.render(<DTYPE_REGISTRY.gzh.PhonePreview doc={doc} title="标题" articleRef={vi.fn()}/>));

@@ -28,14 +28,15 @@ const DESKTOP_UA =
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // authorizing:等扫码中;verifying:已扫码落地、正在验证搜索能力;ready:已授权;
-// failed_account_unusable:探针判定当前公众号没有搜索能力;failed_timeout:没等到扫码确认/核验瞬时失败。
-// 后两者供 wechat_auth_status 给不同话术。
+// failed_account_unusable:探针判定当前公众号没有搜索能力；failed_timeout:仅表示用户扫码落地超时；
+// failed_error:二维码交付后的其余中性故障。三者供 wechat_auth_status 给不同话术。
 export type WechatAuthState =
   | "authorizing"
   | "verifying"
   | "ready"
   | "failed_account_unusable"
-  | "failed_timeout";
+  | "failed_timeout"
+  | "failed_error";
 
 interface WechatPendingAuth {
   state: WechatAuthState;
@@ -102,7 +103,10 @@ function settleAuthVerification(pending: WechatPendingAuth): void {
 
 function setAuthTerminalState(
   pending: WechatPendingAuth,
-  state: Extract<WechatAuthState, "ready" | "failed_account_unusable" | "failed_timeout">,
+  state: Extract<
+    WechatAuthState,
+    "ready" | "failed_account_unusable" | "failed_timeout" | "failed_error"
+  >,
   message: string | null = null,
 ): void {
   pending.state = state;
@@ -181,6 +185,10 @@ async function readMpName(page: Page): Promise<string> {
 
 function cookieHeaderFromCookies(cookies: Array<{ name: string; value: string }>): string {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === "TimeoutError";
 }
 
 // 扫码专用:独立 launch 一个 browser(复用 pool 的启动候选顺序),与共享抓取池隔离。
@@ -338,9 +346,27 @@ export class WechatAuthService {
                 .catch(() => {});
             } catch { /* 扫码信号获取失败不影响授权 */ }
             // 等登录成功落地(任意带 token= 的 mp 页,不限 /cgi-bin/home)。落地只用于取凭据,成败看探针。
-            await page.waitForURL(WECHAT_AUTH_LANDING_RE, {
-              timeout: remainingAuthMs(expiresAt),
-            });
+            try {
+              await page.waitForURL(WECHAT_AUTH_LANDING_RE, {
+                timeout: remainingAuthMs(expiresAt),
+              });
+            } catch (error) {
+              if (signal.aborted) return;
+              if (isTimeoutError(error)) {
+                setAuthTerminalState(
+                  pending,
+                  "failed_timeout",
+                  "没等到扫码确认,请重新发起授权",
+                );
+              } else {
+                setAuthTerminalState(
+                  pending,
+                  "failed_error",
+                  "授权未能完成,请重新发起授权",
+                );
+              }
+              return;
+            }
             pending.scanned = true;
             // waitForURL 返回代表用户已在手机端完成扫码落地。必须在首个 await 前同步改态，
             // 否则紧随「我已扫码完成」发起的 status 会误读为 authorizing。
@@ -368,7 +394,7 @@ export class WechatAuthService {
                 pending,
                 probe.kind === "capability_denied"
                   ? "failed_account_unusable"
-                  : "failed_timeout",
+                  : "failed_error",
                 probe.kind === "capability_denied"
                   ? "当前所选公众号无法使用搜索能力(可能已注销或受限),请重扫并在手机上换一个正常的已认证公众号"
                   : "扫码已收到,但未能完成公众号能力核验,请稍后重新发起授权或换一个正常的公众号",
@@ -398,9 +424,10 @@ export class WechatAuthService {
               // 立即移除 pending，既允许下一次 start 新建授权，也避免 status 在 TTL 内误报 TIMEOUT。
               pendingStore.disconnect("wechat-mp", WECHAT_SCOPE);
               pending.rejectImage(new Error("授权页面加载失败，请稍后重试"));
-            } else {
-              // 二维码已交付后，主流程停在 waitForURL 才是用户未完成手机确认。
-              setAuthTerminalState(pending, "failed_timeout", "没等到扫码确认,请重新发起授权");
+            } else if (!signal.aborted) {
+              // waitForURL 的 TimeoutError 已在本阶段内单独处理；其余二维码后故障
+              // 只能进入中性非超时终态，绝不能把 cookie/token/探针/落库失败冒充用户未扫码。
+              setAuthTerminalState(pending, "failed_error", "授权未能完成,请重新发起授权");
             }
           } finally {
             await authBrowser?.close().catch(() => {});
@@ -470,6 +497,14 @@ export class WechatAuthService {
           state: "TIMEOUT",
           mpName,
           message: pending?.failureMessage ?? "没等到扫码确认,请重新发起授权",
+        };
+      }
+      if (st === "failed_error") {
+        return {
+          ok: true,
+          state: "NO_CREDENTIAL",
+          mpName,
+          message: pending?.failureMessage ?? "授权未能完成,请重新发起授权",
         };
       }
       if (bundle?.payload.sessionIssue?.reasonCode === "needs_reauth") {

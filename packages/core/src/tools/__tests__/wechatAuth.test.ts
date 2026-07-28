@@ -31,7 +31,7 @@ function browserMock(
   const browser = { newContext: vi.fn().mockResolvedValue(context), close: vi.fn().mockResolvedValue(undefined) };
   const launch = vi.fn().mockResolvedValue(browser);
   vi.mocked(browserLaunchCandidates).mockReturnValue([{ kind: "default", label: "test", launch }]);
-  return { browser, page, launch, qrElement };
+  return { browser, context, page, launch, qrElement };
 }
 async function start() { return await wechatAuthStartTool.execute!({}, opts) as Record<string, unknown>; }
 async function status() { return await wechatAuthStatusTool.execute!({}, opts) as Record<string, unknown>; }
@@ -162,7 +162,7 @@ describe("wechat auth connector service thin tools", () => {
     ],
     [
       { ok: false, kind: "reauth", message: "expired" } as const,
-      "TIMEOUT",
+      "NO_CREDENTIAL",
     ],
   ])("本轮授权终态 %s 优先于有效旧 bundle", async (probeResult, expectedState) => {
     vi.mocked(readWechatCredentialBundle).mockResolvedValue({
@@ -310,11 +310,41 @@ describe("wechat auth connector service thin tools", () => {
     browserMock(new Promise<void>((_resolve, reject) => { rejectLanding = reject; }));
     await start();
     await expect(status()).resolves.toMatchObject({ state: "AUTHORIZING" });
-    rejectLanding(new Error("timeout"));
+    rejectLanding(new DOMException("扫码落地超时", "TimeoutError"));
     await vi.waitFor(async () => expect((await status()).state).toBe("TIMEOUT"));
   });
 
-  it("首页兜底请求 10 秒超时后授权及时收尾", async () => {
+  it("waitForURL 非超时异常进入中性失败，不误报扫码超时或泄漏异常", async () => {
+    browserMock(Promise.reject(new Error("frame detached: /private/browser/path")));
+
+    await start();
+
+    await vi.waitFor(async () => {
+      const result = await status();
+      expect(result).toMatchObject({
+        state: "NO_CREDENTIAL",
+        message: "授权未能完成,请重新发起授权",
+      });
+      expect(JSON.stringify(result)).not.toContain("frame detached");
+      expect(JSON.stringify(result)).not.toContain("/private/browser/path");
+    });
+  });
+
+  it("waitForURL 成功后读取 cookies 失败进入中性失败", async () => {
+    const { context } = browserMock();
+    context.cookies.mockRejectedValueOnce(new Error("cookie store unavailable"));
+
+    await start();
+
+    await vi.waitFor(async () => {
+      await expect(status()).resolves.toMatchObject({
+        state: "NO_CREDENTIAL",
+        message: "授权未能完成,请重新发起授权",
+      });
+    });
+  });
+
+  it("首页 token 兜底请求 10 秒超时后进入中性失败", async () => {
     vi.useFakeTimers();
     browserMock(Promise.resolve(), "https://mp.weixin.qq.com/cgi-bin/home");
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -331,7 +361,46 @@ describe("wechat auth connector service thin tools", () => {
 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(requestSignal?.aborted).toBe(true);
-    await expect(status()).resolves.toMatchObject({ state: "TIMEOUT" });
+    await expect(status()).resolves.toMatchObject({
+      state: "NO_CREDENTIAL",
+      message: "授权未能完成,请重新发起授权",
+    });
+  });
+
+  it("waitForURL 成功后探针异常进入中性失败", async () => {
+    browserMock();
+    vi.mocked(probeWechatSearchbiz).mockRejectedValueOnce(
+      new Error("probe transport secret"),
+    );
+
+    await start();
+
+    await vi.waitFor(async () => {
+      const result = await status();
+      expect(result).toMatchObject({
+        state: "NO_CREDENTIAL",
+        message: "授权未能完成,请重新发起授权",
+      });
+      expect(JSON.stringify(result)).not.toContain("probe transport secret");
+    });
+  });
+
+  it("waitForURL 成功后凭据保存失败进入中性失败", async () => {
+    browserMock();
+    vi.mocked(saveConnectorCredentialBundle).mockRejectedValueOnce(
+      new Error("credential storage secret"),
+    );
+
+    await start();
+
+    await vi.waitFor(async () => {
+      const result = await status();
+      expect(result).toMatchObject({
+        state: "NO_CREDENTIAL",
+        message: "授权未能完成,请重新发起授权",
+      });
+      expect(JSON.stringify(result)).not.toContain("credential storage secret");
+    });
   });
 
   it("取消授权会中止正在进行的首页兜底请求", async () => {

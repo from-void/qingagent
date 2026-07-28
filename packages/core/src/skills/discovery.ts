@@ -13,7 +13,15 @@ export interface ParsedSkillFrontmatter {
   placeholder?: string;
   config?: string;
   tools: string[];
+  /**
+   * 技能声明「需要和终端共享哪个凭证目录」。这里只做原样保留(仍是 ~/ 写法),
+   * 合法性由 credentialPaths.ts 统一裁定——解析层不做安全判断,避免两套口径。
+   */
+  credentialPaths: string[];
 }
+
+/** frontmatter 里按 YAML 列表书写的字段(值可以是行内 [a, b] 或多行 - a)。 */
+const LIST_FRONTMATTER_KEYS = new Set(["tools", "credential-paths"]);
 
 export interface DiscoveredSkill {
   path: string;
@@ -45,6 +53,10 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
   const placeholder = nonEmptyString(data.placeholder);
   const config = nonEmptyString(data.config);
   const tools = Array.isArray(data.tools) ? data.tools.filter(Boolean) : [];
+  const rawCredentialPaths = data["credential-paths"];
+  const credentialPaths = Array.isArray(rawCredentialPaths)
+    ? rawCredentialPaths.filter(Boolean)
+    : [];
   const userInvocable = parseBooleanValue(data["user-invocable"]);
   return {
     name,
@@ -57,6 +69,7 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
     ...(placeholder ? { placeholder } : {}),
     ...(config ? { config } : {}),
     tools,
+    credentialPaths,
   };
 }
 
@@ -154,19 +167,19 @@ function parseFrontmatterBlock(block: string): Record<string, FrontmatterValue> 
       data[key] = rawValue === "|" ? parts.join("\n") : parts.join(" ");
       continue;
     }
-    if (rawValue === "" && key === "tools") {
-      const tools: string[] = [];
+    if (rawValue === "" && LIST_FRONTMATTER_KEYS.has(key)) {
+      const items: string[] = [];
       while (i + 1 < lines.length) {
         const itemMatch = lines[i + 1]!.match(/^\s*-\s*(.+?)\s*$/);
         if (!itemMatch) break;
         i += 1;
-        const tool = parseStringValue(itemMatch[1]!);
-        if (tool) tools.push(tool);
+        const item = parseStringValue(itemMatch[1]!);
+        if (item) items.push(item);
       }
-      data[key] = tools;
+      data[key] = items;
       continue;
     }
-    data[key] = key === "tools" ? parseStringArray(rawValue) : parseScalar(rawValue);
+    data[key] = LIST_FRONTMATTER_KEYS.has(key) ? parseStringArray(rawValue) : parseScalar(rawValue);
   }
   return data;
 }

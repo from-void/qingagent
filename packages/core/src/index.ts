@@ -231,14 +231,18 @@ export {
   BUILTIN_SKILLS_DIR,
   SKILLS_INSTALL_DIR,
   USER_SKILLS_DIR,
+  checkCredentialPath,
+  isNeverAllowedCredentialPath,
   listChildSkills,
   listTopLevelSkills,
+  parseCredentialPathDeclarations,
   parseSkillFrontmatter,
   readDisabledSet,
   scanSkillHierarchy,
   setEnabled,
 } from "./skills/index.js";
 export type {
+  CredentialPathDeclaration,
   DiscoveredSkill,
   ParsedSkillFrontmatter,
 } from "./skills/index.js";

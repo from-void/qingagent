@@ -38,7 +38,7 @@ const sharedAccept: CommandFixture[] = [
       data: {
         sessionId: "s",
         text: "hi @x",
-        mentions: [{ id: "r1", domain: { kind: "file" } }],
+        mentions: [],
         skills: [{ id: "browser-ops", version: null }],
         chips: [{ kind: { kind: "text" }, resourceRef: null, prefix: null, label: "L", suffix: null }],
         fileIds: [VALID_UUID],
@@ -125,6 +125,7 @@ const sharedReject: CommandFixture[] = [
 // ——— 分区三:旧误收、新按契约收紧拒绝(有意的安全增益) ———
 const newStricter: CommandFixture[] = [
   { name: "startSession/new-without-template", body: { kind: "startSession", data: { mode: { kind: "new", data: { sessionId: "sess-x" } } } } },
+  { name: "sendMessage/deprecated-mentions", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [{ id: "r1", domain: { kind: "mention" } }], skills: [], chips: [], fileIds: [] } } },
   { name: "sendMessage/mentions-non-object", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [123], skills: [], chips: [], fileIds: [] } } },
   { name: "sendMessage/skill-missing-fields", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [{}], chips: [], fileIds: [] } } },
   { name: "sendMessage/chip-malformed", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [{ label: "L" }], fileIds: [] } } },
@@ -153,6 +154,20 @@ describe("D6 命令校验等价回归矩阵", () => {
     expect(legacyValidateCommandKind(body)).toBeNull();
     expect(validateCommandKind(body)).not.toBeNull();
   });
+});
+
+it("非空 mentions 返回明确的 chips 迁移指引", () => {
+  expect(validateCommandKind({
+    kind: "sendMessage",
+    data: {
+      sessionId: "s",
+      text: "x",
+      mentions: [{ id: "r1", domain: { kind: "mention" } }],
+      skills: [],
+      chips: [],
+      fileIds: [],
+    },
+  })).toBe("sendMessage.data.mentions: mentions is deprecated; use chips instead");
 });
 
 describe("D6 未知字段消毒(strip)", () => {

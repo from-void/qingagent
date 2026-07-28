@@ -96,6 +96,47 @@ describe("commandSchema", () => {
     expect(r.success).toBe(true);
   });
 
+  it("拒绝已弃用的非空 mentions 并指引改用 chips", () => {
+    const result = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "hi",
+        mentions: [{ id: "mention-1", domain: { kind: "mention" } }],
+        skills: [],
+        chips: [],
+        fileIds: [],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: ["data", "mentions"],
+        message: "mentions is deprecated; use chips instead",
+      }),
+    ]));
+  });
+
+  it("mentions 缺省时补为空数组", () => {
+    const result = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "hi",
+        skills: [],
+        chips: [],
+        fileIds: [],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success && result.data.kind === "sendMessage") {
+      expect(result.data.data.mentions).toEqual([]);
+    }
+  });
+
   it("sendMessage 文本与资源字符串在 64 KiB 边界通过，加一拒绝", () => {
     const baseData = {
       sessionId: "s",
@@ -113,25 +154,27 @@ describe("commandSchema", () => {
       data: { ...baseData, text: "x".repeat(MAX_COMMAND_STRING_LENGTH + 1) },
     }).success).toBe(false);
 
-    const mentionAtLimit = {
-      id: "x".repeat(MAX_COMMAND_STRING_LENGTH),
-      domain: { kind: "mention" },
+    const chipAtLimit = {
+      kind: { kind: "selection" },
+      resourceRef: {
+        id: "x".repeat(MAX_COMMAND_STRING_LENGTH),
+        domain: { kind: "docSpan" },
+      },
+      prefix: null,
+      label: "选区",
+      suffix: null,
     };
-    expect(commandSchema.safeParse({
-      kind: "sendMessage",
-      data: { ...baseData, text: "x", mentions: [mentionAtLimit] },
-    }).success).toBe(true);
-    expect(commandSchema.safeParse({
-      kind: "sendMessage",
-      data: { ...baseData, text: "x", mentions: [{
-        ...mentionAtLimit,
-        id: `${mentionAtLimit.id}x`,
-      }] },
-    }).success).toBe(false);
+    expect(commandSchema.safeParse(sendMessageWithChip(chipAtLimit)).success).toBe(true);
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      ...chipAtLimit,
+      resourceRef: {
+        ...chipAtLimit.resourceRef,
+        id: `${chipAtLimit.resourceRef.id}x`,
+      },
+    })).success).toBe(false);
   });
 
   it.each([
-    ["mentions", (): unknown => ({ id: "r", domain: { kind: "mention" } })],
     ["skills", (): unknown => ({ id: "skill", version: null })],
     ["chips", (): unknown => ({
       kind: { kind: "text" },

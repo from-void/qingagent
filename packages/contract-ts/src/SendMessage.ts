@@ -5,10 +5,7 @@ import type { ActionCardData } from "./ActionCard";
 import type { ReviewContext } from "./ReviewTemplates";
 
 export type SendMessage = { sessionId: string, text: string,
-/**
- * Round 3 sweep: mentions are now `ResourceRef` directly. Any of
- * the 10 resource domains is legal as a mention target.
- */
+/** @deprecated 仅保留空数组线协议兼容；资源引用请使用 `chips`。 */
 mentions: Array<ResourceRef>, skills: Array<SkillRef>,
 /**
  * User-side chip echoes (Selection, Insertion, Attach, Mention,

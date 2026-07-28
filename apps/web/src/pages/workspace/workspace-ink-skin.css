@@ -1076,6 +1076,25 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ws-input-tools .wf-btn.primary:disabled {
   opacity: 0.45;
 }
+/* 停止按钮:与发送同几何(12.5px / 6px 12px / 直角 / 1px 边),但走次级墨色调
+   —— 未 hover 即有可见描边与浅底,不再是一坨裸文字;停止属常规操作,禁用红色。 */
+#view-workspace .ws-input-tools .wf-btn[data-wf="WsStopBtn"] {
+  border-radius: 0 !important;
+  border: 1px solid rgba(184, 169, 140, 0.36) !important;
+  background: rgba(184, 169, 140, 0.1) !important;
+  color: rgba(236, 227, 208, 0.82) !important;
+  font-size: 12.5px !important;
+  padding: 6px 12px !important;
+  gap: 6px !important;
+}
+#view-workspace .ws-input-tools .wf-btn[data-wf="WsStopBtn"]:hover:not(:disabled) {
+  border-color: rgba(184, 169, 140, 0.56) !important;
+  background: rgba(184, 169, 140, 0.2) !important;
+  color: #f6efdf !important;
+}
+#view-workspace .ws-input-tools .wf-btn[data-wf="WsStopBtn"]:disabled {
+  opacity: 0.45;
+}
 
 /* askUser 中途反问:内联替代输入框,与输入框同款通体玻璃 */
 #view-workspace .askuser-overlay {

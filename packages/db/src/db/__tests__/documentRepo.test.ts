@@ -164,7 +164,55 @@ describe("documentRepo", () => {
       title: "新标题",
       docVersion: 4,
       legacySections: [section("保持不变的正文")],
-      version: 2,
+      version: 1,
+    });
+  });
+
+  it("已有同版本快照后仍保存同正文的标题、状态和同步指针", async () => {
+    const pmDoc = legacySectionsToPm([section("已提交正文")] as never);
+    await documentRepo.save(
+      input("doc-metadata-after-snapshot", {
+        title: "提交时标题",
+        docState: "editing",
+        docVersion: 4,
+        lastSyncedVersion: 2,
+        legacySections: [section("已提交正文")],
+        pmDoc,
+      }),
+    );
+    await insertVersion({
+      versionId: "version-doc-metadata-after-snapshot-4",
+      docId: "doc-metadata-after-snapshot",
+      docVersion: 4,
+      contentHash: getPmContentHash(pmDoc),
+      schemaVersion: pmDoc.attrs.schemaVersion,
+      actorType: "agent",
+      summary: "提交",
+      snapshotPm: pmDoc,
+      parentVersion: 3,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    await documentRepo.save(
+      input("doc-metadata-after-snapshot", {
+        title: "提交后标题",
+        docState: "reviewing",
+        docVersion: 4,
+        lastSyncedVersion: 4,
+        legacySections: [section("已提交正文")],
+        pmDoc,
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+    );
+
+    expect(await documentRepo.load("doc-metadata-after-snapshot")).toMatchObject({
+      title: "提交后标题",
+      docState: "reviewing",
+      docVersion: 4,
+      lastSyncedVersion: 4,
+      legacySections: [section("已提交正文")],
+      version: 1,
+      updatedAt: "2026-01-03T00:00:00.000Z",
     });
   });
 

@@ -434,7 +434,7 @@ async function listDocumentPage(
   throw new Error("Unreachable document list fetch round");
 }
 
-function upsertStatement(input: DocumentSaveInput): InStatement {
+function contentUpsertStatement(input: DocumentSaveInput): InStatement {
   const projection = buildPmProjection(input);
   return {
     sql: `INSERT INTO documents (
@@ -489,12 +489,7 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
                 )),
             documents.doc_version - 1
           ) < excluded.doc_version
-          AND (
-            excluded.content_hash IS NOT documents.content_hash
-            OR excluded.title IS NOT documents.title
-            OR excluded.doc_state IS NOT documents.doc_state
-            OR excluded.last_synced_version IS NOT documents.last_synced_version
-          )
+          AND excluded.content_hash IS NOT documents.content_hash
         )`,
     args: [
       input.id,
@@ -516,10 +511,88 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
   };
 }
 
+function metadataUpdateStatement(input: DocumentSaveInput): InStatement {
+  const projection = buildPmProjection(input);
+  return {
+    sql: `UPDATE documents SET
+        title = ?,
+        doc_state = ?,
+        last_synced_version = ?,
+        updated_at = ?
+      WHERE id = ?
+        AND doc_version = ?
+        AND content_hash IS ?
+        AND (
+          title IS NOT ?
+          OR doc_state IS NOT ?
+          OR last_synced_version IS NOT ?
+        )`,
+    args: [
+      input.title,
+      input.docState,
+      input.lastSyncedVersion,
+      input.updatedAt,
+      input.id,
+      input.docVersion,
+      projection.contentHash,
+      input.title,
+      input.docState,
+      input.lastSyncedVersion,
+    ],
+  };
+}
+
 async function readyClient() {
   const client = getDocumentsClient();
   await ensureMigrated();
   return client;
+}
+
+async function assertZeroWriteIsResolved(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  input: DocumentSaveInput,
+): Promise<void> {
+  const projection = buildPmProjection(input);
+  const result = await client.execute({
+    sql: `SELECT title, doc_state, doc_version, last_synced_version, content_hash
+      FROM documents WHERE id = ?`,
+    args: [input.id],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error(`文档保存未写入：${input.id}`);
+  const currentVersion = valueAsNumber(row.doc_version);
+  if (currentVersion > input.docVersion) return;
+  if (
+    currentVersion === input.docVersion &&
+    valueAsString(row.content_hash) === projection.contentHash &&
+    valueAsString(row.title) === input.title &&
+    valueAsString(row.doc_state) === input.docState &&
+    valueAsNumber(row.last_synced_version) === input.lastSyncedVersion
+  ) return;
+  throw new Error(`文档保存未写入：版本或正文高水位冲突（${input.id}）`);
+}
+
+async function saveDocumentInputs(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  inputs: DocumentSaveInput[],
+): Promise<void> {
+  const results = await client.batch(
+    inputs.flatMap((input) => [
+      contentUpsertStatement(input),
+      metadataUpdateStatement(input),
+    ]),
+    "write",
+  );
+  for (const [index, input] of inputs.entries()) {
+    const contentResult = results[index * 2];
+    const metadataResult = results[index * 2 + 1];
+    if (!contentResult || !metadataResult) {
+      throw new Error(`文档保存未返回完整结果：${input.id}`);
+    }
+    if (contentResult.rowsAffected === 0 && metadataResult.rowsAffected === 0) {
+      await assertZeroWriteIsResolved(client, input);
+    }
+  }
 }
 
 async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyClient>>, mapped: MappedDocumentRow): Promise<boolean> {
@@ -740,7 +813,7 @@ export const documentRepo: DocumentRepo = {
         threadId: input.threadId,
         operation: "document.save",
       });
-      await client.execute(upsertStatement(input));
+      await saveDocumentInputs(client, [input]);
     });
   },
 
@@ -760,7 +833,7 @@ export const documentRepo: DocumentRepo = {
           operation: "document.saveMany",
         });
       }
-      await client.batch(inputs.map(upsertStatement), "write");
+      await saveDocumentInputs(client, inputs);
     });
   },
 

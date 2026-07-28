@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ConnectorId } from "@qingagent/contract-ts";
+import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
+import { parseCredentialShareItems } from "./credentialShare";
 
 export const SKILLS_CHANGED_EVENT = "qingagent:skills-changed";
 
@@ -67,7 +68,7 @@ export function useSkills() {
   }, [refresh]);
 
   const setSkillEnabled = useCallback(
-    async (name: string, enabled: boolean) => {
+    async (name: string, enabled: boolean): Promise<CredentialShareItem[]> => {
       setSkills((prev) =>
         prev.map((skill) => (skill.name === name ? { ...skill, enabled } : skill)),
       );
@@ -79,8 +80,15 @@ export function useSkills() {
         await refresh();
         throw new Error(`技能${enabled ? "启用" : "停用"}失败`);
       }
+      // 刚启用的技能可能要共享命令行工具的登录信息,把待授权条目交给调用方弹卡。
+      const pending = parseCredentialShareItems(
+        await res.json().then((body: unknown) => ({
+          items: (body as { credentialRequests?: unknown }).credentialRequests,
+        })).catch(() => ({ items: [] })),
+      );
       await refresh();
       notifySkillsChanged();
+      return pending;
     },
     [refresh],
   );

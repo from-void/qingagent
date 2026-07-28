@@ -44,7 +44,7 @@ const h = vi.hoisted(() => ({
     enabled: true,
     body: "",
   })),
-  setSkillEnabled: vi.fn(async () => undefined),
+  setSkillEnabled: vi.fn(async () => []),
   deleteSkill: vi.fn(async () => undefined),
   refresh: vi.fn(async () => undefined),
   getSkillDetail: vi.fn(),

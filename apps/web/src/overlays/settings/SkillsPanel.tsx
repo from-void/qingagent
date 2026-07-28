@@ -22,7 +22,9 @@ import { useClientCapabilities, useConfirm } from "../../system";
 import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
 import { useOverlayDismiss } from "../../system/overlayDismissStack";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
-import type { ConnectorId } from "@qingagent/contract-ts";
+import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
+import { ConfirmOverlay } from "../../pages/workspace/components/ConfirmOverlay";
+import { buildCredentialShareSpec, updateCredentialShare } from "./credentialShare";
 
 ensureSettingsDialogA11y();
 
@@ -224,11 +226,46 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     setMessage(null);
   }, [message, toast]);
 
+  // 启用后若该技能要共享命令行工具的登录信息,当场弹一张确认卡。
+  const [credentialItems, setCredentialItems] = useState<CredentialShareItem[]>([]);
+  const credentialSpec = buildCredentialShareSpec(credentialItems);
+
+  const handleCredentialDecision = async (accepted: boolean) => {
+    const items = credentialItems;
+    setCredentialItems([]);
+    if (!accepted || items.length === 0) return;
+    try {
+      for (const item of items) {
+        await updateCredentialShare({
+          skillName: item.skillName,
+          declared: item.declared,
+          granted: true,
+        });
+      }
+      if (mountedRef.current) {
+        setMessage(`已允许「${items[0]!.skillLabel}」共享登录信息`);
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setMessage(error instanceof Error ? error.message : "共享没有开启成功");
+      }
+    }
+  };
+
+  const credentialCard = credentialSpec ? (
+    <ConfirmOverlay
+      sessionId={null}
+      spec={credentialSpec}
+      onDecision={(decision) => void handleCredentialDecision(decision.accepted)}
+    />
+  ) : null;
+
   const toggle = async (name: string, enabled: boolean) => {
     setBusy(name);
     setMessage(null);
     try {
-      await setSkillEnabled(name, enabled);
+      const pending = (await setSkillEnabled(name, enabled)) ?? [];
+      if (pending.length > 0 && mountedRef.current) setCredentialItems(pending);
       if (detail?.name === name && mountedRef.current) {
         setDetail({ ...detail, enabled });
       }
@@ -445,6 +482,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         ) : (
           <p className="sm-message">{detailError ?? "技能不存在"}</p>
         )}
+        {credentialCard}
       </div>
     );
   }
@@ -552,6 +590,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         )}
 
       {!loading && !error && skills.length === 0 && <p className="sm-empty">暂无技能</p>}
+      {credentialCard}
     </div>
   );
 }

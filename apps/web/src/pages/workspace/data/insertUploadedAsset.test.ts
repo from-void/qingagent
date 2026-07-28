@@ -3,7 +3,12 @@ import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { insertFileAsset, insertImageAsset, UPLOAD_PLACEHOLDER_IMAGE_SRC } from "./insertUploadedAsset";
+import {
+  insertFileAsset,
+  insertImageAsset,
+  insertImageAssets,
+  UPLOAD_PLACEHOLDER_IMAGE_SRC,
+} from "./insertUploadedAsset";
 
 describe("insertUploadedAsset", () => {
   let editor: Editor | null = null;
@@ -70,6 +75,48 @@ describe("insertUploadedAsset", () => {
     ).toBe(false);
   });
 
+  it("多图先按顺序同步插入整批占位,再并发上传并分别回写", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createEditor();
+    const files = [
+      new File(["first"], "first.png", { type: "image/png" }),
+      new File(["second"], "second.png", { type: "image/png" }),
+    ];
+
+    const uploads = insertImageAssets(editor, files);
+    const placeholders = allImageAttrs(editor);
+    expect(placeholders.map((attrs) => attrs.alt)).toEqual(["first.png", "second.png"]);
+    expect(placeholders.every((attrs) => attrs.uploading === true)).toBe(true);
+    await waitForRequestCount(2);
+    expect(MockUploadRequest.instances).toHaveLength(2);
+
+    editor.commands.insertContentAt(editor.state.doc.content.size, {
+      type: "paragraph",
+      attrs: { blockId: "p-after-images" },
+      content: [{ type: "text", text: "上传期间继续编辑" }],
+    });
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+
+    MockUploadRequest.instances[1]!.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440002",
+      filename: "second.png",
+      mimeType: "image/png",
+      size: 6,
+    });
+    MockUploadRequest.instances[0]!.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440001",
+      filename: "first.png",
+      mimeType: "image/png",
+      size: 5,
+    });
+    await Promise.all(uploads);
+
+    expect(allImageAttrs(editor).map((attrs) => attrs.src)).toEqual([
+      "/api/v1/files/550e8400-e29b-41d4-a716-446655440001/first.png",
+      "/api/v1/files/550e8400-e29b-41d4-a716-446655440002/second.png",
+    ]);
+  });
+
   it("文件上传时立即在发起位置插入稳定占位,移动光标后仍按 blockId 回写", async () => {
     vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
     editor = createEditor();
@@ -118,7 +165,7 @@ describe("insertUploadedAsset", () => {
 function createEditor(): Editor {
   const element = document.createElement("div");
   document.body.appendChild(element);
-  return new Editor({
+  const editor = new Editor({
     element,
     extensions: createQingagentExtensions(),
     content: {
@@ -127,6 +174,11 @@ function createEditor(): Editor {
       content: [{ type: "paragraph", attrs: { blockId: "p" } }],
     },
   });
+  vi.spyOn(
+    editor.view as unknown as { scrollToSelection: () => void },
+    "scrollToSelection",
+  ).mockImplementation(() => undefined);
+  return editor;
 }
 
 function firstImage(editor: Editor) {
@@ -137,6 +189,12 @@ function firstImageAttrs(editor: Editor): Record<string, unknown> {
   const attrs = firstImage(editor)?.attrs;
   expect(attrs).toBeDefined();
   return attrs as Record<string, unknown>;
+}
+
+function allImageAttrs(editor: Editor): Record<string, unknown>[] {
+  return (editor.getJSON().content ?? [])
+    .filter((node) => node.type === "image")
+    .map((node) => node.attrs as Record<string, unknown>);
 }
 
 function firstAttachmentAttrs(editor: Editor): Record<string, unknown> {
@@ -186,10 +244,14 @@ class MockUploadRequest {
 }
 
 async function waitForRequest(): Promise<MockUploadRequest> {
+  await waitForRequestCount(1);
+  return MockUploadRequest.instances[0]!;
+}
+
+async function waitForRequestCount(count: number): Promise<void> {
   for (let i = 0; i < 20; i += 1) {
-    const request = MockUploadRequest.instances[0];
-    if (request) return request;
+    if (MockUploadRequest.instances.length >= count) return;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  throw new Error("XMLHttpRequest was not created");
+  throw new Error(`Expected ${count} XMLHttpRequests to be created`);
 }

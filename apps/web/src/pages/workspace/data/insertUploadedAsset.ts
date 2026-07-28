@@ -8,20 +8,43 @@ export const UPLOAD_PLACEHOLDER_IMAGE_SRC = `data:image/svg+xml,${encodeURICompo
 )}`;
 
 export async function insertImageAsset(editor: AssetEditor, file: File): Promise<string> {
-  const blockId = createUploadImageBlockId();
-  const inserted = editor.chain().focus().insertContent({
-    type: "image",
-    attrs: {
-      blockId,
-      src: UPLOAD_PLACEHOLDER_IMAGE_SRC,
-      alt: file.name,
-      uploading: true,
-      progress: null,
-      error: false,
-    },
-  }).run();
+  const [upload] = insertImageAssets(editor, [file]);
+  if (!upload) throw new Error("Insert image placeholder failed");
+  return upload;
+}
+
+export function insertImageAssets(
+  editor: AssetEditor,
+  files: readonly File[],
+): Promise<string>[] {
+  if (files.length === 0) return [];
+  const targets = files.map((file) => ({
+    blockId: createUploadImageBlockId(),
+    file,
+  }));
+  const inserted = editor.chain().focus().insertContent(
+    targets.map(({ blockId, file }) => ({
+      type: "image",
+      attrs: {
+        blockId,
+        src: UPLOAD_PLACEHOLDER_IMAGE_SRC,
+        alt: file.name,
+        uploading: true,
+        progress: null,
+        error: false,
+      },
+    })),
+  ).run();
   if (!inserted) throw new Error("Insert image placeholder failed");
 
+  return targets.map(({ blockId, file }) => uploadImageIntoPlaceholder(editor, blockId, file));
+}
+
+async function uploadImageIntoPlaceholder(
+  editor: AssetEditor,
+  blockId: string,
+  file: File,
+): Promise<string> {
   const uploaded = await uploadAssetFile(file, {
     onProgress: (progress) => {
       updateImageAttrsByBlockId(editor, blockId, {

@@ -94,7 +94,7 @@ import type {
   DocSuggestion,
   PatchOverlayInput,
 } from "../data/protocol";
-import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
+import { insertFileAsset, insertImageAssets } from "../data/insertUploadedAsset";
 import { MathEditPopover, type MathEditTarget } from "./MathEditPopover";
 import { DocColophon } from "./DocColophon";
 import {
@@ -536,23 +536,25 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     () => createWorkspaceTiptapExtensions({ docId, forceExpandCollapse }),
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
-  // 粘贴图片到正文:走上传文件链路(uploadAssetFile)再插 image 节点;读 ref 拿当前 editor,
-  // 避免 editorProps 闭包捕获到 useEditor 首帧的 null。
+  // 粘贴图片到正文:先一次性插入整批占位再并发上传,按各自 blockId 回写;读 ref 拿当前
+  // editor,避免 editorProps 闭包捕获到 useEditor 首帧的 null。
   const pasteImageEditorRef = useRef<Editor | null>(null);
   const handlePasteImages = useCallback(
     (files: File[]) => {
       const ed = pasteImageEditorRef.current;
       if (!ed || ed.isDestroyed || !ed.isEditable) return;
-      void (async () => {
-        for (const file of files) {
-          try {
-            await insertImageAsset(ed, file);
-          } catch (error) {
+      try {
+        const uploads = insertImageAssets(ed, files);
+        void Promise.all(uploads.map((upload) =>
+          upload.catch((error) => {
             console.error("[workspace] paste image upload failed", error);
             onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
-          }
-        }
-      })();
+          }),
+        ));
+      } catch (error) {
+        console.error("[workspace] paste image placeholder failed", error);
+        onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
+      }
     },
     [onToast],
   );

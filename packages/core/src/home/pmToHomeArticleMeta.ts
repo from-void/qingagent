@@ -37,34 +37,22 @@ function firstHeadingText(doc: PmDoc): string | null {
 
 function firstImageUrl(doc: PmDoc): string | null {
   for (const node of doc.content) {
-    const src = findImageSrc(node);
-    if (src?.startsWith("/api/v1/files/")) return src;
+    const src = findLocalImageSrc(node);
+    if (src) return src;
   }
   return null;
 }
 
-function findImageSrc(node: PmNode): string | null {
-  switch (node.type) {
-    case "image":
-      return node.attrs.src;
-    case "blockquote":
-    case "bulletList":
-    case "orderedList":
-    case "listItem":
-    case "table":
-    case "tableRow":
-    case "tableCell":
-    case "tableHeader":
-    case "columnList":
-    case "column":
-      for (const child of "content" in node ? node.content : []) {
-        const src = findImageSrc(child);
-        if (src) return src;
-      }
-      return null;
-    default:
-      return null;
+function findLocalImageSrc(node: PmNode): string | null {
+  if (node.type === "image") {
+    return node.attrs.src.startsWith("/api/v1/files/") ? node.attrs.src : null;
   }
+  if (!("content" in node) || !Array.isArray(node.content)) return null;
+  for (const child of node.content) {
+    const src = findLocalImageSrc(child);
+    if (src) return src;
+  }
+  return null;
 }
 
 function inlineText(node: Extract<PmBlockNode, { type: "heading" }>): string {

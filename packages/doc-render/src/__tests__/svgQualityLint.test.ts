@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lintSvg } from "../browser/svgQualityLint.js";
+import { estimateTextWidth, lintSvg } from "../browser/svgQualityLint.js";
 
 const size = { width: 800, height: 450 };
 
@@ -97,5 +97,11 @@ describe("lintSvg", () => {
   it("畸形 XML 或非 svg 根返回空违规", () => {
     expect(lintSvg(`<svg><text x="10" y="10">坏</svg>`, size)).toEqual([]);
     expect(lintSvg(`<div><text x="10" y="10">非 SVG</text></div>`, size)).toEqual([]);
+  });
+});
+
+describe("estimateTextWidth", () => {
+  it("将假名、Hangul 与全角字符按全宽估算", () => {
+    expect(estimateTextWidth("あア한Ａ", 10)).toBe(40);
   });
 });

@@ -25,7 +25,10 @@ interface Bounds {
 
 const DEFAULT_FONT_SIZE = 16;
 const DEFAULT_BACKGROUND = "#efe7d6";
-const CJK_RE = /[\u3400-\u9fff\uf900-\ufaff]/;
+// SVG 模板使用的 CJK 字体中，下列东亚字符通常占一个完整 em。除汉字外必须覆盖
+// 日文假名、Hangul 与全角形式，否则临界标签会被按 0.6em 低估而侵入相邻图形。
+const EAST_ASIAN_FULLWIDTH_RE =
+  /[\u1100-\u11ff\u3000-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff01-\uff60\uffe0-\uffe6]/u;
 
 function elementName(el: XmlElement): string {
   return (el.localName || el.tagName || "").toLowerCase();
@@ -121,7 +124,7 @@ function previewText(text: string): string {
 export function estimateTextWidth(text: string, fontSize: number): number {
   let width = 0;
   for (const ch of text) {
-    width += CJK_RE.test(ch) ? fontSize : fontSize * 0.6;
+    width += EAST_ASIAN_FULLWIDTH_RE.test(ch) ? fontSize : fontSize * 0.6;
   }
   return width;
 }

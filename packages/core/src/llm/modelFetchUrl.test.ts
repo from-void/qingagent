@@ -13,7 +13,11 @@ vi.mock("node:dns", () => ({
 }));
 
 import { validateFetchUrl } from "@qingagent/doc-render/fetch-url";
-import { modelFetch, resetModelTransportForTests } from "./modelTransport.js";
+import {
+  MODEL_PREFLIGHT_RETRY_DELAYS_MS,
+  modelFetch,
+  resetModelTransportForTests,
+} from "./modelTransport.js";
 import { allowsPrivateModelHost, validateModelFetchUrl } from "./modelFetchUrl.js";
 
 const TEST_ENV_KEYS = [
@@ -37,6 +41,11 @@ async function listen(server: Server): Promise<string> {
   if (!address || typeof address === "string") throw new Error("测试 server 未监听 TCP");
   servers.push(server);
   return `http://127.0.0.1:${address.port}`;
+}
+
+/** 预检重试退避总和:测试推进假时钟时必须把它算进去。 */
+function retryBackoffMs(): number {
+  return MODEL_PREFLIGHT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
 }
 
 function errorMessages(error: unknown): string[] {
@@ -177,15 +186,36 @@ describe("主模型 URL SSRF 策略", () => {
     await expect(pending).rejects.toBe(reason);
   });
 
-  it("modelFetch 的连接超时覆盖 DNS 预检等待", async () => {
+  it("modelFetch 的连接超时覆盖 DNS 预检等待:不允许私网时重试一次后仍严格阻断", async () => {
     vi.useFakeTimers();
     process.env.QINGAGENT_MODEL_CONNECT_TIMEOUT_MS = "25";
     lookupMock.mockReturnValue(new Promise(() => undefined));
     try {
       const pending = modelFetch("https://slow-dns.example.com/v1");
       const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(25 + retryBackoffMs() + 25);
       await rejection;
+      // 瞬时故障重试一次:预检是辅助防线,不该被一次慢解析一票否决。
+      expect(lookupMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("允许私网时预检超时降级为尽力而为,请求继续走连接层的同一套策略", async () => {
+    vi.useFakeTimers();
+    process.env.QINGAGENT_ALLOW_PRIVATE_MODEL_HOST = "1";
+    process.env.QINGAGENT_MODEL_CONNECT_TIMEOUT_MS = "25";
+    lookupMock.mockReturnValue(new Promise(() => undefined));
+    try {
+      let caught: unknown;
+      const pending = modelFetch("https://slow-dns.example.com/v1").catch((error) => {
+        caught = error;
+      });
+      await vi.advanceTimersByTimeAsync(25 + retryBackoffMs() + 25);
+      await pending;
+      // 没有卡在预检超时上:失败来自真正的连接层 DNS(仍受同一策略校验)。
+      expect(errorMessages(caught).join("\n")).toContain("unexpected connection lookup");
     } finally {
       vi.useRealTimers();
     }

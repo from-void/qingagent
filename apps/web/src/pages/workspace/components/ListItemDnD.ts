@@ -92,12 +92,14 @@ interface ListItemDndState {
   target: { pos: number; placement: ListItemDropPlacement; region: ListItemDropRegion; targetDepth: number } | null;
   lastZone: ListItemDndLastZone | null;
   trailingUndoDepth: number | null;
+  trailingUndone: boolean;
 }
 
 type ListItemDndTrailingUndoMeta =
   | "remember"
   | "consume"
-  | { kind: "arm"; undoDepth: number };
+  | { kind: "arm"; undoDepth: number }
+  | { kind: "undone"; undoDepth: number };
 
 type ListItemDndMeta =
   | {
@@ -1386,7 +1388,13 @@ export function createListItemDndPlugin(): Plugin {
   return new Plugin<ListItemDndState>({
     key: listItemDndKey,
     state: {
-      init: () => ({ decorations: DecorationSet.empty, target: null, lastZone: null, trailingUndoDepth: null }),
+      init: () => ({
+        decorations: DecorationSet.empty,
+        target: null,
+        lastZone: null,
+        trailingUndoDepth: null,
+        trailingUndone: false,
+      }),
       apply(tr, value) {
         const meta = tr.getMeta(listItemDndKey) as ListItemDndMeta | undefined;
         const trailingMeta = tr.getMeta(LIST_ITEM_DND_TRAILING_UNDO_META) as ListItemDndTrailingUndoMeta | undefined;
@@ -1395,7 +1403,17 @@ export function createListItemDndPlugin(): Plugin {
             ? null
             : typeof trailingMeta === "object" && trailingMeta.kind === "arm"
               ? trailingMeta.undoDepth
+              : typeof trailingMeta === "object" && trailingMeta.kind === "undone"
+                ? trailingMeta.undoDepth
               : value.trailingUndoDepth;
+        const trailingUndone =
+          trailingMeta === "consume"
+            ? false
+            : typeof trailingMeta === "object" && trailingMeta.kind === "arm"
+              ? false
+              : typeof trailingMeta === "object" && trailingMeta.kind === "undone"
+                ? true
+                : value.trailingUndone;
         if (meta?.kind === "set") {
           const lastZone = { region: meta.region, targetDepth: meta.targetDepth, targetItemPos: meta.pos };
           const decos: Decoration[] = [listItemDropLineDecoration(meta)];
@@ -1406,10 +1424,17 @@ export function createListItemDndPlugin(): Plugin {
             target: { pos: meta.pos, placement: meta.placement, region: meta.region, targetDepth: meta.targetDepth },
             lastZone,
             trailingUndoDepth,
+            trailingUndone,
           };
         }
         if (meta?.kind === "clear") {
-          return { decorations: DecorationSet.empty, target: null, lastZone: null, trailingUndoDepth };
+          return {
+            decorations: DecorationSet.empty,
+            target: null,
+            lastZone: null,
+            trailingUndoDepth,
+            trailingUndone,
+          };
         }
         return {
           decorations: value.decorations.map(tr.mapping, tr.doc),
@@ -1425,6 +1450,7 @@ export function createListItemDndPlugin(): Plugin {
             ? { ...value.lastZone, targetItemPos: tr.mapping.map(value.lastZone.targetItemPos, -1) }
             : null,
           trailingUndoDepth,
+          trailingUndone,
         };
       },
     },
@@ -1438,11 +1464,32 @@ export function createListItemDndPlugin(): Plugin {
       if (oldPluginState?.trailingUndoDepth == null) return null;
       if (transactions.some((tr) => tr.getMeta(LIST_ITEM_DND_TRAILING_UNDO_META) === "consume")) return null;
       if (!transactions.some((tr) => tr.docChanged)) return null;
+      const historyChanged = transactions.some((tr) => isHistoryTransaction(tr));
+      if (oldPluginState.trailingUndone) {
+        if (!historyChanged) {
+          return newState.tr
+            .setMeta("addToHistory", false)
+            .setMeta(LIST_ITEM_DND_TRAILING_UNDO_META, "consume");
+        }
+        if (undoDepth(newState) < oldPluginState.trailingUndoDepth) return null;
+        return newState.tr
+          .setMeta(SKIP_TRAILING_NODE_META, true)
+          .setMeta("addToHistory", false)
+          .setMeta(LIST_ITEM_DND_TRAILING_UNDO_META, {
+            kind: "arm",
+            undoDepth: undoDepth(newState),
+          });
+      }
       const undidProtectedDrag =
-        transactions.some((tr) => isHistoryTransaction(tr)) &&
+        historyChanged &&
         undoDepth(newState) < oldPluginState.trailingUndoDepth;
       const tr = newState.tr.setMeta(SKIP_TRAILING_NODE_META, true).setMeta("addToHistory", false);
-      if (undidProtectedDrag) tr.setMeta(LIST_ITEM_DND_TRAILING_UNDO_META, "consume");
+      if (undidProtectedDrag) {
+        tr.setMeta(LIST_ITEM_DND_TRAILING_UNDO_META, {
+          kind: "undone",
+          undoDepth: oldPluginState.trailingUndoDepth,
+        });
+      }
       if (!docEndsWithSupportedList(newState.doc)) return tr;
       return tr;
     },

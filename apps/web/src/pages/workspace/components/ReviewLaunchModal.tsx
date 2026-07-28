@@ -248,11 +248,14 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     const requestId = ++requestRef.current;
     setActiveLexicon(lexicon);
     setEntries([]);
+    setError(null);
     setLoading(true);
     setPage("entries");
     void props.loadLexiconEntries(lexicon.id).then((items) => {
       if (requestRef.current === requestId) setEntries(items);
-    }).catch(() => setError("词条加载失败，请重试")).finally(() => {
+    }).catch(() => {
+      if (requestRef.current === requestId) setError("词条加载失败，请重试");
+    }).finally(() => {
       if (requestRef.current === requestId) setLoading(false);
     });
   };

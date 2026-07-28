@@ -271,6 +271,60 @@ describe("ReviewLaunchModal", () => {
     expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
   });
 
+  it("切换词库会清除旧错误，且旧词条请求晚失败不会污染当前词库", async () => {
+    const availableLexicons = [
+      lexicons[0]!,
+      { id: "lexicon-brand", name: "品牌禁用词", description: "品牌规范", entryCount: 1 },
+    ];
+    let rejectOldRequest!: (error: Error) => void;
+    let resolveCurrentRequest!: (items: Array<{ word: string; replacement: string | null; note: string | null }>) => void;
+    const oldRequest = new Promise<Array<{ word: string; replacement: string | null; note: string | null }>>((_resolve, reject) => {
+      rejectOldRequest = reject;
+    });
+    const currentRequest = new Promise<Array<{ word: string; replacement: string | null; note: string | null }>>((resolve) => {
+      resolveCurrentRequest = resolve;
+    });
+    const loadLexiconEntries = vi.fn()
+      .mockImplementationOnce(() => oldRequest)
+      .mockRejectedValueOnce(new Error("当前请求失败"))
+      .mockImplementationOnce(() => currentRequest);
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      type: "sensitive",
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [{ ...builtins[0]!, id: "sensitive-default", type: "sensitive", name: "标准敏感词审查" }],
+        selectedTemplateId: "sensitive-default",
+      }),
+      loadLexicons: vi.fn().mockResolvedValue(availableLexicons),
+      loadLexiconEntries,
+    })} />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-resource-row .ws-launch-link")?.click());
+    const openLexicon = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-lexicon-open"))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => openLexicon("广告法极限词").click());
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    await act(async () => {
+      openLexicon("品牌禁用词").click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("词条加载失败，请重试");
+
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    act(() => openLexicon("广告法极限词").click());
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+
+    await act(async () => {
+      resolveCurrentRequest([{ word: "第一", replacement: "领先", note: null }]);
+      await currentRequest;
+      rejectOldRequest(new Error("旧请求晚失败"));
+      await oldRequest.catch(() => undefined);
+    });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector(".ws-lexicon-entry-list")?.textContent).toContain("第一");
+  });
+
   it("菜单无省略号和词库项，query 用完整载荷而卡片只呈现摘要", async () => {
     act(() => root.render(<ReviewMenu
       onClose={vi.fn()}

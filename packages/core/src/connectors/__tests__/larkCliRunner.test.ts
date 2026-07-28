@@ -139,4 +139,36 @@ exit 17
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("config init 未及时产出首个 URL 时终止子进程并收敛两段结果", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lark-cli-config-timeout-"));
+    const stub = join(dir, "lark-cli");
+    writeFileSync(stub, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "lark-cli version 1.0.65"
+  exit 0
+fi
+while :; do :; done
+`);
+    chmodSync(stub, 0o755);
+    try {
+      const runner = new LarkCliRunner({
+        shimPath: stub,
+        configInitUrlTimeoutMs: 30,
+      });
+      const background = await runner.startConfigInit(new AbortController().signal);
+
+      await expect(background.initial).resolves.toMatchObject({
+        ok: false,
+        reasonCode: "LARK_CLI_TIMEOUT",
+        message: "lark-cli 未及时返回创建应用链接",
+      });
+      await expect(background.completion).resolves.toMatchObject({
+        ok: false,
+        reasonCode: "LARK_CLI_TIMEOUT",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

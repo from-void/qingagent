@@ -3268,10 +3268,16 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     } else if (bracket) {
       const rawLabel = stripQuotes(bracket.content);
       label = displayMermaidLabel(rawLabel);
+      const leadingWhitespace = bracket.content.length - bracket.content.trimStart().length;
+      const trailingWhitespace = bracket.content.length - bracket.content.trimEnd().length;
       const quoteOffset = isQuoted(bracket.content) ? 1 : 0;
       const localOpenStart = id.length + restLeading;
-      const localLabelStart = localOpenStart + bracket.open.length + quoteOffset;
-      const localLabelEnd = localLabelStart + rawLabel.length;
+      const localContentStart = localOpenStart + bracket.open.length;
+      const localLabelStart = localContentStart + leadingWhitespace + quoteOffset;
+      const localLabelEnd = Math.max(
+        localLabelStart,
+        localContentStart + bracket.content.length - trailingWhitespace - quoteOffset,
+      );
       const localCloseStart = localOpenStart + bracket.closeStart;
       labelSpan = { start: absoluteStart + localLabelStart, end: absoluteStart + localLabelEnd };
       shapeOpenSpan = { start: absoluteStart + localOpenStart, end: absoluteStart + localOpenStart + bracket.open.length };

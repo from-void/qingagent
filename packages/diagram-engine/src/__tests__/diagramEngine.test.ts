@@ -140,6 +140,16 @@ describe("diagram-engine", () => {
     expect(multiTarget.edges.every((item) => item.rewritable === false)).toBe(true);
   });
 
+  it("flowchart 改名精确覆盖带外侧空白和引号的节点正文", () => {
+    for (const declaration of ["A[  hello  ]", 'A[  "hello"  ]']) {
+      const source = `flowchart TD\n  ${declaration}\n`;
+      const renamed = applyEdit(source, { kind: "relabelNode", nodeId: "A", label: "X" });
+
+      expect(renamed.ok).toBe(true);
+      expect((parseDiagram(renamed.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.label).toBe("X");
+    }
+  });
+
   it("flowchart 按 Mermaid 官方词法区分紧贴圆叉端点与含 -o/-x 的节点 id", () => {
     const cases = [
       {

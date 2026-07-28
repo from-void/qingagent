@@ -96,27 +96,48 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
               onPointerDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                const handle = event.currentTarget;
+                const pointerId = event.pointerId;
                 const startWidth = resolveCurrentImageWidth(width, imgRef.current);
                 const maxWidth = resolveMaxImageWidth(frameRef.current, startWidth);
                 const startX = event.clientX;
                 let nextWidth = startWidth;
+                let active = true;
                 const onMove = (moveEvent: PointerEvent) => {
+                  if (moveEvent.pointerId !== pointerId) return;
                   nextWidth = clamp(Math.round(startWidth + moveEvent.clientX - startX), MIN_IMAGE_WIDTH, maxWidth);
                   setPreviewWidth(nextWidth);
                 };
-                const onUp = () => {
+                const finish = (commit: boolean) => {
+                  if (!active) return;
+                  active = false;
                   window.removeEventListener("pointermove", onMove);
                   window.removeEventListener("pointerup", onUp);
+                  window.removeEventListener("pointercancel", onCancel);
+                  window.removeEventListener("blur", onBlur);
+                  handle.removeEventListener("lostpointercapture", onLostPointerCapture);
                   cleanupResizeRef.current = null;
-                  updateAttributes({ width: nextWidth, height: null });
+                  if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+                  if (commit) updateAttributes({ width: nextWidth, height: null });
                 };
+                const onUp = (upEvent: PointerEvent) => {
+                  if (upEvent.pointerId === pointerId) finish(true);
+                };
+                const onCancel = (cancelEvent: PointerEvent) => {
+                  if (cancelEvent.pointerId === pointerId) finish(true);
+                };
+                const onLostPointerCapture = (lostEvent: PointerEvent) => {
+                  if (lostEvent.pointerId === pointerId) finish(true);
+                };
+                const onBlur = () => finish(true);
                 cleanupResizeRef.current?.();
-                cleanupResizeRef.current = () => {
-                  window.removeEventListener("pointermove", onMove);
-                  window.removeEventListener("pointerup", onUp);
-                };
+                cleanupResizeRef.current = () => finish(false);
+                handle.setPointerCapture(pointerId);
                 window.addEventListener("pointermove", onMove);
-                window.addEventListener("pointerup", onUp, { once: true });
+                window.addEventListener("pointerup", onUp);
+                window.addEventListener("pointercancel", onCancel);
+                window.addEventListener("blur", onBlur);
+                handle.addEventListener("lostpointercapture", onLostPointerCapture);
               }}
             />
           ) : null}

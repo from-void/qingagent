@@ -50,6 +50,11 @@ function polyfillDom() {
     }
     vi.stubGlobal("PointerEvent", TestPointerEvent);
   }
+  Element.prototype.setPointerCapture = function () {};
+  Element.prototype.hasPointerCapture = function () {
+    return true;
+  };
+  Element.prototype.releasePointerCapture = function () {};
 }
 
 polyfillDom();
@@ -187,6 +192,85 @@ describe("ImageView", () => {
       await unmount(editor);
     }
   });
+
+  it("resize 只消费当前指针，并在 pointercancel 后提交且停止旧手势", async () => {
+    const editor = await mountEditor(imageDoc({ align: "center" }));
+    try {
+      const wrapper = editor.view.dom.querySelector<HTMLElement>(".pm-image");
+      wrapper!.getBoundingClientRect = () => ({
+        top: 0,
+        left: 0,
+        right: 520,
+        bottom: 260,
+        width: 520,
+        height: 260,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+      const handle = editor.view.dom.querySelector<HTMLButtonElement>(".pm-image-resize-handle")!;
+
+      await act(async () => {
+        handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, button: 0, pointerId: 7 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 400, pointerId: 8 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 400, pointerId: 8 }));
+      });
+      expect(firstImageAttrs(editor).width).toBe(240);
+
+      await act(async () => {
+        window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 180, pointerId: 7 }));
+        window.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, clientX: 180, pointerId: 7 }));
+      });
+      await flush();
+      expect(firstImageAttrs(editor).width).toBe(320);
+
+      await act(async () => {
+        window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 500, pointerId: 7 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 500, pointerId: 7 }));
+      });
+      await flush();
+      expect(firstImageAttrs(editor).width).toBe(320);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it.each(["lostpointercapture", "blur"] as const)(
+    "resize 在 %s 时统一提交并清理手势",
+    async (endEvent) => {
+      const editor = await mountEditor(imageDoc({ align: "center" }));
+      try {
+        const wrapper = editor.view.dom.querySelector<HTMLElement>(".pm-image");
+        wrapper!.getBoundingClientRect = () => ({
+          top: 0,
+          left: 0,
+          right: 520,
+          bottom: 260,
+          width: 520,
+          height: 260,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
+        const handle = editor.view.dom.querySelector<HTMLButtonElement>(".pm-image-resize-handle")!;
+
+        await act(async () => {
+          handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, button: 0, pointerId: 3 }));
+          window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 160, pointerId: 3 }));
+          if (endEvent === "blur") {
+            window.dispatchEvent(new Event("blur"));
+          } else {
+            handle.dispatchEvent(new PointerEvent(endEvent, { bubbles: true, pointerId: 3 }));
+          }
+        });
+        await flush();
+
+        expect(firstImageAttrs(editor).width).toBe(300);
+      } finally {
+        await unmount(editor);
+      }
+    },
+  );
 
   it("图片工具条是 toolbar 语义且 chrome 不可被选中", async () => {
     const editor = await mountEditor(imageDoc());

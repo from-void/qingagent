@@ -256,9 +256,14 @@ export function DocFindBar({
   const handleReplaceAll = useCallback(() => {
     if (!canReplace || !editor || editor.isDestroyed) return;
     syncSearchBeforeReplace();
-    const currentMatches = matchesRef.current;
-    if (currentMatches.length === 0) return;
-    const plans = planReplaceAll(currentMatches, replacementRef.current);
+    const allMatches = collectMatches(
+      collectDocFindSegments(editor.state.doc),
+      queryRef.current,
+      false,
+      Number.POSITIVE_INFINITY,
+    ).matches;
+    if (allMatches.length === 0) return;
+    const plans = planReplaceAll(allMatches, replacementRef.current);
     editor.commands.command(({ tr }) => {
       for (const plan of plans) {
         tr.insertText(plan.insert, plan.from, plan.to);

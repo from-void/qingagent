@@ -32,6 +32,7 @@ export * from "./LegacySection";
 export * from "./ListLexicons";
 export * from "./RenameSession";
 export * from "./DraftMutation";
+export * from "./DraftExcerpt";
 export * from "./DraftTemplate";
 export * from "./DocSuggestion";
 export * from "./IgnoreAnnotationGroups";

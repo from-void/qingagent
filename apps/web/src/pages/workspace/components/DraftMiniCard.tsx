@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { ToolCallStatus, WriteDraftCardBody } from "@qingagent/contract-ts";
+import {
+  mergeDraftExcerpt,
+  type ToolCallStatus,
+  type WriteDraftCardBody,
+} from "@qingagent/contract-ts";
+
+export { mergeDraftExcerpt, mergeTail } from "@qingagent/contract-ts";
 
 // writeDraft 聊天内迷你草稿卡:生成期间像"一张正在被写的小纸",
 // 实时滚动摘录+字数进度;字数修订时显示校验状态;完成后定格最终字数与验收结果。
@@ -162,27 +168,4 @@ export function targetDescLine(body: WriteDraftCardBody): string {
   if (body.maxLength != null) return `目标 ${body.maxLength} 字`;
   if (body.minLength != null) return `目标 ${body.minLength}+ 字`;
   return "自由长度";
-}
-
-/**
- * 把流式「滚动尾巴摘录」(每次是最后 N 字的快照,会随写作右移)合并重建成增长的全文。
- * - 新尾巴与已重建缓冲的末尾有重叠 → 只追加新增部分(平滑增长)。
- * - 尾巴完全包含在缓冲末尾(没新增)→ 维持。
- * - 完全无重叠(可能换了赛道/重来)→ 以新尾巴重建,避免拼接出乱码。
- * 导出供单测(对付不可信流式输入)。
- */
-export function mergeTail(buffer: string, tail: string): string {
-  if (!buffer) return tail;
-  if (!tail) return buffer;
-  if (buffer.endsWith(tail)) return buffer;
-  const maxK = Math.min(buffer.length, tail.length);
-  for (let k = maxK; k > 0; k--) {
-    if (buffer.endsWith(tail.slice(0, k))) return buffer + tail.slice(k);
-  }
-  return tail;
-}
-
-/** lane 切换或 winner 全文帧必须替换缓冲；普通同 lane 尾帧才允许重叠续接。 */
-export function mergeDraftExcerpt(buffer: string, excerpt: string, reset: boolean): string {
-  return reset ? excerpt : mergeTail(buffer, excerpt);
 }

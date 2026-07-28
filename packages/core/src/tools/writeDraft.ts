@@ -385,6 +385,7 @@ export function createWriteDraftTool(opts: {
       };
       const laneProgress = new Map<number, LaneProgressState>();
       let displayLaneKey: number | null = null;
+      let pendingExcerptReset = false;
       let lastEmitAt = 0;
       let lastEmitChars = 0;
       let lastEmitPhase: string | null = null;
@@ -470,7 +471,17 @@ export function createWriteDraftTool(opts: {
       };
       const emitDisplayProgress = (force = false, phase: ProgressPhase = "writing") => {
         const displayLane = currentDisplayLane();
-        return emitProgress(phase, displayLane?.raw ?? "", 0, force);
+        const resetExcerpt = pendingExcerptReset && displayLane !== null;
+        const emitted = emitProgress(
+          phase,
+          displayLane?.raw ?? "",
+          0,
+          force || resetExcerpt,
+          false,
+          resetExcerpt,
+        );
+        if (resetExcerpt && emitted !== undefined) pendingExcerptReset = false;
+        return emitted;
       };
       const markLaneDead = (laneKey: number) => {
         const lane = laneProgress.get(laneKey);
@@ -479,7 +490,12 @@ export function createWriteDraftTool(opts: {
         if (displayLaneKey !== laneKey) return;
         const next = selectAliveLeadLane();
         displayLaneKey = next?.key ?? null;
-        if (next) void emitProgress("writing", next.raw, 0, true, false, true);
+        if (next) {
+          pendingExcerptReset = false;
+          void emitProgress("writing", next.raw, 0, true, false, true);
+        } else {
+          pendingExcerptReset = true;
+        }
       };
       const emitWinnerFrame = (winnerLaneKey: number, raw: string, revisionCount: number) => {
         const previousDisplay = displayLaneKey;
@@ -501,8 +517,13 @@ export function createWriteDraftTool(opts: {
         lane.alive = false;
         if (displayLaneKey !== laneKey) return;
         const next = selectAliveLeadLane();
-        if (!next) return;
+        if (!next) {
+          displayLaneKey = null;
+          pendingExcerptReset = true;
+          return;
+        }
         displayLaneKey = next.key;
+        pendingExcerptReset = false;
         void emitProgress("writing", next.raw, 0, true, false, true);
       };
 

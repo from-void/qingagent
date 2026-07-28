@@ -2,6 +2,9 @@ interface DocInitProps {
   mode?: "init" | "drafting" | "error";
   title?: string;
   subtitle?: string;
+  /** 错误态自带的行动入口:给出即在卡面上渲染一枚「重试」按钮(不再让文案指向不存在的上方入口)。 */
+  onRetry?: () => void;
+  retryLabel?: string;
 }
 
 /**
@@ -9,9 +12,16 @@ interface DocInitProps {
  * with a guiding message; the drafting variant shows a shimmer animation
  * while a document is being generated.
  */
-export function DocInit({ mode = "init", title, subtitle }: DocInitProps) {
+export function DocInit({
+  mode = "init",
+  title,
+  subtitle,
+  onRetry,
+  retryLabel = "重试",
+}: DocInitProps) {
   const isDrafting = mode === "drafting";
   const isError = mode === "error";
+  const showRetry = isError && !!onRetry;
 
   return (
     <div className={`doc-empty ${isDrafting ? "drafting" : ""}${isError ? " error" : ""}`} data-wf="DocInit">
@@ -37,8 +47,21 @@ export function DocInit({ mode = "init", title, subtitle }: DocInitProps) {
         {(isDrafting || isError) && (
           <>
             {isDrafting && <div className="doc-empty-title">{title ?? "正在生成文档…"}</div>}
-            <div className="doc-empty-sub">{subtitle ?? (isDrafting ? "写作中 · 请稍候" : "请点击上方重试")}</div>
+            {/* 错误态默认不再写「请点击上方重试」——上方根本没有入口;行动交给下面这枚按钮。 */}
+            {(isDrafting || subtitle) && (
+              <div className="doc-empty-sub">{subtitle ?? "写作中 · 请稍候"}</div>
+            )}
           </>
+        )}
+        {showRetry && (
+          <button
+            type="button"
+            className="wf-btn doc-empty-retry"
+            data-wf="DocInitRetry"
+            onClick={onRetry}
+          >
+            {retryLabel}
+          </button>
         )}
       </div>
     </div>

@@ -71,6 +71,7 @@ export function WorkspaceDocumentPane({
     agentActive,
     handleFillTemplate,
     handleCreateBlankDoc,
+    handleRetryRestore,
     state,
     wholeDocReview,
     wholeDocVersion,
@@ -480,6 +481,7 @@ export function WorkspaceDocumentPane({
             agentReasoning={agentActive}
             onFillTemplate={handleFillTemplate}
             onCreateBlank={handleCreateBlankDoc}
+            onRetryRestore={handleRetryRestore}
             doc={state.doc}
             streamError={state.streamError}
             generationDraftDoc={state.generationDraft?.doc ?? null}

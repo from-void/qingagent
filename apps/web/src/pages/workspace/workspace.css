@@ -1293,6 +1293,20 @@
      早已由 doc-empty-loader 取代、产品侧零渲染(DocInit 只渲染 loader/title/sub)。 */
   #view-workspace .doc-empty-title{font-size:15px;color:var(--ink-1);font-weight:500;margin-bottom:6px}
   #view-workspace .doc-empty-sub{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.04em}
+  /* 恢复失败态自带的重试按钮:描线水墨风,落在奶白纸上用暖墨色(无红,不作错误呈现) */
+  #view-workspace .doc-empty-retry{
+    margin-top:14px;
+    padding:5px 18px;
+    border-color:rgba(120,90,50,.30);
+    background:transparent;
+    color:#5b4a2f;
+    font-size:12.5px;
+  }
+  #view-workspace .doc-empty-retry:hover{
+    border-color:rgba(120,90,50,.52);
+    background:rgba(120,90,50,.07);
+    color:#2c2419;
+  }
 
   /* ============ 工具栏 · 浮现式 (选中文本时出现在选区上方) ============ */
   #view-workspace .doc-toolbar{

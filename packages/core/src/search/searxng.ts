@@ -26,7 +26,9 @@ export class SearxngProvider implements SearchProvider {
     const base = this.baseUrl;
     if (!base || !query.trim() || count <= 0) return [];
     try {
-      const url = new URL("/search", base);
+      const normalizedBase = new URL(base);
+      if (!normalizedBase.pathname.endsWith("/")) normalizedBase.pathname += "/";
+      const url = new URL("search", normalizedBase);
       url.searchParams.set("q", query);
       url.searchParams.set("format", "json");
       const resp = await fetch(url, {

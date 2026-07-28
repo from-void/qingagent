@@ -34,12 +34,23 @@ class FakeIDBTransaction {
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
   error: Error | null = null;
+  private aborted = false;
+  private completionQueued = false;
+  private readonly stagedStores: StoreDump;
 
-  constructor(private readonly stores: StoreDump) {}
+  constructor(
+    private readonly stores: StoreDump,
+    storeNames: readonly string[],
+    private readonly failPutStore: string | null,
+  ) {
+    this.stagedStores = Object.fromEntries(
+      storeNames.map((name) => [name, new Map(stores[name] ?? [])]),
+    );
+  }
 
   objectStore(name: string) {
-    const store = this.stores[name] ?? new Map<string, unknown>();
-    this.stores[name] = store;
+    const store = this.stagedStores[name] ?? new Map<string, unknown>();
+    this.stagedStores[name] = store;
     return {
       get: (key: string) => {
         const request = new FakeIDBRequest<unknown>();
@@ -57,20 +68,41 @@ class FakeIDBTransaction {
         return request;
       },
       put: (value: unknown, key: string) => {
+        if (name === this.failPutStore) {
+          throw new DOMException("handle clone failed", "DataCloneError");
+        }
         const request = new FakeIDBRequest<undefined>();
         store.set(key, value);
         request.succeed(undefined);
-        queueMicrotask(() => this.oncomplete?.());
+        this.queueCompletion();
         return request;
       },
       delete: (key: string) => {
         const request = new FakeIDBRequest<undefined>();
         store.delete(key);
         request.succeed(undefined);
-        queueMicrotask(() => this.oncomplete?.());
+        this.queueCompletion();
         return request;
       },
     };
+  }
+
+  abort(): void {
+    if (this.aborted) return;
+    this.aborted = true;
+    queueMicrotask(() => this.onabort?.());
+  }
+
+  private queueCompletion(): void {
+    if (this.completionQueued) return;
+    this.completionQueued = true;
+    queueMicrotask(() => {
+      if (this.aborted) return;
+      for (const [name, store] of Object.entries(this.stagedStores)) {
+        this.stores[name] = new Map(store);
+      }
+      this.oncomplete?.();
+    });
   }
 }
 
@@ -79,15 +111,19 @@ class FakeIDBDatabase {
     contains: (name: string) => this.stores[name] !== undefined,
   };
 
-  constructor(private readonly stores: StoreDump) {}
+  constructor(
+    private readonly stores: StoreDump,
+    private readonly failPutStore: () => string | null,
+  ) {}
 
   createObjectStore(name: string): void {
     this.stores[name] ??= new Map<string, unknown>();
   }
 
-  transaction(storeName: string): FakeIDBTransaction {
-    this.stores[storeName] ??= new Map<string, unknown>();
-    return new FakeIDBTransaction(this.stores);
+  transaction(storeNames: string | string[]): FakeIDBTransaction {
+    const names = Array.isArray(storeNames) ? storeNames : [storeNames];
+    for (const name of names) this.stores[name] ??= new Map<string, unknown>();
+    return new FakeIDBTransaction(this.stores, names, this.failPutStore());
   }
 
   close(): void {}
@@ -121,13 +157,14 @@ class FakeEventSource {
 }
 
 const fakeEventSources: FakeEventSource[] = [];
+let failedPutStore: string | null = null;
 
 function installFakeIndexedDb(stores: StoreDump): void {
   let upgraded = false;
   const indexedDB = {
     open: (_name: string, _version?: number) => {
       const request = new FakeIDBOpenRequest<FakeIDBDatabase>();
-      const db = new FakeIDBDatabase(stores);
+      const db = new FakeIDBDatabase(stores, () => failedPutStore);
       queueMicrotask(() => {
         request.result = db;
         if (!upgraded) {
@@ -178,6 +215,7 @@ describe("browser folder handle persistence", () => {
   beforeEach(() => {
     stores = {};
     uuidSeq = 0;
+    failedPutStore = null;
     fakeEventSources.length = 0;
     installFakeIndexedDb(stores);
     Object.defineProperty(window, "crypto", {
@@ -248,6 +286,25 @@ describe("browser folder handle persistence", () => {
     await forgetBrowserFolderSource("sess", "fld");
     expect(handleStore(stores).size).toBe(0);
     expect(sourceStore(stores).size).toBe(0);
+  });
+
+  it("handle 写入失败时与 source index 一起回滚，不留下半状态", async () => {
+    const picked: PickedBrowserFolderSource = {
+      handle: makeDirectoryHandle("unclonable-folder"),
+      name: "unclonable-folder",
+      browserHandleKey: `${window.location.origin}:sess-atomic:handle:root`,
+      clientSourceId: "browser_client_atomic",
+    };
+    failedPutStore = "handles";
+
+    await expect(rememberAttachedBrowserFolderSource({
+      sessionId: "sess-atomic",
+      folderId: "fld-atomic",
+      picked,
+    })).rejects.toMatchObject({ name: "DataCloneError" });
+
+    expect(sourceStore(stores).size).toBe(0);
+    expect(handleStore(stores).size).toBe(0);
   });
 
   it("同一文件夹并发启动只注册一次并只建立一个 SSE", async () => {

@@ -136,15 +136,24 @@ async function idbGet<T>(storeName: string, key: string): Promise<T | undefined>
   }
 }
 
-async function idbPut<T>(storeName: string, key: string, value: T): Promise<void> {
+async function idbPutSourceAndHandle(
+  index: BrowserFolderSourceIndex,
+  handle: FileSystemDirectoryHandle,
+): Promise<void> {
   const db = await openFolderDb();
   try {
-    const tx = db.transaction(storeName, "readwrite");
-    tx.objectStore(storeName).put(value, key);
+    const tx = db.transaction([SOURCE_STORE, HANDLE_STORE], "readwrite");
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
       tx.onabort = () => reject(tx.error ?? new Error("IndexedDB write aborted"));
+      try {
+        tx.objectStore(SOURCE_STORE).put(index, index.key);
+        tx.objectStore(HANDLE_STORE).put(handle, index.handleKey);
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
     });
   } finally {
     db.close();
@@ -622,8 +631,7 @@ export async function rememberAttachedBrowserFolderSource(args: {
     name: args.picked.name,
     updatedAt: new Date().toISOString(),
   };
-  await idbPut(SOURCE_STORE, index.key, index);
-  await idbPut(HANDLE_STORE, args.picked.browserHandleKey, args.picked.handle);
+  await idbPutSourceAndHandle(index, args.picked.handle);
   await cleanupOrphanBrowserFolderHandles();
   await startBridge({
     sessionId: args.sessionId,

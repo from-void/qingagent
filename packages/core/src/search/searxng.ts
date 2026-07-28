@@ -35,7 +35,12 @@ export class SearxngProvider implements SearchProvider {
         headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
         signal: searchRequestSignal(options?.signal, 8_000),
       });
-      if (!resp.ok) return [];
+      if (!resp.ok) {
+        if (options?.strict) {
+          throw new Error(`SearXNG search failed: HTTP ${resp.status}`);
+        }
+        return [];
+      }
       const data = (await resp.json()) as { results?: SearxngJsonResult[] };
       const out: SearchResult[] = [];
       for (const r of data.results ?? []) {
@@ -44,7 +49,8 @@ export class SearxngProvider implements SearchProvider {
         out.push({ title: r.title, url: r.url, snippet: r.content ?? "" });
       }
       return out;
-    } catch {
+    } catch (error) {
+      if (options?.strict) throw error;
       return [];
     }
   }

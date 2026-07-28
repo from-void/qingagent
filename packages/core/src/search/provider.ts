@@ -11,6 +11,8 @@ export type { SearchResult } from "./parseDuckDuckGo.js";
 
 export interface SearchOptions {
   signal?: AbortSignal;
+  /** 设置页连通性探测：保留网络、HTTP 和解析错误，正常搜索仍保持 best-effort。 */
+  strict?: boolean;
 }
 
 export interface SearchProvider {
@@ -57,6 +59,8 @@ export class DuckDuckGoProvider implements SearchProvider {
     const limit = Math.max(0, Math.floor(count));
     if (!query.trim() || limit <= 0) return [];
 
+    let receivedValidResponse = false;
+    let lastError: unknown;
     for (const endpoint of ENDPOINTS) {
       if (shouldSkipSearchProvider(endpoint.healthId)) continue;
       try {
@@ -67,9 +71,14 @@ export class DuckDuckGoProvider implements SearchProvider {
           limit,
           options?.signal,
         );
+        receivedValidResponse = true;
         if (results.length > 0) return results;
       } catch (err) {
-        if (options?.signal?.aborted) return [];
+        lastError = err;
+        if (options?.signal?.aborted) {
+          if (options.strict) throw err;
+          return [];
+        }
         if (isConnectionFailure(err)) {
           markSearchProviderQuota(endpoint.healthId, 10 * 60 * 1000);
         }
@@ -77,6 +86,11 @@ export class DuckDuckGoProvider implements SearchProvider {
       }
     }
 
+    if (options?.strict && !receivedValidResponse) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("DuckDuckGo search failed");
+    }
     return [];
   }
 

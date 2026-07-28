@@ -247,7 +247,10 @@ searchSettingsRoutes.post("/settings/search/:id/test", async (c) => {
   }
 
   try {
-    const results = await entry.buildProvider(sourceConfig).search(TEST_QUERY, 3);
+    const results = await entry.buildProvider(sourceConfig).search(TEST_QUERY, 3, {
+      signal: c.req.raw.signal,
+      strict: true,
+    });
     clearManagedSearchProviderHealth(id);
     return c.json({ ok: true, resultCount: results.length });
   } catch (err) {

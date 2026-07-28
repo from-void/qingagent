@@ -696,6 +696,92 @@ describe("BrowserBridgeFilesystem", () => {
     closeB();
   });
 
+  it("承载请求的 SSE 断开后由同 clientId 的可用连接幂等接管", async () => {
+    registerBrowserFolderSource("sess_handoff", "fld_handoff", "client_handoff");
+    const firstDeliveries: string[] = [];
+    const secondDeliveries: string[] = [];
+    const closeFirst = openBrowserFolderBridgeConnection({
+      sessionId: "sess_handoff",
+      clientId: "client_handoff",
+      send: async (request) => {
+        firstDeliveries.push(request.requestId);
+      },
+    });
+    const closeSecond = openBrowserFolderBridgeConnection({
+      sessionId: "sess_handoff",
+      clientId: "client_handoff",
+      send: async (request) => {
+        secondDeliveries.push(request.requestId);
+      },
+    });
+    const pending = requestBrowserFolderBridge({
+      sessionId: "sess_handoff",
+      folderId: "fld_handoff",
+      clientId: "client_handoff",
+      op: "stat",
+      relPath: "handoff.md",
+    });
+    await flushPromises();
+
+    expect(firstDeliveries).toHaveLength(1);
+    expect(secondDeliveries).toHaveLength(0);
+    closeFirst();
+    await flushPromises();
+
+    expect(secondDeliveries).toEqual(firstDeliveries);
+    expect(resolveBrowserFolderBridgeResponse(secondDeliveries[0]!, {
+      sessionId: "sess_handoff",
+      folderId: "fld_handoff",
+      clientId: "client_handoff",
+      response: {
+        ok: true,
+        op: "stat",
+        stat: {
+          name: "handoff.md",
+          type: "file",
+          size: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          modifiedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    })).toBe(true);
+    await expect(pending).resolves.toMatchObject({ ok: true, op: "stat" });
+    closeSecond();
+  });
+
+  it("已投递请求的最后一条 SSE 断开时立即按离线结算", async () => {
+    registerBrowserFolderSource("sess_disconnect", "fld_disconnect", "client_disconnect");
+    const deliveries: string[] = [];
+    const close = openBrowserFolderBridgeConnection({
+      sessionId: "sess_disconnect",
+      clientId: "client_disconnect",
+      send: async (request) => {
+        deliveries.push(request.requestId);
+      },
+    });
+    const pending = requestBrowserFolderBridge({
+      sessionId: "sess_disconnect",
+      folderId: "fld_disconnect",
+      clientId: "client_disconnect",
+      op: "readFile",
+      relPath: "disconnect.md",
+    });
+    const settled = pending.then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    await flushPromises();
+    expect(deliveries).toHaveLength(1);
+
+    close();
+
+    expect(__browserFolderBridgeStatsForTest()).toMatchObject({ queued: 0, pending: 0 });
+    await expect(settled).resolves.toMatchObject({
+      name: "BrowserFolderBridgeError",
+      code: "bridge_offline",
+    });
+  });
+
   it("慢 flush 与快速重连不会重复投递同一 requestId", async () => {
     registerBrowserFolderSource("sess_flush", "fld_flush", "client_flush");
     const closeSeen = openBrowserFolderBridgeConnection({

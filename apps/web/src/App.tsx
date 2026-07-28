@@ -2,6 +2,7 @@ import { Router, useRoute } from "./shell";
 import type { RouteName } from "./shell";
 import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
 import { AuthTokenGate } from "./system/AuthTokenGate";
+import { EditContextMenu } from "./system/EditContextMenu";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
@@ -63,6 +64,8 @@ export default function App() {
         <AppShell />
         <AppUpdateWatcher />
         <AuthTokenGate />
+        {/* 可编辑区域的自绘右键菜单(宋体、水墨皮肤);非编辑区域不接管。 */}
+        <EditContextMenu />
       </ConfirmProvider>
     </ToastProvider>
   );

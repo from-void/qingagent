@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   buildEditContextMenuTemplate,
+  shouldUseRendererEditMenu,
   type EditContextMenuParams,
 } from "./contextMenu.js";
 
@@ -56,20 +57,26 @@ test("右键菜单只含中文剪切、复制、粘贴、全选四项及对应�
   );
 });
 
-test("可编辑区域有选区且 editFlags 允许时四项均启用", () => {
-  assert.deepEqual(
-    enabledStates(makeParams({
-      isEditable: true,
-      selectionText: "已选文本",
-      editFlags: {
-        canCut: true,
-        canCopy: true,
-        canPaste: true,
-        canSelectAll: true,
-      },
-    })),
-    [true, true, true, true],
-  );
+test("可编辑区域不弹原生菜单，交渲染进程自绘宋体菜单", () => {
+  const editableParams = makeParams({
+    isEditable: true,
+    selectionText: "已选文本",
+    editFlags: {
+      canCut: true,
+      canCopy: true,
+      canPaste: true,
+      canSelectAll: true,
+    },
+  });
+
+  assert.equal(shouldUseRendererEditMenu(editableParams), true);
+  assert.deepEqual(buildEditContextMenuTemplate(editableParams), []);
+  assert.equal(shouldUseRendererEditMenu(makeParams({ selectionText: "页面选区" })), false);
+});
+
+test("主进程拿到空模板时直接返回，不弹空菜单造成双菜单", () => {
+  const mainSource = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  assert.match(mainSource, /template\.length === 0\)\s*return;/);
 });
 
 test("普通页面有选区时仅按 editFlags 启用复制与全选", () => {
@@ -87,10 +94,9 @@ test("普通页面有选区时仅按 editFlags 启用复制与全选", () => {
   );
 });
 
-test("可编辑区域无选区时禁用剪切复制，保留粘贴与全选", () => {
+test("普通页面无选区时只保留全选可用", () => {
   assert.deepEqual(
     enabledStates(makeParams({
-      isEditable: true,
       editFlags: {
         canCut: true,
         canCopy: true,
@@ -98,14 +104,13 @@ test("可编辑区域无选区时禁用剪切复制，保留粘贴与全选", ()
         canSelectAll: true,
       },
     })),
-    [false, false, true, true],
+    [false, false, false, true],
   );
 });
 
 test("editFlags 拒绝的操作即使上下文满足也保持禁用", () => {
   assert.deepEqual(
     enabledStates(makeParams({
-      isEditable: true,
       selectionText: "已选文本",
     })),
     [false, false, false, false],

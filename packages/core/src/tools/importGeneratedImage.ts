@@ -433,10 +433,14 @@ async function webpDimensions(buffer: Buffer): Promise<ImageDimensions | null> {
   if (!parsed) return null;
 
   try {
-    const { decode } = await import("webp-wasm");
+    const imported = await import("webp-wasm");
+    const decoder = (
+      "default" in imported ? imported.default : imported
+    ) as typeof import("webp-wasm");
     for (const target of parsed.decodeTargets) {
       const exactBuffer = Uint8Array.from(target.buffer).buffer;
-      const decoded = await decode(exactBuffer);
+      // webp-wasm@1.0.6 的 CommonJS 方法依赖 this.loadDecoder，不能解构后调用。
+      const decoded = await decoder.decode(exactBuffer);
       if (
         !decoded ||
         decoded.width !== target.dimensions.width ||

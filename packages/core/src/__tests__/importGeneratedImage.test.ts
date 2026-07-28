@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,7 +22,8 @@ const JPEG_WITHOUT_SCAN = Buffer.from([
   0xff, 0xd9,
 ]);
 const ONE_PIXEL_WEBP = Buffer.from(
-  "UklGRhoAAABXRUJQVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==",
+  // webp-wasm@1.0.6 对不透明红色单像素以 lossless: 1 编码的真实 VP8L 码流。
+  "UklGRhwAAABXRUJQVlA4TA8AAAAvAAAAAAcQ/Y/+ByKi/wEA",
   "base64",
 );
 const INVALID_VP8_WEBP = Buffer.from(
@@ -34,7 +35,8 @@ const INVALID_VP8L_WEBP = Buffer.from(
   "hex",
 );
 const TWO_FRAME_ANIMATED_WEBP = Buffer.from(
-  "UklGRoAAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GJgAAAAAAAAAAAAAAAAAAAGQAAABWUDhMDgAAAC8AAAAABxAR/Q9ERP8DQU5NRiYAAAAAAAAAAAAAAAAAAABkAAAAVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==",
+  // 两个 ANMF 均封装上方经真实编码、解码验证的 VP8L 帧。
+  "UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JTQYAAAAAAAAAAABBTk1GKAAAAAAAAAAAAAAAAAAAAGMAAABWUDhMDwAAAC8AAAAABxD9j/4HIqL/AQBBTk1GKAAAAAAAAAAAAAAAAAAAAGMAAABWUDhMDwAAAC8AAAAABxD9j/4HIqL/AQA=",
   "base64",
 );
 const VP8X_ONLY_WEBP = Buffer.alloc(30);
@@ -313,5 +315,29 @@ describe("importGeneratedImage", () => {
     await expect(
       importGeneratedImageFromPath({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
     ).rejects.toThrow("禁止从 uploads 目录重复导入图片");
+  });
+
+  it("webp-wasm 模块缺失时严格拒绝 WebP 且不落盘", async () => {
+    const { workspaceRoot, uploadsRoot } = await fixture();
+    const sourcePath = join(workspaceRoot, "without-decoder.webp");
+    await writeFile(sourcePath, ONE_PIXEL_WEBP);
+
+    vi.resetModules();
+    vi.doMock("webp-wasm", () => {
+      throw new Error("测试模拟 webp-wasm 模块缺失");
+    });
+    try {
+      const { importGeneratedImageFromPath: importWithoutWebpWasm } = await import(
+        "../tools/importGeneratedImage.js"
+      );
+      await expect(
+        importWithoutWebpWasm({ path: sourcePath }, { workspaceRoot, uploadsRoot }),
+      ).rejects.toThrow("WebP RIFF 结构、图像区块或码流无效");
+    } finally {
+      vi.doUnmock("webp-wasm");
+      vi.resetModules();
+    }
+
+    await expect(readdir(uploadsRoot)).resolves.toEqual([]);
   });
 });

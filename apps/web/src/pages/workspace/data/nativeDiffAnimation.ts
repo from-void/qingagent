@@ -442,8 +442,14 @@ export function buildNativePresentationSeedSections(
         if (!shouldTypewriteTable(section, run.finalDoc?.content[blockIndex])) {
           return cloneViewSection(section);
         }
+        // 安全纯文本表格仍走空 cell 种子逐格动画；移除原始 node，避免保真
+        // 序列化直接把终态内容写回种子。复杂表格则在上一分支保留 node 整块出现。
+        const { node: _node, ...seedTable } = cloneViewSection(section) as Extract<
+          ViewBlock,
+          { kind: "table" }
+        >;
         return {
-          ...cloneViewSection(section),
+          ...seedTable,
           head: section.head.map(() => ""),
           rows: section.rows.map((row) => row.map(() => "")),
           ...(section.headSpans ? { headSpans: section.headSpans.map(() => []) } : {}),

@@ -333,6 +333,7 @@ function pmBlockToViewSections(node: PmBlockNode): ViewBlock[] {
         items: node.content.map((item) => item.content.map(pmBlockText).join("\n")),
         // 富 spans:保留加粗/链接等行内样式,审阅渲染优先消费(items 仍供文本派生)
         itemSpans: node.content.map((item) => pmBlocksInlineSpans(item.content)),
+        node,
       }];
     case "horizontalRule":
       return [{ ...meta, kind: "hr" }];
@@ -349,7 +350,15 @@ function pmBlockToViewSections(node: PmBlockNode): ViewBlock[] {
       const rowSpans = (firstIsHeader ? restRows : node.content).map((row) =>
         row.content.map((cell) => pmBlocksInlineSpans(cell.content)),
       );
-      return [{ ...meta, kind: "table", head, rows, headSpans, rowSpans }];
+      return [{
+        ...meta,
+        kind: "table",
+        head,
+        rows,
+        headSpans,
+        rowSpans,
+        node,
+      }];
     }
     case "image":
       return [{

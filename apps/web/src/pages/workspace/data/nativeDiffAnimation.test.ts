@@ -110,6 +110,52 @@ describe("native PM presentation animation", () => {
     ]);
   });
 
+  it("只让安全纯文本表格丢弃 node 进入逐格动画，复杂表格种子保留原始 node", () => {
+    const textCell = {
+      type: "tableCell",
+      attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "safe-p" },
+        content: [{ type: "text", text: "安全单元" }],
+      }],
+    } as const;
+    const safeTable = {
+      type: "table",
+      attrs: { blockId: "safe-table" },
+      content: [{ type: "tableRow", content: [textCell] }],
+    } as unknown as PmBlockNode;
+    const complexTable = {
+      type: "table",
+      attrs: { blockId: "complex-table" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          ...textCell,
+          attrs: { ...textCell.attrs, colspan: 2, colwidth: [120, 180] },
+        }],
+      }],
+    } as unknown as PmBlockNode;
+    const finalSections: ViewBlock[] = [
+      { kind: "table", head: [], rows: [["安全单元"]], node: safeTable },
+      { kind: "table", head: [], rows: [["复杂单元"]], node: complexTable },
+    ];
+    const finalDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [safeTable, complexTable],
+    } as PmDoc;
+
+    const seed = buildNativePresentationSeedSections({ finalSections, finalDoc });
+    const safeSeed = seed[0] as Extract<ViewBlock, { kind: "table" }>;
+    const complexSeed = seed[1] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(safeSeed.rows).toEqual([[""]]);
+    expect(safeSeed.node).toBeUndefined();
+    expect(complexSeed.rows).toEqual([["复杂单元"]]);
+    expect(complexSeed.node).toEqual(complexTable);
+  });
+
   it("clones presentation runs without sharing section references", () => {
     const run: NativePresentationRun = {
       id: 1,

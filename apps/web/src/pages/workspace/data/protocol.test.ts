@@ -1248,6 +1248,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const table = view.sections[0] as Extract<ViewBlock, { kind: "table" }>;
     expect(table.rows[0]![0]).toBe("kersai.com"); // 字符串字段不回归(文本派生用)
+    expect(table.node).toEqual(tableWithLink);
     const cellSpans = table.rowSpans![0]![0]!;
     expect(cellSpans).toHaveLength(1);
     expect(cellSpans[0]).toMatchObject({
@@ -1258,6 +1259,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const list = view.sections[1] as Extract<ViewBlock, { kind: "list" }>;
     expect(list.items[0]).toBe("要点:说明文字");
+    expect(list.node).toEqual(listWithBold);
     const itemSpans = list.itemSpans![0]!;
     expect(itemSpans[0]).toMatchObject({ kind: "text", text: "要点", marks: [{ type: "bold" }] });
     expect(itemSpans[1]).toMatchObject({ kind: "text", text: ":说明文字" });

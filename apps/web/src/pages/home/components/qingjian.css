@@ -981,11 +981,24 @@ transform 平移内层) */
 .qj-card-slot:hover {
   z-index: var(--qj-card-hover-z, 160);
 }
+.qj-card-slot:focus-visible {
+  z-index: var(--qj-card-hover-z, 160);
+  outline: 2px solid var(--qj-cinnabar);
+  outline-offset: 6px;
+}
 .qj-card-slot:hover::after {
   opacity: 1;
   transform: scale(1);
 }
+.qj-card-slot:focus-visible::after {
+  opacity: 1;
+  transform: scale(1);
+}
 .qj-card-slot:hover .cm-card {
+  transform: translateY(-7px) scale(1.02);
+  box-shadow: var(--qj-card-hover-shadow);
+}
+.qj-card-slot:focus-visible .cm-card {
   transform: translateY(-7px) scale(1.02);
   box-shadow: var(--qj-card-hover-shadow);
 }
@@ -1026,7 +1039,8 @@ transform 平移内层) */
     0 0 0 4px var(--qj-card-border-glow),
     0 8px 20px rgba(0, 0, 0, 0.22);
 }
-.qj-card-slot:hover .cm-card {
+.qj-card-slot:hover .cm-card,
+.qj-card-slot:focus-visible .cm-card {
   box-shadow:
     0 0 0 1px var(--qj-cinnabar),
     0 0 0 4px var(--qj-card-border-glow),

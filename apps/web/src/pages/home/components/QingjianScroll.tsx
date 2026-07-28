@@ -1936,6 +1936,19 @@ export function QingjianScroll({
       // 只在长卷可见且未聚焦输入框时响应
       const active = document.activeElement;
       if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        const target = e.target instanceof Element ? e.target : null;
+        const slot = target?.closest<HTMLElement>(".qj-card-slot");
+        if (!slot || slot.getAttribute("aria-disabled") === "true") return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (slot.dataset.kind === "new") {
+          triggerNewSession();
+        } else if (slot.dataset.id) {
+          triggerOpenSession(slot.dataset.id);
+        }
+        return;
+      }
       if (e.key === "ArrowRight") {
         targetX = clamp(targetX + 320, 0, maxX);
         velocity = 12;
@@ -2223,6 +2236,9 @@ export function QingjianScroll({
                   data-layer={slot.layer}
                   data-title={slot.entry.title}
                   data-category={slot.entry.category}
+                  role="button"
+                  tabIndex={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? -1 : 0}
+                  aria-label={slot.entry.kind === "new" ? "新建文档" : `打开文章：${slot.entry.title}`}
                   aria-disabled={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? "true" : undefined}
                   style={{
                     left: `${slot.left}px`,

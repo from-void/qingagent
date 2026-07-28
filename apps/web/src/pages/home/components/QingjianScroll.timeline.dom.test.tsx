@@ -119,6 +119,50 @@ describe("QingjianScroll 时间轴身份与日期", () => {
     });
     expect(host.querySelector(".qj-dock-preview-title")?.textContent).toBe("命中文章");
   });
+
+  it("真实文章卡和新建卡具备按钮语义，并支持 Enter 与 Space 激活", async () => {
+    const onOpenSession = vi.fn();
+    const onNewSession = vi.fn();
+    await act(async () => {
+      root.render(
+        <QingjianScroll
+          sessions={sessions}
+          onOpenSession={onOpenSession}
+          onNewSession={onNewSession}
+        />,
+      );
+    });
+
+    const realSlot = host.querySelector<HTMLElement>('.qj-card-slot[data-id="matched"]')!;
+    const newSlot = host.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]')!;
+    expect(realSlot.getAttribute("role")).toBe("button");
+    expect(realSlot.tabIndex).toBe(0);
+    expect(realSlot.getAttribute("aria-label")).toContain("命中文章");
+    expect(newSlot.getAttribute("role")).toBe("button");
+    expect(newSlot.tabIndex).toBe(0);
+
+    await act(async () => {
+      realSlot.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onOpenSession).toHaveBeenCalledWith("matched");
+
+    await act(async () => {
+      newSlot.dispatchEvent(new KeyboardEvent("keydown", {
+        key: " ",
+        bubbles: true,
+        cancelable: true,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+  });
 });
 
 function makeSession(

@@ -28,7 +28,7 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
-import { listGrantedCredentialPaths } from "@qingagent/db";
+import { listCredentialGrants } from "@qingagent/db";
 import { Buffer } from "node:buffer";
 import { mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
@@ -44,8 +44,9 @@ import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import {
   ensureCredentialPathExists,
-  intersectGrantedWithRequests,
   listCredentialRequests,
+  selectEffectiveCredentialPaths,
+  type CredentialGrantRef,
 } from "../skills/credentialRequests.js";
 import {
   prepareReadWall,
@@ -218,13 +219,13 @@ export function resolveCredentialWallMode(): CredentialWallMode {
  * 授权被回收、技能被关掉、声明被删掉,下次构建沙箱即自动收回。
  */
 export async function resolveSandboxCredentialPaths(
-  loadGrantedPaths: () => Promise<string[]>,
+  loadGrants: () => Promise<CredentialGrantRef[]>,
 ): Promise<string[]> {
-  const [granted, requests] = await Promise.all([
-    loadGrantedPaths().catch(() => [] as string[]),
+  const [grants, requests] = await Promise.all([
+    loadGrants().catch(() => [] as CredentialGrantRef[]),
     listCredentialRequests().catch(() => []),
   ]);
-  const paths = intersectGrantedWithRequests(granted, requests);
+  const paths = selectEffectiveCredentialPaths(grants, requests);
   // 目录不存在就 bind 不上;CLI 首登也要往里写,先建出来(0700)。
   await Promise.all(paths.map((path) => ensureCredentialPathExists(path)));
   return paths;
@@ -567,7 +568,7 @@ async function buildSessionWorkspace(
   if (isolation === "seatbelt" || isolation === "bwrap") {
     try {
       const grantedCredentialPaths = await resolveSandboxCredentialPaths(
-        () => listGrantedCredentialPaths(),
+        () => listCredentialGrants(),
       );
       readWall = await prepareReadWall({
         platform: isolation === "seatbelt" ? "darwin" : "linux",

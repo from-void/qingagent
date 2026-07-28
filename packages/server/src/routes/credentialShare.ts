@@ -40,11 +40,28 @@ function toItem(request: CredentialRequest, grantedAt: string | null): Credentia
   };
 }
 
-/** 共享条目 + 授权状态。安全页与 credential-share 路由共用同一口径。 */
+export const ADHOC_CREDENTIAL_SKILL_LABEL = "命令行工具";
+
+/**
+ * 共享条目 + 授权状态。两条通道合流:技能声明的条目 + 按需申请拿到的授权
+ * (后者没有技能,统一挂在「命令行工具」名下)。安全页与 credential-share 路由共用同一口径。
+ */
 export async function listCredentialShareItems(): Promise<CredentialShareItem[]> {
   const [requests, grants] = await Promise.all([listCredentialRequests(), listCredentialGrants()]);
   const grantedAtByPath = new Map(grants.map((grant) => [grant.path, grant.createdAt]));
-  return requests.map((request) => toItem(request, grantedAtByPath.get(request.path) ?? null));
+  const declaredPaths = new Set(requests.map((request) => request.path));
+  const items = requests.map((request) => toItem(request, grantedAtByPath.get(request.path) ?? null));
+  for (const grant of grants) {
+    if (declaredPaths.has(grant.path)) continue;
+    items.push({
+      skillName: grant.skillName,
+      skillLabel: grant.skillName || ADHOC_CREDENTIAL_SKILL_LABEL,
+      declared: grant.declared,
+      granted: true,
+      grantedAt: grant.createdAt,
+    });
+  }
+  return items;
 }
 
 export function createCredentialShareRoutes(
@@ -73,13 +90,30 @@ export function createCredentialShareRoutes(
     const parsed = updateSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "设置内容不完整，请再试一次。" }, 400);
 
-    // 路径不从请求体取:只认当前已启用技能的声明,避免任意路径被授权。
+    // 路径不从请求体取:授权只认当前已启用技能的声明,避免任意路径被授权。
     const requests = await listRequests();
     const request = requests.find(
       (item) =>
         item.skillName === parsed.data.skillName && item.declared === parsed.data.declared,
     );
     if (!request) {
+      // 收回是纯削权,按需申请拿到的授权(没有技能声明)也必须收得回来。
+      if (!parsed.data.granted) {
+        const grant = (await listGrants()).find(
+          (item) =>
+            item.declared === parsed.data.declared && item.skillName === parsed.data.skillName,
+        );
+        if (grant) {
+          await revokeGrant(grant.path);
+          return c.json({
+            skillName: grant.skillName,
+            skillLabel: grant.skillName || ADHOC_CREDENTIAL_SKILL_LABEL,
+            declared: grant.declared,
+            granted: false,
+            grantedAt: null,
+          });
+        }
+      }
       return c.json({ error: "这个技能现在没有请求共享这个位置。" }, 404);
     }
 

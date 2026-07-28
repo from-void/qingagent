@@ -8,6 +8,7 @@ import type {
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
+import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 import { buildChipOnlyGuidance, composeInlineChipText } from "../session/chipOnlyNote.js";
 import { createSkillChipInstructionLoader } from "./skillChipInstructionLoader.js";
 import {
@@ -706,6 +707,9 @@ export async function* runAgentTurn(
     }
     if (sessionTools.getProcessOutput) {
       sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
+    }
+    if (sessionTools.requestCredentialAccess) {
+      sessionScopedTools[REQUEST_CREDENTIAL_ACCESS_TOOL] = sessionTools.requestCredentialAccess;
     }
     if (sessionTools.workspaceReadFile) {
       sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = sessionTools.workspaceReadFile;

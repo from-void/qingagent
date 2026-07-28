@@ -233,7 +233,7 @@ export {
   USER_SKILLS_DIR,
   checkCredentialPath,
   ensureCredentialPathExists,
-  intersectGrantedWithRequests,
+  selectEffectiveCredentialPaths,
   isNeverAllowedCredentialPath,
   listCredentialRequests,
   pendingCredentialRequests,

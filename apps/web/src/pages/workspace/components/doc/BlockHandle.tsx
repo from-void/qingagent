@@ -812,10 +812,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
-    if (h) seedInsertChain(h)?.run();
     void pickFile("image/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!seedInsertChain(h)?.run()) return;
       try {
         await insertImageAsset(editor, file);
       } catch (error) {
@@ -837,10 +837,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
-    if (h) seedInsertChain(h)?.run();
     void pickFile("*/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!seedInsertChain(h)?.run()) return;
       try {
         await insertFileAsset(editor, file);
       } catch (error) {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
-import { getPmContentHash, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, normalizePmDoc, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./data/chatInputTypes";
 import type { DocDimensions } from "./data/docDimensions";
 import {
@@ -870,6 +870,147 @@ describe("WorkspacePage review controls", () => {
     );
     act(() => vi.advanceTimersByTime(260));
     expect(window.location.hash).toBe("#/");
+  }, 60_000);
+
+  it("文件上传占位可规范化保存，外部同步期间无报错且完成后原位写回", async () => {
+    let resolveUpload!: (value: {
+      fileId: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+    }) => void;
+    const upload = new Promise<{
+      fileId: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+    }>((resolve) => {
+      resolveUpload = resolve;
+    });
+    vi.doMock("./data/uploadAsset", () => ({
+      uploadAssetFile: vi.fn(() => upload),
+      uploadedAssetUrl: (asset: { fileId: string; filename: string }) =>
+        `/api/v1/files/${asset.fileId}/${asset.filename}`,
+    }));
+
+    try {
+      window.location.hash = "#/workspace?session=s-1";
+      const [
+        { useWorkspacePageController },
+        { WorkspaceDocumentPane },
+        { insertFileAsset },
+      ] = await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+        import("./data/insertUploadedAsset"),
+      ]);
+      const captured: {
+        current: ReturnType<typeof useWorkspacePageController> | null;
+      } = { current: null };
+      function ControllerHarness() {
+        const controller = useWorkspacePageController();
+        captured.current = controller;
+        return <WorkspaceDocumentPane controller={controller} />;
+      }
+      await render(<ControllerHarness />);
+      const stream = latestServerStream();
+      await emitFrames(stream, [
+        { kind: "sessionMeta", data: { sessionId: "s-1", title: "上传附件" } },
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: wireSnapshotFromPmDoc(
+              pmDoc([pmParagraph("upload-base", "上传前正文")]),
+              1,
+            ),
+          },
+        },
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "editing" },
+            activeOverlay: null,
+            agentBusy: false,
+          },
+        },
+      ]);
+      const editor = captured.current?.tiptapEditor;
+      expect(editor).not.toBeNull();
+      vi.spyOn(editor!.view, "coordsAtPos").mockReturnValue({
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+      });
+      vi.useFakeTimers();
+
+      let pendingUpload!: Promise<unknown>;
+      await act(async () => {
+        pendingUpload = insertFileAsset(
+          editor!,
+          new File(["data"], "report.pdf", { type: "application/pdf" }),
+        );
+      });
+      const pendingDoc = normalizePmDoc(editor!.getJSON());
+      expect(
+        pendingDoc.content.some((node) => node.type === "fileAttachment"),
+      ).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await flushMicrotasks(5);
+      const saves = updateDocCommands(stream);
+      expect(saves.length).toBeGreaterThan(0);
+      expect(
+        saves.every(
+          (command) =>
+            !JSON.stringify(command.data.doc).includes("upload-pending:"),
+        ),
+      ).toBe(true);
+
+      await emitFrames(stream, [{
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([
+              pmParagraph("upload-base", "外部同步后的正文"),
+              pmParagraph("upload-tail", "外部新增段落"),
+            ]),
+            3,
+          ),
+        },
+      }]);
+      expect(editor!.getText()).toContain("外部同步后的正文");
+      expect(
+        editor!.getJSON().content?.some(
+          (node) => node.type === "fileAttachment",
+        ),
+      ).toBe(true);
+      expect(host?.textContent).not.toContain("暂不支持");
+
+      await act(async () => {
+        resolveUpload({
+          fileId: "550e8400-e29b-41d4-a716-446655440000",
+          filename: "report.pdf",
+          mimeType: "application/pdf",
+          size: 4,
+        });
+        await pendingUpload;
+      });
+      const completed = normalizePmDoc(editor!.getJSON());
+      expect(JSON.stringify(completed)).toContain("外部同步后的正文");
+      expect(
+        completed.content.find((node) => node.type === "fileAttachment"),
+      ).toMatchObject({
+        attrs: {
+          fileId: "550e8400-e29b-41d4-a716-446655440000",
+          filename: "report.pdf",
+        },
+      });
+    } finally {
+      vi.doUnmock("./data/uploadAsset");
+    }
   }, 60_000);
 
   it("dirty 外标签收到 snapshotWritten 广播时冻结旧版本，下次保存以旧基线触发 conflict", async () => {

@@ -95,6 +95,7 @@ import type {
   PatchOverlayInput,
 } from "../data/protocol";
 import {
+  hasPendingUploadPlaceholders,
   insertFileAsset,
   insertImageAssets,
   replayPendingUploadPlaceholders,
@@ -935,7 +936,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             }
             // exact echo 也可能是 live blockId=null、normalize 后才相等；只在结构已证明
             // 相同的两种回声里同步 attrs。陈旧 pending echo 的 live 可能已继续编辑，不能按位置写 id。
-            if (sync.verdict === "block-id-echo" || sync.matchedSelfIndex === -1) {
+            if (
+              !hasPendingUploadPlaceholders(editor) &&
+              (sync.verdict === "block-id-echo" || sync.matchedSelfIndex === -1)
+            ) {
               const blockIdSync = createLocalBlockIdSyncTransaction(
                 editor,
                 normalizedIncoming,

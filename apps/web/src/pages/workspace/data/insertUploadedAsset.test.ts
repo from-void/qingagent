@@ -8,6 +8,7 @@ import {
   insertImageAsset,
   insertImageAssets,
   replayPendingUploadPlaceholders,
+  UPLOAD_PLACEHOLDER_FILE_ID_PREFIX,
   UPLOAD_PLACEHOLDER_IMAGE_SRC,
 } from "./insertUploadedAsset";
 
@@ -184,13 +185,21 @@ describe("insertUploadedAsset", () => {
     const placeholder = firstAttachmentAttrs(editor);
     expect(placeholder).toMatchObject({
       blockId: expect.stringMatching(/^upload-file-/),
-      fileId: expect.stringMatching(/^upload-file-/),
       filename: "report.pdf",
       mimeType: "application/pdf",
       size: 4,
       uploading: true,
     });
-    expect(normalizePmDoc(editor.getJSON()).content.some((node) => node.type === "fileAttachment")).toBe(false);
+    expect(placeholder.blockId).toMatch(/^upload-file-/);
+    expect(placeholder.fileId).toBe(
+      `${UPLOAD_PLACEHOLDER_FILE_ID_PREFIX}${placeholder.blockId}`,
+    );
+    expect(() => normalizePmDoc(editor!.getJSON())).not.toThrow();
+    expect(
+      normalizePmDoc(editor.getJSON()).content.some(
+        (node) => node.type === "fileAttachment",
+      ),
+    ).toBe(false);
 
     editor.commands.insertContentAt(editor.state.doc.content.size, {
       type: "paragraph",

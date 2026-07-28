@@ -26,6 +26,7 @@ const pendingUploadBlockIds = new WeakMap<AssetEditor, Set<string>>();
 export const UPLOAD_PLACEHOLDER_IMAGE_SRC = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" rx="24" fill="#f3efe7"/><path d="M252 186h136M320 118v136" stroke="#b8aa92" stroke-width="18" stroke-linecap="round"/></svg>',
 )}`;
+export const UPLOAD_PLACEHOLDER_FILE_ID_PREFIX = "upload-pending:";
 
 export async function insertImageAsset(editor: AssetEditor, file: File): Promise<string> {
   const [upload] = insertImageAssets(editor, [file]);
@@ -101,11 +102,11 @@ async function uploadImageIntoPlaceholder(
 export async function insertFileAsset(editor: AssetEditor, file: File): Promise<UploadedAsset> {
   const blockId = createUploadBlockId("file");
   const inserted = editor.chain().focus().insertContent({
-    type: "fileAttachment",
-    attrs: {
-      blockId,
-      fileId: blockId,
-      filename: file.name,
+      type: "fileAttachment",
+      attrs: {
+        blockId,
+        fileId: `${UPLOAD_PLACEHOLDER_FILE_ID_PREFIX}${blockId}`,
+        filename: file.name,
       mimeType: file.type || "application/octet-stream",
       size: file.size,
       uploading: true,
@@ -155,6 +156,10 @@ export function replayPendingUploadPlaceholders(
       : insertAtRootFallback(replayed, bookmark);
   }
   return replayed as unknown as PmDoc;
+}
+
+export function hasPendingUploadPlaceholders(editor: AssetEditor): boolean {
+  return (pendingUploadBlockIds.get(editor)?.size ?? 0) > 0;
 }
 
 function registerPendingUpload(editor: AssetEditor, blockId: string): void {

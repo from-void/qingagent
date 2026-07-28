@@ -237,6 +237,7 @@ export {
   isNeverAllowedCredentialPath,
   listCredentialRequests,
   pendingCredentialRequests,
+  seedPresetCredentialGrants,
   listChildSkills,
   listTopLevelSkills,
   parseCredentialPathDeclarations,

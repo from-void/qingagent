@@ -74,6 +74,28 @@ await sessionManager.resumePendingDeletions();
 
 const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE;
 
+// 随包命令行工具的预置授权:老用户升级后不该被一张新确认卡拦住。
+// 只对"已启用技能确实声明了"的路径生效,失败不阻断启动。
+void (async () => {
+  const { seedPresetCredentialGrants } = await import("@qingagent/core");
+  const { createCredentialGrant } = await import("@qingagent/db");
+  const { homedir } = await import("node:os");
+  const result = await seedPresetCredentialGrants({
+    home: process.env.HOME?.trim() || homedir(),
+    createGrant: (input) => createCredentialGrant(input),
+  });
+  if (result.seeded.length > 0 || result.skipped.length > 0) {
+    // 路径含宿主用户名,只报条数。
+    console.log("[credential-share] 预置授权完成", {
+      seeded: result.seeded.length,
+      skipped: result.skipped.length,
+    });
+  }
+})().catch((e) => console.error(
+  "[credential-share] 预置授权失败(non-fatal)",
+  e instanceof Error ? e.message : String(e),
+));
+
 // 迁移完成后,后台尽力而为回填 thread metadata → documents(失败不阻断启动)。
 void migrateThreadMetadataToDocuments()
   .then((stats) => console.log("[migrations] thread metadata 回填完成", stats))

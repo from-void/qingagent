@@ -44,6 +44,10 @@ const originalProviderEnv = process.env.QINGAGENT_MODEL_PROVIDER;
 
 beforeEach(() => {
   mockCore.store.clear();
+  mockCore.getAppSetting.mockClear();
+  mockCore.getAppSetting.mockImplementation(async (key: string) =>
+    mockCore.store.get(key) ?? null
+  );
   invalidateModelOverridesCache();
   delete process.env.QINGAGENT_MODEL_PROVIDER;
 });
@@ -80,6 +84,64 @@ describe("resolveRequestModelOverrides — provider 优先级", () => {
     mockCore.store.set("model_provider", "kimi");
     invalidateModelOverridesCache();
     expect((await resolveRequestModelOverrides({ provider: "unknown" })).provider).toBe("kimi");
+  });
+});
+
+describe("resolveRequestModelOverrides — 设置缓存容错", () => {
+  it("单项读取失败时保留其余成功设置，并使用短失败 TTL 重试", async () => {
+    vi.useFakeTimers();
+    try {
+      mockCore.store.set("deepseek_global_key", "deepseek-db-key");
+      mockCore.store.set("model_provider", "deepseek");
+      mockCore.store.set("model_params", JSON.stringify({ temperature: 0.3 }));
+      mockCore.getAppSetting.mockImplementationOnce(async () => {
+        throw new Error("temporary read failure");
+      });
+
+      await expect(resolveRequestModelOverrides({})).resolves.toMatchObject({
+        provider: "deepseek",
+        params: { temperature: 0.3 },
+      });
+      expect((await resolveRequestModelOverrides({})).globalApiKey).toBeUndefined();
+      expect(mockCore.getAppSetting).toHaveBeenCalledTimes(4);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(resolveRequestModelOverrides({})).resolves.toMatchObject({
+        provider: "deepseek",
+        globalApiKey: "deepseek-db-key",
+        params: { temperature: 0.3 },
+      });
+      expect(mockCore.getAppSetting).toHaveBeenCalledTimes(8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("缓存失效后丢弃在途旧读取，并按新代设置重新读取", async () => {
+    let releaseOldRead!: (value: string | null) => void;
+    const oldRead = new Promise<string | null>((resolve) => {
+      releaseOldRead = resolve;
+    });
+    mockCore.store.set("deepseek_global_key", "old-key");
+    mockCore.getAppSetting.mockImplementationOnce(() => oldRead);
+
+    const resolving = resolveRequestModelOverrides({});
+    await vi.waitFor(() => expect(mockCore.getAppSetting).toHaveBeenCalledTimes(4));
+
+    mockCore.store.set("deepseek_global_key", "new-key");
+    invalidateModelOverridesCache();
+    releaseOldRead("old-key");
+
+    await expect(resolving).resolves.toMatchObject({
+      provider: "deepseek",
+      globalApiKey: "new-key",
+    });
+    expect(mockCore.getAppSetting).toHaveBeenCalledTimes(8);
+
+    await expect(resolveRequestModelOverrides({})).resolves.toMatchObject({
+      globalApiKey: "new-key",
+    });
+    expect(mockCore.getAppSetting).toHaveBeenCalledTimes(8);
   });
 });
 

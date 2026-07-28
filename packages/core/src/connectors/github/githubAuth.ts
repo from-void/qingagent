@@ -21,6 +21,9 @@ export interface GithubAuthOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
+const MAX_TRANSIENT_BACKOFF_MS = 30_000;
+const MAX_MALFORMED_POLL_RESPONSES = 3;
+
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
   const abort = () => {
     clearTimeout(timer);
@@ -63,18 +66,55 @@ export class GithubDeviceAuth {
 
   async poll(deviceCode: string, initialInterval: number, expiresAt: number, signal: AbortSignal): Promise<GithubToken> {
     let interval = Math.max(1, initialInterval) * 1000;
+    let nextDelay = interval;
+    let transientFailures = 0;
+    let malformedResponses = 0;
+    const retryAfterTransientFailure = (): void => {
+      transientFailures += 1;
+      nextDelay = Math.min(
+        interval * (2 ** Math.max(0, transientFailures - 1)),
+        MAX_TRANSIENT_BACKOFF_MS,
+      );
+    };
     while (Date.now() < expiresAt) {
-      await this.sleepImpl(interval, signal);
-      const response = await this.fetchImpl(`${this.baseUrl}/login/oauth/access_token`, {
-        method: "POST", signal,
-        headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "QingAgent-Connector/1.0" },
-        body: new URLSearchParams({ client_id: this.options.clientId, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
-      });
-      const data = await this.json(response);
+      await this.sleepImpl(Math.min(nextDelay, expiresAt - Date.now()), signal);
+      if (Date.now() >= expiresAt) break;
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/login/oauth/access_token`, {
+          method: "POST", signal,
+          headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "QingAgent-Connector/1.0" },
+          body: new URLSearchParams({ client_id: this.options.clientId, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+        });
+      } catch (error) {
+        signal.throwIfAborted();
+        retryAfterTransientFailure();
+        continue;
+      }
+      if (response.status >= 500 && response.status <= 599) {
+        retryAfterTransientFailure();
+        continue;
+      }
+      let data: Record<string, unknown>;
+      try {
+        data = await response.json() as Record<string, unknown>;
+      } catch {
+        malformedResponses += 1;
+        if (malformedResponses > MAX_MALFORMED_POLL_RESPONSES) {
+          throw new GithubConnectorError("GitHub OAuth 返回了畸形 JSON", "INVALID_RESPONSE", 502);
+        }
+        retryAfterTransientFailure();
+        continue;
+      }
+      transientFailures = 0;
+      nextDelay = interval;
       if (typeof data.access_token === "string") return data as unknown as GithubToken;
       switch (data.error) {
         case "authorization_pending": break;
-        case "slow_down": interval += 5_000; break;
+        case "slow_down":
+          interval += 5_000;
+          nextDelay = interval;
+          break;
         case "access_denied": throw new GithubConnectorError("用户拒绝了 GitHub 授权", "ACCESS_DENIED", 403);
         case "expired_token": throw new GithubConnectorError("GitHub 授权码已过期", "PENDING_EXPIRED", 410);
         default: throw new GithubConnectorError("GitHub token 响应非法", "INVALID_RESPONSE", 502);

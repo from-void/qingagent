@@ -17,6 +17,48 @@ describe("GithubDeviceAuth", () => {
     expect(waits).toEqual([2000, 2000, 7000]);
   });
 
+  it("网络错误、5xx 与有限畸形响应按上限退避后继续轮询", async () => {
+    const waits: number[] = [];
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(new Response("upstream unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response("<html>bad gateway</html>", { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: "token",
+        token_type: "bearer",
+        scope: "repo",
+      })));
+    const auth = new GithubDeviceAuth({
+      clientId: "fake",
+      baseUrl: "http://fake",
+      fetch: fetch as typeof globalThis.fetch,
+      sleep: async (ms) => { waits.push(ms); },
+    });
+
+    await expect(
+      auth.poll("secret", 1, Date.now() + 60_000, new AbortController().signal),
+    ).resolves.toMatchObject({ access_token: "token" });
+    expect(waits).toEqual([1_000, 1_000, 2_000, 4_000]);
+  });
+
+  it("连续畸形响应超过容忍上限后稳定失败", async () => {
+    const fetch = vi.fn(async () => new Response("{bad", { status: 200 }));
+    const auth = new GithubDeviceAuth({
+      clientId: "fake",
+      baseUrl: "http://fake",
+      fetch: fetch as typeof globalThis.fetch,
+      sleep: async () => {},
+    });
+
+    await expect(
+      auth.poll("secret", 1, Date.now() + 60_000, new AbortController().signal),
+    ).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      status: 502,
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
   it.each([["expired_token", "PENDING_EXPIRED", 410], ["access_denied", "ACCESS_DENIED", 403]])("%s 映射稳定错误", async (providerError, code, status) => {
     const auth = new GithubDeviceAuth({ clientId: "fake", baseUrl: "http://fake", fetch: async () => new Response(JSON.stringify({ error: providerError })), sleep: async () => {} });
     await expect(auth.poll("secret", 1, Date.now() + 10_000, new AbortController().signal)).rejects.toMatchObject({ code, status });

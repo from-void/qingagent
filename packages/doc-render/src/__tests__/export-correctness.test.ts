@@ -30,6 +30,18 @@ describe("R20门 Markdown URL 导出正确性", () => {
   });
 });
 
+describe("Markdown 纯文本标题正确性", () => {
+  it("将换行规范化为单行，并转义链接语法与反斜杠", () => {
+    const markdown = toMarkdown(doc([]), {
+      title: "[产品](https://example.com)\n路径\\草稿",
+    });
+
+    expect(markdown).toBe(
+      "# \\[产品\\]\\(https\\:\\/\\/example\\.com\\) 路径\\\\草稿",
+    );
+  });
+});
+
 describe("R20门 TXT 字面尖括号正确性", () => {
   it("PM 结构化纯文本保留用户手打的 <xxx> 占位符", () => {
     const source = doc([

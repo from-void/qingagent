@@ -41,7 +41,9 @@ export const barCardTemplate: SvgTemplate<BarCardParams> = {
     params.bars.forEach((bar, index) => {
       const rowTop = top + index * rowGap;
       const y = rowTop + 22;
-      const filled = maxValue > 0 ? Math.max(4, (bar.value / maxValue) * barWidth) : 0;
+      const filled = maxValue > 0 && bar.value > 0
+        ? Math.max(4, (bar.value / maxValue) * barWidth)
+        : 0;
       const valueText = truncateByWidth(`${formatNumber(bar.value)}${unit}`, valueWidth, 14);
       body.push(svgText(truncateByWidth(bar.label, 88, 14), labelX, y, 14, palette.text, `font-weight="700"`));
       body.push(`<rect x="${barX}" y="${rowTop + 7}" width="${barWidth}" height="18" fill="${palette.panelAlt}"/>`);

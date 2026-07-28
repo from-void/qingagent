@@ -17,6 +17,7 @@ interface DesktopClientSecretStoreOptions {
 export interface DesktopClientSecretStore {
   read(key: string): string | null;
   write(key: string, value: string | null): void;
+  writeWithRollback(key: string, value: string | null, commit: () => void): void;
   writeMany(entries: Iterable<readonly [string, string]>): void;
 }
 
@@ -48,6 +49,32 @@ export function createDesktopClientSecretStore(
       if (value === null) delete ciphertexts[key];
       else ciphertexts[key] = encrypt(value);
       writePrivateStringMap(options.filePath, ciphertexts);
+    },
+    writeWithRollback(key, value, commit) {
+      assertSecretKey(key);
+      const ciphertexts = readCiphertexts();
+      const hadPrevious = Object.hasOwn(ciphertexts, key);
+      const previous = ciphertexts[key];
+      if (value === null) delete ciphertexts[key];
+      else ciphertexts[key] = encrypt(value);
+      writePrivateStringMap(options.filePath, ciphertexts);
+
+      try {
+        commit();
+      } catch (commitError) {
+        try {
+          const rollbackCiphertexts = readCiphertexts();
+          if (hadPrevious && previous !== undefined) rollbackCiphertexts[key] = previous;
+          else delete rollbackCiphertexts[key];
+          writePrivateStringMap(options.filePath, rollbackCiphertexts);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [commitError, rollbackError],
+            "普通配置提交失败，且敏感配置补偿失败",
+          );
+        }
+        throw commitError;
+      }
     },
     writeMany(entries) {
       const ciphertexts = readCiphertexts();

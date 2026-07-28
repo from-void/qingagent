@@ -96,6 +96,47 @@ describe("commandSchema", () => {
     expect(r.success).toBe(true);
   });
 
+  it("拒绝已弃用的非空 mentions 并指引改用 chips", () => {
+    const result = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "hi",
+        mentions: [{ id: "mention-1", domain: { kind: "mention" } }],
+        skills: [],
+        chips: [],
+        fileIds: [],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: ["data", "mentions"],
+        message: "mentions is deprecated; use chips instead",
+      }),
+    ]));
+  });
+
+  it("mentions 缺省时补为空数组", () => {
+    const result = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "hi",
+        skills: [],
+        chips: [],
+        fileIds: [],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success && result.data.kind === "sendMessage") {
+      expect(result.data.data.mentions).toEqual([]);
+    }
+  });
+
   it("sendMessage 文本与资源字符串在 64 KiB 边界通过，加一拒绝", () => {
     const baseData = {
       sessionId: "s",
@@ -113,25 +154,27 @@ describe("commandSchema", () => {
       data: { ...baseData, text: "x".repeat(MAX_COMMAND_STRING_LENGTH + 1) },
     }).success).toBe(false);
 
-    const mentionAtLimit = {
-      id: "x".repeat(MAX_COMMAND_STRING_LENGTH),
-      domain: { kind: "mention" },
+    const chipAtLimit = {
+      kind: { kind: "selection" },
+      resourceRef: {
+        id: "x".repeat(MAX_COMMAND_STRING_LENGTH),
+        domain: { kind: "docSpan" },
+      },
+      prefix: null,
+      label: "选区",
+      suffix: null,
     };
-    expect(commandSchema.safeParse({
-      kind: "sendMessage",
-      data: { ...baseData, text: "x", mentions: [mentionAtLimit] },
-    }).success).toBe(true);
-    expect(commandSchema.safeParse({
-      kind: "sendMessage",
-      data: { ...baseData, text: "x", mentions: [{
-        ...mentionAtLimit,
-        id: `${mentionAtLimit.id}x`,
-      }] },
-    }).success).toBe(false);
+    expect(commandSchema.safeParse(sendMessageWithChip(chipAtLimit)).success).toBe(true);
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      ...chipAtLimit,
+      resourceRef: {
+        ...chipAtLimit.resourceRef,
+        id: `${chipAtLimit.resourceRef.id}x`,
+      },
+    })).success).toBe(false);
   });
 
   it.each([
-    ["mentions", (): unknown => ({ id: "r", domain: { kind: "mention" } })],
     ["skills", (): unknown => ({ id: "skill", version: null })],
     ["chips", (): unknown => ({
       kind: { kind: "text" },
@@ -263,6 +306,61 @@ describe("commandSchema", () => {
       suffix: null,
       tableSelection: { axis: "row", startIndex: 0, endIndex: 0 },
     })).success).toBe(false);
+  });
+
+  it.each([
+    ["selection 缺 ref", { kind: { kind: "selection" }, resourceRef: null }],
+    ["selection 域错误", {
+      kind: { kind: "selection" },
+      resourceRef: { id: "position-1", domain: { kind: "docPosition" } },
+    }],
+    ["insertion 缺 ref", { kind: { kind: "insertion" }, resourceRef: null }],
+    ["insertion 域错误", {
+      kind: { kind: "insertion" },
+      resourceRef: { id: "span-1", domain: { kind: "docSpan" } },
+    }],
+    ["attach 缺 ref", { kind: { kind: "attach" }, resourceRef: null }],
+    ["attach 域错误", {
+      kind: { kind: "attach" },
+      resourceRef: { id: "source-1", domain: { kind: "source" } },
+    }],
+    ["mention 缺 ref", { kind: { kind: "mention" }, resourceRef: null }],
+    ["ref id 为空", {
+      kind: { kind: "mention" },
+      resourceRef: { id: "", domain: { kind: "mention" } },
+    }],
+    ["skill 携带 ref", {
+      kind: { kind: "skill" },
+      resourceRef: { id: "skill-1", domain: { kind: "mention" } },
+    }],
+    ["text 携带 ref", {
+      kind: { kind: "text" },
+      resourceRef: { id: "text-1", domain: { kind: "mention" } },
+    }],
+  ])("服务端命令边界拒绝 kind/ref 关系错误:%s", (_label, partialChip) => {
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      prefix: null,
+      label: "引用",
+      suffix: null,
+      ...partialChip,
+    })).success).toBe(false);
+  });
+
+  it.each([
+    ["selection", "docSpan"],
+    ["insertion", "docPosition"],
+    ["attach", "file"],
+    ["attach", "image"],
+    ["attach", "url"],
+    ["mention", "source"],
+  ])("服务端命令边界接受 %s/%s chip", (kind, domain) => {
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      kind: { kind },
+      resourceRef: { id: "resource-1", domain: { kind: domain } },
+      prefix: null,
+      label: "引用",
+      suffix: null,
+    })).success).toBe(true);
   });
 
   it("表格选区签名按单元格边界和顺序稳定区分", () => {
@@ -415,6 +513,21 @@ describe("commandSchema", () => {
       data: {
         acceptReviewBatchIds: ["batch-1", "batch-2"],
         rejectReviewBatchIds: ["batch-2"],
+      },
+    }],
+    ["commitReviewGroups accept/keep-pending 重叠", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["batch-1", "batch-2"],
+        keepPendingReviewBatchIds: ["batch-2"],
+      },
+    }],
+    ["commitReviewGroups reject/keep-pending 重叠", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: [],
+        rejectReviewBatchIds: ["batch-1", "batch-2"],
+        keepPendingReviewBatchIds: ["batch-2"],
       },
     }],
     ["resumeAskUser 缺 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", answers: { q1: { chosen: [], freeText: "x" } } } }],

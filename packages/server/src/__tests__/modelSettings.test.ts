@@ -453,6 +453,56 @@ describe("modelSettingsRoutes", () => {
     });
   });
 
+  it("DeepSeek 余额查询复用模型代理传输与既有超时信号", async () => {
+    const app = await loadApp();
+    await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        apiKey: "deepseek-db-key",
+      }),
+    });
+    mockCore.modelFetch.mockResolvedValueOnce(Response.json({
+      is_available: true,
+      balance_infos: [
+        {
+          currency: "CNY",
+          total_balance: "12.34",
+          granted_balance: "2.34",
+          topped_up_balance: "10.00",
+        },
+      ],
+    }));
+    const globalFetch = vi.fn();
+    vi.stubGlobal("fetch", globalFetch);
+
+    const res = await app.request("/api/v1/settings/model/balance");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      keySource: "db",
+      isAvailable: true,
+      balances: [
+        {
+          currency: "CNY",
+          total: "12.34",
+          granted: "2.34",
+          toppedUp: "10.00",
+        },
+      ],
+    });
+    expect(mockCore.modelFetch).toHaveBeenCalledWith(
+      "https://api.deepseek.com/user/balance",
+      {
+        headers: { Authorization: "Bearer deepseek-db-key" },
+        signal: expect.any(AbortSignal),
+      },
+    );
+    expect(globalFetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     "http://169.254.169.254/latest/meta-data",
     "http://10.0.0.4/v1",

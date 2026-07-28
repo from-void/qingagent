@@ -10,7 +10,8 @@ export type QaErrorCode =
   | "NOT_FOUND"
   | "SESSION_NOT_FOUND"
   | "MATERIAL_NOT_FOUND"
-  | "RATE_LIMITED";
+  | "RATE_LIMITED"
+  | "SERVICE_UNAVAILABLE";
 
 export const NEXT_STEP: Record<QaErrorCode, string> = {
   REVIEW_PENDING: "用 `qa review list -s <id>` 查看待审修改,再用 `qa review accept|reject|commit` 完成审查",
@@ -25,6 +26,7 @@ export const NEXT_STEP: Record<QaErrorCode, string> = {
   SESSION_NOT_FOUND: "会话不存在,用 `qa sessions list` 重新对号,不要重试原 id",
   MATERIAL_NOT_FOUND: "材料不存在,用 `qa files list` 重新对号,不要重试原 id",
   RATE_LIMITED: "请求太频繁,请降低读取频率并优先使用 `qa doc events --follow`",
+  SERVICE_UNAVAILABLE: "先运行 `qa status` 检查实例状态,稍后重试一次;仍失败请告知用户",
 };
 
 export class QaCliError extends Error {
@@ -123,7 +125,8 @@ function commonErrorHint(code: QaErrorCode): string | null {
     code === "VERSION_CONFLICT" ||
     code === "SESSION_NOT_FOUND" ||
     code === "MATERIAL_NOT_FOUND" ||
-    code === "RATE_LIMITED"
+    code === "RATE_LIMITED" ||
+    code === "SERVICE_UNAVAILABLE"
   ) {
     return NEXT_STEP[code];
   }

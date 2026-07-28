@@ -187,6 +187,19 @@ describe("qingmlParse", () => {
     ]);
   });
 
+  it("链接协议校验与 PM 一致，接受大写 HTTP(S) scheme", () => {
+    const result = qingmlParse('<p><a href="HTTP://example.com/reference" title="来源">资料</a></p>');
+
+    expectValidBlocks(result.blocks);
+    expect(result.blocks[0]).toMatchObject({
+      type: "paragraph",
+      runs: [{
+        text: "资料",
+        marks: [{ type: "link", href: "HTTP://example.com/reference", title: "来源" }],
+      }],
+    });
+  });
+
   it("未转义 pre 子标签按 raw island 静默重建，块级泄漏仍记 bad-block", () => {
     const repaired = qingmlParse(`<pre lang="cpp">#include <stdio.h>\nvector<int> v;</pre>`);
     expectValidBlocks(repaired.blocks);

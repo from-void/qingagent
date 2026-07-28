@@ -174,6 +174,8 @@ export interface SessionState {
   _turnOwner: string | null;
   /** Runtime-only：用于拦截迟到工具写入的单调递增代次。 */
   _turnGeneration: number;
+  /** Runtime-only：用户停止意图的独立代次，不能与 watchdog abort signal 混用。 */
+  _userCancelGeneration: number;
   /** Runtime-only：当前轮助手消息；抢占清理用它给旧轮追加可见收尾。 */
   _activeAgentMessageId: string | null;
   /** Runtime-only：冷恢复草稿冲突的一次性失败帧；正常 restore 消费，只读快照不消费。 */
@@ -364,6 +366,7 @@ export function createSession(
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,
+    _userCancelGeneration: 0,
     _activeAgentMessageId: null,
     _pendingDraftRecoveryFrames: [],
     suggestions: new Map(),

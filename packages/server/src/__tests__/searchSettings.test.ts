@@ -18,6 +18,12 @@ const mockCore = vi.hoisted(() => {
     authRetryAt?: number;
     quotaUntil?: number;
   }>();
+  const providerSearch = {
+    bing: vi.fn(async () => []),
+    ddg: vi.fn(async () => []),
+    searxng: vi.fn(async () => []),
+    tavily: vi.fn(async () => [{ title: "ok", url: "https://example.com", snippet: "s" }]),
+  };
   const registry = [
     {
       id: "bing",
@@ -25,7 +31,7 @@ const mockCore = vi.hoisted(() => {
       kind: "scrape",
       keyUrl: null,
       freeQuotaNote: "免费",
-      buildProvider: () => ({ search: vi.fn(async () => []) }),
+      buildProvider: () => ({ search: providerSearch.bing }),
     },
     {
       id: "ddg",
@@ -33,7 +39,7 @@ const mockCore = vi.hoisted(() => {
       kind: "scrape",
       keyUrl: null,
       freeQuotaNote: "免费",
-      buildProvider: () => ({ search: vi.fn(async () => []) }),
+      buildProvider: () => ({ search: providerSearch.ddg }),
     },
     {
       id: "searxng",
@@ -41,7 +47,7 @@ const mockCore = vi.hoisted(() => {
       kind: "scrape",
       keyUrl: "https://docs.searxng.org/",
       freeQuotaNote: "自建",
-      buildProvider: () => ({ search: vi.fn(async () => []) }),
+      buildProvider: () => ({ search: providerSearch.searxng }),
     },
     {
       id: "tavily",
@@ -49,9 +55,7 @@ const mockCore = vi.hoisted(() => {
       kind: "api",
       keyUrl: "https://app.tavily.com/",
       freeQuotaNote: "免费层",
-      buildProvider: () => ({
-        search: vi.fn(async () => [{ title: "ok", url: "https://example.com", snippet: "s" }]),
-      }),
+      buildProvider: () => ({ search: providerSearch.tavily }),
     },
   ];
   const ids = registry.map((item) => item.id);
@@ -86,6 +90,7 @@ const mockCore = vi.hoisted(() => {
   return {
     store,
     health,
+    providerSearch,
     SETTING_SEARCH_PRIMARY: "search_primary",
     SETTING_SEARCH_PROVIDER_CONFIG: "search_provider_config",
     SEARCH_PROVIDER_REGISTRY: registry,
@@ -156,6 +161,12 @@ describe("searchSettingsRoutes", () => {
     mockCore.health.clear();
     delete process.env.DEEPSEEK_API_KEY;
     vi.clearAllMocks();
+    mockCore.providerSearch.bing.mockResolvedValue([]);
+    mockCore.providerSearch.ddg.mockResolvedValue([]);
+    mockCore.providerSearch.searxng.mockResolvedValue([]);
+    mockCore.providerSearch.tavily.mockResolvedValue([
+      { title: "ok", url: "https://example.com", snippet: "s" },
+    ]);
   });
 
   afterEach(() => {
@@ -206,6 +217,29 @@ describe("searchSettingsRoutes", () => {
       method: "POST",
     });
     expect(test.status).toBe(404);
+  });
+
+  it("免费源测试使用严格探测，网络故障不会清除既有健康状态", async () => {
+    const app = await loadApp();
+    mockCore.health.set("bing", { status: "quota", quotaUntil: Date.now() + 30_000 });
+    mockCore.providerSearch.bing.mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    const res = await app.request("/api/v1/settings/search/bing/test", {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      errorKind: "network",
+      resultCount: 0,
+    });
+    expect(mockCore.providerSearch.bing).toHaveBeenCalledWith("测试", 3, {
+      signal: expect.any(AbortSignal),
+      strict: true,
+    });
+    expect(mockCore.clearManagedSearchProviderHealth).not.toHaveBeenCalled();
+    expect(mockCore.health.get("bing")?.status).toBe("quota");
   });
 
   it("apiKey 空串删除已保存 key,响应不带旧明文", async () => {

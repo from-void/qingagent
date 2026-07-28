@@ -48,6 +48,7 @@ export {
   drainSessionPersistence,
   drainSessionPersistenceForSession,
   emitProjectedDocState,
+  expandReviewIds,
   enrichAskUserResumeAnswersWithLabels,
   ensureDraftCandidateDoc,
   ensureWorkingMemorySnapshot,
@@ -269,6 +270,7 @@ export type {
 export {
   BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES,
   SANDBOX_BIN_DIR,
+  __browserFolderBridgeStatsForTest,
   __resetBrowserFolderBridgeForTest,
   buildSandboxEnv,
   getBrowserFolderBridgeClientFolderIds,
@@ -286,6 +288,7 @@ export {
   resolveIsolation,
   unregisterBrowserFolderSession,
   unregisterBrowserFolderSource,
+  withBrowserFolderBridgeAbortSignal,
 } from "./workspace/index.js";
 export {
   SETTING_DEEPSEEK_GLOBAL_KEY,

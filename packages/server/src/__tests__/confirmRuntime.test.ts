@@ -476,6 +476,40 @@ describe("confirm runtime", () => {
     await manager.disposeAll();
   });
 
+  it("approveToolCall 已提交但返回超时时按执行结果未知收口", async () => {
+    const spec = commandConfirmSpec("confirm-resume-approve-timeout");
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    const agent = {
+      approveToolCall: vi.fn(() => new Promise<never>(() => undefined)),
+      declineToolCall: vi.fn(),
+    };
+
+    const frames = await collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-resume-approve-timeout",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      persistSession: async () => undefined,
+      resumeTimeoutMs: 25,
+    }));
+
+    expect(agent.approveToolCall).toHaveBeenCalledTimes(1);
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({
+        resolution: "failed",
+        message: "确认恢复异常，执行结果未知且未自动重试",
+      }),
+    }));
+    expect(JSON.stringify(frames)).not.toContain("命令未执行");
+  });
+
   it("beginDecision 永不 resolve 时，stop 可中止前置阶段且后续命令不被 Actor 堵塞", async () => {
     const spec = commandConfirmSpec("confirm-begin-decision-hang");
     const { state, toolCallId } = setupPending(spec);

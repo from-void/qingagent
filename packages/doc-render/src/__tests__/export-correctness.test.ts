@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { toMarkdown, toTxt } from "../export/index.js";
+import { toHtml, toMarkdown, toTxt } from "../export/index.js";
 
 function doc(content: PmDoc["content"]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
@@ -30,6 +30,18 @@ describe("R20门 Markdown URL 导出正确性", () => {
   });
 });
 
+describe("Markdown 纯文本标题正确性", () => {
+  it("将换行规范化为单行，并转义链接语法与反斜杠", () => {
+    const markdown = toMarkdown(doc([]), {
+      title: "[产品](https://example.com)\n路径\\草稿",
+    });
+
+    expect(markdown).toBe(
+      "# \\[产品\\]\\(https\\:\\/\\/example\\.com\\) 路径\\\\草稿",
+    );
+  });
+});
+
 describe("R20门 TXT 字面尖括号正确性", () => {
   it("PM 结构化纯文本保留用户手打的 <xxx> 占位符", () => {
     const source = doc([
@@ -52,5 +64,113 @@ describe("R20门 TXT 字面尖括号正确性", () => {
     ];
 
     expect(toTxt(sections)).toBe("正文 加粗下一行 <name> <你的名字> 1 < 2");
+  });
+});
+
+describe("TXT 块结构正确性", () => {
+  it("仅在块之间插入空行，并保留多行代码的缩进与空行", () => {
+    const source = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "before" },
+        content: [{ type: "text", text: "代码如下：" }],
+      },
+      {
+        type: "codeBlock",
+        attrs: { blockId: "code", language: "ts" },
+        content: [{
+          type: "text",
+          text: "function run() {\n  first();\n\n    return second();\n}",
+        }],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "after" },
+        content: [{ type: "text", text: "代码结束。" }],
+      },
+    ]);
+
+    expect(toTxt(source)).toBe(
+      "代码如下：\n\nfunction run() {\n  first();\n\n    return second();\n}\n\n代码结束。",
+    );
+  });
+
+  it.each([
+    ["单个尾随换行", "x\n", "x\n\nafter"],
+    ["两个尾随换行", "x\n\n", "x\n\n\nafter"],
+  ])("代码块含%s时不把既有换行裁掉或重复补双换行", (
+    _label,
+    code,
+    expected,
+  ) => {
+    const source = doc([
+      {
+        type: "codeBlock",
+        attrs: { blockId: "code", language: null },
+        content: [{ type: "text", text: code }],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "after" },
+        content: [{ type: "text", text: "after" }],
+      },
+    ]);
+
+    expect(toTxt(source)).toBe(expected);
+  });
+});
+
+describe("HTML 表格列宽正确性", () => {
+  it("按逻辑列输出 colgroup，并兼容 colspan 与 rowspan 合并单元格", () => {
+    const paragraph = (blockId: string, text: string) => ({
+      type: "paragraph" as const,
+      attrs: { blockId },
+      content: [{ type: "text" as const, text }],
+    });
+    const source = doc([
+      {
+        type: "table",
+        attrs: { blockId: "table" },
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableHeader",
+                attrs: { rowspan: 2, colwidth: [100] },
+                content: [paragraph("h-a", "A")],
+              },
+              {
+                type: "tableHeader",
+                attrs: { colspan: 2 },
+                content: [paragraph("h-bc", "B+C")],
+              },
+            ],
+          },
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                attrs: { colwidth: [140] },
+                content: [paragraph("b", "B")],
+              },
+              {
+                type: "tableCell",
+                attrs: { colwidth: [180] },
+                content: [paragraph("c", "C")],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const html = toHtml(source);
+    expect(html).toContain(
+      '<colgroup><col style="width:100px"><col style="width:140px"><col style="width:180px"></colgroup>',
+    );
+    expect(html).toContain('<th colspan="2">');
+    expect(html).toContain('<th rowspan="2">');
   });
 });

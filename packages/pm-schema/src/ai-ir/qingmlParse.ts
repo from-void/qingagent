@@ -7,6 +7,7 @@ import {
   PM_TEXT_ALIGN_VALUES,
   PM_TEXT_COLORS,
 } from "../spec";
+import { isAllowedLinkHref } from "../validators";
 import {
   aiBlockSchema,
   aiListItemSchema,
@@ -557,7 +558,7 @@ function addInlineMark(element: DomElement, marks: readonly AiRunMark[]): readon
   if (name === "code") return appendMark(marks, { type: "code" });
   if (name === "a") {
     const href = optionalString(element.attribs.href);
-    if (!href || !isAllowedQingmlHref(href)) return marks;
+    if (!href || !isAllowedLinkHref(href)) return marks;
     return appendMark(marks, { type: "link", href, title: optionalString(element.attribs.title) });
   }
   if (name === "mark") {
@@ -1017,10 +1018,6 @@ function booleanAttr(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const normalized = value.trim().toLowerCase();
   return normalized === "" || normalized === "true" || normalized === "1" || normalized === "checked" || normalized === "yes";
-}
-
-function isAllowedQingmlHref(href: string): boolean {
-  return /^https?:\/\//.test(href) || /^\/(?!\/)/.test(href) || href.startsWith("#");
 }
 
 function describeNode(node: DomNode): string {

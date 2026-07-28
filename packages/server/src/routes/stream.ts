@@ -613,6 +613,18 @@ streamRoutes.post("/commit", async (c) => {
         error: "acceptReviewBatchIds and rejectReviewBatchIds must not overlap",
       }, 400);
     }
+    const keptPending = keepPendingReviewBatchIds as string[] | undefined;
+    if (keptPending?.some((id) => accepted.has(id))) {
+      return c.json({
+        error: "acceptReviewBatchIds and keepPendingReviewBatchIds must not overlap",
+      }, 400);
+    }
+    const rejected = new Set((rejectReviewBatchIds as string[] | undefined) ?? []);
+    if (keptPending?.some((id) => rejected.has(id))) {
+      return c.json({
+        error: "rejectReviewBatchIds and keepPendingReviewBatchIds must not overlap",
+      }, 400);
+    }
   } else {
     if (!Array.isArray(patchIds) || patchIds.length === 0) {
       return c.json({ error: "patchIds must be a non-empty array" }, 400);

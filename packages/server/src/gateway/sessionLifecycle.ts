@@ -211,7 +211,12 @@ registerConfirmSessionResolver(getOrRestoreSession);
 export const sessionManager = new SessionManager({
   handleCommand: dispatchBridgeCommand,
   abortSession: (sessionId, reason) => {
-    sessions.get(sessionId)?._abortController?.abort(reason);
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    if (reason === "globalStop") {
+      session._userCancelGeneration += 1;
+    }
+    session._abortController?.abort(reason);
   },
   cleanupSession: (sessionId) => {
     forgetSession(sessionId);

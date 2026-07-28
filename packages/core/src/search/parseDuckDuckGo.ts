@@ -7,6 +7,10 @@ export interface SearchResult {
   snippet: string;
 }
 
+interface ParseOptions {
+  strict?: boolean;
+}
+
 function toHttpUrl(rawHref: string | undefined): string | null {
   if (!rawHref) return null;
 
@@ -55,11 +59,25 @@ function pushResult(
   });
 }
 
-export function parseDdgHtml(html: string, limit = 10): SearchResult[] {
-  if (!html || limit <= 0) return [];
+export function parseDdgHtml(
+  html: string,
+  limit = 10,
+  options?: ParseOptions,
+): SearchResult[] {
+  if (limit <= 0) return [];
+  if (!html) {
+    if (options?.strict) throw new Error("DuckDuckGo HTML search returned invalid HTML");
+    return [];
+  }
 
   try {
     const $ = cheerio.load(html);
+    if (
+      options?.strict &&
+      $(".result, .web-result, #links, .results--main, .no-results").length === 0
+    ) {
+      throw new Error("DuckDuckGo HTML search returned invalid HTML");
+    }
     const results: SearchResult[] = [];
 
     $(".result, .web-result").each((_, element) => {
@@ -75,16 +93,31 @@ export function parseDdgHtml(html: string, limit = 10): SearchResult[] {
     });
 
     return results;
-  } catch {
+  } catch (error) {
+    if (options?.strict) throw error;
     return [];
   }
 }
 
-export function parseLiteSerp(html: string, limit = 10): SearchResult[] {
-  if (!html || limit <= 0) return [];
+export function parseLiteSerp(
+  html: string,
+  limit = 10,
+  options?: ParseOptions,
+): SearchResult[] {
+  if (limit <= 0) return [];
+  if (!html) {
+    if (options?.strict) throw new Error("DuckDuckGo Lite search returned invalid HTML");
+    return [];
+  }
 
   try {
     const $ = cheerio.load(html);
+    if (
+      options?.strict &&
+      $("a.result-link, table, form[action*=\"/lite\"], .no-results").length === 0
+    ) {
+      throw new Error("DuckDuckGo Lite search returned invalid HTML");
+    }
     const results: SearchResult[] = [];
 
     $("a.result-link").each((_, element) => {
@@ -106,7 +139,8 @@ export function parseLiteSerp(html: string, limit = 10): SearchResult[] {
     });
 
     return results;
-  } catch {
+  } catch (error) {
+    if (options?.strict) throw error;
     return [];
   }
 }

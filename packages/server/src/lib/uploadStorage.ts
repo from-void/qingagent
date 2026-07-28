@@ -266,6 +266,23 @@ export async function findOrStoreUploadedFile(input: {
   });
 }
 
+/** 按 fileId 读取与物理文件一致的规范化索引记录；历史未索引文件会先安全重建索引。 */
+export async function findUploadedFileRecord(fileId: string): Promise<UploadedFileRecord | null> {
+  if (!isValidUploadId(fileId)) return null;
+  return withUploadIndexLock(async () => {
+    let index = await readContentIndex();
+    if (!index.complete) {
+      index = await rebuildContentIndex();
+      await writeContentIndex(index);
+    }
+    const record = Object.values(index.records).find(
+      (candidate) => candidate.fileId === fileId,
+    );
+    if (!record || !(await uploadedRecordExists(record))) return null;
+    return { ...record };
+  });
+}
+
 export async function deleteUploadedFile(fileId: string): Promise<boolean> {
   if (!isValidUploadId(fileId)) {
     console.warn("[uploadStorage] Refusing to delete invalid upload id", { fileId });

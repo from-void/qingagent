@@ -96,7 +96,18 @@ export async function* handleMaterialCommand(
       }
 
       const mat = session.materials.get(command.data.materialId);
-      if (!mat) return;
+      if (!mat) {
+        yield {
+          kind: "resourceRemoved",
+          data: {
+            resourceRef: {
+              id: command.data.materialId,
+              domain: { kind: "file" },
+            },
+          },
+        };
+        throw new Error(`Material not found: ${command.data.materialId}`);
+      }
 
       mat.summary = command.data.summary;
       mat.updatedAt = new Date().toISOString();
@@ -119,7 +130,18 @@ export async function* handleMaterialCommand(
       }
 
       const mat = session.materials.get(command.data.materialId);
-      if (!mat) return;
+      if (!mat) {
+        yield {
+          kind: "resourceRemoved",
+          data: {
+            resourceRef: {
+              id: command.data.materialId,
+              domain: { kind: "file" },
+            },
+          },
+        };
+        return;
+      }
 
       session.materials.delete(command.data.materialId);
       clearExtractedTextCacheForMaterial(session, mat, command.data.materialId);

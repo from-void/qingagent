@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { countGraphemes } from "@qingagent/contract-ts";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
@@ -138,6 +139,16 @@ describe("diagram-engine", () => {
     const multiTarget = parseDiagram("flowchart TD\n  A --> B & C\n").model as FlowGraph;
     expect(multiTarget.edges).toHaveLength(2);
     expect(multiTarget.edges.every((item) => item.rewritable === false)).toBe(true);
+  });
+
+  it("flowchart 改名精确覆盖带外侧空白和引号的节点正文", () => {
+    for (const declaration of ["A[  hello  ]", 'A[  "hello"  ]']) {
+      const source = `flowchart TD\n  ${declaration}\n`;
+      const renamed = applyEdit(source, { kind: "relabelNode", nodeId: "A", label: "X" });
+
+      expect(renamed.ok).toBe(true);
+      expect((parseDiagram(renamed.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.label).toBe("X");
+    }
   });
 
   it("flowchart 按 Mermaid 官方词法区分紧贴圆叉端点与含 -o/-x 的节点 id", () => {
@@ -621,6 +632,70 @@ describe("diagram-engine", () => {
     const connected = applyEdit(source, { kind: "connectEdge", source: "Inside", target: "Outside" });
     expect(connected).toMatchObject({ ok: true });
     expect(connected.source).toContain("Inside --> Outside");
+  });
+
+  it("flowchart 新节点 ID 同时避让节点与 subgraph", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Group["分区"]',
+      "    Inside[内部]",
+      "  end",
+      "",
+    ].join("\n");
+
+    const added = applyEdit(source, { kind: "addNode", label: "Group" });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).not.toBe("Group");
+
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const model = reparsed.model as FlowGraph;
+    const allIds = [...model.nodes.map((node) => node.id), ...model.subgraphs.map((subgraph) => subgraph.id)];
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+
+  it("flowchart 缺失 end 保持容错解析并在首次编辑时补全到根级", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Outer["外层"]',
+      '    subgraph Inner["内层"]',
+      "      A[内部]",
+    ].join("\n");
+    const before = parseDiagram(source);
+    expect(before.ok).toBe(true);
+    expect((before.model as FlowGraph).subgraphs.map((subgraph) => [subgraph.id, subgraph.scopePath])).toEqual([
+      ["Inner", ["Outer"]],
+      ["Outer", []],
+    ]);
+
+    const added = applyEdit(source, { kind: "addNode", label: "顶层新增" });
+    expect(added.ok).toBe(true);
+    expect(added.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(2);
+
+    const after = parseDiagram(added.source);
+    expect(after.ok).toBe(true);
+    const model = after.model as FlowGraph;
+    expect(model.subgraphs.map((subgraph) => [subgraph.id, subgraph.scopePath])).toEqual([
+      ["Inner", ["Outer"]],
+      ["Outer", []],
+    ]);
+    expect(model.nodes.find((node) => node.id === added.newNodeId)?.scopePath).toEqual([]);
+
+    const renamed = renameSubgraph(source, "Outer", "新外层");
+    expect(renamed.ok).toBe(true);
+    expect(renamed.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(2);
+    expect((parseDiagram(renamed.source).model as FlowGraph).subgraphs.find((subgraph) => subgraph.id === "Outer")?.label).toBe("新外层");
+  });
+
+  it("flowchart 多余 end 严格拒绝解析与图形编辑", () => {
+    const source = "flowchart TD\n  A[节点]\n  end\n";
+
+    expect(parseDiagram(source)).toMatchObject({ ok: false });
+    expect(graphToSvg(source)).toBeNull();
+    expect(applyEdit(source, { kind: "addNode", label: "不会新增" })).toMatchObject({
+      ok: false,
+      source,
+    });
   });
 
   it("wrapNodesInSubgraph 原位包裹连续节点并以中文标题 round-trip", () => {
@@ -1226,6 +1301,34 @@ flowchart TD
     ]);
   });
 
+  it("stateDiagram-v2 带标题 alias 的嵌套复合状态只按语法括号保护 transition", () => {
+    const source = [
+      "stateDiagram-v2",
+      "  state \"外层{标题}\" as Outer {",
+      "    state \"内层}标题{\" as Inner {",
+      "      A --> B",
+      "    }",
+      "    C --> D",
+      "  }",
+      "  E --> F",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    const model = parsed.model as StateGraph;
+    const innerEdge = model.edges.find((item) => item.source === "A")!;
+    const outerEdge = model.edges.find((item) => item.source === "C")!;
+    const rootEdge = model.edges.find((item) => item.source === "E")!;
+
+    expect(innerEdge.rewritable).toBe(false);
+    expect(outerEdge.rewritable).toBe(false);
+    expect(rootEdge.rewritable).toBe(true);
+    expect(getCapabilities(parsed, { edgeId: outerEdge.id }).find((cap) => cap.op === "deleteEdge")?.enabled).toBe(false);
+    expect(applyEdit(source, { kind: "deleteEdge", edgeId: outerEdge.id })).toMatchObject({
+      ok: false,
+      source,
+    });
+  });
+
   it("state/ER/class 的 Unicode、混合和数字开头 id 与 flowchart 口径一致", () => {
     const state = parseDiagram(`stateDiagram-v2
   123状态 --> 中英State_2
@@ -1268,6 +1371,65 @@ flowchart TD
     expect(after.nodes).toHaveLength(before.nodes.length + 1);
     expect(after.nodes.find((node) => node.id === added.newNodeId)?.label).toBe("待审核");
     expect(after.edges.map((item) => [item.source, item.target, item.label])).toEqual(before.edges.map((item) => [item.source, item.target, item.label]));
+  });
+
+  it.each([
+    ["flowchart", "flowchart TD\n  Existing[既有]\n"],
+    ["state", "stateDiagram-v2\n  Existing\n"],
+    ["er", "erDiagram\n  EXISTING\n"],
+    ["class", "classDiagram\n  class Existing\n"],
+  ] as const)("%s addNode 的长 Unicode ID 可重解析且与返回 ID 一致", (_type, source) => {
+    const label = `A${"𠮷".repeat(63)}😀尾`;
+    const added = applyEdit(source, { kind: "addNode", label });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).toBeTruthy();
+
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const ids = reparsed.ok
+      ? reparsed.model.type === "flowchart" || reparsed.model.type === "state"
+        ? reparsed.model.nodes.map((node) => node.id)
+        : reparsed.model.type === "er"
+          ? reparsed.model.entities.map((node) => node.id)
+          : reparsed.model.type === "class"
+            ? reparsed.model.classes.map((node) => node.id)
+            : []
+      : [];
+    expect(ids).toContain(added.newNodeId);
+    expect(Array.from(added.newNodeId ?? "")).toHaveLength(64);
+  });
+
+  it.each([
+    ["flowchart", (id: string) => `flowchart TD\n  ${id}[既有]\n`],
+    ["state", (id: string) => `stateDiagram-v2\n  ${id}\n`],
+    ["er", (id: string) => `erDiagram\n  ${id}\n`],
+    ["class", (id: string) => `classDiagram\n  class ${id}\n`],
+  ] as const)("%s addNode 冲突后缀仍保持 64 字素 ID 上限", (_type, sourceForId) => {
+    const label = `A${"𠮷".repeat(70)}`;
+    const existingId = `A${"𠮷".repeat(63)}`;
+    const source = sourceForId(existingId);
+
+    const added = applyEdit(source, { kind: "addNode", label });
+
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).not.toBe(existingId);
+    expect(added.newNodeId).toMatch(/_2$/);
+    expect(countGraphemes(added.newNodeId ?? "")).toBeLessThanOrEqual(64);
+    expect(added.newNodeId).toMatch(/^[\p{L}\p{N}_][\p{L}\p{N}_-]*$/u);
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const ids = reparsed.ok
+      ? reparsed.model.type === "flowchart" || reparsed.model.type === "state"
+        ? reparsed.model.nodes.map((node) => node.id)
+        : reparsed.model.type === "er"
+          ? reparsed.model.entities.map((node) => node.id)
+          : reparsed.model.type === "class"
+            ? reparsed.model.classes.map((node) => node.id)
+            : []
+      : [];
+    expect(ids.filter((id) => id === existingId)).toHaveLength(1);
+    expect(ids.filter((id) => id === added.newNodeId)).toHaveLength(1);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("er/class rename 默认拒绝", () => {
@@ -1395,6 +1557,38 @@ flowchart TD
     expect(afterNodes).toHaveLength(beforeLabels.length + 1);
     expect(afterNodes.filter((node) => node.label === "新节点")).toHaveLength(1);
     for (const label of beforeLabels) expect(afterNodes.map((node) => node.label)).toContain(label);
+  });
+
+  it("mindmap 新增特殊标签后仍可继续改名和删除", () => {
+    const label = '  引号"、反斜杠\\、[方括号]与#号\n换行  ';
+    const source = "mindmap\n  root((中心))\n";
+    const root = (parseDiagram(source).model as MindmapTree).root;
+
+    const added = applyEdit(source, { kind: "addNode", parentId: root.id, label });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).toBeDefined();
+    const addedNode = flattenMindmap(
+      (parseDiagram(added.source).model as MindmapTree).root,
+    ).find((node) => node.id === added.newNodeId);
+    expect(addedNode).toMatchObject({ label, hasStableId: true });
+    const renamedAgain = applyEdit(added.source, {
+      kind: "relabelNode",
+      nodeId: addedNode!.id,
+      label: "再次改名",
+    });
+    expect(renamedAgain.ok).toBe(true);
+    const renamedNode = flattenMindmap(
+      (parseDiagram(renamedAgain.source).model as MindmapTree).root,
+    ).find((node) => node.label === "再次改名");
+    expect(renamedNode?.hasStableId).toBe(true);
+    expect(applyEdit(renamedAgain.source, {
+      kind: "deleteNode",
+      nodeId: renamedNode!.id,
+    }).ok).toBe(true);
+
+    const renamed = applyEdit(source, { kind: "relabelNode", nodeId: root.id, label });
+    expect(renamed.ok).toBe(true);
+    expect((parseDiagram(renamed.source).model as MindmapTree).root.label).toBe(label);
   });
 
   it("mindmap moveNode 暴露能力并把节点改挂到新父下", () => {

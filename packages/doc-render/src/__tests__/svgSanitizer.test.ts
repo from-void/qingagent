@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildPartialSvgDraft, hardenInlineSvg, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "../browser/svgSanitize.js";
+import {
+  buildPartialSvgDraft,
+  hardenInlineSvg,
+  hasVisibleSvgContent,
+  sanitizeSvg,
+  SVG_MAX_BYTES,
+  utf8ByteLength,
+} from "../browser/svgSanitize.js";
 
 const size = { width: 10, height: 10 };
 
@@ -92,6 +99,52 @@ describe("sanitizeSvg", () => {
     expect(() => sanitizeSvg("<svg><rect>", size)).not.toThrow();
     expect(sanitizeSvg("not svg", size)).toMatch(/^$|^<svg\b/i);
     expect(sanitizeSvg("<svg><rect>", size)).toMatch(/^$|^<svg\b/i);
+  });
+});
+
+describe("hasVisibleSvgContent", () => {
+  it("拒绝 defs、空内容、零尺寸和不可见节点", () => {
+    const blankSvgs = [
+      `<svg><defs><rect width="10" height="10"/></defs></svg>`,
+      `<svg><text>   </text><path d=""/></svg>`,
+      `<svg><rect width="0" height="10"/><circle r="0"/><ellipse rx="4" ry="0"/></svg>`,
+      `<svg><rect width="10" height="10" opacity="0"/></svg>`,
+      `<svg><g style="display:none"><rect width="10" height="10"/></g></svg>`,
+    ];
+
+    for (const svg of blankSvgs) {
+      expect(hasVisibleSvgContent(svg)).toBe(false);
+    }
+  });
+
+  it("接受具有非零几何或非空文字的可绘制节点", () => {
+    expect(hasVisibleSvgContent(`<svg><rect width="10" height="10"/></svg>`)).toBe(true);
+    expect(hasVisibleSvgContent(`<svg><path d="M0 0 L10 10" stroke="#000"/></svg>`)).toBe(true);
+    expect(hasVisibleSvgContent(`<svg><text x="1" y="8">正文</text></svg>`)).toBe(true);
+  });
+
+  it("按真实填充面积、描边长度与颜色透明度判定清洗后的 SVG", () => {
+    const visibleAfterSanitize = (inner: string) =>
+      hasVisibleSvgContent(sanitizeSvg(`<svg>${inner}</svg>`, size));
+
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0 L20 0 Z" fill="#000"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0 L10 10" fill="#000"/>`,
+    )).toBe(true);
+    expect(visibleAfterSanitize(
+      `<path d="M0 0 L10 0" fill="none" stroke="#000"/>`,
+    )).toBe(true);
+    expect(visibleAfterSanitize(
+      `<rect width="10" height="10" fill="rgba(0,0,0,0)"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<rect width="10" height="10" fill="#00000000"/>`,
+    )).toBe(false);
+    expect(visibleAfterSanitize(
+      `<defs><linearGradient id="clear"><stop offset="0" stop-color="#0000"/><stop offset="1" stop-color="rgba(0,0,0,0)"/></linearGradient></defs><rect width="10" height="10" fill="url(#clear)"/>`,
+    )).toBe(false);
   });
 });
 

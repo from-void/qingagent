@@ -87,6 +87,46 @@ export const editDraftInputSchema = z.object({
       isRegex: z.boolean().optional(),
       withinRef: z.string().optional(),
     }),
-  ])).min(1),
+  ]).superRefine((op, context) => {
+    const validatePositionField = (
+      position: string,
+      positionField: "position" | "at",
+      targetField: "ref" | "rowIndex" | "columnIndex",
+      target: string | number | undefined,
+    ): void => {
+      const requiresTarget = position === "before" || position === "after";
+      const targetMissing = target === undefined ||
+        (typeof target === "string" &&
+          target.replace(/[\s\p{Cf}]/gu, "").length === 0);
+      if (requiresTarget && targetMissing) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [targetField],
+          message: `${targetField} is required when ${positionField} is ${position}`,
+        });
+      } else if (!requiresTarget && target !== undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [targetField],
+          message: `${targetField} is not allowed when ${positionField} is ${position}`,
+        });
+      }
+    };
+
+    switch (op.action) {
+      case "insertBlock":
+        validatePositionField(op.position, "position", "ref", op.ref);
+        break;
+      case "insertListItem":
+        validatePositionField(op.at, "at", "ref", op.ref);
+        break;
+      case "insertTableRow":
+        validatePositionField(op.at, "at", "rowIndex", op.rowIndex);
+        break;
+      case "insertTableColumn":
+        validatePositionField(op.at, "at", "columnIndex", op.columnIndex);
+        break;
+    }
+  })).min(1),
 }) satisfies z.ZodType<EditDraftInput>;
 type _EditDraftInputExact = Expect<Equal<z.infer<typeof editDraftInputSchema>, EditDraftInput>>;

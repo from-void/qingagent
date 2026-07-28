@@ -56,6 +56,13 @@ export interface DocumentSaveInput {
   updatedAt: string;
 }
 
+export interface DocumentSessionSummaryRow {
+  id: string;
+  title: string;
+  docState: string;
+  updatedAt: string;
+}
+
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
   findIdByThreadId(threadId: string): Promise<string | null>;
@@ -74,6 +81,10 @@ export interface DocumentRepo {
     perPage?: number;
     offset?: number;
   }): Promise<{ rows: DocumentRow[]; total: number }>;
+  listSessionSummariesWithExistingThreads(opts: {
+    resourceId: string;
+    limit: number;
+  }): Promise<DocumentSessionSummaryRow[]>;
   countByResourceId(resourceId: string): Promise<number>;
 }
 
@@ -434,7 +445,7 @@ async function listDocumentPage(
   throw new Error("Unreachable document list fetch round");
 }
 
-function upsertStatement(input: DocumentSaveInput): InStatement {
+function contentUpsertStatement(input: DocumentSaveInput): InStatement {
   const projection = buildPmProjection(input);
   return {
     sql: `INSERT INTO documents (
@@ -489,12 +500,7 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
                 )),
             documents.doc_version - 1
           ) < excluded.doc_version
-          AND (
-            excluded.content_hash IS NOT documents.content_hash
-            OR excluded.title IS NOT documents.title
-            OR excluded.doc_state IS NOT documents.doc_state
-            OR excluded.last_synced_version IS NOT documents.last_synced_version
-          )
+          AND excluded.content_hash IS NOT documents.content_hash
         )`,
     args: [
       input.id,
@@ -516,10 +522,102 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
   };
 }
 
+function metadataUpdateStatement(input: DocumentSaveInput): InStatement {
+  const projection = buildPmProjection(input);
+  return {
+    sql: `UPDATE documents SET
+        title = ?,
+        doc_state = ?,
+        last_synced_version = ?,
+        updated_at = ?
+      WHERE id = ?
+        AND doc_version = ?
+        AND content_hash IS ?
+        AND NOT EXISTS (
+          SELECT 1 FROM deleted_sessions
+          WHERE session_id IN (?, ?)
+        )
+        AND (
+          title IS NOT ?
+          OR doc_state IS NOT ?
+          OR last_synced_version IS NOT ?
+        )`,
+    args: [
+      input.title,
+      input.docState,
+      input.lastSyncedVersion,
+      input.updatedAt,
+      input.id,
+      input.docVersion,
+      projection.contentHash,
+      input.threadId,
+      input.id,
+      input.title,
+      input.docState,
+      input.lastSyncedVersion,
+    ],
+  };
+}
+
 async function readyClient() {
   const client = getDocumentsClient();
   await ensureMigrated();
   return client;
+}
+
+async function assertZeroWriteIsResolved(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  input: DocumentSaveInput,
+): Promise<void> {
+  const tombstone = await client.execute({
+    sql: `SELECT 1 FROM deleted_sessions
+      WHERE session_id IN (?, ?)
+      LIMIT 1`,
+    args: [input.threadId, input.id],
+  });
+  if (tombstone.rows.length > 0) return;
+
+  const projection = buildPmProjection(input);
+  const result = await client.execute({
+    sql: `SELECT title, doc_state, doc_version, last_synced_version, content_hash
+      FROM documents WHERE id = ?`,
+    args: [input.id],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error(`文档保存未写入：${input.id}`);
+  const currentVersion = valueAsNumber(row.doc_version);
+  if (currentVersion > input.docVersion) return;
+  if (
+    currentVersion === input.docVersion &&
+    valueAsString(row.content_hash) === projection.contentHash &&
+    valueAsString(row.title) === input.title &&
+    valueAsString(row.doc_state) === input.docState &&
+    valueAsNumber(row.last_synced_version) === input.lastSyncedVersion
+  ) return;
+  throw new Error(`文档保存未写入：版本或正文高水位冲突（${input.id}）`);
+}
+
+async function saveDocumentInputs(
+  client: Awaited<ReturnType<typeof readyClient>>,
+  inputs: DocumentSaveInput[],
+): Promise<void> {
+  const results = await client.batch(
+    inputs.flatMap((input) => [
+      contentUpsertStatement(input),
+      metadataUpdateStatement(input),
+    ]),
+    "write",
+  );
+  for (const [index, input] of inputs.entries()) {
+    const contentResult = results[index * 2];
+    const metadataResult = results[index * 2 + 1];
+    if (!contentResult || !metadataResult) {
+      throw new Error(`文档保存未返回完整结果：${input.id}`);
+    }
+    if (contentResult.rowsAffected === 0 && metadataResult.rowsAffected === 0) {
+      await assertZeroWriteIsResolved(client, input);
+    }
+  }
 }
 
 async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyClient>>, mapped: MappedDocumentRow): Promise<boolean> {
@@ -740,7 +838,7 @@ export const documentRepo: DocumentRepo = {
         threadId: input.threadId,
         operation: "document.save",
       });
-      await client.execute(upsertStatement(input));
+      await saveDocumentInputs(client, [input]);
     });
   },
 
@@ -760,7 +858,7 @@ export const documentRepo: DocumentRepo = {
           operation: "document.saveMany",
         });
       }
-      await client.batch(inputs.map(upsertStatement), "write");
+      await saveDocumentInputs(client, inputs);
     });
   },
 
@@ -792,6 +890,38 @@ export const documentRepo: DocumentRepo = {
       if (isMissingMastraThreadsTableError(error)) {
         return { rows: [], total: 0 };
       }
+      throw error;
+    }
+  },
+
+  async listSessionSummariesWithExistingThreads(opts) {
+    const client = await readyClient();
+    try {
+      const result = await client.execute({
+        // 稳定快照只读列表所需的四个小字段；禁止读取/解析 doc_pm，
+        // 标题直接取权威 thread，避免逐会话冷恢复。
+        sql: `SELECT
+            d.id,
+            t.title AS thread_title,
+            d.doc_state,
+            d.updated_at
+          FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ?
+            AND d.role = 'main'
+            AND ${sqlValidPmCondition("d")}
+          ORDER BY d.updated_at DESC, d.id ASC
+          LIMIT ?`,
+        args: [opts.resourceId, opts.limit],
+      });
+      return result.rows.map((row) => ({
+        id: valueAsString(row.id),
+        title: valueAsString(row.thread_title),
+        docState: valueAsString(row.doc_state),
+        updatedAt: valueAsString(row.updated_at),
+      }));
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) return [];
       throw error;
     }
   },

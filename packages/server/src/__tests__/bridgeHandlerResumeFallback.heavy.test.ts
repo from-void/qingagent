@@ -461,6 +461,56 @@ describe("handleResume askUser fresh-turn fallback", () => {
     }
   });
 
+  it("idle timeout 后收到用户停止时不再启动 fresh retry", async () => {
+    let persistedSessionId: string | null = null;
+    let cancelCompletion: Promise<unknown> | null = null;
+    vi.useFakeTimers();
+    try {
+      const bridge = await loadBridge();
+      const session = await createCachedSession(bridge);
+      await actualCore.createSessionThread(session.sessionId, session.title);
+      persistedSessionId = session.sessionId;
+      seedSuspendedAskUserSession(session, "run-watchdog-user-cancel");
+      mockState.resumeStream.mockResolvedValue({
+        runId: "run-watchdog-user-cancel-resumed",
+        fullStream: neverStream(),
+      });
+      mockState.persistSessionMetadata.mockImplementation(async (_target: any, label?: string) => {
+        if (label !== "handleResume:finally" || cancelCompletion) return;
+        cancelCompletion = bridge.sessionManager.submit(session.sessionId, {
+          command: {
+            kind: "cancelStream",
+            data: { sessionId: session.sessionId },
+          },
+        });
+        await vi.waitFor(() => expect(session._userCancelGeneration).toBe(1));
+      });
+
+      const resumeCompletion = bridge.sessionManager.submit(session.sessionId, {
+        command: {
+          kind: "resumeAskUser",
+          data: {
+            sessionId: session.sessionId,
+            toolCallId: "ask-1",
+            answers: { "q-one": { chosen: [], freeText: "继续" } },
+          },
+        },
+      });
+      await vi.waitFor(() => expect(mockState.resumeStream).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(180_001);
+      await resumeCompletion;
+      await cancelCompletion;
+
+      expect(session._userCancelGeneration).toBe(1);
+      expect(mockState.runAgentTurn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      if (persistedSessionId) {
+        await actualCore.deleteSessionThread(persistedSessionId);
+      }
+    }
+  });
+
   it("恢复中工具收到停止信号后立即退出且不再写进度", async () => {
     let persistedSessionId: string | null = null;
     let underlyingStarted = false;

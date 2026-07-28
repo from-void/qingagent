@@ -1,3 +1,4 @@
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 import { RoleAvatar, type RoleAvatarKind } from "../roleReview";
 
 export interface LaunchTemplateItem {
@@ -12,7 +13,7 @@ export interface LaunchTemplateItem {
 export function buildTemplateSummary(detail: string, prompt: string, max = 58): string {
   const source = detail.trim() || prompt.split(/\r?\n/, 1)[0] || prompt;
   const value = source.replace(/\s+/g, " ").trim();
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  return countGraphemes(value) > max ? `${truncateGraphemes(value, max - 1)}…` : value;
 }
 
 export function TemplateGroup(props: {

@@ -164,7 +164,55 @@ describe("documentRepo", () => {
       title: "新标题",
       docVersion: 4,
       legacySections: [section("保持不变的正文")],
-      version: 2,
+      version: 1,
+    });
+  });
+
+  it("已有同版本快照后仍保存同正文的标题、状态和同步指针", async () => {
+    const pmDoc = legacySectionsToPm([section("已提交正文")] as never);
+    await documentRepo.save(
+      input("doc-metadata-after-snapshot", {
+        title: "提交时标题",
+        docState: "editing",
+        docVersion: 4,
+        lastSyncedVersion: 2,
+        legacySections: [section("已提交正文")],
+        pmDoc,
+      }),
+    );
+    await insertVersion({
+      versionId: "version-doc-metadata-after-snapshot-4",
+      docId: "doc-metadata-after-snapshot",
+      docVersion: 4,
+      contentHash: getPmContentHash(pmDoc),
+      schemaVersion: pmDoc.attrs.schemaVersion,
+      actorType: "agent",
+      summary: "提交",
+      snapshotPm: pmDoc,
+      parentVersion: 3,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    await documentRepo.save(
+      input("doc-metadata-after-snapshot", {
+        title: "提交后标题",
+        docState: "reviewing",
+        docVersion: 4,
+        lastSyncedVersion: 4,
+        legacySections: [section("已提交正文")],
+        pmDoc,
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+    );
+
+    expect(await documentRepo.load("doc-metadata-after-snapshot")).toMatchObject({
+      title: "提交后标题",
+      docState: "reviewing",
+      docVersion: 4,
+      lastSyncedVersion: 4,
+      legacySections: [section("已提交正文")],
+      version: 1,
+      updatedAt: "2026-01-03T00:00:00.000Z",
     });
   });
 
@@ -293,6 +341,52 @@ describe("documentRepo", () => {
     expect(fullRowQueries.every((sql) => (
       /\bLIMIT\s+\?\s+OFFSET\s+\?/i.test(sql)
     ))).toBe(true);
+  });
+
+  it("会话快照摘要只读取有界小字段并采用 thread 标题", async () => {
+    await documentRepo.saveMany([
+      input("summary-new", {
+        resourceId: "summary-resource",
+        threadId: "summary-thread-new",
+        title: "文档旧标题",
+        docState: "pendingReview",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      }),
+      input("summary-old", {
+        resourceId: "summary-resource",
+        threadId: "summary-thread-old",
+        title: "文档标题",
+        docState: "editing",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute(
+      "CREATE TABLE mastra_threads (id TEXT PRIMARY KEY, title TEXT NOT NULL)",
+    );
+    await client.execute(
+      `INSERT INTO mastra_threads (id, title) VALUES
+        ('summary-thread-new', '线程新标题'),
+        ('summary-thread-old', '线程旧标题')`,
+    );
+    const execute = vi.spyOn(client, "execute");
+
+    const rows = await documentRepo.listSessionSummariesWithExistingThreads({
+      resourceId: "summary-resource",
+      limit: 1,
+    });
+
+    expect(rows).toEqual([{
+      id: "summary-new",
+      title: "线程新标题",
+      docState: "pendingReview",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    }]);
+    const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
+    const projection = sql.split(/\bFROM\b/i)[0] ?? "";
+    expect(projection).not.toContain("d.*");
+    expect(projection).not.toContain("doc_pm");
+    expect(sql).toMatch(/\bLIMIT\s+\?/i);
   });
 
   it("单行与列表读取逐行隔离坏 PM，其他文档继续可读", async () => {

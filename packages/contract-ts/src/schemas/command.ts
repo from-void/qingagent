@@ -132,7 +132,10 @@ const reviewContextSchema = z.object({
 const sendMessageDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   text: z.string().max(MAX_COMMAND_STRING_LENGTH),
-  mentions: z.array(resourceRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
+  mentions: z
+    .array(resourceRefSchema)
+    .max(0, "mentions is deprecated; use chips instead")
+    .default([]),
   skills: z.array(skillRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   chips: z.array(chatChipSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   // fileIds 缺省即 []:契约类型要求 fileIds 存在,但旧手写校验容忍其缺省(视作无文件)。
@@ -209,6 +212,26 @@ const commitReviewGroupsDataSchema = z
     {
       path: ["rejectReviewBatchIds"],
       message: "must not overlap with acceptReviewBatchIds",
+    },
+  )
+  .refine(
+    (data) => {
+      const accepted = new Set(data.acceptReviewBatchIds);
+      return !(data.keepPendingReviewBatchIds ?? []).some((id) => accepted.has(id));
+    },
+    {
+      path: ["keepPendingReviewBatchIds"],
+      message: "must not overlap with acceptReviewBatchIds",
+    },
+  )
+  .refine(
+    (data) => {
+      const rejected = new Set(data.rejectReviewBatchIds ?? []);
+      return !(data.keepPendingReviewBatchIds ?? []).some((id) => rejected.has(id));
+    },
+    {
+      path: ["keepPendingReviewBatchIds"],
+      message: "must not overlap with rejectReviewBatchIds",
     },
   ) satisfies z.ZodType<CommitReviewGroups>;
 type _CommitReviewGroupsExact = Expect<

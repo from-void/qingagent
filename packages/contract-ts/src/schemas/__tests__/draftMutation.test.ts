@@ -27,6 +27,196 @@ describe("editDraftInputSchema", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it.each([
+    ["block before + ref", {
+      action: "insertBlock",
+      position: "before",
+      ref: "block-a",
+      blocks: "<p>新增</p>",
+    }],
+    ["block start 无 ref", {
+      action: "insertBlock",
+      position: "start",
+      blocks: "<p>新增</p>",
+    }],
+    ["list after + ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "after",
+      ref: "item-a",
+      item: "<li>新增</li>",
+    }],
+    ["list end 无 ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "end",
+      item: "<li>新增</li>",
+    }],
+    ["table row before + index", {
+      action: "insertTableRow",
+      ref: "table-a",
+      at: "before",
+      rowIndex: 0,
+      cells: "<td>新增</td>",
+    }],
+    ["table row end 无 index", {
+      action: "insertTableRow",
+      ref: "table-a",
+      at: "end",
+      cells: "<td>新增</td>",
+    }],
+    ["table column after + index", {
+      action: "insertTableColumn",
+      ref: "table-a",
+      at: "after",
+      columnIndex: 0,
+      cells: "<td>新增</td>",
+    }],
+    ["table column end 无 index", {
+      action: "insertTableColumn",
+      ref: "table-a",
+      at: "end",
+      cells: "<td>新增</td>",
+    }],
+  ])("accepts position fields with exact relation: %s", (_label, op) => {
+    expect(editDraftInputSchema.safeParse({ ops: [op] }).success).toBe(true);
+  });
+
+  it.each([
+    ["block before 缺 ref", {
+      action: "insertBlock",
+      position: "before",
+      blocks: "<p>新增</p>",
+    }],
+    ["block after 缺 ref", {
+      action: "insertBlock",
+      position: "after",
+      blocks: "<p>新增</p>",
+    }],
+    ["block start 多余 ref", {
+      action: "insertBlock",
+      position: "start",
+      ref: "block-a",
+      blocks: "<p>新增</p>",
+    }],
+    ["block end 多余 ref", {
+      action: "insertBlock",
+      position: "end",
+      ref: "block-a",
+      blocks: "<p>新增</p>",
+    }],
+    ["list before 缺 ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "before",
+      item: "<li>新增</li>",
+    }],
+    ["list after 缺 ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "after",
+      item: "<li>新增</li>",
+    }],
+    ["list start 多余 ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "start",
+      ref: "item-a",
+      item: "<li>新增</li>",
+    }],
+    ["list end 多余 ref", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "end",
+      ref: "item-a",
+      item: "<li>新增</li>",
+    }],
+    ["table row before 缺 index", {
+      action: "insertTableRow",
+      ref: "table-a",
+      at: "before",
+      cells: "<td>新增</td>",
+    }],
+    ["table row after 缺 index", {
+      action: "insertTableRow",
+      ref: "table-a",
+      at: "after",
+      cells: "<td>新增</td>",
+    }],
+    ["table row end 多余 index", {
+      action: "insertTableRow",
+      ref: "table-a",
+      at: "end",
+      rowIndex: 1,
+      cells: "<td>新增</td>",
+    }],
+    ["table column before 缺 index", {
+      action: "insertTableColumn",
+      ref: "table-a",
+      at: "before",
+      cells: "<td>新增</td>",
+    }],
+    ["table column after 缺 index", {
+      action: "insertTableColumn",
+      ref: "table-a",
+      at: "after",
+      cells: "<td>新增</td>",
+    }],
+    ["table column end 多余 index", {
+      action: "insertTableColumn",
+      ref: "table-a",
+      at: "end",
+      columnIndex: 1,
+      cells: "<td>新增</td>",
+    }],
+  ])("rejects inconsistent position fields before execution: %s", (_label, op) => {
+    expect(editDraftInputSchema.safeParse({ ops: [op] }).success).toBe(false);
+  });
+
+  it.each([
+    ["block 空串", {
+      action: "insertBlock",
+      position: "before",
+      ref: "",
+      blocks: "<p>新增</p>",
+    }],
+    ["block 空白", {
+      action: "insertBlock",
+      position: "after",
+      ref: " \n\t ",
+      blocks: "<p>新增</p>",
+    }],
+    ["block 零宽", {
+      action: "insertBlock",
+      position: "before",
+      ref: "\u200B\u2060",
+      blocks: "<p>新增</p>",
+    }],
+    ["list 空串", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "before",
+      ref: "",
+      item: "<li>新增</li>",
+    }],
+    ["list 空白", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "after",
+      ref: "  ",
+      item: "<li>新增</li>",
+    }],
+    ["list 零宽", {
+      action: "insertListItem",
+      parentRef: "list-a",
+      at: "before",
+      ref: "\u200B",
+      item: "<li>新增</li>",
+    }],
+  ])("rejects blank positional ref before execution: %s", (_label, op) => {
+    expect(editDraftInputSchema.safeParse({ ops: [op] }).success).toBe(false);
+  });
+
   it("rejects negative table indexes", () => {
     const parsed = editDraftInputSchema.safeParse({
       ops: [{ action: "deleteTableRow", ref: "table-a", rowIndex: -1 }],

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  handleMainWindowWillNavigate,
   isAllowedMainFrameNavigation,
   shouldOpenMainWindowNavigationExternally,
 } from "./navigationPolicy.js";
@@ -62,6 +63,48 @@ test("data 启动壳阶段的外部 http(s) 导航仍会交给系统浏览器", 
   );
 });
 
+test("同窗口 mailto 明确交给系统邮件客户端，其他非 Web 协议仍拒绝外开", () => {
+  const allowedAppOrigins = new Set(["qingagent://app"]);
+  assert.equal(
+    shouldOpenMainWindowNavigationExternally(
+      "mailto:support@qingagent.com?subject=%E5%8F%8D%E9%A6%88",
+      allowedAppOrigins,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldOpenMainWindowNavigationExternally("file:///tmp/untrusted.html", allowedAppOrigins),
+    false,
+  );
+  assert.equal(
+    shouldOpenMainWindowNavigationExternally("javascript:alert(1)", allowedAppOrigins),
+    false,
+  );
+});
+
+test("Electron 同窗口点击 mailto 会阻止主窗口导航并调用系统外开", () => {
+  let preventDefaultCalls = 0;
+  const openedUrls: string[] = [];
+  const opened = handleMainWindowWillNavigate(
+    {
+      preventDefault() {
+        preventDefaultCalls += 1;
+      },
+    },
+    "mailto:support@qingagent.com",
+    "qingagent://app/#/settings/feedback",
+    undefined,
+    new Set(["qingagent://app"]),
+    (url) => {
+      openedUrls.push(url);
+    },
+  );
+
+  assert.equal(opened, true);
+  assert.equal(preventDefaultCalls, 1);
+  assert.deepEqual(openedUrls, ["mailto:support@qingagent.com"]);
+});
+
 test("启动壳切入已登记的内置服务 origin，同时继续拒绝非 Web scheme", () => {
   const allowedAppOrigins = new Set(["http://localhost:21823"]);
   assert.equal(
@@ -76,6 +119,28 @@ test("启动壳切入已登记的内置服务 origin，同时继续拒绝非 Web
   assert.equal(
     isAllowedMainFrameNavigation(
       "file:///tmp/untrusted.html",
+      "data:text/html,loading",
+      undefined,
+      allowedAppOrigins,
+    ),
+    false,
+  );
+});
+
+test("启动壳只允许登记后的固定桌面 scheme 与精确 host", () => {
+  const allowedAppOrigins = new Set(["qingagent://app"]);
+  assert.equal(
+    isAllowedMainFrameNavigation(
+      "qingagent://app/#/workspace",
+      "data:text/html,loading",
+      undefined,
+      allowedAppOrigins,
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedMainFrameNavigation(
+      "qingagent://other/#/workspace",
       "data:text/html,loading",
       undefined,
       allowedAppOrigins,

@@ -165,7 +165,7 @@ export const pmSchemaSpec = {
     tableCell: { content: "(paragraph|heading|blockquote|bulletList|orderedList|horizontalRule|codeBlock|image|diagram|fileAttachment|penNote|taskList|callout|columnList|blockMath)+", attrs: ["colspan", "rowspan", "colwidth", "backgroundColor"] },
     tableHeader: { content: "(paragraph|heading|blockquote|bulletList|orderedList|horizontalRule|codeBlock|image|diagram|fileAttachment|penNote|taskList|callout|columnList|blockMath)+", attrs: ["colspan", "rowspan", "colwidth", "backgroundColor"] },
     image: { group: "block", atom: true, attrs: ["blockId", "src", "alt", "title", "caption", "width", "height", "align"] },
-    diagram: { group: "block", atom: true, attrs: ["blockId", "lang", "source", "svg", "height", "overlay"] },
+    diagram: { group: "block", atom: true, attrs: ["blockId", "lang", "source", "svg", "height", "width", "align", "overlay"] },
     fileAttachment: { group: "block", atom: true, attrs: ["blockId", "fileId", "filename", "mimeType", "size"] },
     penNote: { group: "block", content: "inline*", attrs: ["blockId"] },
     taskList: { group: "block", content: "taskItem+", attrs: ["blockId"] },

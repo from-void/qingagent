@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { QaCliError } from "./errors.js";
+import { createRequestDeadline } from "./requestDeadline.js";
+
+export const DISCOVERY_REQUEST_DEADLINE_MS = 3_000;
 
 export interface InstanceInfo {
   port: number;
@@ -32,9 +35,11 @@ export async function discoverInstance(filePath = instanceFilePath()): Promise<I
     throw new QaCliError("NO_INSTANCE", "请先打开青简应用");
   }
   if (!isPidAlive(info.pid)) throw new QaCliError("NO_INSTANCE", "请先打开青简应用");
+  const deadline = createRequestDeadline(undefined, DISCOVERY_REQUEST_DEADLINE_MS);
   const res = await fetch(`http://127.0.0.1:${info.port}/api/v1/external/health`, {
     headers: { Authorization: `Bearer ${info.token}` },
-  }).catch(() => null);
+    signal: deadline.signal,
+  }).catch(() => null).finally(() => deadline.dispose());
   if (!res) throw new QaCliError("NO_INSTANCE", "请先打开青简应用");
   if (res.status === 401) throw new QaCliError("AUTH_FAILED", "实例可能已重启");
   if (!res.ok) throw new QaCliError("NO_INSTANCE", "请先打开青简应用");

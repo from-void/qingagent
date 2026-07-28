@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { lintSvg } from "../browser/svgQualityLint.js";
+import { DOMParser } from "@xmldom/xmldom";
+import { describe, expect, it, vi } from "vitest";
+import { estimateTextWidth, lintSvg } from "../browser/svgQualityLint.js";
 
 const size = { width: 800, height: 450 };
 
@@ -38,6 +39,118 @@ describe("lintSvg", () => {
     expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
   });
 
+  it("官方双栏骨架的深色卡片白字不误报低对比度", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/><text x="48" y="56" font-size="30" fill="#2b2b2b">标题</text>
+        <rect x="48" y="96" width="320" height="270" fill="#ffffff"/><text x="72" y="138" font-size="20" fill="#2b2b2b">左栏</text>
+        <text x="72" y="178" font-size="16" fill="#333333"><tspan x="72">要点</tspan><tspan x="72" dy="1.4em">换行</tspan></text>
+        <rect x="432" y="96" width="320" height="270" fill="#2f5d62"/><text x="456" y="138" font-size="20" fill="#ffffff">右栏</text>
+        <text x="456" y="178" font-size="16" fill="#ffffff"><tspan x="456">要点</tspan><tspan x="456" dy="1.4em">换行</tspan></text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
+  it("命中局部深色卡片上的深色文字", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+        <rect x="48" y="96" width="320" height="180" fill="#2f5d62"/>
+        <text x="72" y="140" font-size="18" fill="#333333">局部低对比</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
+  });
+
+  it("无法可靠确定非矩形局部背景时跳过对比度判定", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <circle cx="200" cy="160" r="100" fill="#2f5d62"/>
+        <text x="150" y="170" font-size="20" fill="#ffffff">圆形承载</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
+  it("defs 中未绘制矩形不得覆盖实际米黄背景判断", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+        <defs><rect x="0" y="0" width="800" height="450" fill="#2f5d62"/></defs>
+        <text x="80" y="80" font-size="18" fill="#ffffff">米黄底白字</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
+  });
+
+  it("百分比半透明局部层无法可靠确定合成背景时跳过对比度", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#ffffff"/>
+        <rect x="48" y="48" width="320" height="180" fill="#2f5d62" fill-opacity="50%"/>
+        <text x="72" y="100" font-size="18" fill="#333333">合成背景不确定</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
+  it("大元素集合只需一次绘制顺序扫描即可完成对比度检查", () => {
+    const originalParseFromString = DOMParser.prototype.parseFromString;
+    let rootChildCount = 0;
+    let rootChildReads = 0;
+    const parseSpy = vi
+      .spyOn(DOMParser.prototype, "parseFromString")
+      .mockImplementation(function (this: DOMParser, source, mimeType) {
+        const document = originalParseFromString.call(this, source, mimeType);
+        const childNodes = document.documentElement!.childNodes;
+        rootChildCount = childNodes.length;
+        const originalItem = childNodes.item.bind(childNodes);
+        vi.spyOn(childNodes, "item").mockImplementation((index) => {
+          rootChildReads++;
+          return originalItem(index);
+        });
+        return document;
+      });
+    const shapes = Array.from(
+      { length: 2_500 },
+      (_, index) =>
+        `<rect x="${index % 800}" y="${index % 450}" width="1" height="1" fill="#ffffff"/>`,
+    ).join("");
+    const texts = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `<text x="72" y="${80 + index * 28}" font-size="18" fill="#ffffff">高对比文字${index}</text>`,
+    ).join("");
+
+    try {
+      const issues = lintSvg(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+          ${shapes}
+          <rect x="48" y="48" width="320" height="360" fill="#2f5d62"/>
+          ${texts}
+        </svg>`,
+        size,
+      );
+
+      expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+      // 根节点会被文本收集扫描一次；其余仅允许预计算绘制顺序时再扫描一次。
+      expect(rootChildReads).toBe(rootChildCount * 2);
+    } finally {
+      parseSpy.mockRestore();
+    }
+  });
+
   it("干净网格 SVG 零违规", () => {
     const issues = lintSvg(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
@@ -46,7 +159,7 @@ describe("lintSvg", () => {
         <rect x="48" y="96" width="300" height="180" fill="#ffffff"/>
         <text x="72" y="140" font-size="18" fill="#333333">短文本</text>
         <rect x="432" y="96" width="300" height="180" fill="#315c72"/>
-        <text x="456" y="140" font-size="18" fill="#2b2b2b">高对比</text>
+        <text x="456" y="140" font-size="18" fill="#ffffff">高对比</text>
       </svg>`,
       size,
     );
@@ -57,5 +170,11 @@ describe("lintSvg", () => {
   it("畸形 XML 或非 svg 根返回空违规", () => {
     expect(lintSvg(`<svg><text x="10" y="10">坏</svg>`, size)).toEqual([]);
     expect(lintSvg(`<div><text x="10" y="10">非 SVG</text></div>`, size)).toEqual([]);
+  });
+});
+
+describe("estimateTextWidth", () => {
+  it("将假名、Hangul 与全角字符按全宽估算", () => {
+    expect(estimateTextWidth("あア한Ａ", 10)).toBe(40);
   });
 });

@@ -80,17 +80,18 @@ const ALLOWED_ATTRS = new Set([
 const BAD_STYLE = /(?:url\s*\(|expression\s*\(|@import|javascript:|<)/i;
 const BAD_URL_VALUE = /url\(\s*['"]?\s*(?:https?:|data:|javascript:|#?\/\/)/i;
 const LOCAL_URL_VALUE = /^url\(\s*['"]?#[A-Za-z][\w:.-]*['"]?\s*\)$/;
-const VISIBLE_ELEMENTS = new Set([
-  "path",
-  "rect",
-  "circle",
-  "ellipse",
-  "line",
-  "polyline",
-  "polygon",
-  "text",
-  "tspan",
-]);
+
+interface SvgPaintState {
+  hidden: boolean;
+  opacity: number;
+  visibility: string;
+  fill: string;
+  fillOpacity: number;
+  stroke: string;
+  strokeOpacity: number;
+  strokeWidth: number;
+  fontSize: number;
+}
 
 export function utf8ByteLength(value: string): number {
   return textEncoder.encode(value).length;
@@ -111,6 +112,318 @@ function normalizeCssEscapes(value: string): string {
   });
 }
 
+function inlineStyleValue(el: XmlElement, prop: string): string | null {
+  const style = el.getAttribute("style");
+  if (!style) return null;
+  for (const declaration of style.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon === -1) continue;
+    if (declaration.slice(0, colon).trim().toLowerCase() === prop) {
+      return declaration.slice(colon + 1).trim();
+    }
+  }
+  return null;
+}
+
+function svgPresentationValue(el: XmlElement, prop: string): string | null {
+  return inlineStyleValue(el, prop) ?? el.getAttribute(prop);
+}
+
+function finiteSvgNumber(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const number = Number.parseFloat(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function svgOpacity(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, trimmed.endsWith("%") ? parsed / 100 : parsed));
+}
+
+function cssAlpha(value: string): number {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "transparent") return 0;
+  const shortHex = /^#[0-9a-f]{3}([0-9a-f])$/i.exec(normalized);
+  if (shortHex?.[1]) return Number.parseInt(shortHex[1] + shortHex[1], 16) / 255;
+  const longHex = /^#[0-9a-f]{6}([0-9a-f]{2})$/i.exec(normalized);
+  if (longHex?.[1]) return Number.parseInt(longHex[1], 16) / 255;
+  const functional = /^(?:rgb|rgba|hsl|hsla)\((.*)\)$/i.exec(normalized)?.[1];
+  if (!functional) return 1;
+  const slashAlpha = functional.includes("/")
+    ? functional.slice(functional.lastIndexOf("/") + 1)
+    : null;
+  const commaParts = functional.split(",");
+  const commaAlpha = commaParts.length === 4 ? commaParts[3] : null;
+  const rawAlpha = (slashAlpha ?? commaAlpha)?.trim();
+  if (!rawAlpha) return 1;
+  const parsed = Number.parseFloat(rawAlpha);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(0, Math.min(1, rawAlpha.endsWith("%") ? parsed / 100 : parsed));
+}
+
+function findElementById(root: XmlElement, id: string): XmlElement | null {
+  if (root.getAttribute("id") === id) return root;
+  for (let i = 0; i < root.childNodes.length; i++) {
+    const child = root.childNodes.item(i);
+    if (child?.nodeType !== 1) continue;
+    const found = findElementById(child as XmlElement, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function gradientHasVisibleStop(root: XmlElement, id: string): boolean {
+  const gradient = findElementById(root, id);
+  if (!gradient || !/^(?:lineargradient|radialgradient)$/.test(gradient.tagName.toLowerCase())) {
+    return false;
+  }
+  for (let i = 0; i < gradient.childNodes.length; i++) {
+    const child = gradient.childNodes.item(i);
+    if (child?.nodeType !== 1) continue;
+    const stop = child as XmlElement;
+    if (stop.tagName.toLowerCase() !== "stop") continue;
+    const color = svgPresentationValue(stop, "stop-color") ?? "black";
+    const opacity = svgOpacity(svgPresentationValue(stop, "stop-opacity"), 1) *
+      svgOpacity(svgPresentationValue(stop, "opacity"), 1);
+    if (opacity > 0 && cssAlpha(color) > 0) return true;
+  }
+  return false;
+}
+
+function hasVisiblePaint(value: string, opacity: number, root: XmlElement): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (opacity <= 0 || normalized === "none" || cssAlpha(normalized) <= 0) return false;
+  const gradientId = /^url\(\s*['"]?#([^'")\s]+)['"]?\s*\)$/i.exec(normalized)?.[1];
+  return gradientId ? gradientHasVisibleStop(root, gradientId) : true;
+}
+
+function distinctPoints(el: XmlElement): Array<[number, number]> {
+  const values = ((el.getAttribute("points") ?? "").match(/-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [])
+    .map(Number)
+    .filter(Number.isFinite);
+  const points: Array<[number, number]> = [];
+  for (let i = 0; i + 1 < values.length; i += 2) {
+    const point: [number, number] = [values[i]!, values[i + 1]!];
+    if (!points.some(([x, y]) => x === point[0] && y === point[1])) points.push(point);
+  }
+  return points;
+}
+
+function polygonArea(points: Array<[number, number]>): number {
+  let twiceArea = 0;
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i]!;
+    const next = points[(i + 1) % points.length]!;
+    twiceArea += current[0] * next[1] - next[0] * current[1];
+  }
+  return Math.abs(twiceArea) / 2;
+}
+
+interface PathGeometry {
+  fillArea: number;
+  strokeLength: number;
+}
+
+function pathGeometry(d: string): PathGeometry {
+  const tokens = d.match(/[a-zA-Z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) ?? [];
+  const arity: Record<string, number> = {
+    m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0,
+  };
+  const subpaths: Array<Array<[number, number]>> = [];
+  let points: Array<[number, number]> | null = null;
+  let command = "";
+  let index = 0;
+  let x = 0;
+  let y = 0;
+  let startX = 0;
+  let startY = 0;
+  let previousControl: [number, number] | null = null;
+  let previousCommand = "";
+  const addPoint = (point: [number, number]) => {
+    points ??= [];
+    points.push(point);
+    x = point[0];
+    y = point[1];
+  };
+  const beginSubpath = (point: [number, number]) => {
+    points = [point];
+    subpaths.push(points);
+    x = point[0];
+    y = point[1];
+    startX = x;
+    startY = y;
+  };
+  const numberAt = (offset: number) => Number(tokens[index + offset]);
+  const sampleQuadratic = (
+    from: [number, number],
+    control: [number, number],
+    to: [number, number],
+  ) => {
+    for (let step = 1; step <= 8; step++) {
+      const t = step / 8;
+      const mt = 1 - t;
+      addPoint([
+        mt * mt * from[0] + 2 * mt * t * control[0] + t * t * to[0],
+        mt * mt * from[1] + 2 * mt * t * control[1] + t * t * to[1],
+      ]);
+    }
+  };
+  const sampleCubic = (
+    from: [number, number],
+    control1: [number, number],
+    control2: [number, number],
+    to: [number, number],
+  ) => {
+    for (let step = 1; step <= 12; step++) {
+      const t = step / 12;
+      const mt = 1 - t;
+      addPoint([
+        mt ** 3 * from[0] + 3 * mt * mt * t * control1[0] +
+          3 * mt * t * t * control2[0] + t ** 3 * to[0],
+        mt ** 3 * from[1] + 3 * mt * mt * t * control1[1] +
+          3 * mt * t * t * control2[1] + t ** 3 * to[1],
+      ]);
+    }
+  };
+
+  while (index < tokens.length) {
+    if (/^[a-zA-Z]$/.test(tokens[index]!)) command = tokens[index++]!;
+    if (!command) break;
+    const lower = command.toLowerCase();
+    const count = arity[lower];
+    if (count === undefined || index + count > tokens.length) break;
+    if (lower === "z") {
+      if (subpaths.at(-1)?.length) addPoint([startX, startY]);
+      previousControl = null;
+      previousCommand = command;
+      command = "";
+      continue;
+    }
+    if (/^[a-zA-Z]$/.test(tokens[index]!)) continue;
+    const relative = command === lower;
+    const ox = relative ? x : 0;
+    const oy = relative ? y : 0;
+    const values = Array.from({ length: count }, (_, offset) => numberAt(offset));
+    if (values.some((value) => !Number.isFinite(value))) break;
+    index += count;
+
+    if (lower === "m") {
+      const next: [number, number] = [ox + values[0]!, oy + values[1]!];
+      if (!points || command.toLowerCase() === "m" && previousCommand.toLowerCase() !== "m") {
+        beginSubpath(next);
+      } else {
+        addPoint(next);
+      }
+      command = command === "m" ? "l" : "L";
+      previousControl = null;
+    } else if (lower === "l") {
+      addPoint([ox + values[0]!, oy + values[1]!]);
+      previousControl = null;
+    } else if (lower === "h") {
+      addPoint([ox + values[0]!, y]);
+      previousControl = null;
+    } else if (lower === "v") {
+      addPoint([x, oy + values[0]!]);
+      previousControl = null;
+    } else if (lower === "c") {
+      const from: [number, number] = [x, y];
+      const control1: [number, number] = [ox + values[0]!, oy + values[1]!];
+      const control2: [number, number] = [ox + values[2]!, oy + values[3]!];
+      const to: [number, number] = [ox + values[4]!, oy + values[5]!];
+      sampleCubic(from, control1, control2, to);
+      previousControl = control2;
+    } else if (lower === "s") {
+      const from: [number, number] = [x, y];
+      const control1: [number, number] =
+        previousControl && /[cs]/i.test(previousCommand)
+          ? [2 * x - previousControl[0], 2 * y - previousControl[1]]
+          : [x, y];
+      const control2: [number, number] = [ox + values[0]!, oy + values[1]!];
+      const to: [number, number] = [ox + values[2]!, oy + values[3]!];
+      sampleCubic(from, control1, control2, to);
+      previousControl = control2;
+    } else if (lower === "q") {
+      const from: [number, number] = [x, y];
+      const control: [number, number] = [ox + values[0]!, oy + values[1]!];
+      const to: [number, number] = [ox + values[2]!, oy + values[3]!];
+      sampleQuadratic(from, control, to);
+      previousControl = control;
+    } else if (lower === "t") {
+      const from: [number, number] = [x, y];
+      const control: [number, number] =
+        previousControl && /[qt]/i.test(previousCommand)
+          ? [2 * x - previousControl[0], 2 * y - previousControl[1]]
+          : [x, y];
+      const to: [number, number] = [ox + values[0]!, oy + values[1]!];
+      sampleQuadratic(from, control, to);
+      previousControl = control;
+    } else if (lower === "a") {
+      addPoint([ox + values[5]!, oy + values[6]!]);
+      previousControl = null;
+    }
+    previousCommand = command;
+  }
+
+  let fillArea = 0;
+  let strokeLength = 0;
+  for (const subpath of subpaths) {
+    fillArea += polygonArea(subpath);
+    for (let i = 1; i < subpath.length; i++) {
+      const previous = subpath[i - 1]!;
+      const current = subpath[i]!;
+      strokeLength += Math.hypot(current[0] - previous[0], current[1] - previous[1]);
+    }
+  }
+  return { fillArea, strokeLength };
+}
+
+function isDrawableSvgElement(
+  el: XmlElement,
+  state: SvgPaintState,
+  root: XmlElement,
+): boolean {
+  const name = el.tagName.toLowerCase();
+  const fillVisible = hasVisiblePaint(
+    state.fill,
+    state.opacity * state.fillOpacity,
+    root,
+  );
+  const strokeVisible =
+    state.strokeWidth > 0 &&
+    hasVisiblePaint(state.stroke, state.opacity * state.strokeOpacity, root);
+  const positive = (attr: string) => finiteSvgNumber(el.getAttribute(attr), 0) > 0;
+
+  if (name === "rect") return positive("width") && positive("height") && (fillVisible || strokeVisible);
+  if (name === "circle") return positive("r") && (fillVisible || strokeVisible);
+  if (name === "ellipse") return positive("rx") && positive("ry") && (fillVisible || strokeVisible);
+  if (name === "line") {
+    const x1 = finiteSvgNumber(el.getAttribute("x1"), 0);
+    const y1 = finiteSvgNumber(el.getAttribute("y1"), 0);
+    const x2 = finiteSvgNumber(el.getAttribute("x2"), 0);
+    const y2 = finiteSvgNumber(el.getAttribute("y2"), 0);
+    return strokeVisible && (x1 !== x2 || y1 !== y2);
+  }
+  if (name === "polyline" || name === "polygon") {
+    const points = distinctPoints(el);
+    const hasStrokeGeometry = points.length >= 2;
+    const hasFillGeometry = points.length >= 3 && polygonArea(points) > 0;
+    return (strokeVisible && hasStrokeGeometry) || (fillVisible && hasFillGeometry);
+  }
+  if (name === "path") {
+    const d = (el.getAttribute("d") ?? "").trim();
+    const geometry = pathGeometry(d);
+    return (strokeVisible && geometry.strokeLength > 0) ||
+      (fillVisible && geometry.fillArea > 0);
+  }
+  if (name === "text" || name === "tspan") {
+    return state.fontSize > 0 && Boolean(el.textContent?.trim()) && (fillVisible || strokeVisible);
+  }
+  return false;
+}
+
 export function hasVisibleSvgContent(svg: string): boolean {
   try {
     if (typeof svg !== "string" || svg.length === 0 || exceedsSvgByteLimit(svg)) {
@@ -120,20 +433,50 @@ export function hasVisibleSvgContent(svg: string): boolean {
     const root = doc.documentElement;
     if (!root || root.tagName.toLowerCase() !== "svg") return false;
 
-    const visit = (el: XmlElement): boolean => {
+    const initialState: SvgPaintState = {
+      hidden: false,
+      opacity: 1,
+      visibility: "visible",
+      fill: "black",
+      fillOpacity: 1,
+      stroke: "none",
+      strokeOpacity: 1,
+      strokeWidth: 1,
+      fontSize: 16,
+    };
+    const visit = (el: XmlElement, inherited: SvgPaintState): boolean => {
       const name = el.tagName.toLowerCase();
-      if (VISIBLE_ELEMENTS.has(name)) return true;
+      if (name === "defs") return false;
+
+      const display = svgPresentationValue(el, "display")?.trim().toLowerCase();
+      const visibility =
+        svgPresentationValue(el, "visibility")?.trim().toLowerCase() || inherited.visibility;
+      const state: SvgPaintState = {
+        hidden: inherited.hidden || display === "none",
+        opacity: inherited.opacity * svgOpacity(svgPresentationValue(el, "opacity"), 1),
+        visibility,
+        fill: svgPresentationValue(el, "fill") ?? inherited.fill,
+        fillOpacity: svgOpacity(svgPresentationValue(el, "fill-opacity"), inherited.fillOpacity),
+        stroke: svgPresentationValue(el, "stroke") ?? inherited.stroke,
+        strokeOpacity: svgOpacity(svgPresentationValue(el, "stroke-opacity"), inherited.strokeOpacity),
+        strokeWidth: finiteSvgNumber(svgPresentationValue(el, "stroke-width"), inherited.strokeWidth),
+        fontSize: finiteSvgNumber(svgPresentationValue(el, "font-size"), inherited.fontSize),
+      };
+      if (state.hidden || state.opacity <= 0 || visibility === "hidden" || visibility === "collapse") {
+        return false;
+      }
+      if (isDrawableSvgElement(el, state, root)) return true;
 
       for (let i = 0; i < el.childNodes.length; i++) {
         const child = el.childNodes.item(i);
-        if (child?.nodeType === 1 && visit(child as XmlElement)) {
+        if (child?.nodeType === 1 && visit(child as XmlElement, state)) {
           return true;
         }
       }
       return false;
     };
 
-    return visit(root);
+    return visit(root, initialState);
   } catch {
     return false;
   }

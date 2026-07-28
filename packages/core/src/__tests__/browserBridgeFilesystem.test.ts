@@ -335,6 +335,37 @@ describe("BrowserBridgeFilesystem", () => {
     expect(delivered).toHaveLength(0);
   });
 
+  it("调用方中止后同步清理 queuedRequests 与 pendingRequests", async () => {
+    registerBrowserFolderSource("sess_abort", "fld_abort", "client_abort");
+    const closeSeen = openBrowserFolderBridgeConnection({
+      sessionId: "sess_abort",
+      clientId: "client_abort",
+      send: async () => undefined,
+    });
+    closeSeen();
+    const controller = new AbortController();
+    const pending = requestBrowserFolderBridge(
+      {
+        sessionId: "sess_abort",
+        folderId: "fld_abort",
+        clientId: "client_abort",
+        op: "stat",
+        relPath: "a.md",
+      },
+      30_000,
+      3_000,
+      controller.signal,
+    );
+    const rejected = pending.catch((error) => error);
+    await flushPromises();
+    expect(__browserFolderBridgeStatsForTest()).toMatchObject({ queued: 1, pending: 1 });
+
+    controller.abort(new DOMException("caller aborted", "AbortError"));
+
+    await expect(rejected).resolves.toMatchObject({ name: "AbortError" });
+    expect(__browserFolderBridgeStatsForTest()).toMatchObject({ queued: 0, pending: 0 });
+  });
+
   it("从未建立 SSE 连接的 browser source 在短宽限到期后 bridge_offline，不排队等 30 秒", async () => {
     registerBrowserFolderSource("sess_never_connected", "fld_never_connected", "client_never_connected");
 

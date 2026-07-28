@@ -351,6 +351,7 @@ async function* handleResume(
   // 命令分发时 bindClientTraceId 设置）。若在重试退避期间有并发命令改写了
   // session.clientTraceId，本轮 resume 的框架 span 仍归属本动作而非后续动作。
   const resumeClientTraceId = session.clientTraceId ?? null;
+  const userCancelGeneration = session._userCancelGeneration;
   let freshTurnPrompt: string | null = null;
   let freshTurnAfterIdleTimeout = false;
   let resumeRequestContext: RequestContext | undefined;
@@ -778,6 +779,7 @@ async function* handleResume(
 
   if (
     freshTurnPrompt !== null &&
+    session._userCancelGeneration === userCancelGeneration &&
     (!abortController.signal.aborted || freshTurnAfterIdleTimeout)
   ) {
     yield* runAgentTurn(

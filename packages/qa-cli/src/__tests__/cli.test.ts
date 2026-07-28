@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { discoverInstance } from "../discovery.js";
 
 vi.mock("../discovery.js", () => ({
   discoverInstance: vi.fn(async () => ({
@@ -363,14 +364,14 @@ describe("qa cli", () => {
     ]);
   });
 
-  it("sessions list --all 自动翻页并输出全量 JSON 元信息", async () => {
+  it("sessions list --all 按服务端快照游标翻页并输出全量 JSON 元信息", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const requestedUrls: string[] = [];
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input);
       requestedUrls.push(url);
-      if (url.endsWith("?limit=2&offset=0")) {
+      if (url.endsWith("?limit=2&cursor=start")) {
         return new Response(JSON.stringify({
           sessions: [
             { id: "s1", title: "会话一", state: "empty", updatedAt: "2026-07-25T00:00:00.000Z" },
@@ -378,29 +379,58 @@ describe("qa cli", () => {
           ],
           total: 3,
           hasMore: true,
+          nextCursor: "snapshot-page-2",
         }));
       }
-      expect(url.endsWith("?limit=2&offset=2")).toBe(true);
+      expect(url.endsWith("?limit=2&cursor=snapshot-page-2")).toBe(true);
       return new Response(JSON.stringify({
         sessions: [
           { id: "s3", title: "会话三", state: "pendingReview", updatedAt: "2026-07-23T00:00:00.000Z" },
         ],
         total: 3,
         hasMore: false,
+        nextCursor: null,
       }));
     }) as typeof fetch;
 
     await main(["sessions", "list", "--all", "--limit", "2", "--json"]);
 
     expect(requestedUrls).toEqual([
-      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&offset=0",
-      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&offset=2",
+      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&cursor=start",
+      "http://127.0.0.1:45678/api/v1/external/sessions?limit=2&cursor=snapshot-page-2",
     ]);
     expect(JSON.parse(stdout.mock.calls.map((call) => call[0]).join(""))).toMatchObject({
       sessions: [{ id: "s1" }, { id: "s2" }, { id: "s3" }],
       total: 3,
       hasMore: false,
     });
+  });
+
+  it.each([
+    ["后续 flag", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文", "--json",
+    ]],
+    ["下一个多值选项", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文", "--str-replace", "另一处旧文", "另一处新文",
+    ]],
+    ["参数结尾", [
+      "doc", "propose", "-s", "s1", "--expect-version", "3",
+      "--str-replace", "旧文",
+    ]],
+  ])("doc propose --str-replace 缺值时不把%s当替换文本", async (_label, args) => {
+    const { main } = await import("../cli.js");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "proposed" })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    vi.mocked(discoverInstance).mockClear();
+
+    await expect(main(args)).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: "--str-replace 需要旧文和新文",
+    });
+    expect(discoverInstance).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("chat log 请求 /chat 并打印可读角色", async () => {
@@ -760,6 +790,29 @@ describe("qa cli", () => {
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] watching session=s1 after=41\n");
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] events exited reason=reviewed received=1\n");
     expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"kind\":\"docCommitted\"");
+  });
+
+  it.each([
+    ["非法目标", ["doc", "events", "-s", "s1", "--until", "reviewd"]],
+    ["缺少目标值", ["doc", "events", "-s", "s1", "--until"]],
+    ["后续 flag 不能充当目标值", [
+      "doc", "events", "-s", "s1", "--until", "--timeout", "10ms",
+    ]],
+    ["后一个重复值非法", [
+      "doc", "events", "-s", "s1", "--until", "reviewed", "--until", "reviewd",
+    ]],
+  ])("doc events --until %s 时在连接前拒绝", async (_label, args) => {
+    const { main } = await import("../cli.js");
+    const fetchMock = vi.fn(async () => new Response());
+    globalThis.fetch = fetchMock as typeof fetch;
+    vi.mocked(discoverInstance).mockClear();
+
+    await expect(main(args)).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: "--until 必须是 reviewed、committed 或 review",
+    });
+    expect(discoverInstance).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("doc events 非 follow 在目标命中前 EOF 时明确失败", async () => {

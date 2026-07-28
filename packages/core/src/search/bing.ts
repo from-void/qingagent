@@ -30,13 +30,19 @@ export class BingProvider implements SearchProvider {
         redirect: "follow",
         signal: searchRequestSignal(options?.signal, 10_000),
       });
-      if (!resp.ok) return [];
+      if (!resp.ok) {
+        if (options?.strict) {
+          throw new Error(`Bing search failed: HTTP ${resp.status}`);
+        }
+        return [];
+      }
       const html = decodeHtml(
         Buffer.from(await resp.arrayBuffer()),
         resp.headers.get("content-type"),
       );
-      return parseBingSerp(html, count);
-    } catch {
+      return parseBingSerp(html, count, { strict: options?.strict });
+    } catch (error) {
+      if (options?.strict) throw error;
       return [];
     }
   }

@@ -1,5 +1,5 @@
 import { PM_SCHEMA_VERSION, type PmSchemaVersion } from "./schemaVersion";
-import { normalizePmDoc } from "./validators";
+import { normalizeLegacyCodeBlockMarksPmDoc, normalizePmDoc } from "./validators";
 import type { PmDoc } from "./types";
 
 export const PM_MIGRATION_VERSIONS = [PM_SCHEMA_VERSION] as const;
@@ -8,7 +8,7 @@ export function migratePmDoc(value: unknown, from: PmSchemaVersion, to: PmSchema
   if (from !== PM_SCHEMA_VERSION || to !== PM_SCHEMA_VERSION) {
     throw new Error(`Unsupported PM schema migration: ${from} -> ${to}`);
   }
-  return normalizePmDoc(value);
+  return normalizePmDoc(normalizeLegacyCodeBlockMarksPmDoc(value).value);
 }
 
 export function assertPmMigrationRegistryContinuous(): void {

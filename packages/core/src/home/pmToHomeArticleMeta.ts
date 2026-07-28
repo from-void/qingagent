@@ -1,4 +1,5 @@
 import { pmToPlainText, type PmBlockNode, type PmDoc, type PmNode } from "@qingagent/pm-schema";
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 
 export interface HomeArticleMetaInput {
   fallbackTitle?: string | null;
@@ -69,6 +70,6 @@ function compactWhitespace(value: string): string {
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}...`;
+  if (countGraphemes(value) <= maxLength) return value;
+  return `${truncateGraphemes(value, maxLength)}...`;
 }

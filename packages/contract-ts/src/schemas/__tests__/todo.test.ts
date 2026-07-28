@@ -17,6 +17,13 @@ describe("todo schemas", () => {
   it.each([
     ["缺 content", { status: "pending" }],
     ["content 为空串", { content: "", status: "pending" }],
+    ["content 仅含空白", { content: " \n\t ", status: "pending" }],
+    ["content 仅含零宽空格", { content: "\u200B", status: "pending" }],
+    ["content 仅含词连接符", { content: "\u2060", status: "pending" }],
+    ["content 仅含空白与格式字符", {
+      content: " \u200B\n\u2060 ",
+      status: "pending",
+    }],
     ["status 非法枚举值", { content: "梳理资料", status: "done" }],
     ["status 缺失", { content: "梳理资料" }],
     ["元素非对象", "not-object"],
@@ -32,6 +39,13 @@ describe("todo schemas", () => {
     ["整个非数组", { todos: [validTodo] }],
     ["元素非对象", ["not-object"]],
     ["数组超长", Array.from({ length: TODOS_MAX_COUNT + 1 }, () => validTodo)],
+    [
+      "包含多个进行中任务",
+      [
+        { content: "整理资料", status: "in_progress" },
+        { content: "撰写初稿", status: "in_progress" },
+      ],
+    ],
   ])("拒绝 todo 数组脏输入:%s", (_label, value) => {
     expect(todosSchema.safeParse(value).success).toBe(false);
   });

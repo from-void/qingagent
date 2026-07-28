@@ -2081,6 +2081,7 @@ export async function loadSessionFromThread(
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,
+    _userCancelGeneration: 0,
     _activeAgentMessageId: null,
     _pendingDraftRecoveryFrames: [],
     suggestions,

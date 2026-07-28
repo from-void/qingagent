@@ -196,10 +196,57 @@ function pmTaskItemToHtml(item: PmTaskItemNode): string {
 }
 
 function tableToHtml(rows: { content: PmTableCellNode[] }[]): string {
+  const colgroup = tableColgroupToHtml(rows);
   const body = rows
     .map((row) => `<tr>${row.content.map(pmTableCellToHtml).join("")}</tr>`)
     .join("");
-  return `<table><tbody>${body}</tbody></table>`;
+  return `<table>${colgroup}<tbody>${body}</tbody></table>`;
+}
+
+function tableColgroupToHtml(rows: { content: PmTableCellNode[] }[]): string {
+  const widths: Array<number | undefined> = [];
+  const occupiedUntilRow: number[] = [];
+  let columnCount = 0;
+
+  rows.forEach((row, rowIndex) => {
+    let columnIndex = 0;
+    for (const cell of row.content) {
+      while ((occupiedUntilRow[columnIndex] ?? 0) > rowIndex) columnIndex += 1;
+
+      const colspan = positiveSpan(cell.attrs?.colspan);
+      const rowspan = positiveSpan(cell.attrs?.rowspan);
+      const colwidth = cell.attrs?.colwidth;
+      for (let offset = 0; offset < colspan; offset += 1) {
+        const logicalColumn = columnIndex + offset;
+        const width = colwidth?.[offset];
+        if (
+          widths[logicalColumn] === undefined &&
+          typeof width === "number" &&
+          Number.isFinite(width) &&
+          width > 0
+        ) {
+          widths[logicalColumn] = width;
+        }
+        occupiedUntilRow[logicalColumn] = Math.max(
+          occupiedUntilRow[logicalColumn] ?? 0,
+          rowIndex + rowspan,
+        );
+      }
+      columnIndex += colspan;
+    }
+    columnCount = Math.max(columnCount, columnIndex, occupiedUntilRow.length);
+  });
+
+  if (!widths.some((width) => width !== undefined)) return "";
+  const columns = Array.from({ length: columnCount }, (_, index) => {
+    const width = widths[index];
+    return width === undefined ? "<col>" : `<col style="width:${width}px">`;
+  }).join("");
+  return `<colgroup>${columns}</colgroup>`;
+}
+
+function positiveSpan(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 1;
 }
 
 function pmTableCellToHtml(cell: PmTableCellNode): string {

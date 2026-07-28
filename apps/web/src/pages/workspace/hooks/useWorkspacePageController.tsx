@@ -155,7 +155,11 @@ import {
   replaceWorkspaceSessionHash,
   startNewSessionOnce,
 } from "../data/sessionLifecycle";
-import { toAssetSource, type AssetSource } from "../data/sources";
+import {
+  reconcileAssetPreview,
+  toAssetSource,
+  type AssetSource,
+} from "../data/sources";
 import {
   resourceMutationKey,
   workspaceMutations,
@@ -899,21 +903,8 @@ export function useWorkspacePageController() {
   const agentActive = state.streamActive || dim.agentBusy || sendPending;
   const fileResources = useResourceList({ kind: "file" });
   useEffect(() => {
-    if (!previewSource || previewSource.preview) return;
-    const current = fileResources.find(
-      (resource) => resource.resourceRef.id === previewSource.id,
-    );
-    if (!current) return;
-    const authoritative = toAssetSource(current);
-    if (
-      authoritative.abstract === previewSource.abstract &&
-      authoritative.fileId === previewSource.fileId &&
-      authoritative.sourceUrl === previewSource.sourceUrl &&
-      authoritative.updatedAt === previewSource.updatedAt
-    ) {
-      return;
-    }
-    setPreviewSource(authoritative);
+    const reconciled = reconcileAssetPreview(previewSource, fileResources);
+    if (reconciled !== previewSource) setPreviewSource(reconciled);
   }, [fileResources, previewSource, setPreviewSource]);
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
@@ -3431,6 +3422,7 @@ export function useWorkspacePageController() {
               command.data.summary,
             ),
           rollback: (previous) => {
+            if (!resources.get(ref)) return;
             resources.upsert(previous);
             setPreviewSource((current) =>
               current?.id === materialId

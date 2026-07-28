@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { truncateGraphemes } from "@qingagent/contract-ts";
 import { loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
 import {
   getBrowserCapabilityState,
@@ -75,9 +76,19 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   const specializedOverlayFallback =
     (format === "pdf" || format === "docx" || format === "html") &&
     hasSpecializedDiagramOverlayFallback(document);
-  let body: BodyInit;
   try {
-    body = await renderExport(format, document, title, baseUrl);
+    const body = await renderExport(format, document, title, baseUrl);
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": CONTENT_TYPES[format],
+        "Content-Disposition": contentDisposition(filename),
+        "Cache-Control": "no-store",
+        ...(specializedOverlayFallback
+          ? { "X-Qingagent-Export-Notice": SPECIALIZED_DIAGRAM_OVERLAY_NOTICE }
+          : {}),
+      },
+    });
   } catch (err) {
     if (
       err &&
@@ -109,18 +120,6 @@ exportRoutes.get("/export/:sessionId", async (c) => {
     });
     return c.json({ error: "导出失败，请重试", code: "EXPORT_RENDER_FAILED" }, 500);
   }
-
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "Content-Type": CONTENT_TYPES[format],
-      "Content-Disposition": contentDisposition(filename),
-      "Cache-Control": "no-store",
-      ...(specializedOverlayFallback
-        ? { "X-Qingagent-Export-Notice": SPECIALIZED_DIAGRAM_OVERLAY_NOTICE }
-        : {}),
-    },
-  });
 });
 
 function browserCapabilityUnavailableResponse(c: Context) {
@@ -231,10 +230,10 @@ function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {
 }
 
 function safeFilename(value: string): string {
-  return value
+  const sanitized = value
     .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, "_")
-    .slice(0, 80) || "qingagent-export";
+    .replace(/\s+/g, "_");
+  return truncateGraphemes(sanitized, 80) || "qingagent-export";
 }
 
 function contentDisposition(filename: string): string {

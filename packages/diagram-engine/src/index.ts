@@ -1,3 +1,5 @@
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
+
 export type DiagramType = "flowchart" | "state" | "er" | "class" | "mindmap";
 
 export interface Span {
@@ -123,6 +125,7 @@ export interface FlowGraph extends DiagramThemeMetadata {
   edges: BaseEdge[];
   subgraphs: FlowSubgraph[];
   hasLinkStyle?: boolean;
+  unclosedSubgraphCount?: number;
 }
 
 export interface StateGraph extends DiagramThemeMetadata {
@@ -371,6 +374,7 @@ type EdgeIdFactory = (input: EdgeIdInput) => string;
 // 短形 `<--|x|`/`<==|x|` 直接解析失败(已实测),故反向回写一律用长形(见 flowArrowToken)。
 const FLOW_ARROW_TOKEN_RE = /(?:<-.->|<-->|<==>|<---|<===|<-.-|<==|<--|-.->|==>|---|-.-|===|-->)/g;
 const MERMAID_ID_SOURCE = String.raw`[\p{L}\p{N}_][\p{L}\p{N}_-]*`;
+const MAX_MERMAID_ID_GRAPHEMES = 64;
 const MERMAID_ID_LIST_SOURCE = String.raw`${MERMAID_ID_SOURCE}(?:\s*,\s*${MERMAID_ID_SOURCE})*`;
 const MERMAID_ID_RE = new RegExp(String.raw`^${MERMAID_ID_SOURCE}$`, "u");
 const FLOW_NODE_REF_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})(.*)$`, "u");
@@ -420,10 +424,37 @@ export function getCapabilities(
 export function applyEdit(source: string, op: EditOp): RewriteResult {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  const result = registry[parsed.model.type].rewrite(source, parsed, op);
-  return parsed.model.type === "flowchart"
-    ? verifyFlowSubgraphsPreserved(source, result)
-    : result;
+  if (parsed.model.type !== "flowchart") {
+    return registry[parsed.model.type].rewrite(source, parsed, op);
+  }
+  const rewriteSource = completeOpenFlowSubgraphs(source, parsed.model);
+  const rewriteParsed = rewriteSource === source ? parsed : parseFlowchart(rewriteSource);
+  if (!rewriteParsed.ok || rewriteParsed.model.type !== "flowchart") {
+    return { ok: false, source, error: rewriteParsed.error ?? "分区补全后无法重新解析" };
+  }
+  const result = registry.flowchart.rewrite(rewriteSource, rewriteParsed, op);
+  const verified = verifyFlowSubgraphsPreserved(rewriteSource, result);
+  return verified.ok || rewriteSource === source ? verified : { ...verified, source };
+}
+
+type PreparedFlowchartRewrite = {
+  source: string;
+  parsed: ParseResult & { model: FlowGraph };
+};
+
+function prepareFlowchartRewrite(source: string, operation: string): PreparedFlowchartRewrite | RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, operation);
+  const rewriteSource = completeOpenFlowSubgraphs(source, parsed.model);
+  const rewriteParsed = rewriteSource === source ? parsed : parseFlowchart(rewriteSource);
+  if (!rewriteParsed.ok || rewriteParsed.model.type !== "flowchart") {
+    return { ok: false, source, error: rewriteParsed.error ?? "分区补全后无法重新解析" };
+  }
+  return {
+    source: rewriteSource,
+    parsed: rewriteParsed as ParseResult & { model: FlowGraph },
+  };
 }
 
 /**
@@ -436,9 +467,10 @@ export function wrapNodesInSubgraph(
   title: string,
   parentSubgraph?: string | null,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "wrapNodesInSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "wrapNodesInSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const nextTitle = title.trim();
   if (!nextTitle) return { ok: false, source, error: "分区名称不能为空" };
@@ -504,9 +536,10 @@ export function moveNodeToSubgraph(
   nodeId: string,
   targetSubgraph: string | null,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "moveNodeToSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "moveNodeToSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const node = model.nodes.find((item) => item.id === nodeId);
   if (!node) return { ok: false, source, error: "节点不存在" };
@@ -540,9 +573,10 @@ export function moveNodeToSubgraph(
 
 /** 只改 subgraph 声明行中的标题文本，稳定 id 保持不变。 */
 export function renameSubgraph(source: string, subgraphId: string, title: string): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "renameSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "renameSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const subgraph = parsed.model.subgraphs.find((item) => item.id === subgraphId);
   if (!subgraph) return { ok: false, source, error: "分区不存在" };
   const nextTitle = title.trim();
@@ -575,9 +609,10 @@ export function setSubgraphStyle(
   subgraphId: string,
   patch: Pick<NodeStyleOverride, "fill" | "stroke">,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "setSubgraphStyle");
+  const prepared = prepareFlowchartRewrite(source, "setSubgraphStyle");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   if (!parsed.model.subgraphs.some((subgraph) => subgraph.id === subgraphId)) {
     return { ok: false, source, error: "分区不存在" };
   }
@@ -645,9 +680,10 @@ export function setSubgraphStyle(
 
 /** 解散 subgraph，仅移除它自己的声明行和配对 end；节点/子分区自然回到父级。 */
 export function dissolveSubgraph(source: string, subgraphId: string): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "dissolveSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "dissolveSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const subgraph = model.subgraphs.find((item) => item.id === subgraphId);
   if (!subgraph) return { ok: false, source, error: "分区不存在" };
@@ -747,7 +783,8 @@ export function safeMermaidId(label: string, prefix = "n"): string {
   if (!/^[A-Za-z_]/.test(id)) id = `${prefix}_${id}`;
   if (/^end$/i.test(id)) id = `${id}_node`;
   if (/^[ox]/i.test(id)) id = `${prefix}_${id}`;
-  return id.slice(0, 64);
+  const truncated = truncateGraphemes(id, MAX_MERMAID_ID_GRAPHEMES);
+  return isStableMermaidId(truncated) ? truncated : "n";
 }
 
 export function safeMermaidLabel(label: string): string {
@@ -1496,6 +1533,8 @@ function parseFlowchart(source: string): ParseResult {
           scopePath: open.scopePath,
           ...(open.direction ? { direction: open.direction } : {}),
         });
+      } else {
+        firstUnparsedLine ??= line;
       }
       protectedSpans.push(lineSpan(line));
       continue;
@@ -1540,6 +1579,7 @@ function parseFlowchart(source: string): ParseResult {
     protectedSpans.push(lineSpan(line));
     firstUnparsedLine ??= line;
   }
+  const unclosedSubgraphCount = subgraphStack.length;
   for (const open of subgraphStack.splice(0).reverse()) {
     subgraphs.push({
       id: open.id,
@@ -1570,7 +1610,16 @@ function parseFlowchart(source: string): ParseResult {
       && presentationSyntaxFullyRepresented(source)
       && !parsedNodes.some((node) => node.shape === "icon" || node.shape === "image"),
     ...themeMetadata,
-    model: { type: "flowchart", direction, nodes: parsedNodes, edges, subgraphs, hasLinkStyle, ...themeMetadata },
+    model: {
+      type: "flowchart",
+      direction,
+      nodes: parsedNodes,
+      edges,
+      subgraphs,
+      hasLinkStyle,
+      ...(unclosedSubgraphCount > 0 ? { unclosedSubgraphCount } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
   return firstUnparsedLine ? withUnparsedLineError(result, firstUnparsedLine) : result;
@@ -2017,8 +2066,24 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  ${id}["${safeMermaidLabel(op.label)}"]\n`) };
+    const reservedIds = [
+      ...model.nodes.map((node) => node.id),
+      ...model.subgraphs.map((subgraph) => subgraph.id),
+    ];
+    const id = boundedUniqueMermaidId(reservedIds, safeMermaidId(op.label));
+    const newSource = insertBeforeSourceEnd(source, `  ${id}["${safeMermaidLabel(op.label)}"]\n`);
+    const reparsed = parseFlowchart(newSource);
+    if (!reparsed.ok || reparsed.model.type !== "flowchart") {
+      return { ok: false, source, error: reparsed.error ?? "新节点写回后无法重新解析" };
+    }
+    const allIds = [
+      ...reparsed.model.nodes.map((node) => node.id),
+      ...reparsed.model.subgraphs.map((subgraph) => subgraph.id),
+    ];
+    if (new Set(allIds).size !== allIds.length) {
+      return { ok: false, source, error: "节点与分区 ID 写回后仍有冲突" };
+    }
+    return addedNodeRewriteResult(source, newSource, "flowchart", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.nodes.find((n) => n.id === op.nodeId)!;
@@ -2448,7 +2513,7 @@ function parseState(source: string): ParseResult {
   let edgeOrder = 0;
   let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("state");
-  let inComposite = false;
+  let compositeDepth = 0;
   const ensureNode = (id: string, label = id, declared = false, span?: Span, labelSpan?: Span, kind: "state" | "start" | "end" | "choice" | "fork" | "composite" = "state") => {
     const existing = nodes.get(id);
     if (existing) {
@@ -2469,18 +2534,43 @@ function parseState(source: string): ParseResult {
       protectedSpans.push(lineSpan(line));
       continue;
     }
-    if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+    const compositeDeclaration = line.text.match(new RegExp(
+      String.raw`^(\s*)state\s+(?:"([^"]*)"\s+as\s+(${STATE_ENDPOINT_RE})|(${STATE_ENDPOINT_RE}))\s*\{\s*$`,
+      "u",
+    ));
+    if (compositeDeclaration) {
+      fullyRepresented = false;
+      const label = compositeDeclaration[2];
+      const id = compositeDeclaration[3] ?? compositeDeclaration[4]!;
+      const labelStart = label === undefined
+        ? undefined
+        : line.start + compositeDeclaration[1]!.length + `state "`.length;
+      ensureNode(
+        id,
+        label ?? id,
+        true,
+        lineSpan(line),
+        labelStart === undefined
+          ? undefined
+          : { start: labelStart, end: labelStart + label!.length },
+        "composite",
+      );
+      deleteProtectedNodeIds.add(id);
+      protectedSpans.push(lineSpan(line));
+      compositeDepth += 1;
+      continue;
+    }
+    if (/^note\b|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
       fullyRepresented = false;
       const specialDeclaration = trimmed.match(
-        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
+        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*<<\s*(?:choice|fork|join)\s*>>/iu,
       );
       if (specialDeclaration) deleteProtectedNodeIds.add(specialDeclaration[1]!);
       protectedSpans.push(lineSpan(line));
-      if (/\{/.test(trimmed)) inComposite = true;
       continue;
     }
     if (/^}$/.test(trimmed)) {
-      inComposite = false;
+      compositeDepth = Math.max(0, compositeDepth - 1);
       protectedSpans.push(lineSpan(line));
       continue;
     }
@@ -2508,7 +2598,7 @@ function parseState(source: string): ParseResult {
         syntaxKind: "-->",
         orderIndex,
         scopePath: [],
-        rewritable: !inComposite && !from.pseudo && !to.pseudo,
+        rewritable: compositeDepth === 0 && !from.pseudo && !to.pseudo,
         stmt: lineSpan(line),
       });
       continue;
@@ -2586,8 +2676,12 @@ function rewriteState(source: string, p: ParseResult, op: EditOp): RewriteResult
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label, "state"));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  state "${safeMermaidLabel(op.label)}" as ${id}\n`) };
+    const id = boundedUniqueMermaidId(
+      model.nodes.map((n) => n.id),
+      safeMermaidId(op.label, "state"),
+    );
+    const nextSource = insertBeforeSourceEnd(source, `  state "${safeMermaidLabel(op.label)}" as ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "state", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.nodes.find((n) => n.id === op.nodeId)!;
@@ -2752,8 +2846,10 @@ function rewriteEr(source: string, p: ParseResult, op: EditOp): RewriteResult {
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.entities.map((n) => n.id), safeMermaidId(op.label, "entity").toUpperCase());
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  ${id}\n`) };
+    const baseId = safeMermaidId(safeMermaidId(op.label, "entity").toUpperCase(), "ENTITY");
+    const id = boundedUniqueMermaidId(model.entities.map((n) => n.id), baseId);
+    const nextSource = insertBeforeSourceEnd(source, `  ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "er", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.entities.find((n) => n.id === op.nodeId)!;
@@ -2916,8 +3012,12 @@ function rewriteClass(source: string, p: ParseResult, op: EditOp): RewriteResult
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.classes.map((n) => n.id), safeMermaidId(op.label, "Class"));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  class ${id}\n`) };
+    const id = boundedUniqueMermaidId(
+      model.classes.map((n) => n.id),
+      safeMermaidId(op.label, "Class"),
+    );
+    const nextSource = insertBeforeSourceEnd(source, `  class ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "class", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.classes.find((n) => n.id === op.nodeId)!;
@@ -2954,6 +3054,38 @@ function unwrapMindmapNode(text: string): {
   return { id: text, label: text, open: "", close: "", wrapped: false };
 }
 
+function safeMindmapLabel(label: string): string {
+  const entities: Record<string, string> = {
+    "&": "&amp;",
+    '"': "&quot;",
+    "'": "&apos;",
+    "\\": "&#92;",
+    "[": "&#91;",
+    "]": "&#93;",
+    "(": "&#40;",
+    ")": "&#41;",
+    "{": "&#123;",
+    "}": "&#125;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "#": "&#35;",
+    ":": "&#58;",
+    "%": "&#37;",
+    "\r": "&#13;",
+    "\n": "<br>",
+  };
+  const encoded = label.replace(/[&"'\\[\](){}<>#:%\r\n]/g, (char) => entities[char]!);
+  return encoded.replace(/^\s+|\s+$/g, (whitespace) =>
+    [...whitespace].map((char) => `&#${char.codePointAt(0)};`).join("")
+  );
+}
+
+function displayMindmapLabel(value: string): string {
+  // 先还原编码器生成的真实换行，再解实体；这样用户输入的字面量 `<br>`
+  // 会以 `&lt;br&gt;` 往返，不会被误解码成换行。
+  return decodeMermaidEntities(value.replace(/<br\s*\/?>/gi, "\n"));
+}
+
 function parseMindmap(source: string): ParseResult {
   const lines = getLines(source);
   const header = lines.find((line) => /^\s*mindmap\b/.test(line.text));
@@ -2974,7 +3106,8 @@ function parseMindmap(source: string): ParseResult {
     }
     // ::class / #id::class / icon(...) 这类装饰语法仍不支持;形状包裹(`((..))` 等)
     // 现在能解析,不再标记为 unsupported(否则圆形根节点变只读且显示字面量)。
-    const unsupported = /::|#|^icon\(/i.test(trimmed);
+    const decorationProbe = trimmed.replace(/&#(?:\d+|x[0-9a-f]+);/gi, "");
+    const unsupported = /::|#|^icon\(/i.test(decorationProbe);
     if (unsupported) {
       protectedSpans.push(lineSpan(line));
       fullyRepresented = false;
@@ -2992,7 +3125,7 @@ function parseMindmap(source: string): ParseResult {
     const id = `mind-${hashText(path.join("/"))}`;
     const node: MindNode = {
       id,
-      label: parts.label,
+      label: displayMindmapLabel(parts.label),
       line: lineSpan(line),
       indent,
       children: [],
@@ -3051,7 +3184,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     if (!parent) return { ok: false, source, error: "父节点不存在" };
     const insertAt = subtreeEnd(source, parent);
     const indent = " ".repeat(parent.indent + 2);
-    const text = `${indent}${safeMermaidLabel(op.label)}\n`;
+    const text = `${indent}${safeMindmapLabel(op.label)}\n`;
     const beforeIds = new Set(nodes.map((item) => item.id));
     const newSource = insertAtLineBoundary(source, insertAt, text);
     const reparsed = parseMindmap(newSource);
@@ -3060,6 +3193,7 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     }
     const reparsedTree = reparsed.model as MindmapTree;
     const newNode = flattenMindmap(reparsedTree.root).find((n) => !beforeIds.has(n.id) && n.label === op.label && n.parentId === parent.id);
+    if (!newNode) return { ok: false, source, error: "mindmap 新节点标签无法完整往返" };
     return { ok: true, newNodeId: newNode?.id, source: newSource };
   }
   if (op.kind === "deleteNode") {
@@ -3078,10 +3212,17 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     // 保留原节点的 id 与形状包裹,只替换内部文本(否则改名会丢掉圆形/方形等形状)。
     const parts = unwrapMindmapNode(lineText.trim());
     const body = parts.wrapped
-      ? `${parts.id}${parts.open}${safeMermaidLabel(op.label)}${parts.close}`
-      : safeMermaidLabel(op.label);
+      ? `${parts.id}${parts.open}${safeMindmapLabel(op.label)}${parts.close}`
+      : safeMindmapLabel(op.label);
     const replacement = `${leading}${body}${newline}`;
     const newSource = applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: replacement }]);
+    const reparsed = parseMindmap(newSource);
+    const renamedNode = reparsed.ok && reparsed.model.type === "mindmap"
+      ? flattenMindmap(reparsed.model.root).find((item) => item.line.start === node!.line.start)
+      : undefined;
+    if (renamedNode?.label !== op.label) {
+      return { ok: false, source, error: "mindmap 节点标签无法完整往返" };
+    }
     const lengthDelta = replacement.length - (node!.line.end - node!.line.start);
     return mindmapRewriteResult(source, model, newSource, (oldLineStart) => {
       if (oldLineStart === node!.line.start) return node!.line.start;
@@ -3268,10 +3409,16 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     } else if (bracket) {
       const rawLabel = stripQuotes(bracket.content);
       label = displayMermaidLabel(rawLabel);
+      const leadingWhitespace = bracket.content.length - bracket.content.trimStart().length;
+      const trailingWhitespace = bracket.content.length - bracket.content.trimEnd().length;
       const quoteOffset = isQuoted(bracket.content) ? 1 : 0;
       const localOpenStart = id.length + restLeading;
-      const localLabelStart = localOpenStart + bracket.open.length + quoteOffset;
-      const localLabelEnd = localLabelStart + rawLabel.length;
+      const localContentStart = localOpenStart + bracket.open.length;
+      const localLabelStart = localContentStart + leadingWhitespace + quoteOffset;
+      const localLabelEnd = Math.max(
+        localLabelStart,
+        localContentStart + bracket.content.length - trailingWhitespace - quoteOffset,
+      );
       const localCloseStart = localOpenStart + bracket.closeStart;
       labelSpan = { start: absoluteStart + localLabelStart, end: absoluteStart + localLabelEnd };
       shapeOpenSpan = { start: absoluteStart + localOpenStart, end: absoluteStart + localOpenStart + bracket.open.length };
@@ -3675,6 +3822,18 @@ type FlowNodeRelocation =
 
 function preferredLineEnding(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function completeOpenFlowSubgraphs(source: string, model: FlowGraph): string {
+  const count = model.unclosedSubgraphCount ?? 0;
+  if (count === 0) return source;
+  const lineEnding = preferredLineEnding(source);
+  const prefix = source.endsWith("\n") ? "" : lineEnding;
+  const closings = Array.from(
+    { length: count },
+    (_, index) => `${"  ".repeat(count - index)}end`,
+  ).join(lineEnding);
+  return `${source}${prefix}${closings}${lineEnding}`;
 }
 
 function sourceInsertionPrefix(source: string, insertionAt: number): string {
@@ -4082,6 +4241,22 @@ function uniqueId(existing: Iterable<string>, base: string): string {
   return `${base}_${i}`;
 }
 
+function boundedUniqueMermaidId(
+  existing: Iterable<string>,
+  base: string,
+): string {
+  const used = new Set(existing);
+  if (!used.has(base)) return base;
+  let index = 2;
+  while (true) {
+    const suffix = `_${index}`;
+    const baseLimit = MAX_MERMAID_ID_GRAPHEMES - countGraphemes(suffix);
+    const candidate = `${truncateGraphemes(base, baseLimit)}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+    index += 1;
+  }
+}
+
 function spanContains(container: Span, inner: Span): boolean {
   return container.start <= inner.start && inner.end <= container.end;
 }
@@ -4099,6 +4274,29 @@ function modelNodes(model: DiagramModel): BaseNode[] {
     scopePath: node.scopePath,
     sourceRefs: node.sourceRefs,
   }));
+}
+
+function addedNodeRewriteResult(
+  source: string,
+  nextSource: string,
+  expectedType: DiagramType,
+  id: string,
+): RewriteResult {
+  const reparsed = parseDiagram(nextSource);
+  if (!reparsed.ok || reparsed.model.type !== expectedType) {
+    return { ok: false, source, error: reparsed.error ?? "新节点写回后无法重新解析" };
+  }
+  if (
+    countGraphemes(id) > MAX_MERMAID_ID_GRAPHEMES ||
+    !isStableMermaidId(id)
+  ) {
+    return { ok: false, source, error: "新节点 ID 写回校验失败" };
+  }
+  const matchingNodes = modelNodes(reparsed.model).filter((node) => node.id === id);
+  if (matchingNodes.length !== 1) {
+    return { ok: false, source, error: "新节点写回校验失败" };
+  }
+  return { ok: true, newNodeId: id, source: nextSource };
 }
 
 function modelEdges(model: DiagramModel): BaseEdge[] {

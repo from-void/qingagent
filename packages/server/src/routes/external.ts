@@ -38,6 +38,7 @@ import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import {
   getOrRestoreSession,
+  handleCommand,
   sessionExists,
   sessionManager,
 } from "../gateway/bridgeHandler";
@@ -62,8 +63,25 @@ const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
 const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
+const SESSION_SNAPSHOT_CURSOR_START = "start";
+const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
+const MAX_SESSION_SNAPSHOT_CURSORS = 32;
+const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
+let storedSessionSnapshotItems = 0;
+const sessionSnapshotCursors = new Map<string, {
+  sessions: ExternalSessionSummary[];
+  offset: number;
+  expiresAt: number;
+}>();
+
+type ExternalSessionSummary = {
+  id: string;
+  title: string;
+  state: ContentDocState["kind"];
+  updatedAt: string;
+};
 
 type ReviewOutcomeCompletionResult =
   | { status: "completed" }
@@ -132,13 +150,69 @@ externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
   const limit = clampedQueryInteger(c.req.query("limit"), DEFAULT_SESSIONS_LIMIT, 1, MAX_SESSIONS_LIMIT);
   const offset = clampedQueryInteger(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const cursor = c.req.query("cursor");
+  if (cursor !== undefined) {
+    let snapshot: { sessions: ExternalSessionSummary[]; offset: number } | null;
+    if (cursor === SESSION_SNAPSHOT_CURSOR_START) {
+      const sessions = await snapshotExternalSessions();
+      if (!sessions) {
+        return externalError(
+          c,
+          409,
+          "CONFLICT",
+          "会话数量过多，暂时无法建立稳定列表",
+          "请稍后重试",
+        );
+      }
+      snapshot = { sessions, offset: 0 };
+    } else {
+      snapshot = takeSessionSnapshotCursor(cursor);
+    }
+    if (!snapshot) {
+      return externalError(
+        c,
+        400,
+        "VALIDATION",
+        "会话分页游标已失效",
+        "重新运行 `qa sessions list --all`",
+      );
+    }
+    const page = sessionSnapshotPage(snapshot.sessions, snapshot.offset, limit);
+    externalLog("sessions", {
+      ms: elapsed(startedAt),
+      result: "ok",
+      count: page.sessions.length,
+      total: page.total,
+      hasMore: page.hasMore,
+    });
+    return c.json(page);
+  }
+  const page = await listExternalSessions(limit, offset);
+  externalLog("sessions", {
+    ms: elapsed(startedAt),
+    result: "ok",
+    count: page.sessions.length,
+    total: page.total,
+    hasMore: page.hasMore,
+  });
+  return c.json(page);
+});
+
+async function listExternalSessions(
+  limit: number,
+  offset: number,
+): Promise<{
+  sessions: ExternalSessionSummary[];
+  total: number;
+  hasMore: boolean;
+}> {
   // documents 与 Mastra thread 同库关联后再分页，孤儿行不会占用 total/offset。
   const { rows, total: persistedTotal } = await documentRepo.listWithExistingThreads({
     resourceId: QINGAGENT_RESOURCE_ID,
     perPage: limit,
     offset,
   });
-  const sessions: Array<{ id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }> = [];
+  const sessions: ExternalSessionSummary[] = [];
   for (const row of rows) {
     const session = await getOrRestoreSessionReadOnly(row.id);
     if (!session) continue;
@@ -149,12 +223,7 @@ externalRoutes.get("/sessions", async (c) => {
       updatedAt: row.updatedAt,
     });
   }
-  const memoryOnlySessions: Array<{
-    id: string;
-    title: string;
-    state: ContentDocState["kind"];
-    updatedAt: string;
-  }> = [];
+  const memoryOnlySessions: ExternalSessionSummary[] = [];
   const memorySessionIds = sessionManager.listSessionIds(50);
   // 当前页之外的真实落盘会话也不能作为内存会话重复出现；但仅有 documents
   // 孤儿行不算落盘列表会话，必须经同一条 thread 恢复路径确认。
@@ -197,19 +266,127 @@ externalRoutes.get("/sessions", async (c) => {
   sessions.push(...memoryPage);
   const mergedTotal = persistedTotal + memoryOnlySessions.length;
   const hasMore = offset + sessions.length < mergedTotal;
-  externalLog("sessions", {
-    ms: elapsed(startedAt),
-    result: "ok",
-    count: sessions.length,
-    total: mergedTotal,
-    hasMore,
-  });
-  return c.json({
+  return {
     sessions,
     total: mergedTotal,
     hasMore,
+  };
+}
+
+async function snapshotExternalSessions(): Promise<ExternalSessionSummary[] | null> {
+  const persistedRows = await documentRepo.listSessionSummariesWithExistingThreads({
+    resourceId: QINGAGENT_RESOURCE_ID,
+    limit: MAX_SESSION_SNAPSHOT_ITEMS + 1,
   });
-});
+  if (persistedRows.length > MAX_SESSION_SNAPSHOT_ITEMS) return null;
+
+  const sessions: ExternalSessionSummary[] = persistedRows.map((row) => ({
+    id: row.id,
+    title: row.title || "未命名草稿",
+    state: normalizedExternalSessionState(row.docState),
+    updatedAt: row.updatedAt,
+  }));
+  const persistedSessionIds = new Set(sessions.map((session) => session.id));
+  for (const sessionId of sessionManager.listSessionIds(50)) {
+    if (persistedSessionIds.has(sessionId)) continue;
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) continue;
+    sessions.push({
+      id: sessionId,
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
+      updatedAt: new Date().toISOString(),
+    });
+    if (sessions.length > MAX_SESSION_SNAPSHOT_ITEMS) return null;
+  }
+  return sessions;
+}
+
+function normalizedExternalSessionState(docState: string): ContentDocState["kind"] {
+  switch (docState) {
+    case "empty":
+    case "init":
+      return "empty";
+    case "pendingReview":
+    case "review":
+      return "pendingReview";
+    default:
+      return "editing";
+  }
+}
+
+function sessionSnapshotPage(
+  sessions: ExternalSessionSummary[],
+  offset: number,
+  limit: number,
+): {
+  sessions: ExternalSessionSummary[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+} {
+  const page = sessions.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const hasMore = nextOffset < sessions.length;
+  return {
+    sessions: page,
+    total: sessions.length,
+    hasMore,
+    nextCursor: hasMore
+      ? storeSessionSnapshotCursor(sessions, nextOffset)
+      : null,
+  };
+}
+
+function storeSessionSnapshotCursor(
+  sessions: ExternalSessionSummary[],
+  offset: number,
+): string {
+  pruneSessionSnapshotCursors();
+  while (
+    sessionSnapshotCursors.size >= MAX_SESSION_SNAPSHOT_CURSORS ||
+    storedSessionSnapshotItems + sessions.length > MAX_SESSION_SNAPSHOT_ITEMS
+  ) {
+    const oldest = sessionSnapshotCursors.keys().next().value as string | undefined;
+    if (!oldest) break;
+    deleteSessionSnapshotCursor(oldest);
+  }
+  const cursor = crypto.randomUUID();
+  sessionSnapshotCursors.set(cursor, {
+    sessions,
+    offset,
+    expiresAt: Date.now() + SESSION_SNAPSHOT_TTL_MS,
+  });
+  storedSessionSnapshotItems += sessions.length;
+  return cursor;
+}
+
+function takeSessionSnapshotCursor(
+  cursor: string,
+): { sessions: ExternalSessionSummary[]; offset: number } | null {
+  pruneSessionSnapshotCursors();
+  const snapshot = sessionSnapshotCursors.get(cursor);
+  if (!snapshot) return null;
+  deleteSessionSnapshotCursor(cursor);
+  return { sessions: snapshot.sessions, offset: snapshot.offset };
+}
+
+function pruneSessionSnapshotCursors(): void {
+  const now = Date.now();
+  for (const [cursor, snapshot] of sessionSnapshotCursors) {
+    if (snapshot.expiresAt <= now) deleteSessionSnapshotCursor(cursor);
+  }
+}
+
+function deleteSessionSnapshotCursor(cursor: string): void {
+  const snapshot = sessionSnapshotCursors.get(cursor);
+  if (!snapshot) return;
+  sessionSnapshotCursors.delete(cursor);
+  storedSessionSnapshotItems = Math.max(
+    0,
+    storedSessionSnapshotItems - snapshot.sessions.length,
+  );
+}
 
 externalRoutes.post("/sessions", async (c) => {
   const startedAt = Date.now();
@@ -404,13 +581,89 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     });
     return externalError(c, 400, "VALIDATION", "expectedDocVersion、patchId、verdict 不合法");
   }
-  const session = await getOrRestoreSession(sessionId);
-  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
-  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
+  const {
+    expectedDocVersion,
+    patchId,
+    verdict,
+  } = body as ExternalReviewVerdictRequest;
+  const command: Command = verdict === "accepted"
+    ? { kind: "acceptPatch", data: { id: patchId } }
+    : { kind: "rejectPatch", data: { id: patchId } };
+  const client = parseExternalClient(c.req.header("x-qa-client"));
+  const modelOverrides = await resolveRequestModelOverrides({});
+  type AtomicResult =
+    | { kind: "session_not_found" }
+    | { kind: "agent_busy" }
+    | { kind: "version_conflict"; actual: number }
+    | { kind: "no_pending_review" }
+    | { kind: "patch_not_found" }
+    | {
+        kind: "marked";
+        saved: boolean;
+        docVersion: number;
+        reviewingCount: number;
+      };
+  const atomic = {
+    result: { kind: "session_not_found" } as AtomicResult,
+  };
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) {
+        atomic.result = { kind: "session_not_found" };
+        return;
+      }
+      if (deriveAgentBusy(session)) {
+        atomic.result = { kind: "agent_busy" };
+        return;
+      }
+      if (session.docVersion !== expectedDocVersion) {
+        atomic.result = { kind: "version_conflict", actual: session.docVersion };
+        return;
+      }
+      if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+        atomic.result = { kind: "no_pending_review" };
+        return;
+      }
+      if (!session.suggestions.has(patchId)) {
+        atomic.result = { kind: "patch_not_found" };
+        return;
+      }
+
+      yield* handleCommand(
+        command,
+        undefined,
+        "external",
+        modelOverrides,
+        client,
+        sessionId,
+      );
+      const updated = session.suggestions.get(patchId);
+      atomic.result = {
+        kind: "marked",
+        saved: updated?.suggestion.status === verdict,
+        docVersion: session.docVersion,
+        reviewingCount: countReviewingPatches(session.suggestions.values()),
+      };
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
   }
-  if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+  const atomicResult = atomic.result;
+  if (atomicResult.kind === "session_not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (atomicResult.kind === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (atomicResult.kind === "version_conflict") {
+    return reviewVersionConflict(c, expectedDocVersion, atomicResult.actual, maxSeq(frames));
+  }
+  if (atomicResult.kind === "no_pending_review") {
     return externalError(
       c,
       409,
@@ -419,7 +672,7 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
       "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
     );
   }
-  if (!session.suggestions.has(body.patchId)) {
+  if (atomicResult.kind === "patch_not_found") {
     return externalError(
       c,
       404,
@@ -428,28 +681,7 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
       "用 `qa review list -s <id>` 重读待审修改列表",
     );
   }
-  const command: Command = body.verdict === "accepted"
-    ? { kind: "acceptPatch", data: { id: body.patchId } }
-    : { kind: "rejectPatch", data: { id: body.patchId } };
-  let frames: LoggedFrame[];
-  try {
-    frames = await sessionManager.submit(sessionId, {
-      command,
-      origin: "external",
-      client: parseExternalClient(c.req.header("x-qa-client")),
-      modelOverrides: await resolveRequestModelOverrides({}),
-    });
-  } catch (error) {
-    if (error instanceof SessionActorQueueFullError) {
-      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
-    }
-    throw error;
-  }
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
-  }
-  const updated = session.suggestions.get(body.patchId);
-  if (!updated || updated.suggestion.status !== body.verdict) {
+  if (!atomicResult.saved) {
     return externalError(
       c,
       409,
@@ -463,14 +695,14 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     sessionId,
     ms: elapsed(startedAt),
     result: "marked",
-    verdict: body.verdict,
+    verdict,
   });
   return c.json({
     status: "marked" as const,
-    docVersion: session.docVersion,
-    patchIds: [body.patchId],
-    verdict: body.verdict,
-    reviewingCount: countReviewingPatches(session.suggestions.values()),
+    docVersion: atomicResult.docVersion,
+    patchIds: [patchId],
+    verdict,
+    reviewingCount: atomicResult.reviewingCount,
     seq,
   });
 });

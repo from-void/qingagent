@@ -173,6 +173,47 @@ describe("handleCommand material commands", () => {
     expect(schedulePersist).toHaveBeenCalledWith(session, "command:updateMaterialSummary");
   });
 
+  it("素材已不存在时摘要更新先发权威删除再明确失败，删除仍幂等", async () => {
+    const { bridge, schedulePersist, deleteUploadedFile } = await loadBridge();
+    const session = await createSession(bridge);
+    const missingMaterialId = "missing-material";
+
+    const update = bridge.handleCommand(
+      updateMaterialSummaryCommand(session.sessionId, missingMaterialId),
+    );
+    await expect(update.next()).resolves.toEqual({
+      done: false,
+      value: {
+        kind: "resourceRemoved",
+        data: {
+          resourceRef: {
+            id: missingMaterialId,
+            domain: { kind: "file" },
+          },
+        },
+      },
+    });
+    await expect(update.next()).rejects.toThrow("Material not found");
+
+    await expect(collectFrames(
+      bridge.handleCommand(
+        removeMaterialCommand(session.sessionId, missingMaterialId),
+      ),
+    )).resolves.toEqual([
+      {
+        kind: "resourceRemoved",
+        data: {
+          resourceRef: {
+            id: missingMaterialId,
+            domain: { kind: "file" },
+          },
+        },
+      },
+    ]);
+    expect(schedulePersist).not.toHaveBeenCalled();
+    expect(deleteUploadedFile).not.toHaveBeenCalled();
+  });
+
   it("removes a material, clears extraction cache, deletes the unshared upload, and emits resourceRemoved", async () => {
     const { bridge, schedulePersist, deleteUploadedFile } = await loadBridge();
     const session = await createSession(bridge);

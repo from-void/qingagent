@@ -365,6 +365,49 @@ describe("external review", () => {
     });
   });
 
+  it("审阅命令排队期间文档版本变化时不写入 verdict", async () => {
+    const { sessionId, patchIds } = await createPendingReview();
+    const patchId = patchIds[0]!;
+    const session = await getOrRestoreSession(sessionId);
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const queuedWrite = sessionManager.runExclusive(sessionId, async function* () {
+      markWriteStarted();
+      await writeGate;
+      session!.docVersion += 1;
+    });
+    await writeStarted;
+
+    const runExclusive = vi.spyOn(sessionManager, "runExclusive");
+    const verdictResponse = request(`/sessions/${sessionId}/review/verdicts`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 1,
+        patchId,
+        verdict: "accepted",
+      }),
+    });
+    await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(1));
+    releaseWrite();
+    await queuedWrite;
+
+    const response = await verdictResponse;
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "VERSION_CONFLICT",
+      expected: 1,
+      actual: 2,
+    });
+    expect(session!.suggestions.get(patchId)?.suggestion.status).toBe("reviewing");
+    expect(session!.patchVerdicts.has(patchId)).toBe(false);
+  });
+
   it("读取并忽略批注，事件 allowlist 保留 annotationGroupsReady", async () => {
     const sessionId = await createDocument();
     const session = await getOrRestoreSession(sessionId);
@@ -466,6 +509,8 @@ describe("external review", () => {
       anchors: [],
     }];
     vi.spyOn(sessionManager, "submit")
+      .mockRejectedValue(new SessionActorQueueFullError(64));
+    vi.spyOn(sessionManager, "runExclusive")
       .mockRejectedValue(new SessionActorQueueFullError(64));
 
     const response = await request(path(sessionId), {

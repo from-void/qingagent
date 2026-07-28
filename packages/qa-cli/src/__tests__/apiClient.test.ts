@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiClient, detectQaClient } from "../apiClient.js";
+import {
+  API_REQUEST_DEADLINE_MS,
+  ApiClient,
+  detectQaClient,
+} from "../apiClient.js";
 import { QaCliError } from "../errors.js";
 
 vi.mock("../discovery.js", () => ({
@@ -34,7 +38,7 @@ describe("ApiClient", () => {
     expect(detectQaClient({ AI_AGENT: "other-agent" })).toBe("agent");
   });
 
-  it("非 JSON 错误体降级为 VALIDATION 并保留文本摘要", async () => {
+  it("非 JSON 5xx 归类为中性服务故障且不暴露内部错误", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response("server exploded", { status: 500, statusText: "Internal Server Error" }),
     ) as typeof fetch;
@@ -42,9 +46,61 @@ describe("ApiClient", () => {
 
     await expect(client.request("/boom")).rejects.toMatchObject({
       name: "QaCliError",
-      code: "VALIDATION",
-      message: "server exploded",
+      code: "SERVICE_UNAVAILABLE",
+      message: "青简服务暂时不可用",
     } satisfies Partial<QaCliError>);
+  });
+
+  it("JSON 5xx 不信任服务端业务分类，统一归类为服务故障", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        code: "VALIDATION",
+        error: "database exploded",
+        nextStep: "修改提案",
+      }), { status: 503 }),
+    ) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/boom")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "SERVICE_UNAVAILABLE",
+      message: "青简服务暂时不可用",
+    } satisfies Partial<QaCliError>);
+  });
+
+  it("普通 API 网络异常归类为实例不可达", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/sessions")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "NO_INSTANCE",
+      message: "实例不可达",
+    } satisfies Partial<QaCliError>);
+  });
+
+  it("普通 API 悬挂到 deadline 后归类为实例不可达", async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = vi.fn((_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      }),
+    ) as typeof fetch;
+    const client = await ApiClient.create();
+    const request = client.request("/sessions");
+    const rejected = expect(request).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "NO_INSTANCE",
+      message: "实例请求超时",
+    } satisfies Partial<QaCliError>);
+
+    await vi.advanceTimersByTimeAsync(API_REQUEST_DEADLINE_MS);
+
+    await rejected;
   });
 
   it.each([

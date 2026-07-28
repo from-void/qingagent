@@ -956,6 +956,49 @@ describe("aiIrRoundTrip", () => {
     expect(image?.type === "image" ? image.attrs.title : undefined).toBe("图片标题");
   });
 
+  it("大写 HTTP(S) 链接及 title 在 PM→AI-IR→PM 往返中保留", () => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "link-paragraph" },
+        content: [{
+          type: "text",
+          text: "资料",
+          marks: [{
+            type: "link",
+            attrs: { href: "HTTPS://example.com/reference", title: "参考资料" },
+          }],
+        }],
+      }],
+    };
+
+    expect(safeParsePmDoc(source).success).toBe(true);
+    const ir = pmToAiIr(source);
+    expect(aiBlockSchema.safeParse(ir.blocks[0]).success).toBe(true);
+    expect(ir.blocks[0]).toMatchObject({
+      type: "paragraph",
+      runs: [{
+        text: "资料",
+        marks: [{ type: "link", href: "HTTPS://example.com/reference", title: "参考资料" }],
+      }],
+    });
+
+    const roundTrip = aiIrToPm(ir);
+    expect(roundTrip.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [{
+        type: "text",
+        text: "资料",
+        marks: [{
+          type: "link",
+          attrs: { href: "HTTPS://example.com/reference", title: "参考资料" },
+        }],
+      }],
+    });
+  });
+
   it.each([0, -3])("orderedList.start=%i 在 canonical 与 AI-IR 间往返保留", (start) => {
     const source: PmDoc = {
       type: "doc",

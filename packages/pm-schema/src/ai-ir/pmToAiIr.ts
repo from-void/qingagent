@@ -210,8 +210,12 @@ function markToAi(mark: PmMark): AiRunMark {
     case "strike":
     case "code":
       return { type: mark.type };
-    case "link":
-      return { type: "link", href: mark.attrs.href };
+    case "link": {
+      const title = mark.attrs.title;
+      return typeof title === "string"
+        ? { type: "link", href: mark.attrs.href, title }
+        : { type: "link", href: mark.attrs.href };
+    }
     case "textColor":
       return { type: "textColor", color: mark.attrs.color };
     case "highlight":

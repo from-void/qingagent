@@ -137,12 +137,18 @@ export function sectionText(section: LegacySection): string {
 export function pmDocToPlainExportText(doc: PmDoc): string {
   // PM 已是结构化节点，pmToPlainText 直接取 textContent；此处再按字符串猜 HTML/Markdown
   // 会把用户手打的 `<name>` 等字面内容误删。
-  return pmToPlainText(doc)
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join("\n\n");
+  // 逐个顶层块序列化，只由导出层在块之间补一个空行。不能把整篇文本拆行后 trim，
+  // 否则 codeBlock 内的缩进、空行与相邻代码行都会被破坏。
+  const blocks = doc.content
+    .map((node) => pmToPlainText({ ...doc, content: [node] }).replace(/\r\n?/g, "\n"))
+    .filter((text) => text.length > 0);
+  return blocks.reduce(
+    (output, text) =>
+      output.length === 0
+        ? text
+        : `${output}${output.endsWith("\n") ? "\n" : "\n\n"}${text}`,
+    "",
+  );
 }
 
 // 上传 id 必须是 UUID（generateSvg 用 randomUUID 生成）；文件名只解码最后一个 URL segment，

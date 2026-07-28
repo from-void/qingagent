@@ -116,6 +116,34 @@ describe("documentDerivativesRepo", () => {
     expect((await getDerivativeMeta(meta.docId))?.coverTemplate).toBe("wenkai");
   });
 
+  it("更新参数拒绝其他平台写作模板，并校验目标衍生稿存在", async () => {
+    await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
+    const meta = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "",
+    });
+
+    await expect(updateParams(
+      meta.docId,
+      "xhs-recommend",
+      "错误平台参数",
+    )).rejects.toThrow("未知的写作风格模板");
+    expect(await getDerivativeMeta(meta.docId)).toMatchObject({
+      dtype: "gzh",
+      writingStyleId: "gzh-opinion",
+      privatePrompt: "",
+    });
+
+    await expect(updateParams(
+      "missing-derivative",
+      "gzh-opinion",
+      "",
+    )).rejects.toThrow("衍生稿不存在");
+  });
+
   it("翻译按目标语言一行，重选同语言复用且可独立删除", async () => {
     await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
     const english = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "translate", templateId: "translate-faithful", targetLang: "英语", privatePrompt: "" });

@@ -253,6 +253,7 @@ describe("document write guard", () => {
     await documentRepo.save(documentInput(sessionId, { threadId: sessionId }));
     const client = getDocumentsClient();
     const originalExecute = client.execute.bind(client);
+    const originalBatch = client.batch.bind(client);
     let releaseSql!: () => void;
     let sqlEntered!: () => void;
     const sqlGate = new Promise<void>((resolve) => {
@@ -262,16 +263,21 @@ describe("document write guard", () => {
       sqlEntered = resolve;
     });
     let shouldDelay = true;
-    vi.spyOn(client, "execute").mockImplementation(async (statement) => {
-      const sql = String(
-        (statement as unknown as { sql?: unknown }).sql ?? statement,
-      );
-      if (shouldDelay && sql.includes("INSERT INTO documents")) {
+    vi.spyOn(client, "batch").mockImplementation(async (statements, mode) => {
+      const includesDocumentUpsert = statements.some((statement) => {
+        const sql = Array.isArray(statement)
+          ? statement[0]
+          : typeof statement === "string"
+            ? statement
+            : statement.sql;
+        return String(sql).includes("INSERT INTO documents");
+      });
+      if (shouldDelay && includesDocumentUpsert) {
         shouldDelay = false;
         sqlEntered();
         await sqlGate;
       }
-      return originalExecute(statement);
+      return originalBatch(statements, mode);
     });
 
     const lateWrite = documentRepo.save(documentInput(sessionId, {
@@ -290,6 +296,38 @@ describe("document write guard", () => {
       args: [sessionId, sessionId],
     });
     expect(Number(result.rows[0]?.n ?? 0)).toBe(0);
+  });
+
+  it("F6: 墓碑期间既有文档的同版本元数据保持不变且迟到保存无感结束", async () => {
+    const sessionId = "metadata-write-fence";
+    const original = documentInput(sessionId, {
+      threadId: sessionId,
+      title: "删除前标题",
+      docState: "editing",
+      lastSyncedVersion: 1,
+    });
+    await documentRepo.save(original);
+    setDocumentWriteGuard(null);
+    await beginSessionDeletion(sessionId);
+
+    await expect(documentRepo.save({
+      ...original,
+      title: "不得写入的新标题",
+      docState: "ready",
+      lastSyncedVersion: 2,
+      updatedAt: "2026-07-20T00:00:02.000Z",
+    })).resolves.toBeUndefined();
+
+    const result = await getDocumentsClient().execute({
+      sql: `SELECT title, doc_state, last_synced_version
+        FROM documents WHERE id = ?`,
+      args: [sessionId],
+    });
+    expect(result.rows[0]).toMatchObject({
+      title: "删除前标题",
+      doc_state: "editing",
+      last_synced_version: 1,
+    });
   });
 
   it("F6: 持久化墓碑同时保护 save 与 saveMany", async () => {

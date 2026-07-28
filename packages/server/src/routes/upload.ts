@@ -6,8 +6,15 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { findMaterial } from "../gateway/bridgeHandler";
-import { UPLOAD_DIR, findOrStoreUploadedFile, isValidUploadId, isWithinUploadDir } from "../lib/uploadStorage";
+import { removeUnpairedSurrogates } from "@qingagent/contract-ts";
+import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
+import {
+  UPLOAD_DIR,
+  findOrStoreUploadedFile,
+  findUploadedFileRecord,
+  isValidUploadId,
+  isWithinUploadDir,
+} from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { resolveUploadMaxBytes, uploadBodyMaxBytes } from "../lib/uploadLimits";
 import { parseBody } from "../lib/validation";
@@ -34,6 +41,28 @@ function sanitizeFilename(filename: string): string {
   return filename.replace(/[^\w.\-]/g, "_");
 }
 
+function encodeDispositionFilename(filename: string): string {
+  const withoutControls = removeUnpairedSurrogates(filename)
+    .replace(/[\u0000-\u001f\u007f]/g, "_");
+  return encodeURIComponent(withoutControls).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/** 只保留单一 MIME 与可选 charset，拒绝控制字符及其它可注入参数。 */
+function normalizeMimeType(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const matched = /^([a-z0-9!#$&^_.+-]+)\/([a-z0-9!#$&^_.+-]+)(?:\s*;\s*charset=([a-z0-9._-]+))?$/i.exec(
+    raw.trim(),
+  );
+  if (!matched) return null;
+  const baseType = `${matched[1]!.toLowerCase()}/${matched[2]!.toLowerCase()}`;
+  return matched[3]
+    ? `${baseType}; charset=${matched[3].toLowerCase()}`
+    : baseType;
+}
+
 /** Map file extension to MIME type for serving. */
 function mimeFromExt(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
@@ -53,6 +82,13 @@ function mimeFromExt(filename: string): string {
     ".xml": "application/xml; charset=utf-8",
   };
   return map[ext] ?? "application/octet-stream";
+}
+
+function contentTypeForUpload(filename: string, persistedMimeType: string | null | undefined): string {
+  const persisted = normalizeMimeType(persistedMimeType);
+  return persisted && persisted !== "application/octet-stream"
+    ? persisted
+    : mimeFromExt(filename);
 }
 
 const INLINE_SAFE_CONTENT_TYPES = new Set([
@@ -101,7 +137,7 @@ uploadRoutes.post(
     if (buffer.byteLength > uploadMaxBytes) {
       return c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413);
     }
-    const normalizedMimeType = mimeType || "application/octet-stream";
+    const normalizedMimeType = normalizeMimeType(mimeType) ?? "application/octet-stream";
     let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
     try {
       stored = await findOrStoreUploadedFile({
@@ -161,12 +197,13 @@ async function handleFileRequest(c: Context) {
 
   if (files.length === 0) return c.json({ error: "not found" }, 404);
 
-  const filename = files[0]!;
+  const record = await findUploadedFileRecord(fileId);
+  const filename = record?.filename ?? files.sort()[0]!;
   const filePath = path.resolve(dir, filename);
   if (!isWithinUploadDir(filePath)) {
     return c.json({ error: "not found" }, 404);
   }
-  const contentType = mimeFromExt(filename);
+  const contentType = contentTypeForUpload(filename, record?.mimeType);
 
   let stat: Awaited<ReturnType<typeof fs.stat>>;
   try {
@@ -176,11 +213,15 @@ async function handleFileRequest(c: Context) {
   }
 
   const safeName = sanitizeFilename(filename);
+  const encodedName = encodeDispositionFilename(filename);
   const disposition = shouldServeInline(contentType) ? "inline" : "attachment";
   c.header("Content-Type", contentType);
   c.header("Content-Length", String(stat.size));
   c.header("X-Content-Type-Options", "nosniff");
-  c.header("Content-Disposition", `${disposition}; filename="${safeName}"`);
+  c.header(
+    "Content-Disposition",
+    `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodedName}`,
+  );
 
   return stream(c, async (s) => {
     const nodeStream = createReadStream(filePath);
@@ -206,7 +247,8 @@ uploadRoutes.get("/materials/:materialId/text", async (c) => {
     return c.json({ error: "sessionId query parameter required" }, 400);
   }
 
-  const material = findMaterial(sessionId, materialId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
+  const material = session?.materials.get(materialId);
 
   if (!material) {
     return c.json({ error: "not found" }, 404);

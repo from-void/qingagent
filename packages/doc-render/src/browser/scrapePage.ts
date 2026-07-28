@@ -438,9 +438,17 @@ export async function scrapeWithBrowserImpl(
           clean(document.title) ||
           meta('meta[property="og:title"]') ||
           location.hostname;
-        const ogImageUrl =
+        const ogImageContent =
           meta('meta[property="og:image"]') ||
           meta('meta[name="twitter:image"]');
+        let ogImageUrl: string | null = null;
+        if (ogImageContent) {
+          try {
+            ogImageUrl = new URL(ogImageContent, location.href).href;
+          } catch {
+            // 非法 meta 地址不应让已成功提取的正文一起失败。
+          }
+        }
         const images = Array.from(document.querySelectorAll("img[src]"))
           .map((img) => ({
             src: (img as HTMLImageElement).src,

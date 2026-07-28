@@ -220,6 +220,43 @@ describe("usageRepo", () => {
     expect(rows.some((row) => row.sessionId === "outside-window")).toBe(false);
   });
 
+  it("最近会话限制按 session 选取并完整返回其中所有调用点和模型", async () => {
+    for (const event of [
+      { sessionId: "session-old", callSite: "agent", modelId: "model-a" },
+      { sessionId: "session-middle", callSite: "agent", modelId: "model-a" },
+      { sessionId: "session-latest", callSite: "agent", modelId: "model-a" },
+      { sessionId: "session-latest", callSite: "askUser", modelId: "model-b" },
+    ]) {
+      await recordUsageEvent({
+        ...event,
+        keyOrigin: "visitor",
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+    }
+    const client = getDocumentsClient();
+    for (const [sessionId, createdAt] of [
+      ["session-old", "2026-07-28T01:00:00.000Z"],
+      ["session-middle", "2026-07-28T02:00:00.000Z"],
+      ["session-latest", "2026-07-28T03:00:00.000Z"],
+    ] as const) {
+      await client.execute({
+        sql: "UPDATE llm_usage_events SET created_at = ? WHERE session_id = ?",
+        args: [createdAt, sessionId],
+      });
+    }
+
+    const rows = await aggregateUsageBySession(2);
+    expect([...new Set(rows.map((row) => row.bucket))].sort()).toEqual([
+      "session-latest",
+      "session-middle",
+    ]);
+    expect(rows.filter((row) => row.bucket === "session-latest")).toEqual([
+      expect.objectContaining({ callSite: "agent", modelId: "model-a" }),
+      expect.objectContaining({ callSite: "askUser", modelId: "model-b" }),
+    ]);
+  });
+
   it("Anthropic 只有 cache read/creation、miss 未知时命中率保持 null", async () => {
     await recordUsageEvent({
       sessionId: "session-glm",

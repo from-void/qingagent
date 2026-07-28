@@ -66,4 +66,17 @@ describe('getVerticalTextLayout', () => {
     expect(layout.text).toMatch(/…$/);
     expect(layout.width).toBe(44);
   });
+
+  it('按字素截断 emoji、扩展汉字与组合附加符，并让省略号占一个槽位', () => {
+    const unicodeElement = {
+      ...element,
+      height: 48,
+      fontSize: 16,
+      letterSpacing: 0,
+      maxLines: 2,
+    };
+
+    expect(getVerticalTextLayout('甲𠮷👨‍👩‍👧‍👦e\u0301乙丙丁', unicodeElement, 1.5).text)
+      .toBe('甲𠮷👨‍👩‍👧‍👦e\u0301乙…');
+  });
 });

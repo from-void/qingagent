@@ -15,6 +15,7 @@ import {
 } from "@qingagent/core";
 
 const CACHE_TTL_MS = 30_000;
+const CACHE_FAILURE_TTL_MS = 1_000;
 
 interface CachedSettings {
   expiresAt: number;
@@ -24,8 +25,10 @@ interface CachedSettings {
 }
 
 let cachedSettings: CachedSettings | null = null;
+let cacheGeneration = 0;
 
 export function invalidateModelOverridesCache(): void {
+  cacheGeneration += 1;
   cachedSettings = null;
 }
 
@@ -106,29 +109,47 @@ async function readCachedSettings(): Promise<CachedSettings> {
   const now = Date.now();
   if (cachedSettings && cachedSettings.expiresAt > now) return cachedSettings;
 
-  try {
-    const [deepseekKeyRaw, kimiKeyRaw, providerRaw, paramsRaw] = await Promise.all([
+  const generation = cacheGeneration;
+  const previous = cachedSettings;
+  const [deepseekKeyResult, kimiKeyResult, providerResult, paramsResult] =
+    await Promise.allSettled([
       getAppSetting(SETTING_DEEPSEEK_GLOBAL_KEY),
       getAppSetting(SETTING_KIMI_GLOBAL_KEY),
       getAppSetting(SETTING_MODEL_PROVIDER),
       getAppSetting(SETTING_MODEL_PARAMS),
     ]);
-    const deepseekKey = sanitizeApiKey(deepseekKeyRaw);
-    const kimiKey = sanitizeApiKey(kimiKeyRaw);
-    cachedSettings = {
-      expiresAt: now + CACHE_TTL_MS,
-      provider: sanitizeModelProvider(providerRaw),
-      globalApiKeys: {
-        ...(deepseekKey ? { deepseek: deepseekKey } : {}),
-        ...(kimiKey ? { kimi: kimiKey } : {}),
-      },
-      params: parseStoredParams(paramsRaw),
-    };
-    return cachedSettings;
-  } catch {
-    cachedSettings = { expiresAt: now + CACHE_TTL_MS };
-    return cachedSettings;
+  const hadFailure = [
+    deepseekKeyResult,
+    kimiKeyResult,
+    providerResult,
+    paramsResult,
+  ].some((result) => result.status === "rejected");
+  const deepseekKey = deepseekKeyResult.status === "fulfilled"
+    ? sanitizeApiKey(deepseekKeyResult.value)
+    : previous?.globalApiKeys?.deepseek;
+  const kimiKey = kimiKeyResult.status === "fulfilled"
+    ? sanitizeApiKey(kimiKeyResult.value)
+    : previous?.globalApiKeys?.kimi;
+  const nextSettings: CachedSettings = {
+    expiresAt: now + (hadFailure ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS),
+    provider: providerResult.status === "fulfilled"
+      ? sanitizeModelProvider(providerResult.value)
+      : previous?.provider,
+    globalApiKeys: {
+      ...(deepseekKey ? { deepseek: deepseekKey } : {}),
+      ...(kimiKey ? { kimi: kimiKey } : {}),
+    },
+    params: paramsResult.status === "fulfilled"
+      ? parseStoredParams(paramsResult.value)
+      : previous?.params,
+  };
+
+  // 设置保存会推进代次；旧读取不得在失效后发布，必须按新代重新读取。
+  if (generation !== cacheGeneration) {
+    return readCachedSettings();
   }
+  cachedSettings = nextSettings;
+  return nextSettings;
 }
 
 export interface RequestModelHeaders {

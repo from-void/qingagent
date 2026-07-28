@@ -15,7 +15,12 @@ import {
 import { deriveDocDimensions } from "./docDimensions";
 import { canEditDocument, workspaceDataAttrs } from "./workspacePageView";
 import { resources } from "../../../system/resources";
+import {
+  resourceMutationKey,
+  workspaceMutations,
+} from "./revisionedMutation";
 import type { AnnotationGroup, DocumentSnapshot, FolderSource } from "@qingagent/contract-ts";
+import { reconcileAssetPreview, toAssetSource } from "./sources";
 
 function reduce(...frames: WorkspaceAction[]) {
   return frames.reduce(workspaceReducer, initialWorkspaceState);
@@ -1408,6 +1413,53 @@ describe("annotationGroupsReady 来源增量", () => {
       );
       expect(next.resourceRefs).toHaveLength(0);
       expect(resources.get(ref)).toBeNull();
+    });
+
+    it("远端删除会使同素材摘要 mutation 失效，迟到失败不得复活素材", async () => {
+      const ref = { id: "race-material", domain: { kind: "file" } as const };
+      const original = {
+        resourceRef: ref,
+        displayName: "race.pdf",
+        summary: "旧摘要",
+        mime: "application/pdf",
+        byteLen: 100,
+        createdAt: "2026-05-08T00:00:00Z",
+        metadata: null,
+      };
+      const seeded = workspaceReducer(initialWorkspaceState, {
+        kind: "resourceUpserted",
+        data: { resource: original },
+      });
+      let rejectUpdate!: (reason: Error) => void;
+      const update = workspaceMutations.tryRun(
+        resourceMutationKey(ref.domain.kind, ref.id),
+        {
+          capture: () => original,
+          applyOptimistic: () => resources.applyUpdate(ref, "乐观摘要"),
+          commit: () => new Promise<void>((_resolve, reject) => {
+            rejectUpdate = reject;
+          }),
+          rollback: (previous) => {
+            if (resources.get(ref)) resources.upsert(previous);
+          },
+        },
+      );
+      expect(update).not.toBeNull();
+      expect(resources.list({ kind: "file" })).toHaveLength(1);
+      await Promise.resolve();
+
+      const removed = workspaceReducer(seeded, {
+        kind: "resourceRemoved",
+        data: { resourceRef: ref },
+      });
+      rejectUpdate(new Error("Material not found"));
+      await expect(update!.promise).rejects.toThrow("Material not found");
+
+      expect(removed.resourceRefs).toEqual([]);
+      expect(resources.list({ kind: "file" })).toEqual([]);
+      expect(resources.get(ref)).toBeNull();
+      expect(reconcileAssetPreview(toAssetSource(original), resources.list({ kind: "file" })))
+        .toBeNull();
     });
   });
 

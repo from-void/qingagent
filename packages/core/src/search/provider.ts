@@ -11,6 +11,8 @@ export type { SearchResult } from "./parseDuckDuckGo.js";
 
 export interface SearchOptions {
   signal?: AbortSignal;
+  /** 设置页连通性探测：保留网络、HTTP 和解析错误，正常搜索仍保持 best-effort。 */
+  strict?: boolean;
 }
 
 export interface SearchProvider {
@@ -57,8 +59,10 @@ export class DuckDuckGoProvider implements SearchProvider {
     const limit = Math.max(0, Math.floor(count));
     if (!query.trim() || limit <= 0) return [];
 
+    let receivedValidResponse = false;
+    let lastError: unknown;
     for (const endpoint of ENDPOINTS) {
-      if (shouldSkipSearchProvider(endpoint.healthId)) continue;
+      if (!options?.strict && shouldSkipSearchProvider(endpoint.healthId)) continue;
       try {
         const results = await this.searchOne(
           endpoint.url,
@@ -66,10 +70,16 @@ export class DuckDuckGoProvider implements SearchProvider {
           query,
           limit,
           options?.signal,
+          options?.strict,
         );
+        receivedValidResponse = true;
         if (results.length > 0) return results;
       } catch (err) {
-        if (options?.signal?.aborted) return [];
+        lastError = err;
+        if (options?.signal?.aborted) {
+          if (options.strict) throw err;
+          return [];
+        }
         if (isConnectionFailure(err)) {
           markSearchProviderQuota(endpoint.healthId, 10 * 60 * 1000);
         }
@@ -77,15 +87,25 @@ export class DuckDuckGoProvider implements SearchProvider {
       }
     }
 
+    if (options?.strict && !receivedValidResponse) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("DuckDuckGo search failed");
+    }
     return [];
   }
 
   private async searchOne(
     endpoint: string,
-    parse: (html: string, limit: number) => SearchResult[],
+    parse: (
+      html: string,
+      limit: number,
+      options?: { strict?: boolean },
+    ) => SearchResult[],
     query: string,
     limit: number,
     signal?: AbortSignal,
+    strict?: boolean,
   ): Promise<SearchResult[]> {
     const url = await validateFetchUrl(endpoint);
     const response = await fetch(url, {
@@ -107,6 +127,6 @@ export class DuckDuckGoProvider implements SearchProvider {
       Buffer.from(await response.arrayBuffer()),
       response.headers.get("content-type"),
     );
-    return parse(html, limit);
+    return parse(html, limit, { strict });
   }
 }

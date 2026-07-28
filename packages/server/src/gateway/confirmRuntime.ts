@@ -466,6 +466,7 @@ export async function* handleConfirmDecision(
   session._abortController = abortController;
   session._activeTurnPromise = completion.promise;
   let resolvedEmitted = false;
+  let approvalMayHaveStartedExecution = false;
   let storedGrantApprovals: Array<{
     pending: PendingConfirm;
     decisionId: string;
@@ -508,10 +509,17 @@ export async function* handleConfirmDecision(
       abortSignal: abortController.signal,
       toolsets,
     };
+    const resumeOperation = (() => {
+      if (submission.decision.accepted) {
+        // Mastra 的 approveToolCall 会在 Promise 返回前进入 resumeStream/执行链。
+        // 跨过调用边界后，超时或异常都不能再保证命令尚未产生副作用。
+        approvalMayHaveStartedExecution = true;
+        return agent.approveToolCall(commonOptions);
+      }
+      return agent.declineToolCall(commonOptions);
+    })();
     const result = await withWallClockTimeout(
-      submission.decision.accepted
-        ? agent.approveToolCall(commonOptions)
-        : agent.declineToolCall(commonOptions),
+      resumeOperation,
       abortController,
       resumeTimeoutMs,
       submission.decision.accepted
@@ -605,7 +613,7 @@ export async function* handleConfirmDecision(
       key: "confirm:audit:failed",
       operation: () => service.recordDecisionFailed(session, pending),
     };
-    const reason = resolvedEmitted
+    const reason = resolvedEmitted || approvalMayHaveStartedExecution
       ? "确认恢复异常，执行结果未知且未自动重试"
       : "确认恢复失败，命令未执行";
     const failed = failConfirmedToolCall(session, pending.toolCallId, reason);

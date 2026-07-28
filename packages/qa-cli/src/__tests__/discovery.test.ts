@@ -2,7 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { discoverInstance } from "../discovery.js";
+import {
+  DISCOVERY_REQUEST_DEADLINE_MS,
+  discoverInstance,
+} from "../discovery.js";
 import { QaCliError } from "../errors.js";
 
 const originalFetch = globalThis.fetch;
@@ -11,6 +14,7 @@ const dirs: string[] = [];
 afterEach(async () => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  vi.useRealTimers();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -31,6 +35,33 @@ describe("discoverInstance", () => {
     globalThis.fetch = vi.fn(async () => new Response("{}", { status: 401 })) as typeof fetch;
     await expect(discoverInstance(file)).rejects.toBeInstanceOf(QaCliError);
     await expect(discoverInstance(file)).rejects.toMatchObject({ code: "AUTH_FAILED" });
+  });
+
+  it("health 悬挂到 deadline 后返回 NO_INSTANCE", async () => {
+    vi.useFakeTimers();
+    const file = await writeInstance({ pid: process.pid, port: 12345, token: "t" });
+    let notifyFetchStarted: (() => void) | undefined;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    globalThis.fetch = vi.fn((_input, init) => {
+      notifyFetchStarted?.();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    }) as typeof fetch;
+    const discovery = discoverInstance(file);
+    const rejected = expect(discovery).rejects.toMatchObject({
+      code: "NO_INSTANCE",
+      message: "请先打开青简应用",
+    });
+
+    await fetchStarted;
+    await vi.advanceTimersByTimeAsync(DISCOVERY_REQUEST_DEADLINE_MS);
+
+    await rejected;
   });
 });
 

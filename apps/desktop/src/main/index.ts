@@ -4,10 +4,11 @@ import {
   dialog,
   ipcMain,
   Menu,
+  net,
+  protocol,
   safeStorage,
   screen,
   shell,
-  type Event,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type WebContents,
@@ -27,6 +28,13 @@ import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
+import { persistClientConfigValue } from "./clientConfigPersistence.js";
+import {
+  createDesktopAppProxyHandler,
+  DESKTOP_APP_ORIGIN,
+  DESKTOP_APP_SCHEME,
+  DESKTOP_APP_URL,
+} from "./desktopAppProtocol.js";
 import {
   readPrivateStringMap,
   writePrivateStringMap,
@@ -35,8 +43,9 @@ import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
+  handleMainWindowWillNavigate,
   isAllowedMainFrameNavigation,
-  shouldOpenMainWindowNavigationExternally,
+  type MainFrameNavigationEvent,
 } from "./navigationPolicy.js";
 import {
   getCurrentUpdateStatus,
@@ -122,6 +131,22 @@ const runningFromUncPath = __dirname.startsWith("\\\\");
 if (process.platform === "linux" || runningFromUncPath) {
   app.disableHardwareAcceleration();
 }
+
+// 打包 renderer 使用固定标准 scheme，保证 Web Storage 的 origin 不随内置服务监听端口变化。
+// 必须在 app ready 前登记；实际转发 handler 要等随机监听端口确定后再安装。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: DESKTOP_APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      codeCache: true,
+    },
+  },
+]);
 
 // 用户级配置:从 userData/.env 读密钥等(如 DEEPSEEK_API_KEY)。这样打包后的客户端
 // 无需重新构建即可配置(把 .env 放进 %APPDATA%/<app>/ 即可)。必须在 import server 之前
@@ -785,20 +810,16 @@ function writeClientConfigValue(key: unknown, value: unknown): boolean {
   try {
     const isSecret = DESKTOP_MODEL_SECRET_KEYS.has(key);
     const encryptionAvailable = isDesktopModelEncryptionAvailable();
-    // 删除不需要解密/加密能力：即使 Linux 没有 keyring，也必须能清掉旧明文和密文项。
-    if (isSecret && nextValue !== null && !encryptionAvailable) return false;
-    if (encryptionAvailable) migratePlaintextClientSecrets();
-
-    const cfg = readClientConfig();
-    if (isSecret) {
-      delete cfg[key];
-      desktopClientSecretStore.write(key, nextValue);
-    } else if (nextValue === null) {
-      delete cfg[key];
-    } else {
-      cfg[key] = nextValue;
-    }
-    writeClientConfig(cfg);
+    persistClientConfigValue({
+      key,
+      nextValue,
+      isSecret,
+      encryptionAvailable,
+      migratePlaintextSecrets: migratePlaintextClientSecrets,
+      readConfig: readClientConfig,
+      writeConfig: writeClientConfig,
+      secretStore: desktopClientSecretStore,
+    });
     return true;
   } catch {
     return false;
@@ -895,6 +916,16 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
   } catch {
     console.warn("[startup] 忽略非法应用地址:", url);
   }
+}
+
+function installPackagedRendererProtocol(port: number): void {
+  if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
+  protocol.handle(
+    DESKTOP_APP_SCHEME,
+    createDesktopAppProxyHandler(port, (request) =>
+      net.fetch(request, { bypassCustomProtocolHandlers: true }),
+    ),
+  );
 }
 
 async function createWindow() {
@@ -1001,7 +1032,7 @@ async function createWindowOnce() {
   });
   // 整页导航与服务端重定向：显式放行内置服务、开发服务器和当前同源；file:、about:、
   // 跨源及畸形 URL 都不能接管主窗口。用户主动点出的外部 Web 链接交给系统浏览器。
-  const guardMainFrameNavigation = (event: Event, url: string): void => {
+  const guardMainFrameNavigation = (event: MainFrameNavigationEvent, url: string): void => {
     if (
       !isAllowedMainFrameNavigation(
         url,
@@ -1014,11 +1045,14 @@ async function createWindowOnce() {
     }
   };
   contentWindow.webContents.on("will-navigate", (event, url) => {
-    guardMainFrameNavigation(event, url);
-    if (shouldOpenMainWindowNavigationExternally(url, allowedAppOrigins)) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
+    handleMainWindowWillNavigate(
+      event,
+      url,
+      contentWindow.webContents.getURL(),
+      isDev ? devContentUrl : undefined,
+      allowedAppOrigins,
+      (targetUrl) => shell.openExternal(targetUrl),
+    );
   });
   contentWindow.webContents.on("will-redirect", guardMainFrameNavigation);
 
@@ -1050,6 +1084,10 @@ async function createWindowOnce() {
   embeddedServerPort = port;
   addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
   addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
+  if (!isDev) {
+    installPackagedRendererProtocol(port);
+    allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
+  }
   installNetProbe();
   // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
   warmUpModelEndpoint(resolveBaseUrl());
@@ -1073,8 +1111,8 @@ async function createWindowOnce() {
   const contentUrl = isDev
     // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
     ? devContentUrl
-    // 打包态由内置 Hono 同时提供 API 与静态文件。
-    : `http://localhost:${port}`;
+    // 打包态由固定可信 origin 转发到内置 Hono，Web Storage 不再受随机监听端口影响。
+    : DESKTOP_APP_URL;
 
   let contentRecoveryActive = false;
   const recoverContentLoad = async (reason: unknown): Promise<void> => {

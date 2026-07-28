@@ -728,6 +728,25 @@ const DiagramNode = Node.create({
             ? { "data-height": String(Math.round(attrs.height)) }
             : {},
       },
+      width: {
+        default: null,
+        parseHTML: (element) => parsePositiveImageSize(element.getAttribute("data-width")),
+        renderHTML: (attrs) =>
+          typeof attrs.width === "number" && attrs.width > 0
+            ? { "data-width": String(Math.round(attrs.width)) }
+            : {},
+      },
+      align: {
+        default: "center",
+        parseHTML: (element) => {
+          const value = element.getAttribute("data-align");
+          return PM_IMAGE_ALIGN_VALUES.includes(value as ImageAlign) ? value : "center";
+        },
+        renderHTML: (attrs) =>
+          PM_IMAGE_ALIGN_VALUES.includes(attrs.align as ImageAlign)
+            ? { "data-align": attrs.align }
+            : {},
+      },
       overlay: {
         default: null,
         parseHTML: (element) => parseJsonAttr(element.getAttribute("data-overlay")),
@@ -767,6 +786,18 @@ function stringifyJsonAttr(value: unknown): string | null {
   }
 }
 
+function nonEmptyHtmlAttr(element: HTMLElement, name: string): string | null {
+  const value = element.getAttribute(name);
+  return value && value.trim() ? value : null;
+}
+
+function nonnegativeIntegerHtmlAttr(element: HTMLElement, name: string): number | null {
+  const value = element.getAttribute(name);
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 const FileAttachmentNode = Node.create({
   name: "fileAttachment",
   group: "block",
@@ -774,10 +805,38 @@ const FileAttachmentNode = Node.create({
 
   addAttributes() {
     return {
-      fileId: { default: null },
-      filename: { default: null },
-      mimeType: { default: null },
-      size: { default: 0 },
+      fileId: {
+        default: null,
+        parseHTML: (element) => nonEmptyHtmlAttr(element, "data-file-id"),
+        renderHTML: (attrs) =>
+          typeof attrs.fileId === "string" && attrs.fileId
+            ? { "data-file-id": attrs.fileId }
+            : {},
+      },
+      filename: {
+        default: null,
+        parseHTML: (element) => nonEmptyHtmlAttr(element, "data-filename"),
+        renderHTML: (attrs) =>
+          typeof attrs.filename === "string" && attrs.filename
+            ? { "data-filename": attrs.filename }
+            : {},
+      },
+      mimeType: {
+        default: null,
+        parseHTML: (element) => nonEmptyHtmlAttr(element, "data-mime-type"),
+        renderHTML: (attrs) =>
+          typeof attrs.mimeType === "string" && attrs.mimeType
+            ? { "data-mime-type": attrs.mimeType }
+            : {},
+      },
+      size: {
+        default: 0,
+        parseHTML: (element) => nonnegativeIntegerHtmlAttr(element, "data-size") ?? 0,
+        renderHTML: (attrs) =>
+          typeof attrs.size === "number" && Number.isSafeInteger(attrs.size) && attrs.size >= 0
+            ? { "data-size": String(attrs.size) }
+            : {},
+      },
       uploading: {
         default: null,
         parseHTML: () => null,
@@ -787,18 +846,31 @@ const FileAttachmentNode = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: "a[data-pm-node='fileAttachment']" }];
+    return [{ tag: "div[data-pm-node='fileAttachment']" }];
   },
 
   renderHTML({ HTMLAttributes }) {
+    const fileId = typeof HTMLAttributes["data-file-id"] === "string"
+      ? HTMLAttributes["data-file-id"]
+      : "";
+    const filename = typeof HTMLAttributes["data-filename"] === "string"
+      ? HTMLAttributes["data-filename"]
+      : "attachment";
     return [
-      "a",
+      "div",
       {
         ...HTMLAttributes,
         "data-pm-node": "fileAttachment",
-        href: `/api/v1/files/${HTMLAttributes.fileId}`,
+        class: "pm-file-attachment",
       },
-      HTMLAttributes.filename ?? "attachment",
+      [
+        "a",
+        {
+          href: `/api/v1/files/${encodeURIComponent(fileId)}`,
+          download: filename,
+        },
+        filename,
+      ],
     ];
   },
 });

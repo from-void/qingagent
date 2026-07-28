@@ -522,6 +522,9 @@ function workspaceReducerMut(
       // Side-effect: drop from external registry, and prune the stale ref so
       // 状态里不残留已删素材的引用(否则 resourceRefs 里留 dangling ref)。
       const ref = action.data.resourceRef;
+      workspaceMutations.reconcile(
+        resourceMutationKey(ref.domain.kind, ref.id),
+      );
       resources.remove(ref);
       draft.resourceRefs = draft.resourceRefs.filter(
         (r) => !(r.id === ref.id && r.domain.kind === ref.domain.kind),

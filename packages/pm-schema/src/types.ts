@@ -101,6 +101,12 @@ export type PmTextNode = {
   marks?: PmMark[];
 };
 
+/** codeBlock 只允许 ProseMirror 的纯文本内容，不能携带行内 marks。 */
+export type PmCodeTextNode = {
+  type: "text";
+  text: string;
+};
+
 /** 行内公式:原子行内节点,latex 为源码;在纯文本/偏移计算中按 1 个字符(U+FFFC)处理。 */
 export type PmInlineMathNode = {
   type: "inlineMath";
@@ -135,7 +141,7 @@ export type PmHeadingNode = {
 export type PmCodeBlockNode = {
   type: "codeBlock";
   attrs: PmBlockAttrs & { language?: string | null };
-  content?: PmTextNode[];
+  content?: PmCodeTextNode[];
 };
 
 export type PmBlockquoteNode = {
@@ -218,6 +224,10 @@ export type PmDiagramAttrs = PmBlockAttrs & {
   svg: string | null;
   /** 用户拖拽改的高度(px);仅编辑器持久化,agent/legacy 不设。 */
   height?: number | null;
+  /** 用户拖拽改的宽度(px);null 表示占满可用栏宽。 */
+  width?: number | null;
+  /** 图表宽度小于栏宽时的块对齐。 */
+  align?: "left" | "center" | "right" | null;
   /** 用户域 overlay:持久化进文档 hash,但不进入 AI-IR/proposalDiff。 */
   overlay?: PmDiagramOverlay | null;
 };

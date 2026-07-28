@@ -281,22 +281,29 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
   const client = getDocumentsClient();
   await ensureMigrated();
   const result = await client.execute({
-    sql: `SELECT session_id AS bucket, call_site, model_id,
-        SUM(CASE WHEN usage_state = 'recorded' THEN input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN COALESCE(cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        1.0 * SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens + cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
+    sql: `WITH recent_sessions AS (
+        SELECT session_id, MAX(created_at) AS last_at
+        FROM llm_usage_events
+        GROUP BY session_id
+        ORDER BY last_at DESC, session_id
+        LIMIT ?
+      )
+      SELECT usage.session_id AS bucket, usage.call_site, usage.model_id,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
+        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
+          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
         COUNT(*) AS calls,
-        SUM(CASE WHEN usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
-        MAX(created_at) AS last_at
-      FROM llm_usage_events
-      GROUP BY session_id, call_site, model_id
-      ORDER BY last_at DESC
-      LIMIT ?`,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
+        MAX(usage.created_at) AS last_at
+      FROM llm_usage_events usage
+      INNER JOIN recent_sessions recent ON recent.session_id = usage.session_id
+      GROUP BY usage.session_id, usage.call_site, usage.model_id, recent.last_at
+      ORDER BY recent.last_at DESC, usage.session_id, usage.call_site, usage.model_id`,
     args: [limit],
   });
   return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));

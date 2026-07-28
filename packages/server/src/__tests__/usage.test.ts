@@ -110,4 +110,71 @@ describe("usageRoutes", () => {
 
     expect(body.rows[0]?.documentTitle).toBe("元数据标题");
   });
+
+  it("会话标题全量读取线程，不遗漏第 201 条后的标题", async () => {
+    mockCore.aggregateUsageBySession.mockResolvedValue([
+      { ...usageRow, bucket: "thread-201", sessionId: "thread-201" },
+    ]);
+    const threads = Array.from({ length: 201 }, (_, index) => ({
+      id: `thread-${index + 1}`,
+      title: `线程 ${index + 1}`,
+      metadata: index === 200 ? { title: "第 201 条标题" } : {},
+    }));
+    mockCore.listSessionThreads.mockImplementation(async (
+      opts: { perPage?: number | false },
+    ) => ({
+      threads: opts.perPage === false ? threads : threads.slice(0, 200),
+      total: threads.length,
+      hasMore: opts.perPage !== false,
+    }));
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/summary?view=session");
+    const body = await response.json() as { rows: Array<{ label?: string }> };
+
+    expect(body.rows[0]?.label).toBe("第 201 条标题");
+    expect(mockCore.listSessionThreads).toHaveBeenCalledWith({
+      page: 0,
+      perPage: false,
+    });
+  });
+
+  it("文档统计全量读取线程，不在 updatedAt 前 200 条上截断 createdAt 窗口", async () => {
+    const oldDate = new Date(Date.now() - 30 * 86_400_000);
+    const recentDate = new Date();
+    const threads = Array.from({ length: 201 }, (_, index) => ({
+      id: `thread-${index + 1}`,
+      createdAt: index === 200 ? recentDate : oldDate,
+      metadata: index === 200
+        ? {
+            doc: {
+              type: "doc",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "遗漏文档" }] },
+              ],
+            },
+          }
+        : {},
+    }));
+    mockCore.listSessionThreads.mockImplementation(async (
+      opts: { perPage?: number | false },
+    ) => ({
+      threads: opts.perPage === false ? threads : threads.slice(0, 200),
+      total: threads.length,
+      hasMore: opts.perPage !== false,
+    }));
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/docstats?days=7");
+
+    await expect(response.json()).resolves.toEqual({
+      days: 7,
+      docs: 1,
+      words: 4,
+    });
+    expect(mockCore.listSessionThreads).toHaveBeenCalledWith({
+      page: 0,
+      perPage: false,
+    });
+  });
 });

@@ -171,7 +171,16 @@ function sectionToHtml(section: ViewBlock): string {
 	      return `<figure data-pm-node="image" data-align="${align}" style="margin:16px 0"><img ${imgAttrs}/>${caption}</figure>`;
 	    }
     case "fileAttachment":
-      return `<p><a data-pm-node="fileAttachment" href="/api/v1/files/${escAttr(section.fileId)}/${escAttr(section.filename)}">${esc(section.filename)}</a></p>`;
+      return [
+        `<div data-pm-node="fileAttachment"`,
+        section.blockId ? ` data-block-id="${escAttr(section.blockId)}"` : "",
+        ` data-file-id="${escAttr(section.fileId)}"`,
+        ` data-filename="${escAttr(section.filename)}"`,
+        ` data-mime-type="${escAttr(section.mimeType)}"`,
+        ` data-size="${section.size}">`,
+        `<a href="/api/v1/files/${encodeURIComponent(section.fileId)}" download="${escAttr(section.filename)}">${esc(section.filename)}</a>`,
+        "</div>",
+      ].join("");
     // 保真块:把原始 pm 节点经 pmToClipboardHtml 序列化成 TipTap 可重解析的 HTML
     // (native diff 动画 seeding 用),与最终态一致。
     case "taskList":

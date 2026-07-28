@@ -135,9 +135,12 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
           });
           replaceAt.set(
             idx,
-            carryOverDiagramOverlay(
+            carryOverDiagramLayout(
               nodes[idx]!,
-              carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
+              carryOverDiagramOverlay(
+                nodes[idx]!,
+                carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
+              ),
             ),
           );
           applied.push(op.ref);
@@ -379,6 +382,21 @@ function carryOverTableColwidth(oldNode: PmBlockNode, newNode: PmBlockNode): PmB
         return { ...cell, attrs: { ...cell.attrs, colwidth } };
       }),
     })),
+  };
+}
+
+function carryOverDiagramLayout(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlockNode {
+  if (oldNode.type !== "diagram" || newNode.type !== "diagram") return newNode;
+  const { height, width, align } = oldNode.attrs;
+  if (height === undefined && width === undefined && align === undefined) return newNode;
+  return {
+    ...newNode,
+    attrs: {
+      ...newNode.attrs,
+      ...(height !== undefined ? { height } : {}),
+      ...(width !== undefined ? { width } : {}),
+      ...(align !== undefined ? { align } : {}),
+    },
   };
 }
 

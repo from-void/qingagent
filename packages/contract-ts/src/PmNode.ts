@@ -15,6 +15,12 @@ export type PmTextNode = {
   marks?: Array<PmMark>;
 };
 
+/** codeBlock 只允许 ProseMirror 的纯文本内容，不能携带行内 marks。 */
+export type PmCodeTextNode = {
+  type: "text";
+  text: string;
+};
+
 export type PmInlineMathNode = {
   type: "inlineMath";
   attrs: { latex: string };
@@ -51,7 +57,7 @@ export type PmHeadingNode = {
 export type PmCodeBlockNode = {
   type: "codeBlock";
   attrs: PmBlockAttrs & { language?: string | null };
-  content?: Array<PmTextNode>;
+  content?: Array<PmCodeTextNode>;
 };
 
 export type PmBlockquoteNode = {
@@ -135,6 +141,10 @@ export type PmDiagramNode = {
     svg: string | null;
     /** 用户拖拽改的高度(px);仅编辑器持久化,agent/legacy 不设。 */
     height?: number | null;
+    /** 用户拖拽改的宽度(px);null 表示占满可用栏宽。 */
+    width?: number | null;
+    /** 图表宽度小于栏宽时的块对齐。 */
+    align?: "left" | "center" | "right" | null;
     /** 用户域:节点/边位置与样式 overlay;AI 只读写 source,不消费该字段。 */
     overlay?: PmDiagramOverlay | null;
   };

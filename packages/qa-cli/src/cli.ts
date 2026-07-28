@@ -38,9 +38,21 @@ interface EventOptions {
   follow: boolean;
   after: string;
   timeoutMs: number | null;
-  until: string | null;
+  until: EventTarget | null;
   completion?: (data: string) => string | null;
 }
+
+type EventTarget = "reviewed" | "committed" | "review";
+
+const DOC_PROPOSE_OPTION_NAMES = new Set([
+  "-s",
+  "--expect-version",
+  "--ops",
+  "--full",
+  "--append",
+  "--str-replace",
+  "--json",
+]);
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.length === 0 || hasFlag(args, "--help") || hasFlag(args, "-h")) return help();
@@ -65,6 +77,17 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       hasFlag(args, "--json"),
     );
   }
+  const preflightEventTarget =
+    group === "doc" && command === "events"
+      ? parseEventTarget(args)
+      : null;
+  const preflightStrReplaceValues =
+    group === "doc" &&
+    command === "propose" &&
+    !optionValue(args, "--ops") &&
+    !optionValue(args, "--full")
+      ? parseStrReplaceValues(args)
+      : null;
   const client = await ApiClient.create();
   if (group === "template" && command === "list") {
     const type = optionValue(args, "--type");
@@ -240,14 +263,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "doc" && command === "propose") {
     const sessionId = requireOption(args, "-s");
     const expectedDocVersion = Number(requireOption(args, "--expect-version"));
-    const ops = await parseOps(args);
+    const ops = await parseOps(args, preflightStrReplaceValues ?? undefined);
     const data: ExternalProposalResponse = await client.propose(sessionId, { expectedDocVersion, ops });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "events") {
     const sessionId = requireOption(args, "-s");
     const explicitAfter = optionValue(args, "--after");
-    const until = optionValue(args, "--until") ?? null;
+    const until = preflightEventTarget;
     const after = explicitAfter ?? (until ? "tip" : "0");
     if (until && !explicitAfter) {
       process.stderr.write("[qa] warning: --until 未提供 --after,将从当前 tip 开始监听;提案闭环请优先使用 propose 返回的 seq\n");
@@ -420,7 +443,10 @@ async function status(json: boolean): Promise<void> {
   else process.stdout.write(`青简正在运行 version=${info.version} pid=${info.pid}\n`);
 }
 
-async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
+async function parseOps(
+  args: string[],
+  preflightStrReplaceValues?: string[][],
+): Promise<ExternalProposeOp[]> {
   const opsFile = optionValue(args, "--ops");
   if (opsFile) return JSON.parse(await readFile(opsFile, "utf8")) as ExternalProposeOp[];
   const full = optionValue(args, "--full");
@@ -428,11 +454,18 @@ async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
   const append = optionValue(args, "--append");
   const ops: ExternalProposeOp[] = [];
   if (append) ops.push({ kind: "appendSection", markdown: await readFile(append, "utf8") });
-  for (const [oldText, newText] of optionValues(args, "--str-replace", 2)) {
+  for (const [oldText, newText] of preflightStrReplaceValues ?? parseStrReplaceValues(args)) {
     ops.push({ kind: "strReplace", old: oldText, new: newText });
   }
   if (ops.length === 0) throw new QaCliError("VALIDATION", "缺少提案 ops");
   return ops;
+}
+
+function parseStrReplaceValues(args: string[]): string[][] {
+  return optionValues(args, "--str-replace", 2, {
+    knownOptionNames: DOC_PROPOSE_OPTION_NAMES,
+    missingMessage: "--str-replace 需要旧文和新文",
+  });
 }
 
 async function events(client: ApiClient, sessionId: string, options: EventOptions): Promise<void> {
@@ -671,17 +704,22 @@ async function listAllSessions(
   limit: number,
 ): Promise<ExternalSessionsListResponse> {
   const sessions: ExternalSessionsListResponse["sessions"] = [];
-  let offset = 0;
+  let cursor: string | null = "start";
   let total = 0;
-  let hasMore = true;
-  while (hasMore) {
-    const page = await client.request<ExternalSessionsListResponse>(
-      `/sessions?limit=${limit}&offset=${offset}`,
+  while (cursor) {
+    const page: ExternalSessionsListResponse = await client.request<ExternalSessionsListResponse>(
+      `/sessions?limit=${limit}&cursor=${encodeURIComponent(cursor)}`,
     );
     sessions.push(...page.sessions);
     total = page.total;
-    hasMore = page.hasMore;
-    offset += limit;
+    if (!page.hasMore) break;
+    if (!page.nextCursor) {
+      throw new QaCliError(
+        "SERVICE_UNAVAILABLE",
+        "青简会话分页响应不完整",
+      );
+    }
+    cursor = page.nextCursor;
   }
   return { sessions, total, hasMore: false };
 }
@@ -734,7 +772,24 @@ function parseDuration(value: string | undefined): number | null {
   return amount;
 }
 
-function untilHit(until: string | null, data: string): string | null {
+function parseEventTarget(args: string[]): EventTarget | null {
+  let target: EventTarget | null = null;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== "--until") continue;
+    const value = args[index + 1];
+    if (value === "reviewed" || value === "committed" || value === "review") {
+      target ??= value;
+      continue;
+    }
+    throw new QaCliError(
+      "VALIDATION",
+      "--until 必须是 reviewed、committed 或 review",
+    );
+  }
+  return target;
+}
+
+function untilHit(until: EventTarget | null, data: string): string | null {
   if (!until) return null;
   let frame: { kind?: string; data?: unknown };
   try {

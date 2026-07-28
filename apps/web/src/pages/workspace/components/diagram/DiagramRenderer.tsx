@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import type { DiagramOverlay } from "@qingagent/diagram-engine";
-import { detectType, parseDiagram } from "@qingagent/diagram-engine";
+import { parseDiagram } from "@qingagent/diagram-engine";
 import { MermaidPreview } from "../MermaidPreview";
 
 const GraphDiagramView = lazy(() => import("./GraphDiagramView").then((mod) => ({ default: mod.GraphDiagramView })));
@@ -69,8 +69,8 @@ export function DiagramRenderer({
   canUndo,
   canRedo,
 }: DiagramRendererProps) {
-  const type = lang === "mermaid" ? detectType(source) : null;
-  const parsed = type ? parseDiagram(source) : null;
+  const parsed = lang === "mermaid" ? parseDiagram(source) : null;
+  const type = parsed?.ok ? parsed.model.type : null;
   const normalizedOverlay = normalizeOverlay(overlay);
   if (
     parsed?.ok

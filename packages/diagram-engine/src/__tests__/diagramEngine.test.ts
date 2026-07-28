@@ -653,6 +653,50 @@ describe("diagram-engine", () => {
     expect(new Set(allIds).size).toBe(allIds.length);
   });
 
+  it("flowchart 缺失 end 保持容错解析并在首次编辑时补全到根级", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Outer["外层"]',
+      '    subgraph Inner["内层"]',
+      "      A[内部]",
+    ].join("\n");
+    const before = parseDiagram(source);
+    expect(before.ok).toBe(true);
+    expect((before.model as FlowGraph).subgraphs.map((subgraph) => [subgraph.id, subgraph.scopePath])).toEqual([
+      ["Inner", ["Outer"]],
+      ["Outer", []],
+    ]);
+
+    const added = applyEdit(source, { kind: "addNode", label: "顶层新增" });
+    expect(added.ok).toBe(true);
+    expect(added.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(2);
+
+    const after = parseDiagram(added.source);
+    expect(after.ok).toBe(true);
+    const model = after.model as FlowGraph;
+    expect(model.subgraphs.map((subgraph) => [subgraph.id, subgraph.scopePath])).toEqual([
+      ["Inner", ["Outer"]],
+      ["Outer", []],
+    ]);
+    expect(model.nodes.find((node) => node.id === added.newNodeId)?.scopePath).toEqual([]);
+
+    const renamed = renameSubgraph(source, "Outer", "新外层");
+    expect(renamed.ok).toBe(true);
+    expect(renamed.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(2);
+    expect((parseDiagram(renamed.source).model as FlowGraph).subgraphs.find((subgraph) => subgraph.id === "Outer")?.label).toBe("新外层");
+  });
+
+  it("flowchart 多余 end 严格拒绝解析与图形编辑", () => {
+    const source = "flowchart TD\n  A[节点]\n  end\n";
+
+    expect(parseDiagram(source)).toMatchObject({ ok: false });
+    expect(graphToSvg(source)).toBeNull();
+    expect(applyEdit(source, { kind: "addNode", label: "不会新增" })).toMatchObject({
+      ok: false,
+      source,
+    });
+  });
+
   it("wrapNodesInSubgraph 原位包裹连续节点并以中文标题 round-trip", () => {
     const source = [
       "flowchart TD",

@@ -123,6 +123,7 @@ export interface FlowGraph extends DiagramThemeMetadata {
   edges: BaseEdge[];
   subgraphs: FlowSubgraph[];
   hasLinkStyle?: boolean;
+  unclosedSubgraphCount?: number;
 }
 
 export interface StateGraph extends DiagramThemeMetadata {
@@ -420,10 +421,37 @@ export function getCapabilities(
 export function applyEdit(source: string, op: EditOp): RewriteResult {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  const result = registry[parsed.model.type].rewrite(source, parsed, op);
-  return parsed.model.type === "flowchart"
-    ? verifyFlowSubgraphsPreserved(source, result)
-    : result;
+  if (parsed.model.type !== "flowchart") {
+    return registry[parsed.model.type].rewrite(source, parsed, op);
+  }
+  const rewriteSource = completeOpenFlowSubgraphs(source, parsed.model);
+  const rewriteParsed = rewriteSource === source ? parsed : parseFlowchart(rewriteSource);
+  if (!rewriteParsed.ok || rewriteParsed.model.type !== "flowchart") {
+    return { ok: false, source, error: rewriteParsed.error ?? "分区补全后无法重新解析" };
+  }
+  const result = registry.flowchart.rewrite(rewriteSource, rewriteParsed, op);
+  const verified = verifyFlowSubgraphsPreserved(rewriteSource, result);
+  return verified.ok || rewriteSource === source ? verified : { ...verified, source };
+}
+
+type PreparedFlowchartRewrite = {
+  source: string;
+  parsed: ParseResult & { model: FlowGraph };
+};
+
+function prepareFlowchartRewrite(source: string, operation: string): PreparedFlowchartRewrite | RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, operation);
+  const rewriteSource = completeOpenFlowSubgraphs(source, parsed.model);
+  const rewriteParsed = rewriteSource === source ? parsed : parseFlowchart(rewriteSource);
+  if (!rewriteParsed.ok || rewriteParsed.model.type !== "flowchart") {
+    return { ok: false, source, error: rewriteParsed.error ?? "分区补全后无法重新解析" };
+  }
+  return {
+    source: rewriteSource,
+    parsed: rewriteParsed as ParseResult & { model: FlowGraph },
+  };
 }
 
 /**
@@ -436,9 +464,10 @@ export function wrapNodesInSubgraph(
   title: string,
   parentSubgraph?: string | null,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "wrapNodesInSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "wrapNodesInSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const nextTitle = title.trim();
   if (!nextTitle) return { ok: false, source, error: "分区名称不能为空" };
@@ -504,9 +533,10 @@ export function moveNodeToSubgraph(
   nodeId: string,
   targetSubgraph: string | null,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "moveNodeToSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "moveNodeToSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const node = model.nodes.find((item) => item.id === nodeId);
   if (!node) return { ok: false, source, error: "节点不存在" };
@@ -540,9 +570,10 @@ export function moveNodeToSubgraph(
 
 /** 只改 subgraph 声明行中的标题文本，稳定 id 保持不变。 */
 export function renameSubgraph(source: string, subgraphId: string, title: string): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "renameSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "renameSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const subgraph = parsed.model.subgraphs.find((item) => item.id === subgraphId);
   if (!subgraph) return { ok: false, source, error: "分区不存在" };
   const nextTitle = title.trim();
@@ -575,9 +606,10 @@ export function setSubgraphStyle(
   subgraphId: string,
   patch: Pick<NodeStyleOverride, "fill" | "stroke">,
 ): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "setSubgraphStyle");
+  const prepared = prepareFlowchartRewrite(source, "setSubgraphStyle");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   if (!parsed.model.subgraphs.some((subgraph) => subgraph.id === subgraphId)) {
     return { ok: false, source, error: "分区不存在" };
   }
@@ -645,9 +677,10 @@ export function setSubgraphStyle(
 
 /** 解散 subgraph，仅移除它自己的声明行和配对 end；节点/子分区自然回到父级。 */
 export function dissolveSubgraph(source: string, subgraphId: string): RewriteResult {
-  const parsed = parseDiagram(source);
-  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "dissolveSubgraph");
+  const prepared = prepareFlowchartRewrite(source, "dissolveSubgraph");
+  if (!("parsed" in prepared)) return prepared;
+  source = prepared.source;
+  const parsed = prepared.parsed;
   const model = parsed.model;
   const subgraph = model.subgraphs.find((item) => item.id === subgraphId);
   if (!subgraph) return { ok: false, source, error: "分区不存在" };
@@ -1496,6 +1529,8 @@ function parseFlowchart(source: string): ParseResult {
           scopePath: open.scopePath,
           ...(open.direction ? { direction: open.direction } : {}),
         });
+      } else {
+        firstUnparsedLine ??= line;
       }
       protectedSpans.push(lineSpan(line));
       continue;
@@ -1540,6 +1575,7 @@ function parseFlowchart(source: string): ParseResult {
     protectedSpans.push(lineSpan(line));
     firstUnparsedLine ??= line;
   }
+  const unclosedSubgraphCount = subgraphStack.length;
   for (const open of subgraphStack.splice(0).reverse()) {
     subgraphs.push({
       id: open.id,
@@ -1570,7 +1606,16 @@ function parseFlowchart(source: string): ParseResult {
       && presentationSyntaxFullyRepresented(source)
       && !parsedNodes.some((node) => node.shape === "icon" || node.shape === "image"),
     ...themeMetadata,
-    model: { type: "flowchart", direction, nodes: parsedNodes, edges, subgraphs, hasLinkStyle, ...themeMetadata },
+    model: {
+      type: "flowchart",
+      direction,
+      nodes: parsedNodes,
+      edges,
+      subgraphs,
+      hasLinkStyle,
+      ...(unclosedSubgraphCount > 0 ? { unclosedSubgraphCount } : {}),
+      ...themeMetadata,
+    },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
   return firstUnparsedLine ? withUnparsedLineError(result, firstUnparsedLine) : result;
@@ -3737,6 +3782,18 @@ type FlowNodeRelocation =
 
 function preferredLineEnding(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function completeOpenFlowSubgraphs(source: string, model: FlowGraph): string {
+  const count = model.unclosedSubgraphCount ?? 0;
+  if (count === 0) return source;
+  const lineEnding = preferredLineEnding(source);
+  const prefix = source.endsWith("\n") ? "" : lineEnding;
+  const closings = Array.from(
+    { length: count },
+    (_, index) => `${"  ".repeat(count - index)}end`,
+  ).join(lineEnding);
+  return `${source}${prefix}${closings}${lineEnding}`;
 }
 
 function sourceInsertionPrefix(source: string, insertionAt: number): string {

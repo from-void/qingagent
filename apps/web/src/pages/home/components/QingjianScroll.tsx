@@ -928,8 +928,15 @@ function buildLayout(
   });
 
   const realEntries = entries.filter((e) => e.kind === "real");
-  const dateMin = realEntries[0]?.date ?? "";
-  const dateMax = realEntries[realEntries.length - 1]?.date ?? "";
+  let earliestEntry: CardEntry | undefined;
+  let latestEntry: CardEntry | undefined;
+  for (const entry of realEntries) {
+    if (!Number.isFinite(entry.createdAt)) continue;
+    if (!earliestEntry || entry.createdAt < earliestEntry.createdAt) earliestEntry = entry;
+    if (!latestEntry || entry.createdAt > latestEntry.createdAt) latestEntry = entry;
+  }
+  const dateMin = earliestEntry?.date ?? "";
+  const dateMax = latestEntry?.date ?? "";
   const stageOccupiedRects: StageRect[] = [];
   const preludeStageMoments: StageMoment[] = [];
   // 第一列「新建文档」卡上下固定放当季首株(seasonFirst,已在上方按今日种子选定)
@@ -1111,8 +1118,8 @@ export function QingjianScroll({
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  // 进度条 hover 预览小卡:命中的卡片索引 + 水平定位(相对 dock 容器左侧)
-  const [preview, setPreview] = useState<{ idx: number; left: number } | null>(null);
+  // 进度条 hover 预览小卡:稳定文章 id + 水平定位(相对 dock 容器左侧)
+  const [preview, setPreview] = useState<{ entryId: string; left: number } | null>(null);
 
   useEffect(() => {
     if (!openingScroll) return;
@@ -1562,7 +1569,7 @@ export function QingjianScroll({
     const momentNodes = Array.from(stage.querySelectorAll<HTMLElement>(".qj-stage-moment"));
 
     // scrollIndex: 让某卡居中所需的 viewX(供进度条 hover / 跳转 / 预览)
-    let scrollIndex: { idx: number; x: number }[] = [];
+    let scrollIndex: { entryId: string; kind: CardEntry["kind"]; x: number }[] = [];
     function buildScrollIndex() {
       if (!stage || !inner || !scroller) return;
       const stageRect = stage.getBoundingClientRect();
@@ -1571,10 +1578,12 @@ export function QingjianScroll({
       const vw = scroller.clientWidth;
       scrollIndex = [];
       stage.querySelectorAll<HTMLElement>(".qj-card-slot").forEach((slot) => {
-        const idx = Number(slot.dataset.idx);
+        const entryId = slot.dataset.id;
+        const kind = slot.dataset.kind;
+        if (!entryId || (kind !== "new" && kind !== "real")) return;
         const left = parseFloat(slot.style.left) || 0;
         const centerInScroll = stageOffset + left + CARD_WIDTH / 2;
-        scrollIndex.push({ idx, x: centerInScroll - vw / 2 });
+        scrollIndex.push({ entryId, kind, x: centerInScroll - vw / 2 });
       });
       scrollIndex.sort((a, b) => a.x - b.x);
     }
@@ -2008,14 +2017,14 @@ export function QingjianScroll({
     const onProgMove = (e: PointerEvent) => {
       if (!dockProg || !dock) return;
       const hit = cardAtRatio(ratioFromEvent(e));
-      // 新建卡(globalIdx 0)不预览
-      if (!hit || hit.idx <= 0) {
+      // 新建卡不预览
+      if (!hit || hit.kind !== "real") {
         setPreview(null);
         return;
       }
       const dockRect = dock.getBoundingClientRect();
       const px = clamp(e.clientX - dockRect.left, 80, dockRect.width - 80);
-      setPreview({ idx: hit.idx, left: px });
+      setPreview({ entryId: hit.entryId, left: px });
     };
     const onProgLeave = () => setPreview(null);
     dockProg?.addEventListener("pointermove", onProgMove);
@@ -2260,7 +2269,9 @@ export function QingjianScroll({
       <div className="qj-dock" ref={dockRef} aria-label="展卷进度与搜索">
         {/* hover 预览小卡(进度条上方) */}
         {(() => {
-          const entry = preview ? entries[preview.idx] : undefined;
+          const entry = preview
+            ? entries.find((candidate) => candidate.id === preview.entryId)
+            : undefined;
           if (!preview || !entry || !entry.article || !entry.template) return null;
           const previewText = entry.brief.trim() || entry.article.description?.trim() || "暂无正文预览";
           const previewDate = formatPreviewDate(entry.createdAt);

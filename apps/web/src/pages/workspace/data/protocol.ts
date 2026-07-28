@@ -3173,7 +3173,7 @@ export interface StreamError {
   reason: string;
   retriable?: boolean;
   statusCode?: number;
-  category?: "auth" | "quota" | "request" | "rate_limit" | "timeout" | "upstream" | "network" | "unknown";
+  category?: "auth" | "quota" | "request" | "rate_limit" | "timeout" | "upstream" | "network" | "blocked_address" | "unknown";
   userMessage?: string;
   action?: "retry" | "check_model_settings" | "check_balance" | "reload" | "none";
   actualDocumentSnapshot?: number;

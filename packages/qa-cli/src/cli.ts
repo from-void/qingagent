@@ -38,9 +38,11 @@ interface EventOptions {
   follow: boolean;
   after: string;
   timeoutMs: number | null;
-  until: string | null;
+  until: EventTarget | null;
   completion?: (data: string) => string | null;
 }
+
+type EventTarget = "reviewed" | "committed" | "review";
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.length === 0 || hasFlag(args, "--help") || hasFlag(args, "-h")) return help();
@@ -247,7 +249,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "doc" && command === "events") {
     const sessionId = requireOption(args, "-s");
     const explicitAfter = optionValue(args, "--after");
-    const until = optionValue(args, "--until") ?? null;
+    const until = parseEventTarget(args);
     const after = explicitAfter ?? (until ? "tip" : "0");
     if (until && !explicitAfter) {
       process.stderr.write("[qa] warning: --until 未提供 --after,将从当前 tip 开始监听;提案闭环请优先使用 propose 返回的 seq\n");
@@ -734,7 +736,19 @@ function parseDuration(value: string | undefined): number | null {
   return amount;
 }
 
-function untilHit(until: string | null, data: string): string | null {
+function parseEventTarget(args: string[]): EventTarget | null {
+  if (!hasFlag(args, "--until")) return null;
+  const value = optionValue(args, "--until");
+  if (value === "reviewed" || value === "committed" || value === "review") {
+    return value;
+  }
+  throw new QaCliError(
+    "VALIDATION",
+    "--until 必须是 reviewed、committed 或 review",
+  );
+}
+
+function untilHit(until: EventTarget | null, data: string): string | null {
   if (!until) return null;
   let frame: { kind?: string; data?: unknown };
   try {

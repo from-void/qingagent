@@ -762,6 +762,24 @@ describe("qa cli", () => {
     expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"kind\":\"docCommitted\"");
   });
 
+  it.each([
+    ["非法目标", ["doc", "events", "-s", "s1", "--until", "reviewd"]],
+    ["缺少目标值", ["doc", "events", "-s", "s1", "--until"]],
+    ["后续 flag 不能充当目标值", [
+      "doc", "events", "-s", "s1", "--until", "--timeout", "10ms",
+    ]],
+  ])("doc events --until %s 时在连接前拒绝", async (_label, args) => {
+    const { main } = await import("../cli.js");
+    const fetchMock = vi.fn(async () => new Response());
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    await expect(main(args)).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: "--until 必须是 reviewed、committed 或 review",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("doc events 非 follow 在目标命中前 EOF 时明确失败", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

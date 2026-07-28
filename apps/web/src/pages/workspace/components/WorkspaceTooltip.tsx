@@ -44,6 +44,7 @@ export function WorkspaceTooltip() {
     const activeRef: { current: Element | null } = { current: null };
     let showTimer: number | null = null;
     let rafId: number | null = null;
+    let removalObserver: MutationObserver | null = null;
 
     const clearShowTimer = () => {
       if (showTimer !== null) {
@@ -70,6 +71,8 @@ export function WorkspaceTooltip() {
     const hide = () => {
       clearShowTimer();
       clearRaf();
+      removalObserver?.disconnect();
+      removalObserver = null;
       restoreTitle(activeRef.current);
       activeRef.current = null;
       setTooltip(null);
@@ -121,6 +124,11 @@ export function WorkspaceTooltip() {
         restoreTitle(activeRef.current);
       }
       activeRef.current = target;
+      removalObserver?.disconnect();
+      removalObserver = new MutationObserver(() => {
+        if (activeRef.current === target && !target.isConnected) hide();
+      });
+      removalObserver.observe(root, { childList: true, subtree: true });
 
       if (target.hasAttribute("title")) {
         titleCache.set(target, title);
@@ -206,6 +214,7 @@ export function WorkspaceTooltip() {
       window.removeEventListener("keydown", handleKeyDown);
       clearShowTimer();
       clearRaf();
+      removalObserver?.disconnect();
       restoreTitle(activeRef.current);
     };
   }, []);

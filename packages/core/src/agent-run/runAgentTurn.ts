@@ -981,72 +981,85 @@ export async function* runAgentTurn(
       yield* syncContentAndProjectDocState(state, "agent_turn_failed");
     }
   } finally {
-    sessionWorkspaceLease?.release();
-    if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
-      turnOutcome = "cancelled";
-    }
-    console.info(formatTurnLog("end", {
-      session: state.sessionId,
-      run: activeRunId ?? "unknown",
-      totalMs: Date.now() - turnStartedAt,
-      outcome: turnOutcome,
-    }));
-    // Clear turn-scoped selection chips so they don't leak into the next turn.
-    state._currentChips = null;
-    if (!hasActiveSuspension(state)) {
-      clearSuspension(state);
-    } else if (!activeSuspensionOwnedBy(state, streamId)) {
-      logger.info("runAgentTurn leaving suspension owned by another stream intact", {
-        sessionId: state.sessionId,
-        streamId,
-        ownerStreamId: state._suspensionOwner?.streamId,
-      });
+    const finalFrames: BridgeFrame[] = [];
+    const releaseTurnResources = () => {
+      turnCompletion.resolve();
+      endTurnOwnership(state, turnOwnership);
+      if (state._abortController === abortController) {
+        state._abortController = null;
+      }
+      if (state._activeTurnPromise === turnCompletion.promise) {
+        state._activeTurnPromise = null;
+      }
+      if (
+        state._activeAgentMessageId === agentMessageId &&
+        !turnWasUserAborted &&
+        !isUserAbortSignal(abortController.signal)
+      ) {
+        state._activeAgentMessageId = null;
+      }
+    };
+
+    try {
+      sessionWorkspaceLease?.release();
+      if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
+        turnOutcome = "cancelled";
+      }
+      console.info(formatTurnLog("end", {
+        session: state.sessionId,
+        run: activeRunId ?? "unknown",
+        totalMs: Date.now() - turnStartedAt,
+        outcome: turnOutcome,
+      }));
+      // Clear turn-scoped selection chips so they don't leak into the next turn.
+      state._currentChips = null;
+      if (!hasActiveSuspension(state)) {
+        clearSuspension(state);
+      } else if (!activeSuspensionOwnedBy(state, streamId)) {
+        logger.info("runAgentTurn leaving suspension owned by another stream intact", {
+          sessionId: state.sessionId,
+          streamId,
+          ownerStreamId: state._suspensionOwner?.streamId,
+        });
+      }
+
+      if (state.streamId === streamId) {
+        state.streamId = null;
+      }
+      // 所有权和控制器必须先于任何状态投影/持久化 await 释放；否则外部存储未决会
+      // 让已关闭的生成器继续伪装成活跃 turn。
+      releaseTurnResources();
+
+      // 残留 running 工具调用落终态,避免"调用完仍 loading"。
+      // 用户主动中止的工具卡由 abortAndCleanupTurn 统一落 failed,不能先在这里补成 done。
+      if (!turnWasUserAborted && !isUserAbortSignal(abortController.signal)) {
+        for (const u of finalizeLingeringRunningToolCalls(state)) {
+          finalFrames.push(toolCallUpdated(u.messageId, u.toolCallId, u.spec));
+        }
+      }
+      for await (const frame of syncContentAndProjectDocState(state, "agent_turn_finally_idle")) {
+        finalFrames.push(frame);
+      }
+      // Final persist after all state transitions are settled.
+      // This is the safety-net persist for the turn: processAgentStream's
+      // fire-and-forget persist may have been queued but not yet written,
+      // and the catch block has no persist at all.  By persisting here we
+      // guarantee the user message + any agent response from this turn are
+      // captured even if the earlier persist failed or was skipped.
+      await schedulePersist(state, "runAgentTurn:finally").catch((err) =>
+        logger.error("Persist after runAgentTurn finally failed", { error: String(err) }),
+      );
+      if (omSidecarEnabled) {
+        scheduleOmSidecarAfterTurn(state, turnRequestContext, {
+          turnIndex: omTurnIndex,
+          turnStartMessageIndex: omTurnStartMessageIndex,
+        });
+      }
+    } finally {
+      // 同步收尾本身若抛错也必须释放，且重复调用保持幂等。
+      releaseTurnResources();
     }
 
-    if (state.streamId === streamId) {
-      state.streamId = null;
-    }
-    const finalFrames: BridgeFrame[] = [];
-    // 残留 running 工具调用落终态,避免"调用完仍 loading"。
-    // 用户主动中止的工具卡由 abortAndCleanupTurn 统一落 failed,不能先在这里补成 done。
-    if (!turnWasUserAborted && !isUserAbortSignal(abortController.signal)) {
-      for (const u of finalizeLingeringRunningToolCalls(state)) {
-        finalFrames.push(toolCallUpdated(u.messageId, u.toolCallId, u.spec));
-      }
-    }
-    for await (const frame of syncContentAndProjectDocState(state, "agent_turn_finally_idle")) {
-      finalFrames.push(frame);
-    }
-    // Final persist after all state transitions are settled.
-    // This is the safety-net persist for the turn: processAgentStream's
-    // fire-and-forget persist may have been queued but not yet written,
-    // and the catch block has no persist at all.  By persisting here we
-    // guarantee the user message + any agent response from this turn are
-    // captured even if the earlier persist failed or was skipped.
-    await schedulePersist(state, "runAgentTurn:finally").catch((err) =>
-      logger.error("Persist after runAgentTurn finally failed", { error: String(err) }),
-    );
-    if (omSidecarEnabled) {
-      scheduleOmSidecarAfterTurn(state, turnRequestContext, {
-        turnIndex: omTurnIndex,
-        turnStartMessageIndex: omTurnStartMessageIndex,
-      });
-    }
-    turnCompletion.resolve();
-    endTurnOwnership(state, turnOwnership);
-    if (state._abortController === abortController) {
-      state._abortController = null;
-    }
-    if (state._activeTurnPromise === turnCompletion.promise) {
-      state._activeTurnPromise = null;
-    }
-    if (
-      state._activeAgentMessageId === agentMessageId &&
-      !turnWasUserAborted &&
-      !isUserAbortSignal(abortController.signal)
-    ) {
-      state._activeAgentMessageId = null;
-    }
     // 资源所有权必须在 finally 的首个对外 yield 前结算。即使流消费者用
     // generator.return() 提前关闭且不再拉取，也不能留下假活跃 turn。
     for (const frame of finalFrames) {

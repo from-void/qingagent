@@ -1049,6 +1049,9 @@ transform 平移内层) */
 /* 减少动效 */
 .qj-root[data-reduce-motion="true"] .qj-card-slot,
 .qj-root[data-reduce-motion="true"] .qj-card-slot .cm-card,
+.qj-root[data-reduce-motion="true"] .qj-card-slot .cm-image,
+.qj-root[data-reduce-motion="true"] .qj-card-slot .cm-line,
+.qj-root[data-reduce-motion="true"] .qj-card-slot .cm-card-color-overlay,
 .qj-root[data-reduce-motion="true"] .qj-card-slot::after,
 .qj-root[data-reduce-motion="true"] .qj-stage-moment,
 .qj-root[data-reduce-motion="true"] .qj-stage-moment *,
@@ -1905,6 +1908,9 @@ transform 平移内层) */
 }
 @media (prefers-reduced-motion: reduce) {.qj-root .qj-card-slot,
 .qj-root .qj-card-slot .cm-card,
+.qj-root .qj-card-slot .cm-image,
+.qj-root .qj-card-slot .cm-line,
+.qj-root .qj-card-slot .cm-card-color-overlay,
 .qj-root .qj-card-slot::after,
 .qj-root .qj-stage-moment,
 .qj-root .qj-stage-moment *,

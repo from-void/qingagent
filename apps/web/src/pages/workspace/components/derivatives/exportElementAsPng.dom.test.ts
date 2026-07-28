@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   measureExportLayoutBounds,
   serializeElementAsSelfContainedSvg,
@@ -35,7 +35,33 @@ function px(value: string | null | undefined): number {
 }
 
 describe("衍生稿 PNG 导出布局", () => {
-  afterEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+  });
+
+  it("正文图片仅在单次导出内去重，导出结束后不跨文档常驻", async () => {
+    const article = document.createElement("article");
+    const first = document.createElement("img");
+    const second = document.createElement("img");
+    first.src = "/uploads/document-image.png";
+    second.src = "/uploads/document-image.png";
+    article.append(first, second);
+    document.body.append(article);
+    mockBox(article, { width: 320, height: 240 }, { width: 320, height: 240 });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+
+    await serializeElementAsSelfContainedSvg(article);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await serializeElementAsSelfContainedSvg(article);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
   it("祖先缩放时使用缩放前布局边界，长标题和页脚都在导出可视区内", async () => {
     const cover = document.createElement("section");

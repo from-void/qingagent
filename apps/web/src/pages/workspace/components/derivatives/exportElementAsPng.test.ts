@@ -3,12 +3,30 @@
 import { describe, expect, it } from "vitest";
 import {
   arrayBufferToDataUrl,
+  DataUrlLruCache,
   externalSvgResourceReferences,
   svgMarkupToDataUrl,
 } from "./exportElementAsPng";
 import { XHS_COVER_FONT_FACES, xhsCoverFontFaceCss } from "./xhsCoverFonts";
 
 describe("衍生稿 PNG 导出资源自包含", () => {
+  it("字体 data URL 缓存同时受 LRU 容量和字节预算约束", async () => {
+    const byEntries = new DataUrlLruCache(2, 100);
+    await byEntries.getOrLoad("a", async () => "aaaa");
+    await byEntries.getOrLoad("b", async () => "bbbb");
+    await byEntries.getOrLoad("a", async () => "不应重载");
+    await byEntries.getOrLoad("c", async () => "cccc");
+    expect(byEntries.size).toBe(2);
+    expect(await byEntries.getOrLoad("a", async () => "不应重载")).toBe("aaaa");
+    expect(await byEntries.getOrLoad("b", async () => "b-reloaded")).toBe("b-reloaded");
+
+    const byBytes = new DataUrlLruCache(3, 6);
+    await byBytes.getOrLoad("a", async () => "aaaa");
+    await byBytes.getOrLoad("b", async () => "bbbb");
+    expect(byBytes.size).toBe(1);
+    expect(byBytes.byteSize).toBe(4);
+  });
+
   it("把字体二进制编码为 base64 data URI", () => {
     const buffer = new Uint8Array([0, 1, 2, 253, 254, 255]).buffer;
     expect(arrayBufferToDataUrl(buffer, "font/woff2")).toBe("data:font/woff2;base64,AAEC/f7/");

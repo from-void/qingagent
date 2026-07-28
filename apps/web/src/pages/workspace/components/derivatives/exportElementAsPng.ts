@@ -10,7 +10,89 @@ const LOADABLE_ATTRIBUTE_NAMES = new Set([
   "xlink:href",
 ]);
 const RESOURCE_HREF_ELEMENTS = new Set(["image", "link", "use"]);
-const resourceDataUrls = new Map<string, Promise<string>>();
+const FONT_CACHE_MAX_ENTRIES = Object.keys(XHS_COVER_FONT_FACES).length;
+const FONT_CACHE_MAX_BYTES = 6 * 1024 * 1024;
+
+interface ResourceDataUrlCache {
+  getOrLoad(key: string, load: () => Promise<string>): Promise<string>;
+}
+
+export class DataUrlLruCache implements ResourceDataUrlCache {
+  private readonly entries = new Map<string, { bytes: number; loading: Promise<string> }>();
+  private totalBytes = 0;
+
+  constructor(
+    private readonly maxEntries: number,
+    private readonly maxBytes: number,
+  ) {}
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get byteSize(): number {
+    return this.totalBytes;
+  }
+
+  getOrLoad(key: string, load: () => Promise<string>): Promise<string> {
+    const cached = this.entries.get(key);
+    if (cached) {
+      this.entries.delete(key);
+      this.entries.set(key, cached);
+      return cached.loading;
+    }
+
+    const entry = { bytes: 0, loading: Promise.resolve("") };
+    entry.loading = load().then(
+      (dataUrl) => {
+        if (this.entries.get(key) !== entry) return dataUrl;
+        entry.bytes = dataUrl.length;
+        this.totalBytes += entry.bytes;
+        this.evict();
+        return dataUrl;
+      },
+      (error) => {
+        if (this.entries.get(key) === entry) this.delete(key);
+        throw error;
+      },
+    );
+    this.entries.set(key, entry);
+    this.evict();
+    return entry.loading;
+  }
+
+  private delete(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.totalBytes -= entry.bytes;
+  }
+
+  private evict(): void {
+    while (this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes) {
+      const oldestKey = this.entries.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.delete(oldestKey);
+    }
+  }
+}
+
+class ExportResourceDataUrlCache implements ResourceDataUrlCache {
+  private readonly entries = new Map<string, Promise<string>>();
+
+  getOrLoad(key: string, load: () => Promise<string>): Promise<string> {
+    const cached = this.entries.get(key);
+    if (cached) return cached;
+    const loading = load().catch((error) => {
+      if (this.entries.get(key) === loading) this.entries.delete(key);
+      throw error;
+    });
+    this.entries.set(key, loading);
+    return loading;
+  }
+}
+
+const fontResourceDataUrls = new DataUrlLruCache(FONT_CACHE_MAX_ENTRIES, FONT_CACHE_MAX_BYTES);
 
 function mimeTypeForUrl(url: string): string {
   const path = url.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
@@ -38,31 +120,23 @@ function isEmbeddedResourceUrl(url: string): boolean {
   return !trimmed || trimmed.startsWith("data:") || trimmed.startsWith("#");
 }
 
-async function resourceUrlToDataUrl(rawUrl: string): Promise<string> {
+async function resourceUrlToDataUrl(rawUrl: string, cache: ResourceDataUrlCache): Promise<string> {
   if (isEmbeddedResourceUrl(rawUrl)) return rawUrl;
   const absoluteUrl = new URL(rawUrl, document.baseURI).href;
-  const cached = resourceDataUrls.get(absoluteUrl);
-  if (cached) return cached;
-  const loading = fetch(absoluteUrl, { credentials: "same-origin" }).then(async (response) => {
+  return cache.getOrLoad(absoluteUrl, async () => {
+    const response = await fetch(absoluteUrl, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`导出资源加载失败 (${response.status}): ${absoluteUrl}`);
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
     return arrayBufferToDataUrl(await response.arrayBuffer(), contentType || mimeTypeForUrl(absoluteUrl));
   });
-  resourceDataUrls.set(absoluteUrl, loading);
-  try {
-    return await loading;
-  } catch (error) {
-    resourceDataUrls.delete(absoluteUrl);
-    throw error;
-  }
 }
 
-async function inlineCssResourceUrls(cssText: string): Promise<string> {
+async function inlineCssResourceUrls(cssText: string, cache: ResourceDataUrlCache): Promise<string> {
   const matches = Array.from(cssText.matchAll(RESOURCE_URL_PATTERN));
   if (matches.length === 0) return cssText;
   const replacements = await Promise.all(matches.map(async (match) => {
     const rawUrl = match[1] ?? match[2] ?? match[3] ?? "";
-    const dataUrl = await resourceUrlToDataUrl(rawUrl);
+    const dataUrl = await resourceUrlToDataUrl(rawUrl, cache);
     return { start: match.index ?? 0, end: (match.index ?? 0) + match[0].length, value: `url("${dataUrl}")` };
   }));
   let output = "";
@@ -91,12 +165,16 @@ function collectComputedStyles(source: Element, clone: Element, usedFontFamilies
   });
 }
 
-async function inlineElementResources(source: Element, clone: Element): Promise<void> {
+async function inlineElementResources(
+  source: Element,
+  clone: Element,
+  cache: ResourceDataUrlCache,
+): Promise<void> {
   const tasks: Promise<void>[] = [];
   if (source instanceof HTMLImageElement && clone instanceof HTMLImageElement) {
     const sourceUrl = source.currentSrc || source.src;
     if (sourceUrl) {
-      tasks.push(resourceUrlToDataUrl(sourceUrl).then((dataUrl) => {
+      tasks.push(resourceUrlToDataUrl(sourceUrl, cache).then((dataUrl) => {
         clone.src = dataUrl;
         clone.removeAttribute("srcset");
       }));
@@ -110,14 +188,14 @@ async function inlineElementResources(source: Element, clone: Element): Promise<
         continue;
       }
       RESOURCE_URL_PATTERN.lastIndex = 0;
-      tasks.push(inlineCssResourceUrls(value).then((inlined) => {
+      tasks.push(inlineCssResourceUrls(value, cache).then((inlined) => {
         clone.style.setProperty(property, inlined, clone.style.getPropertyPriority(property));
       }));
     }
   }
   Array.from(source.children).forEach((child, index) => {
     const clonedChild = clone.children[index];
-    if (clonedChild) tasks.push(inlineElementResources(child, clonedChild));
+    if (clonedChild) tasks.push(inlineElementResources(child, clonedChild, cache));
   });
   await Promise.all(tasks);
 }
@@ -133,7 +211,7 @@ function matchingExportFonts(usedFontFamilies: ReadonlySet<string>): XhsCoverFon
 async function embeddedFontCss(usedFontFamilies: ReadonlySet<string>): Promise<string> {
   const fonts = matchingExportFonts(usedFontFamilies);
   return (await Promise.all(fonts.map(async (font) =>
-    xhsCoverFontFaceCss(font, await resourceUrlToDataUrl(font.sourceUrl), "block"),
+    xhsCoverFontFaceCss(font, await resourceUrlToDataUrl(font.sourceUrl, fontResourceDataUrls), "block"),
   ))).join("");
 }
 
@@ -269,7 +347,8 @@ export async function serializeElementAsSelfContainedSvg(element: HTMLElement): 
   clone.style.setProperty("margin", "0");
   clone.style.setProperty("width", `${width}px`);
   clone.style.setProperty("height", `${height}px`);
-  await inlineElementResources(element, clone);
+  // 正文图片只在本次导出内去重；函数返回后整张 Map 即可回收，避免跨文档常驻大体积 data URL。
+  await inlineElementResources(element, clone, new ExportResourceDataUrlCache());
   const fontCss = await embeddedFontCss(usedFontFamilies);
   const markup = new XMLSerializer().serializeToString(clone);
   const layoutContext = `box-sizing:border-box;width:${width}px;height:${height}px;margin:0;padding:0`;

@@ -326,6 +326,74 @@ describe("tableToolbar PM-010", () => {
     }
   });
 
+  it("CellSelection 默认 HTML 往返保留附件节点类型与全部元数据", () => {
+    const attachment = {
+      fileId: "file-cell-1",
+      filename: "需求说明.pdf",
+      mimeType: "application/pdf",
+      size: 2048,
+    };
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "table",
+          attrs: { blockId: "attachment-table" },
+          content: [{
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                content: [{
+                  type: "fileAttachment",
+                  attrs: { blockId: "attachment-source", ...attachment },
+                }],
+              },
+              cell("target"),
+            ],
+          }],
+        }],
+      } satisfies PmDoc,
+    });
+
+    try {
+      expect(selectTableColumns(editor, "attachment-table", 0, 0)).toBe(true);
+      const serialized = editor.view.serializeForClipboard(editor.state.selection.content());
+      const wrapper = document.createElement("div");
+      wrapper.appendChild(serialized.dom);
+      const html = wrapper.innerHTML;
+
+      expect(html).toContain('data-pm-node="fileAttachment"');
+      expect(html).toContain('data-file-id="file-cell-1"');
+      expect(html).toContain("<a ");
+      expect(html).not.toContain('<a data-pm-node="fileAttachment"');
+
+      expect(selectTableColumns(editor, "attachment-table", 1, 1)).toBe(true);
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: {
+          files: [],
+          getData: (type: string) => type === "text/html" ? html : serialized.text,
+          setData: () => undefined,
+        },
+      });
+      editor.view.dom.dispatchEvent(event);
+
+      const result = editor.getJSON() as PmDoc;
+      const tableNode = result.content[0];
+      expect(tableNode?.type).toBe("table");
+      if (tableNode?.type !== "table") throw new Error("附件表格丢失");
+      expect(tableNode.content[0]?.content[1]?.content[0]).toMatchObject({
+        type: "fileAttachment",
+        attrs: attachment,
+      });
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("cell 内 TextSelection 粘贴表格走原生网格覆盖，不产生 table-in-table", () => {
     const editor = createTableEditor();
     try {

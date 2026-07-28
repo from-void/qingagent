@@ -34,6 +34,7 @@ import {
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   PURE_UI_TOOL_NAMES,
+  alignCommandCardWithStatus,
   authCardToolCallSpec,
   buildAskUserToolCallSpec,
   generateSvgToolCallSpec,
@@ -447,7 +448,7 @@ export async function* handleToolCallEvent(
     return true;
   }
   if (originalMessage && originalPart?.kind === "toolCall") {
-    const failedSpec: ToolCallSpec = {
+    const failedSpec = alignCommandCardWithStatus({
       ...originalPart.data,
       status: {
         kind: "failed",
@@ -457,7 +458,7 @@ export async function* handleToolCallEvent(
         },
       },
       result: null,
-    };
+    });
     yield toolCallUpdated(originalMessage.id, toolCallId, failedSpec);
     updateToolCallInChatHistory(state, originalMessage.id, toolCallId, failedSpec);
     outcome.producedVisibleFrame = true;

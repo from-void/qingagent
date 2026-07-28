@@ -30,6 +30,7 @@ import {
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
 import { listCredentialGrants } from "@qingagent/db";
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
@@ -91,9 +92,9 @@ export function __resetIsolationCacheForTest(): void {
   cachedIsolation = null;
 }
 
-/** sessionId 进文件路径前的统一编码：UTF-16 code unit 可逆，且仅输出路径安全字符。 */
+/** sessionId 进文件路径前统一哈希：固定长度、抗碰撞，且仅输出路径安全字符。 */
 export function sessionWorkspaceDirName(sessionId: string): string {
-  return `sid_${Buffer.from(sessionId, "utf16le").toString("hex")}`;
+  return `sid_${createHash("sha256").update(sessionId, "utf8").digest("hex")}`;
 }
 
 export function sessionWorkspaceDir(sessionId: string): string {

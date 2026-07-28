@@ -25,11 +25,30 @@ import {
 // 沙箱 P0:会话级 Workspace 装配——目录命名防穿越/最小 env/隔离解析/实例缓存
 
 describe("sessionWorkspaceDirName 路径安全", () => {
-  it("所有 sessionId 统一编码为可逆的安全目录名", () => {
+  it("所有 sessionId 统一编码为固定长度的安全目录名", () => {
     expect(sessionWorkspaceDirName("9e01e165-1337-43f2-9383-cf339a82b60c")).toMatch(
-      /^sid_[0-9a-f]+$/,
+      /^sid_[0-9a-f]{64}$/,
     );
-    expect(sessionWorkspaceDirName("sess_attack-01")).toMatch(/^sid_[0-9a-f]+$/);
+    expect(sessionWorkspaceDirName("sess_attack-01")).toMatch(/^sid_[0-9a-f]{64}$/);
+  });
+  it("63/256 字符及 Unicode sessionId 均不会超过文件系统单组件长度", () => {
+    const root = mkdtempSync(join(tmpdir(), "qingagent-session-dir-name-"));
+    try {
+      const sessionIds = [
+        "a".repeat(63),
+        "b".repeat(256),
+        "会话🌏".repeat(64),
+      ];
+      const names = sessionIds.map(sessionWorkspaceDirName);
+
+      expect(new Set(names).size).toBe(sessionIds.length);
+      for (const name of names) {
+        expect(Buffer.byteLength(name)).toBeLessThanOrEqual(255);
+        expect(() => mkdirSync(join(root, name))).not.toThrow();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it("路径穿越字符不会进入目录名", () => {
     const name = sessionWorkspaceDirName("../../etc/passwd");
@@ -70,7 +89,7 @@ describe("sessionWorkspaceDirName 路径安全", () => {
     );
   });
   it("空串也走统一编码", () => {
-    expect(sessionWorkspaceDirName("")).toBe("sid_");
+    expect(sessionWorkspaceDirName("")).toMatch(/^sid_[0-9a-f]{64}$/);
     expect(sessionWorkspaceDir("")).toContain("sid_");
   });
 });

@@ -203,6 +203,10 @@ function baselinePrefix(): string[] {
     "--unshare-uts",
     "--proc",
     "/proc",
+    // bwrap 自建的最小 devtmpfs(null/zero/full/random/urandom/tty)。缺了它 /dev 整个不存在,
+    // 任何一句 `2>/dev/null` 都会以 "cannot create /dev/null" 直接失败。
+    "--dev",
+    "/dev",
     "--tmpfs",
     "/tmp",
   ];
@@ -219,7 +223,7 @@ export async function buildBubblewrapReadWallArgs(
     args,
     denyPaths,
     safeBindings: [],
-    projectedDestinations: new Set(["/tmp", "/proc"]),
+    projectedDestinations: new Set(["/tmp", "/proc", "/dev"]),
     visitedSources: new Set(),
     remountReadOnly: new Set(),
     writableHome: policy.writableHome,
@@ -306,7 +310,17 @@ export async function buildStrictFallbackBwrapArgs(
   nodeExecutable: string,
 ): Promise<BuiltBubblewrapPolicy> {
   if (!fallbackAllowed(policy)) throw new Error("strict bwrap fallback would reopen a deny descendant");
-  const args = ["--unshare-pid", "--unshare-ipc", "--unshare-uts", "--proc", "/proc", "--tmpfs", "/tmp"];
+  const args = [
+    "--unshare-pid",
+    "--unshare-ipc",
+    "--unshare-uts",
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "--tmpfs",
+    "/tmp",
+  ];
   const denyPaths = [...policy.credentialDenyPaths, policy.dataDenyPath];
   const fallbackRoots = [...SYSTEM_READONLY_BINDS, "/opt", "/snap"];
   if (denyPaths.some((denied) =>
@@ -374,6 +388,9 @@ async function probeBubblewrapPolicy(
     `test "$(cat ${shellQuoteReadWallPath(sessionProbe)})" = qingagent-read-wall`,
     `rm -f ${shellQuoteReadWallPath(sessionProbe)}`,
     "test -r /proc/self/status",
+    // /dev 缺失会让 `2>/dev/null` 这类最常见写法直接失败,预检必须覆盖。
+    "test -w /dev/null && test -r /dev/urandom",
+    "printf probe 2>/dev/null >/dev/null",
     "node -e 'process.stdout.write(\"node-ok\")'",
   ];
   if (built.mode === "read-wall" && built.safeHomeBindings[0]) {
@@ -427,6 +444,7 @@ export function validateBubblewrapArgsContract(args: string[], requireUserNamesp
     "--unshare-ipc",
     "--unshare-uts",
     "--proc",
+    "--dev",
     "--tmpfs",
     "--chdir",
     "--die-with-parent",

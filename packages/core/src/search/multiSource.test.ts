@@ -28,8 +28,13 @@ describe("normalizeResultUrl", () => {
       "https://a.com/p?q=1",
     );
   });
-  it("非法 URL 回退小写 trim", () => {
-    expect(normalizeResultUrl("  NotAUrl ")).toBe("notaurl");
+  it("非法 URL 仅回退 trim，不破坏原串大小写", () => {
+    expect(normalizeResultUrl("  NotAUrl ")).toBe("NotAUrl");
+  });
+  it("仅归一化协议与主机，保留 path 和 query 的大小写语义", () => {
+    expect(normalizeResultUrl("HTTPS://A.COM/Docs/Read?Mode=Full")).toBe(
+      "https://a.com/Docs/Read?Mode=Full",
+    );
   });
 });
 
@@ -44,6 +49,13 @@ describe("dedupeResults", () => {
   });
   it("跳过空 url", () => {
     expect(dedupeResults([r(""), r("https://a.com")])).toHaveLength(1);
+  });
+  it("不合并仅 path 或 query 大小写不同的合法资源", () => {
+    expect(dedupeResults([
+      r("https://a.com/Docs?mode=full"),
+      r("https://a.com/docs?mode=full"),
+      r("https://a.com/Docs?Mode=full"),
+    ])).toHaveLength(3);
   });
 });
 

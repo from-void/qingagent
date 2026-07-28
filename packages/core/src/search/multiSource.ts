@@ -10,20 +10,22 @@ export interface SearchSource {
 }
 
 /**
- * 规范化结果 URL 用于去重:去协议大小写、去末尾斜杠、去常见跟踪参数、去 fragment。
- * 解析失败则返回原串的小写 trim。
+ * 规范化结果 URL 用于去重:仅统一协议/主机大小写、去末尾斜杠、常见跟踪参数与 fragment。
+ * pathname 和 query 保留原始大小写；解析失败则只 trim。
  */
 export function normalizeResultUrl(url: string): string {
   try {
     const u = new URL(url);
+    u.protocol = u.protocol.toLowerCase();
+    u.hostname = u.hostname.toLowerCase();
     u.hash = "";
     const drop = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "spm"];
     for (const k of drop) u.searchParams.delete(k);
     let s = u.toString();
     s = s.replace(/\/$/, "");
-    return s.toLowerCase();
+    return s;
   } catch {
-    return url.trim().toLowerCase();
+    return url.trim();
   }
 }
 

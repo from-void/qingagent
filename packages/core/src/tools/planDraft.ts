@@ -117,6 +117,14 @@ const askUserOutputSchema = z.union([
   questionnaireRejectedResultSchema,
 ]);
 
+function planDraftRejectedResult(reason: string) {
+  return {
+    rejected: true as const,
+    reason,
+    retryInstruction: "请稍后重新调用 planDraft；若仍失败，基于已有上下文继续写作。",
+  };
+}
+
 export function resolvePlanDraftSuspendPurpose(
   directionReset: boolean,
 ): "initialBrief" | "directionChange" {
@@ -463,8 +471,8 @@ export const planDraftTool = createTool({
       );
       recordAskUserSuppressedSpan(context);
       return {
-        suppressed: true,
-        reason: "askUserAlreadyCompleted",
+        suppressed: true as const,
+        reason: "askUserAlreadyCompleted" as const,
         instruction:
           "已完成一轮澄清,请勿再次提问或描述界面;直接基于已有答案与上下文继续调用 writeDraft/editDraft。",
       };
@@ -473,7 +481,7 @@ export const planDraftTool = createTool({
     try {
       if (!suspend) {
         console.error("[planDraft] suspend function is undefined");
-        return { error: "suspend not available" } as any;
+        return planDraftRejectedResult("当前运行环境无法展示写作方向问卷");
       }
 
       const requestContext = context?.requestContext as RequestContext | undefined;
@@ -539,7 +547,7 @@ export const planDraftTool = createTool({
       }
     } catch (err) {
       console.error("[planDraft] execute failed:", err);
-      return { error: String(err) } as any;
+      return planDraftRejectedResult("写作方向问卷生成失败");
     }
   },
 });

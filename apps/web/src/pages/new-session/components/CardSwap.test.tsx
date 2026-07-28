@@ -78,6 +78,35 @@ describe("CardSwap 当前顺序", () => {
     expect(rect).toBe(expected);
     expect(cardLayoutSnapshot(cards)).toEqual(before);
   });
+
+  it("提交准备在 420ms 轮换窗口内收束布局并锁定被测卡用于飞出", async () => {
+    vi.useFakeTimers();
+    const swapRef = createRef<CardSwapHandle>();
+    await renderCardSwap(swapRef);
+    const cards = getCards();
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = vi.fn(() => new DOMRect(index * 10, index * 20, 300, 380));
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    const rect = swapRef.current?.prepareTopCard();
+    const measuredCard = cards.find((card) =>
+      vi.mocked(card.getBoundingClientRect).mock.calls.length > 0
+    );
+
+    expect(rect).toEqual(new DOMRect(10, 20, 300, 380));
+    expect(measuredCard?.dataset.i).toBe("1");
+    expect(cards.map((card) => card.style.opacity).sort()).toEqual(
+      ["1", "0.88", "0.76", "0.64"].sort(),
+    );
+
+    void swapRef.current?.flyTopCard({ left: 400, top: 50, width: 800, height: 860 });
+    const flyingCard = document.body.querySelector<HTMLDivElement>(".ccx-tcard.flying");
+    expect(flyingCard?.dataset.i).toBe(measuredCard?.dataset.i);
+    flyingCard?.remove();
+  });
 });
 
 async function renderCardSwap(ref = createRef<CardSwapHandle>()): Promise<void> {

@@ -424,9 +424,8 @@ export function NewSessionPage() {
 
     const fly = swapRef.current?.flyTopCard;
     if (fly && !swapHidden) {
-      // 停轮换、量出顶卡 rect(= 汉字吸入的汇聚点 + 翻转起点)
-      swapRef.current?.pause();
-      const cardRect = swapRef.current?.topCardRect();
+      // 原子收束轮换并锁定顶卡；测量与稍后的飞卡始终使用同一张 DOM 卡。
+      const cardRect = swapRef.current?.prepareTopCard();
       const cx = cardRect ? cardRect.left + cardRect.width / 2 : window.innerWidth * 0.72;
       const cy = cardRect ? cardRect.top + cardRect.height / 2 : window.innerHeight / 2;
       const cardW = cardRect?.width ?? 300;

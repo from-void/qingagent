@@ -29,6 +29,8 @@ export interface FlyRect {
 export interface CardSwapHandle {
   /** 纯读取顶层卡当前屏幕 rect(用于 morph 飞入落点)，不收束轮换或改写布局。 */
   topCardRect: () => DOMRect | null;
+  /** 提交前原子收束轮换、锁定顶卡并返回同一张卡的屏幕 rect。 */
+  prepareTopCard: () => DOMRect | null;
   pause: () => void;
   resume: () => void;
   /**
@@ -62,6 +64,7 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
   const cycleLayoutTimerRef = useRef<number | null>(null);
   const cycleFinishTimerRef = useRef<number | null>(null);
   const cyclingCardRef = useRef<number | null>(null);
+  const preparedTopCardRef = useRef<HTMLDivElement | null>(null);
   // 仅用于强制重渲染 ribbon 的 top 标记(布局本身走命令式 transform)
   const [, force] = useState(0);
 
@@ -168,10 +171,21 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
         const top = topIdx == null ? null : cardRefs.current[topIdx];
         return top ? top.getBoundingClientRect() : null;
       },
+      prepareTopCard() {
+        pausedRef.current = true;
+        stopSwap();
+        cancelCycleTransition(true);
+        const swap = swapRef.current;
+        const topIdx = orderRef.current[0];
+        const top = topIdx == null ? null : cardRefs.current[topIdx];
+        preparedTopCardRef.current = swap ? top ?? null : null;
+        return preparedTopCardRef.current?.getBoundingClientRect() ?? null;
+      },
       pause() {
         pausedRef.current = true;
       },
       resume() {
+        preparedTopCardRef.current = null;
         pausedRef.current = false;
       },
       flyTopCard(target) {
@@ -181,7 +195,9 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
           cancelCycleTransition(true);
           const swap = swapRef.current;
           const topIdx = orderRef.current[0];
-          const el = topIdx == null ? null : cardRefs.current[topIdx];
+          const currentTop = topIdx == null ? null : cardRefs.current[topIdx];
+          const el = preparedTopCardRef.current ?? currentTop;
+          preparedTopCardRef.current = null;
           if (!swap || !el) {
             resolve();
             return;
@@ -273,6 +289,7 @@ export const CardSwap = forwardRef<CardSwapHandle, CardSwapProps>(function CardS
     return () => {
       stopSwap();
       cancelCycleTransition(false);
+      preparedTopCardRef.current = null;
     };
   }, [cancelCycleTransition, layout, startSwap, stopSwap]);
 

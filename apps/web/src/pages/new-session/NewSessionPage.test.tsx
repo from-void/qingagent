@@ -275,6 +275,74 @@ describe("NewSessionPage 正文校验", () => {
   });
 });
 
+describe("NewSessionPage 提交飞卡一致性", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    installBrowserPolyfills();
+    Object.defineProperty(window, "requestAnimationFrame", {
+      configurable: true,
+      value(callback: FrameRequestCallback) {
+        return window.setTimeout(() => callback(performance.now()), 16);
+      },
+    });
+    window.localStorage.clear();
+    window.location.hash = "#/new";
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+    document.body.querySelectorAll(".ccx-tcard.flying").forEach((card) => card.remove());
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  it("0–420ms 轮换窗口内测量目标与实际飞卡保持同一张", async () => {
+    await render(<NewSessionPage />);
+    const editor = query("[data-wf='StarterInput']")!;
+    setStarterText(editor, "锁定当前顶卡");
+
+    act(() => {
+      vi.advanceTimersByTime(2132);
+    });
+    const cards = Array.from(host?.querySelectorAll<HTMLDivElement>(".ccx-tcard") ?? []);
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = vi.fn(() =>
+        new DOMRect(100 + index * 20, 80 + index * 10, 300, 380)
+      );
+    });
+
+    click(getButton("[data-wf='StartSession']"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const measuredCard = cards.find((card) =>
+      vi.mocked(card.getBoundingClientRect).mock.calls.length > 0
+    );
+
+    expect(measuredCard?.dataset.i).toBe("1");
+    expect(cards.map((card) => card.style.opacity).sort()).toEqual(
+      ["1", "0.88", "0.76", "0.64"].sort(),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(760);
+    });
+    const flyingCard = document.body.querySelector<HTMLDivElement>(".ccx-tcard.flying");
+    expect(flyingCard?.dataset.i).toBe(measuredCard?.dataset.i);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+  });
+});
+
 async function render(element: ReactElement): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);

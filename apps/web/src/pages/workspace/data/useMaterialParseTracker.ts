@@ -44,6 +44,7 @@ export interface MaterialParseTrackerState {
 }
 
 export const MATERIAL_PARSE_INCOMPLETE_REASON = "本轮未完成解析，可重试";
+export const MATERIAL_PARSE_SEND_FAILED_REASON = "发送失败，请重试";
 export const MATERIAL_PARSE_RETRY_FAILED_REASON = "重试发送失败，请重试";
 export const MATERIAL_PARSE_BUSY_REASON = "生成进行中，请稍后重试";
 
@@ -68,6 +69,7 @@ export type MaterialParseTrackerAction =
       turnKey: number;
       resources: readonly Resource[];
     }
+  | { type: "markTurnError"; turnKey: number; reason: string }
   | { type: "markError"; fileId: string; reason: string }
   | { type: "reset" };
 
@@ -81,7 +83,8 @@ export interface UseMaterialParseTrackerInput {
 export interface UseMaterialParseTrackerResult {
   rows: MaterialParseRow[];
   localEntries: MaterialParseLocalEntry[];
-  markParsing: (assets: readonly UploadedAsset[]) => void;
+  markParsing: (assets: readonly UploadedAsset[]) => number | null;
+  markTurnError: (turnKey: number, reason: string) => void;
   retry: (fileId: string) => Promise<void>;
 }
 
@@ -250,6 +253,24 @@ export function reduceMaterialParseTrackerState(
         ],
       };
     }
+    case "markTurnError": {
+      let changed = false;
+      const entries = prev.entries.map((entry) => {
+        if (
+          entry.turnKey !== action.turnKey ||
+          entry.state !== "parsing"
+        ) {
+          return entry;
+        }
+        changed = true;
+        return {
+          ...entry,
+          state: "error" as const,
+          errorReason: action.reason,
+        };
+      });
+      return changed ? { entries } : prev;
+    }
     case "markError": {
       let changed = false;
       const entries = prev.entries.map((entry) => {
@@ -366,15 +387,21 @@ export function useMaterialParseTracker({
   }, [sessionId]);
 
   const markParsing = useCallback((assets: readonly UploadedAsset[]) => {
-    if (assets.length === 0) return;
+    if (assets.length === 0) return null;
     turnSeqRef.current += 1;
+    const turnKey = turnSeqRef.current;
     dispatch({
       type: "markParsing",
       assets,
       agentActive: agentActiveRef.current,
-      turnKey: turnSeqRef.current,
+      turnKey,
       resources: resourcesRef.current,
     });
+    return turnKey;
+  }, []);
+
+  const markTurnError = useCallback((turnKey: number, reason: string) => {
+    dispatch({ type: "markTurnError", turnKey, reason });
   }, []);
 
   const retry = useCallback(
@@ -423,6 +450,7 @@ export function useMaterialParseTracker({
     rows,
     localEntries: state.entries,
     markParsing,
+    markTurnError,
     retry,
   };
 }

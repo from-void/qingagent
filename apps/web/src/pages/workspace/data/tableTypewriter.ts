@@ -8,7 +8,10 @@ export const TABLE_TYPEWRITER_MAX_GRAPHEMES = 1500;
 export type TableTypewriterFallbackReason =
   | "not-table"
   | "span"
+  | "cell-style"
   | "multi-block-cell"
+  | "non-paragraph-cell"
+  | "formatted-text"
   | "non-text-cell"
   | "too-many-cells"
   | "too-many-graphemes";
@@ -46,11 +49,19 @@ export function tableTypewriterFallbackReason(
         if ((cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1) {
           return "span";
         }
+        if (
+          (cell.attrs?.colwidth ?? null) !== null
+          || (cell.attrs?.backgroundColor ?? null) !== null
+        ) {
+          return "cell-style";
+        }
         if (cell.content.length !== 1) return "multi-block-cell";
         const textBlock = cell.content[0];
-        const blockType = textBlock?.type;
-        if (!blockType || !["paragraph", "heading", "codeBlock", "penNote"].includes(blockType)) {
-          return "non-text-cell";
+        if (textBlock?.type !== "paragraph") {
+          return "non-paragraph-cell";
+        }
+        if ((textBlock.attrs?.textAlign ?? null) !== null) {
+          return "formatted-text";
         }
         // inlineMath 等原子节点的 PM 长度与 ViewBlock 文本投影不同，逐字插入会先
         // 写出源码、终态再跳回 atom；统一视为复杂表整块出现。
@@ -59,6 +70,9 @@ export function tableTypewriterFallbackReason(
           || !Array.isArray(textBlock.content)
           || textBlock.content.some((inline) => inline.type !== "text")
         ) return "non-text-cell";
+        if (textBlock.content.some((inline) => (inline.marks?.length ?? 0) > 0)) {
+          return "formatted-text";
+        }
       }
     }
   }

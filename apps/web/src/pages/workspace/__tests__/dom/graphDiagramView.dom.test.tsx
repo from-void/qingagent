@@ -439,9 +439,43 @@ describe("GraphDiagramView", () => {
   });
 
   it("未闭合 flowchart 节点仍显示解析错误而非空画布", async () => {
-    await render(<DiagramRenderer source="graph TD; A[未闭合 --> B" readOnly />);
-    await waitForSelector(".pm-diagram-error");
-    expect(container?.textContent).toContain("节点 A 的形状未闭合");
+    const cachedSvg = "<svg xmlns='http://www.w3.org/2000/svg'><text>缓存中的完整图表</text></svg>";
+    await render(<DiagramRenderer source="graph TD; A[未闭合 --> B" cachedSvg={cachedSvg} readOnly />);
+    await waitForSelector(".pm-diagram-svg");
+    expect(container?.textContent).toContain("缓存中的完整图表");
+    expect(container?.querySelector(".graph-diagram")).toBeNull();
+    expect(container?.querySelector(".react-flow__node")).toBeNull();
+  });
+
+  it("内部模型无法完整表示合法 Mermaid 时使用已有 SVG 缓存降级", async () => {
+    const source = `stateDiagram-v2
+  [*] --> Active
+  note right of Active: 保留这段说明
+  Active --> [*]
+`;
+    const cachedSvg = "<svg xmlns='http://www.w3.org/2000/svg'><text>带说明的缓存图</text></svg>";
+    await render(<DiagramRenderer source={source} cachedSvg={cachedSvg} readOnly />);
+    await waitForSelector(".pm-diagram-svg");
+
+    expect(container?.textContent).toContain("带说明的缓存图");
+    expect(container?.querySelector(".graph-diagram")).toBeNull();
+    expect(container?.querySelector(".react-flow__node")).toBeNull();
+  });
+
+  it("合法 Mermaid 含未建模主题、曲线或样式时保留缓存 SVG", async () => {
+    const source = `%%{init: {"theme":"dark","flowchart":{"curve":"basis"}}}%%
+flowchart TD
+  A[开始] --> B[结束]
+  style A rx:24,ry:24
+`;
+    const cachedSvg =
+      "<svg xmlns='http://www.w3.org/2000/svg'><text>保真的深色曲线图</text></svg>";
+    await render(
+      <DiagramRenderer source={source} cachedSvg={cachedSvg} readOnly />,
+    );
+    await waitForSelector(".pm-diagram-svg");
+
+    expect(container?.textContent).toContain("保真的深色曲线图");
     expect(container?.querySelector(".graph-diagram")).toBeNull();
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });
@@ -586,11 +620,18 @@ flowchart LR
     expect(graph.outerHTML).not.toContain("#b08a3e");
   });
 
-  it("保存态真实云原生 fixture 渲出 8 个分区,并与 graphToSvg 消费同一布局几何", async () => {
-    const source = readFileSync(
+  it("保存态云原生结构在移除未建模展示属性后渲出 8 个分区,并与 graphToSvg 消费同一布局几何", async () => {
+    const originalSource = readFileSync(
       path.join(process.cwd(), "../../packages/diagram-engine/src/__tests__/fixtures-user-cloudnative.mmd"),
       "utf8",
     );
+    const source = originalSource
+      .replace("'background':'#FFFFFF',", "")
+      .replace(",'edgeLabelBackground':'#FFFFFF'", "")
+      .replace(",'fontSize':'14px'", "")
+      .replace(/,rx:8px,ry:8px/g, "");
+    expect(parseDiagram(originalSource).fullyRepresented).toBe(false);
+    expect(parseDiagram(source).fullyRepresented).toBe(true);
     await render(<DiagramRenderer source={source} readOnly />);
     const graph = await waitForSelector(".graph-diagram") as HTMLElement;
     const clusters = Array.from(graph.querySelectorAll<HTMLElement>(".graph-diagram-cluster"));

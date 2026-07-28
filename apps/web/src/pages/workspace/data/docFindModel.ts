@@ -40,23 +40,25 @@ export function collectMatches(
     return { matches: [], total: 0, truncated: false };
   }
 
-  const needle = caseSensitive ? query : query.toLocaleLowerCase();
+  const needle = caseSensitive ? query : foldFindText(query).text;
   const matches: FindMatch[] = [];
   let total = 0;
 
   for (const segment of segments) {
-    const haystack = caseSensitive
-      ? segment.text
-      : segment.text.toLocaleLowerCase();
+    const folded = caseSensitive ? null : foldFindText(segment.text);
+    const haystack = folded?.text ?? segment.text;
     let offset = 0;
     while (offset <= haystack.length) {
       const index = haystack.indexOf(needle, offset);
       if (index < 0) break;
       total += 1;
       if (matches.length < limit) {
+        const originalFrom = folded?.starts[index] ?? index;
+        const originalTo = folded?.ends[index + needle.length - 1]
+          ?? index + query.length;
         matches.push({
-          from: segment.pos + index,
-          to: segment.pos + index + query.length,
+          from: segment.pos + originalFrom,
+          to: segment.pos + originalTo,
         });
       }
       offset = index + Math.max(needle.length, 1);
@@ -68,6 +70,92 @@ export function collectMatches(
     total,
     truncated: total > matches.length,
   };
+}
+
+function foldFindText(value: string): {
+  text: string;
+  starts: number[];
+  ends: number[];
+} {
+  const text = value.toLocaleLowerCase();
+  let originalOffset = 0;
+  const starts: number[] = [];
+  const ends: number[] = [];
+
+  for (const char of value) {
+    const originalFrom = originalOffset;
+    originalOffset += char.length;
+    const folded = char.toLocaleLowerCase();
+    for (let index = 0; index < folded.length; index += 1) {
+      starts.push(originalFrom);
+      ends.push(originalOffset);
+    }
+  }
+
+  // Unicode 条件大小写（如希腊词尾 sigma）会改变完整字符串的折叠字符，
+  // 但通常不改变长度；text 必须采用完整字符串折叠，映射才沿用原有查找语义。
+  if (starts.length !== text.length) {
+    return foldFindTextFromPrefixes(value, text);
+  }
+  return { text, starts, ends };
+}
+
+function foldFindTextFromPrefixes(
+  value: string,
+  text: string,
+): { text: string; starts: number[]; ends: number[] } {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let originalOffset = 0;
+  let foldedPrefix = "";
+
+  for (const char of value) {
+    const originalFrom = originalOffset;
+    originalOffset += char.length;
+    const nextFoldedPrefix = value
+      .slice(0, originalOffset)
+      .toLocaleLowerCase();
+    let commonPrefix = 0;
+    while (
+      commonPrefix < foldedPrefix.length &&
+      commonPrefix < nextFoldedPrefix.length &&
+      foldedPrefix[commonPrefix] === nextFoldedPrefix[commonPrefix]
+    ) {
+      commonPrefix += 1;
+    }
+    let commonSuffix = 0;
+    while (
+      commonSuffix < foldedPrefix.length - commonPrefix &&
+      commonSuffix < nextFoldedPrefix.length - commonPrefix &&
+      foldedPrefix[foldedPrefix.length - 1 - commonSuffix] ===
+        nextFoldedPrefix[nextFoldedPrefix.length - 1 - commonSuffix]
+    ) {
+      commonSuffix += 1;
+    }
+    const changedFrom = Math.min(commonPrefix, text.length);
+    const changedTo = Math.min(
+      Math.max(changedFrom, nextFoldedPrefix.length - commonSuffix),
+      text.length,
+    );
+    for (let index = changedFrom; index < changedTo; index += 1) {
+      starts[index] ??= originalFrom;
+      ends[index] = originalOffset;
+    }
+    // 条件折叠可能吞掉当前源码字符，或用它改写既有输出而不增加长度。
+    // 这类零宽源字符必须并入相邻折叠字符的结束边界，替换时才能完整覆盖原文。
+    if (changedFrom === changedTo && nextFoldedPrefix.length > 0) {
+      const anchor = Math.min(changedFrom, nextFoldedPrefix.length - 1);
+      starts[anchor] ??= starts[anchor - 1] ?? originalFrom;
+      ends[anchor] = originalOffset;
+    }
+    foldedPrefix = nextFoldedPrefix;
+  }
+
+  for (let index = 0; index < text.length; index += 1) {
+    starts[index] ??= starts[index - 1] ?? 0;
+    ends[index] ??= ends[index - 1] ?? Math.min(1, value.length);
+  }
+  return { text, starts, ends };
 }
 
 export function stepCursor(cur: number, total: number, dir: 1 | -1): number {
@@ -83,6 +171,21 @@ export function planReplaceAll(
   return matches
     .map((match) => ({ from: match.from, to: match.to, insert: replacement }))
     .sort((a, b) => b.from - a.from);
+}
+
+export function collectReplaceAllPlans(
+  segments: FindSegment[],
+  query: string,
+  caseSensitive: boolean,
+  replacement: string,
+): { from: number; to: number; insert: string }[] {
+  const result = collectMatches(
+    segments,
+    query,
+    caseSensitive,
+    Number.POSITIVE_INFINITY,
+  );
+  return planReplaceAll(result.matches, replacement);
 }
 
 export function formatFindCount(

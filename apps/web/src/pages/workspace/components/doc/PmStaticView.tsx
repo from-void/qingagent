@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode, PmTableNode } from "@qingagent/pm-schema";
@@ -6,6 +6,18 @@ import { splitGraphemes } from "../../data/presentationSpans";
 import { reviewTableCellKey, type ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 import { ReadonlyImageFigure } from "../ImageView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
+
+const PmTextRendererContext = createContext<((text: string) => ReactNode) | null>(null);
+
+export function PmTextRendererProvider({
+  children,
+  renderText,
+}: {
+  children: ReactNode;
+  renderText: (text: string) => ReactNode;
+}) {
+  return <PmTextRendererContext.Provider value={renderText}>{children}</PmTextRendererContext.Provider>;
+}
 
 export function PmTableScroll({ children, className = "" }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -357,9 +369,10 @@ function staticStickyHeaderCellIndexes(
 }
 
 function PmInlineView({ node }: { node: PmInlineNode }) {
+  const renderText = useContext(PmTextRendererContext);
   if (node.type === "hardBreak") return <br />;
   if (node.type === "inlineMath") return <MathView latex={node.attrs.latex} />;
-  return <>{applyMarks(node.text, node.marks ?? [])}</>;
+  return <>{applyMarks(renderText ? renderText(node.text) : node.text, node.marks ?? [])}</>;
 }
 
 function inlineGraphemeLength(content: readonly PmInlineNode[]): number {
@@ -424,7 +437,7 @@ export function textAlignStyle(align: string | null | undefined): React.CSSPrope
   return align === "center" || align === "right" || align === "justify" ? { textAlign: align } : undefined;
 }
 
-export function applyMarks(text: string, marks: PmMark[]): React.ReactNode {
+export function applyMarks(text: React.ReactNode, marks: PmMark[]): React.ReactNode {
   return marks.reduce<React.ReactNode>((child, mark) => {
     switch (mark.type) {
       case "bold":

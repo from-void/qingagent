@@ -7,6 +7,7 @@ import {
   ensureBrowserFolderBridge,
   pickBrowserFolderSource,
   rememberAttachedBrowserFolderSource,
+  requestBrowserFolderPermission,
   stopBrowserFolderBridge,
   type PickedBrowserFolderSource,
 } from "./browserFolderBridge";
@@ -23,6 +24,11 @@ class FakeIDBRequest<T = unknown> {
     this.result = value;
     queueMicrotask(() => this.onsuccess?.({ target: this }));
   }
+
+  fail(error: Error): void {
+    this.error = error;
+    queueMicrotask(() => this.onerror?.({ target: this }));
+  }
 }
 
 class FakeIDBOpenRequest<T = unknown> extends FakeIDBRequest<T> {
@@ -34,16 +40,32 @@ class FakeIDBTransaction {
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
   error: Error | null = null;
+  private aborted = false;
+  private completionQueued = false;
+  private readonly stagedStores: StoreDump;
 
-  constructor(private readonly stores: StoreDump) {}
+  constructor(
+    private readonly stores: StoreDump,
+    storeNames: readonly string[],
+    private readonly failPutStore: string | null,
+    private readonly failGetStore: string | null,
+  ) {
+    this.stagedStores = Object.fromEntries(
+      storeNames.map((name) => [name, new Map(stores[name] ?? [])]),
+    );
+  }
 
   objectStore(name: string) {
-    const store = this.stores[name] ?? new Map<string, unknown>();
-    this.stores[name] = store;
+    const store = this.stagedStores[name] ?? new Map<string, unknown>();
+    this.stagedStores[name] = store;
     return {
       get: (key: string) => {
         const request = new FakeIDBRequest<unknown>();
-        request.succeed(store.get(key));
+        if (name === this.failGetStore) {
+          request.fail(new Error("indexeddb read failed"));
+        } else {
+          request.succeed(store.get(key));
+        }
         return request;
       },
       getAll: () => {
@@ -57,20 +79,41 @@ class FakeIDBTransaction {
         return request;
       },
       put: (value: unknown, key: string) => {
+        if (name === this.failPutStore) {
+          throw new DOMException("handle clone failed", "DataCloneError");
+        }
         const request = new FakeIDBRequest<undefined>();
         store.set(key, value);
         request.succeed(undefined);
-        queueMicrotask(() => this.oncomplete?.());
+        this.queueCompletion();
         return request;
       },
       delete: (key: string) => {
         const request = new FakeIDBRequest<undefined>();
         store.delete(key);
         request.succeed(undefined);
-        queueMicrotask(() => this.oncomplete?.());
+        this.queueCompletion();
         return request;
       },
     };
+  }
+
+  abort(): void {
+    if (this.aborted) return;
+    this.aborted = true;
+    queueMicrotask(() => this.onabort?.());
+  }
+
+  private queueCompletion(): void {
+    if (this.completionQueued) return;
+    this.completionQueued = true;
+    queueMicrotask(() => {
+      if (this.aborted) return;
+      for (const [name, store] of Object.entries(this.stagedStores)) {
+        this.stores[name] = new Map(store);
+      }
+      this.oncomplete?.();
+    });
   }
 }
 
@@ -79,15 +122,25 @@ class FakeIDBDatabase {
     contains: (name: string) => this.stores[name] !== undefined,
   };
 
-  constructor(private readonly stores: StoreDump) {}
+  constructor(
+    private readonly stores: StoreDump,
+    private readonly failPutStore: () => string | null,
+    private readonly failGetStore: () => string | null,
+  ) {}
 
   createObjectStore(name: string): void {
     this.stores[name] ??= new Map<string, unknown>();
   }
 
-  transaction(storeName: string): FakeIDBTransaction {
-    this.stores[storeName] ??= new Map<string, unknown>();
-    return new FakeIDBTransaction(this.stores);
+  transaction(storeNames: string | string[]): FakeIDBTransaction {
+    const names = Array.isArray(storeNames) ? storeNames : [storeNames];
+    for (const name of names) this.stores[name] ??= new Map<string, unknown>();
+    return new FakeIDBTransaction(
+      this.stores,
+      names,
+      this.failPutStore(),
+      this.failGetStore(),
+    );
   }
 
   close(): void {}
@@ -121,13 +174,19 @@ class FakeEventSource {
 }
 
 const fakeEventSources: FakeEventSource[] = [];
+let failedPutStore: string | null = null;
+let failedGetStore: string | null = null;
 
 function installFakeIndexedDb(stores: StoreDump): void {
   let upgraded = false;
   const indexedDB = {
     open: (_name: string, _version?: number) => {
       const request = new FakeIDBOpenRequest<FakeIDBDatabase>();
-      const db = new FakeIDBDatabase(stores);
+      const db = new FakeIDBDatabase(
+        stores,
+        () => failedPutStore,
+        () => failedGetStore,
+      );
       queueMicrotask(() => {
         request.result = db;
         if (!upgraded) {
@@ -178,6 +237,8 @@ describe("browser folder handle persistence", () => {
   beforeEach(() => {
     stores = {};
     uuidSeq = 0;
+    failedPutStore = null;
+    failedGetStore = null;
     fakeEventSources.length = 0;
     installFakeIndexedDb(stores);
     Object.defineProperty(window, "crypto", {
@@ -250,6 +311,104 @@ describe("browser folder handle persistence", () => {
     expect(sourceStore(stores).size).toBe(0);
   });
 
+  it("handle 写入失败时与 source index 一起回滚，不留下半状态", async () => {
+    const picked: PickedBrowserFolderSource = {
+      handle: makeDirectoryHandle("unclonable-folder"),
+      name: "unclonable-folder",
+      browserHandleKey: `${window.location.origin}:sess-atomic:handle:root`,
+      clientSourceId: "browser_client_atomic",
+    };
+    failedPutStore = "handles";
+
+    await expect(rememberAttachedBrowserFolderSource({
+      sessionId: "sess-atomic",
+      folderId: "fld-atomic",
+      picked,
+    })).rejects.toMatchObject({ name: "DataCloneError" });
+
+    expect(sourceStore(stores).size).toBe(0);
+    expect(handleStore(stores).size).toBe(0);
+  });
+
+  it("权限 API 拒绝时 ensure 与 request 都返回错误状态，不逃逸 rejected Promise", async () => {
+    const source: FolderSource = {
+      id: "fld-permission-error",
+      sessionId: "sess-permission-error",
+      provider: "browser-fs-access",
+      name: "permission-error-folder",
+      pathLabel: "permission-error-folder",
+      mountName: "source_permission_error",
+      mountPath: "/sources/source_permission_error",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    const handleKey = `${window.location.origin}:sess-permission-error:handle:root`;
+    stores.sources = new Map([[
+      `${window.location.origin}:${source.sessionId}:${source.id}`,
+      {
+        key: `${window.location.origin}:${source.sessionId}:${source.id}`,
+        sessionId: source.sessionId,
+        folderId: source.id,
+        handleKey,
+        clientId: "browser_client_permission_error",
+        name: source.name,
+        updatedAt: "2026-07-28T00:00:00.000Z",
+      },
+    ]]);
+    stores.handles = new Map([[handleKey, {
+      ...makeDirectoryHandle(source.name),
+      queryPermission: async () => { throw new Error("query permission failed"); },
+      requestPermission: async () => { throw new Error("request permission failed"); },
+    }]]);
+
+    await expect(ensureBrowserFolderBridge(source)).resolves.toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+    await expect(requestBrowserFolderPermission(source)).resolves.toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+  });
+
+  it("IndexedDB 读取拒绝时返回固定中性提示且不泄露内部错误", async () => {
+    const source: FolderSource = {
+      id: "fld-idb-error",
+      sessionId: "sess-idb-error",
+      provider: "browser-fs-access",
+      name: "idb-error-folder",
+      pathLabel: "idb-error-folder",
+      mountName: "source_idb_error",
+      mountPath: "/sources/source_idb_error",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    failedGetStore = "sources";
+
+    const ensure = await ensureBrowserFolderBridge(source);
+    const request = await requestBrowserFolderPermission(source);
+
+    expect(ensure).toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+    expect(request).toEqual({
+      status: "error",
+      error: "文件夹连接异常，请稍后重试",
+    });
+    expect(JSON.stringify([ensure, request])).not.toContain("indexeddb");
+  });
+
   it("同一文件夹并发启动只注册一次并只建立一个 SSE", async () => {
     const picked: PickedBrowserFolderSource = {
       handle: makeDirectoryHandle("single-flight-folder"),
@@ -311,6 +470,66 @@ describe("browser folder handle persistence", () => {
     expect(fakeEventSources).toHaveLength(1);
 
     await forgetBrowserFolderSource(source.sessionId, source.id);
+  });
+
+  it("ensure 在权限查询期间被取消后不再注册 bridge 或建立 SSE", async () => {
+    let releasePermission!: () => void;
+    const permissionGate = new Promise<void>((resolve) => {
+      releasePermission = resolve;
+    });
+    const source: FolderSource = {
+      id: "fld-abort",
+      sessionId: "sess-abort",
+      provider: "browser-fs-access",
+      name: "abort-folder",
+      pathLabel: "abort-folder",
+      mountName: "source_abort",
+      mountPath: "/sources/source_abort",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+    };
+    const handleKey = `${window.location.origin}:sess-abort:handle:root`;
+    stores.sources = new Map([[
+      `${window.location.origin}:${source.sessionId}:${source.id}`,
+      {
+        key: `${window.location.origin}:${source.sessionId}:${source.id}`,
+        sessionId: source.sessionId,
+        folderId: source.id,
+        handleKey,
+        clientId: "browser_client_abort",
+        name: source.name,
+        updatedAt: "2026-07-28T00:00:00.000Z",
+      },
+    ]]);
+    stores.handles = new Map([[handleKey, {
+      ...makeDirectoryHandle(source.name),
+      queryPermission: async () => {
+        await permissionGate;
+        return "granted";
+      },
+    }]]);
+
+    const controller = new AbortController();
+    const ensuring = ensureBrowserFolderBridge(source, controller.signal);
+    await flushBridgeTasks();
+    controller.abort();
+    stopBrowserFolderBridge(source.sessionId, source.id);
+    releasePermission();
+
+    await expect(ensuring).resolves.toEqual({
+      status: "connected",
+      error: null,
+    });
+    expect(fakeEventSources).toHaveLength(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      "/api/v1/folder-bridge/register",
+      expect.anything(),
+    );
   });
 
   it("启动注册在途时停止会注销旧连接，随后重启不会被旧竞争者覆盖", async () => {

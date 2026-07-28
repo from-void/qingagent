@@ -54,7 +54,7 @@ describe("首页转场纸与工作区真纸几何交接", () => {
             ).not.toBeNull();
             expect(
               view.querySelector(
-                `.${WORKSPACE_PAPER_DOM.paperColumnClass} > .${WORKSPACE_PAPER_DOM.paperShellClass}[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"] + .${WORKSPACE_PAPER_DOM.documentContentClass} > .${WORKSPACE_PAPER_DOM.documentClass}`,
+                `.${WORKSPACE_PAPER_DOM.paperColumnClass} > .${WORKSPACE_PAPER_DOM.paperShellClass}[data-wf="${WORKSPACE_PAPER_DOM.paperShellDataWf}"] + .${WORKSPACE_PAPER_DOM.documentContentClass} > .${WORKSPACE_PAPER_DOM.paperSurfaceClass}[data-wf="${WORKSPACE_PAPER_DOM.paperSurfaceDataWf}"] > .${WORKSPACE_PAPER_DOM.documentClass}[data-wf="${WORKSPACE_PAPER_DOM.documentDataWf}"]`,
               ),
             ).toBe(this);
             expect(
@@ -91,10 +91,15 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     mountedShell.dataset.wf = WORKSPACE_PAPER_DOM.paperShellDataWf;
     const mountedContent = document.createElement("div");
     mountedContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const mountedSurface = document.createElement("div");
+    mountedSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    mountedSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
     const mountedPaper = document.createElement("article");
     mountedPaper.className = WORKSPACE_PAPER_DOM.documentClass;
+    mountedPaper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
     mountedPaper.getBoundingClientRect = () => domRect(expected);
-    mountedContent.appendChild(mountedPaper);
+    mountedSurface.appendChild(mountedPaper);
+    mountedContent.appendChild(mountedSurface);
     mountedPaperColumn.append(mountedShell, mountedContent);
     mountedBody.append(mountedChatColumn, mountedPaperColumn);
     mountedView.appendChild(mountedBody);
@@ -105,6 +110,71 @@ describe("首页转场纸与工作区真纸几何交接", () => {
     expect(
       document.querySelectorAll(`#${WORKSPACE_PAPER_DOM.viewId}`),
     ).toHaveLength(1);
+  });
+
+  it("只测量右栏正文，并在正文尚未挂载时回退同一右栏纸壳", () => {
+    const previewRect = {
+      left: 40,
+      top: 120,
+      width: 320,
+      height: 240,
+    };
+    const shellRect = {
+      left: 492,
+      top: 52,
+      width: 792,
+      height: 525,
+    };
+    const documentRect = {
+      left: 492,
+      top: 52,
+      width: 792,
+      height: 680,
+    };
+    const view = document.createElement("section");
+    view.id = WORKSPACE_PAPER_DOM.viewId;
+
+    const body = document.createElement("div");
+    body.className = WORKSPACE_PAPER_DOM.bodyClass;
+    const left = document.createElement("aside");
+    left.className = WORKSPACE_PAPER_DOM.chatColumnClass;
+    const askUserPreview = document.createElement("div");
+    askUserPreview.className = `auq-preview-doc ${WORKSPACE_PAPER_DOM.documentClass}`;
+    askUserPreview.getBoundingClientRect = vi.fn(() => domRect(previewRect));
+    left.appendChild(askUserPreview);
+
+    const right = document.createElement("main");
+    right.className = WORKSPACE_PAPER_DOM.paperColumnClass;
+    const shell = document.createElement("div");
+    shell.className = WORKSPACE_PAPER_DOM.paperShellClass;
+    shell.dataset.wf = WORKSPACE_PAPER_DOM.paperShellDataWf;
+    shell.getBoundingClientRect = vi.fn(() => domRect(shellRect));
+    const content = document.createElement("div");
+    content.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const starterPreview = document.createElement("div");
+    starterPreview.className = `starter-preview ${WORKSPACE_PAPER_DOM.documentClass}`;
+    starterPreview.getBoundingClientRect = vi.fn(() => domRect(previewRect));
+    content.appendChild(starterPreview);
+    right.append(shell, content);
+    body.append(left, right);
+    view.appendChild(body);
+    document.body.appendChild(view);
+
+    expect(measureWorkspacePaperRect()).toEqual(shellRect);
+
+    const documentPaper = document.createElement("article");
+    documentPaper.className = WORKSPACE_PAPER_DOM.documentClass;
+    documentPaper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
+    documentPaper.getBoundingClientRect = vi.fn(() => domRect(documentRect));
+    const paperSurface = document.createElement("div");
+    paperSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    paperSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
+    paperSurface.appendChild(documentPaper);
+    content.appendChild(paperSurface);
+
+    expect(measureWorkspacePaperRect()).toEqual(documentRect);
+    expect(askUserPreview.getBoundingClientRect).not.toHaveBeenCalled();
+    expect(starterPreview.getBoundingClientRect).not.toHaveBeenCalled();
   });
 
   it("真实转场 DOM 的纸面层在落定帧重取目标，终帧与工作区首帧误差不超过 1px", async () => {
@@ -133,11 +203,22 @@ describe("首页转场纸与工作区真纸几何交接", () => {
 
     const workspace = document.createElement("section");
     workspace.id = WORKSPACE_PAPER_DOM.viewId;
+    const paperColumn = document.createElement("main");
+    paperColumn.className = WORKSPACE_PAPER_DOM.paperColumnClass;
+    const documentContent = document.createElement("div");
+    documentContent.className = WORKSPACE_PAPER_DOM.documentContentClass;
+    const paperSurface = document.createElement("div");
+    paperSurface.className = WORKSPACE_PAPER_DOM.paperSurfaceClass;
+    paperSurface.dataset.wf = WORKSPACE_PAPER_DOM.paperSurfaceDataWf;
     const paper = document.createElement("div");
     paper.className = WORKSPACE_PAPER_DOM.documentClass;
+    paper.dataset.wf = WORKSPACE_PAPER_DOM.documentDataWf;
     paper.getBoundingClientRect = () =>
       domRect(resized ? workspaceFirstFrame : beforeResize);
-    workspace.appendChild(paper);
+    paperSurface.appendChild(paper);
+    documentContent.appendChild(paperSurface);
+    paperColumn.appendChild(documentContent);
+    workspace.appendChild(paperColumn);
     document.body.appendChild(workspace);
 
     const rafCallbacks: FrameRequestCallback[] = [];

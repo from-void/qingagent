@@ -25,7 +25,7 @@ export function presentationRunWatchdogMs(run: NativePresentationRun): number {
       PRESENTATION_RUN_WATCHDOG_MAX_MS,
       Math.max(
         PRESENTATION_RUN_WATCHDOG_MIN_MS,
-        timing.totalDurationMs + PRESENTATION_RUN_WATCHDOG_BUFFER_MS,
+        timing.maxDurationMs + PRESENTATION_RUN_WATCHDOG_BUFFER_MS,
       ),
     );
   } catch {

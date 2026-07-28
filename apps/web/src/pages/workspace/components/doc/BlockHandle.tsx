@@ -185,7 +185,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         const blockDom = editor.view.nodeDOM(block.pos);
         if (!(blockDom instanceof HTMLElement)) return null;
         const geometry = blockHandleGeometry(blockDom, block.node.type.name);
-        const isEmpty = block.node.type.name !== "table" && (
+        const isEmpty = block.node.isTextblock && (
           blockDom.textContent?.trim() === "" ||
           (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR")
         );
@@ -812,10 +812,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
-    if (h) seedInsertChain(h)?.run();
     void pickFile("image/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!seedInsertChain(h)?.run()) {
+        onToast?.("图片上传失败，请重试");
+        return;
+      }
       try {
         await insertImageAsset(editor, file);
       } catch (error) {
@@ -837,10 +840,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
-    if (h) seedInsertChain(h)?.run();
     void pickFile("*/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!seedInsertChain(h)?.run()) {
+        onToast?.("文件上传失败，请重试");
+        return;
+      }
       try {
         await insertFileAsset(editor, file);
       } catch (error) {

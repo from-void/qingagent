@@ -3,9 +3,9 @@ import type { Editor } from "@tiptap/react";
 import type { Transaction } from "@tiptap/pm/state";
 import {
   FIND_MATCH_LIMIT,
+  collectReplaceAllPlans,
   collectMatches,
   formatFindCount,
-  planReplaceAll,
   stepCursor,
   type FindBarMode,
   type FindMatch,
@@ -256,14 +256,13 @@ export function DocFindBar({
   const handleReplaceAll = useCallback(() => {
     if (!canReplace || !editor || editor.isDestroyed) return;
     syncSearchBeforeReplace();
-    const allMatches = collectMatches(
+    const plans = collectReplaceAllPlans(
       collectDocFindSegments(editor.state.doc),
       queryRef.current,
       false,
-      Number.POSITIVE_INFINITY,
-    ).matches;
-    if (allMatches.length === 0) return;
-    const plans = planReplaceAll(allMatches, replacementRef.current);
+      replacementRef.current,
+    );
+    if (plans.length === 0) return;
     editor.commands.command(({ tr }) => {
       for (const plan of plans) {
         tr.insertText(plan.insert, plan.from, plan.to);

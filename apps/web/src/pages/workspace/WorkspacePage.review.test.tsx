@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
-import { getPmContentHash, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, normalizePmDoc, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./data/chatInputTypes";
 import type { DocDimensions } from "./data/docDimensions";
 import {
@@ -47,6 +47,7 @@ type MockServerStreamInstance = {
   startSession: ReturnType<typeof vi.fn>;
   listDerivatives: ReturnType<typeof vi.fn>;
   getDerivativeDoc: ReturnType<typeof vi.fn>;
+  renameSession: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
   ignoreAnnotationGroups: ReturnType<typeof vi.fn>;
   updateMaterialSummary: ReturnType<typeof vi.fn>;
@@ -61,6 +62,9 @@ const serverStreamMock = vi.hoisted(() => ({
   // 可控 startSession(e2e-loop-0704 R15 回归用):置非 null 时替代默认的立即 resolve,
   // 用于模拟"建会话在途"窗口。用完的测试负责在 finally 里清回 null。
   startSessionImpl: null as (() => Promise<string>) | null,
+  listDerivativesImpl: null as
+    | ((sessionId: string) => Promise<unknown[]>)
+    | null,
 }));
 
 vi.mock("./data/serverStream", () => {
@@ -81,8 +85,13 @@ vi.mock("./data/serverStream", () => {
     startSession = vi.fn(async () =>
       serverStreamMock.startSessionImpl ? serverStreamMock.startSessionImpl() : "s-1",
     );
-    listDerivatives = vi.fn(async () => []);
+    listDerivatives = vi.fn(async (sessionId: string) =>
+      serverStreamMock.listDerivativesImpl
+        ? serverStreamMock.listDerivativesImpl(sessionId)
+        : [],
+    );
     getDerivativeDoc = vi.fn(async () => null);
+    renameSession = vi.fn(async () => undefined);
     commitReviewGroups = vi.fn(async () => []);
     ignoreAnnotationGroups = vi.fn(async () => undefined);
     updateMaterialSummary = vi.fn(
@@ -688,6 +697,7 @@ describe("WorkspacePage review controls", () => {
   beforeEach(() => {
     vi.resetModules();
     serverStreamMock.instances.length = 0;
+    serverStreamMock.listDerivativesImpl = null;
     window.location.hash = "";
     sessionStorage.clear();
     clearPageExitOutboxStorage();
@@ -860,6 +870,147 @@ describe("WorkspacePage review controls", () => {
     );
     act(() => vi.advanceTimersByTime(260));
     expect(window.location.hash).toBe("#/");
+  }, 60_000);
+
+  it("文件上传占位可规范化保存，外部同步期间无报错且完成后原位写回", async () => {
+    let resolveUpload!: (value: {
+      fileId: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+    }) => void;
+    const upload = new Promise<{
+      fileId: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+    }>((resolve) => {
+      resolveUpload = resolve;
+    });
+    vi.doMock("./data/uploadAsset", () => ({
+      uploadAssetFile: vi.fn(() => upload),
+      uploadedAssetUrl: (asset: { fileId: string; filename: string }) =>
+        `/api/v1/files/${asset.fileId}/${asset.filename}`,
+    }));
+
+    try {
+      window.location.hash = "#/workspace?session=s-1";
+      const [
+        { useWorkspacePageController },
+        { WorkspaceDocumentPane },
+        { insertFileAsset },
+      ] = await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+        import("./data/insertUploadedAsset"),
+      ]);
+      const captured: {
+        current: ReturnType<typeof useWorkspacePageController> | null;
+      } = { current: null };
+      function ControllerHarness() {
+        const controller = useWorkspacePageController();
+        captured.current = controller;
+        return <WorkspaceDocumentPane controller={controller} />;
+      }
+      await render(<ControllerHarness />);
+      const stream = latestServerStream();
+      await emitFrames(stream, [
+        { kind: "sessionMeta", data: { sessionId: "s-1", title: "上传附件" } },
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: wireSnapshotFromPmDoc(
+              pmDoc([pmParagraph("upload-base", "上传前正文")]),
+              1,
+            ),
+          },
+        },
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "editing" },
+            activeOverlay: null,
+            agentBusy: false,
+          },
+        },
+      ]);
+      const editor = captured.current?.tiptapEditor;
+      expect(editor).not.toBeNull();
+      vi.spyOn(editor!.view, "coordsAtPos").mockReturnValue({
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+      });
+      vi.useFakeTimers();
+
+      let pendingUpload!: Promise<unknown>;
+      await act(async () => {
+        pendingUpload = insertFileAsset(
+          editor!,
+          new File(["data"], "report.pdf", { type: "application/pdf" }),
+        );
+      });
+      const pendingDoc = normalizePmDoc(editor!.getJSON());
+      expect(
+        pendingDoc.content.some((node) => node.type === "fileAttachment"),
+      ).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await flushMicrotasks(5);
+      const saves = updateDocCommands(stream);
+      expect(saves.length).toBeGreaterThan(0);
+      expect(
+        saves.every(
+          (command) =>
+            !JSON.stringify(command.data.doc).includes("upload-pending:"),
+        ),
+      ).toBe(true);
+
+      await emitFrames(stream, [{
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([
+              pmParagraph("upload-base", "外部同步后的正文"),
+              pmParagraph("upload-tail", "外部新增段落"),
+            ]),
+            3,
+          ),
+        },
+      }]);
+      expect(editor!.getText()).toContain("外部同步后的正文");
+      expect(
+        editor!.getJSON().content?.some(
+          (node) => node.type === "fileAttachment",
+        ),
+      ).toBe(true);
+      expect(host?.textContent).not.toContain("暂不支持");
+
+      await act(async () => {
+        resolveUpload({
+          fileId: "550e8400-e29b-41d4-a716-446655440000",
+          filename: "report.pdf",
+          mimeType: "application/pdf",
+          size: 4,
+        });
+        await pendingUpload;
+      });
+      const completed = normalizePmDoc(editor!.getJSON());
+      expect(JSON.stringify(completed)).toContain("外部同步后的正文");
+      expect(
+        completed.content.find((node) => node.type === "fileAttachment"),
+      ).toMatchObject({
+        attrs: {
+          fileId: "550e8400-e29b-41d4-a716-446655440000",
+          filename: "report.pdf",
+        },
+      });
+    } finally {
+      vi.doUnmock("./data/uploadAsset");
+    }
   }, 60_000);
 
   it("dirty 外标签收到 snapshotWritten 广播时冻结旧版本，下次保存以旧基线触发 conflict", async () => {
@@ -3151,6 +3302,186 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(host?.textContent).toContain("主文档");
     expect(host?.textContent).toContain("公众号文章");
+  });
+
+  it("切到 B 会话后忽略 A 会话迟到的衍生稿列表", async () => {
+    serverStreamMock.startSessionImpl = async () => "session-a";
+    let resolveA!: (value: unknown[]) => void;
+    let resolveB!: (value: unknown[]) => void;
+    const listA = new Promise<unknown[]>((resolve) => {
+      resolveA = resolve;
+    });
+    const listB = new Promise<unknown[]>((resolve) => {
+      resolveB = resolve;
+    });
+    serverStreamMock.listDerivativesImpl = (sessionId) => {
+      if (sessionId === "session-a") return listA;
+      if (sessionId === "session-b") return listB;
+      return Promise.resolve([]);
+    };
+    window.location.hash = "#/workspace?session=session-a";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const streamA = latestServerStream();
+
+    await emitFrames(streamA, [
+      { kind: "sessionMeta", data: { sessionId: "session-a", title: "会话 A" } },
+    ]);
+    serverStreamMock.startSessionImpl = async () => "session-b";
+    await act(async () => {
+      window.location.hash = "#/workspace?session=session-b";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flushMicrotasks(5);
+    const streamB = latestServerStream();
+    expect(streamB).not.toBe(streamA);
+    await emitFrames(streamB, [
+      { kind: "sessionMeta", data: { sessionId: "session-b", title: "会话 B" } },
+    ]);
+    expect(streamB.listDerivatives).toHaveBeenCalledWith("session-b");
+    expect(captured.current?.state.sessionId).toBe("session-b");
+
+    await act(async () => {
+      resolveB([{
+        docId: "derivative-b",
+        dtype: "xhs",
+        templateId: "xhs-note",
+        templateName: "小红书笔记",
+        privatePrompt: "",
+        sourceVersion: null,
+        currentSourceVersion: 0,
+        generatedAt: null,
+        stale: false,
+      }]);
+      await listB;
+    });
+    await flushMicrotasks(5);
+    expect(captured.current?.derivatives).toHaveLength(1);
+    expect(host?.textContent).toContain("小红书");
+
+    await act(async () => {
+      resolveA([{
+        docId: "derivative-a",
+        dtype: "gzh",
+        templateId: "gzh-deep",
+        templateName: "深度长文",
+        privatePrompt: "",
+        sourceVersion: null,
+        currentSourceVersion: 0,
+        generatedAt: null,
+        stale: false,
+      }]);
+      await listA;
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.textContent).toContain("小红书");
+    expect(host?.textContent).not.toContain("公众号文章");
+    serverStreamMock.startSessionImpl = null;
+    serverStreamMock.listDerivativesImpl = null;
+  });
+
+  it("连续重命名中 T1 成功、T2 失败时回滚到即时标题 T1", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "标题 T0" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("rename-title", "正文")]),
+            1,
+          ),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+    ]);
+
+    let resolveT1!: () => void;
+    let rejectT2!: (error: unknown) => void;
+    const renameT1 = new Promise<void>((resolve) => {
+      resolveT1 = resolve;
+    });
+    const renameT2 = new Promise<void>((_resolve, reject) => {
+      rejectT2 = reject;
+    });
+    stream.renameSession
+      .mockReturnValueOnce(renameT1)
+      .mockReturnValueOnce(renameT2);
+
+    const submitTitle = async (nextTitle: string) => {
+      await clickElement(
+        host!.querySelector<HTMLButtonElement>('[aria-label="修改标题"]')!,
+      );
+      const input = host!.querySelector<HTMLInputElement>(
+        '[aria-label="修改文档标题"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set?.call(input, nextTitle);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flushMicrotasks(3);
+    };
+
+    await submitTitle("标题 T1");
+    await submitTitle("标题 T2");
+    expect(stream.renameSession.mock.calls).toEqual([
+      ["s-1", "标题 T1"],
+      ["s-1", "标题 T2"],
+    ]);
+
+    await act(async () => {
+      resolveT1();
+      await renameT1;
+      rejectT2(new Error("rename failed"));
+      await renameT2.catch(() => undefined);
+    });
+    await flushMicrotasks(5);
+
+    expect(
+      host!.querySelector(".ws-deriv-tab.is-main")?.textContent,
+    ).toContain("标题 T1");
+    expect(
+      host!.querySelector(".ws-deriv-tab.is-main")?.textContent,
+    ).not.toContain("标题 T0");
   });
 
   it("#29 回归:整篇改写 busy 发光层独立覆盖编辑视口,不被审阅条或编辑锁条接管", async () => {

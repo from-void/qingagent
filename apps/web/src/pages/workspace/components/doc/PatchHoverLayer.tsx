@@ -73,6 +73,15 @@ export function PatchHoverLayer({
     }, PATCH_POPUP_HIDE_DELAY_MS);
   }, [clearHideTimer]);
 
+  const handlePatchVerdict = useCallback(
+    (patchId: string, verdict: "accepted" | "rejected") => {
+      clearHideTimer();
+      setTarget(null);
+      onPatchVerdict?.(patchId, verdict);
+    },
+    [clearHideTimer, onPatchVerdict],
+  );
+
   useEffect(() => {
     const root = editor.view.dom;
     const onMouseOver = (event: MouseEvent) => {
@@ -106,13 +115,37 @@ export function PatchHoverLayer({
       setStyle(undefined);
       return;
     }
-    const popup = popupRef.current;
-    if (!popup || typeof window === "undefined") return;
-    setStyle(placePatchPopupByAnchorRect(
-      target.anchor.getBoundingClientRect(),
-      popup.getBoundingClientRect(),
-    ));
-  }, [target]);
+    if (typeof window === "undefined") return;
+    const root = editor.view.dom;
+    const recompute = () => {
+      if (!target.anchor.isConnected || !root.contains(target.anchor)) {
+        setStyle(undefined);
+        setTarget((current) => current?.anchor === target.anchor ? null : current);
+        return;
+      }
+      const popup = popupRef.current;
+      if (!popup) return;
+      setStyle(placePatchPopupByAnchorRect(
+        target.anchor.getBoundingClientRect(),
+        popup.getBoundingClientRect(),
+      ));
+    };
+    recompute();
+    editor.on("transaction", recompute);
+    window.addEventListener("scroll", recompute, true);
+    window.addEventListener("resize", recompute);
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(recompute);
+    resizeObserver?.observe(target.anchor);
+    if (popupRef.current) resizeObserver?.observe(popupRef.current);
+    return () => {
+      editor.off("transaction", recompute);
+      window.removeEventListener("scroll", recompute, true);
+      window.removeEventListener("resize", recompute);
+      resizeObserver?.disconnect();
+    };
+  }, [editor, target]);
 
   if (!target || typeof document === "undefined") return null;
 
@@ -127,7 +160,7 @@ export function PatchHoverLayer({
     <PatchFormatPopup
       meta={meta}
       patchId={target.patchId}
-      onPatchVerdict={onPatchVerdict}
+      onPatchVerdict={handlePatchVerdict}
     />
   ) : (
     <PatchStatePopup
@@ -143,7 +176,7 @@ export function PatchHoverLayer({
       }
       originalIsBlock={hasBlockOriginal}
       patchId={target.patchId}
-      onPatchVerdict={onPatchVerdict}
+      onPatchVerdict={handlePatchVerdict}
     />
   );
 

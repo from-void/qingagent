@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import type { DiagramOverlay } from "@qingagent/diagram-engine";
-import { detectType } from "@qingagent/diagram-engine";
+import { detectType, parseDiagram } from "@qingagent/diagram-engine";
 import { MermaidPreview } from "../MermaidPreview";
 
 const GraphDiagramView = lazy(() => import("./GraphDiagramView").then((mod) => ({ default: mod.GraphDiagramView })));
@@ -70,8 +70,13 @@ export function DiagramRenderer({
   canRedo,
 }: DiagramRendererProps) {
   const type = lang === "mermaid" ? detectType(source) : null;
+  const parsed = type ? parseDiagram(source) : null;
   const normalizedOverlay = normalizeOverlay(overlay);
-  if (type === "flowchart" || type === "state" || type === "er" || type === "class" || type === "mindmap") {
+  if (
+    parsed?.ok
+    && parsed.fullyRepresented
+    && (type === "flowchart" || type === "state" || type === "er" || type === "class" || type === "mindmap")
+  ) {
     return (
       <Suspense fallback={<div className="pm-diagram-empty">渲染中…</div>}>
         <GraphDiagramView

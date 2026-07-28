@@ -1,11 +1,33 @@
 import type { Editor } from "@tiptap/react";
+import type { PmDoc } from "@qingagent/pm-schema";
 import { uploadAssetFile, uploadedAssetUrl, type UploadedAsset } from "./uploadAsset";
 
 type AssetEditor = Pick<Editor, "chain" | "state" | "view">;
 
+interface PendingUploadBookmark {
+  blockId: string;
+  node: PmJsonNode;
+  ancestorBlockId: string | null;
+  ancestorIsDoc: boolean;
+  parentPath: number[];
+  previousBlockId: string | null;
+  nextBlockId: string | null;
+  index: number;
+}
+
+interface PmJsonNode {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: PmJsonNode[];
+  [key: string]: unknown;
+}
+
+const pendingUploadBlockIds = new WeakMap<AssetEditor, Set<string>>();
+
 export const UPLOAD_PLACEHOLDER_IMAGE_SRC = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" rx="24" fill="#f3efe7"/><path d="M252 186h136M320 118v136" stroke="#b8aa92" stroke-width="18" stroke-linecap="round"/></svg>',
 )}`;
+export const UPLOAD_PLACEHOLDER_FILE_ID_PREFIX = "upload-pending:";
 
 export async function insertImageAsset(editor: AssetEditor, file: File): Promise<string> {
   const [upload] = insertImageAssets(editor, [file]);
@@ -36,6 +58,7 @@ export function insertImageAssets(
     })),
   ).run();
   if (!inserted) throw new Error("Insert image placeholder failed");
+  for (const { blockId } of targets) registerPendingUpload(editor, blockId);
 
   return targets.map(({ blockId, file }) => uploadImageIntoPlaceholder(editor, blockId, file));
 }
@@ -45,60 +68,255 @@ async function uploadImageIntoPlaceholder(
   blockId: string,
   file: File,
 ): Promise<string> {
-  const uploaded = await uploadAssetFile(file, {
-    onProgress: (progress) => {
+  try {
+    const uploaded = await uploadAssetFile(file, {
+      onProgress: (progress) => {
+        updateImageAttrsByBlockId(editor, blockId, {
+          uploading: true,
+          progress,
+          error: false,
+        });
+      },
+    }).catch((error) => {
       updateImageAttrsByBlockId(editor, blockId, {
-        uploading: true,
-        progress,
-        error: false,
+        uploading: false,
+        progress: null,
+        error: true,
       });
-    },
-  }).catch((error) => {
-    updateImageAttrsByBlockId(editor, blockId, {
-      uploading: false,
-      progress: null,
-      error: true,
+      throw error;
     });
-    throw error;
-  });
-  const src = uploadedAssetUrl(uploaded);
-  updateImageAttrsByBlockId(editor, blockId, {
-    src,
-    alt: file.name,
-    uploading: false,
-    progress: 100,
-    error: false,
-  });
-  return src;
+    const src = uploadedAssetUrl(uploaded);
+    const updated = updateImageAttrsByBlockId(editor, blockId, {
+      src,
+      alt: file.name,
+      uploading: false,
+      progress: 100,
+      error: false,
+    });
+    if (!updated) throw new Error("Image upload placeholder missing");
+    return src;
+  } finally {
+    unregisterPendingUpload(editor, blockId);
+  }
 }
 
 export async function insertFileAsset(editor: AssetEditor, file: File): Promise<UploadedAsset> {
   const blockId = createUploadBlockId("file");
   const inserted = editor.chain().focus().insertContent({
-    type: "fileAttachment",
-    attrs: {
-      blockId,
-      fileId: blockId,
-      filename: file.name,
+      type: "fileAttachment",
+      attrs: {
+        blockId,
+        fileId: `${UPLOAD_PLACEHOLDER_FILE_ID_PREFIX}${blockId}`,
+        filename: file.name,
       mimeType: file.type || "application/octet-stream",
       size: file.size,
       uploading: true,
     },
   }).run();
   if (!inserted) throw new Error("Insert file placeholder failed");
+  registerPendingUpload(editor, blockId);
 
-  const uploaded = await uploadAssetFile(file).catch((error) => {
-    deleteNodeByBlockId(editor, "fileAttachment", blockId);
-    throw error;
+  try {
+    const uploaded = await uploadAssetFile(file).catch((error) => {
+      deleteNodeByBlockId(editor, "fileAttachment", blockId);
+      throw error;
+    });
+    const updated = updateNodeAttrsByBlockId(
+      editor,
+      "fileAttachment",
+      blockId,
+      {
+        fileId: uploaded.fileId,
+        filename: uploaded.filename,
+        mimeType: uploaded.mimeType,
+        size: uploaded.size,
+        uploading: false,
+      },
+    );
+    if (!updated) throw new Error("File upload placeholder missing");
+    return uploaded;
+  } finally {
+    unregisterPendingUpload(editor, blockId);
+  }
+}
+
+export function replayPendingUploadPlaceholders(
+  editor: AssetEditor,
+  incoming: PmDoc,
+): PmDoc {
+  const blockIds = pendingUploadBlockIds.get(editor);
+  if (!blockIds || blockIds.size === 0) return incoming;
+
+  const bookmarks = collectPendingUploadBookmarks(editor, blockIds);
+  let replayed = incoming as unknown as PmJsonNode;
+  for (const bookmark of bookmarks) {
+    if (containsBlockId(replayed, bookmark.blockId)) continue;
+    const inserted = insertPendingUploadBookmark(replayed, bookmark);
+    if (inserted.inserted) replayed = inserted.node;
+  }
+  return replayed as unknown as PmDoc;
+}
+
+export function hasPendingUploadPlaceholders(editor: AssetEditor): boolean {
+  return (pendingUploadBlockIds.get(editor)?.size ?? 0) > 0;
+}
+
+function registerPendingUpload(editor: AssetEditor, blockId: string): void {
+  const current = pendingUploadBlockIds.get(editor);
+  if (current) {
+    current.add(blockId);
+    return;
+  }
+  pendingUploadBlockIds.set(editor, new Set([blockId]));
+}
+
+function unregisterPendingUpload(editor: AssetEditor, blockId: string): void {
+  const current = pendingUploadBlockIds.get(editor);
+  if (!current) return;
+  current.delete(blockId);
+  if (current.size === 0) pendingUploadBlockIds.delete(editor);
+}
+
+function collectPendingUploadBookmarks(
+  editor: AssetEditor,
+  blockIds: ReadonlySet<string>,
+): PendingUploadBookmark[] {
+  const bookmarks: PendingUploadBookmark[] = [];
+  editor.state.doc.descendants((node, pos, parent, index) => {
+    const blockId = readBlockId(node.attrs.blockId);
+    if (!blockId || !blockIds.has(blockId) || !parent) return true;
+    const $pos = editor.state.doc.resolve(pos);
+    let ancestorDepth = $pos.depth;
+    while (
+      ancestorDepth > 0
+      && readBlockId($pos.node(ancestorDepth).attrs.blockId) === null
+    ) {
+      ancestorDepth -= 1;
+    }
+    const ancestorBlockId = ancestorDepth === 0
+      ? null
+      : readBlockId($pos.node(ancestorDepth).attrs.blockId);
+    const parentPath: number[] = [];
+    for (let depth = ancestorDepth; depth < $pos.depth; depth += 1) {
+      parentPath.push($pos.index(depth));
+    }
+    bookmarks.push({
+      blockId,
+      node: node.toJSON() as PmJsonNode,
+      ancestorBlockId,
+      ancestorIsDoc: ancestorDepth === 0,
+      parentPath,
+      previousBlockId: index > 0
+        ? readBlockId(parent.child(index - 1).attrs.blockId)
+        : null,
+      nextBlockId: index + 1 < parent.childCount
+        ? readBlockId(parent.child(index + 1).attrs.blockId)
+        : null,
+      index,
+    });
+    return false;
   });
-  updateNodeAttrsByBlockId(editor, "fileAttachment", blockId, {
-    fileId: uploaded.fileId,
-    filename: uploaded.filename,
-    mimeType: uploaded.mimeType,
-    size: uploaded.size,
-    uploading: false,
-  });
-  return uploaded;
+  return bookmarks;
+}
+
+function insertPendingUploadBookmark(
+  node: PmJsonNode,
+  bookmark: PendingUploadBookmark,
+  root = true,
+): { node: PmJsonNode; inserted: boolean } {
+  const isTargetAncestor = bookmark.ancestorIsDoc
+    ? root
+    : bookmark.ancestorBlockId !== null
+      && readBlockId(node.attrs?.blockId) === bookmark.ancestorBlockId;
+  if (isTargetAncestor) {
+    return insertBookmarkAtParentPath(node, bookmark.parentPath, bookmark);
+  }
+
+  const content = node.content;
+  if (!content) return { node, inserted: false };
+  for (let index = 0; index < content.length; index += 1) {
+    const child = insertPendingUploadBookmark(content[index]!, bookmark, false);
+    if (!child.inserted) continue;
+    const nextContent = content.slice();
+    nextContent[index] = child.node;
+    return {
+      node: { ...node, content: nextContent },
+      inserted: true,
+    };
+  }
+  return { node, inserted: false };
+}
+
+function insertBookmarkAtParentPath(
+  node: PmJsonNode,
+  parentPath: readonly number[],
+  bookmark: PendingUploadBookmark,
+): { node: PmJsonNode; inserted: boolean } {
+  if (parentPath.length === 0) {
+    return {
+      node: {
+        ...node,
+        content: insertBookmarkIntoContent(node.content ?? [], bookmark),
+      },
+      inserted: true,
+    };
+  }
+
+  const [childIndex, ...remainingPath] = parentPath;
+  const content = node.content;
+  if (
+    childIndex === undefined
+    || !content
+    || childIndex < 0
+    || childIndex >= content.length
+  ) {
+    return { node, inserted: false };
+  }
+  const child = insertBookmarkAtParentPath(
+    content[childIndex]!,
+    remainingPath,
+    bookmark,
+  );
+  if (!child.inserted) return { node, inserted: false };
+  const nextContent = content.slice();
+  nextContent[childIndex] = child.node;
+  return {
+    node: { ...node, content: nextContent },
+    inserted: true,
+  };
+}
+
+function insertBookmarkIntoContent(
+  content: PmJsonNode[],
+  bookmark: PendingUploadBookmark,
+): PmJsonNode[] {
+  const next = content.slice();
+  const previousIndex = bookmark.previousBlockId
+    ? next.findIndex(
+        (node) => readBlockId(node.attrs?.blockId) === bookmark.previousBlockId,
+      )
+    : -1;
+  const nextIndex = bookmark.nextBlockId
+    ? next.findIndex(
+        (node) => readBlockId(node.attrs?.blockId) === bookmark.nextBlockId,
+      )
+    : -1;
+  const index = previousIndex >= 0
+    ? previousIndex + 1
+    : nextIndex >= 0
+      ? nextIndex
+      : Math.min(Math.max(0, bookmark.index), next.length);
+  next.splice(index, 0, bookmark.node);
+  return next;
+}
+
+function containsBlockId(node: PmJsonNode, blockId: string): boolean {
+  if (readBlockId(node.attrs?.blockId) === blockId) return true;
+  return node.content?.some((child) => containsBlockId(child, blockId)) ?? false;
+}
+
+function readBlockId(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function createUploadImageBlockId(): string {

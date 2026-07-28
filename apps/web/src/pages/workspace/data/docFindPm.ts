@@ -44,9 +44,26 @@ export const DocFindDecorations = Extension.create({
 
 export function collectDocFindSegments(doc: ProseMirrorNode): FindSegment[] {
   const segments: FindSegment[] = [];
-  doc.descendants((node, pos) => {
+  let previousParent: ProseMirrorNode | null = null;
+  let previousEnd = -1;
+  doc.descendants((node, pos, parent) => {
     if (node.isText && node.text) {
-      segments.push({ text: node.text, pos });
+      const previous = segments.at(-1);
+      // mark 会把视觉连续文本拆成多个 text node；只在线性 PM 坐标也连续且属于
+      // 同一 textblock 时合并，因此 offset 仍可直接映射为 pos，且绝不跨 inline
+      // atom 或段落边界。
+      if (
+        previous
+        && parent?.isTextblock
+        && parent === previousParent
+        && pos === previousEnd
+      ) {
+        previous.text += node.text;
+      } else {
+        segments.push({ text: node.text, pos });
+      }
+      previousParent = parent;
+      previousEnd = pos + node.nodeSize;
     }
   });
   return segments;

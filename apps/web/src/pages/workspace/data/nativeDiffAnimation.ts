@@ -86,6 +86,7 @@ export type NativeDiffInstruction =
 
 export interface NativeTimingPlan {
   totalDurationMs: number;
+  maxDurationMs: number;
   stepDelayMs: number;
   chunkSize: number;
 }
@@ -247,6 +248,7 @@ export interface NativeConcurrentState {
   chunkSize: number;
   lastBatchSize: number;
   startJitter: boolean;
+  deadlineDrainFramesRemaining: number | null;
 }
 
 export interface CreateNativeConcurrentStateOptions {
@@ -388,6 +390,7 @@ export function planNativeTiming(
   if (editableUnits === 0) {
     return {
       totalDurationMs: 0,
+      maxDurationMs: 0,
       stepDelayMs,
       chunkSize: timingConfig.chunkSize,
     };
@@ -401,6 +404,7 @@ export function planNativeTiming(
   const stepCount = Math.ceil(editableUnits / chunkSize);
   return {
     totalDurationMs: Math.min(durationBudgetMs, stepCount * stepDelayMs),
+    maxDurationMs: durationBudgetMs,
     stepDelayMs,
     chunkSize,
   };
@@ -439,8 +443,14 @@ export function buildNativePresentationSeedSections(
         if (!shouldTypewriteTable(section, run.finalDoc?.content[blockIndex])) {
           return cloneViewSection(section);
         }
+        // 安全纯文本表格仍走空 cell 种子逐格动画；移除原始 node，避免保真
+        // 序列化直接把终态内容写回种子。复杂表格则在上一分支保留 node 整块出现。
+        const { node: _node, ...seedTable } = cloneViewSection(section) as Extract<
+          ViewBlock,
+          { kind: "table" }
+        >;
         return {
-          ...cloneViewSection(section),
+          ...seedTable,
           head: section.head.map(() => ""),
           rows: section.rows.map((row) => row.map(() => "")),
           ...(section.headSpans ? { headSpans: section.headSpans.map(() => []) } : {}),
@@ -502,8 +512,11 @@ export function createNativeConcurrentState({
     startJitter,
     chunkSize: stateConfig.chunkSize,
     lastBatchSize: 1,
+    deadlineDrainFramesRemaining: null,
   };
 }
+
+const MIN_DEADLINE_DRAIN_FRAMES = 3;
 
 export function advanceNativeConcurrentState(
   state: NativeConcurrentState,
@@ -514,35 +527,138 @@ export function advanceNativeConcurrentState(
   let next = startNextNativePhaseIfSettled(state);
   if (next.phase === "done") return { state: next, steps: [] };
 
+  const safeDtMs = Math.max(0, dtMs);
+  if (next.deadlineDrainFramesRemaining !== null) {
+    return advanceNativeDeadlineDrainFrame(next, safeDtMs);
+  }
+
+  const isBootstrapTick = next.tick === 0;
+  const accumulatedMs = isBootstrapTick
+    ? safeDtMs
+    : next.stepAccumulatorMs + safeDtMs;
   next = {
     ...next,
-    elapsedMs: next.elapsedMs + Math.max(0, dtMs),
-    stepAccumulatorMs: next.stepAccumulatorMs + Math.max(0, dtMs),
+    elapsedMs: next.elapsedMs + safeDtMs,
+    stepAccumulatorMs: accumulatedMs,
     tick: next.tick + 1,
   };
 
   if (next.elapsedMs >= next.maxDurationMs) {
-    return { state: completeNativeConcurrentState(next), steps: [] };
+    return startNativeDeadlineDrain(next);
   }
 
-  if (next.stepAccumulatorMs < next.stepDelayMs) {
+  const dueTicks = isBootstrapTick
+    ? Math.max(1, Math.floor(next.stepAccumulatorMs / next.stepDelayMs))
+    : Math.floor(next.stepAccumulatorMs / next.stepDelayMs);
+  if (dueTicks <= 0) {
     return { state: next, steps: [] };
   }
 
+  const remainingUnits = remainingNativeConcurrentUnits(next);
+  const remainingDurationMs = Math.max(1, next.maxDurationMs - next.elapsedMs);
+  const observedFrameMs = Math.max(next.stepDelayMs, safeDtMs);
+  const budgetedFrames = Math.max(
+    remainingUnits > next.chunkSize ? MIN_DEADLINE_DRAIN_FRAMES : 1,
+    Math.ceil(remainingDurationMs / observedFrameMs),
+  );
+  const frameUnitBudget = Math.max(
+    next.chunkSize,
+    Math.ceil(remainingUnits / budgetedFrames),
+  );
   next = {
     ...next,
-    stepAccumulatorMs: Math.min(
-      next.stepDelayMs,
-      next.stepAccumulatorMs - next.stepDelayMs,
+    // 帧率下降时用更大的单帧批次追赶预算，但一个 rAF 仍只提交一次事务。
+    stepAccumulatorMs: Math.max(
+      0,
+      next.stepAccumulatorMs - dueTicks * next.stepDelayMs,
     ),
+    chunkSize: frameUnitBudget,
   };
+  return advanceNativeConcurrentTick(next, frameUnitBudget);
+}
 
-  next = claimNativeTasks(next);
-  const advanced = advanceNativeAgents(next);
+function advanceNativeConcurrentTick(
+  state: NativeConcurrentState,
+  frameUnitBudget = Number.POSITIVE_INFINITY,
+): NativeConcurrentAdvanceResult {
+  const claimed = claimNativeTasks(state);
+  const advanced = advanceNativeAgents(claimed, frameUnitBudget);
   return {
     state: startNextNativePhaseIfSettled(advanced.state),
     steps: advanced.steps,
   };
+}
+
+function startNativeDeadlineDrain(
+  state: NativeConcurrentState,
+): NativeConcurrentAdvanceResult {
+  return advanceNativeDeadlineDrainFrame({
+    ...state,
+    // deadline 只切换到逐帧加速态，不能在当前事务里 drain 完余量。
+    deadlineDrainFramesRemaining: MIN_DEADLINE_DRAIN_FRAMES,
+    startJitter: false,
+    agents: state.agents.map((agent) => ({ ...agent, startDelayTicks: 0 })),
+    stepAccumulatorMs: 0,
+  }, 0);
+}
+
+function advanceNativeDeadlineDrainFrame(
+  state: NativeConcurrentState,
+  dtMs: number,
+): NativeConcurrentAdvanceResult {
+  const framesRemaining = Math.max(
+    1,
+    state.deadlineDrainFramesRemaining ?? MIN_DEADLINE_DRAIN_FRAMES,
+  );
+  const remainingUnits = remainingNativeConcurrentUnits(state);
+  const frameUnitBudget = Math.max(1, Math.ceil(remainingUnits / framesRemaining));
+  const accelerated: NativeConcurrentState = {
+    ...state,
+    elapsedMs: state.elapsedMs + dtMs,
+    tick: state.tick + 1,
+    stepAccumulatorMs: 0,
+    chunkSize: Math.max(state.chunkSize, frameUnitBudget),
+    startJitter: false,
+    agents: state.agents.map((agent) => ({ ...agent, startDelayTicks: 0 })),
+  };
+  const advanced = advanceNativeConcurrentTick(accelerated, frameUnitBudget);
+  if (advanced.state.phase === "done") return advanced;
+
+  return {
+    state: {
+      ...advanced.state,
+      deadlineDrainFramesRemaining: Math.max(1, framesRemaining - 1),
+    },
+    steps: advanced.steps,
+  };
+}
+
+function remainingNativeConcurrentUnits(state: NativeConcurrentState): number {
+  const assignedAgentByTask = new Map(
+    state.agents.flatMap((agent) =>
+      agent.taskId ? [[agent.taskId, agent] as const] : []),
+  );
+
+  return state.tasks.reduce((total, task) => {
+    if (state.completedTaskIds.has(task.id)) return total;
+    const agent = assignedAgentByTask.get(task.id);
+    return total + task.operations.reduce((taskTotal, operation, operationIndex) => {
+      if (agent && operationIndex < agent.operationIndex) return taskTotal;
+      const consumed = agent && operationIndex === agent.operationIndex
+        ? agent.charIndex
+        : 0;
+      if (operation.kind === "insertText") {
+        return taskTotal + Math.max(
+          0,
+          nativeOperationGraphemes(operation).length - consumed,
+        );
+      }
+      if (operation.kind === "deleteText") {
+        return taskTotal + Math.max(0, operation.to - operation.from - consumed);
+      }
+      return taskTotal;
+    }, 0);
+  }, 0);
 }
 
 export function completeNativeConcurrentState(
@@ -709,7 +825,7 @@ function claimNativeTasks(state: NativeConcurrentState): NativeConcurrentState {
       operationIndex: 0,
       charIndex: 0,
       cursorPhase: "typing",
-      startDelayTicks: state.startJitter
+      startDelayTicks: state.startJitter && !isTableCellTask(task)
         ? computeStartJitter(agent.id, agent.assignmentId + 1)
         : 0,
     };
@@ -722,39 +838,95 @@ function claimNativeTasks(state: NativeConcurrentState): NativeConcurrentState {
   };
 }
 
+function isTableCellTask(task: NativeConcurrentTask): boolean {
+  return (
+    task.operations.length > 0
+    && task.operations.every(
+      (operation) => operation.target?.kind === "tableCell",
+    )
+  );
+}
+
 function advanceNativeAgents(
   state: NativeConcurrentState,
+  frameUnitBudget = Number.POSITIVE_INFINITY,
 ): NativeConcurrentAdvanceResult {
   const taskById = new Map(state.tasks.map((task) => [task.id, task]));
   const completedTaskIds = new Set(state.completedTaskIds);
   const steps: NativeConcurrentStep[] = [];
   let lastBatchSize = state.lastBatchSize;
+  let remainingFrameUnits = frameUnitBudget;
 
   const agents = state.agents.map((agent) => {
-    if (agent.cursorPhase !== "typing" || !agent.taskId) return agent;
+    if (remainingFrameUnits <= 0) return agent;
+    const advanced = advanceNativeAgentForTick(
+      {
+        ...state,
+        chunkSize: Math.min(state.chunkSize, remainingFrameUnits),
+      },
+      agent,
+      taskById,
+      completedTaskIds,
+      steps,
+    );
+    remainingFrameUnits -= advanced.batchSize;
+    lastBatchSize = Math.max(lastBatchSize, advanced.batchSize);
+    return advanced.agent;
+  });
 
-    // 启动抖动:延迟未到先跳过本帧(不出 step),实现各光标错位启动。
-    if (agent.startDelayTicks > 0) {
-      return { ...agent, startDelayTicks: agent.startDelayTicks - 1 };
+  return {
+    state: {
+      ...state,
+      agents,
+      completedTaskIds,
+      lastBatchSize,
+    },
+    steps,
+  };
+}
+
+function advanceNativeAgentForTick(
+  state: NativeConcurrentState,
+  agent: NativeConcurrentAgent,
+  taskById: ReadonlyMap<string, NativeConcurrentTask>,
+  completedTaskIds: Set<string>,
+  steps: NativeConcurrentStep[],
+): { agent: NativeConcurrentAgent; batchSize: number } {
+  if (agent.cursorPhase !== "typing" || !agent.taskId) {
+    return { agent, batchSize: 0 };
+  }
+
+  // 启动抖动:延迟未到先跳过本帧(不出 step),实现各光标错位启动。
+  if (agent.startDelayTicks > 0) {
+    return {
+      agent: { ...agent, startDelayTicks: agent.startDelayTicks - 1 },
+      batchSize: 0,
+    };
+  }
+
+  let currentAgent = agent;
+  let remainingTableChunk = state.chunkSize;
+  let batchSize = 0;
+
+  while (currentAgent.cursorPhase === "typing" && currentAgent.taskId) {
+    const task = taskById.get(currentAgent.taskId);
+    if (!task) {
+      return { agent: idleNativeAgent(currentAgent), batchSize };
     }
-
-    const task = taskById.get(agent.taskId);
-    if (!task) return idleNativeAgent(agent);
-
-    const operation = task.operations[agent.operationIndex];
+    const operation = task.operations[currentAgent.operationIndex];
     if (!operation) {
       completedTaskIds.add(task.id);
-      return idleNativeAgent(agent);
+      return { agent: idleNativeAgent(currentAgent), batchSize };
     }
 
-    const operationKey = nativeOperationKey(task.id, agent.operationIndex);
+    const operationKey = nativeOperationKey(task.id, currentAgent.operationIndex);
     const baseStep = {
-      agentId: agent.id,
-      assignmentId: agent.assignmentId,
-      label: agent.label,
-      color: agent.color,
+      agentId: currentAgent.id,
+      assignmentId: currentAgent.assignmentId,
+      label: currentAgent.label,
+      color: currentAgent.color,
       taskId: task.id,
-      operationIndex: agent.operationIndex,
+      operationIndex: currentAgent.operationIndex,
       operationKey,
       ...(operation.blockId ? { blockId: operation.blockId } : {}),
       blockIndex: operation.blockIndex,
@@ -771,7 +943,14 @@ function advanceNativeAgents(
         operationLength: 0,
         operationComplete: true,
       });
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
 
     if (operation.kind === "redDot") {
@@ -783,18 +962,31 @@ function advanceNativeAgents(
         operationLength: 0,
         operationComplete: true,
       });
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
 
     if (operation.kind === "insertText") {
       const graphemes = nativeOperationGraphemes(operation);
-      const chunkFrom = agent.charIndex;
-      // cell 必须保持 grapheme 逐字，不能跟随全文 chunkSize 自动放大。
-      const operationChunkSize = operation.target?.kind === "tableCell" ? 1 : state.chunkSize;
-      const chunkTo = Math.min(graphemes.length, chunkFrom + operationChunkSize);
+      const chunkFrom = currentAgent.charIndex;
+      const isTableCell = operation.target?.kind === "tableCell";
+      const operationChunkSize = isTableCell
+        ? remainingTableChunk
+        : state.chunkSize;
+      const chunkTo = Math.min(
+        graphemes.length,
+        chunkFrom + operationChunkSize,
+      );
       const text = graphemes.slice(chunkFrom, chunkTo).join("");
       const operationComplete = chunkTo >= graphemes.length;
-      lastBatchSize = Math.max(lastBatchSize, Math.max(1, chunkTo - chunkFrom));
+      const inserted = Math.max(1, chunkTo - chunkFrom);
+      batchSize += inserted;
       steps.push({
         ...baseStep,
         kind: "insertText",
@@ -807,17 +999,38 @@ function advanceNativeAgents(
         operationComplete,
       });
       if (operationComplete) {
-        return advanceNativeAgentOperation(agent, task, completedTaskIds);
+        const nextAgent = advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        );
+        if (isTableCell) {
+          remainingTableChunk -= inserted;
+          if (
+            remainingTableChunk > 0
+            && nextAgent.cursorPhase === "typing"
+          ) {
+            currentAgent = nextAgent;
+            continue;
+          }
+        }
+        return { agent: nextAgent, batchSize };
       }
-      return { ...agent, charIndex: chunkTo };
+      return {
+        agent: { ...currentAgent, charIndex: chunkTo },
+        batchSize,
+      };
     }
 
     const length = Math.max(0, operation.to - operation.from);
-    const nextDeleted = Math.min(length, agent.charIndex + state.chunkSize);
+    const nextDeleted = Math.min(
+      length,
+      currentAgent.charIndex + state.chunkSize,
+    );
     const chunkFrom = Math.max(operation.from, operation.to - nextDeleted);
-    const chunkTo = operation.to - agent.charIndex;
+    const chunkTo = operation.to - currentAgent.charIndex;
     const operationComplete = nextDeleted >= length;
-    lastBatchSize = Math.max(lastBatchSize, Math.max(1, chunkTo - chunkFrom));
+    batchSize += Math.max(1, chunkTo - chunkFrom);
     steps.push({
       ...baseStep,
       kind: "deleteText",
@@ -829,20 +1042,22 @@ function advanceNativeAgents(
       operationComplete,
     });
     if (operationComplete) {
-      return advanceNativeAgentOperation(agent, task, completedTaskIds);
+      return {
+        agent: advanceNativeAgentOperation(
+          currentAgent,
+          task,
+          completedTaskIds,
+        ),
+        batchSize,
+      };
     }
-    return { ...agent, charIndex: nextDeleted };
-  });
+    return {
+      agent: { ...currentAgent, charIndex: nextDeleted },
+      batchSize,
+    };
+  }
 
-  return {
-    state: {
-      ...state,
-      agents,
-      completedTaskIds,
-      lastBatchSize,
-    },
-    steps,
-  };
+  return { agent: currentAgent, batchSize };
 }
 
 function nativeOperationGraphemes(

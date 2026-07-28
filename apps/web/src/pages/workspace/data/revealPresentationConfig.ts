@@ -95,9 +95,9 @@ export function readRevealPresentationConfig(
   storage: RevealPresentationConfigStorage | null = getRevealPresentationStorage(),
 ): RevealPresentationRuntimeConfig {
   if (!storage) return DEFAULT_REVEAL_PRESENTATION_CONFIG;
-  const raw = storage.getItem(REVEAL_PRESENTATION_CONFIG_STORAGE_KEY);
-  if (!raw) return DEFAULT_REVEAL_PRESENTATION_CONFIG;
   try {
+    const raw = storage.getItem(REVEAL_PRESENTATION_CONFIG_STORAGE_KEY);
+    if (!raw) return DEFAULT_REVEAL_PRESENTATION_CONFIG;
     const parsed = JSON.parse(raw) as Partial<RevealPresentationRuntimeConfig>;
     return sanitizeRevealPresentationConfig({
       ...DEFAULT_REVEAL_PRESENTATION_CONFIG,
@@ -113,10 +113,14 @@ export function writeRevealPresentationConfig(
   storage: RevealPresentationConfigStorage | null = getRevealPresentationStorage(),
 ): void {
   if (!storage) return;
-  storage.setItem(
-    REVEAL_PRESENTATION_CONFIG_STORAGE_KEY,
-    JSON.stringify(sanitizeRevealPresentationConfig(config)),
-  );
+  try {
+    storage.setItem(
+      REVEAL_PRESENTATION_CONFIG_STORAGE_KEY,
+      JSON.stringify(sanitizeRevealPresentationConfig(config)),
+    );
+  } catch {
+    // 存储不可用时保留内存配置；调用方仍需继续发布并通知订阅者。
+  }
 }
 
 export function sanitizeRevealPresentationConfig(

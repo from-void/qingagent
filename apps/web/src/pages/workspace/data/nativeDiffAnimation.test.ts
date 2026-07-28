@@ -13,6 +13,7 @@ import { laneColor } from "./humanCursorLanes";
 import * as presentationSpans from "./presentationSpans";
 import { sectionText } from "./presentationSpans";
 import type { ViewBlock } from "./protocol";
+import { viewSectionsToHtml } from "./viewDocHtml";
 
 function p(text: string): ViewBlock {
   return { kind: "p", spans: [{ kind: "text", text }] };
@@ -108,6 +109,100 @@ describe("native PM presentation animation", () => {
       "",
       "\n",
     ]);
+  });
+
+  it("只让安全纯文本表格丢弃 node 进入逐格动画，复杂表格种子保留原始 node", () => {
+    const textCell = {
+      type: "tableCell",
+      attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "safe-p" },
+        content: [{ type: "text", text: "安全单元" }],
+      }],
+    } as const;
+    const safeTable = {
+      type: "table",
+      attrs: { blockId: "safe-table" },
+      content: [{ type: "tableRow", content: [textCell] }],
+    } as unknown as PmBlockNode;
+    const complexTable = {
+      type: "table",
+      attrs: { blockId: "complex-table" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          ...textCell,
+          attrs: { ...textCell.attrs, colspan: 2, colwidth: [120, 180] },
+        }],
+      }],
+    } as unknown as PmBlockNode;
+    const finalSections: ViewBlock[] = [
+      { kind: "table", head: [], rows: [["安全单元"]], node: safeTable },
+      { kind: "table", head: [], rows: [["复杂单元"]], node: complexTable },
+    ];
+    const finalDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [safeTable, complexTable],
+    } as PmDoc;
+
+    const seed = buildNativePresentationSeedSections({ finalSections, finalDoc });
+    const safeSeed = seed[0] as Extract<ViewBlock, { kind: "table" }>;
+    const complexSeed = seed[1] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(safeSeed.rows).toEqual([[""]]);
+    expect(safeSeed.node).toBeUndefined();
+    expect(complexSeed.rows).toEqual([["复杂单元"]]);
+    expect(complexSeed.node).toEqual(complexTable);
+  });
+
+  it("带 marks、列宽和底色的表格从真实动画种子入口保留 node 与保真 HTML", () => {
+    const formattedTable = {
+      type: "table",
+      attrs: { blockId: "formatted-table" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          attrs: {
+            colspan: 1,
+            rowspan: 1,
+            colwidth: [120],
+            backgroundColor: "sky",
+          },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "formatted-p", textAlign: null },
+            content: [{
+              type: "text",
+              text: "格式保真",
+              marks: [{ type: "bold" }],
+            }],
+          }],
+        }],
+      }],
+    } as unknown as PmBlockNode;
+    const finalSections: ViewBlock[] = [{
+      kind: "table",
+      head: [],
+      rows: [["格式保真"]],
+      node: formattedTable,
+    }];
+    const finalDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [formattedTable],
+    } as PmDoc;
+
+    const seed = buildNativePresentationSeedSections({ finalSections, finalDoc });
+    const tableSeed = seed[0] as Extract<ViewBlock, { kind: "table" }>;
+    const html = viewSectionsToHtml(seed);
+
+    expect(tableSeed.node).toEqual(formattedTable);
+    expect(html).toContain('colwidth="120"');
+    expect(html).toContain('data-bg-color="sky"');
+    expect(html).toContain("<strong>格式保真</strong>");
   });
 
   it("clones presentation runs without sharing section references", () => {
@@ -218,7 +313,7 @@ describe("native PM presentation animation", () => {
     expect(next.steps.length).toBeGreaterThan(0);
   });
 
-  it("表格按 cell 建一个 content task，且 operation 不跟随全局 chunkSize 放大", () => {
+  it("表格按 cell 建一个 content task，且 operation 跟随时长预算放大 chunk", () => {
     const finalSections: ViewBlock[] = [{ kind: "table", head: ["AB"], rows: [["😀C", "D"]] }];
     const run: NativePresentationRun = {
       id: 9,
@@ -246,7 +341,166 @@ describe("native PM presentation animation", () => {
       { kind: "tableCell", rowIndex: 1, cellIndex: 1, textBlockIndex: 0 },
     ]);
     const next = advanceNativeConcurrentState(state, 18);
-    expect(next.steps[0]).toMatchObject({ kind: "insertText", text: "A", chunkFrom: 0, chunkTo: 1 });
+    expect(next.steps[0]).toMatchObject({ kind: "insertText", text: "AB", chunkFrom: 0, chunkTo: 2 });
+  });
+
+  it("预算内的大表按放大 chunk 连续播放完全部字符，不在中途跳终态", () => {
+    const text = "字".repeat(200);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 10,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+    });
+    const emitted: string[] = [];
+    let firstFrame = true;
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        firstFrame ? 1 : state.stepDelayMs,
+      );
+      firstFrame = false;
+      emitted.push(...advanced.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []));
+      state = advanced.state;
+    }
+
+    expect(timing.chunkSize).toBeGreaterThan(1);
+    expect(emitted.some((chunk) => Array.from(chunk).length > 1)).toBe(true);
+    expect(emitted.join("")).toBe(text);
+  });
+
+  it("30fps 双 tick 积压会被消费，完整表格文本先发出再进入终态", () => {
+    const text = "字".repeat(200);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 12,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+      startJitter: false,
+    });
+    const chunks: string[] = [];
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        state.stepDelayMs * 2,
+      );
+      chunks.push(...advanced.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []));
+      state = advanced.state;
+    }
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("到达 deadline 时把剩余内容分成多个帧批次，不在一次 advance 中跳终态", () => {
+    const text = "截止时仍须完整发出".repeat(30);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows: [[text]] }];
+    const run: NativePresentationRun = {
+      id: 13,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: 48,
+      chunkSize: 1,
+      maxDurationMs: 1_000,
+      startJitter: false,
+    });
+
+    const frames: string[] = [];
+    let next = advanceNativeConcurrentState(state, 1_000);
+    while (next.state.phase !== "done") {
+      frames.push(next.steps.flatMap((step) =>
+        step.kind === "insertText" ? [step.text] : []).join(""));
+      next = advanceNativeConcurrentState(next.state, 16);
+    }
+    frames.push(next.steps.flatMap((step) =>
+      step.kind === "insertText" ? [step.text] : []).join(""));
+
+    expect(frames.length).toBeGreaterThanOrEqual(3);
+    expect(frames.every((frame) => frame.length > 0)).toBe(true);
+    expect(frames.some((frame) => Array.from(frame).length > 1)).toBe(true);
+    expect(frames.join("")).toBe(text);
+  });
+
+  it("短 cell 也会在同一拍复用剩余 chunk，阈值内多格表不超时跳终态", () => {
+    const cellText = "字".repeat(12);
+    const rows = Array.from({ length: 120 }, () => [cellText]);
+    const finalSections: ViewBlock[] = [{ kind: "table", head: [], rows }];
+    const run: NativePresentationRun = {
+      id: 11,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const timing = planNativeTiming(instructions, 1_000);
+    let state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: timing.stepDelayMs,
+      chunkSize: timing.chunkSize,
+      maxDurationMs: timing.maxDurationMs,
+    });
+    let firstFrame = true;
+    let emitted = "";
+    let batchedAcrossCells = false;
+
+    while (state.phase !== "done") {
+      const advanced = advanceNativeConcurrentState(
+        state,
+        firstFrame ? 1 : state.stepDelayMs,
+      );
+      firstFrame = false;
+      const inserts = advanced.steps.filter((step) => step.kind === "insertText");
+      emitted += inserts.map((step) => step.text).join("");
+      batchedAcrossCells ||= inserts.length > 1;
+      state = advanced.state;
+    }
+
+    expect(timing.chunkSize).toBeGreaterThan(cellText.length);
+    expect(batchedAcrossCells).toBe(true);
+    expect(emitted).toBe(cellText.repeat(rows.length));
   });
 
   it("表格时长只累计 cell grapheme，不把 tab/newline 当字符", () => {

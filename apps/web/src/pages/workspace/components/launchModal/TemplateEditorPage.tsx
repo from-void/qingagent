@@ -29,6 +29,16 @@ export function TemplateEditorPage(props: {
   const [aiDrafting, setAiDrafting] = useState(false);
   const [aiError, setAiError] = useState(false);
   const aiAbortRef = useRef<AbortController | null>(null);
+  const inputRevisionRef = useRef(0);
+  const lastInputsRef = useRef({ name: props.name, prompt: props.prompt });
+
+  if (
+    lastInputsRef.current.name !== props.name ||
+    lastInputsRef.current.prompt !== props.prompt
+  ) {
+    inputRevisionRef.current += 1;
+    lastInputsRef.current = { name: props.name, prompt: props.prompt };
+  }
 
   useEffect(() => () => aiAbortRef.current?.abort(), []);
 
@@ -38,9 +48,10 @@ export function TemplateEditorPage(props: {
     aiAbortRef.current = controller;
     setAiDrafting(true);
     setAiError(false);
+    const inputRevision = inputRevisionRef.current;
     try {
       const draft = await props.onAiDraft({ name: props.name, prompt: props.prompt }, controller.signal);
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || inputRevisionRef.current !== inputRevision) return;
       props.onNameChange(draft.name);
       props.onPromptChange(draft.prompt);
     } catch (error) {

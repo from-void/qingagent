@@ -111,6 +111,30 @@ describe("WorkspaceTooltip", () => {
     expect(host!.querySelector(".workspace-tooltip")).toBeNull();
   });
 
+  it("焦点目标被直接卸载时立即清除已显示的提示", async () => {
+    render(
+      <button type="button" title="导出">
+        icon
+      </button>,
+    );
+    const button = host!.querySelector("button")!;
+
+    act(() => {
+      button.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: null }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(host!.querySelector(".workspace-tooltip.is-visible")?.textContent).toBe("导出");
+
+    await act(async () => {
+      button.remove();
+      await Promise.resolve();
+    });
+
+    expect(host!.querySelector(".workspace-tooltip")).toBeNull();
+  });
+
   it("æ²¡æœ‰ title çš„æŒ‰é’®ä¸ä¼šå‡º hover æç¤º", () => {
     render(
       <button type="button" className="block-handle-btn">

@@ -10,6 +10,20 @@ interface LinkEditBubble {
   to: number;
 }
 
+function isValidLinkRange(editor: Editor, range: Pick<LinkEditBubble, "from" | "to">): boolean {
+  const { from, to } = range;
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > editor.state.doc.content.size) {
+    return false;
+  }
+  try {
+    editor.state.doc.resolve(from);
+    editor.state.doc.resolve(to);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function useToolbarLinkEditor({
   editor,
   onToast,
@@ -23,8 +37,12 @@ export function useToolbarLinkEditor({
   const [draft, setDraft] = useState("");
   const bubbleRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeBubbleRef = useRef<LinkEditBubble | null>(null);
 
-  const closeLinkEditor = useCallback(() => setBubble(null), []);
+  const closeLinkEditor = useCallback(() => {
+    activeBubbleRef.current = null;
+    setBubble(null);
+  }, []);
   const openLinkEditor = useCallback((anchor: FloatingAnchorRect, range?: { from: number; to: number }) => {
     if (!editor || !editor.isEditable) return false;
     const current = editor.getAttributes("link").href;
@@ -35,7 +53,13 @@ export function useToolbarLinkEditor({
       { width: window.innerWidth, height: window.innerHeight },
     );
     setDraft(typeof current === "string" ? current : "https://");
-    setBubble({ ...position, from: selection.from, to: selection.to });
+    const nextBubble = {
+      ...position,
+      from: selection.from,
+      to: selection.to,
+    };
+    activeBubbleRef.current = nextBubble;
+    setBubble(nextBubble);
     return true;
   }, [editor]);
 
@@ -50,10 +74,10 @@ export function useToolbarLinkEditor({
     const onDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (bubbleRef.current?.contains(target) || ignoreRef?.current?.contains(target)) return;
-      setBubble(null);
+      closeLinkEditor();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setBubble(null);
+      if (event.key === "Escape") closeLinkEditor();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -61,19 +85,38 @@ export function useToolbarLinkEditor({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [bubble, ignoreRef]);
+  }, [bubble, closeLinkEditor, ignoreRef]);
 
   useEffect(() => {
-    if (!editor?.isEditable) setBubble(null);
-  }, [editor, editor?.isEditable]);
+    if (!editor?.isEditable) closeLinkEditor();
+  }, [closeLinkEditor, editor, editor?.isEditable]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (transaction.docChanged && activeBubbleRef.current) closeLinkEditor();
+    };
+    editor.on("transaction", onTransaction);
+    return () => {
+      editor.off("transaction", onTransaction);
+    };
+  }, [closeLinkEditor, editor]);
 
   const applyLink = useCallback(() => {
-    if (!editor || !bubble || !editor.isEditable) return;
+    const activeBubble = activeBubbleRef.current;
+    if (!editor || !activeBubble || !editor.isEditable) return;
+    if (!isValidLinkRange(editor, activeBubble)) {
+      closeLinkEditor();
+      return;
+    }
     const value = draft.trim();
-    const chain = editor.chain().focus().setTextSelection({ from: bubble.from, to: bubble.to }).extendMarkRange("link");
+    const chain = editor.chain().focus().setTextSelection({
+      from: activeBubble.from,
+      to: activeBubble.to,
+    }).extendMarkRange("link");
     if (!value) {
       chain.unsetLink().run();
-      setBubble(null);
+      closeLinkEditor();
       return;
     }
     const href = sanitizeToolbarLinkHref(value);
@@ -82,8 +125,8 @@ export function useToolbarLinkEditor({
       return;
     }
     chain.setLink({ href }).run();
-    setBubble(null);
-  }, [bubble, draft, editor, onToast]);
+    closeLinkEditor();
+  }, [closeLinkEditor, draft, editor, onToast]);
 
   const linkEditor = bubble ? (
     <div
@@ -105,7 +148,7 @@ export function useToolbarLinkEditor({
               applyLink();
             } else if (event.key === "Escape") {
               event.preventDefault();
-              setBubble(null);
+              closeLinkEditor();
             }
           }}
         />

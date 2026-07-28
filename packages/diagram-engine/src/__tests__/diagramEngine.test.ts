@@ -1125,6 +1125,7 @@ describe("diagram-engine", () => {
       ["stateDiagram-v2\n  state Group {\n    Inner\n  }\n  Group --> Done\n", "Group"],
     ];
     for (const [source, specialId] of stateCases) {
+      expect(parseDiagram(source).fullyRepresented).toBe(false);
       expect(getCapabilities(parseDiagram(source), { nodeId: specialId }).find((cap) => cap.op === "deleteNode")).toMatchObject({
         enabled: false,
         reason: "该节点含未完整建模的特殊 State 声明，暂不可删除",
@@ -1137,6 +1138,7 @@ describe("diagram-engine", () => {
     }
 
     const classSource = "classDiagram\n  Customer : +String name\n  Customer --> Order\n";
+    expect(parseDiagram(classSource).fullyRepresented).toBe(false);
     expect(getCapabilities(parseDiagram(classSource), { nodeId: "Customer" }).find((cap) => cap.op === "deleteNode")).toMatchObject({
       enabled: false,
       reason: "该 class 含未完整建模的冒号式成员，暂不可删除",
@@ -1145,6 +1147,61 @@ describe("diagram-engine", () => {
       ok: false,
       error: "该 class 含未完整建模的冒号式成员，暂不可删除",
       source: classSource,
+    });
+  });
+
+  it("未建模的 init 配置与样式属性不宣称完整表示", () => {
+    const cases = [
+      `%%{init: {"theme":"dark"}}%%
+flowchart TD
+  A --> B
+`,
+      `%%{init: {"flowchart":{"curve":"basis"}}}%%
+flowchart TD
+  A --> B
+`,
+      `flowchart TD
+  A --> B
+  style A rx:24,ry:24
+`,
+      `flowchart TD
+  A --> B
+  classDef rounded fill:#fff,rx:24
+  class A rounded
+`,
+      `flowchart TD
+  A --> B
+  linkStyle 0 stroke:#333,animation:fast
+`,
+    ];
+
+    for (const source of cases) {
+      expect(parseDiagram(source).ok, source).toBe(true);
+      expect(parseDiagram(source).fullyRepresented, source).toBe(false);
+    }
+  });
+
+  it("无法保真渲染的 bumpX 边曲线不宣称完整表示", () => {
+    const source = `flowchart TD
+  A --> B
+  linkStyle 0 curve:bumpX
+`;
+
+    expect(parseDiagram(source)).toMatchObject({
+      ok: true,
+      fullyRepresented: false,
+    });
+  });
+
+  it("会被钳制的 99px 节点线宽不宣称完整表示", () => {
+    const source = `flowchart TD
+  A --> B
+  style A stroke-width:99px
+`;
+
+    expect(parseDiagram(source)).toMatchObject({
+      ok: true,
+      fullyRepresented: false,
     });
   });
 

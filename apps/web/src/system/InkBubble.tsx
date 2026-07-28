@@ -254,6 +254,7 @@ export function InkBubble({
     const container = canvasContainerRef.current;
     const contentEl = contentRef.current;
     if (!wrap || !container || !contentEl) return;
+    wrap.classList.remove("ink-bubble--static-fallback");
 
     // Canvas dimensions = content + overflow padding on each side
     const contentW = wrap.offsetWidth;
@@ -264,19 +265,52 @@ export function InkBubble({
     const canvasH = contentH + PAD_V * 2;
     const aspect = canvasW / canvasH;
 
+    const ignoreResourceError = (action: () => void) => {
+      try {
+        action();
+      } catch {
+        // WebGL 降级路径不能因清理异常再次逃逸到根错误边界。
+      }
+    };
+
+    const showStaticFallback = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+      contentEl.classList.add("ink-bubble__content--visible");
+      wrap.classList.remove("ink-bubble--animate");
+      wrap.classList.add("ink-bubble--static-fallback");
+      container.replaceChildren();
+    };
+
     // Create renderer
     const dpr = Math.min(window.devicePixelRatio, 1.5);
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: false,
-      powerPreference: "low-power",
-      preserveDrawingBuffer: true,
-    });
-    renderer.setPixelRatio(dpr);
-    renderer.setSize(canvasW, canvasH);
-    renderer.setClearColor(0x000000, 0);
-    container.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
+    let renderer: THREE.WebGLRenderer | null = null;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: false,
+        powerPreference: "low-power",
+        preserveDrawingBuffer: true,
+      });
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(canvasW, canvasH);
+      renderer.setClearColor(0x000000, 0);
+      container.appendChild(renderer.domElement);
+      rendererRef.current = renderer;
+    } catch {
+      ignoreResourceError(() => renderer?.dispose());
+      ignoreResourceError(() => renderer?.forceContextLoss());
+      ignoreResourceError(() => renderer?.domElement.remove());
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      showStaticFallback();
+      return;
+    }
+    if (!renderer) {
+      showStaticFallback();
+      return;
+    }
 
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -307,18 +341,29 @@ export function InkBubble({
     let snapshotCanvas: HTMLCanvasElement | null = null;
     let rendererDisposed = false;
 
-    const renderFrame = () => {
-      renderer.render(scene, camera);
-    };
-
     const disposeRenderer = () => {
       if (rendererDisposed) return;
       rendererDisposed = true;
-      renderer.dispose();
-      renderer.forceContextLoss();
-      renderer.domElement.remove();
+      ignoreResourceError(() => geometry.dispose());
+      ignoreResourceError(() => material.dispose());
+      ignoreResourceError(() => renderer.dispose());
+      ignoreResourceError(() => renderer.forceContextLoss());
+      ignoreResourceError(() => renderer.domElement.remove());
       if (rendererRef.current === renderer) {
         rendererRef.current = null;
+      }
+    };
+
+    const renderFrame = (): boolean => {
+      try {
+        renderer.render(scene, camera);
+        return true;
+      } catch {
+        snapshotCanvas?.remove();
+        snapshotCanvas = null;
+        disposeRenderer();
+        showStaticFallback();
+        return false;
       }
     };
 
@@ -350,7 +395,11 @@ export function InkBubble({
 
     // If not animating, render one frame with full progress and done
     if (!animate) {
-      renderFrame();
+      if (!renderFrame()) {
+        return () => {
+          disposeRenderer();
+        };
+      }
       settleToSnapshot();
       return () => {
         disposeRenderer();
@@ -370,13 +419,13 @@ export function InkBubble({
       uniforms.uTime.value = elapsed;
       uniforms.uProgress.value = progress;
 
-      renderFrame();
+      if (!renderFrame()) return;
 
       if (rawProgress >= 1) {
         // Animation done — stop rAF, reveal text
         rafRef.current = 0;
         uniforms.uProgress.value = 1.0;
-        renderFrame();
+        if (!renderFrame()) return;
 
         // Reveal text via DOM class (no React re-render)
         contentEl.classList.add("ink-bubble__content--visible");

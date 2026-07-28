@@ -18,7 +18,11 @@ import {
   TableAxisSelectionExtension,
   type TableToolbarFormatCommand,
 } from "../../data/tableToolbar";
-import { handleQingagentPaste, writeSelectionToClipboard } from "../../components/doc/clipboardPaste";
+import {
+  handleQingagentPaste,
+  parsePlainTextClipboard,
+  writeSelectionToClipboard,
+} from "../../components/doc/clipboardPaste";
 import { resolveWorkspaceFloatingPortalTarget } from "../../components/DocumentSnapshotView";
 
 function createTableEditor() {
@@ -132,6 +136,21 @@ function rowCellTexts(editor: Editor, rowIndex: number): string[] {
 }
 
 describe("tableToolbar PM-010", () => {
+  it("纯文本粘贴保留连续换行与首尾空段落", () => {
+    const editor = createTableEditor();
+    try {
+      const slice = parsePlainTextClipboard("\n甲\n\n乙\n", editor.view);
+      expect(slice).not.toBeNull();
+      type ClipboardJsonNode = { text?: string; content?: ClipboardJsonNode[] };
+      const nodes = slice?.content.toJSON() as ClipboardJsonNode[] | undefined;
+      expect(nodes?.map((node) =>
+        node.content?.map((child) => child.text ?? "").join("") ?? "",
+      )).toEqual(["", "甲", "", "乙", ""]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it.each([
     ["column", 1],
     ["row", 1],
@@ -157,6 +176,39 @@ describe("tableToolbar PM-010", () => {
       const rect = TableMap.get(table).findCell(cellOffset);
       expect(axis === "column" ? rect.left : rect.top).toBe(boundary);
       expect(axis === "column" ? rect.top : rect.left).toBe(0);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("最后逻辑列由 colspan 单元格覆盖时仍可从右边界插入列", () => {
+    const editor = new Editor({
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "table",
+          attrs: { blockId: "table-colspan" },
+          content: [{
+            type: "tableRow",
+            content: [{
+              ...cell("merged"),
+              attrs: {
+                colspan: 2,
+                rowspan: 1,
+                colwidth: null,
+                backgroundColor: null,
+              },
+            }],
+          }],
+        }],
+      } satisfies PmDoc,
+    });
+    try {
+      expect(insertTableAxisAtBoundary(editor, "table-colspan", "column", 2)).toBe(true);
+      const tableNode = editor.state.doc.firstChild;
+      expect(tableNode && TableMap.get(tableNode).width).toBe(3);
     } finally {
       editor.destroy();
     }

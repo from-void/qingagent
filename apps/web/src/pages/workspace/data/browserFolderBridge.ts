@@ -61,6 +61,7 @@ const HANDLE_STORE = "handles";
 const SOURCE_STORE = "sources";
 const activeBridges = new Map<string, ActiveBrowserBridge>();
 const pendingBridgeStarts = new Map<string, PendingBrowserBridgeStart>();
+const BROWSER_FOLDER_STATUS_ERROR = "文件夹连接异常，请稍后重试";
 
 class BrowserBridgeTooLargeError extends Error {
   constructor() {
@@ -136,15 +137,24 @@ async function idbGet<T>(storeName: string, key: string): Promise<T | undefined>
   }
 }
 
-async function idbPut<T>(storeName: string, key: string, value: T): Promise<void> {
+async function idbPutSourceAndHandle(
+  index: BrowserFolderSourceIndex,
+  handle: FileSystemDirectoryHandle,
+): Promise<void> {
   const db = await openFolderDb();
   try {
-    const tx = db.transaction(storeName, "readwrite");
-    tx.objectStore(storeName).put(value, key);
+    const tx = db.transaction([SOURCE_STORE, HANDLE_STORE], "readwrite");
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
       tx.onabort = () => reject(tx.error ?? new Error("IndexedDB write aborted"));
+      try {
+        tx.objectStore(SOURCE_STORE).put(index, index.key);
+        tx.objectStore(HANDLE_STORE).put(handle, index.handleKey);
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
     });
   } finally {
     db.close();
@@ -467,11 +477,13 @@ async function startBridgeOnce(
     handle: FileSystemDirectoryHandle;
   },
   pending: PendingBrowserBridgeStart,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) return;
   const key = bridgeKey(args.sessionId, args.folderId);
   const existing = activeBridges.get(key);
   if (existing) await closeActiveBridge(key, existing);
-  if (pending.cancelled) return;
+  if (pending.cancelled || signal?.aborted) return;
 
   let registered = false;
   let adopted = false;
@@ -479,7 +491,7 @@ async function startBridgeOnce(
   try {
     await registerBridge(args.sessionId, args.folderId, args.clientId);
     registered = true;
-    if (pending.cancelled) return;
+    if (pending.cancelled || signal?.aborted) return;
 
     const url = `/api/v1/folder-bridge/events?sessionId=${encodeURIComponent(args.sessionId)}&clientId=${encodeURIComponent(args.clientId)}`;
     eventSource = new EventSource(url);
@@ -508,8 +520,12 @@ async function startBridgeOnce(
         folderId: args.folderId,
       });
     };
+    if (pending.cancelled || signal?.aborted) return;
     activeBridges.set(key, bridge);
     adopted = true;
+    if (pending.cancelled || signal?.aborted) {
+      await closeActiveBridge(key, bridge);
+    }
   } finally {
     if (!adopted) {
       eventSource?.close();
@@ -525,7 +541,8 @@ async function startBridge(args: {
   folderId: string;
   clientId: string;
   handle: FileSystemDirectoryHandle;
-}): Promise<void> {
+}, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
   const key = bridgeKey(args.sessionId, args.folderId);
   const existing = activeBridges.get(key);
   if (
@@ -540,7 +557,8 @@ async function startBridge(args: {
   const inFlight = pendingBridgeStarts.get(key);
   if (inFlight) {
     await inFlight.promise;
-    if (inFlight.cancelled) return startBridge(args);
+    if (signal?.aborted) return;
+    if (inFlight.cancelled) return startBridge(args, signal);
     const started = activeBridges.get(key);
     if (
       started &&
@@ -550,14 +568,14 @@ async function startBridge(args: {
     ) {
       return;
     }
-    return startBridge(args);
+    return startBridge(args, signal);
   }
 
   const pending: PendingBrowserBridgeStart = {
     cancelled: false,
     promise: Promise.resolve(),
   };
-  const promise = startBridgeOnce(args, pending).finally(() => {
+  const promise = startBridgeOnce(args, pending, signal).finally(() => {
     if (pendingBridgeStarts.get(key) === pending) {
       pendingBridgeStarts.delete(key);
     }
@@ -622,8 +640,7 @@ export async function rememberAttachedBrowserFolderSource(args: {
     name: args.picked.name,
     updatedAt: new Date().toISOString(),
   };
-  await idbPut(SOURCE_STORE, index.key, index);
-  await idbPut(HANDLE_STORE, args.picked.browserHandleKey, args.picked.handle);
+  await idbPutSourceAndHandle(index, args.picked.handle);
   await cleanupOrphanBrowserFolderHandles();
   await startBridge({
     sessionId: args.sessionId,
@@ -633,48 +650,56 @@ export async function rememberAttachedBrowserFolderSource(args: {
   });
 }
 
-export async function ensureBrowserFolderBridge(source: FolderSource): Promise<BrowserBridgeStatus> {
+export async function ensureBrowserFolderBridge(
+  source: FolderSource,
+  signal?: AbortSignal,
+): Promise<BrowserBridgeStatus> {
   if (source.provider !== "browser-fs-access") return { status: "connected", error: null };
-  const index = await getSourceIndex(source.sessionId, source.id);
-  if (!index) {
-    return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const handle = await getStoredHandle(index.handleKey);
-  if (!handle) {
-    return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const permission = await queryReadPermission(handle);
-  if (permission !== "granted") {
-    return { status: "permission_required", error: "需要重新授权浏览器读取这个文件夹" };
-  }
   try {
+    if (signal?.aborted) return { status: "connected", error: null };
+    const index = await getSourceIndex(source.sessionId, source.id);
+    if (signal?.aborted) return { status: "connected", error: null };
+    if (!index) {
+      return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const handle = await getStoredHandle(index.handleKey);
+    if (signal?.aborted) return { status: "connected", error: null };
+    if (!handle) {
+      return { status: "permission_required", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const permission = await queryReadPermission(handle);
+    if (signal?.aborted) return { status: "connected", error: null };
+    if (permission !== "granted") {
+      return { status: "permission_required", error: "需要重新授权浏览器读取这个文件夹" };
+    }
     await startBridge({
       sessionId: source.sessionId,
       folderId: source.id,
       clientId: index.clientId,
       handle,
-    });
+    }, signal);
     return { status: "connected", error: null };
   } catch (error) {
-    return { status: "error", error: browserBridgeErrorMessage(error) };
+    console.error("[browserFolderBridge] ensure failed", error);
+    return { status: "error", error: BROWSER_FOLDER_STATUS_ERROR };
   }
 }
 
 export async function requestBrowserFolderPermission(source: FolderSource): Promise<BrowserBridgeStatus> {
   if (source.provider !== "browser-fs-access") return { status: "connected", error: null };
-  const index = await getSourceIndex(source.sessionId, source.id);
-  if (!index) {
-    return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const handle = await getStoredHandle(index.handleKey);
-  if (!handle) {
-    return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
-  }
-  const permission = await requestReadPermission(handle);
-  if (permission !== "granted") {
-    return { status: "permission_required", error: "未获得文件夹读取权限" };
-  }
   try {
+    const index = await getSourceIndex(source.sessionId, source.id);
+    if (!index) {
+      return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const handle = await getStoredHandle(index.handleKey);
+    if (!handle) {
+      return { status: "missing", error: "此浏览器缺少文件夹授权记录，请断开后重新连接" };
+    }
+    const permission = await requestReadPermission(handle);
+    if (permission !== "granted") {
+      return { status: "permission_required", error: "未获得文件夹读取权限" };
+    }
     await startBridge({
       sessionId: source.sessionId,
       folderId: source.id,
@@ -683,7 +708,8 @@ export async function requestBrowserFolderPermission(source: FolderSource): Prom
     });
     return { status: "connected", error: null };
   } catch (error) {
-    return { status: "error", error: browserBridgeErrorMessage(error) };
+    console.error("[browserFolderBridge] permission request failed", error);
+    return { status: "error", error: BROWSER_FOLDER_STATUS_ERROR };
   }
 }
 

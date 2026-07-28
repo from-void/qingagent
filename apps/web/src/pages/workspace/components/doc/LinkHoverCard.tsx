@@ -10,8 +10,29 @@ interface LinkCardState {
   top: number;
   left: number;
   href: string;
-  from: number;
-  to: number;
+  anchor: HTMLAnchorElement;
+}
+
+function resolveLiveLinkRange(
+  editor: Editor,
+  anchor: HTMLAnchorElement,
+  expectedHref: string,
+): { from: number; to: number } | null {
+  const root = editor.view.dom;
+  if (!anchor.isConnected || !root.contains(anchor)) return null;
+  const linkType = editor.schema.marks.link;
+  if (!linkType) return null;
+  try {
+    const pos = editor.view.posAtDOM(anchor, 0);
+    const range = getMarkRange(editor.state.doc.resolve(pos), linkType);
+    if (!range) return null;
+    const linkedNode = editor.state.doc.nodeAt(range.from);
+    const mark = linkedNode ? linkType.isInSet(linkedNode.marks) : null;
+    if (!mark || mark.attrs.href !== expectedHref) return null;
+    return range;
+  } catch {
+    return null;
+  }
 }
 
 export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (message: string) => void }) {
@@ -39,8 +60,6 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
       } catch {
         return;
       }
-      const linkType = editor.schema.marks.link;
-      const range = linkType ? getMarkRange(editor.state.doc.resolve(pos), linkType) : undefined;
       const rect = a.getBoundingClientRect();
       const resolved = resolveAnchoredBubblePosition(
         { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width },
@@ -51,8 +70,7 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
         top: resolved.top,
         left: resolved.left,
         href: a.getAttribute("href") ?? "",
-        from: range?.from ?? pos,
-        to: range?.to ?? pos,
+        anchor: a,
       });
     },
     [clearHide, editor],
@@ -118,10 +136,16 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
       onToast?.("链接地址无效");
       return;
     }
+    const range = resolveLiveLinkRange(editor, card.anchor, card.href);
+    if (!range) {
+      setEditing(false);
+      setCard(null);
+      return;
+    }
     editor
       .chain()
       .focus()
-      .setTextSelection({ from: card.from, to: card.to })
+      .setTextSelection(range)
       .extendMarkRange("link")
       .setLink({ href })
       .run();
@@ -130,10 +154,16 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
   };
   const remove = () => {
     if (!editor.isEditable) return;
+    const range = resolveLiveLinkRange(editor, card.anchor, card.href);
+    if (!range) {
+      setEditing(false);
+      setCard(null);
+      return;
+    }
     editor
       .chain()
       .focus()
-      .setTextSelection({ from: card.from, to: card.to })
+      .setTextSelection(range)
       .extendMarkRange("link")
       .unsetLink()
       .run();

@@ -10,7 +10,7 @@ vi.mock("../../authGate", () => ({
 }));
 
 import { AuthTokenGate } from "../../AuthTokenGate";
-import { submitAuthToken } from "../../authGate";
+import { cancelAuth, submitAuthToken } from "../../authGate";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -43,6 +43,32 @@ describe("AuthTokenGate", () => {
     });
 
     expect(submitAuthToken).toHaveBeenCalledWith("secret-xyz");
+  });
+
+  it("令牌提交期间禁用标题栏关闭入口且不取消原鉴权请求", async () => {
+    let resolveSubmit!: (ok: boolean) => void;
+    vi.mocked(submitAuthToken).mockReturnValueOnce(new Promise((resolve) => {
+      resolveSubmit = resolve;
+    }));
+    await render(<AuthTokenGate />);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("qa-auth-required"));
+    });
+    setInputValue(getInput(), "secret-xyz");
+    await act(async () => {
+      getButton("解锁").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(host?.querySelector('[aria-label="close"]')).toBeNull();
+    expect(getButton("取消").disabled).toBe(true);
+    expect(cancelAuth).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSubmit(true);
+      await Promise.resolve();
+    });
+    expect(cancelAuth).not.toHaveBeenCalled();
   });
 });
 

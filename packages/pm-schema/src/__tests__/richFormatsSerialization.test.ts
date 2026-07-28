@@ -366,6 +366,27 @@ describe("rich format serialization", () => {
     expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("progress");
     expect(image?.type === "image" ? image.attrs : {}).not.toHaveProperty("error");
   });
+
+  it("normalizePmDoc 丢弃合法标记的上传中文件占位节点", () => {
+    const blockId = "upload-file-pending-normalize";
+    const normalized = normalizePmDoc(docWith([
+      {
+        type: "fileAttachment",
+        attrs: {
+          blockId,
+          fileId: `upload-pending:${blockId}`,
+          filename: "report.pdf",
+          mimeType: "application/pdf",
+          size: 4,
+        },
+      },
+      paragraph("kept-after-file-upload", "保留正文"),
+    ]));
+
+    expect(normalized.content).toEqual([
+      paragraph("kept-after-file-upload", "保留正文"),
+    ]);
+  });
 });
 
 function docWith(content: unknown[]): unknown {

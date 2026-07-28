@@ -29,6 +29,8 @@ import {
   annotationMutationKey,
   workspaceMutations,
 } from "../data/revisionedMutation";
+import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
+import { isCurrentSessionTitleRename } from "../data/sessionTitleRename";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
 import type { DerivativeDocument } from "./derivatives/types";
@@ -162,6 +164,15 @@ export function WorkspaceDocumentPane({
     chatInputEditorDisabled,
     chatInputRef,
   } = controller;
+  const currentSessionIdRef = useRef(state.sessionId);
+  const currentTitleRef = useRef(title);
+  const renameGenerationBySessionRef = useRef(new Map<string, number>());
+  currentSessionIdRef.current = state.sessionId;
+  currentTitleRef.current = title;
+
+  useEffect(() => {
+    derivativeTabRequestRef.current += 1;
+  }, [state.sessionId]);
 
   useEffect(() => {
     if (
@@ -247,13 +258,18 @@ export function WorkspaceDocumentPane({
       }
 
       // 既有衍生稿先取正文再换 tab：网络等待期保留当前稳定纸面，避免先挂空纸再替换。
+      const requestSessionId = state.sessionId;
       void streamRef.current
-        .getDerivativeDoc(state.sessionId, target.docId)
+        .getDerivativeDoc(requestSessionId, target.docId)
         .then((document) => {
-          if (
-            derivativeTabRequestRef.current !== requestId ||
-            document?.meta.docId !== target.docId
-          ) {
+          if (!isCurrentDerivativePrefetch({
+            currentRequestId: derivativeTabRequestRef.current,
+            currentSessionId: currentSessionIdRef.current,
+            documentDocId: document?.meta.docId,
+            requestDocId: target.docId,
+            requestId,
+            requestSessionId,
+          })) {
             return;
           }
           setDerivativeDocCache((current) => {
@@ -264,7 +280,12 @@ export function WorkspaceDocumentPane({
           setActiveTab(nextTab);
         })
         .catch((error) => {
-          if (derivativeTabRequestRef.current !== requestId) return;
+          if (
+            derivativeTabRequestRef.current !== requestId ||
+            currentSessionIdRef.current !== requestSessionId
+          ) {
+            return;
+          }
           console.error("[workspace] preload derivative tab failed", error);
           showToast("稿件打开失败 · 请重试");
         });
@@ -326,14 +347,40 @@ export function WorkspaceDocumentPane({
               createDisabledReason={derivativeCreateDisabledReason}
               isStaleDismissed={isStaleDismissed}
               onRename={async (nextTitle) => {
-                const previousTitle = title;
+                const requestSessionId = state.sessionId;
+                const stream = streamRef.current;
+                if (!stream || !requestSessionId) {
+                  showToast("标题修改失败 · 请重试");
+                  return;
+                }
+                const previousTitle = currentTitleRef.current;
+                const requestGeneration =
+                  (renameGenerationBySessionRef.current.get(requestSessionId) ??
+                    0) + 1;
+                renameGenerationBySessionRef.current.set(
+                  requestSessionId,
+                  requestGeneration,
+                );
+                currentTitleRef.current = nextTitle;
                 setTitle(nextTitle);
                 try {
-                  const stream = streamRef.current;
-                  if (!stream || !state.sessionId) throw new Error("会话未就绪");
-                  await stream.renameSession(state.sessionId, nextTitle);
+                  await stream.renameSession(requestSessionId, nextTitle);
                 } catch (error) {
-                  setTitle(previousTitle);
+                  if (!isCurrentSessionTitleRename({
+                    currentGeneration:
+                      renameGenerationBySessionRef.current.get(requestSessionId),
+                    currentSessionId: currentSessionIdRef.current,
+                    currentTitle: currentTitleRef.current,
+                    requestGeneration,
+                    requestSessionId,
+                    requestTitle: nextTitle,
+                  })) {
+                    return;
+                  }
+                  currentTitleRef.current = previousTitle;
+                  setTitle((currentTitle) =>
+                    currentTitle === nextTitle ? previousTitle : currentTitle,
+                  );
                   console.error("[workspace] rename session failed", error);
                   showToast("标题修改失败 · 请重试");
                 }

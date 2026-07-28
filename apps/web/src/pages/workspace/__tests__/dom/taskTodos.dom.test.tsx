@@ -114,6 +114,29 @@ describe("AI任务清单悬浮控件", () => {
     expect(query(".ws-taskpill")).toBeNull();
   });
 
+  it("TaskPill 已完成淡出后收到内容相同的新数组不会再次闪现", async () => {
+    vi.useFakeTimers();
+    await render(<TaskPill todos={mixedTodos} />);
+    await rerender(<TaskPill todos={completedTodos} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        TASK_PILL_COMPLETE_HIDE_MS + TASK_PILL_FADE_MS,
+      );
+    });
+    expect(query(".ws-taskpill")).toBeNull();
+
+    await rerender(
+      <TaskPill todos={completedTodos.map((todo) => ({ ...todo }))} />,
+    );
+    expect(query(".ws-taskpill")).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(query(".ws-taskpill")).toBeNull();
+  });
+
   // F2 回归(用户走查):强刷后帧回放/restore 还原出的初始 todos 已是全完成时,
   // pill 必须直接不渲染——不得再走一遍「展示 4/4 → 2.5s 淡出」造成闪现。
   it("TaskPill 恢复场景初始即全完成:直接不渲染(无闪现)", async () => {

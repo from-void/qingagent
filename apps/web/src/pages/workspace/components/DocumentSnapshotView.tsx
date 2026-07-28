@@ -94,7 +94,12 @@ import type {
   DocSuggestion,
   PatchOverlayInput,
 } from "../data/protocol";
-import { insertFileAsset, insertImageAssets } from "../data/insertUploadedAsset";
+import {
+  hasPendingUploadPlaceholders,
+  insertFileAsset,
+  insertImageAssets,
+  replayPendingUploadPlaceholders,
+} from "../data/insertUploadedAsset";
 import { MathEditPopover, type MathEditTarget } from "./MathEditPopover";
 import { DocColophon } from "./DocColophon";
 import {
@@ -388,13 +393,16 @@ export const DocumentSnapshotView = forwardRef<
   }
 
   return (
-    <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+    <div
+      className={WORKSPACE_PAPER_DOM.paperSurfaceClass}
+      data-wf={WORKSPACE_PAPER_DOM.paperSurfaceDataWf}
+    >
       <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
       <article
         ref={articleRef}
         className={WORKSPACE_PAPER_DOM.documentClass}
         style={{ maxWidth: 800, paddingRight: 200 }}
-        data-wf="DocumentSnapshotView"
+        data-wf={WORKSPACE_PAPER_DOM.documentDataWf}
         data-version={doc.version}
         spellCheck={false}
       >
@@ -573,8 +581,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     content: initialContent,
     editorProps: {
       attributes: {
-        class: "wf-doc",
-        "data-wf": "DocumentSnapshotView",
+        class: WORKSPACE_PAPER_DOM.documentClass,
+        "data-wf": WORKSPACE_PAPER_DOM.documentDataWf,
         "data-version": String(doc.version),
         style: "max-width:800px;padding-right:200px;outline:none",
       },
@@ -931,7 +939,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             }
             // exact echo 也可能是 live blockId=null、normalize 后才相等；只在结构已证明
             // 相同的两种回声里同步 attrs。陈旧 pending echo 的 live 可能已继续编辑，不能按位置写 id。
-            if (sync.verdict === "block-id-echo" || sync.matchedSelfIndex === -1) {
+            if (
+              !hasPendingUploadPlaceholders(editor) &&
+              (sync.verdict === "block-id-echo" || sync.matchedSelfIndex === -1)
+            ) {
               const blockIdSync = createLocalBlockIdSyncTransaction(
                 editor,
                 normalizedIncoming,
@@ -946,7 +957,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             pendingSelfDocKeysRef.current = [];
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
-            setRemoteEditorContent(editor, normalizedIncoming);
+            setRemoteEditorContent(
+              editor,
+              replayPendingUploadPlaceholders(editor, normalizedIncoming),
+            );
             lastVersionRef.current = scheduledVersion;
             lastSyncedDocRevisionRef.current = scheduledRevision;
             if (hadFocus) {
@@ -1061,7 +1075,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       instructions,
       stepDelayMs: timing.stepDelayMs,
       chunkSize: timing.chunkSize,
-      maxDurationMs: timing.totalDurationMs,
+      maxDurationMs: timing.maxDurationMs,
     });
     const rawFinalContent = presentationRun.finalDoc ?? doc.pmDoc;
     const finalContent = rawFinalContent ? flattenNestedTablesInCells(rawFinalContent) : undefined;
@@ -1270,7 +1284,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       data-native-presentation-run-id={presentationRun?.id}
     >
       {presentationRun ? <div className="native-presentation-vignette" aria-hidden="true" /> : null}
-      <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+      <div
+        className={WORKSPACE_PAPER_DOM.paperSurfaceClass}
+        data-wf={WORKSPACE_PAPER_DOM.paperSurfaceDataWf}
+      >
         <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
         <EditorContent editor={editor} />
         {!presentationRun ? <DocColophon doc={doc} /> : null}

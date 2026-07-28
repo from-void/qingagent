@@ -173,6 +173,8 @@ export interface ParseResult extends DiagramThemeMetadata {
   model: DiagramModel;
   spanMap: SpanMap;
   ok: boolean;
+  /** 内部图模型是否完整承载了源码的可见语义；false 时应回退原生 Mermaid 渲染。 */
+  fullyRepresented: boolean;
   error?: string;
   errorSpan?: Span;
 }
@@ -915,6 +917,250 @@ function parseDiagramThemeMetadata(
   };
 }
 
+const REPRESENTED_THEME_VARIABLES = new Set([
+  "clusterBkg",
+  "clusterBorder",
+  "lineColor",
+  "mainBkg",
+  "nodeBorder",
+  "primaryBorderColor",
+  "primaryColor",
+  "primaryTextColor",
+  "textColor",
+]);
+function objectKeysAtTopLevel(source: string): string[] {
+  const keys: string[] = [];
+  let index = 0;
+  while (index < source.length) {
+    while (/[\s,]/.test(source[index] ?? "")) index += 1;
+    if (index >= source.length) break;
+    let key = "";
+    const quote = source[index];
+    if (quote === "'" || quote === '"') {
+      index += 1;
+      while (index < source.length && source[index] !== quote) {
+        if (source[index] === "\\") index += 1;
+        key += source[index] ?? "";
+        index += 1;
+      }
+      index += 1;
+    } else {
+      const match = source.slice(index).match(/^[\w-]+/);
+      if (!match) return [];
+      key = match[0];
+      index += key.length;
+    }
+    while (/\s/.test(source[index] ?? "")) index += 1;
+    if (source[index] !== ":") return [];
+    keys.push(key);
+    index += 1;
+
+    let braces = 0;
+    let brackets = 0;
+    let valueQuote: "'" | '"' | null = null;
+    let escaped = false;
+    while (index < source.length) {
+      const char = source[index]!;
+      if (valueQuote) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === valueQuote) {
+          valueQuote = null;
+        }
+      } else if (char === "'" || char === '"') {
+        valueQuote = char;
+      } else if (char === "{") {
+        braces += 1;
+      } else if (char === "}") {
+        braces -= 1;
+      } else if (char === "[") {
+        brackets += 1;
+      } else if (char === "]") {
+        brackets -= 1;
+      } else if (char === "," && braces === 0 && brackets === 0) {
+        index += 1;
+        break;
+      }
+      index += 1;
+    }
+  }
+  return keys;
+}
+
+type RepresentedStyleTarget = "node" | "edge";
+
+function exactPixelValueInRange(
+  source: string,
+  min: number,
+  max: number,
+  integer = false,
+): boolean {
+  const match = source.trim().match(/^(\d+(?:\.\d+)?|\.\d+)(?:px)?$/i);
+  if (!match) return false;
+  const value = Number(match[1]);
+  return (
+    Number.isFinite(value)
+    && value >= min
+    && value <= max
+    && (!integer || Number.isInteger(value))
+  );
+}
+
+function styleValueFullyRepresented(
+  property: string,
+  rawValue: string,
+  target: RepresentedStyleTarget,
+): boolean {
+  const value = rawValue.trim().replace(/;$/, "");
+  if (property === "color" || property === "stroke") {
+    return sanitizeColor(value) !== null;
+  }
+  if (property === "stroke-dasharray") {
+    return sanitizeDashArray(value) !== null;
+  }
+  if (property === "stroke-width") {
+    return exactPixelValueInRange(value, 1, 8);
+  }
+  if (target === "edge") {
+    // renderer 只分别实现直线和居中阶梯线；其余 Mermaid 曲线会被统一成
+    // 同一条通用 Bézier，无法保真表达原始 curve 取值。
+    return property === "curve" && (value === "linear" || value === "step");
+  }
+  if (property === "fill") return sanitizeColor(value) !== null;
+  if (property === "font-size") return exactPixelValueInRange(value, 9, 28);
+  if (property === "width") {
+    return exactPixelValueInRange(
+      value,
+      GRAPH_LAYOUT_NODE_MIN_WIDTH,
+      GRAPH_LAYOUT_NODE_MAX_WIDTH,
+      true,
+    );
+  }
+  if (property === "height") {
+    return exactPixelValueInRange(
+      value,
+      GRAPH_LAYOUT_NODE_MIN_HEIGHT,
+      GRAPH_LAYOUT_NODE_MAX_HEIGHT,
+      true,
+    );
+  }
+  return false;
+}
+
+function stylePropertiesFullyRepresented(
+  source: string,
+  target: RepresentedStyleTarget,
+): boolean {
+  const declarations = splitStyleDeclarations(source);
+  if (declarations.length === 0) return false;
+  return declarations.every((declaration) => {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) return false;
+    return styleValueFullyRepresented(
+      declaration.slice(0, colon).trim().toLowerCase(),
+      declaration.slice(colon + 1),
+      target,
+    );
+  });
+}
+
+function initDirectiveFullyRepresented(source: string): boolean {
+  const initMatches = [...source.matchAll(/%%\{\s*init\s*:/gi)];
+  if (initMatches.length === 0) return true;
+  if (initMatches.length !== 1) return false;
+  const initStart = initMatches[0]!;
+  const payloadStart = initStart.index + initStart[0].length;
+  const directiveEnd = /\}\s*%%/g;
+  directiveEnd.lastIndex = payloadStart;
+  const endMatch = directiveEnd.exec(source);
+  if (!endMatch) return false;
+  const payload = source.slice(payloadStart, endMatch.index);
+  const objectStart = payload.indexOf("{");
+  if (objectStart < 0) return false;
+  const initBody = extractBalancedObjectBody(payload, objectStart);
+  if (initBody === null) return false;
+  const initKeys = objectKeysAtTopLevel(initBody);
+  if (
+    initKeys.length === 0 ||
+    initKeys.some((key) => key !== "theme" && key !== "themeVariables")
+  ) {
+    return false;
+  }
+  const theme = readObjectValue(initBody, "theme");
+  if (theme !== undefined && theme.toLowerCase() !== "base") return false;
+
+  const themeVariablesKey =
+    /(?:["']themeVariables["']|\bthemeVariables\b)\s*:/i.exec(initBody);
+  if (!themeVariablesKey) return false;
+  const variablesStart = initBody.indexOf(
+    "{",
+    themeVariablesKey.index + themeVariablesKey[0].length,
+  );
+  if (variablesStart < 0) return false;
+  const variablesBody = extractBalancedObjectBody(initBody, variablesStart);
+  if (variablesBody === null) return false;
+  const variableKeys = objectKeysAtTopLevel(variablesBody);
+  if (
+    variableKeys.length === 0 ||
+    variableKeys.some((key) => !REPRESENTED_THEME_VARIABLES.has(key)) ||
+    variableKeys.some(
+      (key) => !sanitizeColor(readObjectValue(variablesBody, key)),
+    )
+  ) {
+    return false;
+  }
+
+  const palette = parseThemePalette(source);
+  return !!(
+    palette?.nodeFill &&
+    palette.nodeStroke &&
+    palette.lineColor &&
+    palette.textColor &&
+    palette.clusterFill &&
+    palette.clusterStroke
+  );
+}
+
+function presentationSyntaxFullyRepresented(source: string): boolean {
+  if (!initDirectiveFullyRepresented(source)) return false;
+  for (const line of getLines(source)) {
+    const trimmed = stripTrailingComment(line.text).trim();
+    const classDefinition = trimmed.match(CLASS_DEFINITION_RE);
+    if (
+      classDefinition &&
+      !stylePropertiesFullyRepresented(
+        classDefinition[2]!,
+        "node",
+      )
+    ) {
+      return false;
+    }
+    const inlineStyle = trimmed.match(INLINE_STYLE_RE);
+    if (
+      inlineStyle &&
+      !stylePropertiesFullyRepresented(
+        inlineStyle[2]!,
+        "node",
+      )
+    ) {
+      return false;
+    }
+    const linkStyle = trimmed.match(/^linkStyle\s+\S+\s+(.+?)\s*;?$/i);
+    if (
+      linkStyle &&
+      !stylePropertiesFullyRepresented(
+        linkStyle[1]!,
+        "edge",
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseThemePalette(source: string): ThemePalette | undefined {
   const initStart = /%%\{\s*init\s*:/i.exec(source);
   if (!initStart) return undefined;
@@ -1316,10 +1562,15 @@ function parseFlowchart(source: string): ParseResult {
     edges,
     subgraphs.map((subgraph) => subgraph.id),
   );
+  const parsedNodes = [...nodes.values()];
   const result: ParseResult = {
     ok: true,
+    fullyRepresented:
+      !/^\s*click\b/im.test(source)
+      && presentationSyntaxFullyRepresented(source)
+      && !parsedNodes.some((node) => node.shape === "icon" || node.shape === "image"),
     ...themeMetadata,
-    model: { type: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, hasLinkStyle, ...themeMetadata },
+    model: { type: "flowchart", direction, nodes: parsedNodes, edges, subgraphs, hasLinkStyle, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
   return firstUnparsedLine ? withUnparsedLineError(result, firstUnparsedLine) : result;
@@ -2195,6 +2446,7 @@ function parseState(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const deleteProtectedNodeIds = new Set<string>();
   let edgeOrder = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("state");
   let inComposite = false;
   const ensureNode = (id: string, label = id, declared = false, span?: Span, labelSpan?: Span, kind: "state" | "start" | "end" | "choice" | "fork" | "composite" = "state") => {
@@ -2218,6 +2470,7 @@ function parseState(source: string): ParseResult {
       continue;
     }
     if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+      fullyRepresented = false;
       const specialDeclaration = trimmed.match(
         /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
       );
@@ -2266,10 +2519,13 @@ function parseState(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys());
   return {
     ok: true,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: {
       type: "state",
@@ -2354,6 +2610,7 @@ function parseEr(source: string): ParseResult {
   const rels: ErGraph["rels"] = [];
   const protectedSpans: Span[] = [];
   let order = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("er");
   let inAttrs: string | null = null;
   const ensureEntity = (id: string, span?: Span, declared = false) => {
@@ -2388,6 +2645,7 @@ function parseEr(source: string): ParseResult {
       const entity = ensureEntity(inlineBlock[1]!, lineSpan(line), true);
       const attr = parseErAttr(inlineBlock[2] ?? "", lineSpan(line));
       if (attr) entity.attrs.push(attr);
+      if (!attr || attr.keys?.length) fullyRepresented = false;
       protectedSpans.push(lineSpan(line));
       continue;
     }
@@ -2402,6 +2660,7 @@ function parseEr(source: string): ParseResult {
       if (!/^}/.test(trimmed)) {
         const attr = parseErAttr(trimmed, lineSpan(line));
         if (attr) entities.get(inAttrs)?.attrs.push(attr);
+        if (!attr || attr.keys?.length) fullyRepresented = false;
       }
       protectedSpans.push(lineSpan(line));
       if (/^}/.test(trimmed)) inAttrs = null;
@@ -2437,10 +2696,13 @@ function parseEr(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, entities.keys());
   return {
     ok: true,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: { type: "er", entities: [...entities.values()], rels, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
@@ -2511,6 +2773,7 @@ function parseClass(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const deleteProtectedNodeIds = new Set<string>();
   let order = 0;
+  let fullyRepresented = true;
   const nextEdgeId = createEdgeIdFactory("class");
   let inClass: string | null = null;
   const ensureClass = (id: string, span?: Span, declared = false) => {
@@ -2533,6 +2796,7 @@ function parseClass(source: string): ParseResult {
     }
     const block = trimmed.match(/^class\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)(?:~[^~]+~)?\s*\{\s*$/u);
     if (block) {
+      if (trimmed.includes("~")) fullyRepresented = false;
       inClass = block[1]!;
       ensureClass(inClass, lineSpan(line), true);
       protectedSpans.push(lineSpan(line));
@@ -2546,6 +2810,7 @@ function parseClass(source: string): ParseResult {
     }
     const colonMember = trimmed.match(/^([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*:\s*\S.*$/u);
     if (colonMember) {
+      fullyRepresented = false;
       deleteProtectedNodeIds.add(colonMember[1]!);
       protectedSpans.push(lineSpan(line));
       continue;
@@ -2580,10 +2845,13 @@ function parseClass(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    fullyRepresented = false;
   }
   const themeMetadata = parseDiagramThemeMetadata(source, classes.keys());
   return {
     ok: true,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: {
       type: "class",
@@ -2693,6 +2961,7 @@ function parseMindmap(source: string): ParseResult {
   const protectedSpans: Span[] = [];
   const stack: MindNode[] = [];
   let root: MindNode | null = null;
+  let fullyRepresented = true;
   const siblingCounters = new Map<string, Map<string, number>>();
   for (const line of lines) {
     if (line === header) continue;
@@ -2706,7 +2975,10 @@ function parseMindmap(source: string): ParseResult {
     // ::class / #id::class / icon(...) 这类装饰语法仍不支持;形状包裹(`((..))` 等)
     // 现在能解析,不再标记为 unsupported(否则圆形根节点变只读且显示字面量)。
     const unsupported = /::|#|^icon\(/i.test(trimmed);
-    if (unsupported) protectedSpans.push(lineSpan(line));
+    if (unsupported) {
+      protectedSpans.push(lineSpan(line));
+      fullyRepresented = false;
+    }
     const parts = unwrapMindmapNode(trimmed);
     const indent = raw.match(/^\s*/)?.[0].length ?? 0;
     while (stack.length > 0 && stack[stack.length - 1]!.indent >= indent) stack.pop();
@@ -2743,6 +3015,8 @@ function parseMindmap(source: string): ParseResult {
   const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
   return {
     ok: true,
+    fullyRepresented:
+      fullyRepresented && presentationSyntaxFullyRepresented(source),
     ...themeMetadata,
     model: { type: "mindmap", root, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
@@ -3228,7 +3502,7 @@ function emptyParse(type: DiagramType, error: string): ParseResult {
           : type === "mindmap"
             ? ({ type: "mindmap", root: { id: "mind-root", label: "", line: { start: 0, end: 0 }, indent: 0, children: [], hasStableId: true, parentId: null, scopePath: [], sourceRefs: [] } } as MindmapTree)
             : ({ type: "flowchart", direction: "TD", nodes: [], edges: [], subgraphs: [] } as FlowGraph);
-  return { ok: false, error, model, spanMap: { directives: [], protectedSpans: [] } };
+  return { ok: false, fullyRepresented: false, error, model, spanMap: { directives: [], protectedSpans: [] } };
 }
 
 function withUnparsedLineError(result: ParseResult, line: LineInfo): ParseResult {
@@ -3236,6 +3510,7 @@ function withUnparsedLineError(result: ParseResult, line: LineInfo): ParseResult
   return {
     ...result,
     ok: false,
+    fullyRepresented: false,
     error: `无法解析第 ${line.index + 1} 行: ${sourceText}`,
     errorSpan: { start: line.start, end: line.bodyEnd },
   };

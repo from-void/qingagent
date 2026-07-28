@@ -162,6 +162,7 @@ import {
 } from "../data/revisionedMutation";
 import {
   MATERIAL_PARSE_BUSY_REASON,
+  MATERIAL_PARSE_SEND_FAILED_REASON,
   useMaterialParseTracker,
 } from "../data/useMaterialParseTracker";
 import {
@@ -454,6 +455,7 @@ export function useWorkspacePageController() {
   const replaySessionIdRef = useRef<string | null>(state.sessionId);
   const activeWorkspaceSessionTargetRef = useRef<string | null>(null);
   const streamGenerationRef = useRef(0);
+  const derivativeListGenerationRef = useRef(0);
   const streamDisposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -916,9 +918,11 @@ export function useWorkspacePageController() {
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
+  const materialParsingTurnKeyRef = useRef<number | null>(null);
   const {
     rows: materialParseRows,
     markParsing: markMaterialParsing,
+    markTurnError: markMaterialParsingTurnError,
     retry: retryMaterialParse,
   } = useMaterialParseTracker({
     sessionId: state.sessionId,
@@ -973,8 +977,9 @@ export function useWorkspacePageController() {
       return next;
     });
     let cancelled = false;
+    const bridgeLifecycle = new AbortController();
     for (const source of browserSources) {
-      void ensureBrowserFolderBridge(source).then((result) => {
+      void ensureBrowserFolderBridge(source, bridgeLifecycle.signal).then((result) => {
         if (cancelled) return;
         const key = `${source.sessionId}\0${source.id}`;
         if (result.status === "connected") {
@@ -1003,6 +1008,7 @@ export function useWorkspacePageController() {
     }
     return () => {
       cancelled = true;
+      bridgeLifecycle.abort();
       for (const source of browserSources) {
         const key = `${source.sessionId}\0${source.id}`;
         stopBrowserFolderBridge(source.sessionId, source.id);
@@ -2408,9 +2414,23 @@ export function useWorkspacePageController() {
             };
           },
           dispatch: async ({ command, uploadedAssets }) => {
-            markMaterialParsing(uploadedAssets);
+            const materialTurnKey = markMaterialParsing(uploadedAssets);
+            materialParsingTurnKeyRef.current = materialTurnKey;
             lastRetriableSendRef.current = command;
-            await stream.sendCommand(command);
+            try {
+              await stream.sendCommand(command);
+            } catch (error) {
+              if (materialTurnKey !== null) {
+                markMaterialParsingTurnError(
+                  materialTurnKey,
+                  MATERIAL_PARSE_SEND_FAILED_REASON,
+                );
+              }
+              if (materialParsingTurnKeyRef.current === materialTurnKey) {
+                materialParsingTurnKeyRef.current = null;
+              }
+              throw error;
+            }
           },
         });
 
@@ -2654,6 +2674,7 @@ export function useWorkspacePageController() {
     clearHydrationTimers,
     rejectPendingDocSaveDrain,
     markMaterialParsing,
+    markMaterialParsingTurnError,
     observeHydrationFrame,
     resolvePendingDocSaveDrain,
     restoreExistingSession,
@@ -2694,17 +2715,25 @@ export function useWorkspacePageController() {
 
   const refreshDerivatives = useCallback(async () => {
     const stream = streamRef.current;
-    const sessionId = stateRef.current.sessionId;
-    if (!stream || !sessionId) return;
-    setDerivatives(await stream.listDerivatives(sessionId));
+    const requestSessionId = stateRef.current.sessionId;
+    if (!stream || !requestSessionId) return;
+    const requestGeneration = derivativeListGenerationRef.current + 1;
+    derivativeListGenerationRef.current = requestGeneration;
+    const nextDerivatives = await stream.listDerivatives(requestSessionId);
+    if (
+      stateRef.current.sessionId !== requestSessionId ||
+      derivativeListGenerationRef.current !== requestGeneration
+    ) {
+      return;
+    }
+    setDerivatives(nextDerivatives);
   }, []);
 
   useEffect(() => {
-    if (!state.sessionId) {
-      setDerivatives([]);
-      setActiveTab("main");
-      return;
-    }
+    setDerivatives([]);
+    setActiveTab("main");
+    setActiveTranslationDocId(null);
+    if (!state.sessionId) return;
     void refreshDerivatives().catch((error) =>
       console.error("[workspace] list derivatives failed", error),
     );
@@ -3215,6 +3244,8 @@ export function useWorkspacePageController() {
       setSendPending,
       flushPendingDocSave,
       markMaterialParsing,
+      markMaterialParsingTurnError,
+      materialParsingTurnKeyRef,
       ensureSessionId,
       showToast,
       toast,

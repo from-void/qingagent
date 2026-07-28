@@ -73,6 +73,7 @@ export function applyNativeConcurrentFrame(
   runtime: NativeEditorOperationRuntime,
 ): NativeCursorMarker[] {
   const markers: NativeCursorMarker[] = [];
+  const markerIndexByAgent = new Map<string, number>();
   if (editor.isDestroyed) return markers;
 
   const graphemeCache: GraphemeFrameCache = new Map();
@@ -87,7 +88,15 @@ export function applyNativeConcurrentFrame(
         runtime,
         graphemeCache,
       );
-      if (marker) markers.push(marker);
+      if (marker) {
+        const markerIndex = markerIndexByAgent.get(step.agentId);
+        if (markerIndex === undefined) {
+          markerIndexByAgent.set(step.agentId, markers.length);
+          markers.push(marker);
+        } else {
+          markers[markerIndex] = marker;
+        }
+      }
       return true;
     });
   }

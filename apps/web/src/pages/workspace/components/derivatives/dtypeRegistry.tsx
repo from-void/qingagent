@@ -1,7 +1,7 @@
-import { useEffect, useRef, type FC, type MutableRefObject, type Ref } from "react";
+import { useRef, type FC, type MutableRefObject, type ReactNode, type Ref } from "react";
 import type { PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData, DerivativeDtypeName } from "@qingagent/contract-ts";
-import { PmBlockView } from "../doc/PmStaticView";
+import { PmBlockView, PmTextRendererProvider } from "../doc/PmStaticView";
 import { PhoneShell } from "./PhoneShell";
 import { DesktopShell } from "./DesktopShell";
 import { XhsCover, type XhsCoverTemplate } from "./XhsCover";
@@ -69,27 +69,18 @@ function WechatDesktopPreview(props: PreviewProps) {
 
 function XhsArticle({ doc, title, articleRef, coverTemplate = "poster", onCoverTemplateChange = () => undefined }: PreviewProps) {
   const localRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const body = localRef.current?.querySelector(".xhs-body");
-    if (!body) return;
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    const textNodes: Text[] = [];
-    while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
-    for (const node of textNodes) {
-      if (!node.data.includes("#")) continue;
-      const parts = node.data.split(/(#[\p{L}\p{N}_-]+)/gu);
-      if (parts.length === 1) continue;
-      const fragment = document.createDocumentFragment();
-      for (const part of parts) fragment.append(part.startsWith("#") ? Object.assign(document.createElement("span"), { className: "xhs-topic", textContent: part }) : document.createTextNode(part));
-      node.replaceWith(fragment);
-    }
-  }, [doc]);
   const setRef = (node: HTMLElement | null) => {
     localRef.current = node;
     if (typeof articleRef === "function") articleRef(node);
     else if (articleRef) (articleRef as MutableRefObject<HTMLElement | null>).current = node;
   };
-  return <article ref={setRef} className="xhs-article"><XhsCover title={title} template={coverTemplate} onTemplateChange={onCoverTemplateChange}/><h1>{title}</h1><div className="xhs-body"><PmBody doc={doc}/></div></article>;
+  return <article ref={setRef} className="xhs-article"><XhsCover title={title} template={coverTemplate} onTemplateChange={onCoverTemplateChange}/><h1>{title}</h1><div className="xhs-body"><PmTextRendererProvider renderText={renderXhsTopicText}><PmBody doc={doc}/></PmTextRendererProvider></div></article>;
+}
+
+function renderXhsTopicText(text: string): ReactNode {
+  return text.split(/(#[\p{L}\p{N}_-]+)/gu).map((part, index) =>
+    part.startsWith("#") ? <span key={index} className="xhs-topic">{part}</span> : part,
+  );
 }
 
 function XhsNav() { return <div className="xhs-navbar"><span className="xhs-back"><ChevronBackIcon/></span><span className="xhs-avatar">青</span><strong>青简</strong><button type="button">关注</button><span className="xhs-share" aria-label="分享"><XhsShareIcon/></span></div>; }

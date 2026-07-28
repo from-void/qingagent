@@ -70,6 +70,66 @@ describe("useAutoScroll", () => {
     expect(rafCountDuringDisableLayout).toBe(0);
     expect(rafCallbacks).toHaveLength(0);
   });
+
+  it("同位置程序滚动不会吞掉下一次用户上滚", async () => {
+    const rafCallbacks: FrameRequestCallback[] = [];
+    const observers: Array<() => void> = [];
+    let scrollToBottom!: () => void;
+
+    class FakeMutationObserver implements MutationObserver {
+      constructor(private readonly callback: MutationCallback) {
+        observers.push(() => this.callback([], this));
+      }
+      observe() {
+        return undefined;
+      }
+      disconnect() {
+        return undefined;
+      }
+      takeRecords() {
+        return [];
+      }
+    }
+
+    vi.stubGlobal("MutationObserver", FakeMutationObserver);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    });
+
+    function Harness() {
+      const ref = useRef<HTMLDivElement>(null);
+      const autoScroll = useAutoScroll(ref);
+      useLayoutEffect(() => {
+        scrollToBottom = autoScroll.scrollToBottom;
+      }, [autoScroll.scrollToBottom]);
+      return <div ref={ref}>content</div>;
+    }
+
+    await render(<Harness />);
+    const container = host?.firstElementChild as HTMLDivElement;
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, writable: true, value: 900 },
+    });
+    const scrollTo = vi.fn();
+    container.scrollTo = scrollTo;
+
+    act(() => {
+      scrollToBottom();
+    });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+
+    container.scrollTop = 600;
+    act(() => {
+      container.dispatchEvent(new Event("scroll"));
+      observers[0]?.();
+    });
+
+    expect(rafCallbacks).toHaveLength(0);
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
 });
 
 async function render(element: ReactNode): Promise<void> {

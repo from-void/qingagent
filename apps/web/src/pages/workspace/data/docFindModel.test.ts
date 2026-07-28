@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DocDimensions } from "./docDimensions";
 import {
+  FIND_MATCH_LIMIT,
+  collectReplaceAllPlans,
   collectMatches,
   formatFindCount,
   planReplaceAll,
@@ -73,6 +75,38 @@ describe("docFindModel", () => {
     ]);
   });
 
+  it("大小写折叠展开字符时仍把命中映射回原文 UTF-16 范围", () => {
+    expect(
+      collectMatches([{ text: "AİBC", pos: 10 }], "bc", false).matches,
+    ).toEqual([{ from: 12, to: 14 }]);
+    expect(
+      collectMatches([{ text: "İ", pos: 20 }], "i", false).matches,
+    ).toEqual([{ from: 20, to: 21 }]);
+    expect(
+      collectMatches([{ text: "ΟΣ", pos: 30 }], "ος", false).matches,
+    ).toEqual([{ from: 30, to: 32 }]);
+  });
+
+  it("土耳其语折叠吞掉组合点时命中与替换完整覆盖源字符", () => {
+    const originalToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+    const localeSpy = vi
+      .spyOn(String.prototype, "toLocaleLowerCase")
+      .mockImplementation(function toTurkishLowerCase(this: string) {
+        return originalToLocaleLowerCase.call(String(this), "tr-TR");
+      });
+    try {
+      const segments = [{ text: "I\u0307", pos: 7 }];
+      expect(collectMatches(segments, "i", false).matches).toEqual([
+        { from: 7, to: 9 },
+      ]);
+      expect(collectReplaceAllPlans(segments, "i", false, "X")).toEqual([
+        { from: 7, to: 9, insert: "X" },
+      ]);
+    } finally {
+      localeSpy.mockRestore();
+    }
+  });
+
   it("空 query 返回空结果", () => {
     expect(collectMatches([{ text: "abc", pos: 1 }], "", false)).toEqual({
       matches: [],
@@ -110,6 +144,22 @@ describe("docFindModel", () => {
       { from: 6, to: 8, insert: "X" },
       { from: 2, to: 4, insert: "X" },
     ]);
+  });
+
+  it("全部替换重新收集上限外命中并生成完整倒序计划", () => {
+    const segments = [{ text: "a".repeat(FIND_MATCH_LIMIT + 2), pos: 1 }];
+    const displayed = collectMatches(segments, "a", true);
+    const plans = collectReplaceAllPlans(segments, "a", true, "X");
+
+    expect(displayed.matches).toHaveLength(FIND_MATCH_LIMIT);
+    expect(displayed.truncated).toBe(true);
+    expect(plans).toHaveLength(FIND_MATCH_LIMIT + 2);
+    expect(plans[0]).toEqual({
+      from: FIND_MATCH_LIMIT + 2,
+      to: FIND_MATCH_LIMIT + 3,
+      insert: "X",
+    });
+    expect(plans.at(-1)).toEqual({ from: 1, to: 2, insert: "X" });
   });
 
   it("formatFindCount 覆盖空、无当前、普通和截断分支", () => {

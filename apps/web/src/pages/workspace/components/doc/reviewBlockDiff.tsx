@@ -696,16 +696,56 @@ function renderTableRowPopup(row: TableNode["content"][number] | undefined): Rea
   );
 }
 
+function tableLogicalColumnCount(
+  table: TableNode,
+  logicalColumns: ReadonlyMap<string, number>,
+): number {
+  let width = 0;
+  table.content.forEach((row, rowIndex) => {
+    row.content.forEach((cell, cellIndex) => {
+      const start = logicalColumns.get(`${rowIndex}:${cellIndex}`);
+      if (start === undefined) return;
+      width = Math.max(width, start + Math.max(1, Number(cell.attrs?.colspan) || 1));
+    });
+  });
+  return Math.max(1, width);
+}
+
+function rowAvailableLogicalColumnCount(
+  row: TableNode["content"][number],
+  logicalColumns: ReadonlyMap<number, number> | undefined,
+  tableColumnCount: number,
+): number {
+  const availableColumns = new Set<number>();
+  row.content.forEach((cell, cellIndex) => {
+    const start = logicalColumns?.get(cellIndex);
+    if (start === undefined) return;
+    const colspan = Math.max(1, Number(cell.attrs?.colspan) || 1);
+    for (let offset = 0; offset < colspan; offset += 1) {
+      const column = start + offset;
+      if (column < tableColumnCount) availableColumns.add(column);
+    }
+  });
+  if (availableColumns.size > 0) return availableColumns.size;
+  const physicalSpan = row.content.reduce(
+    (sum, cell) => sum + Math.max(1, Number(cell.attrs?.colspan) || 1),
+    0,
+  );
+  return Math.max(1, Math.min(tableColumnCount, physicalSpan));
+}
+
 function ReviewTableStateRow({
   status,
   row,
   targetPath,
   logicalColumns,
+  tableColumnCount,
 }: {
   status: "added" | "removed";
   row: TableNode["content"][number];
   targetPath: string;
   logicalColumns?: ReadonlyMap<number, number>;
+  tableColumnCount: number;
 }) {
   const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
   const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLTableRowElement>(renderTableRowPopup(row), targetIndex, status);
@@ -718,7 +758,10 @@ function ReviewTableStateRow({
       onMouseLeave={scheduleHide}
     >
       {status === "removed" ? (
-        <td className="wf-table-cell wf-table-delete-cell" colSpan={Math.max(1, row.content.length)}>
+        <td
+          className="wf-table-cell wf-table-delete-cell"
+          colSpan={rowAvailableLogicalColumnCount(row, logicalColumns, tableColumnCount)}
+        >
           <span className="wf-review-delete-marker" aria-label="已删除表格行，悬停查看原文" />
           {popup}
         </td>
@@ -755,6 +798,10 @@ function ReviewTableDiff({
   const afterRows = node.content;
   const beforeLogicalColumns = isTableNode(beforeNode) ? staticTableCellLogicalColumns(beforeNode) : new Map<string, number>();
   const afterLogicalColumns = staticTableCellLogicalColumns(node);
+  const beforeColumnCount = isTableNode(beforeNode)
+    ? tableLogicalColumnCount(beforeNode, beforeLogicalColumns)
+    : 1;
+  const afterColumnCount = tableLogicalColumnCount(node, afterLogicalColumns);
   let beforeCursor = 0;
   let afterCursor = 0;
   const rows = cellDiff.map((rowDiff, rowIndex) => {
@@ -779,6 +826,7 @@ function ReviewTableDiff({
           row={row}
           targetPath={rowPath}
           logicalColumns={logicalColumns}
+          tableColumnCount={rowDiff.status === "added" ? afterColumnCount : beforeColumnCount}
         />
       );
     }

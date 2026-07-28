@@ -7,8 +7,23 @@ import {
   insertFileAsset,
   insertImageAsset,
   insertImageAssets,
+  replayPendingUploadPlaceholders,
+  UPLOAD_PLACEHOLDER_FILE_ID_PREFIX,
   UPLOAD_PLACEHOLDER_IMAGE_SRC,
 } from "./insertUploadedAsset";
+
+Element.prototype.getClientRects = function () {
+  return Object.assign([], { item: () => null }) as unknown as DOMRectList;
+};
+Element.prototype.getBoundingClientRect = function () {
+  return new DOMRect();
+};
+Range.prototype.getClientRects = function () {
+  return Object.assign([], { item: () => null }) as unknown as DOMRectList;
+};
+Range.prototype.getBoundingClientRect = function () {
+  return new DOMRect();
+};
 
 describe("insertUploadedAsset", () => {
   let editor: Editor | null = null;
@@ -117,6 +132,129 @@ describe("insertUploadedAsset", () => {
     ]);
   });
 
+  it("图片上传完成时若占位已被外部正文替换，必须抛错而非静默成功", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createEditor();
+
+    const pending = insertImageAsset(editor, imageFile());
+    const xhr = await waitForRequest();
+    editor.commands.setContent({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "external" },
+        content: [{ type: "text", text: "外部版本" }],
+      }],
+    });
+    xhr.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440000",
+      filename: "figure.png",
+      mimeType: "image/png",
+      size: 3,
+    });
+
+    await expect(pending).rejects.toThrow("placeholder");
+    expect(editor.getText()).toBe("外部版本");
+  });
+
+  it("外部正文同步时按原块位置重放在途图片占位，完成后仍能原位写回", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createEditor();
+
+    const pending = insertImageAsset(editor, imageFile());
+    const xhr = await waitForRequest();
+    const liveContent = editor.getJSON().content ?? [];
+    const originalIndex = liveContent.findIndex((node) => node.type === "image");
+    const incoming = normalizePmDoc(editor.getJSON());
+    expect(incoming.content.some((node) => node.type === "image")).toBe(false);
+
+    const replayed = replayPendingUploadPlaceholders(editor, incoming);
+    expect(replayed.content.findIndex((node) => node.type === "image")).toBe(
+      originalIndex,
+    );
+    editor.commands.setContent(replayed);
+    xhr.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440000",
+      filename: "figure.png",
+      mimeType: "image/png",
+      size: 3,
+    });
+
+    const src = await pending;
+    expect(firstImageAttrs(editor)).toMatchObject({
+      src,
+      uploading: false,
+      progress: 100,
+      error: false,
+    });
+  });
+
+  it("外部同步会在原表格单元格内按序重放多个在途图片，不降级到文档根部", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    editor = createTableEditor();
+    editor.commands.setTextSelection(findBlockTextPosition(editor, "cell-anchor"));
+
+    const firstPending = insertImageAsset(
+      editor,
+      new File(["a"], "first.png", { type: "image/png" }),
+    );
+    const secondPending = insertImageAsset(
+      editor,
+      new File(["b"], "second.png", { type: "image/png" }),
+    );
+    const firstRequest = await waitForRequest(0);
+    const secondRequest = await waitForRequest(1);
+    const liveCell = firstTableCell(editor.getJSON());
+    const liveImageIds = (liveCell.content ?? [])
+      .filter((node) => node.type === "image")
+      .map((node) => node.attrs?.blockId);
+    expect(liveImageIds).toHaveLength(2);
+
+    const incoming = normalizePmDoc(editor.getJSON());
+    expect((firstTableCell(incoming).content ?? []).some(
+      (node) => node.type === "image",
+    )).toBe(false);
+
+    const missingAncestor = replayPendingUploadPlaceholders(
+      editor,
+      normalizePmDoc({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{ type: "paragraph", attrs: { blockId: "external" } }],
+      }),
+    );
+    expect(missingAncestor.content.some((node) => node.type === "image")).toBe(false);
+
+    const replayed = replayPendingUploadPlaceholders(editor, incoming);
+    expect(replayed.content.some((node) => node.type === "image")).toBe(false);
+    expect((firstTableCell(replayed).content ?? [])
+      .filter((node) => node.type === "image")
+      .map((node) => node.attrs?.blockId)).toEqual(liveImageIds);
+    editor.commands.setContent(replayed as never);
+
+    firstRequest.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440001",
+      filename: "first.png",
+      mimeType: "image/png",
+      size: 1,
+    });
+    secondRequest.resolve({
+      fileId: "550e8400-e29b-41d4-a716-446655440002",
+      filename: "second.png",
+      mimeType: "image/png",
+      size: 1,
+    });
+    await Promise.all([firstPending, secondPending]);
+
+    expect((firstTableCell(editor.getJSON()).content ?? [])
+      .filter((node) => node.type === "image")
+      .map((node) => node.attrs?.src)).toEqual([
+      "/api/v1/files/550e8400-e29b-41d4-a716-446655440001/first.png",
+      "/api/v1/files/550e8400-e29b-41d4-a716-446655440002/second.png",
+    ]);
+  });
+
   it("文件上传时立即在发起位置插入稳定占位,移动光标后仍按 blockId 回写", async () => {
     vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
     editor = createEditor();
@@ -125,13 +263,21 @@ describe("insertUploadedAsset", () => {
     const placeholder = firstAttachmentAttrs(editor);
     expect(placeholder).toMatchObject({
       blockId: expect.stringMatching(/^upload-file-/),
-      fileId: expect.stringMatching(/^upload-file-/),
       filename: "report.pdf",
       mimeType: "application/pdf",
       size: 4,
       uploading: true,
     });
-    expect(normalizePmDoc(editor.getJSON()).content.some((node) => node.type === "fileAttachment")).toBe(false);
+    expect(placeholder.blockId).toMatch(/^upload-file-/);
+    expect(placeholder.fileId).toBe(
+      `${UPLOAD_PLACEHOLDER_FILE_ID_PREFIX}${placeholder.blockId}`,
+    );
+    expect(() => normalizePmDoc(editor!.getJSON())).not.toThrow();
+    expect(
+      normalizePmDoc(editor.getJSON()).content.some(
+        (node) => node.type === "fileAttachment",
+      ),
+    ).toBe(false);
 
     editor.commands.insertContentAt(editor.state.doc.content.size, {
       type: "paragraph",
@@ -162,6 +308,40 @@ describe("insertUploadedAsset", () => {
   });
 });
 
+function createTableEditor(): Editor {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  return new Editor({
+    element,
+    extensions: createQingagentExtensions(),
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: "table" },
+        content: [{
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            attrs: {
+              colspan: 1,
+              rowspan: 1,
+              colwidth: null,
+              backgroundColor: null,
+            },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: "cell-anchor" },
+              content: [{ type: "text", text: "单元格" }],
+            }],
+          }],
+        }],
+      }],
+    },
+  });
+}
+
 function createEditor(): Editor {
   const element = document.createElement("div");
   document.body.appendChild(element);
@@ -179,6 +359,31 @@ function createEditor(): Editor {
     "scrollToSelection",
   ).mockImplementation(() => undefined);
   return editor;
+}
+
+function findBlockTextPosition(editor: Editor, blockId: string): number {
+  let position: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.attrs.blockId !== blockId) return true;
+    position = pos + 1;
+    return false;
+  });
+  expect(position).not.toBeNull();
+  return position!;
+}
+
+interface TestJsonNode {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: TestJsonNode[];
+}
+
+function firstTableCell(doc: unknown): TestJsonNode {
+  const root = doc as TestJsonNode;
+  const table = (root.content ?? []).find((node) => node.type === "table");
+  const cell = table?.content?.[0]?.content?.[0];
+  expect(cell?.type).toBe("tableCell");
+  return cell!;
 }
 
 function firstImage(editor: Editor) {
@@ -243,9 +448,9 @@ class MockUploadRequest {
   }
 }
 
-async function waitForRequest(): Promise<MockUploadRequest> {
-  await waitForRequestCount(1);
-  return MockUploadRequest.instances[0]!;
+async function waitForRequest(index = 0): Promise<MockUploadRequest> {
+  await waitForRequestCount(index + 1);
+  return MockUploadRequest.instances[index]!;
 }
 
 async function waitForRequestCount(count: number): Promise<void> {

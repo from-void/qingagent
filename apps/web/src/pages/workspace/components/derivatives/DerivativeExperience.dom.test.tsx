@@ -88,6 +88,65 @@ describe("公众号稿生成体验", () => {
     expect(host.textContent).toContain("预取正文首帧可见");
   });
 
+  it("首次正文刷新失败时保留已有稿面并给出统一短提示", async () => {
+    const generated = {
+      ...item,
+      sourceVersion: 1,
+      generatedAt: "2026-07-28T09:00:00.000Z",
+    };
+    const initialDocument = {
+      meta: generated,
+      docPm: JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "existing" },
+            content: [{ type: "text", text: "可用旧稿不能被清空" }],
+          },
+        ],
+      }),
+      docVersion: 1,
+      title: "已有稿",
+    };
+    const requestError = new Error("temporary request failure");
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => {
+        throw requestError;
+      }),
+    };
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={generated}
+            initialDocument={initialDocument}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={onToast}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("可用旧稿不能被清空");
+    expect(onToast).toHaveBeenCalledWith("稿件加载失败，请重试");
+    expect(consoleError).toHaveBeenCalledWith(
+      "[workspace] load derivative document failed",
+      requestError,
+    );
+    consoleError.mockRestore();
+  });
+
   it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
     const legacyBrokenTable = JSON.stringify({
       type: "doc", attrs: { schemaVersion: 1 }, content: [{
@@ -227,6 +286,27 @@ describe("公众号稿生成体验", () => {
 
     expect(host.querySelector(".ws-deriv-tabs")?.classList.contains("is-single-untitled")).toBe(false);
     expect(host.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain("项目复盘");
+  });
+
+  it("按 Enter 提交标题后即使继续触发 blur 也只重命名一次", async () => {
+    const onRename = vi.fn();
+    await act(async () => root.render(
+      <DerivTabBar title="旧标题" items={[]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={onRename} />,
+    ));
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="修改标题"]')!.click());
+    const input = host.querySelector<HTMLInputElement>('[aria-label="修改文档标题"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "新标题");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    });
+
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(onRename).toHaveBeenCalledWith("新标题");
   });
 
   it("有衍生稿时无标题主文档 Tab 常显，保留多 Tab 导航", async () => {
@@ -963,6 +1043,115 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("写作风格");
     expect(host.querySelectorAll(".ws-launch-template-group")).toHaveLength(1);
     expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe("这篇想怎么写，例如：语气再活泼一点，多用短句");
+  });
+
+  it("小红书话题随稳定 blockId 声明式更新且不会重复嵌套", async () => {
+    const Preview = DTYPE_REGISTRY.xhs.PhonePreview!;
+    const makeDoc = (text: string) => ({
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: "stable-paragraph" },
+        content: [{ type: "text" as const, text }],
+      }],
+    });
+
+    await act(async () => root.render(
+      <Preview doc={makeDoc("旧正文 #旧话题")} title="测试" articleRef={() => undefined} />,
+    ));
+    expect(host.querySelector(".xhs-body")?.textContent).toBe("旧正文 #旧话题");
+    expect(host.querySelector(".xhs-topic")?.textContent).toBe("#旧话题");
+
+    await act(async () => root.render(
+      <Preview doc={makeDoc("新正文 #新话题 #第二个")} title="测试" articleRef={() => undefined} />,
+    ));
+    expect(host.querySelector(".xhs-body")?.textContent).toBe("新正文 #新话题 #第二个");
+    expect(host.textContent).not.toContain("旧正文");
+    expect(Array.from(host.querySelectorAll(".xhs-topic")).map((node) => node.textContent)).toEqual(["#新话题", "#第二个"]);
+    expect(host.querySelector(".xhs-topic .xhs-topic")).toBeNull();
+  });
+
+  it("快速切换封面时旧请求迟到失败不能覆盖后一次成功选择", async () => {
+    const xhsItem: DerivativeItem = {
+      ...item,
+      dtype: "xhs",
+      templateId: "xhs-recommend",
+      templateName: "种草安利",
+      sourceVersion: 1,
+      generatedAt: "now",
+      coverTemplate: "poster",
+    };
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, blockId: "h1" },
+          content: [{ type: "text", text: "封面竞态测试" }],
+        },
+      ],
+    });
+    let rejectOldSave!: (error: Error) => void;
+    const oldSave = new Promise<never>((_resolve, reject) => {
+      rejectOldSave = reject;
+    });
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({
+        meta: xhsItem,
+        docPm,
+        docVersion: 1,
+        title: "",
+      })),
+      updateDerivativeCoverTemplate: vi.fn(
+        async (_sessionId: string, _docId: string, template: string) => {
+          if (template === "magazine") return oldSave;
+          return { ...xhsItem, coverTemplate: template };
+        },
+      ),
+    };
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={xhsItem}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={onToast}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="下一款封面"]')!.click();
+    });
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("magazine");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="下一款封面"]')!.click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("wenkai");
+
+    await act(async () => {
+      rejectOldSave(new Error("old save failed"));
+      await oldSave.catch(() => undefined);
+    });
+
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("wenkai");
+    expect(onToast).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("微信手机预览包含真实 meta 形态和四组底栏操作", async () => {

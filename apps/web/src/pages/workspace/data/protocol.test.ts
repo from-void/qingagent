@@ -686,6 +686,33 @@ describe("derivePatchPresentation — 单一真相源", () => {
     assertInternallyConsistent(result);
   });
 
+  it("quote 回退扫描重叠候选，并用 suffix 定位第二处匹配", () => {
+    const doc = pdoc("ababaX");
+    const suggestion: DocSuggestion = {
+      id: "s-overlap",
+      docId: "doc-1",
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+      status: "reviewing",
+      anchor: {
+        blockId: "block-drifted",
+        pmFrom: 999,
+        pmTo: 1002,
+        quote: "aba",
+        suffix: "X",
+        textHash: "h",
+      },
+      patch: { kind: "prosemirror_steps", steps: [] },
+      preview: { deleteText: "aba", insertText: "替换" },
+      summary: "改写重叠文本",
+    };
+
+    expect(suggestionToPatchOverlay(doc, suggestion)).toMatchObject({
+      blockIndex: 0,
+      range: { start: 2, end: 5 },
+    });
+  });
+
   it("conflict suggestion 不生成正文标记,通过 conflictIds 显式守恒", () => {
     const { doc, suggestion } = suggestionFromText(
       "s-conflict",
@@ -1221,6 +1248,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const table = view.sections[0] as Extract<ViewBlock, { kind: "table" }>;
     expect(table.rows[0]![0]).toBe("kersai.com"); // 字符串字段不回归(文本派生用)
+    expect(table.node).toEqual(tableWithLink);
     const cellSpans = table.rowSpans![0]![0]!;
     expect(cellSpans).toHaveLength(1);
     expect(cellSpans[0]).toMatchObject({
@@ -1231,6 +1259,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const list = view.sections[1] as Extract<ViewBlock, { kind: "list" }>;
     expect(list.items[0]).toBe("要点:说明文字");
+    expect(list.node).toEqual(listWithBold);
     const itemSpans = list.itemSpans![0]!;
     expect(itemSpans[0]).toMatchObject({ kind: "text", text: "要点", marks: [{ type: "bold" }] });
     expect(itemSpans[1]).toMatchObject({ kind: "text", text: ":说明文字" });
@@ -1300,6 +1329,31 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(addBlock.rowDiff?.[1]?.status === "added" ? addBlock.rowDiff[1].spans : []).toEqual([
       { kind: "patchIns", text: "只新增", patchId: "rep-pure-add" },
     ]);
+  });
+
+  it.each([
+    ["新增", false, true, "added"],
+    ["删除", true, false, "removed"],
+  ] as const)("嵌套列表%s时父项正文保持 same，仅子列表记录变化", (_, beforeHasChild, afterHasChild, childStatus) => {
+    const nested = pmNestedListRows("bulletList", "nested-child", [{ text: "子项" }]);
+    const list = (hasChild: boolean) => pmNestedListRows("bulletList", "nested-parent", [{
+      text: "父项",
+      ...(hasChild ? { children: [nested] } : {}),
+    }]);
+    const before = list(beforeHasChild);
+    const after = list(afterHasChild);
+    const inputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-nested-presence", replaceHunk("rep-nested-presence", "nested-parent", before, after)),
+      0,
+    );
+    const block = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    const parentRow = block.rowDiff?.[0];
+
+    expect(parentRow).toMatchObject({
+      status: "same",
+      spans: [{ kind: "text", text: "父项" }],
+    });
+    expect(parentRow?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual([childStatus]);
   });
 
   it("三级嵌套 bulletList 只改三个叶子行时递归标记叶子 changed,其余分支 same 且 granular", () => {

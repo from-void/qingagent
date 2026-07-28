@@ -396,7 +396,7 @@ describe("nativePresentationFrameTape", () => {
     }
   });
 
-  it("普通 3×3 表按物理 cell 逐字，offset/光标不跨格", () => {
+  it("普通 3×3 表按物理 cell 批量推进，offset/光标不跨格", () => {
     const finalSections: ViewBlock[] = [{
       kind: "table",
       head: ["H", "😀", " "],
@@ -432,28 +432,94 @@ describe("nativePresentationFrameTape", () => {
         if (advanced.steps.length === 0) continue;
         runtime.charEnters.length = 0;
         const markers = applyNativeConcurrentFrame(editor, advanced.steps, runtime);
-        expect(advanced.steps).toHaveLength(1);
-        const step = advanced.steps[0]!;
-        expect(step.kind).toBe("insertText");
-        if (step.kind !== "insertText" || step.target?.kind !== "tableCell") continue;
-        expect(step.chunkTo - step.chunkFrom).toBe(1);
-        const key = `${step.target.rowIndex}:${step.target.cellIndex}`;
-        seenTargets.push(key);
-        const row = editor.view.dom.querySelectorAll("tr")[step.target.rowIndex];
-        const cell = row?.querySelectorAll("th,td")[step.target.cellIndex];
-        expect(cell?.textContent).toContain(step.text);
+        expect(advanced.steps.length).toBeGreaterThan(1);
+        for (const step of advanced.steps) {
+          expect(step.kind).toBe("insertText");
+          if (step.kind !== "insertText" || step.target?.kind !== "tableCell") continue;
+          const key = `${step.target.rowIndex}:${step.target.cellIndex}`;
+          seenTargets.push(key);
+          const row = editor.view.dom.querySelectorAll("tr")[step.target.rowIndex];
+          const cell = row?.querySelectorAll("th,td")[step.target.cellIndex];
+          expect(cell?.textContent).toContain(step.text);
+        }
         expect(markers).toHaveLength(1);
         expect(editor.view.dom.querySelectorAll("[data-hc-lane]")).toHaveLength(1);
-        expect(editor.view.dom.querySelector("[data-hc-lane]")?.closest("th,td")).toBe(cell);
+        const lastStep = advanced.steps.at(-1);
+        if (lastStep?.target?.kind === "tableCell") {
+          const row = editor.view.dom.querySelectorAll("tr")[lastStep.target.rowIndex];
+          const cell = row?.querySelectorAll("th,td")[lastStep.target.cellIndex];
+          expect(editor.view.dom.querySelector("[data-hc-lane]")?.closest("th,td")).toBe(cell);
+        }
       }
 
       expect(scheduler.phase).toBe("done");
       expect(Array.from(editor.view.dom.querySelectorAll("th,td"), (cell) => cell.textContent)).toEqual([
         "H", "😀", " ", "A", "BC", "D", "E", "F", "G",
       ]);
-      expect(seenTargets).toEqual(["0:0", "0:1", "0:2", "1:0", "1:1", "1:1", "1:2", "2:0", "2:1", "2:2"]);
+      expect(seenTargets).toEqual(["0:0", "0:1", "0:2", "1:0", "1:1", "1:2", "2:0", "2:1", "2:2"]);
       expect(Array.from(runtime.offsets.keys())).toContain("table:0:1:1:0");
     } finally {
+      editor.destroy();
+    }
+  });
+
+  it("deadline 余量逐帧提交，终态前保留多次可见绘制机会", () => {
+    const text = "逐帧可见推进".repeat(50);
+    const finalText = `表头${text}`;
+    const run: NativePresentationRun = {
+      id: 47,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections: [{ kind: "table", head: ["表头"], rows: [[text]] }],
+    };
+    let scheduler = createNativeConcurrentState({
+      run,
+      instructions: buildNativeDiffInstructions(run),
+      agentCount: 1,
+      stepDelayMs: 48,
+      chunkSize: 1,
+      maxDurationMs: 1_000,
+      startJitter: false,
+    });
+    const editor = createEditor(
+      viewSectionsToHtml(buildNativePresentationSeedSections(run)),
+    );
+    const runtime = createRuntime();
+    const dispatch = vi.spyOn(editor.view, "dispatch");
+    const visibleFrames: string[] = [];
+
+    try {
+      let dtMs = 1_000;
+      while (scheduler.phase !== "done") {
+        const advanced = advanceNativeConcurrentState(scheduler, dtMs);
+        scheduler = advanced.state;
+        dtMs = 16;
+        if (advanced.steps.length === 0) continue;
+
+        runtime.charEnters.length = 0;
+        dispatch.mockClear();
+        applyNativeConcurrentFrame(editor, advanced.steps, runtime);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        visibleFrames.push(editor.state.doc.textContent);
+      }
+
+      expect(visibleFrames.length).toBeGreaterThanOrEqual(3);
+      expect(visibleFrames.at(-1)).toBe(finalText);
+      expect(
+        visibleFrames
+          .slice(0, -1)
+          .every((value) => value.length < finalText.length),
+      ).toBe(true);
+      expect(
+        visibleFrames.every(
+          (value, index) =>
+            index === 0 || value.length > visibleFrames[index - 1]!.length,
+        ),
+      ).toBe(true);
+    } finally {
+      dispatch.mockRestore();
       editor.destroy();
     }
   });

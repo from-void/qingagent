@@ -111,15 +111,35 @@ function sectionToHtml(section: ViewBlock): string {
       if (section.node && !hasPatchSpan(section.spans)) return faithfulNodeToHtml(section.node);
       return `<blockquote><p>${section.spans ? section.spans.map(spanToText).join("") : esc(section.text)}</p></blockquote>`;
     case "list": {
+      if (
+        section.node &&
+        !section.itemSpans?.some((spans) => hasPatchSpan(spans))
+      ) {
+        return faithfulNodeToHtml(section.node);
+      }
       const tag = section.ordered ? "ol" : "ul";
-      const attrs = section.ordered && section.listStyle
-        ? ` data-list-style="${escAttr(section.listStyle)}" style="list-style-type: ${escAttr(section.listStyle)}"`
-        : "";
+      const attrs = [
+        section.ordered && section.start !== undefined
+          ? ` start="${section.start}"`
+          : "",
+        section.ordered && section.listStyle
+          ? ` data-list-style="${escAttr(section.listStyle)}" style="list-style-type: ${escAttr(section.listStyle)}"`
+          : "",
+      ].join("");
       return `<${tag}${attrs}>${section.items.map((item, i) => `<li><p>${section.itemSpans?.[i]?.length ? section.itemSpans[i]!.map(spanToText).join("") : esc(item)}</p></li>`).join("")}</${tag}>`;
     }
     case "hr":
       return "<hr />";
     case "table": {
+      if (
+        section.node &&
+        !section.headSpans?.some((spans) => hasPatchSpan(spans)) &&
+        !section.rowSpans?.some((row) =>
+          row.some((spans) => hasPatchSpan(spans))
+        )
+      ) {
+        return faithfulNodeToHtml(section.node);
+      }
       const ths = section.head.map((h, i) => `<th>${section.headSpans?.[i]?.length ? section.headSpans[i]!.map(spanToText).join("") : esc(h)}</th>`).join("");
       const trs = section.rows
         .map((r, rowIndex) => `<tr>${r.map((c, cellIndex) => `<td>${section.rowSpans?.[rowIndex]?.[cellIndex]?.length ? section.rowSpans[rowIndex]![cellIndex]!.map(spanToText).join("") : esc(c)}</td>`).join("")}</tr>`)

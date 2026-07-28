@@ -64,4 +64,86 @@ describe("viewSectionsToHtml 审阅态行内 patch 保真", () => {
     expect(html).toContain("data-latex=\"\\sqrt{\\sigma^{}} &amp; x &lt; y\"");
     expect(html).not.toContain("旧引文");
   });
+
+  it("无 patch 的复杂列表与表格直接序列化原始 PM node", () => {
+    const listNode = {
+      type: "orderedList",
+      attrs: { blockId: "ordered-rich", start: 5, listStyle: "upper-roman" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "ordered-rich-item" },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "ordered-rich-p" },
+            content: [{ type: "text", text: "父项", marks: [{ type: "bold" }] }],
+          },
+          {
+            type: "bulletList",
+            attrs: { blockId: "ordered-rich-child" },
+            content: [{
+              type: "listItem",
+              attrs: { blockId: "ordered-rich-child-item" },
+              content: [{
+                type: "paragraph",
+                attrs: { blockId: "ordered-rich-child-p" },
+                content: [{ type: "text", text: "子项" }],
+              }],
+            }],
+          },
+        ],
+      }],
+    } as PmBlockNode;
+    const tableNode = {
+      type: "table",
+      attrs: { blockId: "table-rich" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          attrs: {
+            colspan: 2,
+            rowspan: 1,
+            colwidth: [120, 180],
+            backgroundColor: null,
+          },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "table-rich-p1" },
+              content: [{ type: "text", text: "合并", marks: [{ type: "bold" }] }],
+            },
+            {
+              type: "paragraph",
+              attrs: { blockId: "table-rich-p2" },
+              content: [{ type: "text", text: "说明" }],
+            },
+          ],
+        }],
+      }],
+    } as PmBlockNode;
+
+    const html = viewSectionsToHtml([
+      {
+        kind: "list",
+        ordered: true,
+        start: 5,
+        listStyle: "upper-roman",
+        items: ["父项\n子项"],
+        node: listNode,
+      },
+      {
+        kind: "table",
+        head: [],
+        rows: [["合并\n说明"]],
+        node: tableNode,
+      },
+    ]);
+
+    expect(html).toContain('<ol start="5" data-list-style="upper-roman"');
+    expect(html).toContain("<strong>父项</strong>");
+    expect(html).toContain("<ul><li><p>子项</p></li></ul>");
+    expect(html).toContain('<td colspan="2" colwidth="120,180">');
+    expect(html).toContain("<p><strong>合并</strong></p><p>说明</p></td>");
+  });
 });

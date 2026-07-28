@@ -24,8 +24,9 @@ export function useAutoScroll(
   const enabled = options.enabled ?? true;
   const enabledRef = useRef(enabled);
   const isAtBottomRef = useRef(true);
-  /** Flag to distinguish programmatic scrolls from user scrolls. */
-  const programmaticScrollRef = useRef(false);
+  /** Expected final position of an unsettled programmatic scroll. */
+  const programmaticScrollTargetRef = useRef<number | null>(null);
+  const settleProgrammaticScrollRafRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     enabledRef.current = enabled;
@@ -34,9 +35,32 @@ export function useAutoScroll(
   const scrollToBottom = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    programmaticScrollRef.current = true;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    const before = el.scrollTop;
+    programmaticScrollTargetRef.current = target;
+    if (settleProgrammaticScrollRafRef.current !== null) {
+      cancelAnimationFrame(settleProgrammaticScrollRafRef.current);
+      settleProgrammaticScrollRafRef.current = null;
+    }
     el.scrollTo({ top: el.scrollHeight, behavior: "instant" });
+    const after = el.scrollTop;
+    if (Math.abs(after - before) < 1 || Math.abs(after - target) < 1) {
+      programmaticScrollTargetRef.current = null;
+      return;
+    }
+    settleProgrammaticScrollRafRef.current = requestAnimationFrame(() => {
+      settleProgrammaticScrollRafRef.current = null;
+      if (programmaticScrollTargetRef.current === target) {
+        programmaticScrollTargetRef.current = null;
+      }
+    });
   }, [containerRef]);
+
+  useEffect(() => () => {
+    if (settleProgrammaticScrollRafRef.current !== null) {
+      cancelAnimationFrame(settleProgrammaticScrollRafRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -57,12 +81,16 @@ export function useAutoScroll(
     updateIsAtBottom();
 
     const handleScroll = () => {
-      // Skip isAtBottom recalculation for programmatic scrolls to avoid
-      // the race where smooth-animated intermediate positions falsely
-      // set isAtBottom to false.
-      if (programmaticScrollRef.current) {
-        programmaticScrollRef.current = false;
-        return;
+      const expectedTarget = programmaticScrollTargetRef.current;
+      if (
+        expectedTarget !== null &&
+        Math.abs(el.scrollTop - expectedTarget) < 1
+      ) {
+        programmaticScrollTargetRef.current = null;
+      } else if (expectedTarget !== null) {
+        // The position moved somewhere other than the expected programmatic
+        // target, so this is a real user scroll and must update follow state.
+        programmaticScrollTargetRef.current = null;
       }
       updateIsAtBottom();
     };
@@ -75,8 +103,7 @@ export function useAutoScroll(
         // Use requestAnimationFrame to let DOM settle before scrolling
         requestAnimationFrame(() => {
           if (!enabledRef.current) return;
-          programmaticScrollRef.current = true;
-          el.scrollTo({ top: el.scrollHeight, behavior: "instant" });
+          scrollToBottom();
         });
       }
     });
@@ -91,7 +118,7 @@ export function useAutoScroll(
       el.removeEventListener("scroll", handleScroll);
       observer.disconnect();
     };
-  }, [containerRef, enabled]);
+  }, [containerRef, enabled, scrollToBottom]);
 
   return { scrollToBottom };
 }

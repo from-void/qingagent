@@ -210,17 +210,30 @@ export async function stampGenerated(docId: string, sourceVersion: number, clien
 
 export async function updateParams(docId: string, writingStyleId: string, privatePrompt: string, layoutStyleId?: string | null, coverTemplate?: DerivativeMeta["coverTemplate"]): Promise<void> {
   await ensureMigrated();
-  const template = await getStyleTemplate(writingStyleId);
-  if (!template || template.slot !== "writing") throw new Error("未知的写作风格模板");
-  const layout = layoutStyleId == null ? null : await getStyleTemplate(layoutStyleId);
-  if (layout && (layout.slot !== "layout" || layout.dtype !== template.dtype)) throw new Error("未知的排版风格模板");
-  const now = new Date().toISOString();
-  await withWriteRetry(async () => {
-    await getDocumentsClient().execute({
+  await withTransaction(async (client) => {
+    const derivative = await client.execute({
+      sql: "SELECT dtype FROM document_derivatives WHERE doc_id = ?",
+      args: [docId],
+    });
+    const dtype = derivative.rows[0]?.dtype;
+    const template = await getStyleTemplate(writingStyleId, client);
+    if (!template || template.slot !== "writing" || template.dtype !== dtype) {
+      throw new Error("未知的写作风格模板");
+    }
+    const layout = layoutStyleId == null ? null : await getStyleTemplate(layoutStyleId, client);
+    if (layout && (layout.slot !== "layout" || layout.dtype !== dtype)) {
+      throw new Error("未知的排版风格模板");
+    }
+    const now = new Date().toISOString();
+    await client.execute({
       sql: "UPDATE document_derivatives SET template_id = ?, layout_style_id = COALESCE(?, layout_style_id), private_prompt = ?, cover_template = COALESCE(?, cover_template), updated_at = ? WHERE doc_id = ?",
       args: [writingStyleId, layoutStyleId ?? null, privatePrompt, coverTemplate ?? null, now, docId],
     });
-    await getDocumentsClient().execute({ sql: "UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND role = 'derivative'", args: [template.name, now, docId] });
+    await client.execute({
+      sql: "UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND role = 'derivative'",
+      args: [template.name, now, docId],
+    });
+    return commitTransaction(undefined);
   });
 }
 

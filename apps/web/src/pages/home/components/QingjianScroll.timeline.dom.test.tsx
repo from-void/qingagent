@@ -163,6 +163,57 @@ describe("QingjianScroll 时间轴身份与日期", () => {
     });
     expect(onNewSession).toHaveBeenCalledTimes(1);
   });
+
+  it("会话数据更新重建布局后保留并钳制当前长卷位置", async () => {
+    const scroller = host.querySelector<HTMLElement>(".qj-scroll")!;
+    const inner = host.querySelector<HTMLElement>(".qj-inner")!;
+    window.dispatchEvent(new Event("resize"));
+    await act(async () => {
+      scroller.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "End",
+        bubbles: true,
+        cancelable: true,
+      }));
+      vi.advanceTimersByTime(500);
+    });
+    const beforeUpdate = translatedViewX(inner);
+    expect(beforeUpdate).toBeGreaterThan(100);
+
+    await act(async () => {
+      root.render(
+        <QingjianScroll
+          sessions={[
+            ...sessions,
+            makeSession("added", "新增文章", "新增", 400, 400),
+          ]}
+          onOpenSession={() => undefined}
+          onNewSession={() => undefined}
+        />,
+      );
+    });
+    mockTimelineGeometry();
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(translatedViewX(inner)).toBeGreaterThan(100);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(".qj-dock-search-btn")!.click();
+    });
+    const input = host.querySelector<HTMLInputElement>(".qj-dock-search-input")!;
+    await act(async () => {
+      setInputValue(input, "命中");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    mockTimelineGeometry();
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(20);
+    });
+    expect(translatedViewX(inner)).toBe(0);
+  });
 });
 
 function makeSession(
@@ -202,6 +253,11 @@ function mockTimelineGeometry(): void {
 
 function setInputValue(input: HTMLInputElement, value: string): void {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+}
+
+function translatedViewX(inner: HTMLElement): number {
+  const match = inner.style.transform.match(/translate3d\((-?[\d.]+)px/);
+  return match ? Math.abs(Number(match[1])) : 0;
 }
 
 function domRect(

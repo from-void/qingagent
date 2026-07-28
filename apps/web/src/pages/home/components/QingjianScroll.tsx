@@ -1185,9 +1185,16 @@ export function QingjianScroll({
   // 每次去程与舞台生命周期绑定；卸载/重建会使旧 Promise 的 finally 无权再提交导航。
   const transitionGenerationRef = useRef(0);
   const initialHomeViewXRef = useRef<number | null>(null);
+  const scrollPositionRef = useRef({ viewX: 0, targetX: 0 });
 
   const [containerH, setContainerH] = useState(0);
   const [containerW, setContainerW] = useState(0);
+
+  const updateSearchQuery = useCallback((nextQuery: string) => {
+    // 搜索会重排文章，属于明确回卷首场景；用一次性初始值覆盖常规布局重建的续接位置。
+    initialHomeViewXRef.current = 0;
+    setSearchQuery(nextQuery);
+  }, []);
 
   const replayVisibleCards = useCallback(() => {
     const stage = stageRef.current;
@@ -1543,10 +1550,12 @@ export function QingjianScroll({
 
     const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    const initialViewX = initialHomeViewXRef.current ?? 0;
+    const explicitInitialViewX = initialHomeViewXRef.current;
     initialHomeViewXRef.current = null;
+    const initialViewX = explicitInitialViewX ?? scrollPositionRef.current.viewX;
+    const initialTargetX = explicitInitialViewX ?? scrollPositionRef.current.targetX;
     let viewX = initialViewX;
-    let targetX = initialViewX;
+    let targetX = initialTargetX;
     let velocity = 0;
     let maxX = 1;
     let dragging = false;
@@ -2079,6 +2088,7 @@ export function QingjianScroll({
     }, 400);
 
     return () => {
+      scrollPositionRef.current = { viewX, targetX };
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);
@@ -2107,11 +2117,11 @@ export function QingjianScroll({
   const onSearchToggle = useCallback(() => {
     setSearchOpen((v) => {
       const next = !v;
-      if (!next) setSearchQuery("");
+      if (!next) updateSearchQuery("");
       return next;
     });
     dockRef.current?.classList.add("qj-show");
-  }, []);
+  }, [updateSearchQuery]);
 
   return (
     <div
@@ -2338,10 +2348,10 @@ export function QingjianScroll({
               placeholder="搜标题 / 分类…"
               autoComplete="off"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => updateSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
-                  setSearchQuery("");
+                  updateSearchQuery("");
                   setSearchOpen(false);
                 }
               }}

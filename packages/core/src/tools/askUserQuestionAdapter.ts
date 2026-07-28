@@ -105,9 +105,15 @@ function normalizeQuestion(raw: unknown): Omit<AdaptedAskUserQuestion, "id"> | n
   if (!isRecord(raw)) return null;
   const label = trimmedString(raw.question);
   if (!label) return null;
-  const options = Array.isArray(raw.options)
+  const normalizedOptions = Array.isArray(raw.options)
     ? raw.options.map(normalizeOption).filter((option): option is NonNullable<typeof option> => option !== null)
     : [];
+  const seenValues = new Set<string>();
+  const options = normalizedOptions.filter((option) => {
+    if (seenValues.has(option.value)) return false;
+    seenValues.add(option.value);
+    return true;
+  });
   if (options.length < 2) return null;
   const header = trimmedString(raw.header);
   return {

@@ -224,7 +224,14 @@ export function TableControls({ editor, onAiModify, onToast }: {
 
   /* ── helpers ── */
   const prevent = useCallback((e: React.MouseEvent) => e.preventDefault(), []);
-  /* ── header mousedown：快拖保留 B3 范围拖选；长按或 Alt 拖进入 A7 排序/克隆。 ── */
+  /* ──
+     header mousedown 手势契约（真机 P1 修正）：
+     · 短按（位移未过阈值）＝ 选中整列/整行，保留既有点击语义；
+     · 按住直接拖（过阈值）＝ 进入 A7 排序，人手"按下即拖"不再被 180ms 静止门挡住；
+     · 长按静止 180ms 也直接亮出拖影，给慢手用户同样的入口；
+     · Shift + 拖 ＝ B3 沿轴范围拖选；Alt + 拖 ＝ 克隆落位。
+     拖拽全程只动 chrome，落位事务自己把选区钉回移动后的轴，绝不放任 PM 兜底选区。
+  ── */
   const startHeaderDrag = useCallback((axis: "col" | "row", idx: number, e: React.MouseEvent) => {
     e.preventDefault();
     if (!editor.isEditable || !info) return;
@@ -287,7 +294,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
       const distance = Math.hypot(me.clientX - startX, me.clientY - startY);
       if (mode === "pending" && distance >= AXIS_DRAG_THRESHOLD_PX) {
         if (holdTimer !== null) window.clearTimeout(holdTimer);
-        mode = "select";
+        if (me.shiftKey) mode = "select";
+        else beginReorder(me.altKey);
       }
       if (mode === "reorder") {
         latestClone = me.altKey;
@@ -340,11 +348,20 @@ export function TableControls({ editor, onAiModify, onToast }: {
       pendingTarget = null;
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("mouseleave", cleanup);
       window.removeEventListener("blur", cleanup);
       window.removeEventListener("pointercancel", cleanup);
       setAxisDrag(null);
       if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
     };
+    // Esc 与"指针离开文档"都是取消：先摘掉 mouseup 监听，随后的松手不再落位改表。
+    function onKeyDown(ke: KeyboardEvent) {
+      if (ke.key !== "Escape") return;
+      ke.preventDefault();
+      ke.stopPropagation();
+      cleanup();
+    }
     const onUp = (event: MouseEvent) => {
       try {
         if (mode === "reorder") {
@@ -371,6 +388,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
     dragCleanupRef.current = cleanup;
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("mouseleave", cleanup);
     window.addEventListener("blur", cleanup);
     window.addEventListener("pointercancel", cleanup);
   }, [editor, info, onToast, selCols, selRows]);
@@ -561,8 +580,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
         ))}
       </div>
 
-      {/* ── selection toolbar ── */}
-      {hasSel && (() => {
+      {/* ── selection toolbar：拖拽落位途中一律收起，避免工具栏跟着拖影误弹挡视线 ── */}
+      {hasSel && !axisDrag && (() => {
         let selectionAnchor = { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width };
         if (selCols) {
           const lo = cols[Math.min(selCols[0], selCols[1])];

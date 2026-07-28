@@ -1,7 +1,9 @@
 import { materializeDraftBlockNodes, type PmBlockNode } from "@qingagent/pm-schema";
 import type { Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { TableMap } from "@tiptap/pm/tables";
+import type { Selection } from "@tiptap/pm/state";
+import { CellSelection, TableMap } from "@tiptap/pm/tables";
+import { tableAxisSelectionKey } from "./tableToolbar";
 
 export type TableDragAxis = "row" | "column";
 
@@ -88,8 +90,56 @@ export function applyTableAxisDrop(editor: Editor, input: TableAxisDropInput): b
     nextTable,
   );
   assertUniquePmBlockIds(tr.doc);
+  // 整表 replaceWith 会把旧 CellSelection 的两个 cell 位置一起映射到"表后一格"，
+  // CellSelection.map 随即降级成 TextSelection.between —— 表格是末块时光标直接甩到
+  // 文档最末尾(真机 P1)。落位后必须显式把选区钉回移动后的那几列/行。
+  const moved = resolveMovedAxisSelection(tr.doc, located.pos, input, sourceStart, sourceEnd);
+  if (moved) tr.setSelection(moved).setMeta(tableAxisSelectionKey, input.axis);
   editor.view.dispatch(tr.scrollIntoView());
   return true;
+}
+
+/** 落位后的目标轴区间：非克隆且向后移动时要扣掉自身占位，其余情形落点即新起点。 */
+export function resolveMovedAxisRange(
+  input: Pick<TableAxisDropInput, "clone" | "dropBoundary">,
+  sourceStart: number,
+  sourceEnd: number,
+): { startIndex: number; endIndex: number } {
+  const count = sourceEnd - sourceStart + 1;
+  const startIndex = input.clone || input.dropBoundary <= sourceStart
+    ? input.dropBoundary
+    : input.dropBoundary - count;
+  return { startIndex, endIndex: startIndex + count - 1 };
+}
+
+function resolveMovedAxisSelection(
+  doc: ProseMirrorNode,
+  tablePos: number,
+  input: TableAxisDropInput,
+  sourceStart: number,
+  sourceEnd: number,
+): Selection | null {
+  const table = doc.nodeAt(tablePos);
+  if (!table || table.type.spec.tableRole !== "table") return null;
+  const { startIndex, endIndex } = resolveMovedAxisRange(input, sourceStart, sourceEnd);
+  const map = TableMap.get(table);
+  const limit = input.axis === "row" ? map.height : map.width;
+  if (startIndex < 0 || endIndex >= limit) return null;
+  const tableStart = tablePos + 1;
+  try {
+    const $start = doc.resolve(tableStart + (input.axis === "row"
+      ? map.positionAt(startIndex, 0, table)
+      : map.positionAt(0, startIndex, table)));
+    const $end = doc.resolve(tableStart + (input.axis === "row"
+      ? map.positionAt(endIndex, 0, table)
+      : map.positionAt(0, endIndex, table)));
+    return input.axis === "row"
+      ? CellSelection.rowSelection($start, $end)
+      : CellSelection.colSelection($start, $end);
+  } catch {
+    // 合并单元格等极端形状下无法构造整轴选区时保持沉默，交由调用方的兜底选区。
+    return null;
+  }
 }
 
 function reorderRows(

@@ -32,6 +32,9 @@ export function createDesktopAppProxyHandler(
     const init: RequestInit & { duplex?: "half" } = {
       method: request.method,
       headers,
+      // Electron 的 protocol.handle 目前不给 handler 传 signal,这里的 request.signal 恒不触发;
+      // 真正可靠的"渲染端已取消"信号是响应体的 cancel(),由 desktopAppProxyFetch 负责接住。
+      // 保留透传是为了将来 Electron 接通时能立刻生效。
       signal: request.signal,
     };
     if (request.method !== "GET" && request.method !== "HEAD") {

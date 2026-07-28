@@ -4,7 +4,6 @@ import {
   dialog,
   ipcMain,
   Menu,
-  net,
   protocol,
   safeStorage,
   screen,
@@ -35,6 +34,7 @@ import {
   DESKTOP_APP_SCHEME,
   DESKTOP_APP_URL,
 } from "./desktopAppProtocol.js";
+import { createNodeHttpProxyFetch } from "./desktopAppProxyFetch.js";
 import {
   readPrivateStringMap,
   writePrivateStringMap,
@@ -920,11 +920,12 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
 
 function installPackagedRendererProtocol(port: number): void {
   if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
+  // 这一跳必须走 Node http 直连而非 net.fetch:后者取消不传播(SSE 连接永久泄漏)且受
+  // Chromium 单主机 6 连接上限约束,叠加后会让事件流和随后的所有 API 请求集体静默挂起。
+  // 详见 desktopAppProxyFetch.ts 头部注释。
   protocol.handle(
     DESKTOP_APP_SCHEME,
-    createDesktopAppProxyHandler(port, (request) =>
-      net.fetch(request, { bypassCustomProtocolHandlers: true }),
-    ),
+    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch()),
   );
 }
 

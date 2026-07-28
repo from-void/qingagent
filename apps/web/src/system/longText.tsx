@@ -1,3 +1,4 @@
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import "./longText.css";
@@ -7,21 +8,24 @@ export const LONGTEXT_CHAR_THRESHOLD = 600;
 export const LONGTEXT_LINE_THRESHOLD = 12;
 
 export function shouldCollapsePastedText(text: string): boolean {
-  if (text.length >= LONGTEXT_CHAR_THRESHOLD) return true;
+  if (countGraphemes(text) >= LONGTEXT_CHAR_THRESHOLD) return true;
   return text.split(/\r\n|\r|\n/).length >= LONGTEXT_LINE_THRESHOLD;
 }
 
 /** 字数(去空白),用于小条与全屏标题。 */
 export function countChars(text: string): number {
-  return text.replace(/\s/g, "").length;
+  return countGraphemes(text.replace(/\s/g, ""));
 }
 
 /** hover 预览卡片里展示的截断预览(前若干行,限长 + 省略号)。 */
 export function longTextPreview(text: string, maxLines = 10, maxChars = 500): string {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
   let out = lines.slice(0, maxLines).join("\n");
-  if (out.length > maxChars) out = out.slice(0, maxChars);
-  if (out.length < text.replace(/\r\n?/g, "\n").length) {
+  const omittedLines = lines.length > maxLines;
+  const omittedChars = countGraphemes(out) > maxChars;
+  if (omittedChars) out = truncateGraphemes(out, maxChars);
+  if (omittedLines || omittedChars) {
     out = out.replace(/\s+$/, "") + " …";
   }
   return out;

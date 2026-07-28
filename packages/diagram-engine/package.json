@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@qingagent/contract-ts": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "5.9.3",
     "vitest": "2.1.9"

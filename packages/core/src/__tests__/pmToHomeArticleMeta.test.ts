@@ -183,6 +183,20 @@ describe("pmToHomeArticleMeta", () => {
     expect(pmToHomeArticleMeta(docWithNonFileImageBeforeLocal())).toMatchObject({ imageUrl });
   });
 
+  it("按字素截断含扩展汉字与 emoji 的首页摘要", () => {
+    const doc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "unicode-summary" },
+        content: [{ type: "text", text: "甲乙𠮷👨‍👩‍👧‍👦丁" }],
+      }],
+    };
+
+    expect(pmToHomeArticleMeta(doc, { descriptionLength: 3 }).description).toBe("甲乙𠮷...");
+  });
+
   it("feeds imageUrl into masonry selector requiresImage and dynamic image scores", async () => {
     const masonryBundlePath = "../../../../apps/web/src/system/chinese-masonry/index.ts";
     const { TemplateRegistry, createTemplateSelector } = await import(masonryBundlePath) as {

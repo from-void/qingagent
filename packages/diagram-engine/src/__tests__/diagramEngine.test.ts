@@ -1372,6 +1372,32 @@ flowchart TD
     expect(after.edges.map((item) => [item.source, item.target, item.label])).toEqual(before.edges.map((item) => [item.source, item.target, item.label]));
   });
 
+  it.each([
+    ["flowchart", "flowchart TD\n  Existing[既有]\n"],
+    ["state", "stateDiagram-v2\n  Existing\n"],
+    ["er", "erDiagram\n  EXISTING\n"],
+    ["class", "classDiagram\n  class Existing\n"],
+  ] as const)("%s addNode 的长 Unicode ID 可重解析且与返回 ID 一致", (_type, source) => {
+    const label = `A${"𠮷".repeat(63)}😀尾`;
+    const added = applyEdit(source, { kind: "addNode", label });
+    expect(added.ok).toBe(true);
+    expect(added.newNodeId).toBeTruthy();
+
+    const reparsed = parseDiagram(added.source);
+    expect(reparsed.ok).toBe(true);
+    const ids = reparsed.ok
+      ? reparsed.model.type === "flowchart" || reparsed.model.type === "state"
+        ? reparsed.model.nodes.map((node) => node.id)
+        : reparsed.model.type === "er"
+          ? reparsed.model.entities.map((node) => node.id)
+          : reparsed.model.type === "class"
+            ? reparsed.model.classes.map((node) => node.id)
+            : []
+      : [];
+    expect(ids).toContain(added.newNodeId);
+    expect(Array.from(added.newNodeId ?? "")).toHaveLength(64);
+  });
+
   it("er/class rename 默认拒绝", () => {
     const er = parseDiagram("erDiagram\n  CUSTOMER ||--o{ ORDER : places\n").model as ErGraph;
     expect(applyEdit("erDiagram\n  CUSTOMER ||--o{ ORDER : places\n", { kind: "relabelNode", nodeId: er.entities[0]!.id, label: "Client" }).ok).toBe(false);

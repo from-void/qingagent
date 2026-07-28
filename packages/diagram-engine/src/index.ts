@@ -1,3 +1,5 @@
+import { truncateGraphemes } from "@qingagent/contract-ts";
+
 export type DiagramType = "flowchart" | "state" | "er" | "class" | "mindmap";
 
 export interface Span {
@@ -780,7 +782,8 @@ export function safeMermaidId(label: string, prefix = "n"): string {
   if (!/^[A-Za-z_]/.test(id)) id = `${prefix}_${id}`;
   if (/^end$/i.test(id)) id = `${id}_node`;
   if (/^[ox]/i.test(id)) id = `${prefix}_${id}`;
-  return id.slice(0, 64);
+  const truncated = truncateGraphemes(id, 64);
+  return isStableMermaidId(truncated) ? truncated : "n";
 }
 
 export function safeMermaidLabel(label: string): string {
@@ -2079,7 +2082,7 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
     if (new Set(allIds).size !== allIds.length) {
       return { ok: false, source, error: "节点与分区 ID 写回后仍有冲突" };
     }
-    return { ok: true, newNodeId: id, source: newSource };
+    return addedNodeRewriteResult(source, newSource, "flowchart", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.nodes.find((n) => n.id === op.nodeId)!;
@@ -2650,7 +2653,8 @@ function rewriteState(source: string, p: ParseResult, op: EditOp): RewriteResult
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.nodes.map((n) => n.id), safeMermaidId(op.label, "state"));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  state "${safeMermaidLabel(op.label)}" as ${id}\n`) };
+    const nextSource = insertBeforeSourceEnd(source, `  state "${safeMermaidLabel(op.label)}" as ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "state", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.nodes.find((n) => n.id === op.nodeId)!;
@@ -2815,8 +2819,10 @@ function rewriteEr(source: string, p: ParseResult, op: EditOp): RewriteResult {
     );
   }
   if (op.kind === "addNode") {
-    const id = uniqueId(model.entities.map((n) => n.id), safeMermaidId(op.label, "entity").toUpperCase());
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  ${id}\n`) };
+    const baseId = safeMermaidId(safeMermaidId(op.label, "entity").toUpperCase(), "ENTITY");
+    const id = uniqueId(model.entities.map((n) => n.id), baseId);
+    const nextSource = insertBeforeSourceEnd(source, `  ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "er", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.entities.find((n) => n.id === op.nodeId)!;
@@ -2980,7 +2986,8 @@ function rewriteClass(source: string, p: ParseResult, op: EditOp): RewriteResult
   }
   if (op.kind === "addNode") {
     const id = uniqueId(model.classes.map((n) => n.id), safeMermaidId(op.label, "Class"));
-    return { ok: true, newNodeId: id, source: insertBeforeSourceEnd(source, `  class ${id}\n`) };
+    const nextSource = insertBeforeSourceEnd(source, `  class ${id}\n`);
+    return addedNodeRewriteResult(source, nextSource, "class", id);
   }
   if (op.kind === "deleteNode") {
     const node = model.classes.find((n) => n.id === op.nodeId)!;
@@ -4220,6 +4227,23 @@ function modelNodes(model: DiagramModel): BaseNode[] {
     scopePath: node.scopePath,
     sourceRefs: node.sourceRefs,
   }));
+}
+
+function addedNodeRewriteResult(
+  source: string,
+  nextSource: string,
+  expectedType: DiagramType,
+  id: string,
+): RewriteResult {
+  const reparsed = parseDiagram(nextSource);
+  if (!reparsed.ok || reparsed.model.type !== expectedType) {
+    return { ok: false, source, error: reparsed.error ?? "新节点写回后无法重新解析" };
+  }
+  const matchingNodes = modelNodes(reparsed.model).filter((node) => node.id === id);
+  if (matchingNodes.length !== 1) {
+    return { ok: false, source, error: "新节点写回校验失败" };
+  }
+  return { ok: true, newNodeId: id, source: nextSource };
 }
 
 function modelEdges(model: DiagramModel): BaseEdge[] {

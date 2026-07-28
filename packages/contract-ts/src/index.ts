@@ -102,6 +102,7 @@ export * from "./UpdateDoc";
 export * from "./UpdateMaterialSummary";
 export * from "./UsageSummary";
 export * from "./VisibleText";
+export * from "./unicodeText";
 export * from "./validators";
 export * from "./BridgeFrame";
 export * from "./DocSuggestionBody";

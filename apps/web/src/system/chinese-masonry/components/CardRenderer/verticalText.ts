@@ -1,3 +1,4 @@
+import { splitGraphemes } from '@qingagent/contract-ts';
 import type { TextElement } from '../../templates/types';
 
 export interface VerticalTextLayout {
@@ -24,7 +25,10 @@ export function getVerticalTextLayout(text: string, element: TextElement, lineHe
   const charsPerColumn = Math.max(1, Math.floor(element.height / charAdvance));
   const maxColumns = Math.max(1, element.maxLines);
   const maxChars = charsPerColumn * maxColumns;
-  const truncated = text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 1))}…` : text;
+  const graphemes = splitGraphemes(text);
+  const truncated = graphemes.length > maxChars
+    ? `${graphemes.slice(0, Math.max(1, maxChars - 1)).join('')}…`
+    : graphemes.join('');
   const columnAdvance = Math.max(element.fontSize, element.fontSize * lineHeight);
   const sideBearing = Math.max(0, (columnAdvance - element.fontSize) / 2);
   const width = Math.ceil(element.fontSize + (maxColumns - 1) * columnAdvance + sideBearing);

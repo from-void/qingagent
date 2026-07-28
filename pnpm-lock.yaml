@@ -310,6 +310,10 @@ importers:
         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
 
   packages/diagram-engine:
+    dependencies:
+      '@qingagent/contract-ts':
+        specifier: workspace:*
+        version: link:../contract-ts
     devDependencies:
       typescript:
         specifier: 5.9.3

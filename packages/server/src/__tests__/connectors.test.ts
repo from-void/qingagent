@@ -116,7 +116,7 @@ describe("/api/v1/connectors 安全矩阵", () => {
     expect(JSON.parse(raw)).toMatchObject({ user_code: "ABCD-EFGH", pendingId: "pending-safe-id" });
   });
 
-  it("start 失败同时返回机器码和可展示的 message", async () => {
+  it("start 失败按可信机器码返回固定中性文案", async () => {
     const { app, service } = setup({ authOn: false, gateOn: true, publicDeployment: false });
     service.start.mockRejectedValueOnce(Object.assign(new Error("至少选择一个飞书授权域"), {
       code: "INVALID_ARGUMENT",
@@ -132,7 +132,7 @@ describe("/api/v1/connectors 安全矩阵", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: "INVALID_ARGUMENT",
-      message: "至少选择一个飞书授权域",
+      message: "连接参数无效，请检查后重试。",
     });
   });
 
@@ -157,7 +157,40 @@ describe("/api/v1/connectors 安全矩阵", () => {
       });
       expect(log).toHaveBeenCalledWith(
         "[connector-route] operation failed",
-        { error: "fetch failed: socket detail" },
+        { code: null, error: "fetch failed: socket detail" },
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("probe 带底层 code 的未知异常仍不回显原始消息", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { app, service } = setup({
+      authOn: false,
+      gateOn: true,
+      publicDeployment: false,
+    });
+    service.probe.mockRejectedValueOnce(Object.assign(
+      new Error("fetch failed: upstream socket detail"),
+      { code: "ECONNRESET", status: 503 },
+    ));
+
+    try {
+      const response = await app.request("/api/v1/connectors/github/probe", {
+        method: "POST",
+        headers: { Origin: "http://localhost:5173" },
+      });
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body).toEqual({
+        error: "CONNECTOR_OPERATION_FAILED",
+        message: "连接操作失败，请稍后重试。",
+      });
+      expect(JSON.stringify(body)).not.toContain("socket");
+      expect(log).toHaveBeenCalledWith(
+        "[connector-route] operation failed",
+        { code: "ECONNRESET", error: "fetch failed: upstream socket detail" },
       );
     } finally {
       log.mockRestore();

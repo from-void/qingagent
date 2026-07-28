@@ -113,7 +113,7 @@ describe("diagram overlay 数据域", () => {
     expect(block.attrs.overlay?.edgeHandles?.ORPHAN).toBeUndefined();
   });
 
-  it.each([false, true])("replaceBlock 在 overlay=%s 时均继承图表持久化高度", (withOverlay) => {
+  it.each([false, true])("replaceBlock 在 overlay=%s 时均继承图表持久化布局", (withOverlay) => {
     const source: PmDoc = {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -125,6 +125,8 @@ describe("diagram overlay 数据域", () => {
           source: "flowchart TD\n  A --> B\n",
           svg: null,
           height: 360,
+          width: 480,
+          align: "right",
           ...(withOverlay ? { overlay: { positions: { A: { x: 10, y: 20 } } } } : {}),
         },
       }],
@@ -143,6 +145,8 @@ describe("diagram overlay 数据域", () => {
     expect(result.ok).toBe(true);
     const block = firstDiagram(result.doc!);
     expect(block.attrs.height).toBe(360);
+    expect(block.attrs.width).toBe(480);
+    expect(block.attrs.align).toBe("right");
     expect(block.attrs.overlay?.positions?.A).toEqual(withOverlay ? { x: 10, y: 20 } : undefined);
   });
 

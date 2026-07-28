@@ -224,6 +224,10 @@ export type PmDiagramAttrs = PmBlockAttrs & {
   svg: string | null;
   /** 用户拖拽改的高度(px);仅编辑器持久化,agent/legacy 不设。 */
   height?: number | null;
+  /** 用户拖拽改的宽度(px);null 表示占满可用栏宽。 */
+  width?: number | null;
+  /** 图表宽度小于栏宽时的块对齐。 */
+  align?: "left" | "center" | "right" | null;
   /** 用户域 overlay:持久化进文档 hash,但不进入 AI-IR/proposalDiff。 */
   overlay?: PmDiagramOverlay | null;
 };

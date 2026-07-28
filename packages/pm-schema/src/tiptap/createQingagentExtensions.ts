@@ -728,6 +728,25 @@ const DiagramNode = Node.create({
             ? { "data-height": String(Math.round(attrs.height)) }
             : {},
       },
+      width: {
+        default: null,
+        parseHTML: (element) => parsePositiveImageSize(element.getAttribute("data-width")),
+        renderHTML: (attrs) =>
+          typeof attrs.width === "number" && attrs.width > 0
+            ? { "data-width": String(Math.round(attrs.width)) }
+            : {},
+      },
+      align: {
+        default: "center",
+        parseHTML: (element) => {
+          const value = element.getAttribute("data-align");
+          return PM_IMAGE_ALIGN_VALUES.includes(value as ImageAlign) ? value : "center";
+        },
+        renderHTML: (attrs) =>
+          PM_IMAGE_ALIGN_VALUES.includes(attrs.align as ImageAlign)
+            ? { "data-align": attrs.align }
+            : {},
+      },
       overlay: {
         default: null,
         parseHTML: (element) => parseJsonAttr(element.getAttribute("data-overlay")),

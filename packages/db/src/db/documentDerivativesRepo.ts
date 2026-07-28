@@ -210,28 +210,48 @@ export async function stampGenerated(docId: string, sourceVersion: number, clien
 
 export async function updateParams(docId: string, writingStyleId: string, privatePrompt: string, layoutStyleId?: string | null, coverTemplate?: DerivativeMeta["coverTemplate"]): Promise<void> {
   await ensureMigrated();
+  const now = new Date().toISOString();
   await withTransaction(async (client) => {
-    const derivative = await client.execute({
-      sql: "SELECT dtype FROM document_derivatives WHERE doc_id = ?",
-      args: [docId],
+    const lookup = await client.execute({
+      sql: `SELECT d.dtype AS derivative_dtype,
+          writing.resource_id AS writing_id,
+          writing.dtype AS writing_dtype,
+          writing.slot AS writing_slot,
+          writing.name AS writing_name,
+          layout.resource_id AS layout_id,
+          layout.dtype AS layout_dtype,
+          layout.slot AS layout_slot
+        FROM document_derivatives d
+        LEFT JOIN style_templates writing ON writing.resource_id = ?
+        LEFT JOIN style_templates layout ON layout.resource_id = ?
+        WHERE d.doc_id = ?`,
+      args: [writingStyleId, layoutStyleId ?? null, docId],
     });
-    const dtype = derivative.rows[0]?.dtype;
-    const template = await getStyleTemplate(writingStyleId, client);
-    if (!template || template.slot !== "writing" || template.dtype !== dtype) {
-      throw new Error("未知的写作风格模板");
-    }
-    const layout = layoutStyleId == null ? null : await getStyleTemplate(layoutStyleId, client);
-    if (layoutStyleId != null && (!layout || layout.slot !== "layout" || layout.dtype !== dtype)) {
-      throw new Error("未知的排版风格模板");
-    }
-    const now = new Date().toISOString();
-    await client.execute({
+    const row = lookup.rows[0];
+    if (!row) throw new Error("衍生稿不存在");
+    const derivativeDtype = String(row.derivative_dtype);
+    if (
+      row.writing_id == null ||
+      String(row.writing_slot) !== "writing" ||
+      String(row.writing_dtype) !== derivativeDtype
+    ) throw new Error("未知的写作风格模板");
+    if (
+      layoutStyleId != null &&
+      (
+        row.layout_id == null ||
+        String(row.layout_slot) !== "layout" ||
+        String(row.layout_dtype) !== derivativeDtype
+      )
+    ) throw new Error("未知的排版风格模板");
+
+    const updated = await client.execute({
       sql: "UPDATE document_derivatives SET template_id = ?, layout_style_id = COALESCE(?, layout_style_id), private_prompt = ?, cover_template = COALESCE(?, cover_template), updated_at = ? WHERE doc_id = ?",
       args: [writingStyleId, layoutStyleId ?? null, privatePrompt, coverTemplate ?? null, now, docId],
     });
+    if (Number(updated.rowsAffected) !== 1) throw new Error("衍生稿参数更新失败");
     await client.execute({
       sql: "UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND role = 'derivative'",
-      args: [template.name, now, docId],
+      args: [String(row.writing_name), now, docId],
     });
     return commitTransaction(undefined);
   });

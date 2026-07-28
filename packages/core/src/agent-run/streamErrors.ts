@@ -195,6 +195,7 @@ function streamErrorName(chunk: unknown): string {
 export type StreamErrorCategory =
   | "auth"
   | "quota"
+  | "request"
   | "rate_limit"
   | "timeout"
   | "upstream"
@@ -248,7 +249,6 @@ export function isTransientStreamErrorChunk(chunk: unknown): boolean {
     "socket hang up",
     "other side closed",
     "fetch failed",
-    "terminated",
   ].some((needle) => message.includes(needle));
 }
 
@@ -295,6 +295,17 @@ export function streamErrorDetails(chunk: unknown): StreamErrorDetails {
       category: "rate_limit",
       userMessage,
       action: "retry",
+    };
+  }
+  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+    const userMessage = "模型请求无法处理，请检查模型配置或调整输入。";
+    return {
+      reason: userMessage,
+      retriable: false,
+      statusCode,
+      category: "request",
+      userMessage,
+      action: "none",
     };
   }
   if (statusCode !== undefined && statusCode >= 500) {

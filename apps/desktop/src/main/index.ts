@@ -692,6 +692,7 @@ const DESKTOP_CLIENT_CONFIG_KEYS = new Set([
   "qingagent.kimi_api_key",
   "qingagent.kimi_custom_provider",
   "qingagent.kimi_official_model",
+  "qingagent.kimi_model_tier",
   "qingagent.model_provider",
 ]);
 

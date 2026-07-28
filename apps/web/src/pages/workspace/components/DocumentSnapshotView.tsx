@@ -18,7 +18,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { flattenNestedTablesInCells, getPmContentHash, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
@@ -77,11 +77,11 @@ import {
   docKeyWithoutBlockIds,
   pushPendingSelfDocKey,
 } from "../data/docSyncClassify";
+import { canonicalDocWriteBaseline } from "../data/docWriteBaseline";
 import type {
   DocWriteBaseline,
   EditorDocChange,
 } from "../data/docWriteBaseline";
-import { pmDocHasSubstantiveContent } from "../data/pageExitSave";
 import type {
   ViewBlock,
   ViewBlockSeqDiff,
@@ -510,14 +510,11 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   latestCanonicalDocRef.current = doc;
   latestDocVersionRef.current = doc.version;
   latestDocRevisionRef.current = docRevision;
-  const currentDocWriteBaseline = useCallback((): DocWriteBaseline => {
-    const canonical = normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current));
-    return {
-      expectedDocumentSnapshot: latestCanonicalDocRef.current.version,
-      baseContentHash: getPmContentHash(canonical),
-      baseHasSubstantiveContent: pmDocHasSubstantiveContent(canonical),
-    };
-  }, []);
+  // 基线按服务端 canonical 原样算(不经装载侧安全网),否则该文档任何写入都必冲突。
+  const currentDocWriteBaseline = useCallback(
+    (): DocWriteBaseline => canonicalDocWriteBaseline(latestCanonicalDocRef.current, viewDocToPm),
+    [],
+  );
   const beginApplyingRemote = useCallback(() => {
     remoteApplyDepthRef.current += 1;
     isApplyingRemoteRef.current = true;
@@ -1023,11 +1020,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           JSON.stringify(repairedDoc),
         );
         void Promise.resolve(onEditorChange(repairedDoc, {
+          ...canonicalDocWriteBaseline(doc, viewDocToPm),
           expectedDocumentSnapshot: targetVersion,
-          baseContentHash: getPmContentHash(normalizePmDoc(viewDocToPm(doc))),
-          baseHasSubstantiveContent: pmDocHasSubstantiveContent(
-            normalizePmDoc(viewDocToPm(doc)),
-          ),
         })).catch((error: unknown) => {
           repairedBlockIdVersionRef.current = null;
           console.error("[doc] 存量 blockId 自愈保存失败", error);

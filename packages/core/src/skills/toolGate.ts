@@ -9,10 +9,10 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   generate_derivative: ["derivatives"],
   list_derivatives: ["derivatives"],
   update_derivative_params: ["derivatives"],
-  style_template_list: ["gzh-style"],
-  style_template_get: ["gzh-style", "review"],
-  style_template_save: ["gzh-style"],
-  style_template_delete: ["gzh-style"],
+  style_template_list: ["derivative-writing"],
+  style_template_get: ["derivative-writing", "review"],
+  style_template_save: ["derivative-writing"],
+  style_template_delete: ["derivative-writing"],
   // fetchArticle 虽被公众号相关技能复用,但本质仍是联网抓取；联网搜关闭时必须一并关停。
   webSearch: ["web-search"],
   fetchArticle: ["web-search"],
@@ -37,7 +37,7 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
 
 const SKILL_LABELS: Record<string, string> = {
   derivatives: "衍生稿",
-  "gzh-style": "公众号风格",
+  "derivative-writing": "衍生稿撰写",
   "browser-ops": "浏览器操作",
   "web-search": "联网搜",
   "image-gen": "画配图",

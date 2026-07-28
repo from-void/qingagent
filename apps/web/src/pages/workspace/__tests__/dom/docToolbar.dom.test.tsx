@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import { setTableCellSelectionFromDom } from "../../data/tableToolbar";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const workspaceCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
 
 vi.mock("../../components/drawioEditorLauncher", () => ({
   openDrawioEditor: vi.fn(async () => null),
@@ -650,6 +654,110 @@ describe("DocToolbar 块节点选中(原子块走 AI 引用,不出文本工具�
     expect(aiButton?.textContent).toContain("让 AI 修改这个图表");
     expect(aiButton?.hasAttribute("title")).toBe(false);
     expect(aiButton?.getAttribute("aria-label")).toBe("让 AI 修改这个图表");
+  });
+
+  it.each([
+    ["图表", { type: "diagram", attrs: { blockId: "d-1", lang: "mermaid", source: "graph TD;A-->B;", svg: null } }],
+    ["图片", { type: "image", attrs: { blockId: "i-1", src: "https://example.com/a.png", alt: "图" } }],
+  ])("取消选中%s后文本工具栏不闪现(显隐以 PM 选区为准)", async (label, blockNode) => {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const atomEditor = new Editor({
+      element,
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          { type: "paragraph", attrs: { blockId: "p-1" }, content: [{ type: "text", text: "前面一段文字" }] },
+          blockNode,
+        ],
+      } as unknown as PmDoc,
+    });
+    editor = atomEditor;
+    try {
+      let atomPos = -1;
+      atomEditor.state.doc.descendants((node, pos) => {
+        if (node.type.isAtom && node.isBlock) atomPos = pos;
+        return true;
+      });
+      expect(atomPos).toBeGreaterThanOrEqual(0);
+      await act(async () => {
+        atomEditor.view.dispatch(atomEditor.state.tr.setSelection(NodeSelection.create(atomEditor.state.doc, atomPos)));
+      });
+      await render(
+        <DocToolbar
+          active
+          editor={atomEditor}
+          containerSelector="body"
+          onAiModify={async () => true}
+        />,
+      );
+      await act(async () => {
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+      expect(host?.querySelector(`[aria-label="让 AI 修改这个${label}"]`)).not.toBeNull();
+
+      // 取消选中:PM 选区回到折叠文本选区,但浏览器原生选区还残留着原子块那一段(非折叠、有高度)。
+      const paragraphText = atomEditor.view.dom.querySelector("p")?.firstChild;
+      if (!paragraphText) throw new Error("paragraph text not found");
+      // 闪帧发生在"编辑器已聚焦、PM 选区已不是块选、原生选区还没跟上"的那一拍。
+      Object.defineProperty(atomEditor, "isFocused", { configurable: true, get: () => true });
+      await act(async () => {
+        atomEditor.view.dispatch(atomEditor.state.tr.setSelection(TextSelection.create(atomEditor.state.doc, 1)));
+        const range = document.createRange();
+        range.setStart(paragraphText, 0);
+        range.setEnd(paragraphText, 3);
+        Object.defineProperty(range, "getBoundingClientRect", {
+          configurable: true,
+          value: () => DOMRect.fromRect({ x: 40, y: 60, width: 60, height: 18 }),
+        });
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+
+      expect(host?.querySelector(`[aria-label="让 AI 修改这个${label}"]`)).toBeNull();
+      // 关键:PM 选区已折叠,文本工具栏不能靠残留的原生选区闪出来
+      expect(host?.querySelector('[aria-label="文档格式工具栏"]')?.classList.contains("on")).not.toBe(true);
+    } finally {
+      atomEditor.destroy();
+      element.remove();
+      editor = null;
+    }
+  });
+
+  it("选中分隔线不弹「让 AI 修改」气泡,选中态视觉也不描边", () => {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const hrEditor = new Editor({
+      element,
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          { type: "paragraph", attrs: { blockId: "p-1" }, content: [{ type: "text", text: "前" }] },
+          { type: "horizontalRule", attrs: { blockId: "hr-1" } },
+        ],
+      } as unknown as PmDoc,
+    });
+    try {
+      let hrPos = -1;
+      hrEditor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "horizontalRule") hrPos = pos;
+        return true;
+      });
+      expect(hrPos).toBeGreaterThanOrEqual(0);
+      hrEditor.view.dispatch(hrEditor.state.tr.setSelection(NodeSelection.create(hrEditor.state.doc, hrPos)));
+      expect(resolveSelectedBlockNode(hrEditor)).toBeNull();
+      // 图表等真正可改的原子块不受影响(同文件另有用例覆盖)
+      expect(workspaceCss).toMatch(/hr\.ProseMirror-selectednode\{[^}]*outline:none;/s);
+    } finally {
+      hrEditor.destroy();
+      element.remove();
+    }
   });
 
   it("选中图表(原子块)→ resolveSelectedBlockNode 给出 图表 标签 + 单原子块范围放行", () => {

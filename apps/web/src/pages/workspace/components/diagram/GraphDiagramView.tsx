@@ -52,6 +52,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   applyEdit,
+  applyZOrderCommand,
   carryOverDiagramOverlay,
   dissolveSubgraph,
   getFlowShapeGeometry,
@@ -64,6 +65,7 @@ import {
   parseDiagram,
   renameSubgraph,
   setSubgraphStyle,
+  sortIdsByZOrder,
   wrapNodesInSubgraph,
   type BaseEdge as DiagramBaseEdge,
   type BaseNode,
@@ -80,6 +82,7 @@ import {
   type MindNode,
   type NodeStyleOverride,
   type RewriteResult,
+  type ZOrderCommand,
 } from "@qingagent/diagram-engine";
 import { useToast } from "../../../../system";
 import { MediaBlockToolbar } from "../MediaBlockToolbar";
@@ -114,6 +117,7 @@ type ToolbarMenu =
   | "node-more"
   | "subgraph-fill"
   | "subgraph-border"
+  | "subgraph-more"
   | "edge-line"
   | "edge-arrow"
   | "edge-label"
@@ -148,7 +152,6 @@ type CanvasToolIconName =
   | "zoom-in"
   | "fit"
   | "fullscreen"
-  | "dissolve"
   | "plus";
 type GraphNodeShape = FlowNodeShape;
 type GraphNodeData = {
@@ -168,6 +171,7 @@ type GraphNodeData = {
   onQuickAdd: (handleId: GraphHandleId) => void;
   onResizePreview: (size: ResizeParams) => void;
   onResizeCommit: (size: ResizeParams) => void;
+  onGhostPreviewChange: (active: boolean) => void;
 } & Record<string, unknown>;
 type GraphRegularNode = Node<GraphNodeData, "graphNode">;
 type GraphClusterData = {
@@ -179,10 +183,15 @@ type GraphClusterData = {
   empty: boolean;
   isRenaming: boolean;
   canEdit: boolean;
+  isDropTarget: boolean;
+  width: number;
+  height: number;
   onSelect: () => void;
   onRenameStart: () => void;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
+  onResizePreview: (size: ResizeParams) => void;
+  onResizeCommit: (size: ResizeParams) => void;
 } & Record<string, unknown>;
 type GraphClusterNode = Node<GraphClusterData, "graphCluster">;
 type GraphFlowNode = GraphRegularNode | GraphClusterNode;
@@ -219,6 +228,10 @@ type ShiftDragState = {
   startPositions: Record<string, { x: number; y: number }>;
 };
 type GraphRect = { x: number; y: number; width: number; height: number };
+type GraphClipboard = {
+  nodes: GraphNodeDragSnapshot[];
+  edges: Array<{ source: string; target: string }>;
+};
 type ClusterDragState = {
   clusterId: string;
   startPosition: { x: number; y: number };
@@ -230,10 +243,12 @@ type GraphDiagramTestAction =
   | { kind: "boxSelect"; nodeIds: string[]; edgeIds?: string[] }
   | { kind: "moveParent"; nodeId: string; newParentId: string }
   | { kind: "drawSubgraph"; rect: GraphRect }
+  | { kind: "dragNode"; nodeId: string; position: { x: number; y: number } }
   | { kind: "dropNode"; nodeId: string; position: { x: number; y: number } }
   | { kind: "resizeNodePreview"; nodeId: string; rect: GraphRect }
   | { kind: "resizeNode"; nodeId: string; rect: GraphRect }
-  | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } };
+  | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } }
+  | { kind: "resizeSubgraph"; subgraphId: string; rect: GraphRect };
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 72;
@@ -241,8 +256,29 @@ const NODE_MIN_WIDTH = 96;
 const NODE_MIN_HEIGHT = 48;
 const NODE_MAX_WIDTH = 640;
 const NODE_MAX_HEIGHT = 480;
+// 分区形变边界:下限交给引擎按内容包络兜底,这里只挡住明显不合理的极小/极大值。
+const CLUSTER_MIN_WIDTH = 160;
+const CLUSTER_MIN_HEIGHT = 120;
+const CLUSTER_MAX_WIDTH = 2400;
+const CLUSTER_MAX_HEIGHT = 1800;
 const NODE_FILL_COLORS = ["#efe3cc", "#f3ecdd", "#e5dfc9", "#f8e7a1", "#ddd0b5", "#cfc5b2"];
 const NODE_STROKE_COLORS = ["#b08a3e", "#8f6d30", "#8d7447", "#6a6256", "#4f514f", "#2f2a22"];
+// 节点填充/边框色板按两行铺开(纸暖色系:第一行由浅到深的纸墨,第二行暖色相)。
+const NODE_FILL_COLOR_ROWS: string[][] = [
+  ["#fffaf0", "#f6f1e7", "#f3ecdd", "#efe3cc", "#e5dfc9", "#ddd0b5"],
+  ["#f8e7a1", "#f2d7a8", "#e8c9a0", "#d9c3a5", "#cfc5b2", "#b9ab93"],
+];
+const NODE_STROKE_COLOR_ROWS: string[][] = [
+  ["#2f2a22", "#4f514f", "#6a6256", "#8d7447", "#cdbfa3", "#e5dfc9"],
+  ["#8f6d30", "#a8763a", "#b08a3e", "#7a6a4f", "#5c5346", "#9a8f7a"],
+];
+// 边框线型与粗细档位:线型落到 dashArray,粗细落到 strokeWidth(引擎钳 1~8)。
+const NODE_BORDER_DASH_OPTIONS: Array<{ key: "solid" | "dashed" | "dotted"; label: string; dashArray: string }> = [
+  { key: "solid", label: "实线", dashArray: "" },
+  { key: "dashed", label: "虚线", dashArray: "6 4" },
+  { key: "dotted", label: "点线", dashArray: "2 4" },
+];
+const NODE_BORDER_WIDTH_OPTIONS = [1, 2, 3, 4];
 const NODE_TEXT_COLORS = ["#2f2a22", "#4f514f", "#5c5346", "#6a6256", "#8d7447", "#11110f"];
 const EDGE_COLORS = ["#8d7447", "#8f6d30", "#b08a3e", "#6a6256", "#4f514f"];
 const EDGE_DIRECTION_OPTIONS: Array<{ direction: EdgeDirection; label: string; icon: IconName }> = [
@@ -256,7 +292,6 @@ const EDGE_LINE_STYLE_OPTIONS: Array<{ lineStyle: EdgeLineStyle; label: string; 
   { lineStyle: "dotted", label: "点线", icon: "line-dotted" },
   { lineStyle: "thick", label: "粗线", icon: "line-thick" },
 ];
-const NODE_STROKE_WIDTH_RANGE = { min: 1, max: 8, step: 0.5 };
 const EDGE_STROKE_WIDTH_RANGE = { min: 1, max: 8, step: 0.5 };
 const NODE_FONT_SIZE_RANGE = { min: 10, max: 48, step: 1 };
 const DEFAULT_NODE_FONT_SIZE = 13;
@@ -333,6 +368,18 @@ const DIRECTION_HANDLES: Record<GraphDirection, {
 };
 
 const NODE_SHAPE_VIEWBOX = `0 0 ${NODE_WIDTH} ${NODE_HEIGHT}`;
+// 手型钮提示条与按钮的间距,以及靠边内收时与视口的最小间距。
+const PAN_TIP_GAP = 10;
+const PAN_TIP_EDGE_GAP = 12;
+// 把手快速新增:新节点与源节点之间的净间距(横向/纵向)。
+const QUICK_ADD_GAP_X = 96;
+const QUICK_ADD_GAP_Y = 88;
+// 粘贴副本相对原件的整体偏移。
+const PASTE_OFFSET = 16;
+// 工具栏与元素的常态间距:只让开外侧圆点/加号那一圈。
+const NODE_TOOLBAR_CLEARANCE = 44;
+// 把手悬停铺出幽灵预览节点时的临时净空:越过整层幽灵操作区。
+const GHOST_PREVIEW_CLEARANCE = 116;
 
 const graphNodeTypes = { graphNode: GraphNode, graphCluster: GraphCluster } satisfies NodeTypes;
 const graphEdgeTypes = { graphEdge: GraphEdge } satisfies EdgeTypes;
@@ -364,16 +411,26 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   const handlePreviewTimerRef = useRef<number | null>(null);
   const [handleHover, setHandleHover] = useState<{ id: GraphHandleId; phase: "plus" | "preview" } | null>(null);
 
+  const ghostPreviewChangeRef = useRef(data.onGhostPreviewChange);
+  ghostPreviewChangeRef.current = data.onGhostPreviewChange;
+  // 连线进行中:把手只当连线落点,不再触发快速新增的加号/幽灵(拖线经过目标节点会误弹)。
+  const connectionInProgress = useStore((state) => state.connection.inProgress);
+
   useEffect(() => () => {
     if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
+    // 卸载时兜底收回"幽灵预览活跃"信号,避免工具栏被永久顶远。
+    ghostPreviewChangeRef.current?.(false);
   }, []);
 
   const beginHandleHover = (handleId: GraphHandleId) => {
+    if (connectionInProgress) return;
     if (handlePreviewTimerRef.current !== null) window.clearTimeout(handlePreviewTimerRef.current);
     setHandleHover({ id: handleId, phase: "plus" });
     handlePreviewTimerRef.current = window.setTimeout(() => {
       setHandleHover((current) => (current?.id === handleId ? { id: handleId, phase: "preview" } : current));
       handlePreviewTimerRef.current = null;
+      // 幽灵预览真正铺开后才通知工具栏让位。
+      if (data.canQuickAdd) data.onGhostPreviewChange(true);
     }, 220);
   };
   const endHandleHover = (handleId: GraphHandleId) => {
@@ -382,7 +439,19 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
       handlePreviewTimerRef.current = null;
     }
     setHandleHover((current) => (current?.id === handleId ? null : current));
+    data.onGhostPreviewChange(false);
   };
+
+  // 连线一开始就收掉已经弹出来的加号/幽灵,避免"拖线中途把手变成新增入口"。
+  useEffect(() => {
+    if (!connectionInProgress) return;
+    if (handlePreviewTimerRef.current !== null) {
+      window.clearTimeout(handlePreviewTimerRef.current);
+      handlePreviewTimerRef.current = null;
+    }
+    setHandleHover(null);
+    ghostPreviewChangeRef.current?.(false);
+  }, [connectionInProgress]);
 
   useEffect(() => {
     if (!data.isRenaming) {
@@ -442,6 +511,17 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
   const stopRenameEvent = (event: SyntheticEvent) => {
     event.stopPropagation();
   };
+  // 重命名中在文本上按下鼠标:连击计数会把这一下算成三连击(双击进编辑 + 紧接着的单击),
+  // 浏览器原生行为=整段重选,光标"定不了"。这里接管连击那一下,按落点手动放光标。
+  const handleRenamePointerSelect = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (!data.isRenaming || event.detail < 2) return;
+    const el = labelRef.current;
+    if (!el) return;
+    event.preventDefault();
+    if (document.activeElement !== el) el.focus({ preventScroll: true });
+    placeCaretAtPoint(el, event.clientX, event.clientY);
+  };
   const requestRename = (event: SyntheticEvent) => {
     if (!data.canRename || data.isRenaming) return;
     event.stopPropagation();
@@ -457,7 +537,6 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
       data-mermaid-shape={data.rawShape ?? undefined}
       data-node-width={data.width}
       data-node-height={data.height}
-      style={{ width: data.width, height: data.height }}
       onClickCapture={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.detail >= 2) requestRename(event);
       }}
@@ -494,7 +573,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
         tabIndex={data.isRenaming ? 0 : undefined}
         onClick={data.isRenaming ? stopRenameEvent : undefined}
         onDoubleClick={data.isRenaming ? stopRenameEvent : undefined}
-        onMouseDown={data.isRenaming ? stopRenameEvent : undefined}
+        onMouseDown={data.isRenaming ? handleRenamePointerSelect : undefined}
         onPointerDown={data.isRenaming ? stopRenameEvent : undefined}
         onCompositionStart={(event) => {
           if (!data.isRenaming) return;
@@ -586,7 +665,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
               data.onQuickAdd(handle.id);
             }}
           />
-          {data.canQuickAdd && handleHover?.id === handle.id ? (
+          {data.canQuickAdd && !connectionInProgress && handleHover?.id === handle.id ? (
             <button
               type="button"
               className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} is-${handleHover.phase} nodrag nopan`}
@@ -609,24 +688,140 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
                 : <CanvasToolIcon name="plus" />}
             </button>
           ) : null}
-          {data.canQuickAdd && handleHover?.id === handle.id && handleHover.phase === "preview" ? (
-            <div
-              className={`graph-diagram-handle-ghost graph-diagram-handle-ghost--${handle.id}`}
-              data-direction={handle.id}
-              aria-hidden="true"
-            >
-              <span className="graph-diagram-handle-ghost__line" />
-              <span className="graph-diagram-handle-ghost__node">
-                <svg viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none">
-                  {renderShapeSvg(data.shape)}
-                </svg>
-              </span>
-            </div>
+          {data.canQuickAdd && !connectionInProgress && handleHover?.id === handle.id && handleHover.phase === "preview" ? (
+            <QuickAddGhost shape={data.shape} width={data.width} height={data.height} handleId={handle.id} />
           ) : null}
         </div>
       ))}
     </div>
   );
+}
+
+/**
+ * 把手快速新增的唯一几何来源:预览(幽灵)与真正创建的节点共用它,禁止两套数字。
+ * 返回值都以源节点左上角为原点(流坐标 = 画布内 CSS px)。
+ */
+export function quickAddGhostGeometry(
+  sourceWidth: number,
+  sourceHeight: number,
+  handleId: GraphHandleId,
+): {
+  offset: { x: number; y: number };
+  size: { width: number; height: number };
+  line: { left: number; top: number; length: number; vertical: boolean };
+} {
+  const size = { width: NODE_WIDTH, height: NODE_HEIGHT };
+  if (handleId === "r") {
+    return {
+      offset: { x: sourceWidth + QUICK_ADD_GAP_X, y: 0 },
+      size,
+      line: { left: sourceWidth, top: sourceHeight / 2, length: QUICK_ADD_GAP_X, vertical: false },
+    };
+  }
+  if (handleId === "l") {
+    return {
+      offset: { x: -(sourceWidth + QUICK_ADD_GAP_X), y: 0 },
+      size,
+      line: { left: -QUICK_ADD_GAP_X, top: sourceHeight / 2, length: QUICK_ADD_GAP_X, vertical: false },
+    };
+  }
+  if (handleId === "b") {
+    return {
+      offset: { x: 0, y: sourceHeight + QUICK_ADD_GAP_Y },
+      size,
+      line: { left: sourceWidth / 2, top: sourceHeight, length: QUICK_ADD_GAP_Y, vertical: true },
+    };
+  }
+  return {
+    offset: { x: 0, y: -(sourceHeight + QUICK_ADD_GAP_Y) },
+    size,
+    line: { left: sourceWidth / 2, top: -QUICK_ADD_GAP_Y, length: QUICK_ADD_GAP_Y, vertical: true },
+  };
+}
+
+/** 幽灵预览 = 目标节点的真实尺寸/形状/落点 + 带箭头的连接段;点一下就是把它固化下来。 */
+function QuickAddGhost({
+  shape,
+  width,
+  height,
+  handleId,
+}: {
+  shape: GraphNodeShape;
+  width: number;
+  height: number;
+  handleId: GraphHandleId;
+}) {
+  const geometry = quickAddGhostGeometry(width, height, handleId);
+  const arrowSize = 9;
+  const lineStyle: CSSProperties = geometry.line.vertical
+    ? {
+        left: geometry.line.left,
+        top: geometry.line.top,
+        width: arrowSize,
+        height: geometry.line.length,
+        marginLeft: -arrowSize / 2,
+      }
+    : {
+        left: geometry.line.left,
+        top: geometry.line.top,
+        width: geometry.line.length,
+        height: arrowSize,
+        marginTop: -arrowSize / 2,
+      };
+  return (
+    <div className="graph-diagram-handle-ghost" data-direction={handleId} aria-hidden="true">
+      <svg
+        className="graph-diagram-handle-ghost__line"
+        style={lineStyle}
+        viewBox={geometry.line.vertical ? `0 0 ${arrowSize} ${geometry.line.length}` : `0 0 ${geometry.line.length} ${arrowSize}`}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <marker
+            id={`graph-ghost-arrow-${handleId}`}
+            markerWidth="6"
+            markerHeight="6"
+            refX="5"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0 0.6 L5.4 3 L0 5.4 z" fill="currentColor" />
+          </marker>
+        </defs>
+        <path
+          d={quickAddGhostLinePath(handleId, geometry.line.length, arrowSize)}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="5 4"
+          markerEnd={`url(#graph-ghost-arrow-${handleId})`}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <span
+        className="graph-diagram-handle-ghost__node"
+        style={{
+          left: geometry.offset.x,
+          top: geometry.offset.y,
+          width: geometry.size.width,
+          height: geometry.size.height,
+        }}
+      >
+        <svg viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none">
+          {renderShapeSvg(shape)}
+        </svg>
+      </span>
+    </div>
+  );
+}
+
+function quickAddGhostLinePath(handleId: GraphHandleId, length: number, thickness: number): string {
+  const mid = thickness / 2;
+  if (handleId === "r") return `M0 ${mid} H${length}`;
+  if (handleId === "l") return `M${length} ${mid} H0`;
+  if (handleId === "b") return `M${mid} 0 V${length}`;
+  return `M${mid} ${length} V0`;
 }
 
 function HandleDirectionIcon({ direction }: { direction: GraphHandleId }) {
@@ -683,12 +878,29 @@ function GraphCluster({ data, selected }: NodeProps<GraphClusterNode>) {
         data.empty && "is-empty",
         selected && "is-selected",
         data.isRenaming && "is-renaming",
+        data.isDropTarget && "is-drop-target",
       )}
+      data-drop-target={data.isDropTarget ? "true" : undefined}
       data-cluster-label={data.label}
       data-cluster-direction={data.direction}
       data-cluster-depth={data.depth}
       data-cluster-empty={data.empty}
+      data-cluster-width={data.width}
+      data-cluster-height={data.height}
     >
+      {/* 分区形变:与节点同规格——只四角、金系,挂在外偏包围盒上;
+          最小尺寸由引擎按"子节点包络 + 内边距"兜底,收缩不会吞掉已有子节点。 */}
+      <NodeResizer
+        isVisible={selected && data.canEdit && !data.isRenaming}
+        minWidth={CLUSTER_MIN_WIDTH}
+        minHeight={CLUSTER_MIN_HEIGHT}
+        maxWidth={CLUSTER_MAX_WIDTH}
+        maxHeight={CLUSTER_MAX_HEIGHT}
+        lineClassName="graph-diagram-resize-line"
+        handleClassName="graph-diagram-resize-handle nodrag nopan"
+        onResize={(_event, size) => data.onResizePreview(size)}
+        onResizeEnd={(_event, size) => data.onResizeCommit(size)}
+      />
       <div
         ref={titleRef}
         className={classNames("graph-diagram-cluster__title", data.isRenaming && "nodrag nowheel")}
@@ -1015,12 +1227,6 @@ function CanvasToolIcon({ name }: { name: CanvasToolIconName }) {
       {name === "fullscreen" && (
         <path d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" {...common} />
       )}
-      {name === "dissolve" && (
-        <>
-          <path d="M5 3H2.5v2.5M11 3h2.5v2.5M13.5 10.5V13H11M5 13H2.5v-2.5" strokeDasharray="1.7 1.5" {...common} />
-          <path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" {...common} />
-        </>
-      )}
       {name === "plus" && <path d="M3.2 8h9.6M8 3.2v9.6" {...common} />}
     </svg>
   );
@@ -1050,6 +1256,50 @@ function GraphViewportControls({
     event.stopPropagation();
   };
   const fit = () => void rf.fitView({ padding: 0.15, maxZoom: 1, duration: 160 });
+  // 手型钮提示条:控件组为了做圆角药丸带 overflow:hidden,提示条挂在组里必被裁掉(真机不可见)。
+  // 改成挂 body 的定位浮层,向上展开并按视口收边。
+  const panButtonRef = useRef<HTMLButtonElement | null>(null);
+  const panTipRef = useRef<HTMLDivElement | null>(null);
+  const [panTipAnchor, setPanTipAnchor] = useState<{ left: number; top: number } | null>(null);
+  const showPanTip = () => {
+    const rect = panButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPanTipAnchor({ left: rect.left + rect.width / 2, top: rect.top - PAN_TIP_GAP });
+  };
+  const hidePanTip = () => setPanTipAnchor(null);
+  useEffect(() => {
+    if (!panTipAnchor) return;
+    const tip = panTipRef.current;
+    if (!tip || typeof window === "undefined") return;
+    // 靠边自动内收:提示条以自身中心对齐按钮,越界时把中心点拉回视口内。
+    const half = tip.offsetWidth / 2;
+    const min = PAN_TIP_EDGE_GAP + half;
+    const max = window.innerWidth - PAN_TIP_EDGE_GAP - half;
+    const clamped = clamp(panTipAnchor.left, Math.min(min, max), Math.max(min, max));
+    if (Math.abs(clamped - panTipAnchor.left) > 0.5) {
+      setPanTipAnchor({ left: clamped, top: panTipAnchor.top });
+    }
+  }, [panTipAnchor]);
+  const panTip = panTipAnchor && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={panTipRef}
+          className="graph-diagram-pan-tip"
+          role="tooltip"
+          style={{ left: panTipAnchor.left, top: panTipAnchor.top }}
+        >
+          移动画布
+          <kbd>H</kbd>
+          <span className="graph-diagram-pan-tip__sep">·</span>
+          <kbd>空格</kbd>
+          <span className="graph-diagram-pan-tip__plus">+</span>
+          拖拽
+          <span className="graph-diagram-pan-tip__sep">·</span>
+          右键拖拽
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <div className="graph-diagram-viewport-controls" aria-label="画布视图控件">
@@ -1080,12 +1330,17 @@ function GraphViewportControls({
       <div className="graph-diagram-viewport-controls__group" role="group" aria-label="缩放与平移">
         {onPanModeChange ? (
           <button
+            ref={panButtonRef}
             type="button"
             className={classNames(panMode && "is-active")}
-            aria-label="拖拽画布(空格)"
+            aria-label="移动画布"
             aria-pressed={panMode}
-            title="拖拽画布(空格)"
+            aria-keyshortcuts="H"
             onMouseDown={stop}
+            onMouseEnter={showPanTip}
+            onMouseLeave={hidePanTip}
+            onFocus={showPanTip}
+            onBlur={hidePanTip}
             onClick={() => onPanModeChange(!panMode)}
           >
             <CanvasToolIcon name="hand" />
@@ -1120,6 +1375,7 @@ function GraphViewportControls({
           <CanvasToolIcon name="zoom-in" />
         </button>
       </div>
+      {panTip}
     </div>
   );
 }
@@ -1136,8 +1392,14 @@ function FitOnNodesInitialized({ maxZoom = 1 }: { maxZoom?: number }) {
   // 一次就定死,图表被顶出视口渲染成空白(审阅态复现)。
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
+  // 只在"首次量到容器"和"容器尺寸真的变了"时 fit。节点重建(选中/改样式/resize 落库都会重建)
+  // 会让 useNodesInitialized 抖动,若照旧 refit 就会把用户手动缩放/平移过的视角一并重置。
+  const fittedFrameRef = useRef<string | null>(null);
   useEffect(() => {
     if (!initialized || width === 0 || height === 0) return;
+    const frameKey = `${Math.round(width)}x${Math.round(height)}`;
+    if (fittedFrameRef.current === frameKey) return;
+    fittedFrameRef.current = frameKey;
     const id = requestAnimationFrame(() => fitView({ padding: 0.15, maxZoom }));
     return () => cancelAnimationFrame(id);
   }, [initialized, fitView, maxZoom, width, height]);
@@ -1183,6 +1445,76 @@ function graphRectContainsRect(outer: GraphRect, inner: GraphRect): boolean {
   );
 }
 
+/**
+ * 新增节点的落点:必须整块落在当前视口内并尽量不压住既有元素。
+ * 有锚点(选中节点)时优先放它右侧/下方的常规位置,否则从视口中心起按环形找空位;
+ * 全被占满时退回视口中心(仍保证完整可见)。纯几何,流坐标。
+ */
+export function resolveNewNodePlacement(input: {
+  visible: GraphRect;
+  occupied: GraphRect[];
+  size: { width: number; height: number };
+  anchor?: GraphRect | null;
+}): { x: number; y: number } {
+  const { visible, occupied, size } = input;
+  const margin = 24;
+  const clampToVisible = (point: { x: number; y: number }): { x: number; y: number } => ({
+    x: Math.round(clamp(
+      point.x,
+      visible.x + margin,
+      Math.max(visible.x + margin, visible.x + visible.width - size.width - margin),
+    )),
+    y: Math.round(clamp(
+      point.y,
+      visible.y + margin,
+      Math.max(visible.y + margin, visible.y + visible.height - size.height - margin),
+    )),
+  });
+  const free = (point: { x: number; y: number }): boolean => {
+    const rect = { x: point.x, y: point.y, width: size.width, height: size.height };
+    if (!graphRectContainsRect(visible, rect)) return false;
+    return !occupied.some((item) => graphRectsIntersect(inflateGraphRect(item, 16), rect));
+  };
+  const center = {
+    x: visible.x + visible.width / 2 - size.width / 2,
+    y: visible.y + visible.height / 2 - size.height / 2,
+  };
+  const candidates: Array<{ x: number; y: number }> = [];
+  if (input.anchor) {
+    candidates.push({ x: input.anchor.x + input.anchor.width + QUICK_ADD_GAP_X, y: input.anchor.y });
+    candidates.push({ x: input.anchor.x, y: input.anchor.y + input.anchor.height + QUICK_ADD_GAP_Y });
+    candidates.push({ x: input.anchor.x - size.width - QUICK_ADD_GAP_X, y: input.anchor.y });
+  }
+  candidates.push(center);
+  const stepX = size.width + QUICK_ADD_GAP_X;
+  const stepY = size.height + QUICK_ADD_GAP_Y;
+  for (let ring = 1; ring <= 4; ring += 1) {
+    for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
+      candidates.push({ x: center.x + dx * ring * stepX, y: center.y + dy * ring * stepY });
+    }
+  }
+  for (const candidate of candidates) {
+    const rounded = { x: Math.round(candidate.x), y: Math.round(candidate.y) };
+    if (free(rounded)) return rounded;
+  }
+  return clampToVisible(center);
+}
+
+function inflateGraphRect(rect: GraphRect, by: number): GraphRect {
+  return { x: rect.x - by, y: rect.y - by, width: rect.width + by * 2, height: rect.height + by * 2 };
+}
+
+/** 当前视口对应的流坐标可视矩形。 */
+export function visibleFlowRect(viewport: Viewport, canvasFrame: CanvasSize): GraphRect {
+  const zoom = viewport.zoom > 0 ? viewport.zoom : 1;
+  return {
+    x: -viewport.x / zoom,
+    y: -viewport.y / zoom,
+    width: (canvasFrame.width || 900) / zoom,
+    height: (canvasFrame.height || 600) / zoom,
+  };
+}
+
 function graphRectsIntersect(left: GraphRect, right: GraphRect): boolean {
   return (
     left.x < right.x + right.width &&
@@ -1214,6 +1546,33 @@ function deepestSubgraphAtPoint(
   return clusters
     .filter((cluster) => graphRectContainsPoint(graphNodeRect(cluster), point))
     .sort((left, right) => right.data.depth - left.data.depth)[0]?.id ?? null;
+}
+
+/**
+ * 拖拽入区的唯一判定:节点整块矩形被分区包住才算进区(中心点擦边不算),取最深的一层。
+ * 拖拽中的边框高亮与松手后的归属收编共用本函数,保证"高亮说能进"与"松手真进"一致。
+ */
+export function deepestSubgraphContainingRect(
+  rect: GraphRect,
+  clusters: Array<{ id: string; rect: GraphRect; depth: number }>,
+): string | null {
+  return clusters
+    .filter((cluster) => graphRectContainsRect(cluster.rect, rect))
+    .sort((left, right) => right.depth - left.depth)[0]?.id ?? null;
+}
+
+function dropTargetSubgraphFor(node: Node, clusters: GraphClusterNode[]): string | null {
+  return deepestSubgraphContainingRect(
+    graphNodeRect(node),
+    clusters.map((cluster) => ({ id: cluster.id, rect: graphNodeRect(cluster), depth: cluster.data.depth })),
+  );
+}
+
+/** 选择集是否等价(顺序无关):用于避免把同一份选择反复写回 state。 */
+function sameIdList(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(left);
+  return right.every((id) => seen.has(id));
 }
 
 function sameStringPath(left: readonly string[], right: readonly string[]): boolean {
@@ -1309,9 +1668,14 @@ export function GraphDiagramView({
   const altDuplicateDragRef = useRef<AltDuplicateDragState | null>(null);
   const shiftDragRef = useRef<ShiftDragState | null>(null);
   const clusterDragRef = useRef<ClusterDragState | null>(null);
+  const clipboardRef = useRef<GraphClipboard | null>(null);
   const subgraphDrawStartRef = useRef<{ pointerId: number; point: { x: number; y: number } } | null>(null);
   const nodesRef = useRef<GraphFlowNode[]>([]);
   if (!editorOwnerIdRef.current) editorOwnerIdRef.current = createGraphEditorOwnerId();
+  // React Flow 的点阵 pattern id 只有 `pattern-${rfId}`,而 rfId 默认全实例都是 "1":
+  // 一篇文档里多个图表(预览/编辑器/全屏并存)会撞出重复 DOM id,url(#pattern-1) 解析到文档里
+  // 第一个(可能在隐藏或零尺寸实例里)的那份 → 点阵看不见。给每个 Background 显式唯一 id 断掉撞车。
+  const backgroundIdBase = editorOwnerIdRef.current;
   useEffect(() => {
     liveSourceRef.current = source;
     setLiveSource(source);
@@ -1364,8 +1728,15 @@ export function GraphDiagramView({
   const [subgraphDrawMode, setSubgraphDrawMode] = useState(false);
   const [subgraphPreview, setSubgraphPreview] = useState<GraphRect | null>(null);
   const [newSubgraphId, setNewSubgraphId] = useState<string | null>(null);
-  const [panMode, setPanMode] = useState(true);
+  // 编辑器默认不锁平移(空白左键拖拽=框选);H/空格/右键拖拽随时可平移。
+  const [panMode, setPanMode] = useState(false);
+  // 只读全屏查看层没有可选元素,左键拖拽默认就是平移。
+  const [viewerPanMode, setViewerPanMode] = useState(true);
   const [spacePanning, setSpacePanning] = useState(false);
+  // 把手悬停铺出幽灵预览的节点(工具栏据此临时让位),以及拖拽中标记(拖拽期不出浮动工具栏)。
+  const [ghostPreviewNodeId, setGhostPreviewNodeId] = useState<string | null>(null);
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [dropTargetSubgraphId, setDropTargetSubgraphId] = useState<string | null>(null);
   const renameCommittedRef = useRef(false);
   const subgraphRenameCommittedRef = useRef(false);
   const edgeLabelCommittedRef = useRef(false);
@@ -1425,8 +1796,16 @@ export function GraphDiagramView({
     setSubgraphPreview(null);
     setNewSubgraphId(null);
     setSpacePanning(false);
+    setGhostPreviewNodeId(null);
+    setDraggingNodeId(null);
+    setDropTargetSubgraphId(null);
     subgraphDrawStartRef.current = null;
     clusterDragRef.current = null;
+  }, []);
+
+  // 幽灵预览信号来自节点内部,用稳定回调收敛到父级,避免每帧重建节点数据。
+  const setGhostPreviewActive = useCallback((nodeId: string, active: boolean) => {
+    setGhostPreviewNodeId((current) => (active ? nodeId : current === nodeId ? null : current));
   }, []);
 
   const openEditor = useCallback(() => {
@@ -1590,21 +1969,62 @@ export function GraphDiagramView({
       if (!inEdit || !ids.nodes.has(nodeId)) return;
       const width = clamp(size.width, NODE_MIN_WIDTH, NODE_MAX_WIDTH);
       const height = clamp(size.height, NODE_MIN_HEIGHT, NODE_MAX_HEIGHT);
+      // 尺寸单一真相 = React Flow 的 dimension change 写进 node.width/height(拖拽中逐帧到达),
+      // 节点外壳按 100% 跟随即可。这里只补两件 React Flow 管不了的:拖拽中的新左上角坐标,
+      // 以及连线锚点(handles 由本组件显式提供,React Flow 不再测量 DOM,必须随尺寸重算)。
+      // data.width/height 只回显给 data-node-* 属性,不参与布局。
       setNodes((current) => current.map((node) => {
         if (node.id !== nodeId || node.type !== "graphNode") return node;
         return {
           ...node,
           position: { x: size.x, y: size.y },
-          initialWidth: width,
-          initialHeight: height,
-          measured: { ...(node.measured ?? {}), width, height },
           handles: graphNodeHandleBounds(width, height),
           data: { ...node.data, width, height },
-          style: { ...(node.style ?? {}), width, height },
         };
       }));
     },
     [ids.nodes, inEdit],
+  );
+
+  // 分区形变:预览走 React Flow 的 dimension change(与节点同一条链),落库写 overlay。
+  const previewClusterResize = useCallback(
+    (clusterId: string, size: ResizeParams) => {
+      if (!inEdit) return;
+      const width = clamp(size.width, CLUSTER_MIN_WIDTH, CLUSTER_MAX_WIDTH);
+      const height = clamp(size.height, CLUSTER_MIN_HEIGHT, CLUSTER_MAX_HEIGHT);
+      setNodes((current) => current.map((node) => {
+        if (node.id !== clusterId || node.type !== "graphCluster") return node;
+        return {
+          ...node,
+          position: { x: size.x, y: size.y },
+          data: { ...node.data, width, height },
+        };
+      }));
+    },
+    [inEdit],
+  );
+
+  const commitClusterResize = useCallback(
+    (clusterId: string, size: ResizeParams) => {
+      if (!inEdit) return;
+      const width = clamp(Math.round(size.width), CLUSTER_MIN_WIDTH, CLUSTER_MAX_WIDTH);
+      const height = clamp(Math.round(size.height), CLUSTER_MIN_HEIGHT, CLUSTER_MAX_HEIGHT);
+      emitOverlay(
+        {
+          ...(overlayRef.current ?? {}),
+          positions: {
+            ...(overlayRef.current?.positions ?? {}),
+            [clusterId]: { x: Math.round(size.x), y: Math.round(size.y) },
+          },
+          styles: {
+            ...(overlayRef.current?.styles ?? {}),
+            [clusterId]: { ...(overlayRef.current?.styles?.[clusterId] ?? {}), width, height },
+          },
+        },
+        { nodes: [clusterId] },
+      );
+    },
+    [emitOverlay, inEdit],
   );
 
   const runRewrite = useCallback(
@@ -1773,8 +2193,10 @@ export function GraphDiagramView({
     const nextSubgraphIds = selection.nodes.filter((node) => node.type === "graphCluster").map((node) => node.id);
     const nextNodeIds = selection.nodes.filter((node) => node.type !== "graphCluster").map((node) => node.id);
     const nextEdgeIds = selection.edges.map((edge) => edge.id);
-    setSelectedNodeIds(nextNodeIds);
-    setSelectedEdgeIds(nextEdgeIds);
+    // 选择集内容没变就不写回:每次都塞新数组会让依赖它的节点重建反复触发,
+    // React Flow 再回吐一次 onSelectionChange —— 混合选中(节点+连线)时表现为工具栏疯狂闪烁。
+    setSelectedNodeIds((current) => (sameIdList(current, nextNodeIds) ? current : nextNodeIds));
+    setSelectedEdgeIds((current) => (sameIdList(current, nextEdgeIds) ? current : nextEdgeIds));
     setSelectedNodeId(nextNodeIds.length === 1 && nextEdgeIds.length === 0 && nextSubgraphIds.length === 0 ? nextNodeIds[0]! : null);
     setSelectedEdgeId(nextEdgeIds.length === 1 && nextNodeIds.length === 0 && nextSubgraphIds.length === 0 ? nextEdgeIds[0]! : null);
     setSelectedSubgraphId(
@@ -1794,6 +2216,22 @@ export function GraphDiagramView({
     const parentId = isMindmap ? selectedNodeId ?? undefined : undefined;
     const newNodeId = runEdit({ kind: "addNode", label: "新节点", parentId })?.newNodeId ?? null;
     if (newNodeId) {
+      // 不写落点的话,新节点交给自动布局,可能被排到画布最右缘、跑出当前视口(用户只看得到它的工具栏)。
+      // 这里按当前视口算一个完整可见、尽量不压既有元素的空位。
+      const anchorNode = selectedNodeId ? nodesRef.current.find((item) => item.id === selectedNodeId) : undefined;
+      const placement = resolveNewNodePlacement({
+        visible: visibleFlowRect(editViewport, editCanvasFrame),
+        occupied: nodesRef.current.map((item) => graphNodeRect(item)),
+        size: { width: NODE_WIDTH, height: NODE_HEIGHT },
+        anchor: anchorNode ? graphNodeRect(anchorNode) : null,
+      });
+      emitOverlay(
+        {
+          ...(overlayRef.current ?? {}),
+          positions: { ...(overlayRef.current?.positions ?? {}), [newNodeId]: placement },
+        },
+        { nodes: [newNodeId] },
+      );
       setSelectedNodeId(newNodeId);
       setSelectedNodeIds([newNodeId]);
       setSelectedEdgeId(null);
@@ -1802,7 +2240,36 @@ export function GraphDiagramView({
       setEditingEdgeLabelId(null);
       setParentPickerNodeId(null);
     }
-  }, [canAddNodeEmpty, isMindmap, runEdit, selectedNodeCaps, selectedNodeId]);
+  }, [
+    canAddNodeEmpty,
+    editCanvasFrame,
+    editViewport,
+    emitOverlay,
+    isMindmap,
+    runEdit,
+    selectedNodeCaps,
+    selectedNodeId,
+  ]);
+
+  // 元素层级(z 轴):只在节点之间排序;分区始终垫在节点之下(zIndex 用负数),
+  // 层级值存进视觉 overlay,与位置/样式同一套,撤销重做走既有画布历史。
+  const applyZOrder = useCallback((command: ZOrderCommand) => {
+    if (!inEdit) return;
+    const selected = selectedNodeIds.length > 0 ? selectedNodeIds : selectedNodeId ? [selectedNodeId] : [];
+    const targets = selected.filter((id) => ids.nodes.has(id));
+    if (targets.length === 0) return;
+    const order = graphNodes.map((node) => node.id).filter((id) => ids.nodes.has(id));
+    const zOrders = applyZOrderCommand({
+      order,
+      selected: targets,
+      command,
+      zOrders: overlayRef.current?.zOrders,
+    });
+    emitOverlay({
+      ...(overlayRef.current ?? {}),
+      zOrders: Object.keys(zOrders).length > 0 ? zOrders : undefined,
+    });
+  }, [emitOverlay, graphNodes, ids.nodes, inEdit, selectedNodeId, selectedNodeIds]);
 
   const deleteSelectedNode = useCallback(() => {
     if (!selectedNodeId || !capEnabled(selectedNodeCaps, "deleteNode")) return;
@@ -2020,6 +2487,18 @@ export function GraphDiagramView({
         return;
       }
       const hasMod = event.ctrlKey || event.metaKey;
+      // H = 锁定/解除画布平移(与手型按钮同一开关);文本编辑态不劫持。
+      if (
+        key === "h" &&
+        !hasMod &&
+        !event.altKey &&
+        !event.repeat &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        setPanMode((current) => !current);
+        return;
+      }
       const isUndo = hasMod && !event.shiftKey && key === "z";
       const isRedo = hasMod && (
         (event.shiftKey && key === "z") ||
@@ -2288,6 +2767,11 @@ export function GraphDiagramView({
         position: { x: cluster.x, y: cluster.y },
         initialWidth: cluster.width,
         initialHeight: cluster.height,
+        // 尺寸要同时声明进 measured:React Flow 每次采纳新的 nodes 数组都会用
+        // userNode.measured 重建内部节点(adoptUserNodes),而我们显式提供了 handles,
+        // 它就不会再去量 DOM 补回来——不声明的话内部 measured 会被清空,
+        // NodeResizer 起拖时读到的起始尺寸是 0,一拖就被钳到最小尺寸。
+        measured: { width: cluster.width, height: cluster.height },
         sourcePosition: graphHandleDirection.sourcePosition,
         targetPosition: graphHandleDirection.targetPosition,
         data: {
@@ -2299,10 +2783,15 @@ export function GraphDiagramView({
           empty: cluster.empty,
           isRenaming: inEdit && renamingSubgraphId === cluster.id,
           canEdit: inEdit,
+          isDropTarget: false,
+          width: cluster.width,
+          height: cluster.height,
           onSelect: () => selectSubgraph(cluster.id),
           onRenameStart: () => startSubgraphRename(cluster.id),
           onRenameCommit: commitSubgraphRename,
           onRenameCancel: cancelSubgraphRename,
+          onResizePreview: (size: ResizeParams) => previewClusterResize(cluster.id, size),
+          onResizeCommit: (size: ResizeParams) => commitClusterResize(cluster.id, size),
         },
         draggable: inEdit && renamingSubgraphId !== cluster.id,
         selectable: inEdit,
@@ -2324,6 +2813,11 @@ export function GraphDiagramView({
             : {}),
         },
       }));
+    // 层级序:overlay 里排过的按 overlay,没排过的按声明次序;分区一律垫底(负 zIndex)。
+    const zOrderIndex = new Map(
+      sortIdsByZOrder(graphNodes.map((item) => item.id), overlay?.zOrders).map((id, index) => [id, index]),
+    );
+    const nodeZIndex = (nodeId: string): number => 1 + (zOrderIndex.get(nodeId) ?? 0);
     const regularNodes = graphNodes.map((node) => {
       const sourceStyle = parsed.model.perNodeStyles?.[node.id];
       const overlayStyle = overlay?.styles?.[node.id];
@@ -2348,6 +2842,9 @@ export function GraphDiagramView({
         position: over ?? auto,
         initialWidth: nodeWidth,
         initialHeight: nodeHeight,
+        // 与 style/initialWidth 同一个数(节点尺寸的唯一真相:源码/overlay 里的宽高);
+        // 声明给 React Flow 的 measured,免得内部尺寸在重建后被清空。
+        measured: { width: nodeWidth, height: nodeHeight },
         sourcePosition: graphHandleDirection.sourcePosition,
         targetPosition: graphHandleDirection.targetPosition,
         handles: graphNodeHandleBounds(nodeWidth, nodeHeight),
@@ -2368,10 +2865,14 @@ export function GraphDiagramView({
           onQuickAdd: (handleId: GraphHandleId) => addConnectedNodeFromHandle(node.id, handleId),
           onResizePreview: (size: ResizeParams) => previewNodeResize(node.id, size),
           onResizeCommit: (size: ResizeParams) => commitNodeResize(node.id, size),
+          onGhostPreviewChange: (active: boolean) => setGhostPreviewActive(node.id, active),
         },
         draggable: inEdit && !isRenaming,
         selectable: inEdit,
         selected: isSelected,
+        // 持久层级 → React Flow zIndex;选中态由 React Flow 自己临时抬高,不写进这里,
+        // 所以取消选中后层级会回到用户设定的那一层。
+        zIndex: nodeZIndex(node.id),
         className: classNames(isSelected && "is-selected", isMoveTarget && "is-parent-target"),
         style: {
           width: nodeWidth,
@@ -2484,8 +2985,11 @@ export function GraphDiagramView({
     selectedNodeId,
     selectedNodeIds,
     selectedSubgraphId,
+    previewClusterResize,
+    commitClusterResize,
     selectEdge,
     selectSubgraph,
+    setGhostPreviewActive,
     startEdgeLabelEdit,
     startRename,
     startSubgraphRename,
@@ -2512,6 +3016,7 @@ export function GraphDiagramView({
               ...node.data,
               isRenaming: false,
               canEdit: false,
+              isDropTarget: false,
             },
           }
     )),
@@ -2553,19 +3058,45 @@ export function GraphDiagramView({
     [moveParentTargetIds, parentPickerNodeId, parsed, runEdit, selectNode, selectSubgraph],
   );
 
+  // 浮动工具栏的唯一归属:同一时刻最多一种元素能出样式工具栏。
+  // 混合选中(节点+连线/分区)一律不出——两个工具栏同时满足渲染条件会在同一位置争抢闪烁;
+  // 批量拖拽/删除/复制不依赖工具栏,照常可用(与多选态从简的口径一致)。
+  const contextKind = useMemo<"node" | "subgraph" | "edge" | null>(() => {
+    const kinds: Array<"node" | "subgraph" | "edge"> = [];
+    if (selectedNodeId) kinds.push("node");
+    if (selectedSubgraphId) kinds.push("subgraph");
+    if (selectedEdgeId) kinds.push("edge");
+    if (kinds.length !== 1) return null;
+    if (selectedNodeIds.length > 1 || selectedEdgeIds.length > 1) return null;
+    if (selectedNodeIds.length > 0 && selectedEdgeIds.length > 0) return null;
+    return kinds[0]!;
+  }, [selectedEdgeId, selectedEdgeIds, selectedNodeId, selectedNodeIds, selectedSubgraphId]);
+
   const contextPosition = useMemo(
-    () => getFloatingPosition({
-      selectedNodeId: selectedNodeId ?? selectedSubgraphId,
-      selectedEdge,
-      nodes,
-      viewport: editViewport,
-      canvasFrame: editCanvasFrame,
-    }),
-    [editCanvasFrame, editViewport, nodes, selectedEdge, selectedNodeId, selectedSubgraphId],
+    // 拖拽中不出浮动工具栏(三个工具栏同门):元素在手上,工具栏跟着飘只会挡视线。
+    () => draggingNodeId || !contextKind
+      ? null
+      : getFloatingPosition({
+          selectedNodeId: selectedNodeId ?? selectedSubgraphId,
+          selectedEdge,
+          nodes,
+          viewport: editViewport,
+          canvasFrame: editCanvasFrame,
+          handlePreviewActive: !!ghostPreviewNodeId && ghostPreviewNodeId === selectedNodeId,
+        }),
+    [contextKind, draggingNodeId, editCanvasFrame, editViewport, ghostPreviewNodeId, nodes, selectedEdge, selectedNodeId, selectedSubgraphId],
   );
   const contextStyle = contextPosition
     ? ({ left: contextPosition.left, top: contextPosition.top } as const)
     : undefined;
+  // 画布拖拽优先级:画框建区 > 平移(手型锁定/空格/右键) > 空白左键框选。
+  // panOnDrag 用按钮数组:2=右键随时可平移(React Flow 会同时吞掉这段的 contextmenu),
+  // 0=左键,只在锁定平移或按住空格时加入。
+  const editorPanOnDrag = useMemo<number[] | false>(() => {
+    if (subgraphDrawMode) return false;
+    return panMode || spacePanning ? [0, 2] : [2];
+  }, [panMode, spacePanning, subgraphDrawMode]);
+  const marqueeEnabled = !subgraphDrawMode && !panMode && !spacePanning;
   const selectedNodeCanAdd = capEnabled(selectedNodeCaps, "addNode");
   const selectedNodeCanDelete = capEnabled(selectedNodeCaps, "deleteNode");
   const selectedNodeCanMove = capEnabled(selectedNodeCaps, "moveNode") && moveParentOptions.length > 0;
@@ -2630,6 +3161,113 @@ export function GraphDiagramView({
     [emitOverlay, isMindmap, parsed.model, runEdit],
   );
 
+  // 拖拽中把"松手能进"的分区边框点亮;只在目标变化时写回,避免每帧重建节点。
+  const applyDropTargetHighlight = useCallback((targetId: string | null) => {
+    setDropTargetSubgraphId((current) => (current === targetId ? current : targetId));
+    setNodes((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        if (item.type !== "graphCluster") return item;
+        const isTarget = item.id === targetId;
+        if (item.data.isDropTarget === isTarget) return item;
+        changed = true;
+        return { ...item, data: { ...item.data, isDropTarget: isTarget } };
+      });
+      return changed ? next : current;
+    });
+  }, []);
+
+  // 多选复制粘贴:复制选中节点集与其互连边,粘贴为整体偏移的新副本并选中副本。
+  const copySelection = useCallback((): boolean => {
+    if (!inEdit) return false;
+    const targetIds = selectedNodeIds.length > 0 ? selectedNodeIds : selectedNodeId ? [selectedNodeId] : [];
+    const picked = targetIds.filter((id) => ids.nodes.has(id));
+    if (picked.length === 0) return false;
+    const pickedSet = new Set(picked);
+    const nodeSnapshots = picked.flatMap((id) => {
+      const modelNode = graphNodes.find((item) => item.id === id);
+      if (!modelNode) return [];
+      const flowNode = nodesRef.current.find((item) => item.id === id);
+      const overlayStyle = overlayRef.current?.styles?.[id];
+      return [{
+        id,
+        label: modelNode.label,
+        shape: copyableFlowShape(modelNode),
+        style: overlayStyle ? { ...overlayStyle } : undefined,
+        position: flowNode ? { ...flowNode.position } : overlayRef.current?.positions?.[id] ?? { x: 0, y: 0 },
+      }];
+    });
+    if (nodeSnapshots.length === 0) return false;
+    clipboardRef.current = {
+      nodes: nodeSnapshots,
+      edges: graphEdges
+        .filter((edge) => pickedSet.has(edge.source) && pickedSet.has(edge.target))
+        .map((edge) => ({ source: edge.source, target: edge.target })),
+    };
+    return true;
+  }, [graphEdges, graphNodes, ids.nodes, inEdit, selectedNodeId, selectedNodeIds]);
+
+  const pasteClipboard = useCallback((): boolean => {
+    const clipboard = clipboardRef.current;
+    if (!inEdit || !clipboard || clipboard.nodes.length === 0) return false;
+    if (!capEnabled(getCapabilities(parseDiagram(liveSourceRef.current)), "addNode")) return false;
+    const idMap: Record<string, string> = {};
+    const positions: Record<string, { x: number; y: number }> = {};
+    const styles: Record<string, NodeStyleOverride> = {};
+    for (const snapshot of clipboard.nodes) {
+      const addResult = runEdit({
+        kind: "addNode",
+        label: snapshot.label,
+        parentId: isMindmap ? findMindmapParentId(parsed.model, snapshot.id) ?? undefined : undefined,
+      });
+      const newNodeId = addResult?.newNodeId;
+      if (!addResult?.ok || !newNodeId) continue;
+      idMap[snapshot.id] = newNodeId;
+      if (snapshot.shape && capEnabled(getCapabilities(parseDiagram(liveSourceRef.current), { nodeId: newNodeId }), "setNodeShape")) {
+        runEdit({ kind: "setNodeShape", nodeId: newNodeId, shape: snapshot.shape });
+      }
+      positions[newNodeId] = {
+        x: Math.round(snapshot.position.x + PASTE_OFFSET),
+        y: Math.round(snapshot.position.y + PASTE_OFFSET),
+      };
+      if (snapshot.style) styles[newNodeId] = { ...snapshot.style };
+    }
+    const newNodeIds = Object.values(idMap);
+    if (newNodeIds.length === 0) return false;
+    for (const edge of clipboard.edges) {
+      const source = idMap[edge.source];
+      const target = idMap[edge.target];
+      if (!source || !target) continue;
+      runEdit({ kind: "connectEdge", source, target });
+    }
+    emitOverlay(
+      {
+        ...(overlayRef.current ?? {}),
+        positions: { ...(overlayRef.current?.positions ?? {}), ...positions },
+        ...(Object.keys(styles).length
+          ? { styles: { ...(overlayRef.current?.styles ?? {}), ...styles } }
+          : {}),
+      },
+      { nodes: newNodeIds },
+    );
+    // 连续粘贴逐次错开,副本不会叠在一起。
+    clipboardRef.current = {
+      ...clipboard,
+      nodes: clipboard.nodes.map((snapshot) => ({
+        ...snapshot,
+        position: { x: snapshot.position.x + PASTE_OFFSET, y: snapshot.position.y + PASTE_OFFSET },
+      })),
+    };
+    setSelectedNodeIds(newNodeIds);
+    setSelectedNodeId(newNodeIds.length === 1 ? newNodeIds[0]! : null);
+    setSelectedEdgeId(null);
+    setSelectedEdgeIds([]);
+    setSelectedSubgraphId(null);
+    setRenamingNodeId(null);
+    setOpenToolbarMenu(null);
+    return true;
+  }, [emitOverlay, inEdit, isMindmap, parsed.model, runEdit]);
+
   const commitDroppedNodes = useCallback((droppedNodes: Node[]) => {
     commitNodePositions(droppedNodes);
     if (!parsed.ok || parsed.model.type !== "flowchart") return;
@@ -2639,7 +3277,8 @@ export function GraphDiagramView({
       if (droppedNode.type === "graphCluster") continue;
       const modelNode = modelNodeById.get(droppedNode.id);
       if (!modelNode) continue;
-      const targetSubgraph = deepestSubgraphAtPoint(graphNodeCenter(droppedNode), clusterNodes);
+      // 与拖拽中高亮同一判定:整块被包住才收编。
+      const targetSubgraph = dropTargetSubgraphFor(droppedNode, clusterNodes);
       const target = targetSubgraph
         ? parsed.model.subgraphs.find((subgraph) => subgraph.id === targetSubgraph)
         : undefined;
@@ -2653,6 +3292,8 @@ export function GraphDiagramView({
     (event: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
       editorRef.current?.focus({ preventScroll: true });
       if (!inEdit) return;
+      // 拖拽期间收起浮动工具栏(选中态不变,只是不跟着飘)。
+      setDraggingNodeId(node.id);
       if (node.type === "graphCluster" && parsed.ok && parsed.model.type === "flowchart") {
         const descendantNodeIds = new Set(
           parsed.model.nodes.filter((item) => item.scopePath.includes(node.id)).map((item) => item.id),
@@ -2706,6 +3347,11 @@ export function GraphDiagramView({
 
   const handleNodeDrag = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
     const clusterState = clusterDragRef.current;
+    if (!clusterState || clusterState.clusterId !== node.id) {
+      // 普通节点拖拽:按"整块被包住"实时点亮目标分区边框(与松手收编同一判定)。
+      const clusters = nodesRef.current.filter((item): item is GraphClusterNode => item.type === "graphCluster");
+      applyDropTargetHighlight(node.type === "graphCluster" ? null : dropTargetSubgraphFor(node, clusters));
+    }
     if (clusterState && clusterState.clusterId === node.id) {
       const dx = node.position.x - clusterState.startPosition.x;
       const dy = node.position.y - clusterState.startPosition.y;
@@ -2733,10 +3379,12 @@ export function GraphDiagramView({
     setNodes((current) =>
       current.map((item) => (constrained[item.id] ? { ...item, position: constrained[item.id]! } : item)),
     );
-  }, []);
+  }, [applyDropTargetHighlight]);
 
   const handleNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
+      setDraggingNodeId(null);
+      applyDropTargetHighlight(null);
       const clusterState = clusterDragRef.current;
       if (clusterState && clusterState.clusterId === node.id) {
         clusterDragRef.current = null;
@@ -2782,7 +3430,7 @@ export function GraphDiagramView({
       }
       commitDroppedNodes(draggedNodes.length > 0 ? draggedNodes : [node]);
     },
-    [commitDroppedNodes, commitNodePositions, duplicateNodeAt],
+    [applyDropTargetHighlight, commitDroppedNodes, commitNodePositions, duplicateNodeAt],
   );
 
   useEffect(() => {
@@ -2791,6 +3439,21 @@ export function GraphDiagramView({
     if (!editor) return;
 
     // DOM 回归测试用入口，避免 jsdom 依赖 d3 全局拖拽状态。
+    // resize 走的是 React Flow 的 dimension change(NodeResizer 拖拽时逐帧发出),
+    // 测试入口按同一格式补发，保证被测路径与真实路径同源。
+    const applyTestResizeDimensions = (nodeId: string, rect: GraphRect) => {
+      onNodesChange([{
+        id: nodeId,
+        type: "dimensions",
+        resizing: true,
+        setAttributes: true,
+        dimensions: {
+          width: clamp(rect.width, NODE_MIN_WIDTH, NODE_MAX_WIDTH),
+          height: clamp(rect.height, NODE_MIN_HEIGHT, NODE_MAX_HEIGHT),
+        },
+      }]);
+    };
+
     const handleTestAction = (event: Event) => {
       const action = (event as CustomEvent<GraphDiagramTestAction>).detail;
       if (!action) return;
@@ -2863,21 +3526,35 @@ export function GraphDiagramView({
         createSubgraphFromRect(action.rect);
         return;
       }
-      if (action.kind === "dropNode") {
+      if (action.kind === "dragNode" || action.kind === "dropNode") {
         const flowNode = nodesRef.current.find((item): item is GraphRegularNode => item.id === action.nodeId && item.type === "graphNode");
         if (!flowNode) return;
         const moved = { ...flowNode, position: action.position };
         setNodes((current) => current.map((item) => (item.id === action.nodeId ? moved : item)));
-        commitDroppedNodes([moved]);
+        // 走与真实拖拽同一组回调,拖拽中态(工具栏隐藏/目标分区高亮)与松手收编都被覆盖。
+        const dragEvent = new MouseEvent("mousemove");
+        if (action.kind === "dragNode") {
+          handleNodeDragStart(dragEvent, moved, [moved]);
+          handleNodeDrag(dragEvent, moved);
+          return;
+        }
+        handleNodeDragStop(dragEvent, moved, [moved]);
         return;
       }
       if (action.kind === "resizeNode") {
+        applyTestResizeDimensions(action.nodeId, action.rect);
         previewNodeResize(action.nodeId, action.rect);
         commitNodeResize(action.nodeId, action.rect);
         return;
       }
       if (action.kind === "resizeNodePreview") {
+        applyTestResizeDimensions(action.nodeId, action.rect);
         previewNodeResize(action.nodeId, action.rect);
+        return;
+      }
+      if (action.kind === "resizeSubgraph") {
+        previewClusterResize(action.subgraphId, action.rect);
+        commitClusterResize(action.subgraphId, action.rect);
         return;
       }
       if (action.kind === "moveSubgraph" && parsed.ok && parsed.model.type === "flowchart") {
@@ -2913,15 +3590,21 @@ export function GraphDiagramView({
     editor.addEventListener("graph-diagram-test-action", handleTestAction);
     return () => editor.removeEventListener("graph-diagram-test-action", handleTestAction);
   }, [
+    commitClusterResize,
     commitDroppedNodes,
     commitNodePositions,
     commitNodeResize,
     duplicateNodeAt,
     graphNodes,
+    handleNodeDrag,
+    handleNodeDragStart,
+    handleNodeDragStop,
     ids.edges,
     ids.nodes,
     inEdit,
+    onNodesChange,
     parsed,
+    previewClusterResize,
     previewNodeResize,
     createSubgraphFromRect,
     runEdit,
@@ -2934,9 +3617,33 @@ export function GraphDiagramView({
         event.preventDefault();
         event.stopPropagation();
         deleteSelection();
+        return;
+      }
+      const hasMod = event.ctrlKey || event.metaKey;
+      if (!hasMod || event.altKey) return;
+      // 层级重排:Ctrl/Cmd+] 上移、+[ 下移,加 Shift 直达顶/底(与撤销重做、复制粘贴不冲突)。
+      if (event.key === "]" || event.key === "[") {
+        const command: ZOrderCommand = event.key === "]"
+          ? (event.shiftKey ? "front" : "raise")
+          : (event.shiftKey ? "back" : "lower");
+        event.preventDefault();
+        event.stopPropagation();
+        applyZOrder(command);
+        return;
+      }
+      const key = event.key.toLowerCase();
+      // Ctrl/Cmd+C 复制选中节点集(含互连边),Ctrl/Cmd+V 粘贴为整体偏移的副本。
+      if (key === "c" && copySelection()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (key === "v" && pasteClipboard()) {
+        event.preventDefault();
+        event.stopPropagation();
       }
     },
-    [deleteSelection],
+    [applyZOrder, copySelection, deleteSelection, pasteClipboard],
   );
 
   if (!parsed.ok) {
@@ -3038,8 +3745,8 @@ export function GraphDiagramView({
               selectionKeyCode={["Control", "Meta"]}
               multiSelectionKeyCode={["Control", "Meta"]}
               selectionMode={SelectionMode.Partial}
-              selectionOnDrag={false}
-              panOnDrag={!subgraphDrawMode && (panMode || spacePanning)}
+              selectionOnDrag={marqueeEnabled}
+              panOnDrag={editorPanOnDrag}
               proOptions={{ hideAttribution: true }}
               zoomOnDoubleClick={false}
               // 关掉拖节点时的自动平移:alt 拖拽复制会把源节点钉在原位,但 React Flow 的拖拽仍"活跃",
@@ -3078,7 +3785,7 @@ export function GraphDiagramView({
               }}
             >
               <FitOnNodesInitialized />
-              <Background color="#d8c9a8" gap={18} />
+              <Background id={`${backgroundIdBase}-editor`} color="#d8c9a8" gap={18} />
               <GraphViewportControls
                 showHistory
                 onUndo={onUndo}
@@ -3104,7 +3811,7 @@ export function GraphDiagramView({
               )}
             </ReactFlow>
           </div>
-          {selectedSubgraph && contextPosition && renamingSubgraphId !== selectedSubgraph.id && (
+          {contextKind === "subgraph" && selectedSubgraph && contextPosition && renamingSubgraphId !== selectedSubgraph.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--subgraph",
@@ -3134,20 +3841,21 @@ export function GraphDiagramView({
                   openMenu={openToolbarMenu}
                   onToggle={setOpenToolbarMenu}
                 />
-                <button
-                  type="button"
-                  className="graph-diagram-toolbar__button"
-                  aria-label="解散分区"
-                  title="解散分区"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    dissolveSelectedSubgraph();
-                  }}
-                >
-                  <CanvasToolIcon name="dissolve" />
-                </button>
+                <ToolbarDropdownButton
+                  menu="subgraph-more"
+                  label="…更多"
+                  icon="more"
+                  openMenu={openToolbarMenu}
+                  onToggle={setOpenToolbarMenu}
+                />
               </div>
+              {openToolbarMenu === "subgraph-more" && (
+                <div className="graph-diagram-popover graph-diagram-popover--menu dt-menu" role="menu" aria-label="分区更多操作">
+                  {/* 与节点侧「删除节点」同一套菜单项(危险项红字);外层工具栏容器已吞掉
+                      mousedown/pointerdown,焦点不会被抢走,这里按菜单惯例走 onClick。 */}
+                  <MenuActionButton label="解散分区" shortcut="Del" disabled={false} danger onClick={dissolveSelectedSubgraph} />
+                </div>
+              )}
               {openToolbarMenu === "subgraph-fill" && (
                 <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="分区填充设置">
                   <ColorControl
@@ -3172,7 +3880,7 @@ export function GraphDiagramView({
               )}
             </div>
           )}
-          {selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
+          {contextKind === "node" && selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--node",
@@ -3200,7 +3908,9 @@ export function GraphDiagramView({
                       menu="node-shape"
                       label="形状"
                       icon="shape"
-                      valueLabel={NODE_SHAPE_LABELS[selectedNodeShape]}
+                      // 触发钮直接显示当前形状,不再靠文字标签占宽。
+                      iconNode={<NodeShapeGlyph shape={selectedNodeShape} />}
+                      valueLabel={undefined}
                       disabled={!selectedNodeCanShape}
                       openMenu={openToolbarMenu}
                       onToggle={setOpenToolbarMenu}
@@ -3211,58 +3921,30 @@ export function GraphDiagramView({
                     <ToolbarDropdownButton menu="node-more" label="…更多" icon="more" openMenu={openToolbarMenu} onToggle={setOpenToolbarMenu} />
                   </div>
                   {openToolbarMenu === "node-shape" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="形状选择">
-                      <div className="graph-diagram-shape-grid" aria-label="节点形状">
-                        {NODE_SHAPE_OPTIONS.map((item) => (
-                          <button
-                            key={item.shape}
-                            type="button"
-                            className={classNames("graph-diagram-shape-btn dt-mi", selectedNodeShape === item.shape && "is-active")}
-                            disabled={!selectedNodeCanShape}
-                            aria-pressed={selectedNodeShape === item.shape}
-                            onClick={() => {
-                              setSelectedNodeShape(item.shape);
-                              setOpenToolbarMenu(null);
-                            }}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <NodeShapePopover
+                      shape={selectedNodeShape}
+                      disabled={!selectedNodeCanShape}
+                      onSelect={(shape) => {
+                        setSelectedNodeShape(shape);
+                        setOpenToolbarMenu(null);
+                      }}
+                    />
                   )}
                   {openToolbarMenu === "node-fill" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="填充设置">
-                      <ColorControl
-                        label="填充色"
-                        value={selectedNodeStyle?.fill ?? DEFAULT_NODE_FILL}
-                        disabled={!selectedNodeCanStyle}
-                        swatches={NODE_FILL_COLORS}
-                        opacityLabel="填充不透明度"
-                        onChange={(fill) => updateNodeStyle({ fill })}
-                      />
-                    </div>
+                    <NodeFillPopover
+                      value={selectedNodeStyle?.fill ?? DEFAULT_NODE_FILL}
+                      disabled={!selectedNodeCanStyle}
+                      onChange={(fill) => updateNodeStyle({ fill })}
+                    />
                   )}
                   {openToolbarMenu === "node-border" && (
-                    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="边框设置">
-                      <ColorControl
-                        label="边框色"
-                        value={selectedNodeStyle?.stroke ?? DEFAULT_NODE_STROKE}
-                        disabled={!selectedNodeCanStyle}
-                        swatches={NODE_STROKE_COLORS}
-                        onChange={(stroke) => updateNodeStyle({ stroke })}
-                      />
-                      <NumberRangeControl
-                        label="边框粗细"
-                        inputLabel="边框粗细(px)"
-                        disabled={!selectedNodeCanStyle}
-                        value={selectedNodeStyle?.strokeWidth ?? 1.5}
-                        min={NODE_STROKE_WIDTH_RANGE.min}
-                        max={NODE_STROKE_WIDTH_RANGE.max}
-                        step={NODE_STROKE_WIDTH_RANGE.step}
-                        onChange={(strokeWidth) => updateNodeStyle({ strokeWidth })}
-                      />
-                    </div>
+                    <NodeBorderPopover
+                      value={selectedNodeStyle?.stroke ?? DEFAULT_NODE_STROKE}
+                      strokeWidth={selectedNodeStyle?.strokeWidth ?? 1.5}
+                      dashArray={selectedNodeStyle?.dashArray}
+                      disabled={!selectedNodeCanStyle}
+                      onChange={updateNodeStyle}
+                    />
                   )}
                   {openToolbarMenu === "node-text" && (
                     <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="文字设置">
@@ -3287,7 +3969,13 @@ export function GraphDiagramView({
                   )}
                   {openToolbarMenu === "node-more" && (
                     <div className="graph-diagram-popover graph-diagram-popover--menu dt-menu" role="menu" aria-label="节点更多操作">
-                      <MenuActionButton label={isMindmap ? "加子节点" : "新增节点"} shortcut={isMindmap ? "Tab" : "N"} disabled={!selectedNodeCanAdd} onClick={addNode} />
+                      {/* flowchart 的"新增节点"与把手加号、底部工具栏重复,菜单里不再重复出;
+                          mindmap 无等价把手路径,保留"加子节点"。 */}
+                      {isMindmap && <MenuActionButton label="加子节点" shortcut="Tab" disabled={!selectedNodeCanAdd} onClick={addNode} />}
+                      <MenuActionButton label="上移一层" shortcut="Ctrl+]" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("raise")} />
+                      <MenuActionButton label="下移一层" shortcut="Ctrl+[" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("lower")} />
+                      <MenuActionButton label="移到顶层" shortcut="Ctrl+⇧+]" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("front")} />
+                      <MenuActionButton label="移到底层" shortcut="Ctrl+⇧+[" disabled={!selectedNodeCanStyle} onClick={() => applyZOrder("back")} />
                       {isMindmap && <MenuActionButton label="改父" shortcut="M" disabled={!selectedNodeCanMove} onClick={beginParentPicker} />}
                       <MenuActionButton label="重置样式" shortcut="⌥R" disabled={!selectedNodeCanStyle} onClick={resetNodeStyle} />
                       <MenuActionButton label="删除节点" shortcut="Del" disabled={!selectedNodeCanDelete} danger onClick={deleteSelectedNode} />
@@ -3297,7 +3985,7 @@ export function GraphDiagramView({
               )}
             </div>
           )}
-          {selectedEdge && contextPosition && editingEdgeLabelId !== selectedEdge.id && (
+          {contextKind === "edge" && selectedEdge && contextPosition && editingEdgeLabelId !== selectedEdge.id && (
             <div
               className={classNames(
                 "graph-diagram-context graph-diagram-toolbar doc-toolbar on graph-diagram-context--edge",
@@ -3424,7 +4112,7 @@ export function GraphDiagramView({
               nodesDraggable={false}
               nodesConnectable={false}
               elementsSelectable={false}
-              panOnDrag={panMode}
+              panOnDrag={viewerPanMode ? [0, 2] : [2]}
               deleteKeyCode={null}
               proOptions={{ hideAttribution: true }}
               zoomOnDoubleClick={false}
@@ -3432,11 +4120,11 @@ export function GraphDiagramView({
               onEdgesChange={onEdgesChange}
             >
               <FitOnNodesInitialized />
-              <Background color="#d8c9a8" gap={18} />
+              <Background id={`${backgroundIdBase}-fullscreen`} color="#d8c9a8" gap={18} />
               <GraphViewportControls
                 showHistory={false}
-                panMode={panMode}
-                onPanModeChange={setPanMode}
+                panMode={viewerPanMode}
+                onPanModeChange={setViewerPanMode}
               />
             </ReactFlow>
           </div>
@@ -3472,7 +4160,7 @@ export function GraphDiagramView({
           onPaneClick={clearSelection}
         >
           <FitPreviewOnLayoutApplied expectedLayoutKey={previewFitKey} />
-          <Background color="#d8c9a8" gap={18} />
+          <Background id={`${backgroundIdBase}-preview`} color="#d8c9a8" gap={18} />
           <GraphPreviewToolbar
             readOnly={readOnly}
             align={align}
@@ -3494,6 +4182,7 @@ function ToolbarDropdownButton({
   menu,
   label,
   icon,
+  iconNode,
   swatchColor,
   valueLabel,
   disabled = false,
@@ -3503,6 +4192,7 @@ function ToolbarDropdownButton({
   menu: ToolbarMenu;
   label: string;
   icon: IconName;
+  iconNode?: ReactNode;
   swatchColor?: string;
   valueLabel?: string;
   disabled?: boolean;
@@ -3522,9 +4212,10 @@ function ToolbarDropdownButton({
       onClick={() => onToggle(active ? null : menu)}
       data-swatch-color={swatchColor}
     >
-      <GraphIcon name={icon} color={swatchColor} />
+      {iconNode ?? <GraphIcon name={icon} color={swatchColor} />}
       {valueLabel ? <span className="graph-diagram-toolbar__value">{valueLabel}</span> : null}
-      <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>
+      {/* 「…」溢出钮本身就是"更多"的语义,再挂一个下拉尖角是重复噪点。 */}
+      {icon === "more" ? null : <span className="graph-diagram-toolbar__caret" aria-hidden="true">▾</span>}
     </button>
   );
 }
@@ -3694,6 +4385,264 @@ function MenuActionButton({
   );
 }
 
+/** 色板:两行色样 +(可选)首格「无」+ 末位「+」自定义色;透明度以颜色 alpha 承载。 */
+function SwatchPalette({
+  label,
+  value,
+  rows,
+  disabled,
+  noneLabel,
+  onSelect,
+  onSelectNone,
+}: {
+  label: string;
+  value: string;
+  rows: string[][];
+  disabled: boolean;
+  noneLabel?: string;
+  onSelect: (color: string) => void;
+  onSelectNone?: () => void;
+}) {
+  const opaqueValue = toOpaqueHex(value);
+  const isNone = colorOpacityPercent(value) === 0;
+  // 色样直接复用正文工具栏的 dt-swatch 体系(正圆色块 + 22px 网格 + 同一套 hover/焦点态),
+  // 图表这边只补"当前选中"的描边,不再自造一套色样样式。
+  return (
+    <div className="graph-diagram-swatch-panel" aria-label={`${label}色板`}>
+      {rows.map((row, rowIndex) => (
+        <div className="dt-swatch-grid" key={`row-${rowIndex}`}>
+          {rowIndex === 0 && noneLabel && onSelectNone ? (
+            <button
+              type="button"
+              className={classNames("dt-swatch dt-swatch-clear", isNone && "is-active")}
+              disabled={disabled}
+              aria-label={noneLabel}
+              aria-pressed={isNone}
+              title={noneLabel}
+              onClick={onSelectNone}
+            >
+              <span className="dt-color-none" />
+            </button>
+          ) : null}
+          {row.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={classNames("dt-swatch", !isNone && opaqueValue === color && "is-active")}
+              disabled={disabled}
+              aria-label={`${label} ${color}`}
+              aria-pressed={!isNone && opaqueValue === color}
+              title={color}
+              onClick={() => onSelect(color)}
+            >
+              <span className="dt-swatch-chip" style={{ background: color, borderColor: color }} />
+            </button>
+          ))}
+          {rowIndex === rows.length - 1 ? (
+            <label className="dt-swatch graph-diagram-swatch-custom" title="自定义颜色">
+              <span className="dt-swatch-chip" aria-hidden="true">+</span>
+              <input
+                type="color"
+                aria-label={label}
+                value={opaqueValue}
+                disabled={disabled}
+                onChange={(event) => onSelect(event.currentTarget.value)}
+              />
+            </label>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NodeFillPopover({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (fill: string) => void;
+}) {
+  const opacityPercent = colorOpacityPercent(value);
+  return (
+    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="填充设置">
+      <SwatchPalette
+        label="填充色"
+        value={value}
+        rows={NODE_FILL_COLOR_ROWS}
+        disabled={disabled}
+        noneLabel="无填充"
+        onSelect={(color) => onChange(applyPaletteColor(color, opacityPercent))}
+        onSelectNone={() => onChange(`${toOpaqueHex(value)}00`)}
+      />
+      <NumberRangeControl
+        label="不透明度"
+        inputLabel="填充不透明度"
+        disabled={disabled}
+        value={opacityPercent}
+        min={0}
+        max={100}
+        step={1}
+        unit="%"
+        onChange={(percent) => onChange(withColorOpacity(toOpaqueHex(value), percent))}
+      />
+    </div>
+  );
+}
+
+function NodeBorderPopover({
+  value,
+  strokeWidth,
+  dashArray,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  strokeWidth: number;
+  dashArray: string | undefined;
+  disabled: boolean;
+  onChange: (patch: NodeStyleOverride) => void;
+}) {
+  const opacityPercent = colorOpacityPercent(value);
+  const isNone = opacityPercent === 0;
+  const activeDash = matchBorderDashKey(dashArray);
+  // 选线型时若当前是"无边框"(alpha 0),顺手把边框恢复成不透明,否则点了没反应。
+  const restoredColor = isNone ? toOpaqueHex(value) : value;
+  return (
+    <div className="graph-diagram-popover dt-menu" role="dialog" aria-label="边框设置">
+      <div className="graph-diagram-popover__title">边框样式</div>
+      <div className="graph-diagram-option-row" role="group" aria-label="边框线型">
+        <button
+          type="button"
+          className={classNames("graph-diagram-option-btn", isNone && "is-active")}
+          disabled={disabled}
+          aria-label="无边框"
+          aria-pressed={isNone}
+          title="无边框"
+          onClick={() => onChange({ stroke: `${toOpaqueHex(value)}00` })}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M5 19 19 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+        {NODE_BORDER_DASH_OPTIONS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            className={classNames("graph-diagram-option-btn", !isNone && activeDash === option.key && "is-active")}
+            disabled={disabled}
+            aria-label={option.label}
+            aria-pressed={!isNone && activeDash === option.key}
+            title={option.label}
+            onClick={() => onChange({ dashArray: option.dashArray, stroke: restoredColor })}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M4 12h16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                {...(option.key === "dashed" ? { strokeDasharray: "6 4" } : {})}
+                {...(option.key === "dotted" ? { strokeDasharray: "2 4" } : {})}
+              />
+            </svg>
+          </button>
+        ))}
+      </div>
+      <div className="graph-diagram-option-row" role="group" aria-label="边框粗细">
+        {NODE_BORDER_WIDTH_OPTIONS.map((width) => (
+          <button
+            key={width}
+            type="button"
+            className={classNames("graph-diagram-option-btn", Math.round(strokeWidth) === width && "is-active")}
+            disabled={disabled}
+            aria-label={`边框粗细 ${width}px`}
+            aria-pressed={Math.round(strokeWidth) === width}
+            title={`${width}px`}
+            onClick={() => onChange({ strokeWidth: width, stroke: restoredColor })}
+          >
+            <span className="graph-diagram-width-dot" style={{ width: width * 2 + 2, height: width * 2 + 2 }} />
+          </button>
+        ))}
+      </div>
+      <div className="graph-diagram-popover__divider" aria-hidden="true" />
+      <SwatchPalette
+        label="边框色"
+        value={value}
+        rows={NODE_STROKE_COLOR_ROWS}
+        disabled={disabled}
+        onSelect={(color) => onChange({ stroke: applyPaletteColor(color, opacityPercent) })}
+      />
+      <NumberRangeControl
+        label="不透明度"
+        inputLabel="边框不透明度"
+        disabled={disabled}
+        value={opacityPercent}
+        min={0}
+        max={100}
+        step={1}
+        unit="%"
+        onChange={(percent) => onChange({ stroke: withColorOpacity(toOpaqueHex(value), percent) })}
+      />
+    </div>
+  );
+}
+
+function NodeShapePopover({
+  shape,
+  disabled,
+  onSelect,
+}: {
+  shape: GraphNodeShape;
+  disabled: boolean;
+  onSelect: (shape: FlowNodeShape) => void;
+}) {
+  return (
+    <div className="graph-diagram-popover graph-diagram-popover--shape dt-menu" role="dialog" aria-label="形状选择">
+      <div className="graph-diagram-popover__title">更改图形</div>
+      <div className="graph-diagram-shape-grid" aria-label="节点形状">
+        {NODE_SHAPE_OPTIONS.map((item) => (
+          <button
+            key={item.shape}
+            type="button"
+            className={classNames("graph-diagram-shape-btn dt-mi", shape === item.shape && "is-active")}
+            disabled={disabled}
+            aria-label={item.label}
+            aria-pressed={shape === item.shape}
+            title={item.label}
+            onClick={() => onSelect(item.shape)}
+          >
+            <NodeShapeGlyph shape={item.shape} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 形状迷你预览:与画布同一套几何,只是换一套适配深色浮层的描边填充。 */
+function NodeShapeGlyph({ shape }: { shape: GraphNodeShape }) {
+  return (
+    <svg className="graph-diagram-shape-glyph" viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      {renderShapeSvg(shape)}
+    </svg>
+  );
+}
+
+function matchBorderDashKey(dashArray: string | undefined): "solid" | "dashed" | "dotted" {
+  const normalized = (dashArray ?? "").trim();
+  if (!normalized) return "solid";
+  return NODE_BORDER_DASH_OPTIONS.find((option) => option.dashArray === normalized)?.key ?? "dashed";
+}
+
+/** 从色板选色:当前是全透明(无填充/无边框)时恢复成不透明,否则沿用现有透明度。 */
+function applyPaletteColor(color: string, opacityPercent: number): string {
+  return withColorOpacity(color, opacityPercent > 0 ? opacityPercent : 100);
+}
+
 function ColorControl({
   label,
   value,
@@ -3726,17 +4675,26 @@ function ColorControl({
             onChange={(event) => applyColor(event.currentTarget.value)}
           />
         </label>
-        <div className="graph-diagram-swatch-group">
+        {/* 分区/连线/文字弹层的色样同样走 dt-swatch 体系,全站只维护一套色样样式。 */}
+        <div className="dt-swatch-grid">
           {swatches.map((color) => (
             <button
               key={color}
               type="button"
-              className="graph-diagram-swatch"
-              style={{ background: withColorOpacity(color, opacityLabel ? opacityPercent : 100) }}
+              className={classNames("dt-swatch", toOpaqueHex(value) === color && "is-active")}
               disabled={disabled}
               aria-label={`${label} ${color}`}
+              title={color}
               onClick={() => applyColor(color)}
-            />
+            >
+              <span
+                className="dt-swatch-chip"
+                style={{
+                  background: withColorOpacity(color, opacityLabel ? opacityPercent : 100),
+                  borderColor: color,
+                }}
+              />
+            </button>
           ))}
         </div>
       </div>
@@ -3839,9 +4797,14 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
   useEffect(() => {
     if (!active || !canvasEl || typeof ResizeObserver === "undefined") return;
     let raf = 0;
+    let fittedSize: string | null = null;
     const update = () => {
       const rect = canvasEl.getBoundingClientRect();
       onCanvasFrameChange?.({ width: rect.width, height: rect.height, left: rect.left, top: rect.top });
+      // 容器尺寸没变就别重新 fit:用户手动缩放/平移过的视角要留着。
+      const sizeKey = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+      if (fittedSize === sizeKey) return;
+      fittedSize = sizeKey;
       rfRef.current?.fitView({ padding: 0.15, maxZoom: 1 });
     };
     const ro = new ResizeObserver(() => {
@@ -3981,27 +4944,14 @@ function renderShapeSvg(shape: GraphNodeShape) {
     strokeWidth: "var(--graph-node-stroke-width)",
     vectorEffect: "non-scaling-stroke",
   } satisfies CSSProperties;
-  const hoverRingStyle = {
-    fill: "none",
-    stroke: "#8f6d30",
-    strokeWidth: 2.5,
-    vectorEffect: "non-scaling-stroke",
-  } satisfies CSSProperties;
-  const selectionRingStyle = {
-    fill: "none",
-    stroke: "#8f6d30",
-    strokeWidth: 3,
-    vectorEffect: "non-scaling-stroke",
-  } satisfies CSSProperties;
-
+  // 选中/悬停指示不再跟随形状轮廓描粗线(那会压在元素自己的边框上,改边框色看不见),
+  // 改由外壳的包围盒指示环(CSS ::before)承担,与 resize 四角把手同一圈。
   return (
     <>
       <path className="graph-diagram-node-shape-fill" d={geometry.outlinePath} style={shapeStyle} />
       {geometry.detailPaths.map((path, index) => (
         <path key={`${shape}-detail-${index}`} className="graph-diagram-node-shape-detail" d={path} style={lineStyle} />
       ))}
-      <path className="graph-diagram-node-selection-ring" d={geometry.outlinePath} style={selectionRingStyle} />
-      <path className="graph-diagram-node-hover-ring" d={geometry.outlinePath} style={hoverRingStyle} />
     </>
   );
 }
@@ -4067,12 +5017,12 @@ function handlePosition(handleId: GraphHandleId): Position {
 function quickAddNodePosition(sourceNode: Node, handleId: GraphHandleId): { x: number; y: number } {
   const width = sourceNode.measured?.width ?? sourceNode.width ?? NODE_WIDTH;
   const height = sourceNode.measured?.height ?? sourceNode.height ?? NODE_HEIGHT;
-  const gapX = width + 96;
-  const gapY = height + 88;
-  if (handleId === "r") return { x: Math.round(sourceNode.position.x + gapX), y: Math.round(sourceNode.position.y) };
-  if (handleId === "l") return { x: Math.round(sourceNode.position.x - gapX), y: Math.round(sourceNode.position.y) };
-  if (handleId === "b") return { x: Math.round(sourceNode.position.x), y: Math.round(sourceNode.position.y + gapY) };
-  return { x: Math.round(sourceNode.position.x), y: Math.round(sourceNode.position.y - gapY) };
+  // 与幽灵预览同一套几何:所见即所得,点一下就是把预览固化。
+  const { offset } = quickAddGhostGeometry(width, height, handleId);
+  return {
+    x: Math.round(sourceNode.position.x + offset.x),
+    y: Math.round(sourceNode.position.y + offset.y),
+  };
 }
 
 function findAddedEdgeId(oldSource: string, newSource: string, sourceId: string, targetId: string): string | null {
@@ -4245,6 +5195,34 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return tag === "input" || tag === "textarea" || tag === "select";
 }
 
+// 注意:本文件的 Node 是 React Flow 的节点类型,DOM 节点必须显式取全局类型。
+type CaretDocument = Document & {
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: globalThis.Node; offset: number } | null;
+};
+
+/** 把光标放到给定屏幕坐标处;拿不到落点(如 jsdom 无该 API)时返回 false,交回浏览器默认行为。 */
+export function placeCaretAtPoint(el: HTMLElement, clientX: number, clientY: number): boolean {
+  const doc = el.ownerDocument as CaretDocument;
+  const selection = doc.defaultView?.getSelection?.();
+  if (!selection) return false;
+  let range: Range | null = null;
+  if (typeof doc.caretRangeFromPoint === "function") {
+    range = doc.caretRangeFromPoint(clientX, clientY);
+  } else if (typeof doc.caretPositionFromPoint === "function") {
+    const caret = doc.caretPositionFromPoint(clientX, clientY);
+    if (caret) {
+      range = doc.createRange();
+      range.setStart(caret.offsetNode, caret.offset);
+    }
+  }
+  if (!range || !el.contains(range.startContainer)) return false;
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
 function selectEditableContents(el: HTMLElement): void {
   const selection = window.getSelection();
   if (!selection) return;
@@ -4264,12 +5242,14 @@ export function getFloatingPosition({
   nodes,
   viewport,
   canvasFrame,
+  handlePreviewActive = false,
 }: {
   selectedNodeId: string | null;
   selectedEdge: DiagramBaseEdge | undefined;
   nodes: Node[];
   viewport: Viewport;
   canvasFrame: CanvasFrame;
+  handlePreviewActive?: boolean;
 }): { left: number; top: number; placement: FloatingPlacement } | null {
   const selectedNode = selectedNodeId ? nodes.find((node) => node.id === selectedNodeId) : undefined;
   let flowX = 0;
@@ -4293,9 +5273,9 @@ export function getFloatingPosition({
   const leftMin = canvasFrame.left + 156;
   const leftMax = canvasFrame.left + Math.max(156, width - 156);
   const left = clamp(screenX, leftMin, leftMax);
-  // 四向快速新增会在节点外侧铺一层幽灵节点；工具栏需越过这层操作区，
-  // 否则顶部把手刚变成加号就会被工具栏截住。
-  const handlePreviewClearance = selectedNode ? 116 : 14;
+  // 常态贴近元素(只让开圆点/加号那一小圈);只有把手悬停真的铺出幽灵预览时才临时让位,
+  // 不为偶发态永久买单(旧实现常态就顶着 116px,工具栏离元素太远)。
+  const handlePreviewClearance = selectedNode ? (handlePreviewActive ? GHOST_PREVIEW_CLEARANCE : NODE_TOOLBAR_CLEARANCE) : 14;
   const topAbove = screenY - handlePreviewClearance;
   // 选"above"时,工具栏在元素上方,其二级下拉(popover)还会再向上展开 ~一屏高度;
   // 只留工具栏自身高度(~70)会让靠顶部的下拉越出视口被裁切(实测 y 为负)。
@@ -4343,7 +5323,8 @@ function colorOpacityPercent(value: string): number {
 function withColorOpacity(color: string, opacityPercent: number): string {
   const normalized = normalizeHex(color) ?? "#000000";
   const opaque = normalized.slice(0, 7);
-  const percent = clamp(Math.round(opacityPercent), 10, 100);
+  // 0% 用于"无填充/无边框"(alpha 00),故下界放到 0。
+  const percent = clamp(Math.round(opacityPercent), 0, 100);
   if (percent >= 100) return opaque;
   const alpha = Math.round((percent / 100) * 255).toString(16).padStart(2, "0");
   return `${opaque}${alpha}`;
@@ -4368,11 +5349,13 @@ function remapSelectedId(id: string | null, idMap: Record<string, string> | unde
 function cleanOverlay(overlay: DiagramOverlay, nodeIds: Set<string>, edgeIds: Set<string>): DiagramOverlay {
   const positions = filterRecord(overlay.positions, nodeIds);
   const styles = filterRecord(overlay.styles, nodeIds);
+  const zOrders = filterRecord(overlay.zOrders, nodeIds);
   const edgeStyles = filterRecord(overlay.edgeStyles, edgeIds);
   const edgeHandles = filterRecord(overlay.edgeHandles, edgeIds);
   return {
     ...(positions ? { positions } : {}),
     ...(styles ? { styles } : {}),
+    ...(zOrders ? { zOrders } : {}),
     ...(edgeStyles ? { edgeStyles } : {}),
     ...(edgeHandles ? { edgeHandles } : {}),
   };
@@ -4388,5 +5371,5 @@ function filterRecord<T>(record: Record<string, T> | undefined, allowed: Set<str
 }
 
 function isOverlayEmpty(overlay: DiagramOverlay): boolean {
-  return !overlay.positions && !overlay.styles && !overlay.edgeStyles && !overlay.edgeHandles;
+  return !overlay.positions && !overlay.styles && !overlay.zOrders && !overlay.edgeStyles && !overlay.edgeHandles;
 }

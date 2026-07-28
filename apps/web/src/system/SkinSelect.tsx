@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "./useAnchoredPopover";
+import { useOverlayDismiss } from "./overlayDismissStack";
 import "./skinControls.css";
 
 export interface SkinSelectOption {
@@ -74,6 +75,12 @@ export function SkinSelect({
   useEffect(() => {
     if (!open) setActiveIndex(selectedIndex);
   }, [open, selectedIndex]);
+
+  // 开着时进浮层关闭栈:Esc 由外层弹层的守卫统一弹栈关闭,焦点不在触发器上也能关
+  useOverlayDismiss(open, () => {
+    close();
+    anchorRef.current?.focus();
+  });
 
   const choose = (index: number) => {
     const option = options[index];

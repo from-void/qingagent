@@ -2,7 +2,7 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import type { RequestContext } from "@mastra/core/request-context";
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { streamText } from "../llm/streamTextCompat.js";
-import { withDtypeCommonConstraints } from "../derivatives/dtypeTemplatePrompts.js";
+import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
   getDerivativeMeta,
   getDocumentsClient,
@@ -29,6 +29,8 @@ interface TranslationBrief {
   targetLang: string;
   writingPrompt: string;
   privatePrompt: string;
+  /** translate 子技能纪律;母技能停用时为内置最小纪律。 */
+  skillGuidance: string;
   sourceTitle: string;
   sourceText: string;
 }
@@ -129,10 +131,13 @@ async function loadTranslationBrief(sessionId: string, docId: string): Promise<T
   });
   const source = sourceResult.rows[0];
   if (!source) throw new Error("translation source unavailable");
+  // 纪律层来自 derivative-writing/translate 子技能,模板层来自 DB,两层在装配处合流。
+  const guidance = await loadDerivativeGuidance("translate");
   return {
     targetLang: meta.targetLang,
-    writingPrompt: withDtypeCommonConstraints("translate", writing.prompt),
+    writingPrompt: writing.prompt,
     privatePrompt: meta.privatePrompt,
+    skillGuidance: guidance.text,
     sourceTitle: String(source.title),
     sourceText: pmToPlainText(parsePmDoc(source.doc_pm)),
   };
@@ -140,8 +145,9 @@ async function loadTranslationBrief(sessionId: string, docId: string): Promise<T
 
 export function buildTranslationSteeringTail(brief: TranslationBrief): string {
   const privatePrompt = brief.privatePrompt.trim() || "无";
+  const guidance = brief.skillGuidance.trim();
   return `不要调用任何工具。你正在把一篇完整文档翻译成${brief.targetLang}。
-
+${guidance ? `\n执行纪律（逐条遵守）：\n${guidance}\n` : ""}
 翻译风格要求：
 ${brief.writingPrompt}
 

@@ -169,8 +169,10 @@
 }
 .qj-sheet-body{
   flex:1 1 auto;min-height:0;overflow-y:auto;
-  /* 底部留 ~3 行 buffer:内容不贴底被渐隐截断,且都能往上滚出空间 */
-  padding:8px 8px 60px 0;
+  /* 底部留 ~3 行 buffer:内容不贴底被渐隐截断,且都能往上滚出空间。
+     左侧留 6px:满宽输入框的聚焦圈(outline 2px + offset 2px)要完整可见,
+     否则会被这个滚动容器在左缘裁掉半圈(右侧本就有 8px)。 */
+  padding:8px 8px 60px 6px;
   border:0;
   border-radius:0;
   background:transparent;
@@ -221,7 +223,7 @@
 .qj-appear .qj-swatch::before{display:none}
 
 /* —— 技能 tab:卡片网格 —— */
-.qj-sheet-body .sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:2px 6px 0 0}
+.qj-sheet-body .sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:2px 6px 0 0;align-items:stretch}
 .qj-sheet-body .sk-card{
   display:flex;flex-direction:column;gap:7px;min-width:0;text-align:left;
   padding:11px 13px;border-radius:0;
@@ -242,10 +244,14 @@
 /* 头部:标题在左,开关在右上 */
 .qj-sheet-body .sk-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .qj-sheet-body .sk-card-icon{flex:0 0 auto;width:18px;height:18px;color:var(--qj-cinnabar)}
-.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13px;font-weight:700;color:var(--qj-ink);line-height:1.2}
+.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13.5px;font-weight:700;color:var(--qj-ink);line-height:1.2}
 .qj-sheet-body .sk-card-tag{font-size:9.5px;font-style:normal;color:var(--qj-header-sub);border:1px solid var(--qj-switch-border);border-radius:0;padding:1px 5px;white-space:nowrap}
 /* 一句话简介:列表态压成单行 */
-.qj-sheet-body .sk-card-summary{margin:0;font-size:13px;line-height:1.5;color:var(--ink-desc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 简介比标题小一档,最多两行;配合删掉子技能徽标,列表卡自然等高 */
+.qj-sheet-body .sk-card-summary{margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-desc);
+  /* 固定两行高度:一行的技能也占两行位,整格网卡片严格等高 */
+  min-height:calc(11.5px * 1.6 * 2);
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 /* 描述:最多三行 */
 .qj-sheet-body .sk-card-desc{margin:0;font-size:13px;line-height:1.6;color:var(--ink-desc);
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -319,6 +325,7 @@
 .qj-sheet-body .sk-label-input:focus{border-color:var(--qj-cinnabar)}
 .qj-sheet-body .sk-label-save{flex:0 0 auto;height:30px;padding:0 10px;border-radius:0;cursor:pointer;border:1px solid var(--qj-cinnabar);background:var(--qj-switch-active-bg);color:var(--qj-ink);font:inherit;font-size:10.5px;font-weight:700;font-family:var(--font-zh-serif)}
 .qj-sheet-body .sk-label-save:disabled{opacity:.5;cursor:default;border-color:var(--qj-switch-border);background:rgba(236,227,208,.04);color:var(--qj-header-sub)}
+/* 正文不再内嵌独立滚动区:整页单滚动轴,一路往下能顺畅滚到子技能与删除入口 */
 .qj-sheet-body .sk-md-body{
   border:1px solid var(--qj-switch-border);
   background:rgba(8,11,14,.32);
@@ -328,8 +335,6 @@
   font-size:12px;
   line-height:1.85;
   color:var(--qj-switch-text);
-  max-height:210px;
-  overflow-y:auto;
 }
 .qj-sheet-body .sk-md-body h4{margin:12px 0 4px;font-size:12.5px;font-weight:800;color:var(--qj-ink)}
 .qj-sheet-body .sk-md-body h4:first-child{margin-top:0}

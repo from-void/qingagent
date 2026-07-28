@@ -30,8 +30,8 @@ function response(body: unknown, status = 200): Response {
 const categories = [
   { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
   { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },
-  { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
-  { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
+  { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
+  { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
 ];
 
 async function renderPanel() {
@@ -39,7 +39,8 @@ async function renderPanel() {
     .mockResolvedValueOnce(response({ categories }))
     .mockImplementation(async (input, init) => {
       if (!init?.method || init.method === "GET") return response({ categories });
-      const kind = String(input).split("/").at(-1) as "install" | "command";
+      const kind = String(input).split("/").at(-1) as
+        | "install" | "command" | "send" | "connect";
       const body = JSON.parse(String(init.body)) as { grantMode: "ask" | "always" };
       return response({
         kind,
@@ -98,8 +99,9 @@ describe("SecurityPanel", () => {
     expect(selects.every((select) => select.classList.contains("skin-select--ink"))).toBe(true);
     expect(categorySelect("安装").textContent).toContain("每次询问");
     expect(categorySelect("同类操作").textContent).toContain("总是允许");
-    expect(categorySelect("向外发送内容").disabled).toBe(true);
-    expect(categorySelect("连接账号").disabled).toBe(true);
+    // 两类已解锁:与安装/同类操作同等可选
+    expect(categorySelect("向外发送内容").disabled).toBe(false);
+    expect(categorySelect("连接账号").disabled).toBe(false);
     expect(host!.querySelector("select")).toBeNull();
 
     const copies = [...host!.querySelectorAll<HTMLElement>(".security-copy")];
@@ -152,6 +154,24 @@ describe("SecurityPanel", () => {
       message: "安装已设为总是允许。",
       tone: "success",
     });
+  });
+
+  it.each([
+    ["向外发送内容", "send"],
+    ["连接账号", "connect"],
+  ])("%s 也能选总是允许并按既有通道落盘", async (label, kind) => {
+    const fetchMock = await renderPanel();
+    const select = categorySelect(label);
+    await choose(select, "always");
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/v1/settings/security/${kind}`,
+      expect.objectContaining({ body: JSON.stringify({ grantMode: "always" }) }),
+    );
+    expect(select.textContent).toContain("总是允许");
+    expect(host!.querySelector(`#security-${kind}-effect`)?.textContent).toContain(
+      "已记住，之后同类操作直接执行；可随时改回。",
+    );
   });
 
   it("卡侧状态事件按版本立即更新已打开的下拉", async () => {

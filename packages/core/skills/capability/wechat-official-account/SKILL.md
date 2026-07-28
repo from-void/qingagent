@@ -3,10 +3,11 @@ name: wechat-official-account
 label: 抓公众号
 summary: 把微信公众号文章抓成干净写作素材
 icon: wechat
-description: 微信公众号文章抓取——把公众号文章变成干净的 Markdown 写作素材。两种用法：①用户给出
-  mp.weixin.qq.com 文章链接时，直接抓取正文（零登录，最稳）；②用户只说公众号名/文章描述时，
+description: 微信公众号文章抓取（只管取素材，不管写稿）——把别人公众号的文章变成干净的 Markdown 写作素材。
+  两种用法：①用户给出 mp.weixin.qq.com 文章链接时，直接抓取正文（零登录，最稳）；②用户只说公众号名/文章描述时，
   用用户自己的公众号身份扫码登录后按号搜索、列文、抓正文。当用户提到"公众号文章""微信文章"
   "帮我抓/搜某公众号"或贴出 mp.weixin.qq.com 链接时使用。拿不到阅读量/点赞/评论/付费内容。
+  要把主文档改写成公众号推文、或学习维护公众号风格模板，属于写作侧，走"衍生稿撰写"技能，不走本技能。
 user-invocable: true
 placeholder: 贴公众号文章链接，或说公众号名
 tools: [fetchArticle, storeMaterial, wechat_auth_start, wechat_auth_status, wechat_search_mp, wechat_list_articles]

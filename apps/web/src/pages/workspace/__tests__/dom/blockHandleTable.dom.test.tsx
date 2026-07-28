@@ -425,6 +425,93 @@ describe("BlockHandle 表格专属菜单", () => {
   });
 });
 
+describe("BlockHandle 末尾空白悬停", () => {
+  function mountWithGeometry(blocks: Record<string, unknown>[], lastBlockBottom: number) {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const surface = document.createElement("div");
+    surface.className = "ws-paper-surface";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    surface.appendChild(editorElement);
+    workspace.append(surface, reactHost);
+    document.body.appendChild(workspace);
+    const created = new Editor({
+      element: editorElement,
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
+      content: { type: "doc", attrs: { schemaVersion: 1 }, content: blocks } as PmDoc,
+    });
+    // jsdom 没有布局:给正文根与最后一块喂确定几何,末尾留白 = 最后一块底边之下。
+    const paperRect = { left: 100, right: 700, top: 40, bottom: 900, width: 600, height: 860, x: 100, y: 40, toJSON: () => ({}) } as DOMRect;
+    const lastRect = { left: 120, right: 680, top: lastBlockBottom - 30, bottom: lastBlockBottom, width: 560, height: 30, x: 120, y: lastBlockBottom - 30, toJSON: () => ({}) } as DOMRect;
+    created.view.dom.getBoundingClientRect = () => paperRect;
+    const lastEl = created.view.dom.lastElementChild as HTMLElement;
+    lastEl.getBoundingClientRect = () => lastRect;
+    return { editor: created, workspace, reactHost, surface, lastRect };
+  }
+
+  it("指针落在最后一块下方的留白里也浮出手柄,锚定最后一块", async () => {
+    const mounted = mountWithGeometry(
+      [paragraph("p-1", "第一段"), paragraph("p-last", "最后一段")],
+      500,
+    );
+    editor = mounted.editor;
+    root = createRoot(mounted.reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} onToast={vi.fn()} />));
+
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, clientX: 400, clientY: 580,
+      }));
+    });
+    const handle = mounted.workspace.querySelector<HTMLElement>("[data-block-handle-id]");
+    expect(handle).not.toBeNull();
+    expect(handle?.getAttribute("data-block-handle-id")).toBe("p-last");
+  });
+
+  it("留白落在正文根之外(纸面容器上)同样能出手柄", async () => {
+    const mounted = mountWithGeometry([paragraph("p-only", "唯一一段")], 300);
+    editor = mounted.editor;
+    root = createRoot(mounted.reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} onToast={vi.fn()} />));
+
+    await act(async () => {
+      mounted.surface.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, clientX: 400, clientY: 380,
+      }));
+    });
+    expect(mounted.workspace.querySelector("[data-block-handle-id]")?.getAttribute("data-block-handle-id")).toBe("p-only");
+  });
+
+  it("空文档的空段落也能从下方留白唤出手柄", async () => {
+    const mounted = mountWithGeometry([paragraph("p-empty")], 200);
+    editor = mounted.editor;
+    root = createRoot(mounted.reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} onToast={vi.fn()} />));
+
+    await act(async () => {
+      mounted.surface.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, clientX: 400, clientY: 320,
+      }));
+    });
+    expect(mounted.workspace.querySelector("[data-block-handle-id]")?.getAttribute("data-block-handle-id")).toBe("p-empty");
+  });
+
+  it("横向落在正文带之外不出手柄", async () => {
+    const mounted = mountWithGeometry([paragraph("p-1", "正文")], 300);
+    editor = mounted.editor;
+    root = createRoot(mounted.reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} onToast={vi.fn()} />));
+
+    await act(async () => {
+      mounted.surface.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, clientX: 900, clientY: 400,
+      }));
+    });
+    expect(mounted.workspace.querySelector("[data-block-handle-id]")).toBeNull();
+  });
+});
+
 function createEditor(
   element: HTMLElement | undefined,
   table: Record<string, unknown>,

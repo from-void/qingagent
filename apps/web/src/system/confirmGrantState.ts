@@ -1,4 +1,5 @@
-export type RememberGrantKind = "install" | "command";
+// 四类确认都可记住"始终允许",跨设置页与确认卡同步状态
+export type RememberGrantKind = "install" | "command" | "send" | "connect";
 
 export interface RememberGrantCanonical {
   kind: RememberGrantKind;
@@ -13,7 +14,12 @@ const STORAGE_KEY = "qa-confirm-grant-state:v1";
 function parseCanonical(value: unknown): RememberGrantCanonical | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  if (input.kind !== "install" && input.kind !== "command") return null;
+  if (
+    input.kind !== "install" &&
+    input.kind !== "command" &&
+    input.kind !== "send" &&
+    input.kind !== "connect"
+  ) return null;
   if (typeof input.present !== "boolean") return null;
   if (input.grantId !== null && typeof input.grantId !== "string") return null;
   if (!Number.isSafeInteger(input.version) || Number(input.version) < 0) return null;

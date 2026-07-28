@@ -8,6 +8,7 @@ import type { ConnectorId } from "@qingagent/contract-ts";
 import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
 import "../../../overlays/settings/settings.css";
+import { dismissTopOverlay } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 
@@ -110,7 +111,15 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) handleClose();
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // Esc 的唯一出口:面板内还开着浮层(档位/下拉/日历/技能菜单)时先弹栈关掉最上层浮层
+      // 并消费掉事件——不依赖焦点落在哪个控件上;栈空了才轮到关整个设置面板。
+      if (dismissTopOverlay()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      handleClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);

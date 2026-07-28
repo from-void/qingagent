@@ -1422,29 +1422,36 @@
     font-size:11px;color:rgba(255,255,255,.62);
     padding:0 2px;font-family:var(--font-zh-serif);
   }
-  #view-workspace .dt-swatch-grid{
+  #view-workspace .dt-swatch-grid,
+  .graph-diagram-editor .dt-swatch-grid{
     display:grid;grid-template-columns:repeat(7,22px);gap:6px;
   }
-  #view-workspace .dt-swatch{
+  #view-workspace .dt-swatch,
+  .graph-diagram-editor .dt-swatch{
     width:22px;height:22px;padding:0;border:1px solid transparent;border-radius:0;
     background:transparent;display:flex;align-items:center;justify-content:center;
     cursor:pointer;
   }
   #view-workspace .dt-swatch:hover,
-  #view-workspace .dt-swatch:focus-visible{
+  #view-workspace .dt-swatch:focus-visible,
+  .graph-diagram-editor .dt-swatch:hover,
+  .graph-diagram-editor .dt-swatch:focus-visible{
     background:rgba(255,255,255,.14);outline:none;
   }
-  #view-workspace .dt-swatch-chip{
+  #view-workspace .dt-swatch-chip,
+  .graph-diagram-editor .dt-swatch-chip{
     width:14px;height:14px;border-radius:50%;display:block;
     border:1.5px solid rgba(0,0,0,.22);box-shadow:0 0 0 1px rgba(255,255,255,.16);
   }
   #view-workspace .dt-swatch-text .dt-swatch-chip{border-color:rgba(255,255,255,.32)}
-  #view-workspace .dt-color-none{
+  #view-workspace .dt-color-none,
+  .graph-diagram-editor .dt-color-none{
     background:var(--bg-canvas) !important;
     border:1.5px dashed var(--ink-4) !important;position:relative;overflow:hidden;
     display:block;width:14px;height:14px;border-radius:50%;
   }
-  #view-workspace .dt-color-none::after{
+  #view-workspace .dt-color-none::after,
+  .graph-diagram-editor .dt-color-none::after{
     content:"";position:absolute;left:50%;top:50%;
     width:12px;height:1.5px;background:var(--ink-4);
     transform:translate(-50%,-50%) rotate(-45deg);
@@ -2328,6 +2335,10 @@
   #view-workspace .wf-doc li{margin:2px 0}
   #view-workspace .wf-doc hr{
     border:none;height:1px;background:var(--line-2);margin:16px 0;
+  }
+  /* 分隔线不做选中态视觉(ProseMirror 默认给选中节点描一圈系统蓝);编辑语义不变。 */
+  #view-workspace .wf-doc hr.ProseMirror-selectednode{
+    outline:none;box-shadow:none;background:var(--line-2);
   }
   #view-workspace .wf-doc a{color:var(--mark);text-decoration:underline;text-decoration-thickness:.5px;text-underline-offset:2px}
   #view-workspace .wf-doc pre.md-code-block{

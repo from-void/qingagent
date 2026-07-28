@@ -159,9 +159,18 @@ export function resolveSelectedBlockNode(editor: Pick<Editor, "state">): Selecte
   if (!(sel instanceof NodeSelection)) return null;
   const node = sel.node;
   if (!node.isBlock || !node.type.isAtom) return null;
+  // 分隔线没有可让 AI 改的内容,点它不该弹"让 AI 修改这个分隔线"气泡(键盘删除等编辑语义不受影响)。
+  if (node.type.name === "horizontalRule") return null;
   const label = BLOCK_NODE_LABELS[node.type.name] ?? "内容块";
   const blockId = typeof node.attrs.blockId === "string" && node.attrs.blockId ? node.attrs.blockId : undefined;
   return { type: node.type.name, label, from: sel.from, to: sel.to, blockId };
+}
+
+/** PM state 里是否存在"有内容的文本选区"(含全选);文本工具栏的显隐只认它。 */
+export function hasTextRangeSelection(editor: Pick<Editor, "state">): boolean {
+  const selection = editor.state.selection;
+  if (selection instanceof NodeSelection) return false;
+  return !selection.empty;
 }
 
 /** 取某位置所在【顶层块】的 blockId(文本选区用):自下而上找到 doc 的直接子节点。 */
@@ -480,6 +489,13 @@ export function DocToolbar({
       return;
     }
     setBlockSel(null);
+    // 显隐以 PM state 为准:取消选中原子块(图表/图片)的那一拍,PM 选区已经不是块选,
+    // 但浏览器原生选区还残留着原子块的旧 range(非折叠、有高度),只看原生选区会让
+    // 文本工具栏按旧矩形闪现一帧。原生选区此后只负责定位,不负责显隐。
+    if (!hasTextRangeSelection(editor)) {
+      setPos(null);
+      return;
+    }
     if (!editor.isFocused) {
       setPos(null);
       return;

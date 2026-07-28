@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "./useAnchoredPopover";
+import { useOverlayDismiss } from "./overlayDismissStack";
 import "./skinControls.css";
 
 interface CalendarDatePickerProps {
@@ -73,6 +74,12 @@ export function CalendarDatePicker({
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [open]);
+
+  // 开着时进浮层关闭栈:Esc 由外层弹层的守卫统一弹栈关闭,焦点不在触发器/面板里也能关
+  useOverlayDismiss(open, () => {
+    setOpen(false);
+    anchorRef.current?.focus();
+  });
 
   useEffect(() => {
     if (!open || !selectedDate) return;

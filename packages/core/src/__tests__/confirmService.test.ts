@@ -225,6 +225,44 @@ describe("ConfirmService", () => {
     })).toBeNull();
   });
 
+  it("向外发送设为始终允许后,send 类确认不再弹卡,按存量授权直接放行", async () => {
+    const state = createSession("confirm-stored-send");
+    const service = new ConfirmService({
+      createId: () => "confirm-send",
+      persist: async () => undefined,
+      loadGrant: async (kind) => (kind === "send"
+        ? {
+            grantId: "grant-send",
+            kind: "send",
+            createdAt: "2026-07-28T00:00:00.000Z",
+            source: "settings",
+          }
+        : null),
+      appendAudit: async () => undefined,
+    });
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-send",
+      toolCallId: "tool-send",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "scp report.txt user@example.test:/tmp/" },
+      aborted: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      storedGrantApproval: { grant: { grantId: "grant-send", kind: "send" } },
+    });
+    if (!result.ok) return;
+    // 没有确认卡帧 = 门不再弹窗
+    expect(result.frame).toBeUndefined();
+    expect(result.pending).toMatchObject({
+      status: "resuming",
+      decisionSource: "stored-grant",
+      decisionGrantId: "grant-send",
+    });
+  });
+
   it("stored grant 保持 confirm 分类并为本次 digest 签发 fresh 一次性 proof", async () => {
     const state = createSession("confirm-stored-grant");
     const audits: Array<Record<string, unknown>> = [];

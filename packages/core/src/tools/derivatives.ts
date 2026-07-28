@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createTool } from "@mastra/core/tools";
 import { getStablePmJson, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { z } from "zod";
-import { withDtypeCommonConstraints } from "../derivatives/dtypeTemplatePrompts.js";
+import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
   buildPmProjection,
   commitTransaction,
@@ -25,11 +25,12 @@ function sessionIdFrom(context: unknown): string | null {
 
 export const derivativeBriefTool = createTool({
   id: "derivative_brief",
-  description: "读取当前会话衍生稿的模板、补充指令和源文档正文，供本轮直接改写。",
+  description: "读取当前会话衍生稿的执行纪律、模板、补充指令和源文档正文，供本轮直接改写。",
   inputSchema: z.object({ derivativeDocId: z.string().min(1) }),
   outputSchema: z.object({
     ok: z.boolean(), dtype: z.string().optional(), targetLang: z.string().optional(), layoutPrompt: z.string().optional(),
     writingPrompt: z.string().optional(), privatePrompt: z.string().optional(),
+    skillGuidance: z.string().optional(), skillName: z.string().nullable().optional(),
     sourceTitle: z.string().optional(), sourceText: z.string().optional(),
     sourceVersion: z.number().optional(), error: z.string().optional(),
   }),
@@ -40,9 +41,12 @@ export const derivativeBriefTool = createTool({
     const writing = await getStyleTemplate(meta.writingStyleId);
     const layout = meta.layoutStyleId ? await getStyleTemplate(meta.layoutStyleId) : null;
     if (!writing) return { ok: false, error: "写作风格模板不存在" };
+    // 纪律层来自 derivative-writing 子技能文件,模板层来自 DB;两层在这里合流下发。
+    const guidance = await loadDerivativeGuidance(meta.dtype);
     return withTransaction<{
       ok: boolean; dtype?: string; targetLang?: string; layoutPrompt?: string; writingPrompt?: string;
-      privatePrompt?: string; sourceTitle?: string; sourceText?: string;
+      privatePrompt?: string; skillGuidance?: string; skillName?: string | null;
+      sourceTitle?: string; sourceText?: string;
       sourceVersion?: number; error?: string;
     }>(async (client) => {
       const result = await client.execute({
@@ -52,7 +56,8 @@ export const derivativeBriefTool = createTool({
       const source = result.rows[0];
       if (!source) return commitTransaction({ ok: false, error: "源文档不存在" });
       return commitTransaction({ ok: true, dtype: meta.dtype, targetLang: meta.targetLang ?? undefined, layoutPrompt: layout?.prompt ?? "",
-        writingPrompt: withDtypeCommonConstraints(meta.dtype, writing.prompt), privatePrompt: meta.privatePrompt,
+        writingPrompt: writing.prompt, privatePrompt: meta.privatePrompt,
+        skillGuidance: guidance.text, skillName: guidance.skillName,
         sourceTitle: String(source.title), sourceText: pmToPlainText(parsePmDoc(source.doc_pm)),
         sourceVersion: Number(source.doc_version) });
     });

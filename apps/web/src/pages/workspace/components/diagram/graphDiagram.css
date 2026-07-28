@@ -8,6 +8,10 @@
   --graph-edge-text: #5c5346;
   --graph-cluster-fill: #f3ecdd;
   --graph-cluster-stroke: #cdbfa3;
+  /* 连线圆点与其命中盒统一悬在元素外侧的距离:不骑边框,也不与四角 resize 方块重叠。 */
+  --graph-handle-offset: 11px;
+  /* 选中包围盒(以及挂在同一圈上的 resize 四角把手)相对元素边框外移的距离。 */
+  --graph-select-inset: 3px;
 }
 
 .graph-diagram {
@@ -194,6 +198,14 @@
   cursor: grabbing;
 }
 
+/* 拖拽中"松手能进"的分区:边框点亮(黄棕强调色),与松手收编判定同源。 */
+.graph-diagram-cluster.is-drop-target {
+  border-color: var(--mark);
+  border-style: solid;
+  background: color-mix(in srgb, var(--mark) 9%, var(--graph-cluster-fill));
+  box-shadow: 0 0 0 2px var(--mark-soft);
+}
+
 .graph-diagram-cluster.is-selected {
   border-color: var(--mark);
   background: color-mix(in srgb, var(--graph-cluster-fill) 82%, transparent);
@@ -226,10 +238,15 @@
   color: var(--graph-node-text);
 }
 
+/* 形状层必须显式 100%:svg 是替换元素,只写 inset:0 时浏览器按 viewBox 的固有宽高比定尺寸
+   (忽略 bottom/right 约束)——节点被非等比拉伸后,填充与边框只占外壳的一部分,文字掉在图形外。
+   写死 100% 才能让 preserveAspectRatio="none" 真正自由形变、与外壳始终重合。 */
 .graph-diagram-node-shape-svg {
   position: absolute;
   inset: 0;
   z-index: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
   pointer-events: none;
 }
@@ -243,22 +260,12 @@
   filter: drop-shadow(0 3px 10px rgba(77, 55, 26, 0.1));
 }
 
-.graph-diagram-node-hover-ring,
-.graph-diagram-node-selection-ring {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.14s ease, filter 0.14s ease;
-}
-
 .graph-diagram[data-diagram-type] .react-flow__node:hover .graph-diagram-node-shape-fill,
 .graph-diagram-editor .react-flow__node:hover .graph-diagram-node-shape-fill {
-  filter: drop-shadow(0 8px 16px color-mix(in srgb, var(--mark) 20%, transparent));
-}
-
-.graph-diagram[data-diagram-type] .react-flow__node:hover .graph-diagram-node-hover-ring,
-.graph-diagram-editor .react-flow__node:hover .graph-diagram-node-hover-ring {
-  opacity: 1;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--mark) 28%, transparent));
+  /* 阴影色必须写成显式 rgba:filter 过渡按 oklab 插值,若端点是 color-mix(..., transparent),
+     中间帧会算出越出 sRGB 色域的值(实测 oklab(1 3.82 1.89)),渲染成粉红外发光——
+     拖拽 resize 时最明显,松手即消失。金墨皮肤不允许出现红色。 */
+  filter: drop-shadow(0 8px 16px rgba(168, 130, 63, 0.2));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.selected,
@@ -289,6 +296,10 @@
   z-index: 6;
   outline: none;
   cursor: text;
+  /* React Flow 给 .react-flow__node 设了 -webkit-user-select: none;只写不带前缀的一条,
+     WebKit 系仍按继承的 none 处理 contenteditable 后代,点击落不下光标。三条一起写死。 */
+  -webkit-user-select: text;
+  -moz-user-select: text;
   user-select: text;
   caret-color: var(--mark);
 }
@@ -308,6 +319,8 @@
   padding: 10px 28px;
 }
 
+/* 命中盒与可见圆点同心:清掉 React Flow 默认的贴边定位,改用与圆点同一套外侧偏移,
+   再以 translate(-50%,-50%) 让 16px 命中盒以自身中心对齐锚点(旧的 transform:none 会整体偏 8px)。 */
 .graph-diagram .react-flow__handle,
 .graph-diagram-editor .react-flow__handle {
   z-index: 7;
@@ -318,7 +331,32 @@
   opacity: 0;
   pointer-events: none;
   cursor: crosshair;
-  transform: none;
+  inset: auto;
+  transform: translate(-50%, -50%);
+}
+
+.graph-diagram .graph-diagram-handle--t,
+.graph-diagram-editor .graph-diagram-handle--t {
+  top: calc(var(--graph-handle-offset) * -1);
+  left: 50%;
+}
+
+.graph-diagram .graph-diagram-handle--r,
+.graph-diagram-editor .graph-diagram-handle--r {
+  top: 50%;
+  left: calc(100% + var(--graph-handle-offset));
+}
+
+.graph-diagram .graph-diagram-handle--b,
+.graph-diagram-editor .graph-diagram-handle--b {
+  top: calc(100% + var(--graph-handle-offset));
+  left: 50%;
+}
+
+.graph-diagram .graph-diagram-handle--l,
+.graph-diagram-editor .graph-diagram-handle--l {
+  top: 50%;
+  left: calc(var(--graph-handle-offset) * -1);
 }
 
 .graph-diagram-canvas--editor .react-flow__handle {
@@ -357,23 +395,23 @@
 }
 
 .graph-diagram-handle-dot--t {
-  top: 0;
+  top: calc(var(--graph-handle-offset) * -1);
   left: 50%;
 }
 
 .graph-diagram-handle-dot--r {
   top: 50%;
-  left: 100%;
+  left: calc(100% + var(--graph-handle-offset));
 }
 
 .graph-diagram-handle-dot--b {
-  top: 100%;
+  top: calc(100% + var(--graph-handle-offset));
   left: 50%;
 }
 
 .graph-diagram-handle-dot--l {
   top: 50%;
-  left: 0;
+  left: calc(var(--graph-handle-offset) * -1);
 }
 
 .graph-diagram-node-shell.is-renaming .graph-diagram-handle-slot {
@@ -401,24 +439,15 @@
   opacity: 0 !important;
 }
 
+/* resize 只保留四角方块把手:四条边线既不显示也不可抓取(选中框由外壳包围盒承担),
+   边中点整块让给连线圆点,两者命中盒不再重叠。 */
 .graph-diagram-resize-line {
-  border-color: var(--mark) !important;
+  border-color: transparent !important;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  pointer-events: none;
 }
 
-.graph-diagram-resize-line::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--mark);
-  background: #fffaf0;
-  transform: translate(-50%, -50%);
-}
-
+/* 四角方块把手外移到与选中包围盒同一圈上,和圆点(11px 外)彼此错开。 */
 .graph-diagram-resize-handle {
   width: 8px !important;
   height: 8px !important;
@@ -429,9 +458,25 @@
   transition: opacity 0.12s ease, transform 0.12s ease, background 0.12s ease;
 }
 
-.graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-resize-line,
+.graph-diagram-resize-handle.top {
+  margin-top: calc(var(--graph-select-inset) * -1);
+}
+
+.graph-diagram-resize-handle.bottom {
+  margin-top: var(--graph-select-inset);
+}
+
+.graph-diagram-resize-handle.left {
+  margin-left: calc(var(--graph-select-inset) * -1);
+}
+
+.graph-diagram-resize-handle.right {
+  margin-left: var(--graph-select-inset);
+}
+
 .graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-resize-handle,
-.graph-diagram-canvas--editor .react-flow__node.resizing .graph-diagram-resize-line,
+.graph-diagram-canvas--editor .react-flow__node.is-selected .graph-diagram-resize-handle,
+.graph-diagram-canvas--editor .react-flow__node.selected .graph-diagram-resize-handle,
 .graph-diagram-canvas--editor .react-flow__node.resizing .graph-diagram-resize-handle {
   opacity: 1;
 }
@@ -469,23 +514,23 @@
 }
 
 .graph-diagram-handle-add--t {
-  top: 0;
+  top: calc(var(--graph-handle-offset) * -1);
   left: 50%;
 }
 
 .graph-diagram-handle-add--r {
   top: 50%;
-  left: 100%;
+  left: calc(100% + var(--graph-handle-offset));
 }
 
 .graph-diagram-handle-add--b {
-  top: 100%;
+  top: calc(100% + var(--graph-handle-offset));
   left: 50%;
 }
 
 .graph-diagram-handle-add--l {
   top: 50%;
-  left: 0;
+  left: calc(var(--graph-handle-offset) * -1);
 }
 
 .graph-diagram-handle-add.is-preview {
@@ -510,26 +555,24 @@
   transform: rotate(180deg);
 }
 
+/* 幽灵预览:容器只是定位原点,落点/尺寸/连接段长度全部由 JS 的同一套几何给出(与创建共用),
+   这里只管观感(虚化、不吃指针)。 */
 .graph-diagram-handle-ghost {
   position: absolute;
+  inset: 0;
   z-index: 3;
-  width: 124px;
-  height: 56px;
-  opacity: 0.46;
+  color: color-mix(in srgb, var(--mark) 72%, transparent);
+  opacity: 0.55;
   pointer-events: none;
 }
 
 .graph-diagram-handle-ghost__line {
   position: absolute;
-  z-index: 0;
-  border-top: 1.5px dashed color-mix(in srgb, var(--mark) 72%, transparent);
+  overflow: visible;
 }
 
 .graph-diagram-handle-ghost__node {
   position: absolute;
-  z-index: 1;
-  width: 96px;
-  height: 48px;
   color: var(--graph-node-text);
   filter: saturate(0.72);
 }
@@ -540,99 +583,25 @@
   height: 100%;
 }
 
-.graph-diagram-handle-ghost .graph-diagram-node-hover-ring,
-.graph-diagram-handle-ghost .graph-diagram-node-selection-ring {
-  opacity: 0 !important;
-}
-
-.graph-diagram-handle-ghost .graph-diagram-node-shape-fill {
-  filter: none !important;
-}
-
-.graph-diagram-handle-ghost--r {
-  top: calc(50% - 28px);
-  left: calc(100% + 26px);
-}
-
-.graph-diagram-handle-ghost--r .graph-diagram-handle-ghost__line {
-  top: 28px;
-  left: -26px;
-  width: 30px;
-}
-
-.graph-diagram-handle-ghost--r .graph-diagram-handle-ghost__node {
-  top: 4px;
-  left: 4px;
-}
-
-.graph-diagram-handle-ghost--l {
-  top: calc(50% - 28px);
-  right: calc(100% + 26px);
-}
-
-.graph-diagram-handle-ghost--l .graph-diagram-handle-ghost__line {
-  top: 28px;
-  right: -26px;
-  width: 30px;
-}
-
-.graph-diagram-handle-ghost--l .graph-diagram-handle-ghost__node {
-  top: 4px;
-  right: 4px;
-}
-
-.graph-diagram-handle-ghost--t,
-.graph-diagram-handle-ghost--b {
-  width: 104px;
-  height: 80px;
-  left: calc(50% - 52px);
-}
-
-.graph-diagram-handle-ghost--t {
-  bottom: calc(100% + 22px);
-}
-
-.graph-diagram-handle-ghost--b {
-  top: calc(100% + 22px);
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__line,
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__line {
-  left: 52px;
-  width: 1px;
-  height: 26px;
-  border-top: 0;
-  border-left: 1.5px dashed color-mix(in srgb, var(--mark) 72%, transparent);
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__line {
-  bottom: -22px;
-}
-
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__line {
-  top: -22px;
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__node,
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__node {
-  left: 4px;
-}
-
-.graph-diagram-handle-ghost--t .graph-diagram-handle-ghost__node {
-  bottom: 0;
-}
-
-.graph-diagram-handle-ghost--b .graph-diagram-handle-ghost__node {
-  top: 0;
+.graph-diagram-handle-ghost .graph-diagram-node-shell::before {
+  display: none;
 }
 
 .graph-diagram-canvas--preview .graph-diagram-handle-add {
   display: none;
 }
 
-.graph-diagram-editor .react-flow__selection {
+/* 空白拖拽的框选选区:黄棕细线 + 低透明填充(强调色统一走 --mark 体系)。 */
+.graph-diagram-editor .react-flow__selection,
+.graph-diagram-canvas--editor .react-flow__selection {
   border: 1px solid color-mix(in srgb, var(--mark) 72%, transparent);
+  border-radius: 0;
   background: color-mix(in srgb, var(--mark) 12%, transparent);
+}
+
+.graph-diagram-canvas--editor .react-flow__nodesselection-rect {
+  border: 1px solid color-mix(in srgb, var(--mark) 62%, transparent);
+  background: transparent;
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.is-selected,
@@ -641,19 +610,31 @@
   box-shadow: none;
 }
 
-.graph-diagram[data-diagram-type] .react-flow__node.is-selected .graph-diagram-node-selection-ring,
-.graph-diagram-editor .react-flow__node.is-selected .graph-diagram-node-selection-ring,
-.graph-diagram[data-diagram-type] .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-selection-ring,
-.graph-diagram-editor .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-selection-ring {
-  opacity: 1;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--mark) 45%, transparent));
+/* 选中指示 = 元素外侧一圈细包围盒(不跟随形状轮廓,不压在元素自己的边框上),
+   与 resize 四角把手同处一圈;悬停给一层更淡的同款框。 */
+.graph-diagram-node-shell::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: calc(var(--graph-select-inset) * -1);
+  border: 1.5px solid var(--mark);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
-.graph-diagram[data-diagram-type] .react-flow__node.is-selected:hover .graph-diagram-node-hover-ring,
-.graph-diagram-editor .react-flow__node.is-selected:hover .graph-diagram-node-hover-ring,
-.graph-diagram[data-diagram-type] .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-hover-ring,
-.graph-diagram-editor .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-hover-ring {
-  opacity: 0;
+.graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-node-shell::before {
+  opacity: 0.4;
+}
+
+.graph-diagram-canvas--editor .react-flow__node.is-selected .graph-diagram-node-shell::before,
+.graph-diagram-canvas--editor .react-flow__node.selected .graph-diagram-node-shell::before,
+.graph-diagram-canvas--editor .graph-diagram-node-shell.is-renaming::before {
+  opacity: 1;
+}
+
+.graph-diagram-handle-ghost .graph-diagram-node-shell::before {
+  display: none;
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.is-parent-target,
@@ -670,14 +651,14 @@
 
 .graph-diagram[data-diagram-type] .react-flow__edge.is-selected .react-flow__edge-path,
 .graph-diagram-editor .react-flow__edge.is-selected .react-flow__edge-path {
-  filter: drop-shadow(0 3px 4px color-mix(in srgb, var(--mark) 28%, transparent));
+  filter: drop-shadow(0 3px 4px rgba(168, 130, 63, 0.28));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__edge:hover .react-flow__edge-path,
 .graph-diagram-editor .react-flow__edge:hover .react-flow__edge-path {
   stroke: var(--mark) !important;
   stroke-width: 3px !important;
-  filter: drop-shadow(0 3px 5px color-mix(in srgb, var(--mark) 24%, transparent));
+  filter: drop-shadow(0 3px 5px rgba(168, 130, 63, 0.24));
 }
 
 .graph-diagram-edge-label {
@@ -712,6 +693,8 @@
   background: rgba(255, 250, 240, 0.98);
   box-shadow: 0 0 0 3px var(--mark-soft), 0 10px 24px rgba(47, 42, 34, 0.14);
   cursor: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
   user-select: text;
   caret-color: var(--mark);
 }
@@ -838,6 +821,39 @@
 
 .graph-diagram-viewport-controls button + button {
   border-left-color: var(--line-1);
+}
+
+/* 手型按钮悬浮提示:黑底提示条 + 键帽。控件组为了圆角药丸带 overflow:hidden,提示条只能挂在
+   body 上用定位浮层,否则必被裁掉(真机不可见);层级压过全屏编辑层,不吃指针、不占布局。 */
+.graph-diagram-pan-tip {
+  position: fixed;
+  z-index: 2147483020;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 0;
+  background: var(--ink-1);
+  color: var(--ink-on-dark);
+  font: 12px/1 var(--font-zh-serif);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  box-shadow: 0 10px 28px rgba(20, 18, 16, 0.28);
+}
+
+.graph-diagram-pan-tip kbd {
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 250, 240, 0.86);
+  font: 11px/1.3 var(--font-mono);
+}
+
+.graph-diagram-pan-tip__sep,
+.graph-diagram-pan-tip__plus {
+  color: rgba(255, 250, 240, 0.5);
 }
 
 .graph-diagram-viewport-controls button:hover:not(:disabled),
@@ -985,6 +1001,21 @@
   flex: 0 0 auto;
 }
 
+/* 填充/边框触发钮的色样圆点放大到与 dt-swatch 色块同一档视觉直径(约 18px)。 */
+.graph-diagram-toolbar__button .graph-diagram-icon:has(.graph-diagram-icon__color-sample) {
+  width: 20px;
+  height: 20px;
+}
+
+.graph-diagram-icon__color-sample--fill {
+  r: 9;
+}
+
+.graph-diagram-icon__color-sample--border {
+  r: 8;
+  stroke-width: 3;
+}
+
 .graph-diagram-toolbar__button.is-active,
 .graph-diagram-toolbar__button:hover:not(:disabled) {
   border-color: var(--line-3);
@@ -1056,8 +1087,15 @@
   background: var(--mark-soft);
 }
 
-.graph-diagram-menu-item.is-danger {
-  color: var(--ink-2);
+/* 破坏性菜单项(解散分区/删除节点/删除连线)按惯例用红字提示后果;
+   这条只管菜单项文字,报错呈现仍守"不出红"的铁律。 */
+.graph-diagram-context .graph-diagram-menu-item.is-danger {
+  color: #e2705d;
+}
+
+.graph-diagram-context .graph-diagram-menu-item.is-danger:hover:not(:disabled) {
+  background: rgba(226, 112, 93, 0.16);
+  color: #f0897a;
 }
 
 .graph-diagram-menu-item kbd {
@@ -1071,23 +1109,165 @@
   text-align: center;
 }
 
+/* 弹层小标题与分隔线(边框/形状弹层照分组排布)。 */
+.graph-diagram-popover__title {
+  color: rgba(255, 250, 240, 0.66);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.graph-diagram-popover__divider {
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* 线型/线宽这类等宽小钮成行排布。 */
+.graph-diagram-option-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-diagram-option-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 250, 240, 0.82);
+  cursor: pointer;
+}
+
+.graph-diagram-option-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.graph-diagram-option-btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.graph-diagram-option-btn.is-active {
+  border-color: var(--mark);
+  background: color-mix(in srgb, var(--mark) 32%, transparent);
+  color: #fffaf0;
+}
+
+.graph-diagram-option-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.graph-diagram-width-dot {
+  display: block;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* 色板两行:格子/色块/无色/hover 全部走正文工具栏的 dt-swatch 体系(workspace.css 单一定义),
+   这里只补图表侧特有的"当前选中"描边与「+」自定义格。 */
+.graph-diagram-swatch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.graph-diagram-editor .dt-swatch.is-active .dt-swatch-chip,
+.graph-diagram-editor .dt-swatch.is-active .dt-color-none {
+  box-shadow: 0 0 0 2px var(--ink-1), 0 0 0 3.5px var(--mark);
+}
+
+.graph-diagram-swatch-custom {
+  position: relative;
+}
+
+.graph-diagram-editor .graph-diagram-swatch-custom .dt-swatch-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 250, 240, 0.86);
+  font: 600 12px/1 var(--font-zh-serif);
+  box-shadow: none;
+}
+
+.graph-diagram-swatch-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .graph-diagram-shape-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
 
+.graph-diagram-popover--shape {
+  min-width: 236px;
+}
+
 .graph-diagram-shape-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  min-width: 104px;
+  width: 38px;
+  height: 34px;
+  min-width: 0;
+  padding: 0 !important;
+  border: 1px solid transparent;
+}
+
+/* 迷你形状预览换一套适配深色浮层的描边填充(几何仍与画布同源)。 */
+.graph-diagram-shape-glyph {
+  --graph-node-fill: rgba(255, 250, 240, 0.14);
+  --graph-node-stroke: rgba(255, 250, 240, 0.76);
+  --graph-node-stroke-width: 3px;
+  display: block;
+  width: 26px;
+  height: 18px;
+  overflow: visible;
 }
 
 .graph-diagram-shape-btn.is-active {
   border-color: var(--mark);
-  background: var(--mark-soft);
-  color: var(--mark);
-  font-weight: 650;
+  background: color-mix(in srgb, var(--mark) 32%, transparent);
+}
+
+.graph-diagram-shape-btn.is-active .graph-diagram-shape-glyph {
+  --graph-node-stroke: #fffaf0;
+}
+
+/* 形状触发钮:图形在按钮盒里居中,背景高亮块与其他钮同规格(此前图形偏出高亮块)。 */
+.graph-diagram-toolbar__button .graph-diagram-shape-glyph {
+  width: 20px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0 auto;
+}
+
+.graph-diagram-toolbar__button:has(.graph-diagram-shape-glyph) {
+  /* 图标 + 尖角比默认 32px 宽,固定宽会让高亮块包不住内容(常态/hover/选中三态都错位);
+     改为按内容自适应,盒与内容始终同心。 */
+  width: auto;
+  min-width: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px !important;
 }
 
 .graph-diagram-icon-options {
@@ -1163,21 +1343,6 @@
   opacity: 0.45;
 }
 
-.graph-diagram-swatch-group {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding-right: 2px;
-}
-
-.graph-diagram-swatch {
-  width: 24px;
-  height: 24px;
-  padding: 0 !important;
-  border: 1px solid rgba(47, 42, 34, 0.22) !important;
-  border-radius: 999px !important;
-}
 
 .graph-diagram-range-control {
   display: flex;

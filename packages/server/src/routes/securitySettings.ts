@@ -18,7 +18,7 @@ const updateSecuritySchema = z.object({
   grantMode: z.enum(["ask", "always"]),
 }).strict();
 
-const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command"]);
+const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command", "send", "connect"]);
 
 interface SecuritySettingsRoutesDependencies {
   listGrantStates?: typeof listConfirmGrantStates;
@@ -55,26 +55,10 @@ export function createSecuritySettingsRoutes(
     };
     const body: SecuritySettingsResponse = {
       categories: [
-      category("install", "安装"),
-      category("command", "同类操作"),
-        {
-          kind: "send",
-          label: "向外发送内容",
-          grantMode: "ask",
-          grantModes: ["ask"],
-          present: false,
-          grantId: null,
-          version: 0,
-        },
-        {
-          kind: "connect",
-          label: "连接账号",
-          grantMode: "ask",
-          grantModes: ["ask"],
-          present: false,
-          grantId: null,
-          version: 0,
-        },
+        category("install", "安装"),
+        category("command", "同类操作"),
+        category("send", "向外发送内容"),
+        category("connect", "连接账号"),
       ],
     };
     return c.json(body);

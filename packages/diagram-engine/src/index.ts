@@ -234,6 +234,84 @@ export interface DiagramOverlay {
   styles?: Record<string, NodeStyleOverride>;
   edgeStyles?: Record<string, EdgeStyleOverride>;
   edgeHandles?: Record<string, EdgeHandleOverride>;
+  /** 元素层级(越大越靠上)。Mermaid 没有 z 语义,只存视觉层。 */
+  zOrders?: Record<string, number>;
+}
+
+/** 层级重排的四种动作(与画布右键/溢出菜单一一对应)。 */
+export type ZOrderCommand = "raise" | "lower" | "front" | "back";
+
+/**
+ * 计算层级重排后的 zOrders。语义:
+ * - 只在"可排序元素"之间比较(分区始终垫在节点之下,由渲染层保证,不进这套序);
+ * - 上/下移一层 = 与相邻一层交换;移到顶/底层 = 排到序列两端;
+ * - 多选按同向整体移动,保持它们彼此的相对次序;
+ * - 返回结果只保留与默认次序不同的项,overlay 不堆无意义数据。
+ */
+export function applyZOrderCommand(input: {
+  order: string[];
+  selected: string[];
+  command: ZOrderCommand;
+  zOrders?: Record<string, number> | undefined;
+}): Record<string, number> {
+  const base = [...input.order].sort(
+    (left, right) => zOrderValue(input.zOrders, input.order, left) - zOrderValue(input.zOrders, input.order, right),
+  );
+  const selected = new Set(input.selected.filter((id) => base.includes(id)));
+  if (selected.size === 0) return { ...(input.zOrders ?? {}) };
+  const moving = base.filter((id) => selected.has(id));
+  const rest = base.filter((id) => !selected.has(id));
+  let next: string[];
+  if (input.command === "front") {
+    next = [...rest, ...moving];
+  } else if (input.command === "back") {
+    next = [...moving, ...rest];
+  } else {
+    next = [...base];
+    const step = input.command === "raise" ? 1 : -1;
+    // 上移从后往前处理、下移从前往后处理,避免同一批元素互相顶掉。
+    const indexes = base
+      .map((id, index) => ({ id, index }))
+      .filter((item) => selected.has(item.id))
+      .sort((left, right) => (step > 0 ? right.index - left.index : left.index - right.index));
+    for (const item of indexes) {
+      const from = next.indexOf(item.id);
+      const to = from + step;
+      if (to < 0 || to >= next.length) continue;
+      if (selected.has(next[to]!)) continue; // 同批元素之间不互换
+      const swapped = next[to]!;
+      next[to] = item.id;
+      next[from] = swapped;
+    }
+  }
+  const result: Record<string, number> = {};
+  next.forEach((id, index) => {
+    if (input.order[index] !== id) result[id] = index;
+  });
+  // 一旦有元素排序变了,整串都要落下来,否则默认次序会把它顶回去。
+  if (Object.keys(result).length > 0) {
+    next.forEach((id, index) => {
+      result[id] = index;
+    });
+  }
+  return result;
+}
+
+function zOrderValue(
+  zOrders: Record<string, number> | undefined,
+  order: string[],
+  id: string,
+): number {
+  const explicit = zOrders?.[id];
+  if (typeof explicit === "number" && Number.isFinite(explicit)) return explicit;
+  return order.indexOf(id);
+}
+
+/** 按层级排序一组元素 id(默认次序 = 传入次序)。 */
+export function sortIdsByZOrder(order: string[], zOrders?: Record<string, number> | undefined): string[] {
+  return [...order].sort(
+    (left, right) => zOrderValue(zOrders, order, left) - zOrderValue(zOrders, order, right),
+  );
 }
 
 export interface GraphLayoutRect {
@@ -618,9 +696,10 @@ export function filterStableOverlay(source: string, overlay: DiagramOverlay | nu
   const ids = getStableElementIds(parsed.model);
   const positions = filterRecord(overlay.positions, ids.nodes);
   const styles = filterRecord(overlay.styles, ids.nodes);
+  const zOrders = filterRecord(overlay.zOrders, ids.nodes);
   const edgeStyles = filterRecord(overlay.edgeStyles, ids.edges);
   const edgeHandles = filterRecord(overlay.edgeHandles, ids.edges);
-  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
+  return compactOverlay({ positions, styles, zOrders, edgeStyles, edgeHandles });
 }
 
 export function carryOverDiagramOverlay(
@@ -639,15 +718,17 @@ export function carryOverDiagramOverlay(
   const edges = intersectSets(oldIds.edges, newIds.edges);
   const positions = remapRecord(oldOverlay.positions, newIds.nodes, nodes, idMap?.nodes);
   const styles = remapRecord(oldOverlay.styles, newIds.nodes, nodes, idMap?.nodes);
+  const zOrders = remapRecord(oldOverlay.zOrders, newIds.nodes, nodes, idMap?.nodes);
   const edgeStyles = remapRecord(oldOverlay.edgeStyles, newIds.edges, edges, idMap?.edges);
   const edgeHandles = remapRecord(oldOverlay.edgeHandles, newIds.edges, edges, idMap?.edges);
-  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
+  return compactOverlay({ positions, styles, zOrders, edgeStyles, edgeHandles });
 }
 
 function compactOverlay(overlay: DiagramOverlay): DiagramOverlay | undefined {
   const compacted: DiagramOverlay = {
     ...(overlay.positions ? { positions: overlay.positions } : {}),
     ...(overlay.styles ? { styles: overlay.styles } : {}),
+    ...(overlay.zOrders ? { zOrders: overlay.zOrders } : {}),
     ...(overlay.edgeStyles ? { edgeStyles: overlay.edgeStyles } : {}),
     ...(overlay.edgeHandles ? { edgeHandles: overlay.edgeHandles } : {}),
   };
@@ -700,7 +781,12 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
       parsed.model.type === "flowchart" ? parsed.model.perSubgraphStyles?.[cluster.id] : undefined,
     ))
     .join("");
-  const nodeSvg = flattened
+  // 节点绘制顺序 = 层级顺序(后画的盖前面的),与画布 z 轴一致。
+  const nodeOrder = new Map(
+    sortIdsByZOrder(flattened.map((node) => node.id), overlay?.zOrders).map((id, index) => [id, index]),
+  );
+  const nodeSvg = [...flattened]
+    .sort((left, right) => (nodeOrder.get(left.id) ?? 0) - (nodeOrder.get(right.id) ?? 0))
     .map((node) =>
       renderSvgNode(
         node,
@@ -1619,7 +1705,14 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
   if (op.kind === "deleteEdge") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
     const edits = [{ ...lineRemovalSpan(source, edge.stmt), text: "" }];
-    return { ok: true, source: applyFlowchartEditsPreservingInlineLabels(source, edits, [edge.stmt]) };
+    // 端点节点若只在这条语句里声明(无论带不带标签),删掉整行会把两端节点一起带走
+    // = 只想删一条连线却丢了两个节点。这里先把它们补成独立声明再删边。
+    return {
+      ok: true,
+      source: applyFlowchartEditsPreservingInlineLabels(source, edits, [edge.stmt], {
+        preserveMissingEndpoints: true,
+      }),
+    };
   }
   if (op.kind === "reconnectEdge") {
     const edge = model.edges.find((e) => e.id === op.edgeId)!;
@@ -1717,7 +1810,10 @@ function applyFlowchartEditsPreservingInlineLabels(
   removedEdgeSpans: Span[],
   opts: { excludeIds?: Set<string>; preserveMissingEndpoints?: boolean } = {},
 ): string {
-  const candidates = collectRemovedFlowInlineLabels(source, removedEdgeSpans);
+  // 要"保住被带走的端点"时,连裸 id 端点(A --> B 里的 A/B)也得进候选:它们同样只靠这条语句存在。
+  const candidates = collectRemovedFlowInlineLabels(source, removedEdgeSpans, {
+    includeBareIds: opts.preserveMissingEndpoints === true,
+  });
   const nextSource = applyEdits(source, edits);
   if (candidates.size === 0) return nextSource;
   const reparsed = parseFlowchart(nextSource);
@@ -1726,22 +1822,25 @@ function applyFlowchartEditsPreservingInlineLabels(
   const declarations: string[] = [];
   for (const candidate of candidates.values()) {
     if (opts.excludeIds?.has(candidate.id)) continue; // 不复活被删的节点本身
-    if (candidate.label === candidate.id) continue; // 没有可保留的 inline 标签
     const node = nextModel.nodes.find((item) => item.id === candidate.id);
     if (!node) {
-      // 端点在"删节点"时随它的关联连边一起被带走了。删一个节点不应连带删掉
-      // 只在被删连边里 inline 声明过的邻居节点,补回为孤立节点声明(否则删 B 会让
-      // 只写在 `A-->B` 里的 A 一起消失 = 数据丢失,见 e2e R2 Lane B)。
+      // 端点随被删语句一起消失了。删一条边/一个节点都不该连带删掉只在该语句里声明过的端点,
+      // 补回为孤立节点声明(否则删 `A[开始] --> B[结束]` 这条边会把两个节点一起丢掉)。
       if (opts.preserveMissingEndpoints) declarations.push(`  ${formatFlowNodeDeclaration(candidate)}\n`);
       continue;
     }
+    if (candidate.label === candidate.id) continue; // 节点还在,裸 id 没有可补的标签
     if (node.label !== node.id) continue; // 节点还在且标签没丢,无需补
     declarations.push(`  ${formatFlowNodeDeclaration(candidate)}\n`);
   }
   return declarations.length > 0 ? insertBeforeSourceEnd(nextSource, declarations.join("")) : nextSource;
 }
 
-function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<string, ParsedFlowNodeRef> {
+function collectRemovedFlowInlineLabels(
+  source: string,
+  spans: Span[],
+  opts: { includeBareIds?: boolean } = {},
+): Map<string, ParsedFlowNodeRef> {
   const out = new Map<string, ParsedFlowNodeRef>();
   const nextEdgeId = createEdgeIdFactory("flow");
   for (const span of spans) {
@@ -1757,7 +1856,9 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
     const parsed = parseFlowEdgeStatement(line, 0, [], nextEdgeId);
     if (!parsed || "error" in parsed) continue;
     for (const ref of parsed.refs) {
-      if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
+      const bare = !ref.labelSpan || ref.label === ref.id;
+      if (bare && !opts.includeBareIds) continue;
+      if (!bare && !ref.declared) continue;
       out.set(ref.id, ref);
     }
   }
@@ -1766,6 +1867,8 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
 
 function formatFlowNodeDeclaration(node: ParsedFlowNodeRef): string {
   const label = safeMermaidLabel(node.label);
+  // 裸 id 端点补回时仍写成裸 id,不给它凭空造一个标签。
+  if (node.label === node.id && (!node.shape || node.shape === "[")) return node.id;
   if (!node.shape || node.shape === "[") return `${node.id}["${label}"]`;
   const syntax = flowShapeSyntax(normalizeFlowShapeName(node.shape));
   return syntax ? `${node.id}${syntax.open}${label}${syntax.close}` : `${node.id}["${label}"]`;
@@ -3812,7 +3915,7 @@ function remapRecord<T>(
 }
 
 function emptyOverlay(overlay: DiagramOverlay): boolean {
-  return !overlay.positions && !overlay.styles && !overlay.edgeStyles && !overlay.edgeHandles;
+  return !overlay.positions && !overlay.styles && !overlay.zOrders && !overlay.edgeStyles && !overlay.edgeHandles;
 }
 
 function intersectSets(a: Set<string>, b: Set<string>): Set<string> {
@@ -4001,7 +4104,7 @@ export function layoutDiagramGraph(
   const root = arrangeLayoutItems(rootItems, rootPairs, rootDirection);
   const translated = translateLayoutItems(root.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET);
   applyOverlayPositions(translated.nodes, overlay);
-  const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes);
+  const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes, overlay);
   applyOverlayClusterPositions(translated.nodes, clusters, model, overlay);
   return { nodes: translated.nodes, clusters };
 }
@@ -4161,16 +4264,26 @@ function refitClustersToContents(
   clusters: GraphLayoutCluster[],
   nodes: Record<string, GraphLayoutRect>,
   modelNodes: FlowGraph["nodes"],
+  overlay?: DiagramOverlay | null,
 ): GraphLayoutCluster[] {
   const next = clusters.map((cluster) => ({ ...cluster }));
   const scopeByNodeId = new Map(modelNodes.map((node) => [node.id, node.scopePath]));
   for (const cluster of [...next].sort((left, right) => right.depth - left.depth)) {
+    // 用户手动拉过的分区尺寸(overlay)是下限之一:分区可以比内容大,但绝不会小于内容包络,
+    // 收缩时不会把已有子节点吞掉。
+    const sized = overlay?.styles?.[cluster.id];
+    const overlayWidth = typeof sized?.width === "number" && Number.isFinite(sized.width) ? sized.width : 0;
+    const overlayHeight = typeof sized?.height === "number" && Number.isFinite(sized.height) ? sized.height : 0;
     const directNodes = Object.entries(nodes)
       .filter(([nodeId]) => scopeByNodeId.get(nodeId)?.includes(cluster.id))
       .map(([, rect]) => rect);
     const childClusters = next.filter((candidate) => candidate.scopePath[candidate.scopePath.length - 1] === cluster.id);
     const contents = [...directNodes, ...childClusters];
-    if (contents.length === 0) continue;
+    if (contents.length === 0) {
+      if (overlayWidth > 0) cluster.width = Math.max(cluster.width, overlayWidth);
+      if (overlayHeight > 0) cluster.height = Math.max(cluster.height, overlayHeight);
+      continue;
+    }
     const minX = Math.min(...contents.map((rect) => rect.x));
     const minY = Math.min(...contents.map((rect) => rect.y));
     const maxX = Math.max(...contents.map((rect) => rect.x + rect.width));
@@ -4180,10 +4293,12 @@ function refitClustersToContents(
     cluster.width = Math.max(
       GRAPH_LAYOUT_NODE_WIDTH + GRAPH_CLUSTER_SIDE_PADDING * 2,
       maxX - minX + GRAPH_CLUSTER_SIDE_PADDING * 2,
+      overlayWidth,
     );
     cluster.height = Math.max(
       GRAPH_LAYOUT_NODE_HEIGHT + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
       maxY - minY + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+      overlayHeight,
     );
   }
   return next;

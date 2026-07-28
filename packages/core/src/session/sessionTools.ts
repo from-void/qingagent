@@ -191,7 +191,9 @@ const CAPABILITY_TOOLS = {
     list_derivatives: listDerivativesTool,
     update_derivative_params: updateDerivativeParamsTool,
   },
-  "gzh-style": { style_template_list: styleTemplateListTool, style_template_get: styleTemplateGetTool, style_template_save: styleTemplateSaveTool, style_template_delete: styleTemplateDeleteTool },
+  // 风格模板 CRUD 归衍生稿撰写母技能(原 gzh-style);停用母技能即关停模板读写,
+  // 与旧 gzh-style 的停用语义完全一致。衍生稿生成本身仍挂 derivatives 常驻键,不受停用影响。
+  "derivative-writing": { style_template_list: styleTemplateListTool, style_template_get: styleTemplateGetTool, style_template_save: styleTemplateSaveTool, style_template_delete: styleTemplateDeleteTool },
   "browser-ops": {},
   // fetchArticle 是 webSearch 的间接联网路径，也受同一个隐私开关约束。
   "web-search": { webSearch: webSearchTool, fetchArticle: fetchArticleTool },
@@ -248,7 +250,17 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
   feishu: ["feishu_auth_start"],
   review: ["lexicon_list", "sensitive_scan", "lexicon_manage", "style_template_get", "run_python"],
-  "gzh-style": ["fetchArticle", "style_template_list", "style_template_get", "style_template_save", "style_template_delete"],
+  "derivative-writing": [
+    "derivative_brief",
+    "generate_derivative",
+    "list_derivatives",
+    "update_derivative_params",
+    "fetchArticle",
+    "style_template_list",
+    "style_template_get",
+    "style_template_save",
+    "style_template_delete",
+  ],
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {

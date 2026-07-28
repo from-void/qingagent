@@ -47,3 +47,18 @@
 .pm-image-tool--wide {
   min-width: 58px;
 }
+
+.pm-image-tool--icon {
+  display: inline-grid;
+  width: 26px;
+  min-width: 26px;
+  padding: 0;
+  place-items: center;
+}
+
+.pm-image-tool-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+}

@@ -48,4 +48,41 @@ describe("planDraftTool 失败输出", () => {
     expect(JSON.stringify(result)).not.toContain("upstream");
     expect(suspend).not.toHaveBeenCalled();
   });
+
+  it("出题阶段取消时透传原取消原因而不返回 rejected", async () => {
+    const controller = new AbortController();
+    const abortReason = new DOMException("用户取消", "AbortError");
+    generateQuestionsMock.mockImplementationOnce(async () => {
+      controller.abort(abortReason);
+      throw abortReason;
+    });
+    const suspend = vi.fn();
+
+    await expect(planDraftTool.execute!(input, {
+      agent: { suspend },
+      abortSignal: controller.signal,
+    } as never)).rejects.toBe(abortReason);
+    expect(suspend).not.toHaveBeenCalled();
+  });
+
+  it("suspend 阶段取消时透传原取消原因而不返回 rejected", async () => {
+    const controller = new AbortController();
+    const abortReason = new DOMException("用户取消", "AbortError");
+    generateQuestionsMock.mockResolvedValueOnce({
+      questions: [],
+      transport: "tool",
+      branchFailure: null,
+      toolCallRetries: 0,
+    });
+    const suspend = vi.fn(async () => {
+      controller.abort(abortReason);
+      throw abortReason;
+    });
+
+    await expect(planDraftTool.execute!(input, {
+      agent: { suspend },
+      abortSignal: controller.signal,
+    } as never)).rejects.toBe(abortReason);
+    expect(suspend).toHaveBeenCalledOnce();
+  });
 });

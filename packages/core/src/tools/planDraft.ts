@@ -440,6 +440,7 @@ export const planDraftTool = createTool({
   suspendSchema: suspendPayloadSchema,
   resumeSchema: resumeDataSchema,
   execute: async (input, context) => {
+    context?.abortSignal?.throwIfAborted();
     const { resumeData, suspend } = context?.agent ?? {};
 
     if (resumeData) {
@@ -515,6 +516,7 @@ export const planDraftTool = createTool({
       });
 
       // Suspend with complete questionnaire
+      context?.abortSignal?.throwIfAborted();
       return await suspend({
         id: input.id,
         purpose: resolvePlanDraftSuspendPurpose(directionReset),
@@ -546,6 +548,7 @@ export const planDraftTool = createTool({
         stopHeartbeat();
       }
     } catch (err) {
+      context?.abortSignal?.throwIfAborted();
       console.error("[planDraft] execute failed:", err);
       return planDraftRejectedResult("写作方向问卷生成失败");
     }

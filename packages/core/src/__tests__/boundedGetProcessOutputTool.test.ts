@@ -257,6 +257,22 @@ describe("bounded get_process_output", () => {
     });
   });
 
+  it.each([0, 7])("无输出的已退出进程返回退出码且不再显示仍待输出：exitCode=%s", async (exitCode) => {
+    const handle: FakeProcessHandle = {
+      pid: `silent-${exitCode}`,
+      stdout: "",
+      stderr: "",
+      exitCode,
+      kill: vi.fn(async () => true),
+      wait: vi.fn(),
+    };
+    const { tool } = createHarness(handle);
+
+    await expect(executeTool(tool, { pid: handle.pid })).resolves.toBe(
+      `(no output)\n\nExit code: ${exitCode}`,
+    );
+  });
+
   it("wait 有界返回后进程才退出时由下次轮询发送退出事件", async () => {
     vi.useFakeTimers();
     let resolveWait: ((result: CommandResult) => void) | undefined;

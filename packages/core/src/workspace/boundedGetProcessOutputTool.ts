@@ -112,7 +112,7 @@ function formatOutput(
 ): string {
   const parts: string[] = [];
   if (!stdout && !stderr) {
-    parts.push("(no output yet)");
+    parts.push(exitCode === undefined ? "(no output yet)" : "(no output)");
   } else if (stdout && stderr) {
     parts.push("stdout:", stdout, "", "stderr:", stderr);
   } else if (stdout) {

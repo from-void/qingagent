@@ -85,8 +85,11 @@ export interface LarkCliRunnerOptions {
   exists?: (path: string) => boolean;
 }
 
-export function hasLarkConfigInitUrl(output: string): boolean {
-  return extractLarkConfigInitUrl(output) !== null;
+export function hasLarkConfigInitUrl(
+  output: string,
+  options: { requireTerminator?: boolean } = {},
+): boolean {
+  return extractLarkConfigInitUrl(output, options) !== null;
 }
 
 interface LarkCliInvocation {
@@ -353,7 +356,10 @@ export class LarkCliRunner {
       };
       child.stdout.on("data", (chunk: Buffer) => {
         stdout = append(stdout, chunk);
-        if (!initialSettled && hasLarkConfigInitUrl(stdout)) {
+        if (
+          !initialSettled &&
+          hasLarkConfigInitUrl(stdout, { requireTerminator: true })
+        ) {
           initialSettled = true;
           clearTimeout(initialUrlTimeout);
           resolveInitial({ ok: true, stdout: redactLarkCliOutput(stdout), stderr: redactLarkCliOutput(stderr), cliVersion, source });

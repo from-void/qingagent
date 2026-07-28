@@ -19,6 +19,19 @@ function isOfficialLarkHost(host: string): boolean {
   ].some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+function isRootVerificationPath(path: string): boolean {
+  return /^\/(?:verification|verify)(?:\/|$)/u.test(path);
+}
+
+function isCreationPath(path: string): boolean {
+  return [
+    /^\/console\/app\/init\/?$/u,
+    /^\/console\/init\/?$/u,
+    /^\/app\/(?:create|init)\/?$/u,
+    /^\/(?:create|init)\/?$/u,
+  ].some((pattern) => pattern.test(path));
+}
+
 function scoreOnboardingUrl(value: string): number {
   let parsed: URL | null = null;
   try {
@@ -29,8 +42,8 @@ function scoreOnboardingUrl(value: string): number {
   const host = parsed.hostname.toLowerCase();
   if (!isOfficialLarkHost(host)) return -1;
   const path = parsed.pathname.toLowerCase();
-  const hasVerificationPath = /\/(?:verification|verify)(?:\/|$)/u.test(path);
-  const hasCreationPath = /\/(?:app\/)?(?:create|init)(?:\/|$)/u.test(path);
+  const hasVerificationPath = isRootVerificationPath(path);
+  const hasCreationPath = isCreationPath(path);
   if (!hasVerificationPath && !hasCreationPath) return -1;
 
   let score = 10;
@@ -40,16 +53,25 @@ function scoreOnboardingUrl(value: string): number {
 }
 
 /** 从一段可能混杂多条 URL 的文本里,挑出最像"飞书应用创建链接"的那条;没有返回 null。 */
-export function extractLarkConfigInitUrl(output: string): string | null {
-  const matches = output.match(/https?:\/\/[^\s<>"'`]+/giu) ?? [];
+export function extractLarkConfigInitUrl(
+  output: string,
+  options: { requireTerminator?: boolean } = {},
+): string | null {
+  const matches = [...output.matchAll(/https?:\/\/[^\s<>"'`]+/giu)];
   if (matches.length === 0) return null;
 
   const candidates = matches
-    .map((raw, index) => {
+    .map((match, index) => {
+      const raw = match[0];
       const url = cleanupUrl(raw);
-      return { url, index, score: scoreOnboardingUrl(url) };
+      const rawEnd = (match.index ?? 0) + raw.length;
+      const terminated = rawEnd < output.length || url.length < raw.length;
+      return { url, index, score: scoreOnboardingUrl(url), terminated };
     })
-    .filter((candidate) => candidate.score >= 0);
+    .filter((candidate) =>
+      candidate.score >= 0 &&
+      (options.requireTerminator !== true || candidate.terminated)
+    );
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => b.score - a.score || a.index - b.index);

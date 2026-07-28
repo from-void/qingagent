@@ -49,6 +49,9 @@ describe("extractLarkConfigInitUrl", () => {
     expect(extractLarkConfigInitUrl("go https://open.feishu.cn.evil.test/app/create")).toBeNull();
     expect(extractLarkConfigInitUrl("go https://lark.evil.test/verification/x")).toBeNull();
     expect(extractLarkConfigInitUrl("docs https://open.feishu.cn/document/home")).toBeNull();
+    expect(
+      extractLarkConfigInitUrl("docs https://open.feishu.cn/document/verification/guide"),
+    ).toBeNull();
   });
 
   it("忽略先出现的文档链接并选择后续官方创建链接", () => {

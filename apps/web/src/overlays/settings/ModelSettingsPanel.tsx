@@ -167,6 +167,7 @@ export function ModelSettingsPanel() {
   const [expandedUsageGroups, setExpandedUsageGroups] = useState<Set<string>>(() => new Set());
   const [usage, setUsage] = useState<UsageRow[] | null>(null);
   const [usageSettled, setUsageSettled] = useState(false);
+  const [usageStatus, setUsageStatus] = useState<"loading" | "ready" | "error">("loading");
   const [usageDate, setUsageDate] = useState("");
   // 模型多选筛选:记"被取消勾选的模型",这样用量里新出现的模型天然算已勾选(默认全选)。
   const [excludedModels, setExcludedModels] = useState<ReadonlySet<string>>(() => new Set());
@@ -333,14 +334,21 @@ export function ModelSettingsPanel() {
   }, []);
 
   const loadUsage = useCallback(async (view: UsageView, signal?: AbortSignal) => {
+    setUsage(null);
+    setUsageStatus("loading");
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
-      if (res.ok) {
-        const body = (await res.json()) as Partial<UsageSummaryResponse>;
-        if (mountedRef.current && !signal?.aborted) setUsage(body.rows ?? []);
+      if (!res.ok) {
+        if (mountedRef.current && !signal?.aborted) setUsageStatus("error");
+        return;
+      }
+      const body = (await res.json()) as Partial<UsageSummaryResponse>;
+      if (mountedRef.current && !signal?.aborted) {
+        setUsage(body.rows ?? []);
+        setUsageStatus("ready");
       }
     } catch {
-      if (mountedRef.current && !signal?.aborted) setUsage(null);
+      if (mountedRef.current && !signal?.aborted) setUsageStatus("error");
     } finally {
       if (mountedRef.current && !signal?.aborted) setUsageSettled(true);
     }
@@ -959,6 +967,15 @@ export function ModelSettingsPanel() {
     setUsageMode(nextMode);
     setExpandedUsageGroups(new Set());
     persistUsageMode(nextMode);
+  };
+
+  const switchUsageView = (nextView: UsageView) => {
+    if (nextView === usageView) return;
+    // 点击当帧先撤掉旧口径数据，避免 effect 发起新请求前按新视图解释旧 rows。
+    setUsage(null);
+    setUsageStatus("loading");
+    setExpandedUsageGroups(new Set());
+    setUsageView(nextView);
   };
 
   const toggleUsageGroup = (key: string) => {
@@ -1683,7 +1700,7 @@ export function ModelSettingsPanel() {
                       type="button"
                       aria-pressed={usageView === v}
                       className={`md-view-btn${usageView === v ? " md-active" : ""}`}
-                      onClick={() => setUsageView(v)}
+                      onClick={() => switchUsageView(v)}
                     >
                       {v === "day" ? "按天" : v === "session" ? "按文档" : "总计"}
                     </button>
@@ -1696,8 +1713,10 @@ export function ModelSettingsPanel() {
               )}
               {!usageSettled ? (
                 showUsageLoading ? <p className="md-empty">加载中…</p> : null
-              ) : filteredUsage === null ? (
-                <p className="md-empty">用量数据加载失败或暂不可用</p>
+              ) : usageStatus === "loading" ? (
+                <p className="md-empty">正在加载用量数据</p>
+              ) : usageStatus === "error" || filteredUsage === null ? (
+                <p className="md-empty">用量数据暂时无法加载，请稍后重试</p>
               ) : usageGroups?.length === 0 ? (
                 <p className="md-empty">
                   {usageDate && usageView === "day"

@@ -1511,6 +1511,37 @@ describe("Settings Track B", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.includes("date="))).toBe(false);
   });
 
+  it("用量视图切换立即清除旧行，非 2xx 后显示中性失败态", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    let resolveSession!: (response: Response) => void;
+    const sessionRequest = new Promise<Response>((resolve) => {
+      resolveSession = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=session")) {
+        return sessionRequest;
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+    expect(getTable().textContent).toContain("2026-06-24");
+
+    await click(getButtonByText("按文档"));
+    expect(host?.textContent).toContain("正在加载用量数据");
+    expect(host?.querySelector(".md-table")).toBeNull();
+    expect(host?.textContent).not.toContain("2026-06-24");
+
+    await act(async () => {
+      resolveSession(json({ error: "temporary unavailable" }, 503));
+      await sessionRequest;
+    });
+    await flush();
+
+    expect(host?.textContent).toContain("用量数据暂时无法加载，请稍后重试");
+    expect(host?.querySelector(".md-table")).toBeNull();
+  });
+
   it("用量明细默认小白模式只展示聚合列", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);

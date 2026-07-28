@@ -78,6 +78,50 @@ describe("lintSvg", () => {
     expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
   });
 
+  it("defs 中未绘制矩形不得覆盖实际米黄背景判断", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <defs><rect x="0" y="0" width="800" height="450" fill="#2f5d62"/></defs>
+        <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+        <text x="80" y="80" font-size="18" fill="#ffffff">米黄底白字</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.some((issue) => issue.rule === "low-contrast")).toBe(true);
+  });
+
+  it("百分比半透明局部层无法可靠确定合成背景时跳过对比度", () => {
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <rect x="0" y="0" width="800" height="450" fill="#ffffff"/>
+        <rect x="48" y="48" width="320" height="180" fill="#2f5d62" fill-opacity="50%"/>
+        <text x="72" y="100" font-size="18" fill="#333333">合成背景不确定</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
+  it("大元素集合只需一次绘制顺序扫描即可完成对比度检查", () => {
+    const shapes = Array.from(
+      { length: 2_500 },
+      (_, index) =>
+        `<rect x="${index % 800}" y="${index % 450}" width="1" height="1" fill="#ffffff"/>`,
+    ).join("");
+    const issues = lintSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        ${shapes}
+        <rect x="48" y="48" width="320" height="180" fill="#2f5d62"/>
+        <text x="72" y="100" font-size="18" fill="#ffffff">高对比文字</text>
+      </svg>`,
+      size,
+    );
+
+    expect(issues.filter((issue) => issue.rule === "low-contrast")).toEqual([]);
+  });
+
   it("干净网格 SVG 零违规", () => {
     const issues = lintSvg(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">

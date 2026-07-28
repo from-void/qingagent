@@ -46,6 +46,7 @@ function elementChildren(el: XmlElement): XmlElement[] {
 function collectElements(root: XmlElement, names: Set<string>): XmlElement[] {
   const out: XmlElement[] = [];
   const visit = (el: XmlElement) => {
+    if (el !== root && elementName(el) === "defs") return;
     if (names.has(elementName(el))) out.push(el);
     for (const child of elementChildren(el)) visit(child);
   };
@@ -85,6 +86,14 @@ function parseNumber(value: string | null): number | null {
   if (!match) return null;
   const n = Number(match[0]);
   return Number.isFinite(n) ? n : null;
+}
+
+function parseOpacity(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, trimmed.endsWith("%") ? parsed / 100 : parsed));
 }
 
 function firstNumberAttr(el: XmlElement, attrName: string): number | null {
@@ -215,6 +224,7 @@ function contrastRatio(a: [number, number, number], b: [number, number, number])
 function collectPaintOrder(root: XmlElement): XmlElement[] {
   const elements: XmlElement[] = [];
   const visit = (el: XmlElement) => {
+    if (el !== root && elementName(el) === "defs") return;
     elements.push(el);
     for (const child of elementChildren(el)) visit(child);
   };
@@ -296,13 +306,13 @@ function isFullyOpaque(el: XmlElement): boolean {
     const curEl = cur as XmlElement;
     const display = presentationValue(curEl, "display")?.trim().toLowerCase();
     const visibility = presentationValue(curEl, "visibility")?.trim().toLowerCase();
-    const opacity = parseNumber(presentationValue(curEl, "opacity")) ?? 1;
+    const opacity = parseOpacity(presentationValue(curEl, "opacity"), 1);
     if (display === "none" || visibility === "hidden" || visibility === "collapse" || opacity < 1) {
       return false;
     }
     cur = cur.parentNode;
   }
-  return (inheritedNumber(el, "fill-opacity", 1) ?? 1) >= 1;
+  return parseOpacity(inheritedValue(el, "fill-opacity"), 1) >= 1;
 }
 
 function solidOpaqueFill(el: XmlElement): string | null {
@@ -311,9 +321,12 @@ function solidOpaqueFill(el: XmlElement): string | null {
   return parseHexColor(fill) ? fill : null;
 }
 
-function localBackgroundFill(root: XmlElement, box: TextBox): string | null {
-  const elements = collectPaintOrder(root);
-  const textIndex = elements.indexOf(box.ownerText);
+function localBackgroundFill(
+  elements: readonly XmlElement[],
+  elementIndexes: ReadonlyMap<XmlElement, number>,
+  box: TextBox,
+): string | null {
+  const textIndex = elementIndexes.get(box.ownerText) ?? -1;
   if (textIndex < 0) return null;
 
   let candidateIndex = -1;
@@ -367,6 +380,10 @@ export function lintSvg(svg: string, opts: { width: number; height: number }): S
 
     const issues: SvgLintIssue[] = [];
     const boxes = collectTextBoxes(root);
+    const paintOrder = collectPaintOrder(root);
+    const paintIndexes = new Map(
+      paintOrder.map((element, index) => [element, index] as const),
+    );
 
     for (const box of boxes) {
       if (box.x0 < -8 || box.x1 > opts.width + 8) {
@@ -396,7 +413,9 @@ export function lintSvg(svg: string, opts: { width: number; height: number }): S
 
     for (const box of boxes) {
       const fill = parseHexColor(inheritedValue(box.el, "fill"));
-      const bg = parseHexColor(localBackgroundFill(root, box));
+      const bg = parseHexColor(
+        localBackgroundFill(paintOrder, paintIndexes, box),
+      );
       if (!fill || !bg) continue;
       const ratio = contrastRatio(fill, bg);
       if (ratio < 2.5) {

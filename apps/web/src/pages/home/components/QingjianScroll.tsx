@@ -1118,6 +1118,7 @@ export function QingjianScroll({
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const effectiveSearchQueryRef = useRef("");
   // 进度条 hover 预览小卡:稳定文章 id + 水平定位(相对 dock 容器左侧)
   const [preview, setPreview] = useState<{ entryId: string; left: number } | null>(null);
 
@@ -1191,8 +1192,12 @@ export function QingjianScroll({
   const [containerW, setContainerW] = useState(0);
 
   const updateSearchQuery = useCallback((nextQuery: string) => {
-    // 搜索会重排文章，属于明确回卷首场景；用一次性初始值覆盖常规布局重建的续接位置。
-    initialHomeViewXRef.current = 0;
+    const nextEffectiveQuery = nextQuery.trim().toLowerCase();
+    if (nextEffectiveQuery !== effectiveSearchQueryRef.current) {
+      // 有效搜索条件变化会重排文章，属于明确回卷首场景。
+      initialHomeViewXRef.current = 0;
+      effectiveSearchQueryRef.current = nextEffectiveQuery;
+    }
     setSearchQuery(nextQuery);
   }, []);
 

@@ -39,6 +39,7 @@ const sessions: HomeSession[] = [
 
 let host: HTMLDivElement;
 let root: Root;
+let resizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 describe("QingjianScroll 时间轴身份与日期", () => {
   beforeEach(async () => {
@@ -66,7 +67,11 @@ describe("QingjianScroll 时间轴身份与日期", () => {
       configurable: true,
       value: vi.fn(),
     });
+    resizeObserverCallbacks = [];
     class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeObserverCallbacks.push(callback);
+      }
       observe() {}
       disconnect() {}
     }
@@ -87,6 +92,10 @@ describe("QingjianScroll 时间轴身份与日期", () => {
       );
     });
     mockTimelineGeometry();
+    await act(async () => {
+      emitResizeObservers();
+      vi.advanceTimersByTime(20);
+    });
   });
 
   afterEach(() => {
@@ -214,6 +223,55 @@ describe("QingjianScroll 时间轴身份与日期", () => {
     });
     expect(translatedViewX(inner)).toBe(0);
   });
+
+  it.each(["会话更新", "ResizeObserver"])(
+    "空搜索开关后由%s重建布局仍保留长卷位置",
+    async (rebuildBy) => {
+      const scroller = host.querySelector<HTMLElement>(".qj-scroll")!;
+      const inner = host.querySelector<HTMLElement>(".qj-inner")!;
+      await act(async () => {
+        scroller.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "End",
+          bubbles: true,
+          cancelable: true,
+        }));
+        vi.advanceTimersByTime(500);
+      });
+      expect(translatedViewX(inner)).toBeGreaterThan(100);
+
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>(".qj-dock-search-btn")!.click();
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>(".qj-dock-search-btn")!.click();
+      });
+
+      if (rebuildBy === "会话更新") {
+        await act(async () => {
+          root.render(
+            <QingjianScroll
+              sessions={[...sessions, makeSession("added-empty-search", "新增", "新增", 400, 400)]}
+              onOpenSession={() => undefined}
+              onNewSession={() => undefined}
+            />,
+          );
+        });
+        mockTimelineGeometry();
+        await act(async () => {
+          window.dispatchEvent(new Event("resize"));
+          vi.advanceTimersByTime(20);
+        });
+      } else {
+        Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 360 });
+        await act(async () => {
+          emitResizeObservers();
+          vi.advanceTimersByTime(20);
+        });
+      }
+
+      expect(translatedViewX(inner)).toBeGreaterThan(100);
+    },
+  );
 });
 
 function makeSession(
@@ -258,6 +316,12 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 function translatedViewX(inner: HTMLElement): number {
   const match = inner.style.transform.match(/translate3d\((-?[\d.]+)px/);
   return match ? Math.abs(Number(match[1])) : 0;
+}
+
+function emitResizeObservers(): void {
+  for (const callback of resizeObserverCallbacks) {
+    callback([], {} as ResizeObserver);
+  }
 }
 
 function domRect(

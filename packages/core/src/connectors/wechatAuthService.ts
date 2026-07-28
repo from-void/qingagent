@@ -38,7 +38,6 @@ interface WechatPendingAuth {
   state: WechatAuthState;
   browser: Browser | null;
   imageDataUri: string | null;
-  generatedAt: number;
   verification: { promise: Promise<void>; resolve: () => void } | null;
   failureMessage: string | null;
   imageReady: Promise<string>;
@@ -53,6 +52,7 @@ export interface WechatAuthStartResult {
   ok: true;
   imageDataUri: string;
   expiresInSec: number;
+  expiresAt: number;
   connectorId: "wechat-mp";
   pendingId: string;
   reused: boolean;
@@ -60,6 +60,10 @@ export interface WechatAuthStartResult {
 
 const pendingStore = new PendingStore<WechatPendingAuth>({ ttlMs: WECHAT_AUTH_TIMEOUT_MS });
 pendingStore.attachProcessCleanup();
+
+function remainingAuthMs(expiresAt: number): number {
+  return Math.max(1, expiresAt - Date.now());
+}
 
 function beginAuthVerification(pending: WechatPendingAuth): void {
   let resolve!: () => void;
@@ -200,7 +204,8 @@ async function extractTokenViaHomeRequest(cookie: string, signal: AbortSignal): 
 export class WechatAuthService {
   async start(): Promise<WechatAuthStartResult> {
     if (process.env.WECHAT_AUTH_EVAL_NOOP === "1") {
-      return { ok: true, imageDataUri: "data:image/png;base64,ZVZBTA==", expiresInSec: 240, connectorId: "wechat-mp", pendingId: "eval-pending", reused: false };
+      const expiresAt = Date.now() + WECHAT_AUTH_TIMEOUT_MS;
+      return { ok: true, imageDataUri: "data:image/png;base64,ZVZBTA==", expiresInSec: WECHAT_AUTH_EXPIRES_IN_SEC, expiresAt, connectorId: "wechat-mp", pendingId: "eval-pending", reused: false };
     }
     const current = pendingStore.current("wechat-mp", WECHAT_SCOPE);
     if (current && current.value.state !== "authorizing" && current.value.state !== "verifying") {
@@ -209,27 +214,36 @@ export class WechatAuthService {
     const started = pendingStore.start({
       connectorId: "wechat-mp",
       scope: WECHAT_SCOPE,
-      create: ({ signal }) => {
+      create: ({ pendingId, signal }) => {
         let resolveImage!: (value: string) => void;
         let rejectImage!: (error: unknown) => void;
         const imageReady = new Promise<string>((resolve, reject) => { resolveImage = resolve; rejectImage = reject; });
         const pending: WechatPendingAuth = {
-          state: "authorizing", browser: null, imageDataUri: null, generatedAt: Date.now(),
+          state: "authorizing", browser: null, imageDataUri: null,
           verification: null, failureMessage: null, imageReady, resolveImage, rejectImage,
           task: Promise.resolve(),
           scanned: false,
         };
-        pending.task = this.runAuth(pending, signal);
+        pending.task = this.runAuth(pending, pendingId, signal);
         return pending;
       },
     });
     const pending = started.entry.value;
     const imageDataUri = pending.imageDataUri ?? await pending.imageReady;
-    const remainingSec = Math.max(1, WECHAT_AUTH_EXPIRES_IN_SEC - Math.floor((Date.now() - pending.generatedAt) / 1000));
-    return { ok: true, imageDataUri, expiresInSec: remainingSec, connectorId: "wechat-mp", pendingId: started.entry.pendingId, reused: started.reused };
+    const expiresAt = pendingStore.get(
+      started.entry.pendingId,
+      "wechat-mp",
+      WECHAT_SCOPE,
+    ).expiresAt;
+    const remainingSec = Math.max(1, Math.ceil(remainingAuthMs(expiresAt) / 1000));
+    return { ok: true, imageDataUri, expiresInSec: remainingSec, expiresAt, connectorId: "wechat-mp", pendingId: started.entry.pendingId, reused: started.reused };
   }
 
-  private async runAuth(pending: WechatPendingAuth, signal: AbortSignal): Promise<void> {
+  private async runAuth(
+    pending: WechatPendingAuth,
+    pendingId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
       let imageSettled = false;
       let authBrowser: Browser | null = null;
       const abort = () => { void authBrowser?.close().catch(() => {}); };
@@ -271,10 +285,14 @@ export class WechatAuthService {
               await page.waitForTimeout(400);
               screenshot = await qrElement.screenshot({ type: "png" });
             }
+            const expiresAt = pendingStore.renew(
+              pendingId,
+              "wechat-mp",
+              WECHAT_SCOPE,
+            ).expiresAt;
             imageSettled = true;
             const dataUri = `data:image/png;base64,${screenshot.toString("base64")}`;
             pending.imageDataUri = dataUri;
-            pending.generatedAt = Date.now();
             console.info(`[wechat-auth] qr screenshot done (${screenshot.length} bytes)`);
             pending.resolveImage(dataUri);
 
@@ -292,13 +310,15 @@ export class WechatAuthService {
                     return text !== initial;
                   },
                   { sel: WECHAT_QR_SELECTOR, initial: initialScanText },
-                  { timeout: WECHAT_AUTH_TIMEOUT_MS },
+                  { timeout: remainingAuthMs(expiresAt) },
                 )
                 .then(() => { pending.scanned = true; })
                 .catch(() => {});
             } catch { /* 扫码信号获取失败不影响授权 */ }
             // 等登录成功落地(任意带 token= 的 mp 页,不限 /cgi-bin/home)。落地只用于取凭据,成败看探针。
-            await page.waitForURL(WECHAT_AUTH_LANDING_RE, { timeout: WECHAT_AUTH_TIMEOUT_MS });
+            await page.waitForURL(WECHAT_AUTH_LANDING_RE, {
+              timeout: remainingAuthMs(expiresAt),
+            });
             pending.scanned = true;
             // waitForURL 返回代表用户已在手机端完成扫码落地。必须在首个 await 前同步改态，
             // 否则紧随「我已扫码完成」发起的 status 会误读为 authorizing。

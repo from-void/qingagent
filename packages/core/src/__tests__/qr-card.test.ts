@@ -219,7 +219,7 @@ describe("show_qr 二维码卡帧协议", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("wechat-auth-qr");
     const img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
-    const startedAt = Date.now();
+    const expiresAt = Date.now() + 240_000;
     const frames = await collect(
       processAgentStream(
         streamOf(
@@ -230,7 +230,7 @@ describe("show_qr 二维码卡帧协议", () => {
               toolName: "wechat_auth_start",
               toolCallId: "wa1",
               args: {},
-              result: { ok: true, imageDataUri: img, expiresInSec: 240, connectorId: "wechat-mp", pendingId: "wechat-pending-safe", reused: false },
+              result: { ok: true, imageDataUri: img, expiresInSec: 240, expiresAt, connectorId: "wechat-mp", pendingId: "wechat-pending-safe", reused: false },
             },
           },
         ),
@@ -245,8 +245,7 @@ describe("show_qr 二维码卡帧协议", () => {
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
       expect(typeof final.body.data.expiresAt).toBe("number");
-      expect(final.body.data.expiresAt).toBeGreaterThanOrEqual(startedAt + 240_000);
-      expect(final.body.data.expiresAt).toBeLessThanOrEqual(Date.now() + 240_000);
+      expect(final.body.data.expiresAt).toBe(expiresAt);
       expect(final.body.data.connectorId).toBe("wechat-mp");
       expect(final.body.data.pendingId).toBe("wechat-pending-safe");
     }

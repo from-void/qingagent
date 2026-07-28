@@ -165,6 +165,7 @@ export async function* handleSpecialToolResult(
       title: "扫码登录微信公众号",
       code: null,
       note: "用你**公众号管理员**的那个微信扫码,扫完手机上点「登录」,再点下方按钮",
+      expiresAt: toolResult.expiresAt,
       expiresInSec: toolResult.expiresInSec,
       fallbackExpiresInSec: 240,
       refreshQuery: "微信登录二维码过期了,请帮我重新生成",

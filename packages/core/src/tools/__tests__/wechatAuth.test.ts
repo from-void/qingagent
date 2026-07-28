@@ -31,7 +31,7 @@ function browserMock(
   const browser = { newContext: vi.fn().mockResolvedValue(context), close: vi.fn().mockResolvedValue(undefined) };
   const launch = vi.fn().mockResolvedValue(browser);
   vi.mocked(browserLaunchCandidates).mockReturnValue([{ kind: "default", label: "test", launch }]);
-  return { browser, page, launch };
+  return { browser, page, launch, qrElement };
 }
 async function start() { return await wechatAuthStartTool.execute!({}, opts) as Record<string, unknown>; }
 async function status() { return await wechatAuthStatusTool.execute!({}, opts) as Record<string, unknown>; }
@@ -184,6 +184,35 @@ describe("wechat auth connector service thin tools", () => {
     expect(browser.close).not.toHaveBeenCalled();
     resolveLanding();
     await vi.waitFor(() => expect(browser.close).toHaveBeenCalledTimes(1));
+  });
+
+  it("二维码就绪后统一续期 Store、浏览器等待与对外截止时间", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T12:00:00.000Z"));
+    const neverLands = new Promise<void>(() => {});
+    const { browser, qrElement } = browserMock(neverLands);
+    qrElement.screenshot.mockImplementation(
+      () => new Promise<Buffer>((resolve) => {
+        setTimeout(() => resolve(Buffer.alloc(1_600, 1)), 30_000);
+      }),
+    );
+
+    const starting = start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    const result = await starting;
+    const expectedExpiresAt = Date.parse("2026-07-11T12:04:30.000Z");
+
+    expect(result).toMatchObject({
+      expiresAt: expectedExpiresAt,
+      expiresInSec: 240,
+    });
+
+    await vi.advanceTimersByTimeAsync(210_000);
+    expect(browser.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(browser.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(browser.close).toHaveBeenCalledTimes(1);
   });
 
   it("pending 状态供旧 confirmQuery status 兜底读取", async () => {

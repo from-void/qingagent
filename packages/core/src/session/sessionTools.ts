@@ -394,6 +394,7 @@ export function missingGenericToolResultFields(
       requireBoolean("ok");
       requireString("imageDataUri");
       requireNumber("expiresInSec");
+      requireNumber("expiresAt");
       break;
     case "wechat_auth_status":
       requireBoolean("ok");

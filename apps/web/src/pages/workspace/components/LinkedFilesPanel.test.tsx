@@ -495,7 +495,7 @@ describe("LinkedFilesPanel", () => {
     expect(rowByText("问卷汇总.xlsx")).not.toBeNull();
   });
 
-  it("folderSource 从 null 变为 connected 时自动展开并高亮文件夹根", async () => {
+  it("进入已关联文件夹的会话(无关联动作)时 folderSource 到达不自动展开", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ entries: [], truncated: false }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -504,9 +504,35 @@ describe("LinkedFilesPanel", () => {
 
     await rerender(panel({ folderSource: mockFolderSource }));
 
+    // 只出现收起态细条，不展开面板、不预取目录。
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+    expect(getBar().textContent).toContain("文件夹「客户资料」");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // 用户自己点开时也不该有定位闪烁高亮。
+    click(getBar());
+    expect(getFolderRoot().classList.contains("is-located")).toBe(false);
+  });
+
+  it("本会话关联动作后 folderSource 到达会自动展开并高亮文件夹根，且只生效一次", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ entries: [], truncated: false }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(panel({ folderSource: null }));
+    // 用户点了"连接本地文件夹"并成功返回：信号 +1，此时 folderSource 还没到。
+    await rerender(panel({ folderSource: null, folderAttachSignal: 1 }));
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+
+    await rerender(panel({ folderSource: mockFolderSource, folderAttachSignal: 1 }));
+
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
     expect(getFolderRoot().classList.contains("is-located")).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 断开后再有 folderSource 到达(没有新的关联动作)不再自动展开。
+    await rerender(panel({ folderSource: null, folderAttachSignal: 1 }));
+    await rerender(panel({ folderSource: mockFolderSource, folderAttachSignal: 1 }));
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
   });
 
   it("切换文件夹来源会取消旧请求且迟到响应不覆盖新来源", async () => {

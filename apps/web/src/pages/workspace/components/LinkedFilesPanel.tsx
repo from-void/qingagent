@@ -44,6 +44,11 @@ interface LinkedFilesPanelProps {
   folderSource: FolderSource | null;
   disabled?: boolean;
   locateFolderSignal?: number;
+  /**
+   * 本客户端刚完成一次「关联文件夹」动作的显式信号(每次成功 +1)。
+   * 只有它出现过,后续 folderSource 首次到达才自动展开;进入已关联会话的数据加载不会触发。
+   */
+  folderAttachSignal?: number;
   onReference: (label: string) => void;
   onPreviewMaterial?: (source: AssetSource) => void;
   onPreviewFolderFile?: (source: AssetSource) => void;
@@ -59,6 +64,7 @@ export function LinkedFilesPanel({
   folderSource,
   disabled = false,
   locateFolderSignal = 0,
+  folderAttachSignal = 0,
   onReference,
   onPreviewMaterial,
   onPreviewFolderFile,
@@ -84,6 +90,8 @@ export function LinkedFilesPanel({
   const currentFolderIdentityRef = useRef<string | null>(folderIdentity);
   currentFolderIdentityRef.current = folderIdentity;
   const previousFolderIdentityRef = useRef<string | null>(folderIdentity);
+  // 一次性标记:本客户端刚发起的关联动作在等 folderSource 到达后自动展开。
+  const pendingAttachExpandRef = useRef(false);
   const entryControllersRef = useRef<Set<AbortController>>(new Set());
   const locateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleDirStates = useMemo(() => {
@@ -239,11 +247,23 @@ export function LinkedFilesPanel({
     flashLocated();
   }, [flashLocated, folderSource, loadEntries, visibleDirStates]);
 
+  // 收到关联动作信号后置起一次性待展开标记;必须声明在下面的 identity 效应之前,
+  // 保证同一次提交里「信号 +1」与「folderSource 到达」同时发生时也能被看到。
+  useEffect(() => {
+    if (folderAttachSignal <= 0) return;
+    pendingAttachExpandRef.current = true;
+  }, [folderAttachSignal]);
+
   useEffect(() => {
     const prev = previousFolderIdentityRef.current;
     const current = folderIdentity;
     previousFolderIdentityRef.current = current;
-    if (prev === null && current !== null) expandFolderRoot();
+    if (prev !== null || current === null) return;
+    // 只有本会话内用户亲自关联过文件夹才自动展开;
+    // 进入已关联会话时 folderSource 也是 null → 非 null,但没有关联动作,保持收起。
+    if (!pendingAttachExpandRef.current) return;
+    pendingAttachExpandRef.current = false;
+    expandFolderRoot();
   }, [expandFolderRoot, folderIdentity]);
 
   useEffect(() => {

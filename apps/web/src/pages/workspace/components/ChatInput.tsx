@@ -136,6 +136,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const skillWrapRef = useRef<HTMLDivElement>(null);
   // 文件菜单状态行点击后,让底部树展开并短暂定位高亮文件夹根节点。
   const [locateFolderSignal, setLocateFolderSignal] = useState(0);
+  // 本客户端刚完成一次「关联文件夹」动作的信号:底部树据此在新 folderSource 到达时自动展开;
+  // 进入已关联会话只是数据加载,不会 +1,面板保持收起。
+  const [folderAttachSignal, setFolderAttachSignal] = useState(0);
   const fileResources = useResourceList({ kind: "file" });
   // 输入框是否为空(无文本且无 chip)——驱动"停止/发送"按钮切换。
   const [isEmpty, setIsEmpty] = useState(true);
@@ -160,6 +163,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       .map(({ action }) => action);
   }, [invocableSkillActions, skillMenuOrder]);
   const sendDisabled = disabled && !sendEnabledWhenDisabled;
+  const handleFolderAttachSuccess = useCallback(() => {
+    setFolderAttachSignal((value) => value + 1);
+  }, []);
   const {
     folderDialog,
     folderActionPending,
@@ -174,6 +180,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDetachFolder,
     disabled,
     restoreFocusRef: fileButtonRef,
+    onAttachSuccess: handleFolderAttachSuccess,
   });
 
   // 未配置 key 时按发送快捷键:不放行,改成强弹引导气泡(短暂 is-forced),~2.6s 后自动收起。
@@ -1142,6 +1149,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         folderSource={folderSource}
         disabled={disabled}
         locateFolderSignal={locateFolderSignal}
+        folderAttachSignal={folderAttachSignal}
         onReference={insertAttachChip}
         onPreviewMaterial={onPreviewMaterial}
         onPreviewFolderFile={onPreviewFolderFile}

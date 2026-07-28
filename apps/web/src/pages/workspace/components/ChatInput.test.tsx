@@ -723,6 +723,50 @@ describe("ChatInput", () => {
     expect(host?.querySelector('[data-wf="LinkedFolderRootRow"]')?.textContent).toContain("客户资料");
   });
 
+  it("进入已关联文件夹的会话时素材树保持收起", async () => {
+    await render(
+      <ChatInput {...baseFolderProps()} placeholder="输入" onSubmit={() => undefined} />,
+    );
+    // 会话数据异步到达：folderSource 由 null 变为已连接。
+    await rerender(
+      <ChatInput
+        {...baseFolderProps({ folderSource: mockFolderSource })}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+    expect(getLinkedFilesBar().textContent).toContain("文件夹「客户资料」");
+  });
+
+  it("本会话完成关联动作后素材树在 folderSource 到达时自动展开", async () => {
+    window.localStorage.setItem(FOLDER_INTRO_STORAGE_KEY, "1");
+    const onAttachFolder = vi.fn(async () => undefined);
+    await render(
+      <ChatInput
+        {...baseFolderProps({ onAttachFolder })}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    openFileMenu();
+    await clickElementAsync(getAttachFolderRow());
+    expect(onAttachFolder).toHaveBeenCalledTimes(1);
+
+    await rerender(
+      <ChatInput
+        {...baseFolderProps({ folderSource: mockFolderSource, onAttachFolder })}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="LinkedFolderRootRow"]')?.classList.contains("is-located")).toBe(true);
+  });
+
   it("已关联素材行点击会透传 onPreviewMaterial", async () => {
     const onPreviewMaterial = vi.fn();
     await render(
@@ -1088,6 +1132,14 @@ async function render(element: ReactNode): Promise<void> {
   root = createRoot(host);
   await act(async () => {
     root?.render(element);
+  });
+}
+
+async function rerender(element: ReactNode): Promise<void> {
+  await act(async () => {
+    root?.render(element);
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 

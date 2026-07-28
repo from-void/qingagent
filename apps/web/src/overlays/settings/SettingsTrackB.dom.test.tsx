@@ -1170,6 +1170,33 @@ describe("Settings Track B", () => {
     expect(host?.querySelector(".ss-card .ss-badge")?.textContent).toContain(badge);
   });
 
+  it("Kimi 原生识图复用服务端活动 provider 与 DB/env key 状态", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/settings/model")) {
+        return json({
+          provider: "kimi",
+          apiKeyConfigured: true,
+          maskedTail: "7788",
+          source: "env",
+          providers: {
+            deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+            kimi: { apiKeyConfigured: true, maskedTail: "7788", source: "env" },
+          },
+          params: null,
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<VisionPanel />);
+
+    const nativeCard = host?.querySelector(".ss-card");
+    expect(nativeCard?.textContent).toContain("Kimi 原生图像识别");
+    expect(nativeCard?.querySelector(".ss-badge")?.textContent).toContain("自动启用");
+    expect(host?.textContent).toContain("默认复用");
+  });
+
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);

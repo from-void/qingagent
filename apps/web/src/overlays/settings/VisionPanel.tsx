@@ -10,9 +10,10 @@ import {
   type VisionProvider,
 } from "./visionProviderStore";
 import {
-  getSelectedModelProvider,
   getVisitorModelKey,
   readCustomProvider,
+  resolveModelRequestProvider,
+  type ModelProvider,
 } from "./visitorKeyStore";
 
 // 设置·技能·图像识别:副基模(多模态)配置面板。
@@ -29,6 +30,12 @@ type VisionTestErrorKind =
   | "ssrf_blocked"
   | "unsupported_media"
   | "model_error";
+
+interface VisionModelSettingsResponse {
+  provider?: ModelProvider;
+  apiKeyConfigured?: boolean;
+  providers?: Partial<Record<ModelProvider, { apiKeyConfigured?: boolean }>>;
+}
 
 function testErrorLabel(kind: VisionTestErrorKind | undefined): string {
   switch (kind) {
@@ -64,13 +71,22 @@ function visionPersistFailureMessage(): string {
 }
 
 export function VisionPanel() {
-  const modelProvider = getSelectedModelProvider();
-  const kimiNativeVision = modelProvider === "kimi";
-  const kimiKeyConfigured =
-    Boolean(getVisitorModelKey("kimi")) || Boolean(readCustomProvider("kimi"));
-  const kimiNativeVisionReady = kimiNativeVision && kimiKeyConfigured;
   const toast = useToast();
   const confirm = useConfirm();
+  const [serverModelSettings, setServerModelSettings] =
+    useState<VisionModelSettingsResponse | null>(null);
+  const modelProvider = resolveModelRequestProvider(serverModelSettings?.provider);
+  const kimiNativeVision = modelProvider === "kimi";
+  const serverKimiKeyConfigured =
+    serverModelSettings?.providers?.kimi?.apiKeyConfigured ??
+    (serverModelSettings?.provider === "kimi"
+      ? Boolean(serverModelSettings.apiKeyConfigured)
+      : false);
+  const kimiKeyConfigured =
+    Boolean(getVisitorModelKey("kimi")) ||
+    Boolean(readCustomProvider("kimi")) ||
+    serverKimiKeyConfigured;
+  const kimiNativeVisionReady = kimiNativeVision && kimiKeyConfigured;
   const [saved, setSaved] = useState<VisionProvider | null>(() => readVisionProvider());
   const [protocol, setProtocol] = useState<"openai" | "anthropic">(
     () => readVisionProvider()?.protocol ?? "openai",
@@ -102,6 +118,21 @@ export function VisionPanel() {
       testControllerRef.current?.abort();
       testControllerRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch("/api/v1/settings/model", { signal: controller.signal });
+        if (!res.ok) return;
+        const body = (await res.json()) as VisionModelSettingsResponse;
+        if (mountedRef.current && !controller.signal.aborted) setServerModelSettings(body);
+      } catch {
+        // 服务端状态暂不可用时保留本地显式配置判断，不把可用状态误写成失败。
+      }
+    })();
+    return () => controller.abort();
   }, []);
 
   // 测试并保存:先调后端 test 路由(代理避免 CORS、做真实 image part 连通性检查),通了再落本机。

@@ -143,10 +143,12 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const templateSelectionEpochRef = useRef(0);
 
   useEffect(() => {
     if (!props.open) return;
     const requestId = ++requestRef.current;
+    templateSelectionEpochRef.current += 1;
     setLoading(true);
     setError(null);
     setPage("launch");
@@ -191,9 +193,11 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   };
   const chooseTemplate = (id: string) => {
     const previous = selectedId;
+    const selectionEpoch = ++templateSelectionEpochRef.current;
     setSelectedId(id);
     setError(null);
     void props.selectTemplate(props.type, id).catch(() => {
+      if (templateSelectionEpochRef.current !== selectionEpoch) return;
       setSelectedId(previous);
       setError("模板选择保存失败，请重试");
     });

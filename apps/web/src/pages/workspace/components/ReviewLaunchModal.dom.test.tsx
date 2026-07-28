@@ -143,6 +143,49 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("每类至少保留一个模板");
   });
 
+  it("旧模板选择晚失败不会回滚较新的成功选择", async () => {
+    const balanced = {
+      ...builtins[1]!,
+      id: "source-balanced",
+      name: "均衡来源核查",
+    };
+    let rejectStrict!: (error: Error) => void;
+    let resolveBalanced!: () => void;
+    const strictRequest = new Promise<void>((_resolve, reject) => {
+      rejectStrict = reject;
+    });
+    const balancedRequest = new Promise<void>((resolve) => {
+      resolveBalanced = resolve;
+    });
+    const selectTemplate = vi.fn((_type: string, id: string) => (
+      id === "source-strict" ? strictRequest : balancedRequest
+    ));
+
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [...builtins, balanced],
+        selectedTemplateId: builtins[0]!.id,
+      }),
+      selectTemplate,
+    })} />));
+    const card = (name: string) => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes(name))!;
+
+    act(() => card("严格来源核查").click());
+    act(() => card("均衡来源核查").click());
+    await act(async () => {
+      resolveBalanced();
+      await balancedRequest;
+    });
+    await act(async () => {
+      rejectStrict(new Error("旧请求失败"));
+      await strictRequest.catch(() => undefined);
+    });
+
+    expect(card("均衡来源核查").getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("文档级补充自动带出、确认即持久化；敏感词弹窗内含词库管理", async () => {
     let stored = "上次重点核对品牌口号";
     const modalProps = props({

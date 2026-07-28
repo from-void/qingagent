@@ -4,8 +4,14 @@ import {
   normalizeDrawioSource,
 } from "@qingagent/pm-schema";
 
+/**
+ * dark=0 / contrast=0 是「图不许跟着系统主题变脸」的上游开关：
+ * - dark=0 钉死编辑器为浅色，不让 prefers-color-scheme 把画布翻黑；
+ * - contrast=0 让 Graph.defaultAdaptiveColors 走 "simple"，导出 SVG 写字面颜色，
+ *   而不是 `fill: light-dark(浅, 深)`——后者在深色系统上会把图渲染成黑块。
+ */
 export const DRAWIO_EMBED_PATH =
-  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&saveAndExit=1&keepmodified=1&suppressNewWindows=1";
+  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&saveAndExit=1&keepmodified=1&suppressNewWindows=1&dark=0&contrast=0";
 
 export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
 export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;

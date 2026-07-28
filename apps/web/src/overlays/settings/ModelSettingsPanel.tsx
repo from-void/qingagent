@@ -2166,15 +2166,18 @@ function summarizeRecentDays(
 ): { cost: number; tokens: number; calls: number; hasPriced: boolean } | null {
   if (rows === null) return null;
   if (rows.length === 0) return { cost: 0, tokens: 0, calls: 0, hasPriced: false };
-  // bucket 是 YYYY-MM-DD;取按日期倒序后最近 N 天涉及的所有行
-  const dates = Array.from(new Set(rows.map((r) => r.bucket))).sort().reverse().slice(0, days);
-  const keep = new Set(dates);
+  // bucket 是本地日历日 YYYY-MM-DD；窗口固定为“今天及之前 N-1 天”，不按有数据日期倒推。
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  start.setDate(start.getDate() - Math.max(0, days - 1));
+  const startYmd = toYMD(start);
+  const endYmd = toYMD(today);
   let cost = 0;
   let tokens = 0;
   let calls = 0;
   let hasPriced = false;
   for (const r of rows) {
-    if (!keep.has(r.bucket)) continue;
+    if (r.bucket < startYmd || r.bucket > endYmd) continue;
     cost += r.costCny ?? 0;
     if (r.costCny != null) hasPriced = true;
     tokens += r.inputTokens + r.outputTokens;

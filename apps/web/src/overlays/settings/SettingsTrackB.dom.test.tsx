@@ -352,6 +352,31 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
+  it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    const today = new Date();
+    const staleDay = new Date(today);
+    staleDay.setDate(today.getDate() - 8);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [
+            usageRow(localYmd(today), "deepseek-v4-flash", 100, 0, 0.001),
+            usageRow(localYmd(staleDay), "deepseek-v4-flash", 1000, 0, 0.01),
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+
+    const recentMetric = host?.querySelector(".md-metric");
+    expect(recentMetric?.textContent).toContain("100 tokens");
+    expect(recentMetric?.textContent).not.toContain("1.1k tokens");
+  });
+
   it("SecretInput 默认遮挡,眼睛按钮可切明文且保留 data-wf", async () => {
     await render(
       <SecretInput
@@ -1964,6 +1989,13 @@ function usageRow(
     coverageRate: 1,
     costCny,
   };
+}
+
+function localYmd(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function json(body: unknown, status = 200): Response {

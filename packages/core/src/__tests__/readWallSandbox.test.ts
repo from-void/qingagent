@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,73 @@ afterEach(async () => {
 });
 
 describe("read-wall fail-closed 与 mount 升级锁", () => {
+  it("并发启动必须等待前一条命令完成完整性复核和底层 spawn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-serialized-start-"));
+    roots.push(root);
+    let releaseFirstVerification!: () => void;
+    const firstVerification = new Promise<void>((resolve) => {
+      releaseFirstVerification = resolve;
+    });
+    let verificationCount = 0;
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: vi.fn(async () => {
+        verificationCount += 1;
+        if (verificationCount === 1) await firstVerification;
+      }),
+    });
+
+    const firstHandlePromise = sandbox.processes.spawn("printf first");
+    await vi.waitFor(() => expect(verificationCount).toBe(1));
+    const secondHandlePromise = sandbox.processes.spawn("printf second");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(verificationCount).toBe(1);
+
+    releaseFirstVerification();
+    const [firstHandle, secondHandle] = await Promise.all([
+      firstHandlePromise,
+      secondHandlePromise,
+    ]);
+    await expect(firstHandle.wait()).resolves.toMatchObject({ exitCode: 0, stdout: "first" });
+    await expect(secondHandle.wait()).resolves.toMatchObject({ exitCode: 0, stdout: "second" });
+  });
+
+  it("完整性复核失败后排队的启动不得复核或拉起进程", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-queued-failure-"));
+    roots.push(root);
+    let rejectFirstVerification!: (error: Error) => void;
+    const firstVerification = new Promise<void>((_resolve, reject) => {
+      rejectFirstVerification = reject;
+    });
+    let verificationCount = 0;
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: vi.fn(async () => {
+        verificationCount += 1;
+        await firstVerification;
+      }),
+    });
+
+    const firstStart = sandbox.processes.spawn("printf first > first-started");
+    await vi.waitFor(() => expect(verificationCount).toBe(1));
+    const queuedStart = sandbox.processes.spawn("printf queued > queued-started");
+    const firstRejection = expect(firstStart).rejects.toThrow(/profile hash changed/);
+    const queuedRejection = expect(queuedStart).rejects.toThrow(/commands are disabled/);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(verificationCount).toBe(1);
+
+    rejectFirstVerification(new Error("profile hash changed"));
+    await firstRejection;
+    await queuedRejection;
+    expect(verificationCount).toBe(1);
+    await expect(access(join(root, "first-started"))).rejects.toThrow();
+    await expect(access(join(root, "queued-started"))).rejects.toThrow();
+  });
+
   it("后台 spawn 与前台命令共享完整性复核和熔断", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-background-"));
     roots.push(root);

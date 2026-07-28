@@ -148,6 +148,7 @@ function shellQuoteCommandArg(arg: string): string {
  */
 export class ReadWallLocalSandbox extends LocalSandbox {
   private readWallHealthy = true;
+  private processStartTail: Promise<void> = Promise.resolve();
   private readonly verifyReadWallIntegrity: () => Promise<void>;
 
   constructor(options: ReadWallLocalSandboxOptions) {
@@ -159,19 +160,21 @@ export class ReadWallLocalSandbox extends LocalSandbox {
       command: string,
       spawnOptions?: SpawnProcessOptions,
     ): Promise<ProcessHandle> => {
-      this.assertReadWallHealthy();
-      try {
-        await this.verifyReadWallIntegrity();
-      } catch (error) {
-        this.markReadWallUnhealthy();
-        throw error;
-      }
-      try {
-        return await spawnProcess(command, spawnOptions);
-      } catch (error) {
-        this.markReadWallUnhealthy();
-        throw error;
-      }
+      return this.serializeProcessStart(async () => {
+        this.assertReadWallHealthy();
+        try {
+          await this.verifyReadWallIntegrity();
+        } catch (error) {
+          this.markReadWallUnhealthy();
+          throw error;
+        }
+        try {
+          return await spawnProcess(command, spawnOptions);
+        } catch (error) {
+          this.markReadWallUnhealthy();
+          throw error;
+        }
+      });
     };
     this.executeCommand = async (
       command: string,
@@ -217,6 +220,20 @@ export class ReadWallLocalSandbox extends LocalSandbox {
 
   private assertReadWallHealthy(): void {
     if (!this.readWallHealthy) throw new Error("read-wall is unhealthy; commands are disabled for this Workspace");
+  }
+
+  private async serializeProcessStart<T>(startProcess: () => Promise<T>): Promise<T> {
+    const previousStart = this.processStartTail;
+    let releaseStart!: () => void;
+    this.processStartTail = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    await previousStart;
+    try {
+      return await startProcess();
+    } finally {
+      releaseStart();
+    }
   }
 
   private markReadWallUnhealthy(): void {

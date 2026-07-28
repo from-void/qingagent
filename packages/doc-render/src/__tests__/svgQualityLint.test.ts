@@ -111,9 +111,9 @@ describe("lintSvg", () => {
     let rootChildReads = 0;
     const parseSpy = vi
       .spyOn(DOMParser.prototype, "parseFromString")
-      .mockImplementation(function (source, mimeType) {
+      .mockImplementation(function (this: DOMParser, source, mimeType) {
         const document = originalParseFromString.call(this, source, mimeType);
-        const childNodes = document.documentElement.childNodes;
+        const childNodes = document.documentElement!.childNodes;
         rootChildCount = childNodes.length;
         const originalItem = childNodes.item.bind(childNodes);
         vi.spyOn(childNodes, "item").mockImplementation((index) => {

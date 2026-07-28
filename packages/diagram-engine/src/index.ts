@@ -2533,16 +2533,39 @@ function parseState(source: string): ParseResult {
       protectedSpans.push(lineSpan(line));
       continue;
     }
-    if (/^note\b|^state\s+\S+\s*\{|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
+    const compositeDeclaration = line.text.match(new RegExp(
+      String.raw`^(\s*)state\s+(?:"([^"]*)"\s+as\s+(${STATE_ENDPOINT_RE})|(${STATE_ENDPOINT_RE}))\s*\{\s*$`,
+      "u",
+    ));
+    if (compositeDeclaration) {
+      fullyRepresented = false;
+      const label = compositeDeclaration[2];
+      const id = compositeDeclaration[3] ?? compositeDeclaration[4]!;
+      const labelStart = label === undefined
+        ? undefined
+        : line.start + compositeDeclaration[1]!.length + `state "`.length;
+      ensureNode(
+        id,
+        label ?? id,
+        true,
+        lineSpan(line),
+        labelStart === undefined
+          ? undefined
+          : { start: labelStart, end: labelStart + label!.length },
+        "composite",
+      );
+      deleteProtectedNodeIds.add(id);
+      protectedSpans.push(lineSpan(line));
+      compositeDepth += 1;
+      continue;
+    }
+    if (/^note\b|^state\s+\S+\s*<</i.test(trimmed) || /<<(?:choice|fork|join)>>/i.test(trimmed)) {
       fullyRepresented = false;
       const specialDeclaration = trimmed.match(
-        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*(?:\{|<<\s*(?:choice|fork|join)\s*>>)/iu,
+        /^state\s+([\p{L}\p{N}_][\p{L}\p{N}_-]*)\s*<<\s*(?:choice|fork|join)\s*>>/iu,
       );
       if (specialDeclaration) deleteProtectedNodeIds.add(specialDeclaration[1]!);
       protectedSpans.push(lineSpan(line));
-      const opened = (trimmed.match(/{/g) ?? []).length;
-      const closed = (trimmed.match(/}/g) ?? []).length;
-      compositeDepth = Math.max(0, compositeDepth + opened - closed);
       continue;
     }
     if (/^}$/.test(trimmed)) {

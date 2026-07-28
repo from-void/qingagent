@@ -1300,11 +1300,11 @@ flowchart TD
     ]);
   });
 
-  it("stateDiagram-v2 嵌套复合状态在最外层闭合前持续保护 transition", () => {
+  it("stateDiagram-v2 带标题 alias 的嵌套复合状态只按语法括号保护 transition", () => {
     const source = [
       "stateDiagram-v2",
-      "  state Outer {",
-      "    state Inner {",
+      "  state \"外层{标题}\" as Outer {",
+      "    state \"内层}标题{\" as Inner {",
       "      A --> B",
       "    }",
       "    C --> D",

@@ -238,6 +238,35 @@ describe("generateSvg direct DeepSeek path", () => {
     expect(writeFileMock.mock.calls[0]![1]).toContain("干净版本");
   });
 
+  it("质量重试期间父调用取消后不回退首版落盘或发送完成进度", async () => {
+    const controller = new AbortController();
+    const { writes, context } = progressWriter();
+    const overflowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+      <text x="760" y="80" font-size="20" fill="#2b2b2b">一二三四五六七八九十</text>
+    </svg>`;
+    const cancelReason = new DOMException("用户取消 SVG 生成", "AbortError");
+    streamInnerModelMock
+      .mockResolvedValueOnce({ raw: overflowSvg, contentStartMs: 0 })
+      .mockImplementationOnce(async () => {
+        controller.abort(cancelReason);
+        throw cancelReason;
+      });
+
+    const result = await executeGenerateSvg("重试时取消的插图", {
+      ...context,
+      abortSignal: controller.signal,
+    } as never);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("SVG 生成已取消。");
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(
+      writes.some((write) =>
+        (write.progress as { stage?: string } | undefined)?.stage === "done"
+      ),
+    ).toBe(false);
+  });
+
   it("首版无版式问题时不重试", async () => {
     streamInnerModelMock.mockResolvedValueOnce({
       raw: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">

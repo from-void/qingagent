@@ -447,10 +447,12 @@ export const generateSvgTool = createTool({
             selected = retryCandidate;
           }
         } catch {
+          context?.abortSignal?.throwIfAborted();
           selected = firstCandidate;
         }
       }
 
+      context?.abortSignal?.throwIfAborted();
       const { imageId, src } = await persistSvg(selected.svg);
       await emitProgress("done", {
         message: "SVG 已生成",

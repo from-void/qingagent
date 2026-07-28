@@ -443,6 +443,7 @@ async function runFallback(
   input: GenerateQuestionsInput,
   // 去重态由调用方传入、与主路径共用:各自持一份的话,降级后收尾那帧会把同一套问卷重复发一次。
   progressState: { signature: string },
+  onUnanswerableQuestionnaire: () => void,
 ): Promise<GeneratedQuestion[]> {
   let lastAnswerable: GeneratedQuestion[] = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -467,6 +468,7 @@ async function runFallback(
       await emitQuestionProgress(input, parsed, progressState);
       break;
     }
+    if (parsed) onUnanswerableQuestionnaire();
   }
   return lastAnswerable;
 }
@@ -507,6 +509,7 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
   const progressState = prepared?.progressState ?? { signature: "" };
   let lastPartial: GeneratedQuestion[] = [];
   let branchText = "";
+  let sawUnanswerableQuestionnaire = false;
   const result = await runSideChannel({
     callSite: input.mode === "initial" ? "planDraft" : "askMore",
     requestContext: input.requestContext,
@@ -531,16 +534,25 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
     parse: (text) => {
       branchText = text;
       const parsed = parseGeneratedQuestions(text);
-      if (parsed) return isAnswerableQuestionnaire(parsed) ? parsed : null;
+      if (parsed) {
+        if (isAnswerableQuestionnaire(parsed)) return parsed;
+        sawUnanswerableQuestionnaire = true;
+        return null;
+      }
       return isAnswerableQuestionnaire(lastPartial) ? lastPartial : null;
     },
     fallback: async () => {
-      const questions = await runFallback(input, progressState);
+      const questions = await runFallback(input, progressState, () => {
+        sawUnanswerableQuestionnaire = true;
+      });
       if (snapshot) rememberFallbackQuestions(snapshot, input, questions);
       return questions;
     },
   });
-  if (!isAnswerableQuestionnaire(result.value)) {
+  if (
+    !isAnswerableQuestionnaire(result.value) &&
+    (result.value.length > 0 || sawUnanswerableQuestionnaire)
+  ) {
     throw new Error("问卷生成结果不可回答，请重试。");
   }
   if (result.transport === "branch" && snapshot && prepared) {

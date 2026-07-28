@@ -102,10 +102,12 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
                 const maxWidth = resolveMaxImageWidth(frameRef.current, startWidth);
                 const startX = event.clientX;
                 let nextWidth = startWidth;
+                let hasEffectiveMove = false;
                 let active = true;
                 const onMove = (moveEvent: PointerEvent) => {
                   if (moveEvent.pointerId !== pointerId) return;
                   nextWidth = clamp(Math.round(startWidth + moveEvent.clientX - startX), MIN_IMAGE_WIDTH, maxWidth);
+                  hasEffectiveMove = nextWidth !== startWidth;
                   setPreviewWidth(nextWidth);
                 };
                 const finish = (commit: boolean) => {
@@ -118,7 +120,12 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
                   handle.removeEventListener("lostpointercapture", onLostPointerCapture);
                   cleanupResizeRef.current = null;
                   if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
-                  if (commit) updateAttributes({ width: nextWidth, height: null });
+                  const attributesChanged = nextWidth !== width || height !== null;
+                  if (commit && hasEffectiveMove && attributesChanged) {
+                    updateAttributes({ width: nextWidth, height: null });
+                  } else if (commit) {
+                    setPreviewWidth(width);
+                  }
                 };
                 const onUp = (upEvent: PointerEvent) => {
                   if (upEvent.pointerId === pointerId) finish(true);

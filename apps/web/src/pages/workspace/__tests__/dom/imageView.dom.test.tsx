@@ -193,6 +193,66 @@ describe("ImageView", () => {
     }
   });
 
+  it("只点击 resize 手柄不会固化自然宽度、清除高度或写入事务", async () => {
+    const editor = await mountEditor(imageDoc({ width: null, height: 180, align: "center" }));
+    let docChanges = 0;
+    editor.on("transaction", ({ transaction }) => {
+      if (transaction.docChanged) docChanges += 1;
+    });
+    try {
+      const handle = editor.view.dom.querySelector<HTMLButtonElement>(".pm-image-resize-handle")!;
+
+      await act(async () => {
+        handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, button: 0, pointerId: 5 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 5 }));
+      });
+      await flush();
+
+      expect(firstImageAttrs(editor).width).toBeNull();
+      expect(firstImageAttrs(editor).height).toBe(180);
+      expect(docChanges).toBe(0);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("resize 拖开后回到原尺寸不会写入同值事务", async () => {
+    const editor = await mountEditor(imageDoc({ width: 240, height: null, align: "center" }));
+    let docChanges = 0;
+    editor.on("transaction", ({ transaction }) => {
+      if (transaction.docChanged) docChanges += 1;
+    });
+    try {
+      const wrapper = editor.view.dom.querySelector<HTMLElement>(".pm-image");
+      wrapper!.getBoundingClientRect = () => ({
+        top: 0,
+        left: 0,
+        right: 520,
+        bottom: 260,
+        width: 520,
+        height: 260,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+      const handle = editor.view.dom.querySelector<HTMLButtonElement>(".pm-image-resize-handle")!;
+
+      await act(async () => {
+        handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, button: 0, pointerId: 6 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 160, pointerId: 6 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, pointerId: 6 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 6 }));
+      });
+      await flush();
+
+      expect(firstImageAttrs(editor).width).toBe(240);
+      expect(firstImageAttrs(editor).height).toBeNull();
+      expect(docChanges).toBe(0);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
   it("resize 只消费当前指针，并在 pointercancel 后提交且停止旧手势", async () => {
     const editor = await mountEditor(imageDoc({ align: "center" }));
     try {

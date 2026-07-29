@@ -1,6 +1,7 @@
 import type {
   BridgeFrame,
   DocState,
+  FinalDocumentReceipt,
 } from "@qingagent/contract-ts";
 import type { RequestContext } from "@mastra/core/request-context";
 import { SpanType } from "@mastra/core/observability";
@@ -31,6 +32,7 @@ import { AnnotationPreviewState } from "./annotationPreview.js";
 import { currentPmDoc } from "../doc-engine/draftScratch.js";
 import { confirmService, type ConfirmService } from "../confirm/confirmService.js";
 import type { TrustedAuthCardSignal } from "./authCardDedup.js";
+import type { StreamErrorDetails } from "./streamErrors.js";
 
 const logger = mastra.getLogger();
 
@@ -67,6 +69,13 @@ export interface ProcessOutcome {
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
   retryableIdleTimeoutChunk?: unknown;
+  /** 本段已提交的 canonical 正文；由 runAgentTurn 带到最终 stream end。 */
+  finalDocument?: FinalDocumentReceipt;
+  /** 本段唯一权威终态；runAgentTurn 不得再从“是否抛异常”反推 stream end。 */
+  terminalOutcome:
+    | { kind: "ok" }
+    | { kind: "error"; details: StreamErrorDetails }
+    | { kind: "cancelled" };
   storedGrantApprovals: Array<{ pending: PendingConfirm; decisionId: string }>;
 }
 
@@ -212,6 +221,7 @@ export async function createAgentStreamTurnContext(
       streamWasUserAborted: false,
       finishReason: null,
       finalText: "",
+      terminalOutcome: { kind: "ok" },
       storedGrantApprovals: [],
     },
     previousStreamId,

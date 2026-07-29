@@ -1,6 +1,7 @@
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import type { ModelOverrides } from "@qingagent/core";
 import type { FrameLog, LoggedFrame } from "./frameLog";
+import { terminalDocumentFrameFields } from "../lib/terminalDocumentFrame";
 
 export type SessionActorState = "idle" | "running" | "cancelling" | "disposed";
 export type CommandOrigin = "manual" | "agent" | "e2e" | "external";
@@ -239,6 +240,14 @@ export class SessionActor {
             { generation },
           );
           if (seq !== null) {
+            const terminalFields = terminalDocumentFrameFields(frame, seq);
+            if (terminalFields) {
+              console.info("[terminal-document] appended", {
+                stage: "appended",
+                sessionId: this.options.sessionId,
+                ...terminalFields,
+              });
+            }
             produced.push({
               seq,
               epoch: this.options.frameLog.getEpoch(this.options.sessionId),

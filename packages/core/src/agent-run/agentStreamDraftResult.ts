@@ -1,10 +1,11 @@
 import type {
   BridgeFrame,
+  DocGenerationEvent,
   MessagePart,
   ToolCallSpec,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { pmToPlainText } from "@qingagent/pm-schema";
+import { getPmContentHash, pmToPlainText } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import {
   currentDraftMutationStats,
@@ -42,8 +43,47 @@ import {
 } from "./toolCards.js";
 import { hasToolCallPart } from "./agentStreamToolOutput.js";
 import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
+import { nextDocGenerationEvent } from "../doc-engine/docGenerationEvents.js";
 
 const logger = mastra.getLogger();
+
+function candidateProjectionEvents(
+  turn: ToolResultContext["turn"],
+): DocGenerationEvent[] {
+  const candidate = turn.state.docDraftCandidateDoc;
+  const generationId = turn.settledDocGenerationId;
+  if (!candidate || !generationId) return [];
+
+  const events: DocGenerationEvent[] = [];
+  let lastSeq = turn.settledDocGenerationLastSeq;
+  if (lastSeq === 0) {
+    const seq = 1;
+    events.push({
+      kind: "generation_started",
+      data: {
+        generationId,
+        seq,
+        prevSeq: null,
+        sessionId: turn.state.sessionId,
+        baseVersion:
+          turn.state.docDraftBaseVersion ?? turn.state.docVersion,
+      },
+    });
+    lastSeq = seq;
+  }
+  const snapshot = nextDocGenerationEvent(generationId, lastSeq, {
+    kind: "candidate_snapshot",
+    data: {
+      doc: candidate,
+      baseVersion:
+        turn.state.docDraftBaseVersion ?? turn.state.docVersion,
+      contentHash: getPmContentHash(candidate),
+    },
+  });
+  events.push(snapshot);
+  turn.settledDocGenerationLastSeq = snapshot.data.seq;
+  return events;
+}
 
 function genericToolFailureReason(
   toolName: string,
@@ -139,6 +179,12 @@ export async function* handleDraftOrGenericToolResult(
         streamId,
         sessionId: state.sessionId,
       });
+    }
+    if (effectiveOk && draftMutationApplied) {
+      for (const event of candidateProjectionEvents(turn)) {
+        yield { kind: "docGenerationEvent", data: event };
+        outcome.producedVisibleFrame = true;
+      }
     }
     const reason = effectiveOk
       ? draftMutationFailureReason(toolName, args, toolResult)

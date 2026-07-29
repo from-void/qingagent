@@ -38,6 +38,18 @@ export type DocGenerationEvent =
       };
     }
   | {
+      /**
+       * writeDraft 胜出候选与后续 editDraft 的完整非 canonical 投影。
+       * 客户端可立即展示，但不得据此推进 canonical version。
+       */
+      kind: "candidate_snapshot";
+      data: DocGenerationEventSeq & {
+        doc: PmDoc;
+        baseVersion: number;
+        contentHash: string;
+      };
+    }
+  | {
       kind: "generation_finished";
       data: DocGenerationEventSeq & {
         doc: PmDoc;

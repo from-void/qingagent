@@ -49,6 +49,7 @@ import {
   legacySectionsToPm,
   pmToLegacySections,
 } from "@qingagent/pm-schema";
+import { Buffer } from "node:buffer";
 
 const logger = mastra.getLogger();
 
@@ -430,17 +431,29 @@ export async function* settleDraftCandidate(opts: {
     const versionDoc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
     const committedDoc = result.doc;
     if (emitGenerationEvent && generationId) {
-      yield {
-        kind: "docGenerationEvent",
-        data: nextDocGenerationEvent(generationId, generationLastSeq, {
+      const event = nextDocGenerationEvent(generationId, generationLastSeq, {
           kind: "generation_finished",
           data: {
             doc: committedDoc,
             finalVersion: state.docVersion,
             contentHash: getPmContentHash(committedDoc),
           },
-        }),
+        });
+      const frame: BridgeFrame = {
+        kind: "docGenerationEvent",
+        data: event,
       };
+      logger.info("[terminal-document] generated", {
+        stage: "generated",
+        sessionId: state.sessionId,
+        streamId,
+        frameSeq: event.data.seq,
+        generationId,
+        documentVersion: state.docVersion,
+        contentHash: getPmContentHash(committedDoc),
+        frameBytes: Buffer.byteLength(JSON.stringify(frame), "utf8"),
+      });
+      yield frame;
     } else {
       yield {
         kind: "documentSnapshotWritten",

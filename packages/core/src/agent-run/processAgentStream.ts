@@ -191,6 +191,7 @@ export async function* processAgentStream(
         yield* context.annotationPreview.clear();
         return context.outcome;
       }
+      if (lifecycleResult === "finalize") break;
       if (lifecycleResult === "handled") continue;
       if (yield* trackUserVisibleFrames(context, handleToolOutputEvent(context, chunk))) {
         continue;

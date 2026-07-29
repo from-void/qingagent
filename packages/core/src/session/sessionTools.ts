@@ -1085,15 +1085,80 @@ export function createSessionScopedTools(
       failedOpIndex: z.number().optional(),
     }),
     execute: async (input, context) => {
-      if (!state) return { ok: false, applied: [], error: "editDraft is unavailable outside a session" };
-      const writeGuard = captureTurnWriteGuard(state, context);
-      assertTurnWriteAllowed(state, writeGuard);
+      const editDraftStartedAt = Date.now();
+      if (!state) {
+        const result = {
+          ok: false,
+          applied: [],
+          error: "editDraft is unavailable outside a session",
+        };
+        logger.warn("[editDraft.execute] result", {
+          sessionId: null,
+          runId: "no-run",
+          toolCallId: null,
+          executeSeqInTurn: 0,
+          ok: false,
+          failedOpIndex: null,
+          errorCategory: "unavailable",
+          candidateBlocksBefore: 0,
+          candidateBlocksAfter: 0,
+          appliedCount: 0,
+          elapsedMs: Date.now() - editDraftStartedAt,
+        });
+        return result;
+      }
       // BB① 埋点:记录入口快照,便于复现"同一轮多次 editDraft.execute 把单插入叠加成重复 heading"。
       const turnRunId =
         (context?.requestContext?.get("runId") as string | null | undefined) ?? state.runId ?? "no-run";
       const editDraftToolCallId =
         (context as { agent?: { toolCallId?: string | null } } | undefined)?.agent?.toolCallId ?? null;
       const editDraftExecuteSeq = bumpEditDraftExecuteCount(turnRunId);
+      let candidateBlocksBefore =
+        state.docDraftCandidateDoc?.content.length ??
+        state.doc?.content.length ??
+        0;
+      let workingDocForResult: PmDoc | null = null;
+      const finishEditDraft = <
+        T extends {
+          ok: boolean;
+          applied: string[];
+          failedOpIndex?: number;
+        },
+      >(
+        result: T,
+        errorCategory: string,
+      ): T => {
+        const fields = {
+          sessionId: state.sessionId,
+          runId: turnRunId,
+          toolCallId: editDraftToolCallId,
+          executeSeqInTurn: editDraftExecuteSeq,
+          ok: result.ok,
+          failedOpIndex: result.failedOpIndex ?? null,
+          errorCategory,
+          candidateBlocksBefore,
+          candidateBlocksAfter:
+            state.docDraftCandidateDoc?.content.length ??
+            workingDocForResult?.content.length ??
+            candidateBlocksBefore,
+          appliedCount: result.applied.length,
+          elapsedMs: Date.now() - editDraftStartedAt,
+        };
+        if (result.ok) logger.info("[editDraft.execute] result", fields);
+        else logger.warn("[editDraft.execute] result", fields);
+        return result;
+      };
+      let writeGuard: ReturnType<typeof captureTurnWriteGuard>;
+      try {
+        writeGuard = captureTurnWriteGuard(state, context);
+        assertTurnWriteAllowed(state, writeGuard);
+      } catch (error) {
+        finishEditDraft({
+          ok: false,
+          applied: [],
+        }, "turn_ownership");
+        throw error;
+      }
       let candidateDoc: PmDoc;
       let expectedMutationRevision: number;
       try {
@@ -1102,17 +1167,23 @@ export function createSessionScopedTools(
         const candidate = ensureDraftCandidateDoc(state);
         expectedMutationRevision = currentDraftMutationRevision(state);
         candidateDoc = clonePmDoc(candidate);
+        candidateBlocksBefore = candidateDoc.content.length;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // 只把已知可由刷新自愈的重复标识转成模型可行动结果；其余初始化异常维持原抛错语义。
-        if (!/重复 blockId/.test(message)) throw error;
-        return {
+        if (!/重复 blockId/.test(message)) {
+          finishEditDraft({
+            ok: false,
+            applied: [],
+          }, "initialization_exception");
+          throw error;
+        }
+        return finishEditDraft({
           ok: false,
           applied: [],
           error: addDuplicateBlockIdRecoveryGuidance(message),
-        };
+        }, "duplicate_block_id");
       }
-      const candidateBlocksBefore = candidateDoc.content.length;
       logger.info("[editDraft.execute] enter", {
         sessionId: state.sessionId,
         runId: turnRunId,
@@ -1123,6 +1194,7 @@ export function createSessionScopedTools(
         opsSummary: input.ops.map((op) => op.action),
       });
       let workingDoc = clonePmDoc(candidateDoc);
+      workingDocForResult = workingDoc;
       const applied: string[] = [];
       let skippedDuplicateInserts = 0;
 
@@ -1132,35 +1204,63 @@ export function createSessionScopedTools(
           let blockEdit: BlockEdit | null = null;
           if (op.action === "replaceBlock") {
             const target = workingDoc.content.find((block) => block.attrs.blockId === op.ref);
-            if (!target) return { ok: false, applied: [], error: `块 ${op.ref} 不存在,请先 readDraft`, failedOpIndex: i };
+            if (!target) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: `块 ${op.ref} 不存在,请先 readDraft`, failedOpIndex: i },
+                "missing_ref",
+              );
+            }
             const editability = analyzeAiIrEditability(target);
             if (!editability.replaceBlockAllowed) {
-              return {
+              return finishEditDraft({
                 ok: false,
                 applied: [],
                 error: `replaceBlock 拒绝有损块: ${editability.lossyReasons.join(", ")}`,
                 failedOpIndex: i,
-              };
+              }, "lossy_replace");
             }
             const parsed = parseEditDraftQingmlFragment(op.block, "replaceBlock", "blocks");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             if (parsed.fragment.blocks.length !== 1) {
-              return { ok: false, applied: [], error: "replaceBlock 期望单个 QingML block", failedOpIndex: i };
+              return finishEditDraft(
+                { ok: false, applied: [], error: "replaceBlock 期望单个 QingML block", failedOpIndex: i },
+                "invalid_shape",
+              );
             }
             blockEdit = { action: "replaceBlock", ref: op.ref, block: parsed.fragment.blocks[0] };
           } else if (op.action === "insertBlock") {
             const parsed = parseEditDraftQingmlFragment(op.blocks, "insertBlock", "blocks");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             blockEdit = { action: "insertBlock", position: op.position, ref: op.ref, blocks: parsed.fragment.blocks };
           } else if (op.action === "deleteBlock") {
             blockEdit = { action: "deleteBlock", ref: op.ref };
           } else if (op.action === "replaceListItem") {
             const parsed = parseEditDraftQingmlFragment(op.item, "replaceListItem", "listItem");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             blockEdit = { action: "replaceListItem", ref: op.ref, item: parsed.fragment.item };
           } else if (op.action === "insertListItem") {
             const parsed = parseEditDraftQingmlFragment(op.item, "insertListItem", "listItem");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             blockEdit = {
               action: "insertListItem",
               parentRef: op.parentRef,
@@ -1172,7 +1272,12 @@ export function createSessionScopedTools(
             blockEdit = { action: "deleteListItem", ref: op.ref };
           } else if (op.action === "insertTableRow") {
             const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableRow", "row");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             blockEdit = {
               action: "insertTableRow",
               ref: op.ref,
@@ -1182,7 +1287,12 @@ export function createSessionScopedTools(
             };
           } else if (op.action === "insertTableColumn") {
             const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableColumn", "column");
-            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (!parsed.ok) {
+              return finishEditDraft(
+                { ok: false, applied: [], error: parsed.error, failedOpIndex: i },
+                "invalid_qingml",
+              );
+            }
             blockEdit = {
               action: "insertTableColumn",
               ref: op.ref,
@@ -1200,30 +1310,33 @@ export function createSessionScopedTools(
               ? await findSafeRegexMatches(textBlocks, op.find, op.all === true)
               : null;
             if (regexResult && !regexResult.ok) {
-              return {
+              return finishEditDraft({
                 ok: false,
                 applied: [],
                 error: regexResult.error,
                 failedOpIndex: i,
-              };
+              }, "regex_validation");
             }
             const matches = regexResult
               ? regexResult.matches
               : findLiteralMatches(textBlocks, op.find, op.all === true);
             if (matches.length === 0) {
-              return {
+              return finishEditDraft({
                 ok: false,
                 applied: [],
                 error: "文本未命中或未唯一命中,请先 readDraft 后缩小 withinRef 或设置 all:true",
                 failedOpIndex: i,
-              };
+              }, "no_match");
             }
             if (op.action === "replaceText") {
               workingDoc = replaceTextRuns(workingDoc, matches, op.replace, op.isRegex === true);
             } else {
               const parsedMark = aiRunMarkSchema.safeParse(op.mark);
               if (!parsedMark.success) {
-                return { ok: false, applied: [], error: parsedMark.error.message, failedOpIndex: i };
+                return finishEditDraft(
+                  { ok: false, applied: [], error: parsedMark.error.message, failedOpIndex: i },
+                  "invalid_mark",
+                );
               }
               workingDoc = markTextRuns(
                 workingDoc,
@@ -1239,24 +1352,26 @@ export function createSessionScopedTools(
             await fillLocalSvgImageDimensions([blockEdit]);
             const blockResult = applyBlockEdits(workingDoc, [blockEdit]);
             if (!blockResult.ok || !blockResult.doc) {
-              return {
+              return finishEditDraft({
                 ok: false,
                 applied: [],
                 error: addDuplicateBlockIdRecoveryGuidance(blockResult.error),
                 failedOpIndex: i,
-              };
+              }, "apply_failed");
             }
             workingDoc = blockResult.doc;
+            workingDocForResult = workingDoc;
             applied.push(...blockResult.applied);
             skippedDuplicateInserts += blockResult.skippedDuplicateInserts;
           }
+          workingDocForResult = workingDoc;
         } catch (error) {
-          return {
+          return finishEditDraft({
             ok: false,
             applied: [],
             error: error instanceof Error ? error.message : String(error),
             failedOpIndex: i,
-          };
+          }, "operation_exception");
         }
       }
 
@@ -1271,7 +1386,10 @@ export function createSessionScopedTools(
 
       const parsedDoc = safeParsePmDoc(workingDoc);
       if (!parsedDoc.success) {
-        return { ok: false, applied: [], error: parsedDoc.error.message };
+        return finishEditDraft(
+          { ok: false, applied: [], error: parsedDoc.error.message },
+          "schema_validation",
+        );
       }
       const scopeValidation = validateCurrentTableSelectionScopes(state, candidateDoc, workingDoc);
       if (!scopeValidation.ok) {
@@ -1279,12 +1397,12 @@ export function createSessionScopedTools(
           ("ref" in op && op.ref === scopeValidation.tableRef) ||
           ("withinRef" in op && op.withinRef === scopeValidation.tableRef),
         );
-        return {
+        return finishEditDraft({
           ok: false,
           applied: [],
           error: scopeValidation.error,
           ...(failedOpIndex >= 0 ? { failedOpIndex } : {}),
-        };
+        }, "selection_scope");
       }
       assertTurnWriteAllowed(state, writeGuard);
       let candidate;
@@ -1298,38 +1416,32 @@ export function createSessionScopedTools(
         );
       } catch (error) {
         if (error instanceof DraftMutationConflictError) {
-          return {
+          return finishEditDraft({
             ok: false,
             applied: [],
             error: DRAFT_MUTATION_CONFLICT_ERROR,
-          };
+          }, "mutation_conflict");
         }
+        finishEditDraft({
+          ok: false,
+          applied: [],
+        }, "commit_exception");
         throw error;
       }
       context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", state.docDraftCandidateDoc ?? workingDoc);
       const stats = currentDraftMutationStats(state);
-      // BB① 埋点:出口块数(before→after),配合 executeSeqInTurn 可锁定重复叠加来源。
-      logger.info("[editDraft.execute] applied", {
-        sessionId: state.sessionId,
-        runId: turnRunId,
-        toolCallId: editDraftToolCallId,
-        executeSeqInTurn: editDraftExecuteSeq,
-        candidateBlocksBefore,
-        candidateBlocksAfter: state.docDraftCandidateDoc?.content.length ?? workingDoc.content.length,
-        appliedCount: applied.length,
-      });
       const warning = skippedDuplicateInserts > 0
         ? `${skippedDuplicateInserts} 处插入与相邻内容重复被跳过;若确需重复内容,请用 replaceBlock 或换插入位置`
         : undefined;
-      return {
+      return finishEditDraft({
         ok: true,
         applied,
         changed: stats.changed,
         hunkCount: stats.hunkCount,
         blockCount: state.docDraftCandidateDoc?.content.length ?? workingDoc.content.length,
         ...(skippedDuplicateInserts > 0 ? { skippedDuplicateInserts, warning } : {}),
-      };
+      }, "none");
     },
   });
 

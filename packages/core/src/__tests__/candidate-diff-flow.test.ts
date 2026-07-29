@@ -299,7 +299,7 @@ describe("candidate-diff backend flow", () => {
     );
   }
 
-  it("首稿 writeDraft 回合末发 generation_finished(触发前端整篇光标书写),而非裸 documentSnapshotWritten", async () => {
+  it("首稿 writeDraft 胜出后先投影候选，回合末只提交一次 generation_finished", async () => {
     // 回归:AI-IR 出稿工具 writeDraft 此前不设 settledDocGenerationId,导致 settle 走
     // 裸 documentSnapshotWritten 分支,前端 native presentation 整篇打字机不触发(光标书写特效丢失)。
     // 修复:writeDraft 赋 generation id,使 settle 发 generation_finished。
@@ -325,6 +325,14 @@ describe("candidate-diff backend flow", () => {
     const finished = frames.find(
       (frame) => frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished",
     );
+    const projected = frames.find(
+      (frame) => frame.kind === "docGenerationEvent" && frame.data.kind === "candidate_snapshot",
+    );
+    expect(projected?.kind).toBe("docGenerationEvent");
+    if (projected?.kind === "docGenerationEvent" && projected.data.kind === "candidate_snapshot") {
+      expect(docText(projected.data.data.doc)).toBe("第一版正文");
+      expect(projected.data.data.baseVersion).toBe(0);
+    }
     expect(finished?.kind).toBe("docGenerationEvent");
     if (finished?.kind === "docGenerationEvent" && finished.data.kind === "generation_finished") {
       // 前端揭示契约:必须是 generation_finished + 完整 PM doc + 推进后的版本/hash。
@@ -334,10 +342,16 @@ describe("candidate-diff backend flow", () => {
       expect(finished.data.data.contentHash).toBe(getPmContentHash(generatedDoc));
     }
     const finishedIndex = frames.indexOf(finished!);
+    const projectedIndex = frames.indexOf(projected!);
     const editingIndex = frames.findIndex(
       (frame) => frame.kind === "docStateChanged" && frame.data.state.kind === "editing",
     );
     expect(finishedIndex).toBeGreaterThanOrEqual(0);
+    expect(projectedIndex).toBeGreaterThanOrEqual(0);
+    expect(finishedIndex).toBeGreaterThan(projectedIndex);
+    expect(frames.filter(
+      (frame) => frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished",
+    )).toHaveLength(1);
     expect(editingIndex).toBeGreaterThan(finishedIndex);
     // 首稿走整篇直接落地,不进审查、不发裸 documentSnapshotWritten。
     expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
@@ -388,6 +402,67 @@ describe("candidate-diff backend flow", () => {
       "editDraft 生成的首稿正文",
     );
   });
+
+  it("writeDraft 后连续 editDraft 每次更新候选投影，canonical 仍只在回合末提交一次", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("candidate-write-edit-projection");
+    const initialCandidate = legacySectionsToPm([p("胜出首稿")] as never);
+    const editedCandidate = legacySectionsToPm([p("胜出首稿，已补充细节")] as never);
+    state.docDraftCandidateDoc = initialCandidate;
+    state.docDraftCandidateSections =
+      pmToLegacySections(initialCandidate) as unknown as LegacySection[];
+
+    async function* streamWithEdit(): AsyncGenerator<StreamChunk> {
+      yield writeDraftCall("wd-project");
+      yield writeDraftResult("wd-project");
+      state.docDraftCandidateDoc = editedCandidate;
+      state.docDraftCandidateSections =
+        pmToLegacySections(editedCandidate) as unknown as LegacySection[];
+      const args = {
+        ops: [{
+          action: "replaceBlock",
+          blockId: editedCandidate.content[0]?.attrs?.blockId,
+          blocks: "<p>胜出首稿，已补充细节</p>",
+        }],
+      };
+      yield editDraftCall("ed-project", args);
+      yield editDraftResult("ed-project", args, {
+        ok: true,
+        applied: [editedCandidate.content[0]?.attrs?.blockId],
+        changed: true,
+        hunkCount: 1,
+      });
+    }
+
+    const frames = await collectFrames(
+      processAgentStream(streamWithEdit(), {
+        state,
+        agentMessageId: "agent-project",
+        streamId: "stream-project",
+        runId: "run-project",
+      }),
+    );
+    const snapshots = frames.filter(
+      (frame) =>
+        frame.kind === "docGenerationEvent" &&
+        frame.data.kind === "candidate_snapshot",
+    );
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots.map((frame) =>
+      frame.kind === "docGenerationEvent" &&
+      frame.data.kind === "candidate_snapshot"
+        ? docText(frame.data.data.doc)
+        : null
+    )).toEqual(["胜出首稿", "胜出首稿，已补充细节"]);
+    const finished = frames.filter(
+      (frame) =>
+        frame.kind === "docGenerationEvent" &&
+        frame.data.kind === "generation_finished",
+    );
+    expect(finished).toHaveLength(1);
+    expect(docText(state.doc)).toBe("胜出首稿，已补充细节");
+    expect(state.docVersion).toBe(1);
+  }, 10_000);
 
   it("noop 丢弃候选时同步清库，冷恢复不再提交已丢弃首稿", async () => {
     const {

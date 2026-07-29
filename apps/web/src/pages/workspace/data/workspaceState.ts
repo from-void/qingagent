@@ -550,6 +550,15 @@ function workspaceReducerMut(
       terminalizeInFlightToolCallsMut(draft, "failed");
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       return;
+    case "documentFrameConflict":
+      draft.streamError = {
+        kind: "docWriteConflict",
+        reason: "文档已生成新版本，本地未保存编辑已保留；可重载查看服务器版本。",
+        retriable: true,
+        action: "reload",
+        actualDocumentSnapshot: action.actualDocumentSnapshot,
+      };
+      return;
     case "retryDrafting":
       draft.streamError = null;
       return;
@@ -846,6 +855,16 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
     case "end":
       markStreamInactiveMut(draft, s.data.streamId);
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
+      if (s.data.finalDocument) {
+        draft.doc = pmDocToViewDocumentSnapshot(
+          s.data.finalDocument.doc as PmDoc,
+          s.data.finalDocument.version,
+        );
+        draft.generationDraft = null;
+        draft.docDiff = null;
+        draft.version = s.data.finalDocument.version;
+        draft.progressPct = 1;
+      }
       if (s.data.reason.kind === "cancelled") {
         terminalizeInFlightToolCallsMut(draft, "aborted");
         draft.streamError = { kind: "cancelled", reason: "" };
@@ -995,6 +1014,7 @@ function reduceDocGenerationEventMut(
         };
       }
       return;
+    case "candidate_snapshot":
     case "block_started":
     case "inline_appended":
     case "block_finished":
@@ -1020,6 +1040,17 @@ function reduceDocGenerationEventMut(
 
   generationDraft.lastSeq = event.data.seq;
   switch (event.kind) {
+    case "candidate_snapshot":
+      generationDraft.baseVersion = event.data.baseVersion;
+      generationDraft.blocks = event.data.doc.content.slice() as PmBlockNode[];
+      generationDraft.openBlocks = {};
+      generationDraft.doc = pmDocToViewDocumentSnapshot(
+        event.data.doc as PmDoc,
+        event.data.baseVersion,
+      );
+      draft.progressPct = Math.max(draft.progressPct, 0.95);
+      draft.streamError = null;
+      return;
     case "block_started":
       generationDraft.openBlocks[event.data.blockId] = {
         blockId: event.data.blockId,

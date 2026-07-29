@@ -21,6 +21,7 @@ export function nextDocGenerationEvent(
   generationId: string,
   lastSeq: number,
   event:
+    | { kind: "candidate_snapshot"; data: Omit<Extract<DocGenerationEvent, { kind: "candidate_snapshot" }>["data"], "generationId" | "seq" | "prevSeq"> }
     | { kind: "generation_finished"; data: Omit<Extract<DocGenerationEvent, { kind: "generation_finished" }>["data"], "generationId" | "seq" | "prevSeq"> }
     | { kind: "generation_failed"; data: Omit<Extract<DocGenerationEvent, { kind: "generation_failed" }>["data"], "generationId" | "seq" | "prevSeq"> },
 ): DocGenerationEvent {

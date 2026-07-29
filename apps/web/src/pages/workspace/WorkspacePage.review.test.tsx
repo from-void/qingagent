@@ -132,7 +132,10 @@ vi.mock("./data/serverStream", () => {
     }
   }
 
-  return { ServerStream };
+  return {
+    ServerStream,
+    loggedFrameObservabilityOf: () => null,
+  };
 });
 
 let root: Root | null = null;
@@ -1108,6 +1111,371 @@ describe("WorkspacePage review controls", () => {
     expect(JSON.stringify(editor!.getJSON())).toContain("外标签本地未保存句");
   }, 60_000);
 
+  it("generation_finished 撞上 400ms 本地 debounce 时先 drain 保存再自动回灌终稿", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-echo", "旧正文")]);
+    const localDebouncedDoc = pmDoc([pmParagraph("p-echo", "本地 debounce 正文")]);
+    const finalDoc = pmDoc([pmParagraph("p-echo-final", "Agent 权威终稿")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "终稿回显" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    vi.useFakeTimers();
+
+    act(() => {
+      editor!.commands.setContent(localDebouncedDoc);
+    });
+    expect(updateDocCommands(stream)).toHaveLength(0);
+
+    await emitFrames(stream, [
+      {
+        kind: "stream",
+        data: { kind: "start", data: { streamId: "stream-echo" } },
+      },
+      {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_finished",
+          data: {
+            generationId: "gen-echo",
+            seq: 2,
+            prevSeq: 1,
+            doc: finalDoc,
+            finalVersion: 9,
+            contentHash: getPmContentHash(finalDoc),
+          },
+        },
+      },
+    ]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushMicrotasks(8);
+
+    // 终稿到达时 debounce 被主动 flush；私有保存先推进到 v8，随后延迟帧
+    // 自动重放到 v9，既不覆盖未发送编辑，也不需要路由切换恢复。
+    expect(updateDocCommands(stream)).toHaveLength(1);
+    expect(JSON.stringify(updateDocCommands(stream)[0]?.data.doc)).toContain(
+      "本地 debounce 正文",
+    );
+    expect(captured.current?.state.version).toBe(9);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(finalDoc);
+    expect(captured.current?.state.streamError).toBeNull();
+
+    await emitFrames(stream, [{
+      kind: "stream",
+      data: {
+        kind: "end",
+        data: {
+          streamId: "stream-echo",
+          reason: { kind: "done" },
+          finalDocument: {
+            version: 9,
+            contentHash: getPmContentHash(finalDoc),
+            doc: finalDoc,
+          },
+        },
+      },
+    }]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushMicrotasks(5);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushMicrotasks(5);
+    expect(captured.current?.state.activeStreamIds).toEqual([]);
+    expect(captured.current?.state.streamActive).toBe(false);
+    expect(captured.current?.state.agentBusy).toBe(false);
+    expect(captured.current?.agentActive).toBe(false);
+    expect(captured.current?.effectivePresentationRun).toBeNull();
+    expect(
+      JSON.stringify(captured.current?.tiptapEditor?.getJSON()),
+    ).toContain("Agent 权威终稿");
+  }, 60_000);
+
+  it("缺失 generation_finished 时 end.finalDocument 仍当场回显并解除发送锁", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [
+      { useWorkspacePageController },
+      { WorkspaceDocumentPane },
+      { WorkspaceChatPane },
+    ] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./components/WorkspaceDocumentPane"),
+      import("./components/WorkspaceChatPane"),
+    ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return (
+        <>
+          <WorkspaceDocumentPane controller={controller} />
+          <WorkspaceChatPane controller={controller} />
+        </>
+      );
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-receipt-old", "旧正文")]);
+    const finalDoc = pmDoc([pmParagraph("p-receipt-final", "只从终态收据恢复的正文")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "终态兜底" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 3) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+      },
+      {
+        kind: "stream",
+        data: { kind: "start", data: { streamId: "stream-receipt-only" } },
+      },
+      {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "stream-receipt-only",
+            reason: { kind: "done" },
+            finalDocument: {
+              version: 4,
+              contentHash: getPmContentHash(finalDoc),
+              doc: finalDoc,
+            },
+          },
+        },
+      },
+    ]);
+    await flushMicrotasks(8);
+
+    expect(captured.current?.state.version).toBe(4);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(finalDoc);
+    expect(JSON.stringify(captured.current?.tiptapEditor?.getJSON())).toContain(
+      "只从终态收据恢复的正文",
+    );
+    expect(captured.current?.state.activeStreamIds).toEqual([]);
+    expect(captured.current?.state.streamActive).toBe(false);
+    expect(captured.current?.state.agentBusy).toBe(false);
+    expect(captured.current?.agentActive).toBe(false);
+    expect(
+      [...(host?.querySelectorAll("button") ?? [])].some(
+        (button) => button.textContent?.trim() === "发送",
+      ),
+    ).toBe(true);
+  }, 60_000);
+
+  it("end.finalDocument 与 drain 后的新本地编辑真冲突时保留本地正文但仍结束 stream", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-conflict-old", "旧正文")]);
+    const firstLocalDoc = pmDoc([pmParagraph("p-conflict-old", "第一笔本地编辑")]);
+    const secondLocalDoc = pmDoc([pmParagraph("p-conflict-old", "保存冲突后的新本地编辑")]);
+    const finalDoc = pmDoc([pmParagraph("p-conflict-final", "服务器 Agent 终稿")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "终稿冲突" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 5) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    vi.useFakeTimers();
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: false,
+          clientMutationId: command.data.clientMutationId,
+          conflict: {
+            expectedDocumentSnapshot:
+              command.data.expectedDocumentSnapshot,
+            actualDocumentSnapshot: 6,
+          },
+        },
+      });
+    });
+
+    act(() => {
+      editor!.commands.setContent(firstLocalDoc);
+    });
+    await emitFrames(stream, [
+      {
+        kind: "stream",
+        data: { kind: "start", data: { streamId: "stream-conflict" } },
+      },
+      {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "stream-conflict",
+            reason: { kind: "done" },
+            finalDocument: {
+              version: 7,
+              contentHash: getPmContentHash(finalDoc),
+              doc: finalDoc,
+            },
+          },
+        },
+      },
+    ]);
+    await flushMicrotasks(8);
+
+    // debounce 被终态帧主动 flush，但服务端确认 canonical 已分叉；保存 drain
+    // 明确失败后又发生一笔本地编辑，必须升级为显式冲突，不能覆盖也不能重新 defer。
+    act(() => {
+      editor!.commands.setContent(secondLocalDoc);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushMicrotasks(8);
+
+    expect(JSON.stringify(editor!.getJSON())).toContain("保存冲突后的新本地编辑");
+    expect(JSON.stringify(editor!.getJSON())).not.toContain("服务器 Agent 终稿");
+    expect(captured.current?.state.streamError).toMatchObject({
+      kind: "docWriteConflict",
+      actualDocumentSnapshot: 7,
+      action: "reload",
+    });
+    expect(captured.current?.state.activeStreamIds).toEqual([]);
+    expect(captured.current?.state.streamActive).toBe(false);
+    expect(captured.current?.state.agentBusy).toBe(false);
+    expect(captured.current?.agentActive).toBe(false);
+  }, 60_000);
+
+  it("presentation 动画异常不前进时由 65 秒上限 watchdog 强制收口到 final PM", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string): MediaQueryList => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    });
+    const [
+      { useWorkspacePageController },
+      { resetNativePresentationConfigForTest },
+    ] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./data/presentationRuntimeConfig"),
+    ]);
+    resetNativePresentationConfigForTest({ maxDurationMs: 60_000 }, null);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <div data-watchdog-harness />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "动画看门狗" } },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+      },
+      {
+        kind: "stream",
+        data: { kind: "start", data: { streamId: "stream-watchdog" } },
+      },
+    ]);
+    await flushMicrotasks(5);
+    vi.useFakeTimers();
+    const finalDoc = pmDoc([
+      pmParagraph("p-watchdog-final", "强制收口后必须保留的 final PM".repeat(20_000)),
+    ]);
+    await emitFrames(stream, [{
+      kind: "docGenerationEvent",
+      data: {
+        kind: "generation_finished",
+        data: {
+          generationId: "gen-watchdog",
+          seq: 2,
+          prevSeq: 1,
+          doc: finalDoc,
+          finalVersion: 11,
+          contentHash: getPmContentHash(finalDoc),
+        },
+      },
+    }]);
+    await flushMicrotasks(5);
+
+    expect(captured.current?.effectivePresentationRun).not.toBeNull();
+    expect(captured.current?.state.doc?.pmDoc).toEqual(finalDoc);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(63_999);
+    });
+    expect(captured.current?.effectivePresentationRun).not.toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushMicrotasks(5);
+    expect(captured.current?.effectivePresentationRun).toBeNull();
+    expect(captured.current?.state.doc?.pmDoc).toEqual(finalDoc);
+  }, 60_000);
+
   it("干净外标签照常同步 snapshotWritten 的版本与正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
@@ -1544,10 +1912,13 @@ describe("WorkspacePage review controls", () => {
       Extract<Command, { kind: "updateDoc" }>
     > = [];
     const backgroundFetch = vi.fn(async (_url: string, init: RequestInit) => {
-      const command = JSON.parse(String(init.body)) as Extract<
-        Command,
-        { kind: "updateDoc" }
-      >;
+      const body = JSON.parse(String(init.body)) as
+        | Extract<Command, { kind: "updateDoc" }>
+        | { events?: unknown[] };
+      if (!("kind" in body) || body.kind !== "updateDoc") {
+        return new Response("{}", { status: 200 });
+      }
+      const command = body;
       backgroundCommands.push(command);
       return new Response(JSON.stringify([{
         kind: "docWriteResult",

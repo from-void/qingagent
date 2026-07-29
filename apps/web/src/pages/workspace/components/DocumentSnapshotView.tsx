@@ -880,8 +880,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       )
     ) {
       if (presentationRun?.docVersion === doc.version) {
-        lastVersionRef.current = doc.version;
-        lastSyncedDocRevisionRef.current = docRevision;
+        // 这里只让出渲染权，不能提前把本版本记成“已同步”。run 可能在动画
+        // 真正写入编辑器前因 reduced-motion、watchdog 或生命周期收口被清掉；
+        // 若这里先推进游标，后续 presentationRun=null 时主 effect 会误以为
+        // final PM 已经落进 TipTap，留下 state=终稿、正文仍是旧稿的假完成态。
+        // 动画实际写入/完成路径会自行推进这两个游标；未写入则等 run 清除后
+        // 由本 effect 的普通 external 分支兜底 setContent。
         return;
       }
       const scheduledDoc = doc;

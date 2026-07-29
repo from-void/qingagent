@@ -2,11 +2,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Command } from "@qingagent/contract-ts";
 import { ServerStream } from "./serverStream";
-import { toContractChip, uploadFiles } from "./sessionFrameGuards";
+import {
+  DEFAULT_NATIVE_PRESENTATION_CONFIG,
+  resetNativePresentationConfigForTest,
+} from "./presentationRuntimeConfig";
+import {
+  presentationRunWatchdogMs,
+  toContractChip,
+  uploadFiles,
+} from "./sessionFrameGuards";
 
 afterEach(() => {
   MockUploadRequest.instances.length = 0;
   vi.unstubAllGlobals();
+  resetNativePresentationConfigForTest(DEFAULT_NATIVE_PRESENTATION_CONFIG, null);
 });
 
 describe("toContractChip", () => {
@@ -60,6 +69,33 @@ describe("toContractChip", () => {
       label: "部门甲/报告.md",
       suffix: null,
     });
+  });
+});
+
+describe("presentationRunWatchdogMs", () => {
+  it("超长全文动画无论估算多慢都在 65 秒上限内强制收口", () => {
+    resetNativePresentationConfigForTest({ maxDurationMs: 60_000 }, null);
+    const text = "长文终稿".repeat(20_000);
+    expect(presentationRunWatchdogMs({
+      id: 1,
+      docVersion: 9,
+      sessionId: "session-watchdog",
+      mode: "whole",
+      finalDoc: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "watchdog-final" },
+          content: [{ type: "text", text }],
+        }],
+      },
+      baselineSections: [],
+      finalSections: [{
+        kind: "p",
+        spans: [{ kind: "text", text }],
+      }],
+    })).toBe(64_000);
   });
 });
 

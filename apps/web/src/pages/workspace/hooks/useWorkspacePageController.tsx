@@ -98,7 +98,8 @@ import {
 import {
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
-  shouldHandleBroadcastDocumentFrame,
+  decideBroadcastDocumentFrame,
+  splitStreamEndFinalDocument,
   shouldHandleDocWriteResult,
 } from "../data/docWriteResultOwnership";
 import {
@@ -132,7 +133,10 @@ import {
   shouldSuppressPresentationRun,
 } from "../data/reviewActions";
 import { deriveReviewUiState } from "../data/reviewUiState";
-import { ServerStream } from "../data/serverStream";
+import {
+  loggedFrameObservabilityOf,
+  ServerStream,
+} from "../data/serverStream";
 import {
   clientPerformanceNow,
   presentationRunWatchdogMs,
@@ -540,6 +544,15 @@ export function useWorkspacePageController() {
   const latestDocMutationIdRef = useRef<string | null>(null);
   const docWriteAckRef = useRef<Map<string, PendingDocSaveWaiter>>(new Map());
   const docSaveDrainWaitersRef = useRef<PendingDocSaveWaiter[]>([]);
+  const deferredDocumentFrameRef = useRef<{
+    frame: BridgeFrame;
+    streamSessionId: string | null;
+    streamGeneration: number;
+  } | null>(null);
+  const deferredDocumentFrameDrainRef = useRef(false);
+  // 真冲突时既保留编辑器本地正文，也保留服务器 canonical 帧；重载入口由
+  // documentFrameConflict 驱动，不能把服务器版本从内存中遗忘。
+  const conflictedDocumentFrameRef = useRef<BridgeFrame | null>(null);
   const pendingBlankFocusRef = useRef<StarterBlankTarget | null>(null);
   // 模板填充在途 promise:单飞去重(review #2)+ 发送消息前等它落定,避免 sendMessage 与骨架
   // updateDoc 竞发(sendMessage 先被处理会置 streamId,后到的骨架写被拒、模板永久丢失,review #6)。
@@ -1669,10 +1682,34 @@ export function useWorkspacePageController() {
       streamDisposeTimerRef.current = null;
     }
     const handleFrame = (
-      frame: BridgeFrame,
+      incomingFrame: BridgeFrame,
       streamSessionId: string | null,
       streamGeneration: number,
+      afterDeferredDrain = false,
     ) => {
+      let frame = incomingFrame;
+      const incomingFrameObservability =
+        loggedFrameObservabilityOf(incomingFrame);
+      const incomingDocument =
+        appliedDocVersionFromBroadcastFrame(incomingFrame);
+      const incomingGenerationId =
+        incomingFrame.kind === "docGenerationEvent" &&
+        incomingFrame.data.kind === "generation_finished"
+          ? incomingFrame.data.data.generationId
+          : incomingFrame.kind === "stream" &&
+              incomingFrame.data.kind === "end" &&
+              incomingFrame.data.data.finalDocument
+            ? `terminal-${incomingFrame.data.data.streamId}`
+            : null;
+      const terminalDocumentLogFields = incomingDocument
+        ? {
+            frameSeq: incomingFrameObservability?.frameSeq ?? null,
+            generationId: incomingGenerationId,
+            documentVersion: incomingDocument.version,
+            contentHash: incomingDocument.contentHash ?? null,
+            frameBytes: incomingFrameObservability?.frameBytes ?? null,
+          }
+        : null;
       if (streamGenerationRef.current !== streamGeneration) return;
       if (
         !shouldAcceptBridgeFrameForSession({
@@ -1687,6 +1724,25 @@ export function useWorkspacePageController() {
         frame,
         streamSessionId ?? activeWorkspaceSessionTargetRef.current,
       );
+
+      const terminalReceipt = splitStreamEndFinalDocument(frame);
+      if (terminalReceipt) {
+        // 生命周期终止与正文冲突是两件事：先无条件解除 active stream，
+        // 再让 documentFrame 单独进入 apply/defer/conflict。
+        dispatch(terminalReceipt.lifecycleFrame);
+        console.info("[terminal-document] terminalized", {
+          stage: "terminalized",
+          sessionId:
+            streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+          streamId:
+            incomingFrame.kind === "stream" &&
+            incomingFrame.data.kind === "end"
+              ? incomingFrame.data.data.streamId
+              : null,
+          ...terminalDocumentLogFields,
+        });
+        frame = terminalReceipt.documentFrame;
+      }
 
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
@@ -1736,20 +1792,119 @@ export function useWorkspacePageController() {
         const locallyOwnedReviewSnapshot =
           frame.kind === "documentSnapshotWritten" &&
           reviewCloseInFlightRef.current !== null;
-        const hasLocalDocumentChanges =
-          docConflictReconcileSessionRef.current !==
-            (streamSessionId ?? activeWorkspaceSessionTargetRef.current) &&
-          !locallyOwnedReviewSnapshot &&
-          (
-            docViewRef.current?.hasLocalDocumentChanges() === true ||
-            pendingDocWriteRef.current ||
-            queuedPmDocRef.current !== null ||
-            scheduledDocWriteRef.current
-          );
-        if (!shouldHandleBroadcastDocumentFrame({
+        const bypassDirtyDecision =
+          docConflictReconcileSessionRef.current ===
+            (streamSessionId ?? activeWorkspaceSessionTargetRef.current) ||
+          locallyOwnedReviewSnapshot;
+        const dirty = {
+          editorDirty:
+            !bypassDirtyDecision &&
+            docViewRef.current?.hasLocalDocumentChanges() === true,
+          pendingDocWrite:
+            !bypassDirtyDecision && pendingDocWriteRef.current,
+          queuedDocWrite:
+            !bypassDirtyDecision && queuedPmDocRef.current !== null,
+          scheduledDocWrite:
+            !bypassDirtyDecision && scheduledDocWriteRef.current,
+        };
+        const decision = decideBroadcastDocumentFrame({
           frame,
-          hasLocalDocumentChanges,
-        })) {
+          ...dirty,
+          afterDeferredDrain,
+        });
+        if (decision.kind === "defer") {
+          const incoming = appliedDocVersionFromBroadcastFrame(frame);
+          const deferred = deferredDocumentFrameRef.current;
+          const deferredVersion = deferred
+            ? appliedDocVersionFromBroadcastFrame(deferred.frame)?.version ?? -1
+            : -1;
+          if (!deferred || (incoming?.version ?? -1) >= deferredVersion) {
+            deferredDocumentFrameRef.current = {
+              frame,
+              streamSessionId,
+              streamGeneration,
+            };
+          }
+          console.info("[workspace] canonical document frame deferred", {
+            stage: "deferred",
+            sessionId:
+              streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+            reason: decision.reason,
+            version: incoming?.version ?? null,
+            editorDirty: dirty.editorDirty,
+            pendingDocWrite: dirty.pendingDocWrite,
+            queuedDocWrite: dirty.queuedDocWrite,
+            scheduledDocWrite: dirty.scheduledDocWrite,
+            ...terminalDocumentLogFields,
+          });
+          if (!deferredDocumentFrameDrainRef.current) {
+            deferredDocumentFrameDrainRef.current = true;
+            void (async () => {
+              try {
+                // generation_finished 可能正好撞上编辑器 400ms debounce。主动
+                // flush 后再等私有 updateDoc 回执，把它变成可判定的保存 drain。
+                await docViewRef.current?.flushPendingDocSave();
+                await waitForPendingDocSaveDrain();
+              } catch (error) {
+                console.warn(
+                  "[workspace] local save failed before deferred canonical replay",
+                  error,
+                );
+              } finally {
+                deferredDocumentFrameDrainRef.current = false;
+              }
+              // 让 manualDocSaved/编辑器 canonical 同步先完成一个 task，再重判；
+              // 若此时 editor 仍 dirty，会进入 conflict 而不是再次 defer。
+              await new Promise<void>((resolve) => {
+                window.setTimeout(resolve, 0);
+              });
+              const queued = deferredDocumentFrameRef.current;
+              deferredDocumentFrameRef.current = null;
+              if (
+                !queued ||
+                streamGenerationRef.current !== queued.streamGeneration ||
+                (
+                  queued.streamSessionId !== null &&
+                  activeWorkspaceSessionTargetRef.current !== queued.streamSessionId
+                )
+              ) {
+                return;
+              }
+              handleFrame(
+                queued.frame,
+                queued.streamSessionId,
+                queued.streamGeneration,
+                true,
+              );
+            })();
+          }
+          return;
+        }
+        if (decision.kind === "conflict") {
+          const conflicted = appliedDocVersionFromBroadcastFrame(frame);
+          conflictedDocumentFrameRef.current = frame;
+          if (conflicted) {
+            knownDocVersionsRef.current.remember(
+              appliedDocWriteBaseline(conflicted),
+              "streamConflict",
+            );
+            dispatch({
+              kind: "documentFrameConflict",
+              actualDocumentSnapshot: conflicted.version,
+            });
+          }
+          console.warn("[workspace] canonical document frame conflicted", {
+            stage: "conflicted",
+            sessionId:
+              streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+            reason: decision.reason,
+            version: conflicted?.version ?? null,
+            editorDirty: dirty.editorDirty,
+            pendingDocWrite: dirty.pendingDocWrite,
+            queuedDocWrite: dirty.queuedDocWrite,
+            scheduledDocWrite: dirty.scheduledDocWrite,
+            ...terminalDocumentLogFields,
+          });
           return;
         }
         // 走到这里这一帧就会被应用:把它带来的版本登记为"本会话已知产出"。
@@ -1761,6 +1916,21 @@ export function useWorkspacePageController() {
             appliedDocWriteBaseline(applied),
             "streamApply",
           );
+          console.info("[terminal-document] applied", {
+            stage: "applied",
+            sessionId:
+              streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+            streamId:
+              incomingFrame.kind === "stream" &&
+              incomingFrame.data.kind === "end"
+                ? incomingFrame.data.data.streamId
+                : null,
+            editorDirty: dirty.editorDirty,
+            pendingDocWrite: dirty.pendingDocWrite,
+            queuedDocWrite: dirty.queuedDocWrite,
+            scheduledDocWrite: dirty.scheduledDocWrite,
+            ...terminalDocumentLogFields,
+          });
         }
       }
       if (frame.kind === "documentSnapshotWritten") {
@@ -2081,6 +2251,9 @@ export function useWorkspacePageController() {
       docConflictReconcileSessionRef.current = null;
       lastSentPmDocRef.current = null;
       lastSentDocWriteBaselineRef.current = null;
+      deferredDocumentFrameRef.current = null;
+      deferredDocumentFrameDrainRef.current = false;
+      conflictedDocumentFrameRef.current = null;
       // 已知产出账本按会话隔离:换会话后旧文档的版本号不能再当"自产"用
       knownDocVersionsRef.current.clear();
       replayedConflictVersionsRef.current.clear();

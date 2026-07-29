@@ -67,6 +67,59 @@ interface LoggedBridgeFrame {
   frame: BridgeFrame;
 }
 
+export interface LoggedFrameObservability {
+  frameSeq: number;
+  frameBytes: number;
+}
+
+const loggedFrameObservability = new WeakMap<object, LoggedFrameObservability>();
+
+export function loggedFrameObservabilityOf(
+  frame: BridgeFrame,
+): LoggedFrameObservability | null {
+  return loggedFrameObservability.get(frame as object) ?? null;
+}
+
+function terminalDocumentFields(
+  frame: BridgeFrame,
+  frameSeq: number,
+  frameBytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength,
+): (LoggedFrameObservability & {
+  generationId: string;
+  streamId: string | null;
+  documentVersion: number;
+  contentHash: string;
+}) | null {
+  if (
+    frame.kind === "docGenerationEvent" &&
+    frame.data.kind === "generation_finished"
+  ) {
+    return {
+      frameSeq,
+      frameBytes,
+      generationId: frame.data.data.generationId,
+      streamId: null,
+      documentVersion: frame.data.data.finalVersion,
+      contentHash: frame.data.data.contentHash,
+    };
+  }
+  if (
+    frame.kind === "stream" &&
+    frame.data.kind === "end" &&
+    frame.data.data.finalDocument
+  ) {
+    return {
+      frameSeq,
+      frameBytes,
+      generationId: `terminal-${frame.data.data.streamId}`,
+      streamId: frame.data.data.streamId,
+      documentVersion: frame.data.data.finalDocument.version,
+      contentHash: frame.data.data.finalDocument.contentHash,
+    };
+  }
+  return null;
+}
+
 /** Web 比服务端 85 秒 deadline 多留 5 秒，用于接收失败帧和 422 响应。 */
 const DRAFT_TEMPLATE_WAIT_TIMEOUT_MS = 90_000;
 
@@ -1065,6 +1118,15 @@ export class ServerStream {
     }
     if (normalizedSeq <= this.lastSeq) return;
     this.lastSeq = normalizedSeq;
+    const terminalFields = terminalDocumentFields(frame, normalizedSeq);
+    if (terminalFields) {
+      loggedFrameObservability.set(frame as object, terminalFields);
+      console.info("[terminal-document] validated", {
+        stage: "validated",
+        sessionId: this.activeSessionId,
+        ...terminalFields,
+      });
+    }
     this.emit(frame);
   }
 
@@ -1133,6 +1195,18 @@ export class ServerStream {
       const json = message.data;
       try {
         const frame: BridgeFrame = JSON.parse(json);
+        const terminalFields = terminalDocumentFields(
+          frame,
+          Number.isFinite(seq) ? Math.floor(seq) : 0,
+          new TextEncoder().encode(json).byteLength,
+        );
+        if (terminalFields) {
+          console.info("[terminal-document] received", {
+            stage: "received",
+            sessionId,
+            ...terminalFields,
+          });
+        }
         validateBridgeFrame(frame);
         this.emitLoggedFrame(seq, frame);
       } catch (e) {

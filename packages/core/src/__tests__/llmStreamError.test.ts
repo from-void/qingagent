@@ -268,7 +268,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("guardrail-tripwire");
 
-    const frames = await collectFrames(
+    const { frames, result } = await collectFramesAndReturn(
       processAgentStream(streamOf(tripwireChunk("检测到提示词注入")), {
         state,
         agentMessageId: "agent-msg",
@@ -287,7 +287,98 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(f0.data.data.reason).toContain("prompt-injection-detector");
     expect(textBodies(frames).some((body) => body.includes("安全护栏"))).toBe(true);
     expect(state.messages.at(-1)?.content).toContain("安全护栏");
+    expect(result.terminalOutcome.kind).toBe("error");
   });
+
+  it.each([
+    ["ordinary error", errorChunk("Unauthorized", { statusCode: 401 })],
+    ["tripwire", tripwireChunk("检测到提示词注入")],
+  ])("runAgentTurn 的 %s 只以 stream end:error 收口，不再失败后 end:done", async (_label, terminalChunk) => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    vi.mocked(qingagentAgent.stream).mockResolvedValueOnce({
+      runId: `run-terminal-${_label}`,
+      fullStream: streamOf(terminalChunk),
+    } as never);
+
+    const frames = await collectFrames(
+      runAgentTurn(createSession(`terminal-${_label}`), "开始"),
+    );
+    const ends = frames.filter(
+      (frame) => frame.kind === "stream" && frame.data.kind === "end",
+    );
+    expect(draftingFailures(frames)).toHaveLength(1);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]?.kind === "stream" && ends[0].data.kind === "end"
+      ? ends[0].data.data.reason.kind
+      : null).toBe("error");
+    expect(frames.some(
+      (frame) =>
+        frame.kind === "stream" &&
+        frame.data.kind === "end" &&
+        frame.data.data.reason.kind === "done",
+    )).toBe(false);
+  });
+
+  it("错误发生前已有 writeDraft 候选时先结算正文资产，再以 error outcome 返回", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const sessionId = "terminal-error-settles-draft";
+    const state = createSession(sessionId);
+    const generatedSections: LegacySection[] = [{
+      kind: "p",
+      data: { text: "错误前已经完成的候选正文" },
+    }];
+    const generatedDoc = legacySectionsToPm(generatedSections as never);
+    state.docDraftCandidateDoc = generatedDoc;
+    state.docDraftCandidateSections =
+      pmToLegacySections(generatedDoc) as unknown as LegacySection[];
+
+    try {
+      const args = { title: "测试", outline: "大纲" };
+      const { frames, result } = await collectFramesAndReturn(
+        processAgentStream(
+          streamOf(
+            {
+              type: "tool-call",
+              payload: {
+                toolName: "writeDraft",
+                toolCallId: "wd-before-error",
+                args,
+              },
+            },
+            {
+              type: "tool-result",
+              payload: {
+                toolName: "writeDraft",
+                toolCallId: "wd-before-error",
+                args,
+                result: { ok: true, blockCount: 1, wordCount: 13 },
+              },
+            },
+            errorChunk("upstream failed", { statusCode: 500 }),
+          ),
+          {
+            state,
+            agentMessageId: "agent-before-error",
+            streamId: "stream-before-error",
+            runId: "run-before-error",
+          },
+        ),
+      );
+
+      expect(result.terminalOutcome.kind).toBe("error");
+      expect(result.finalDocument?.version).toBe(1);
+      expect(frames.some(
+        (frame) =>
+          frame.kind === "docGenerationEvent" &&
+          frame.data.kind === "generation_finished",
+      )).toBe(true);
+      expect(state.docVersion).toBe(1);
+      expect(state.doc).toEqual(generatedDoc);
+    } finally {
+      await deleteDocumentFamily(sessionId);
+    }
+  }, 10_000);
 
   it("runAgentTurn 在 caller 层重试零产出瞬态错误,第二次成功且不重复写 memory", async () => {
     vi.useFakeTimers();

@@ -48,6 +48,7 @@ import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
 import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import { BoundedSsePump } from "../lib/boundedSsePump";
+import { allowOversizedSseFrame } from "../lib/terminalDocumentFrame";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import { queueExternalChat } from "../lib/externalChatQueue";
 import { externalTemplateRoutes } from "./externalTemplates";
@@ -1132,7 +1133,7 @@ externalRoutes.get("/sessions/:id/events", async (c) => {
         data: JSON.stringify(frame),
       }, {
         delivery,
-        allowOversized: entry.frame.kind === "documentSnapshotWritten",
+        allowOversized: allowOversizedSseFrame(entry.frame),
       });
     };
     try {

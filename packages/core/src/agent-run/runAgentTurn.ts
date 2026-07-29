@@ -2,6 +2,7 @@ import type {
   BridgeFrame,
   ChatChip,
   ChatMessage,
+  FinalDocumentReceipt,
   MessagePart,
   ReviewContext,
 } from "@qingagent/contract-ts";
@@ -191,6 +192,8 @@ export async function* runAgentTurn(
   }
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
+  let turnErrorReason: string | null = null;
+  let turnFinalDocument: FinalDocumentReceipt | undefined;
   let abortController = new AbortController();
   let turnOwnership = beginTurnOwnership(state, `${streamId}:attempt:0`);
   const turnCompletion = createTurnCompletion(streamId);
@@ -839,6 +842,7 @@ export async function* runAgentTurn(
           }),
         );
         turnWasUserAborted ||= outcome.streamWasUserAborted;
+        turnFinalDocument = outcome.finalDocument ?? turnFinalDocument;
         for (const stored of outcome.storedGrantApprovals) {
           yield* resumeConfirmDecision({
             session: state,
@@ -853,6 +857,7 @@ export async function* runAgentTurn(
           });
         }
         if (
+          outcome.terminalOutcome.kind === "ok" &&
           shouldContinuePromisedAction({
             finishReason: outcome.finishReason,
             sawToolCall: outcome.sawToolCall,
@@ -942,9 +947,18 @@ export async function* runAgentTurn(
         turnOutcome = "error";
         const retryChunk = outcome.retryableIdleTimeoutChunk ?? outcome.transientErrorChunk;
         const errorDetails = streamErrorDetails(retryChunk);
+        turnErrorReason = errorDetails.userMessage;
         yield appendVisibleStreamErrorText(state, agentMessageId, errorDetails.userMessage);
         state.messages.push({ role: "assistant", content: errorDetails.userMessage });
         yield draftingFailedFrame(streamId, errorDetails);
+      } else if (outcome.terminalOutcome.kind === "cancelled") {
+        turnOutcome = "cancelled";
+      } else if (outcome.terminalOutcome.kind === "error") {
+        turnOutcome = "error";
+        turnErrorReason = outcome.terminalOutcome.details.userMessage;
+      } else {
+        turnOutcome = "ok";
+        turnErrorReason = null;
       }
       break;
     }
@@ -961,6 +975,7 @@ export async function* runAgentTurn(
       });
     } else {
       turnOutcome = "error";
+      turnErrorReason = AGENT_TURN_FAILED_MESSAGE;
       logger.error("Agent turn failed", {
         sessionId: state.sessionId,
         streamId,
@@ -1076,7 +1091,13 @@ export async function* runAgentTurn(
         streamId,
         turnOutcome === "cancelled"
           ? { kind: "cancelled" }
-          : { kind: "done" },
+          : turnOutcome === "error"
+            ? {
+                kind: "error",
+                data: turnErrorReason ?? AGENT_TURN_FAILED_MESSAGE,
+              }
+            : { kind: "done" },
+        turnFinalDocument,
       );
     }
   }

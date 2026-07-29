@@ -86,9 +86,13 @@ export function isEmptyScaffoldConflict(input: {
  * 一个已知版本是怎么来的:
  * - selfWrite:本标签自己的 updateDoc 回执产出的版本;
  * - streamApply:本会话生成流(agent 写文档)推进、且本标签已经把它应用到编辑器的版本。
- * 二者都不是"外部并发"——用户眼里 agent 往自己正开着的文档里写,天经地义。
+ * - streamConflict:本会话生成流已推进，但本标签为保护本地编辑暂未应用的版本。
+ * 三者都不是"外部并发"——用户眼里 agent 往自己正开着的文档里写,天经地义。
  */
-export type KnownDocVersionOrigin = "selfWrite" | "streamApply";
+export type KnownDocVersionOrigin =
+  | "selfWrite"
+  | "streamApply"
+  | "streamConflict";
 
 export interface KnownDocVersion {
   /** 该版本对应的 canonical 写入基线(可直接拿来重放) */

@@ -2,6 +2,7 @@ import type {
   BridgeFrame,
   ChatMessage,
   DocSuggestion,
+  FinalDocumentReceipt,
   MessagePart,
   Resource,
   ToolCallSpec,
@@ -61,8 +62,19 @@ export function streamEnd(
   reason: { kind: "done" } | { kind: "cancelled" } | { kind: "error"; data: string } = {
     kind: "done",
   },
+  finalDocument?: FinalDocumentReceipt,
 ): BridgeFrame {
-  return { kind: "stream", data: { kind: "end", data: { streamId, reason } } };
+  return {
+    kind: "stream",
+    data: {
+      kind: "end",
+      data: {
+        streamId,
+        reason,
+        ...(finalDocument ? { finalDocument } : {}),
+      },
+    },
+  };
 }
 
 export function chatMessageAdded(message: ChatMessage): BridgeFrame {

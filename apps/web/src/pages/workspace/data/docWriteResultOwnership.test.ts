@@ -3,8 +3,9 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
-  shouldHandleBroadcastDocumentFrame,
+  decideBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
+  splitStreamEndFinalDocument,
 } from "./docWriteResultOwnership";
 
 const pmDoc = {
@@ -33,7 +34,7 @@ describe("shouldHandleDocWriteResult", () => {
   });
 });
 
-describe("shouldHandleBroadcastDocumentFrame", () => {
+describe("decideBroadcastDocumentFrame", () => {
   const versionWritingFrames: BridgeFrame[] = [
     {
       kind: "documentSnapshotWritten",
@@ -59,14 +60,49 @@ describe("shouldHandleBroadcastDocumentFrame", () => {
     },
   ];
 
-  it("dirty 时冻结全部广播版本写入路径", () => {
-    for (const frame of versionWritingFrames) {
-      expect(broadcastContentFrameWritesDocumentVersion(frame)).toBe(true);
-      expect(shouldHandleBroadcastDocumentFrame({
-        frame,
-        hasLocalDocumentChanges: true,
-      })).toBe(false);
-    }
+  const decide = (
+    frame: BridgeFrame,
+    dirty: Partial<Parameters<typeof decideBroadcastDocumentFrame>[0]> = {},
+  ) => decideBroadcastDocumentFrame({
+    frame,
+    editorDirty: false,
+    pendingDocWrite: false,
+    queuedDocWrite: false,
+    scheduledDocWrite: false,
+    ...dirty,
+  });
+
+  it("dirty + generation_finished 先 defer，drain 后仍 dirty 则显式 conflict", () => {
+    const frame = versionWritingFrames[2]!;
+    expect(decide(frame, { editorDirty: true })).toEqual({
+      kind: "defer",
+      reason: "agent_final_waiting_for_editor_save",
+    });
+    expect(decide(frame, {
+      editorDirty: true,
+      afterDeferredDrain: true,
+    })).toEqual({
+      kind: "conflict",
+      reason: "local_editor_changes",
+    });
+  });
+
+  it.each([
+    ["pendingDocWrite", { pendingDocWrite: true }, "pending_doc_write"],
+    ["queuedDocWrite", { queuedDocWrite: true }, "queued_doc_write"],
+    ["scheduledDocWrite", { scheduledDocWrite: true }, "scheduled_doc_write"],
+  ] as const)("%s 在途时延迟终稿而非丢弃", (_name, dirty, reason) => {
+    expect(decide(versionWritingFrames[2]!, dirty)).toEqual({
+      kind: "defer",
+      reason,
+    });
+  });
+
+  it("外部快照撞上无在途保存的实质编辑时进入 conflict，不覆盖本地正文", () => {
+    expect(decide(versionWritingFrames[0]!, { editorDirty: true })).toEqual({
+      kind: "conflict",
+      reason: "local_editor_changes",
+    });
   });
 
   it("会写版本的帧都能取出该版本与正文,供登记为本会话已知产出", () => {
@@ -91,12 +127,59 @@ describe("shouldHandleBroadcastDocumentFrame", () => {
     })).toBeNull();
   });
 
+  it("stream end 终态收据可登记版本，并拆成生命周期与正文两条独立决策链", () => {
+    const terminalFrame: BridgeFrame = {
+      kind: "stream",
+      data: {
+        kind: "end",
+        data: {
+          streamId: "stream-1",
+          reason: { kind: "done" },
+          finalDocument: {
+            version: 4,
+            contentHash: "terminal-hash",
+            doc: pmDoc,
+          },
+        },
+      },
+    };
+
+    expect(appliedDocVersionFromBroadcastFrame(terminalFrame)).toEqual({
+      version: 4,
+      contentHash: "terminal-hash",
+      pmDoc,
+    });
+    expect(splitStreamEndFinalDocument(terminalFrame)).toEqual({
+      lifecycleFrame: {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "stream-1",
+            reason: { kind: "done" },
+          },
+        },
+      },
+      documentFrame: {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_finished",
+          data: {
+            generationId: "terminal-stream-1",
+            seq: 1,
+            prevSeq: null,
+            doc: pmDoc,
+            finalVersion: 4,
+            contentHash: "terminal-hash",
+          },
+        },
+      },
+    });
+  });
+
   it("干净标签照常消费版本帧，非终态帧不受 dirty 守卫影响", () => {
     for (const frame of versionWritingFrames) {
-      expect(shouldHandleBroadcastDocumentFrame({
-        frame,
-        hasLocalDocumentChanges: false,
-      })).toBe(true);
+      expect(decide(frame)).toEqual({ kind: "apply" });
     }
 
     const nonVersionFrames: BridgeFrame[] = [
@@ -120,10 +203,7 @@ describe("shouldHandleBroadcastDocumentFrame", () => {
     ];
     for (const frame of nonVersionFrames) {
       expect(broadcastContentFrameWritesDocumentVersion(frame)).toBe(false);
-      expect(shouldHandleBroadcastDocumentFrame({
-        frame,
-        hasLocalDocumentChanges: true,
-      })).toBe(true);
+      expect(decide(frame, { editorDirty: true })).toEqual({ kind: "apply" });
     }
   });
 });

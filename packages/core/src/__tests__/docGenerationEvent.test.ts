@@ -69,10 +69,19 @@ async function* streamOf(...chunks: StreamChunk[]): AsyncGenerator<StreamChunk> 
   for (const chunk of chunks) yield chunk;
 }
 
-async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
+async function collectFramesWithReturn<T>(
+  gen: AsyncGenerator<BridgeFrame, T>,
+): Promise<{ frames: BridgeFrame[]; result: T }> {
   const frames: BridgeFrame[] = [];
-  for await (const frame of gen) frames.push(frame);
-  return frames;
+  while (true) {
+    const next = await gen.next();
+    if (next.done) return { frames, result: next.value };
+    frames.push(next.value);
+  }
+}
+
+async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
+  return (await collectFramesWithReturn(gen)).frames;
 }
 
 const legacySections: LegacySection[] = [
@@ -196,7 +205,7 @@ describe("docGenerationEvent stream protocol", () => {
     state.docDraftCandidateDoc = pmDoc;
     state.docDraftCandidateSections = legacySections;
 
-    const frames = await collectFrames(
+    const { frames, result } = await collectFramesWithReturn(
       processAgentStream(
         streamOf(
           writeDraftCall(),
@@ -218,6 +227,7 @@ describe("docGenerationEvent stream protocol", () => {
       "block_started",
       "inline_appended",
       "block_finished",
+      "candidate_snapshot",
       "generation_finished",
     ]);
     expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
@@ -227,7 +237,7 @@ describe("docGenerationEvent stream protocol", () => {
       throw new Error("expected generation_finished");
     }
     expect(finished.data.data.generationId).toBe("g1");
-    expect(finished.data.data.prevSeq).toBe(4);
+    expect(finished.data.data.prevSeq).toBe(5);
     expect(finished.data.data.finalVersion).toBe(1);
     expect(finished.data.data.doc.content[0]?.type).toBe("paragraph");
     const text = finished.data.data.doc.content[0]?.type === "paragraph"
@@ -238,6 +248,11 @@ describe("docGenerationEvent stream protocol", () => {
     expect(state.modelKnownDocVersion).toBe(1);
     expect(buildDocVersionAwarenessContent(state)).toBeNull();
     expect(state.doc?.content[0]).toEqual(pmNode);
+    expect(result.finalDocument).toEqual({
+      version: finished.data.data.finalVersion,
+      contentHash: finished.data.data.contentHash,
+      doc: finished.data.data.doc,
+    });
   });
 
   it("does not duplicate generation_failed when the tool has already streamed it", async () => {

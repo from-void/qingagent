@@ -3191,6 +3191,10 @@ export interface StreamError {
 export type WorkspaceLocalAction =
   | { kind: "streamErrorCleared" }
   | { kind: "streamErrorSet"; error: StreamError }
+  | {
+      kind: "documentFrameConflict";
+      actualDocumentSnapshot: number;
+    }
   | { kind: "retryDrafting"; streamId: string }
   | {
       kind: "streamTerminated";

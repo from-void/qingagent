@@ -28,7 +28,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export type LifecycleEventResult = "unhandled" | "handled" | "terminal";
+export type LifecycleEventResult =
+  | "unhandled"
+  | "handled"
+  | "finalize"
+  | "terminal";
 
 export async function* handleLifecycleEvent(
   context: AgentStreamTurnContext,
@@ -49,6 +53,7 @@ export async function* handleLifecycleEvent(
     const idleTimeout = isIdleTimeoutChunk(chunk);
     if (isUserAbortSignal(abortController.signal)) {
       outcome.streamWasUserAborted = true;
+      outcome.terminalOutcome = { kind: "cancelled" };
       logger.info("Ignoring stream error chunk from user-aborted turn", {
         sessionId: state.sessionId,
         streamId,
@@ -78,6 +83,7 @@ export async function* handleLifecycleEvent(
       !outcome.producedVisibleFrame &&
       !outcome.sawSideEffectToolCall
     ) {
+      outcome.terminalOutcome = { kind: "error", details: errorDetails };
       outcome.retryableIdleTimeoutChunk = chunk;
       return "terminal";
     }
@@ -100,9 +106,11 @@ export async function* handleLifecycleEvent(
       return "handled";
     }
     if (transient && !outcome.producedVisibleFrame && !outcome.sawSideEffectToolCall) {
+      outcome.terminalOutcome = { kind: "error", details: errorDetails };
       outcome.transientErrorChunk = chunk;
       return "terminal";
     }
+    outcome.terminalOutcome = { kind: "error", details: errorDetails };
     if (!context.accumulatedText) {
       yield appendVisibleStreamErrorText(state, agentMessageId, errorDetails.userMessage);
       context.accumulatedText += errorDetails.userMessage;
@@ -110,11 +118,21 @@ export async function* handleLifecycleEvent(
     }
     yield draftingFailedFrame(streamId, errorDetails);
     outcome.producedVisibleFrame = true;
-    return "handled";
+    return "finalize";
   }
 
   if (chunk.type === "tripwire") {
     const notice = guardrailTripwireMessage(chunk);
+    outcome.terminalOutcome = {
+      kind: "error",
+      details: {
+        reason: notice,
+        retriable: false,
+        category: "unknown",
+        userMessage: notice,
+        action: "none",
+      },
+    };
     yield appendVisibleStreamErrorText(state, agentMessageId, notice);
     context.accumulatedText += notice;
     outcome.producedVisibleFrame = true;
@@ -124,7 +142,7 @@ export async function* handleLifecycleEvent(
       reason: notice,
     });
     yield draftingFailedFrame(streamId, notice, false);
-    return "handled";
+    return "finalize";
   }
 
   if (chunk.type === "step-start") {

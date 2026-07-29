@@ -8,7 +8,10 @@ export interface SseMessage {
 
 export interface BoundedSsePumpOptions {
   write: (message: SseMessage) => Promise<unknown>;
-  onClose: (reason: "overflow" | "write_error") => void;
+  onClose: (
+    reason: "overflow" | "write_error",
+    details: SsePumpCloseDetails,
+  ) => void;
   maxFrames?: number;
   maxBytes?: number;
 }
@@ -24,6 +27,16 @@ export interface SseEnqueueOptions {
 
 export const DEFAULT_SSE_QUEUE_MAX_FRAMES = 64;
 export const DEFAULT_SSE_QUEUE_MAX_BYTES = 512 * 1024;
+
+export interface SsePumpCloseDetails {
+  reason: "overflow" | "write_error";
+  queuedFrames: number;
+  queuedBytes: number;
+  lastWrittenSeq: string | null;
+  firstUnwrittenSeq: string | null;
+  attemptedSeq: string | null;
+  attemptedBytes: number | null;
+}
 
 interface QueuedMessage {
   message: SseMessage;
@@ -45,6 +58,9 @@ export class BoundedSsePump {
   private limitedQueuedBytes = 0;
   private pumping = false;
   private closed = false;
+  private inFlightId: string | null = null;
+  private inFlightBytes = 0;
+  private lastWrittenId: string | null = null;
   private idleWaiters: Array<() => void> = [];
 
   constructor(private readonly options: BoundedSsePumpOptions) {
@@ -64,7 +80,10 @@ export class BoundedSsePump {
       this.limitedQueuedBytes + limitedBytes > this.maxBytes;
     if (overflow) {
       if (enqueueOptions.dropOnOverflow) return false;
-      this.close("overflow");
+      this.close("overflow", {
+        attemptedSeq: message.id ?? null,
+        attemptedBytes: bytes,
+      });
       return false;
     }
     this.queue.push({ message, bytes, limitedFrames, limitedBytes });
@@ -75,14 +94,35 @@ export class BoundedSsePump {
     return true;
   }
 
-  close(reason?: "overflow" | "write_error"): void {
+  close(
+    reason?: "overflow" | "write_error",
+    attempted: {
+      attemptedSeq?: string | null;
+      attemptedBytes?: number | null;
+    } = {},
+  ): void {
     if (this.closed) return;
     this.closed = true;
+    const details = reason
+      ? {
+          reason,
+          queuedFrames: this.queue.length + (this.inFlightId ? 1 : 0),
+          queuedBytes: this.queuedBytes + this.inFlightBytes,
+          lastWrittenSeq: this.lastWrittenId,
+          firstUnwrittenSeq:
+            this.inFlightId ??
+            this.queue[0]?.message.id ??
+            attempted.attemptedSeq ??
+            null,
+          attemptedSeq: attempted.attemptedSeq ?? null,
+          attemptedBytes: attempted.attemptedBytes ?? null,
+        }
+      : null;
     this.queue.length = 0;
     this.queuedBytes = 0;
     this.limitedQueuedFrames = 0;
     this.limitedQueuedBytes = 0;
-    if (reason) this.options.onClose(reason);
+    if (reason && details) this.options.onClose(reason, details);
     this.resolveIdleIfDone();
   }
 
@@ -115,7 +155,12 @@ export class BoundedSsePump {
         this.queuedBytes -= queued.bytes;
         this.limitedQueuedFrames -= queued.limitedFrames;
         this.limitedQueuedBytes -= queued.limitedBytes;
+        this.inFlightId = queued.message.id ?? null;
+        this.inFlightBytes = queued.bytes;
         await this.options.write(queued.message);
+        this.lastWrittenId = queued.message.id ?? this.lastWrittenId;
+        this.inFlightId = null;
+        this.inFlightBytes = 0;
       }
     } catch {
       this.close("write_error");

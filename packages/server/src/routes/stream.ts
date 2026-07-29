@@ -29,6 +29,10 @@ import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { formatCommandError, parseBody } from "../lib/validation";
 import { BoundedSsePump } from "../lib/boundedSsePump";
+import {
+  allowOversizedSseFrame,
+  terminalDocumentFrameFields,
+} from "../lib/terminalDocumentFrame";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import {
   clientMessageIdempotency,
@@ -439,8 +443,33 @@ streamRoutes.get("/events", async (c) => {
       });
     };
     const pump = new BoundedSsePump({
-      write: (message) => stream.writeSSE(message),
-      onClose: () => {
+      write: async (message) => {
+        await stream.writeSSE(message);
+        if (message.id && message.event === "frame") {
+          try {
+            const frame = JSON.parse(message.data) as BridgeFrame;
+            const terminalFields = terminalDocumentFrameFields(
+              frame,
+              Number(message.id),
+            );
+            if (terminalFields) {
+              console.info("[terminal-document] written", {
+                stage: "written",
+                sessionId,
+                ...terminalFields,
+              });
+            }
+          } catch {
+            // 诊断不得影响 SSE 交付。
+          }
+        }
+      },
+      onClose: (reason, details) => {
+        console.error("[events] SSE pump closed", {
+          sessionId,
+          ...details,
+          reason,
+        });
         stream.abort();
         settleDisconnectedTurn();
       },
@@ -457,14 +486,26 @@ streamRoutes.get("/events", async (c) => {
         sessionId,
         subscribeAfter,
         (entry, delivery) => {
-          pump.enqueue({
+          const enqueued = pump.enqueue({
             id: String(entry.seq),
             event: "frame",
             data: JSON.stringify(entry.frame),
           }, {
             delivery,
-            allowOversized: entry.frame.kind === "documentSnapshotWritten",
+            allowOversized: allowOversizedSseFrame(entry.frame),
           });
+          const terminalFields = terminalDocumentFrameFields(
+            entry.frame,
+            entry.seq,
+          );
+          if (enqueued && terminalFields) {
+            console.info("[terminal-document] enqueued", {
+              stage: "enqueued",
+              sessionId,
+              delivery,
+              ...terminalFields,
+            });
+          }
         },
       );
       if (cleaned) {

@@ -847,6 +847,43 @@ describe("annotationGroupsReady 来源增量", () => {
       expect(finished.doc?.pmDoc?.content[0]).toEqual(streamedPmNode);
     });
 
+    it("candidate_snapshot 立即替换非 canonical 投影且不提前推进正式版本", () => {
+      const started = reduce({
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_started",
+          data: {
+            generationId: "g-candidate",
+            seq: 1,
+            prevSeq: null,
+            sessionId: "session-1",
+            baseVersion: 3,
+          },
+        },
+      });
+
+      const projected = workspaceReducer(started, {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "candidate_snapshot",
+          data: {
+            generationId: "g-candidate",
+            seq: 2,
+            prevSeq: 1,
+            doc: streamedPmDoc,
+            baseVersion: 3,
+            contentHash: "pmv1-candidate",
+          },
+        },
+      });
+
+      expect(projected.generationDraft?.doc.pmDoc?.content[0]).toEqual(streamedPmNode);
+      expect(projected.generationDraft?.lastSeq).toBe(2);
+      expect(projected.generationDraft?.baseVersion).toBe(3);
+      expect(projected.version).toBe(initialWorkspaceState.version);
+      expect(projected.doc).toBeNull();
+    });
+
     it("generation_finished 后仍有活跃流和运行中工具时保持忙碌与编辑锁", () => {
       const busy = reduce(
         {
@@ -1702,6 +1739,55 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(ended.streamActive).toBe(false);
       expect(ended.agentBusy).toBe(false);
+    });
+
+    it("stream end 的 finalDocument 缺失 generation_finished 时仍提交正文并独立收口生命周期", () => {
+      const started = reduce(
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "drafting" },
+            activeOverlay: null,
+            agentBusy: true,
+          },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "receipt-stream" } },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: "m-agent",
+            toolCallId: runningCommandToolCall.id,
+            spec: runningCommandToolCall,
+          },
+        },
+      );
+
+      const ended = workspaceReducer(started, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "receipt-stream",
+            reason: { kind: "done" },
+            finalDocument: {
+              version: 9,
+              contentHash: "pmv1-receipt",
+              doc: streamedPmDoc,
+            },
+          },
+        },
+      });
+
+      expect(ended.doc?.version).toBe(9);
+      expect(ended.doc?.pmDoc?.content[0]).toEqual(streamedPmNode);
+      expect(ended.generationDraft).toBeNull();
+      expect(ended.streamActive).toBe(false);
+      expect(ended.activeStreamIds).toEqual([]);
+      expect(ended.agentBusy).toBe(false);
+      expect(ended.toolCalls.get(runningCommandToolCall.id)?.status.kind).toBe("running");
     });
 
     it("clears streamActive on stream end error", () => {

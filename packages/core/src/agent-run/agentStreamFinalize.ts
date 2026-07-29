@@ -6,7 +6,7 @@ import {
   type ToolCallSpec,
 } from "@qingagent/contract-ts";
 import { documentDraftRepo } from "@qingagent/db";
-import { pmToPlainText } from "@qingagent/pm-schema";
+import { getPmContentHash, pmToPlainText } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { recordLlmResponseSpan } from "./agentSpans.js";
@@ -46,6 +46,24 @@ import { endToolIoSpan } from "./toolIoSpans.js";
 import { recomputeUserVisibleOutput } from "./agentStreamVisibility.js";
 
 const logger = mastra.getLogger();
+
+function markTerminalFailure(
+  outcome: ProcessOutcome,
+  reason: string,
+  retriable = true,
+): void {
+  if (outcome.terminalOutcome.kind === "cancelled") return;
+  outcome.terminalOutcome = {
+    kind: "error",
+    details: {
+      reason,
+      retriable,
+      category: "unknown",
+      userMessage: reason,
+      action: retriable ? "retry" : "none",
+    },
+  };
+}
 
 function failPendingToolCallsAfterTimeout(
   context: AgentStreamTurnContext,
@@ -192,6 +210,13 @@ export async function* finalizeAgentStream(
     });
     context.validPatchCount = settled.hunkCount;
     context.finalDocumentSnapshotEmitted = settled.docWritten;
+    if (settled.docWritten && state.doc) {
+      outcome.finalDocument = {
+        version: state.docVersion,
+        contentHash: getPmContentHash(state.doc),
+        doc: state.doc,
+      };
+    }
     if (settled.hunkCount > 0 || settled.docWritten) {
       outcome.producedVisibleFrame = true;
       outcome.sawToolCall = true;
@@ -251,6 +276,9 @@ export async function* finalizeAgentStream(
   const streamWasUserAborted =
     isUserAbortSignal(abortController.signal) && !context.sawIdleTimeout;
   outcome.streamWasUserAborted = streamWasUserAborted;
+  if (streamWasUserAborted) {
+    outcome.terminalOutcome = { kind: "cancelled" };
+  }
   recomputeUserVisibleOutput(context);
   const hadUserVisibleOutputBeforeFallbacks = context.hasUserVisibleOutput;
   const accumulatedTextHadNonWhitespaceBeforeFallbacks =
@@ -275,6 +303,7 @@ export async function* finalizeAgentStream(
       hadAccumulatedText,
     });
     yield draftingFailedFrame(streamId, DRAFT_TOOL_JSON_RETRY_NOTICE);
+    markTerminalFailure(outcome, DRAFT_TOOL_JSON_RETRY_NOTICE);
   }
 
   const endedAfterToolCallsWithoutText =
@@ -350,6 +379,7 @@ export async function* finalizeAgentStream(
       streamId,
     });
     yield draftingFailedFrame(streamId, emptyNotice);
+    markTerminalFailure(outcome, emptyNotice);
   } else if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
@@ -371,6 +401,7 @@ export async function* finalizeAgentStream(
       maxSteps: AGENT_MAX_STEPS,
     });
     yield draftingFailedFrame(streamId, stepNotice);
+    markTerminalFailure(outcome, stepNotice);
   }
 
   const annotationGroupIdsAfterSettle = new Set(

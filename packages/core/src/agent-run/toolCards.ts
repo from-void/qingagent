@@ -116,13 +116,16 @@ export function commandCardFromResult(
   );
   const cancelled = structured?.cancelled === true;
   const timedOut = structured?.timedOut === true;
+  // killed = 被信号打死但不是我们主动取消:必须与"已中止"分开,否则用户看到的
+  // 结论是"你把它停了",而真相可能是沙箱写墙拒绝或 OOM(0729 真机 P1)。
+  const killedBySignal = !cancelled && !timedOut && structured?.killed === true;
   const pid = typeof structured?.pid === "string" || typeof structured?.pid === "number"
     ? String(structured.pid)
     : null;
   const background =
     structured?.background === true && pid !== null && structured?.success === true;
   const structuredFailed = structured !== null && (
-    structured.success === false || exitCode !== 0 || cancelled || timedOut
+    structured.success === false || exitCode !== 0 || cancelled || timedOut || killedBySignal
   );
   const legacyNonZeroExit = structured === null && exitMatch !== null && exitCode !== 0;
   const policyBlock = commandPolicyBlockFromOutput(outRaw);
@@ -151,9 +154,11 @@ export function commandCardFromResult(
       ? "timedOut"
       : cancelled
         ? "aborted"
-        : failed
-          ? "failed"
-          : "succeeded";
+        : killedBySignal
+          ? "killed"
+          : failed
+            ? "failed"
+            : "succeeded";
   return {
     title: cardTitle,
     icon: verdict.icon,

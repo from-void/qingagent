@@ -85,11 +85,28 @@ function tailLines(
 export interface GatedCommandResult {
   success: boolean;
   exitCode: number;
+  /** 只代表"用户/系统主动取消"(abortSignal 触发)。被信号打死不算。 */
   cancelled: boolean;
   timedOut: boolean;
+  /**
+   * 进程被信号终止,且不是我们主动取消、也不是超时。常见于沙箱写墙拒绝、OOM、
+   * 外部 kill。历史上它被并入 cancelled,模型看到"已取消"就会替用户编理由
+   * ("可能是你没及时点确认"),真机上已实证。必须单独成态。
+   */
+  killed?: boolean;
   output: string;
   pid?: string;
   background?: true;
+}
+
+/** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
+export function killedCommandNotice(exitCode: number): string {
+  return [
+    `进程被信号终止(退出码 ${exitCode})。`,
+    "这不是用户取消,也不是用户没有确认——确认已经通过,命令确实启动过。",
+    "常见成因:命令试图写入沙箱不允许写的目录、内存不足、或被外部进程结束。",
+    "如需继续,请先根据输出判断是权限还是资源问题,再决定换路径重试或改用后台执行。",
+  ].join("");
 }
 
 type SandboxWriter = {
@@ -151,6 +168,7 @@ function commandResult(input: {
   output: string;
   cancelled?: boolean;
   timedOut?: boolean;
+  killed?: boolean;
   pid?: string;
   background?: true;
 }): GatedCommandResult {
@@ -159,6 +177,7 @@ function commandResult(input: {
     exitCode: input.exitCode,
     cancelled: input.cancelled ?? false,
     timedOut: input.timedOut ?? false,
+    ...(input.killed ? { killed: true } : {}),
     output: input.output,
     ...(input.pid ? { pid: input.pid } : {}),
     ...(input.background ? { background: true as const } : {}),
@@ -477,15 +496,21 @@ export function createGatedExecuteCommandTool({
           },
         });
         const timedOut = result.timedOut === true;
-        const cancelled = !timedOut && (
-          context?.abortSignal?.aborted === true || result.killed === true
-        );
+        // 只有我们自己的 abortSignal 触发才叫"取消"。被信号打死(killed)另算一态:
+        // 沙箱写墙拒绝 / OOM / 外部 kill 都会走到这里,把它说成"用户取消"会让模型
+        // 反过来责怪用户没点确认(0729 真机 P1 实证:319ms 被 SIGKILL、exitCode 128)。
+        const cancelled = !timedOut && context?.abortSignal?.aborted === true;
+        const killed = !timedOut && !cancelled && result.killed === true;
+        const commandOutput = formatCommandOutput(result, input.tail);
         const terminalResult = commandResult({
-          success: result.success && result.exitCode === 0 && !cancelled && !timedOut,
+          success: result.success && result.exitCode === 0 && !cancelled && !timedOut && !killed,
           exitCode: result.exitCode,
           cancelled,
           timedOut,
-          output: formatCommandOutput(result, input.tail),
+          killed,
+          output: killed
+            ? [commandOutput, killedCommandNotice(result.exitCode)].filter(Boolean).join("\n")
+            : commandOutput,
         });
         await safeCustom(writer, {
           type: "data-sandbox-exit",

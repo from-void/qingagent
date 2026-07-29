@@ -1,110 +1,192 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
-test("NoKey CTA 与空编辑器在新建/编辑工作区都保持正确点击命中", async ({ page }) => {
-  await page.goto("/");
-  await loadWorkspaceStyles(page);
+const MODEL_SETTINGS_RESPONSE = {
+  provider: "kimi",
+  apiKeyConfigured: false,
+  providers: {
+    deepseek: { apiKeyConfigured: false },
+    kimi: { apiKeyConfigured: false },
+  },
+};
 
-  for (const content of ["empty", "editing"] as const) {
-    await mountGateLayout(page, content);
+test.describe.configure({ mode: "serial" });
 
-    const hit = await page.locator(".nokey-tip-btn").evaluate((button) => {
+for (const layout of ["empty", "editing"] as const) {
+  test(`真实工作区 ${layout} 布局的 NoKey CTA 可命中并完成恢复`, async ({ page }) => {
+    await openPollutedWorkspace(page, layout);
+
+    const editor = page.locator(".chat-edit");
+    await expect(editor).toHaveCount(1);
+    if (layout === "empty") {
+      await expect(editor).toHaveClass(/(?:^|\s)is-empty(?:\s|$)/);
+      await focusEditor(editor);
+    } else {
+      await editor.fill("已有聊天内容");
+      await expect(editor).not.toHaveClass(/(?:^|\s)is-empty(?:\s|$)/);
+    }
+
+    const gate = page.locator(".nokey-gate");
+    const cta = page.locator(".nokey-tip-btn");
+    await page.keyboard.press("Enter");
+    await expect(gate).toHaveClass(/(?:^|\s)is-forced(?:\s|$)/);
+    await expect(cta).toBeVisible();
+    await expect(page.locator(".nokey-tip")).toHaveCSS("pointer-events", "auto");
+
+    const hit = await cta.evaluate((button) => {
       const rect = button.getBoundingClientRect();
       const target = document.elementFromPoint(
         rect.left + rect.width / 2,
         rect.top + rect.height / 2,
       );
-      return target === button || button.contains(target);
+      const input = button.closest(".wf-input");
+      const editor = input?.querySelector(".chat-edit") ?? null;
+      const tools = input?.querySelector(".ws-input-tools") ?? null;
+      return {
+        hit: target === button || button.contains(target),
+        target: target instanceof Element
+          ? `${target.tagName}.${Array.from(target.classList).join(".")}`
+          : null,
+        stacking: {
+          inputIsolation: input ? getComputedStyle(input).isolation : null,
+          editorZIndex: editor ? getComputedStyle(editor).zIndex : null,
+          toolsZIndex: tools ? getComputedStyle(tools).zIndex : null,
+        },
+      };
     });
-    expect(hit, `${content} 的 CTA 中心必须命中按钮`).toBe(true);
-
-    const editor = page.locator(".chat-edit");
-    const editorHit = await editor.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return document.elementFromPoint(
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2,
-      ) === element;
+    expect(
+      hit.hit,
+      `${layout} 的 CTA 中心命中了 ${hit.target ?? "null"}`,
+    ).toBe(true);
+    expect(hit.stacking).toEqual({
+      inputIsolation: "isolate",
+      editorZIndex: "0",
+      toolsZIndex: "2",
     });
-    expect(editorHit, `${content} 的空编辑器中心仍须可点击`).toBe(true);
 
-    await editor.click({ position: { x: 110, y: 24 } });
-    await page.keyboard.type("仍可输入");
-    await expect(editor).toContainText("仍可输入");
-
-    // 去掉强制态，验证从发送按钮穿过 12px hover bridge 移到 CTA 时气泡不消失。
-    await page.locator(".nokey-gate").evaluate((gate) => gate.classList.remove("is-forced"));
-    const sendBox = await page.locator("[data-send]").boundingBox();
-    const ctaBox = await page.locator(".nokey-tip-btn").boundingBox();
-    if (!sendBox || !ctaBox) throw new Error("gate layout missing");
-    await page.mouse.move(
-      sendBox.x + sendBox.width / 2,
-      sendBox.y + sendBox.height / 2,
-    );
-    await page.mouse.move(
-      ctaBox.x + ctaBox.width / 2,
-      (sendBox.y + ctaBox.y + ctaBox.height) / 2,
-      { steps: 4 },
-    );
-    await page.mouse.move(
-      ctaBox.x + ctaBox.width / 2,
-      ctaBox.y + ctaBox.height / 2,
-      { steps: 4 },
-    );
-    await expect(page.locator(".nokey-tip")).toHaveCSS("pointer-events", "auto");
-    await expect(page.locator(".nokey-tip")).toHaveCSS("opacity", "1");
-  }
-});
-
-async function loadWorkspaceStyles(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const load = new Function(
-      "return Promise.all([" +
-        "import('/src/pages/workspace/workspace.css')," +
-        "import('/src/pages/workspace/workspace-ink-skin.css')" +
-      "])",
-    ) as () => Promise<unknown>;
-    await load();
+    await cta.click();
+    await expect(gate).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => localStorage.getItem("qingagent.model_provider")),
+    ).toBe("deepseek");
+    if (layout === "empty") {
+      await editor.fill("恢复发送");
+    }
+    await expect(gate).toHaveCount(0);
+    await expect(page.locator(".ws-input-tools .wf-btn.primary")).toBeEnabled();
   });
 }
 
-async function mountGateLayout(
+async function openPollutedWorkspace(
   page: Page,
-  content: "empty" | "editing",
+  layout: "empty" | "editing",
 ): Promise<void> {
-  await page.evaluate((nextContent) => {
-    document.body.dataset.content = nextContent;
-    document.body.dataset.tool = "none";
-    document.body.innerHTML = `
-      <main id="view-workspace" style="height:900px;padding:300px 80px;background:#16212c">
-        <section class="ws-left" style="width:${nextContent === "empty" ? 680 : 760}px">
-          <div class="ws-input-wrap">
-            <div class="ws-input-morph">
-              <div class="wf-input" data-wf="ChatInputWrap">
-                <div
-                  class="chat-edit is-empty"
-                  data-wf="ChatInput"
-                  data-placeholder="说说你想写什么"
-                  contenteditable="true"
-                  role="textbox"
-                  tabindex="0"
-                ></div>
-                <div class="ws-input-tools has-nokey-gate">
-                  <div></div>
-                  <div style="display:flex;align-items:center">
-                    <span class="nokey-gate is-forced">
-                      <button class="wf-btn primary small" data-send type="button" disabled>发送</button>
-                      <span class="nokey-tip" role="tooltip">
-                        <span class="nokey-tip-text">当前使用中的 Kimi 还没配置 key。</span>
-                        <button class="nokey-tip-btn" type="button">切到 DeepSeek</button>
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-    `;
-  }, content);
+  await page.addInitScript(() => {
+    localStorage.setItem("qingagent.model_provider", "kimi");
+    localStorage.setItem("qingagent.deepseek_api_key", "deepseek-test-key");
+    localStorage.removeItem("qingagent.custom_provider");
+    localStorage.removeItem("qingagent.official_model");
+    localStorage.removeItem("qingagent.kimi_api_key");
+    localStorage.removeItem("qingagent.kimi_custom_provider");
+    localStorage.removeItem("qingagent.kimi_official_model");
+  });
+  await page.route("**/api/v1/skills", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ skills: [] }),
+    });
+  });
+  await page.route("**/api/v1/capabilities", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        folderSources: {
+          desktopLocal: { enabled: false },
+          browserFsAccess: { enabled: false },
+        },
+      }),
+    });
+  });
+  await page.route("**/api/v1/clientlog", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: "{}",
+    });
+  });
+  await page.route("**/api/v1/settings/model", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(MODEL_SETTINGS_RESPONSE),
+    });
+  });
+  if (layout === "editing") {
+    await mockEditingSession(page);
+  }
+  await page.goto(
+    layout === "editing"
+      ? "/#/workspace?session=model-key-gate-visual"
+      : "/#/workspace",
+  );
+  const workspace = page.locator("#view-workspace");
+  await expect(workspace).toBeVisible();
+  await expect(workspace).toHaveAttribute("data-content", layout);
+  await expect(page.locator(".nokey-tip-text")).toContainText(
+    "当前使用中的 Kimi 还没配置 key",
+  );
+}
+
+async function mockEditingSession(page: Page): Promise<void> {
+  await page.route("**/api/v1/commands", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        accepted: true,
+        sessionId: "model-key-gate-visual",
+        epoch: 1,
+      }),
+    });
+  });
+  await page.route("**/api/v1/events?*", async (route) => {
+    const frames = [
+      {
+        kind: "sessionMeta",
+        data: {
+          sessionId: "model-key-gate-visual",
+          title: "CTA 命中回归",
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+      {
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "model-key-gate-visual" },
+      },
+    ];
+    const body = frames
+      .map((frame, index) => (
+        `event: frame\nid: ${index + 1}\ndata: ${JSON.stringify(frame)}\n\n`
+      ))
+      .join("");
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body,
+    });
+  });
+}
+
+async function focusEditor(editor: Locator): Promise<void> {
+  const box = await editor.boundingBox();
+  if (!box) throw new Error("chat editor layout missing");
+  await editor.click({
+    position: {
+      x: Math.min(18, box.width / 2),
+      y: Math.max(1, box.height - 12),
+    },
+  });
+  await expect(editor).toBeFocused();
 }

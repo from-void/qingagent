@@ -800,6 +800,20 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   backdrop-filter: var(--fx-workspace-backdrop-filter);
   -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
 }
+/* NoKey 气泡向上伸进 contenteditable 的矩形范围。只提升气泡自身不够：
+   它的 z-index 不能越过祖先工具栏的 stacking context；真机空编辑器曾因此继续
+   成为 elementFromPoint 的首命中。门禁态把同一 .wf-input 内两个兄弟明确排成
+   编辑器 0 / 工具栏 2，并隔离为本地层叠，不动编辑器 pointer-events（仍可聚焦）。 */
+#view-workspace .wf-input:has(> .ws-input-tools.has-nokey-gate) {
+  isolation: isolate;
+}
+#view-workspace .wf-input:has(> .ws-input-tools.has-nokey-gate) > .chat-edit {
+  z-index: 0;
+}
+#view-workspace .wf-input > .ws-input-tools.has-nokey-gate {
+  position: relative;
+  z-index: 2;
+}
 #view-workspace .wf-input .chat-edit {
   color: #ece4d4 !important;
 }

@@ -359,19 +359,21 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     expect(mat?.text).toBe(WEB); // 引用抓取全文,非模型参数
   });
 
-  it("p08 串台回归:多文件解析后键未命中绝不兜底——宁可空正文也不绑成别的素材", async () => {
+  it("p08 串台回归:多文件按各自 fileId/filename 绑定，未命中绝不兜底", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("ref-crosstalk");
     const FULL_A = "甲文件的独有正文。".repeat(50);
     const FULL_B = "乙文件的独有正文。".repeat(50);
+    const FILE_ID_A = "11111111-1111-4111-8111-111111111111";
+    const FILE_ID_B = "22222222-2222-4222-8222-222222222222";
 
     const frames = await collectFrames(
       processAgentStream(
         streamOf(
-          toolCall("parseFile", "p1", { filePath: "/x/a.txt", filename: "a.txt" }),
-          toolResult("parseFile", "p1", { filename: "a.txt" }, { text: FULL_A, wordCount: 1 }),
-          toolCall("parseFile", "p2", { filePath: "/x/b.txt", filename: "b.txt" }),
-          toolResult("parseFile", "p2", { filename: "b.txt" }, { text: FULL_B, wordCount: 1 }),
+          toolCall("parseFile", "p1", { fileId: FILE_ID_A, filename: "a.txt" }),
+          toolResult("parseFile", "p1", { fileId: FILE_ID_A, filename: "a.txt" }, { text: FULL_A, wordCount: 1 }),
+          toolCall("parseFile", "p2", { fileId: FILE_ID_B, filename: "b.txt" }),
+          toolResult("parseFile", "p2", { fileId: FILE_ID_B, filename: "b.txt" }, { text: FULL_B, wordCount: 1 }),
           // 三次落库:两次精确命中,一次自创 filename(两个缓存键都不匹配)
           toolCall("storeMaterial", "s1", { filename: "a.txt", mimeType: "text/plain" }),
           toolResult("storeMaterial", "s1", { filename: "a.txt", mimeType: "text/plain" }, { materialId: "mat-a", stored: true }),
@@ -386,6 +388,8 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
 
     expect(state.materials.get("mat-a")?.text).toBe(FULL_A);
     expect(state.materials.get("mat-b")?.text).toBe(FULL_B);
+    expect(state.materials.get("mat-a")?.fileId).toBe(FILE_ID_A);
+    expect(state.materials.get("mat-b")?.fileId).toBe(FILE_ID_B);
     // 旧实现这里会串成 FULL_B(最近一次提取);现在拒绝兜底,且不再生成空素材。
     expect(state.materials.has("mat-c")).toBe(false);
     const failed = storeMaterialFailureFor(frames, "s3");

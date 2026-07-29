@@ -5,6 +5,10 @@ import { mastra, getObservability } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
 import { getToolIoMaxBytes, summarizeToolValue } from "./redaction.js";
 import { sessionIdToTraceId } from "./agentSpans.js";
+import {
+  summarizeParseFileInput,
+  summarizeParseFileOutput,
+} from "./parseFileTelemetry.js";
 
 const logger = mastra.getLogger();
 
@@ -205,6 +209,9 @@ export function summarizeToolInputForSpan(
   maxBytes = getToolIoMaxBytes(),
   folderSourceHostRoots: readonly string[] = [],
 ): unknown {
+  if (toolName === "parseFile") {
+    return summarizeToolValue(summarizeParseFileInput(input), maxBytes);
+  }
   return summarizeFolderSourceToolIoForSpan(toolName, input, "input", maxBytes, folderSourceHostRoots) ??
     summarizeToolValue(input, maxBytes);
 }
@@ -216,6 +223,9 @@ export function summarizeToolOutputForSpan(
   folderSourceHostRoots: readonly string[] = [],
 ): unknown {
   const record = asRecord(output);
+  if (toolName === "parseFile") {
+    return summarizeToolValue(summarizeParseFileOutput(output), maxBytes);
+  }
   if (toolName === "readDocument" && record) {
     return summarizeToolValue(summarizeReadDocumentOutputForSpan(record), maxBytes);
   }

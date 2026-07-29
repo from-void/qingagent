@@ -25,6 +25,8 @@ describe("desktop folder selection registry", () => {
     });
 
     expect(selection.pathLabel).toBe(".../docs");
+    expect(selection.fileCount).toBeNull();
+    expect(selection.fileCountCapped).toBe(false);
     expect(peekDesktopFolderSelection(selection.selectionToken, 7)?.rootPath).toBe("/tmp/docs");
     expect(peekDesktopFolderSelection(selection.selectionToken, 7)?.rootPath).toBe("/tmp/docs");
     expect(consumeDesktopFolderSelection(selection.selectionToken, 8)).toBeNull();

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 
@@ -47,10 +48,17 @@ function isWithinUploadRoot(rootRealPath: string, candidateRealPath: string): bo
 }
 
 function warnSkippedUploadFile(fileId: unknown, reason: string, error?: unknown): void {
+  const errorRecord = error !== null && typeof error === "object"
+    ? error as { name?: unknown; code?: unknown }
+    : null;
   console.warn("[uploadFileResolver] 跳过不安全或不可用的上传文件", {
-    fileId,
+    fileIdHash: typeof fileId === "string"
+      ? createHash("sha256").update(fileId).digest("hex").slice(0, 12)
+      : null,
+    fileIdType: typeof fileId,
     reason,
-    error: error instanceof Error ? error.message : error === undefined ? undefined : String(error),
+    errorName: typeof errorRecord?.name === "string" ? errorRecord.name : null,
+    errorCode: typeof errorRecord?.code === "string" ? errorRecord.code : null,
   });
 }
 

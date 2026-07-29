@@ -529,16 +529,18 @@ describe("F. 文件菜单连接行双击竞态", () => {
       getAttachFolderRow().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    // React 已 commit，菜单关闭；再次打开后连接行 disabled。
+    // React 已 commit，菜单关闭；再次打开后连接行变成“停止等待”。
     openFileMenu();
-    expect(getAttachFolderRow().disabled).toBe(true);
+    expect(getAttachFolderRow().disabled).toBe(false);
+    expect(getAttachFolderRow().textContent).toContain("停止等待");
 
-    // 再次点击（disabled 菜单行）
+    // 再次点击只停止等待，不会重复 attach。
     act(() => {
       getAttachFolderRow().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(slowAttach).toHaveBeenCalledTimes(1);
+    await act(async () => {});
     act(() => { resolve(); });
   });
 });

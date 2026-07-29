@@ -1927,6 +1927,18 @@ export const parseFileTool = createTool({
         buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
+      } else if (fileId) {
+        // Desktop 上传附件同样优先走 uploads resolver。即使模型同时提交宿主
+        // filePath/content，也不能抢占 fileId 通道再次落入 Windows fail-closed 分支。
+        const [resolved] = await resolveFileIds([fileId]);
+        if (!resolved) {
+          return parseFileToolFailure(
+            `无法解析 fileId：${fileId}（上传文件不存在或不可访问）`,
+          );
+        }
+        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
+        filename = resolved.filename;
+        mimeType = resolved.mimeType;
       } else if (filePath) {
         const desktopFile = await readDesktopFilePath(filePath, context?.abortSignal);
         if (desktopFile.status === "denied") return FILE_ACCESS_DENIED_RESULT;
@@ -1938,16 +1950,6 @@ export const parseFileTool = createTool({
         filename = basename(desktopFile.canonicalPath);
       } else if (content !== undefined && content !== null) {
         buffer = Buffer.from(content, "base64");
-      } else if (fileId) {
-        const [resolved] = await resolveFileIds([fileId]);
-        if (!resolved) {
-          return parseFileToolFailure(
-            `无法解析 fileId：${fileId}（上传文件不存在或不可访问）`,
-          );
-        }
-        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
-        filename = resolved.filename;
-        mimeType = resolved.mimeType;
       } else {
         return parseFileToolFailure("必须提供 filePath、content 或 fileId");
       }

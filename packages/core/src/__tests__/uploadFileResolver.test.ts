@@ -63,6 +63,20 @@ describe("uploadFileResolver", () => {
     expect(console.warn).toHaveBeenCalledTimes(4);
   });
 
+  it("上传目录缺失时日志不暴露宿主绝对路径或完整内部错误", async () => {
+    const resolver = await loadResolver();
+    const fileId = crypto.randomUUID();
+    await fs.mkdir(resolver.UPLOADS_BASE, { recursive: true });
+
+    const result = await resolver.resolveFileIds([fileId]);
+    const serialized = JSON.stringify(vi.mocked(console.warn).mock.calls);
+
+    expect(result).toEqual([]);
+    expect(serialized).toContain('"errorCode":"ENOENT"');
+    expect(serialized).not.toContain(resolver.UPLOADS_BASE);
+    expect(serialized).not.toContain("no such file or directory");
+  });
+
   it("拒绝 realpath 逃出 uploads 的符号链接目录", async () => {
     const resolver = await loadResolver();
     const fileId = crypto.randomUUID();
@@ -78,7 +92,7 @@ describe("uploadFileResolver", () => {
     expect(console.warn).toHaveBeenCalledWith(
       "[uploadFileResolver] 跳过不安全或不可用的上传文件",
       expect.objectContaining({
-        fileId,
+        fileIdHash: crypto.createHash("sha256").update(fileId).digest("hex").slice(0, 12),
         reason: "上传目录 realpath 不在 uploads 根目录内",
       }),
     );
@@ -99,7 +113,7 @@ describe("uploadFileResolver", () => {
     expect(console.warn).toHaveBeenCalledWith(
       "[uploadFileResolver] 跳过不安全或不可用的上传文件",
       expect.objectContaining({
-        fileId,
+        fileIdHash: crypto.createHash("sha256").update(fileId).digest("hex").slice(0, 12),
         reason: "上传文件 realpath 不在 uploads 根目录内",
       }),
     );

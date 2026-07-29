@@ -245,7 +245,7 @@ describe("R8-1. connected + pending(attach) 状态组合", () => {
     expect(getMenuDisconnectButton()).not.toBeNull();
   });
 
-  it("attach pending 时连接文件夹行禁用并展示忙碌文案", async () => {
+  it("attach pending 时展示忙碌文案并可停止等待", async () => {
     // 用慢 onAttachFolder 模拟挂起中
     window.localStorage.setItem(FOLDER_INTRO_STORAGE_KEY, "1");
     let resolveAttach!: () => void;
@@ -270,10 +270,12 @@ describe("R8-1. connected + pending(attach) 状态组合", () => {
 
     openFileMenu();
     const row = getAttachFolderRow();
-    expect(row.disabled).toBe(true);
+    expect(row.disabled).toBe(false);
     expect(row.textContent).toContain("正在连接文件夹");
+    expect(row.textContent).toContain("停止等待");
 
-    // 清理
+    clickElement(row);
+    await act(async () => {});
     act(() => { resolveAttach(); });
   });
 });
@@ -567,9 +569,12 @@ describe("R8-9. CSS 状态类完整性审查", () => {
     await act(async () => {});
 
     openFileMenu();
-    expect(getAttachFolderRow().disabled).toBe(true);
+    expect(getAttachFolderRow().disabled).toBe(false);
     expect(getAttachFolderRow().textContent).toContain("正在连接文件夹");
+    expect(getAttachFolderRow().textContent).toContain("停止等待");
 
+    clickElement(getAttachFolderRow());
+    await act(async () => {});
     act(() => { resolveAttach(); });
   });
 

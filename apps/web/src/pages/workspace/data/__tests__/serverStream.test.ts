@@ -6,6 +6,12 @@ import {
 } from "../serverStream";
 import type { AskUserQuestion, BridgeFrame } from "@qingagent/contract-ts";
 import type { WorkspaceLocalAction } from "../protocol";
+import {
+  buildAttachFolderCommand,
+  FolderAttachTimeoutError,
+  submitAttachFolderCommand,
+  type FolderAttachSelection,
+} from "../folderAttach";
 
 const VALID_FRAME: BridgeFrame = {
   kind: "sessionMeta",
@@ -765,6 +771,150 @@ describe("ServerStream", () => {
     const parsed = JSON.parse(capturedBody!);
     expect(parsed.kind).toBe("sendMessage");
     expect(parsed.data.fileIds).toEqual(["file-abc-123"]);
+  });
+
+  it("attach HTTP 永不返回时在 deadline 后 abort 并报超时", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        requestSignal = init?.signal ?? undefined;
+        requestSignal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      }));
+    const stream = new ServerStream();
+    const selection: FolderAttachSelection = {
+      provider: "desktop-local",
+      selectionToken: "selection-http-timeout",
+    };
+    const command = buildAttachFolderCommand("s-1", selection, "request-http-timeout");
+    const pending = submitAttachFolderCommand(stream, command, selection, {
+      timeoutMs: 1_000,
+    });
+    const rejected = expect(pending).rejects.toBeInstanceOf(FolderAttachTimeoutError);
+    await waitForEventSource();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await rejected;
+    expect(requestSignal?.aborted).toBe(true);
+    stream.dispose();
+  });
+
+  it("attach HTTP 成功但结果帧缺失时在 deadline 后 reject", async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = commandResponse();
+    const stream = new ServerStream();
+    const selection: FolderAttachSelection = {
+      provider: "desktop-local",
+      selectionToken: "selection-frame-timeout",
+    };
+    const command = buildAttachFolderCommand("s-1", selection, "request-frame-timeout");
+    const pending = submitAttachFolderCommand(stream, command, selection, {
+      timeoutMs: 1_000,
+    });
+    const rejected = expect(pending).rejects.toBeInstanceOf(FolderAttachTimeoutError);
+    await waitForEventSource();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await rejected;
+    stream.dispose();
+  });
+
+  it("attach 在 deadline 内收到精确匹配结果帧后成功", async () => {
+    globalThis.fetch = commandResponse();
+    const stream = new ServerStream();
+    const selection: FolderAttachSelection = {
+      provider: "desktop-local",
+      selectionToken: "selection-success",
+    };
+    const command = buildAttachFolderCommand("s-1", selection, "request-success");
+    const pending = submitAttachFolderCommand(stream, command, selection, {
+      timeoutMs: 1_000,
+    });
+    const source = await waitForEventSource();
+    source.emitFrame({
+      kind: "folderSourceOperationResult",
+      data: {
+        ok: true,
+        op: "attach",
+        requestId: "other-request",
+        clientSourceId: null,
+        folderId: "folder-other",
+      },
+    } satisfies BridgeFrame, "1");
+    source.emitFrame({
+      kind: "folderSourceOperationResult",
+      data: {
+        ok: true,
+        op: "attach",
+        requestId: "request-success",
+        clientSourceId: null,
+        folderId: "folder-success",
+      },
+    } satisfies BridgeFrame, "2");
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      folderId: "folder-success",
+    });
+    stream.dispose();
+  });
+
+  it("attach 手动取消会 abort HTTP、结算 waiter 且迟到帧不再命中", async () => {
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        requestSignal = init?.signal ?? undefined;
+        requestSignal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      }));
+    const stream = new ServerStream();
+    const selection: FolderAttachSelection = {
+      provider: "desktop-local",
+      selectionToken: "selection-cancel",
+    };
+    const command = buildAttachFolderCommand("s-1", selection, "request-cancel");
+    const controller = new AbortController();
+    const pending = submitAttachFolderCommand(stream, command, selection, {
+      signal: controller.signal,
+      timeoutMs: 30_000,
+    });
+    const source = await waitForEventSource();
+
+    controller.abort(new DOMException("Stopped waiting", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(requestSignal?.aborted).toBe(true);
+    source.emitFrame({
+      kind: "folderSourceOperationResult",
+      data: {
+        ok: true,
+        op: "attach",
+        requestId: "request-cancel",
+        clientSourceId: null,
+        folderId: "folder-late",
+      },
+    } satisfies BridgeFrame, "1");
+    stream.dispose();
+  });
+
+  it("waitForFrame 超时后清理订阅和 timer，迟到帧不再执行 predicate", async () => {
+    vi.useFakeTimers();
+    const stream = new ServerStream();
+    const predicate = vi.fn(() => true);
+    const pending = stream.waitForFrame(predicate, "frame timeout", 10);
+    const rejected = expect(pending).rejects.toThrow("frame timeout");
+
+    await vi.advanceTimersByTimeAsync(10);
+    await rejected;
+    (stream as unknown as { emit: (frame: BridgeFrame) => void }).emit(VALID_FRAME);
+
+    expect(predicate).not.toHaveBeenCalled();
+    stream.dispose();
   });
 
   it("renameSession 等不依赖成功帧的命令遇到 422 时不再误判成功", async () => {

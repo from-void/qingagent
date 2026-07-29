@@ -19,6 +19,13 @@ import type {
 export const FOLDER_INTRO_STORAGE_KEY = "qingagent:folder-source-intro-dismissed";
 const FOLDER_PROMPT_EXIT_MS = 240;
 
+function isAbortError(error: unknown): boolean {
+  return error !== null &&
+    typeof error === "object" &&
+    "name" in error &&
+    error.name === "AbortError";
+}
+
 /**
  * 引导/确认弹框 portal 到所在页面根容器(#view-workspace / #view-home),而不是留在输入框内部渲染。
  * 输入栏用了 backdrop-filter/transform,会成为 position:fixed 的包含块,导致弹框只在输入栏范围内
@@ -218,7 +225,7 @@ export interface FolderDisconnectDialogActionProps {
 export interface UseFolderSourceActionsOptions {
   folderSource: FolderSourceControlSource | null;
   folderCapability: FolderCapability;
-  onAttachFolder: () => Promise<void>;
+  onAttachFolder: (signal?: AbortSignal) => Promise<void>;
   onDetachFolder?: (folderId: string) => Promise<void>;
   disabled?: boolean;
   connectedBehavior?: "confirm-detach" | "attach";
@@ -232,6 +239,7 @@ export interface UseFolderSourceActionsResult {
   folderNeedsBrowserPermission: boolean;
   requestPrimaryAction: () => void;
   requestAttach: () => void;
+  cancelAttach: () => void;
   requestDetach: () => void;
   confirmDetach: (closeDialog?: FolderPromptDialogControls["close"]) => void;
   cancelDialog: () => void;
@@ -250,6 +258,8 @@ export function useFolderSourceActions({
   onAttachSuccess,
 }: UseFolderSourceActionsOptions): UseFolderSourceActionsResult {
   const folderActionInFlightRef = useRef<FolderSourceActionKind | null>(null);
+  const attachAbortControllerRef = useRef<AbortController | null>(null);
+  const attachGenerationRef = useRef(0);
   const restoreFolderButtonFocusRef = useRef(false);
   const [folderDialog, setFolderDialog] = useState<FolderSourceDialogKind | null>(null);
   const [folderIntroDismissChecked, setFolderIntroDismissChecked] = useState(false);
@@ -265,19 +275,41 @@ export function useFolderSourceActions({
 
   const startAttachFolder = useCallback(async () => {
     if (!folderCapability.enabled || folderActionInFlightRef.current !== null) return;
+    const generation = attachGenerationRef.current + 1;
+    attachGenerationRef.current = generation;
+    const controller = new AbortController();
+    attachAbortControllerRef.current = controller;
     folderActionInFlightRef.current = "attach";
     setFolderActionPending("attach");
     try {
-      await onAttachFolder();
+      await onAttachFolder(controller.signal);
+      controller.signal.throwIfAborted();
       onAttachSuccess?.();
       restoreFocusRef?.current?.blur();
     } catch (error) {
-      console.error("[FolderSourceControl] attach folder failed", error);
+      if (!isAbortError(error)) {
+        console.error("[FolderSourceControl] attach folder failed", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
     } finally {
-      folderActionInFlightRef.current = null;
-      setFolderActionPending(null);
+      if (attachGenerationRef.current === generation) {
+        attachAbortControllerRef.current = null;
+        folderActionInFlightRef.current = null;
+        setFolderActionPending(null);
+      }
     }
   }, [folderCapability.enabled, onAttachFolder, onAttachSuccess, restoreFocusRef]);
+
+  const cancelAttach = useCallback(() => {
+    const controller = attachAbortControllerRef.current;
+    if (!controller || folderActionInFlightRef.current !== "attach") return;
+    attachGenerationRef.current += 1;
+    attachAbortControllerRef.current = null;
+    controller.abort(new DOMException("Folder attach wait cancelled", "AbortError"));
+    folderActionInFlightRef.current = null;
+    setFolderActionPending(null);
+  }, []);
 
   const canRequestAttach = useCallback(() => {
     return !disabled &&
@@ -382,12 +414,22 @@ export function useFolderSourceActions({
     restoreFocusRef?.current?.focus();
   }, [folderActionPending, folderDialog, restoreFocusRef]);
 
+  useEffect(() => () => {
+    attachGenerationRef.current += 1;
+    attachAbortControllerRef.current?.abort(
+      new DOMException("Folder source control unmounted", "AbortError"),
+    );
+    attachAbortControllerRef.current = null;
+    folderActionInFlightRef.current = null;
+  }, []);
+
   return {
     folderDialog,
     folderActionPending,
     folderNeedsBrowserPermission,
     requestPrimaryAction,
     requestAttach,
+    cancelAttach,
     requestDetach,
     confirmDetach,
     cancelDialog,

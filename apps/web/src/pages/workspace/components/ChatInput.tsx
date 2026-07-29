@@ -78,7 +78,7 @@ export interface ChatInputProps {
   /** 当前会话已连接的文件夹资料库；P0 每会话至多一个。 */
   folderSource: FolderSource | null;
   folderCapability: FolderCapability;
-  onAttachFolder: () => Promise<void>;
+  onAttachFolder: (signal?: AbortSignal) => Promise<void>;
   onDetachFolder: (folderId: string) => Promise<void>;
   /** 已发送文件的解析态合并视图；任务5 会替换为 LinkedFilesPanel。 */
   materialParseRows?: readonly MaterialParseRow[];
@@ -178,6 +178,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     folderDialog,
     folderActionPending,
     requestAttach: requestAttachFolder,
+    cancelAttach: cancelAttachFolder,
     requestDetach: requestDetachFolder,
     introDialogProps,
     disconnectDialogProps,
@@ -978,6 +979,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     requestAttachFolder();
   }, [requestAttachFolder]);
 
+  const handleCancelAttachFolderFromMenu = useCallback(() => {
+    setFileMenuOpen(false);
+    cancelAttachFolder();
+  }, [cancelAttachFolder]);
+
   const handleOpenFolderPanelFromMenu = useCallback(() => {
     setFileMenuOpen(false);
     setLocateFolderSignal((value) => value + 1);
@@ -1119,6 +1125,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 folderActionPending={folderActionPending}
                 onChooseFile={handleChooseFileFromMenu}
                 onAttachFolder={handleAttachFolderFromMenu}
+                onCancelAttachFolder={handleCancelAttachFolderFromMenu}
                 onOpenFolderPanel={handleOpenFolderPanelFromMenu}
                 onDetachFolder={handleDetachFolderFromMenu}
               />

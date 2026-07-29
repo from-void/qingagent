@@ -467,8 +467,8 @@ describe("断开连接二次确认", () => {
 // ────────────────────────────────────────────────────────────
 // 场景 6：folderActionPending 禁用状态
 // ────────────────────────────────────────────────────────────
-describe("folderActionPending 禁用", () => {
-  it("attach 进行中：连接文件夹行禁用并展示忙碌文案", async () => {
+describe("folderActionPending 状态", () => {
+  it("attach 进行中：连接文件夹行可停止等待并展示忙碌文案", async () => {
     // 构造一个永不 resolve 的 onAttachFolder
     let resolve!: () => void;
     const slowAttach = vi.fn(
@@ -487,8 +487,11 @@ describe("folderActionPending 禁用", () => {
     clickElement(getAttachFolderRow());
     await act(async () => undefined);
     openFileMenu();
-    expect(getAttachFolderRow().disabled).toBe(true);
+    expect(getAttachFolderRow().disabled).toBe(false);
     expect(getAttachFolderRow().textContent).toContain("正在连接文件夹");
+    expect(getAttachFolderRow().textContent).toContain("停止等待");
+    clickElement(getAttachFolderRow());
+    await act(async () => undefined);
     // 清理：resolve promise
     act(() => { resolve(); });
   });

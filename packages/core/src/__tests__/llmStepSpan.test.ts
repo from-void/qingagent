@@ -9,6 +9,8 @@ import {
 } from "../agent-run/agentSpans.js";
 import {
   buildToolIoEndMetadata,
+  summarizeToolInputForSpan,
+  summarizeToolOutputForSpan,
 } from "../agent-run/toolIoSpans.js";
 import {
   getToolIoMaxBytes,
@@ -267,5 +269,51 @@ describe("llm step span helpers", () => {
       suppressed: true,
       suppressReason: "askUserAlreadyCompleted",
     });
+  });
+
+  it("parseFile span 只记录脱敏输入摘要，不记录宿主路径或 base64", () => {
+    const input = summarizeToolInputForSpan("parseFile", {
+      fileId: "11111111-1111-4111-8111-111111111111",
+      filePath: "C:\\Users\\alice\\AppData\\Roaming\\qingagent\\uploads\\secret.txt",
+      content: "U0VDUkVUX0JBU0U2NA==",
+      filename: "secret.txt",
+    });
+    const serialized = JSON.stringify(input);
+
+    expect(input).toMatchObject({
+      inputMode: "fileId",
+      hasFileId: true,
+      hasFilePath: true,
+      hasContent: true,
+      filenameExtension: ".txt",
+    });
+    expect(serialized).not.toContain("C:\\\\Users");
+    expect(serialized).not.toContain("alice");
+    expect(serialized).not.toContain("U0VDUkVUX0JBU0U2NA");
+    expect(serialized).not.toContain("secret.txt");
+  });
+
+  it("parseFile span 只记录结果统计，不记录正文或原始错误", () => {
+    const output = summarizeToolOutputForSpan("parseFile", {
+      ok: false,
+      error: "secure_fd_path_unavailable: C:\\Users\\alice\\secret.txt",
+      errorCode: "FILE_ACCESS_DENIED",
+      failureKind: "error",
+      text: "[Error] INTERNAL_SECRET_BODY",
+      metadata: { pages: null, wordCount: 0, title: null },
+    });
+    const serialized = JSON.stringify(output);
+
+    expect(output).toEqual({
+      ok: false,
+      failureKind: "error",
+      errorCode: "FILE_ACCESS_DENIED",
+      textLength: 28,
+      wordCount: 0,
+      pages: null,
+    });
+    expect(serialized).not.toContain("secure_fd_path_unavailable");
+    expect(serialized).not.toContain("C:\\\\Users");
+    expect(serialized).not.toContain("INTERNAL_SECRET_BODY");
   });
 });

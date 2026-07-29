@@ -325,7 +325,7 @@ describe("S4: folderActionPending 与 dialog 叠加态", () => {
     act(() => { if (resolveDetach) resolveDetach(); });
   });
 
-  it("attach 进行中（folderActionPending=attach）：连接文件夹行 disabled 并展示忙碌文案", async () => {
+  it("attach 进行中：展示忙碌文案并允许停止等待", async () => {
     let resolveAttach!: () => void;
     const slowAttach = vi.fn(async () => {
       await new Promise<void>((res) => { resolveAttach = res; });
@@ -349,10 +349,14 @@ describe("S4: folderActionPending 与 dialog 叠加态", () => {
 
     openFileMenu();
     const row = getAttachFolderRow();
-    expect(row.disabled).toBe(true);
+    expect(row.disabled).toBe(false);
     expect(row.textContent).toContain("正在连接文件夹");
+    expect(row.textContent).toContain("停止等待");
 
-    // 清理
+    clickEl(row);
+    await act(async () => {});
+    openFileMenu();
+    expect(getAttachFolderRow().textContent).toContain("连接本地文件夹");
     act(() => { if (resolveAttach) resolveAttach(); });
   });
 

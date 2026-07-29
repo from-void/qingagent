@@ -80,9 +80,10 @@ import { installAnnotationGroupDecorations } from "../data/annotationDecorations
 import { deriveDocDimensions } from "../data/docDimensions";
 import {
   buildAttachFolderCommand,
+  FolderAttachTimeoutError,
   folderSourceOperationFailureToast,
-  matchesAttachFolderResult,
   newFolderAttachRequestId,
+  submitAttachFolderCommand,
   type FolderAttachSelection,
 } from "../data/folderAttach";
 import {
@@ -277,6 +278,13 @@ function sessionTitleFromStore(sessionId: string | null): string | null {
     .getState()
     .sessions.find((session) => session.id === sessionId)?.title;
   return hydratedSessionTitle(title);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error !== null &&
+    typeof error === "object" &&
+    "name" in error &&
+    error.name === "AbortError";
 }
 
 export function useWorkspacePageController() {
@@ -531,6 +539,10 @@ export function useWorkspacePageController() {
       }
     >
   >(new Map());
+  const activeFolderAttachRef = useRef<{
+    sessionId: string;
+    controller: AbortController;
+  } | null>(null);
   const activeBrowserFolderKeysRef = useRef<
     Map<string, { sessionId: string; folderId: string }>
   >(new Map());
@@ -643,6 +655,10 @@ export function useWorkspacePageController() {
     workspaceMountedRef.current = true;
     return () => {
       workspaceMountedRef.current = false;
+      activeFolderAttachRef.current?.controller.abort(
+        new DOMException("Workspace unmounted", "AbortError"),
+      );
+      activeFolderAttachRef.current = null;
     };
   }, []);
   const restoreExistingSession = useCallback((sessionId: string) => {
@@ -686,92 +702,21 @@ export function useWorkspacePageController() {
     });
   }, [restoreExistingSession]);
 
-  const createAttachFolderResultWaiter = useCallback(
-    (
-      stream: ServerStream,
-      sessionId: string,
-      selection: FolderAttachSelection,
-      requestId: string,
-      options: { awaitBrowserBridge?: boolean } = {},
-    ): {
-      promise: Promise<void>;
-      cancel: () => void;
-    } => {
-      let unsubscribe: (() => void) | null = null;
-      const promise = new Promise<void>((resolve, reject) => {
-        unsubscribe = stream.subscribe((frame: BridgeFrame) => {
-          if (
-            frame.kind !== "folderSourceOperationResult" ||
-            !matchesAttachFolderResult(frame.data, requestId, selection)
-          )
-            return;
-          unsubscribe?.();
-          unsubscribe = null;
-          const result = frame.data;
-          if (!result.ok) {
-            reject(new Error(folderSourceOperationFailureToast(result)));
-            return;
-          }
-          if (
-            selection.provider !== "browser-fs-access" ||
-            !options.awaitBrowserBridge
-          ) {
-            resolve();
-            return;
-          }
-          void rememberAttachedBrowserFolderSource({
-            sessionId,
-            folderId: result.folderId,
-            picked: selection.picked,
-          })
-            .then(() => {
-              activeBrowserFolderKeysRef.current.set(
-                `${sessionId}\0${result.folderId}`,
-                { sessionId, folderId: result.folderId },
-              );
-              resolve();
-            })
-            .catch((error) => {
-              console.error(
-                "[workspace] browser folder bridge start failed",
-                error,
-              );
-              reject(
-                new Error("连接文件夹失败：浏览器桥接未就绪，请刷新或重试"),
-              );
-            });
-        });
-      });
-      return {
-        promise,
-        cancel() {
-          unsubscribe?.();
-          unsubscribe = null;
-        },
-      };
-    },
-    [],
-  );
-
   const sendAttachFolderSelection = useCallback(
     async (
       stream: ServerStream,
       sessionId: string,
       selection: FolderAttachSelection,
-      options: { awaitBrowserBridge?: boolean } = {},
+      options: {
+        awaitBrowserBridge?: boolean;
+        signal?: AbortSignal;
+      } = {},
     ): Promise<void> => {
       const requestId = newFolderAttachRequestId();
       const command = buildAttachFolderCommand(
         sessionId,
         selection,
         requestId,
-      );
-      const attachResult = createAttachFolderResultWaiter(
-        stream,
-        sessionId,
-        selection,
-        requestId,
-        options,
       );
       let usedGlobalPending = false;
       if (selection.provider === "browser-fs-access") {
@@ -787,7 +732,6 @@ export function useWorkspacePageController() {
       try {
         validateCommand(command);
       } catch (error) {
-        attachResult.cancel();
         if (usedGlobalPending) {
           pendingBrowserAttachRef.current.delete(requestId);
         }
@@ -796,18 +740,54 @@ export function useWorkspacePageController() {
         throw error;
       }
 
+      const startedAt = Date.now();
+      console.info("[workspace] folder attach submit started", {
+        requestId,
+        provider: selection.provider,
+      });
       try {
-        await stream.sendCommand(command);
-        await attachResult.promise;
+        const result = await submitAttachFolderCommand(
+          stream,
+          command,
+          selection,
+          { signal: options.signal },
+        );
+        if (!result.ok) {
+          throw new Error(folderSourceOperationFailureToast(result));
+        }
+        if (
+          selection.provider === "browser-fs-access" &&
+          options.awaitBrowserBridge
+        ) {
+          await rememberAttachedBrowserFolderSource({
+            sessionId,
+            folderId: result.folderId,
+            picked: selection.picked,
+          });
+          activeBrowserFolderKeysRef.current.set(
+            `${sessionId}\0${result.folderId}`,
+            { sessionId, folderId: result.folderId },
+          );
+        }
+        console.info("[workspace] folder attach submit completed", {
+          requestId,
+          provider: selection.provider,
+          durationMs: Date.now() - startedAt,
+        });
       } catch (error) {
-        attachResult.cancel();
         if (usedGlobalPending) {
           pendingBrowserAttachRef.current.delete(requestId);
         }
+        console.warn("[workspace] folder attach submit failed", {
+          requestId,
+          provider: selection.provider,
+          durationMs: Date.now() - startedAt,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
         throw error;
       }
     },
-    [createAttachFolderResultWaiter, showToast],
+    [showToast],
   );
 
   const resolvePendingDocSaveDrain = useCallback(() => {
@@ -2260,6 +2240,10 @@ export function useWorkspacePageController() {
       silentConflictReplayDepthRef.current = 0;
       startSessionPromisesBySessionRef.current.clear();
       startNewSessionPromiseRef.current = null;
+      activeFolderAttachRef.current?.controller.abort(
+        new DOMException("Folder attach superseded by session switch", "AbortError"),
+      );
+      activeFolderAttachRef.current = null;
       pendingBrowserAttachRef.current.clear();
       setSendPending(false);
       beginWorkspaceHydration(targetSessionId);
@@ -2830,17 +2814,19 @@ export function useWorkspacePageController() {
     [],
   );
 
-  const handleAttachFolder = useCallback(async () => {
+  const handleAttachFolder = useCallback(async (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
     const stream = streamRef.current;
     if (!stream) {
       showToast("连接未就绪");
-      return;
+      throw new Error("连接未就绪");
     }
     if (
       folderSource?.provider === "browser-fs-access" &&
       folderSource.status === "permission_required"
     ) {
       const result = await requestBrowserFolderPermission(folderSource);
+      signal?.throwIfAborted();
       if (result.status === "connected") {
         setBrowserFolderOverrides((current) => {
           const { [folderSource.id]: _removed, ...rest } = current;
@@ -2878,9 +2864,12 @@ export function useWorkspacePageController() {
       } catch (error) {
         console.error("[workspace] selectFolderSource failed", error);
         showToast("选择文件夹失败，请重试");
-        return;
+        throw error;
       }
-      if (!desktopSelection) return;
+      signal?.throwIfAborted();
+      if (!desktopSelection) {
+        throw new DOMException("Folder selection cancelled", "AbortError");
+      }
     } else if (
       folderCapability.enabled &&
       typeof window.showDirectoryPicker === "function"
@@ -2891,17 +2880,17 @@ export function useWorkspacePageController() {
         );
       } catch (error) {
         // 用户在系统选择器里点了取消(AbortError)→ 不弹任何提示(原来会弹一条英文 toast)。
-        if (error instanceof DOMException && error.name === "AbortError")
-          return;
+        if (isAbortError(error)) throw error;
         console.error("[workspace] showDirectoryPicker failed", error);
         showToast(
           error instanceof Error ? error.message : "选择文件夹失败，请重试",
         );
-        return;
+        throw error;
       }
+      signal?.throwIfAborted();
     } else {
       showToast(folderCapability.reason ?? "当前浏览器不支持本地文件夹访问");
-      return;
+      throw new Error("当前环境不支持本地文件夹访问");
     }
 
     let sessionId: string;
@@ -2913,8 +2902,9 @@ export function useWorkspacePageController() {
         error,
       );
       showToast("会话创建失败，请重试");
-      return;
+      throw error;
     }
+    signal?.throwIfAborted();
 
     const selection: FolderAttachSelection = desktopSelection
       ? {
@@ -2922,11 +2912,36 @@ export function useWorkspacePageController() {
           selectionToken: desktopSelection.selectionToken,
         }
       : { provider: "browser-fs-access", picked: browserSelection! };
+    const operationController = new AbortController();
+    const forwardAbort = () => operationController.abort(signal?.reason);
+    if (signal?.aborted) forwardAbort();
+    else signal?.addEventListener("abort", forwardAbort, { once: true });
+    activeFolderAttachRef.current?.controller.abort(
+      new DOMException("Folder attach superseded", "AbortError"),
+    );
+    activeFolderAttachRef.current = {
+      sessionId,
+      controller: operationController,
+    };
     try {
-      await sendAttachFolderSelection(stream, sessionId, selection);
+      await sendAttachFolderSelection(stream, sessionId, selection, {
+        signal: operationController.signal,
+      });
     } catch (error) {
-      console.error("[workspace] attachFolder failed", error);
-      showToast("连接文件夹失败，请重试");
+      if (error instanceof FolderAttachTimeoutError) {
+        showToast(error.message);
+      } else if (!isAbortError(error)) {
+        console.error("[workspace] attachFolder failed", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+        showToast("连接文件夹失败，请重试");
+      }
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", forwardAbort);
+      if (activeFolderAttachRef.current?.controller === operationController) {
+        activeFolderAttachRef.current = null;
+      }
     }
   }, [
     ensureSessionId,

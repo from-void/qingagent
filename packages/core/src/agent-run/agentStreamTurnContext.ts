@@ -344,8 +344,8 @@ export function upsertParseFileErrorMaterial(
   if (!binding.fileId) {
     logger.warn("parseFile 失败但无法绑定 fileId，跳过失败素材落库", {
       sessionId: context.state.sessionId,
-      filename: args.filename,
-      filePath: args.filePath,
+      hasFilename: typeof args.filename === "string" && args.filename.length > 0,
+      hasFilePath: typeof args.filePath === "string" && args.filePath.length > 0,
     });
     return;
   }

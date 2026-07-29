@@ -612,32 +612,16 @@ export function buildAttachmentContext(
   const docs = files.filter((f) => !f.mimeType.startsWith("image/"));
   let out = "";
   if (docs.length > 0) {
-    // CC 脱敏:web 部署不把 server 绝对路径(./uploads/<uuid>/<file>)暴露进模型上下文/转写,
-    // 改用内部 fileId(parseFile 用安全 resolver 还原真实路径,限定在 ./uploads 根目录内);
-    // desktop(本机单机)保留原 filePath。部署标志由桌面端在启动时设的 QINGAGENT_RUNTIME=desktop。
-    const isDesktopRuntime = process.env.QINGAGENT_RUNTIME === "desktop";
-    if (isDesktopRuntime) {
-      const docList = docs
-        .map((f) => `- filename: ${f.filename}\n  mimeType: ${f.mimeType}\n  filePath: ${f.filePath}`)
-        .join("\n");
-      out += documentAttachmentToolInstruction({
-        docList,
-        exampleField: "filePath",
-        exampleValue: docs[0]!.filePath,
-        toolSearchEnabled: options.toolSearchEnabled === true,
-      });
-    } else {
-      const docList = docs
-        .map((f) => `- filename: ${f.filename}\n  mimeType: ${f.mimeType}\n  fileId: ${f.fileId}`)
-        .join("\n");
-      out += documentAttachmentToolInstruction({
-        docList,
-        exampleField: "fileId",
-        exampleValue: docs[0]!.fileId,
-        toolSearchEnabled: options.toolSearchEnabled === true,
-        fieldHint: "不要传服务器文件路径",
-      });
-    }
+    // Web/Desktop 上传附件统一只把内部 fileId 交给模型。parseFile 通过 uploads
+    // resolver 安全还原文件，宿主绝对路径不得进入模型上下文或转写。
+    const docList = docs
+      .map((f) => `- filename: ${f.filename}\n  mimeType: ${f.mimeType}\n  fileId: ${f.fileId}`)
+      .join("\n");
+    out += documentAttachmentToolInstruction({
+      docList,
+      fileId: docs[0]!.fileId,
+      toolSearchEnabled: options.toolSearchEnabled === true,
+    });
   }
   if (images.length > 0) {
     const imgList = images
@@ -654,26 +638,21 @@ export function buildAttachmentContext(
 
 function documentAttachmentToolInstruction({
   docList,
-  exampleField,
-  exampleValue,
+  fileId,
   toolSearchEnabled,
-  fieldHint,
 }: {
   docList: string;
-  exampleField: "fileId" | "filePath";
-  exampleValue: string;
+  fileId: string;
   toolSearchEnabled: boolean;
-  fieldHint?: string;
 }): string {
-  const hint = fieldHint ? `(${fieldHint})` : "";
   const load = toolSearchEnabled
     ? `请先调用 search_tools({ query: "parseFile" }) 加载 parseFile 工具；加载后立即使用 parseFile 解析这些文档。\n`
     : "请立即使用 parseFile 工具解析这些文档。\n";
   return (
     `[系统] 用户上传了以下文档，已保存到服务器：\n${docList}\n\n` +
     load +
-    `调用时传入 ${exampleField} 参数${hint}，例如：\n` +
-    `parseFile({ ${exampleField}: "${exampleValue}" })\n\n` +
+    `调用时只传入 fileId 参数(不要传 filePath)，例如：\n` +
+    `parseFile({ fileId: "${fileId}" })\n\n` +
     `解析完成后，用 storeMaterial 存储结果，然后基于素材内容向用户提问。\n\n`
   );
 }

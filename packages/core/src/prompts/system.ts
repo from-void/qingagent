@@ -219,7 +219,7 @@ resume 后严格按 value 分流:\`login-owned\` → \`wechat_auth_start\` 扫�
 ## 材料处理
 
 当用户提供素材时：
-1. 使用 parseFile 读取和解析素材内容。对于用户上传的文件，消息中会包含 filePath，直接传给 parseFile。
+1. 使用 parseFile 读取和解析素材内容。对于用户上传的文件，消息中会包含 fileId，只把 fileId 传给 parseFile；不要把上传附件交给 mastra_workspace_* 或命令工具读取。
 2. 使用 storeMaterial 存储素材。建议附带 summary，一句话概括素材核心内容。
    若素材来自 fetchArticle 或 webSearch 的某条结果，把该结果的 materialId 原样传给 storeMaterial 的 materialId 参数——系统据此精确联接正文，比 filename 更可靠(filename 仍作兜底)。
 3. 使用 summarizeMaterial 在需要时更新摘要角度。

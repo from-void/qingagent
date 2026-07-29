@@ -110,10 +110,15 @@ describe("文件菜单连接行竞态测试", () => {
     act(() => { if (resolve) resolve(); });
   });
 
-  it("folderActionPending=attach 时再次点击连接行不应触发新的 attach（React re-render 后）", async () => {
+  it("folderActionPending=attach 时再次点击停止等待，不重复 attach", async () => {
     let resolve!: () => void;
-    const slowAttach = vi.fn(async () => {
-      await new Promise<void>((res) => { resolve = res; });
+    let observedSignal: AbortSignal | undefined;
+    const slowAttach = vi.fn(async (signal?: AbortSignal) => {
+      observedSignal = signal;
+      await new Promise<void>((res, reject) => {
+        resolve = res;
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
     });
 
     await renderChatInput(
@@ -134,15 +139,20 @@ describe("文件菜单连接行竞态测试", () => {
       getAttachFolderRow().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    // React 已更新，folderActionPending=attach。菜单关闭后再次打开，连接行应 disabled。
+    // React 已更新，folderActionPending=attach。菜单关闭后再次打开，连接行可停止等待。
     clickSync(getFileButton());
-    expect(getAttachFolderRow().disabled).toBe(true);
+    expect(getAttachFolderRow().disabled).toBe(false);
+    expect(getAttachFolderRow().textContent).toContain("停止等待");
 
-    // 再次点击（此时菜单行 disabled，点击会被忽略）
+    // 再次点击停止等待。
     clickSync(getAttachFolderRow());
+    await act(async () => {});
 
-    // 确认只调用了一次
+    // 确认只调用了一次，入口已恢复。
     expect(slowAttach).toHaveBeenCalledTimes(1);
+    expect(observedSignal?.aborted).toBe(true);
+    clickSync(getFileButton());
+    expect(getAttachFolderRow().textContent).toContain("连接本地文件夹");
 
     // 清理
     act(() => { if (resolve) resolve(); });

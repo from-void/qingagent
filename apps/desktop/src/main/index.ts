@@ -649,35 +649,73 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {
   assertTrustedRenderer(event);
-  const owner = BrowserWindow.fromWebContents(event.sender);
-  const result = owner
-    ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] })
-    : await dialog.showOpenDialog({ properties: ["openDirectory"] });
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  const selectedPath = result.filePaths[0]!;
-  const {
-    assertDirectory,
-    countFolderFiles,
-    registerDesktopFolderSelection,
-  } = await import("@qingagent/server/desktopFolderSelection");
-  const rootPath = await assertDirectory(selectedPath);
-  const count = await countFolderFiles(rootPath);
-  const selection = registerDesktopFolderSelection({
+  const startedAt = Date.now();
+  let phase = "folderPicker.opened";
+  console.info("[folderPicker]", {
+    event: phase,
     webContentsId: event.sender.id,
-    rootPath,
-    name: path.basename(rootPath),
-    pathLabel: rootPath,
-    fileCount: count.fileCount,
-    fileCountCapped: count.fileCountCapped,
   });
-  return {
-    selectionToken: selection.selectionToken,
-    name: selection.name,
-    pathLabel: selection.pathLabel,
-    fileCount: selection.fileCount,
-    fileCountCapped: selection.fileCountCapped,
-  };
+  try {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = owner
+      ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] })
+      : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+    if (result.canceled || result.filePaths.length === 0) {
+      console.info("[folderPicker]", {
+        event: "folderPicker.cancelled",
+        durationMs: Date.now() - startedAt,
+      });
+      return null;
+    }
+
+    phase = "folderPicker.selected";
+    console.info("[folderPicker]", {
+      event: phase,
+      durationMs: Date.now() - startedAt,
+    });
+    const selectedPath = result.filePaths[0]!;
+    const {
+      assertDirectory,
+      registerDesktopFolderSelection,
+    } = await import("@qingagent/server/desktopFolderSelection");
+    const rootPath = await assertDirectory(selectedPath);
+    phase = "folderPicker.validated";
+    console.info("[folderPicker]", {
+      event: phase,
+      durationMs: Date.now() - startedAt,
+    });
+
+    // 关键路径只注册选择，不同步递归扫描目录。连接成功后由 server 现有的
+    // startFolderSourceFileCountRefresh 在挂载后的 Workspace 内有界后台计数。
+    const selection = registerDesktopFolderSelection({
+      webContentsId: event.sender.id,
+      rootPath,
+      name: path.basename(rootPath),
+      pathLabel: rootPath,
+      fileCount: null,
+      fileCountCapped: false,
+    });
+    phase = "folderPicker.tokenRegistered";
+    console.info("[folderPicker]", {
+      event: phase,
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      selectionToken: selection.selectionToken,
+      name: selection.name,
+      pathLabel: selection.pathLabel,
+      fileCount: selection.fileCount,
+      fileCountCapped: selection.fileCountCapped,
+    };
+  } catch (error) {
+    console.warn("[folderPicker]", {
+      event: "folderPicker.failed",
+      phase,
+      durationMs: Date.now() - startedAt,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    throw error;
+  }
 });
 
 ipcMain.handle("qingagent:update-quit-install", async (event) => {

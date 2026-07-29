@@ -27,6 +27,7 @@ import {
 import { isExtractionFailureText } from "../session/sessionTools.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { UPLOADS_BASE } from "../session/uploadFileResolver.js";
+import { summarizeParseFileOutput } from "./parseFileTelemetry.js";
 
 const logger = mastra.getLogger();
 
@@ -90,16 +91,26 @@ export async function* handleMaterialToolResultSideEffects(
   }
 
   if (toolName === "parseFile") {
+    const binding = resolveParseFileBinding(turn, args);
     const failure = parseFileFailureFromResult(toolResult);
+    let extractionCached = false;
     if (failure) {
       upsertParseFileErrorMaterial(turn, args, failure);
     } else if (typeof toolResult.text === "string") {
-      const binding = resolveParseFileBinding(turn, args);
       const filename = binding.filename;
       const entry = { text: toolResult.text, sourceUrl: null, fileId: binding.fileId };
       if (filename) turn.extractedTexts.set(filename, entry);
       turn.extractionEventsThisTurn.push(entry);
+      extractionCached = true;
     }
+    logger.info("parseFile result processed", {
+      sessionId: state.sessionId,
+      toolCallId,
+      ...summarizeParseFileOutput(toolResult, { extractionCached }),
+      hasBoundFileId: binding.fileId !== null,
+      hasBoundFilename: binding.filename !== null,
+      extractionsThisTurn: turn.extractionEventsThisTurn.length,
+    });
   }
 
   if (toolName === "github_read_file" && typeof toolResult.text === "string") {

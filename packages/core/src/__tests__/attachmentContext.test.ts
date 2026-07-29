@@ -78,8 +78,7 @@ describe("buildAttachmentContext 按类型分派", () => {
   });
 });
 
-// CC 脱敏:desktop(本机单机)保留原 filePath,方便本地工具直接读盘。
-describe("buildAttachmentContext desktop 部署保留 filePath", () => {
+describe("buildAttachmentContext desktop 上传同样隐藏宿主路径", () => {
   const prevRuntime = process.env.QINGAGENT_RUNTIME;
   beforeEach(() => {
     process.env.QINGAGENT_RUNTIME = "desktop";
@@ -89,9 +88,11 @@ describe("buildAttachmentContext desktop 部署保留 filePath", () => {
     else process.env.QINGAGENT_RUNTIME = prevRuntime;
   });
 
-  it("纯文档(desktop) → 指引 parseFile 传 filePath", () => {
+  it("纯文档(desktop) → 指引 parseFile 传 fileId，不暴露宿主 filePath", () => {
     const out = buildAttachmentContext([doc]);
     expect(out).toContain("parseFile");
-    expect(out).toContain(doc.filePath);
+    expect(out).toContain(doc.fileId);
+    expect(out).not.toContain(doc.filePath);
+    expect(out).toContain("不要传 filePath");
   });
 });

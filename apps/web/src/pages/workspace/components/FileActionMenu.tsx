@@ -9,6 +9,7 @@ interface FileActionMenuProps {
   folderActionPending: FolderSourceActionKind | null;
   onChooseFile: () => void;
   onAttachFolder: () => void;
+  onCancelAttachFolder: () => void;
   onOpenFolderPanel: () => void;
   onDetachFolder: () => void;
 }
@@ -19,10 +20,11 @@ export function FileActionMenu({
   folderActionPending,
   onChooseFile,
   onAttachFolder,
+  onCancelAttachFolder,
   onOpenFolderPanel,
   onDetachFolder,
 }: FileActionMenuProps) {
-  const folderDisabled = !folderCapability.enabled || folderActionPending !== null;
+  const folderDisabled = !folderCapability.enabled;
   const folderReason = folderCapability.reason ?? "当前环境暂不支持连接文件夹";
   const folderBusyText = folderActionPending === "attach"
     ? "正在连接文件夹…"
@@ -79,6 +81,22 @@ export function FileActionMenu({
             断开
           </button>
         </div>
+      ) : folderActionPending === "attach" ? (
+        <button
+          type="button"
+          className="qa-file-row"
+          role="menuitem"
+          onClick={onCancelAttachFolder}
+          data-wf="WsFileMenuAttachFolder"
+          data-folder-action="cancel-attach"
+        >
+          <FolderLineIcon />
+          <span className="qa-file-copy">
+            <span className="qa-file-name">正在连接文件夹…</span>
+            <span className="qa-file-desc">等待服务器确认，点击可停止等待</span>
+          </span>
+          <span className="qa-file-row-action">停止等待</span>
+        </button>
       ) : (
         <button
           type="button"

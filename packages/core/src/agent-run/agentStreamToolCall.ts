@@ -53,6 +53,7 @@ import {
   showQrDuplicatesTrustedAuthCard,
 } from "./authCardDedup.js";
 import { getConnectorDefinition } from "../connectors/registry.js";
+import { summarizeParseFileInput } from "./parseFileTelemetry.js";
 
 const logger = mastra.getLogger();
 export const SESSION_STATE_TOOL_NAMES = new Set(["updateTodos"]);
@@ -182,6 +183,7 @@ export async function* handleToolCallEvent(
       toolCallId,
       streamId,
       sessionId: state.sessionId,
+      ...(toolName === "parseFile" ? summarizeParseFileInput(toolArgs) : {}),
     });
     context.toolIoSpans.set(
       toolCallId,

@@ -284,6 +284,23 @@ export function isStreamStalled(
   return nowMs - lastActivityAt > timeoutMs;
 }
 
+interface FrameWaiter {
+  predicate: (frame: BridgeFrame) => boolean;
+  resolve: (frame: BridgeFrame) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  abortSignal?: AbortSignal;
+  abortListener: () => void;
+  promise?: Promise<unknown>;
+}
+
+function frameWaiterAbortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("Frame waiter cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
 /**
  * Real server stream — sends `Command` objects to `POST /api/v1/stream`
  * and parses the SSE response, validating each frame with the wire
@@ -295,20 +312,10 @@ export function isStreamStalled(
  */
 export class ServerStream {
   private listeners = new Set<(frame: BridgeFrame) => void>();
-  private waiters = new Set<{
-    predicate: (frame: BridgeFrame) => boolean;
-    resolve: (frame: BridgeFrame) => void;
-    reject: (error: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>();
+  private waiters = new Set<FrameWaiter>();
   private waiterByPromise = new WeakMap<
     Promise<unknown>,
-    {
-      predicate: (frame: BridgeFrame) => boolean;
-      resolve: (frame: BridgeFrame) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
+    FrameWaiter
   >();
   /** Active abort controllers — one per in-flight command submit. */
   private activeControllers = new Set<AbortController>();
@@ -362,8 +369,8 @@ export class ServerStream {
     return () => this.listeners.delete(listener);
   }
 
-  async sendCommand(command: Command): Promise<unknown> {
-    return this.sendCommandInternal(command);
+  async sendCommand(command: Command, abortSignal?: AbortSignal): Promise<unknown> {
+    return this.sendCommandInternal(command, undefined, abortSignal);
   }
 
   /** secret 专用上行：不经过 Command/client_event 摘要，也不读取或回显请求体。 */
@@ -1067,11 +1074,10 @@ export class ServerStream {
       controller.abort();
     }
     this.activeControllers.clear();
-    for (const waiter of this.waiters) {
-      clearTimeout(waiter.timer);
+    for (const waiter of [...this.waiters]) {
+      this.removeWaiter(waiter);
       waiter.reject(new Error("ServerStream disposed"));
     }
-    this.waiters.clear();
     this.listeners.clear();
   }
 
@@ -1091,8 +1097,7 @@ export class ServerStream {
     }
     for (const waiter of [...this.waiters]) {
       if (!waiter.predicate(frame)) continue;
-      clearTimeout(waiter.timer);
-      this.waiters.delete(waiter);
+      this.removeWaiter(waiter);
       waiter.resolve(frame);
     }
     for (const listener of this.listeners) {
@@ -1305,34 +1310,52 @@ export class ServerStream {
     }, exponentialMs);
   }
 
-  private waitForFrame(
+  waitForFrame(
     predicate: (frame: BridgeFrame) => boolean,
     timeoutMessage: string,
     timeoutMs = 30_000,
     onTimeout?: (error: Error) => void,
+    abortSignal?: AbortSignal,
   ): Promise<BridgeFrame> {
-    let waiter: {
-      predicate: (frame: BridgeFrame) => boolean;
-      resolve: (frame: BridgeFrame) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    };
+    let waiter: FrameWaiter;
     const promise = new Promise<BridgeFrame>((resolve, reject) => {
+      const abortListener = () => {
+        this.removeWaiter(waiter);
+        reject(frameWaiterAbortError(abortSignal));
+      };
       waiter = {
         predicate,
         resolve,
         reject,
         timer: setTimeout(() => {
-          this.waiters.delete(waiter);
+          this.removeWaiter(waiter);
           const error = new Error(timeoutMessage);
           reject(error);
           onTimeout?.(error);
         }, timeoutMs),
+        abortSignal,
+        abortListener,
       };
+      if (abortSignal?.aborted) {
+        clearTimeout(waiter.timer);
+        reject(frameWaiterAbortError(abortSignal));
+        return;
+      }
+      abortSignal?.addEventListener("abort", abortListener, { once: true });
       this.waiters.add(waiter);
     });
-    this.waiterByPromise.set(promise, waiter!);
+    waiter!.promise = promise;
+    if (this.waiters.has(waiter!)) {
+      this.waiterByPromise.set(promise, waiter!);
+    }
     return promise;
+  }
+
+  private removeWaiter(waiter: FrameWaiter): void {
+    clearTimeout(waiter.timer);
+    this.waiters.delete(waiter);
+    waiter.abortSignal?.removeEventListener("abort", waiter.abortListener);
+    if (waiter.promise) this.waiterByPromise.delete(waiter.promise);
   }
 
   private rejectWaiter(
@@ -1342,9 +1365,7 @@ export class ServerStream {
     if (!promise) return;
     const waiter = this.waiterByPromise.get(promise);
     if (waiter) {
-      clearTimeout(waiter.timer);
-      this.waiters.delete(waiter);
-      this.waiterByPromise.delete(promise);
+      this.removeWaiter(waiter);
       waiter.reject(error);
     }
     // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。

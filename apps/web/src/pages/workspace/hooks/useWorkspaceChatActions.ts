@@ -25,6 +25,7 @@ import { getChatInputBlockReason } from "../data/chatInputBlockReason";
 import { newClientMessageId } from "../data/clientMessageId";
 import { buildCancelStreamCommands } from "../data/workspacePageView";
 import { runAfterPendingDocSave } from "../data/pendingDocSave";
+import { UploadAssetError } from "../data/uploadAsset";
 import {
   rollbackOptimisticChatSend,
   toContractChip,
@@ -404,15 +405,32 @@ export function useWorkspaceChatActions(input: {
         return;
       }
       console.error("[workspace] sendMessage failed", e);
+      const uploadError = e instanceof UploadAssetError ? e : null;
       rollbackOptimisticChatSend({
         dispatch,
         chatInput: chatInputRef.current,
         snapshot: snap,
         keepMessageCount,
         setSendPending,
-        showToast,
+        showToast: uploadError ? () => undefined : showToast,
         error: e,
       });
+      if (uploadError) {
+        toast.show({
+          message: uploadError.message,
+          tone: "warn",
+          sticky: true,
+          role: "alert",
+          dedupeKey: "material-upload-failed",
+          action: {
+            label: uploadError.retryable ? "重试" : "重新选择",
+            onClick: () => {
+              if (uploadError.retryable) handleSubmitChatRef.current();
+              else chatInputRef.current?.chooseFiles();
+            },
+          },
+        });
+      }
     });
   }, [
     askUserInputDisabled,
@@ -423,6 +441,7 @@ export function useWorkspaceChatActions(input: {
     markMaterialParsingTurnError,
     showToast,
     tiptapEditor,
+    toast,
     turnContext,
   ]);
   // 让 chatInputBus.send 的订阅者拿到最新 handleSubmitChat(每渲染同步)。

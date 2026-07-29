@@ -2096,6 +2096,12 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .chat-edit:has(.chat-chip-annotation:hover),#view-workspace .chat-edit:has(.chat-chip-annotation:focus-within) { overflow:visible; }
 #view-workspace .chat-chip.chat-chip-annotation { position:relative; border-color:var(--mark); background:var(--bg-subtle); }
 #view-workspace .chat-chip.chat-chip-annotation .c-ico { color:var(--mark); }
+#view-workspace .chat-chip[data-kind="attach"].is-validating { border-color:var(--line-2); color:var(--ink-4); }
+#view-workspace .chat-chip[data-kind="attach"].is-error { max-width:min(520px,calc(100% - 12px)); border-color:var(--line-2); background:var(--bg-subtle); color:var(--ink-3); }
+#view-workspace .chat-chip .c-attachment-status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-4); font:11px/1.4 var(--font-zh-serif); }
+#view-workspace .chat-chip.is-error .c-attachment-status { color:var(--ink-3); }
+#view-workspace .chat-chip .c-attachment-action { flex:0 0 auto; padding:0 4px; border:0; border-left:1px solid var(--line-2); border-radius:0; background:transparent; color:var(--mark); cursor:pointer; font:600 11px/1.4 var(--font-zh-serif); }
+#view-workspace .chat-chip .c-attachment-action:hover,#view-workspace .chat-chip .c-attachment-action:focus-visible { background:var(--mark-soft); color:var(--ink-1); outline:1px solid var(--mark); outline-offset:1px; }
 #view-workspace .annotation-chip-pop { position:absolute; left:0; bottom:calc(100% + 8px); z-index:61; display:none; box-sizing:border-box; width:360px; max-width:calc(100vw - 32px); padding:10px; border:1px solid var(--line-2); border-radius:0; background:var(--bg-paper-deep); color:var(--ink-surface); box-shadow:0 12px 28px color-mix(in srgb,var(--ink-surface) 28%,transparent); white-space:normal; }
 #view-workspace .chat-chip-annotation:hover .annotation-chip-pop,#view-workspace .chat-chip-annotation:focus-within .annotation-chip-pop { display:grid; gap:7px; }
 #view-workspace .annotation-chip-pop-title { color:var(--ink-surface); font:600 12px/1.4 var(--font-zh-serif); }

@@ -20,6 +20,11 @@ export type {
   ParseFileBufferOutput,
   ParseFileBufferResult,
 } from "./parseFile.js";
+export { preflightMaterialFileBuffer } from "./materialFilePreflight.js";
+export type {
+  MaterialFilePreflightInput,
+  MaterialFilePreflightResult,
+} from "./materialFilePreflight.js";
 export {
   createReadDocumentTool,
   createSearchDocumentsTool,

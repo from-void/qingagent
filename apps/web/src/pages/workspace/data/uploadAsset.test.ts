@@ -48,10 +48,10 @@ describe("uploadAssetFile", () => {
     const xhr = await waitForRequest();
     xhr.reject(500, "nope");
 
-    await expect(pending).rejects.toThrow("Upload failed for bad.png: 500");
+    await expect(pending).rejects.toThrow("文件上传失败，请重试");
   });
 
-  it("uses server JSON error text when upload fails", async () => {
+  it("does not expose raw server JSON error text when upload fails", async () => {
     vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
     const file = new File(["x"], "../bad.png", { type: "image/png" });
 
@@ -59,9 +59,29 @@ describe("uploadAssetFile", () => {
     const xhr = await waitForRequest();
     xhr.reject(400, JSON.stringify({ error: "filename must not contain path separators or '..'" }));
 
-    await expect(pending).rejects.toThrow(
-      "filename must not contain path separators or '..'",
-    );
+    await expect(pending).rejects.toThrow("文件上传失败，请重试");
+    await expect(pending).rejects.not.toThrow("path separators");
+  });
+
+  it("素材用途随请求发送，并把稳定预检码映射为可读失败", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    const file = new File(["not-office"], "bad.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+
+    const pending = uploadAssetFile(file, { purpose: "material" });
+    const xhr = await waitForRequest();
+    expect(JSON.parse(xhr.body)).toMatchObject({
+      filename: "bad.docx",
+      purpose: "material",
+    });
+    xhr.reject(422, JSON.stringify({ error: "material_format_mismatch" }));
+
+    await expect(pending).rejects.toMatchObject({
+      code: "material_format_mismatch",
+      message: "文件格式与内容不一致",
+      retryable: false,
+    });
   });
 
   it("preflights the default decoded-byte limit before reading or creating XHR", async () => {

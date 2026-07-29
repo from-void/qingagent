@@ -3,7 +3,11 @@ import { buildNativeDiffInstructions, planNativeTiming, type NativePresentationR
 import type { StreamError } from "./protocol";
 import type { WorkspaceAction } from "./workspaceState";
 import { HISTORY_CHAT_INPUT_BLOCK_REASON } from "./chatInputBlockReason";
-import { uploadAssetFile, uploadFailureMessage } from "./uploadAsset";
+import {
+  UploadAssetError,
+  uploadAssetFile,
+  uploadFailureMessage,
+} from "./uploadAsset";
 import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "./chatInputTypes";
 import type { UploadedAsset } from "./useMaterialParseTracker";
 
@@ -79,7 +83,7 @@ export async function uploadFiles(files: File[]): Promise<UploadedAsset[]> {
 
   const uploadedAssets: UploadedAsset[] = [];
   for (const file of files) {
-    const data = await uploadAssetFile(file);
+    const data = await uploadAssetFile(file, { purpose: "material" });
     uploadedAssets.push({
       fileId: data.fileId,
       filename: file.name,
@@ -195,7 +199,7 @@ export function shouldAcceptBridgeFrameForSession(input: {
 
 export function rollbackOptimisticChatSend(input: {
   dispatch: (action: WorkspaceAction) => void;
-  chatInput: Pick<ChatInputHandle, "restore"> | null | undefined;
+  chatInput: Pick<ChatInputHandle, "restore" | "markAttachmentFailure"> | null | undefined;
   snapshot: ChatInputSnapshot;
   keepMessageCount: number;
   setSendPending: (value: boolean) => void;
@@ -205,6 +209,13 @@ export function rollbackOptimisticChatSend(input: {
   input.setSendPending(false);
   input.dispatch({ kind: "rewindChat", keepMessageCount: input.keepMessageCount });
   input.chatInput?.restore(input.snapshot);
+  if (input.error instanceof UploadAssetError) {
+    input.chatInput?.markAttachmentFailure(
+      input.error.file,
+      input.error.message,
+      input.error.retryable,
+    );
+  }
   input.showToast(sendFailureToastMessage(input.error));
 }
 

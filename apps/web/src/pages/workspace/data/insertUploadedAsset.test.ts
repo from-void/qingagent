@@ -80,7 +80,7 @@ describe("insertUploadedAsset", () => {
     const xhr = await waitForRequest();
     xhr.reject(500, "nope");
 
-    await expect(pending).rejects.toThrow("Upload failed");
+    await expect(pending).rejects.toThrow("文件上传失败，请重试");
     const attrs = firstImageAttrs(editor);
     expect(attrs.src).toBe(UPLOAD_PLACEHOLDER_IMAGE_SRC);
     expect(attrs.uploading).toBe(false);

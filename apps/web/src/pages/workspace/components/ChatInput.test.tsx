@@ -290,6 +290,53 @@ describe("ChatInput", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("纯空白时发送按钮不可提交，文本、chip 或有效文件可提交", async () => {
+    const onSubmit = vi.fn();
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    const whitespaceSamples = ["", " ", "\u00a0", "\u3000", "\n", " \u00a0\u3000\n "];
+
+    for (const sample of whitespaceSamples) {
+      setEditorText(edit, sample);
+      const sendButton = getSendButton();
+      expect(sendButton.disabled).toBe(true);
+
+      const enter = keyboardEvent("Enter");
+      act(() => {
+        edit.dispatchEvent(enter);
+        // 直接派发 click 会绕过真实浏览器的 pointer-events；即便如此也不能提交。
+        sendButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(enter.defaultPrevented).toBe(true);
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    setEditorText(edit, "。");
+    expect(getSendButton().disabled).toBe(false);
+    clickElement(getSendButton());
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      ref.current?.clear();
+      ref.current?.insertChip({ kind: "mention", label: "联网搜", skillId: "web-search" });
+    });
+    expect(getSendButton().disabled).toBe(false);
+
+    act(() => {
+      ref.current?.clear();
+    });
+    await selectFile(new File(["素材"], "brief.md", { type: "text/markdown" }));
+    expect(getSendButton().disabled).toBe(false);
+  });
+
   it("Ctrl/Cmd+Enter 仍是发送别名，发送按钮提示同步展示新键位", async () => {
     const onSubmit = vi.fn();
     await render(
@@ -335,6 +382,70 @@ describe("ChatInput", () => {
     expect(attachChipLabels()).toEqual(["alpha.txt", "beta.txt"]);
   });
 
+  it("选择真实文件后立即进入校验中，完成前不可提交，校验通过才进入可用态", async () => {
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    let resolveBytes!: (value: ArrayBuffer) => void;
+    const file = new File(["pending"], "pending.md", { type: "text/markdown" });
+    Object.defineProperty(file, "arrayBuffer", {
+      configurable: true,
+      value: () => new Promise<ArrayBuffer>((resolve) => {
+        resolveBytes = resolve;
+      }),
+    });
+    const input = getFileInput();
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+    expect(input.files).toHaveLength(1);
+
+    act(() => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const chip = getEditor().querySelector<HTMLElement>('[data-wf="WsAttachmentChip"]');
+    expect(chip?.dataset.attachmentState).toBe("validating");
+    expect(chip?.textContent).toContain("校验中");
+    expect(getSendButton().disabled).toBe(true);
+
+    resolveBytes(new TextEncoder().encode("pending").buffer);
+    await waitForAttachmentValidation();
+    expect(chip?.dataset.attachmentState).toBe("ready");
+    expect(getSendButton().disabled).toBe(false);
+  });
+
+  it("PNG 改名 DOCX 只留下可读错误 chip 与重新选择，不进入可提交文件", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const fakeDocx = new File(
+      [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+      "A-r6-fake-image.docx",
+      { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+    );
+
+    await selectFile(fakeDocx);
+
+    const chip = getEditor().querySelector<HTMLElement>('[data-wf="WsAttachmentChip"]');
+    expect(chip?.dataset.attachmentState).toBe("error");
+    expect(chip?.textContent).toContain("文件格式与内容不一致");
+    expect(chip?.querySelector(".c-reselect")?.textContent).toBe("重新选择");
+    expect(ref.current?.snapshot().files).toEqual([]);
+    expect(getSendButton().disabled).toBe(true);
+  });
+
   it("长附件文件名中间省略并保留扩展名，短名保持原样，hover 展示全名", async () => {
     await render(
       <ChatInput
@@ -347,7 +458,7 @@ describe("ChatInput", () => {
     const shortName = "简报.md";
 
     await selectFiles([
-      new File(["long"], longName, { type: "application/pdf" }),
+      new File(["%PDF-1.7\n%%EOF"], longName, { type: "application/pdf" }),
       new File(["short"], shortName, { type: "text/markdown" }),
     ]);
 
@@ -1293,6 +1404,12 @@ function getSkillButton(): HTMLButtonElement {
   return button;
 }
 
+function getSendButton(): HTMLButtonElement {
+  const button = host?.querySelector<HTMLButtonElement>('[data-wf="WsSendBtn"]');
+  if (!button) throw new Error("send button not found");
+  return button;
+}
+
 function getFileMenu(): HTMLElement {
   const menu = host?.querySelector<HTMLElement>('[data-wf="WsFileMenu"]');
   if (!menu) throw new Error("file menu not found");
@@ -1395,6 +1512,15 @@ async function selectFiles(files: File[]): Promise<void> {
   });
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitForAttachmentValidation();
+}
+
+async function waitForAttachmentValidation(): Promise<void> {
+  await vi.waitFor(() => {
+    expect(
+      getEditor().querySelector('[data-attachment-state="validating"]'),
+    ).toBeNull();
   });
 }
 

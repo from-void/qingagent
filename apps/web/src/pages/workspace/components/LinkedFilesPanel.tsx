@@ -50,6 +50,8 @@ interface LinkedFilesPanelProps {
   folderSource: FolderSource | null;
   disabled?: boolean;
   locateFolderSignal?: number;
+  /** 解析失败 toast 的「查看素材」动作递增该信号，强制展开素材区。 */
+  openMaterialSignal?: number;
   /**
    * 本客户端刚完成一次「关联文件夹」动作的显式信号(每次成功 +1)。
    * 只有它出现过,后续 folderSource 首次到达才自动展开;进入已关联会话的数据加载不会触发。
@@ -70,6 +72,7 @@ export function LinkedFilesPanel({
   folderSource,
   disabled = false,
   locateFolderSignal = 0,
+  openMaterialSignal = 0,
   folderAttachSignal = 0,
   onReference,
   onPreviewMaterial,
@@ -101,6 +104,7 @@ export function LinkedFilesPanel({
   const entryControllersRef = useRef<Set<AbortController>>(new Set());
   const locateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocateFolderSignalRef = useRef(0);
+  const lastOpenMaterialSignalRef = useRef(0);
   const visibleDirStates = useMemo(() => {
     if (!folderIdentity) return {};
     const prefix = `${folderIdentity}\u0000`;
@@ -143,6 +147,19 @@ export function LinkedFilesPanel({
   useEffect(() => {
     if (materialRows.length === 0) setUploadsExpanded(true);
   }, [materialRows.length]);
+
+  useEffect(() => {
+    if (
+      openMaterialSignal <= 0 ||
+      openMaterialSignal === lastOpenMaterialSignalRef.current ||
+      materialRows.length === 0
+    ) {
+      return;
+    }
+    lastOpenMaterialSignalRef.current = openMaterialSignal;
+    setUploadsExpanded(true);
+    setExpanded(true);
+  }, [materialRows.length, openMaterialSignal]);
 
   useEffect(() => {
     setDirStates({});
@@ -942,7 +959,7 @@ function buildSummary(rows: readonly MaterialParseRow[], folderSource: FolderSou
 
 function materialInfo(row: MaterialParseRow): string {
   if (row.state === "parsing") return `${row.filename} · 正在解析`;
-  if (row.state === "error") return `${row.filename} · ${row.parseError ?? "解析失败"}`;
+  if (row.state === "error") return `${row.filename} · 解析失败`;
   const byteLabel = row.resource?.byteLen != null ? `${row.resource.byteLen} 字` : "";
   return [row.filename, byteLabel].filter(Boolean).join(" · ");
 }

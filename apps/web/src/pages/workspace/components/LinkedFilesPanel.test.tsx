@@ -111,6 +111,24 @@ describe("LinkedFilesPanel", () => {
     expect(onRetry).toHaveBeenCalledWith("file-error");
   });
 
+  it("解析失败 toast 的查看素材信号会从折叠态展开，并露出重试动作", async () => {
+    const row = errorRow("res-error", "file-error", "broken.docx", "raw parser detail");
+    await render(panel({
+      materialRows: [row],
+      openMaterialSignal: 0,
+    }));
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+
+    await rerender(panel({
+      materialRows: [row],
+      openMaterialSignal: 1,
+    }));
+
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
+    expect(buttonByText(rowByText("broken.docx"), "重试")).not.toBeNull();
+    expect(host?.textContent).not.toContain("raw parser detail");
+  });
+
   it("展开态不再提供面板内第二个选择文件入口", async () => {
     await render(panel({
       materialRows: [readyRow("res-ready", "ready.pdf")],
@@ -379,7 +397,7 @@ describe("LinkedFilesPanel", () => {
     click(getBar());
     expect(getInfo().textContent).toBe("1 个素材(1 个失败)");
     mouseEnter(rowByText("broken.pptx"));
-    expect(getInfo().textContent).toContain("旧版格式暂不支持");
+    expect(getInfo().textContent).toBe("broken.pptx · 解析失败");
     mouseLeave(rowByText("broken.pptx"));
     expect(getInfo().textContent).toBe("1 个素材(1 个失败)");
   });

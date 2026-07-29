@@ -102,6 +102,7 @@ export * from "./ToolCallStatus";
 export * from "./ToolRenderTarget";
 export * from "./UpdateDoc";
 export * from "./UpdateMaterialSummary";
+export * from "./Upload";
 export * from "./UsageSummary";
 export * from "./VisibleText";
 export * from "./unicodeText";

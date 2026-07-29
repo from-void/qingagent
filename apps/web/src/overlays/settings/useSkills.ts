@@ -35,6 +35,17 @@ export interface SkillInstallResult {
   name: string;
 }
 
+/** POST 已被服务端接受，但列表尚未证明已包含该技能。调用方必须展示部分成功回执。 */
+export class SkillInstallReconcileError extends Error {
+  constructor(
+    public readonly result: SkillInstallResult,
+    public readonly reason: "refresh_failed" | "list_missing",
+  ) {
+    super("技能已安装，但列表尚未刷新");
+    this.name = "SkillInstallReconcileError";
+  }
+}
+
 export function useSkills() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   // 初值必须是 true:首拉由挂载后的 effect 发起,若初值 false,首帧就会命中
@@ -42,30 +53,34 @@ export function useSkills() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<SkillInfo[]> => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/v1/skills");
       if (!res.ok) throw new Error(`技能列表加载失败 (${res.status})`);
       const data = (await res.json()) as { skills?: SkillInfo[] };
-      setSkills(Array.isArray(data.skills) ? data.skills : []);
+      const latest = Array.isArray(data.skills) ? data.skills : [];
+      setSkills(latest);
+      return latest;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "技能列表加载失败");
+      const failure = e instanceof Error ? e : new Error("技能列表加载失败");
+      setError(failure.message);
+      throw failure;
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => undefined);
   }, [refresh]);
 
   useEffect(() => {
     const target = globalThis.window;
     if (!target) return undefined;
     const onSkillsChanged = () => {
-      void refresh();
+      void refresh().catch(() => undefined);
     };
     target.addEventListener(SKILLS_CHANGED_EVENT, onSkillsChanged);
     return () => target.removeEventListener(SKILLS_CHANGED_EVENT, onSkillsChanged);
@@ -119,7 +134,15 @@ export function useSkills() {
       });
       if (!res.ok) throw new Error(await readError(res, "安装技能失败"));
       const result = await readInstallResult(res);
-      await refresh();
+      let latest: SkillInfo[];
+      try {
+        latest = await refresh();
+      } catch {
+        throw new SkillInstallReconcileError(result, "refresh_failed");
+      }
+      if (!findSkill(latest, result.name)) {
+        throw new SkillInstallReconcileError(result, "list_missing");
+      }
       notifySkillsChanged();
       return result;
     },
@@ -136,7 +159,15 @@ export function useSkills() {
       });
       if (!res.ok) throw new Error(await readError(res, "安装技能失败"));
       const result = await readInstallResult(res);
-      await refresh();
+      let latest: SkillInfo[];
+      try {
+        latest = await refresh();
+      } catch {
+        throw new SkillInstallReconcileError(result, "refresh_failed");
+      }
+      if (!findSkill(latest, result.name)) {
+        throw new SkillInstallReconcileError(result, "list_missing");
+      }
       notifySkillsChanged();
       return result;
     },
@@ -180,6 +211,15 @@ export function useSkills() {
     setSkillLabel,
     getSkillDetail,
   };
+}
+
+function findSkill(skills: readonly SkillInfo[], name: string): SkillInfo | null {
+  for (const skill of skills) {
+    if (skill.name === name) return skill;
+    const child = findSkill(Array.isArray(skill.children) ? skill.children : [], name);
+    if (child) return child;
+  }
+  return null;
 }
 
 function notifySkillsChanged(): void {

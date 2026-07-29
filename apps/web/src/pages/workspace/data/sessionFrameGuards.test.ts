@@ -128,6 +128,10 @@ describe("uploadFiles", () => {
       "alpha.txt",
       "beta.txt",
     ]);
+    expect(MockUploadRequest.instances.map((request) => request.purpose())).toEqual([
+      "material",
+      "material",
+    ]);
     expect(uploadedAssets.map((asset) => asset.fileId)).toEqual([
       "file-alpha",
       "file-beta",
@@ -211,6 +215,10 @@ class MockUploadRequest {
 
   filename(): string | undefined {
     return (JSON.parse(this.body) as { filename?: string }).filename;
+  }
+
+  purpose(): string | undefined {
+    return (JSON.parse(this.body) as { purpose?: string }).purpose;
   }
 }
 

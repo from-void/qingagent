@@ -19,6 +19,7 @@
     "./home": "./src/home/index.ts",
     "./llm": "./src/llm/index.ts",
     "./llm/runtime": "./src/llm/runtime.ts",
+    "./material-preflight": "./src/tools/materialFilePreflight.ts",
     "./observability": "./src/mastra.ts",
     "./search": "./src/search/index.ts",
     "./session": "./src/session/index.ts",

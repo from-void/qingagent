@@ -120,6 +120,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     skills,
     loading,
     error,
+    refresh,
     setSkillEnabled,
     deleteSkill,
     installSkillMd,
@@ -317,6 +318,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     const lower = file.name.toLowerCase();
     setBusy("__import__");
     setMessage(null);
+    let installedName: string | null = null;
     try {
       let result: { name: string };
       if (lower.endsWith(".zip")) {
@@ -326,12 +328,43 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
       } else {
         throw new Error("仅支持 .zip 技能包或 .md 文件");
       }
+      installedName = result.name;
+      const importedDetail = await getSkillDetail(result.name);
       if (mountedRef.current) {
+        setDetail(importedDetail);
         setSelectedName(result.name);
-        setMessage("技能已导入");
+        toast.show({ message: "技能已导入", tone: "success" });
       }
     } catch (e) {
-      if (mountedRef.current) setMessage(e instanceof Error ? e.message : "导入失败");
+      if (!mountedRef.current) return;
+      const reconciledName = skillInstallReconcileResult(e)?.name ?? installedName;
+      if (reconciledName) {
+        showSkillImportPartialReceipt({
+          name: reconciledName,
+          refresh,
+          getSkillDetail,
+          onReady: (latestDetail) => {
+            if (!mountedRef.current) return;
+            setDetail(latestDetail);
+            setSelectedName(reconciledName);
+            toast.show({ message: "技能列表已刷新", tone: "success" });
+          },
+          setBusy,
+          toast,
+        });
+      } else {
+        toast.show({
+          message: safeSkillImportFailureMessage(e),
+          tone: "warn",
+          sticky: true,
+          role: "alert",
+          dedupeKey: "skill-import-failed",
+          action: {
+            label: "重新选择",
+            onClick: () => fileInputRef.current?.click(),
+          },
+        });
+      }
     } finally {
       if (mountedRef.current) setBusy(null);
     }
@@ -615,6 +648,89 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
       {!loading && !error && skills.length === 0 && <p className="sm-empty">暂无技能</p>}
     </div>
   );
+}
+
+function safeSkillImportFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (
+    message === "仅支持 .zip 技能包或 .md 文件" ||
+    (message.length > 0 && message.length <= 80 && /[\u3400-\u9fff]/u.test(message))
+  ) {
+    return message;
+  }
+  return "技能导入失败，请重试";
+}
+
+function skillInstallReconcileResult(error: unknown): { name: string } | null {
+  if (!error || typeof error !== "object") return null;
+  const record = error as { name?: unknown; result?: unknown };
+  if (
+    record.name !== "SkillInstallReconcileError" ||
+    !record.result ||
+    typeof record.result !== "object"
+  ) {
+    return null;
+  }
+  const name = (record.result as { name?: unknown }).name;
+  return typeof name === "string" && name.length > 0 ? { name } : null;
+}
+
+function showSkillImportPartialReceipt({
+  name,
+  refresh,
+  getSkillDetail,
+  onReady,
+  setBusy,
+  toast,
+}: {
+  name: string;
+  refresh: () => Promise<SkillInfo[]>;
+  getSkillDetail: (name: string, childName?: string) => Promise<SkillDetailInfo>;
+  onReady: (detail: SkillDetailInfo) => void;
+  setBusy: (value: string | null) => void;
+  toast: ReturnType<typeof useToast>;
+}): void {
+  toast.show({
+    message: "技能已安装，但列表尚未刷新",
+    tone: "warn",
+    sticky: true,
+    role: "alert",
+    dedupeKey: "skill-import-partial",
+    action: {
+      label: "重新加载",
+      onClick: () => {
+        setBusy("__import__");
+        void refresh()
+          .then(async (latest) => {
+            if (!findSkillInList(latest, name)) {
+              throw new Error("skill_not_visible");
+            }
+            return getSkillDetail(name);
+          })
+          .then(onReady)
+          .catch(() => {
+            showSkillImportPartialReceipt({
+              name,
+              refresh,
+              getSkillDetail,
+              onReady,
+              setBusy,
+              toast,
+            });
+          })
+          .finally(() => setBusy(null));
+      },
+    },
+  });
+}
+
+function findSkillInList(skills: readonly SkillInfo[], name: string): SkillInfo | null {
+  for (const skill of skills) {
+    if (skill.name === name) return skill;
+    const child = findSkillInList(Array.isArray(skill.children) ? skill.children : [], name);
+    if (child) return child;
+  }
+  return null;
 }
 
 function childSkills(skill: SkillInfo): SkillInfo[] {

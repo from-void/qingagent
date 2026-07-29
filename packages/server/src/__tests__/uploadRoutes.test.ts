@@ -29,7 +29,12 @@ async function seedUploadedFile(uploadDir: string, filename: string, content = "
 
 async function postUpload(
   app: Hono,
-  input: { filename: string; content: string; mimeType?: string },
+  input: {
+    filename: string;
+    content: string | Buffer;
+    mimeType?: string;
+    purpose?: "material";
+  },
 ) {
   const res = await app.request("/api/v1/upload", {
     method: "POST",
@@ -38,6 +43,7 @@ async function postUpload(
       filename: input.filename,
       mimeType: input.mimeType,
       content: Buffer.from(input.content).toString("base64"),
+      ...(input.purpose ? { purpose: input.purpose } : {}),
     }),
   });
   return {
@@ -146,6 +152,52 @@ describe("uploadRoutes 下载响应头", () => {
     expect(second.body.fileId).toBe(first.body.fileId);
     expect(second.body.filename).toBe("逐宁简历.pdf");
     expect(await uploadDirs(uploadDir)).toEqual([first.body.fileId]);
+  });
+
+  it("素材 POST 确实发出后在返回 fileId 前拒绝 PNG 改名 DOCX，且不影响未声明用途的上传", async () => {
+    const { app, uploadDir } = await createUploadApp();
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const materialUpload = await postUpload(app, {
+      filename: "A-r6-fake-image.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      content: pngBytes,
+      purpose: "material",
+    });
+
+    expect(materialUpload.res.status).toBe(422);
+    expect(materialUpload.body).toEqual({
+      error: "material_format_mismatch",
+    });
+    expect(await uploadDirs(uploadDir)).toEqual([]);
+
+    const legacyConsumerUpload = await postUpload(app, {
+      filename: "A-r6-fake-image.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      content: pngBytes,
+    });
+    expect(legacyConsumerUpload.res.status).toBe(200);
+    expect(legacyConsumerUpload.body.fileId).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("素材用途接受可读文本并返回可核验 fileId", async () => {
+    const { app } = await createUploadApp();
+    const uploaded = await postUpload(app, {
+      filename: "brief.md",
+      mimeType: "text/markdown",
+      content: "# 可读素材\n",
+      purpose: "material",
+    });
+
+    expect(uploaded.res.status).toBe(200);
+    expect(uploaded.body).toMatchObject({
+      filename: "brief.md",
+      mimeType: "text/markdown",
+      size: Buffer.byteLength("# 可读素材\n"),
+    });
+    expect(uploaded.body.fileId).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
   it("无扩展名文件下载时优先采用持久化 MIME", async () => {

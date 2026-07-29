@@ -49,6 +49,10 @@ import {
 import { FileActionMenu } from "./FileActionMenu";
 import { LinkedFilesPanel, type LinkedFileReference } from "./LinkedFilesPanel";
 import { uploadFailureMessage, uploadFileSizeError } from "../data/uploadAsset";
+import {
+  materialPreflightErrorMessage,
+  preflightBrowserMaterialFile,
+} from "../data/materialFilePreflight";
 import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../data/chatInputTypes";
 export type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../data/chatInputTypes";
 
@@ -87,6 +91,8 @@ export interface ChatInputProps {
   /** 已发送文件的解析态合并视图；任务5 会替换为 LinkedFilesPanel。 */
   materialParseRows?: readonly MaterialParseRow[];
   onRetryMaterialParse?: (fileId: string) => void;
+  /** 页面级解析失败 toast 请求展开素材区的递增信号。 */
+  openMaterialSignal?: number;
   /** 未配置模型 key:发送按钮置灰 + hover 引导去配置。 */
   noModelKey?: boolean;
   modelKeyGate?: ModelKeyGateSnapshot;
@@ -122,6 +128,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDetachFolder,
     materialParseRows,
     onRetryMaterialParse,
+    openMaterialSignal = 0,
     noModelKey: legacyNoModelKey = false,
     modelKeyGate,
     onConfigureModel,
@@ -136,6 +143,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const seededRef = useRef(false);
   const composingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replacementAttachmentIdRef = useRef<string | null>(null);
   const fileButtonRef = useRef<HTMLButtonElement>(null);
   const fileWrapRef = useRef<HTMLDivElement>(null);
   const folderIntroPrimaryRef = useRef<HTMLButtonElement>(null);
@@ -180,6 +188,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       .map(({ action }) => action);
   }, [invocableSkillActions, skillMenuOrder]);
   const sendDisabled = disabled && !sendEnabledWhenDisabled;
+  const canSubmit = !isEmpty;
   const handleFolderAttachSuccess = useCallback(() => {
     setFolderAttachSignal((value) => value + 1);
   }, []);
@@ -223,9 +232,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const reportChange = useCallback(() => {
     const edit = editRef.current;
     if (!edit) return;
-    const text = (edit.innerText || "").trim();
-    const chips = edit.querySelectorAll(".chat-chip").length;
-    setIsEmpty(text.length === 0 && chips === 0);
+    const { text } = serializeChatInputContent(edit);
+    const chips = Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip"))
+      .filter(isSubmittableChatChipNode).length;
+    setIsEmpty(!hasSubmittableChatInput(edit));
     onChange?.(text, chips);
   }, [onChange]);
 
@@ -234,8 +244,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     // 此刻就要藏占位符,否则"字还没上屏、占位符还压着字"。组字期间仍不向上 onChange(不发半截)。
     const edit = editRef.current;
     if (edit) {
-      const text = (edit.innerText || "").trim();
-      setIsEmpty(text.length === 0 && edit.querySelectorAll(".chat-chip").length === 0);
+      setIsEmpty(!hasSubmittableChatInput(edit));
     }
     if (composingRef.current || (e.nativeEvent as InputEvent).isComposing) return;
     reportChange();
@@ -311,7 +320,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       snapshot() {
         const edit = editRef.current;
         if (!edit) return { text: "", chips: [], files: [], richText: "", skills: [] };
-        const chipNodes = edit.querySelectorAll<HTMLElement>(".chat-chip");
+        const chipNodes = Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip"))
+          .filter(isSubmittableChatChipNode);
         const chips: ChatChipSpec[] = Array.from(chipNodes).map(readChipNode);
         // 纯文本、气泡 richText 与模型上下文共用同一个 DOM walker；不能依赖游离 clone
         // 的 innerText 布局计算，否则 contenteditable 用相邻 div 表示的换行会被吞掉。
@@ -340,6 +350,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         if (!edit) return;
         while (edit.firstChild) edit.removeChild(edit.firstChild);
         setAttachedFiles([]);
+        replacementAttachmentIdRef.current = null;
         setSkillMenuOpen(false);
         setFileMenuOpen(false);
         reportChange();
@@ -366,10 +377,36 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         if (!edit) return;
         restoreSnapshotContent(edit, snapshot);
         setAttachedFiles([...snapshot.files]);
+        replacementAttachmentIdRef.current = null;
         setSkillMenuOpen(false);
         setFileMenuOpen(false);
         focusEditorEnd(edit);
         reportChange();
+      },
+      markAttachmentFailure(file, message, retryable) {
+        const attachmentId = attachmentFileKey(file);
+        const edit = editRef.current;
+        const chip = edit
+          ? Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip")).find(
+              (node) => node.dataset.attachmentId === attachmentId,
+            )
+          : null;
+        if (!retryable) {
+          setAttachedFiles((files) =>
+            files.filter((attached) => attachmentFileKey(attached) !== attachmentId),
+          );
+        }
+        if (chip) {
+          setLocalAttachmentChipState(
+            chip,
+            retryable ? "upload-error" : "error",
+            message,
+          );
+        }
+        reportChange();
+      },
+      chooseFiles() {
+        fileInputRef.current?.click();
       },
       insertText(text) {
         const edit = editRef.current;
@@ -621,7 +658,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           flashKeyTip();
           return;
         }
-        if (!isEmpty) onSubmit();
+        if (canSubmit) onSubmit();
         return;
       }
       if (e.key === "Backspace") {
@@ -711,12 +748,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       onOpenSkillMenu,
       noModelKey,
       flashKeyTip,
-      isEmpty,
+      canSubmit,
     ],
   );
 
   const removeAttachment = useCallback(
     (attachmentId: string) => {
+      if (replacementAttachmentIdRef.current === attachmentId) {
+        replacementAttachmentIdRef.current = null;
+      }
       setAttachedFiles((prev) =>
         prev.filter((file) => attachmentFileKey(file) !== attachmentId),
       );
@@ -736,6 +776,24 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         return;
       }
       const target = e.target as HTMLElement;
+      const attachmentAction = target.closest<HTMLElement>(".c-attachment-action");
+      if (attachmentAction) {
+        const chip = attachmentAction.closest<HTMLElement>(".chat-chip");
+        const attachmentId = chip?.dataset.attachmentId;
+        if (!chip || !attachmentId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (attachmentAction.classList.contains("c-reselect")) {
+          replacementAttachmentIdRef.current = attachmentId;
+          fileInputRef.current?.click();
+          return;
+        }
+        if (attachmentAction.classList.contains("c-retry")) {
+          if (noModelKey) flashKeyTip();
+          else if (canSubmit) onSubmit();
+          return;
+        }
+      }
       if (target.classList.contains("annotation-chip-confirm")) {
         const chip = target.closest<HTMLElement>('.chat-chip[data-kind="annotation"]');
         const textarea = chip?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor");
@@ -779,7 +837,77 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         setLongTextView(longChip.dataset.text);
       }
     },
-    [disabled, removeAttachment, reportChange],
+    [
+      canSubmit,
+      disabled,
+      flashKeyTip,
+      noModelKey,
+      onSubmit,
+      removeAttachment,
+      reportChange,
+    ],
+  );
+
+  const enqueueLocalAttachments = useCallback(
+    (files: readonly File[]) => {
+      const edit = editRef.current;
+      if (!edit || disabled || files.length === 0) return;
+      edit.focus();
+      const queued: Array<{ file: File; attachmentId: string }> = [];
+      for (const file of files) {
+        const attachmentId = attachmentFileKey(file);
+        if (hasLocalAttachChip(edit, attachmentId)) continue;
+        const range = restoreOrEndRange();
+        range.deleteContents();
+        const chip = makeChatChipNode({
+          kind: "attach",
+          label: file.name,
+          attachmentId,
+        });
+        setLocalAttachmentChipState(chip, "validating");
+        range.insertNode(chip);
+        const space = document.createTextNode(" ");
+        chip.after(space);
+        const nextRange = document.createRange();
+        nextRange.setStartAfter(space);
+        nextRange.collapse(true);
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(nextRange);
+          savedRangeRef.current = nextRange.cloneRange();
+        }
+        queued.push({ file, attachmentId });
+      }
+      reportChange();
+
+      for (const { file, attachmentId } of queued) {
+        void preflightBrowserMaterialFile(file).then((result) => {
+          const currentEdit = editRef.current;
+          if (!currentEdit) return;
+          const chip = Array.from(
+            currentEdit.querySelectorAll<HTMLElement>(".chat-chip"),
+          ).find((node) => node.dataset.attachmentId === attachmentId);
+          if (!chip) return;
+          if (result.ok) {
+            setAttachedFiles((prev) =>
+              prev.some((existing) => attachmentFileKey(existing) === attachmentId)
+                ? prev
+                : [...prev, file],
+            );
+            setLocalAttachmentChipState(chip, "ready");
+          } else {
+            setLocalAttachmentChipState(
+              chip,
+              "error",
+              materialPreflightErrorMessage(result.error),
+            );
+          }
+          reportChange();
+        });
+      }
+    },
+    [disabled, reportChange, restoreOrEndRange],
   );
 
   // 粘贴图片 → 走上传文件链路:重命名唯一名、落入 attachedFiles、插一个引用 chip,
@@ -788,33 +916,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     (files: File[]) => {
       const edit = editRef.current;
       if (!edit || disabled) return;
-      const accepted = files.filter((f) => isAcceptedUploadFile(f));
-      if (accepted.length === 0) return;
-      setAttachedFiles((prev) => {
-        const next = [...prev];
-        for (const f of accepted) {
-          const key = attachmentFileKey(f);
-          if (!next.some((x) => attachmentFileKey(x) === key)) next.push(f);
+      const accepted = files.filter((file) => {
+        const sizeError = uploadFileSizeError(file);
+        if (sizeError) {
+          onToast?.(uploadFailureMessage(sizeError, "文件上传失败，请重试"));
+          return false;
         }
-        return next;
+        return isAcceptedUploadFile(file);
       });
-      for (const f of accepted) {
-        const attachmentId = attachmentFileKey(f);
-        if (hasLocalAttachChip(edit, attachmentId)) continue;
-        const chip = makeChatChipNode({
-          kind: "attach",
-          label: f.name,
-          attachmentId,
-        });
-        const hasContent = !!(edit.textContent && edit.textContent.trim().length > 0);
-        if (hasContent) edit.appendChild(document.createElement("br"));
-        edit.appendChild(chip);
-        edit.appendChild(document.createTextNode(" "));
-      }
-      focusEditorEnd(edit);
-      reportChange();
+      if (accepted.length === 0) return;
+      enqueueLocalAttachments(accepted);
     },
-    [disabled, reportChange],
+    [disabled, enqueueLocalAttachments, onToast],
   );
 
   // 粘贴超长文本 → 折叠成卡片 chip 插在光标处(原文存 data-text,发送时 snapshot 原位展开)。
@@ -894,53 +1007,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         acceptedFiles.push(file);
       }
       if (hasUnsupportedFile) {
-        window.alert(
-          `暂不支持这种文件，可以试试 PDF、Word、Excel、PPT、TXT、Markdown 或图片。`,
-        );
+        onToast?.("暂不支持这种文件，可以试试 PDF、Word、Excel、PPT、TXT、Markdown 或图片");
       }
       if (acceptedFiles.length === 0) return;
 
-      // 保存整批原生 File 对象，延迟到提交时上传。未发送文件只作为输入框 chip 存在,
-      // 发送后解析 tracker/resource 才会让它进入「已关联文件」面板。
-      setAttachedFiles((prev) => {
-        const next = [...prev];
-        for (const file of acceptedFiles) {
-          const attachmentId = attachmentFileKey(file);
-          if (!next.some((existing) => attachmentFileKey(existing) === attachmentId)) {
-            next.push(file);
-          }
-        }
-        return next;
-      });
-
-      // 每个文件插入一个 attach chip（面板上传与按钮上传一致，都自动引用）。
-      const edit = editRef.current;
-      if (!edit) return;
-      edit.focus();
-      for (const file of acceptedFiles) {
-        const attachmentId = attachmentFileKey(file);
-        if (hasLocalAttachChip(edit, attachmentId)) continue;
-        const r = restoreOrEndRange();
-        r.deleteContents();
-        const chip = makeChatChipNode({
-          kind: "attach",
-          label: file.name,
-          attachmentId,
-        });
-        r.insertNode(chip);
-        const space = document.createTextNode(" ");
-        chip.after(space);
-        const r2 = document.createRange();
-        r2.setStartAfter(space);
-        r2.collapse(true);
-        const sel = window.getSelection()!;
-        sel.removeAllRanges();
-        sel.addRange(r2);
-        savedRangeRef.current = r2.cloneRange();
+      const replacementAttachmentId = replacementAttachmentIdRef.current;
+      if (replacementAttachmentId) {
+        removeAttachment(replacementAttachmentId);
+        replacementAttachmentIdRef.current = null;
       }
-      reportChange();
+      enqueueLocalAttachments(acceptedFiles);
     },
-    [disabled, onToast, restoreOrEndRange, reportChange],
+    [disabled, enqueueLocalAttachments, onToast, removeAttachment],
   );
 
   // 引用:文件夹文件用完整相对路径进入模型上下文，folderId + childRelPath 提供稳定身份。
@@ -1185,9 +1263,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 variant="primary"
                 size="small"
                 onClick={() => {
-                  if (!noModelKey) onSubmit();
+                  if (!noModelKey && canSubmit) onSubmit();
                 }}
-                disabled={sendDisabled || noModelKey}
+                disabled={sendDisabled || noModelKey || !canSubmit}
+                data-wf="WsSendBtn"
                 title={noModelKey ? "还没配置模型 key" : "Enter 发送 · Shift+Enter 换行"}
               >
                 发送<ArrowRightIcon size={12} />
@@ -1201,6 +1280,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         folderSource={folderSource}
         disabled={disabled}
         locateFolderSignal={locateFolderSignal}
+        openMaterialSignal={openMaterialSignal}
         folderAttachSignal={folderAttachSignal}
         onReference={insertAttachChip}
         onPreviewMaterial={onPreviewMaterial}
@@ -1347,6 +1427,57 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   return chip;
 }
 
+type LocalAttachmentState = "validating" | "ready" | "error" | "upload-error";
+
+function setLocalAttachmentChipState(
+  chip: HTMLElement,
+  state: LocalAttachmentState,
+  message?: string,
+): void {
+  chip.dataset.wf = "WsAttachmentChip";
+  chip.dataset.attachmentState = state;
+  chip.classList.toggle("is-validating", state === "validating");
+  chip.classList.toggle("is-error", state === "error" || state === "upload-error");
+  chip.querySelector(".c-attachment-status")?.remove();
+  chip.querySelector(".c-attachment-action")?.remove();
+  delete chip.dataset.attachmentError;
+
+  if (state === "ready") return;
+
+  const status = document.createElement("span");
+  status.className = "c-attachment-status";
+  status.textContent = state === "validating" ? "校验中" : (message ?? "文件不可用");
+  chip.appendChild(status);
+
+  if (state === "validating") return;
+  chip.dataset.attachmentError = message ?? "文件不可用";
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = `c-attachment-action ${state === "upload-error" ? "c-retry" : "c-reselect"}`;
+  action.textContent = state === "upload-error" ? "重试" : "重新选择";
+  chip.appendChild(action);
+}
+
+function isSubmittableChatChipNode(chip: HTMLElement): boolean {
+  const state = chip.dataset.attachmentState;
+  return state !== "validating" && state !== "error";
+}
+
+function hasSubmittableChatInput(edit: HTMLElement): boolean {
+  const localAttachmentChips = Array.from(
+    edit.querySelectorAll<HTMLElement>(
+      '.chat-chip[data-kind="attach"][data-attachment-id]',
+    ),
+  );
+  if (localAttachmentChips.some((chip) => !isSubmittableChatChipNode(chip))) {
+    return false;
+  }
+  const { text } = serializeChatInputContent(edit);
+  if (text.trim().length > 0) return true;
+  return Array.from(edit.querySelectorAll<HTMLElement>(".chat-chip"))
+    .some(isSubmittableChatChipNode);
+}
+
 const attachmentFileIds = new WeakMap<File, string>();
 let attachmentFileIdSequence = 0;
 
@@ -1442,6 +1573,7 @@ function serializeChatInputContent(edit: HTMLElement): {
     }
     if (!(node instanceof HTMLElement)) return;
     if (node.classList.contains("chat-chip")) {
+      if (!isSubmittableChatChipNode(node)) return;
       if (
         (node.dataset.kind === "longtext" ||
           node.dataset.kind === "annotation") &&

@@ -435,7 +435,7 @@ function looksLikeText(buffer: Buffer): boolean {
 }
 
 function assertNoNulText(text: string): string {
-  if (text.includes("\u0000")) {
+  if (hasBinaryControlText(text)) {
     throw new Error("不是可读文本或包含二进制控制字符");
   }
   return text;
@@ -472,7 +472,7 @@ function tryDecodeLegacyChineseText(buffer: Buffer): string | null {
   return null;
 }
 
-function decodeTextBuffer(buffer: Buffer): string {
+export function decodeTextBuffer(buffer: Buffer): string {
   if (buffer.length === 0) return "";
   const assertLossless = (text: string): string => {
     if (text.includes("\uFFFD")) {
@@ -486,12 +486,12 @@ function decodeTextBuffer(buffer: Buffer): string {
   if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
     const payload = buffer.subarray(2);
     assertEvenUtf16Payload(payload);
-    return assertLossless(payload.toString("utf16le"));
+    return assertNoNulText(assertLossless(payload.toString("utf16le")));
   }
   if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
     const payload = buffer.subarray(2);
     assertEvenUtf16Payload(payload);
-    return assertLossless(decodeUtf16be(payload));
+    return assertNoNulText(assertLossless(decodeUtf16be(payload)));
   }
   if (buffer.includes(0)) {
     throw new Error("不是可读文本或包含二进制控制字符");

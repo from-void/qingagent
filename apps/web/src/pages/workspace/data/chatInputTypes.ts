@@ -73,6 +73,10 @@ export interface ChatInputHandle {
   snapshot: () => ChatInputSnapshot;
   /** Restore a previously captured draft after an optimistic send fails. */
   restore: (snapshot: ChatInputSnapshot) => void;
+  /** 上传失败回滚后，把对应附件切到可恢复的原位失败态。 */
+  markAttachmentFailure: (file: File, message: string, retryable: boolean) => void;
+  /** 打开素材文件选择器；供失败 toast 的恢复动作复用。 */
+  chooseFiles: () => void;
   /** Focus the editor. */
   focus: () => void;
 }

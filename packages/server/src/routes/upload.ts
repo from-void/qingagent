@@ -6,7 +6,8 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { removeUnpairedSurrogates } from "@qingagent/contract-ts";
+import { removeUnpairedSurrogates, type UploadPurpose } from "@qingagent/contract-ts";
+import { preflightMaterialFileBuffer } from "@qingagent/core/material-preflight";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
   UPLOAD_DIR,
@@ -29,6 +30,7 @@ const uploadBodySchema = z.object({
   filename: z.string().min(1),
   content: z.string().min(1),
   mimeType: z.string().optional(),
+  purpose: z.enum(["material"] satisfies UploadPurpose[]).optional(),
 });
 
 /** Validate that a filename does not contain path separators or traversal sequences. */
@@ -124,7 +126,7 @@ uploadRoutes.post(
 
     const parsed = await parseBody(c, uploadBodySchema);
     if (!parsed.ok) return parsed.response;
-    const { filename, mimeType, content } = parsed.data;
+    const { filename, mimeType, content, purpose } = parsed.data;
 
     if (!isSafeFilename(filename)) {
       return c.json({ error: "filename must not contain path separators or '..'" }, 400);
@@ -138,6 +140,16 @@ uploadRoutes.post(
       return c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413);
     }
     const normalizedMimeType = normalizeMimeType(mimeType) ?? "application/octet-stream";
+    if (purpose === "material") {
+      const preflight = await preflightMaterialFileBuffer({
+        buffer,
+        filename,
+        mimeType: normalizedMimeType,
+      });
+      if (!preflight.ok) {
+        return c.json({ error: preflight.error }, 422);
+      }
+    }
     let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
     try {
       stored = await findOrStoreUploadedFile({

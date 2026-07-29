@@ -128,6 +128,14 @@ function assertImageMime(buffer: Buffer, declaredMimeType?: string | null): stri
   return magic;
 }
 
+/** 素材上传预检复用的图片身份校验；只返回可信魔数 MIME，不暴露内部错误给客户端。 */
+export function validateImageBufferMime(
+  buffer: Buffer,
+  declaredMimeType?: string | null,
+): string {
+  return assertImageMime(buffer, declaredMimeType);
+}
+
 async function readStreamWithLimit(
   response: UndiciResponse,
   abortController: AbortController,

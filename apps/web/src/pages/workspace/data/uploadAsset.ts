@@ -1,3 +1,10 @@
+import type {
+  MaterialUploadErrorCode,
+  UploadPurpose,
+  UploadRequest,
+} from "@qingagent/contract-ts";
+import { materialPreflightErrorMessage } from "./materialFilePreflight";
+
 export interface UploadedAsset {
   fileId: string;
   filename: string;
@@ -7,9 +14,29 @@ export interface UploadedAsset {
 
 export interface UploadAssetOptions {
   onProgress?: (progress: number | null) => void;
+  purpose?: UploadPurpose;
 }
 
 export const DEFAULT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+export type UploadAssetErrorCode =
+  | MaterialUploadErrorCode
+  | "file_too_large"
+  | "network"
+  | "upload_failed"
+  | "invalid_response";
+
+export class UploadAssetError extends Error {
+  constructor(
+    public readonly code: UploadAssetErrorCode,
+    public readonly file: File,
+    message: string,
+    public readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "UploadAssetError";
+  }
+}
 
 function formatUploadLimit(maxBytes: number): string {
   const mib = maxBytes / (1024 * 1024);
@@ -30,6 +57,7 @@ export function uploadFileSizeError(file: Pick<File, "size">): Error | null {
 }
 
 export function uploadFailureMessage(error: unknown, fallback: string): string {
+  if (error instanceof UploadAssetError) return error.message;
   const message = error instanceof Error ? error.message : "";
   return message.startsWith("文件过大（上限 ") ? message : fallback;
 }
@@ -38,13 +66,15 @@ export async function uploadAssetFile(file: File, options: UploadAssetOptions = 
   const sizeError = uploadFileSizeError(file);
   if (sizeError) throw sizeError;
   const content = await fileToBase64(file);
+  const body: UploadRequest = {
+    filename: file.name,
+    mimeType: file.type || "application/octet-stream",
+    content,
+    ...(options.purpose ? { purpose: options.purpose } : {}),
+  };
   return uploadJson(
     file,
-    JSON.stringify({
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      content,
-    }),
+    JSON.stringify(body),
     options,
   );
 }
@@ -94,21 +124,50 @@ function uploadJson(file: File, body: string, options: UploadAssetOptions): Prom
       }
       options.onProgress?.(Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100))));
     };
-    xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}: network error`));
+    xhr.onerror = () => reject(new UploadAssetError(
+      "network",
+      file,
+      "文件上传失败，请重试",
+      true,
+    ));
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
         if (xhr.status === 413) {
-          reject(new Error(fileTooLargeMessage(readUploadMaxBytes(xhr.responseText) ?? DEFAULT_UPLOAD_MAX_BYTES)));
+          reject(new UploadAssetError(
+            "file_too_large",
+            file,
+            fileTooLargeMessage(readUploadMaxBytes(xhr.responseText) ?? DEFAULT_UPLOAD_MAX_BYTES),
+            false,
+          ));
           return;
         }
-        const detail = readUploadErrorText(xhr.responseText);
-        reject(new Error(detail || `Upload failed for ${file.name}: ${xhr.status}`));
+        const errorCode = readMaterialUploadErrorCode(xhr.responseText);
+        if (errorCode) {
+          reject(new UploadAssetError(
+            errorCode,
+            file,
+            materialPreflightErrorMessage(errorCode),
+            false,
+          ));
+          return;
+        }
+        reject(new UploadAssetError(
+          "upload_failed",
+          file,
+          "文件上传失败，请重试",
+          xhr.status >= 500,
+        ));
         return;
       }
       try {
         resolve(JSON.parse(xhr.responseText) as UploadedAsset);
       } catch {
-        reject(new Error(`Upload failed for ${file.name}: invalid response`));
+        reject(new UploadAssetError(
+          "invalid_response",
+          file,
+          "文件已上传，但回执无法确认，请重试",
+          true,
+        ));
       }
     };
     xhr.send(body);
@@ -129,30 +188,21 @@ function readUploadMaxBytes(text: string): number | null {
   }
 }
 
-function readUploadErrorText(text: string): string | null {
+function readMaterialUploadErrorCode(text: string): MaterialUploadErrorCode | null {
   if (!text) return null;
-
   try {
     const body = JSON.parse(text) as unknown;
-    const error = readStringField(body, "error");
-    if (error) return error;
-    const message = readStringField(body, "message");
-    if (message) return message;
-    const detail = readStringField(body, "detail");
-    if (detail) return detail;
+    if (!body || typeof body !== "object") return null;
+    const code = (body as Record<string, unknown>).error;
+    if (
+      code === "material_format_mismatch" ||
+      code === "material_unreadable" ||
+      code === "material_unsupported"
+    ) {
+      return code;
+    }
   } catch {
     return null;
-  }
-  return null;
-}
-
-function readStringField(value: unknown, field: "error" | "message" | "detail"): string | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = (value as Record<string, unknown>)[field];
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
-    const message = (raw as Record<string, unknown>).message;
-    if (typeof message === "string") return message;
   }
   return null;
 }

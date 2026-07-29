@@ -862,6 +862,11 @@ export function useWorkspacePageController() {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
   const materialParsingTurnKeyRef = useRef<number | null>(null);
+  const [materialPanelOpenSignal, setMaterialPanelOpenSignal] = useState(0);
+  const materialParseNoticeRef = useRef<{
+    sessionId: string | null;
+    states: Map<string, string>;
+  }>({ sessionId: null, states: new Map() });
   const {
     rows: materialParseRows,
     markParsing: markMaterialParsing,
@@ -873,6 +878,44 @@ export function useWorkspacePageController() {
     agentActive,
     sendCommand: sendMaterialParseCommand,
   });
+  useEffect(() => {
+    const currentSessionId = state.sessionId;
+    const nextStates = new Map(
+      materialParseRows.map((row) => [
+        row.id,
+        row.state === "error" ? `error:${row.parseError ?? ""}` : row.state,
+      ]),
+    );
+    const noticeState = materialParseNoticeRef.current;
+    if (noticeState.sessionId !== currentSessionId) {
+      materialParseNoticeRef.current = {
+        sessionId: currentSessionId,
+        states: nextStates,
+      };
+      return;
+    }
+
+    const hasNewFailure = materialParseRows.some((row) => {
+      if (row.state !== "error") return false;
+      return noticeState.states.get(row.id) !== nextStates.get(row.id);
+    });
+    materialParseNoticeRef.current = {
+      sessionId: currentSessionId,
+      states: nextStates,
+    };
+    if (!hasNewFailure) return;
+    toast.show({
+      message: "素材解析失败",
+      tone: "warn",
+      sticky: true,
+      role: "alert",
+      dedupeKey: "material-parse-failed",
+      action: {
+        label: "查看素材",
+        onClick: () => setMaterialPanelOpenSignal((value) => value + 1),
+      },
+    });
+  }, [materialParseRows, state.sessionId, toast]);
   const handleRetryMaterialParse = useCallback(
     (fileId: string) => {
       if (agentActive) {
@@ -881,11 +924,7 @@ export function useWorkspacePageController() {
       }
       retryMaterialParse(fileId).catch((error) => {
         console.error("[workspace] reparseMaterial failed", error);
-        showToast(
-          error instanceof Error && error.message
-            ? error.message
-            : "重试解析失败，请稍后再试",
-        );
+        showToast("重试解析失败，请稍后再试");
       });
     },
     [agentActive, retryMaterialParse, showToast],
@@ -3337,6 +3376,7 @@ export function useWorkspacePageController() {
     handleDetachFolder,
     materialParseRows,
     handleRetryMaterialParse,
+    materialPanelOpenSignal,
     handleEditSummary,
     hasModelKey,
     modelKeyGate,

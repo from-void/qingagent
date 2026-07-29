@@ -43,6 +43,7 @@ export function WorkspaceChatPane({
     handleDetachFolder,
     materialParseRows,
     handleRetryMaterialParse,
+    materialPanelOpenSignal,
     hasModelKey,
     modelKeyGate,
     handleBackHome,
@@ -121,6 +122,7 @@ export function WorkspaceChatPane({
             onDetachFolder={handleDetachFolder}
             materialParseRows={materialParseRows}
             onRetryMaterialParse={handleRetryMaterialParse}
+            openMaterialSignal={materialPanelOpenSignal}
             noModelKey={!hasModelKey}
             modelKeyGate={modelKeyGate}
             onConfigureModel={(provider) => goConfigureModel(handleBackHome, provider)}

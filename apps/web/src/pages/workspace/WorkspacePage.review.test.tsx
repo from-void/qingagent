@@ -4258,6 +4258,44 @@ describe("WorkspacePage review controls", () => {
     expect(removeMaterialCommands(stream)).toHaveLength(0);
   });
 
+  it("下游解析失败即使素材栏折叠也显示常驻回执，查看素材后露出重试", async () => {
+    const stream = await renderWorkspaceWithUploadedMaterial();
+    expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+
+    await emitFrames(stream, [{
+      kind: "resourceUpdated",
+      data: {
+        resourceRef: { id: "mat-1", domain: { kind: "file" } },
+        summary: "合同摘要",
+        metadata: {
+          fileId: "file-mat-1",
+          parseState: "error",
+          parseError: "pdf parser internal stack trace",
+        },
+      },
+    }]);
+
+    await vi.waitFor(() => {
+      expect(host?.querySelector('[data-toast-key="material-parse-failed"]'))
+        .not.toBeNull();
+    });
+    const toast = host!.querySelector<HTMLElement>(
+      '[data-toast-key="material-parse-failed"]',
+    )!;
+    expect(toast.classList.contains("sticky")).toBe(true);
+    expect(toast.textContent).toContain("素材解析失败");
+    expect(toast.textContent).not.toContain("stack trace");
+    await clickElement(buttonByTextIn(toast, "查看素材"));
+
+    await vi.waitFor(() => {
+      expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
+    });
+    const row = rowByText("合同.pdf");
+    expect(row.textContent).toContain("解析失败");
+    expect(buttonByTextIn(row, "重试")).not.toBeNull();
+    expect(host?.textContent).not.toContain("stack trace");
+  });
+
   it("移除上传素材确认期间切换会话后不再发送旧会话 removeMaterial", async () => {
     const stream = await renderWorkspaceWithUploadedMaterial();
 
@@ -4794,6 +4832,7 @@ describe("WorkspacePage optimistic send rollback", () => {
       },
     });
     const restore = vi.fn();
+    const markAttachmentFailure = vi.fn();
     const setSendPending = vi.fn();
     const showToast = vi.fn();
 
@@ -4801,7 +4840,7 @@ describe("WorkspacePage optimistic send rollback", () => {
       dispatch: (action) => {
         state = workspaceReducer(state, action);
       },
-      chatInput: { restore },
+      chatInput: { restore, markAttachmentFailure },
       snapshot,
       keepMessageCount: 0,
       setSendPending,
@@ -4815,6 +4854,47 @@ describe("WorkspacePage optimistic send rollback", () => {
     expect(showToast).toHaveBeenCalledWith(
       "发送失败，请重试",
     );
+  });
+
+  it("网络上传失败回滚后保留附件，并标成可重试的原位失败态", async () => {
+    const [{ rollbackOptimisticChatSend }, { UploadAssetError }] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./data/uploadAsset"),
+    ]);
+    const file = new File(["retry"], "retry.md", { type: "text/markdown" });
+    const snapshot: ChatInputSnapshot = {
+      text: "",
+      chips: [{ kind: "attach", label: "retry.md" }],
+      files: [file],
+      richText: "{{chip:0}}",
+      skills: [],
+    };
+    const restore = vi.fn();
+    const markAttachmentFailure = vi.fn();
+    const showToast = vi.fn();
+
+    rollbackOptimisticChatSend({
+      dispatch: vi.fn(),
+      chatInput: { restore, markAttachmentFailure },
+      snapshot,
+      keepMessageCount: 0,
+      setSendPending: vi.fn(),
+      showToast,
+      error: new UploadAssetError(
+        "network",
+        file,
+        "文件上传失败，请重试",
+        true,
+      ),
+    });
+
+    expect(restore).toHaveBeenCalledWith(snapshot);
+    expect(markAttachmentFailure).toHaveBeenCalledWith(
+      file,
+      "文件上传失败，请重试",
+      true,
+    );
+    expect(showToast).toHaveBeenCalledWith("文件上传失败，请重试");
   });
 });
 

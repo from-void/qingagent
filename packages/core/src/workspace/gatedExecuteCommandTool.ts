@@ -16,9 +16,11 @@ import {
   executeCommandInputSchema,
 } from "../confirm/commandConfirmation.js";
 import {
+  resolveEffectiveIsolation,
   sessionWorkspaceDir,
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
+import { createInteractiveAuthDetector } from "./interactiveAuthSignal.js";
 import { formatCommandDuration } from "./backgroundCommandLimits.js";
 import {
   commandTimeoutClampNotice,
@@ -100,6 +102,12 @@ export interface GatedCommandResult {
    * ("可能是你没及时点确认"),真机上已实证。必须单独成态。
    */
   killed?: boolean;
+  /**
+   * 命令已转入交互式授权等待(没有可复用的登录态),被我们主动收口。
+   * 它既不是命令自身失败、也不是我们的超时墙、更不是用户取消,必须单独成态——
+   * 否则模型只能从"超时"里瞎猜,用户白等两分钟还拿到错误结论(0729 语雀真机实证)。
+   */
+  authRequired?: true;
   output: string;
   pid?: string;
   background?: true;
@@ -118,9 +126,15 @@ export interface GatedCommandResult {
  * - `command`：命令自己跑完退出(含它自身的非零失败，如 CLI 自己的授权超时)；
  * - `system-timeout`：超过我们的超时上限被终止；
  * - `signal`：被信号打死(沙箱写墙/OOM/外部 kill)；
- * - `user-cancel`：用户或系统取消。
+ * - `user-cancel`：用户或系统取消；
+ * - `auth-required`：命令转入交互式授权等待，被我们主动收口(只可能出现在前台执行)。
  */
-export type CommandTerminator = "command" | "system-timeout" | "signal" | "user-cancel";
+export type CommandTerminator =
+  | "command"
+  | "system-timeout"
+  | "signal"
+  | "user-cancel"
+  | "auth-required";
 
 /**
  * 凭据/登录类失败的如实说明。与 killedCommandNotice 同一位置、同一风格:
@@ -132,9 +146,32 @@ export function credentialFailureNoticeFor(result: {
   output: string;
   timedOut?: boolean;
   killed?: boolean;
+  interactiveAuthDetected?: boolean;
+  isolated?: boolean;
 }): string {
   const diagnosis = diagnoseCredentialFailure(result);
   return diagnosis ? credentialFailureNotice(diagnosis) : "";
+}
+
+/**
+ * 命中"已转入交互式授权"并被我们主动收口时的如实说明。
+ *
+ * 与其它归因同一位置、同一风格:先讲我们做了什么(收口)、再堵死错误归因(不是超时、不是取消、
+ * 也不是命令自身失败)、最后给唯一正确的出路。行为约束(别反复重试 / 别 --force / 别重复出码)
+ * 由凭据诊断那条线统一给,这里不重复念。
+ */
+export function authRequiredCommandNotice(input: {
+  durationMs?: number;
+  timeoutMs: number;
+}): string {
+  const elapsed = typeof input.durationMs === "number"
+    ? `,实际只用了 ${formatElapsedDuration(input.durationMs)}`
+    : "";
+  return [
+    `命令已进入交互式授权等待(它没有读到可复用的登录态),我已主动结束本次前台执行${elapsed}。`,
+    `这不是系统超时(本次上限 ${formatCommandDuration(input.timeoutMs)},未触发),不是用户取消,也不是命令自身跑完失败。`,
+    "继续在前台等下去没有意义:那边等的是一次永远不会在这里发生的扫码/网页确认。",
+  ].join("");
 }
 
 /** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
@@ -248,6 +285,7 @@ function commandResult(input: {
   cancelled?: boolean;
   timedOut?: boolean;
   killed?: boolean;
+  authRequired?: boolean;
   pid?: string;
   background?: true;
   terminatedBy?: CommandTerminator;
@@ -261,6 +299,7 @@ function commandResult(input: {
     cancelled: input.cancelled ?? false,
     timedOut: input.timedOut ?? false,
     ...(input.killed ? { killed: true } : {}),
+    ...(input.authRequired ? { authRequired: true as const } : {}),
     output: input.output,
     ...(input.pid ? { pid: input.pid } : {}),
     ...(input.background ? { background: true as const } : {}),
@@ -390,7 +429,12 @@ export function createGatedExecuteCommandTool({
       "mastra_workspace_get_process_output for the auth URL and present it via show_qr. " +
       `Timeouts: use timeoutSeconds (unit = SECONDS, not milliseconds); foreground is capped at ${
         FOREGROUND_TIMEOUT_LIMIT_SECONDS
-      } seconds and larger values are clamped, so run long waits with background:true instead.`,
+      } seconds and larger values are clamped, so run long waits with background:true instead. ` +
+      "Read-only identity/status probes (whoami, `auth status`, `login --check`, `who am i`) must " +
+      "pass timeoutSeconds: 5 — they either answer instantly or have no reusable login at all. " +
+      "If such a command slips into an interactive authorization wait, it is terminated immediately " +
+      "and returns terminatedBy: \"auth-required\"; do not retry it, do not add --force, and do not " +
+      "re-issue QR codes.",
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
       // 用户主动勾了「以后不用再问我」时不再要求确认。默认(未勾)一律照旧弹卡——
@@ -580,14 +624,40 @@ export function createGatedExecuteCommandTool({
         return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持命令执行");
       }
       const startedAt = Date.now();
+      // 交互式授权快速收口:只装在**前台**这条路上。后台(background:true)是用户真心要走
+      // 扫码授权时的正道,那条分支在上面就 return 了,永远走不到这里,不会被掐断。
+      const authDetector = createInteractiveAuthDetector();
+      const authAbort = new AbortController();
+      const outerAbortSignal = context?.abortSignal;
+      // 与既有 abortSignal 链路合流:外层取消照旧透传下去,不另造终止机制。
+      const forwardOuterAbort = () => authAbort.abort(outerAbortSignal?.reason);
+      if (outerAbortSignal) {
+        if (outerAbortSignal.aborted) forwardOuterAbort();
+        else outerAbortSignal.addEventListener("abort", forwardOuterAbort, { once: true });
+      }
+      let authRequiredAt: number | null = null;
+      const noteInteractiveAuth = (data: string): void => {
+        if (authRequiredAt !== null) return;
+        const hit = authDetector.push(data);
+        if (!hit) return;
+        authRequiredAt = Date.now();
+        // 命中的原文只进诊断日志,不进用户可见文案(UI 铁律:不暴露原始英文)。
+        console.warn("[gatedExecuteCommandTool] 命中交互式授权信号,前台命令提前收口", {
+          signal: hit,
+          elapsedMs: authRequiredAt - startedAt,
+          timeoutMs: timeoutPolicy.effectiveMs,
+        });
+        authAbort.abort(new Error("interactive authorization required"));
+      };
       try {
         const result = await sandbox.executeCommand(input.command, [], {
           cwd,
           ...perCallCredentialEnv,
           timeout: timeoutPolicy.effectiveMs,
           maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-          abortSignal: context?.abortSignal,
+          abortSignal: authAbort.signal,
           onStdout: async (data) => {
+            noteInteractiveAuth(data);
             await safeCustom(writer, {
               type: "data-sandbox-stdout",
               data: { output: data, timestamp: Date.now(), toolCallId },
@@ -595,6 +665,7 @@ export function createGatedExecuteCommandTool({
             });
           },
           onStderr: async (data) => {
+            noteInteractiveAuth(data);
             await safeCustom(writer, {
               type: "data-sandbox-stderr",
               data: { output: data, timestamp: Date.now(), toolCallId },
@@ -602,51 +673,69 @@ export function createGatedExecuteCommandTool({
             });
           },
         });
-        const timedOut = result.timedOut === true;
+        // 用户取消优先于一切:哪怕同一瞬间也命中了授权信号,也照实说"用户取消"。
+        const cancelledByUser = outerAbortSignal?.aborted === true;
+        const authRequired = !cancelledByUser && authRequiredAt !== null;
+        const timedOut = !authRequired && result.timedOut === true;
         // 只有我们自己的 abortSignal 触发才叫"取消"。被信号打死(killed)另算一态:
         // 沙箱写墙拒绝 / OOM / 外部 kill 都会走到这里,把它说成"用户取消"会让模型
         // 反过来责怪用户没点确认(0729 真机 P1 实证:319ms 被 SIGKILL、exitCode 128)。
-        const cancelled = !timedOut && context?.abortSignal?.aborted === true;
-        const killed = !timedOut && !cancelled && result.killed === true;
+        const cancelled = !authRequired && !timedOut && cancelledByUser;
+        // 我们为收口而 abort,底层多半会报 killed:true;那是我们自己动的手,不是写墙/OOM。
+        const killed = !authRequired && !timedOut && !cancelled && result.killed === true;
         const commandOutput = formatCommandOutput(result, input.tail);
         const durationMs = typeof result.executionTimeMs === "number"
           ? result.executionTimeMs
           : Date.now() - startedAt;
         const succeeded = result.success && result.exitCode === 0 &&
-          !cancelled && !timedOut && !killed;
+          !cancelled && !timedOut && !killed && !authRequired;
         // 失败态分档:谁终止的必须一次说清,否则模型会替系统编理由(把 CLI 自己的
         // 非零退出说成"我们超时"，或把被信号打死说成"用户取消")。
         const terminatedBy: CommandTerminator = timedOut
           ? "system-timeout"
           : cancelled
             ? "user-cancel"
-            : killed
-              ? "signal"
-              : "command";
+            : authRequired
+              ? "auth-required"
+              : killed
+                ? "signal"
+                : "command";
         const attributionNotice = timedOut
           ? timedOutCommandNotice(timeoutPolicy.effectiveMs)
           : cancelled
             ? cancelledCommandNotice()
-            : killed
-              ? killedCommandNotice(result.exitCode)
-              : succeeded
-                ? ""
-                : commandSelfFailureNotice({
-                  exitCode: result.exitCode,
-                  durationMs,
-                  timeoutMs: timeoutPolicy.effectiveMs,
-                });
+            : authRequired
+              ? authRequiredCommandNotice({
+                durationMs,
+                timeoutMs: timeoutPolicy.effectiveMs,
+              })
+              : killed
+                ? killedCommandNotice(result.exitCode)
+                : succeeded
+                  ? ""
+                  : commandSelfFailureNotice({
+                    exitCode: result.exitCode,
+                    durationMs,
+                    timeoutMs: timeoutPolicy.effectiveMs,
+                  });
         // 凭据诊断与终止方归因是两个维度:前者说"这次登录卡在哪一步",后者说"谁终止的"。
         // 只在非成功回合追加,成功回合不打扰模型。
         const credentialNotice = succeeded
           ? ""
-          : credentialFailureNoticeFor({ output: commandOutput, timedOut, killed });
+          : credentialFailureNoticeFor({
+            output: commandOutput,
+            timedOut,
+            killed,
+            interactiveAuthDetected: authRequired,
+            isolated: resolveEffectiveIsolation() !== "none",
+          });
         const terminalResult = commandResult({
           success: succeeded,
           exitCode: result.exitCode,
           cancelled,
           timedOut,
           killed,
+          authRequired,
           terminatedBy,
           timeoutMs: timeoutPolicy.effectiveMs,
           timeoutClamped: timeoutPolicy.clamped,
@@ -665,25 +754,47 @@ export function createGatedExecuteCommandTool({
         });
         return terminalResult;
       } catch (error) {
-        const timedOut = error instanceof SandboxTimeoutError;
-        const cancelled = !timedOut && context?.abortSignal?.aborted === true;
+        // 我们主动 abort 后,底层多半是抛 AbortError 而不是正常 resolve;两条路都要认出
+        // 这是"授权收口",否则又会退化成一句含糊的英文 Error 甩给模型。
+        const cancelledByUser = outerAbortSignal?.aborted === true;
+        const authRequired = !cancelledByUser && authRequiredAt !== null;
+        const timedOut = !authRequired && error instanceof SandboxTimeoutError;
+        const cancelled = !authRequired && !timedOut && cancelledByUser;
         const reason = error instanceof Error ? error.message : String(error);
         const durationMs = Date.now() - startedAt;
         // 原始英文只进诊断日志；回给模型/用户的是分档后的中文归因。
         console.warn("[gatedExecuteCommandTool] 前台命令异常终止", {
           timedOut,
           cancelled,
+          authRequired,
           durationMs,
           timeoutMs: timeoutPolicy.effectiveMs,
           errorType: error instanceof Error ? error.name : "unknown",
           message: reason,
         });
+        const authNotice = authRequired
+          ? [
+            authRequiredCommandNotice({ durationMs, timeoutMs: timeoutPolicy.effectiveMs }),
+            credentialFailureNoticeFor({
+              output: "",
+              interactiveAuthDetected: true,
+              isolated: resolveEffectiveIsolation() !== "none",
+            }),
+          ].filter(Boolean).join("\n")
+          : "";
         const terminalResult = commandResult({
           success: false,
           exitCode: -1,
           cancelled,
           timedOut,
-          terminatedBy: timedOut ? "system-timeout" : cancelled ? "user-cancel" : undefined,
+          authRequired,
+          terminatedBy: timedOut
+            ? "system-timeout"
+            : cancelled
+              ? "user-cancel"
+              : authRequired
+                ? "auth-required"
+                : undefined,
           timeoutMs: timeoutPolicy.effectiveMs,
           timeoutClamped: timeoutPolicy.clamped,
           durationMs,
@@ -692,7 +803,9 @@ export function createGatedExecuteCommandTool({
               ? timedOutCommandNotice(timeoutPolicy.effectiveMs)
               : cancelled
                 ? cancelledCommandNotice()
-                : `Error: ${reason}`,
+                : authRequired
+                  ? authNotice
+                  : `Error: ${reason}`,
             timeoutClampNotice,
           ].filter(Boolean).join("\n"),
         });
@@ -706,6 +819,9 @@ export function createGatedExecuteCommandTool({
           },
         });
         return terminalResult;
+      } finally {
+        // 外层 signal 是长寿对象(整轮 agent 共用),监听器必须摘干净,否则多命令会堆积。
+        outerAbortSignal?.removeEventListener("abort", forwardOuterAbort);
       }
       } finally {
         stopHeartbeat();

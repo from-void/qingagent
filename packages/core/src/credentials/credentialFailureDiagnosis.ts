@@ -21,6 +21,11 @@
 export type CredentialFailureKind =
   /** 授权已完成、凭据已拿到,但没能保存下来(写盘被拒 / 系统凭据存取失败)。 */
   | "credential-save-failed"
+  /**
+   * 命令没读到可复用的登录态,已自行转入交互式 OAuth 等待,被我们主动收口。
+   * 这一档**不靠猜输出**:由前台流式识别给出确定信号(见 interactiveAuthSignal.ts)。
+   */
+  | "interactive-auth-required"
   /** 命令被 qingagent 自己的超时或信号终止,不是对端的授权超时。 */
   | "sandbox-timeout"
   /** CLI 自己判定授权超时(它等不到扫码结果)。 */
@@ -53,6 +58,17 @@ export interface CredentialFailureSignals {
   timedOut?: boolean;
   /** 进程被信号终止。 */
   killed?: boolean;
+  /**
+   * 前台流式识别已确认"命令转入交互式授权等待",并由我们主动收口。
+   * 这是**确定信号**而非文本猜测,优先级仅次于"凭据已到手却存不下"。
+   */
+  interactiveAuthDetected?: boolean;
+  /**
+   * 本次执行确实处于文件隔离形态(seatbelt/bwrap)。
+   * 只用于把"读不到本机登录态"的说法从猜测升级为有依据的说明;
+   * 拿不到这个事实时文案退回纯陈述,绝不臆断成因。
+   */
+  isolated?: boolean;
 }
 
 /** 扫码已完成、凭据已到手的正向信号。命中即禁止再把失败说成"用户没扫码"。 */
@@ -140,11 +156,19 @@ const COPY: Record<
     authCompleted: true,
     retryable: false,
   },
+  // 措辞只讲我们确知的事实。历史上这里写过"不是你的授权出了问题"——我们根本没有
+  // 任何证据支持这个断言(0729 语雀真机里恰恰就是登录态读不到),必须删掉。
   "sandbox-timeout": {
-    message: "这条命令等待太久，已经被我这边结束了，不是你的授权出了问题。",
+    message: "这条命令等待太久，已经被我这边结束了。",
     nextStep: "需要长时间等待的登录命令我会放到后台跑，稍后再看结果。",
     authCompleted: false,
     retryable: true,
+  },
+  "interactive-auth-required": {
+    message: "当前命令没有读到可复用的登录状态，已经进入重新授权流程。",
+    nextStep: "我不会在这里干等，需要的话我把授权放到后台跑，再把授权入口给你。",
+    authCompleted: false,
+    retryable: false,
   },
   "cli-auth-timeout": {
     message: "这个工具没能在有效期内确认到授权结果，已经自行结束等待。",
@@ -166,6 +190,16 @@ const COPY: Record<
   },
 };
 
+/**
+ * 隔离形态下的用户可见说法。
+ *
+ * 定稿取舍(UI 铁律:不得向用户暴露内部机制词):「隔离模式」「系统 Keychain」都是实现名词,
+ * 用户看不懂也帮不上忙,一律不出现在用户文案里;换成用户能懂的「当前的安全设置」「你在终端里的
+ * 登录状态」。给模型的事实说明则保留技术措辞(见 credentialFailureNotice),模型需要准确信息。
+ */
+const ISOLATED_INTERACTIVE_AUTH_MESSAGE =
+  "当前的安全设置下读不到你在终端里的登录状态，所以这个工具要重新授权一次。";
+
 /** 归因主入口。判不出来返回 null。 */
 export function diagnoseCredentialFailure(
   signals: CredentialFailureSignals,
@@ -177,6 +211,8 @@ export function diagnoseCredentialFailure(
     // 已经拿到凭据之后的保存失败,和"没扫码"是两回事,必须单独成档,而且优先级最高。
     if (authCompleted && matchesAny(output, PERSIST_FAILURE_PATTERNS)) return "credential-save-failed";
     if (authCompleted && matchesAny(output, PERMISSION_PATTERNS)) return "credential-save-failed";
+    // 流式识别给的是确定信号,不是从文本里猜,所以排在所有文本模式之前。
+    if (signals.interactiveAuthDetected === true) return "interactive-auth-required";
     // 我们自己的执行墙掐断,绝不能算成对端授权超时;只在确实是登录类命令时才出声。
     if ((signals.timedOut === true || signals.killed === true) && hasCredentialContext(output)) {
       return "sandbox-timeout";
@@ -189,12 +225,18 @@ export function diagnoseCredentialFailure(
   if (!kind) return null;
 
   const copy = COPY[kind];
+  // 只有"确实处于隔离形态 + 确实命中授权等待"两个事实同时成立,才敢把成因说到"读不到
+  // 本机登录态"这一层;缺任何一个就退回纯陈述句,不猜。
+  const userMessage =
+    kind === "interactive-auth-required" && signals.isolated === true
+      ? ISOLATED_INTERACTIVE_AUTH_MESSAGE
+      : copy.message;
   return {
     kind,
     // 只要输出里出现过"已拿到凭据"的正向信号,就永远不允许再退回"用户没扫码"。
     authCompleted: copy.authCompleted || authCompleted,
     retryable: copy.retryable && !authCompleted,
-    userMessage: copy.message,
+    userMessage,
     userNextStep: copy.nextStep,
   };
 }
@@ -215,6 +257,18 @@ export function credentialFailureNotice(diagnosis: CredentialFailureDiagnosis): 
         "重复出码只会让用户白等,失败点根本不在扫码。",
       "立即停止本次登录编排,先如实向用户说明保存失败,再决定下一步;" +
         "不要靠反复重试碰运气。",
+    );
+  }
+  if (diagnosis.kind === "interactive-auth-required") {
+    // 给模型的事实说明可以技术化——它需要准确信息才能应对;用户可见的那句仍是 userMessage。
+    lines.push(
+      "事实核对:该命令没有拿到可复用的本机登录态(隔离执行时读不到宿主的系统钥匙串/凭据文件)," +
+        "于是自行转入交互式 OAuth 等待;我们已在识别到这一点后主动结束了它,不是它自己失败,也不是我们的超时墙。",
+      "行为约束:不要反复重试 whoami 之类的登录态查询;不要改用 --force 或任何会重建客户端、" +
+        "强制重新认证的参数;不要重复生成二维码或反复重发授权链接——重复只会让用户白等,状态不会因此改变。",
+      "正确出路:如果用户确实要重新授权,把授权命令改成 background:true 后台执行," +
+        "再用 mastra_workspace_get_process_output 轮询拿到授权链接/二维码并交给用户;" +
+        "如果用户只是想复用终端里已有的登录态,如实说明当前设置下读不到,再问他要不要调整,不要自作主张。",
     );
   }
   if (!diagnosis.retryable && !diagnosis.authCompleted) {

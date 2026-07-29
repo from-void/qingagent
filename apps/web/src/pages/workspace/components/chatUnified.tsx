@@ -643,6 +643,8 @@ export function UCommand({
       ? body.signal ? `已终止（${body.signal}）` : "已终止"
       : terminalKind === "aborted"
         ? "已中止"
+        : terminalKind === "authRequired"
+          ? "需要重新授权"
         : terminalKind === "timedOut"
           ? "已超时"
           : terminalKind === "failed"
@@ -662,10 +664,13 @@ export function UCommand({
       ? ICO.cancel
       : terminalKind === "killed" || terminalKind === "aborted"
         ? ICO.stop
-        : terminalKind === "failed" || terminalKind === "timedOut"
+        : terminalKind === "failed" || terminalKind === "timedOut" ||
+            terminalKind === "authRequired"
           ? ICO.stop
           : ICO.cmd;
-  const showOutput = !failed && terminalKind !== "timedOut" && terminalKind !== "aborted";
+  // 授权收口的输出里只有半截交互提示与英文链接,展开给用户没有意义,与超时/中止同款隐藏。
+  const showOutput = !failed && terminalKind !== "timedOut" && terminalKind !== "aborted" &&
+    terminalKind !== "authRequired";
   const expandable = Boolean(body.command || (showOutput && body.outputTail));
   return (
     <UCard icon={icon} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>

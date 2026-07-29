@@ -1,4 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  revealExportDownload,
+  saveExportDownload,
+} from "./exportDownloadBridge.js";
 
 type UpdateStatusPayload = {
   kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
@@ -56,6 +60,8 @@ async function writeDesktopConfigValue(
 contextBridge.exposeInMainWorld("electron", {
   platform: process.platform,
   isDesktop: true,
+  saveExportDownload,
+  revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),
   exportDiagnostics: (opts: { privacyLevel: "L1" | "L2"; report?: string; sessionIds?: string[] }) =>
     ipcRenderer.invoke("qingagent:export-diagnostics", opts),

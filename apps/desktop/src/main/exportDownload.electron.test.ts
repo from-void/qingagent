@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import {
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const electronExecutable = require("electron") as string;
+const RESULT_PREFIX = "QINGAGENT_EXPORT_DOWNLOAD_ELECTRON_RESULT=";
+
+test("真实 Electron/Chromium Blob 下载落成 md/docx/pdf 成品并为重名自动编号", async () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "qingagent-electron-download-test-"));
+  const fixtureBundle = path.join(tempRoot, "fixture.mjs");
+  const preloadBundle = path.join(tempRoot, "preload.cjs");
+  const downloadsDirectory = path.join(tempRoot, "Downloads");
+  const userDataDirectory = path.join(tempRoot, "user-data");
+
+  try {
+    await build({
+      entryPoints: [path.join(__dirname, "exportDownload.electron.fixture.ts")],
+      outfile: fixtureBundle,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      external: ["electron"],
+      logLevel: "silent",
+    });
+    await build({
+      entryPoints: [path.join(__dirname, "exportDownload.electron.preload.fixture.ts")],
+      outfile: preloadBundle,
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      target: "node22",
+      external: ["electron"],
+      logLevel: "silent",
+    });
+
+    const result = spawnSync(
+      electronExecutable,
+      [
+        "--headless",
+        "--no-sandbox",
+        "--disable-gpu",
+        `--user-data-dir=${userDataDirectory}`,
+        fixtureBundle,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          ELECTRON_DISABLE_SANDBOX: "1",
+          QINGAGENT_EXPORT_TEST_DIR: downloadsDirectory,
+          QINGAGENT_EXPORT_TEST_PRELOAD: preloadBundle,
+        },
+      },
+    );
+    assert.equal(
+      result.status,
+      0,
+      `Electron fixture failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const resultLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith(RESULT_PREFIX));
+    assert.ok(resultLine, `missing Electron result\nstdout:\n${result.stdout}`);
+    const payload = JSON.parse(resultLine.slice(RESULT_PREFIX.length)) as {
+      savedFilenames: string[];
+    };
+    assert.deepEqual(payload.savedFilenames, [
+      "测试文档_20260729.md",
+      "测试文档_20260729.docx",
+      "测试文档_20260729.pdf",
+      "测试文档_20260729 (2).pdf",
+    ]);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

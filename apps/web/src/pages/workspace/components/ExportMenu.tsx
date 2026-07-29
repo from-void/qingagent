@@ -3,6 +3,7 @@ import type { PmDoc, PmNode } from "@qingagent/pm-schema";
 import { chatInputBus } from "../../../system/chatInputBus";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useSessionStore } from "../../../stores/sessionStore";
+import type { ToastShow } from "../../../system/ToastProvider";
 
 // 导出二级菜单:确定性格式(PDF/Word/TXT)直接走后端导出下载;
 // 平台技能(飞书,启用了才显示)点了发 query 回对话,交给 agent 走流程。
@@ -11,15 +12,46 @@ interface Fmt {
   id: "pdf" | "docx" | "html" | "markdown" | "txt";
   label: string;
   ext: string;
-  doneToast: string;
+  savedToast: string;
+  startedToast: string;
 }
 
 const FORMATS: Fmt[] = [
-  { id: "pdf", label: "导出 PDF", ext: "pdf", doneToast: "PDF 已生成" },
-  { id: "docx", label: "导出 Word", ext: "docx", doneToast: "Word 已生成" },
-  { id: "html", label: "导出 HTML", ext: "html", doneToast: "HTML 已生成" },
-  { id: "markdown", label: "导出 Markdown", ext: "md", doneToast: "Markdown 已生成" },
-  { id: "txt", label: "导出 TXT", ext: "txt", doneToast: "TXT 已生成" },
+  {
+    id: "pdf",
+    label: "导出 PDF",
+    ext: "pdf",
+    savedToast: "PDF 已保存",
+    startedToast: "PDF 已开始下载",
+  },
+  {
+    id: "docx",
+    label: "导出 Word",
+    ext: "docx",
+    savedToast: "Word 已保存",
+    startedToast: "Word 已开始下载",
+  },
+  {
+    id: "html",
+    label: "导出 HTML",
+    ext: "html",
+    savedToast: "HTML 已保存",
+    startedToast: "HTML 已开始下载",
+  },
+  {
+    id: "markdown",
+    label: "导出 Markdown",
+    ext: "md",
+    savedToast: "Markdown 已保存",
+    startedToast: "Markdown 已开始下载",
+  },
+  {
+    id: "txt",
+    label: "导出 TXT",
+    ext: "txt",
+    savedToast: "TXT 已保存",
+    startedToast: "TXT 已开始下载",
+  },
 ];
 const SPECIALIZED_DIAGRAM_OVERLAY_NOTICE = "specialized-diagram-overlay";
 
@@ -35,7 +67,7 @@ const PLATFORM_TARGETS: Array<{ skill: string; label: string; query: string }> =
 export interface ExportMenuProps {
   anchorRef?: RefObject<HTMLElement>;
   onClose: () => void;
-  onAction: (msg: string, durationMs?: number) => void;
+  onAction: ToastShow;
   prepareDrawioForExport?: (
     onProgress: (current: number, total: number) => void,
   ) => Promise<void>;
@@ -115,24 +147,61 @@ export function ExportMenu({
         res.headers.get("X-Qingagent-Export-Notice") === SPECIALIZED_DIAGRAM_OVERLAY_NOTICE;
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${safeFilename(sessionTitle || "qingagent-export")}_${dateStamp()}.${f.ext}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      onAction(
-        lossyColumns
-          ? "Markdown 已生成 · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。"
-          : specializedDiagramOverlayFallback
-            ? `${f.doneToast} · 专有图表已保留完整语义，画布布局未应用。`
-          : f.doneToast,
-        // 导出经服务端往返后才弹成功 toast,默认 1.6s 太短——用户在导出等待期常瞥开、
-        // 回看时 toast 已消失,显得"导出无反馈"(e2e #11 在 V2/V3/V5/V12/V13/V17 反复报)。
-        // 成功反馈给 3.2s,足够回看确认;有损分栏信息量更大给 7s。
-        lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
-      );
+      const filename = `${safeFilename(sessionTitle || "qingagent-export")}_${dateStamp()}.${f.ext}`;
+      try {
+        if (window.electron?.isDesktop) {
+          if (!window.electron.saveExportDownload) {
+            throw new Error("Desktop export download bridge unavailable");
+          }
+          setBusyText("正在保存…");
+          const result = await window.electron.saveExportDownload({
+            blobUrl: url,
+            filename,
+            format: f.id,
+          });
+          if (!result.saved) {
+            onAction(
+              result.reason === "cancelled"
+                ? "导出已取消"
+                : "导出未保存 · 请重试",
+            );
+            return;
+          }
+          const message = exportResultMessage(
+            f.savedToast,
+            lossyColumns,
+            specializedDiagramOverlayFallback,
+          );
+          onAction({
+            message,
+            durationMs: lossyColumns || specializedDiagramOverlayFallback ? 7000 : 5000,
+            action: window.electron.revealExportDownload
+              ? {
+                  label: "打开所在文件夹",
+                  onClick: () => revealSavedExport(result.revealToken, onAction),
+                }
+              : undefined,
+          });
+        } else {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          onAction(
+            exportResultMessage(
+              f.startedToast,
+              lossyColumns,
+              specializedDiagramOverlayFallback,
+            ),
+            lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
+          );
+        }
+      } finally {
+        // 桌面端必须等 DownloadItem done 后才能释放 Blob；浏览器端在 click 返回后即可释放。
+        URL.revokeObjectURL(url);
+      }
       onClose();
     } catch (err) {
       console.error("[export-menu] download failed", err);
@@ -181,6 +250,35 @@ export function ExportMenu({
       ))}
     </div>
   );
+}
+
+function exportResultMessage(
+  base: string,
+  lossyColumns: boolean,
+  specializedDiagramOverlayFallback: boolean,
+): string {
+  if (lossyColumns) {
+    return `${base} · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。`;
+  }
+  if (specializedDiagramOverlayFallback) {
+    return `${base} · 专有图表已保留完整语义，画布布局未应用。`;
+  }
+  return base;
+}
+
+function revealSavedExport(revealToken: string, onAction: ToastShow): void {
+  const reveal = window.electron?.revealExportDownload;
+  if (!reveal) {
+    onAction("无法定位导出文件");
+    return;
+  }
+  void reveal(revealToken)
+    .then((revealed) => {
+      if (!revealed) onAction("文件已被移动或删除");
+    })
+    .catch(() => {
+      onAction("无法定位导出文件");
+    });
 }
 
 export function docHasNodeType(doc: PmDoc | null, type: PmNode["type"]): boolean {

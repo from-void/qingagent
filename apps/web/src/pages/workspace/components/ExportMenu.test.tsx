@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { ExportMenu, docHasNodeType } from "./ExportMenu";
+import type { ToastShow, ToastShowOptions } from "../../../system/ToastProvider";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,6 +34,7 @@ describe("ExportMenu", () => {
     }
     host?.remove();
     host = null;
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
     vi.restoreAllMocks();
   });
 
@@ -117,7 +119,7 @@ describe("ExportMenu", () => {
     });
 
     expect(onAction).toHaveBeenCalledWith(
-      "HTML 已生成 · 专有图表已保留完整语义，画布布局未应用。",
+      "HTML 已开始下载 · 专有图表已保留完整语义，画布布局未应用。",
       7000,
     );
   });
@@ -207,22 +209,122 @@ describe("ExportMenu", () => {
 
     expect(flushPendingDocSave).toHaveBeenCalledTimes(1);
     expect(onAction).toHaveBeenCalledWith(
-      "Markdown 已生成 · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。",
+      "Markdown 已开始下载 · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。",
       7000,
     );
     expect(onAction).not.toHaveBeenCalledWith(expect.stringContaining("Word"), expect.anything());
+  });
+
+  it("桌面端等 DownloadItem completed 后才提示已保存，并在收口后释放 Blob URL", async () => {
+    let finishDownload: ((result: ElectronExportDownloadResult) => void) | undefined;
+    const saveExportDownload = vi.fn(() => new Promise<ElectronExportDownloadResult>((resolve) => {
+      finishDownload = resolve;
+    }));
+    const revealExportDownload = vi.fn(async () => true);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        platform: "win32",
+        isDesktop: true,
+        saveExportDownload,
+        revealExportDownload,
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response(new Blob(["%PDF"])));
+    vi.stubGlobal("fetch", fetchMock);
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURL, configurable: true });
+    const onAction = vi.fn();
+    await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction as ToastShow} />);
+
+    const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-pdf"]');
+    if (!item) throw new Error("PDF export item not found");
+    await act(async () => {
+      item.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(saveExportDownload).toHaveBeenCalledTimes(1);
+    });
+    expect(item.textContent).toContain("正在保存");
+    expect(onAction).not.toHaveBeenCalledWith(expect.objectContaining({ message: "PDF 已保存" }));
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishDownload?.({
+        saved: true,
+        filename: "测试文档_20260729.pdf",
+        revealToken: "reveal-pdf",
+      });
+      await Promise.resolve();
+    });
+
+    const success = onAction.mock.calls
+      .map(([input]) => input)
+      .find((input): input is ToastShowOptions => (
+        typeof input === "object" && input?.message === "PDF 已保存"
+      ));
+    expect(success).toBeDefined();
+    expect(success?.action?.label).toBe("打开所在文件夹");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:export");
+
+    success?.action?.onClick();
+    await vi.waitFor(() => {
+      expect(revealExportDownload).toHaveBeenCalledWith("reveal-pdf");
+    });
+  });
+
+  it.each([
+    ["cancelled", "导出已取消"],
+    ["interrupted", "导出未保存 · 请重试"],
+  ] as const)("桌面端 %s 不误报成功并给可读失败文案", async (reason, expectedMessage) => {
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        platform: "win32",
+        isDesktop: true,
+        saveExportDownload: vi.fn(async () => ({
+          saved: false as const,
+          filename: "测试文档_20260729.docx",
+          reason,
+        })),
+        revealExportDownload: vi.fn(async () => true),
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["PK"]))));
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    const onAction = vi.fn();
+    await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction as ToastShow} />);
+
+    const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-docx"]');
+    if (!item) throw new Error("Word export item not found");
+    await act(async () => {
+      item.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(onAction).toHaveBeenCalledWith(expectedMessage);
+    });
+    expect(onAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("已保存") }),
+    );
   });
 });
 
 function ExportMenuHarness({
   onClose,
-  onAction = () => undefined,
+  onAction = (() => "test-toast") as ToastShow,
   prepareDrawioForExport,
   flushPendingDocSave,
   getLatestPmDoc,
 }: {
   onClose: () => void;
-  onAction?: (message: string, durationMs?: number) => void;
+  onAction?: ToastShow;
   prepareDrawioForExport?: (
     onProgress: (current: number, total: number) => void,
   ) => Promise<void>;

@@ -629,10 +629,7 @@ export function useWorkspacePageController() {
   );
   const toast = useToast();
   const confirm = useConfirm();
-  const showToast = useCallback(
-    (msg: string, durationMs?: number) => toast.show(msg, durationMs),
-    [toast],
-  );
+  const showToast = toast.show;
   useEffect(() => {
     if (!tiptapEditor || tiptapEditor.isDestroyed) return;
     return installAnnotationGroupDecorations(

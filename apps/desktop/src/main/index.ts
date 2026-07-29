@@ -69,8 +69,15 @@ import { computeMainWindowSize } from "./windowSize.js";
 import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
+import {
+  ExportDownloadCoordinator,
+  EXPORT_DOWNLOAD_CANCEL_CHANNEL,
+  EXPORT_DOWNLOAD_REGISTER_CHANNEL,
+  EXPORT_DOWNLOAD_REVEAL_CHANNEL,
+} from "./exportDownloadCoordinator.js";
 
 let mainWindow: BrowserWindow | null = null;
+let mainExportDownloadCoordinator: ExportDownloadCoordinator | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
 const nativeRememberGrantGate = new NativeRememberGrantGate();
 let mainWindowRememberGeneration = 0;
@@ -718,6 +725,24 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
   }
 });
 
+ipcMain.handle(EXPORT_DOWNLOAD_REGISTER_CHANNEL, (event, input: unknown) => {
+  assertTrustedRenderer(event);
+  return mainExportDownloadCoordinator?.register(event.sender, input) ?? null;
+});
+
+ipcMain.handle(EXPORT_DOWNLOAD_CANCEL_CHANNEL, (event, requestId: unknown) => {
+  assertTrustedRenderer(event);
+  return mainExportDownloadCoordinator?.cancel(event.sender, requestId) ?? false;
+});
+
+ipcMain.handle(EXPORT_DOWNLOAD_REVEAL_CHANNEL, (event, token: unknown) => {
+  assertTrustedRenderer(event);
+  const filePath = mainExportDownloadCoordinator?.resolveRevealPath(event.sender, token);
+  if (!filePath) return false;
+  shell.showItemInFolder(filePath);
+  return true;
+});
+
 ipcMain.handle("qingagent:update-quit-install", async (event) => {
   assertTrustedRenderer(event);
   return quitAndInstallUpdate();
@@ -1054,6 +1079,11 @@ async function createWindowOnce() {
     },
   });
   const contentWindow = mainWindow;
+  const exportDownloadCoordinator = new ExportDownloadCoordinator(
+    contentWindow.webContents.session,
+    { downloadsDirectory: app.getPath("downloads") },
+  );
+  mainExportDownloadCoordinator = exportDownloadCoordinator;
   const rememberGeneration = nativeRememberGrantGate.reset();
   const rememberScope = `desktop-window:${rememberGeneration}`;
   mainWindowRememberGeneration = rememberGeneration;
@@ -1074,6 +1104,10 @@ async function createWindowOnce() {
   });
 
   contentWindow.once("closed", () => {
+    exportDownloadCoordinator.dispose();
+    if (mainExportDownloadCoordinator === exportDownloadCoordinator) {
+      mainExportDownloadCoordinator = null;
+    }
     trustedRememberUiGate.clear();
     nativeRememberGrantGate.cancel(rememberGeneration);
     void import("@qingagent/server/confirmUiGrant")

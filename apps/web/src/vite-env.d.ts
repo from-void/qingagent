@@ -34,10 +34,25 @@ interface ElectronKernelVersions {
   node: string;
 }
 
+type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
+type ElectronExportDownloadResult =
+  | { saved: true; filename: string; revealToken: string }
+  | {
+      saved: false;
+      filename: string;
+      reason: "cancelled" | "interrupted" | "not-started" | "missing-file" | "window-closed";
+    };
+
 interface Window {
   electron?: {
     platform: string;
     isDesktop: boolean;
+    saveExportDownload?: (input: {
+      blobUrl: string;
+      filename: string;
+      format: ElectronExportFormat;
+    }) => Promise<ElectronExportDownloadResult>;
+    revealExportDownload?: (revealToken: string) => Promise<boolean>;
     selectFolderSource?: () => Promise<ElectronFolderSourceSelection | null>;
     exportDiagnostics?: (opts: {
       privacyLevel: "L1" | "L2";

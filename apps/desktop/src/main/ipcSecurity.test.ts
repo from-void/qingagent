@@ -48,6 +48,8 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
   assert.doesNotMatch(preload, /^\s*clientConfig\s*[,}]/m);
   assert.doesNotMatch(preload, /^\s*setClientConfig\s*:/m);
   for (const api of [
+    "saveExportDownload",
+    "revealExportDownload",
     "getDeepseekApiKey",
     "setDeepseekApiKey",
     "getCustomProvider",
@@ -71,6 +73,32 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
   ]) {
     assert.match(preload, new RegExp(`\\b${api}\\b`), `缺少具名 preload API: ${api}`);
   }
+});
+
+test("导出下载 IPC 只暴露登记/取消/定位能力，不向 renderer 暴露任意文件路径", () => {
+  const main = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
+  const downloadBridge = readFileSync(
+    path.join(__dirname, "../preload/exportDownloadBridge.ts"),
+    "utf8",
+  );
+  const contract = readFileSync(path.join(__dirname, "../exportDownloadContract.ts"), "utf8");
+
+  for (const channel of [
+    "EXPORT_DOWNLOAD_REGISTER_CHANNEL",
+    "EXPORT_DOWNLOAD_CANCEL_CHANNEL",
+    "EXPORT_DOWNLOAD_REVEAL_CHANNEL",
+  ]) {
+    assert.ok(main.includes(`ipcMain.handle(${channel}`), `主进程缺少 ${channel}`);
+  }
+  assert.match(downloadBridge, /saveExportDownload[\s\S]*EXPORT_DOWNLOAD_REGISTER_CHANNEL/);
+  assert.match(downloadBridge, /revealExportDownload[\s\S]*EXPORT_DOWNLOAD_REVEAL_CHANNEL/);
+  assert.doesNotMatch(`${preload}\n${downloadBridge}`, /showItemInFolder|setSavePath/);
+  assert.doesNotMatch(
+    contract,
+    /\bsavedPath\b|\bfilePath\b|\bpath:\s*string/,
+    "renderer 回执不得携带本机文件路径",
+  );
 });
 
 test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", () => {

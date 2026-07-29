@@ -2456,6 +2456,32 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   font: 400 12.5px/1.6 var(--font-zh-serif);
 }
 #view-workspace .ws-launch-field textarea { min-height: 150px; resize: vertical; }
+/* 字段标题行:左标题 + 右侧字段级动作(AI 起草贴在提示词框右上角) */
+#view-workspace .ws-launch-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+#view-workspace .ws-launch-ai-draft {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted var(--mark);
+  border-radius: 0;
+  background: transparent;
+  color: var(--mark);
+  cursor: pointer;
+  font: 600 12px/1.6 var(--font-zh-serif);
+}
+#view-workspace .ws-launch-ai-draft:hover:not(:disabled) {
+  border-bottom-color: var(--ink-1);
+  color: var(--ink-1);
+}
+#view-workspace .ws-launch-ai-draft:disabled {
+  border-bottom-color: var(--ink-4);
+  color: var(--ink-4);
+  cursor: default;
+}
 #view-workspace .ws-launch-field input:focus,
 #view-workspace .ws-launch-field textarea:focus { border-color: var(--mark); }
 #view-workspace .ws-launch-field input::placeholder,

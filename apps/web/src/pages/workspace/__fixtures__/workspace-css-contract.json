@@ -25,8 +25,8 @@
     ".link-hover-card"
   ],
   "skinFile": "apps/web/src/pages/workspace/workspace-ink-skin.css",
-  "skinSha256": "1dc6242d9ef4aed00fbd1eb21af2e05d7477f50a8d038a7a00fd3acd8d7e5108",
-  "skinLineCount": 3459,
+  "skinSha256": "2a1e3adc4d5949a0e01523d63400d2237e1c901f155acbe8ab7a962895a13047",
+  "skinLineCount": 3485,
   "xhsPreviewFile": "apps/web/src/pages/workspace/components/derivatives/xhsPreview.css",
   "xhsPreviewSha256": "81859058fc6601737dd152a39420c225db66a710da59f93b9154864714f41fb7",
   "xhsPreviewLineCount": 7

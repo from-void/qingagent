@@ -2105,12 +2105,12 @@ export function UIKitPage() {
           </Group>
           <Group title="未配置 key 门禁气泡(强制态)" code=".nokey-gate.is-forced / .nokey-tip / .nokey-tip-text / .nokey-tip-btn">
             <div id="view-workspace" className="uk-portal uk-send-demo" style={{ height: 150 }}>
-              <div className="ws-input-tools">
+              <div className="ws-input-tools has-nokey-gate">
                 <span className="nokey-gate is-forced">
                   <button className="wf-btn primary small" type="button" disabled>发送<ArrowRightIcon size={12} /></button>
                   <span className="nokey-tip" role="tooltip">
-                    <span className="nokey-tip-text">还没配置模型 key,无法开始写作。</span>
-                    <button className="nokey-tip-btn" type="button">去首页配置<ArrowRightIcon size={12} /></button>
+                    <span className="nokey-tip-text">当前使用中的 Kimi 还没配置 key。</span>
+                    <button className="nokey-tip-btn" type="button">切到 DeepSeek<ArrowRightIcon size={12} /></button>
                   </span>
                 </span>
               </div>

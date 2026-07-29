@@ -1,12 +1,21 @@
 // 模型 baseURL 的无副作用入口:桌面启动预热会在迁移前加载它,不能依赖 Mastra。
+import { allowGlobalModelFallback } from "./modelSourcePolicy.js";
 
-// 默认官方端点;QINGAGENT_DEEPSEEK_BASE_URL 可覆盖(自托管 / 本地 mock 端点做确定性 e2e / GLM 中转)。
+const OFFICIAL_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+const OFFICIAL_KIMI_BASE_URL = "https://api.kimi.com/coding/v1";
+
+// 默认官方端点;Web/自部署/desktop dev 可由 env 覆盖。打包 desktop 固定官方端点，
+// 自定义地址必须随 visitor key 从请求显式传入。
 export const DEEPSEEK_BASE_URL =
-  process.env.QINGAGENT_DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/v1";
+  (allowGlobalModelFallback()
+    ? process.env.QINGAGENT_DEEPSEEK_BASE_URL?.trim()
+    : undefined) || OFFICIAL_DEEPSEEK_BASE_URL;
 
 /** Kimi Coding 官方 OpenAI 兼容端点。 */
 export const KIMI_BASE_URL =
-  process.env.QINGAGENT_KIMI_BASE_URL?.trim() || "https://api.kimi.com/coding/v1";
+  (allowGlobalModelFallback()
+    ? process.env.QINGAGENT_KIMI_BASE_URL?.trim()
+    : undefined) || OFFICIAL_KIMI_BASE_URL;
 
 export type ModelProvider = "deepseek" | "kimi";
 
@@ -46,14 +55,15 @@ export function sanitizeBaseUrl(raw: string | undefined): string | undefined {
   return url.toString().replace(/\/+$/, "");
 }
 
-/** provider 选择:请求覆盖(DB 选择也由 server 注入这里) > env > DeepSeek 默认。 */
+/** provider 选择:请求覆盖(DB 选择也由 server 注入这里) > 允许时 env > DeepSeek 默认。 */
 export function resolveModelProvider(requestContext?: RequestContextLike): ModelProvider {
   const value = requestContext?.get(MODEL_OVERRIDES_CONTEXT_KEY);
   if (value && typeof value === "object") {
     const provider = (value as { provider?: unknown }).provider;
     if (provider === "kimi" || provider === "deepseek") return provider;
   }
-  return process.env.QINGAGENT_MODEL_PROVIDER?.trim().toLowerCase() === "kimi"
+  return allowGlobalModelFallback() &&
+      process.env.QINGAGENT_MODEL_PROVIDER?.trim().toLowerCase() === "kimi"
     ? "kimi"
     : "deepseek";
 }

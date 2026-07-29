@@ -77,10 +77,30 @@ test("configureDesktopRuntimeEnv 在打包态清除不安全记忆开关并锁�
   const env = {
     QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1",
     QINGAGENT_DESKTOP_PACKAGED: "0",
+    DEEPSEEK_API_KEY: "deepseek-env-key",
+    KIMI_API_KEY: "kimi-env-key",
+    QINGAGENT_MODEL_PROVIDER: "kimi",
   };
 
   configureDesktopRuntimeEnv(env, { isPackaged: true });
 
   assert.equal(env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER, undefined);
   assert.equal(env.QINGAGENT_DESKTOP_PACKAGED, "1");
+  assert.equal(env.DEEPSEEK_API_KEY, undefined);
+  assert.equal(env.KIMI_API_KEY, undefined);
+  assert.equal(env.QINGAGENT_MODEL_PROVIDER, undefined);
+});
+
+test("configureDesktopRuntimeEnv 在 desktop dev 保留模型 env 方便调试", () => {
+  const env = {
+    DEEPSEEK_API_KEY: "deepseek-env-key",
+    KIMI_API_KEY: "kimi-env-key",
+    QINGAGENT_MODEL_PROVIDER: "kimi",
+  };
+
+  configureDesktopRuntimeEnv(env);
+
+  assert.equal(env.DEEPSEEK_API_KEY, "deepseek-env-key");
+  assert.equal(env.KIMI_API_KEY, "kimi-env-key");
+  assert.equal(env.QINGAGENT_MODEL_PROVIDER, "kimi");
 });

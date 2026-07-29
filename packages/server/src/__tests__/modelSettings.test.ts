@@ -13,6 +13,9 @@ const mockCore = vi.hoisted(() => {
     SETTING_MODEL_PARAMS: "model_param_overrides",
     MODEL_OVERRIDES_CONTEXT_KEY: "modelOverrides",
     VISION_TEST_TIMEOUT_MS: 12_000,
+    allowGlobalModelFallback: (
+      env: Record<string, string | undefined> = process.env,
+    ) => !(env.QINGAGENT_RUNTIME === "desktop" && env.QINGAGENT_DESKTOP_PACKAGED === "1"),
     getAppSetting: vi.fn(async (key: string) => store.get(key) ?? null),
     setAppSetting: vi.fn(async (key: string, value: string) => {
       store.set(key, value);
@@ -60,6 +63,8 @@ vi.mock("@qingagent/core", () => mockCore);
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
 const originalKimiApiKey = process.env.KIMI_API_KEY;
 const originalProvider = process.env.QINGAGENT_MODEL_PROVIDER;
+const originalRuntime = process.env.QINGAGENT_RUNTIME;
+const originalPackaged = process.env.QINGAGENT_DESKTOP_PACKAGED;
 
 async function loadApp() {
   const { Hono } = await import("hono");
@@ -76,6 +81,8 @@ describe("modelSettingsRoutes", () => {
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.KIMI_API_KEY;
     delete process.env.QINGAGENT_MODEL_PROVIDER;
+    delete process.env.QINGAGENT_RUNTIME;
+    delete process.env.QINGAGENT_DESKTOP_PACKAGED;
   });
 
   afterEach(() => {
@@ -89,6 +96,10 @@ describe("modelSettingsRoutes", () => {
     else process.env.KIMI_API_KEY = originalKimiApiKey;
     if (originalProvider === undefined) delete process.env.QINGAGENT_MODEL_PROVIDER;
     else process.env.QINGAGENT_MODEL_PROVIDER = originalProvider;
+    if (originalRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
+    else process.env.QINGAGENT_RUNTIME = originalRuntime;
+    if (originalPackaged === undefined) delete process.env.QINGAGENT_DESKTOP_PACKAGED;
+    else process.env.QINGAGENT_DESKTOP_PACKAGED = originalPackaged;
   });
 
   it("PUT/GET 都不回传明文 DeepSeek key", async () => {
@@ -163,6 +174,52 @@ describe("modelSettingsRoutes", () => {
       provider: "deepseek",
       maskedTail: "1111",
       providers: { kimi: { maskedTail: "2222" } },
+    });
+  });
+
+  it("打包 desktop 的 settings 与 balance 都忽略 DB/env，visitor 仍可用", async () => {
+    process.env.QINGAGENT_RUNTIME = "desktop";
+    process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
+    process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
+    process.env.DEEPSEEK_API_KEY = "deepseek-env-key";
+    process.env.KIMI_API_KEY = "kimi-env-key";
+    mockCore.store.set(mockCore.SETTING_MODEL_PROVIDER, "kimi");
+    mockCore.store.set(mockCore.SETTING_DEEPSEEK_GLOBAL_KEY, "deepseek-db-key");
+    mockCore.store.set(mockCore.SETTING_KIMI_GLOBAL_KEY, "kimi-db-key");
+    const app = await loadApp();
+
+    const settings = await app.request("/api/v1/settings/model");
+    await expect(settings.json()).resolves.toMatchObject({
+      provider: "deepseek",
+      apiKeyConfigured: false,
+      source: "none",
+      providers: {
+        deepseek: { apiKeyConfigured: false, source: "none" },
+        kimi: { apiKeyConfigured: false, source: "none" },
+      },
+    });
+
+    const noVisitor = await app.request("/api/v1/settings/model/balance");
+    expect(noVisitor.status).toBe(400);
+    await expect(noVisitor.json()).resolves.toMatchObject({
+      ok: false,
+      keySource: "none",
+    });
+
+    mockCore.modelFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      is_available: true,
+      balance_infos: [],
+    }), { status: 200 }));
+    const visitor = await app.request("/api/v1/settings/model/balance", {
+      headers: {
+        "x-model-provider": "deepseek",
+        "x-model-key": "deepseek-visitor-key",
+      },
+    });
+    expect(visitor.status).toBe(200);
+    await expect(visitor.json()).resolves.toMatchObject({
+      ok: true,
+      keySource: "visitor",
     });
   });
 

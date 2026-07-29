@@ -195,7 +195,10 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
   assert.ok(encryptedWrite > migrationStart && plaintextClear > encryptedWrite, "迁移必须先落密文再清明文");
 
   const rendererReadStart = source.indexOf("function readClientConfigValueForRenderer(");
-  const unavailableReturn = source.indexOf("if (!isDesktopModelEncryptionAvailable()) return null;", rendererReadStart);
+  const unavailableReturn = source.indexOf(
+    "if (!isDesktopModelEncryptionAvailable()) return { ok: false };",
+    rendererReadStart,
+  );
   const singleSecretRead = source.indexOf("desktopClientSecretStore.read(key)", rendererReadStart);
   assert.ok(
     unavailableReturn > rendererReadStart && singleSecretRead > unavailableReturn,
@@ -213,6 +216,19 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
   assert.match(secretStoreSource, /delete ciphertexts\[key\]/);
   assert.match(source, /\^client-config\(\?:\\\.secrets\)\?\\\.json/);
   assert.match(source, /cleanupClientConfigTempFiles\(\)/);
+});
+
+test("desktop 配置读取保留 unknown 并在就绪后发无秘密信号", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
+
+  assert.match(source, /type DesktopClientConfigReadResult[\s\S]*\{ ok: false \}/);
+  assert.match(source, /if \(!desktopClientConfigReady \|\| !isDesktopClientConfigKey\(key\)\) return \{ ok: false \}/);
+  assert.match(source, /desktopClientConfigReady = true/);
+  assert.match(source, /webContents\.send\("qingagent:client-config-ready"\)/);
+  assert.match(preload, /if \(!clientConfigReady\) throw new Error/);
+  assert.match(preload, /if \(!result \|\| result\.ok !== true\) throw new Error/);
+  assert.match(preload, /onClientConfigReady:/);
 });
 
 test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧行保真", async () => {

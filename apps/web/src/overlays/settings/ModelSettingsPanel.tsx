@@ -102,13 +102,20 @@ interface BalanceState {
   balances?: Array<{ currency: string; total: string; granted: string; toppedUp: string }>;
 }
 
-export function ModelSettingsPanel() {
+export function ModelSettingsPanel({
+  initialConfigProvider,
+}: {
+  initialConfigProvider?: ModelProvider;
+} = {}) {
   const toast = useToast();
   const confirm = useConfirm();
-  const initialProvider = getSelectedModelProvider();
+  const selectedProvider = getSelectedModelProvider();
+  const initialProvider = initialConfigProvider ?? selectedProvider;
   // modelProvider = 当前"使用中"的厂商;configProvider = 二级页正在配置的厂商(可以不是使用中那家)
-  const [modelProvider, setModelProvider] = useState<ModelProvider>(initialProvider);
-  const [view, setView] = useState<"main" | "config">("main");
+  const [modelProvider, setModelProvider] = useState<ModelProvider>(selectedProvider);
+  const [view, setView] = useState<"main" | "config">(
+    initialConfigProvider ? "config" : "main",
+  );
   const [configProvider, setConfigProvider] = useState<ModelProvider>(initialProvider);
   const [server, setServer] = useState<ServerModelSettings | null>(null);
   // 首拉是否已 settled(成功/失败都算)。口径:数据未定时一律不渲染空态/错误文案,

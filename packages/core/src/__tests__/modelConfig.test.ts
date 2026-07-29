@@ -23,6 +23,8 @@ const ENV_KEYS = [
   "QINGAGENT_MODEL_PROTOCOL",
   "QINGAGENT_MODEL_FLASH",
   "QINGAGENT_MODEL_PRO",
+  "QINGAGENT_RUNTIME",
+  "QINGAGENT_DESKTOP_PACKAGED",
 ] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -74,6 +76,8 @@ describe("modelConfig", () => {
   it("provider 按 visitor > env > 默认解析，Kimi key 同样保持 visitor > db > env", () => {
     process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
     process.env.KIMI_API_KEY = "kimi-env-key";
+    process.env.QINGAGENT_MODEL_PROTOCOL = "anthropic";
+    process.env.QINGAGENT_MODEL_FLASH = "env-model";
     expect(resolveModelProvider(requestContext())).toBe("kimi");
     expect(resolveDeepseekAuth(requestContext())).toEqual({
       apiKey: "kimi-env-key",
@@ -106,6 +110,23 @@ describe("modelConfig", () => {
 
     delete process.env.QINGAGENT_MODEL_PROVIDER;
     expect(resolveModelProvider(requestContext())).toBe("deepseek");
+  });
+
+  it("打包 desktop 只接受 visitor，忽略 global-db、env key 与 env provider", () => {
+    process.env.QINGAGENT_RUNTIME = "desktop";
+    process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
+    process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
+    process.env.KIMI_API_KEY = "kimi-env-key";
+
+    expect(resolveModelProvider(requestContext())).toBe("deepseek");
+    expect(resolveDeepseekAuth(requestContext([
+      ["modelOverrides", { provider: "kimi", globalApiKey: "kimi-db-key" }],
+    ]))).toEqual({ apiKey: "", origin: "none" });
+    expect(resolveDeepseekAuth(requestContext([
+      ["modelOverrides", { provider: "kimi", visitorApiKey: "kimi-visitor-key" }],
+    ]))).toEqual({ apiKey: "kimi-visitor-key", origin: "visitor" });
+    expect(resolveProtocol(requestContext())).toBe("openai");
+    expect(resolveModelId(requestContext(), "flash")).toBe(DEEPSEEK_MODEL_IDS.flash);
   });
 
   it("Kimi 官方 base 与档位固定映射为 Flash→K2.7 Code、Pro→K3", () => {

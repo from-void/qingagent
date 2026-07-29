@@ -34,7 +34,11 @@ import {
   type FolderCapability,
 } from "../../../system";
 import { truncateFilenameMiddle, truncateLabel } from "../textUtils";
-import { NoKeyTip } from "../../../system/modelKeyGate";
+import {
+  NoKeyTip,
+  type ModelKeyGateSnapshot,
+} from "../../../system/modelKeyGate";
+import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
 import {
   buildLongTextChip,
   collectClipboardImageFiles,
@@ -85,7 +89,8 @@ export interface ChatInputProps {
   onRetryMaterialParse?: (fileId: string) => void;
   /** 未配置模型 key:发送按钮置灰 + hover 引导去配置。 */
   noModelKey?: boolean;
-  onConfigureModel?: () => void;
+  modelKeyGate?: ModelKeyGateSnapshot;
+  onConfigureModel?: (provider: ModelProvider) => void;
 }
 
 
@@ -117,11 +122,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDetachFolder,
     materialParseRows,
     onRetryMaterialParse,
-    noModelKey = false,
+    noModelKey: legacyNoModelKey = false,
+    modelKeyGate,
     onConfigureModel,
   },
   ref,
 ) {
+  const noModelKey = modelKeyGate
+    ? modelKeyGate.status === "unconfigured"
+    : legacyNoModelKey;
   const editRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
   const seededRef = useRef(false);
@@ -1054,7 +1063,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         onClick={handleClick}
         onBlur={captureRange}
       />
-      <div className="ws-input-tools">
+      <div className={`ws-input-tools${noModelKey ? " has-nokey-gate" : ""}`}>
         <div style={{ display: "flex", gap: 4, position: "relative" }}>
           <div ref={skillWrapRef} style={{ position: "relative", display: "inline-flex" }}>
           <button
@@ -1160,7 +1169,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             </Button>
           ) : (
             // 快捷键提示改成 hover 文案(去掉常驻的 ⌘⏎ 按钮);未配置 key 时置灰 + 引导气泡
-            <NoKeyTip active={noModelKey} forced={keyTipForced} onConfigure={() => onConfigureModel?.()}>
+            <NoKeyTip
+              gate={modelKeyGate}
+              active={noModelKey}
+              forced={keyTipForced}
+              onConfigure={(provider) => onConfigureModel?.(provider)}
+            >
               <Button
                 variant="primary"
                 size="small"

@@ -17,6 +17,7 @@ import {
   testTextModelConnection,
   validateModelFetchUrl,
   VISION_TEST_TIMEOUT_MS,
+  allowGlobalModelFallback,
   type ModelProtocol,
   type ModelProvider,
   type ModelParamOverrides,
@@ -239,15 +240,21 @@ async function readModelSettingsResponse() {
     getAppSetting(SETTING_KIMI_GLOBAL_KEY),
     getAppSetting(SETTING_MODEL_PARAMS),
   ]);
-  const provider =
-    parseModelProvider(providerRaw) ??
-    parseModelProvider(process.env.QINGAGENT_MODEL_PROVIDER) ??
-    "deepseek";
+  const allowGlobalFallback = allowGlobalModelFallback();
+  const provider = allowGlobalFallback
+    ? parseModelProvider(providerRaw) ??
+      parseModelProvider(process.env.QINGAGENT_MODEL_PROVIDER) ??
+      "deepseek"
+    : "deepseek";
   const providerState = (target: ModelProvider) => {
-    const dbKey = target === "kimi" ? kimiDbKey : deepseekDbKey;
-    const envKey = target === "kimi"
-      ? process.env.KIMI_API_KEY ?? ""
-      : process.env.DEEPSEEK_API_KEY ?? "";
+    const dbKey = allowGlobalFallback
+      ? target === "kimi" ? kimiDbKey : deepseekDbKey
+      : null;
+    const envKey = allowGlobalFallback
+      ? target === "kimi"
+        ? process.env.KIMI_API_KEY ?? ""
+        : process.env.DEEPSEEK_API_KEY ?? ""
+      : "";
     const effectiveKey = dbKey || envKey || "";
     return {
       apiKeyConfigured: Boolean(effectiveKey),
@@ -340,9 +347,11 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     visionProtocol: c.req.header("x-vision-protocol"),
   });
   const provider = overrides.provider ?? "deepseek";
-  const envKey = provider === "kimi"
-    ? process.env.KIMI_API_KEY ?? ""
-    : process.env.DEEPSEEK_API_KEY ?? "";
+  const envKey = allowGlobalModelFallback()
+    ? provider === "kimi"
+      ? process.env.KIMI_API_KEY ?? ""
+      : process.env.DEEPSEEK_API_KEY ?? ""
+    : "";
   const apiKey = overrides.visitorApiKey ?? overrides.globalApiKey ?? envKey;
   const keySource = overrides.visitorApiKey ? "visitor" : overrides.globalApiKey ? "db" : apiKey ? "env" : "none";
   if (!apiKey) {

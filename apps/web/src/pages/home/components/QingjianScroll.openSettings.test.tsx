@@ -21,8 +21,18 @@ vi.mock("../../../system/chinese-masonry", () => ({
 }));
 
 vi.mock("./HomeSettingsSheet", () => ({
-  HomeSettingsSheet: ({ initialTab }: { initialTab?: string }) => (
-    <div data-wf="HomeSettingsSheet" data-tab={initialTab ?? "model"}>
+  HomeSettingsSheet: ({
+    initialTab,
+    initialModelProvider,
+  }: {
+    initialTab?: string;
+    initialModelProvider?: string;
+  }) => (
+    <div
+      data-wf="HomeSettingsSheet"
+      data-tab={initialTab ?? "model"}
+      data-model-provider={initialModelProvider}
+    >
       设置
     </div>
   ),
@@ -101,6 +111,32 @@ describe("QingjianScroll 去首页配置", () => {
     const sheet = host.querySelector<HTMLElement>('[data-wf="HomeSettingsSheet"]');
     expect(sheet).not.toBeNull();
     expect(sheet?.dataset.tab).toBe("model");
+    expect(window.sessionStorage.getItem("qj-open-settings")).toBeNull();
+  });
+
+  it("门禁携带 Kimi 目标时直接把设置页定向到 Kimi 二级配置", async () => {
+    goConfigureModel(() => undefined, "kimi");
+    expect(window.sessionStorage.getItem("qj-open-settings")).toBe("model:kimi");
+
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        <QingjianScroll
+          sessions={[]}
+          onOpenSession={() => undefined}
+          onNewSession={() => undefined}
+        />,
+      );
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(650);
+    });
+
+    const sheet = host.querySelector<HTMLElement>('[data-wf="HomeSettingsSheet"]');
+    expect(sheet?.dataset.tab).toBe("model");
+    expect(sheet?.dataset.modelProvider).toBe("kimi");
     expect(window.sessionStorage.getItem("qj-open-settings")).toBeNull();
   });
 

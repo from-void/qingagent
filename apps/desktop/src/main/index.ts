@@ -78,6 +78,7 @@ import {
 
 let mainWindow: BrowserWindow | null = null;
 let mainExportDownloadCoordinator: ExportDownloadCoordinator | null = null;
+let desktopClientConfigReady = false;
 const trustedRememberUiGate = new TrustedRememberUiGate();
 const nativeRememberGrantGate = new NativeRememberGrantGate();
 let mainWindowRememberGeneration = 0;
@@ -219,12 +220,6 @@ if (process.env.QINGAGENT_DESKTOP_KEEP_PROXY !== "1") {
     delete process.env[k];
   }
 }
-
-// 客户端「上来纯空」:彻底不认 env/db 默认 key,只认用户在 app 设置里自带的 key
-// (visitor key,存本地 localStorage、随请求 header 透传)。这里删掉从 userData/.env
-// 读进来的 DEEPSEEK_API_KEY,使服务端任何兜底读取都拿不到默认 key,强制用户配置自己的 key;
-// db 全局 key 客户端从不写入、天然为空。必须在 import server/core 之前执行。
-delete process.env.DEEPSEEK_API_KEY;
 
 // —— undici@8 / Electron-Node-20 兼容垫片(必须在引入 server/core 之前执行) ——
 // Electron 33 内置 Node 20.18,其 node:worker_threads 没有 markAsUncloneable
@@ -877,25 +872,32 @@ function isDesktopClientConfigKey(value: unknown): value is string {
   return typeof value === "string" && DESKTOP_CLIENT_CONFIG_KEYS.has(value);
 }
 
-function readClientConfigValueForRenderer(key: unknown): string | null {
-  if (!isDesktopClientConfigKey(key)) return null;
+type DesktopClientConfigReadResult =
+  | { ok: true; value: string | null }
+  | { ok: false };
+
+function readClientConfigValueForRenderer(key: unknown): DesktopClientConfigReadResult {
+  if (!desktopClientConfigReady || !isDesktopClientConfigKey(key)) return { ok: false };
   if (!DESKTOP_MODEL_SECRET_KEYS.has(key)) {
     try {
       const value = readClientConfig()[key];
-      return typeof value === "string" && value.length > 0 ? value : null;
+      return {
+        ok: true,
+        value: typeof value === "string" && value.length > 0 ? value : null,
+      };
     } catch {
-      return null;
+      return { ok: false };
     }
   }
 
   // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。
-  if (!isDesktopModelEncryptionAvailable()) return null;
+  if (!isDesktopModelEncryptionAvailable()) return { ok: false };
   try {
     migratePlaintextClientSecrets();
-    return desktopClientSecretStore.read(key);
+    return { ok: true, value: desktopClientSecretStore.read(key) };
   } catch (err) {
-    console.warn(`[client-config] ${key} 迁移/解密失败，已按未配置处理:`, err);
-    return null;
+    console.warn(`[client-config] ${key} 迁移/解密失败，暂不发布配置状态:`, err);
+    return { ok: false };
   }
 }
 
@@ -924,6 +926,10 @@ function writeClientConfigValue(key: unknown, value: unknown): boolean {
 ipcMain.on("qingagent:client-config-value-get", (event, key: unknown) => {
   assertTrustedRenderer(event);
   event.returnValue = readClientConfigValueForRenderer(key);
+});
+ipcMain.on("qingagent:client-config-ready-get", (event) => {
+  assertTrustedRenderer(event);
+  event.returnValue = desktopClientConfigReady;
 });
 ipcMain.handle("qingagent:client-config-value-set", (event, key: unknown, value: unknown) => {
   assertTrustedRenderer(event);
@@ -1332,6 +1338,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   if (credentialKeyState.reasonCode) {
     console.warn("[credentials] key provider unavailable:", credentialKeyState.reasonCode);
+  }
+  desktopClientConfigReady = true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("qingagent:client-config-ready");
   }
   if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
     const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");

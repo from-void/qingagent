@@ -12,6 +12,9 @@ vi.mock("@qingagent/core", async () => ({
   SETTING_MODEL_PROVIDER: "model_provider",
   SETTING_MODEL_PARAMS: "model_params",
   getAppSetting: mockCore.getAppSetting,
+  allowGlobalModelFallback: (
+    env: Record<string, string | undefined> = process.env,
+  ) => !(env.QINGAGENT_RUNTIME === "desktop" && env.QINGAGENT_DESKTOP_PACKAGED === "1"),
   // 归一化用真实 canonical 实现(纯函数、无 DB 依赖),避免测试里另写一套口径失真。
   sanitizeBaseUrl: (await import("../../../core/src/llm/modelBaseUrl.js")).sanitizeBaseUrl,
   sanitizeModelId: (raw: string | undefined) => {
@@ -41,6 +44,8 @@ import {
 
 const VKEY = `sk-${"a".repeat(32)}`;
 const originalProviderEnv = process.env.QINGAGENT_MODEL_PROVIDER;
+const originalRuntime = process.env.QINGAGENT_RUNTIME;
+const originalPackaged = process.env.QINGAGENT_DESKTOP_PACKAGED;
 
 beforeEach(() => {
   mockCore.store.clear();
@@ -50,11 +55,17 @@ beforeEach(() => {
   );
   invalidateModelOverridesCache();
   delete process.env.QINGAGENT_MODEL_PROVIDER;
+  delete process.env.QINGAGENT_RUNTIME;
+  delete process.env.QINGAGENT_DESKTOP_PACKAGED;
 });
 
 afterEach(() => {
   if (originalProviderEnv === undefined) delete process.env.QINGAGENT_MODEL_PROVIDER;
   else process.env.QINGAGENT_MODEL_PROVIDER = originalProviderEnv;
+  if (originalRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
+  else process.env.QINGAGENT_RUNTIME = originalRuntime;
+  if (originalPackaged === undefined) delete process.env.QINGAGENT_DESKTOP_PACKAGED;
+  else process.env.QINGAGENT_DESKTOP_PACKAGED = originalPackaged;
 });
 
 describe("resolveRequestModelOverrides — provider 优先级", () => {
@@ -84,6 +95,31 @@ describe("resolveRequestModelOverrides — provider 优先级", () => {
     mockCore.store.set("model_provider", "kimi");
     invalidateModelOverridesCache();
     expect((await resolveRequestModelOverrides({ provider: "unknown" })).provider).toBe("kimi");
+  });
+
+  it("打包 desktop 忽略 DB/env provider 与 global key，但保留 visitor provider/key", async () => {
+    process.env.QINGAGENT_RUNTIME = "desktop";
+    process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
+    process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
+    mockCore.store.set("model_provider", "kimi");
+    mockCore.store.set("deepseek_global_key", "deepseek-db-key");
+    mockCore.store.set("kimi_global_key", "kimi-db-key");
+    invalidateModelOverridesCache();
+
+    await expect(resolveRequestModelOverrides({})).resolves.toEqual({
+      provider: "deepseek",
+    });
+    await expect(resolveRequestModelOverrides({
+      provider: "kimi",
+      visitorKey: VKEY,
+    })).resolves.toMatchObject({
+      provider: "kimi",
+      visitorApiKey: VKEY,
+    });
+    expect((await resolveRequestModelOverrides({
+      provider: "kimi",
+      visitorKey: VKEY,
+    })).globalApiKey).toBeUndefined();
   });
 });
 

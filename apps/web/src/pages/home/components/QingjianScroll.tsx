@@ -45,6 +45,7 @@ import {
 } from "../../../system/transition/homeStage";
 import "./qingjian.css";
 import { HomeSettingsSheet, type SettingsSheetTab } from "./HomeSettingsSheet";
+import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
 import {
   SETTINGS_INK_VARIANT_LABEL,
   SETTINGS_INK_VARIANTS,
@@ -1092,12 +1093,15 @@ export function QingjianScroll({
   // 全部设置统一从首页 ⚙ 打开弹框,不再保留右上角二级浮层。
   const [settingsSheetOpen, setSettingsSheetOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsSheetTab>("model");
+  const [settingsInitialModelProvider, setSettingsInitialModelProvider] =
+    useState<ModelProvider | undefined>();
   // 从编辑/新建页「去配置」返回:消费信号 → 略等返回转场落定后打开设置(默认第一个 tab=模型)。
   useEffect(() => {
     const target = readOpenSettingsFlag();
     if (!target) return;
     const t = window.setTimeout(() => {
-      setSettingsInitialTab(target);
+      setSettingsInitialTab(target.tab);
+      setSettingsInitialModelProvider(target.provider);
       setSettingsSheetOpen(true);
       clearOpenSettingsFlag();
     }, 650);
@@ -2155,6 +2159,7 @@ export function QingjianScroll({
             aria-expanded={settingsSheetOpen}
             onClick={(e) => {
               e.stopPropagation();
+              setSettingsInitialModelProvider(undefined);
               setSettingsSheetOpen(true);
             }}
           >
@@ -2166,6 +2171,7 @@ export function QingjianScroll({
       {settingsSheetOpen && (
         <HomeSettingsSheet
           initialTab={settingsInitialTab}
+          initialModelProvider={settingsInitialModelProvider}
           inkVariant={settingsInkVariant}
           themeMode={themeMode}
           themeModeOptions={THEME_MODE_OPTIONS}
@@ -2185,7 +2191,10 @@ export function QingjianScroll({
           onPrimaryFontChange={setPrimaryFont}
           onSecondaryFontChange={setSecondaryFont}
           onOpenShelf={onOpenShelf}
-          onClose={() => setSettingsSheetOpen(false)}
+          onClose={() => {
+            setSettingsSheetOpen(false);
+            setSettingsInitialModelProvider(undefined);
+          }}
         />
       )}
 

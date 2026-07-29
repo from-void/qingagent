@@ -8,6 +8,9 @@ export interface DesktopRuntimeEnv {
   QINGAGENT_ALLOW_TEMPLATE_MUTATION?: string;
   QINGAGENT_CONNECTORS_ENABLED?: string;
   QINGAGENT_ALLOW_PRIVATE_MODEL_HOST?: string;
+  DEEPSEEK_API_KEY?: string;
+  KIMI_API_KEY?: string;
+  QINGAGENT_MODEL_PROVIDER?: string;
 }
 
 export function configureDesktopRuntimeEnv(
@@ -18,6 +21,11 @@ export function configureDesktopRuntimeEnv(
   if (options.isPackaged === true) {
     delete env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
     env.QINGAGENT_DESKTOP_PACKAGED = "1";
+    // 防御性清除当前已知模型身份/凭据。真正的长期防线在 core/server 的来源白名单：
+    // 打包 desktop 即使未来漏清新厂商 env，也只接受 visitor/custom。
+    delete env.DEEPSEEK_API_KEY;
+    delete env.KIMI_API_KEY;
+    delete env.QINGAGENT_MODEL_PROVIDER;
   } else {
     delete env.QINGAGENT_DESKTOP_PACKAGED;
   }

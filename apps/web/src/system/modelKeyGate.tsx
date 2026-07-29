@@ -1,25 +1,29 @@
-// 模型 key 门禁:检测是否已配置可用 key;未配置时发送按钮 disable + hover 引导气泡,
-// 「去配置」按钮带转场返回首页并打开设置(定位第一个 tab)。新建页与编辑页共用。
-import { useEffect, useState, type ReactNode } from "react";
-import { ArrowRightIcon } from "./icons";
+// 模型 key 门禁：只有“已明确无 key”才禁用发送；本地持久层不可读时保持 loading/fail-open。
+// 当前厂商无 key、另一家可用时给明确的一键切换，不静默改变 provider。
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  getVisitorModelKey,
-  readCustomProvider,
-  resolveModelRequestProvider,
+  CLIENT_PERSIST_CHANGED_EVENT,
+} from "../overlays/settings/clientPersist";
+import {
+  readLocalModelKeySnapshot,
+  setSelectedModelProvider,
+  type LocalModelKeySnapshot,
   type ModelProvider,
 } from "../overlays/settings/visitorKeyStore";
+import { useToast } from "./ToastProvider";
+import { ArrowRightIcon } from "./icons";
 
 const OPEN_SETTINGS_FLAG = "qj-open-settings";
-type ModelKeyGateState = "loading" | "configured" | "unconfigured";
+const RETRY_DELAYS_MS = [50, 100, 250, 500, 1_000] as const;
 
-function readLocalKey(): boolean {
-  try {
-    const provider = resolveModelRequestProvider();
-    return Boolean(getVisitorModelKey(provider)) || Boolean(readCustomProvider(provider));
-  } catch {
-    return false;
-  }
-}
+export type ModelKeyGateSnapshot =
+  | { status: "loading" }
+  | { status: "configured"; provider: ModelProvider }
+  | {
+      status: "unconfigured";
+      provider: ModelProvider;
+      fallbackProvider: ModelProvider | null;
+    };
 
 interface ModelKeySettingsResponse {
   provider?: ModelProvider;
@@ -27,75 +31,194 @@ interface ModelKeySettingsResponse {
   providers?: Partial<Record<ModelProvider, { apiKeyConfigured?: boolean }>>;
 }
 
-function readServerKeyConfigured(body: ModelKeySettingsResponse): boolean {
-  const provider = resolveModelRequestProvider(body.provider);
-  const providerConfigured = body.providers?.[provider]?.apiKeyConfigured;
-  if (typeof providerConfigured === "boolean") return providerConfigured;
-  // 兼容仅返回顶层状态的旧服务端，但只能在顶层 provider 与请求选择一致时使用。
+function providerName(provider: ModelProvider): string {
+  return provider === "kimi" ? "Kimi" : "DeepSeek";
+}
+
+function oppositeProvider(provider: ModelProvider): ModelProvider {
+  return provider === "kimi" ? "deepseek" : "kimi";
+}
+
+function localRequestProvider(
+  local: LocalModelKeySnapshot,
+  serverProvider?: ModelProvider,
+): ModelProvider {
+  if (local.provider) return local.provider;
+  // 兼容旧数据：只要已有任一 DeepSeek 显式配置，就继续锁定 DeepSeek。
+  if (local.providers.deepseek.hasExplicitConfig) return "deepseek";
+  return serverProvider ?? "deepseek";
+}
+
+function serverProviderConfigured(
+  body: ModelKeySettingsResponse,
+  provider: ModelProvider,
+): boolean {
+  const configured = body.providers?.[provider]?.apiKeyConfigured;
+  if (typeof configured === "boolean") return configured;
   if (body.provider === provider && typeof body.apiKeyConfigured === "boolean") {
     return body.apiKeyConfigured;
   }
   throw new Error(`model settings response is missing ${provider} apiKeyConfigured`);
 }
 
-// 是否已配置可用模型 key。桌面端只认本机自带 key(visitor/custom);web 端再叠加服务端状态。
-export function useModelKeyConfigured(): boolean {
-  const [state, setState] = useState<ModelKeyGateState>(() =>
-    readLocalKey() ? "configured" : "loading",
-  );
+function configuredFromLocal(
+  local: LocalModelKeySnapshot,
+): ModelKeyGateSnapshot | null {
+  const provider = localRequestProvider(local, undefined);
+  if (
+    (local.provider || local.providers.deepseek.hasExplicitConfig) &&
+    local.providers[provider].configured
+  ) {
+    return { status: "configured", provider };
+  }
+  return null;
+}
+
+function initialGateSnapshot(): ModelKeyGateSnapshot {
+  const local = readLocalModelKeySnapshot();
+  return local ? configuredFromLocal(local) ?? { status: "loading" } : { status: "loading" };
+}
+
+/** 一次读取当前 provider 与两家配置态；旧请求永远不能覆盖新配置。 */
+export function useModelKeyGate(): ModelKeyGateSnapshot {
+  const [snapshot, setSnapshot] = useState<ModelKeyGateSnapshot>(initialGateSnapshot);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
   useEffect(() => {
     let alive = true;
-    const recompute = async () => {
-      if (readLocalKey()) {
-        if (alive) setState("configured");
+    let generation = 0;
+    let retryIndex = 0;
+    let retryTimer: number | null = null;
+    let fetchController: AbortController | null = null;
+
+    const clearRetry = () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+    };
+
+    const publish = (next: ModelKeyGateSnapshot) => {
+      if (!alive) return;
+      snapshotRef.current = next;
+      setSnapshot(next);
+    };
+
+    const scheduleRetry = (recompute: () => void) => {
+      if (retryTimer !== null) return;
+      const delay = RETRY_DELAYS_MS[Math.min(retryIndex, RETRY_DELAYS_MS.length - 1)]!;
+      retryIndex += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        recompute();
+      }, delay);
+    };
+
+    const recompute = () => {
+      const currentGeneration = ++generation;
+      fetchController?.abort();
+      fetchController = null;
+      const local = readLocalModelKeySnapshot();
+      if (!local) {
+        publish({ status: "loading" });
+        scheduleRetry(recompute);
         return;
       }
-      // 桌面端服务端已无 env/db 兜底 key(main 里删了),这步主要兼容 web。
-      try {
-        const res = await fetch("/api/v1/settings/model");
-        if (!res.ok) throw new Error(`model settings request failed: ${res.status}`);
-        const body = (await res.json()) as ModelKeySettingsResponse;
-        const configured = readServerKeyConfigured(body);
-        if (!alive) return;
-        if (configured) {
-          setState("configured");
-        } else {
-          setState("unconfigured");
-        }
-      } catch {
-        // 瞬态失败不覆盖已知状态;若请求期间刚写入本地 key,仍立即放行。
-        if (alive && readLocalKey()) setState("configured");
+
+      clearRetry();
+      retryIndex = 0;
+      const localConfigured = configuredFromLocal(local);
+      if (localConfigured) {
+        publish(localConfigured);
+        return;
       }
+
+      const controller = new AbortController();
+      fetchController = controller;
+      void (async () => {
+        try {
+          const res = await fetch("/api/v1/settings/model", { signal: controller.signal });
+          if (!res.ok) throw new Error(`model settings request failed: ${res.status}`);
+          const body = (await res.json()) as ModelKeySettingsResponse;
+          const provider = localRequestProvider(local, body.provider);
+          const otherProvider = oppositeProvider(provider);
+          const providerConfigured =
+            local.providers[provider].configured ||
+            serverProviderConfigured(body, provider);
+          const fallbackConfigured =
+            local.providers[otherProvider].configured ||
+            serverProviderConfigured(body, otherProvider);
+          if (!alive || currentGeneration !== generation || controller.signal.aborted) return;
+          publish(providerConfigured
+            ? { status: "configured", provider }
+            : {
+                status: "unconfigured",
+                provider,
+                fallbackProvider: fallbackConfigured ? otherProvider : null,
+              });
+        } catch {
+          if (!alive || currentGeneration !== generation || controller.signal.aborted) return;
+          // 瞬态失败保留最后已知结论；若请求期间本地已写好 key，则立即升级放行。
+          const latestLocal = readLocalModelKeySnapshot();
+          const latestConfigured = latestLocal ? configuredFromLocal(latestLocal) : null;
+          if (latestConfigured) publish(latestConfigured);
+        }
+      })();
     };
-    void recompute();
-    const onSignal = () => void recompute();
+
+    const onSignal = () => recompute();
+    const removeReadyListener = window.electron?.onClientConfigReady?.(onSignal);
+    window.addEventListener(CLIENT_PERSIST_CHANGED_EVENT, onSignal);
     window.addEventListener("storage", onSignal);
     window.addEventListener("focus", onSignal);
+    recompute();
+
     return () => {
       alive = false;
+      generation += 1;
+      fetchController?.abort();
+      clearRetry();
+      removeReadyListener?.();
+      window.removeEventListener(CLIENT_PERSIST_CHANGED_EVENT, onSignal);
       window.removeEventListener("storage", onSignal);
       window.removeEventListener("focus", onSignal);
     };
   }, []);
-  // loading 不是“确认无 key”;只有服务端明确确认 false 时才启用门禁。
-  return state !== "unconfigured";
+
+  return snapshot;
 }
 
-// 「去配置」:设信号让首页打开设置(定位第一个 tab),再调用各页自带的「返回首页(带转场)」。
-export function goConfigureModel(navigateHome: () => void): void {
+/** 兼容只关心 boolean 的旧调用方；loading 保持 fail-open。 */
+export function useModelKeyConfigured(): boolean {
+  return useModelKeyGate().status !== "unconfigured";
+}
+
+// 「去配置」：携带目标厂商返回首页，设置弹框直接打开该厂商二级配置页。
+export function goConfigureModel(
+  navigateHome: () => void,
+  provider?: ModelProvider,
+): void {
   try {
-    sessionStorage.setItem(OPEN_SETTINGS_FLAG, "model");
+    sessionStorage.setItem(
+      OPEN_SETTINGS_FLAG,
+      provider ? `model:${provider}` : "model",
+    );
   } catch {
     /* ignore */
   }
   navigateHome();
 }
 
-export type OpenSettingsTarget = "model";
+export interface OpenSettingsTarget {
+  tab: "model";
+  provider?: ModelProvider;
+}
 
 export function readOpenSettingsFlag(): OpenSettingsTarget | null {
   try {
-    return sessionStorage.getItem(OPEN_SETTINGS_FLAG) === "model" ? "model" : null;
+    const value = sessionStorage.getItem(OPEN_SETTINGS_FLAG);
+    if (value === "model") return { tab: "model" };
+    if (value === "model:deepseek") return { tab: "model", provider: "deepseek" };
+    if (value === "model:kimi") return { tab: "model", provider: "kimi" };
   } catch {
     /* ignore */
   }
@@ -110,7 +233,6 @@ export function clearOpenSettingsFlag(): void {
   }
 }
 
-// 首页挂载时消费信号:返回 true 表示应打开设置。
 export function consumeOpenSettingsFlag(): boolean {
   if (readOpenSettingsFlag()) {
     clearOpenSettingsFlag();
@@ -119,27 +241,70 @@ export function consumeOpenSettingsFlag(): boolean {
   return false;
 }
 
-// 发送按钮上的「未配置 key」引导气泡:hover(active 时)显示文案 + 「去配置」按钮。
-// forced=true 时强制弹出(用于:用户按发送快捷键却因未配置 key 被拦下时,主动把气泡推到眼前)。
+// 发送按钮上的门禁气泡：一键切换会等待 provider 真正落盘，再由同窗口配置事件触发门禁重算。
 export function NoKeyTip({
-  active,
+  gate,
+  active = false,
   forced = false,
   onConfigure,
   children,
 }: {
-  active: boolean;
+  gate?: ModelKeyGateSnapshot;
+  /** 仅保留给独立样式/demo 调用；产品路径应传 gate。 */
+  active?: boolean;
   forced?: boolean;
-  onConfigure: () => void;
+  onConfigure: (provider: ModelProvider) => void;
   children: ReactNode;
 }) {
-  if (!active) return <>{children}</>;
+  const toast = useToast();
+  const [switching, setSwitching] = useState(false);
+  const effectiveGate: ModelKeyGateSnapshot = gate ?? (
+    active
+      ? { status: "unconfigured", provider: "deepseek", fallbackProvider: null }
+      : { status: "configured", provider: "deepseek" }
+  );
+  if (effectiveGate.status !== "unconfigured") return <>{children}</>;
+
+  const { provider, fallbackProvider } = effectiveGate;
+  const handlePrimaryAction = async () => {
+    if (!fallbackProvider) {
+      onConfigure(provider);
+      return;
+    }
+    if (switching) return;
+    setSwitching(true);
+    const saved = await setSelectedModelProvider(fallbackProvider);
+    setSwitching(false);
+    toast.show(saved
+      ? {
+          message: `已切到 ${providerName(fallbackProvider)}`,
+          tone: "success",
+          dedupeKey: "model-gate-switch",
+        }
+      : {
+          message: "本机保存失败，请重试",
+          tone: "warn",
+          dedupeKey: "model-gate-switch-failed",
+        });
+  };
+
   return (
     <span className={`nokey-gate${forced ? " is-forced" : ""}`}>
       {children}
       <span className="nokey-tip" role="tooltip">
-        <span className="nokey-tip-text">还没配置模型 key,无法开始写作。</span>
-        <button type="button" className="nokey-tip-btn" onClick={onConfigure}>
-          去首页配置<ArrowRightIcon size={12} />
+        <span className="nokey-tip-text">
+          当前使用中的 {providerName(provider)} 还没配置 key{fallbackProvider ? "。" : "，无法开始写作。"}
+        </span>
+        <button
+          type="button"
+          className="nokey-tip-btn"
+          disabled={switching}
+          onClick={() => void handlePrimaryAction()}
+        >
+          {fallbackProvider
+            ? `切到 ${providerName(fallbackProvider)}`
+            : `去配置 ${providerName(provider)}`}
+          <ArrowRightIcon size={12} />
         </button>
       </span>
     </span>

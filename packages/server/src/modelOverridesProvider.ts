@@ -3,6 +3,7 @@ import {
   SETTING_KIMI_GLOBAL_KEY,
   SETTING_MODEL_PROVIDER,
   SETTING_MODEL_PARAMS,
+  allowGlobalModelFallback,
   getAppSetting,
   sanitizeBaseUrl,
   sanitizeModelId,
@@ -170,10 +171,13 @@ export async function resolveRequestModelOverrides(
   headers: RequestModelHeaders,
 ): Promise<ModelOverrides> {
   const settings = await readCachedSettings();
+  const allowGlobalFallback = allowGlobalModelFallback();
   const provider =
     sanitizeModelProvider(headers.provider) ??
-    settings.provider ??
-    sanitizeModelProvider(process.env.QINGAGENT_MODEL_PROVIDER) ??
+    (allowGlobalFallback ? settings.provider : undefined) ??
+    (allowGlobalFallback
+      ? sanitizeModelProvider(process.env.QINGAGENT_MODEL_PROVIDER)
+      : undefined) ??
     "deepseek";
   const visitorApiKey = sanitizeApiKey(headers.visitorKey);
   // 安全（代码评审 P1）:自定义 baseURL / 协议 / 模型名只在"访客自带 key"时生效。
@@ -215,7 +219,7 @@ export async function resolveRequestModelOverrides(
   return {
     provider,
     ...(visitorApiKey ? { visitorApiKey } : {}),
-    ...(settings.globalApiKeys?.[provider]
+    ...(allowGlobalFallback && settings.globalApiKeys?.[provider]
       ? { globalApiKey: settings.globalApiKeys[provider] }
       : {}),
     ...(settings.params ? { params: settings.params } : {}),

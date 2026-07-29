@@ -49,6 +49,14 @@ export interface PersistedModelState {
   officialModel: OfficialModelOverride | null;
 }
 
+export interface LocalModelKeySnapshot {
+  provider: ModelProvider | null;
+  providers: Record<ModelProvider, {
+    configured: boolean;
+    hasExplicitConfig: boolean;
+  }>;
+}
+
 function providerStorageKeys(provider: ModelProvider) {
   return provider === "kimi"
     ? {
@@ -179,6 +187,51 @@ export function readPersistedModelState(provider: ModelProvider): PersistedModel
   } catch {
     return null;
   }
+}
+
+/**
+ * 门禁专用原子快照：任一相关 accessor 不可读就返回 null（unknown），不能把它压成空配置。
+ * JSON 内容损坏属于“该项无有效配置”，与持久层暂不可读分开处理。
+ */
+export function readLocalModelKeySnapshot(): LocalModelKeySnapshot | null {
+  const providerResult = readPersistedChecked(MODEL_PROVIDER_KEY);
+  const deepseek = readCheckedProviderState("deepseek");
+  const kimi = readCheckedProviderState("kimi");
+  if (!providerResult.ok || !deepseek || !kimi) return null;
+  const provider = providerResult.value?.trim();
+  return {
+    provider: provider === "deepseek" || provider === "kimi" ? provider : null,
+    providers: { deepseek, kimi },
+  };
+}
+
+function readCheckedProviderState(provider: ModelProvider): {
+  configured: boolean;
+  hasExplicitConfig: boolean;
+} | null {
+  const keys = providerStorageKeys(provider);
+  const keyResult = readPersistedChecked(keys.apiKey);
+  const customResult = readPersistedChecked(keys.customProvider);
+  const officialResult = readPersistedChecked(keys.officialModel);
+  if (!keyResult.ok || !customResult.ok || !officialResult.ok) return null;
+
+  const visitorKey = keyResult.value?.trim() || null;
+  let customProvider: CustomProvider | null = null;
+  let officialModel: OfficialModelOverride | null = null;
+  try {
+    customProvider = parseCustomProvider(customResult.value, provider);
+  } catch {
+    customProvider = null;
+  }
+  try {
+    officialModel = parseOfficialModelOverride(officialResult.value);
+  } catch {
+    officialModel = null;
+  }
+  return {
+    configured: Boolean(visitorKey || customProvider),
+    hasExplicitConfig: Boolean(visitorKey || customProvider || officialModel),
+  };
 }
 
 function parseCustomProvider(raw: string | null, provider: ModelProvider): CustomProvider | null {

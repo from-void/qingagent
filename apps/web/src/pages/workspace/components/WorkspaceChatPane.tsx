@@ -44,6 +44,7 @@ export function WorkspaceChatPane({
     materialParseRows,
     handleRetryMaterialParse,
     hasModelKey,
+    modelKeyGate,
     handleBackHome,
     inlineAsk,
     handleCancelAskUser,
@@ -121,7 +122,8 @@ export function WorkspaceChatPane({
             materialParseRows={materialParseRows}
             onRetryMaterialParse={handleRetryMaterialParse}
             noModelKey={!hasModelKey}
-            onConfigureModel={() => goConfigureModel(handleBackHome)}
+            modelKeyGate={modelKeyGate}
+            onConfigureModel={(provider) => goConfigureModel(handleBackHome, provider)}
           />
         </div>
         {inlineAsk && (

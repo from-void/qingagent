@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CLIENT_PERSIST_CHANGED_EVENT,
   __resetClientPersistCacheForTests,
   isDesktopPersist,
   readPersisted,
+  readPersistedChecked,
   writePersistedAwaited,
 } from "./clientPersist";
 import {
@@ -35,6 +37,8 @@ type ElectronBridge = {
   setKimiOfficialModel?: (value: string | null) => Promise<boolean>;
   getModelProvider?: () => string | null;
   setModelProvider?: (value: string | null) => Promise<boolean>;
+  isClientConfigReady?: () => boolean;
+  onClientConfigReady?: (cb: () => void) => () => void;
 };
 const DEEPSEEK_KEY = "qingagent.deepseek_api_key";
 const OFFICIAL_MODEL_KEY = "qingagent.official_model";
@@ -47,6 +51,7 @@ function desktopBridge(
 ): ElectronBridge {
   return {
     isDesktop: true,
+    isClientConfigReady: () => true,
     getDeepseekApiKey: () => initial[DEEPSEEK_KEY] ?? null,
     setDeepseekApiKey: (value) => write(DEEPSEEK_KEY, value),
     getCustomProvider: () => initial["qingagent.custom_provider"] ?? null,
@@ -128,6 +133,7 @@ describe("clientPersist", () => {
 
       expect(() => readPersisted(DEEPSEEK_KEY)).not.toThrow();
       expect(readPersisted(DEEPSEEK_KEY)).toBeNull();
+      expect(readPersistedChecked(DEEPSEEK_KEY)).toEqual({ ok: false, value: null });
       await expect(writePersistedAwaited(DEEPSEEK_KEY, "new")).resolves.toBe(false);
       expect(bridge.setDeepseekApiKey).not.toHaveBeenCalled();
     });
@@ -188,11 +194,50 @@ describe("clientPersist", () => {
       expect(readOfficialModelOverride()).toEqual({ flash: "old-flash" });
     });
 
-    it("旧 preload 缺具名配置 API 时回退 localStorage", async () => {
+    it("desktop accessor 缺失时保持 unknown，绝不回退随机 origin localStorage", async () => {
       setElectron({ isDesktop: true });
-      expect(isDesktopPersist()).toBe(false);
-      await expect(writePersistedAwaited(DEEPSEEK_KEY, "v")).resolves.toBe(true);
-      expect(window.localStorage.getItem(DEEPSEEK_KEY)).toBe("v");
+      window.localStorage.setItem(DEEPSEEK_KEY, "wrong-origin-key");
+
+      expect(isDesktopPersist()).toBe(true);
+      expect(readPersistedChecked(DEEPSEEK_KEY)).toEqual({ ok: false, value: null });
+      await expect(writePersistedAwaited(DEEPSEEK_KEY, "v")).resolves.toBe(false);
+      expect(window.localStorage.getItem(DEEPSEEK_KEY)).toBe("wrong-origin-key");
+    });
+
+    it("ready=false 时不缓存空值，ready 后可读到既有 key", () => {
+      let ready = false;
+      const initial = { [DEEPSEEK_KEY]: "existing-key" };
+      const bridge = desktopBridge(initial);
+      bridge.isClientConfigReady = () => ready;
+      setElectron(bridge);
+
+      expect(readPersistedChecked(DEEPSEEK_KEY)).toEqual({ ok: false, value: null });
+      ready = true;
+      expect(readPersistedChecked(DEEPSEEK_KEY)).toEqual({
+        ok: true,
+        value: "existing-key",
+      });
+    });
+
+    it("只有成功落盘才派发同窗口配置变化事件，失败回滚不派发", async () => {
+      const onChange = vi.fn();
+      window.addEventListener(CLIENT_PERSIST_CHANGED_EVENT, onChange);
+      try {
+        setElectron(desktopBridge({ [DEEPSEEK_KEY]: "old" }, async () => true));
+        await expect(writePersistedAwaited(DEEPSEEK_KEY, "new")).resolves.toBe(true);
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect((onChange.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+          key: DEEPSEEK_KEY,
+        });
+
+        onChange.mockClear();
+        setElectron(desktopBridge({ [DEEPSEEK_KEY]: "old" }, async () => false));
+        await expect(writePersistedAwaited(DEEPSEEK_KEY, "new")).resolves.toBe(false);
+        expect(readPersisted(DEEPSEEK_KEY)).toBe("old");
+        expect(onChange).not.toHaveBeenCalled();
+      } finally {
+        window.removeEventListener(CLIENT_PERSIST_CHANGED_EVENT, onChange);
+      }
     });
   });
 });

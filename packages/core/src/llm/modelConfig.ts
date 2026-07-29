@@ -64,6 +64,7 @@ export {
   type SessionSnapshot,
 } from "./sessionSnapshots.js";
 import type { ApiKeyOrigin } from "./modelTypes.js";
+import { allowGlobalModelFallback } from "./modelSourcePolicy.js";
 export type { ApiKeyOrigin } from "./modelTypes.js";
 
 type InnerLanguageModel = Exclude<LanguageModel, string>;
@@ -721,6 +722,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
 // env 层默认协议:QINGAGENT_MODEL_PROTOCOL=anthropic|openai(GLM Coding 走 anthropic)。
 // 调用时读取(而非模块加载常量),便于 dotenv 时序与测试;非法值忽略 -> undefined。
 function envModelProtocol(): ModelProtocol | undefined {
+  if (!allowGlobalModelFallback()) return undefined;
   const v = process.env.QINGAGENT_MODEL_PROTOCOL?.trim().toLowerCase();
   return v === "anthropic" || v === "openai" ? v : undefined;
 }
@@ -810,6 +812,9 @@ export function resolveModelAuth(requestContext?: RequestContext): ResolvedModel
   if (overrides?.visitorApiKey) {
     return { apiKey: overrides.visitorApiKey, origin: "visitor" };
   }
+  if (!allowGlobalModelFallback()) {
+    return { apiKey: "", origin: "none" };
+  }
   if (overrides?.globalApiKey) {
     return { apiKey: overrides.globalApiKey, origin: "global-db" };
   }
@@ -870,7 +875,11 @@ export function resolveModelId(requestContext?: RequestContext, tier: DeepseekTi
   const visitor = sanitizeModelId(overrides?.modelIds?.[effectiveTier]);
   if (visitor) return visitor;
   const provider = resolveModelProvider(requestContext);
-  if (provider === "deepseek" && !overrides?.baseUrl) {
+  if (
+    allowGlobalModelFallback() &&
+    provider === "deepseek" &&
+    !overrides?.baseUrl
+  ) {
     const envId = sanitizeModelId(
       effectiveTier === "flash" ? process.env.QINGAGENT_MODEL_FLASH : process.env.QINGAGENT_MODEL_PRO,
     );

@@ -32,7 +32,7 @@ import {
   useToast,
 } from "../../../system";
 import { useConfirm } from "../../../system/ConfirmProvider";
-import { useModelKeyConfigured } from "../../../system/modelKeyGate";
+import { useModelKeyGate } from "../../../system/modelKeyGate";
 import { resources, useResourceList } from "../../../system/resources";
 import { validateCommand } from "../../../system/validators";
 import type {
@@ -846,7 +846,8 @@ export function useWorkspacePageController() {
 
   useAutoScroll(chatScrollRef);
 
-  const hasModelKey = useModelKeyConfigured();
+  const modelKeyGate = useModelKeyGate();
+  const hasModelKey = modelKeyGate.status !== "unconfigured";
 
   const dim = useMemo(() => deriveDocDimensions(state), [state]);
   // Agent 在跑 = 真实信号(流已激活 / 后端 agentBusy)并联乐观 sendPending。
@@ -3338,6 +3339,7 @@ export function useWorkspacePageController() {
     handleRetryMaterialParse,
     handleEditSummary,
     hasModelKey,
+    modelKeyGate,
     inlineAsk,
     handleCancelAskUser,
     handleSubmitAskUserAnswers,

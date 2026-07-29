@@ -12,6 +12,7 @@ import "../../../overlays/settings/settings.css";
 import { dismissTopOverlay } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
+import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
 
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
 // tab:模型(看板) · 技能 · 连接 · 记忆 · 安全 · 快捷键 · 反馈 · 关于。
@@ -25,6 +26,7 @@ interface SheetOption<T extends string> {
 
 interface HomeSettingsSheetProps<Mode extends string, AnimId extends string, Font extends string> {
   initialTab?: SettingsSheetTab;
+  initialModelProvider?: ModelProvider;
   inkVariant: SettingsInkVariantId;
   themeMode: Mode;
   themeModeOptions: Array<SheetOption<Mode>>;
@@ -57,6 +59,7 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
 
 export function HomeSettingsSheet<Mode extends string, AnimId extends string, Font extends string>({
   initialTab,
+  initialModelProvider,
   inkVariant,
   themeMode,
   themeModeOptions,
@@ -307,7 +310,9 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                 ) : null}
               </div>
             )}
-            {tab === "model" && <ModelSettingsPanel />}
+            {tab === "model" && (
+              <ModelSettingsPanel initialConfigProvider={initialModelProvider} />
+            )}
             {tab === "skills" && <SkillsPanel onOpenConnector={(id) => {
               setSelectedConnectorId(id);
               switchTab("connections");

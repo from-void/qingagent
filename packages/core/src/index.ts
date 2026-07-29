@@ -189,6 +189,7 @@ export {
   guardReset,
   installNetProbe,
   modelFetch,
+  allowGlobalModelFallback,
   resolveBaseUrl,
   resolveModelProvider,
   resolveModelParams,

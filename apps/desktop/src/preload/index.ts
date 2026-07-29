@@ -39,15 +39,33 @@ type DesktopConfigKey =
   | "qingagent.kimi_official_model"
   | "qingagent.model_provider";
 
+type DesktopConfigReadResult =
+  | { ok: true; value: string | null }
+  | { ok: false };
+
+let clientConfigReady = false;
+try {
+  clientConfigReady = ipcRenderer.sendSync("qingagent:client-config-ready-get") === true;
+} catch {
+  clientConfigReady = false;
+}
+ipcRenderer.on("qingagent:client-config-ready", () => {
+  clientConfigReady = true;
+});
+
 // 请求 header 仍需同步读取本机配置，因此保留 sendSync，但每次只读取调用方明确请求的一项；
 // contextBridge 不再挂整份已解密配置对象，也不暴露可枚举任意 key 的通用 API。
 function readDesktopConfigValue(key: DesktopConfigKey): string | null {
-  try {
-    const value = ipcRenderer.sendSync("qingagent:client-config-value-get", key) as unknown;
-    return typeof value === "string" && value.length > 0 ? value : null;
-  } catch {
-    return null;
-  }
+  if (!clientConfigReady) throw new Error("desktop client config is not ready");
+  const result = ipcRenderer.sendSync(
+    "qingagent:client-config-value-get",
+    key,
+  ) as DesktopConfigReadResult | string | null;
+  // 兼容同版本滚动升级期间可能短暂连到旧 main 的值形状。
+  if (typeof result === "string") return result.length > 0 ? result : null;
+  if (result === null) return null;
+  if (!result || result.ok !== true) throw new Error("desktop client config read failed");
+  return typeof result.value === "string" && result.value.length > 0 ? result.value : null;
 }
 
 async function writeDesktopConfigValue(
@@ -95,6 +113,12 @@ contextBridge.exposeInMainWorld("electron", {
   getModelProvider: () => readDesktopConfigValue("qingagent.model_provider"),
   setModelProvider: (value: string | null) =>
     writeDesktopConfigValue("qingagent.model_provider", value),
+  isClientConfigReady: () => clientConfigReady,
+  onClientConfigReady: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on("qingagent:client-config-ready", listener);
+    return () => ipcRenderer.removeListener("qingagent:client-config-ready", listener);
+  },
   requestConfirmRememberGrant: (input: {
     sessionId: string;
     confirmId: string;

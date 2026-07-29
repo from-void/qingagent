@@ -19,6 +19,7 @@ type DesktopConfigAccessor = {
 export type PersistedReadResult =
   | { ok: true; value: string | null }
   | { ok: false; value: null };
+export const CLIENT_PERSIST_CHANGED_EVENT = "qingagent:client-persist-changed";
 
 const cache: ConfigMap = {};
 const loadedKeys = new Set<string>();
@@ -85,6 +86,27 @@ function desktopConfigAccessor(key: string): DesktopConfigAccessor | null {
   }
 }
 
+function isDesktopWindow(): boolean {
+  return typeof window !== "undefined" && window.electron?.isDesktop === true;
+}
+
+function isDesktopConfigReady(): boolean {
+  if (!isDesktopWindow()) return false;
+  const ready = window.electron?.isClientConfigReady;
+  if (!ready) return true;
+  try {
+    return ready();
+  } catch {
+    return false;
+  }
+}
+
+function emitPersistedChange(key: string): void {
+  window.dispatchEvent(new CustomEvent(CLIENT_PERSIST_CHANGED_EVENT, {
+    detail: { key },
+  }));
+}
+
 function readDesktopCached(key: string, accessor: DesktopConfigAccessor): PersistedReadResult {
   if (!loadedKeys.has(key)) {
     try {
@@ -102,13 +124,18 @@ function readDesktopCached(key: string, accessor: DesktopConfigAccessor): Persis
 
 /** 当前是否走 userData 持久化(桌面端)。web 端为 false,走 localStorage。 */
 export function isDesktopPersist(): boolean {
-  return desktopConfigAccessor("qingagent.deepseek_api_key") !== null;
+  return isDesktopWindow();
 }
 
 /** 读取一个持久化字符串;缺失/空串都返回 null。 */
 export function readPersistedChecked(key: string): PersistedReadResult {
+  if (isDesktopWindow() && !isDesktopConfigReady()) {
+    return { ok: false, value: null };
+  }
   const accessor = desktopConfigAccessor(key);
   if (accessor) return readDesktopCached(key, accessor);
+  // 已明确是 desktop 时，具名 accessor 暂缺代表桥尚不可读；绝不回退随机 origin 的 localStorage。
+  if (isDesktopWindow()) return { ok: false, value: null };
   try {
     return { ok: true, value: window.localStorage.getItem(key) };
   } catch {
@@ -126,11 +153,14 @@ export function readPersisted(key: string): string | null {
  * 桌面端仍会先同步更新镜像；IPC 失败时恢复写入前的值，避免形成“本次能用、重启丢失”的假象。
  */
 export async function writePersistedAwaited(key: string, value: string | null): Promise<boolean> {
+  if (isDesktopWindow() && !isDesktopConfigReady()) return false;
   const accessor = desktopConfigAccessor(key);
   if (!accessor) {
+    if (isDesktopWindow()) return false;
     try {
       if (value) window.localStorage.setItem(key, value);
       else window.localStorage.removeItem(key);
+      emitPersistedChange(key);
       return true;
     } catch {
       return false;
@@ -147,7 +177,10 @@ export async function writePersistedAwaited(key: string, value: string | null): 
 
   try {
     const ok = await accessor.set(value);
-    if (ok) return true;
+    if (ok) {
+      emitPersistedChange(key);
+      return true;
+    }
   } catch {
     // 统一按落盘失败处理，并在下方回滚镜像。
   }

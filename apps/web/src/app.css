@@ -60,6 +60,11 @@
 }
 
 /* 未配置 key 的发送按钮引导气泡 */
+.ws-input-tools.has-nokey-gate {
+  /* 提升包含 CTA 的整条工具栏，避免气泡向上伸入编辑器时仍被兄弟层命中。 */
+  position: relative;
+  z-index: 2;
+}
 .nokey-gate {
   position: relative;
   display: inline-flex;

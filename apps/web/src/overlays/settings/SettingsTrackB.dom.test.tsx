@@ -174,6 +174,20 @@ describe("Settings Track B", () => {
     expect(host?.querySelector(".vd-grid")).not.toBeNull();
   });
 
+  it("门禁定向进入 Kimi 时首屏就是 Kimi 二级配置，且不擅自切换使用中厂商", async () => {
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel initialConfigProvider="kimi" />
+      </ToastProvider>,
+    );
+
+    const page = host?.querySelector('[data-wf="ModelConfigPage"]');
+    expect(page?.textContent).toContain("如何配置 Kimi");
+    expect(page?.textContent).toContain("接入 Kimi 官方 API");
+    expect(host?.querySelector('[data-wf="ModelVendorCards"]')).toBeNull();
+    expect(getSelectedModelProvider()).toBe("deepseek");
+  });
+
   it("二级页保存 key 后回主视图并直接成为使用中", async () => {
     await render(
       <ConfirmProvider>

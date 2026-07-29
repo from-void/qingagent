@@ -63,6 +63,8 @@ export interface SessionActorOptions {
   abortSession: (sessionId: string, reason?: TurnPreemptionReason) => void;
   afterRun?: (sessionId: string) => void;
   maxQueueSize?: number;
+  /** 用户已确认且正在执行的命令等"不能被系统悄悄丢掉"的工作。 */
+  hasProtectedWork?: (sessionId: string) => boolean;
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
@@ -101,8 +103,19 @@ export class SessionActor {
     }
     this.assertQueueCapacity();
     if (this.isBusy && isPreemptiveCommand(input.command)) {
-      preemptionReason = preemptionReasonForCommand(input.command);
-      this.abortCurrent(preemptionReason);
+      const reason = preemptionReasonForCommand(input.command);
+      // 用户已经点过确认、命令正在跑:新消息只排队,绝不顺手把它掐死——那会让用户
+      // 付出的确认动作白丢,卡片落成笼统"已中止"(0729 真机 P1)。
+      // 用户显式点停止(cancelStream → globalStop)仍必须立刻生效。
+      if (reason === "preemptedByNewMessage" && this.hasProtectedWork()) {
+        console.info("[confirm-lifecycle] preemption skipped: protected work in flight", {
+          sessionId: this.options.sessionId,
+          command: input.command.kind,
+        });
+      } else {
+        preemptionReason = reason;
+        this.abortCurrent(preemptionReason);
+      }
     }
 
     return new Promise<LoggedFrame[]>((resolve, reject) => {
@@ -124,6 +137,14 @@ export class SessionActor {
   private assertQueueCapacity(): void {
     if (this.queue.length >= this.maxQueueSize) {
       throw new SessionActorQueueFullError(this.maxQueueSize);
+    }
+  }
+
+  private hasProtectedWork(): boolean {
+    try {
+      return this.options.hasProtectedWork?.(this.options.sessionId) === true;
+    } catch {
+      return false;
     }
   }
 

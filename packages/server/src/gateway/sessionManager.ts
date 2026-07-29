@@ -34,6 +34,12 @@ export interface SessionManagerOptions {
   deletionLookupCacheSize?: number;
   disposeWaitTimeoutMs?: number;
   deletionStore?: SessionDeletionStore;
+  /**
+   * 会话是否正在做"用户已经付出过动作、不能被系统悄悄丢掉"的工作
+   * (当前=用户已确认且正在执行的命令,以及仍待用户决策的确认卡)。
+   * 返回 true 时,断连宽限期与新消息抢占都必须放行等它自己收口。
+   */
+  hasProtectedWork?: (sessionId: string) => boolean;
 }
 
 export interface SessionDeletionStoreRecord {
@@ -278,6 +284,12 @@ export class SessionManager {
   async cancelRunningTurnAfterDisconnect(sessionId: string): Promise<boolean> {
     const live = this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER);
     if (this.frameLog.hasSubscribers(sessionId) || !live.activeRunner) return false;
+    if (this.hasProtectedWork(sessionId)) {
+      console.info("[confirm-lifecycle] disconnect cleanup skipped: protected work in flight", {
+        sessionId,
+      });
+      return false;
+    }
     if (this.disconnectGraceTimers.has(sessionId)) return true;
 
     const timer = setTimeout(() => {
@@ -325,9 +337,25 @@ export class SessionManager {
     this.disconnectGraceTimers.delete(sessionId);
   }
 
+  /** 受保护工作判定的唯一入口；未注入时按"没有受保护工作"处理，保持既有行为。 */
+  private hasProtectedWork(sessionId: string): boolean {
+    try {
+      return this.options.hasProtectedWork?.(sessionId) === true;
+    } catch {
+      return false;
+    }
+  }
+
   private async cancelRunningTurnAfterGracePeriod(sessionId: string): Promise<void> {
     const live = this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER);
     if (this.frameLog.hasSubscribers(sessionId) || !live.activeRunner) return;
+    // 宽限期内用户点了确认、命令跑起来了：断连不能把它掐死。
+    if (this.hasProtectedWork(sessionId)) {
+      console.info("[confirm-lifecycle] disconnect cleanup skipped: protected work in flight", {
+        sessionId,
+      });
+      return;
+    }
     try {
       const queued = await this.submitQueued(sessionId, {
         command: { kind: "cancelStream", data: { sessionId } },
@@ -471,6 +499,7 @@ export class SessionManager {
       handleCommand: this.options.handleCommand,
       abortSession: this.options.abortSession,
       afterRun: this.options.afterRun,
+      hasProtectedWork: (id) => this.hasProtectedWork(id),
     });
     this.actors.set(sessionId, { actor, lastAccessAt: Date.now() });
     this.evictIdleActorsIfNeeded(sessionId);

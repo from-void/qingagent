@@ -26,6 +26,10 @@ import {
   resolveCommandTimeout,
 } from "./commandTimeoutPolicy.js";
 import { formatRetainedOutputNotice } from "./retainedOutputNotice.js";
+import {
+  credentialFailureNotice,
+  diagnoseCredentialFailure,
+} from "../credentials/credentialFailureDiagnosis.js";
 
 function positiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -116,6 +120,21 @@ export interface GatedCommandResult {
  * - `user-cancel`：用户或系统取消。
  */
 export type CommandTerminator = "command" | "system-timeout" | "signal" | "user-cancel";
+
+/**
+ * 凭据/登录类失败的如实说明。与 killedCommandNotice 同一位置、同一风格:
+ * 命令本身没被我们掐死,但输出里已经写明"扫码成功却存不下登录",
+ * 不追加说明的话模型会照旧编成"你没扫码"并再发一张二维码(0729 真机实证)。
+ * 判不出来就返回空串,绝不瞎归因。
+ */
+export function credentialFailureNoticeFor(result: {
+  output: string;
+  timedOut?: boolean;
+  killed?: boolean;
+}): string {
+  const diagnosis = diagnoseCredentialFailure(result);
+  return diagnosis ? credentialFailureNotice(diagnosis) : "";
+}
 
 /** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
 export function killedCommandNotice(exitCode: number): string {
@@ -611,6 +630,11 @@ export function createGatedExecuteCommandTool({
                   durationMs,
                   timeoutMs: timeoutPolicy.effectiveMs,
                 });
+        // 凭据诊断与终止方归因是两个维度:前者说"这次登录卡在哪一步",后者说"谁终止的"。
+        // 只在非成功回合追加,成功回合不打扰模型。
+        const credentialNotice = succeeded
+          ? ""
+          : credentialFailureNoticeFor({ output: commandOutput, timedOut, killed });
         const terminalResult = commandResult({
           success: succeeded,
           exitCode: result.exitCode,
@@ -621,7 +645,7 @@ export function createGatedExecuteCommandTool({
           timeoutMs: timeoutPolicy.effectiveMs,
           timeoutClamped: timeoutPolicy.clamped,
           durationMs,
-          output: [commandOutput, timeoutClampNotice, attributionNotice]
+          output: [commandOutput, timeoutClampNotice, attributionNotice, credentialNotice]
             .filter(Boolean).join("\n"),
         });
         await safeCustom(writer, {

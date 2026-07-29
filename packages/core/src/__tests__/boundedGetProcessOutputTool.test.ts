@@ -628,3 +628,54 @@ describe("bounded get_process_output", () => {
     expect(custom).toHaveBeenCalledTimes(callsAfterReturn);
   });
 });
+
+/**
+ * 扫码登录几乎都跑在「后台起进程 + 轮询输出」这条路上,所以归因必须在轮询回合就生效:
+ * 否则模型只看到「还在等」,就会一轮轮重发二维码,而真相是凭据已经拿到、只是存不下去。
+ */
+describe("轮询回合的凭据归因", () => {
+  const KEYCHAIN_LOG = [
+    "polling success, token obtained",
+    `msg="key access denied" service="AntOAuthSDK" account="htnn-gateway-master-key" reason="denied"`,
+  ].join("\n");
+
+  function handleWithOutput(stdout: string, exitCode?: number): FakeProcessHandle {
+    return {
+      pid: "yuque-login",
+      command: "yuque login",
+      stdout,
+      stderr: "",
+      exitCode,
+      wait: vi.fn(() => new Promise<CommandResult>(() => {})),
+      kill: vi.fn(async () => true),
+    };
+  }
+
+  it("扫码成功却存不下时,当轮就告诉模型不要再出码", async () => {
+    const { tool } = createHarness(handleWithOutput(KEYCHAIN_LOG));
+    const output = await executeTool(tool, { pid: "yuque-login" });
+    expect(output).toContain("授权/扫码环节已经完成");
+    expect(output).toContain("禁止再调用 show_qr");
+    expect(output).toContain("立即停止本次登录编排");
+  });
+
+  it("同一份输出重复轮询也始终给同一个结论,不会回退成「等用户扫码」", async () => {
+    const { tool } = createHarness(handleWithOutput(KEYCHAIN_LOG));
+    const first = await executeTool(tool, { pid: "yuque-login" });
+    const second = await executeTool(tool, { pid: "yuque-login" });
+    expect(second).toBe(first);
+    expect(second).not.toContain("请扫描下方的二维码");
+  });
+
+  it("正常等待扫码的回合不追加诊断噪音", async () => {
+    const { tool } = createHarness(handleWithOutput("waiting for user to scan the QR code"));
+    const output = await executeTool(tool, { pid: "yuque-login" });
+    expect(output).not.toContain("凭据诊断");
+  });
+
+  it("与登录无关的输出一律不追加", async () => {
+    const { tool } = createHarness(handleWithOutput("building...\n", 0));
+    const output = await executeTool(tool, { pid: "yuque-login" });
+    expect(output).not.toContain("凭据诊断");
+  });
+});

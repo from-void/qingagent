@@ -1,5 +1,6 @@
 import "./workspace.css";
 import "./workspace-ink-skin.css";
+import "./workspace-responsive.css";
 import { WORKSPACE_PAPER_DOM } from "../../system/workspacePaperGeometry";
 import { WorkspaceChatPane } from "./components/WorkspaceChatPane";
 import { WorkspaceDocumentPane } from "./components/WorkspaceDocumentPane";

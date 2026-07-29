@@ -1,0 +1,30 @@
+/*
+ * 窄桌面工作区降级。
+ *
+ * 完整桌面继续使用 400 / 800 双定宽列；产品从 768px 起进入桌面界面，
+ * Electron 主窗口又允许缩到 960px，因此 1024px 不能依赖横向滚动才能找到核心操作。
+ * 这里仅压缩框架留白与左栏，把剩余宽度全部交给纸列；1280px 起保持既有几何不变。
+ */
+@media (min-width: 768px) and (max-width: 1279px) {
+  #view-workspace {
+    --ws-paper-body-padding-inline: 24px;
+    --ws-paper-chat-column-width: 320px;
+    --ws-paper-column-gap: 24px;
+    --ws-paper-column-width: min(
+      800px,
+      calc(
+        100vw
+        - var(--ws-paper-body-padding-inline)
+        - var(--ws-paper-body-padding-inline)
+        - var(--ws-paper-chat-column-width)
+        - var(--ws-paper-column-gap)
+      )
+    );
+  }
+
+  #view-workspace .wf-doc,
+  #view-workspace .ws-paper-shell {
+    padding-right: 48px !important;
+    padding-left: 48px !important;
+  }
+}

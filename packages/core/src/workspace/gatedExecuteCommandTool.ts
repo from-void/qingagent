@@ -25,6 +25,10 @@ import {
   SANDBOX_BACKGROUND_TTL_MS,
 } from "./backgroundCommandLimits.js";
 import { formatRetainedOutputNotice } from "./retainedOutputNotice.js";
+import {
+  credentialFailureNotice,
+  diagnoseCredentialFailure,
+} from "../credentials/credentialFailureDiagnosis.js";
 
 function positiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -97,6 +101,21 @@ export interface GatedCommandResult {
   output: string;
   pid?: string;
   background?: true;
+}
+
+/**
+ * 凭据/登录类失败的如实说明。与 killedCommandNotice 同一位置、同一风格:
+ * 命令本身没被我们掐死,但输出里已经写明"扫码成功却存不下登录",
+ * 不追加说明的话模型会照旧编成"你没扫码"并再发一张二维码(0729 真机实证)。
+ * 判不出来就返回空串,绝不瞎归因。
+ */
+export function credentialFailureNoticeFor(result: {
+  output: string;
+  timedOut?: boolean;
+  killed?: boolean;
+}): string {
+  const diagnosis = diagnoseCredentialFailure(result);
+  return diagnosis ? credentialFailureNotice(diagnosis) : "";
 }
 
 /** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
@@ -502,15 +521,22 @@ export function createGatedExecuteCommandTool({
         const cancelled = !timedOut && context?.abortSignal?.aborted === true;
         const killed = !timedOut && !cancelled && result.killed === true;
         const commandOutput = formatCommandOutput(result, input.tail);
+        const succeeded = result.success && result.exitCode === 0 && !cancelled && !timedOut && !killed;
+        // 凭据诊断只在非成功回合追加,成功回合不打扰模型。
+        const credentialNotice = succeeded
+          ? ""
+          : credentialFailureNoticeFor({ output: commandOutput, timedOut, killed });
         const terminalResult = commandResult({
-          success: result.success && result.exitCode === 0 && !cancelled && !timedOut && !killed,
+          success: succeeded,
           exitCode: result.exitCode,
           cancelled,
           timedOut,
           killed,
-          output: killed
-            ? [commandOutput, killedCommandNotice(result.exitCode)].filter(Boolean).join("\n")
-            : commandOutput,
+          output: [
+            commandOutput,
+            killed ? killedCommandNotice(result.exitCode) : "",
+            credentialNotice,
+          ].filter(Boolean).join("\n"),
         });
         await safeCustom(writer, {
           type: "data-sandbox-exit",

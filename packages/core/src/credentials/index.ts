@@ -24,3 +24,11 @@ export {
   PLATFORM_CREDENTIAL_SPECS,
   type PlatformCredentialSpec,
 } from "./specs.js";
+// 命令行工具扫码登录失败的归因分档:把"扫码成功却存不下"与"用户没扫码"彻底分开。
+export {
+  credentialFailureNotice,
+  diagnoseCredentialFailure,
+  type CredentialFailureDiagnosis,
+  type CredentialFailureKind,
+  type CredentialFailureSignals,
+} from "./credentialFailureDiagnosis.js";

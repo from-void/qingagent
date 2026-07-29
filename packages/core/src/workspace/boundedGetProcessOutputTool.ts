@@ -10,6 +10,10 @@ import {
 import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import {
+  credentialFailureNotice,
+  diagnoseCredentialFailure,
+} from "../credentials/credentialFailureDiagnosis.js";
+import {
   formatRetainedOutputNotice,
   type RetainedOutputState,
 } from "./retainedOutputNotice.js";
@@ -159,6 +163,19 @@ function abortError(signal: AbortSignal): Error {
   );
   error.name = "AbortError";
   return error;
+}
+
+/**
+ * 轮询回合的凭据归因。
+ *
+ * 只在"还在等用户扫码"以外的分档上出声:等待中是后台授权的正常态,
+ * 每轮都念一遍反而变噪音;而一旦出现"拿到了却存不下""目录被拒""码已过期"这类,
+ * 必须当轮就把真相摆到模型面前,否则它会继续重发二维码让用户白等。
+ */
+function pollingCredentialFailureNotice(output: string): string {
+  const diagnosis = diagnoseCredentialFailure({ output });
+  if (!diagnosis || diagnosis.kind === "qr-pending") return "";
+  return credentialFailureNotice(diagnosis);
 }
 
 async function safeCustom(
@@ -378,12 +395,16 @@ Use this after starting a background command with execute_command (background: t
         const stdout = applyTail(currentStdout, tail);
         const stderr = applyTail(currentStderr, tail);
         const output = formatOutput(stdout, stderr, handle.exitCode, handle);
-        if (!waitTimedOut) return output;
+        // 扫码登录几乎都跑在后台 + 轮询这条路上,所以归因必须在这里也做一遍:
+        // 否则模型只看到「还在等」,就会一轮轮重发二维码,而真相是凭据已经拿到、存不下去。
+        const notice = pollingCredentialFailureNotice(`${stdout}\n${stderr}`);
+        if (!waitTimedOut) return [output, notice].filter(Boolean).join("\n");
         return [
           output,
           "",
           `进程仍在运行（等待 ${formatWaitDuration(waitMaxMs)} 未退出）。可稍后不带 wait 再次轮询，或用 kill_process 终止后重试。`,
-        ].join("\n");
+          notice,
+        ].filter(Boolean).join("\n");
       } finally {
         stopHeartbeat();
       }

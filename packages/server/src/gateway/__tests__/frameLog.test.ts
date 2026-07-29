@@ -99,6 +99,22 @@ describe("InMemoryFrameLog", () => {
     expect(received).toEqual([1, 2]);
   });
 
+  it("append 可把主动生成的恢复帧标成 replay 投递", () => {
+    const log = new InMemoryFrameLog();
+    const deliveries: string[] = [];
+    const unsubscribe = log.subscribe(
+      "s1",
+      0,
+      (_entry, delivery) => deliveries.push(delivery),
+    );
+
+    log.append("s1", frame("restore"), { delivery: "replay" });
+    log.append("s1", frame("live"));
+    unsubscribe();
+
+    expect(deliveries).toEqual(["replay", "live"]);
+  });
+
   it("evict 后同一 session 会获得新的 epoch", () => {
     const log = new InMemoryFrameLog();
     const firstEpoch = log.getEpoch("s1");

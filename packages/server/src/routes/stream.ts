@@ -545,7 +545,11 @@ function appendRestoreSnapshot(sessionId: string, requestedEpoch: number): numbe
     kind: "restoreReset",
     data: { epoch, snapshotSeq },
   };
-  const resetSeq = sessionManager.frameLog.append(sessionId, resetFrame) ?? snapshotSeq;
+  const resetSeq = sessionManager.frameLog.append(
+    sessionId,
+    resetFrame,
+    { delivery: "replay" },
+  ) ?? snapshotSeq;
   const state: RestoreInflightState = {
     epoch,
     resetSeq,
@@ -556,23 +560,30 @@ function appendRestoreSnapshot(sessionId: string, requestedEpoch: number): numbe
       for (const frame of frames) {
         // 恢复期间会话被驱逐/重建时，旧快照不得串入新 epoch。
         if (sessionManager.frameLog.getEpoch(sessionId) !== epoch) return;
-        sessionManager.frameLog.append(sessionId, frame);
+        // 这批帧是为 gap/epoch 重连生成的权威回放。若按 live 计入 64 帧
+        // 慢客户端预算，恢复本身超过上限时会 close → 重连 → 再生成恢复，
+        // 形成永不收敛的自喂养循环。
+        sessionManager.frameLog.append(sessionId, frame, { delivery: "replay" });
       }
     })
     .catch((error) => {
       if (sessionManager.frameLog.getEpoch(sessionId) !== epoch) return;
       console.error("[events] restore snapshot failed:", redactStreamErrorForLog(error));
-      sessionManager.frameLog.append(sessionId, {
-        kind: "stream",
-        data: {
-          kind: "draftingFailed",
+      sessionManager.frameLog.append(
+        sessionId,
+        {
+          kind: "stream",
           data: {
-            streamId: "restore",
-            reason: publicStreamErrorReason(),
-            retriable: true,
+            kind: "draftingFailed",
+            data: {
+              streamId: "restore",
+              reason: publicStreamErrorReason(),
+              retriable: true,
+            },
           },
         },
-      });
+        { delivery: "replay" },
+      );
     })
     .finally(() => {
       if (restoreInflight.get(sessionId) === state) {

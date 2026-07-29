@@ -20,7 +20,7 @@ export interface FrameLog {
   append(
     sessionId: string,
     frame: BridgeFrame,
-    options?: { generation?: number },
+    options?: { generation?: number; delivery?: FrameDelivery },
   ): number | null;
   readFrom(sessionId: string, afterSeq: number): FrameLogReadResult;
   subscribe(
@@ -49,7 +49,7 @@ interface SessionFrameLogState {
   epoch: number;
   generation: number;
   activeRunner: boolean;
-  listeners: Set<(frame: LoggedFrame) => void>;
+  listeners: Set<(frame: LoggedFrame, delivery: FrameDelivery) => void>;
 }
 
 export class InMemoryFrameLog implements FrameLog {
@@ -76,7 +76,7 @@ export class InMemoryFrameLog implements FrameLog {
   append(
     sessionId: string,
     frame: BridgeFrame,
-    options: { generation?: number } = {},
+    options: { generation?: number; delivery?: FrameDelivery } = {},
   ): number | null {
     const state = this.ensure(sessionId);
     if (
@@ -105,7 +105,7 @@ export class InMemoryFrameLog implements FrameLog {
 
     for (const listener of [...state.listeners]) {
       try {
-        listener(logged);
+        listener(logged, options.delivery ?? "live");
       } catch (error) {
         console.error("[frameLog] subscriber failed", {
           sessionId,
@@ -153,7 +153,9 @@ export class InMemoryFrameLog implements FrameLog {
         });
       }
     };
-    const listener = (entry: LoggedFrame) => deliver(entry, "live");
+    const listener = (entry: LoggedFrame, delivery: FrameDelivery) => {
+      deliver(entry, delivery);
+    };
 
     state.listeners.add(listener);
     for (const entry of this.readFrom(sessionId, lastSeq).frames) {

@@ -17,7 +17,7 @@ export interface BoundedSsePumpOptions {
 }
 
 export interface SseEnqueueOptions {
-  /** FrameLog 同步回放由其 2000 帧窗口约束，不计入 live 慢客户端背压预算。 */
+  /** FrameLog 历史/恢复回放不计入 live 慢客户端背压预算。 */
   delivery?: "live" | "replay";
   /** 合法快照没有 512 KiB 文档上限；仍受 live 帧数上限约束。 */
   allowOversized?: boolean;

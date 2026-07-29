@@ -614,7 +614,7 @@ describe("沙箱命令终端卡", () => {
     expect(findSpec(state, "normalized-owner")).toMatchObject({
       status: {
         kind: "failed",
-        data: { reason: "运行失败（退出码 3）" },
+        data: { reason: "命令自身返回失败（退出码 3）" },
       },
       body: {
         kind: "commandCard",
@@ -706,7 +706,7 @@ describe("沙箱命令终端卡", () => {
     expect(findSpec(state, "indexed-owner")).toMatchObject({
       status: {
         kind: "failed",
-        data: { reason: "运行失败（退出码 3）" },
+        data: { reason: "命令自身返回失败（退出码 3）" },
       },
     });
     const settlementLog = loggerInfo.mock.calls.find(

@@ -15,15 +15,16 @@ import {
   executeCommandInputSchema,
 } from "../confirm/commandConfirmation.js";
 import {
-  SANDBOX_TIMEOUT_MS,
   sessionWorkspaceDir,
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
+import { formatCommandDuration } from "./backgroundCommandLimits.js";
 import {
-  effectiveBackgroundTimeoutMs,
-  formatCommandDuration,
-  SANDBOX_BACKGROUND_TTL_MS,
-} from "./backgroundCommandLimits.js";
+  commandTimeoutClampNotice,
+  FOREGROUND_TIMEOUT_LIMIT_SECONDS,
+  formatElapsedDuration,
+  resolveCommandTimeout,
+} from "./commandTimeoutPolicy.js";
 import { formatRetainedOutputNotice } from "./retainedOutputNotice.js";
 
 function positiveIntegerEnv(name: string, fallback: number): number {
@@ -97,7 +98,24 @@ export interface GatedCommandResult {
   output: string;
   pid?: string;
   background?: true;
+  /** 谁结束了这条命令。模型据此归因，不必再从输出里猜。 */
+  terminatedBy?: CommandTerminator;
+  /** 本次实际生效的超时上限(毫秒)，已按硬上限钳制。 */
+  timeoutMs?: number;
+  /** 入参超过硬上限、已被钳制到 timeoutMs。 */
+  timeoutClamped?: true;
+  /** 命令实际耗时(毫秒)。 */
+  durationMs?: number;
 }
+
+/**
+ * 命令终止方。分档给模型看的第一手事实：
+ * - `command`：命令自己跑完退出(含它自身的非零失败，如 CLI 自己的授权超时)；
+ * - `system-timeout`：超过我们的超时上限被终止；
+ * - `signal`：被信号打死(沙箱写墙/OOM/外部 kill)；
+ * - `user-cancel`：用户或系统取消。
+ */
+export type CommandTerminator = "command" | "system-timeout" | "signal" | "user-cancel";
 
 /** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
 export function killedCommandNotice(exitCode: number): string {
@@ -106,6 +124,47 @@ export function killedCommandNotice(exitCode: number): string {
     "这不是用户取消,也不是用户没有确认——确认已经通过,命令确实启动过。",
     "常见成因:命令试图写入沙箱不允许写的目录、内存不足、或被外部进程结束。",
     "如需继续,请先根据输出判断是权限还是资源问题,再决定换路径重试或改用后台执行。",
+  ].join("");
+}
+
+/** 命令被我们的超时掐掉时的如实说明：给出实际生效的超时值与"改后台"的出路。 */
+export function timedOutCommandNotice(timeoutMs: number, background = false): string {
+  return [
+    `命令运行超过${background ? "后台" : "前台"}超时上限 ${
+      formatCommandDuration(timeoutMs)
+    },已被系统终止。`,
+    "这不是命令自己失败,也不是用户取消。",
+    background
+      ? "如需更久,请把任务拆小后重试,不要把超时写得更大——上限不可越过。"
+      : "如果它本来就要等更久(例如等待扫码/登录授权),请改用 background:true 后台执行,再用 mastra_workspace_get_process_output 轮询输出。",
+  ].join("");
+}
+
+/**
+ * 命令自己跑完并返回非零退出码时的如实说明。
+ * 必须与"我们的超时/取消"划清界限：0729 语雀真机里 CLI 自己等满 OAuth 后打印
+ * `Authorization timeout.` 退出，模型却把它讲成系统超时，用户只看到一句原始英文。
+ */
+export function commandSelfFailureNotice(input: {
+  exitCode: number;
+  durationMs?: number;
+  timeoutMs: number;
+}): string {
+  const elapsed = typeof input.durationMs === "number"
+    ? `,耗时 ${formatElapsedDuration(input.durationMs)}`
+    : "";
+  return [
+    `命令自己运行结束并返回失败(退出码 ${input.exitCode}${elapsed})。`,
+    `这不是系统超时(本次超时上限 ${formatCommandDuration(input.timeoutMs)},未触发),也不是用户取消。`,
+    "请按上面的输出判断失败原因再决定下一步;向用户说明时用中文讲清楚发生了什么,不要把命令的原文报错直接抛给用户,也不要说成超时。",
+  ].join("");
+}
+
+/** 执行途中被用户/系统取消时的如实说明。 */
+export function cancelledCommandNotice(): string {
+  return [
+    "命令已被用户或系统取消,本次执行没有跑完。",
+    "这不是超时,也不是命令自身失败;需要的话请征求用户意见后再重试。",
   ].join("");
 }
 
@@ -171,6 +230,10 @@ function commandResult(input: {
   killed?: boolean;
   pid?: string;
   background?: true;
+  terminatedBy?: CommandTerminator;
+  timeoutMs?: number;
+  timeoutClamped?: boolean;
+  durationMs?: number;
 }): GatedCommandResult {
   return {
     success: input.success,
@@ -181,6 +244,10 @@ function commandResult(input: {
     output: input.output,
     ...(input.pid ? { pid: input.pid } : {}),
     ...(input.background ? { background: true as const } : {}),
+    ...(input.terminatedBy ? { terminatedBy: input.terminatedBy } : {}),
+    ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.timeoutClamped ? { timeoutClamped: true as const } : {}),
+    ...(typeof input.durationMs === "number" ? { durationMs: input.durationMs } : {}),
   };
 }
 
@@ -193,6 +260,7 @@ function cancelledCommandResult(reason: string): GatedCommandResult {
     success: false,
     exitCode: -1,
     cancelled: true,
+    terminatedBy: "user-cancel",
     output: reason,
   });
 }
@@ -299,7 +367,10 @@ export function createGatedExecuteCommandTool({
       "Install, external-send, and destructive effects require explicit user approval. " +
       "Commands that block waiting for user authorization (QR-scan / login / init flows that " +
       "print an auth link then wait) MUST run with background:true; then poll " +
-      "mastra_workspace_get_process_output for the auth URL and present it via show_qr.",
+      "mastra_workspace_get_process_output for the auth URL and present it via show_qr. " +
+      `Timeouts: use timeoutSeconds (unit = SECONDS, not milliseconds); foreground is capped at ${
+        FOREGROUND_TIMEOUT_LIMIT_SECONDS
+      } seconds and larger values are clamped, so run long waits with background:true instead.`,
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
       try {
@@ -386,14 +457,20 @@ export function createGatedExecuteCommandTool({
       if (context?.abortSignal?.aborted) {
         return cancelledCommandResult("命令已取消: 执行前请求已被取消");
       }
-      const timeoutSeconds = typeof input.timeout === "number" ? input.timeout : undefined;
-      const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
-      // 前台挡 runaway；后台未显式限时时使用可配置 TTL，避免页面关闭/正常轮次结束后无限存活。
-      const foregroundTimeout = explicitTimeout ?? SANDBOX_TIMEOUT_MS;
-      // 后台显式 timeout 与默认值共享同一个硬上限，模型无法靠填写超大秒数绕过 TTL。
-      const backgroundTimeout = effectiveBackgroundTimeoutMs(timeoutSeconds);
-      const backgroundTimeoutClamped =
-        explicitTimeout !== undefined && explicitTimeout > SANDBOX_BACKGROUND_TTL_MS;
+      // 前后台共用同一套归一+钳制：显式入参永远不可能越过硬上限(历史上前台缺这层钳制，
+      // 模型按毫秒风格传 timeout:15000 就把 120s 上限直接绕过了)。
+      const isBackground = input.background === true;
+      const timeoutPolicy = resolveCommandTimeout(input, { background: isBackground });
+      const timeoutClampNotice = commandTimeoutClampNotice(timeoutPolicy, isBackground);
+      if (timeoutPolicy.clamped) {
+        console.warn("[gatedExecuteCommandTool] 超时入参超出硬上限，已钳制", {
+          background: isBackground,
+          source: timeoutPolicy.source,
+          requestedMs: timeoutPolicy.requestedMs,
+          effectiveMs: timeoutPolicy.effectiveMs,
+          limitMs: timeoutPolicy.limitMs,
+        });
+      }
       const toolCallId = context?.agent?.toolCallId;
       const writer = context?.writer as SandboxWriter | undefined;
 
@@ -431,7 +508,7 @@ export function createGatedExecuteCommandTool({
             handle = await sandbox.processes!.spawn(input.command, {
               cwd,
               ...perCallCredentialEnv,
-              timeout: backgroundTimeout,
+              timeout: timeoutPolicy.effectiveMs,
               maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
               abortSignal,
             });
@@ -456,15 +533,20 @@ export function createGatedExecuteCommandTool({
             () => releaseWorkspace?.(),
             () => releaseWorkspace?.(),
           );
-          const clampedLabel = backgroundTimeoutClamped ? "，已按后台上限钳制" : "";
+          const clampedLabel = timeoutPolicy.clamped ? "，已按后台上限钳制" : "";
           return commandResult({
             success: true,
             exitCode: 0,
-            output: `Started background process (PID: ${handle.pid}; 最长运行: ${
-              formatCommandDuration(backgroundTimeout)
-            }${clampedLabel})`,
+            output: [
+              `Started background process (PID: ${handle.pid}; 最长运行: ${
+                formatCommandDuration(timeoutPolicy.effectiveMs)
+              }${clampedLabel})`,
+              timeoutClampNotice,
+            ].filter(Boolean).join("\n"),
             pid: String(handle.pid),
             background: true,
+            timeoutMs: timeoutPolicy.effectiveMs,
+            timeoutClamped: timeoutPolicy.clamped,
           });
         });
       }
@@ -477,7 +559,7 @@ export function createGatedExecuteCommandTool({
         const result = await sandbox.executeCommand(input.command, [], {
           cwd,
           ...perCallCredentialEnv,
-          timeout: foregroundTimeout,
+          timeout: timeoutPolicy.effectiveMs,
           maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
           abortSignal: context?.abortSignal,
           onStdout: async (data) => {
@@ -502,15 +584,45 @@ export function createGatedExecuteCommandTool({
         const cancelled = !timedOut && context?.abortSignal?.aborted === true;
         const killed = !timedOut && !cancelled && result.killed === true;
         const commandOutput = formatCommandOutput(result, input.tail);
+        const durationMs = typeof result.executionTimeMs === "number"
+          ? result.executionTimeMs
+          : Date.now() - startedAt;
+        const succeeded = result.success && result.exitCode === 0 &&
+          !cancelled && !timedOut && !killed;
+        // 失败态分档:谁终止的必须一次说清,否则模型会替系统编理由(把 CLI 自己的
+        // 非零退出说成"我们超时"，或把被信号打死说成"用户取消")。
+        const terminatedBy: CommandTerminator = timedOut
+          ? "system-timeout"
+          : cancelled
+            ? "user-cancel"
+            : killed
+              ? "signal"
+              : "command";
+        const attributionNotice = timedOut
+          ? timedOutCommandNotice(timeoutPolicy.effectiveMs)
+          : cancelled
+            ? cancelledCommandNotice()
+            : killed
+              ? killedCommandNotice(result.exitCode)
+              : succeeded
+                ? ""
+                : commandSelfFailureNotice({
+                  exitCode: result.exitCode,
+                  durationMs,
+                  timeoutMs: timeoutPolicy.effectiveMs,
+                });
         const terminalResult = commandResult({
-          success: result.success && result.exitCode === 0 && !cancelled && !timedOut && !killed,
+          success: succeeded,
           exitCode: result.exitCode,
           cancelled,
           timedOut,
           killed,
-          output: killed
-            ? [commandOutput, killedCommandNotice(result.exitCode)].filter(Boolean).join("\n")
-            : commandOutput,
+          terminatedBy,
+          timeoutMs: timeoutPolicy.effectiveMs,
+          timeoutClamped: timeoutPolicy.clamped,
+          durationMs,
+          output: [commandOutput, timeoutClampNotice, attributionNotice]
+            .filter(Boolean).join("\n"),
         });
         await safeCustom(writer, {
           type: "data-sandbox-exit",
@@ -526,16 +638,33 @@ export function createGatedExecuteCommandTool({
         const timedOut = error instanceof SandboxTimeoutError;
         const cancelled = !timedOut && context?.abortSignal?.aborted === true;
         const reason = error instanceof Error ? error.message : String(error);
+        const durationMs = Date.now() - startedAt;
+        // 原始英文只进诊断日志；回给模型/用户的是分档后的中文归因。
+        console.warn("[gatedExecuteCommandTool] 前台命令异常终止", {
+          timedOut,
+          cancelled,
+          durationMs,
+          timeoutMs: timeoutPolicy.effectiveMs,
+          errorType: error instanceof Error ? error.name : "unknown",
+          message: reason,
+        });
         const terminalResult = commandResult({
           success: false,
           exitCode: -1,
           cancelled,
           timedOut,
-          output: timedOut
-            ? `命令执行超时: ${reason}`
-            : cancelled
-              ? `命令已取消: ${reason}`
-              : `Error: ${reason}`,
+          terminatedBy: timedOut ? "system-timeout" : cancelled ? "user-cancel" : undefined,
+          timeoutMs: timeoutPolicy.effectiveMs,
+          timeoutClamped: timeoutPolicy.clamped,
+          durationMs,
+          output: [
+            timedOut
+              ? timedOutCommandNotice(timeoutPolicy.effectiveMs)
+              : cancelled
+                ? cancelledCommandNotice()
+                : `Error: ${reason}`,
+            timeoutClampNotice,
+          ].filter(Boolean).join("\n"),
         });
         await safeCustom(writer, {
           type: "data-sandbox-exit",

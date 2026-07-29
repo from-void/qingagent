@@ -5,22 +5,40 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { redactSensitiveText } from "../agent-run/redaction.js";
 import { assessCommand } from "../workspace/commandRisk.js";
+import { formatCommandDuration } from "../workspace/backgroundCommandLimits.js";
 import {
-  effectiveBackgroundTimeoutMs,
-  formatCommandDuration,
-} from "../workspace/backgroundCommandLimits.js";
+  BACKGROUND_TIMEOUT_LIMIT_SECONDS,
+  FOREGROUND_TIMEOUT_LIMIT_SECONDS,
+  resolveCommandTimeout,
+} from "../workspace/commandTimeoutPolicy.js";
 import {
   isEnvEnabled,
   sessionWorkspaceDir,
 } from "../workspace/sessionWorkspace.js";
 
-const secondsSchema = z.preprocess(
+const durationSchema = z.preprocess(
   (value) => {
     if (value === null || value === undefined || value === "") return undefined;
     return typeof value === "string" ? Number(value) : value;
   },
   z.number().positive().optional(),
 );
+
+/**
+ * 单位歧义是已实证的 P1：模型按毫秒风格写 `timeout: 15000`，协议却按秒解释成 15000 秒。
+ * 因此三个字段的 description 都必须把单位与上限写死在模型一眼能看到的地方。
+ */
+export const TIMEOUT_SECONDS_DESCRIPTION =
+  `命令超时，单位=秒，不是毫秒。前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS} 秒，` +
+  `后台（background:true）最长 ${BACKGROUND_TIMEOUT_LIMIT_SECONDS} 秒；` +
+  "超过上限会被自动钳制到上限，结果里会告知实际生效值。例：timeoutSeconds: 60 表示 60 秒。" +
+  "需要等更久（扫码/登录授权等）请改用 background:true，不要把秒数写大。";
+export const TIMEOUT_MS_DESCRIPTION =
+  "命令超时，单位=毫秒。与 timeoutSeconds 互斥，只能二选一。" +
+  `同样受硬上限钳制：前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS * 1_000} 毫秒。`;
+export const LEGACY_TIMEOUT_DESCRIPTION =
+  "已废弃的旧字段，单位=秒，不是毫秒。仅为兼容保留，新调用一律用 timeoutSeconds；" +
+  "与 timeoutSeconds/timeoutMs 同时给出时以新字段为准。";
 
 export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 export const MAX_EXECUTE_COMMAND_REASON_LENGTH = 80;
@@ -62,11 +80,25 @@ export const executeCommandInputSchema = z.object({
     .max(MAX_EXECUTE_COMMAND_REASON_LENGTH)
     .describe("面向用户简短说明为什么需要执行这条命令")
     .optional(),
-  timeout: secondsSchema.nullish(),
+  timeoutSeconds: durationSchema.nullish().describe(TIMEOUT_SECONDS_DESCRIPTION),
+  timeoutMs: durationSchema.nullish().describe(TIMEOUT_MS_DESCRIPTION),
+  timeout: durationSchema.nullish().describe(LEGACY_TIMEOUT_DESCRIPTION),
   cwd: z.string().max(1_024).nullish(),
   tail: z.number().int().nonnegative().max(100_000).nullish(),
   background: z.boolean().optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  // 两个新字段单位不同，同时给出无法判断模型的真实意图，只能明确报错让它改写。
+  if (
+    typeof value.timeoutSeconds === "number" &&
+    typeof value.timeoutMs === "number"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["timeoutMs"],
+      message: "timeoutSeconds 与 timeoutMs 互斥，只能二选一（timeoutSeconds 单位=秒，timeoutMs 单位=毫秒）",
+    });
+  }
+});
 
 export type ExecuteCommandInput = z.infer<typeof executeCommandInputSchema>;
 
@@ -79,9 +111,11 @@ export function commandConfirmationDigest(
   sessionId: string,
   input: ExecuteCommandInput,
 ): string {
+  // 超时按归一后的毫秒入摘要：新旧字段换写法不会伪造出新摘要，也不会绕过已发放的确认。
   const stable = JSON.stringify({
     command: input.command,
-    timeout: input.timeout ?? null,
+    timeoutMs: resolveCommandTimeout(input, { background: input.background === true }).requestedMs
+      ?? null,
     cwd: lexicalExecutionCwd(sessionId, input.cwd),
     tail: input.tail ?? null,
     background: input.background === true,
@@ -110,7 +144,9 @@ export function buildCommandConfirmSpec(
             ? "包含多种副作用"
             : "破坏性命令";
   const sub = input.background
-    ? `后台执行 · 最长运行 ${formatCommandDuration(effectiveBackgroundTimeoutMs(input.timeout))} · ${riskSub}`
+    ? `后台执行 · 最长运行 ${
+      formatCommandDuration(resolveCommandTimeout(input, { background: true }).effectiveMs)
+    } · ${riskSub}`
     : riskSub;
   const primaryLabel = kind === "install"
     ? "确认安装"

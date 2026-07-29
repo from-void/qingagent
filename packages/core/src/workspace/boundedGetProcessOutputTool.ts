@@ -148,6 +148,23 @@ function formatOutput(
   return parts.join("\n");
 }
 
+/**
+ * 后台进程退出的分档归因。与前台 execute_command 同一套口径：
+ * 我们的 TTL 掐掉 ≠ 进程自己返回失败，模型不许把后者说成超时。
+ */
+export function backgroundExitAttribution(
+  terminal: { timedOut: boolean; exitCode: number } | null,
+): string {
+  if (!terminal) return "";
+  if (terminal.timedOut) {
+    return "后台进程达到最长运行时限，已被系统终止。这不是进程自己失败，也不是用户取消；" +
+      "如需继续，请把任务拆小后重新启动，不要把超时写得更大。";
+  }
+  if (terminal.exitCode === 0) return "";
+  return `后台进程自己运行结束并返回失败（退出码 ${terminal.exitCode}）。这不是系统超时，也不是用户取消；` +
+    "请按上面的输出判断失败原因，向用户说明时用中文讲清楚，不要把原文报错直接抛给用户。";
+}
+
 function formatWaitDuration(waitMaxMs: number): string {
   return waitMaxMs % 1_000 === 0 ? `${waitMaxMs / 1_000}s` : `${waitMaxMs}ms`;
 }
@@ -217,6 +234,9 @@ Use this after starting a background command with execute_command (background: t
 
         let waitTimedOut = false;
         let exitEventEmitted = false;
+        // 只有本次调用亲眼看到进程退出时,才拿得到权威的 timedOut;轮询到"已退出"的旧进程
+        // 无法区分是它自己失败还是被 TTL 掐掉,那种情况一律不下归因结论,免得猜错。
+        let observedTerminal: { timedOut: boolean; exitCode: number } | null = null;
         let authorizationSignalDetected = false;
         let observedStdout = handle.stdout;
         let observedStderr = handle.stderr;
@@ -330,6 +350,10 @@ Use this after starting a background command with execute_command (background: t
             const outcome = await Promise.race(races);
             await stopPolling();
             if (outcome.kind === "exited") {
+              observedTerminal = {
+                timedOut: outcome.result.timedOut === true,
+                exitCode: outcome.result.exitCode,
+              };
               await pollRetainedOutput();
               await safeCustom(writer, {
                 type: "data-sandbox-exit",
@@ -378,12 +402,15 @@ Use this after starting a background command with execute_command (background: t
         const stdout = applyTail(currentStdout, tail);
         const stderr = applyTail(currentStderr, tail);
         const output = formatOutput(stdout, stderr, handle.exitCode, handle);
-        if (!waitTimedOut) return output;
-        return [
-          output,
-          "",
-          `进程仍在运行（等待 ${formatWaitDuration(waitMaxMs)} 未退出）。可稍后不带 wait 再次轮询，或用 kill_process 终止后重试。`,
-        ].join("\n");
+        if (waitTimedOut) {
+          return [
+            output,
+            "",
+            `进程仍在运行（等待 ${formatWaitDuration(waitMaxMs)} 未退出）。可稍后不带 wait 再次轮询，或用 kill_process 终止后重试。`,
+          ].join("\n");
+        }
+        const attribution = backgroundExitAttribution(observedTerminal);
+        return attribution ? [output, "", attribution].join("\n") : output;
       } finally {
         stopHeartbeat();
       }

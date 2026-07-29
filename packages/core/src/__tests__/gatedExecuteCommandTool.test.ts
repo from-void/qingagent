@@ -23,6 +23,8 @@ interface GatedExecuteInput {
   command: string;
   reason?: string;
   timeout?: number | null;
+  timeoutSeconds?: number | null;
+  timeoutMs?: number | null;
   cwd?: string | null;
   tail?: number | null;
   background?: boolean;
@@ -505,6 +507,113 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(executeCalls[0]?.timeout).toBe(7_000);
   });
 
+  it("超时协议回归:旧 timeout 与新 timeoutSeconds 都按秒解释，timeoutMs 按毫秒", async () => {
+    const legacy = createToolHarness("gated-timeout-legacy-15");
+    await expect(executeTool(legacy.tool, { command: allowedFileCommand, timeout: 15 }))
+      .resolves.toBe("ok");
+    expect(legacy.executeCalls[0]?.timeout).toBe(15_000);
+
+    const named = createToolHarness("gated-timeout-seconds-15");
+    await expect(executeTool(named.tool, { command: allowedFileCommand, timeoutSeconds: 15 }))
+      .resolves.toBe("ok");
+    expect(named.executeCalls[0]?.timeout).toBe(15_000);
+
+    const millis = createToolHarness("gated-timeout-ms-15000");
+    await expect(executeTool(millis.tool, { command: allowedFileCommand, timeoutMs: 15_000 }))
+      .resolves.toBe("ok");
+    expect(millis.executeCalls[0]?.timeout).toBe(15_000);
+  });
+
+  it("超时协议回归:新旧字段并存时以 timeoutSeconds 为准", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-timeout-precedence");
+
+    await expect(executeTool(tool, {
+      command: allowedFileCommand,
+      timeout: 30,
+      timeoutSeconds: 5,
+    })).resolves.toBe("ok");
+    expect(executeCalls[0]?.timeout).toBe(5_000);
+  });
+
+  it("超时协议回归:timeoutSeconds 与 timeoutMs 互斥，schema 直接拒绝", async () => {
+    const { tool } = createToolHarness("gated-timeout-exclusive");
+
+    const conflict = validateToolInput(tool, {
+      command: allowedFileCommand,
+      timeoutSeconds: 15,
+      timeoutMs: 15_000,
+    });
+    expect(conflict.success).toBe(false);
+    expect(conflict.error).toContain("互斥");
+
+    expect(validateToolInput(tool, {
+      command: allowedFileCommand,
+      timeoutSeconds: 15,
+    }).success).toBe(true);
+  });
+
+  it("P1 回归:毫秒当秒传的巨值不能绕过前台硬上限，且生效值回传给模型", async () => {
+    // 0729 真机:模型传 timeout:15000(毫秒风格),被按秒解释成 15000 秒,
+    // 前台 120s 上限被显式入参直接绕过,命令跑满 130s 才由 CLI 自己退出。
+    const { tool, executeCalls } = createToolHarness("gated-timeout-clamp");
+
+    const result = await executeToolResult(tool, {
+      command: allowedFileCommand,
+      timeout: 15_000,
+    });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(executeCalls[0]?.timeout).toBe(SANDBOX_TIMEOUT_MS);
+    expect(result).toMatchObject({
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      timeoutClamped: true,
+    });
+    expect(result.output).toContain("超时参数单位是秒");
+    expect(result.output).toContain(formatCommandDuration(SANDBOX_TIMEOUT_MS));
+    expect(result.output).toContain("timeoutMs");
+  });
+
+  it("P1 回归:timeoutSeconds 的巨值同样被钳制到前台硬上限", async () => {
+    const { tool, executeCalls } = createToolHarness("gated-timeout-clamp-named");
+
+    const result = await executeToolResult(tool, {
+      command: allowedFileCommand,
+      timeoutSeconds: 30_000,
+    });
+
+    expect(executeCalls[0]?.timeout).toBe(SANDBOX_TIMEOUT_MS);
+    expect(result.timeoutClamped).toBe(true);
+  });
+
+  it("P1 回归:CLI 自身非零退出不得被归因成我们的超时", async () => {
+    const { tool } = createToolHarness("gated-self-failure", {
+      commandResult: {
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "Authorization timeout.\n",
+        executionTimeMs: 129_611,
+      },
+    });
+
+    const result = await executeToolResult(tool, { command: allowedFileCommand });
+
+    expect(result).toMatchObject({
+      success: false,
+      exitCode: 1,
+      timedOut: false,
+      cancelled: false,
+      terminatedBy: "command",
+      durationMs: 129_611,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+    });
+    expect(result.killed).toBeUndefined();
+    expect(result.output).toContain("命令自己运行结束并返回失败");
+    expect(result.output).toContain("129.6 秒");
+    expect(result.output).toContain("未触发");
+    expect(result.output).not.toContain("已被系统终止");
+  });
+
   it("P1-4 回归:前台命令安静运行 120 秒时用心跳避免 90 秒 idle 看门狗误杀", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
@@ -589,13 +698,17 @@ describe("gated execute_command tool cwd 约束", () => {
       },
     });
 
-    await expect(executeToolResult(tool, { command: allowedFileCommand })).resolves.toEqual({
+    const result = await executeToolResult(tool, { command: allowedFileCommand });
+    expect(result).toMatchObject({
       success: false,
       exitCode: 17,
       cancelled: false,
       timedOut: false,
-      output: "partial output\ncommand failed\nExit code: 17",
+      terminatedBy: "command",
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      durationMs: 5,
     });
+    expect(result.output).toContain("partial output\ncommand failed\nExit code: 17");
   });
 
   it("成功命令的退出帧一次写入失败时仍保留真实成功终态", async () => {
@@ -611,11 +724,12 @@ describe("gated execute_command tool cwd 约束", () => {
       messages: [],
       writer,
       agent: { toolCallId: "gated-exit-frame-once" },
-    } as never)).resolves.toEqual({
+    } as never)).resolves.toMatchObject({
       success: true,
       exitCode: 0,
       cancelled: false,
       timedOut: false,
+      terminatedBy: "command",
       output: "ok",
     });
     expect(executeCalls).toHaveLength(1);
@@ -754,13 +868,18 @@ describe("gated execute_command tool cwd 约束", () => {
       },
     });
 
-    await expect(executeToolResult(tool, { command: allowedFileCommand })).resolves.toEqual({
+    const result = await executeToolResult(tool, { command: allowedFileCommand });
+    expect(result).toMatchObject({
       success: false,
       exitCode: -1,
       cancelled: false,
       timedOut: true,
-      output: "Exit code: -1",
+      terminatedBy: "system-timeout",
+      timeoutMs: SANDBOX_TIMEOUT_MS,
     });
+    expect(result.output).toContain("Exit code: -1");
+    expect(result.output).toContain("已被系统终止");
+    expect(result.output).toContain("background:true");
   });
 
   it("Gap4 回归:前台 executeCommand 显式设置输出保留上限", async () => {

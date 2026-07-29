@@ -207,8 +207,11 @@ describe("bounded get_process_output", () => {
       writer: { custom, write: vi.fn() },
     } as never);
 
-    expect(output).toBe("stdout:\nbefore\ndone\n\n\nstderr:\nwarning\n\n\nExit code: 7");
+    expect(output).toContain("stdout:\nbefore\ndone\n\n\nstderr:\nwarning\n\n\nExit code: 7");
     expect(output).not.toContain("仍在运行");
+    // 非零退出是进程自己返回的失败，绝不能被讲成我们的超时。
+    expect(output).toContain("后台进程自己运行结束并返回失败（退出码 7）");
+    expect(output).not.toContain("系统终止");
     expect(custom).toHaveBeenCalledWith(expect.objectContaining({
       type: "data-sandbox-exit",
       data: expect.objectContaining({
@@ -219,6 +222,33 @@ describe("bounded get_process_output", () => {
       }),
     }));
     expect(handle.kill).not.toHaveBeenCalled();
+  });
+
+  it("P1 回归:后台进程被 TTL 掐掉时如实说成系统终止，不冒充进程自身失败", async () => {
+    const handle: FakeProcessHandle = {
+      pid: "ttl-process",
+      stdout: "",
+      stderr: "",
+      exitCode: undefined,
+      kill: vi.fn(async () => true),
+      wait: vi.fn(async () => {
+        handle.exitCode = -1;
+        return {
+          success: false,
+          exitCode: -1,
+          stdout: handle.stdout,
+          stderr: handle.stderr,
+          executionTimeMs: 9,
+          timedOut: true,
+        };
+      }),
+    };
+    const { tool } = createHarness(handle, 100);
+
+    const output = await executeTool(tool, { pid: handle.pid, wait: true });
+
+    expect(output).toContain("后台进程达到最长运行时限，已被系统终止");
+    expect(output).not.toContain("自己运行结束");
   });
 
   it("pid 不存在时返回 Mastra 原版提示", async () => {

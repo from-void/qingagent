@@ -56,6 +56,7 @@ export * from "./Hunk";
 export * from "./HunkOp";
 export * from "./LineRange";
 export * from "./MaterialResourceMetadata";
+export * from "./MemorySettings";
 export * from "./MessagePart";
 export * from "./PatchProposal";
 export * from "./PatchConflict";

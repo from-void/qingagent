@@ -25,6 +25,10 @@ vi.mock("../../../overlays/settings/SecurityPanel", () => ({
   SecurityPanel: () => <div>安全内容</div>,
 }));
 
+vi.mock("../../../overlays/settings/MemoryPanel", () => ({
+  MemoryPanel: () => <div>记忆内容</div>,
+}));
+
 vi.mock("../../../overlays/settings/FeedbackPanel", () => ({
   FeedbackPanel: () => <div>反馈内容</div>,
 }));
@@ -105,6 +109,9 @@ describe("HomeSettingsSheet tab 滚动位置", () => {
     };
 
     act(renderSheet);
+    expect([...host!.querySelectorAll('[role="tab"]')].some(
+      (tab) => tab.textContent === "记忆",
+    )).toBe(true);
     const body = host!.querySelector<HTMLDivElement>(".qj-sheet-body")!;
     body.scrollTop = 420;
 
@@ -114,6 +121,9 @@ describe("HomeSettingsSheet tab 滚动位置", () => {
     body.scrollTop = 90;
     clickTab("模型");
     expect(body.scrollTop).toBe(420);
+
+    clickTab("记忆");
+    expect(host!.textContent).toContain("记忆内容");
 
     act(() => host!.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click());
     act(() => vi.advanceTimersByTime(700));

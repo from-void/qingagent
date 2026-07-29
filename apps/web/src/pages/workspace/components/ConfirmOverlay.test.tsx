@@ -740,6 +740,74 @@ describe("ConfirmOverlay", () => {
     expect(findButton("重新确认")).not.toBeNull();
   });
 
+  it("中止/失败收口同样给出真实原因与重新确认入口", async () => {
+    for (const resolution of ["aborted", "failed"] as const) {
+      let listener: ((frame: BridgeFrame) => void) | null = null;
+      const stream = {
+        subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+          listener = next;
+          return () => { listener = null; };
+        }),
+        resolveConfirm: vi.fn(),
+      } as unknown as ServerStream;
+      await render(<LiveConfirmHarness stream={stream} />);
+
+      await act(async () => {
+        listener?.({
+          kind: "confirmResolved",
+          data: {
+            id: `confirm-${resolution}-visible`,
+            toolCallId: `tool-${resolution}-visible`,
+            resolution,
+            message: "命令运行时间超过本次上限，已停止。可以让我改成后台运行后再试一次。",
+          },
+        });
+      });
+
+      expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+        "命令运行时间超过本次上限",
+      );
+      // 用户绝不能只拿到一句笼统"已中止"：必须能立刻重新发起。
+      expect(findButton("重新确认")).not.toBeNull();
+    }
+  });
+
+  it("同一张卡先 accepted 后带真因收口时，后到的真话不被 toast 去重吞掉", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm: vi.fn(),
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+
+    await act(async () => {
+      listener?.({
+        kind: "confirmResolved",
+        data: {
+          id: "confirm-double-resolve",
+          toolCallId: "tool-double-resolve",
+          resolution: "accepted",
+          message: "本次操作已经开始执行。",
+        },
+      });
+      listener?.({
+        kind: "confirmResolved",
+        data: {
+          id: "confirm-double-resolve",
+          toolCallId: "tool-double-resolve",
+          resolution: "failed",
+          message: "命令被停止，没有跑完。需要的话我可以重新执行一次。",
+        },
+      });
+    });
+
+    expect(host!.querySelectorAll(".qa-toast")).toHaveLength(2);
+    expect(host?.textContent).toContain("命令被停止，没有跑完");
+  });
+
   it("命令确认未提供脚注时不渲染脚注且保留按钮区", async () => {
     const rememberSpec: ConfirmSpec = {
       ...installSpec,

@@ -210,8 +210,14 @@ export function useConfirmCard({
           toast.show({
             message: frame.data.message,
             tone: frame.data.resolution === "accepted" ? "info" : "warn",
-            dedupeKey: `confirm-resolved:${frame.data.id}`,
-            ...(frame.data.resolution === "expired"
+            // 同一张卡先 accepted、后带真实原因收口是正常序列：dedupe 必须带上
+            // resolution，否则后到的真话会被前一条 toast 吞掉。
+            dedupeKey: `confirm-resolved:${frame.data.id}:${frame.data.resolution}`,
+            // 过期/中止/失败都不是终点：一律给一条能立刻往下走的路,
+            // 不让用户对着一句笼统结论发呆。
+            ...(frame.data.resolution === "expired" ||
+              frame.data.resolution === "aborted" ||
+              frame.data.resolution === "failed"
               ? {
                   action: {
                     label: "重新确认",

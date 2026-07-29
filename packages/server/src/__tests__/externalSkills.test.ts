@@ -171,6 +171,7 @@ describe("external skills", () => {
     await expect(update.json()).resolves.toMatchObject({ code: "CONFLICT" });
     const remove = await request("/skills/review", { method: "DELETE" });
     expect(remove.status).toBe(409);
+    await expect(remove.json()).resolves.toMatchObject({ code: "CONFLICT" });
 
     delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
     const disabled = await request("/skills/review/disable", {

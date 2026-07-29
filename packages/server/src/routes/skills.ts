@@ -32,6 +32,12 @@ export interface SkillFileInput {
   content: string;
 }
 
+export const READ_ONLY_SKILL_ERROR_CODE = "READ_ONLY_SKILL" as const;
+
+export class ReadOnlySkillError extends Error {
+  readonly code = READ_ONLY_SKILL_ERROR_CODE;
+}
+
 export interface SkillMarkdownInstallOperations {
   mkdtemp: typeof mkdtemp;
   rename: typeof rename;
@@ -563,7 +569,7 @@ export async function replaceInstalledSkillFiles(
   if (!isValidSkillName(name)) throw new Error("not found");
   const skill = await findSkillOnDisk(name);
   if (!skill) throw new Error("not found");
-  if (skill.source !== "installed") throw new Error("只读来源技能不可修改");
+  if (skill.source !== "installed") throw new ReadOnlySkillError("只读来源技能不可修改");
 
   const validated = validateSkillFiles(input);
   if (validated.root.name !== name) throw new Error("技能名称与路径参数不一致");
@@ -611,7 +617,7 @@ export async function deleteInstalledSkill(name: string): Promise<boolean> {
   if (!isValidSkillName(name)) return false;
   const skill = await findSkillOnDisk(name);
   if (!skill) return false;
-  if (skill.source !== "installed") throw new Error("只读来源技能不可删除");
+  if (skill.source !== "installed") throw new ReadOnlySkillError("只读来源技能不可删除");
   await rm(skill.path, { recursive: true, force: true });
   await refreshSkills();
   return true;

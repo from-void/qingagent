@@ -302,6 +302,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       focus() {
         editRef.current?.focus();
       },
+      openFileMenu() {
+        if (disabled) return false;
+        setSkillMenuOpen(false);
+        setFileMenuOpen(true);
+        return true;
+      },
       snapshot() {
         const edit = editRef.current;
         if (!edit) return { text: "", chips: [], files: [], richText: "", skills: [] };

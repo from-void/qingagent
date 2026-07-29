@@ -47,6 +47,7 @@ describe("ReviewLaunchModal", () => {
       selectTemplate: vi.fn().mockResolvedValue(undefined),
       loadSupplement: vi.fn().mockResolvedValue(""),
       saveSupplement: vi.fn().mockImplementation(async (_type: string, value: string) => value),
+      sourceMaterialAvailable: true,
       onClose: vi.fn(),
       onConfirm: vi.fn(),
       ...overrides,
@@ -56,8 +57,8 @@ describe("ReviewLaunchModal", () => {
   it("头部左对齐呈现动作说明且无计数，审查组标题与弱化新建入口始终存在", async () => {
     const modalProps = props();
     await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
-    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("来源核查");
-    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("对照素材核对文中的事实与数字");
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("来源核查（仅对照已关联素材）");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("以当前会话素材为依据，不联网");
     expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("2 模板");
     expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("审查模板");
     expect(host.querySelectorAll(".ws-launch-template-edit")).toHaveLength(2);
@@ -129,6 +130,24 @@ describe("ReviewLaunchModal", () => {
     expect(newName.value).toBe("数字专核");
     expect(newPrompt.value).toBe("本轮只核对数字：把文中所有数字（金额/百分比/日期/数量）与素材逐一对照，数值、单位、口径三样都要对上。素材里没有的数字标「无据」，口径变了标「口径漂移」。引句必须含数字原文。");
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions > .wf-btn")).map((button) => button.textContent)).toEqual(["保存"]);
+  });
+
+  it("来源核查无素材时阻断发起并提供添加素材入口", async () => {
+    const onAddMaterial = vi.fn();
+    const modalProps = props({
+      sourceMaterialAvailable: false,
+      onAddMaterial,
+    });
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("当前没有可对照素材，请先添加素材");
+    const startButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "开始核查");
+    expect(startButton?.disabled).toBe(true);
+
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-source-blocked .ws-launch-link")?.click());
+    expect(onAddMaterial).toHaveBeenCalledTimes(1);
+    expect(modalProps.onConfirm).not.toHaveBeenCalled();
   });
 
   it("内置模板在同类有余量时可删，并原样展示服务端保底错误", async () => {
@@ -405,7 +424,7 @@ describe("ReviewLaunchModal", () => {
     expect(query).toContain(template.prompt);
     expect(query).toBe(assembleReviewQuery("source", template, "重点核对月活"));
     expect(query).toContain("文档级补充要求（只适用于当前文档）：重点核对月活");
-    expect(card).toEqual({ title: "来源核查", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }] });
+    expect(card).toEqual({ title: "来源核查（仅对照已关联素材）", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }] });
     expect(reviewContext).toEqual({ type: "source", templateId: "source-default", templateName: "标准来源核查" });
     expect(JSON.stringify(card)).not.toContain(template.prompt);
 
@@ -417,7 +436,7 @@ describe("ReviewLaunchModal", () => {
       chips: [],
     }];
     act(() => root.render(<ChatMessageList messages={messages} streamActive={false} />));
-    expect(host.querySelector('[data-wf="ActionCard"]')?.textContent).toContain("来源核查");
+    expect(host.querySelector('[data-wf="ActionCard"]')?.textContent).toContain("来源核查（仅对照已关联素材）");
     expect(host.querySelector('[data-wf="ActionCard"]')?.textContent).toContain("标准来源核查");
     expect(host.textContent).not.toContain(template.prompt);
     expect(host.querySelector(".wf-msg.user")).toBeNull();

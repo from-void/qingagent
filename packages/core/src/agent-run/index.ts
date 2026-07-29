@@ -24,6 +24,9 @@ export {
 } from "./backgroundCommandTermination.js";
 
 export {
+  SOURCE_REVIEW_NO_MATERIAL_REASON,
+  hasReviewableSourceMaterial,
+  reviewPreconditionFailure,
   runAgentTurn,
 } from "./runAgentTurn.js";
 

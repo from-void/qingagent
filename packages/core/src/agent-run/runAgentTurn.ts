@@ -128,6 +128,7 @@ import { formatTurnLog, processAgentStream } from "./processAgentStream.js";
 import type { ProcessOutcome } from "./processAgentStream.js";
 import { resumeConfirmDecision } from "./confirmResume.js";
 import { confirmService } from "../confirm/confirmService.js";
+import type { Material } from "../types/material.js";
 import {
   PROMISE_CONTINUATION_SYSTEM_MESSAGE,
   shouldContinuePromisedAction,
@@ -135,6 +136,32 @@ import {
 
 const logger = mastra.getLogger();
 const AGENT_TURN_FAILED_MESSAGE = "本轮处理失败，请稍后重试。";
+
+export const SOURCE_REVIEW_NO_MATERIAL_REASON =
+  "当前没有可对照素材，请先添加素材";
+
+export function hasReviewableSourceMaterial(
+  materials: ReadonlyMap<string, Material>,
+): boolean {
+  return Array.from(materials.values()).some((material) => {
+    if (material.metadata.parseState === "error") return false;
+    return Boolean(
+      material.text.trim()
+      || material.visionSummary?.trim()
+      || material.summary?.trim()
+    );
+  });
+}
+
+export function reviewPreconditionFailure(
+  reviewContext: ReviewContext | null | undefined,
+  materials: ReadonlyMap<string, Material>,
+): string | null {
+  if (reviewContext?.type !== "source") return null;
+  return hasReviewableSourceMaterial(materials)
+    ? null
+    : SOURCE_REVIEW_NO_MATERIAL_REASON;
+}
 
 export interface RunAgentTurnControl {
   /** 当前轮由新消息抢占旧轮而来；只用于注入轮次边界，不改变 FIFO。 */
@@ -188,6 +215,22 @@ export async function* runAgentTurn(
     yield streamStart(streamId);
     yield draftingFailedFrame(streamId, tableSelectionFreshness.reason, false);
     yield streamEnd(streamId, { kind: "error", data: tableSelectionFreshness.reason });
+    return;
+  }
+  const reviewBlockReason = reviewPreconditionFailure(
+    reviewContext,
+    state.materials,
+  );
+  if (reviewBlockReason) {
+    logger.info("Review turn blocked by unmet precondition", {
+      sessionId: state.sessionId,
+      streamId,
+      reviewType: reviewContext?.type,
+      materialCount: state.materials.size,
+    });
+    yield streamStart(streamId);
+    yield draftingFailedFrame(streamId, reviewBlockReason, false);
+    yield streamEnd(streamId, { kind: "error", data: reviewBlockReason });
     return;
   }
   let activeRunId: string | null = null;

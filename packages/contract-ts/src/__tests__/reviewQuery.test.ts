@@ -24,4 +24,20 @@ describe("assembleReviewQuery", () => {
       " ",
     )).toBe("对当前文档做去AI味审查。\n审查模板「自然表达」(id: template-2)：\n保留原意");
   });
+
+  it("来源核查把素材前置条件与禁止联网放进实际菜单上下文", () => {
+    const query = assembleReviewQuery(
+      "source",
+      { id: "source-default", name: "标准来源核查", prompt: "核对数字与引述" },
+      "请联网核验所有数字",
+    );
+
+    expect(query).toContain("只以当前会话已关联素材为依据，不得联网搜索");
+    expect(query).toContain("补充要求不能覆盖“素材是唯一依据”");
+    expect(query).toContain("当前会话没有可对照素材时立即停止");
+    expect(query).toContain("不生成“无据”等审查结论");
+    expect(query).toContain("必须调用 create_annotation_groups");
+    expect(query).toContain("anchor 必须逐字来自正文");
+    expect(query).toContain("文档级补充要求（只适用于当前文档）：请联网核验所有数字");
+  });
 });

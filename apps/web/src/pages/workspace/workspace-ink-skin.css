@@ -2072,6 +2072,8 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .annotation-hover-card footer { flex:none; display:flex; justify-content:flex-end; gap:8px; margin-top:13px; }
 #view-workspace .annotation-hover-card footer button { appearance:none; min-width:76px; padding:6px 14px; border-radius:0; cursor:pointer; font:600 12.5px/1.4 var(--font-zh-serif); transition:background 120ms ease,border-color 120ms ease,color 120ms ease; }
 #view-workspace .annotation-hover-card button:focus-visible { outline:2px solid var(--mark); outline-offset:2px; }
+#view-workspace .ahc-accept-actions { display:flex; align-items:center; gap:8px; }
+#view-workspace .ahc-accept-actions>span { color:var(--ink-4); font-size:11px; line-height:1.4; }
 #view-workspace .ahc-accept { border:1px solid var(--mark); background:var(--mark); color:var(--ink-surface); }
 #view-workspace .ahc-accept:hover { border-color:var(--ink-2); background:var(--ink-2); color:var(--bg-canvas); }
 #view-workspace .ahc-ignore { border:1px solid var(--line-2); background:transparent; color:var(--ink-2); }
@@ -2447,10 +2449,15 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--mark);
   font: 600 12px/1.6 var(--font-zh-serif);
   white-space: nowrap;
+  cursor: pointer;
 }
+#view-workspace .ws-launch-source-blocked { background: var(--bg-subtle); color: var(--ink-3); }
 #view-workspace .ws-launch-field {
   display: grid;
   gap: 6px;

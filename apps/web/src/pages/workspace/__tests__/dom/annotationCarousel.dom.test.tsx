@@ -195,7 +195,7 @@ describe("AnnotationCarousel hover card", () => {
     uninstall();
   });
 
-  it("hover 延迟出宽卡且可桥接，切组后编辑意见并确认修改，忽略立即移除", async () => {
+  it("hover 延迟出宽卡且可桥接，切组后编辑意见并请求生成修改，忽略立即移除", async () => {
     vi.useFakeTimers();
     createEditor();
     host = document.createElement("div");
@@ -213,7 +213,6 @@ describe("AnnotationCarousel hover card", () => {
           editorDom={editor!.view.dom}
           onAccept={(group, suggestion) => {
             setInput((value) => value + buildAnnotationInstruction(group, suggestion));
-            setCurrentGroups((value) => value.map((item) => item.id === group.id ? { ...item, status: "accepted" } : item));
             return true;
           }}
           onIgnore={(group) => setCurrentGroups((value) => value.map((item) => item.id === group.id ? { ...item, status: "ignored" } : item))}
@@ -240,7 +239,8 @@ describe("AnnotationCarousel hover card", () => {
     expect(card.textContent).toContain("时间与资料不一致");
     expect(card.textContent).toContain("改为四月发布");
     expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
-    expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "下次不再提示", "确认修改"]);
+    expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "下次不再提示", "生成修改"]);
+    expect(card.textContent).toContain("将按这条建议生成待确认改动");
     expect(card.querySelectorAll(".ahc-nav button")).toHaveLength(2);
     expect(host.textContent).not.toContain("全部提交");
 
@@ -264,7 +264,7 @@ describe("AnnotationCarousel hover card", () => {
     });
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
     expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("按批注修改:「甲组原句」——改成五月发布（批注:事实有误；原因:时间与资料不一致）\n");
-    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.classList.contains("annotation-anchor-accepted")).toBe(true);
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host.querySelector(".annotation-hover-card")).toBeNull();
 
     const secondAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g2"]')!;

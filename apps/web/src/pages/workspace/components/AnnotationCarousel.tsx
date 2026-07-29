@@ -263,12 +263,15 @@ export function AnnotationCarousel(props: {
         <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); hideNow(); }}>忽略</button>
         <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); hideNow(); }}>下次不再提示</button>
       </div>
-      <button
-        className="ahc-accept"
-        type="button"
-        disabled={!resolvedSuggestion}
-        onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) hideNow(); }}
-      >确认修改</button>
+      <div className="ahc-accept-actions">
+        <span>将按这条建议生成待确认改动</span>
+        <button
+          className="ahc-accept"
+          type="button"
+          disabled={!resolvedSuggestion}
+          onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) hideNow(); }}
+        >生成修改</button>
+      </div>
     </footer>
   </article>;
 }

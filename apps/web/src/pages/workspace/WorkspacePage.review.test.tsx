@@ -3264,7 +3264,7 @@ describe("WorkspacePage review controls", () => {
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
   });
 
-  it("批注意见编辑后确认生成短 chip，发送载荷展开完整指令", async () => {
+  it("批注意见编辑后点击生成修改会立即发送一次，并保持 reviewing 锚点", async () => {
     const stream = await renderWorkspaceWithAnnotations();
     const editor = getChatEditor();
     bindInnerText(editor);
@@ -3287,19 +3287,9 @@ describe("WorkspacePage review controls", () => {
       );
       suggestion.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await clickButton("确认修改");
-
-    const chip = editor.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
-    expect(chip?.getAttribute("contenteditable")).toBe("false");
-    expect(chip?.querySelector(".c-label")?.textContent).toBe("批注·事实有误");
-    expect(chip?.dataset.text).toBe(
-      "按批注修改:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
-    );
-    expect(editor.textContent).not.toContain("时间与资料不一致");
-
-    vi.useRealTimers();
-    await clickButton("发送");
+    await clickButton("生成修改");
     await flushMicrotasks(5);
+
     const send = sendMessageCommands(stream)[0];
     expect(send?.kind).toBe("sendMessage");
     if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
@@ -3312,6 +3302,128 @@ describe("WorkspacePage review controls", () => {
       label: "批注·事实有误",
       text: "按批注修改:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
     })]);
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-accepted")).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("批注生成修改发送失败时恢复输入内容，锚点仍可再次处理", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    stream.sendCommand.mockRejectedValueOnce(new Error("network down"));
+
+    vi.useFakeTimers();
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[data-annotation-group="annotation-1"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    await clickButton("生成修改");
+    await flushMicrotasks(8);
+
+    const editor = getChatEditor();
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).not.toBeNull();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain("发送失败，请重试");
+    vi.useRealTimers();
+  });
+
+  it("批注生成修改经候选提交后正文落稿，重开会话仍读取已提交版本", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    const baseDoc = pmDoc([pmParagraph("p-1", "甲组正文")]);
+    const editedDoc = pmDoc([pmParagraph("p-1", "乙组正文")]);
+    const suggestion = docSuggestionFromToolCall(reviewToolCall(
+      "annotation-fix",
+      "batch-annotation-fix",
+      "reviewing",
+      {
+        blockId: "p-1",
+        before: "甲组",
+        after: "乙组",
+        groupMode: "independent",
+      },
+    ));
+
+    vi.useFakeTimers();
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[data-annotation-group="annotation-1"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    await clickButton("生成修改");
+    await flushMicrotasks(5);
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+
+    await emitFrames(stream, [
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc,
+        },
+      },
+      docStateFrame("pendingReview"),
+    ]);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).toBeNull();
+    expect(host?.textContent).toContain("乙组");
+
+    mockCommitWithFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(editedDoc, 2) },
+      },
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      {
+        kind: "annotationGroupsReady",
+        data: { groups: [], replacedOrigins: ["source-check"] },
+      },
+      docStateFrame("editing"),
+    ]);
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
+      acceptReviewBatchIds: ["batch-annotation-fix"],
+      rejectReviewBatchIds: [],
+    });
+    expect(host?.querySelector<HTMLElement>(".wf-doc.ProseMirror")?.textContent).toContain("乙组正文");
+    expect(host?.querySelector<HTMLElement>(".wf-doc.ProseMirror")?.textContent).not.toContain("甲组正文");
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).toBeNull();
+
+    vi.useRealTimers();
+    await act(async () => root?.unmount());
+    host?.remove();
+    root = null;
+
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const reopenedStream = latestServerStream();
+    await emitFrames(reopenedStream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试批注" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(editedDoc, 2) },
+      },
+      docStateFrame("editing"),
+      { kind: "sessionRestoreCompleted", data: { sessionId: "s-1" } },
+    ]);
+
+    expect(host?.querySelector<HTMLElement>(".wf-doc.ProseMirror")?.textContent).toContain("乙组正文");
+    expect(host?.querySelector<HTMLElement>(".wf-doc.ProseMirror")?.textContent).not.toContain("甲组正文");
   });
 
   it("P2-20 回归:忽略批注保存失败后按快照恢复，并重新出现操作入口", async () => {

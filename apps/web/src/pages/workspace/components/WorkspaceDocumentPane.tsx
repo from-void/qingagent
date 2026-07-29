@@ -162,14 +162,19 @@ export function WorkspaceDocumentPane({
     saveReviewSupplement,
     loadLexicons,
     loadLexiconEntries,
+    materialParseRows,
     chatInputEditorDisabled,
     chatInputRef,
+    handleSubmitChat,
   } = controller;
   const currentSessionIdRef = useRef(state.sessionId);
   const currentTitleRef = useRef(title);
   const renameGenerationBySessionRef = useRef(new Map<string, number>());
   currentSessionIdRef.current = state.sessionId;
   currentTitleRef.current = title;
+  const sourceMaterialAvailable = materialParseRows.some(
+    (row) => row.state === "ready",
+  );
 
   useEffect(() => {
     derivativeTabRequestRef.current += 1;
@@ -599,7 +604,7 @@ export function WorkspaceDocumentPane({
             }
             onAccept={(group, suggestion) => {
               if (chatInputEditorDisabled || !chatInputRef.current) {
-                showToast("输入框当前不可用,请稍后再接受批注");
+                showToast("输入框当前不可用，请稍后再生成修改");
                 return false;
               }
               const shortTitle = Array.from(group.summary).slice(0, 15).join("");
@@ -612,11 +617,7 @@ export function WorkspaceDocumentPane({
                 showToast("批注标记插入失败,请重试");
                 return false;
               }
-              controller.dispatchAnnotationGroups(
-                state.annotationGroups.map((item) =>
-                  item.id === group.id ? { ...item, status: "accepted" } : item,
-                ),
-              );
+              handleSubmitChat();
               return true;
             }}
             onIgnore={(group, rememberDismissal) => {
@@ -675,6 +676,13 @@ export function WorkspaceDocumentPane({
             saveSupplement={saveReviewSupplement}
             loadLexicons={loadLexicons}
             loadLexiconEntries={loadLexiconEntries}
+            sourceMaterialAvailable={sourceMaterialAvailable}
+            onAddMaterial={() => {
+              setReviewLaunchType(null);
+              if (!chatInputRef.current?.openFileMenu()) {
+                showToast("素材入口当前不可用，请稍后重试");
+              }
+            }}
             onAiDraft={async (intent, abortSignal) => {
               const sessionId = state.sessionId;
               const stream = streamRef.current;

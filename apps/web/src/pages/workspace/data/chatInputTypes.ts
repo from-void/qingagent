@@ -52,6 +52,8 @@ export interface ChatInputSnapshot {
 export interface ChatInputHandle {
   /** Insert a chip at the current caret. */
   insertChip: (spec: ChatChipSpec) => boolean;
+  /** 打开素材菜单，供文档区的“添加素材”等明确入口复用。 */
+  openFileMenu: () => boolean;
   /** 按 snapshot 中的 chip 顺序移除一个 chip。 */
   removeChipAt: (index: number) => void;
   /** Insert plain text at the current caret. */

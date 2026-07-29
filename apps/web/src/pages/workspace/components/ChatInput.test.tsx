@@ -662,12 +662,31 @@ describe("ChatInput", () => {
       />,
     );
     expect(disabledRef.current?.insertChip({ kind: "sel", label: "不可插入" })).toBe(false);
+    expect(disabledRef.current?.openFileMenu()).toBe(false);
     expect(disabledRef.current?.snapshot().chips).toEqual([]);
 
     const handle = disabledRef.current!;
     act(() => root?.unmount());
     root = null;
     expect(handle.insertChip({ kind: "sel", label: "已卸载" })).toBe(false);
+  });
+
+  it("openFileMenu 复用输入框素材入口并直接打开菜单", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    act(() => {
+      expect(ref.current?.openFileMenu()).toBe(true);
+    });
+    expect(host?.querySelector('[data-wf="WsFileMenu"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="WsFileMenuChooseFile"]')?.textContent).toContain("选择文件");
   });
 
   it("removeChipAt 仅移除指定的过期表格 chip", async () => {

@@ -22,9 +22,9 @@ export const REVIEW_META: Record<ReviewType, { title: string; action: string; su
     supplementPlaceholder: "这次处理要特别注意什么，例如：保留第一人称口吻，案例部分别改",
   },
   source: {
-    title: "来源核查",
+    title: "来源核查（仅对照已关联素材）",
     action: "开始核查",
-    subtitle: "对照素材核对文中的事实与数字",
+    subtitle: "以当前会话素材为依据，不联网",
     supplementPlaceholder: "这次核查要特别注意什么，例如：重点核对数据和引述，标题不用查",
   },
   consistency: {
@@ -94,6 +94,8 @@ interface ReviewLaunchModalProps {
   loadLexicons?: () => Promise<LexiconResourceSummary[]>;
   loadLexiconEntries?: (resourceId: string) => Promise<LexiconEntrySummary[]>;
   onAiDraft?: (intent: DraftTemplateIntent, abortSignal: AbortSignal) => Promise<DraftTemplateResult>;
+  sourceMaterialAvailable?: boolean;
+  onAddMaterial?: () => void;
   onClose: () => void;
   onConfirm: (template: ReviewTemplateItem, supplement: string, lexicons: LexiconResourceSummary[]) => void;
 }
@@ -183,6 +185,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   if (!props.open) return null;
   const selected = templates.find((item) => item.id === selectedId) ?? null;
   const editorMode: TemplateEditorMode = editor?.source ? "existing" : "new";
+  const sourceBlocked = props.type === "source" && props.sourceMaterialAvailable === false;
 
   const openTemplate = (template: ReviewTemplateItem) => {
     setEditor({ source: template, name: template.name, prompt: template.prompt });
@@ -319,10 +322,16 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
               <button type="button" className="ws-launch-link" onClick={() => setPage("lexicons")}>管理词库<CaretIcon size={12} direction="right" /></button>
             </div>
           ) : null}
+          {sourceBlocked ? (
+            <div className="ws-launch-resource-row ws-launch-source-blocked" role="status">
+              <span>当前没有可对照素材，请先添加素材</span>
+              <button type="button" className="ws-launch-link" onClick={props.onAddMaterial}>添加素材<CaretIcon size={12} direction="right" /></button>
+            </div>
+          ) : null}
           <SupplementField value={supplement} placeholder={meta.supplementPlaceholder} disabled={loading} onChange={setSupplement} />
           <div className="ws-launch-actions">
             <Button type="button" variant="ghost" disabled={saving} onClick={props.onClose}>取消</Button>
-            <Button type="button" variant="primary" disabled={loading || saving || !selected || (props.type === "sensitive" && selectedLexicons.size === 0)} onClick={() => {
+            <Button type="button" variant="primary" disabled={loading || saving || !selected || sourceBlocked || (props.type === "sensitive" && selectedLexicons.size === 0)} onClick={() => {
               if (!selected) return;
               setSaving(true);
               setError(null);

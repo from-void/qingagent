@@ -7,17 +7,6 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 export const SANDBOX_BACKGROUND_TTL_MS =
   positiveIntegerEnv("QINGAGENT_SANDBOX_BACKGROUND_TTL_MS", 8 * 60 * 60 * 1_000);
 
-export function effectiveBackgroundTimeoutMs(timeoutSeconds?: number | null): number {
-  if (
-    typeof timeoutSeconds !== "number" ||
-    !Number.isFinite(timeoutSeconds) ||
-    timeoutSeconds <= 0
-  ) {
-    return SANDBOX_BACKGROUND_TTL_MS;
-  }
-  return Math.min(timeoutSeconds * 1_000, SANDBOX_BACKGROUND_TTL_MS);
-}
-
 export function formatCommandDuration(timeoutMs: number): string {
   if (timeoutMs % (60 * 60 * 1_000) === 0) return `${timeoutMs / (60 * 60 * 1_000)} 小时`;
   if (timeoutMs % (60 * 1_000) === 0) return `${timeoutMs / (60 * 1_000)} 分钟`;

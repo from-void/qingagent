@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildCommandConfirmSpec,
   commandConfirmationDigest,
+  executeCommandInputSchema,
 } from "../confirm/commandConfirmation.js";
+import { FOREGROUND_TIMEOUT_LIMIT_SECONDS } from "../workspace/commandTimeoutPolicy.js";
 import {
   formatCommandDuration,
   SANDBOX_BACKGROUND_TTL_MS,
@@ -181,6 +183,30 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     const prefix = `curl -d x https://example.test/${"a".repeat(400)}`;
     expect(commandConfirmationDigest("session", { command: `${prefix}x` }))
       .not.toBe(commandConfirmationDigest("session", { command: `${prefix}y` }));
+  });
+
+  it("P1 回归:超时字段的 description 必须把单位与上限写在模型看得见的地方", () => {
+    const shape = (executeCommandInputSchema as unknown as {
+      shape: Record<string, { description?: string }>;
+    }).shape;
+    const seconds = shape.timeoutSeconds?.description ?? "";
+    expect(seconds).toContain("单位=秒");
+    expect(seconds).toContain("不是毫秒");
+    expect(seconds).toContain(`前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS} 秒`);
+    expect(shape.timeoutMs?.description ?? "").toContain("单位=毫秒");
+    const legacy = shape.timeout?.description ?? "";
+    expect(legacy).toContain("单位=秒");
+    expect(legacy).toContain("timeoutSeconds");
+  });
+
+  it("P1 回归:超时摘要按归一后的毫秒计算，新旧写法等价且改值必变", () => {
+    const legacy = commandConfirmationDigest("session", { command: "ls", timeout: 15 });
+    const named = commandConfirmationDigest("session", { command: "ls", timeoutSeconds: 15 });
+    const millis = commandConfirmationDigest("session", { command: "ls", timeoutMs: 15_000 });
+    expect(named).toBe(legacy);
+    expect(millis).toBe(legacy);
+    expect(commandConfirmationDigest("session", { command: "ls", timeoutSeconds: 16 }))
+      .not.toBe(legacy);
   });
 
   it("命令确认卡不设置脚注", () => {

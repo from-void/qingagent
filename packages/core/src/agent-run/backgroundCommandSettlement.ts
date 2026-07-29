@@ -53,9 +53,10 @@ function terminalReason(terminal: BackgroundCommandTerminal): string {
     case "succeeded":
       return "已完成";
     case "failed":
-      return `运行失败（退出码 ${terminal.exitCode}）`;
+      // 是命令自己退出返回的失败，不是我们把它掐了；措辞必须能区分这两件事。
+      return `命令自身返回失败（退出码 ${terminal.exitCode}）`;
     case "timedOut":
-      return "执行超时";
+      return "已达最长运行时限，被系统终止";
     case "killed":
       return `已终止（${terminal.signal}）`;
     case "aborted":

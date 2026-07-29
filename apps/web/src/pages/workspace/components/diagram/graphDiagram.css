@@ -6,6 +6,8 @@
   --graph-line-color: #8d7447;
   --graph-node-text: #2f2a22;
   --graph-edge-text: #5c5346;
+  --graph-canvas-background: #fbf7ee;
+  --graph-edge-label-background: rgba(255, 250, 240, 0.88);
   --graph-cluster-fill: #f3ecdd;
   --graph-cluster-stroke: #cdbfa3;
   /* 连线圆点与其命中盒统一悬在元素外侧的距离:不骑边框,也不与四角 resize 方块重叠。 */
@@ -36,7 +38,7 @@
   overflow: hidden;
   border: 1px solid rgba(176, 138, 62, 0.26);
   border-radius:0;
-  background: #fbf7ee;
+  background: var(--graph-canvas-background);
 }
 
 .graph-diagram-canvas .react-flow {
@@ -102,7 +104,7 @@
   min-height: 0;
   border-radius:0;
   border-color: var(--line-2);
-  background: #fbf7ee;
+  background: var(--graph-canvas-background);
 }
 
 .graph-diagram-canvas--editor.is-drawing-subgraph,
@@ -678,7 +680,7 @@
   max-width: 220px;
   padding: 2px 7px;
   border-radius:0;
-  background: rgba(255, 250, 240, 0.88);
+  background: var(--graph-edge-label-background);
   color: var(--ink-2);
   font: 12px/1.35 var(--font-zh-serif);
   text-align: center;

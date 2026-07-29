@@ -97,7 +97,8 @@ interface GraphDiagramViewProps {
   readOnly?: boolean;
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
-  openVisualSignal?: number;
+  openVisualRequestId?: number | null;
+  onVisualEditorOpened?: (requestId: number) => void;
   onOverlayChange?: (overlay: DiagramOverlay | null) => void;
   onSourceChange?: (source: string) => void;
   onVisualChange?: (change: DiagramVisualChange) => void;
@@ -166,6 +167,8 @@ type GraphNodeData = {
   canResize: boolean;
   width: number;
   height: number;
+  rx?: number;
+  ry?: number;
   onRenameStart: () => void;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
@@ -590,7 +593,7 @@ function GraphNode({ data, isConnectable, selected }: NodeProps<GraphRegularNode
         onResizeEnd={(_event, size) => data.onResizeCommit(size)}
       />
       <svg className="graph-diagram-node-shape-svg" viewBox={NODE_SHAPE_VIEWBOX} preserveAspectRatio="none" aria-hidden="true">
-        {renderShapeSvg(data.shape)}
+        {renderShapeSvg(data.shape, data.rx, data.ry)}
       </svg>
       <div
         ref={labelRef}
@@ -1682,7 +1685,8 @@ export function GraphDiagramView({
   readOnly = true,
   align = "center",
   onAlignChange,
-  openVisualSignal = 0,
+  openVisualRequestId = null,
+  onVisualEditorOpened,
   onOverlayChange,
   onSourceChange,
   onVisualChange,
@@ -1695,7 +1699,8 @@ export function GraphDiagramView({
   const [liveSource, setLiveSource] = useState(source);
   const liveSourceRef = useRef(source);
   const overlayRef = useRef<DiagramOverlay | null | undefined>(overlay);
-  const lastOpenVisualSignalRef = useRef(0);
+  const lastOpenVisualRequestRef = useRef<number | null>(null);
+  const pendingOpenVisualRequestRef = useRef<number | null>(null);
   const editorOwnerIdRef = useRef<string | null>(null);
   const editorRef = useRef<HTMLDivElement | null>(null);
   const altDuplicateDragRef = useRef<AltDuplicateDragState | null>(null);
@@ -1725,6 +1730,8 @@ export function GraphDiagramView({
       ...(palette.nodeFill ? { "--graph-node-fill": palette.nodeFill } : {}),
       ...(palette.nodeStroke ? { "--graph-node-stroke": palette.nodeStroke } : {}),
       ...(palette.lineColor ? { "--graph-line-color": palette.lineColor } : {}),
+      ...(palette.canvasBackground ? { "--graph-canvas-background": palette.canvasBackground } : {}),
+      ...(palette.edgeLabelBackground ? { "--graph-edge-label-background": palette.edgeLabelBackground } : {}),
       ...(palette.textColor ? { "--graph-node-text": palette.textColor, "--graph-edge-text": palette.textColor } : {}),
       ...(palette.clusterFill ? { "--graph-cluster-fill": palette.clusterFill } : {}),
       ...(palette.clusterStroke ? { "--graph-cluster-stroke": palette.clusterStroke } : {}),
@@ -1849,10 +1856,28 @@ export function GraphDiagramView({
   }, [readOnly]);
 
   useEffect(() => {
-    if (!openVisualSignal || openVisualSignal === lastOpenVisualSignalRef.current) return;
-    lastOpenVisualSignalRef.current = openVisualSignal;
+    if (openVisualRequestId == null || openVisualRequestId === lastOpenVisualRequestRef.current) return;
+    lastOpenVisualRequestRef.current = openVisualRequestId;
+    pendingOpenVisualRequestRef.current = openVisualRequestId;
     openEditor();
-  }, [openEditor, openVisualSignal]);
+  }, [openEditor, openVisualRequestId]);
+
+  // portal 的 ref 已提交到真实 document.body 后才确认；父层据此清除“正在打开”。
+  useEffect(() => {
+    const requestId = pendingOpenVisualRequestRef.current;
+    if (!inEdit || requestId == null) return;
+    const frame = requestAnimationFrame(() => {
+      if (
+        pendingOpenVisualRequestRef.current !== requestId
+        || !editorRef.current?.isConnected
+      ) {
+        return;
+      }
+      pendingOpenVisualRequestRef.current = null;
+      onVisualEditorOpened?.(requestId);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inEdit, onVisualEditorOpened]);
 
   const closeEditor = useCallback(() => {
     if (activeGraphEditorOwnerId === editorOwnerIdRef.current) {
@@ -2865,7 +2890,7 @@ export function GraphDiagramView({
       const nodeFill = overlayStyle?.fill ?? sourceStyle?.fill;
       const nodeStroke = overlayStyle?.stroke ?? sourceStyle?.stroke;
       const nodeText = overlayStyle?.textColor ?? sourceStyle?.textColor;
-      const nodeFontSize = overlayStyle?.fontSize ?? sourceStyle?.fontSize ?? 13;
+      const nodeFontSize = overlayStyle?.fontSize ?? sourceStyle?.fontSize ?? parsed.model.themePalette?.fontSize ?? 13;
       const nodeDashArray = overlayStyle?.dashArray ?? sourceStyle?.dashArray;
       const nodeWidth = clamp(overlayStyle?.width ?? sourceStyle?.width ?? NODE_WIDTH, NODE_MIN_WIDTH, NODE_MAX_WIDTH);
       const nodeHeight = clamp(overlayStyle?.height ?? sourceStyle?.height ?? NODE_HEIGHT, NODE_MIN_HEIGHT, NODE_MAX_HEIGHT);
@@ -2892,6 +2917,8 @@ export function GraphDiagramView({
           canResize: inEdit,
           width: nodeWidth,
           height: nodeHeight,
+          ...(typeof sourceStyle?.rx === "number" ? { rx: sourceStyle.rx } : {}),
+          ...(typeof sourceStyle?.ry === "number" ? { ry: sourceStyle.ry } : {}),
           onRenameStart: () => startRename(node.id),
           onRenameCommit: commitRename,
           onRenameCancel: cancelRename,
@@ -4962,7 +4989,7 @@ function normalizeGraphNodeShape(raw: string | null): GraphNodeShape {
   return normalizeFlowShapeName(raw);
 }
 
-function renderShapeSvg(shape: GraphNodeShape) {
+function renderShapeSvg(shape: GraphNodeShape, rx?: number, ry?: number) {
   const geometry = getFlowShapeGeometry(shape);
   const shapeStyle = {
     fill: geometry.open ? "none" : "var(--graph-node-fill)",
@@ -4979,6 +5006,20 @@ function renderShapeSvg(shape: GraphNodeShape) {
   } satisfies CSSProperties;
   // 选中/悬停指示不再跟随形状轮廓描粗线(那会压在元素自己的边框上,改边框色看不见),
   // 改由外壳的包围盒指示环(CSS ::before)承担,与 resize 四角把手同一圈。
+  if (shape === "rect" && (typeof rx === "number" || typeof ry === "number")) {
+    return (
+      <rect
+        className="graph-diagram-node-shape-fill"
+        x="0"
+        y="0"
+        width="160"
+        height="72"
+        rx={rx}
+        ry={ry}
+        style={shapeStyle}
+      />
+    );
+  }
   return (
     <>
       <path className="graph-diagram-node-shape-fill" d={geometry.outlinePath} style={shapeStyle} />

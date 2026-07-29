@@ -41,6 +41,7 @@ vi.mock("../../components/drawioEditorLauncher", () => ({
 import { DiagramCM } from "../../components/DiagramView";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
 import { openDrawioEditor } from "../../components/drawioEditorLauncher";
+import "../../components/diagram/GraphDiagramView";
 
 const graphDiagramCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/graphDiagram.css"), "utf8");
 const diagramViewCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/DiagramView.css"), "utf8");
@@ -1370,6 +1371,102 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await flush(20);
       expect(document.body.querySelectorAll(".graph-diagram-editor")).toHaveLength(1);
     } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("r14 原始 Mermaid 首次渲染即挂载 Graph，点击当拍反馈并在 portal 提交后清除", async () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "../../packages/diagram-engine/src/__tests__/fixtures-r14-review-flow.mmd"),
+      "utf8",
+    );
+    expect(parseDiagram(source)).toMatchObject({ ok: true, fullyRepresented: true });
+    const editor = await mountEditor(diagramDoc(source));
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const queuedFrames: FrameRequestCallback[] = [];
+
+    try {
+      const graph = await waitForSelector(".graph-diagram", editor.view.dom) as HTMLElement;
+      expect(graph.style.getPropertyValue("--graph-canvas-background")).toBe("#FAF6EC");
+      expect(graph.style.getPropertyValue("--graph-edge-label-background")).toBe("#FFFFFF");
+      expect(graph.querySelector(".graph-diagram-node-shape-fill[rx='8'][ry='8']")).not.toBeNull();
+
+      globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+        queuedFrames.push(callback);
+        return queuedFrames.length;
+      }) as typeof requestAnimationFrame;
+      globalThis.cancelAnimationFrame = vi.fn() as typeof cancelAnimationFrame;
+
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(visualButton).not.toBeNull();
+
+      await act(async () => {
+        visualButton!.click();
+      });
+
+      expect(visualButton!.disabled).toBe(true);
+      expect(visualButton!.getAttribute("aria-busy")).toBe("true");
+      expect(visualButton!.textContent?.trim()).toBe("正在打开…");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+
+      await act(async () => {
+        for (const callback of queuedFrames.splice(0)) callback(performance.now());
+      });
+      expect(visualButton!.disabled).toBe(false);
+      expect(visualButton!.getAttribute("aria-busy")).toBe("false");
+      expect(visualButton!.textContent?.trim()).toBe("可视化编辑");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      await unmount(editor);
+    }
+  });
+
+  it("可视编辑请求期间源码切为不支持再切回时不会迟到打开", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]\n";
+    const unsupported = `${source}  style A animation:fast\n`;
+    expect(parseDiagram(unsupported).fullyRepresented).toBe(false);
+    const editor = await mountEditor(diagramDoc(source));
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+    try {
+      await waitForSelector(".graph-diagram", editor.view.dom);
+      globalThis.requestAnimationFrame = vi.fn(() => 1) as typeof requestAnimationFrame;
+      globalThis.cancelAnimationFrame = vi.fn() as typeof cancelAnimationFrame;
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑")!;
+
+      await act(async () => visualButton.click());
+      expect(visualButton.textContent?.trim()).toBe("正在打开…");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+
+      await act(async () => updateFirstDiagramAttrs(editor, { source: unsupported, svg: null }));
+      await flush(4);
+      expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
+      expect(
+        Array.from(editor.view.dom.querySelectorAll(".pm-diagram-view-actions button"))
+          .some((button) => button.textContent?.trim() === "可视化编辑"),
+      ).toBe(false);
+
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      await act(async () => updateFirstDiagramAttrs(editor, { source, svg: null }));
+      await flush(12);
+      expect(await waitForSelector(".graph-diagram", editor.view.dom)).not.toBeNull();
+      expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
+      const restoredButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(restoredButton?.disabled).toBe(false);
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
       await unmount(editor);
     }
   });

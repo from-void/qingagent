@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Node } from "@tiptap/core";
 import type { NodeViewProps } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
-import { detectType, type DiagramType } from "@qingagent/diagram-engine";
+import { canUseGraphVisualEditor, parseDiagram } from "@qingagent/diagram-engine";
 import {
   DEFAULT_DRAWIO_SOURCE,
   isPoisonedMermaidSvg,
@@ -54,7 +54,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
   const [source, setSource] = useState(attrSource);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source);
-  const [visualEditSignal, setVisualEditSignal] = useState(0);
+  const [visualEditRequest, setVisualEditRequest] = useState<{ id: number; source: string } | null>(null);
   const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
   const [svg, setSvg] = useState<string | null>(usableCachedSvg);
   const [error, setError] = useState<string | null>(null);
@@ -62,14 +62,19 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
   const editableRef = useRef(editable);
   const mountedRef = useRef(true);
   const renderTokenRef = useRef(0);
+  const visualEditRequestIdRef = useRef(0);
   const renderedSourceRef = useRef<string | null>(usableCachedSvg ? attrSource.trim() : null);
   const editingRef = useRef(false);
   const viewRef = useRef<HTMLDivElement>(null);
   // 双击手势第一次按下前,本块是否已经是 NodeSelection。diagram 可拖拽,ProseMirror 会在
   // mousedown 阶段先完成选中;若等 click 再看当前选区,会丢失"冷双击前未选中"这个事实。
   const selectedBeforeMouseDownRef = useRef(false);
-  const diagramType = lang === "mermaid" ? detectType(source) : null;
-  const supportsVisualEdit = editable && (lang === "drawio" || isVisualDiagramType(diagramType));
+  const parsedDiagram = useMemo(
+    () => lang === "mermaid" ? parseDiagram(source) : null,
+    [lang, source],
+  );
+  const supportsVisualEdit = editable && (lang === "drawio" || canUseGraphVisualEditor(parsedDiagram));
+  const visualEditorOpening = visualEditRequest !== null;
   const emptyDrawio = lang === "drawio" && isEmptyDrawioSource(source);
   const emptyDiagram = !source.trim() || emptyDrawio;
   const storedHeight =
@@ -127,6 +132,12 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setVisualEditRequest((current) => (
+      current && (current.source !== source || !supportsVisualEdit) ? null : current
+    ));
+  }, [source, supportsVisualEdit]);
 
   useEffect(() => {
     if (!editor) return;
@@ -293,7 +304,9 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
       startEdit();
       return;
     }
-    setVisualEditSignal((value) => value + 1);
+    visualEditRequestIdRef.current += 1;
+    setError(null);
+    setVisualEditRequest({ id: visualEditRequestIdRef.current, source });
   };
 
   const commit = () => {
@@ -560,11 +573,12 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
                 <button
                   type="button"
                   className="pm-diagram-view-btn"
-                  disabled={drawioEditorOpening}
+                  disabled={drawioEditorOpening || visualEditorOpening}
+                  aria-busy={drawioEditorOpening || visualEditorOpening}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openVisualEdit}
                 >
-                  {drawioEditorOpening ? "正在打开…" : "可视化编辑"}
+                  {drawioEditorOpening || visualEditorOpening ? "正在打开…" : "可视化编辑"}
                 </button>
               )}
               <button
@@ -598,7 +612,17 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
                     { visualWrite: true },
                   )
                 : undefined}
-              openVisualSignal={visualEditSignal}
+              openVisualRequestId={visualEditRequest?.source === source ? visualEditRequest.id : null}
+              onVisualEditorOpened={(requestId) => {
+                setVisualEditRequest((current) => current?.id === requestId ? null : current);
+              }}
+              onVisualEditorOpenFailed={(requestId) => {
+                setVisualEditRequest((current) => current?.id === requestId ? null : current);
+                toast.show({
+                  message: "图表编辑器暂时无法打开，请稍后重试",
+                  tone: "warn",
+                });
+              }}
               onVisualChange={(change: DiagramVisualChange) => {
                 if (!editable) return;
                 const patch: Record<string, unknown> = {};
@@ -806,8 +830,4 @@ function stringifyJsonAttr(value: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-function isVisualDiagramType(type: DiagramType | null): boolean {
-  return type === "flowchart" || type === "state" || type === "er" || type === "class" || type === "mindmap";
 }

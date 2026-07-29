@@ -1,6 +1,7 @@
-import { Suspense, lazy } from "react";
+import { Component, Suspense, lazy } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import type { DiagramOverlay } from "@qingagent/diagram-engine";
-import { parseDiagram } from "@qingagent/diagram-engine";
+import { canUseGraphVisualEditor, parseDiagram } from "@qingagent/diagram-engine";
 import { MermaidPreview } from "../MermaidPreview";
 
 const GraphDiagramView = lazy(() => import("./GraphDiagramView").then((mod) => ({ default: mod.GraphDiagramView })));
@@ -36,7 +37,9 @@ export interface DiagramRendererProps {
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
   onFullscreen?: () => void;
-  openVisualSignal?: number;
+  openVisualRequestId?: number | null;
+  onVisualEditorOpened?: (requestId: number) => void;
+  onVisualEditorOpenFailed?: (requestId: number) => void;
   onOverlayChange?: (overlay: DiagramOverlay | null) => void;
   onSourceChange?: (source: string) => void;
   onVisualChange?: (change: DiagramVisualChange) => void;
@@ -60,7 +63,9 @@ export function DiagramRenderer({
   align = "center",
   onAlignChange,
   onFullscreen,
-  openVisualSignal,
+  openVisualRequestId,
+  onVisualEditorOpened,
+  onVisualEditorOpenFailed,
   onOverlayChange,
   onSourceChange,
   onVisualChange,
@@ -70,31 +75,44 @@ export function DiagramRenderer({
   canRedo,
 }: DiagramRendererProps) {
   const parsed = lang === "mermaid" ? parseDiagram(source) : null;
-  const type = parsed?.ok ? parsed.model.type : null;
   const normalizedOverlay = normalizeOverlay(overlay);
-  if (
-    parsed?.ok
-    && parsed.fullyRepresented
-    && (type === "flowchart" || type === "state" || type === "er" || type === "class" || type === "mindmap")
-  ) {
+  if (canUseGraphVisualEditor(parsed)) {
     return (
-      <Suspense fallback={<div className="pm-diagram-empty">渲染中…</div>}>
-        <GraphDiagramView
-          source={source}
-          overlay={normalizedOverlay}
-          readOnly={readOnly}
-          align={align}
-          onAlignChange={onAlignChange}
-          openVisualSignal={openVisualSignal}
-          onOverlayChange={onOverlayChange}
-          onSourceChange={onSourceChange}
-          onVisualChange={onVisualChange}
-          onUndo={onUndo}
-          onRedo={onRedo}
-          canUndo={canUndo}
-          canRedo={canRedo}
-        />
-      </Suspense>
+      <GraphDiagramErrorBoundary
+        resetKey={source}
+        requestId={openVisualRequestId}
+        onOpenFailed={onVisualEditorOpenFailed}
+        fallback={(
+          <MermaidPreview
+            source={source}
+            cachedSvg={cachedSvg}
+            lang={lang}
+            readOnly={readOnly}
+            align={align}
+            onAlignChange={onAlignChange}
+            onFullscreen={onFullscreen}
+          />
+        )}
+      >
+        <Suspense fallback={<div className="pm-diagram-empty">渲染中…</div>}>
+          <GraphDiagramView
+            source={source}
+            overlay={normalizedOverlay}
+            readOnly={readOnly}
+            align={align}
+            onAlignChange={onAlignChange}
+            openVisualRequestId={openVisualRequestId}
+            onVisualEditorOpened={onVisualEditorOpened}
+            onOverlayChange={onOverlayChange}
+            onSourceChange={onSourceChange}
+            onVisualChange={onVisualChange}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+          />
+        </Suspense>
+      </GraphDiagramErrorBoundary>
     );
   }
   return (
@@ -108,6 +126,49 @@ export function DiagramRenderer({
       onFullscreen={onFullscreen}
     />
   );
+}
+
+interface GraphDiagramErrorBoundaryProps {
+  children: ReactNode;
+  fallback: ReactNode;
+  resetKey: string;
+  requestId?: number | null;
+  onOpenFailed?: (requestId: number) => void;
+}
+
+class GraphDiagramErrorBoundary extends Component<
+  GraphDiagramErrorBoundaryProps,
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    if (this.props.requestId != null) {
+      this.props.onOpenFailed?.(this.props.requestId);
+    }
+  }
+
+  componentDidUpdate(previous: GraphDiagramErrorBoundaryProps) {
+    if (this.state.failed && this.props.resetKey !== previous.resetKey) {
+      this.setState({ failed: false });
+      return;
+    }
+    if (
+      this.state.failed
+      && this.props.requestId != null
+      && this.props.requestId !== previous.requestId
+    ) {
+      this.props.onOpenFailed?.(this.props.requestId);
+    }
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }
 
 function normalizeOverlay(overlay: RendererOverlay | null | undefined): DiagramOverlay | null {

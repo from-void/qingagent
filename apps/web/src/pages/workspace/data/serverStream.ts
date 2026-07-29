@@ -574,11 +574,22 @@ export class ServerStream {
     command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
-    const framePromise = this.waitForFrame(
-      (frame) => frame.kind === kind && frame.data.requestId === command.data.requestId,
-      `${kind} response missing`,
+    const result = await this.sendCommandInternal(command);
+    if (!Array.isArray(result)) {
+      throw new Error(`${kind} response missing`);
+    }
+    const frames = result.map((value) => {
+      const frame = value as BridgeFrame;
+      validateBridgeFrame(frame);
+      return frame;
+    });
+    const frame = frames.find(
+      (candidate) =>
+        candidate.kind === kind
+        && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
     );
-    return await this.sendCommandAndWaitFrame(command, framePromise) as Extract<BridgeFrame, { kind: K }>;
+    if (!frame) throw new Error(`${kind} response missing`);
+    return frame as Extract<BridgeFrame, { kind: K }>;
   }
 
   async listDerivatives(sessionId: string) {

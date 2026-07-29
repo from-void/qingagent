@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyEdit,
   applyZOrderCommand,
+  canUseGraphVisualEditor,
   carryOverDiagramOverlay,
   dissolveSubgraph,
   filterStableOverlay,
@@ -1237,15 +1238,6 @@ flowchart TD
 `,
       `flowchart TD
   A --> B
-  style A rx:24,ry:24
-`,
-      `flowchart TD
-  A --> B
-  classDef rounded fill:#fff,rx:24
-  class A rounded
-`,
-      `flowchart TD
-  A --> B
   linkStyle 0 stroke:#333,animation:fast
 `,
     ];
@@ -1254,6 +1246,35 @@ flowchart TD
       expect(parseDiagram(source).ok, source).toBe(true);
       expect(parseDiagram(source).fullyRepresented, source).toBe(false);
     }
+  });
+
+  it("r14 审核流程原始 fixture 的标准样式完整进入共享模型与 SVG", () => {
+    const source = readFileSync(new URL("./fixtures-r14-review-flow.mmd", import.meta.url), "utf8");
+    const parsed = parseDiagram(source);
+    const model = parsed.model as FlowGraph;
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.fullyRepresented).toBe(true);
+    expect(canUseGraphVisualEditor(parsed)).toBe(true);
+    expect(model.themePalette).toMatchObject({
+      canvasBackground: "#FAF6EC",
+      nodeFill: "#FFFFFF",
+      nodeStroke: "#2F2A22",
+      lineColor: "#B3A791",
+      edgeLabelBackground: "#FFFFFF",
+      textColor: "#2F2A22",
+      fontSize: 14,
+    });
+    expect(model.perNodeStyles).toEqual({
+      A: expect.objectContaining({ rx: 8, ry: 8 }),
+      B: expect.objectContaining({ rx: 8, ry: 8 }),
+      C: expect.objectContaining({ rx: 8, ry: 8 }),
+    });
+
+    const svg = graphToSvg(source)!;
+    expect(svg).toContain('fill="#FAF6EC"');
+    expect(svg).toMatch(/data-node-id="A"><rect[^>]+rx="8"[^>]+ry="8"/);
+    expect(svg).toContain('font-size="14"');
   });
 
   it("无法保真渲染的 bumpX 边曲线不宣称完整表示", () => {

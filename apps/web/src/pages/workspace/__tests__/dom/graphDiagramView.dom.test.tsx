@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { act } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -273,18 +273,27 @@ function EditableDiagramHarness({
   canUndo?: boolean;
   canRedo?: boolean;
 }) {
-  const [openVisualSignal, setOpenVisualSignal] = useState(0);
+  const [openVisualRequestId, setOpenVisualRequestId] = useState<number | null>(null);
+  const openVisualRequestIdRef = useRef(0);
   const [overlay, setOverlay] = useState<Parameters<typeof DiagramRenderer>[0]["overlay"]>(initialOverlay);
   return (
     <>
-      <button type="button" className="test-open-visual" onClick={() => setOpenVisualSignal((value) => value + 1)}>
+      <button
+        type="button"
+        className="test-open-visual"
+        onClick={() => {
+          openVisualRequestIdRef.current += 1;
+          setOpenVisualRequestId(openVisualRequestIdRef.current);
+        }}
+      >
         打开可视化
       </button>
       <DiagramRenderer
         source={source}
         overlay={overlay}
         readOnly={false}
-        openVisualSignal={openVisualSignal}
+        openVisualRequestId={openVisualRequestId}
+        onVisualEditorOpened={() => setOpenVisualRequestId(null)}
         onSourceChange={onSourceChange}
         onUndo={onUndo}
         onRedo={onRedo}
@@ -627,17 +636,11 @@ flowchart LR
     expect(graph.outerHTML).not.toContain("#b08a3e");
   });
 
-  it("保存态云原生结构在移除未建模展示属性后渲出 8 个分区,并与 graphToSvg 消费同一布局几何", async () => {
-    const originalSource = readFileSync(
+  it("保存态云原生结构直接渲出 8 个分区,并与 graphToSvg 消费同一布局几何", async () => {
+    const source = readFileSync(
       path.join(process.cwd(), "../../packages/diagram-engine/src/__tests__/fixtures-user-cloudnative.mmd"),
       "utf8",
     );
-    const source = originalSource
-      .replace("'background':'#FFFFFF',", "")
-      .replace(",'edgeLabelBackground':'#FFFFFF'", "")
-      .replace(",'fontSize':'14px'", "")
-      .replace(/,rx:8px,ry:8px/g, "");
-    expect(parseDiagram(originalSource).fullyRepresented).toBe(false);
     expect(parseDiagram(source).fullyRepresented).toBe(true);
     await render(<DiagramRenderer source={source} readOnly />);
     const graph = await waitForSelector(".graph-diagram") as HTMLElement;

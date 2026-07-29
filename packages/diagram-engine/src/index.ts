@@ -44,12 +44,15 @@ export type EdgeLineStyle = "solid" | "dotted" | "thick" | "invisible";
 export type EdgeMarkerKind = "arrow" | "circle" | "cross" | "none";
 
 export interface ThemePalette {
+  canvasBackground?: string;
   nodeFill?: string;
   nodeStroke?: string;
   lineColor?: string;
+  edgeLabelBackground?: string;
   textColor?: string;
   clusterFill?: string;
   clusterStroke?: string;
+  fontSize?: number;
 }
 
 export interface DiagramThemeMetadata {
@@ -216,6 +219,8 @@ export interface NodeStyleOverride {
   textColor?: string;
   strokeWidth?: number;
   fontSize?: number;
+  rx?: number;
+  ry?: number;
   dashArray?: string;
   width?: number;
   height?: number;
@@ -411,6 +416,21 @@ export function parseDiagram(source: string): ParseResult {
     return emptyParse("flowchart", "不支持的 Mermaid 图类型");
   }
   return registry[type].parse(source);
+}
+
+/** 图画布与“可视化编辑”入口共用的能力判定，避免按钮存在但消费者未挂载。 */
+export function canUseGraphVisualEditor(parsed: ParseResult | null | undefined): boolean {
+  return !!(
+    parsed?.ok
+    && parsed.fullyRepresented
+    && (
+      parsed.model.type === "flowchart"
+      || parsed.model.type === "state"
+      || parsed.model.type === "er"
+      || parsed.model.type === "class"
+      || parsed.model.type === "mindmap"
+    )
+  );
 }
 
 export function getCapabilities(
@@ -848,7 +868,8 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
       ),
     )
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${clusterSvg}${edgeSvg}${nodeSvg}</svg>`;
+  const canvasBackground = sanitizeColor(parsed.model.themePalette?.canvasBackground) ?? "#faf6ec";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="${canvasBackground}"/>${clusterSvg}${edgeSvg}${nodeSvg}</svg>`;
 }
 
 function hasGraphSvgOverlay(overlay: DiagramOverlay | null | undefined): boolean {
@@ -955,8 +976,11 @@ function parseDiagramThemeMetadata(
 }
 
 const REPRESENTED_THEME_VARIABLES = new Set([
+  "background",
   "clusterBkg",
   "clusterBorder",
+  "edgeLabelBackground",
+  "fontSize",
   "lineColor",
   "mainBkg",
   "nodeBorder",
@@ -1067,6 +1091,9 @@ function styleValueFullyRepresented(
   }
   if (property === "fill") return sanitizeColor(value) !== null;
   if (property === "font-size") return exactPixelValueInRange(value, 9, 28);
+  if (property === "rx" || property === "ry") {
+    return exactPixelValueInRange(value, 0, 80);
+  }
   if (property === "width") {
     return exactPixelValueInRange(
       value,
@@ -1142,21 +1169,26 @@ function initDirectiveFullyRepresented(source: string): boolean {
   if (
     variableKeys.length === 0 ||
     variableKeys.some((key) => !REPRESENTED_THEME_VARIABLES.has(key)) ||
-    variableKeys.some(
-      (key) => !sanitizeColor(readObjectValue(variablesBody, key)),
-    )
+    variableKeys.some((key) => {
+      const value = readObjectValue(variablesBody, key);
+      return key === "fontSize"
+        ? !value || !exactPixelValueInRange(value, 9, 28)
+        : !sanitizeColor(value);
+    })
   ) {
     return false;
   }
 
   const palette = parseThemePalette(source);
   return !!(
-    palette?.nodeFill &&
-    palette.nodeStroke &&
-    palette.lineColor &&
-    palette.textColor &&
-    palette.clusterFill &&
-    palette.clusterStroke
+    palette?.nodeFill
+    && palette.nodeStroke
+    && palette.lineColor
+    && palette.textColor
+    && (
+      !/^\s*subgraph\b/im.test(source)
+      || (palette.clusterFill && palette.clusterStroke)
+    )
   );
 }
 
@@ -1215,13 +1247,20 @@ function parseThemePalette(source: string): ThemePalette | undefined {
   if (themeVariables === null) return undefined;
 
   const readColor = (key: string) => sanitizeColor(readObjectValue(themeVariables, key));
+  const rawFontSize = readObjectValue(themeVariables, "fontSize");
+  const fontSize = rawFontSize && exactPixelValueInRange(rawFontSize, 9, 28)
+    ? Number.parseFloat(rawFontSize)
+    : undefined;
   const palette: ThemePalette = {
+    canvasBackground: readColor("background") ?? undefined,
     nodeFill: readColor("mainBkg") ?? readColor("primaryColor") ?? undefined,
     nodeStroke: readColor("nodeBorder") ?? readColor("primaryBorderColor") ?? undefined,
     lineColor: readColor("lineColor") ?? undefined,
+    edgeLabelBackground: readColor("edgeLabelBackground") ?? undefined,
     textColor: readColor("textColor") ?? readColor("primaryTextColor") ?? undefined,
     clusterFill: readColor("clusterBkg") ?? undefined,
     clusterStroke: readColor("clusterBorder") ?? undefined,
+    fontSize,
   };
   return Object.values(palette).some(Boolean) ? palette : undefined;
 }
@@ -1339,6 +1378,11 @@ function parseClassDefinitionStyle(source: string): NodeStyleOverride | undefine
     } else if (property === "font-size") {
       const size = Number.parseFloat(rawValue);
       if (Number.isFinite(size) && size > 0) style.fontSize = Math.max(9, Math.min(48, size));
+    } else if (property === "rx" || property === "ry") {
+      const radius = Number.parseFloat(rawValue);
+      if (Number.isFinite(radius) && radius >= 0) {
+        style[property] = Math.max(0, Math.min(80, radius));
+      }
     } else if (property === "width") {
       const width = Number.parseFloat(rawValue);
       if (Number.isFinite(width) && width > 0) style.width = clampNodeWidth(width);
@@ -4920,7 +4964,7 @@ function renderSvgNode(
   const textColor = sanitizeColor(overlayStyle?.textColor) ?? sanitizeColor(sourceStyle?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
   const strokeWidthSource = overlayStyle?.strokeWidth ?? sourceStyle?.strokeWidth;
   const strokeWidth = typeof strokeWidthSource === "number" ? Math.max(1, Math.min(8, strokeWidthSource)) : 1.5;
-  const fontSizeSource = overlayStyle?.fontSize ?? sourceStyle?.fontSize;
+  const fontSizeSource = overlayStyle?.fontSize ?? sourceStyle?.fontSize ?? themePalette?.fontSize;
   const fontSize = typeof fontSizeSource === "number" ? Math.max(9, Math.min(28, fontSizeSource)) : 14;
   const lines = wrapNodeLabel(node.label, fontSize, pos.width);
   const lineHeight = Math.max(16, Math.round(fontSize * 1.3));
@@ -4929,9 +4973,11 @@ function renderSvgNode(
   const geometry = getFlowShapeGeometry((node as BaseNode & { shape?: string }).shape);
   const normalizedShape = normalizeFlowShapeName((node as BaseNode & { shape?: string }).shape);
   const dashArray = overlayStyle?.dashArray ?? sourceStyle?.dashArray;
+  const rx = overlayStyle?.rx ?? sourceStyle?.rx;
+  const ry = overlayStyle?.ry ?? sourceStyle?.ry;
   const layoutAttributes = ` data-layout-x="${pos.x}" data-layout-y="${pos.y}" data-layout-width="${pos.width}" data-layout-height="${pos.height}"`;
   const shape = normalizedShape === "rect"
-    ? `<rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${layoutAttributes}${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>`
+    ? `<rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}"${typeof rx === "number" ? ` rx="${rx}"` : ""}${typeof ry === "number" ? ` ry="${ry}"` : ""} fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${layoutAttributes}${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>`
     : `<g transform="translate(${pos.x} ${pos.y}) scale(${pos.width / SVG_NODE_WIDTH} ${pos.height / SVG_NODE_HEIGHT})"${layoutAttributes}><path d="${geometry.outlinePath}" fill="${geometry.open ? "none" : fill}" stroke="${geometry.outlineVisible === false ? "none" : stroke}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"/>`).join("")}</g>`;
   return `<g data-node-id="${escapeXml(node.id)}">${shape}<text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
 }
@@ -4958,8 +5004,10 @@ function renderSvgEdge(
         : `M${x1} ${y1} L${x1} ${(y1 + y2) / 2} L${x2} ${(y1 + y2) / 2} L${x2} ${y2}`
       : `M${x1} ${y1} C${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`;
   const invisible = edge.lineStyle === "invisible";
+  const labelX = (x1 + x2) / 2;
+  const labelY = (y1 + y2) / 2 - 6;
   const label = edge.label && !invisible
-    ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(edge.label)}</text>`
+    ? `${themePalette?.edgeLabelBackground ? `<rect x="${labelX - textWidth(edge.label, 12) / 2 - 5}" y="${labelY - 12}" width="${textWidth(edge.label, 12) + 10}" height="17" fill="${themePalette.edgeLabelBackground}"/>` : ""}<text x="${labelX}" y="${labelY}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(edge.label)}</text>`
     : "";
   const sourceMarker = edge.sourceMarker ?? (edge.direction === "backward" || edge.direction === "both" ? "arrow" : "none");
   const targetMarker = edge.targetMarker ?? (edge.direction === "forward" || edge.direction === "both" || edge.direction === undefined ? "arrow" : "none");

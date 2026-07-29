@@ -19,13 +19,25 @@ export const USER_SKILLS_DIR = process.env.QINGAGENT_USER_SKILLS_DIR
 export const SKILLS_INSTALL_DIR = USER_SKILLS_DIR;
 
 /**
- * 第三方 agent 工具链的共用技能目录。像 `anttoolcenter skill add` 这类 CLI 固定
- * 装到 `~/.agents/skills`,用户装完后在青简里却"查无此技能"——因为我们只扫自己的
- * 目录。这里把它作为**只增不搬**的额外来源:两处都扫,不迁移任何文件,
- * 也不改变默认安装位置(仍是 SKILLS_INSTALL_DIR)。
+ * 第三方技能安装器普遍会同时覆盖 Claude 与 Codex 的技能目录；
+ * `~/.agents/skills` 作为历史共享来源继续保留。这里采用**只增不搬**:
+ * 扫描外部目录但不迁移文件,也不改变默认安装位置(仍是 SKILLS_INSTALL_DIR)。
  * 可用 QINGAGENT_EXTRA_USER_SKILLS_DIRS(路径分隔符分隔)追加更多来源。
  */
-const DEFAULT_EXTRA_USER_SKILL_SOURCES = [resolve(homedir(), ".agents", "skills")];
+export const DEFAULT_EXTRA_USER_SKILL_SOURCES = [
+  resolve(homedir(), ".claude", "skills"),
+  resolve(homedir(), ".codex", "skills"),
+  resolve(homedir(), ".agents", "skills"),
+];
+
+/** 外部目录最多注入的顶层技能数，避免第三方目录无限膨胀提示词。 */
+export const MAX_EXTERNAL_USER_SKILLS = 30;
+
+export type UserSkillSource =
+  | "installed"
+  | "external-claude"
+  | "external-codex"
+  | "external-shared";
 
 /**
  * env 是**追加**而不是覆盖:这条清单的语义就是"只增不搬"。若写成覆盖,任何一处
@@ -42,8 +54,9 @@ function parseExtraUserSkillSources(): string[] {
 }
 
 /**
- * 用户技能的全部来源目录,首位恒为安装目录 USER_SKILLS_DIR。发现、沙箱可写面、
- * 可信脚本判定都必须走这一份清单,避免各处各记一半。
+ * 用户技能的全部来源目录,首位恒为安装目录 USER_SKILLS_DIR。发现、沙箱权限面、
+ * 可信脚本判定都必须走这一份清单,避免各处各记一半；权限消费必须保持
+ * “首位安装目录可写、其余外部来源只读”。
  *
  * 顺序即优先级:同名技能以**靠前的来源为准**(安装目录 > 内置额外来源 > env 追加),
  * 由 resolveEnabledSkillDirsFromRoots 按名去重落实,避免多来源同名时行为不确定。
@@ -51,3 +64,11 @@ function parseExtraUserSkillSources(): string[] {
 export const USER_SKILL_SOURCE_DIRS: readonly string[] = [
   ...new Set([USER_SKILLS_DIR, ...parseExtraUserSkillSources()]),
 ];
+
+export function classifyUserSkillSource(sourceDir: string): UserSkillSource {
+  const normalized = resolve(sourceDir);
+  if (normalized === resolve(USER_SKILLS_DIR)) return "installed";
+  if (normalized === resolve(homedir(), ".claude", "skills")) return "external-claude";
+  if (normalized === resolve(homedir(), ".codex", "skills")) return "external-codex";
+  return "external-shared";
+}

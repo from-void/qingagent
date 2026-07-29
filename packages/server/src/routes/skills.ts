@@ -6,24 +6,27 @@ import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/p
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   BUILTIN_SKILLS_DIR,
+  MAX_EXTERNAL_USER_SKILLS,
   SKILLS_INSTALL_DIR,
+  USER_SKILL_SOURCE_DIRS,
   USER_SKILLS_DIR,
   ARCHIVED_BUILTIN_SKILLS,
   getQingagentSkills,
   listChildSkills,
-  listTopLevelSkills,
+  classifyUserSkillSource,
   parseSkillFrontmatter,
   readDisabledSet,
   setEnabled,
   listConnectorDefinitions,
   listCredentialRequests,
+  resolveSkillSourcesFromRoots,
 } from "@qingagent/core";
 import { listCredentialGrants } from "@qingagent/db";
-import type { CredentialShareItem } from "@qingagent/contract-ts";
+import type { CredentialShareItem, ExternalSkillSource } from "@qingagent/contract-ts";
 import type { ParsedSkillFrontmatter } from "@qingagent/core";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
-export type SkillSourceLabel = "builtin" | "installed";
+export type SkillSourceLabel = ExternalSkillSource;
 export interface SkillFileInput {
   path: string;
   content: string;
@@ -147,7 +150,7 @@ skillsRoutes.get("/skills/:name", async (c) => {
         source: skill.source,
         userInvocable: child.metadata.userInvocableExplicit
           ? child.metadata.userInvocable
-          : skill.source === "installed",
+          : skill.source !== "builtin",
         placeholder: child.metadata.placeholder,
         config: child.metadata.config,
         tools: child.metadata.tools,
@@ -280,7 +283,7 @@ skillsRoutes.patch("/skills/:name", async (c) => {
     const skill = await findSkillOnDisk(name);
     if (!skill) return c.json({ error: "not found" }, 404);
     if (skill.source !== "installed") {
-      return c.json({ error: "内置技能不能修改显示名" }, 400);
+      return c.json({ error: "只读来源技能不能修改显示名" }, 400);
     }
 
     const skillMdPath = join(skill.path, "SKILL.md");
@@ -307,7 +310,7 @@ skillsRoutes.delete("/skills/:name", async (c) => {
     const skill = await findSkillOnDisk(name);
     if (!skill) return c.json({ error: "not found" }, 404);
     if (skill.source !== "installed") {
-      return c.json({ error: "内置技能不能删除" }, 400);
+      return c.json({ error: "只读来源技能不能删除" }, 400);
     }
     await rm(skill.path, { recursive: true, force: true });
     await refreshSkills();
@@ -560,7 +563,7 @@ export async function replaceInstalledSkillFiles(
   if (!isValidSkillName(name)) throw new Error("not found");
   const skill = await findSkillOnDisk(name);
   if (!skill) throw new Error("not found");
-  if (skill.source !== "installed") throw new Error("builtin skill is read only");
+  if (skill.source !== "installed") throw new Error("只读来源技能不可修改");
 
   const validated = validateSkillFiles(input);
   if (validated.root.name !== name) throw new Error("技能名称与路径参数不一致");
@@ -608,7 +611,7 @@ export async function deleteInstalledSkill(name: string): Promise<boolean> {
   if (!isValidSkillName(name)) return false;
   const skill = await findSkillOnDisk(name);
   if (!skill) return false;
-  if (skill.source !== "installed") throw new Error("builtin skill is read only");
+  if (skill.source !== "installed") throw new Error("只读来源技能不可删除");
   await rm(skill.path, { recursive: true, force: true });
   await refreshSkills();
   return true;
@@ -732,7 +735,7 @@ export async function listAllSkillItems(disabled: Set<string>): Promise<SkillLis
       if (!parsed) continue;
       items.push({
         ...parsed,
-        userInvocable: parsed.userInvocableExplicit ? parsed.userInvocable : source === "installed",
+        userInvocable: parsed.userInvocableExplicit ? parsed.userInvocable : source !== "builtin",
         path,
         source,
         enabled: !disabled.has(parsed.name),
@@ -754,7 +757,7 @@ export async function serializeSkillListItem(
     ...child.metadata,
     userInvocable: child.metadata.userInvocableExplicit
       ? child.metadata.userInvocable
-      : skill.source === "installed",
+      : skill.source !== "builtin",
     path: child.path,
     source: skill.source,
     // 子技能不提供独立开关，enabled 始终继承母技能的总控状态。
@@ -806,29 +809,35 @@ async function collectAllSkillDirs(): Promise<Array<{ path: string; source: Skil
     { path: join(BUILTIN_SKILLS_DIR, "capability"), source: "builtin" },
     { path: join(BUILTIN_SKILLS_DIR, "native"), source: "builtin" },
     { path: join(BUILTIN_SKILLS_DIR, "style"), source: "builtin" },
-    { path: USER_SKILLS_DIR, source: "installed" },
+    ...USER_SKILL_SOURCE_DIRS.map((path) => ({
+      path,
+      source: classifyUserSkillSource(path),
+    })),
   ];
-  const result: Array<{ path: string; source: SkillSourceLabel; mtimeMs: number }> = [];
-  for (const root of roots) {
-    try {
-      const skills = await listTopLevelSkills(root.path);
-      for (const skill of skills) {
-        if (root.source === "builtin" && ARCHIVED_BUILTIN_SKILLS.has(skill.metadata.name)) continue;
-        result.push({
-          path: skill.path,
-          source: root.source,
-          mtimeMs: skill.mtimeMs,
-        });
-      }
-    } catch {
-      // Missing user install dir is normal.
-    }
-  }
-  return result;
+  const sources = await resolveSkillSourcesFromRoots(
+    roots.map((root) => ({
+      path: root.path,
+      external: root.source.startsWith("external-"),
+    })),
+    {
+      maxExternalSkills: MAX_EXTERNAL_USER_SKILLS,
+      logger: console,
+    },
+  );
+  return sources
+    .filter(({ skill, rootIndex }) =>
+      roots[rootIndex]?.source !== "builtin"
+      || !ARCHIVED_BUILTIN_SKILLS.has(skill.metadata.name)
+    )
+    .map(({ skill, rootIndex }) => ({
+      path: skill.path,
+      source: roots[rootIndex]!.source,
+      mtimeMs: skill.mtimeMs,
+    }));
 }
 
 function compareSkillItems(a: SkillListItem, b: SkillListItem): number {
-  if (a.source !== b.source) return a.source === "builtin" ? -1 : 1;
+  if (a.source !== b.source) return skillSourceOrder(a.source) - skillSourceOrder(b.source);
   if (a.source === "builtin") {
     const ai = builtinOrder(a.name);
     const bi = builtinOrder(b.name);
@@ -837,6 +846,16 @@ function compareSkillItems(a: SkillListItem, b: SkillListItem): number {
   }
   if (a.mtimeMs !== b.mtimeMs) return a.mtimeMs - b.mtimeMs;
   return a.name.localeCompare(b.name);
+}
+
+function skillSourceOrder(source: SkillSourceLabel): number {
+  return [
+    "builtin",
+    "installed",
+    "external-claude",
+    "external-codex",
+    "external-shared",
+  ].indexOf(source);
 }
 
 function builtinOrder(name: string): number {

@@ -12,7 +12,12 @@ interface MockSkillInfo {
   label: string;
   summary: string;
   icon: string;
-  source: "builtin" | "installed";
+  source:
+    | "builtin"
+    | "installed"
+    | "external-claude"
+    | "external-codex"
+    | "external-shared";
   userInvocable: boolean;
   placeholder?: string;
   config?: string;
@@ -38,7 +43,7 @@ const h = vi.hoisted(() => ({
     label,
     summary: "",
     icon: "star",
-    source: "installed" as "builtin" | "installed",
+    source: "installed" as MockSkillInfo["source"],
     userInvocable: true,
     tools: [] as string[],
     enabled: true,
@@ -229,6 +234,29 @@ describe("SkillsPanel 导入门控", () => {
 
     const cards = Array.from(host?.querySelectorAll<HTMLElement>(".sk-grid > .sk-card") ?? []);
     expect(cards.at(-1)?.dataset.wf).toBe("SkillImportCard");
+  });
+
+  it("外部技能显示轻量来源徽标，且不开放删除菜单", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [{
+      name: "claude-directory-skill",
+      description: "来自外部目录",
+      label: "外部技能",
+      summary: "直接发现并默认启用",
+      icon: "star",
+      source: "external-claude",
+      userInvocable: true,
+      tools: [],
+      enabled: true,
+    }];
+    await render();
+
+    expect(host?.textContent).toContain("来自 Claude 目录");
+    const card = q('[data-wf="SkillEntry"]');
+    await act(async () => {
+      card?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    expect(document.body.querySelector(".sk-ctxmenu")).toBeNull();
   });
 
   it("点击卡片进入详情页，显示工具、配置区和去 frontmatter 的 SKILL.md 正文", async () => {

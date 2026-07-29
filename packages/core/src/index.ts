@@ -231,8 +231,11 @@ export { clearQuestionBranch } from "./services/genService.js";
 export {
   ARCHIVED_BUILTIN_SKILLS,
   BUILTIN_SKILLS_DIR,
+  MAX_EXTERNAL_USER_SKILLS,
   SKILLS_INSTALL_DIR,
+  USER_SKILL_SOURCE_DIRS,
   USER_SKILLS_DIR,
+  classifyUserSkillSource,
   checkCredentialPath,
   ensureCredentialPathExists,
   selectEffectiveCredentialPaths,
@@ -245,6 +248,7 @@ export {
   parseCredentialPathDeclarations,
   parseSkillFrontmatter,
   readDisabledSet,
+  resolveSkillSourcesFromRoots,
   scanSkillHierarchy,
   setEnabled,
 } from "./skills/index.js";
@@ -253,6 +257,7 @@ export type {
   CredentialRequest,
   DiscoveredSkill,
   ParsedSkillFrontmatter,
+  UserSkillSource,
 } from "./skills/index.js";
 export {
   askUserTool,

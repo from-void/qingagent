@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
+import type {
+  ConnectorId,
+  CredentialShareItem,
+  ExternalSkillSource,
+} from "@qingagent/contract-ts";
 import { parseCredentialShareItems } from "./credentialShare";
 
 export const SKILLS_CHANGED_EVENT = "qingagent:skills-changed";
@@ -10,7 +14,7 @@ export interface SkillBaseInfo {
   label: string;
   summary: string;
   icon: string;
-  source: "builtin" | "installed";
+  source: ExternalSkillSource;
   userInvocable: boolean;
   placeholder?: string;
   config?: string;

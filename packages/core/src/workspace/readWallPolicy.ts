@@ -75,7 +75,7 @@ export interface ResolveReadWallPolicyOptions {
   builtinSkillsDir: string;
   /** 技能安装目录(可写)。 */
   userSkillsDir: string;
-  /** 其它 agent 工具链共用的技能目录(如 ~/.agents/skills),同样按技能目录放行。 */
+  /** 其它 agent 工具链的技能目录，只读放行，避免沙箱向其它 agent 注入提示词。 */
   extraUserSkillsDirs?: string[];
   /** 包管理器缓存目录(可写)。让 npm/npx 写这里,而不是去写 HOME 下的 ~/.npm。 */
   packageCacheDir?: string;
@@ -640,13 +640,10 @@ export async function resolveReadWallPolicy(
     resolveAllowPath(options.sessionDir, "session", true, effectiveHome),
     resolveAllowPath(options.sandboxBinDir, "bin", false, effectiveHome),
     resolveAllowPath(options.builtinSkillsDir, "builtin-skills", false, effectiveHome),
-    // 技能目录必须可写:装技能(npx … skill add / skills add)的落点就在这里,
-    // 只读会让所有"装技能"命令必被信号打死(0729 真机 P1)。
-    // 安全边界:放开的只是技能目录本身,HOME 其余部分(含 ~/.ssh、浏览器数据、
-    // 钥匙串)一律维持只读 + 既有 deny,不受影响。
+    // 只有青简自己的安装目录可写；外部 agent 技能目录必须保持只读。
     resolveAllowPath(options.userSkillsDir, "user-skills", true, effectiveHome),
     ...(options.extraUserSkillsDirs ?? []).map((path) =>
-      resolveAllowPath(path, "user-skills", true, effectiveHome),
+      resolveAllowPath(path, "user-skills", false, effectiveHome),
     ),
     ...(options.packageCacheDir
       ? [resolveAllowPath(options.packageCacheDir, "package-cache", true, effectiveHome)]

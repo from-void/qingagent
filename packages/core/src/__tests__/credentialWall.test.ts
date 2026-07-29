@@ -163,7 +163,13 @@ describe("seatbelt(darwin)渲染", () => {
   it("最宽档写墙放开到 HOME,浏览器/钥匙串读写都仍被拒", async () => {
     const options = await fixture("darwin");
     const home = options.effectiveHome!;
-    const policy = await resolveReadWallPolicy({ ...options, credentialWallMode: "wide" });
+    const externalSkills = join(home, ".claude", "skills");
+    await mkdir(externalSkills, { recursive: true });
+    const policy = await resolveReadWallPolicy({
+      ...options,
+      extraUserSkillsDirs: [externalSkills],
+      credentialWallMode: "wide",
+    });
     const profile = buildSeatbeltReadWallProfile(policy);
     expect(profile).toContain(`(allow file-write* (subpath "${home}"))`);
     expect(profile).toContain(
@@ -174,6 +180,10 @@ describe("seatbelt(darwin)渲染", () => {
     );
     // 写墙放开发生在永久 deny 之前,收回写权限的规则必须排在它之后。
     expect(profile.indexOf(`(deny file-write* (subpath "${join(home, "Library", "Keychains")}"))`))
+      .toBeGreaterThan(profile.indexOf(`(allow file-write* (subpath "${home}"))`));
+    const externalDeny = `(deny file-write* (subpath "${externalSkills}"))`;
+    expect(profile).toContain(externalDeny);
+    expect(profile.indexOf(externalDeny))
       .toBeGreaterThan(profile.indexOf(`(allow file-write* (subpath "${home}"))`));
   });
 });
@@ -213,9 +223,18 @@ describe("bubblewrap(linux)渲染", () => {
   it("最宽档 HOME 内条目以可写方式 bind 且不再只读重挂", async () => {
     const options = await fixture("linux");
     const home = options.effectiveHome!;
-    const policy = await resolveReadWallPolicy({ ...options, credentialWallMode: "wide" });
+    const externalSkills = join(home, ".codex", "skills");
+    await mkdir(externalSkills, { recursive: true });
+    const policy = await resolveReadWallPolicy({
+      ...options,
+      extraUserSkillsDirs: [externalSkills],
+      credentialWallMode: "wide",
+    });
     const built = await buildBubblewrapReadWallArgs(policy, process.execPath);
     expect(bindPairs(built.args, "--bind").some((pair) => pair.startsWith(join(home, ".ssh")))).toBe(true);
+    expect(bindPairs(built.args, "--ro-bind")).toContain(
+      `${externalSkills}=>${externalSkills}`,
+    );
     const remountIndex = built.args.indexOf("--remount-ro");
     const remounted = remountIndex === -1 ? [] : built.args.filter((_, index) =>
       built.args[index - 1] === "--remount-ro",

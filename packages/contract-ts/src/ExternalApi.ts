@@ -321,7 +321,12 @@ export interface ExternalReviewRunResponse extends ExternalChatSendResponse {
   afterSeq: number;
 }
 
-export type ExternalSkillSource = "builtin" | "installed";
+export type ExternalSkillSource =
+  | "builtin"
+  | "installed"
+  | "external-claude"
+  | "external-codex"
+  | "external-shared";
 export interface ExternalSkill {
   name: string;
   description: string;

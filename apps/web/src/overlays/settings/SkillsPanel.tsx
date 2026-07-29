@@ -56,7 +56,20 @@ function SkIcon({ icon }: { icon: string }) {
 }
 
 function sourceLabel(source: SkillBaseInfo["source"]): string {
-  return source === "builtin" ? "内置" : "已安装";
+  switch (source) {
+    case "builtin":
+      return "内置";
+    case "installed":
+      return "已安装";
+    case "external-claude":
+      return "来自 Claude 目录";
+    case "external-codex":
+      return "来自 Codex 目录";
+    case "external-shared":
+      return "来自共享目录";
+    default:
+      return "来自共享目录";
+  }
 }
 
 function configTitle(config: string): string {
@@ -369,9 +382,9 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
 
   const openMenu = (e: MouseEvent, s: SkillInfo) => {
     e.preventDefault();
-    if (!canMutate) return;
+    if (!canMutate || s.source !== "installed") return;
     e.stopPropagation();
-    setMenu({ name: s.name, builtin: s.source === "builtin", title: s.label, x: e.clientX, y: e.clientY });
+    setMenu({ name: s.name, builtin: false, title: s.label, x: e.clientX, y: e.clientY });
   };
 
   const openSkill = (skill: SkillInfo) => {
@@ -530,6 +543,9 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             <div className="sk-card-head">
               <SkIcon icon={s.icon} />
               <span className="sk-card-title">{s.label}</span>
+              {s.source.startsWith("external-") && (
+                <span className="sk-card-tag">{sourceLabel(s.source)}</span>
+              )}
               <button
                 type="button"
                 className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
@@ -675,7 +691,7 @@ function SkillDetail({
   const [editingLabel, setEditingLabel] = useState(false);
   const labelInputRef = useRef<HTMLInputElement>(null);
   const configNode = renderConfig(skill.config);
-  const isBuiltin = skill.source === "builtin";
+  const isInstalled = skill.source === "installed";
   useEffect(() => {
     setLabelDraft(skill.label);
     setEditingLabel(false);
@@ -688,7 +704,7 @@ function SkillDetail({
   const normalizedDraft = labelDraft.trim();
   const labelChanged = normalizedDraft.length > 0 && normalizedDraft !== skill.label;
   const beginLabelEdit = () => {
-    if (!canMutate || busy) return;
+    if (!isInstalled || !canMutate || busy) return;
     setLabelDraft(skill.label);
     setEditingLabel(true);
   };
@@ -709,10 +725,10 @@ function SkillDetail({
     <>
       <div className="sk-detail-hero">
         <SkIcon icon={skill.icon} />
-        {isBuiltin ? (
+        {!isInstalled ? (
           <>
             <span className="sk-detail-name">{skill.label}</span>
-            {/* 内置技能改不了名,来源标直接跟在名字后面,省掉单独一行元信息 */}
+            {/* 只读来源改不了名，来源标直接跟在名字后面。 */}
             <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
           </>
         ) : editingLabel ? (
@@ -828,9 +844,9 @@ function SkillDeleteFoot({
   busy: boolean;
   onDelete: () => void;
 }) {
-  const isBuiltin = skill.source === "builtin";
-  const hint = isBuiltin
-    ? "内置技能不可删除,仅可停用。"
+  const isInstalled = skill.source === "installed";
+  const hint = !isInstalled
+    ? "此来源为只读,仅可停用。"
     : canMutate
       ? "已安装技能可删除。"
       : "删除仅在桌面客户端开放。";
@@ -840,7 +856,7 @@ function SkillDeleteFoot({
       <button
         type="button"
         className="sk-btn-danger"
-        disabled={isBuiltin || !canMutate || busy}
+        disabled={!isInstalled || !canMutate || busy}
         onClick={onDelete}
       >
         删除技能

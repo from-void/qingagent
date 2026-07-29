@@ -493,3 +493,71 @@ describe("SessionActor", () => {
     expect(log.getSessionCountForTest()).toBe(0);
   });
 });
+
+describe("SessionActor 受保护工作", () => {
+  it("用户已确认、正在执行的命令不被新消息抢占,新消息排队等它收口", async () => {
+    const log = new InMemoryFrameLog();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    const abortSession = vi.fn();
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* (command) {
+        if (command.kind === "sendMessage") yield meta(command.data.text);
+      },
+      abortSession,
+      hasProtectedWork: () => true,
+    });
+
+    const protectedRun = actor.enqueueTask(async function* () {
+      started();
+      await releasePromise;
+      yield meta("confirmed-command-done");
+    });
+    await startedPromise;
+
+    const queued = actor.enqueue({ command: sendMessage("怎么样了") });
+    // 抢占必须被跳过:已确认的命令还在跑。
+    expect(abortSession).not.toHaveBeenCalled();
+
+    release();
+    await expect(protectedRun).resolves.toHaveLength(1);
+    await expect(queued).resolves.toHaveLength(1);
+    await actor.disposeAndWait();
+  });
+
+  it("用户显式停止仍能立刻打断受保护工作", async () => {
+    const log = new InMemoryFrameLog();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    const abortSession = vi.fn(() => release());
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* () {
+        yield meta("cancelled");
+      },
+      abortSession,
+      hasProtectedWork: () => true,
+    });
+
+    const protectedRun = actor.enqueueTask(async function* () {
+      started();
+      await releasePromise;
+      yield meta("confirmed-command-stopped");
+    });
+    await startedPromise;
+
+    const cancelled = actor.enqueue({ command: cancelStream() });
+    expect(abortSession).toHaveBeenCalledWith("s1", "globalStop");
+
+    await expect(protectedRun).resolves.toHaveLength(1);
+    await expect(cancelled).resolves.toHaveLength(1);
+    await actor.disposeAndWait();
+  });
+});

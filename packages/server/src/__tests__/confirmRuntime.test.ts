@@ -504,10 +504,55 @@ describe("confirm runtime", () => {
       kind: "confirmResolved",
       data: expect.objectContaining({
         resolution: "failed",
-        message: "确认恢复异常，执行结果未知且未自动重试",
+        message: "确认已提交，但没有收到命令结果。为避免重复操作没有自动重试，请先查看命令输出再决定是否重来。",
       }),
     }));
     expect(JSON.stringify(frames)).not.toContain("命令未执行");
+  });
+
+  it("恢复流被整体墙掐死时按超时如实收口,并把真实归因写给模型", async () => {
+    const spec = commandConfirmSpec("confirm-resume-wall-timeout");
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    const agent = {
+      approveToolCall: vi.fn(async () => ({
+        runId: `run-${spec.id}`,
+        // 命令一直不产帧:超时必须由恢复墙收口,而不是变成含糊的"已中止"。
+        fullStream: (async function* () {
+          await new Promise(() => undefined);
+          yield { type: "finish", payload: {} };
+        })(),
+      })),
+      declineToolCall: vi.fn(),
+    };
+
+    const frames = await collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-resume-wall-timeout",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      persistSession: async () => undefined,
+      resumeTimeoutMs: 30,
+    }));
+
+    const failure = frames.find(
+      (frame) => frame.kind === "confirmResolved" && frame.data.resolution === "failed",
+    );
+    expect(failure).toBeDefined();
+    const message = failure?.kind === "confirmResolved" ? failure.data.message ?? "" : "";
+    expect(message).toContain("超过本次上限");
+    expect(message).toContain("后台运行");
+    // 用户已经点过确认:回传模型的说明必须堵死"你没及时点确认"这类瞎猜。
+    const note = state.messages.at(-1);
+    expect(note?.role).toBe("system");
+    const noteText = typeof note?.content === "string" ? note.content : "";
+    expect(noteText).toContain("用户已经点了确认");
+    expect(noteText).toContain("不要说是用户取消");
   });
 
   it("beginDecision 永不 resolve 时，stop 可中止前置阶段且后续命令不被 Actor 堵塞", async () => {

@@ -232,6 +232,17 @@ export const sessionManager = new SessionManager({
     const session = sessions.get(sessionId);
     if (session) armSessionConfirmTimeouts(session);
   },
+  hasProtectedWork: (sessionId) => {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+    // 已确认、正在执行的命令 = 用户已经付出过动作,不能被系统悄悄丢掉。
+    if (session._activeConfirmedToolCallId) return true;
+    for (const pending of session.pendingConfirms.values()) {
+      // pending=还在等用户点；resuming=已点、正在恢复执行。两者都不许被顺手清理。
+      if (pending.status === "pending" || pending.status === "resuming") return true;
+    }
+    return false;
+  },
 });
 
 interface ConfirmTimerEntry {

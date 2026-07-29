@@ -69,6 +69,44 @@ describe("SessionManager", () => {
     reconnectUnsubscribe();
   });
 
+  it("有受保护工作(已确认正在执行的命令)时，断连宽限期不取消 active turn", async () => {
+    const frameLog = new InMemoryFrameLog();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const abortSession = vi.fn(() => release());
+    const manager = new SessionManager({
+      frameLog,
+      handleCommand: async function* (command) {
+        if (command.kind !== "cancelStream") await blocked;
+        yield frame("disconnect-protected");
+      },
+      abortSession,
+      cleanupSession: vi.fn(),
+      hasProtectedWork: () => true,
+    });
+
+    const running = manager.submit("disconnect-protected", {
+      command: startExisting("disconnect-protected"),
+    });
+    await vi.waitFor(() => {
+      expect(frameLog.readFrom("disconnect-protected", 0).activeRunner).toBe(true);
+    });
+    vi.useFakeTimers();
+
+    // 受保护时连宽限期都不排,更不会走到 cancelStream。
+    await expect(
+      manager.cancelRunningTurnAfterDisconnect("disconnect-protected"),
+    ).resolves.toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(abortSession).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+    release();
+    await running;
+  });
+
   it("最后一个 SSE 订阅断开满 15 秒且未重连，取消 active turn", async () => {
     const frameLog = new InMemoryFrameLog();
     let release!: () => void;

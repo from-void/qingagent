@@ -242,7 +242,11 @@ export async function buildBubblewrapReadWallArgs(
 
   const mountedRoots = [...SYSTEM_READONLY_BINDS, "/opt", "/snap", policy.effectiveHome];
   const explicitReadOnly = policy.allowPaths.filter(
-    (path) => path.exists && path.kind !== "credential" && !allowInsideData(path, policy.dataDenyPath),
+    (path) =>
+      path.exists &&
+      !path.writable &&
+      path.kind !== "credential" &&
+      !allowInsideData(path, policy.dataDenyPath),
   );
   for (const allowed of explicitReadOnly) {
     if (isCoveredByRoot(allowed.lexicalPath, mountedRoots)) continue;
@@ -269,6 +273,16 @@ export async function buildBubblewrapReadWallArgs(
   for (const credential of policy.allowPaths.filter((path) => path.kind === "credential")) {
     if (!credential.exists) continue;
     context.args.push("--bind", credential.canonicalPath, credential.lexicalPath);
+  }
+
+  // 技能目录等可写例外:同样在 HOME 只读投影之上叠一层可写 bind,否则"装技能"
+  // 这类命令会被写墙打死(0729 真机 P1)。放开面仅限这些目录本身。
+  for (const writable of policy.allowPaths.filter(
+    (path) => path.writable && path.kind !== "credential" && path.kind !== "session",
+  )) {
+    if (!writable.exists) continue;
+    if (allowInsideData(writable, policy.dataDenyPath)) continue;
+    context.args.push("--bind", writable.canonicalPath, writable.lexicalPath);
   }
 
   const session = policy.allowPaths.find((path) => path.kind === "session");
@@ -350,6 +364,11 @@ export async function buildStrictFallbackBwrapArgs(
   }
   for (const credential of policy.allowPaths.filter((path) => path.kind === "credential" && path.exists)) {
     args.push("--bind", credential.canonicalPath, credential.lexicalPath);
+  }
+  for (const writable of policy.allowPaths.filter(
+    (path) => path.writable && path.exists && path.kind !== "credential" && path.kind !== "session",
+  )) {
+    args.push("--bind", writable.canonicalPath, writable.lexicalPath);
   }
   const session = policy.allowPaths.find((path) => path.kind === "session");
   if (!session) throw new Error("strict bwrap fallback is missing the session exception");

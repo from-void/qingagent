@@ -29,10 +29,17 @@ export function isUserAbortSignal(signal: AbortSignal): boolean {
   return signal.aborted && signal.reason !== IDLE_TIMEOUT_ABORT_REASON;
 }
 
+/**
+ * 空闲看门狗的判死回调。返回 `false` 表示"本轮还活着,别判死"——用于把
+ * 「有待用户确认的卡片」这类没有帧、但绝不是卡死的状态显式标成活跃信号;
+ * 否决后计时器从头开始,底层迭代器不受影响。
+ */
+export type IdleTimeoutVerdict = (info: { heartbeatOnly: boolean }) => boolean | void;
+
 export async function* withIdleTimeout<T>(
   source: AsyncIterable<T>,
   timeoutMs: number,
-  onTimeout: () => void,
+  onTimeout: IdleTimeoutVerdict,
   options: IdleTimeoutOptions<T> = {},
 ): AsyncGenerator<T | AgentStreamErrorEvent> {
   const iterator = source[Symbol.asyncIterator]();
@@ -43,6 +50,8 @@ export async function* withIdleTimeout<T>(
   const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
   const abortedSignal = Symbol("aborted");
   let naturallyEnded = false;
+  // 判死被否决时挂起的 next 必须复用；重复调用 iterator.next() 会丢 chunk。
+  let pendingNext: Promise<IteratorResult<T>> | null = null;
   try {
     for (;;) {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,7 +62,8 @@ export async function* withIdleTimeout<T>(
       const idleTimeout = new Promise<typeof idleTimeoutSignal>((resolve) => {
         idleTimer = setTimeout(() => resolve(idleTimeoutSignal), activeIdleTimeoutMs);
       });
-      const next = iterator.next();
+      const next: Promise<IteratorResult<T>> = pendingNext ?? iterator.next();
+      pendingNext = null;
       const races: Array<
         Promise<
           | IteratorResult<T>
@@ -97,6 +107,14 @@ export async function* withIdleTimeout<T>(
         return;
       }
       if (raced === idleTimeoutSignal || raced === heartbeatTimeoutSignal) {
+        const heartbeatOnly = raced === heartbeatTimeoutSignal;
+        // 判死可被否决(如本轮正等用户点确认卡):否决时不 abort、不产错误帧,
+        // 也不能丢掉仍在跑的 next——把它接回下一轮竞速,继续等真正的 chunk。
+        if (onTimeout({ heartbeatOnly }) === false) {
+          if (heartbeatOnly) heartbeatOnlySince = Date.now();
+          pendingNext = next;
+          continue;
+        }
         timedOut = true;
         // 竞态护栏:timeout 赢了,挂起的 next 还在跑;吞掉它后续可能的 reject,
         // 否则上游在 abort 后才报错会变成 unhandledRejection。
@@ -104,7 +122,6 @@ export async function* withIdleTimeout<T>(
           () => undefined,
           () => undefined,
         );
-        onTimeout();
         yield {
           type: "error",
           payload: {

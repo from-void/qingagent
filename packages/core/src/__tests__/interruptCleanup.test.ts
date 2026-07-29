@@ -404,7 +404,14 @@ describe("abortAndCleanupTurn", () => {
 
     expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
     expect(persistReasons).toEqual(["confirm:aborted:terminal", "confirm:aborted"]);
-    expect(frames).toContainEqual(service.resolvedFrame(pending, "aborted"));
+    // 中止收口必须带如实说明:用户与模型都不能只拿到一句笼统"已中止"。
+    expect(frames).toContainEqual(
+      service.resolvedFrame(
+        pending,
+        "aborted",
+        "已停止，这张确认卡一并收回，命令没有执行。需要的话我可以重新发起。",
+      ),
+    );
     await expect(service.beginDecision(state, {
       sessionId: state.sessionId,
       toolCallId: pending.toolCallId,

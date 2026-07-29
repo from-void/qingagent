@@ -43,6 +43,14 @@ function safeTurnLogValue(value: string): string {
   return value.replace(/\s+/g, "_");
 }
 
+/** 有卡片正等用户点确认 = 本轮活着,只是在等人。 */
+function hasPendingConfirm(state: { pendingConfirms: Map<string, { status: string }> }): boolean {
+  for (const pending of state.pendingConfirms.values()) {
+    if (pending.status === "pending" || pending.status === "resuming") return true;
+  }
+  return false;
+}
+
 function isToolHeartbeatEvent(chunk: AgentStreamEvent): boolean {
   return chunk.type === "tool-output" && chunk.payload.output?.type === "tool-heartbeat";
 }
@@ -115,9 +123,23 @@ export async function* processAgentStream(
     const monitoredStream = withIdleTimeout(
       fullStream as AsyncIterable<AgentStreamEvent>,
       context.timeoutMs,
-      () => {
+      ({ heartbeatOnly }) => {
+        // 待确认卡是"等人"不是"卡死":挂起期间本就没有 chunk,任何无帧判定都必须
+        // 把它当活跃信号,否则用户还没来得及点确认,回合已被 idle 看门狗杀掉,
+        // 卡片直接落成中止(0729 真机 P1)。
+        if (hasPendingConfirm(context.state)) {
+          logger.info("Idle watchdog vetoed: turn is waiting for a user confirm", {
+            sessionId: context.state.sessionId,
+            streamId: context.streamId,
+            runId: context.runId,
+            heartbeatOnly,
+            pendingConfirmCount: context.state.pendingConfirms.size,
+          });
+          return false;
+        }
         context.abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
         invalidateTurnOwnership(context.state, turnOwnership);
+        return true;
       },
       {
         firstChunkTimeoutMs: context.firstChunkTimeoutMs,

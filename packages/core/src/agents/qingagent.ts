@@ -6,7 +6,11 @@ import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import {
+  BUILTIN_SKILLS_DIR,
+  USER_SKILLS_DIR,
+  USER_SKILL_SOURCE_DIRS,
+} from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import {
   acquireSessionWorkspace,
@@ -167,7 +171,9 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
   }
   const roots = [
     ...BUILTIN_SKILL_CATEGORIES.map((category) => join(BUILTIN_SKILLS_DIR, category)),
-    USER_SKILLS_DIR,
+    // 用户技能可能装在我们自己的目录,也可能被别的 agent CLI 装到 ~/.agents/skills。
+    // 两处都扫,否则用户明明装过却被告知"没安装"。
+    ...USER_SKILL_SOURCE_DIRS,
   ];
   return resolveEnabledSkillDirsFromRoots(roots, disabled);
 }
@@ -187,11 +193,25 @@ export async function resolveEnabledSkillDirsFromRoots(
       }
     }),
   );
-  return groups
-    .flat()
-    .filter((skill) => !isArchivedBuiltinSkillName(skill.metadata.name))
-    .filter((skill) => !disabled.has(skill.metadata.name))
-    .map((skill) => toPosixPath(skill.path));
+  // 多来源同名必须有确定优先级:roots 顺序即优先级,先出现的来源赢。
+  // (安装目录 > 内置额外来源 > env 追加;详见 skills/paths.ts 的 USER_SKILL_SOURCE_DIRS)
+  // 否则同一个技能名会被重复交给 Workspace,加载顺序决定行为,排障时无从解释。
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const skill of groups.flat()) {
+    const name = skill.metadata.name;
+    if (isArchivedBuiltinSkillName(name) || disabled.has(name)) continue;
+    if (seen.has(name)) {
+      console.info("[skills] 同名技能命中多个来源,按来源顺序取先出现的那个", {
+        name,
+        ignoredPath: toPosixPath(skill.path),
+      });
+      continue;
+    }
+    seen.add(name);
+    dirs.push(toPosixPath(skill.path));
+  }
+  return dirs;
 }
 
 export async function getQingagentSessionWorkspace(sessionId: string): Promise<Workspace> {

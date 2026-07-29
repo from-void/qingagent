@@ -390,7 +390,9 @@ describe("公众号稿生成体验", () => {
     expect(editorInputs[0]?.placeholder).toBe("给风格起个名，例如：热点借势评论");
     expect(host.textContent).not.toContain("说明");
     expect(editorPrompt.placeholder).toBe("描述排版规则：小标题、段落长度、加粗和分隔的用法");
-    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：重点高亮卡片式✦ AI 起草");
+    // AI 起草已移到提示词输入框右上角(字段级动作),不再混在快速开始行里
+    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：重点高亮卡片式");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("✦ AI 起草");
     expect(host.querySelector(".ws-launch-actions > .ws-launch-starters")).not.toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-starters button")!.click());
     expect(editorInputs[0]?.value).toBe("重点高亮卡片式");
@@ -401,7 +403,8 @@ describe("公众号稿生成体验", () => {
     await act(async () => host.querySelectorAll<HTMLButtonElement>(".ws-launch-template-new")[1]!.click());
     const writingPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
     expect(writingPrompt.placeholder).toBe("描述这类稿子怎么写：开头怎么起、正文什么结构、语气什么样、结尾怎么收");
-    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：热点借势评论人物访谈问答体✦ AI 起草");
+    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：热点借势评论人物访谈问答体");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("✦ AI 起草");
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-starters button")).find((button) => button.textContent === "热点借势评论")!.click());
     expect(host.querySelector<HTMLInputElement>(".ws-launch-editor input")?.value).toBe("热点借势评论");
     expect(writingPrompt.value).toContain("正文用\"现象—本质—主文档的观点/事实\"结构推进");
@@ -440,15 +443,16 @@ describe("公众号稿生成体验", () => {
     expect(host.textContent).not.toContain("内置");
     expect(host.textContent).not.toContain("说明");
     const builtinActions = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"));
-    expect(builtinActions.map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
-    expect(builtinActions[1]?.disabled).toBe(true);
-    expect(builtinActions[1]?.title).toBe("内置模板不可删除");
+    // 底部动作区只剩表单级动作,删除靠左(margin-right:auto)
+    expect(builtinActions.map((button) => button.textContent)).toEqual(["删除", "另存新模板", "保存"]);
+    expect(builtinActions[0]?.disabled).toBe(true);
+    expect(builtinActions[0]?.title).toBe("内置模板不可删除");
     const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "新提示");
       prompt.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(async () => builtinActions[3]!.click());
+    await act(async () => builtinActions[2]!.click());
     expect(stream.saveStyleTemplate).toHaveBeenCalledWith("session-1", expect.objectContaining({ id: builtin.id, detail: "深入", name: "深度观点文", prompt: "新提示" }));
     expect(Array.from(host.querySelectorAll('[aria-checked="true"]')).some((button) => button.textContent?.includes("深度观点文"))).toBe(true);
     await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
@@ -630,7 +634,7 @@ describe("公众号稿生成体验", () => {
     await act(async () => Promise.resolve());
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑我的写法"]')!.click());
     await act(async () => Promise.resolve());
-    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button")).map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button")).map((button) => button.textContent)).toEqual(["删除", "另存新模板", "保存"]);
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除")!.click());
     expect(stream.deleteStyleTemplate).not.toHaveBeenCalled();
     expect(host.querySelector('[data-wf="GlobalConfirm"]')?.textContent).toContain("删除风格模板「我的写法」？");

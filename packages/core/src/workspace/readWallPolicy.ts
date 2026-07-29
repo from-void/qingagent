@@ -32,6 +32,8 @@ export type ReadWallAllowKind =
   | "bin"
   | "builtin-skills"
   | "user-skills"
+  /** 包管理器缓存(npm/npx 等):放在产品数据目录内的可写共享缓存,替代 ~/.npm。 */
+  | "package-cache"
   | "extra"
   /** 技能声明 + 用户授权的凭证路径:读放行且可写,让 CLI 与终端共享同一份登录态。 */
   | "credential";
@@ -71,7 +73,12 @@ export interface ResolveReadWallPolicyOptions {
   sessionDir: string;
   sandboxBinDir: string;
   builtinSkillsDir: string;
+  /** 技能安装目录(可写)。 */
   userSkillsDir: string;
+  /** 其它 agent 工具链共用的技能目录(如 ~/.agents/skills),同样按技能目录放行。 */
+  extraUserSkillsDirs?: string[];
+  /** 包管理器缓存目录(可写)。让 npm/npx 写这里,而不是去写 HOME 下的 ~/.npm。 */
+  packageCacheDir?: string;
   extraReadOnlyPaths: string[];
   /** 已授权的凭证路径(绝对路径,由技能声明 + 用户授权得出)。 */
   grantedCredentialPaths?: string[];
@@ -512,7 +519,13 @@ function assertDataExceptionRules(
   allowPaths: ResolvedReadWallAllowPath[],
   dataDenyPath: ResolvedReadWallPath,
 ): void {
-  const fixedExceptions = new Set<ReadWallAllowKind>(["session", "bin", "builtin-skills", "user-skills"]);
+  const fixedExceptions = new Set<ReadWallAllowKind>([
+    "session",
+    "bin",
+    "builtin-skills",
+    "user-skills",
+    "package-cache",
+  ]);
   // 凭证例外恒在 HOME 下,不可能落进数据目录;真落进去说明配置串了,照旧按下面的规则拒。
   for (const allowed of allowPaths) {
     if (pathFallsInside(allowed, dataDenyPath) && !fixedExceptions.has(allowed.kind)) {
@@ -627,7 +640,17 @@ export async function resolveReadWallPolicy(
     resolveAllowPath(options.sessionDir, "session", true, effectiveHome),
     resolveAllowPath(options.sandboxBinDir, "bin", false, effectiveHome),
     resolveAllowPath(options.builtinSkillsDir, "builtin-skills", false, effectiveHome),
-    resolveAllowPath(options.userSkillsDir, "user-skills", false, effectiveHome),
+    // 技能目录必须可写:装技能(npx … skill add / skills add)的落点就在这里,
+    // 只读会让所有"装技能"命令必被信号打死(0729 真机 P1)。
+    // 安全边界:放开的只是技能目录本身,HOME 其余部分(含 ~/.ssh、浏览器数据、
+    // 钥匙串)一律维持只读 + 既有 deny,不受影响。
+    resolveAllowPath(options.userSkillsDir, "user-skills", true, effectiveHome),
+    ...(options.extraUserSkillsDirs ?? []).map((path) =>
+      resolveAllowPath(path, "user-skills", true, effectiveHome),
+    ),
+    ...(options.packageCacheDir
+      ? [resolveAllowPath(options.packageCacheDir, "package-cache", true, effectiveHome)]
+      : []),
     ...options.extraReadOnlyPaths.map((path) => resolveAllowPath(path, "extra", false, effectiveHome)),
   ]);
   allowPaths.push(...credentialSelection.granted);

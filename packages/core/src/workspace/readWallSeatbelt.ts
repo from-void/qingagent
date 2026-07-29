@@ -81,6 +81,10 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
   const credentialExceptions = policy.allowPaths.filter((path) => path.kind === "credential");
   const session = policy.allowPaths.find((path) => path.kind === "session");
   if (!session) throw new Error("seatbelt policy is missing the session exception");
+  // session 已单独发写规则;credential 走后置的 renderCredentialAllow。
+  const writableExceptions = policy.allowPaths.filter(
+    (path) => path.writable && path.kind !== "session" && path.kind !== "credential",
+  );
 
   const lines = [
     "(version 1)",
@@ -118,6 +122,11 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
     ...pathVariants(session).map((path) => `(allow file-write* (subpath ${sbplString(path)}))`),
     '(allow file-write* (subpath "/private/tmp"))',
     '(allow file-write* (subpath "/private/var/folders"))',
+    "",
+    "; 技能目录可写:装技能就是往这里写。只开技能目录,HOME 其余部分仍只读。",
+    ...writableExceptions.flatMap((path) =>
+      pathVariants(path).map((variant) => `(allow file-write* (subpath ${sbplString(variant)}))`),
+    ),
     "",
     "; 用户授权共享的凭证路径:读放行 + 可写,与终端共用同一份登录态。",
     "; SBPL 后规则覆盖前规则,因此这里能盖掉上面的凭证 deny。",

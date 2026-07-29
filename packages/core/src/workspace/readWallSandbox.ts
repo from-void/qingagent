@@ -33,6 +33,8 @@ export interface PrepareReadWallOptions {
   sandboxBinDir: string;
   builtinSkillsDir: string;
   userSkillsDir: string;
+  extraUserSkillsDirs?: string[];
+  packageCacheDir?: string;
   extraReadOnlyPaths: string[];
   /** 已授权可与终端共享的凭证路径(绝对路径)。 */
   grantedCredentialPaths?: string[];
@@ -65,6 +67,8 @@ export async function prepareReadWall(options: PrepareReadWallOptions): Promise<
     sandboxBinDir: options.sandboxBinDir,
     builtinSkillsDir: options.builtinSkillsDir,
     userSkillsDir: options.userSkillsDir,
+    extraUserSkillsDirs: options.extraUserSkillsDirs,
+    packageCacheDir: options.packageCacheDir,
     extraReadOnlyPaths: options.extraReadOnlyPaths,
     grantedCredentialPaths: options.grantedCredentialPaths,
     credentialWallMode: options.credentialWallMode,

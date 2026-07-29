@@ -42,7 +42,11 @@ import {
   normalizeFolderSourceRecords,
 } from "../folderSources/runtime.js";
 import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import {
+  BUILTIN_SKILLS_DIR,
+  USER_SKILLS_DIR,
+  USER_SKILL_SOURCE_DIRS,
+} from "../skills/paths.js";
 import {
   ensureCredentialPathExists,
   listCredentialRequests,
@@ -99,6 +103,24 @@ export function sessionWorkspaceDirName(sessionId: string): string {
 
 export function sessionWorkspaceDir(sessionId: string): string {
   return join(SANDBOX_SESSIONS_BASE, sessionWorkspaceDirName(sessionId));
+}
+
+/**
+ * 沙箱内包管理器缓存目录。npm/npx 默认写 `~/.npm`,而写墙只放开会话目录与技能目录,
+ * 于是 `npx -y <包>` 会被直接打死。把缓存重定向到产品数据目录下的共享位置:
+ * 既不用给 HOME 开任何口子,又能跨会话复用下载(比塞进 session 目录更省网、更干净)。
+ */
+export const SANDBOX_PACKAGE_CACHE_DIR = join(QINGAGENT_DATA_DIR, "package-cache");
+
+/** 让包管理器把缓存/临时产物写进沙箱可写区,而不是 HOME。 */
+export function packageManagerCacheEnv(cacheDir = SANDBOX_PACKAGE_CACHE_DIR): NodeJS.ProcessEnv {
+  return {
+    npm_config_cache: cacheDir,
+    NPM_CONFIG_CACHE: cacheDir,
+    YARN_CACHE_FOLDER: join(cacheDir, "yarn"),
+    npm_config_store_dir: join(cacheDir, "pnpm-store"),
+    XDG_CACHE_HOME: cacheDir,
+  };
 }
 
 function legacySessionWorkspaceDirName(sessionId: string): string | null {
@@ -202,6 +224,8 @@ export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   env.PATH = prefixedPath;
   if (process.platform === "win32") env.Path = prefixedPath;
   if (effectiveHome && process.platform !== "win32") env.HOME = effectiveHome;
+  // 包管理器缓存改写进沙箱可写区,避免 npx/npm 去写只读的 ~/.npm 而被写墙打死。
+  Object.assign(env, packageManagerCacheEnv());
   // 飞书域名并入 NO_PROXY:lark-cli 走代理连飞书会被不稳定的翻墙上游间歇 reset(实测),直连飞书稳定。
   // 仅在确实设了代理时才需要,可被 QINGAGENT_SANDBOX_FEISHU_NO_PROXY=0 关闭(给"飞书必须经代理"的环境)。
   const hasProxy = !!(
@@ -619,6 +643,15 @@ async function buildSessionWorkspace(
   await migrateLegacySessionStorage(sessionId);
   // 同步确保目录存在:Workspace 装配在 stream 起步路径上,异步竞态不值得
   mkdirSync(sessionDir, { recursive: true });
+  // 缓存与技能目录必须先存在,写墙才能把它们 bind 成可写(bwrap 对不存在的路径无法 bind)。
+  mkdirSync(SANDBOX_PACKAGE_CACHE_DIR, { recursive: true });
+  for (const skillsDir of USER_SKILL_SOURCE_DIRS) {
+    try {
+      mkdirSync(skillsDir, { recursive: true });
+    } catch {
+      // 第三方目录创建失败(权限/只读挂载)不该拖垮整个工作区装配,跳过即可。
+    }
+  }
 
   const isolation = resolveIsolation();
   const extraReadOnlyPaths = sandboxExtraReadOnlyPaths();
@@ -640,6 +673,8 @@ async function buildSessionWorkspace(
         sandboxBinDir: SANDBOX_BIN_DIR,
         builtinSkillsDir: BUILTIN_SKILLS_DIR,
         userSkillsDir: USER_SKILLS_DIR,
+        extraUserSkillsDirs: USER_SKILL_SOURCE_DIRS.filter((dir) => dir !== USER_SKILLS_DIR),
+        packageCacheDir: SANDBOX_PACKAGE_CACHE_DIR,
         extraReadOnlyPaths,
         grantedCredentialPaths,
         credentialWallMode: resolveCredentialWallMode(),
@@ -717,11 +752,11 @@ async function buildSessionWorkspace(
     "/skills": new RedactedSymlinkTargetFilesystem(
       new LocalFilesystem({
         basePath: BUILTIN_SKILLS_DIR,
-        allowedPaths: [USER_SKILLS_DIR],
+        allowedPaths: [...USER_SKILL_SOURCE_DIRS],
         readOnly: true,
       }),
       "/skills",
-      [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR],
+      [BUILTIN_SKILLS_DIR, ...USER_SKILL_SOURCE_DIRS],
     ),
   };
 
@@ -767,8 +802,13 @@ async function buildSessionWorkspace(
               // CLI skill 要调开放 API,必须放网;文件面仍然兜死
               allowNetwork: true,
               // 技能目录 + 产品级 CLI 目录只读可执行(bwrap/seatbelt 隔离下访问 lark-cli 等)
-              readOnlyPaths: [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
-              readWritePaths: [sessionDir],
+              readOnlyPaths: [BUILTIN_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
+              // 技能目录与包缓存可写:装技能的落点与 npx 缓存。放开面仅限这些目录。
+              readWritePaths: [
+                sessionDir,
+                ...USER_SKILL_SOURCE_DIRS,
+                SANDBOX_PACKAGE_CACHE_DIR,
+              ],
             },
             env: buildSandboxEnv(),
             timeout: SANDBOX_TIMEOUT_MS,

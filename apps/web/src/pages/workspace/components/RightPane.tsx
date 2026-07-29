@@ -369,6 +369,8 @@ export function RightPane({
     dimensions.overlay === "askUser" ||
     dimensions.content.kind === "pendingReview";
   const interactiveEditable = baseEditable && !presentationRun;
+  const canInterruptPresentationForEdit =
+    baseEditable && presentationMatchesRenderDoc;
 
   // 大改(≥70%):整篇新旧版审 —— 右侧直接展示选中版本的完整文档(干净,无内联红绿),
   // 底部条换成 [新版‖旧版] 互斥选择器 + [应用新版][退回旧版]。切换带动效、新旧各记滚动位置。
@@ -451,6 +453,7 @@ export function RightPane({
         docId={sessionId}
         editable={mountEditableSurface}
         interactiveEditable={interactiveEditable}
+        canInterruptPresentationForEdit={canInterruptPresentationForEdit}
         deferBlockIdNormalization={dimensions.content.kind === "pendingReview"}
         showPatches={showPatches}
         acceptedPatches={patchesAccepted}

@@ -357,6 +357,102 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     mounted = null;
   });
 
+  it("r14 原始 Mermaid 首次渲染即挂载 Graph，点击当拍反馈并在 portal 提交后清除", async () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "../../packages/diagram-engine/src/__tests__/fixtures-r14-review-flow.mmd"),
+      "utf8",
+    );
+    expect(parseDiagram(source)).toMatchObject({ ok: true, fullyRepresented: true });
+    const editor = await mountEditor(diagramDoc(source));
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    const queuedFrames: FrameRequestCallback[] = [];
+
+    try {
+      const graph = await waitForSelector(".graph-diagram", editor.view.dom) as HTMLElement;
+      expect(graph.style.getPropertyValue("--graph-canvas-background")).toBe("#FAF6EC");
+      expect(graph.style.getPropertyValue("--graph-edge-label-background")).toBe("#FFFFFF");
+      expect(graph.querySelector(".graph-diagram-node-shape-fill[rx='8'][ry='8']")).not.toBeNull();
+
+      globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+        queuedFrames.push(callback);
+        return queuedFrames.length;
+      }) as typeof requestAnimationFrame;
+      globalThis.cancelAnimationFrame = vi.fn() as typeof cancelAnimationFrame;
+
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(visualButton).not.toBeNull();
+
+      await act(async () => {
+        visualButton!.click();
+      });
+
+      expect(visualButton!.disabled).toBe(true);
+      expect(visualButton!.getAttribute("aria-busy")).toBe("true");
+      expect(visualButton!.textContent?.trim()).toBe("正在打开…");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+
+      await act(async () => {
+        for (const callback of queuedFrames.splice(0)) callback(performance.now());
+      });
+      expect(visualButton!.disabled).toBe(false);
+      expect(visualButton!.getAttribute("aria-busy")).toBe("false");
+      expect(visualButton!.textContent?.trim()).toBe("可视化编辑");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      await unmount(editor);
+    }
+  });
+
+  it("可视编辑请求期间源码切为不支持再切回时不会迟到打开", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]\n";
+    const unsupported = `${source}  style A animation:fast\n`;
+    expect(parseDiagram(unsupported).fullyRepresented).toBe(false);
+    const editor = await mountEditor(diagramDoc(source));
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+    try {
+      await waitForSelector(".graph-diagram", editor.view.dom);
+      globalThis.requestAnimationFrame = vi.fn(() => 1) as typeof requestAnimationFrame;
+      globalThis.cancelAnimationFrame = vi.fn() as typeof cancelAnimationFrame;
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑")!;
+
+      await act(async () => visualButton.click());
+      expect(visualButton.textContent?.trim()).toBe("正在打开…");
+      expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+
+      await act(async () => updateFirstDiagramAttrs(editor, { source: unsupported, svg: null }));
+      await flush(4);
+      expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
+      expect(
+        Array.from(editor.view.dom.querySelectorAll(".pm-diagram-view-actions button"))
+          .some((button) => button.textContent?.trim() === "可视化编辑"),
+      ).toBe(false);
+
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      await act(async () => updateFirstDiagramAttrs(editor, { source, svg: null }));
+      await flush(12);
+      expect(await waitForSelector(".graph-diagram", editor.view.dom)).not.toBeNull();
+      expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
+      const restoredButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(restoredButton?.disabled).toBe(false);
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      await unmount(editor);
+    }
+  });
+
   it("含 diagram 节点的文档会挂载 NodeView 并把 mermaid 源码渲染成 svg 注入 DOM", async () => {
     const source = "sequenceDiagram\n  A->>B: 你好";
     const editor = await mountEditor(diagramDoc(source));
@@ -1337,9 +1433,14 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const diagramView = await waitForSelector(".pm-diagram-view", editor.view.dom) as HTMLElement;
       const buttons = Array.from(editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button")).map((button) => button.textContent?.trim());
       expect(buttons).toEqual(["可视化编辑", "编辑 Mermaid"]);
-      expect(diagramViewCss).toMatch(/\.pm-diagram-view-actions\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
+      expect(diagramViewCss).toMatch(
+        /\.pm-diagram-view-actions\s*\{[^}]*visibility:\s*hidden;[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;[^}]*visibility 0s linear 0\.16s;/s,
+      );
       expect(diagramViewCss).toContain(".pm-diagram-view:hover .pm-diagram-view-actions");
       expect(diagramViewCss).toContain(".pm-diagram.is-selected .pm-diagram-view-actions");
+      expect(diagramViewCss).toMatch(
+        /\.pm-diagram-view:focus-within \.pm-diagram-view-actions\s*\{[^}]*visibility:\s*visible;[^}]*opacity:\s*1;[^}]*pointer-events:\s*auto;/s,
+      );
 
       await act(async () => {
         diagramView.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));

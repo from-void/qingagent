@@ -11,12 +11,22 @@ import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 import { nativePresentationDecorationKey } from "../../data/nativePresentationPm";
 import { pmDocToViewDocumentSnapshot, type ViewDocumentSnapshot } from "../../data/protocol";
 import { shouldRetainPresentationRun } from "../../data/reviewActions";
+import "../../components/diagram/GraphDiagramView";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async (_id: string, source: string) => ({
+      svg: `<svg data-mmd="1" data-src="${encodeURIComponent(source)}"><text>图表</text></svg>`,
+    })),
+  },
+}));
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -67,6 +77,25 @@ function pmDoc(text: string): PmDoc {
   };
 }
 
+function diagramPmDoc(trailingText = ""): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-presentation",
+          lang: "mermaid",
+          source: "flowchart TD\n  A[开始] --> B[完成]\n",
+          svg: null,
+        },
+      },
+      ...(trailingText ? [pmParagraph("p-after-diagram", trailingText)] : []),
+    ],
+  } as unknown as PmDoc;
+}
+
 function presentationRunFor(doc: ViewDocumentSnapshot): NativePresentationRun {
   return {
     id: 1,
@@ -102,6 +131,50 @@ async function drainAnimationFrames(done: () => boolean, stepMs = 1000) {
     });
     await flush(1);
   }
+}
+
+async function drainAnimationFramesAllowingGaps(
+  done: () => boolean,
+  stepMs = 1000,
+) {
+  for (let index = 0; index < 200 && !done(); index += 1) {
+    const callbacks = Array.from(rafCallbacks.values());
+    rafCallbacks.clear();
+    if (callbacks.length === 0) {
+      await flush(1);
+      continue;
+    }
+    await act(async () => {
+      frameTime += stepMs;
+      callbacks.forEach((callback) => callback(frameTime));
+    });
+    await flush(1);
+  }
+  if (!done()) {
+    const button = document.querySelector<HTMLButtonElement>(
+      ".pm-diagram-view-actions .pm-diagram-view-btn",
+    );
+    throw new Error(JSON.stringify({
+      activePresentation: Boolean(document.querySelector(".native-presentation-active")),
+      contentEditable: document.querySelector(".ProseMirror")?.getAttribute("contenteditable"),
+      graphEditor: Boolean(document.querySelector(".graph-diagram-editor")),
+      graph: Boolean(document.querySelector(".graph-diagram")),
+      graphEditButton: Boolean(document.querySelector(".graph-diagram-viewbar button")),
+      diagramHtml: document.querySelector(".pm-diagram")?.outerHTML.slice(0, 1200),
+      buttonBusy: button?.getAttribute("aria-busy"),
+      buttonText: button?.textContent?.trim(),
+      queuedFrames: rafCallbacks.size,
+    }));
+  }
+}
+
+async function waitForSelector(selector: string, root: ParentNode = document.body) {
+  for (let index = 0; index < 80; index += 1) {
+    const found = root.querySelector(selector);
+    if (found) return found;
+    await flush(1);
+  }
+  throw new Error(`等待元素超时: ${selector}`);
 }
 
 describe("presentationRun editable unlock", () => {
@@ -191,6 +264,107 @@ describe("presentationRun editable unlock", () => {
     expect(container?.querySelector<HTMLElement>(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
     expect(editorRef.current?.isEditable).toBe(true);
     expect(container?.textContent).toContain("写完即可编辑");
+  });
+
+  it("终稿图表已稳定且仅剩揭示动画时入口存在，一次点击结算动画并打开可视编辑器", async () => {
+    const baselineDoc = pmDocToViewDocumentSnapshot(diagramPmDoc(), 11, "图表旧稿");
+    const doc = pmDocToViewDocumentSnapshot(
+      diagramPmDoc("剩余揭示正文".repeat(120)),
+      12,
+      "图表终稿",
+    );
+    const initialRun: NativePresentationRun = {
+      id: 12,
+      docVersion: doc.version,
+      sessionId: "session-diagram-presentation",
+      mode: "whole",
+      finalDoc: doc.pmDoc,
+      baselineSections: baselineDoc.sections,
+      finalSections: doc.sections,
+    };
+    const onPresentationCancel = vi.fn();
+    const editorRef: { current: Editor | null } = { current: null };
+
+    function Harness() {
+      const [run, setRun] = useState<NativePresentationRun | null>(initialRun);
+      return createElement(DocumentSnapshotView, {
+        doc,
+        editable: true,
+        interactiveEditable: run === null,
+        canInterruptPresentationForEdit: run !== null,
+        showPatches: false,
+        acceptedPatches: new Set<string>(),
+        rejectedPatches: new Set<string>(),
+        onEditorReady: (editor) => {
+          editorRef.current = editor;
+        },
+        presentationRun: run,
+        presentationReducedMotion: false,
+        onPresentationCancel: () => {
+          onPresentationCancel();
+          setRun(null);
+        },
+      });
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    const visualButton = await waitForSelector(
+      ".pm-diagram-view-actions .pm-diagram-view-btn",
+      container ?? document.body,
+    ) as HTMLButtonElement;
+
+    expect(container?.querySelector(".native-presentation-active")).not.toBeNull();
+    expect(editorRef.current?.isEditable).toBe(false);
+    expect(visualButton.textContent?.trim()).toBe("可视化编辑");
+
+    await act(async () => {
+      visualButton.click();
+    });
+    expect(visualButton.disabled).toBe(true);
+    expect(visualButton.getAttribute("aria-busy")).toBe("true");
+    expect(visualButton.textContent?.trim()).toBe("正在打开…");
+
+    await drainAnimationFramesAllowingGaps(
+      () => Boolean(
+        document.body.querySelector(".graph-diagram-editor")
+        && visualButton.getAttribute("aria-busy") === "false",
+      ),
+    );
+    await flush(2);
+
+    expect(onPresentationCancel).toHaveBeenCalledTimes(1);
+    expect(container?.querySelector(".native-presentation-active")).toBeNull();
+    expect(container?.querySelector<HTMLElement>(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
+    expect(editorRef.current?.isEditable).toBe(true);
+    expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+    expect(visualButton.disabled).toBe(false);
+    expect(visualButton.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("agent/stream 等真实编辑锁存在时，揭示中的图表操作区仍不挂载", async () => {
+    const doc = pmDocToViewDocumentSnapshot(diagramPmDoc("仍在生成"), 13, "忙碌图表");
+    const run = presentationRunFor(doc);
+
+    await act(async () => {
+      root?.render(createElement(DocumentSnapshotView, {
+        doc,
+        editable: true,
+        interactiveEditable: false,
+        canInterruptPresentationForEdit: false,
+        showPatches: false,
+        acceptedPatches: new Set<string>(),
+        rejectedPatches: new Set<string>(),
+        onEditorReady: () => undefined,
+        presentationRun: run,
+        presentationReducedMotion: false,
+      }));
+    });
+    await flush(4);
+
+    expect(container?.querySelector(".native-presentation-active")).not.toBeNull();
+    expect(container?.querySelector(".pm-diagram-view-actions")).toBeNull();
   });
 
   it("doc.version 与 presentationRun 同时到达时主 effect 让渡，正文经多帧单调揭示", async () => {

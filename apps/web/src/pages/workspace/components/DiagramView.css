@@ -205,17 +205,23 @@
   left: 10px;
   display: flex;
   gap: 8px;
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px);
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0s linear 0.16s;
 }
 .pm-diagram-view:hover .pm-diagram-view-actions,
 .pm-diagram.is-selected .pm-diagram-view-actions,
 .pm-diagram-view:focus-within .pm-diagram-view-actions {
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+  transition-delay: 0s;
 }
 .pm-diagram-view-btn {
   height: 30px;

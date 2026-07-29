@@ -32,6 +32,11 @@ import "./DiagramView.css";
 const DIAGRAM_ERROR_SUMMARY_MAX_CHARS = 180;
 export const DIAGRAM_VISUAL_WRITE_META = "qingagent:diagram-visual-write";
 
+export interface DiagramInteractionBridge {
+  canRequestDiagramInteraction: () => boolean;
+  requestDiagramInteraction: () => Promise<boolean>;
+}
+
 function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
   const title = lang === "drawio" ? "draw.io 图表无法解析" : "Mermaid 语法错误";
   const oneLine = error.replace(/\s+/g, " ").trim();
@@ -41,7 +46,14 @@ function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
   return `${title}${summary ? `：${summary}` : ""}。双击进入编辑器修正`;
 }
 
-function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeViewProps) {
+function DiagramComponent({
+  node,
+  deleteNode,
+  editor,
+  selected,
+  getPos,
+  diagramInteraction,
+}: NodeViewProps & { diagramInteraction: DiagramInteractionBridge }) {
   const toast = useToast();
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
@@ -55,10 +67,14 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source);
   const [visualEditRequest, setVisualEditRequest] = useState<{ id: number; source: string } | null>(null);
+  const [interactionOpening, setInteractionOpening] = useState<"visual" | "source" | null>(null);
   const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
   const [svg, setSvg] = useState<string | null>(usableCachedSvg);
   const [error, setError] = useState<string | null>(null);
   const [editable, setEditable] = useState(editor?.isEditable ?? false);
+  const [canRequestInteraction, setCanRequestInteraction] = useState(
+    () => !editor?.isEditable && diagramInteraction.canRequestDiagramInteraction(),
+  );
   const editableRef = useRef(editable);
   const mountedRef = useRef(true);
   const renderTokenRef = useRef(0);
@@ -73,8 +89,10 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     () => lang === "mermaid" ? parseDiagram(source) : null,
     [lang, source],
   );
-  const supportsVisualEdit = editable && (lang === "drawio" || canUseGraphVisualEditor(parsedDiagram));
-  const visualEditorOpening = visualEditRequest !== null;
+  const supportsVisualEdit = lang === "drawio" || canUseGraphVisualEditor(parsedDiagram);
+  const showActions = editable || canRequestInteraction;
+  const visualEditorOpening =
+    interactionOpening === "visual" || drawioEditorOpening || visualEditRequest !== null;
   const emptyDrawio = lang === "drawio" && isEmptyDrawioSource(source);
   const emptyDiagram = !source.trim() || emptyDrawio;
   const storedHeight =
@@ -143,9 +161,13 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     if (!editor) return;
     const syncEditable = () => {
       const next = editor.isEditable;
-      if (editableRef.current === next) return;
-      editableRef.current = next;
-      setEditable(next);
+      if (editableRef.current !== next) {
+        editableRef.current = next;
+        setEditable(next);
+      }
+      setCanRequestInteraction(
+        !next && diagramInteraction.canRequestDiagramInteraction(),
+      );
     };
     syncEditable();
     // TipTap setEditable() 会发 update 而不是 transaction；NodeView 本身不会因这次
@@ -154,7 +176,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     return () => {
       editor.off("update", syncEditable);
     };
-  }, [editor]);
+  }, [diagramInteraction, editor]);
 
   useEffect(() => {
     if (!editing) setSource(attrSource);
@@ -263,50 +285,81 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
     return () => clearTimeout(t);
   }, [draft, editing, renderInto]);
 
-  const startEdit = () => {
-    if (!editable) return;
+  const beginSourceEdit = () => {
+    if (!editableRef.current) return;
     setDraft(source);
     setEditing(true);
   };
 
-  const openVisualEdit = () => {
-    if (!editable) return;
-    if (lang === "drawio") {
-      if (drawioEditorOpening) return;
-      setDrawioEditorOpening(true);
-      setError(null);
-      void openDrawioEditor(source, "Drawio 编辑", (result) => {
-        if (!result || !mountedRef.current) return;
-        // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
-        // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。
-        renderTokenRef.current += 1;
-        setSource(result.source);
-        setDraft(result.source);
-        setSvg(result.svg);
-        updateDiagramAttributes(
-          { source: result.source, svg: result.svg },
-          { visualWrite: true },
-        );
+  const requestInteraction = useCallback(async () => {
+    if (editableRef.current) return true;
+    if (!diagramInteraction.canRequestDiagramInteraction()) return false;
+    return diagramInteraction.requestDiagramInteraction();
+  }, [diagramInteraction]);
+
+  const startEdit = () => {
+    if (interactionOpening || visualEditRequest) return;
+    setInteractionOpening("source");
+    void requestInteraction()
+      .then((allowed) => {
+        if (allowed && mountedRef.current) beginSourceEdit();
       })
-        .catch((openError) => {
-          if (!mountedRef.current) return;
-          toast.show({
-            message: openError instanceof Error ? openError.message : String(openError),
-            tone: "error",
-          });
-        })
-        .finally(() => {
-          if (mountedRef.current) setDrawioEditorOpening(false);
+      .finally(() => {
+        if (mountedRef.current) setInteractionOpening(null);
+      });
+  };
+
+  const openVisualEdit = () => {
+    if (visualEditorOpening || interactionOpening === "source") return;
+    setInteractionOpening("visual");
+    void requestInteraction()
+      .then((allowed) => {
+        if (!allowed || !mountedRef.current) return;
+        if (lang === "drawio") {
+          setInteractionOpening(null);
+          setDrawioEditorOpening(true);
+          setError(null);
+          void openDrawioEditor(source, "Drawio 编辑", (result) => {
+            if (!result || !mountedRef.current) return;
+            // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
+            // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。
+            renderTokenRef.current += 1;
+            setSource(result.source);
+            setDraft(result.source);
+            setSvg(result.svg);
+            updateDiagramAttributes(
+              { source: result.source, svg: result.svg },
+              { visualWrite: true },
+            );
+          })
+            .catch((openError) => {
+              if (!mountedRef.current) return;
+              toast.show({
+                message: openError instanceof Error ? openError.message : String(openError),
+                tone: "error",
+              });
+            })
+            .finally(() => {
+              if (mountedRef.current) setDrawioEditorOpening(false);
+            });
+          return;
+        }
+        if (!supportsVisualEdit) {
+          beginSourceEdit();
+          return;
+        }
+        visualEditRequestIdRef.current += 1;
+        setError(null);
+        setVisualEditRequest({
+          id: visualEditRequestIdRef.current,
+          source,
         });
-      return;
-    }
-    if (!supportsVisualEdit) {
-      startEdit();
-      return;
-    }
-    visualEditRequestIdRef.current += 1;
-    setError(null);
-    setVisualEditRequest({ id: visualEditRequestIdRef.current, source });
+      })
+      .finally(() => {
+        if (mountedRef.current) {
+          setInteractionOpening((current) => current === "visual" ? null : current);
+        }
+      });
   };
 
   const commit = () => {
@@ -561,7 +614,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
             }
           }}
         >
-          {editable && (
+          {showActions && (
             <div
               className="pm-diagram-view-actions"
               aria-label="图表操作"
@@ -573,21 +626,25 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
                 <button
                   type="button"
                   className="pm-diagram-view-btn"
-                  disabled={drawioEditorOpening || visualEditorOpening}
-                  aria-busy={drawioEditorOpening || visualEditorOpening}
+                  disabled={visualEditorOpening || interactionOpening === "source"}
+                  aria-busy={visualEditorOpening}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openVisualEdit}
                 >
-                  {drawioEditorOpening || visualEditorOpening ? "正在打开…" : "可视化编辑"}
+                  {visualEditorOpening ? "正在打开…" : "可视化编辑"}
                 </button>
               )}
               <button
                 type="button"
                 className="pm-diagram-view-btn pm-diagram-view-btn--ghost"
+                disabled={interactionOpening !== null || visualEditRequest !== null}
+                aria-busy={interactionOpening === "source"}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={startEdit}
               >
-                {lang === "drawio" ? "编辑 drawio XML" : "编辑 Mermaid"}
+                {interactionOpening === "source"
+                  ? "正在打开…"
+                  : lang === "drawio" ? "编辑 drawio XML" : "编辑 Mermaid"}
               </button>
             </div>
           )}
@@ -681,13 +738,20 @@ declare module "@tiptap/core" {
 
 export const DEFAULT_MERMAID_SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
 
-export const DiagramCM = Node.create({
+export const DiagramCM = Node.create<DiagramInteractionBridge>({
   name: "diagram",
   group: "block",
   atom: true,
   // 可被左侧块手柄拖拽排序(对齐 image 节点);拖拽由外层覆盖手柄经 view.dragging 驱动,
   // 节点自身不挂 data-drag-handle,故画布内的 react-flow 交互不受影响。
   draggable: true,
+
+  addOptions() {
+    return {
+      canRequestDiagramInteraction: () => false,
+      requestDiagramInteraction: async () => false,
+    };
+  },
 
   addAttributes() {
     return {
@@ -757,7 +821,11 @@ export const DiagramCM = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(DiagramComponent as never, {
+    const diagramInteraction = this.options;
+    const ConfiguredDiagramComponent = (props: NodeViewProps) => (
+      <DiagramComponent {...props} diagramInteraction={diagramInteraction} />
+    );
+    return ReactNodeViewRenderer(ConfiguredDiagramComponent, {
       stopEvent: ({ event }) => {
         // 编辑态:让 textarea/按钮独占键鼠事件,别被 PM 抢走。
         const target = event.target as HTMLElement | null;

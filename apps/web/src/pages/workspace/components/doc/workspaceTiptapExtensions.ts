@@ -18,12 +18,17 @@ export const MATH_CLICK_EVENT = "qingagent:math-click";
 export function createWorkspaceTiptapExtensions(options: {
   docId: string | null;
   forceExpandCollapse: boolean;
+  canRequestDiagramInteraction: () => boolean;
+  requestDiagramInteraction: () => Promise<boolean>;
 }): Extensions {
   return [
   ...createQingagentExtensions({
 	    codeBlockExtension: CodeBlockCM,
 	    imageExtension: ImageCM,
-	    diagramExtension: DiagramCM,
+	    diagramExtension: DiagramCM.configure({
+        canRequestDiagramInteraction: options.canRequestDiagramInteraction,
+        requestDiagramInteraction: options.requestDiagramInteraction,
+      }),
     calloutExtension: CalloutCM,
     columnListExtension: ColumnListCM,
     columnExtension: ColumnCM,

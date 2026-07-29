@@ -238,6 +238,8 @@ export interface DocumentSnapshotViewProps {
   editable: boolean;
   /** TipTap 已挂载时是否允许用户交互编辑；presentation 动画期间会强制只读。 */
   interactiveEditable?: boolean;
+  /** 终稿权限已恢复、当前仅被同版本揭示动画阻塞时，允许图表入口请求结算动画。 */
+  canInterruptPresentationForEdit?: boolean;
   /** 审阅态锚点基于原文 PM 位置；退出审阅前延后存量 blockId 自愈，避免改写位置与锚点错位。 */
   deferBlockIdNormalization?: boolean;
   showPatches: boolean;
@@ -280,6 +282,7 @@ export const DocumentSnapshotView = forwardRef<
     docId = null,
     editable,
     interactiveEditable,
+    canInterruptPresentationForEdit = false,
     deferBlockIdNormalization = false,
     showPatches,
     acceptedPatches,
@@ -360,6 +363,9 @@ export const DocumentSnapshotView = forwardRef<
         ref={tiptapRef}
         doc={doc}
         interactiveEditable={tiptapInteractiveEditable}
+        canInterruptPresentationForEdit={
+          canInterruptPresentationForEdit && presentationMatchesDoc
+        }
         deferBlockIdNormalization={deferBlockIdNormalization}
         docId={docId}
         forceExpandCollapse={showPatches || !editable || Boolean(presentationRun)}
@@ -426,9 +432,18 @@ interface TipTapDocHandle {
   flushPendingDocSave: () => Promise<void>;
 }
 
+interface PendingDiagramInteractionRequest {
+  editor: Editor;
+  resolve: (allowed: boolean) => void;
+  onUpdate: () => void;
+  timeout: ReturnType<typeof setTimeout> | null;
+  settled: boolean;
+}
+
 const TipTapDoc = forwardRef<TipTapDocHandle, {
   doc: ViewDocumentSnapshot;
   interactiveEditable: boolean;
+  canInterruptPresentationForEdit: boolean;
   deferBlockIdNormalization: boolean;
   docId: string | null;
   forceExpandCollapse: boolean;
@@ -460,6 +475,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   {
     doc,
     interactiveEditable,
+    canInterruptPresentationForEdit,
     deferBlockIdNormalization,
     docId,
     forceExpandCollapse,
@@ -500,6 +516,21 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     runId: number;
     skip: () => void;
   } | null>(null);
+  const canInterruptPresentationForEditRef = useRef(
+    canInterruptPresentationForEdit,
+  );
+  canInterruptPresentationForEditRef.current =
+    canInterruptPresentationForEdit;
+  const pendingDiagramInteractionRequestsRef = useRef(
+    new Set<PendingDiagramInteractionRequest>(),
+  );
+  const diagramInteractionRuntimeRef = useRef<{
+    canRequest: () => boolean;
+    request: () => Promise<boolean>;
+  }>({
+    canRequest: () => false,
+    request: async () => false,
+  });
   const presentationTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const presentationFrameRef = useRef<{
     id: number;
@@ -540,8 +571,69 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         : viewDocToPm(doc),
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const settleDiagramInteractionRequest = useCallback(
+    (request: PendingDiagramInteractionRequest, allowed: boolean) => {
+      if (request.settled) return;
+      request.settled = true;
+      request.editor.off("update", request.onUpdate);
+      if (request.timeout !== null) clearTimeout(request.timeout);
+      pendingDiagramInteractionRequestsRef.current.delete(request);
+      request.resolve(allowed);
+    },
+    [],
+  );
+  const settleAllDiagramInteractionRequests = useCallback(
+    (allowed: boolean) => {
+      for (const request of pendingDiagramInteractionRequestsRef.current) {
+        settleDiagramInteractionRequest(request, allowed);
+      }
+    },
+    [settleDiagramInteractionRequest],
+  );
+  const waitForDiagramEditorEditable = useCallback(
+    (targetEditor: Editor) => {
+      let request!: PendingDiagramInteractionRequest;
+      const promise = new Promise<boolean>((resolve) => {
+        const onUpdate = () => {
+          if (targetEditor.isDestroyed) {
+            settleDiagramInteractionRequest(request, false);
+            return;
+          }
+          if (targetEditor.isEditable) {
+            settleDiagramInteractionRequest(request, true);
+          }
+        };
+        request = {
+          editor: targetEditor,
+          resolve,
+          onUpdate,
+          timeout: null,
+          settled: false,
+        };
+        request.timeout = setTimeout(
+          () => settleDiagramInteractionRequest(request, false),
+          5_000,
+        );
+        pendingDiagramInteractionRequestsRef.current.add(request);
+        targetEditor.on("update", onUpdate);
+        scheduleMicrotask(onUpdate);
+      });
+      return {
+        promise,
+        cancel: () => settleDiagramInteractionRequest(request, false),
+      };
+    },
+    [settleDiagramInteractionRequest],
+  );
   const editorExtensions = useMemo(
-    () => createWorkspaceTiptapExtensions({ docId, forceExpandCollapse }),
+    () => createWorkspaceTiptapExtensions({
+      docId,
+      forceExpandCollapse,
+      canRequestDiagramInteraction: () =>
+        diagramInteractionRuntimeRef.current.canRequest(),
+      requestDiagramInteraction: () =>
+        diagramInteractionRuntimeRef.current.request(),
+    }),
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
   // 粘贴图片到正文:先一次性插入整批占位再并发上传,按各自 blockId 回写;读 ref 拿当前
@@ -615,6 +707,31 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     },
   });
 
+  diagramInteractionRuntimeRef.current = {
+    canRequest: () => {
+      if (!editor || editor.isDestroyed) return false;
+      if (editor.isEditable) return true;
+      return (
+        canInterruptPresentationForEditRef.current
+        && activePresentationRef.current !== null
+      );
+    },
+    request: async () => {
+      if (!editor || editor.isDestroyed) return false;
+      if (editor.isEditable) return true;
+      if (!canInterruptPresentationForEditRef.current) return false;
+      const activePresentation = activePresentationRef.current;
+      if (!activePresentation) return false;
+      const pending = waitForDiagramEditorEditable(editor);
+      try {
+        activePresentation.skip();
+      } catch {
+        pending.cancel();
+      }
+      return pending.promise;
+    },
+  };
+
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     // setEditable 会同步触发 EditorContent 刷新,直接在 useEffect(commit)窗口执行会引发
@@ -625,7 +742,27 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (!editor || editor.isDestroyed) return;
       editor.setEditable(nextEditable);
     });
-  }, [editor, interactiveEditable]);
+  }, [canInterruptPresentationForEdit, editor, interactiveEditable]);
+
+  useEffect(() => {
+    if (editor?.isEditable) {
+      settleAllDiagramInteractionRequests(true);
+      return;
+    }
+    if (!canInterruptPresentationForEdit && !interactiveEditable) {
+      settleAllDiagramInteractionRequests(false);
+    }
+  }, [
+    canInterruptPresentationForEdit,
+    editor,
+    interactiveEditable,
+    settleAllDiagramInteractionRequests,
+  ]);
+
+  useEffect(
+    () => () => settleAllDiagramInteractionRequests(false),
+    [settleAllDiagramInteractionRequests],
+  );
 
   useLayoutEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -1275,10 +1412,6 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     finishApplyingRemoteSoon,
     presentationRun,
   ]);
-
-  const handleSkipPresentation = useCallback(() => {
-    activePresentationRef.current?.skip();
-  }, []);
 
   if (!editor) return null;
 

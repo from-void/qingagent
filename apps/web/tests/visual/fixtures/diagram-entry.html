@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>图表编辑入口真浏览器回归</title>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #16212c;
+      }
+
+      #view-workspace {
+        min-height: 100vh;
+        padding: 48px;
+        box-sizing: border-box;
+      }
+
+      #view-workspace .ws-right {
+        width: min(960px, calc(100vw - 96px));
+        min-height: 760px;
+        margin: 0 auto;
+        padding: 28px;
+        box-sizing: border-box;
+        overflow: visible;
+      }
+    </style>
+  </head>
+  <body data-tool="none" data-content="editing">
+    <div id="root"></div>
+    <script type="module" src="./diagram-entry-fixture.tsx"></script>
+  </body>
+</html>

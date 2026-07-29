@@ -1,7 +1,19 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, win32 } from "node:path";
-import { SANDBOX_BIN_DIR } from "./sandboxPaths.js";
+import { SANDBOX_BIN_DIR, SANDBOX_NODE_RUNTIME_DIR } from "./sandboxPaths.js";
 
+/**
+ * 产品自带 Node 运行时 shim。
+ *
+ * 桌面端不随包带 Node,而是让主程序以 Electron-as-Node 模式扮演 `node`,给产品自带的
+ * Node CLI(如随包 lark-cli)与技能脚本提供运行时。
+ *
+ * **边界(0729 真机病根)**:这个 shim 只能作为**产品自带 CLI 显式指定的运行时**,
+ * 或宿主完全没有 Node 时的兜底,绝不能以通用名 `node` 常驻 PATH 最前——那样所有
+ * `#!/usr/bin/env node` 的宿主 CLI 都会被主程序拉起,系统凭据存储按调用程序身份判权,
+ * 用户在终端里正常可用的登录态就此读不出来。落地位置见 SANDBOX_NODE_RUNTIME_DIR,
+ * PATH 站位见 resolveNodeRuntimePathPlacement。
+ */
 export interface NodeRuntimeShimOptions {
   execPath: string;
   electron: boolean;
@@ -79,7 +91,7 @@ export function renderNodeRuntimeShim(options: NodeRuntimeShimOptions): Rendered
         'set "ELECTRON_RUN_AS_NODE=1"',
         // set 不带外层引号:让 preload 路径两侧的引号进入变量值,cmd 对引号内的 & 等特殊字符
         // 按字面处理。这里只对 batch 的 % 做转义，最终 NODE_OPTIONS 仍保留原始绝对路径。
-        `set NODE_OPTIONS=${renderWindowsNodeOptions(options.binDir ?? SANDBOX_BIN_DIR).replace(/%/g, "%%")}`,
+        `set NODE_OPTIONS=${renderWindowsNodeOptions(options.binDir ?? SANDBOX_NODE_RUNTIME_DIR).replace(/%/g, "%%")}`,
       );
     }
     lines.push(`"${options.execPath.replace(/%/g, "%%")}" %*`);
@@ -104,8 +116,41 @@ export function writeIfChanged(path: string, content: string): boolean {
   return true;
 }
 
+/**
+ * 历史上被写进 PATH 目录(SANDBOX_BIN_DIR)的 Node 运行时残留文件名。
+ * 这些文件一旦留在 PATH 最前的目录里,就会继续劫持宿主的 `node`——**换成新版程序、
+ * 甚至改配置跳过 shim 生成都治不好**,必须当作升级迁移的一部分主动删掉。
+ */
+export const LEGACY_PATH_NODE_SHIM_FILENAMES = [
+  "node",
+  "node.cmd",
+  WINDOWS_HIDE_PRELOAD_FILENAME,
+] as const;
+
+/**
+ * 清除遗留在 PATH 目录里的 Node shim。返回真正删掉的文件名。
+ *
+ * 只删我们自己生成的这三个固定文件名,且只在**产品 CLI 目录**里删——绝不碰
+ * node-runtime 子目录(那是新家),更不碰宿主任何位置。删除失败静默跳过:
+ * 迁移动作不该让客户端启动失败。
+ */
+export function pruneLegacyNodeRuntimeShims(binDir: string = SANDBOX_BIN_DIR): string[] {
+  const removed: string[] = [];
+  for (const filename of LEGACY_PATH_NODE_SHIM_FILENAMES) {
+    const target = join(binDir, filename);
+    try {
+      if (!existsSync(target)) continue;
+      rmSync(target, { force: true });
+      removed.push(filename);
+    } catch {
+      // 删不掉(权限/占用)不该拖垮启动;PATH 策略侧仍会把宿主 Node 排在前面兜住。
+    }
+  }
+  return removed;
+}
+
 export function ensureNodeRuntimeShim(options: NodeRuntimeShimOptions): string {
-  const binDir = options.binDir ?? SANDBOX_BIN_DIR;
+  const binDir = options.binDir ?? SANDBOX_NODE_RUNTIME_DIR;
   mkdirSync(binDir, { recursive: true });
   const platform = options.platform ?? process.platform;
   if (platform === "win32" && options.electron) {

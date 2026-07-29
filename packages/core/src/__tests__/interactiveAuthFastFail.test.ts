@@ -23,7 +23,10 @@ import {
   createInteractiveAuthDetector,
   normalizeAuthSignalLine,
 } from "../workspace/interactiveAuthSignal.js";
-import { diagnoseCredentialFailure } from "../credentials/credentialFailureDiagnosis.js";
+import {
+  credentialFailureNotice,
+  diagnoseCredentialFailure,
+} from "../credentials/credentialFailureDiagnosis.js";
 import {
   SANDBOX_TIMEOUT_MS,
   __resetIsolationCacheForTest,
@@ -186,6 +189,31 @@ describe("交互式授权信号识别", () => {
     expect(detector.push("authentication succeeded\n")).toBeNull();
     expect(detector.matchedLine()).toBeNull();
   });
+
+  it("「凭据存储被拒」与「正在等用户认证」分属两档", () => {
+    const waiting = createInteractiveAuthDetector();
+    expect(waiting.push("Waiting for authentication...\n")).toBeTruthy();
+    expect(waiting.matchedKind()).toBe("interactive-auth");
+
+    for (const line of [
+      "key access denied service=AntOAuthSDK reason=denied\n",
+      "keychain access denied\n",
+      "failed to read keyring: locked\n",
+      "errSecInteractionNotAllowed\n",
+      "User interaction is not allowed.\n",
+    ]) {
+      const denied = createInteractiveAuthDetector();
+      expect(denied.push(line)).toBeTruthy();
+      expect(denied.matchedKind()).toBe("credential-store-denied");
+    }
+  });
+
+  it("「本机没有这条凭据」不是被拒,不触发任何收口", () => {
+    const detector = createInteractiveAuthDetector();
+    expect(detector.push("The specified item could not be found in the keychain\n")).toBeNull();
+    expect(detector.push("no credentials found\n")).toBeNull();
+    expect(detector.matchedKind()).toBeNull();
+  });
 });
 
 describe("前台命令:交互式授权快速收口", () => {
@@ -282,7 +310,7 @@ describe("前台命令:交互式授权快速收口", () => {
     expect(elapsedMs).toBeGreaterThanOrEqual(SANDBOX_TIMEOUT_MS);
   });
 
-  it("回归 5:Keychain 被拒场景不再出现「不是你的授权出了问题」类断言", async () => {
+  it("回归 5:凭据存储被拒单独成档,不再和「等用户扫码」混为一谈", async () => {
     const { tool } = createFakeCliHarness("auth-fast-keychain", {
       script: [
         { atMs: 800, channel: "stderr", text: "key access denied service=AntOAuthSDK reason=denied\n" },
@@ -290,14 +318,56 @@ describe("前台命令:交互式授权快速收口", () => {
       ],
     });
 
-    const { result } = await runWithVirtualClock(tool, { command: PROBE_COMMAND });
+    const { result, elapsedMs } = await runWithVirtualClock(tool, { command: PROBE_COMMAND });
 
     expect(result.terminatedBy).toBe("auth-required");
     expect(result.output).not.toContain("不是你的授权出了问题");
-    // 隔离形态下的定稿文案:讲用户能懂的话,不出现任何内部机制词。
-    expect(result.output).toContain("当前的安全设置下读不到你在终端里的登录状态");
+    // 拒绝信号比授权链接更早到,必须在它那一刻就收口(800ms),不必等到打出链接。
+    expect(elapsedMs).toBeLessThan(1_000);
+    // 归因说的是"读不到已有登录",而不是"正在等你扫码"。
+    expect(result.output).toContain("读不到你这台电脑上已保存的登录信息");
+    expect(result.output).toContain("与「用户没登录」「登录已过期」是两回事");
+    expect(result.output).not.toContain("已经进入重新授权流程");
     for (const forbidden of ["隔离模式", "Keychain", "钥匙串", "seatbelt", "bwrap", "沙箱"]) {
       expect(result.output.split("事实核对")[0]).not.toContain(forbidden);
+    }
+  });
+
+  it("回归 5b:只是等用户扫码时仍走交互式授权档,不被误判成凭据被拒", async () => {
+    const { tool } = createFakeCliHarness("auth-fast-plain-interactive", {
+      script: [
+        { atMs: 1_100, channel: "stdout", text: "Open this URL to authenticate: https://example.test/oauth\n" },
+      ],
+    });
+
+    const { result } = await runWithVirtualClock(tool, { command: PROBE_COMMAND });
+
+    expect(result.terminatedBy).toBe("auth-required");
+    expect(result.output).toContain("已进入交互式授权等待");
+    expect(result.output).not.toContain("读不到你这台电脑上已保存的登录信息");
+  });
+
+  it("回归 5c:5 秒超时的只读探测只陈述超时,不得被归因成登录过期或模型服务异常", async () => {
+    // 真机形态:whoami 一声不吭地挂着,5 秒执行墙把它掐掉——除了"没在限时内答复",
+    // 我们对用户的登录态一无所知,任何进一步的结论都是编的。
+    const { tool } = createFakeCliHarness("auth-fast-silent-timeout", { script: [] });
+
+    const { result } = await runWithVirtualClock(
+      tool,
+      { command: PROBE_COMMAND, timeoutSeconds: 5 },
+      10_000,
+    );
+
+    expect(result).toMatchObject({ timedOut: true, terminatedBy: "system-timeout" });
+    expect(result.authRequired).toBeUndefined();
+    expect(result.output).toContain("被系统终止");
+    expect(result.output).toContain("不得据此断定用户登录态已过期");
+    for (const forbidden of ["登录已过期", "登录态过期", "模型服务", "凭据已失效"]) {
+      // 只允许出现在"禁止这么说"的约束句里,绝不能作为结论出现。
+      const asConclusion = result.output
+        .split("\n")
+        .filter((line) => !line.includes("不得") && !line.includes("禁止"));
+      expect(asConclusion.join("\n")).not.toContain(forbidden);
     }
   });
 
@@ -464,5 +534,29 @@ describe("凭据归因:交互式授权档", () => {
     });
     expect(diagnosis?.kind).toBe("sandbox-timeout");
     expect(diagnosis?.userMessage).not.toContain("不是你的授权出了问题");
+  });
+
+  it("凭据存储被拒是独立分档,且优先于「已转入交互式授权」", () => {
+    const diagnosis = diagnoseCredentialFailure({
+      output: "key access denied",
+      credentialStoreDenied: true,
+      interactiveAuthDetected: true,
+    });
+    expect(diagnosis?.kind).toBe("credential-store-unreadable");
+    expect(diagnosis?.authCompleted).toBe(false);
+    expect(diagnosis?.retryable).toBe(false);
+    expect(diagnosis?.userMessage).toContain("读不到你这台电脑上已保存的登录信息");
+  });
+
+  it("产品自带运行时是已知事实时才写进给模型的说明,否则不臆断", () => {
+    const diagnosis = diagnoseCredentialFailure({
+      output: "key access denied",
+      credentialStoreDenied: true,
+    })!;
+    expect(credentialFailureNotice(diagnosis, { nodeRuntime: "product" }))
+      .toContain("由产品自带的 Node 运行时");
+    const hostNotice = credentialFailureNotice(diagnosis, { nodeRuntime: "host" });
+    expect(hostNotice).not.toContain("由产品自带的 Node 运行时");
+    expect(hostNotice).toContain("走的是宿主自己的 Node");
   });
 });

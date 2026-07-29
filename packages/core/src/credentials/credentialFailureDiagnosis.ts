@@ -22,6 +22,12 @@ export type CredentialFailureKind =
   /** 授权已完成、凭据已拿到,但没能保存下来(写盘被拒 / 系统凭据存取失败)。 */
   | "credential-save-failed"
   /**
+   * 本机**已有**的登录信息读不出来:凭据存储(钥匙串/keyring/凭据管理器)拒绝了本次读取。
+   * 与"没登录"和"等用户扫码"都不是一回事——用户在终端里的登录多半好好的,
+   * 只是这次读取方的身份/环境变了。判据是命令自己的输出信号,不猜、不读第三方日志。
+   */
+  | "credential-store-unreadable"
+  /**
    * 命令没读到可复用的登录态,已自行转入交互式 OAuth 等待,被我们主动收口。
    * 这一档**不靠猜输出**:由前台流式识别给出确定信号(见 interactiveAuthSignal.ts)。
    */
@@ -69,6 +75,18 @@ export interface CredentialFailureSignals {
    * 拿不到这个事实时文案退回纯陈述,绝不臆断成因。
    */
   isolated?: boolean;
+  /**
+   * 前台流式识别已确认"读取本机凭据存储被拒绝"。
+   * 同样是**确定信号**而非文本猜测,且比"转入交互式授权"更早、更具体。
+   */
+  credentialStoreDenied?: boolean;
+  /**
+   * 本次命令实际由哪种 Node 运行时拉起。
+   * `product` = 产品自带运行时(桌面即主程序扮演 Node);`host` = 宿主自己的 Node。
+   * 这是我们自己掌握的运行时事实,用来解释"同一台机器上终端能读、这里读不到":
+   * 系统凭据存储按调用程序身份判权,换了拉起方就可能被拒。拿不到该事实时不作此推断。
+   */
+  nodeRuntime?: "product" | "host";
 }
 
 /** 扫码已完成、凭据已到手的正向信号。命中即禁止再把失败说成"用户没扫码"。 */
@@ -156,6 +174,13 @@ const COPY: Record<
     authCompleted: true,
     retryable: false,
   },
+  "credential-store-unreadable": {
+    message: "读不到你这台电脑上已保存的登录信息，所以这个工具当成了未登录。",
+    nextStep: "先别急着重新登录：你在终端里的登录多半还在，我先把读不到的原因说清楚再问你怎么办。",
+    authCompleted: false,
+    // 同样的读取方式再来一次结果不会变,原样重试没有意义。
+    retryable: false,
+  },
   // 措辞只讲我们确知的事实。历史上这里写过"不是你的授权出了问题"——我们根本没有
   // 任何证据支持这个断言(0729 语雀真机里恰恰就是登录态读不到),必须删掉。
   "sandbox-timeout": {
@@ -212,6 +237,8 @@ export function diagnoseCredentialFailure(
     if (authCompleted && matchesAny(output, PERSIST_FAILURE_PATTERNS)) return "credential-save-failed";
     if (authCompleted && matchesAny(output, PERMISSION_PATTERNS)) return "credential-save-failed";
     // 流式识别给的是确定信号,不是从文本里猜,所以排在所有文本模式之前。
+    // "读不到已有登录"比"已转入交互式授权"更早、更具体,先判它。
+    if (signals.credentialStoreDenied === true) return "credential-store-unreadable";
     if (signals.interactiveAuthDetected === true) return "interactive-auth-required";
     // 我们自己的执行墙掐断,绝不能算成对端授权超时;只在确实是登录类命令时才出声。
     if ((signals.timedOut === true || signals.killed === true) && hasCredentialContext(output)) {
@@ -247,7 +274,10 @@ export function diagnoseCredentialFailure(
  * 与 killedCommandNotice 同一风格:先讲事实,再堵死错误归因,最后给唯一正确的下一步。
  * 用户可见的那句话由 userMessage 原文给出,要求模型原样转述,不许自行编造原因。
  */
-export function credentialFailureNotice(diagnosis: CredentialFailureDiagnosis): string {
+export function credentialFailureNotice(
+  diagnosis: CredentialFailureDiagnosis,
+  facts: Pick<CredentialFailureSignals, "nodeRuntime"> = {},
+): string {
   const lines = [`凭据诊断:${diagnosis.userMessage}`];
   if (diagnosis.authCompleted) {
     lines.push(
@@ -259,11 +289,40 @@ export function credentialFailureNotice(diagnosis: CredentialFailureDiagnosis): 
         "不要靠反复重试碰运气。",
     );
   }
+  if (diagnosis.kind === "credential-store-unreadable") {
+    lines.push(
+      "事实核对:命令读取本机凭据存储(钥匙串/keyring/凭据管理器)时被系统拒绝," +
+        "这与「用户没登录」「登录已过期」是两回事——同一台机器上用户在终端里的登录很可能仍然有效。",
+      // 运行时事实来自我们自己的装配,不是猜测:凭据存储按调用程序身份判权。
+      facts.nodeRuntime === "product"
+        ? "已知运行时事实:本次命令由产品自带的 Node 运行时(主程序扮演 node)拉起," +
+          "与用户终端里的 Node 不是同一个程序身份,系统凭据存储据此拒绝读取是已知成因。"
+        : "运行时事实:本次命令走的是宿主自己的 Node,不要把成因归到运行时替换上。",
+      "行为约束:禁止改用 --force 或任何会强制重新认证、重建客户端的参数;" +
+        "禁止重复重试同一条只读查询;禁止把它说成登录已过期或模型服务异常。",
+      "正确出路:如实向用户说明「这台电脑上已保存的登录信息读不出来」," +
+        "并问他是要在当前设置下重新授权一次,还是调整设置后复用终端里的登录——不要替他做决定。",
+    );
+  }
+  if (diagnosis.kind === "sandbox-timeout") {
+    lines.push(
+      "事实核对:唯一确定的事实是这条命令在本机被我们的超时上限终止。" +
+        "禁止据此断定用户的登录态已过期/凭据已失效,也禁止说成模型服务、网络或对端服务异常——" +
+        "这些都没有任何证据。",
+      "需要更长等待时改用 background:true 后台执行并轮询输出;不要靠反复重试碰运气。",
+    );
+  }
   if (diagnosis.kind === "interactive-auth-required") {
     // 给模型的事实说明可以技术化——它需要准确信息才能应对;用户可见的那句仍是 userMessage。
     lines.push(
       "事实核对:该命令没有拿到可复用的本机登录态(隔离执行时读不到宿主的系统钥匙串/凭据文件)," +
         "于是自行转入交互式 OAuth 等待;我们已在识别到这一点后主动结束了它,不是它自己失败,也不是我们的超时墙。",
+      ...(facts.nodeRuntime === "product"
+        ? [
+          "已知运行时事实:本次命令由产品自带的 Node 运行时拉起,与用户终端里的 Node 不是同一个程序身份," +
+            "系统凭据存储可能因此拒绝读取——不要把它说成用户的登录已过期。",
+        ]
+        : []),
       "行为约束:不要反复重试 whoami 之类的登录态查询;不要改用 --force 或任何会重建客户端、" +
         "强制重新认证的参数;不要重复生成二维码或反复重发授权链接——重复只会让用户白等,状态不会因此改变。",
       "正确出路:如果用户确实要重新授权,把授权命令改成 background:true 后台执行," +

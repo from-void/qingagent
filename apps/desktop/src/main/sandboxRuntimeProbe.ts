@@ -5,10 +5,12 @@ import path from "node:path";
 import {
   BUILTIN_SKILLS_DIR,
   SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
   buildSandboxEnv,
   getQingagentSessionWorkspace,
   redactProbe,
   resolveIsolation,
+  resolveNodeRuntimePathPlacement,
 } from "@qingagent/core";
 
 export { redactProbe };
@@ -55,6 +57,11 @@ async function sandboxNodeProbe(sessionId: string) {
         "JSON.stringify({node:process.version,exec:process.execPath})",
       ], { timeout: 10_000 })
     : null;
+  // 沙箱里 `node` 到底解析到谁:这是"宿主 CLI 会被谁拉起"的第一手事实,
+  // 真机验收(command -v node / process.execPath)靠它一次看清,不必猜。
+  const nodeWhich = sandbox?.executeCommand && process.platform !== "win32"
+    ? await sandbox.executeCommand("sh", ["-c", "command -v node || true"], { timeout: 10_000 })
+    : null;
   return {
     skills: skills.map((skill) => skill.name),
     nodeCommand: command
@@ -65,6 +72,7 @@ async function sandboxNodeProbe(sessionId: string) {
           stderr: command.stderr.trim(),
         }
       : null,
+    nodeResolvedPath: nodeWhich ? nodeWhich.stdout.trim() : null,
   };
 }
 
@@ -75,7 +83,8 @@ export async function runSandboxRuntimeProbe() {
   const skillsDir = process.env.QINGAGENT_SKILLS_DIR ?? BUILTIN_SKILLS_DIR;
   const calcScript = path.join(skillsDir, "capability", "doc-calc", "scripts", "calc.mjs");
   const sandboxEnv = buildSandboxEnv();
-  const pathHead = sandboxEnv.PATH?.split(path.delimiter)[0] ?? "";
+  const pathEntries = (sandboxEnv.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const pathHead = pathEntries[0] ?? "";
   const sessionId = `runtime-probe-${Date.now()}`;
 
   const electronAsNode = spawnElectronAsNode();
@@ -114,6 +123,17 @@ export async function runSandboxRuntimeProbe() {
       sandboxBinDir: SANDBOX_BIN_DIR,
       sandboxBinEntries: await listDir(SANDBOX_BIN_DIR),
       sandboxEnvPathStartsWithBin: pathHead === SANDBOX_BIN_DIR,
+      // Node 运行时站位:host-first 表示宿主自己的 Node 优先,产品运行时只在 PATH 末尾兜底。
+      nodeRuntimePlacement: resolveNodeRuntimePathPlacement(),
+      nodeRuntimeDir: SANDBOX_NODE_RUNTIME_DIR,
+      nodeRuntimeEntries: await listDir(SANDBOX_NODE_RUNTIME_DIR),
+      // 迁移自查:产品 CLI 目录里绝不该再有通用名 node/node.cmd(那是老版本的劫持源)。
+      legacyNodeShimInBinDir: (await listDir(SANDBOX_BIN_DIR)).some(
+        (entry) => entry === "node" || entry === "node.cmd",
+      ),
+      // 只报站位不报原文:PATH 里含宿主用户名与个人目录,探针文件可能被外发。
+      nodeRuntimeDirPathIndex: pathEntries.indexOf(SANDBOX_NODE_RUNTIME_DIR),
+      pathEntryCount: pathEntries.length,
       resourcesSkillsExists: await exists(resourcesSkillsDir),
       calcScriptExists: await exists(calcScript),
     },
@@ -123,6 +143,7 @@ export async function runSandboxRuntimeProbe() {
 
   raw.ok = electronAsNode.status === 0 &&
     raw.core.sandboxEnvPathStartsWithBin &&
+    !raw.core.legacyNodeShimInBinDir &&
     raw.core.calcScriptExists &&
     "nodeCommand" in workspaceFacts &&
     workspaceFacts.nodeCommand?.exitCode === 0 &&

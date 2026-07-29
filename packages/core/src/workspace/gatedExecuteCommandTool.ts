@@ -16,11 +16,17 @@ import {
   executeCommandInputSchema,
 } from "../confirm/commandConfirmation.js";
 import {
+  productNodeRuntimePathEnv,
   resolveEffectiveIsolation,
+  resolveNodeRuntimePathPlacement,
   sessionWorkspaceDir,
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
-import { createInteractiveAuthDetector } from "./interactiveAuthSignal.js";
+import { isElectronRuntime } from "./nodeRuntimeShim.js";
+import {
+  createInteractiveAuthDetector,
+  type AuthSignalKind,
+} from "./interactiveAuthSignal.js";
 import { formatCommandDuration } from "./backgroundCommandLimits.js";
 import {
   commandTimeoutClampNotice,
@@ -147,10 +153,24 @@ export function credentialFailureNoticeFor(result: {
   timedOut?: boolean;
   killed?: boolean;
   interactiveAuthDetected?: boolean;
+  credentialStoreDenied?: boolean;
   isolated?: boolean;
+  nodeRuntime?: "product" | "host";
 }): string {
   const diagnosis = diagnoseCredentialFailure(result);
-  return diagnosis ? credentialFailureNotice(diagnosis) : "";
+  return diagnosis ? credentialFailureNotice(diagnosis, { nodeRuntime: result.nodeRuntime }) : "";
+}
+
+/**
+ * 本次命令实际由哪种 Node 运行时拉起——我们自己装配出来的事实,不是猜测。
+ *
+ * 只有"当前进程本身就是 Electron 主程序"且"产品运行时排在宿主之前"两个条件同时成立时,
+ * 沙箱里的 `node` 才会是产品自带运行时;否则命中的是宿主自己的 Node。
+ */
+export function resolveCommandNodeRuntime(): "product" | "host" {
+  return isElectronRuntime() && resolveNodeRuntimePathPlacement() === "runtime-first"
+    ? "product"
+    : "host";
 }
 
 /**
@@ -174,6 +194,26 @@ export function authRequiredCommandNotice(input: {
   ].join("");
 }
 
+/**
+ * 命中"读不到本机已保存的登录信息"并被我们主动收口时的如实说明。
+ *
+ * 与 authRequiredCommandNotice 同一位置、同一风格,但事实不同:那边是"它已经在等扫码",
+ * 这边是"它连已有登录都没读出来"。混用会让模型把两种完全不同的处境说成同一件事。
+ */
+export function credentialStoreBlockedNotice(input: {
+  durationMs?: number;
+  timeoutMs: number;
+}): string {
+  const elapsed = typeof input.durationMs === "number"
+    ? `,实际只用了 ${formatElapsedDuration(input.durationMs)}`
+    : "";
+  return [
+    `命令在读取本机已保存的登录信息时被系统拒绝,我已主动结束本次前台执行${elapsed}。`,
+    `这不是系统超时(本次上限 ${formatCommandDuration(input.timeoutMs)},未触发),不是用户取消,也不是命令自身跑完失败。`,
+    "继续在前台等下去没有意义:它接下来只会退化成需要人工确认的重新授权。",
+  ].join("");
+}
+
 /** 被信号打死时给模型的如实说明:讲清事实与常见成因,并堵死"用户取消"的误读。 */
 export function killedCommandNotice(exitCode: number): string {
   return [
@@ -191,6 +231,10 @@ export function timedOutCommandNotice(timeoutMs: number, background = false): st
       formatCommandDuration(timeoutMs)
     },已被系统终止。`,
     "这不是命令自己失败,也不是用户取消。",
+    // 0729 真机:一条 5 秒超时的只读登录探测被掐掉后,被讲成"你的登录态过期了""模型服务有问题",
+    // 两条都毫无证据。超时只能证明"它没在限时内答复",别的一概不能推。
+    "唯一确定的事实是它没有在限时内给出结果:不得据此断定用户登录态已过期或凭据失效," +
+      "也不得说成模型服务、网络或对端服务异常;向用户只能陈述这条命令在本机执行时被超时终止。",
     background
       ? "如需更久,请把任务拆小后重试,不要把超时写得更大——上限不可越过。"
       : "如果它本来就要等更久(例如等待扫码/登录授权),请改用 background:true 后台执行,再用 mastra_workspace_get_process_output 轮询输出。",
@@ -520,8 +564,14 @@ export function createGatedExecuteCommandTool({
         resolveCredentialEnv
           ? await resolveCredentialEnv()
           : undefined;
-      const perCallCredentialEnv = credentialEnv && Object.keys(credentialEnv).length > 0
-        ? { env: credentialEnv }
+      // 产品自带的受信技能脚本固定用产品自带运行时:它们是我们自己的代码,依赖的 Node 版本
+      // 由产品保证,不该被宿主装了哪个版本左右。用户自己的 CLI 不走这条,照旧用宿主 Node。
+      const productRuntimeEnv = decision.credentialConsumer === "trusted-node-skill"
+        ? productNodeRuntimePathEnv()
+        : {};
+      const perCallEnv = { ...productRuntimeEnv, ...(credentialEnv ?? {}) };
+      const perCallCredentialEnv = Object.keys(perCallEnv).length > 0
+        ? { env: perCallEnv }
         : {};
       if (context?.abortSignal?.aborted) {
         return cancelledCommandResult("命令已取消: 执行前请求已被取消");
@@ -636,19 +686,25 @@ export function createGatedExecuteCommandTool({
         else outerAbortSignal.addEventListener("abort", forwardOuterAbort, { once: true });
       }
       let authRequiredAt: number | null = null;
+      let authSignalKind: AuthSignalKind | null = null;
       const noteInteractiveAuth = (data: string): void => {
         if (authRequiredAt !== null) return;
         const hit = authDetector.push(data);
         if (!hit) return;
         authRequiredAt = Date.now();
+        authSignalKind = authDetector.matchedKind();
         // 命中的原文只进诊断日志,不进用户可见文案(UI 铁律:不暴露原始英文)。
-        console.warn("[gatedExecuteCommandTool] 命中交互式授权信号,前台命令提前收口", {
+        console.warn("[gatedExecuteCommandTool] 命中授权类信号,前台命令提前收口", {
+          signalKind: authSignalKind,
           signal: hit,
           elapsedMs: authRequiredAt - startedAt,
           timeoutMs: timeoutPolicy.effectiveMs,
         });
         authAbort.abort(new Error("interactive authorization required"));
       };
+      // 两档信号都由我们主动收口,终态同为 auth-required;区别落在给模型/用户的归因文案上。
+      const isCredentialStoreDenied = (): boolean => authSignalKind === "credential-store-denied";
+      const nodeRuntime = resolveCommandNodeRuntime();
       try {
         const result = await sandbox.executeCommand(input.command, [], {
           cwd,
@@ -705,10 +761,15 @@ export function createGatedExecuteCommandTool({
           : cancelled
             ? cancelledCommandNotice()
             : authRequired
-              ? authRequiredCommandNotice({
-                durationMs,
-                timeoutMs: timeoutPolicy.effectiveMs,
-              })
+              ? (isCredentialStoreDenied()
+                ? credentialStoreBlockedNotice({
+                  durationMs,
+                  timeoutMs: timeoutPolicy.effectiveMs,
+                })
+                : authRequiredCommandNotice({
+                  durationMs,
+                  timeoutMs: timeoutPolicy.effectiveMs,
+                }))
               : killed
                 ? killedCommandNotice(result.exitCode)
                 : succeeded
@@ -726,8 +787,10 @@ export function createGatedExecuteCommandTool({
             output: commandOutput,
             timedOut,
             killed,
-            interactiveAuthDetected: authRequired,
+            interactiveAuthDetected: authRequired && !isCredentialStoreDenied(),
+            credentialStoreDenied: authRequired && isCredentialStoreDenied(),
             isolated: resolveEffectiveIsolation() !== "none",
+            nodeRuntime,
           });
         const terminalResult = commandResult({
           success: succeeded,
@@ -772,13 +835,18 @@ export function createGatedExecuteCommandTool({
           errorType: error instanceof Error ? error.name : "unknown",
           message: reason,
         });
+        const storeDenied = isCredentialStoreDenied();
         const authNotice = authRequired
           ? [
-            authRequiredCommandNotice({ durationMs, timeoutMs: timeoutPolicy.effectiveMs }),
+            storeDenied
+              ? credentialStoreBlockedNotice({ durationMs, timeoutMs: timeoutPolicy.effectiveMs })
+              : authRequiredCommandNotice({ durationMs, timeoutMs: timeoutPolicy.effectiveMs }),
             credentialFailureNoticeFor({
               output: "",
-              interactiveAuthDetected: true,
+              interactiveAuthDetected: !storeDenied,
+              credentialStoreDenied: storeDenied,
               isolated: resolveEffectiveIsolation() !== "none",
+              nodeRuntime,
             }),
           ].filter(Boolean).join("\n")
           : "";

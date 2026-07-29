@@ -79,3 +79,16 @@ export const SANDBOX_BIN_DIR = resolveSandboxPath(
   "QINGAGENT_SANDBOX_BIN_DIR",
   join(QINGAGENT_DATA_DIR, "bin"),
 );
+
+/**
+ * 产品自带 Node 运行时(桌面是 Electron-as-Node 的 `node` shim)目录。
+ *
+ * 必须与 SANDBOX_BIN_DIR **分开**:产品 CLI 目录常驻 PATH 最前,把一个通用名 `node`
+ * 放进去等于**无差别劫持所有 `#!/usr/bin/env node` 的宿主 CLI**——宿主 CLI 会被我们的
+ * 主程序(而不是用户终端里的 Node)拉起,系统凭据存储看到的调用方身份随之改变,用户在
+ * 终端里本来好好的登录态就读不出来了(0729 真机病根)。
+ *
+ * 拆成 bin 的子目录而不是另起一个顶层目录:读墙/沙箱早已把 bin 整棵树放行,子目录天然继承,
+ * 不引入任何新的放行面。它是否进 PATH、进 PATH 的哪一头,由 resolveNodeRuntimePathPlacement 决定。
+ */
+export const SANDBOX_NODE_RUNTIME_DIR = join(SANDBOX_BIN_DIR, "node-runtime");

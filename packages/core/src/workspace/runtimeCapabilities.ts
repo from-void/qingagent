@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { LocalSandbox } from "@mastra/core/workspace";
 import {
   SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
+  resolveNodeRuntimePathPlacement,
   type ResolvedIsolation,
 } from "./sessionWorkspace.js";
 import { isPyodideRuntimeAvailable } from "../runtime/pyodideRunner.js";
@@ -18,14 +20,20 @@ export interface SandboxRuntimeCapabilities {
   isolation: ResolvedIsolation;
 }
 
-function hasAnySandboxBin(names: string[]): boolean {
-  return names.some((name) => existsSync(join(SANDBOX_BIN_DIR, name)));
+function hasAnySandboxBin(names: string[], dir = SANDBOX_BIN_DIR): boolean {
+  return names.some((name) => existsSync(join(dir, name)));
 }
 
+/**
+ * 沙箱里的 `node` 究竟来自谁。
+ *
+ * 宿主优先档(无隔离/用户已全局免询问)下,PATH 上先命中的一定是宿主自己的 Node——
+ * 产品自带运行时只排在末尾兜底,不该再对模型宣称"产品运行时就绪"。
+ */
 function detectNodeRuntime(): NodeRuntimeCapability {
-  if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") return "host";
+  if (resolveNodeRuntimePathPlacement() === "host-first") return "host";
   const shimNames = process.platform === "win32" ? ["node.cmd", "node.exe", "node"] : ["node"];
-  return hasAnySandboxBin(shimNames) ? "shim-ready" : "host";
+  return hasAnySandboxBin(shimNames, SANDBOX_NODE_RUNTIME_DIR) ? "shim-ready" : "host";
 }
 
 function detectLarkCli(): LarkCliCapability {

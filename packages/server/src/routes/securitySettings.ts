@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type {
+  SecurityBypassState,
   SecurityGrantCategory,
   SecurityGrantMode,
   SecuritySettingsOperation,
@@ -8,6 +9,7 @@ import type {
   UpdateSecurityGrantResponse,
 } from "@qingagent/contract-ts";
 import { randomUUID } from "node:crypto";
+import { applyBypassMode, loadBypassMode } from "@qingagent/core";
 import {
   createConfirmGrantCanonical,
   listConfirmGrantStates,
@@ -25,11 +27,17 @@ const updateSecuritySchema = z.object({
 
 const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command", "send", "connect"]);
 
+// 「以后不用再问我」的常驻控制点就在这一页:用户随时能看到自己现在处于哪一档,
+// 也能一键改回默认(改回后立刻恢复弹确认卡与隔离执行,已有会话即时生效)。
+const updateBypassSchema = z.object({ enabled: z.boolean() }).strict();
+
 interface SecuritySettingsRoutesDependencies {
   listCredentialShare?: typeof listCredentialShareItems;
   listGrantStates?: typeof listConfirmGrantStates;
   createGrant?: typeof createConfirmGrantCanonical;
   revokeGrant?: typeof revokeConfirmGrantWithState;
+  readBypass?: typeof loadBypassMode;
+  writeBypass?: typeof applyBypassMode;
 }
 
 export function createSecuritySettingsRoutes(
@@ -40,6 +48,8 @@ export function createSecuritySettingsRoutes(
   const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
   const revokeGrant = dependencies.revokeGrant ?? revokeConfirmGrantWithState;
   const listCredentialShare = dependencies.listCredentialShare ?? listCredentialShareItems;
+  const readBypass = dependencies.readBypass ?? loadBypassMode;
+  const writeBypass = dependencies.writeBypass ?? applyBypassMode;
   const operations = new Map<string, SecuritySettingsOperation>();
   const rememberOperation = (operation: SecuritySettingsOperation) => {
     operations.delete(operation.operationId);
@@ -69,7 +79,12 @@ export function createSecuritySettingsRoutes(
     };
     // 共享条目随设置一起返回:安全页只发一次请求,读失败也不拖垮整页。
     const credentialShare = await listCredentialShare().catch(() => []);
+    // 读失败按默认形态(仍在询问)呈现,不能因为一次读失败就告诉用户"已关闭询问"。
+    const bypass: SecurityBypassState = await readBypass()
+      .then((snapshot) => ({ enabled: snapshot.enabled, enabledAt: snapshot.enabledAt }))
+      .catch(() => ({ enabled: false, enabledAt: null }));
     const body: SecuritySettingsResponse = {
+      bypass,
       categories: [
         category("install", "安装"),
         category("command", "同类操作"),
@@ -82,6 +97,24 @@ export function createSecuritySettingsRoutes(
     const operation = operationId ? operations.get(operationId) : undefined;
     if (operation) body.operation = operation;
     return c.json(body);
+  });
+
+  // 必须注册在 :kind 之前,否则 "bypass" 会被当成一个确认类别吃掉。
+  routes.post("/settings/security/bypass", async (c) => {
+    const originError = requireTrustedOrigin(c);
+    if (originError) return originError;
+    const parsed = updateBypassSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "设置内容不完整，请再试一次。" }, 400);
+    try {
+      const snapshot = await writeBypass(parsed.data.enabled);
+      const body: SecurityBypassState = {
+        enabled: snapshot.enabled,
+        enabledAt: snapshot.enabledAt,
+      };
+      return c.json(body);
+    } catch {
+      return c.json({ error: "设置保存失败，请再试一次。" }, 500);
+    }
   });
 
   routes.post("/settings/security/:kind", async (c) => {

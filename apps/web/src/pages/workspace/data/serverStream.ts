@@ -322,6 +322,8 @@ export class ServerStream {
     remembered: boolean;
     grantState?: { present: boolean; grantId: string | null; version: number };
     rememberFailure?: "not-saved" | "settings-changed";
+    /** 用户在卡上勾了「以后不用再问我」时,服务端回报开关是否真的存下来了。 */
+    bypassEnabled?: boolean;
   }> {
     // 旧组件的决策仍必须送达原 session，但不得把当前共享 EventSource 拉回旧会话。
     if (options.activateSession !== false) this.connectEvents(submission.sessionId);
@@ -349,6 +351,7 @@ export class ServerStream {
         grantId?: unknown;
         version?: unknown;
         rememberFailure?: unknown;
+        bypassEnabled?: unknown;
       } | null;
       if (body?.accepted !== true || typeof body.remembered !== "boolean") {
         throw new Error("确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。");
@@ -375,6 +378,9 @@ export class ServerStream {
             }
           : {}),
         ...(rememberFailure ? { rememberFailure } : {}),
+        ...(typeof body.bypassEnabled === "boolean"
+          ? { bypassEnabled: body.bypassEnabled }
+          : {}),
       };
     } finally {
       this.activeControllers.delete(controller);

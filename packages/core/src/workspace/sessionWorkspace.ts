@@ -41,6 +41,7 @@ import {
   normalizeFolderSourceRecord,
   normalizeFolderSourceRecords,
 } from "../folderSources/runtime.js";
+import { isBypassEnabled, loadBypassMode } from "../security/bypassMode.js";
 import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
 import {
   BUILTIN_SKILLS_DIR,
@@ -94,6 +95,18 @@ export function resolveIsolation(): ResolvedIsolation {
 /** 仅测试用:重置探测缓存。 */
 export function __resetIsolationCacheForTest(): void {
   cachedIsolation = null;
+}
+
+/**
+ * 本次装配真正使用的隔离形态。
+ *
+ * 用户主动勾了「以后不用再问我」之后,命令就按无隔离装配、以用户本人身份执行——
+ * 这正是这个开关存在的原因:隔离层会把用户本机已有的登录态(钥匙串/凭据文件)挡在
+ * 外面,第三方命令行工具因此用不了。resolveIsolation() 保持"平台探测"的纯粹语义,
+ * 诊断面板等只关心宿主能力的调用方继续读它。
+ */
+export function resolveEffectiveIsolation(): ResolvedIsolation {
+  return isBypassEnabled() ? "none" : resolveIsolation();
 }
 
 /** sessionId 进文件路径前统一哈希：固定长度、抗碰撞，且仅输出路径安全字符。 */
@@ -278,21 +291,23 @@ export function shouldInjectCredentials(): boolean {
 }
 
 /** isolation=none(无文件系统隔离,如 Windows/未装 bwrap)时是否仍暴露命令执行。
- *  默认关闭,要求服务端形态必须有真隔离才暴露命令;桌面主进程显式设
- *  QINGAGENT_ALLOW_UNISOLATED_COMMANDS=1 补回单用户本地命令能力。 */
+ *  默认关闭,要求服务端形态必须有真隔离才暴露命令;两条补回通道:
+ *  ①用户主动勾了「以后不用再问我」——此时命令本就以用户本人身份直接执行,
+ *    再不暴露 execute_command 等于把这个开关做成空转;
+ *  ②部署方显式设 QINGAGENT_ALLOW_UNISOLATED_COMMANDS=1(桌面主进程用它补回本地命令能力)。 */
 export function allowUnisolatedCommands(): boolean {
-  return isEnvEnabled(process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS);
+  return isBypassEnabled() || isEnvEnabled(process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS);
 }
 
 /**
  * 凭证墙档位的唯一判定入口。
  *
- * 这里刻意不新造开关:0721 拍板的安全档位体系(YOLO/最宽档)尚未合入本分支,
- * 合入后只需把这一个函数改成读取那套档位即可,调用方与渲染层都不动。
- * 在此之前按现有形态判定——完全不设文件隔离、且显式放开未隔离命令执行,
- * 就是当前产品里语义上的最宽档,凭证墙没有再收紧的意义。
+ * 用户主动开启全局免询问后即为最宽档:命令本来就以用户本人身份直接执行,凭证墙
+ * 再收紧没有意义。除此之外按现有形态判定——完全不设文件隔离、且显式放开未隔离
+ * 命令执行,同样是语义上的最宽档。
  */
 export function resolveCredentialWallMode(): CredentialWallMode {
+  if (isBypassEnabled()) return "wide";
   return resolveIsolation() === "none" && allowUnisolatedCommands() ? "wide" : "standard";
 }
 
@@ -653,7 +668,10 @@ async function buildSessionWorkspace(
     }
   }
 
-  const isolation = resolveIsolation();
+  // 装配前刷新一次全局免询问状态:开关是全局且低频变更的,这里刷新既保证本次装配
+  // 用的是最新形态,也顺带把进程内缓存预热给同步读取方(工具门禁/系统提示词)。
+  await loadBypassMode().catch(() => undefined);
+  const isolation = resolveEffectiveIsolation();
   const extraReadOnlyPaths = sandboxExtraReadOnlyPaths();
   // 无文件系统隔离(none)且未显式允许时:不装 sandbox(不暴露命令执行),
   // 只留文件工具+技能发现。多租户服务器靠此强制要求真隔离。

@@ -183,6 +183,13 @@ export function buildCommandConfirmSpec(
           : {}),
       }
     : undefined;
+  // 「以后不用再问我」:确认卡上唯一的减少打扰出口。勾选并批准后全局永久生效——
+  // 之后所有命令不再询问、直接执行。默认(不勾)一律照旧弹卡,这是产品可信度的一部分。
+  // 副说明必须把后果和改回路径一句话讲清,不得出现任何内部机制词。
+  const bypassOption = {
+    label: "以后不用再问我",
+    hint: "以后的命令会直接执行；可以在 设置 → 安全 里改回。",
+  };
   return confirmSpecSchema.parse({
     id,
     kind,
@@ -193,6 +200,7 @@ export function buildCommandConfirmSpec(
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     ...(rememberCategory ? { rememberCategory } : {}),
+    bypassOption,
     primaryLabel,
     secondaryLabel: "取消",
   });

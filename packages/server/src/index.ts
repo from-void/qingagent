@@ -55,10 +55,15 @@ const { sessionManager } = await import("./gateway/bridgeHandler");
 const { startExternalInstance, stopExternalInstance } = await import("./lib/externalInstance.js");
 const {
   installNetProbe,
+  loadBypassMode,
   migrateThreadMetadataToDocuments,
   resolveBaseUrl,
   warmUpModelEndpoint,
 } = await import("@qingagent/core");
+
+// 开放端口前预热「以后不用再问我」的全局开关:沙箱装配、工具门禁、系统提示词都同步读
+// 这个缓存,未预热时一律按默认形态(照常弹卡 + 照常隔离)。读失败也保持默认形态。
+await loadBypassMode().catch(() => undefined);
 const { probeBrowserCapability } = await import("@qingagent/doc-render/browser");
 
 // app/core/doc-render 的完整依赖图此时已求值；移除其后装的竞争信号 handler，确保只有

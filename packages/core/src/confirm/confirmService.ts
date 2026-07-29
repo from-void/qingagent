@@ -132,6 +132,19 @@ interface TerminalTombstone {
   reason: ConfirmTerminalPersistReason;
 }
 
+/**
+ * 确认流水线。
+ *
+ * **产品设计口径(改动前务必读):确认卡是本产品可信度与安全设计的一环,默认必弹。**
+ * 装/外发/破坏三类操作照旧弹卡,不是待优化项,也不许为了"少一个框更顺"或"测试好写"
+ * 而把默认改成不弹。唯一的关闭出口是用户**主动**勾选确认卡上的「以后不用再问我」
+ * (或在 设置 → 安全 里打开同一个开关);用户随时能在设置里改回默认,改回后立刻
+ * 恢复弹卡与隔离执行。全局开关本身见 ../security/bypassMode.ts。
+ *
+ * 注意:开关生效点在工具门禁(gatedExecuteCommandTool 的 requireApproval)——开着时
+ * 根本不会产生审批事件,本服务不会被调到;本服务自身**不做**任何"要不要弹"的降级,
+ * 一旦被调到就一定按默认形态老老实实走完确认。
+ */
 export class ConfirmService {
   readonly #now: () => number;
   readonly #createId: () => string;

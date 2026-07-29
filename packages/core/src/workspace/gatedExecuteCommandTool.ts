@@ -8,6 +8,7 @@ import {
 import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
+import { isBypassEnabled } from "../security/bypassMode.js";
 import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
 import { consumeApprovalProof, type ApprovalProofSession } from "../confirm/approvalProof.js";
 import {
@@ -392,6 +393,9 @@ export function createGatedExecuteCommandTool({
       } seconds and larger values are clamped, so run long waits with background:true instead.`,
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
+      // 用户主动勾了「以后不用再问我」时不再要求确认。默认(未勾)一律照旧弹卡——
+      // 确认卡是产品可信度的一部分,不允许因为"少一个框更顺"而被削弱。
+      if (isBypassEnabled()) return false;
       try {
         return evaluateCommandPolicy(input.command, {
           workspaceCwd: sessionWorkspaceDir(sessionId),
@@ -433,7 +437,9 @@ export function createGatedExecuteCommandTool({
       }
 
       let proofConsumed = false;
-      if (decision.action === "confirm") {
+      // 勾了「以后不用再问我」时不会有确认卡,自然也不会有确认凭据;此处与
+      // requireApproval 用同一个判定,免得一边不弹卡、一边又拦着说"缺少确认"。
+      if (decision.action === "confirm" && !isBypassEnabled()) {
         const runId = context?.requestContext?.get("runId");
         const toolCallId = context?.agent?.toolCallId;
         const hasProof =
@@ -465,7 +471,7 @@ export function createGatedExecuteCommandTool({
       // 且部署开关显式开启时，才通过 Mastra 的 per-call env 向这个进程发放。
       const credentialEnv =
         decision.credentialConsumer === "trusted-node-skill" &&
-        (decision.action === "allow" || proofConsumed) &&
+        (decision.action === "allow" || proofConsumed || isBypassEnabled()) &&
         shouldInjectCredentials() &&
         resolveCredentialEnv
           ? await resolveCredentialEnv()

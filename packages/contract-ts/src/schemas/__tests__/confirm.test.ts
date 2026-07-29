@@ -80,6 +80,43 @@ describe("confirm contract schemas", () => {
     }).success).toBe(false);
   });
 
+  it("bypassAll 只在卡片声明了勾选项且用户点同意时合法", () => {
+    const withBypass = confirmSpecSchema.parse({
+      ...plainSpec,
+      bypassOption: {
+        label: "以后不用再问我",
+        hint: "以后的命令会直接执行；可以在 设置 → 安全 里改回。",
+      },
+    });
+    expect(confirmDecisionForSpecSchema(withBypass).safeParse({
+      id: withBypass.id,
+      accepted: true,
+      bypassAll: true,
+    }).success).toBe(true);
+    // 卡片没声明就不能借决策关掉询问
+    expect(confirmDecisionForSpecSchema(plainSpec).safeParse({
+      id: plainSpec.id,
+      accepted: true,
+      bypassAll: true,
+    }).success).toBe(false);
+    // 拒绝态一律不许携带
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: { id: plainSpec.id, accepted: false, bypassAll: true },
+    }).success).toBe(false);
+    // 文案有上界,不能塞进长文本
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      bypassOption: { label: "以后不用再问我", hint: "x".repeat(301) },
+    }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      bypassOption: { label: "", hint: "有效说明" },
+    }).success).toBe(false);
+  });
+
   it("拒绝态 remember 合法但仍不能携带 UI grant nonce", () => {
     expect(submitConfirmDecisionSchema.safeParse({
       sessionId: "s",

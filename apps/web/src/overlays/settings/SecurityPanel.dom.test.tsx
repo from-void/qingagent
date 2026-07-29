@@ -87,6 +87,22 @@ function categorySelect(label: string): HTMLButtonElement {
   return host!.querySelector<HTMLButtonElement>(`button[aria-label="${label}的确认方式"]`)!;
 }
 
+function bypassSelect(): HTMLButtonElement {
+  return host!.querySelector<HTMLButtonElement>('button[aria-label="执行命令前是否先问我"]')!;
+}
+
+async function chooseBypass(label: "先问我" | "不用再问") {
+  await act(async () => {
+    bypassSelect().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  const option = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find((node) => node.textContent?.trim() === label);
+  expect(option).toBeDefined();
+  await act(async () => {
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 describe("SecurityPanel", () => {
   afterEach(() => {
     act(() => root?.unmount());
@@ -101,8 +117,9 @@ describe("SecurityPanel", () => {
   it("每类一行使用暗墨自定义下拉，说明无重复状态且采用暗底说明色", async () => {
     await renderPanel();
 
+    // 四类 + 顶部「执行命令前先问我」总开关一行
     const selects = [...host!.querySelectorAll<HTMLElement>(".security-select")];
-    expect(selects).toHaveLength(4);
+    expect(selects).toHaveLength(5);
     expect(selects.every((select) => select.classList.contains("skin-select--ink"))).toBe(true);
     expect(categorySelect("安装").textContent).toContain("每次询问");
     expect(categorySelect("同类操作").textContent).toContain("总是允许");
@@ -126,6 +143,59 @@ describe("SecurityPanel", () => {
     );
     expect(css).toMatch(/\.security-description\{[^}]*color:var\(--ink-desc\)/);
     expect(css).toMatch(/\.security-description\{[^}]*font-size:11\.5px/);
+  });
+
+  // 「以后不用再问我」的常驻控制点:状态看得见、一键能改回,改回即恢复默认形态。
+  it("默认形态下这一行显示「先问我」，不显示已关闭的说明", async () => {
+    await renderPanel();
+
+    const row = host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!;
+    expect(row.dataset.bypass).toBe("off");
+    expect(row.textContent).toContain("执行命令前先问我");
+    expect(bypassSelect().textContent).toContain("先问我");
+    expect(host!.querySelector("#security-bypass-effect")).toBeNull();
+    // 默认形态下四类仍然可改
+    expect(categorySelect("安装").disabled).toBe(false);
+  });
+
+  it("已关闭询问时状态可见，且四类设置标注为暂不生效", async () => {
+    await renderWithFetch(vi.fn<typeof fetch>().mockResolvedValue(
+      response({ categories, bypass: { enabled: true, enabledAt: "2026-07-29T00:00:00.000Z" } }),
+    ));
+
+    const row = host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!;
+    expect(row.dataset.bypass).toBe("on");
+    expect(bypassSelect().textContent).toContain("不用再问");
+    expect(host!.querySelector("#security-bypass-effect")?.textContent).toContain(
+      "当前不再询问",
+    );
+    expect(categorySelect("安装").disabled).toBe(true);
+  });
+
+  it("一键改回默认:发出关闭请求并提示已恢复询问与隔离", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({
+        categories,
+        bypass: { enabled: true, enabledAt: "2026-07-29T00:00:00.000Z" },
+      }))
+      .mockResolvedValue(response({ enabled: false, enabledAt: null }));
+    await renderWithFetch(fetchMock);
+
+    await chooseBypass("先问我");
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/settings/security/bypass",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const [, request] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(String(request?.body))).toEqual({ enabled: false });
+    expect(
+      host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!.dataset.bypass,
+    ).toBe("off");
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "success",
+      message: "已恢复默认：这些操作会先问你一句，命令也重新隔离执行。",
+    }));
   });
 
   it("改回每次询问调用 revoke 语义并给出轻提示", async () => {

@@ -967,6 +967,89 @@ describe("ConfirmOverlay", () => {
   });
 });
 
+// 「以后不用再问我」是卡面上唯一的减少打扰出口:不勾就是默认形态(下次照旧问),
+// 勾了才把"以后不再询问"带上去。卡面任何时候只出现一个勾选。
+describe("ConfirmOverlay 的「以后不用再问我」", () => {
+  const bypassSpec: ConfirmSpec = {
+    id: "confirm-bypass",
+    kind: "command",
+    title: "删除文件",
+    say: "将删除 build 目录",
+    commandPreview: "rm -rf ./build",
+    rememberCategory: { kind: "command", label: "以后遇到同类操作不再询问" },
+    bypassOption: {
+      label: "以后不用再问我",
+      hint: "以后的命令会直接执行；可以在 设置 → 安全 里改回。",
+    },
+    primaryLabel: "确认执行",
+    secondaryLabel: "取消",
+  };
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    root = null;
+    host?.remove();
+    host = null;
+    delete (window as { electron?: unknown }).electron;
+  });
+
+  it("网页端也给出勾选项，并且卡面只有这一个勾选", async () => {
+    await renderOverlay(bypassSpec);
+
+    const checkboxes = host!.querySelectorAll('input[type="checkbox"]');
+    expect(checkboxes).toHaveLength(1);
+    const label = host!.querySelector<HTMLElement>(".cf-remember")!;
+    expect(label.textContent).toContain("以后不用再问我");
+    expect(label.textContent).toContain("设置 → 安全");
+    // 按类别记忆的勾选与它的降级提示都不再出现
+    expect(label.textContent).not.toContain("以后遇到同类操作不再询问");
+    expect(host!.querySelector(".cf-remember-unavailable")).toBeNull();
+  });
+
+  it("不勾选时决策里不带任何全局改动", async () => {
+    const onDecision = vi.fn();
+    await renderOverlay(bypassSpec, onDecision);
+
+    await click(findButton("确认执行"));
+
+    expect(onDecision).toHaveBeenCalledWith({ id: "confirm-bypass", accepted: true });
+  });
+
+  it("勾选并批准后决策带上「以后不用再问我」", async () => {
+    const onDecision = vi.fn();
+    await renderOverlay(bypassSpec, onDecision);
+
+    await click(host!.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(findButton("确认执行"));
+
+    expect(onDecision).toHaveBeenCalledWith({
+      id: "confirm-bypass",
+      accepted: true,
+      bypassAll: true,
+    });
+  });
+
+  it("勾了却点取消时不带任何全局改动", async () => {
+    const onDecision = vi.fn();
+    await renderOverlay(bypassSpec, onDecision);
+
+    await click(host!.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(findButton("取消"));
+
+    expect(onDecision).toHaveBeenCalledWith({ id: "confirm-bypass", accepted: false });
+  });
+
+  it("卡片没有声明勾选项时保持按类别记忆的既有形态", async () => {
+    const { bypassOption: _bypassOption, ...withoutBypass } = bypassSpec;
+    await renderOverlay(withoutBypass as ConfirmSpec);
+
+    expect(host!.querySelector('.cf-remember input[type="checkbox"]')).toBeNull();
+    expect(host!.querySelector(".cf-remember-unavailable")?.textContent).toContain(
+      "开启记忆需要在桌面应用中完成确认。",
+    );
+  });
+});
+
 function ConfirmHarness({
   debugMode,
   onDecision,

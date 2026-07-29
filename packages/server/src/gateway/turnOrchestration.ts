@@ -64,6 +64,7 @@ import { bindClientTraceId, deriveSessionTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { findSessionByStream, getOrRestoreSession } from "./sessionLifecycle";
 import { bindToolsToAbortSignal } from "./abortableTools";
+import { MODEL_CALL_SITES } from "@qingagent/core";
 
 async function* handleCancelAskUser(
   session: SessionState,
@@ -455,6 +456,7 @@ async function* handleResume(
       ["streamId", streamId],
       ["abortSignal", abortController.signal],
       ["runId", runId],
+      ["usageCallSite", MODEL_CALL_SITES.agentQuestionnaireResume],
       ["clientTraceId", session.clientTraceId ?? null],
       ["origin", session.origin ?? "manual"],
       ["docVersion", session.docVersion],
@@ -555,6 +557,7 @@ async function* handleResume(
                   { ...session, clientTraceId: resumeClientTraceId ?? undefined },
                   streamId,
                   runId,
+                  MODEL_CALL_SITES.agentQuestionnaireResume,
                 ),
               },
               requestContext,
@@ -902,6 +905,9 @@ export async function* handleTurnCommand(
           preemptedByNewMessage,
           ...(command.data.turnContext
             ? { turnContext: command.data.turnContext }
+            : {}),
+          ...(command.data.turnKind
+            ? { turnKind: command.data.turnKind }
             : {}),
         },
       );

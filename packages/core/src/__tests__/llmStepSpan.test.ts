@@ -181,6 +181,7 @@ describe("llm step span helpers", () => {
         { sessionId: "session-1", clientTraceId: "ct-1", origin: "e2e" },
         "stream-1",
         "run-1",
+        "agentChat",
       ),
     ).toEqual({
       sessionId: "session-1",
@@ -188,6 +189,7 @@ describe("llm step span helpers", () => {
       streamId: "stream-1",
       runId: "run-1",
       origin: "e2e",
+      site: "agentChat",
       serverReanchorEnabled: false,
     });
   });

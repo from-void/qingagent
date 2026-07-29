@@ -94,7 +94,7 @@ export async function draftTemplate(
     fallback: async () => {
       const generated = await generateText({
         model: getDeepseekModel(requestContext, "flash", {
-          callSite: "draftTemplateFallback",
+          callSite: "draftTemplate",
           thinking: false,
         }),
         ...resolveModelParams(requestContext),

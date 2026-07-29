@@ -380,6 +380,7 @@ describe("commandSchema", () => {
         chips: [],
         fileIds: [],
         turnContext: "[系统:用户当前正查看衍生稿(doc_id: d-1)]",
+        turnKind: "generateDerivative",
         displayCard: {
           icon: "✦",
           title: "生成公众号稿",
@@ -391,7 +392,23 @@ describe("commandSchema", () => {
     if (r.success && r.data.kind === "sendMessage") {
       expect(r.data.data.displayCard?.title).toBe("生成公众号稿");
       expect(r.data.data.turnContext).toContain("doc_id: d-1");
+      expect(r.data.data.turnKind).toBe("generateDerivative");
     }
+  });
+
+  it("拒绝把任意字符串伪装成模型调用 site", () => {
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "生成衍生稿",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+        turnKind: "agentReviewSensitive",
+      },
+    }).success).toBe(false);
   });
 
   it("审查 query 保留结构化类型与模板标识", () => {

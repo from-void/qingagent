@@ -28,7 +28,7 @@ function nodeSize(node: PmNode | PmDoc): number {
   return 2 + node.content.reduce((sum, child) => sum + nodeSize(child as PmNode), 0);
 }
 
-// inlineMath 是原子行内节点(PM nodeSize=1):文本投影用 U+FFFC 占位,保证 offset 与 PM 位置一致。
+// 行内原子节点（PM nodeSize=1）统一用 U+FFFC 投影，保证 offset 与 PM 位置一致。
 export const INLINE_ATOM_PLACEHOLDER = "￼";
 
 export function inlineNodeLen(node: PmInlineNode): number {
@@ -37,7 +37,9 @@ export function inlineNodeLen(node: PmInlineNode): number {
 
 export function projectInlineNodeText(node: PmInlineNode): string {
   if (node.type === "hardBreak") return "\n";
-  if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
+  if (node.type === "inlineMath" || node.type === "footnoteReference") {
+    return INLINE_ATOM_PLACEHOLDER;
+  }
   return node.text;
 }
 

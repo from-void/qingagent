@@ -70,7 +70,11 @@ export function tableTypewriterFallbackReason(
           || !Array.isArray(textBlock.content)
           || textBlock.content.some((inline) => inline.type !== "text")
         ) return "non-text-cell";
-        if (textBlock.content.some((inline) => (inline.marks?.length ?? 0) > 0)) {
+        if (
+          textBlock.content.some(
+            (inline) => inline.type === "text" && (inline.marks?.length ?? 0) > 0,
+          )
+        ) {
           return "formatted-text";
         }
       }

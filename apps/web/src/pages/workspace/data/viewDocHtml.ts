@@ -200,6 +200,13 @@ function spanToText(span: ViewDocSpan): string {
   if (span.kind === "math" || span.kind === "patchInsMath" || span.kind === "patchDelMath") {
     return inlineMathToHtml(span.latex);
   }
+  if (
+    span.kind === "footnote" ||
+    span.kind === "patchInsFootnote" ||
+    span.kind === "patchDelFootnote"
+  ) {
+    return `<sup data-pm-node="footnoteReference" data-footnote-id="${esc(span.id)}" data-footnote-note="${esc(span.note)}">※</sup>`;
+  }
   return esc(span.text);
 }
 
@@ -213,6 +220,8 @@ function hasPatchSpan(spans: readonly ViewDocSpan[] | undefined): boolean {
     span.kind === "patchIns" ||
     span.kind === "patchDelMath" ||
     span.kind === "patchInsMath" ||
+    span.kind === "patchDelFootnote" ||
+    span.kind === "patchInsFootnote" ||
     span.kind === "patchMark",
   ) ?? false;
 }

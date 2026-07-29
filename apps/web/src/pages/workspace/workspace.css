@@ -1703,6 +1703,23 @@
   /* TipTap / ProseMirror 基础样式 */
   #view-workspace .wf-doc.ProseMirror{outline:none}
   #view-workspace .wf-doc.ProseMirror .ProseMirror-gapcursor{display:none}
+  #view-workspace .wf-doc .pm-footnote-reference{
+    position:relative;display:inline-block;min-width:.8em;margin:0 1px;color:var(--mark);
+    font-family:var(--font-zh-serif);font-size:.72em;line-height:1;vertical-align:super;
+    cursor:help;outline:none
+  }
+  #view-workspace .wf-doc .pm-footnote-reference::after{content:attr(data-footnote-number)}
+  #view-workspace .wf-doc .pm-footnote-reference::before{
+    content:attr(data-footnote-note);position:absolute;left:50%;bottom:calc(100% + 8px);z-index:12;
+    box-sizing:border-box;width:max-content;max-width:320px;padding:8px 10px;border:1px solid var(--line-2);
+    border-radius:0;background:var(--bg-paper-deep);color:var(--ink-1);box-shadow:var(--shadow-2);
+    font:13px/1.6 var(--font-zh-serif);text-align:left;white-space:normal;
+    opacity:0;pointer-events:none;transform:translate(-50%,4px);
+    transition:opacity .12s ease-out,transform .12s ease-out
+  }
+  #view-workspace .wf-doc .pm-footnote-reference:hover::before,
+  #view-workspace .wf-doc .pm-footnote-reference:focus::before{opacity:1;transform:translate(-50%,0)}
+  #view-workspace .wf-doc .pm-footnote-reference.ProseMirror-selectednode{outline:1px solid var(--mark)}
   #view-workspace .wf-doc mark{border-radius:0;padding:0 1px;background:#fff3a3;color:inherit}
   #view-workspace .wf-doc span[data-text-color="ink"]{color:var(--ink-1)}
   #view-workspace .wf-doc span[data-text-color="gray"]{color:#5f625c}

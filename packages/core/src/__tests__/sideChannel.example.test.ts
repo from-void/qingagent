@@ -20,7 +20,7 @@ describe("runSideChannel 新站点接入模板", () => {
 
   // 新站点抄这里：业务侧只需提供 callSite / steeringTail / parse / fallback 四样。
   const recommendQuery = () => runSideChannel({
-    callSite: "recommendQuery",
+    callSite: "planDraft",
     steeringTail: "不要调用工具，只输出一个推荐 query。",
     parse: (text) => text.trim() || null,
     fallback: async () => "默认推荐",
@@ -42,7 +42,7 @@ describe("runSideChannel 新站点接入模板", () => {
     });
     expect(mocks.getSessionSnapshot).toHaveBeenCalledOnce();
     expect(mocks.branchCall).toHaveBeenCalledWith(expect.objectContaining({
-      callSite: "recommendQuery",
+      callSite: "planDraft",
       sessionSnapshot: { sessionId: "example" },
     }));
   });
@@ -62,7 +62,7 @@ describe("runSideChannel 新站点接入模板", () => {
       branchFailure: "parse_failed",
     });
     expect(warn).toHaveBeenCalledWith(
-      "[sideChannel] site=recommendQuery fallback engaged reason=parse_failed snapshot=true",
+      "[sideChannel] site=planDraft fallback engaged reason=parse_failed snapshot=true",
     );
     warn.mockRestore();
   });

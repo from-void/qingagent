@@ -221,6 +221,28 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).not.toThrow();
   });
 
+  it("只接受受控的衍生稿 turnKind", () => {
+    const base = {
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "生成衍生稿",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+      },
+    };
+    expect(() => validateCommand({
+      ...base,
+      data: { ...base.data, turnKind: "generateDerivative" },
+    } as Command)).not.toThrow();
+    expect(() => validateCommand({
+      ...base,
+      data: { ...base.data, turnKind: "free-form-site" },
+    } as unknown as Command)).toThrow(CommandValidationError);
+  });
+
   it("accepts normalized table selection on selection chip", () => {
     const cmd: Command = {
       kind: "sendMessage",

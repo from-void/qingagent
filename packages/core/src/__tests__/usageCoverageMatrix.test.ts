@@ -1,38 +1,86 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
-const matrix: Array<{ file: string; callSites: string[] }> = [
-  { file: "packages/core/src/agent-run/processAgentStream.ts", callSites: ["agent"] },
-  { file: "packages/core/src/services/genService.ts", callSites: ["planDraft", "askMore"] },
-  { file: "packages/core/src/tools/writeDraft.ts", callSites: ["writeDraft"] },
-  { file: "packages/core/src/tools/generateSvg.ts", callSites: ["generateSvg"] },
-  { file: "packages/core/src/tools/readImage.ts", callSites: ["readImage"] },
-  { file: "packages/core/src/llm/visionTest.ts", callSites: ["visionTest"] },
-  { file: "packages/core/src/search/deepseekWebSearch.ts", callSites: ["webSearch"] },
-  { file: "packages/core/src/session/omSidecar.ts", callSites: ["omObserve", "omReflect"] },
-  { file: "packages/core/src/session/titleGeneration.ts", callSites: ["generateTitle"] },
-  {
-    file: "packages/core/src/agents/processors.ts",
-    callSites: ["guardPii", "guardPromptInjection", "guardModeration"],
-  },
-  { file: "packages/core/src/evals/liveRunner.ts", callSites: ["liveEval"] },
-  {
-    file: "packages/core/scripts/pm-model-smoke.ts",
-    callSites: ["pmModelSmokeStructured", "pmModelSmokeText"],
-  },
-  {
-    file: "packages/core/src/llm/textConnectionTest.ts",
-    callSites: ["anthropicConnectionTest"],
-  },
-];
 
-describe("LLM usage 全调用点覆盖矩阵", () => {
-  for (const entry of matrix) {
-    it(`${entry.file} 声明 ${entry.callSites.join("/")}`, () => {
-      const source = readFileSync(resolve(root, entry.file), "utf8");
-      for (const callSite of entry.callSites) expect(source).toContain(`"${callSite}"`);
-    });
-  }
+function sourceFiles(directory: string): string[] {
+  const files: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (
+        entry.isFile() &&
+        path.endsWith(".ts") &&
+        !path.includes("__tests__") &&
+        !path.endsWith(".test.ts")
+      ) {
+        files.push(path);
+      }
+    }
+  };
+  visit(resolve(root, directory));
+  return files;
+}
+
+describe("LLM usage provider 边界覆盖", () => {
+  it("只有统一终态记录器可以直接写 usage 账本", () => {
+    const writers = sourceFiles("packages/core/src")
+      .filter((file) => readFileSync(file, "utf8").includes("recordUsageEvent"))
+      .map((file) => relative(root, file).replace(/\\/g, "/"));
+    expect(writers).toEqual(["packages/core/src/llm/usageMiddleware.ts"]);
+  });
+
+  it("三类模型传输都委托统一终态记录器", () => {
+    const middleware = readFileSync(
+      resolve(root, "packages/core/src/llm/usageMiddleware.ts"),
+      "utf8",
+    );
+    const modern = readFileSync(
+      resolve(root, "packages/core/src/llm/modernUsageModel.ts"),
+      "utf8",
+    );
+    const branch = readFileSync(
+      resolve(root, "packages/core/src/llm/modelConfig.ts"),
+      "utf8",
+    );
+    const manual = readFileSync(
+      resolve(root, "packages/core/src/search/deepseekWebSearch.ts"),
+      "utf8",
+    );
+
+    expect(middleware).toContain("recordModelCallOutcome({");
+    expect(modern).toContain("recordModelCallOutcome({");
+    expect(branch).toContain("recordModelCallOutcome({");
+    expect(manual).toContain("recordModelCallOutcome({");
+  });
+
+  it("主 Agent 的 OpenAI/Anthropic 两条模型路径都始终套 provider wrapper", () => {
+    const source = readFileSync(
+      resolve(root, "packages/core/src/agents/qingagent.ts"),
+      "utf8",
+    );
+    expect(source.match(/return trackQingagentModel\(/g)).toHaveLength(2);
+    expect(source).toContain("return wrapModernModelUsage(model");
+    expect(source).not.toContain("maybeTrackNonBridgeModel");
+  });
+
+  it("step-finish 只保留 Mastra span，不直接写 usage", () => {
+    const source = readFileSync(
+      resolve(root, "packages/core/src/agent-run/agentStreamLifecycle.ts"),
+      "utf8",
+    );
+    expect(source).toContain("recordLlmStepResponseSpan(");
+    expect(source).not.toContain("recordUsageEvent");
+  });
+
+  it("同一业务动作的 branch/fallback site 不漂移", () => {
+    const draftTemplate = readFileSync(
+      resolve(root, "packages/core/src/session/draftTemplate.ts"),
+      "utf8",
+    );
+    expect(draftTemplate.match(/callSite: "draftTemplate"/g)).toHaveLength(2);
+    expect(draftTemplate).not.toContain("draftTemplateFallback");
+  });
 });

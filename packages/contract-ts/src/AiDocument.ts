@@ -12,10 +12,18 @@ export type AiRunMark =
   | { type: "highlight"; color: PmThemeColor }
   | { type: "math" };
 
-export type AiRun = {
+export type AiTextRun = {
   text: string;
   marks?: Array<AiRunMark>;
 };
+
+export type AiFootnoteRun = {
+  type: "footnote";
+  id?: string;
+  note: string;
+};
+
+export type AiRun = AiTextRun | AiFootnoteRun;
 
 export type AiListItem = {
   runs: Array<AiRun>;

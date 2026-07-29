@@ -755,8 +755,17 @@ function checkDocGenerationEvent(frame: Extract<BridgeFrame, { kind: "docGenerat
       if (!Number.isInteger(event.data.appendOffset) || event.data.appendOffset < 0) {
         fail("inline_appended.appendOffset must be a non-negative integer");
       }
-      if (!event.data.run || typeof event.data.run.text !== "string") {
-        fail("inline_appended.run.text must be a string");
+      if (
+        !event.data.run ||
+        (
+          !("text" in event.data.run) &&
+          (
+            event.data.run.type !== "footnote" ||
+            typeof event.data.run.note !== "string"
+          )
+        )
+      ) {
+        fail("inline_appended.run must be text or footnote");
       }
       return;
     case "block_finished":

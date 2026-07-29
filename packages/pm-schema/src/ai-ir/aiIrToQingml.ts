@@ -122,6 +122,9 @@ function runsToInline(runs: readonly AiRun[]): string {
 }
 
 function runToInline(run: AiRun): string {
+  if (!("text" in run)) {
+    return tag("footnote", escapeText(run.note), { id: run.id });
+  }
   const marks = run.marks ?? [];
   if (marks.some((mark) => mark.type === "math")) return tag("math", escapeText(run.text));
 

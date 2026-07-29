@@ -8,6 +8,7 @@ import {
   createSnapshottingQingagentModel,
 } from "../llm/modelConfig.js";
 import {
+  buildTranslationSteeringTail,
   DerivativeDeltaBatcher,
   TRANSLATION_DELTA_FLUSH_BYTES,
   generateTranslations,
@@ -331,5 +332,24 @@ describe("generateTranslations 并发旁支", () => {
     batcher.add("b".repeat(TRANSLATION_DELTA_FLUSH_BYTES));
     expect(frames).toHaveLength(2);
     batcher.dispose();
+  });
+});
+
+describe("翻译脚注上下文", () => {
+  it("把 sourceQingml 与保留 id 的明确范本放入真实旁支提示", () => {
+    const tail = buildTranslationSteeringTail({
+      targetLang: "英语",
+      writingPrompt: "忠实翻译",
+      privatePrompt: "",
+      skillGuidance: "",
+      sourceTitle: "标题",
+      sourceText: "正文",
+      sourceQingml: '<p>正文<footnote id="source_a">来源甲</footnote></p>',
+    });
+    expect(tail).toContain(
+      '<p>正文<footnote id=\\"source_a\\">来源甲</footnote></p>',
+    );
+    expect(tail).toContain("保留在原引用位置并保持 id 不变");
+    expect(tail).toContain("不要把它改成普通 [1] 文本");
   });
 });

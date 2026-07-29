@@ -85,7 +85,8 @@ export function isListItemRefNode(node: PmNode | PmBlockNode): node is Extract<P
 }
 
 export function isPmBlockNode(node: PmNode | PmBlockNode): node is PmBlockNode {
-  return !isListItemRefNode(node) && node.type !== "text" && node.type !== "hardBreak" && node.type !== "inlineMath" &&
+  return !isListItemRefNode(node) && node.type !== "text" && node.type !== "hardBreak" &&
+    node.type !== "inlineMath" && node.type !== "footnoteReference" &&
     node.type !== "column" && node.type !== "tableRow" && node.type !== "tableCell" && node.type !== "tableHeader";
 }
 

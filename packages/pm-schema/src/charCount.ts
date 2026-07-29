@@ -20,5 +20,9 @@ export function countCharsNoPunct(text: string): number {
  *  图片里的描述(alt/caption)、图表源码不计入。左侧工具卡与右下角落款都引用本函数,
  *  确保两边数字一致。 */
 export function countDocVisibleChars(doc: PmDoc): number {
-  return countVisibleChars(pmToPlainText(doc, { skipMedia: true, skipTaskMarkers: true }));
+  return countVisibleChars(pmToPlainText(doc, {
+    skipMedia: true,
+    skipTaskMarkers: true,
+    skipFootnotes: true,
+  }));
 }

@@ -26,7 +26,7 @@ type FlatTextUnit = {
   from: number;
   to: number;
   marks: PmMark[];
-  inlineMathLatex?: string;
+  atomKey?: string;
 };
 
 type MarkGroup = {
@@ -558,9 +558,9 @@ function appendInlineAtomReplaceHunks(input: {
     if (
       baseUnit.text === "￼" &&
       draftUnit.text === "￼" &&
-      baseUnit.inlineMathLatex !== undefined &&
-      draftUnit.inlineMathLatex !== undefined &&
-      baseUnit.inlineMathLatex !== draftUnit.inlineMathLatex
+      baseUnit.atomKey !== undefined &&
+      draftUnit.atomKey !== undefined &&
+      baseUnit.atomKey !== draftUnit.atomKey
     ) {
       const hunk = createInlineAtomReplaceHunk({
         baseBlock: input.baseBlock,
@@ -1125,9 +1125,26 @@ function flattenInlineUnits(content: readonly PmInlineNode[] | undefined): FlatT
       offset += 1;
       continue;
     }
-    // inlineMath 原子节点:占 1 个单位,文本投影用 U+FFFC 占位(与 PM nodeSize 一致)。
+    // 行内原子节点占 1 个单位，文本投影用 U+FFFC 占位（与 PM nodeSize 一致）。
     if (node.type === "inlineMath") {
-      units.push({ text: "￼", from: offset, to: offset + 1, marks: [], inlineMathLatex: node.attrs.latex });
+      units.push({
+        text: "￼",
+        from: offset,
+        to: offset + 1,
+        marks: [],
+        atomKey: `inlineMath:${node.attrs.latex}`,
+      });
+      offset += 1;
+      continue;
+    }
+    if (node.type === "footnoteReference") {
+      units.push({
+        text: "￼",
+        from: offset,
+        to: offset + 1,
+        marks: [],
+        atomKey: `footnoteReference:${node.attrs.id}:${node.attrs.note}`,
+      });
       offset += 1;
       continue;
     }
@@ -1175,6 +1192,11 @@ function inlineSliceAsNodes(block: PmBlockNode, from: number, to: number): DiffH
         nodes.push({ type: "hardBreak" });
       } else if (node.type === "inlineMath") {
         nodes.push({ type: "inlineMath", attrs: { latex: node.attrs.latex } });
+      } else if (node.type === "footnoteReference") {
+        nodes.push({
+          type: "footnoteReference",
+          attrs: { id: node.attrs.id, note: node.attrs.note },
+        });
       } else {
         const text = node.text.slice(sliceFrom - nodeFrom, sliceTo - nodeFrom);
         nodes.push(node.marks && node.marks.length > 0 ? { type: "text", text, marks: cloneValue(node.marks) } : { type: "text", text });
@@ -1908,7 +1930,7 @@ function inlineText(content: readonly PmInlineNode[] | undefined): string {
   return (content ?? [])
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
-      if (node.type === "inlineMath") return "￼";
+      if (node.type === "inlineMath" || node.type === "footnoteReference") return "￼";
       return node.text;
     })
     .join("");
@@ -1932,6 +1954,7 @@ function blockPlainText(node: PmNode): string {
         .map((child) => {
           if (child.type === "hardBreak") return "\n";
           if (child.type === "inlineMath") return child.attrs.latex;
+          if (child.type === "footnoteReference") return child.attrs.note;
           return child.text;
         })
         .join("");
@@ -1971,6 +1994,8 @@ function blockPlainText(node: PmNode): string {
       return node.attrs.latex;
     case "inlineMath":
       return node.attrs.latex;
+    case "footnoteReference":
+      return node.attrs.note;
   }
 }
 

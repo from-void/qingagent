@@ -107,12 +107,24 @@ const inlineMathNodeSchema = z.object({
   marks: z.array(markSchema).optional(),
 });
 
+export const FOOTNOTE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const FOOTNOTE_NOTE_MAX_LENGTH = 4_096;
+
+const footnoteReferenceNodeSchema = z.object({
+  type: z.literal("footnoteReference"),
+  attrs: z.object({
+    id: z.string().regex(FOOTNOTE_ID_PATTERN),
+    note: z.string().trim().min(1).max(FOOTNOTE_NOTE_MAX_LENGTH),
+  }),
+});
+
 // discriminatedUnion 按 type 判别:校验错误能精确定位到成员内部字段
 // (z.union 会聚合各分支错误,path 停在 union 节点,报错没法读)。
 const inlineNodeSchema = z.discriminatedUnion("type", [
   textNodeSchema,
   z.object({ type: z.literal("hardBreak"), marks: z.array(markSchema).optional() }),
   inlineMathNodeSchema,
+  footnoteReferenceNodeSchema,
 ]);
 
 const tableSpanSchema = z.number().int().positive().max(PM_TABLE_MAX_SPAN);
@@ -538,6 +550,28 @@ export const pmDocSchema = z.object({
   type: z.literal("doc"),
   attrs: z.object({ schemaVersion: z.literal(PM_SCHEMA_VERSION) }),
   content: z.array(blockNodeSchema),
+}).superRefine((doc, context) => {
+  const definitions = new Map<string, string>();
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    const value = node as { type?: unknown; attrs?: unknown; content?: unknown };
+    if (value.type === "footnoteReference" && value.attrs && typeof value.attrs === "object") {
+      const attrs = value.attrs as { id?: unknown; note?: unknown };
+      if (typeof attrs.id === "string" && typeof attrs.note === "string") {
+        const previous = definitions.get(attrs.id);
+        if (previous !== undefined && previous !== attrs.note) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `footnote id "${attrs.id}" must use one identical note`,
+          });
+        } else {
+          definitions.set(attrs.id, attrs.note);
+        }
+      }
+    }
+    if (Array.isArray(value.content)) value.content.forEach(visit);
+  };
+  visit(doc);
 });
 
 export const PM_VALIDATOR_NODE_NAMES = PM_SCHEMA_NODE_NAMES;

@@ -71,7 +71,7 @@ describe("selection chip edit context", () => {
         undefined,
         undefined,
         undefined,
-        { turnContext },
+        { turnContext, turnKind: "generateDerivative" },
       ),
     );
 
@@ -84,6 +84,13 @@ describe("selection chip edit context", () => {
     expect(visibleUserMessage?.parts).toEqual([
       { kind: "text", data: { body: "把标题改得更抓人" } },
     ]);
+    const requestContext = agentStreamCalls[0]?.options.requestContext as {
+      get: (key: string) => unknown;
+    };
+    expect(requestContext.get("usageCallSite")).toBe("generateDerivative");
+    expect(agentStreamCalls[0]?.options.tracingOptions).toMatchObject({
+      metadata: { site: "generateDerivative" },
+    });
   });
 
   it("blockId 缺失时用 chip label 作为 readDraft 模糊定位文本", async () => {
@@ -127,6 +134,10 @@ describe("selection chip edit context", () => {
     expect(content).toContain('action:"replaceText"');
     expect(content).toContain('action:"markText"');
     expect(content).toContain("withinRef");
+    const requestContext = agentStreamCalls[0]?.options.requestContext as {
+      get: (key: string) => unknown;
+    };
+    expect(requestContext.get("usageCallSite")).toBe("agentSelectionEdit");
 
     expect(agentStreamCalls).toHaveLength(1);
     expect(agentStreamCalls[0]!.options.toolChoice).toBeUndefined();

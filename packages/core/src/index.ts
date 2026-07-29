@@ -10,6 +10,16 @@ export type {
   SessionState,
 } from "./bridge/index.js";
 export {
+  MODEL_CALL_SITES,
+  isModelCallSite,
+  resolveAgentModelCallSite,
+} from "./llm/modelCallSites.js";
+export type {
+  AgentTurnKind,
+  ModelCallSite,
+  ModelCallTransport,
+} from "./llm/modelCallSites.js";
+export {
   AGENT_MAX_STEPS,
   QINGAGENT_RESOURCE_ID,
   TODO_AWARENESS_REQUEST_CONTEXT_KEY,

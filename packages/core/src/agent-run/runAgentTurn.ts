@@ -25,6 +25,10 @@ import {
   resolveModelParams,
   resolveProtocol,
 } from "../llm/modelConfig.js";
+import {
+  resolveAgentModelCallSite,
+  type AgentTurnKind,
+} from "../llm/modelCallSites.js";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
@@ -171,6 +175,8 @@ export interface RunAgentTurnControl {
 export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
   /** 仅追加到模型侧当轮 user message，不进入可见用户气泡或 system prompt 前缀。 */
   turnContext?: string;
+  /** 受控的用户动作分类，仅用于 provider 遥测归属。 */
+  turnKind?: AgentTurnKind;
   /** idle-timeout 自动重试上限；只供已消费一次额度的恢复链路收紧为 0。 */
   idleTimeoutRetryLimit?: number;
   /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
@@ -318,6 +324,11 @@ export async function* runAgentTurn(
   const selectionChips = chips.filter(
     (c) => c.kind.kind === "selection",
   );
+  const modelCallSite = resolveAgentModelCallSite({
+    reviewType: reviewContext?.type,
+    turnKind: runtimeOptions.turnKind,
+    hasSelection: selectionChips.length > 0,
+  });
   const selectionDiagramLanguages = new Set<DiagramVizLanguage>();
 
   // Store chips on state so validatePatch can use from/to for
@@ -684,6 +695,7 @@ export async function* runAgentTurn(
       ],
       ["userText", userText],
       ["reviewContext", reviewContext ?? null],
+      ["usageCallSite", modelCallSite],
       ["sessionId", state.sessionId],
       ["streamId", streamId],
       ["abortSignal", abortController.signal],
@@ -831,7 +843,12 @@ export async function* runAgentTurn(
           // header / 尚未绑定)，与原行为一致。
           tracingOptions: {
             ...(sessionTraceId ? { traceId: sessionTraceId } : {}),
-            metadata: buildAgentTracingMetadata(state, streamId, state.runId),
+            metadata: buildAgentTracingMetadata(
+              state,
+              streamId,
+              state.runId,
+              modelCallSite,
+            ),
           },
           requestContext,
           abortSignal: abortController.signal,

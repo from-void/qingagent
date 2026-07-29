@@ -421,4 +421,26 @@ td.wf-page-cell {
 .wf-doc .inline-math { color: inherit; }
 /* KaTeX 在奶白纸上的字色对齐暖墨正文 */
 .wf-doc .katex { color: var(--ink-1); font-size: 1.05em; }
+
+/* ============ 语义脚注（HTML/PDF 均为文末区，不承诺分页页底） ============ */
+.wf-doc .footnote-ref {
+  margin: 0 1px;
+  color: var(--mark);
+  font-size: 0.72em;
+  line-height: 1;
+  vertical-align: super;
+}
+.wf-doc .footnote-ref a,
+.wf-doc .footnote-backref { color: var(--mark); text-decoration: none; }
+.wf-doc .footnotes {
+  margin-top: 28px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.65;
+  break-inside: avoid;
+}
+.wf-doc .footnotes hr { margin: 0 0 12px; border-color: var(--line-2); }
+.wf-doc .footnotes ol { margin: 0; padding-left: 24px; }
+.wf-doc .footnotes li { margin: 4px 0; break-inside: avoid; }
+.wf-doc .footnote-backref { margin-left: 4px; }
 `;

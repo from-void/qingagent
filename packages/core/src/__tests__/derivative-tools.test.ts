@@ -62,7 +62,25 @@ afterEach(() => db.cleanup());
 describe("derivative Agent tools", () => {
   it("brief 返回目标语言、排版/写作约束，参数更新校验归属", async () => {
     await documentRepo.save(
-      documentInput("main", { threadId: "thread", docVersion: 1 }),
+      documentInput("main", {
+        threadId: "thread",
+        docVersion: 1,
+        pmDoc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "source-p" },
+            content: [
+              { type: "text", text: "源文" },
+              {
+                type: "footnoteReference",
+                attrs: { id: "source_note", note: "来源正文" },
+              },
+            ],
+          }],
+        },
+      }),
     );
     const translation = await createDerivativeDoc({
       threadId: "thread",
@@ -75,8 +93,11 @@ describe("derivative Agent tools", () => {
     const translatedBrief = (await derivativeBriefTool.execute!(
       { derivativeDocId: translation.docId },
       toolContext("thread") as never,
-    )) as { ok: boolean; targetLang?: string };
+    )) as { ok: boolean; targetLang?: string; sourceQingml?: string };
     expect(translatedBrief).toMatchObject({ ok: true, targetLang: "日语" });
+    expect(translatedBrief.sourceQingml).toContain(
+      '<p>源文<footnote id="source_note">来源正文</footnote></p>',
+    );
 
     const meta = await createDerivativeDoc({
       threadId: "thread",

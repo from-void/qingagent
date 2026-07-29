@@ -16,7 +16,7 @@ function context(): RequestContext {
 function middleware() {
   return createUsageMiddleware({
     requestContext: context(),
-    callSite: "middleware-test",
+    callSite: "webSearch",
     modelId: "glm-test",
     keyOrigin: "env",
   });
@@ -62,7 +62,7 @@ describe("usage middleware", () => {
     expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-mw",
       runId: "run-mw",
-      callSite: "middleware-test",
+      callSite: "webSearch",
       modelId: "glm-test",
       inputTokens: 100,
       outputTokens: 20,

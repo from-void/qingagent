@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { chromium } from "playwright";
+import { systemBrowserExecutablePath } from "../browser/systemBrowser.js";
 
 /**
  * PDF 导出已改为 headless Chromium 渲染。本地 / CI 没装 Chromium 二进制时,相关 PDF 烟测
@@ -7,8 +8,8 @@ import { chromium } from "playwright";
  */
 export const hasChromium = (() => {
   try {
-    const exe = chromium.executablePath();
-    return Boolean(exe) && existsSync(exe);
+    const candidates = [systemBrowserExecutablePath(), chromium.executablePath()];
+    return candidates.some((exe) => Boolean(exe) && existsSync(exe!));
   } catch {
     return false;
   }

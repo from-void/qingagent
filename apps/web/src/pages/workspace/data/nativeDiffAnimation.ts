@@ -121,8 +121,8 @@ function pmInlineText(content: readonly PmInlineNode[] | undefined): string {
   return (content ?? [])
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
-      // inlineMath 原子节点在动画文本投影中按 1 个占位符处理(与 PM nodeSize 一致)。
-      if (node.type === "inlineMath") return "￼";
+      // 行内原子节点在动画文本投影中按 1 个占位符处理（与 PM nodeSize 一致）。
+      if (node.type === "inlineMath" || node.type === "footnoteReference") return "￼";
       return node.text;
     })
     .join("");

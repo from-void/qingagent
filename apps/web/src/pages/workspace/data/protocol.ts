@@ -98,6 +98,7 @@ export const INLINE_ATOM_PLACEHOLDER = "￼";
 
 export type ViewTextSpan = { kind: "text"; text: string; marks?: PmMark[] };
 export type ViewMathSpan = { kind: "math"; latex: string };
+export type ViewFootnoteSpan = { kind: "footnote"; id: string; note: string };
 
 export type ViewPatchTextSpan =
   | { kind: "patchDel"; text: string; patchId: string; marks?: PmMark[] }
@@ -110,8 +111,11 @@ export type ViewPatchMathSpan =
 export type ViewDocSpan =
   | ViewTextSpan
   | ViewMathSpan
+  | ViewFootnoteSpan
   | ViewPatchTextSpan
   | ViewPatchMathSpan
+  | { kind: "patchDelFootnote"; id: string; note: string; patchId: string }
+  | { kind: "patchInsFootnote"; id: string; note: string; patchId: string }
   | {
       kind: "patchMark";
       text: string;
@@ -456,6 +460,10 @@ function pmInlineSpans(content: readonly PmInlineNode[]): ViewDocSpan[] {
       spans.push({ kind: "math", latex: node.attrs.latex });
       continue;
     }
+    if (node.type === "footnoteReference") {
+      spans.push({ kind: "footnote", id: node.attrs.id, note: node.attrs.note });
+      continue;
+    }
     if (!node.text) continue;
     spans.push(
       node.marks && node.marks.length > 0
@@ -475,7 +483,8 @@ function pmInlineNodesToViewSpans(nodes: DiffHunk["before"] | DiffHunk["after"])
 function isPmInlineNode(node: unknown): node is PmInlineNode {
   if (node === null || typeof node !== "object") return false;
   const type = (node as { type?: unknown }).type;
-  return type === "text" || type === "hardBreak" || type === "inlineMath";
+  return type === "text" || type === "hardBreak" || type === "inlineMath" ||
+    type === "footnoteReference";
 }
 
 function pmCellText(cell: PmTableCellNode): string {
@@ -523,6 +532,9 @@ function pmInlineText(content: readonly (PmInlineNode | { type: "text"; text?: s
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
       if (node.type === "inlineMath") return (node as { attrs?: { latex?: string } }).attrs?.latex ?? "";
+      if (node.type === "footnoteReference") {
+        return (node as { attrs?: { note?: string } }).attrs?.note ?? "";
+      }
       return node.text ?? "";
     })
     .join("");
@@ -545,7 +557,9 @@ function pmInlineOffsetText(content: readonly (PmInlineNode | { type: "text"; te
   return content
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
-      if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
+      if (node.type === "inlineMath" || node.type === "footnoteReference") {
+        return INLINE_ATOM_PLACEHOLDER;
+      }
       return node.text ?? "";
     })
     .join("");
@@ -598,6 +612,10 @@ export function viewDocSpanText(span: ViewDocSpan): string {
     case "patchDelMath":
     case "patchInsMath":
       return span.latex;
+    case "footnote":
+    case "patchDelFootnote":
+    case "patchInsFootnote":
+      return span.note;
     case "text":
     case "patchDel":
     case "patchIns":
@@ -612,6 +630,9 @@ export function viewDocSpanOffsetText(span: ViewDocSpan): string {
     case "math":
     case "patchDelMath":
     case "patchInsMath":
+    case "footnote":
+    case "patchDelFootnote":
+    case "patchInsFootnote":
       return INLINE_ATOM_PLACEHOLDER;
     case "text":
     case "patchDel":
@@ -876,7 +897,8 @@ function cloneSpans(spans: readonly ViewDocSpan[]): ViewDocSpan[] {
 
 type InlineDiffUnit =
   | { kind: "text"; text: string; marks?: PmMark[] }
-  | { kind: "math"; latex: string };
+  | { kind: "math"; latex: string }
+  | { kind: "footnote"; id: string; note: string };
 
 /**
  * 500 × 500 个行内单元的真实 LCS 基准约耗时 3ms、分配约 25 万个 DP 槽；
@@ -900,6 +922,9 @@ function inlineDiffUnitCount(spans: readonly ViewDocSpan[]): number {
       case "math":
       case "patchInsMath":
       case "patchDelMath":
+      case "footnote":
+      case "patchInsFootnote":
+      case "patchDelFootnote":
         count += 1;
         break;
     }
@@ -927,6 +952,11 @@ function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[]
       case "patchDelMath":
         units.push({ kind: "math", latex: span.latex });
         break;
+      case "footnote":
+      case "patchInsFootnote":
+      case "patchDelFootnote":
+        units.push({ kind: "footnote", id: span.id, note: span.note });
+        break;
     }
   }
   return units;
@@ -935,6 +965,9 @@ function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[]
 function sameInlineDiffUnit(a: InlineDiffUnit, b: InlineDiffUnit): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "math") return b.kind === "math" && a.latex === b.latex;
+  if (a.kind === "footnote") {
+    return b.kind === "footnote" && a.id === b.id && a.note === b.note;
+  }
   return b.kind === "text" && a.text === b.text && sameMarks(a.marks, b.marks);
 }
 
@@ -968,12 +1001,25 @@ function pushInlineDiffUnit(spans: ViewDocSpan[], unit: InlineDiffUnit): void {
     spans.push({ kind: "math", latex: unit.latex });
     return;
   }
+  if (unit.kind === "footnote") {
+    spans.push({ kind: "footnote", id: unit.id, note: unit.note });
+    return;
+  }
   pushTextSpan(spans, unit.text, unit.marks);
 }
 
 function pushPatchInlineDiffUnit(spans: ViewDocSpan[], unit: InlineDiffUnit, op: "insert" | "delete", patchId: string): void {
   if (unit.kind === "math") {
     spans.push({ kind: op === "insert" ? "patchInsMath" : "patchDelMath", latex: unit.latex, patchId });
+    return;
+  }
+  if (unit.kind === "footnote") {
+    spans.push({
+      kind: op === "insert" ? "patchInsFootnote" : "patchDelFootnote",
+      id: unit.id,
+      note: unit.note,
+      patchId,
+    });
     return;
   }
   pushPatchTextSpan(spans, op === "insert" ? "patchIns" : "patchDel", unit.text, patchId, unit.marks);
@@ -1887,13 +1933,13 @@ export interface BlockPatchInput {
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
 const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "penNote"]);
-/** 行内节点类型:replace 的 hunk.before/after 是「行内切片」(text/hardBreak/inlineMath),
+/** 行内节点类型:replace 的 hunk.before/after 是「行内切片」(text/hardBreak/inlineMath/footnoteReference),
  * 本就属行内、该走行内文本通道。此前漏列 → pmNodesInlineSafe 误判其为结构块 → 内联通道返 null、
  * 块通道(pmNodesToViewBlocks 过滤行内节点)又返 [] → 纯文本改动被双通道丢弃(表现为"无法定位")。
  * 实证:packages/core buildDraftDiff 对段内文本 replace 产出的 before=[{type:"text",...}](见
  * proposalDiff inlineSliceAsNodes)。结构块(表格/列表/代码)的 replace 仍是块节点、不在此集 → 照旧落块通道。
  * inlineMath 在视图层按 math span 保留,offset 投影统一用 U+FFFC,不会再把 latex 源码长度当 PM 位置。 */
-const INLINE_NODE_PM_TYPES = new Set(["text", "hardBreak", "inlineMath"]);
+const INLINE_NODE_PM_TYPES = new Set(["text", "hardBreak", "inlineMath", "footnoteReference"]);
 
 function pmNodesInlineSafe(nodes: unknown): boolean {
   if (!Array.isArray(nodes)) return true;

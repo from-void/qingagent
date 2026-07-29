@@ -99,3 +99,35 @@ editDraft 的 op 载荷是 QingML **片段**(非整篇),按 action 规定合法�
 
 **硬约束**:片段解析只接受该 action 的合法根;越界(如给 replaceListItem 一个 `<table>`)→ 拒收报错,
 **不做"数组/单块/envelope 宽容归一"那种兼容**(否则旧坑在 QingML 形态原样长回来)。
+
+## 9. 纯文本脚注（MVP）
+
+`<footnote id="source_1">来源说明</footnote>` 是行内引用原子，编译为
+`AiFootnoteRun` → PM `footnoteReference`。`id` 必须稳定，且只允许
+`A-Z`、`a-z`、`0-9`、`_`、`-`（1–64 字符）；正文是去除首尾空白后的纯文本，
+不得嵌标签或 mark。同一文档中相同 `id` 可被多次引用，但 `note` 必须完全一致。
+显示编号按该 `id` 在文档中的首次出现顺序计算，不把编号写死在模型输出或节点属性里。
+
+示例：
+
+```html
+<p>这是第一处事实<footnote id="source_1">《资料甲》，第 12 页。</footnote>，
+也是第二处事实<footnote id="source_2">《资料乙》，2026 年版。</footnote>。</p>
+```
+
+脚注是引用原子，不是作用于任意文字范围的视觉样式，因此不得用 `mark` 表达。解析器遇到
+嵌套标签、截断脚注或同一 `id` 对应不同 `note` 时产生 warning/校验失败，不静默猜测正文。
+
+### 9.1 导出语义与降级边界
+
+| 格式 | 实际输出 |
+|---|---|
+| Markdown | 正文 `[^id]` 引用 + 文末 `[^id]: note` 定义 |
+| HTML | `doc-noteref` 行内引用 + 文末 `doc-endnotes` 区及回链 |
+| PDF | Chromium 打印上述 HTML，保留正文引用和**文末**语义脚注区 |
+| DOCX | `FootnoteReferenceRun` + `Document.footnotes`，生成 Word 原生页底脚注 |
+| TXT | 正文 `[n]` 引用 + 文末“脚注”区 |
+
+**PDF 不承诺每页页底脚注。** 当前 PDF 使用 Chromium 打印 HTML；要实现随分页重排的页底
+脚注需要更换或扩展分页排版引擎，不属于本 MVP。HTML/PDF 的诚实语义是文末注释及回链，
+不能在产品说明或验收中称为 Word 式分页脚注。

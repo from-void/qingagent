@@ -633,9 +633,9 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
   const blockId = block.blockId ?? getDeterministicId("ai-block", { index, block });
   switch (block.type) {
     case "paragraph":
-      return { type: "paragraph", attrs: attrsWithAlign(blockId, block.textAlign), content: runsToInline(block.runs) };
+      return { type: "paragraph", attrs: attrsWithAlign(blockId, block.textAlign), content: runsToInline(block.runs, blockId) };
     case "heading":
-      return { type: "heading", attrs: { ...attrsWithAlign(blockId, block.textAlign), level: block.level, anchor: block.anchor ?? null }, content: runsToInline(block.runs) };
+      return { type: "heading", attrs: { ...attrsWithAlign(blockId, block.textAlign), level: block.level, anchor: block.anchor ?? null }, content: runsToInline(block.runs, blockId) };
     case "blockquote":
       return {
         type: "blockquote",
@@ -718,7 +718,7 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
         attrs: { blockId, fileId: block.fileId, filename: block.filename, mimeType: block.mimeType, size: block.size },
       };
     case "penNote":
-      return { type: "penNote", attrs: { blockId }, content: runsToInline(block.runs) };
+      return { type: "penNote", attrs: { blockId }, content: runsToInline(block.runs, blockId) };
     case "taskList":
       return {
         type: "taskList",
@@ -764,7 +764,7 @@ function containerContentToPm(
   return [{
     type: "paragraph",
     attrs: { blockId: `${blockId}-p` },
-    content: runsToInline(block.runs),
+    content: runsToInline(block.runs, `${blockId}-p`),
   }];
 }
 
@@ -797,7 +797,7 @@ function listItemToPm(
       {
         type: "paragraph" as const,
         attrs: { blockId: `${itemBlockId}-p` },
-        content: runsToInline(item.runs),
+        content: runsToInline(item.runs, `${itemBlockId}-p`),
       },
       ...childBlocks,
     ],
@@ -821,7 +821,7 @@ function taskItemToPm(
       {
         type: "paragraph",
         attrs: { blockId: `${itemBlockId}-p` },
-        content: runsToInline(item.runs),
+        content: runsToInline(item.runs, `${itemBlockId}-p`),
       },
       ...childBlocks,
     ],
@@ -964,9 +964,19 @@ function rebaseBlockIdPrefix<T extends PmBlockNode>(node: T, oldPrefix: string, 
   return rewrite(node) as T;
 }
 
-function runsToInline(runs: readonly AiRun[]): PmInlineNode[] {
+function runsToInline(runs: readonly AiRun[], ownerId: string): PmInlineNode[] {
   const nodes: PmInlineNode[] = [];
-  for (const run of runs) {
+  for (const [runIndex, run] of runs.entries()) {
+    if (!("text" in run)) {
+      nodes.push({
+        type: "footnoteReference",
+        attrs: {
+          id: run.id ?? getDeterministicId("footnote", { ownerId, runIndex, note: run.note }),
+          note: run.note,
+        },
+      });
+      continue;
+    }
     if (run.text.length === 0) continue;
     // math mark 的 run 整体转 inlineMath 节点(text 即 LaTeX 源码),其他 mark 忽略。
     if (run.marks?.some((mark) => mark.type === "math")) {

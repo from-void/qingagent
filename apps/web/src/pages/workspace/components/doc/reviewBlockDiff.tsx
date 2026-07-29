@@ -69,6 +69,18 @@ function ReviewSpan({ span }: { span: ViewDocSpan }) {
       return <>{applyMarksWithBreaks(span.text, span.marks ?? [])}</>;
     case "math":
       return <MathView latex={span.latex} />;
+    case "footnote":
+      return (
+        <sup
+          className="pm-footnote-reference"
+          data-pm-node="footnoteReference"
+          data-footnote-id={span.id}
+          data-footnote-note={span.note}
+          data-footnote-number="※"
+          title={span.note}
+          tabIndex={0}
+        />
+      );
     case "patchIns":
       return <span className="wf-row-ins">{applyMarksWithBreaks(span.text, span.marks ?? [])}</span>;
     case "patchDel":
@@ -80,6 +92,22 @@ function ReviewSpan({ span }: { span: ViewDocSpan }) {
         </span>
       );
     case "patchDelMath":
+      return null;
+    case "patchInsFootnote":
+      return (
+        <span className="wf-row-ins">
+          <sup
+            className="pm-footnote-reference"
+            data-pm-node="footnoteReference"
+            data-footnote-id={span.id}
+            data-footnote-note={span.note}
+            data-footnote-number="※"
+            title={span.note}
+            tabIndex={0}
+          />
+        </span>
+      );
+    case "patchDelFootnote":
       return null;
     case "patchMark":
       return <>{applyMarksWithBreaks(span.text, span.marks)}</>;
@@ -528,8 +556,17 @@ function isColumnListNode(node: PmBlockNode | undefined): node is ColumnListNode
 }
 
 function spanAfterLength(span: ViewDocSpan): number {
-  if (span.kind === "patchDel" || span.kind === "patchDelMath") return 0;
-  if (span.kind === "math" || span.kind === "patchInsMath") return 1;
+  if (
+    span.kind === "patchDel" ||
+    span.kind === "patchDelMath" ||
+    span.kind === "patchDelFootnote"
+  ) return 0;
+  if (
+    span.kind === "math" ||
+    span.kind === "patchInsMath" ||
+    span.kind === "footnote" ||
+    span.kind === "patchInsFootnote"
+  ) return 1;
   return Array.from(span.text).length;
 }
 
@@ -565,7 +602,14 @@ function splitReviewSpansAtAfterLength(
       consumed += length;
       continue;
     }
-    if (span.kind === "math" || span.kind === "patchInsMath" || span.kind === "patchDelMath") {
+    if (
+      span.kind === "math" ||
+      span.kind === "patchInsMath" ||
+      span.kind === "patchDelMath" ||
+      span.kind === "footnote" ||
+      span.kind === "patchInsFootnote" ||
+      span.kind === "patchDelFootnote"
+    ) {
       right.push(span);
       split = true;
       continue;
@@ -583,7 +627,11 @@ function splitReviewSpansAtAfterLength(
 function inlineContentLength(node: PmBlockNode): number {
   if (!("content" in node) || !Array.isArray(node.content)) return 0;
   return node.content.reduce((sum, child) => {
-    if (child.type === "hardBreak" || child.type === "inlineMath") return sum + 1;
+    if (
+      child.type === "hardBreak" ||
+      child.type === "inlineMath" ||
+      child.type === "footnoteReference"
+    ) return sum + 1;
     if (child.type === "text") return sum + Array.from(child.text).length;
     return sum;
   }, 0);

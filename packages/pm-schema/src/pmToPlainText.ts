@@ -8,6 +8,8 @@ export interface PmToPlainTextOptions {
   skipMedia?: boolean;
   /** 跳过 taskItem 的 [ ]/[x] 展示装饰，仅保留任务正文与子块。 */
   skipTaskMarkers?: boolean;
+  /** 跳过脚注 note；正文字符数使用，搜索/AI 定位默认保留 note。 */
+  skipFootnotes?: boolean;
 }
 
 export function pmToPlainText(doc: PmDoc, opts?: PmToPlainTextOptions): string {
@@ -28,6 +30,9 @@ function nodeToText(node: PmNode, opts?: PmToPlainTextOptions): string {
         .map((child) => {
           if (child.type === "text") return child.text;
           if (child.type === "inlineMath") return child.attrs.latex;
+          if (child.type === "footnoteReference") {
+            return opts?.skipFootnotes ? "" : child.attrs.note;
+          }
           return "\n";
         })
         .join("");
@@ -55,6 +60,8 @@ function nodeToText(node: PmNode, opts?: PmToPlainTextOptions): string {
       return node.attrs.latex;
     case "inlineMath":
       return node.attrs.latex;
+    case "footnoteReference":
+      return opts?.skipFootnotes ? "" : node.attrs.note;
     case "image":
       // 媒体节点:图片不是散文正文。字数口径(skipMedia)下不计入;
       // 其它用途(搜索命中 / AI 定位 / 导出)仍取 caption/alt 作为可检索文本。

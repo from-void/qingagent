@@ -3,6 +3,7 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
+  FootnoteReferenceRun,
   HeadingLevel,
   HighlightColor,
   ImageRun,
@@ -30,6 +31,7 @@ import {
 import { documentLeadsWithTitle, drawioFallbackMessage, isDrawioExportSourceNormalized, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
 import { withRenderedDiagrams } from "./mermaidServer.js";
 import { rasterizeMathBatch, rasterizeSvgToPng } from "./rasterize.js";
+import { collectExportFootnotes } from "./footnotes.js";
 
 // ——— 公式图片预渲染 ———
 
@@ -165,13 +167,16 @@ export async function toDocx(
   // 先补渲染缺缓存的 Mermaid；drawio 只消费客户端持久化的安全 SVG 缓存。
   // DOCX 再把可用 SVG 栅格成 PNG 嵌入，缺失/失败则按 W4 设计回退源码。
   const prepared = await withRenderedDiagrams(document);
+  const footnotes = isPmDocDocument(prepared)
+    ? collectExportFootnotes(prepared)
+    : { definitions: [], numberById: new Map<string, number>() };
   // 批量预渲染文档中所有数学公式(单个 Chromium 上下文,避免逐公式开关上下文)。
   const mathImages = isPmDocDocument(prepared)
     ? await buildMathImages(collectMathFormulas(prepared))
     : new Map<string, ImageRun | null>();
   const numbering = createDocxNumberingRegistry();
   const sectionChildren = isPmDocDocument(prepared)
-    ? await pmDocToDocx(prepared, mathImages, numbering)
+    ? await pmDocToDocx(prepared, mathImages, numbering, footnotes.numberById)
     : (await Promise.all(prepared.map((section) =>
         sectionToDocx(
           section,
@@ -209,6 +214,20 @@ export async function toDocx(
     numbering: {
       config: numbering.config,
     },
+    ...(footnotes.definitions.length > 0
+      ? {
+          footnotes: Object.fromEntries(footnotes.definitions.map(({ number, note }) => [
+            String(number),
+            {
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: note, font: FONT })],
+                }),
+              ],
+            },
+          ])),
+        }
+      : {}),
     sections: [{ children }],
   });
 
@@ -219,8 +238,11 @@ async function pmDocToDocx(
   doc: PmDoc,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
+  footnoteNumbers: ReadonlyMap<string, number>,
 ): Promise<Array<Paragraph | Table>> {
-  return (await Promise.all(doc.content.map((node) => pmBlockToDocx(node, 0, {}, mathImages, numbering)))).flat();
+  return (await Promise.all(doc.content.map((node) =>
+    pmBlockToDocx(node, 0, {}, mathImages, numbering, footnoteNumbers),
+  ))).flat();
 }
 
 // 引用块视觉装饰:左缩进 + 左侧竖边框 + 浅暖底纹(与 callout/codeBlock 同色系),
@@ -239,6 +261,7 @@ async function pmBlockToDocx(
   opts: { inQuote?: boolean },
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
+  footnoteNumbers: ReadonlyMap<string, number>,
 ): Promise<Array<Paragraph | Table>> {
   const quoteDeco = opts.inQuote ? QUOTE_PARAGRAPH_DECORATION : {};
   switch (node.type) {
@@ -246,7 +269,9 @@ async function pmBlockToDocx(
       return (
         await Promise.all(
           node.content.map((column) =>
-            Promise.all(column.content.map((child) => pmBlockToDocx(child, depth, {}, mathImages, numbering))),
+            Promise.all(column.content.map((child) =>
+              pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers),
+            )),
           ),
         )
       ).flat(2);
@@ -260,7 +285,7 @@ async function pmBlockToDocx(
     case "heading":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], {bold: true}, mathImages),
+          children: pmInlineToDocx(node.content ?? [], {bold: true}, mathImages, footnoteNumbers),
           heading: headingLevelToDocx(node.attrs.level),
           alignment: alignmentToDocx(node.attrs.textAlign),
           ...quoteDeco,
@@ -269,7 +294,7 @@ async function pmBlockToDocx(
     case "paragraph":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], {}, mathImages),
+          children: pmInlineToDocx(node.content ?? [], {}, mathImages, footnoteNumbers),
           alignment: alignmentToDocx(node.attrs.textAlign),
           spacing: { after: 180 },
           ...quoteDeco,
@@ -278,18 +303,24 @@ async function pmBlockToDocx(
     case "penNote":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], { italics: true }, mathImages),
+          children: pmInlineToDocx(node.content ?? [], { italics: true }, mathImages, footnoteNumbers),
           spacing: { after: 180 },
         }),
       ];
     case "blockquote":
       // 把 inQuote 透传给子块,使引用内的段落/标题带上引用视觉装饰。
-      return (await Promise.all(node.content.map((child) => pmBlockToDocx(child, depth, { inQuote: true }, mathImages, numbering)))).flat();
+      return (await Promise.all(node.content.map((child) =>
+        pmBlockToDocx(child, depth, { inQuote: true }, mathImages, numbering, footnoteNumbers),
+      ))).flat();
     case "bulletList":
-      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, BULLET_NUMBERING, depth, mathImages, numbering)))).flat();
+      return (await Promise.all(node.content.map((item) =>
+        pmListItemToDocx(item.content, BULLET_NUMBERING, depth, mathImages, numbering, footnoteNumbers),
+      ))).flat();
     case "orderedList": {
       const reference = numbering.referenceFor(node, node.attrs.listStyle, node.attrs.start);
-      return (await Promise.all(node.content.map((item) => pmListItemToDocx(item.content, reference, depth, mathImages, numbering)))).flat();
+      return (await Promise.all(node.content.map((item) =>
+        pmListItemToDocx(item.content, reference, depth, mathImages, numbering, footnoteNumbers),
+      ))).flat();
     }
     case "horizontalRule":
       return [new Paragraph({ text: "————————", spacing: { after: 180 } })];
@@ -307,7 +338,9 @@ async function pmBlockToDocx(
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: await Promise.all(node.content.map(async (row) =>
             new TableRow({
-              children: await Promise.all(row.content.map((cell) => pmTableCellToDocx(cell, mathImages, numbering))),
+              children: await Promise.all(row.content.map((cell) =>
+                pmTableCellToDocx(cell, mathImages, numbering, footnoteNumbers),
+              )),
             }),
           )),
         }),
@@ -341,15 +374,15 @@ async function pmBlockToDocx(
             children.push(new Paragraph({
               children: [
                 new TextRun({ text: item.attrs.checked ? "☑ " : "☐ ", font: FONT }),
-                ...pmInlineToDocx(child.content ?? [], {}, mathImages),
+                ...pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
               ],
               indent: { left: depth * 360 },
               spacing: { after: 120 },
             }));
           } else if (child.type === "taskList") {
-            children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
+            children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
           } else {
-            children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering));
+            children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers));
           }
         }
       }
@@ -361,7 +394,7 @@ async function pmBlockToDocx(
         new Paragraph({
           children: [
             ...(index === 0 ? [new TextRun({ text: `${node.attrs.emoji ?? "💡"} `, font: FONT })] : []),
-            ...pmInlineToDocx(child.content ?? [], {}, mathImages),
+            ...pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
           ],
           shading: { type: ShadingType.CLEAR, fill },
           spacing: { after: 120 },
@@ -387,26 +420,27 @@ async function pmListItemToDocx(
   depth: number,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
+  footnoteNumbers: ReadonlyMap<string, number>,
 ): Promise<Array<Paragraph | Table>> {
   const children: Array<Paragraph | Table> = [];
   for (const child of content) {
     if (child.type === "paragraph" || child.type === "heading" || child.type === "penNote") {
       children.push(new Paragraph({
-        children: pmInlineToDocx(child.content ?? [], {}, mathImages),
+        children: pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
         numbering: { reference, level: Math.min(depth, 5) },
         spacing: { after: 120 },
       }));
       continue;
     }
     if (child.type === "bulletList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
+      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
       continue;
     }
     if (child.type === "orderedList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering));
+      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
       continue;
     }
-    children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering));
+    children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers));
   }
   return children;
 }
@@ -415,8 +449,11 @@ async function pmTableCellToDocx(
   cell: PmTableCellNode,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
+  footnoteNumbers: ReadonlyMap<string, number>,
 ): Promise<TableCell> {
-  const children = (await Promise.all(cell.content.map((child) => pmBlockToDocx(child, 0, {}, mathImages, numbering)))).flat();
+  const children = (await Promise.all(cell.content.map((child) =>
+    pmBlockToDocx(child, 0, {}, mathImages, numbering, footnoteNumbers),
+  ))).flat();
   const colspan = normalizeTableSpan(cell.attrs?.colspan);
   const rowspan = normalizeTableSpan(cell.attrs?.rowspan);
   // 单元格背景色:此前 docx 导出丢失(回归 table-cell-color)。docx TableCell 原生支持 shading,
@@ -448,10 +485,14 @@ export function pmInlineToDocx(
   content: readonly PmInlineNode[] = [],
   base: Partial<DocxTextStyle> = {},
   mathImages: MathImages = new Map(),
+  footnoteNumbers: ReadonlyMap<string, number> = new Map(),
 ): ParagraphChild[] {
   return content.flatMap((node) => {
     if (node.type === "hardBreak") return [new TextRun({ break: 1 })];
     if (node.type === "inlineMath") return [latexToDocxRun(node.attrs.latex, false, mathImages)];
+    if (node.type === "footnoteReference") {
+      return [new FootnoteReferenceRun(footnoteNumbers.get(node.attrs.id) ?? 0)];
+    }
     return [pmTextNodeToDocx(node.text, node.marks ?? [], base)];
   });
 }

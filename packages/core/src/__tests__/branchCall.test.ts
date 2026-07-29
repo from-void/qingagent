@@ -297,7 +297,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     const result = await branchCall({
       sessionSnapshot: snapshot,
       steeringTail: "直接回答。",
-      callSite: "titleGeneration",
+      callSite: "generateTitle",
       requestContext,
       thinking: false,
       temperature: 0.35,

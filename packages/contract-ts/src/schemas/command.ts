@@ -145,6 +145,7 @@ const sendMessageDataSchema = z.object({
   clientMessageId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   turnContext: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
+  turnKind: z.literal("generateDerivative").optional(),
   displayCard: actionCardDataSchema.optional(),
   reviewContext: reviewContextSchema.optional(),
 }) satisfies z.ZodType<SendMessage>;

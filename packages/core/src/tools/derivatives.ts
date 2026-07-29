@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createTool } from "@mastra/core/tools";
-import { getStablePmJson, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
+import {
+  aiBlocksToQingml,
+  getStablePmJson,
+  pmToAiIr,
+  pmToPlainText,
+  type PmDoc,
+} from "@qingagent/pm-schema";
 import { z } from "zod";
 import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 import {
@@ -36,7 +42,7 @@ export const derivativeBriefTool = createTool({
     ok: z.boolean(), dtype: z.string().optional(), targetLang: z.string().optional(), layoutPrompt: z.string().optional(),
     writingPrompt: z.string().optional(), privatePrompt: z.string().optional(),
     skillGuidance: z.string().optional(), skillName: z.string().nullable().optional(),
-    sourceTitle: z.string().optional(), sourceText: z.string().optional(),
+    sourceTitle: z.string().optional(), sourceText: z.string().optional(), sourceQingml: z.string().optional(),
     sourceVersion: z.number().optional(), error: z.string().optional(),
   }),
   execute: async (input, context) => {
@@ -51,7 +57,7 @@ export const derivativeBriefTool = createTool({
     return withTransaction<{
       ok: boolean; dtype?: string; targetLang?: string; layoutPrompt?: string; writingPrompt?: string;
       privatePrompt?: string; skillGuidance?: string; skillName?: string | null;
-      sourceTitle?: string; sourceText?: string;
+      sourceTitle?: string; sourceText?: string; sourceQingml?: string;
       sourceVersion?: number; error?: string;
     }>(async (client) => {
       const result = await client.execute({
@@ -60,10 +66,12 @@ export const derivativeBriefTool = createTool({
       });
       const source = result.rows[0];
       if (!source) return commitTransaction({ ok: false, error: "源文档不存在" });
+      const sourceDoc = parsePmDoc(source.doc_pm);
       return commitTransaction({ ok: true, dtype: meta.dtype, targetLang: meta.targetLang ?? undefined, layoutPrompt: layout?.prompt ?? "",
         writingPrompt: writing.prompt, privatePrompt: meta.privatePrompt,
         skillGuidance: guidance.text, skillName: guidance.skillName,
-        sourceTitle: String(source.title), sourceText: pmToPlainText(parsePmDoc(source.doc_pm)),
+        sourceTitle: String(source.title), sourceText: pmToPlainText(sourceDoc),
+        sourceQingml: aiBlocksToQingml(pmToAiIr(sourceDoc).blocks),
         sourceVersion: Number(source.doc_version) });
     });
   },

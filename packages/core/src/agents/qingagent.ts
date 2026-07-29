@@ -65,6 +65,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import type { RequestContext } from "@mastra/core/request-context";
 import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
 import { modelFetch } from "../llm/modelTransport.js";
+import {
+  isModelCallSite,
+  MODEL_CALL_SITES,
+} from "../llm/modelCallSites.js";
 // F1 两层 key:模型实例按"实际生效的 apiKey"缓存——env 兜底请求共用一个实例(等价
 // 旧单例,保留 prompt-cache 等收益),访客自带 key 的请求各自命中自己的缓存项。
 // 上限防滥用:访客 key 任意多,缓存只留最近 16 个。
@@ -118,7 +122,7 @@ function getRepairingModelFor(requestContext?: RequestContext) {
       ),
       todoAwarenessSource,
     );
-    return maybeTrackNonBridgeModel(contextualModel, requestContext);
+    return trackQingagentModel(contextualModel, requestContext);
   }
 
   // OpenAI 兼容主链按 requestContext 建轻量 provider，fetch 闭包才能只把本 turn 的最终
@@ -137,16 +141,15 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     ),
     todoAwarenessSource,
   );
-  return maybeTrackNonBridgeModel(contextualModel, requestContext);
+  return trackQingagentModel(contextualModel, requestContext);
 }
 
-/** 正常主链仍由 processAgentStream 按 step 记账；live eval 不经过 bridge，显式接请求级包装。 */
-function maybeTrackNonBridgeModel<T extends object>(model: T, requestContext?: RequestContext): T {
+/** 主 Agent 所有路径都在真实 provider 边界入账；RequestContext 终态动态读取 run/stream。 */
+function trackQingagentModel<T extends object>(model: T, requestContext?: RequestContext): T {
   const callSite = requestContext?.get("usageCallSite");
-  if (typeof callSite !== "string" || !callSite) return model;
   return wrapModernModelUsage(model, {
     requestContext,
-    callSite,
+    callSite: isModelCallSite(callSite) ? callSite : MODEL_CALL_SITES.unknown,
     modelId: resolveModelId(requestContext, "flash"),
     keyOrigin: resolveDeepseekAuth(requestContext).origin,
   });

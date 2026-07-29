@@ -40,11 +40,17 @@ import {
   sanitizeBaseUrl,
   type ModelProvider,
 } from "./modelBaseUrl.js";
-import { createUsageMiddleware, recordUsageOutcome } from "./usageMiddleware.js";
-import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
+import {
+  createUsageMiddleware,
+  logModelCallStart,
+  recordModelCallOutcome,
+} from "./usageMiddleware.js";
 import { modelFetch } from "./modelTransport.js";
-import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
+import {
+  MODEL_CALL_SITES,
+  type ModelCallSite,
+} from "./modelCallSites.js";
 import {
   BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY,
   BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY,
@@ -98,7 +104,7 @@ export function createSnapshottingQingagentModel(
 export interface BranchCallInput {
   sessionSnapshot: SessionSnapshot;
   steeringTail: string | BranchMessage[];
-  callSite: string;
+  callSite: ModelCallSite;
   requestContext?: RequestContext;
   lane?: number | null;
   attempt?: number;
@@ -451,29 +457,23 @@ async function recordBranchUsage(
   usage: unknown,
   attempt: number,
   reason: string | null,
+  startedAt: number,
+  finishReason?: string | null,
 ): Promise<void> {
   const { origin } = resolveModelAuth(input.requestContext);
-  const normalized = normalizeLlmUsageCounts(usage);
-  const hitTokens = normalized?.promptCacheHitTokens;
-  const missTokens = normalized?.promptCacheMissTokens;
-  if (!reason && typeof hitTokens === "number" && typeof missTokens === "number") {
-    void observeCacheOutcome({
-      sessionId: input.sessionSnapshot.sessionId,
-      callSite: input.callSite,
-      hitTokens,
-      missTokens,
-    });
-  }
-  await recordUsageOutcome({
+  await recordModelCallOutcome({
+    requestContext: input.requestContext,
     sessionId: input.sessionSnapshot.sessionId,
-    runId: (input.requestContext?.get("runId") as string | null | undefined) ?? null,
     callSite: input.callSite,
     modelId: resolveModelId(input.requestContext, "flash"),
     keyOrigin: origin,
     lane: input.lane ?? null,
     attempt,
+    transport: "branch",
+    startedAt,
     usage,
     reason,
+    finishReason,
   });
 }
 
@@ -532,7 +532,6 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       const violation = validateWireMessages(replayMessages);
       if (violation) {
         console.warn(`[branchCall] site=${input.callSite} preflight-fail: ${violation} → fallback(0ms)`);
-        void recordBranchUsage(input, null, attempt, `preflight: ${violation}`.slice(0, 200));
         return { ok: false, reason: "preflight_failed", attempts: retry, toolCallRetries: retry, error: violation };
       }
     }
@@ -561,6 +560,14 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。
     const t0 = Date.now();
     let tFirstDelta = 0;
+    logModelCallStart({
+      requestContext: input.requestContext,
+      sessionId: input.sessionSnapshot.sessionId,
+      callSite: input.callSite,
+      transport: "branch",
+      lane: input.lane ?? null,
+      attempt,
+    });
     console.log(
       `[branchCall] site=${input.callSite} start snapshot(gen=${input.sessionSnapshot.generation}` +
       ` epoch=${input.sessionSnapshot.epoch} age=${Date.now() - Date.parse(input.sessionSnapshot.capturedAt)}ms)` +
@@ -581,7 +588,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       if (!response.ok) {
         const error = await providerErrorSummary(response);
         console.warn(`[branchCall] site=${input.callSite} provider-reject status=${response.status} latency=${Date.now() - t0}ms err=${error.slice(0, 120)}`);
-        void recordBranchUsage(input, null, attempt, error);
+        void recordBranchUsage(input, null, attempt, error, t0);
         return {
           ok: false,
           reason: "provider_error",
@@ -614,10 +621,10 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       }
       if (raw.providerError) {
         const error = streamErrorSummary(raw.providerError);
-        void recordBranchUsage(input, raw.usage, attempt, error);
+        void recordBranchUsage(input, raw.usage, attempt, error, t0, raw.finishReason);
         return { ok: false, reason: "provider_error", attempts: 1, toolCallRetries: 0, error };
       }
-      void recordBranchUsage(input, raw.usage, attempt, null);
+      void recordBranchUsage(input, raw.usage, attempt, null, t0, raw.finishReason);
       {
         const u = asRecord(raw.usage);
         console.log(
@@ -706,7 +713,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       const reason = input.abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")
         ? "provider_request_aborted"
         : "provider_request_error";
-      void recordBranchUsage(input, null, attempt, reason);
+      void recordBranchUsage(input, null, attempt, reason, t0);
       return {
         ok: false,
         reason: "provider_error",
@@ -750,7 +757,7 @@ export const DEEPSEEK_CONTEXT_WINDOWS: Record<string, number> = {
 
 export interface UsageTrackedModelOptions {
   /** 调用点可选以兼容仓外消费者；缺省仍留痕到 unknown。 */
-  callSite?: string;
+  callSite?: ModelCallSite;
   /** 赛马 lane；同一包装模型内的 provider 请求 attempt 自动从 1 连续递增。 */
   lane?: number | null;
   /** 调用层已知的串行请求序号；省略时由同一包装模型自动递增。 */
@@ -1020,7 +1027,7 @@ export function createDeepseekProvider(
     model,
     middleware: createUsageMiddleware({
       requestContext,
-      callSite: options.callSite ?? "unknown",
+      callSite: options.callSite ?? MODEL_CALL_SITES.unknown,
       modelId,
       keyOrigin: origin,
       lane: options.lane,
@@ -1066,7 +1073,7 @@ export async function getVisionModel(
     model,
     middleware: createUsageMiddleware({
       requestContext,
-      callSite: options.callSite ?? "unknown",
+      callSite: options.callSite ?? MODEL_CALL_SITES.unknown,
       modelId: config.model,
       keyOrigin: config.keyOrigin,
       lane: options.lane,

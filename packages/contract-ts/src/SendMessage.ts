@@ -4,6 +4,8 @@ import type { SkillRef } from "./SkillRef";
 import type { ActionCardData } from "./ActionCard";
 import type { ReviewContext } from "./ReviewTemplates";
 
+export type SendMessageTurnKind = "generateDerivative";
+
 export type SendMessage = { sessionId: string, text: string,
 /** @deprecated 仅保留空数组线协议兼容；资源引用请使用 `chips`。 */
 mentions: Array<ResourceRef>, skills: Array<SkillRef>,
@@ -42,6 +44,8 @@ richText?: string,
  * 不得渲染进用户气泡。
  */
 turnContext?: string,
+/** 受控的用户动作分类，只用于服务端模型调用归属，不接受任意 site。 */
+turnKind?: SendMessageTurnKind,
 /** 可选的用户侧展示卡；模型仍接收 text 原文。 */
 displayCard?: ActionCardData,
 /** 审查菜单发起时的结构化类型/模板标识；只约束当前回合。 */

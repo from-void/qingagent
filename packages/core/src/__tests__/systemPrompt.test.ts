@@ -141,6 +141,14 @@ describe("system prompt S3", () => {
       "colspan/rowspan 属性必须照抄",
       "列宽由系统自动保留",
       "table ref + 当前 0-based 索引",
+      // 脚注格式范本必须位于 agent 主循环真实 system 上下文，生成与编辑共用。
+      '<footnote id="fn-1">注释正文</footnote>',
+      "footnote 是不可拆分的行内引用原子",
+      "模型不要写 [1]/[2] 假装脚注",
+      "同一 id 重复引用时 note 必须逐字一致",
+      "编辑已有脚注必须保留引用位置和 id",
+      "优先依据保留结构的 sourceQingml",
+      "源文脚注要保留引用位置与 id",
     ]) {
       expect(prompt).toContain(keyword);
     }

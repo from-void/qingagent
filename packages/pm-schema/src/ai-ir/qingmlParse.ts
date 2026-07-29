@@ -17,6 +17,7 @@ import {
   type AiColumn,
   type AiListItem,
   type AiRun,
+  type AiTextRun,
   type AiRunMark,
   type AiTableCell,
   type AiTaskListItem,
@@ -102,6 +103,7 @@ const INLINE_TAGS = new Set([
   "mark",
   "color",
   "math",
+  "footnote",
   "br",
 ]);
 
@@ -136,6 +138,7 @@ export function qingmlParse(text: string): { title: string | null; blocks: AiBlo
   }
 
   const blocks = parseNodesAsBlocks(contentNodes, ctx);
+  validateFootnoteDefinitions(blocks, ctx);
   if (!nodes.some(isTag) && hasMeaningfulText(text)) {
     warn(ctx, "plain-text-document", "harmless", "输入没有 QingML 标签，按纯文本段落解析。");
   }
@@ -520,6 +523,21 @@ function parseInlineNodes(nodes: readonly DomNode[], ctx: ParseContext, options:
       if (latex) appendText(runs, latex, [{ type: "math" }], true);
       return;
     }
+    if (name === "footnote") {
+      if (!hasExplicitClosingTag(node, ctx.source)) {
+        warn(ctx, "truncated-footnote", "bad-block", "<footnote> 缺少显式闭合标签，疑似输出截断。");
+      }
+      if (node.children.some((child) => !isText(child))) {
+        warn(ctx, "nested-footnote-content", "bad-block", "<footnote> 内只允许纯文本和实体转义，不能嵌套标签。");
+      }
+      const id = optionalString(node.attribs.id);
+      runs.push({
+        type: "footnote",
+        ...(id ? { id } : {}),
+        note: collapseInlineWhitespace(textContent(node.children)).trim(),
+      });
+      return;
+    }
     if (isInlineMarkTag(name)) {
       walkChildren(node.children, addInlineMark(node, marks));
       return;
@@ -582,7 +600,7 @@ function appendText(runs: AiRun[], text: string, marks: readonly AiRunMark[], pr
   if (!value) return;
   const normalizedMarks = normalizeMarkList(marks);
   const last = runs[runs.length - 1];
-  if (last && sameMarks(last.marks ?? [], normalizedMarks)) {
+  if (last && isAiTextRun(last) && sameMarks(last.marks ?? [], normalizedMarks)) {
     last.text += value;
     return;
   }
@@ -591,32 +609,76 @@ function appendText(runs: AiRun[], text: string, marks: readonly AiRunMark[], pr
 
 function appendNewlineIfNeeded(runs: AiRun[], marks: readonly AiRunMark[]): void {
   const last = runs[runs.length - 1];
-  if (!last || last.text.endsWith("\n")) return;
+  if (!last || (isAiTextRun(last) && last.text.endsWith("\n"))) return;
   appendText(runs, "\n", marks, true);
 }
 
 function normalizeRuns(input: readonly AiRun[]): AiRun[] {
   const runs = input
-    .map((run) => ({ ...run, marks: run.marks ? normalizeMarkList(run.marks) : undefined }))
-    .filter((run) => run.text.length > 0);
+    .map((run): AiRun =>
+      isAiTextRun(run)
+        ? { ...run, marks: run.marks ? normalizeMarkList(run.marks) : undefined }
+        : { ...run, note: run.note.trim() },
+    )
+    .filter((run) => !isAiTextRun(run) || run.text.length > 0);
 
   if (runs.length === 0) return [];
-  runs[0] = { ...runs[0]!, text: runs[0]!.text.replace(/^[ \t\r\n\f]+/, "") };
+  const first = runs[0];
+  if (first && isAiTextRun(first)) {
+    runs[0] = { ...first, text: first.text.replace(/^[ \t\r\n\f]+/, "") };
+  }
   const lastIndex = runs.length - 1;
-  runs[lastIndex] = { ...runs[lastIndex]!, text: runs[lastIndex]!.text.replace(/[ \t\r\n\f]+$/, "") };
+  const last = runs[lastIndex];
+  if (last && isAiTextRun(last)) {
+    runs[lastIndex] = { ...last, text: last.text.replace(/[ \t\r\n\f]+$/, "") };
+  }
 
   const merged: AiRun[] = [];
   for (const run of runs) {
+    if (!isAiTextRun(run)) {
+      merged.push(run);
+      continue;
+    }
     if (run.text.length === 0) continue;
     const marks = run.marks && run.marks.length > 0 ? run.marks : undefined;
     const prev = merged[merged.length - 1];
-    if (prev && sameMarks(prev.marks ?? [], marks ?? [])) {
+    if (prev && isAiTextRun(prev) && sameMarks(prev.marks ?? [], marks ?? [])) {
       prev.text += run.text;
       continue;
     }
     merged.push(marks ? { text: run.text, marks } : { text: run.text });
   }
   return merged;
+}
+
+function isAiTextRun(run: AiRun): run is AiTextRun {
+  return !("type" in run);
+}
+
+function validateFootnoteDefinitions(blocks: readonly AiBlock[], ctx: ParseContext): void {
+  const definitions = new Map<string, string>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      record.type === "footnote"
+      && typeof record.id === "string"
+      && typeof record.note === "string"
+    ) {
+      const previous = definitions.get(record.id);
+      if (previous !== undefined && previous !== record.note) {
+        warn(ctx, "conflicting-footnote-id", "bad-block", `脚注 id "${record.id}" 对应了不同 note。`);
+      } else {
+        definitions.set(record.id, record.note);
+      }
+    }
+    Object.values(record).forEach(visit);
+  };
+  visit(blocks);
 }
 
 function normalizeMarkList(marks: readonly AiRunMark[]): AiRunMark[] {

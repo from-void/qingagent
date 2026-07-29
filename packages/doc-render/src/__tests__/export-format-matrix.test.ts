@@ -53,7 +53,19 @@ const BLOCKS: BlockDef[] = [
 ];
 
 // 容器/内联节点:不作为独立块导出,显式登记。新增 schema 节点必须落进 BLOCKS 或这里。
-const EXCLUDED = new Set(["doc", "text", "hardBreak", "tableRow", "tableCell", "tableHeader", "listItem", "taskItem", "column"]);
+const EXCLUDED = new Set([
+  "doc",
+  "text",
+  "hardBreak",
+  "inlineMath",
+  "footnoteReference",
+  "tableRow",
+  "tableCell",
+  "tableHeader",
+  "listItem",
+  "taskItem",
+  "column",
+]);
 
 const megaDoc: PmDoc = {
   type: "doc",

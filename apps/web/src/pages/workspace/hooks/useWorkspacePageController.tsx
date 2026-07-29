@@ -3097,6 +3097,7 @@ export function useWorkspacePageController() {
               fileIds: [],
               clientMessageId,
               displayCard,
+              ...(!reviewContext ? { turnKind: "generateDerivative" as const } : {}),
               ...(reviewContext ? { reviewContext } : {}),
             },
           } satisfies Extract<Command, { kind: "sendMessage" }>;

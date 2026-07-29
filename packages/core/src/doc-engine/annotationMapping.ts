@@ -31,7 +31,8 @@ function textBetweenPmDoc(doc: PmDoc, from: number, to: number): string {
     if (
       value.type === "text" ||
       value.type === "hardBreak" ||
-      value.type === "inlineMath"
+      value.type === "inlineMath" ||
+      value.type === "footnoteReference"
     ) {
       const text = projectInlineNodeText(value as PmInlineNode);
       const start = Math.max(0, from - pos);
@@ -70,7 +71,7 @@ export function mappingFromPmSteps(steps: readonly PmStep[]): Mapping {
   return mapping;
 }
 
-const INLINE_NODE_TYPES = new Set(["text", "hardBreak", "inlineMath"]);
+const INLINE_NODE_TYPES = new Set(["text", "hardBreak", "inlineMath", "footnoteReference"]);
 
 function isBlockLevelHunk(hunk: DiffHunk): boolean {
   if (hunk.op === "markAdd" || hunk.op === "markRemove") return false;

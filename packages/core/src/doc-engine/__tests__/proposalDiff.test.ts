@@ -768,3 +768,41 @@ describe("拆干净:锚点清理(★裁决 260710)", () => {
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 });
+
+describe("脚注行内原子 diff", () => {
+  it("note 或 id 改动生成原子 replace，应用后完整保留 attrs", () => {
+    const base = doc([paragraph("p", [
+      text("正文"),
+      { type: "footnoteReference", attrs: { id: "source_a", note: "旧来源" } },
+      text("继续"),
+    ])]);
+    const draft = doc([paragraph("p", [
+      text("正文"),
+      { type: "footnoteReference", attrs: { id: "source_b", note: "新来源" } },
+      text("继续"),
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      before: [{
+        type: "footnoteReference",
+        attrs: { id: "source_a", note: "旧来源" },
+      }],
+      after: [{
+        type: "footnoteReference",
+        attrs: { id: "source_b", note: "新来源" },
+      }],
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("同 id 同 note 不产生虚假 hunk", () => {
+    const base = doc([paragraph("p", [
+      text("正文"),
+      { type: "footnoteReference", attrs: { id: "source_a", note: "来源" } },
+    ])]);
+    expect(buildDraftDiff(base, structuredClone(base))).toEqual([]);
+  });
+});

@@ -1,5 +1,5 @@
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmParagraphNode, PmHeadingNode, PmTableCellNode, PmListItemNode, PmTaskItemNode } from "../types";
-import type { AiBlock, AiDocument, AiListItem, AiRun, AiRunMark, AiTaskListItem } from "./aiIrSchema";
+import type { AiBlock, AiDocument, AiListItem, AiRun, AiRunMark, AiTaskListItem, AiTextRun } from "./aiIrSchema";
 
 export function pmToAiIr(doc: PmDoc): AiDocument {
   return {
@@ -29,7 +29,11 @@ export function blockToAi(node: PmBlockNode): AiBlock {
       };
     case "codeBlock":
       // language 缺省统一为 "plaintext",与 aiIrToPm 的缺省对称(language:null 往返会漂移成 "plaintext")。
-      return { type: "codeBlock", language: node.attrs.language ?? "plaintext", text: inlineToRuns(node.content ?? []).map((run) => run.text).join("") };
+      return {
+        type: "codeBlock",
+        language: node.attrs.language ?? "plaintext",
+        text: (node.content ?? []).map((child) => child.text).join(""),
+      };
     case "bulletList":
       return { type: "bulletList", items: node.content.map(listItemToAi) };
     case "orderedList": {
@@ -157,11 +161,14 @@ function cellToAi(cell: PmTableCellNode) {
  *  两个相邻公式合并会把两条 latex 拼成一条。 */
 function mergeAdjacentRuns(runs: AiRun[]): AiRun[] {
   const out: AiRun[] = [];
-  const isMath = (run: AiRun) => run.marks?.some((mark) => mark.type === "math") === true;
+  const isText = (run: AiRun): run is AiTextRun => !("type" in run);
+  const isMath = (run: AiTextRun) => run.marks?.some((mark) => mark.type === "math") === true;
   for (const run of runs) {
     const prev = out[out.length - 1];
     if (
       prev &&
+      isText(prev) &&
+      isText(run) &&
       !isMath(prev) &&
       !isMath(run) &&
       JSON.stringify(prev.marks ?? []) === JSON.stringify(run.marks ?? [])
@@ -184,6 +191,10 @@ function inlineToRuns(content: readonly PmInlineNode[]): AiRun[] {
     // 行内公式整体作为一个 run:text 即 LaTeX 源码,挂 math mark。
     if (node.type === "inlineMath") {
       runs.push({ text: node.attrs.latex, marks: [{ type: "math" }] });
+      continue;
+    }
+    if (node.type === "footnoteReference") {
+      runs.push({ type: "footnote", id: node.attrs.id, note: node.attrs.note });
       continue;
     }
     // 无 marks 时省略键:`marks: undefined` 会进入 getDeterministicId 的稳定串,

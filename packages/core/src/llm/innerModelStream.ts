@@ -11,10 +11,11 @@ import {
   type BranchMessage,
   type DeepseekTier,
 } from "./modelConfig.js";
+import type { ModelCallSite } from "./modelCallSites.js";
 
 export interface InnerModelStreamCall {
   requestContext?: RequestContext;
-  callSite: string;
+  callSite: ModelCallSite;
   lane?: number | null;
   attempt?: number;
   tier?: DeepseekTier;

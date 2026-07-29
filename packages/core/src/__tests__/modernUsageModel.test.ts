@@ -59,7 +59,7 @@ function options() {
       ["sessionId", "session-modern"],
       ["runId", "run-modern"],
     ] as never),
-    callSite: "omSidecar",
+    callSite: "omObserve" as const,
     modelId: "glm-test",
     keyOrigin: "env" as const,
   };
@@ -91,7 +91,7 @@ describe("modern usage model", () => {
 
     await model.doGenerate();
     await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
-      callSite: "omSidecar",
+      callSite: "omObserve",
       inputTokens: 15_000,
       outputTokens: 10,
       cacheHitTokens: 12_000,
@@ -99,7 +99,7 @@ describe("modern usage model", () => {
     })));
     expect(observeCacheOutcomeMock).toHaveBeenCalledWith({
       sessionId: "session-modern",
-      callSite: "omSidecar",
+      callSite: "omObserve",
       hitTokens: 12_000,
       missTokens: 3_000,
     });
@@ -117,7 +117,7 @@ describe("modern usage model", () => {
     const calls = recordUsageEventMock.mock.calls as unknown as Array<[{ attempt?: number }]>;
     expect(calls.map(([event]) => event.attempt)).toEqual([1, 2]);
     expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
-      callSite: "omSidecar",
+      callSite: "omObserve",
       inputTokens: 10,
       outputTokens: 2,
     }));
@@ -153,5 +153,50 @@ describe("modern usage model", () => {
     await drain((await make().doStream()).stream);
     const calls = recordUsageEventMock.mock.calls as unknown as Array<[{ attempt?: number }]>;
     expect(calls.map(([event]) => event.attempt)).toEqual([1, 2]);
+  });
+
+  it("wrapper 构造和请求开始后才写入 runId，终态仍读取最新关联", async () => {
+    let finishRequest!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finishRequest = resolve;
+    });
+    const dynamic = options();
+    dynamic.requestContext.set("runId", null);
+    dynamic.requestContext.set("streamId", "stream-dynamic");
+    const model = wrapModernModelUsage({
+      doGenerate: async () => {
+        await gate;
+        return {
+          usage: {
+            inputTokens: 10,
+            outputTokens: 2,
+            promptCacheHitTokens: 7,
+            promptCacheMissTokens: 3,
+          },
+          finishReason: "stop",
+        };
+      },
+    }, dynamic);
+
+    const pending = model.doGenerate();
+    dynamic.requestContext.set("runId", "run-late");
+    finishRequest();
+    await pending;
+
+    await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-modern",
+        runId: "run-late",
+        callSite: "omObserve",
+        cacheHitTokens: 7,
+        cacheMissTokens: 3,
+      }),
+    ));
+    await model.doGenerate();
+    await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledTimes(2));
+    const attempts = recordUsageEventMock.mock.calls as unknown as Array<
+      [{ attempt?: number }]
+    >;
+    expect(attempts.map(([event]) => event.attempt)).toEqual([1, 2]);
   });
 });

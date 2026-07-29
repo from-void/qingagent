@@ -19,6 +19,10 @@ import { hardenInlineSvg } from "../browser/svgSanitize.js";
 import { DOCUMENT_EXPORT_CSS } from "./documentStyles.js";
 import { highlightCodeHtml, katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
 import {
+  collectExportFootnotes,
+  type ExportFootnoteRegistry,
+} from "./footnotes.js";
+import {
   documentLeadsWithTitle,
   drawioFallbackMessage,
   isDrawioExportSourceNormalized,
@@ -44,9 +48,18 @@ import {
 // 单次 toHtml 调用内,记录是否渲染过公式——是则在 <head> 注入 KaTeX 自包含 CSS(含 base64 字体)。
 // toHtml 全程同步执行,模块级标志在入口重置即可,无并发问题。
 let mathUsedInRender = false;
+let activeFootnotes: ExportFootnoteRegistry = {
+  definitions: [],
+  numberById: new Map(),
+};
+let activeFootnoteRefIds = new Map<string, string[]>();
 
 export function toHtml(document: ExportDocument, options: ExportOptions = {}): string {
   mathUsedInRender = false;
+  activeFootnotes = isPmDocDocument(document)
+    ? collectExportFootnotes(document)
+    : { definitions: [], numberById: new Map() };
+  activeFootnoteRefIds = new Map();
   const body = isPmDocDocument(document)
     ? document.content.map(pmBlockToHtml).join("\n")
     : document.map(legacySectionToHtml).join("\n");
@@ -55,7 +68,11 @@ export function toHtml(document: ExportDocument, options: ExportOptions = {}): s
   const titleHtml = title && !documentLeadsWithTitle(document, title)
     ? `<h1 class="doc-title">${escapeHtml(title)}</h1>\n`
     : "";
-  return buildDocumentHtml(`${titleHtml}${body}`, title, mathUsedInRender);
+  return buildDocumentHtml(
+    `${titleHtml}${body}${footnotesToHtml()}`,
+    title,
+    mathUsedInRender,
+  );
 }
 
 function buildDocumentHtml(bodyHtml: string, title: string | undefined, mathUsed: boolean): string {
@@ -277,9 +294,30 @@ export function pmInlineToHtml(content: readonly PmInlineNode[] = []): string {
         }
         return `<span class="inline-math">${escapeHtml(node.attrs.latex)}</span>`;
       }
+      if (node.type === "footnoteReference") {
+        const number = activeFootnotes.numberById.get(node.attrs.id) ?? 0;
+        const refs = activeFootnoteRefIds.get(node.attrs.id) ?? [];
+        const refId = `fnref-${node.attrs.id}${refs.length === 0 ? "" : `-${refs.length + 1}`}`;
+        refs.push(refId);
+        activeFootnoteRefIds.set(node.attrs.id, refs);
+        return `<sup class="footnote-ref" id="${escapeAttr(refId)}" role="doc-noteref"><a href="#fn-${escapeAttr(node.attrs.id)}" aria-describedby="fn-${escapeAttr(node.attrs.id)}">${number}</a></sup>`;
+      }
       return pmTextNodeToHtml(node.text, node.marks ?? []);
     })
     .join("");
+}
+
+function footnotesToHtml(): string {
+  if (activeFootnotes.definitions.length === 0) return "";
+  const items = activeFootnotes.definitions.map(({ id, note, number }) => {
+    const backlinks = (activeFootnoteRefIds.get(id) ?? [])
+      .map((refId, index) =>
+        `<a class="footnote-backref" href="#${escapeAttr(refId)}" aria-label="返回脚注 ${number} 的第 ${index + 1} 个引用">↩</a>`,
+      )
+      .join(" ");
+    return `<li id="fn-${escapeAttr(id)}" role="doc-endnote"><span class="footnote-note">${escapeHtml(note)}</span>${backlinks ? ` ${backlinks}` : ""}</li>`;
+  }).join("\n");
+  return `\n<section class="footnotes" role="doc-endnotes" aria-label="脚注"><hr><ol>${items}</ol></section>`;
 }
 
 function pmTextNodeToHtml(text: string, marks: readonly PmMark[]): string {

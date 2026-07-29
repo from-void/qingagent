@@ -27,6 +27,7 @@ export const PM_SCHEMA_NODE_NAMES = [
   "column",
   "blockMath",
   "inlineMath",
+  "footnoteReference",
 ] as const satisfies readonly PmNodeName[];
 
 export const PM_SCHEMA_MARK_NAMES = [
@@ -177,6 +178,7 @@ export const pmSchemaSpec = {
     column: { content: "block+", attrs: ["blockId", "widthRatio"] },
     blockMath: { group: "block", atom: true, attrs: ["blockId", "latex"] },
     inlineMath: { group: "inline", atom: true, attrs: ["latex"] },
+    footnoteReference: { group: "inline", atom: true, attrs: ["id", "note"] },
   },
   marks: {
     bold: {},

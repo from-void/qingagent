@@ -3,6 +3,7 @@ import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
 import { mastra, getObservability } from "../mastra.js";
 import { isServerReanchorEnabled } from "../doc-engine/draftFeatureFlags.js";
 import type { SessionState } from "../session/sessionState.js";
+import type { ModelCallSite } from "../llm/modelCallSites.js";
 import { truncateLargeStrings } from "./redaction.js";
 
 const logger = mastra.getLogger();
@@ -249,6 +250,7 @@ export function buildAgentTracingMetadata(
   state: Pick<SessionState, "sessionId" | "clientTraceId" | "origin">,
   streamId: string,
   runId: string | null | undefined,
+  site: ModelCallSite,
 ): Record<string, unknown> {
   return {
     sessionId: state.sessionId,
@@ -256,6 +258,7 @@ export function buildAgentTracingMetadata(
     streamId,
     clientTraceId: state.clientTraceId ?? null,
     origin: state.origin ?? "manual",
+    site,
     serverReanchorEnabled: isServerReanchorEnabled(),
   };
 }

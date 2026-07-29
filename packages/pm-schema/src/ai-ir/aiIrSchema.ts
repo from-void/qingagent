@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { PM_CALLOUT_TONES, PM_DIAGRAM_LANGS, PM_HIGHLIGHT_COLORS, PM_IMAGE_ALIGN_VALUES, PM_ORDERED_LIST_STYLES, PM_TEXT_ALIGN_VALUES, PM_TEXT_COLORS } from "../spec";
 import type { PmDiagramLang } from "../types";
-import { isAllowedImageSrc, isAllowedLinkHref } from "../validators";
+import {
+  FOOTNOTE_ID_PATTERN,
+  FOOTNOTE_NOTE_MAX_LENGTH,
+  isAllowedImageSrc,
+  isAllowedLinkHref,
+} from "../validators";
 
 const linkHrefSchema = z
   .string()
@@ -27,12 +32,22 @@ export const aiRunMarkSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("math") }),
 ]);
 
-export const aiRunSchema = z.object({
+export const aiTextRunSchema = z.object({
   text: z.string(),
   marks: z.array(aiRunMarkSchema).optional(),
 });
 
+export const aiFootnoteRunSchema = z.object({
+  type: z.literal("footnote"),
+  id: z.string().regex(FOOTNOTE_ID_PATTERN).optional(),
+  note: z.string().trim().min(1).max(FOOTNOTE_NOTE_MAX_LENGTH),
+});
+
+export const aiRunSchema = z.union([aiTextRunSchema, aiFootnoteRunSchema]);
+
 export type AiRunMark = z.infer<typeof aiRunMarkSchema>;
+export type AiTextRun = z.infer<typeof aiTextRunSchema>;
+export type AiFootnoteRun = z.infer<typeof aiFootnoteRunSchema>;
 export type AiRun = z.infer<typeof aiRunSchema>;
 export type AiTextAlign = z.infer<typeof aiTextAlignSchema>;
 

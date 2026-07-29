@@ -1,12 +1,8 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { mastra } from "../mastra.js";
-import { recordUsageEvent } from "@qingagent/db";
-import { resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
 import {
-  normalizeLlmUsage,
   recordLlmRequestSpan,
   recordLlmStepResponseSpan,
-  toNumber,
 } from "./agentSpans.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
 import type { AgentStreamTurnContext } from "./agentStreamTurnContext.js";
@@ -43,7 +39,6 @@ export async function* handleLifecycleEvent(
     agentMessageId,
     streamId,
     runId,
-    requestContext,
     abortController,
     outcome,
   } = context;
@@ -169,34 +164,6 @@ export async function* handleLifecycleEvent(
       context.activeStepIndex,
       chunk.payload,
     );
-    const stepOutput = asRecord(payload?.output);
-    const usageRecord = asRecord(stepOutput?.usage);
-    const siblingMetadata =
-      stepOutput?.providerMetadata ??
-      payload?.providerMetadata ??
-      asRecord(payload?.stepResult)?.providerMetadata;
-    const usage = normalizeLlmUsage(
-      usageRecord
-        ? {
-            ...usageRecord,
-            ...(siblingMetadata ? { providerMetadata: siblingMetadata } : {}),
-          }
-        : stepOutput?.usage,
-    );
-    if (usage) {
-      const { origin } = resolveDeepseekAuth(requestContext);
-      void recordUsageEvent({
-        sessionId: state.sessionId,
-        runId,
-        callSite: "agent",
-        modelId: resolveModelId(requestContext, "flash"),
-        keyOrigin: origin,
-        inputTokens: toNumber(usage.inputTokens),
-        outputTokens: toNumber(usage.outputTokens),
-        cacheHitTokens: toNumber(usage.promptCacheHitTokens),
-        cacheMissTokens: toNumber(usage.promptCacheMissTokens),
-      });
-    }
     context.activeStepIndex = null;
     return "handled";
   }

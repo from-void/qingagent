@@ -288,7 +288,7 @@ describe("processAgentStream 行为特征", () => {
       .toBe("审查完成，已写入3处批注。\n\n批注落地结果：2处已定位。");
   });
 
-  it("step-finish 把 usage 与同级 providerMetadata 合并后记入 agent 账本", async () => {
+  it("step-finish 只保留 span，不再重复写 provider usage 账本", async () => {
     const { processAgentStream } = await import("../processAgentStream.js");
     const state = createSession("characterize-step-usage");
 
@@ -320,18 +320,7 @@ describe("processAgentStream 行为特征", () => {
       ),
     );
 
-    expect(recordUsageEventMock).toHaveBeenCalledOnce();
-    expect(recordUsageEventMock).toHaveBeenCalledWith({
-      sessionId: "characterize-step-usage",
-      runId: "run-step-usage",
-      callSite: "agent",
-      modelId: expect.any(String),
-      keyOrigin: expect.stringMatching(/^(none|env)$/),
-      inputTokens: 120,
-      outputTokens: 8,
-      cacheHitTokens: 90,
-      cacheMissTokens: 30,
-    });
+    expect(recordUsageEventMock).not.toHaveBeenCalled();
   });
 
   it("askUser 恢复流收到 null result 时仍原位收口问卷卡", async () => {

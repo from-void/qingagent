@@ -3,9 +3,13 @@
 // 参考 github.com/lyumeng/websearch-deepseek(MCP server,同一机制)。
 import type { SearchResult } from "./provider.js";
 import { DEEPSEEK_MODEL_IDS, type ApiKeyOrigin } from "../llm/modelConfig.js";
-import { recordUsageEvent } from "@qingagent/db";
 import type { RequestContext } from "@mastra/core/request-context";
 import { nextUsageAttempt } from "../llm/usageAttempt.js";
+import {
+  logModelCallStart,
+  recordModelCallOutcome,
+} from "../llm/usageMiddleware.js";
+import { MODEL_CALL_SITES } from "../llm/modelCallSites.js";
 
 const DEEPSEEK_ANTHROPIC_MESSAGES_URL = "https://api.deepseek.com/anthropic/v1/messages";
 
@@ -33,6 +37,25 @@ export async function fetchDeepseekSearchLinks(
   const limit = Math.max(1, Math.floor(count));
   if (!query.trim() || !apiKey) return [];
 
+  const startedAt = Date.now();
+  const attempt = usageContext
+    ? nextUsageAttempt(
+        usageContext.requestContext,
+        MODEL_CALL_SITES.webSearch,
+        null,
+      )
+    : 1;
+  if (usageContext) {
+    logModelCallStart({
+      requestContext: usageContext.requestContext,
+      sessionId: usageContext.sessionId,
+      runId: usageContext.runId,
+      callSite: MODEL_CALL_SITES.webSearch,
+      transport: "manual-api",
+      lane: null,
+      attempt,
+    });
+  }
   const controller = new AbortController();
   const abortFromSignal = () => controller.abort(signal?.reason);
   if (signal?.aborted) abortFromSignal();
@@ -40,13 +63,19 @@ export async function fetchDeepseekSearchLinks(
   const removeAbortListener = () => signal?.removeEventListener("abort", abortFromSignal);
   const recordMissing = (reason: string) => {
     if (!usageContext) return;
-    void recordUsageEvent({
-      ...usageContext,
-      callSite: "webSearch",
+    void recordModelCallOutcome({
+      requestContext: usageContext.requestContext,
+      sessionId: usageContext.sessionId,
+      runId: usageContext.runId,
+      callSite: MODEL_CALL_SITES.webSearch,
       modelId: model,
-      usageState: "missing",
+      keyOrigin: usageContext.keyOrigin,
+      lane: null,
+      attempt,
+      transport: "manual-api",
+      startedAt,
+      usage: null,
       reason,
-      attempt: nextUsageAttempt(usageContext.requestContext, "webSearch", null),
     });
   };
   let response: Response;

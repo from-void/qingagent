@@ -2,6 +2,7 @@ import { Extension, InputRule, Mark, Node, type AnyExtension } from "@tiptap/cor
 import type { Node as PmModelNode } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
 import { Plugin } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -96,6 +97,7 @@ export function createQingagentExtensions(options: {
     options.diagramExtension ?? DiagramNode,
     FileAttachmentNode,
     PenNoteNode,
+    FootnoteReferenceNode,
     // 待办:TaskItem 自带输入规则,行首敲 "[] "/"[x] " 即转待办项(对齐飞书快捷输入)。
     TaskList,
     QingagentTaskItem.configure({ nested: true }),
@@ -494,6 +496,79 @@ const PenNoteNode = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ["aside", { ...HTMLAttributes, "data-pm-node": "penNote", class: "pm-pen-note" }, 0];
+  },
+});
+
+/** 行内脚注引用原子；数字只由当前文档首见顺序计算，不写回 PM attrs。 */
+const FootnoteReferenceNode = Node.create({
+  name: "footnoteReference",
+  inline: true,
+  group: "inline",
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-footnote-id"),
+        renderHTML: (attrs: { id?: unknown }) =>
+          typeof attrs.id === "string" ? { "data-footnote-id": attrs.id } : {},
+      },
+      note: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-footnote-note"),
+        renderHTML: (attrs: { note?: unknown }) =>
+          typeof attrs.note === "string" ? { "data-footnote-note": attrs.note } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "sup[data-pm-node='footnoteReference']" }];
+  },
+
+  renderHTML({ HTMLAttributes, node }) {
+    const note = String(node.attrs.note ?? "");
+    return [
+      "sup",
+      {
+        ...HTMLAttributes,
+        "data-pm-node": "footnoteReference",
+        class: "pm-footnote-reference",
+        tabindex: "0",
+        role: "doc-noteref",
+        title: note,
+        "aria-label": `脚注：${note}`,
+      },
+    ];
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          decorations: (state) => {
+            const numbers = new Map<string, number>();
+            const decorations: Decoration[] = [];
+            state.doc.descendants((node, pos) => {
+              if (node.type.name !== "footnoteReference") return;
+              const id = String(node.attrs.id ?? "");
+              let number = numbers.get(id);
+              if (number === undefined) {
+                number = numbers.size + 1;
+                numbers.set(id, number);
+              }
+              decorations.push(Decoration.node(pos, pos + node.nodeSize, {
+                "data-footnote-number": String(number),
+                "aria-label": `脚注 ${number}：${String(node.attrs.note ?? "")}`,
+              }));
+            });
+            return DecorationSet.create(state.doc, decorations);
+          },
+        },
+      }),
+    ];
   },
 });
 

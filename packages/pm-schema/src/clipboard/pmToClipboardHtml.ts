@@ -157,6 +157,11 @@ function inlineToHtml(node: PmInlineNode): string {
     const escaped = escapeHtml(latex);
     return `<span data-type="inline-math" data-latex="${escaped}">$${escaped}$</span>`;
   }
+  if (node.type === "footnoteReference") {
+    const id = escapeHtml(stringAttr(node.attrs?.id));
+    const note = escapeHtml(stringAttr(node.attrs?.note));
+    return `<sup data-pm-node="footnoteReference" data-footnote-id="${id}" data-footnote-note="${note}" role="doc-noteref"></sup>`;
+  }
   if (node.type !== "text") return "";
   let html = escapeHtml(stringAttr(node.text));
   const marks = (node as { marks?: PmMark[] }).marks ?? [];

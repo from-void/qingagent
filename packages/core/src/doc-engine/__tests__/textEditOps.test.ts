@@ -56,7 +56,7 @@ function inlineText(docValue: PmDoc): string {
   return (docValue.content[0] as Extract<PmBlockNode, { type: "paragraph" }>)
     .content?.map((node) => {
       if (node.type === "hardBreak") return "\n";
-      if (node.type === "inlineMath") return "￼";
+      if (node.type === "inlineMath" || node.type === "footnoteReference") return "￼";
       return node.text;
     })
     .join("") ?? "";

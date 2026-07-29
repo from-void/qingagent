@@ -36,7 +36,8 @@ export type PmNodeName =
   | "columnList"
   | "column"
   | "blockMath"
-  | "inlineMath";
+  | "inlineMath"
+  | "footnoteReference";
 
 export type PmTextAlign = "left" | "center" | "right" | "justify";
 export type PmOrderedListStyle =
@@ -114,12 +115,22 @@ export type PmInlineMathNode = {
   marks?: PmMark[];
 };
 
+/** 行内脚注引用原子；编号由文档首次出现顺序派生，不持久化。 */
+export type PmFootnoteReferenceNode = {
+  type: "footnoteReference";
+  attrs: { id: string; note: string };
+};
+
 export type PmHardBreakNode = {
   type: "hardBreak";
   marks?: PmMark[];
 };
 
-export type PmInlineNode = PmTextNode | PmHardBreakNode | PmInlineMathNode;
+export type PmInlineNode =
+  | PmTextNode
+  | PmHardBreakNode
+  | PmInlineMathNode
+  | PmFootnoteReferenceNode;
 
 export type PmBlockAttrs = {
   blockId: string;

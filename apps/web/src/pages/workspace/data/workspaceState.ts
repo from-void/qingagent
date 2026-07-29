@@ -27,9 +27,15 @@ import {
   resourceMutationKey,
   workspaceMutations,
 } from "./revisionedMutation";
-import type { AiRun, BridgeFrame, TodoItem } from "@qingagent/contract-ts";
+import type { AiRun, AiTextRun, BridgeFrame, TodoItem } from "@qingagent/contract-ts";
 import type { AnnotationGroup } from "@qingagent/contract-ts";
-import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "@qingagent/pm-schema";
+import {
+  getDeterministicId,
+  type PmBlockNode,
+  type PmDoc,
+  type PmInlineNode,
+  type PmMark,
+} from "@qingagent/pm-schema";
 
 // Enable Map/Set support for immer (toolCalls is a Map)
 enableMapSet();
@@ -1074,7 +1080,7 @@ function reduceDocGenerationEventMut(
         return;
       }
       block.runs.push(event.data.run);
-      block.appendOffset += event.data.run.text.length;
+      block.appendOffset += "text" in event.data.run ? event.data.run.text.length : 1;
       generationDraft.openBlocks[event.data.blockId] = block;
       generationDraft.blocks[event.data.index] = partialBlockNode(block);
       refreshGenerationDraftDocMut(generationDraft);
@@ -1132,7 +1138,9 @@ function refreshGenerationDraftDocMut(draft: GenerationDraft): void {
 }
 
 function partialBlockNode(block: GenerationDraftBlock): PmBlockNode {
-  const content = block.runs.flatMap(runToInlineNodes);
+  const content = block.runs.flatMap((run, runIndex) =>
+    runToInlineNodes(run, block.blockId, runIndex),
+  );
   if (block.blockType === "heading") {
     return {
       type: "heading",
@@ -1154,7 +1162,16 @@ function partialBlockNode(block: GenerationDraftBlock): PmBlockNode {
   };
 }
 
-function runToInlineNodes(run: AiRun): PmInlineNode[] {
+function runToInlineNodes(run: AiRun, blockId: string, runIndex: number): PmInlineNode[] {
+  if (!("text" in run)) {
+    return [{
+      type: "footnoteReference",
+      attrs: {
+        id: run.id ?? getDeterministicId("footnote", { blockId, runIndex, note: run.note }),
+        note: run.note,
+      },
+    }];
+  }
   if (run.marks?.some((mark) => mark.type === "math")) {
     return [{ type: "inlineMath", attrs: { latex: run.text } }];
   }
@@ -1170,7 +1187,7 @@ function runToInlineNodes(run: AiRun): PmInlineNode[] {
   return nodes;
 }
 
-function aiMarksToPmMarks(marks: AiRun["marks"]): PmMark[] {
+function aiMarksToPmMarks(marks: AiTextRun["marks"]): PmMark[] {
   if (!marks || marks.length === 0) return [];
   return marks.flatMap((mark): PmMark[] => {
     switch (mark.type) {

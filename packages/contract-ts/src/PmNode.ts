@@ -27,12 +27,21 @@ export type PmInlineMathNode = {
   marks?: Array<PmMark>;
 };
 
+export type PmFootnoteReferenceNode = {
+  type: "footnoteReference";
+  attrs: { id: string; note: string };
+};
+
 export type PmHardBreakNode = {
   type: "hardBreak";
   marks?: Array<PmMark>;
 };
 
-export type PmInlineNode = PmTextNode | PmHardBreakNode | PmInlineMathNode;
+export type PmInlineNode =
+  | PmTextNode
+  | PmHardBreakNode
+  | PmInlineMathNode
+  | PmFootnoteReferenceNode;
 
 export type PmBlockAttrs = {
   blockId: string;

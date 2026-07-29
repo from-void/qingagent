@@ -372,6 +372,19 @@ function PmInlineView({ node }: { node: PmInlineNode }) {
   const renderText = useContext(PmTextRendererContext);
   if (node.type === "hardBreak") return <br />;
   if (node.type === "inlineMath") return <MathView latex={node.attrs.latex} />;
+  if (node.type === "footnoteReference") {
+    return (
+      <sup
+        className="pm-footnote-reference"
+        data-pm-node="footnoteReference"
+        data-footnote-id={node.attrs.id}
+        data-footnote-note={node.attrs.note}
+        data-footnote-number="※"
+        title={node.attrs.note}
+        tabIndex={0}
+      />
+    );
+  }
   return <>{applyMarks(renderText ? renderText(node.text) : node.text, node.marks ?? [])}</>;
 }
 
@@ -460,11 +473,14 @@ export function applyMarks(text: React.ReactNode, marks: PmMark[]): React.ReactN
   }, text);
 }
 
-export function pmInlineText(content: readonly { type: string; text?: string; attrs?: { latex?: string } }[]): string {
+export function pmInlineText(
+  content: readonly { type: string; text?: string; attrs?: { latex?: string; note?: string } }[],
+): string {
   return content
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
       if (node.type === "inlineMath") return node.attrs?.latex ?? "";
+      if (node.type === "footnoteReference") return node.attrs?.note ?? "";
       return node.text ?? "";
     })
     .join("");

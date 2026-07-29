@@ -6,6 +6,7 @@ import {
   type BranchCallResult,
   type BranchMessage,
 } from "./modelConfig.js";
+import type { ModelCallSite } from "./modelCallSites.js";
 
 export type SideChannelFailure =
   | Exclude<BranchCallResult, { ok: true }>["reason"]
@@ -13,7 +14,7 @@ export type SideChannelFailure =
   | "parse_failed";
 
 export interface RunSideChannelInput<T> {
-  callSite: string;
+  callSite: ModelCallSite;
   requestContext?: RequestContext;
   steeringTail: string | BranchMessage[];
   parse: (text: string, context: { finishReason: string | null }) => T | null;

@@ -74,10 +74,11 @@ describe("模型传输静态守护", () => {
     expect(rawFetchIndex).toBeLessThan(branchEnd);
     expect(source.match(/modelFetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
     const branchSource = source.slice(branchStart, branchEnd);
-    // 5 = provider-reject/流错误/成功/异常兜底 + preflight 拒发(回放前形态卡,同样必须留痕)。
-    expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(5);
+    // 4 = provider-reject/流错误/成功/异常兜底。preflight 没有发出真实请求，不进入请求账本。
+    expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(4);
+    expect(branchSource).not.toMatch(/preflight[\s\S]{0,300}recordBranchUsage/);
     expect(branchSource).toContain("providerErrorSummary(response)");
-    expect(branchSource).toContain("recordBranchUsage(input, null, attempt, error)");
+    expect(branchSource).toContain("recordBranchUsage(input, null, attempt, error, t0)");
     expect(branchSource).toContain("provider_request_aborted");
     expect(branchSource).toContain("provider_request_error");
   });

@@ -8,7 +8,61 @@ export interface PmToMarkdownOptions {
 }
 
 export function pmToMarkdown(doc: PmDoc, options: PmToMarkdownOptions = {}): string {
-  return doc.content.map((node) => blockToMarkdown(node, options)).filter(Boolean).join("\n\n");
+  const footnotes = collectMarkdownFootnotes(doc);
+  const serializable = replaceFootnotesWithMarkdownRefs(doc);
+  const body = serializable.content
+    .map((node) => blockToMarkdown(node, options))
+    .filter(Boolean)
+    .join("\n\n");
+  if (footnotes.length === 0) return body;
+  const definitions = footnotes
+    .map(({ id, note }) => `[^${id}]: ${escapeFootnoteDefinition(note)}`)
+    .join("\n");
+  return `${body}\n\n${definitions}`.trim();
+}
+
+function collectMarkdownFootnotes(doc: PmDoc): Array<{ id: string; note: string }> {
+  const definitions = new Map<string, string>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const node = value as { type?: unknown; attrs?: unknown; content?: unknown };
+    if (node.type === "footnoteReference" && node.attrs && typeof node.attrs === "object") {
+      const attrs = node.attrs as { id?: unknown; note?: unknown };
+      if (typeof attrs.id === "string" && typeof attrs.note === "string" && !definitions.has(attrs.id)) {
+        definitions.set(attrs.id, attrs.note);
+      }
+    }
+    if (Array.isArray(node.content)) node.content.forEach(visit);
+  };
+  visit(doc);
+  return [...definitions].map(([id, note]) => ({ id, note }));
+}
+
+function replaceFootnotesWithMarkdownRefs(doc: PmDoc): PmDoc {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== "object") return value;
+    const node = value as Record<string, unknown>;
+    if (node.type === "footnoteReference") {
+      const attrs = node.attrs as { id?: unknown } | undefined;
+      return { type: "text", text: `[^${String(attrs?.id ?? "")}]` };
+    }
+    return {
+      ...node,
+      ...(Array.isArray(node.content) ? { content: node.content.map(visit) } : {}),
+    };
+  };
+  return visit(doc) as PmDoc;
+}
+
+function escapeFootnoteDefinition(note: string): string {
+  return note
+    .replace(/[\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e]/g, "\\$&")
+    .replace(/\r\n?|\n/g, "\n    ");
 }
 
 function blockToMarkdown(node: PmBlockNode, options: PmToMarkdownOptions): string {
@@ -114,6 +168,7 @@ function inlineText(content: readonly PmInlineNode[]): string {
     .map((node) => {
       if (node.type === "hardBreak") return "\n";
       if (node.type === "inlineMath") return `$${node.attrs?.latex ?? ""}$`;
+      if (node.type === "footnoteReference") return `[^${node.attrs.id}]`;
       return markedText(node.text, node.marks ?? []);
     })
     .join("");

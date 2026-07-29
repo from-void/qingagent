@@ -38,7 +38,8 @@ export function measureDocumentShape(doc: PmDoc): DocumentShape {
       (node.type === "image" && node.attrs.src.length > 0) ||
       (node.type === "diagram" && node.attrs.source.length > 0) ||
       (node.type === "fileAttachment" && node.attrs.fileId.length > 0) ||
-      (node.type === "blockMath" && node.attrs.latex.length > 0)
+      (node.type === "blockMath" && node.attrs.latex.length > 0) ||
+      (node.type === "footnoteReference" && node.attrs.note.length > 0)
     ) {
       keyAttributeCount += 1;
     }

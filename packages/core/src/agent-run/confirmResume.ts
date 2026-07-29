@@ -23,6 +23,8 @@ import {
   confirmedCommandCardSpec,
 } from "./toolCards.js";
 import { chatMessageAdded } from "./frames.js";
+import { buildAgentTracingMetadata, sessionIdToTraceId } from "./agentSpans.js";
+import { MODEL_CALL_SITES } from "../llm/modelCallSites.js";
 
 export type ApprovalAgent = Pick<
   typeof qingagentAgent,
@@ -203,6 +205,7 @@ function safeResumeRequestContext(
     ["sessionId", session.sessionId],
     ["streamId", streamId],
     ["runId", pending.runId],
+    ["usageCallSite", MODEL_CALL_SITES.agentConfirmResume],
     ["abortSignal", signal],
     ["clientTraceId", session.clientTraceId ?? null],
     ["origin", session.origin ?? "manual"],
@@ -304,6 +307,17 @@ export async function* resumeConfirmDecision(input: {
       requestContext,
       abortSignal: abortController.signal,
       toolsets,
+      tracingOptions: {
+        ...(sessionIdToTraceId(session.sessionId)
+          ? { traceId: sessionIdToTraceId(session.sessionId) }
+          : {}),
+        metadata: buildAgentTracingMetadata(
+          session,
+          streamId,
+          pending.runId,
+          MODEL_CALL_SITES.agentConfirmResume,
+        ),
+      },
     };
     const result = input.accepted
       ? await agent.approveToolCall(commonOptions)

@@ -2,13 +2,22 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectorInfo, ConnectorState } from "@qingagent/contract-ts";
+import type { ConnectorId, ConnectorInfo, ConnectorState, QrCardBody } from "@qingagent/contract-ts";
 
 const h = vi.hoisted(() => ({
   capabilities: { connectors: { mutationEnabled: true, reasonCode: null } } as Record<string, unknown>,
   connectors: [] as ConnectorInfo[],
+  pendingSessions: {} as Partial<Record<ConnectorId, {
+    connectorId: ConnectorId;
+    pendingId: string;
+    startedAt: number;
+    card: QrCardBody;
+  }>>,
+  pendingListeners: new Set<() => void>(),
+  loading: false,
   probe: vi.fn(),
   disconnect: vi.fn(),
+  cancel: vi.fn(),
   start: vi.fn(),
   refresh: vi.fn(),
   toast: vi.fn(),
@@ -20,12 +29,35 @@ vi.mock("../../system", () => ({
   useConfirm: () => h.confirm,
 }));
 vi.mock("../../system/ToastProvider", () => ({ useToast: () => ({ show: h.toast }) }));
-vi.mock("./useConnectors", () => ({
-  useConnectors: () => ({
-    connectors: h.connectors, loading: false, error: null, refresh: h.refresh, start: h.start,
-    probe: h.probe, disconnect: h.disconnect,
+vi.mock("./connectorAuthSession", () => ({
+  saveConnectorAuthSession: vi.fn((session) => {
+    h.pendingSessions = { ...h.pendingSessions, [session.connectorId]: session };
+    for (const listener of h.pendingListeners) listener();
   }),
 }));
+vi.mock("./useConnectors", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useConnectors: () => ({
+      connectors: h.connectors,
+      pendingSessions: useSyncExternalStore(
+        (listener) => {
+          h.pendingListeners.add(listener);
+          return () => h.pendingListeners.delete(listener);
+        },
+        () => h.pendingSessions,
+        () => h.pendingSessions,
+      ),
+      loading: h.loading,
+      error: null,
+      refresh: h.refresh,
+      start: h.start,
+      cancel: h.cancel,
+      probe: h.probe,
+      disconnect: h.disconnect,
+    }),
+  };
+});
 
 import { ConnectionsPanel, mapConnectorStart } from "./ConnectionsPanel";
 
@@ -56,8 +88,12 @@ beforeEach(() => {
   root = createRoot(host);
   h.capabilities = { connectors: { mutationEnabled: true, reasonCode: null } };
   h.connectors = [];
+  h.pendingSessions = {};
+  h.pendingListeners.clear();
+  h.loading = false;
   h.start.mockReset();
   h.refresh.mockReset();
+  h.cancel.mockReset();
   h.disconnect.mockReset();
   h.confirm.mockReset();
 });
@@ -88,6 +124,14 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).toContain("扫码授权");
     expect(host.textContent).not.toContain("立即检查");
     expect(host.textContent).not.toContain("设置页不直接发起授权");
+  });
+
+  it("首次慢加载立即显示三行骨架，不留空白卡片区", () => {
+    h.loading = true;
+    act(() => root.render(<ConnectionsPanel />));
+
+    expect(host.querySelector('[role="status"][aria-label="正在加载连接"]')).toBeTruthy();
+    expect(host.querySelectorAll(".cn-skeleton-row")).toHaveLength(3);
   });
 
   it.each([
@@ -149,6 +193,42 @@ describe("ConnectionsPanel", () => {
     const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "连 接")!;
     await act(async () => { button.click(); });
     expect(h.toast).toHaveBeenCalledWith({ message: "连接操作失败 (403)", tone: "error" });
+  });
+
+  it("等待态在详情与列表都提供取消入口", async () => {
+    const card = mapConnectorStart("github", "device-code", {
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://github.test/device",
+      expiresAt: "2026-07-12T10:00:00.000Z",
+      pendingId: "github-pending",
+    });
+    h.pendingSessions = {
+      github: {
+        connectorId: "github",
+        pendingId: "github-pending",
+        startedAt: Date.now(),
+        card,
+      },
+    };
+    h.connectors = [github("disconnected")];
+    h.cancel.mockResolvedValue(github("disconnected"));
+    await act(async () => {
+      root.render(<ConnectionsPanel selectedId="github" />);
+    });
+
+    const detailCancel = Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent === "取消本次授权")!;
+    await act(async () => detailCancel.click());
+    expect(h.cancel).toHaveBeenCalledWith("github", "github-pending");
+
+    act(() => {
+      Array.from(host.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("返回连接"))
+        ?.click();
+    });
+    expect(host.textContent).toContain("等待授权");
+    expect(Array.from(host.querySelectorAll("button"))
+      .some((button) => button.textContent === "取消授权")).toBe(true);
   });
 
   it("断开连接必须二次确认，取消时不撤权", async () => {

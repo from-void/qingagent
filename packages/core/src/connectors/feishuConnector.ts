@@ -329,6 +329,18 @@ export class FeishuConnector implements ConnectorAdapter {
 
   async probe(): Promise<ConnectorStatusDto> { return this.readStatus(); }
 
+  async cancel(pendingId: string): Promise<ConnectorStatusDto> {
+    if (this.currentPendingId !== pendingId || !this.currentScope) {
+      throw new PendingStoreError("授权上下文已丢失，请重新发起", "PENDING_LOST", 410);
+    }
+    const scope = this.currentScope;
+    this.generation += 1;
+    this.pending.cancel(pendingId, "feishu", scope);
+    this.terminalByPending.delete(pendingId);
+    this.clearCurrent(pendingId);
+    return this.readStatus();
+  }
+
   async disconnect(): Promise<ConnectorStatusDto> {
     this.generation += 1;
     if (this.currentScope) this.pending.disconnect("feishu", this.currentScope);

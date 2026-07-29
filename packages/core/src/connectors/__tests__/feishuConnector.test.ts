@@ -92,6 +92,47 @@ describe("FeishuConnector 授权编排", () => {
     },
   );
 
+  it("cancel 按 pendingId 中止后台 CLI，且不执行 auth logout", async () => {
+    let loginSignal: AbortSignal | undefined;
+    const run = vi.fn(async (
+      command: LarkCliCommand,
+      options?: { signal?: AbortSignal },
+    ): Promise<LarkCliRunResult> => {
+      const key = command.join(" ");
+      if (key === "config show") return ok(configured);
+      if (key === "auth status --json") return ok(missing);
+      if (key.includes("--no-wait")) return deviceResult();
+      if (key.includes("--device-code")) {
+        loginSignal = options?.signal;
+        return new Promise<LarkCliRunResult>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve({
+            ok: false,
+            reasonCode: "LARK_CLI_FAILED",
+            message: "aborted",
+            cliVersion: "1.0.65",
+            source: "path",
+          }), { once: true });
+        });
+      }
+      if (key === "auth logout") return ok();
+      throw new Error(`unexpected ${key}`);
+    });
+    const connector = new FeishuConnector({ runner: { run } });
+
+    const started = await connector.start({ domains: ["docs"] });
+    await vi.waitFor(() => expect(loginSignal).toBeDefined());
+    await expect(connector.cancel(started.pendingId)).resolves.toMatchObject({
+      state: "disconnected",
+      reasonCode: "LARK_AUTH_MISSING",
+    });
+    expect(loginSignal?.aborted).toBe(true);
+    expect(run.mock.calls.some(([argv]) => argv.join(" ") === "auth logout")).toBe(false);
+    await expect(connector.status(started.pendingId)).rejects.toMatchObject({
+      code: "PENDING_LOST",
+      status: 410,
+    });
+  });
+
   it("不同 domains 的并发 start 不共享授权卡", async () => {
     let releaseConfig!: () => void;
     const configGate = new Promise<void>((resolve) => { releaseConfig = resolve; });

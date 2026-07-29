@@ -30,6 +30,10 @@ function setup(input: { gateOn: boolean; publicDeployment: boolean; authOn: bool
     list: vi.fn(async () => [connector]),
     info: vi.fn(async () => connector),
     start: vi.fn(async () => ({ user_code: "ABCD-EFGH", verification_uri: "https://example.test/device", expiresAt: "2026-07-11T12:00:00.000Z", pendingId: "pending-safe-id" })),
+    cancel: vi.fn(async () => ({
+      ...connector,
+      status: { ...connector.status, state: "disconnected" as const },
+    })),
     probe: vi.fn(async () => connector),
     disconnect: vi.fn(async () => ({
       ...connector,
@@ -85,13 +89,19 @@ describe("/api/v1/connectors 安全矩阵", () => {
               method: "DELETE",
               headers: requestHeaders,
             });
+            const cancel = await app.request("/api/v1/connectors/wechat-mp/pending/pending-safe-id", {
+              method: "DELETE",
+              headers: requestHeaders,
+            });
             const start = await app.request("/api/v1/connectors/github/start", { method: "POST", headers: { ...requestHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ scope: "public_repo" }) });
             const allowed = origin !== "evil" && gateOn && !publicDeployment;
             expect(probe.status).toBe(allowed ? 200 : 403);
             expect(disconnect.status).toBe(allowed ? 200 : 403);
+            expect(cancel.status).toBe(allowed ? 200 : 403);
             expect(start.status).toBe(allowed ? 200 : 403);
             expect(service.probe).toHaveBeenCalledTimes(allowed ? 1 : 0);
             expect(service.disconnect).toHaveBeenCalledTimes(allowed ? 1 : 0);
+            expect(service.cancel).toHaveBeenCalledTimes(allowed ? 1 : 0);
             expect(service.start).toHaveBeenCalledTimes(allowed ? 1 : 0);
           });
         }
@@ -114,6 +124,21 @@ describe("/api/v1/connectors 安全矩阵", () => {
     expect(raw).not.toContain("device_code");
     expect(raw).not.toContain("access_token");
     expect(JSON.parse(raw)).toMatchObject({ user_code: "ABCD-EFGH", pendingId: "pending-safe-id" });
+  });
+
+  it("cancel 把 connectorId 与 pendingId 原样交给服务层", async () => {
+    const { app, service } = setup({
+      authOn: false,
+      gateOn: true,
+      publicDeployment: false,
+    });
+    const response = await app.request(
+      "/api/v1/connectors/github/pending/pending-safe-id",
+      { method: "DELETE", headers: { Origin: "http://localhost:5173" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.cancel).toHaveBeenCalledWith("github", "pending-safe-id");
   });
 
   it("start 失败按可信机器码返回固定中性文案", async () => {

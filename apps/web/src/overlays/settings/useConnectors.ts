@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectorId, ConnectorInfo } from "@qingagent/contract-ts";
+import {
+  clearConnectorAuthSession,
+  useConnectorAuthSessions,
+} from "./connectorAuthSession";
 
 const PENDING_REFRESH_INTERVAL_MS = 30_000;
 
-function pendingIdFromStartResult(value: unknown): string | null {
-  if (!value || typeof value !== "object") return null;
-  const pendingId = (value as { pendingId?: unknown }).pendingId;
-  return typeof pendingId === "string" && pendingId.length > 0 ? pendingId : null;
-}
-
 export function useConnectors() {
   const [connectors, setConnectors] = useState<ConnectorInfo[]>([]);
-  const [pendingIds, setPendingIds] = useState<Partial<Record<ConnectorId, string>>>({});
-  const [loading, setLoading] = useState(false);
+  const pendingSessions = useConnectorAuthSessions();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -23,25 +21,34 @@ export function useConnectors() {
       if (!response.ok) throw new Error(`连接列表加载失败 (${response.status})`);
       const body = await response.json() as { connectors?: ConnectorInfo[] };
       let next = Array.isArray(body.connectors) ? body.connectors : [];
-      const pendingEntries = Object.entries(pendingIds) as Array<[ConnectorId, string]>;
+      const pendingEntries = Object.values(pendingSessions).filter(
+        (session) => session !== undefined,
+      );
       if (pendingEntries.length > 0) {
-        const statuses = await Promise.all(pendingEntries.map(async ([id, pendingId]) => {
-          const statusResponse = await fetch(`/api/v1/connectors/${encodeURIComponent(id)}?pendingId=${encodeURIComponent(pendingId)}`);
-          if (!statusResponse.ok) return null;
-          return { id, connector: await statusResponse.json() as ConnectorInfo };
+        const statuses = await Promise.all(pendingEntries.map(async (session) => {
+          const statusResponse = await fetch(`/api/v1/connectors/${encodeURIComponent(session.connectorId)}?pendingId=${encodeURIComponent(session.pendingId)}`);
+          if (!statusResponse.ok) {
+            if (statusResponse.status === 410) {
+              clearConnectorAuthSession(session.connectorId, session.pendingId);
+            }
+            return null;
+          }
+          return {
+            session,
+            connector: await statusResponse.json() as ConnectorInfo,
+          };
         }));
-        const resolvedIds: ConnectorId[] = [];
         for (const status of statuses) {
           if (!status) continue;
-          next = next.map((item) => item.id === status.id ? status.connector : item);
-          if (status.connector.status.state !== "pending") resolvedIds.push(status.id);
-        }
-        if (resolvedIds.length > 0) {
-          setPendingIds((current) => {
-            const remaining = { ...current };
-            for (const id of resolvedIds) delete remaining[id];
-            return remaining;
-          });
+          next = next.map((item) =>
+            item.id === status.session.connectorId ? status.connector : item
+          );
+          if (status.connector.status.state !== "pending") {
+            clearConnectorAuthSession(
+              status.session.connectorId,
+              status.session.pendingId,
+            );
+          }
         }
       }
       setConnectors(next);
@@ -52,13 +59,13 @@ export function useConnectors() {
     } finally {
       setLoading(false);
     }
-  }, [pendingIds]);
+  }, [pendingSessions]);
 
   useEffect(() => {
     void refresh().catch(() => undefined);
   }, [refresh]);
 
-  const hasPending = Object.keys(pendingIds).length > 0 || connectors.some(
+  const hasPending = Object.keys(pendingSessions).length > 0 || connectors.some(
     (connector) => connector.status.state === "pending",
   );
   useEffect(() => {
@@ -101,18 +108,39 @@ export function useConnectors() {
       const result = await response.json().catch(() => ({})) as { error?: string; message?: string; reasonCode?: string };
       throw new Error(`${result.message ?? result.error ?? "连接操作失败"} (${response.status})${result.reasonCode ? `：${result.reasonCode}` : ""}`);
     }
-    const result = await response.json() as unknown;
-    const pendingId = pendingIdFromStartResult(result);
-    if (pendingId) setPendingIds((current) => ({ ...current, [id]: pendingId }));
-    return result;
+    return response.json() as Promise<unknown>;
+  }, []);
+
+  const cancel = useCallback(async (id: ConnectorId, pendingId: string) => {
+    const response = await fetch(
+      `/api/v1/connectors/${encodeURIComponent(id)}/pending/${encodeURIComponent(pendingId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      if (response.status === 410) clearConnectorAuthSession(id, pendingId);
+      const body = await response.json().catch(() => ({})) as {
+        error?: string;
+        message?: string;
+        reasonCode?: string;
+      };
+      throw new Error(`${body.message ?? body.error ?? "取消授权失败"} (${response.status})${body.reasonCode ? `：${body.reasonCode}` : ""}`);
+    }
+    const connector = await response.json() as ConnectorInfo;
+    clearConnectorAuthSession(id, pendingId);
+    setConnectors((current) =>
+      current.map((item) => item.id === id ? connector : item)
+    );
+    return connector;
   }, []);
 
   return {
     connectors,
+    pendingSessions,
     loading,
     error,
     refresh,
     start,
+    cancel,
     probe: (id: ConnectorId) => mutate(id, "POST"),
     disconnect: (id: ConnectorId) => mutate(id, "DELETE"),
   };

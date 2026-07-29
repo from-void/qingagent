@@ -103,6 +103,11 @@ export class WechatConnector implements ConnectorAdapter {
     return { ...ttlStatus, reasonCode, lastCheckedAt: checkedAt, statusFreshness: "ttl" };
   }
 
+  async cancel(pendingId: string): Promise<ConnectorStatusDto> {
+    wechatAuthService.cancel(pendingId);
+    return this.status();
+  }
+
   async disconnect(): Promise<ConnectorStatusDto> {
     wechatAuthService.disconnectPending();
     let revision: number | null = null;

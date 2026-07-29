@@ -71,6 +71,7 @@ export interface ConnectorStatusPatch {
 export interface ConnectorAdapter {
   status(pendingId?: string): Promise<ConnectorStatusDto>;
   start?(input?: unknown): Promise<unknown>;
+  cancel?(pendingId: string): Promise<ConnectorStatusDto>;
   probe?(): Promise<ConnectorStatusDto>;
   disconnect(): Promise<ConnectorStatusDto>;
 }

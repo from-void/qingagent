@@ -96,6 +96,35 @@ describe("PendingStore", () => {
     expect(store.size).toBe(0);
   });
 
+  it("cancel 必须匹配 pendingId 与绑定，并只中止目标授权", () => {
+    const store = new PendingStore<string>();
+    const first = store.start({
+      connectorId: "github",
+      scope: "public",
+      create: () => "first",
+    }).entry;
+    const second = store.start({
+      connectorId: "feishu",
+      scope: "docs",
+      create: () => "second",
+    }).entry;
+
+    expect(() => store.cancel(first.pendingId, "github", "private")).toThrowError(
+      expect.objectContaining({ code: "PENDING_LOST", status: 410 }),
+    );
+    expect(first.signal.aborted).toBe(false);
+    expect(second.signal.aborted).toBe(false);
+
+    expect(store.cancel(first.pendingId, "github", "public")).toMatchObject({
+      pendingId: first.pendingId,
+    });
+    expect(first.signal.aborted).toBe(true);
+    expect(second.signal.aborted).toBe(false);
+    expect(store.current("github", "public")).toBeNull();
+    expect(store.current("feishu", "docs")?.pendingId).toBe(second.pendingId);
+    store.shutdown();
+  });
+
   it("进程退出钩子调用 shutdown，detach 后不再响应", () => {
     const emitter = new EventEmitter();
     const processLike = emitter as unknown as Pick<NodeJS.Process, "once" | "off">;

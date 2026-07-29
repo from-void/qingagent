@@ -272,6 +272,19 @@ export class GithubConnector implements ConnectorAdapter {
     }
   }
 
+  async cancel(pendingId: string): Promise<ConnectorStatusDto> {
+    const scope = this.scopeByPending.get(pendingId);
+    if (!scope || this.currentPendingId !== pendingId) {
+      throw new PendingStoreError("授权上下文已丢失，请重新发起", "PENDING_LOST", 410);
+    }
+    this.generation += 1;
+    this.pending.cancel(pendingId, "github", this.pendingScope(scope));
+    this.scopeByPending.delete(pendingId);
+    this.terminalByPending.delete(pendingId);
+    if (this.currentPendingId === pendingId) this.currentPendingId = null;
+    return this.status();
+  }
+
   async disconnect(): Promise<ConnectorStatusDto> {
     this.generation += 1;
     this.pending.disconnect("github", this.pendingScope("public_repo"));

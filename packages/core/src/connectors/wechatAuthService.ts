@@ -549,6 +549,10 @@ export class WechatAuthService {
     pendingStore.disconnect("wechat-mp", WECHAT_SCOPE);
   }
 
+  cancel(pendingId: string): void {
+    pendingStore.cancel(pendingId, "wechat-mp", WECHAT_SCOPE);
+  }
+
   resetForTests(): void { this.disconnectPending(); }
 }
 

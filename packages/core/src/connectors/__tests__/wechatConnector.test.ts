@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
 import type { WechatCredentialPayload } from "../wechatCredentials.js";
 
-vi.mock("../wechatAuthService.js", () => ({ wechatAuthService: { status: vi.fn(), disconnectPending: vi.fn(), start: vi.fn() } }));
+vi.mock("../wechatAuthService.js", () => ({
+  wechatAuthService: {
+    status: vi.fn(),
+    cancel: vi.fn(),
+    disconnectPending: vi.fn(),
+    start: vi.fn(),
+  },
+}));
 
 import { wechatAuthService } from "../wechatAuthService.js";
 import { WechatConnector } from "../wechatConnector.js";
@@ -88,6 +95,22 @@ describe("WechatConnector", () => {
     const connector = new WechatConnector({ readBundle: async () => bundle(7), deleteBundle, now });
     await expect(connector.disconnect()).resolves.toMatchObject({ state: "disconnected" });
     expect(deleteBundle).toHaveBeenCalledWith(7);
+  });
+
+  it("cancel 只中止指定 pending，不删除已有凭证", async () => {
+    const deleteBundle = vi.fn(async () => undefined);
+    const connector = new WechatConnector({
+      readBundle: async () => bundle(7),
+      deleteBundle,
+      now,
+    });
+
+    await expect(connector.cancel("wx-pending")).resolves.toMatchObject({
+      state: "connected",
+      account: { displayName: "测试公众号" },
+    });
+    expect(wechatAuthService.cancel).toHaveBeenCalledWith("wx-pending");
+    expect(deleteBundle).not.toHaveBeenCalled();
   });
 
   it("bundle 损坏时 disconnect 仍按无有效 revision 删除原始行", async () => {

@@ -14,7 +14,8 @@ import {
 } from "../lib/connectorRuntimeGate";
 
 export interface ConnectorsRoutesOptions {
-  service?: Pick<ConnectorService, "list" | "info" | "probe" | "disconnect"> & Partial<Pick<ConnectorService, "start">>;
+  service?: Pick<ConnectorService, "list" | "info" | "probe" | "disconnect"> &
+    Partial<Pick<ConnectorService, "start" | "cancel">>;
   runtimeAccess?: () => ConnectorRuntimeAccess;
 }
 
@@ -24,6 +25,7 @@ const TRUSTED_CONNECTOR_ERRORS: Readonly<Record<
 >> = {
   INVALID_ARGUMENT: { status: 400, message: "连接参数无效，请检查后重试。" },
   CONNECTOR_START_UNSUPPORTED: { status: 409, message: "当前连接器不支持发起授权。" },
+  CONNECTOR_CANCEL_UNSUPPORTED: { status: 409, message: "当前连接器不支持取消授权。" },
   ILLEGAL_CONNECTOR_TRANSITION: { status: 409, message: "当前连接状态不支持此操作。" },
   PENDING_LOST: { status: 410, message: "授权上下文已丢失，请重新发起。" },
   PENDING_EXPIRED: { status: 410, message: "授权已过期，请重新发起。" },
@@ -135,6 +137,18 @@ export function createConnectorsRoutes(options: ConnectorsRoutesOptions = {}): H
       const id = c.req.param("id");
       if (!isConnectorId(id)) return c.json({ error: "CONNECTOR_NOT_FOUND" }, 404);
       return c.json(await service.probe(id));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  routes.delete("/connectors/:id/pending/:pendingId", async (c) => {
+    try {
+      runtimeAccess().assertMutationAllowed();
+      const id = c.req.param("id");
+      if (!isConnectorId(id)) return c.json({ error: "CONNECTOR_NOT_FOUND" }, 404);
+      if (!service.cancel) return c.json({ error: "CONNECTOR_CANCEL_UNSUPPORTED" }, 409);
+      return c.json(await service.cancel(id, c.req.param("pendingId")));
     } catch (error) {
       return errorResponse(c, error);
     }

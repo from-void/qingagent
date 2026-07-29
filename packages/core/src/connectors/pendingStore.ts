@@ -161,6 +161,13 @@ export class PendingStore<T> {
     return entry;
   }
 
+  cancel(pendingId: string, connectorId: string, scope: string): PendingEntry<T> {
+    const entry = this.get(pendingId, connectorId, scope);
+    const stored = this.entries.get(pendingId)!;
+    this.removeStored(stored, "authorization cancelled");
+    return entry;
+  }
+
   disconnect(connectorId: string, scope: string): boolean {
     const pendingId = this.byBinding.get(this.bindingKey(connectorId, scope));
     if (!pendingId) return false;

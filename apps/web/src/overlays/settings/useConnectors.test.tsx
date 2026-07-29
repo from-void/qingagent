@@ -2,6 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getConnectorAuthSessions,
+  resetConnectorAuthSessionsForTests,
+  saveConnectorAuthSession,
+} from "./connectorAuthSession";
 import { useConnectors } from "./useConnectors";
 
 let root: Root | null = null;
@@ -18,7 +23,9 @@ afterEach(() => {
   host?.remove();
   root = null;
   host = null;
+  resetConnectorAuthSessionsForTests();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("useConnectors", () => {
@@ -85,6 +92,25 @@ describe("useConnectors", () => {
     root = createRoot(host);
     await act(async () => { root?.render(<Harness />); });
     await act(async () => { await hook.start("feishu"); });
+    act(() => {
+      saveConnectorAuthSession({
+        connectorId: "feishu",
+        pendingId: "fs-pending",
+        startedAt: Date.now(),
+        card: {
+          presentation: "scan",
+          connectorId: "feishu",
+          pendingId: "fs-pending",
+          title: "扫码授权飞书",
+          content: "https://feishu.test/auth",
+          code: "ABCD-EFGH",
+          note: null,
+          expiresAt: Date.now() + 300_000,
+          refreshQuery: "重新授权飞书",
+          confirmQuery: null,
+        },
+      });
+    });
     await act(async () => { await Promise.resolve(); });
 
     fetchMock.mockClear();
@@ -102,5 +128,127 @@ describe("useConnectors", () => {
     fetchMock.mockClear();
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("会话级 pending 在连接 tab 连续卸载重挂五次后仍用同一 pendingId 恢复轮询", async () => {
+    const connector = {
+      id: "github", name: "GitHub", icon: "github", official: true, riskNote: null,
+      authPresentation: "device-code", usedBySkills: [], status: {
+        state: "pending", reasonCode: null, account: null, scopes: [],
+        lastCheckedAt: null, statusFreshness: "fresh", canProbe: false,
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/connectors") {
+        return new Response(JSON.stringify({
+          connectors: [{ ...connector, status: { ...connector.status, state: "disconnected" } }],
+        }));
+      }
+      if (url === "/api/v1/connectors/github?pendingId=gh-stable") {
+        return new Response(JSON.stringify(connector));
+      }
+      throw new Error(`未预期请求: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => {
+      saveConnectorAuthSession({
+        connectorId: "github",
+        pendingId: "gh-stable",
+        startedAt: 1234,
+        card: {
+          presentation: "device-code",
+          connectorId: "github",
+          pendingId: "gh-stable",
+          title: "连接 GitHub",
+          content: "https://github.test/device",
+          code: "ABCD-EFGH",
+          note: null,
+          expiresAt: Date.now() + 300_000,
+          refreshQuery: "重新连接 GitHub",
+          confirmQuery: null,
+        },
+      });
+    });
+
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    for (let index = 0; index < 5; index += 1) {
+      fetchMock.mockClear();
+      root = createRoot(host);
+      await act(async () => { root?.render(<Harness />); });
+      await act(async () => { await Promise.resolve(); });
+
+      expect(getConnectorAuthSessions().github).toMatchObject({
+        pendingId: "gh-stable",
+        startedAt: 1234,
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/connectors/github?pendingId=gh-stable",
+      );
+
+      act(() => root?.unmount());
+      root = null;
+    }
+  });
+
+  it("cancel 成功后清理会话快照并更新连接状态", async () => {
+    const disconnected = {
+      id: "wechat-mp", name: "微信公众号", icon: "wechat", official: false,
+      authPresentation: "scan", riskNote: null, usedBySkills: [], status: {
+        state: "disconnected", reasonCode: "USER_CANCELLED", account: null,
+        scopes: [], lastCheckedAt: null, statusFreshness: "fresh", canProbe: false,
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/connectors") {
+        return new Response(JSON.stringify({ connectors: [disconnected] }));
+      }
+      if (url === "/api/v1/connectors/wechat-mp?pendingId=wx-pending") {
+        return new Response(JSON.stringify({
+          ...disconnected,
+          status: { ...disconnected.status, state: "pending" },
+        }));
+      }
+      if (url === "/api/v1/connectors/wechat-mp/pending/wx-pending") {
+        expect(init?.method).toBe("DELETE");
+        return new Response(JSON.stringify(disconnected));
+      }
+      throw new Error(`未预期请求: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => {
+      saveConnectorAuthSession({
+        connectorId: "wechat-mp",
+        pendingId: "wx-pending",
+        startedAt: Date.now(),
+        card: {
+          presentation: "scan",
+          connectorId: "wechat-mp",
+          pendingId: "wx-pending",
+          title: "扫码登录微信公众平台",
+          content: "",
+          imageDataUri: "data:image/png;base64,AA",
+          code: null,
+          note: null,
+          expiresAt: Date.now() + 300_000,
+          refreshQuery: "重新登录微信公众号",
+          confirmQuery: null,
+        },
+      });
+    });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root?.render(<Harness />); });
+
+    await act(async () => {
+      await hook.cancel("wechat-mp", "wx-pending");
+    });
+
+    expect(getConnectorAuthSessions()["wechat-mp"]).toBeUndefined();
+    expect(hook.connectors.find((item) => item.id === "wechat-mp")?.status.state)
+      .toBe("disconnected");
   });
 });

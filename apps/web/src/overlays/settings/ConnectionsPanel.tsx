@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CaretIcon } from "../../system/icons";
 import type {
   ConnectorAuthPresentation,
@@ -9,8 +9,11 @@ import type {
 } from "@qingagent/contract-ts";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { useToast } from "../../system/ToastProvider";
-import { useDelayedVisible } from "../../system/useDelayedVisible";
 import { AuthCard } from "../../pages/workspace/components/QrCard";
+import {
+  saveConnectorAuthSession,
+  type ConnectorAuthSession,
+} from "./connectorAuthSession";
 import { useConnectors } from "./useConnectors";
 
 type GithubStartResult = { user_code: string; verification_uri: string; expiresAt: string; pendingId: string };
@@ -42,7 +45,7 @@ export function mapConnectorStart(
   presentation: ConnectorAuthPresentation,
   value: unknown,
   now = Date.now(),
-): QrCardBody {
+): QrCardBody & { connectorId: ConnectorId; pendingId: string } {
   if (id === "github") {
     const result = value as Partial<GithubStartResult>;
     return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
@@ -255,28 +258,27 @@ export interface ConnectionsPanelProps {
 
 export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange }: ConnectionsPanelProps) {
   const capabilities = useClientCapabilities();
-  const { connectors, loading, error, refresh, start, probe, disconnect } = useConnectors();
-  // 加载占位延迟 250ms 才显形,快请求不闪
-  const showLoading = useDelayedVisible(loading && connectors.length === 0);
+  const {
+    connectors,
+    pendingSessions,
+    loading,
+    error,
+    refresh,
+    start,
+    cancel,
+    probe,
+    disconnect,
+  } = useConnectors();
   const toast = useToast();
   const confirm = useConfirm();
   // 未提供回调时把 selectedId 当作初始值，避免半受控调用导致返回按钮失效。
   const [localId, setLocalId] = useState<ConnectorId | null>(controlledId ?? null);
   const [busy, setBusy] = useState(false);
-  const [authCard, setAuthCard] = useState<{ connectorId: ConnectorId; data: QrCardBody } | null>(null);
   const selectedId = onSelectedIdChange ? controlledId ?? null : localId;
   const select = (id: ConnectorId | null) => {
     setLocalId(id);
     onSelectedIdChange?.(id);
   };
-
-  useEffect(() => {
-    if (!authCard) return;
-    const connector = connectors.find((item) => item.id === authCard.connectorId);
-    // start() 后列表接口短暂仍可能返回旧的 disconnected；只在轮询确认已连接时收起，
-    // 避免刚拿到二维码/设备码便被陈旧列表回包清掉。
-    if (connector?.status.state === "connected") setAuthCard(null);
-  }, [authCard, connectors]);
 
   if (capabilities?.connectors?.mutationEnabled === false) {
     return (
@@ -286,6 +288,21 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       </div>
     );
   }
+
+  const cancelAuthorization = async (session: ConnectorAuthSession) => {
+    setBusy(true);
+    try {
+      await cancel(session.connectorId, session.pendingId);
+      toast.show({ message: "已取消本次授权", tone: "success" });
+    } catch (cause) {
+      toast.show({
+        message: cause instanceof Error ? cause.message : "取消授权失败",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const selected = selectedId ? connectors.find((item) => item.id === selectedId) ?? null : null;
   if (selectedId && selected) {
@@ -300,7 +317,8 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       : ["disconnected", "needs_reauth"]).includes(selected.status.state);
     const canProbe = selected.status.canProbe && !canStart;
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
-    const selectedAuthCard = authCard?.connectorId === selected.id ? authCard.data : null;
+    const selectedAuthSession = pendingSessions[selected.id] ?? null;
+    const selectedAuthCard = selectedAuthSession?.card ?? null;
     const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
     const initiate = async () => {
       setBusy(true);
@@ -312,13 +330,19 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           : selected.id === "feishu"
             ? { domains: [...DEFAULT_FEISHU_AUTH_DOMAINS] }
             : {};
-        setAuthCard({
+        const result = await start(selected.id, body);
+        const startedAt = Date.now();
+        const card = mapConnectorStart(
+          selected.id,
+          selected.authPresentation,
+          result,
+          startedAt,
+        );
+        saveConnectorAuthSession({
           connectorId: selected.id,
-          data: mapConnectorStart(
-            selected.id,
-            selected.authPresentation,
-            await start(selected.id, body),
-          ),
+          pendingId: card.pendingId,
+          startedAt,
+          card,
         });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
@@ -360,9 +384,27 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态。" : detailStatus(selected)}</p>
         )}
         {selectedAuthCard ? (
-          <div className="cnd-authcard"><AuthCard data={selectedAuthCard} onRefresh={initiate} onStatusChange={() => {
-            void refresh().then(() => setAuthCard(null)).catch(() => undefined);
-          }} /></div>
+          <>
+            <div className="cnd-authcard"><AuthCard
+              data={selectedAuthCard}
+              onRefresh={initiate}
+              onStatusChange={() => {
+                void refresh().catch(() => undefined);
+              }}
+            /></div>
+            <div className="cnd-cancel">
+              <button
+                type="button"
+                className="sm-btn"
+                disabled={busy}
+                onClick={() => {
+                  if (selectedAuthSession) void cancelAuthorization(selectedAuthSession);
+                }}
+              >
+                {busy ? "取消中…" : "取消本次授权"}
+              </button>
+            </div>
+          </>
         ) : (canStart || canProbe) ? (
           <div className="cnd-action">
             {canStart && (
@@ -416,23 +458,48 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   return (
     <div className="settings-connections" data-wf="ConnectionsPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>管理青简以你的身份访问的外部服务。可在详情页主动连接，也可在对话里按需发起。</p>
-      {showLoading && <p className="sm-empty">加载中…</p>}
+      {loading && connectors.length === 0 && (
+        <div className="cn-skeleton" role="status" aria-label="正在加载连接">
+          {[0, 1, 2].map((index) => (
+            <div className="cn-skeleton-row" key={index} aria-hidden="true">
+              <span className="cn-skeleton-icon" />
+              <span className="cn-skeleton-copy">
+                <span className="cn-skeleton-line cn-skeleton-line--title" />
+                <span className="cn-skeleton-line" />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {error && <p className="sm-message">{error}</p>}
       <div className="cn-list">
         {connectors.map((connector) => {
-          const visibleState: ConnectorState = authCard?.connectorId === connector.id ? "pending" : connector.status.state;
+          const pendingSession = pendingSessions[connector.id];
+          const visibleState: ConnectorState = pendingSession ? "pending" : connector.status.state;
           return (
-            <button key={connector.id} type="button" className="cn-row" onClick={() => select(connector.id)}>
-              <ConnectorIcon connector={connector} />
-              <span className="cn-titleblock">
-                <span className="cn-titleline">
-                  <span className="cn-name">{connector.name}</span>
-                  <Badge state={visibleState} connectorId={connector.id} />
+            <div className="cn-row-wrap" key={connector.id}>
+              <button type="button" className="cn-row" onClick={() => select(connector.id)}>
+                <ConnectorIcon connector={connector} />
+                <span className="cn-titleblock">
+                  <span className="cn-titleline">
+                    <span className="cn-name">{connector.name}</span>
+                    <Badge state={visibleState} connectorId={connector.id} />
+                  </span>
+                  <span className="cn-sub">{listSubtitle(connector, visibleState)}</span>
                 </span>
-                <span className="cn-sub">{listSubtitle(connector, visibleState)}</span>
-              </span>
-              <span className="cn-caret" aria-hidden="true"><CaretIcon size={15} direction="right" /></span>
-            </button>
+                <span className="cn-caret" aria-hidden="true"><CaretIcon size={15} direction="right" /></span>
+              </button>
+              {pendingSession && (
+                <button
+                  type="button"
+                  className="cn-row-cancel"
+                  disabled={busy}
+                  onClick={() => void cancelAuthorization(pendingSession)}
+                >
+                  取消授权
+                </button>
+              )}
+            </div>
           );
         })}
       </div>

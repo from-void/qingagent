@@ -92,6 +92,28 @@ export class ConnectorService {
     };
   }
 
+  async cancel(id: ConnectorId, pendingId: string): Promise<ConnectorInfoDto> {
+    const adapter = this.adapters[id];
+    if (!adapter.cancel) {
+      throw Object.assign(new Error("该连接器不支持取消授权"), {
+        code: "CONNECTOR_CANCEL_UNSUPPORTED",
+        status: 409,
+      });
+    }
+    const status = await adapter.cancel(pendingId);
+    const definition = listConnectorDefinitions().find((item) => item.id === id)!;
+    return {
+      id,
+      name: definition.name,
+      icon: definition.icon,
+      official: definition.official,
+      authPresentation: definition.authPresentation,
+      riskNote: definition.riskNote ?? null,
+      usedBySkills: [...definition.usedBySkills],
+      status,
+    };
+  }
+
   async disconnect(id: ConnectorId): Promise<ConnectorInfoDto> {
     const status = await this.adapters[id].disconnect();
     const definition = listConnectorDefinitions().find((item) => item.id === id)!;

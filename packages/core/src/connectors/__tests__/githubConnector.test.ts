@@ -173,6 +173,63 @@ describe("GithubConnector 授权生命周期", () => {
     h.bundle = null;
   });
 
+  it("cancel 按 pendingId 中止 device flow 且不删除已有凭证", async () => {
+    h.bundle = {
+      version: 1,
+      connectorId: "github",
+      revision: 1,
+      payload: {
+        strategy: "oauth2-device",
+        version: 1,
+        grantedScopes: ["repo"],
+        account: { id: "1", displayName: "@octo" },
+        token: "tok-test",
+      },
+    };
+    const pollSignals: AbortSignal[] = [];
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/login/device/code")) {
+        return new Response(JSON.stringify({
+          device_code: "device-repo",
+          user_code: "PRIVATE",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      throw new Error(`unexpected ${url}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      fetch,
+      sleep: (_ms, signal) => {
+        pollSignals.push(signal);
+        return new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const started = await connector.start({ scope: "repo" });
+    await vi.waitFor(() => expect(pollSignals).toHaveLength(1));
+    await expect(connector.cancel(started.pendingId)).resolves.toMatchObject({
+      state: "connected",
+      account: { displayName: "@octo" },
+    });
+    expect(pollSignals[0]?.aborted).toBe(true);
+    await expect(connector.status(started.pendingId)).rejects.toMatchObject({
+      code: "PENDING_LOST",
+      status: 410,
+    });
+    expect(h.bundle?.payload.token).toBe("tok-test");
+  });
+
   it("disconnect 后保存事务内的代际 guard 拒绝迟到凭证写入", async () => {
     const saveEntered = deferred();
     const releaseSave = deferred();

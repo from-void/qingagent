@@ -44,4 +44,29 @@ describe("ConnectorService.list", () => {
     });
     expect(result.find((item) => item.id === "wechat-mp")?.status.state).toBe("disconnected");
   });
+
+  it("cancel 仅调用目标 adapter 的 pending 取消契约", async () => {
+    const cancel = async (pendingId: string) => {
+      expect(pendingId).toBe("pending-safe-id");
+      return createConnectorStatus("disconnected", {
+        reasonCode: "USER_CANCELLED",
+        statusFreshness: "fresh",
+      });
+    };
+    const adapters: Record<ConnectorId, ConnectorAdapter> = {
+      github: { ...adapter(async () => createConnectorStatus("pending")), cancel },
+      feishu: adapter(async () => createConnectorStatus("connected")),
+      "wechat-mp": adapter(async () => createConnectorStatus("connected")),
+    };
+
+    const result = await new ConnectorService(adapters).cancel(
+      "github",
+      "pending-safe-id",
+    );
+
+    expect(result).toMatchObject({
+      id: "github",
+      status: { state: "disconnected", reasonCode: "USER_CANCELLED" },
+    });
+  });
 });

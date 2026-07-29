@@ -421,4 +421,19 @@ describe("wechat auth connector service thin tools", () => {
     expect(requestSignal?.aborted).toBe(true);
     await vi.waitFor(() => expect(browser.close).toHaveBeenCalled());
   });
+
+  it("按 pendingId 取消会关闭等待扫码浏览器并使旧 ID 失效", async () => {
+    const neverLands = new Promise<void>(() => {});
+    const { browser } = browserMock(neverLands);
+    const started = await start();
+    const pendingId = String(started.pendingId);
+
+    wechatAuthService.cancel(pendingId);
+
+    await vi.waitFor(() => expect(browser.close).toHaveBeenCalled());
+    await expect(wechatAuthService.status(pendingId)).rejects.toMatchObject({
+      code: "PENDING_LOST",
+      status: 410,
+    });
+  });
 });

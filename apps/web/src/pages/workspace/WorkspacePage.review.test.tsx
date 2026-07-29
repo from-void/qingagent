@@ -658,6 +658,7 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     visiblePatchCount: 7,
     unrenderablePatchCount: 0,
     effectiveReview: true,
+    reviewResolutionAvailable: true,
     reviewMaterializing: false,
     fullpageAsk: null,
     viewingVersion: null,
@@ -2943,6 +2944,81 @@ describe("WorkspacePage review controls", () => {
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
+  it("pendingReview 有候选但正文锚点失配时仍可提交或放弃", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    const patch = textReviewToolCall("p-missing", "batch-missing", 0);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试审阅脱困" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("unrelated-block", "当前正文没有候选锚点")]),
+            1,
+          ),
+        },
+      },
+      docStateFrame("pendingReview"),
+      toolCallUpdatedFrame(patch),
+    ]);
+
+    const fallback = host?.querySelector(
+      '[data-wf="PatchNav"][data-review-fallback="true"]',
+    );
+    expect(fallback?.textContent).toContain("修改候选待确认");
+    expect(fallback?.textContent).toContain("提交 ↵");
+    expect(fallback?.textContent).toContain("放弃全部");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+
+    await clickButton("提交 ↵");
+    expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
+      acceptReviewBatchIds: ["batch-missing"],
+      rejectReviewBatchIds: [],
+    });
+  });
+
+  it("pendingReview 没有候选明细时保留输入重说入口", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试审阅脱困" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("base-p", "候选明细未恢复，但正文仍在")]),
+            1,
+          ),
+        },
+      },
+      docStateFrame("pendingReview"),
+    ]);
+
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+    const editor = getChatEditor();
+    expect(editor.getAttribute("contenteditable")).toBe("true");
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "请重新处理刚才的修改";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("发送");
+    await flushMicrotasks(5);
+
+    expect(sendMessageCommands(stream)).toContainEqual(
+      expect.objectContaining({
+        kind: "sendMessage",
+        data: expect.objectContaining({
+          sessionId: "s-1",
+          text: "请重新处理刚才的修改",
+        }),
+      }),
+    );
+  });
+
   it("B7 放弃全部不终止在途请求，pending 问卷卡保持可作答", async () => {
     const { useWorkspacePageController } = await import("./WorkspacePage");
     const captured: {
@@ -3180,7 +3256,11 @@ describe("WorkspacePage review controls", () => {
     expect(sends).toHaveLength(1);
     expect(sends[0]).toMatchObject({
       kind: "sendMessage",
-      data: { sessionId: "s-1", text: "继续追问" },
+      data: {
+        sessionId: "s-1",
+        text: "继续追问",
+        activeDocument: { kind: "main" },
+      },
     });
   });
 
@@ -3262,6 +3342,64 @@ describe("WorkspacePage review controls", () => {
     await clickElement(mainTab!);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+  });
+
+  it("切到衍生稿后界面标明目标，发送载荷绑定当前衍生稿而非主稿", async () => {
+    const derivative = {
+      docId: "deriv-current-target",
+      dtype: "gzh",
+      templateId: "gzh-story",
+      templateName: "故事叙事文",
+      privatePrompt: "",
+      sourceVersion: 1,
+      currentSourceVersion: 1,
+      generatedAt: "2026-07-30T00:00:00.000Z",
+      stale: false,
+    };
+    const stream = await renderWorkspaceWithAnnotations("reviewing", (nextStream) => {
+      nextStream.listDerivatives.mockResolvedValue([derivative]);
+      nextStream.getDerivativeDoc.mockResolvedValue({
+        meta: derivative,
+        docPm: JSON.stringify(pmDoc([pmParagraph("deriv-target-p", "衍生正文")])),
+        docVersion: 1,
+        title: "",
+      });
+    });
+    await flushMicrotasks(5);
+
+    expect(
+      host?.querySelector('[data-wf="ChatTurnTarget"]')?.textContent,
+    ).toContain("主稿 · 《测试批注》");
+    const derivativeTab = Array.from(
+      host!.querySelectorAll<HTMLElement>('[role="tab"]'),
+    ).find((tab) => tab.textContent?.includes("公众号文章"));
+    expect(derivativeTab).toBeTruthy();
+    await clickElement(derivativeTab!);
+    expect(
+      host?.querySelector('[data-wf="ChatTurnTarget"]')?.textContent,
+    ).toContain("公众号稿 · 故事叙事文");
+
+    const editor = getChatEditor();
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "把第二段改短一点";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("发送");
+    await flushMicrotasks(5);
+
+    expect(sendMessageCommands(stream)).toContainEqual(
+      expect.objectContaining({
+        kind: "sendMessage",
+        data: expect.objectContaining({
+          text: "把第二段改短一点",
+          activeDocument: {
+            kind: "derivative",
+            docId: derivative.docId,
+          },
+        }),
+      }),
+    );
   });
 
   it("批注意见编辑后点击生成修改会立即发送一次，并保持 reviewing 锚点", async () => {
@@ -4719,6 +4857,42 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')?.textContent).toContain(
       "另有 7 处改动无法在正文定位",
     );
+  });
+
+  it("pendingReview 候选无法在正文定位时仍显示提交与放弃入口", async () => {
+    const { RightPane } = await import("./WorkspacePage");
+    const onCommit = vi.fn();
+    const onRejectAll = vi.fn();
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            effectiveReview: false,
+            reviewResolutionAvailable: true,
+            visiblePatchCount: 0,
+            remainingCount: 1,
+            unrenderablePatchCount: 1,
+            patchMeta: new Map(),
+            onCommit,
+            onRejectAll,
+          })}
+        />
+      </section>,
+    );
+
+    const fallback = host?.querySelector(
+      '[data-wf="PatchNav"][data-review-fallback="true"]',
+    );
+    expect(fallback?.textContent).toContain("修改候选待确认");
+    expect(fallback?.textContent).toContain("提交 ↵");
+    expect(fallback?.textContent).toContain("放弃全部");
+
+    await clickButton("提交 ↵");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
 
   it("R2-02 整篇审提交若没有状态回帧，底部条会超时复位并提示重试", async () => {

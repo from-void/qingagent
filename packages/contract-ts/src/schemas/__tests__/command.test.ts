@@ -411,6 +411,39 @@ describe("commandSchema", () => {
     }).success).toBe(false);
   });
 
+  it("接受结构化的当前文档目标并拒绝空衍生稿 id", () => {
+    const base = {
+      sessionId: "s",
+      text: "把第二段改短一点",
+      mentions: [],
+      skills: [],
+      chips: [],
+      fileIds: [],
+    };
+    const main = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: { ...base, activeDocument: { kind: "main" } },
+    });
+    const derivative = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        ...base,
+        activeDocument: { kind: "derivative", docId: "derivative-1" },
+      },
+    });
+    const emptyDerivative = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        ...base,
+        activeDocument: { kind: "derivative", docId: "" },
+      },
+    });
+
+    expect(main.success).toBe(true);
+    expect(derivative.success).toBe(true);
+    expect(emptyDerivative.success).toBe(false);
+  });
+
   it("审查 query 保留结构化类型与模板标识", () => {
     const r = commandSchema.safeParse({
       kind: "sendMessage",

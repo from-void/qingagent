@@ -574,22 +574,37 @@ export class ServerStream {
     command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
-    const result = await this.sendCommandInternal(command);
-    if (!Array.isArray(result)) {
-      throw new Error(`${kind} response missing`);
-    }
-    const frames = result.map((value) => {
-      const frame = value as BridgeFrame;
-      validateBridgeFrame(frame);
-      return frame;
-    });
-    const frame = frames.find(
-      (candidate) =>
-        candidate.kind === kind
-        && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
+    const framePromise = this.waitForFrame(
+      (frame) =>
+        frame.kind === kind
+        && (frame.data as { requestId?: unknown }).requestId === command.data.requestId,
+      `${kind} response missing`,
     );
-    if (!frame) throw new Error(`${kind} response missing`);
-    return frame as Extract<BridgeFrame, { kind: K }>;
+    try {
+      const result = await this.sendCommandInternal(command);
+      if (!Array.isArray(result)) {
+        return await framePromise as Extract<BridgeFrame, { kind: K }>;
+      }
+      const frames = result.map((value) => {
+        const frame = value as BridgeFrame;
+        validateBridgeFrame(frame);
+        return frame;
+      });
+      const frame = frames.find(
+        (candidate) =>
+          candidate.kind === kind
+          && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
+      );
+      if (!frame) throw new Error(`${kind} response missing`);
+      this.resolveWaiter(framePromise, frame);
+      return frame as Extract<BridgeFrame, { kind: K }>;
+    } catch (error) {
+      this.rejectWaiter(
+        framePromise,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      throw error;
+    }
   }
 
   async listDerivatives(sessionId: string) {
@@ -1381,6 +1396,16 @@ export class ServerStream {
     }
     // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。
     promise.catch(() => undefined);
+  }
+
+  private resolveWaiter(
+    promise: Promise<unknown>,
+    frame: BridgeFrame,
+  ): void {
+    const waiter = this.waiterByPromise.get(promise);
+    if (!waiter) return;
+    this.removeWaiter(waiter);
+    waiter.resolve(frame);
   }
 
   private dispatchStreamTerminated(

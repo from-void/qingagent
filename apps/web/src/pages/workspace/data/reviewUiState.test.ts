@@ -28,6 +28,23 @@ describe("deriveReviewUiState", () => {
     expect(state.canReplayReviewReveal).toBe(false);
   });
 
+  it("keeps exactly one escape route when pending review details are missing", () => {
+    const missingDetails = derive();
+    const unrenderable = derive({
+      hasPatchCalls: true,
+      visiblePatchCount: 0,
+    });
+
+    expect(missingDetails).toMatchObject({
+      reviewResolutionAvailable: false,
+      pendingReviewChatFallback: true,
+    });
+    expect(unrenderable).toMatchObject({
+      reviewResolutionAvailable: true,
+      pendingReviewChatFallback: false,
+    });
+  });
+
   it("review with no visible patches stays outside inline review", () => {
     const state = derive({ hasPatchCalls: true, visiblePatchCount: 0 });
 

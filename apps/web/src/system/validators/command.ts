@@ -103,6 +103,26 @@ function checkSendMessage(m: SendMessage): void {
   if (m.turnKind !== undefined && m.turnKind !== "generateDerivative") {
     fail(`SendMessage.turnKind is invalid`);
   }
+  if (m.activeDocument !== undefined) {
+    if (
+      typeof m.activeDocument !== "object" ||
+      m.activeDocument === null
+    ) {
+      fail(`SendMessage.activeDocument must be an object`);
+    }
+    if (
+      m.activeDocument.kind !== "main" &&
+      m.activeDocument.kind !== "derivative"
+    ) {
+      fail(`SendMessage.activeDocument.kind must be main|derivative`);
+    }
+    if (
+      m.activeDocument.kind === "derivative" &&
+      !nonEmptyString(m.activeDocument.docId)
+    ) {
+      fail(`SendMessage.activeDocument.docId must be non-empty`);
+    }
+  }
   for (const r of m.mentions) checkRefAny("SendMessage.mentions[]", r);
   for (const c of m.chips) checkChip(c);
   // fileIds is optional; when present each entry must be a non-empty string

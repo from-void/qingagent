@@ -903,6 +903,9 @@ export async function* handleTurnCommand(
         command.data.reviewContext,
         {
           preemptedByNewMessage,
+          ...(command.data.activeDocument
+            ? { activeDocument: command.data.activeDocument }
+            : {}),
           ...(command.data.turnContext
             ? { turnContext: command.data.turnContext }
             : {}),

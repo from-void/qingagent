@@ -54,11 +54,9 @@ describe("selection chip edit context", () => {
     agentStreamCalls.length = 0;
   });
 
-  it("turnContext 只追加到模型侧当轮 user message，不污染可见用户气泡", async () => {
+  it("activeDocument 只追加到本次模型输入，不污染持久历史与可见用户气泡", async () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("sess-derivative-turn-context");
-    const turnContext =
-      "[系统:用户当前正查看衍生稿(doc_id: derivative-xhs-1,类型=小红书稿)。]";
 
     await collectFrames(
       runAgentTurn(
@@ -71,13 +69,26 @@ describe("selection chip edit context", () => {
         undefined,
         undefined,
         undefined,
-        { turnContext, turnKind: "generateDerivative" },
+        {
+          activeDocument: {
+            kind: "derivative",
+            docId: "derivative-xhs-1",
+          },
+          turnKind: "generateDerivative",
+        },
       ),
     );
 
     const modelUserMessage = state.messages.find((message) => message.role === "user");
     expect(modelUserMessage?.content).toContain("把标题改得更抓人");
-    expect(modelUserMessage?.content).toContain(turnContext);
+    expect(modelUserMessage?.content).not.toContain("当前文档目标");
+    const streamedMessages = agentStreamCalls[0]?.messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(streamedMessages.at(-1)?.content).toContain(
+      "本轮发送时界面激活的是衍生稿(doc_id: derivative-xhs-1)",
+    );
     const visibleUserMessage = state.chatHistory.find(
       (message) => message.role.kind === "user",
     );
@@ -91,6 +102,46 @@ describe("selection chip edit context", () => {
     expect(agentStreamCalls[0]?.options.tracingOptions).toMatchObject({
       metadata: { site: "generateDerivative" },
     });
+  });
+
+  it("同 session 历史含衍生稿标记时，主稿目标在当前轮尾部明确复位", async () => {
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
+    const state = createSession("sess-main-after-derivative");
+    state.messages.push({
+      role: "user",
+      content:
+        "旧轮请求\n\n[系统:用户当前正查看衍生稿(doc_id: stale-derivative,类型=公众号稿)。]",
+    });
+    state.messages.push({ role: "assistant", content: "已生成衍生稿。" });
+
+    await collectFrames(
+      runAgentTurn(
+        state,
+        "把第二段改短一点",
+        [],
+        [],
+        [],
+        null,
+        undefined,
+        undefined,
+        undefined,
+        { activeDocument: { kind: "main" } },
+      ),
+    );
+
+    const streamedMessages = agentStreamCalls.at(-1)?.messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const currentUserMessage = streamedMessages.at(-1);
+    expect(currentUserMessage?.content).toContain("把第二段改短一点");
+    expect(currentUserMessage?.content).toContain(
+      "本轮发送时界面激活的是主文档",
+    );
+    expect(currentUserMessage?.content).toContain(
+      "历史消息中任何“当前正查看衍生稿”",
+    );
+    expect(state.messages.at(-1)?.content).not.toContain("当前文档目标");
   });
 
   it("blockId 缺失时用 chip label 作为 readDraft 模糊定位文本", async () => {

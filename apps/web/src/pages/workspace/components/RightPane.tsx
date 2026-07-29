@@ -64,6 +64,8 @@ interface RightPaneProps {
   visiblePatchCount: number;
   unrenderablePatchCount: number;
   effectiveReview: boolean;
+  /** 有待裁决候选；即使正文定位失败，也必须显示提交/放弃入口。 */
+  reviewResolutionAvailable: boolean;
   reviewMaterializing: boolean;
   fullpageAsk: ToolCallSpec | null;
   submittingAskUserId?: string | null;
@@ -153,6 +155,7 @@ export function RightPane({
   visiblePatchCount,
   unrenderablePatchCount,
   effectiveReview,
+  reviewResolutionAvailable,
   reviewMaterializing,
   fullpageAsk,
   submittingAskUserId,
@@ -337,6 +340,7 @@ export function RightPane({
     return <QingLoading reasoning={agentReasoning} />;
 
   const showPatches = !viewingHistory && effectiveReview;
+  const showReviewActions = !viewingHistory && reviewResolutionAvailable;
   const showUnrenderableHint =
     !viewingHistory &&
     !patchRevealing &&
@@ -425,13 +429,14 @@ export function RightPane({
       {historyBanner}
       {/* 审批条:揭示动画一开始(patchRevealing)就出条并同体平移进来(不再等揭示跑完),
           这样"光标刚开始在正文打字"时条就立刻转移过去。 */}
-      {showPatches && (
+      {showReviewActions && (
         <PatchNav
           remainingCount={remainingCount}
           totalCount={visiblePatchCount}
           activePatchIndex={activePatchIndex}
           isSubmitting={isReviewSubmitting}
           retryOnly={reviewSettlementRetryPending}
+          unrenderableOnly={!showPatches && !reviewSettlementRetryPending}
           onJumpPrev={onJumpPrev}
           onJumpNext={onJumpNext}
           onRejectAll={onRejectAll}
@@ -444,7 +449,7 @@ export function RightPane({
           data-wf="PatchUnrenderableHint"
           style={{ marginBottom: 10, color: "var(--ink-3)", fontSize: 12.5 }}
         >
-          另有 {unrenderablePatchCount} 处改动无法在正文定位，未计入上方审批。
+          另有 {unrenderablePatchCount} 处改动无法在正文定位，不能逐处查看；仍可提交或放弃整轮候选。
         </div>
       )}
       <DocumentSnapshotView

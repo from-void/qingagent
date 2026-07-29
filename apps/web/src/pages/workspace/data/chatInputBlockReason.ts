@@ -18,6 +18,7 @@ export function getChatInputBlockReason(
   askUserInputDisabled: boolean,
   viewingHistory = false,
   hasAskUserCard = dim.overlay === "askUser",
+  pendingReviewResolutionAvailable = true,
 ): ChatInputBlockReason | null {
   if (viewingHistory) return HISTORY_CHAT_INPUT_BLOCK_REASON;
 
@@ -29,6 +30,9 @@ export function getChatInputBlockReason(
   }
 
   if (dim.content.kind === "pendingReview") {
+    // pendingReview 已落库但候选明细没进前端时，提交/放弃都无从执行；
+    // 此时不能再锁输入框，否则用户没有任何可自行脱出的入口。
+    if (!pendingReviewResolutionAvailable) return null;
     return {
       toast: "请先提交或撤销上方修改，再继续对话",
       placeholder: "先提交或撤销上方修改，再继续对话",

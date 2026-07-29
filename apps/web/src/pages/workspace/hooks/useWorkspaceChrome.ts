@@ -21,6 +21,7 @@ import { workspaceSessionIdFromHash } from "../data/workspacePageView";
  *   `.ws-taskpill-flyout` 开合时绝不能改变对话流底部留白。
  */
 const INPUT_OCCUPANT_SELECTOR = [
+  ".ws-chat-target",
   ".wf-input",
   ".askuser-overlay",
   ".cf-overlay",

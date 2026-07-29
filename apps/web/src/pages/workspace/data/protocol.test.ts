@@ -1845,6 +1845,56 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     ]);
   });
 
+  it("删除含代码块的完整小节仍生成一个可裁决块目标", () => {
+    // r39 真实形态并非只删一个 codeBlock：模型连续删了小节标题、说明段和代码块，
+    // buildDraftDiff 将三次 deleteBlock 合并为一个块级 delete hunk。
+    const prefix = pmParagraph("intro", "改造背景");
+    const heading = pmHeading("code-heading", "装置：老旧管网改造成本测算脚本");
+    const explanation = pmParagraph("code-explanation", "以下脚本用于成本测算。");
+    const code = pmCodeBlock("code-script", "const total = materials + labor;");
+    const suffix = pmParagraph("footnotes", "脚注保留。");
+    const base = pmDoc([prefix, heading, explanation, code, suffix]);
+    const draft = pmDoc([prefix, suffix]);
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    const hunk = hunks[0]!;
+    const suggestion = blockSuggestion("delete-code-section", hunk);
+    const doc = pmDocToViewDocumentSnapshot(base, 1, "t");
+
+    expect(hunks).toHaveLength(1);
+    expect(hunk).toMatchObject({
+      op: "delete",
+      before: [
+        { type: "heading" },
+        { type: "paragraph" },
+        { type: "codeBlock" },
+      ],
+      after: null,
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+    expect(suggestionToPatchOverlay(doc, suggestion, 0)).toBeNull();
+
+    const inputs = suggestionToBlockPatchInputs(suggestion, 0);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      op: "delete",
+      blockCount: 3,
+      blocks: [
+        { kind: "h2" },
+        { kind: "p" },
+        { kind: "code" },
+      ],
+    });
+
+    const presentation = derivePatchPresentation(doc, [], inputs);
+    expect(presentation.droppedIds).toEqual([]);
+    expect(presentation.conflictIds).toEqual([]);
+    expect(presentation.reviewTargets).toHaveLength(1);
+    expect(presentation.reviewTargets[0]).toMatchObject({
+      patchId: "delete-code-section",
+      kind: "patch",
+    });
+  });
+
   it("形状稳定的 table replace 只产出一个 replace patch,单元格级 cellDiff 覆盖 changed/removed/added", () => {
     const baseTable = pmTableRows("tbl-1", [
       ["指标", "Q1", "Q2"],

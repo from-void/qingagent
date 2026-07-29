@@ -740,6 +740,29 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   /* 外壳显隐瞬时(不淡),避免返回时「框先没了再淡回来」;只让框内元素淡入淡出。 */
   will-change: transform;
 }
+#view-workspace .ws-chat-target {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 2px 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line-3);
+  color: var(--ink-2);
+  font: 11.5px/1.5 var(--font-zh-serif);
+}
+#view-workspace .ws-chat-target span {
+  flex: 0 0 auto;
+  letter-spacing: 0.08em;
+}
+#view-workspace .ws-chat-target strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-1);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 工具排:禁用态下淡出收起(box 不动) */
 #view-workspace .ws-input-morph .ws-input-tools {
   transition:

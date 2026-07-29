@@ -208,6 +208,44 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).not.toThrow();
   });
 
+  it("accepts current main/derivative targets", () => {
+    for (const activeDocument of [
+      { kind: "main" as const },
+      { kind: "derivative" as const, docId: "derivative-1" },
+    ]) {
+      const cmd: Command = {
+        kind: "sendMessage",
+        data: {
+          sessionId: "s",
+          text: "把第二段改短一点",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+          activeDocument,
+        },
+      };
+      expect(() => validateCommand(cmd)).not.toThrow();
+    }
+  });
+
+  it("rejects non-object active document target", () => {
+    expect(() =>
+      validateCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s",
+          text: "改短一点",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+          activeDocument: null,
+        },
+      } as unknown as Command),
+    ).toThrow(/activeDocument must be an object/);
+  });
+
   it("accepts role review context", () => {
     const cmd: Command = {
       kind: "sendMessage",

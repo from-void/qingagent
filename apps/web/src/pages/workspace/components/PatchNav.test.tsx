@@ -73,6 +73,24 @@ describe("PatchNav", () => {
     expect(host?.querySelector(".pn-label")?.getAttribute("title")).toBe("剩余 2 处");
   });
 
+  it("正文无法定位时仍给整轮提交与放弃入口", async () => {
+    await renderPatchNav(baseProps({
+      totalCount: 0,
+      remainingCount: 1,
+      unrenderableOnly: true,
+    }));
+
+    expect(host?.textContent).toContain("修改候选待确认");
+    expect(host?.textContent).not.toContain("剩余 ·");
+    expect(host?.textContent).not.toContain("上一处");
+    expect(host?.textContent).not.toContain("下一处");
+    expect(buttonByText("提交 ↵")).toBeTruthy();
+    expect(buttonByText("放弃全部")).toBeTruthy();
+    expect(
+      host?.querySelector('[data-wf="PatchNav"]')?.getAttribute("data-review-fallback"),
+    ).toBe("true");
+  });
+
   it("放弃全部仍保留确认二次点击", async () => {
     const onRejectAll = vi.fn();
     await renderPatchNav(baseProps({ onRejectAll }));

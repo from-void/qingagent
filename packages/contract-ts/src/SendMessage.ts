@@ -6,6 +6,15 @@ import type { ReviewContext } from "./ReviewTemplates";
 
 export type SendMessageTurnKind = "generateDerivative";
 
+/**
+ * 用户点击发送时，工作区界面实际激活的文档。
+ *
+ * 这是路由提示而非写权限：服务端仍须由会话级工具 guard 校验 docId 归属。
+ */
+export type ActiveDocumentTarget =
+  | { kind: "main" }
+  | { kind: "derivative"; docId: string };
+
 export type SendMessage = { sessionId: string, text: string,
 /** @deprecated 仅保留空数组线协议兼容；资源引用请使用 `chips`。 */
 mentions: Array<ResourceRef>, skills: Array<SkillRef>,
@@ -46,6 +55,11 @@ richText?: string,
 turnContext?: string,
 /** 受控的用户动作分类，只用于服务端模型调用归属，不接受任意 site。 */
 turnKind?: SendMessageTurnKind,
+/**
+ * 当前指令默认作用的文档。服务端据此生成仅本轮有效的模型路由上下文，
+ * 不把瞬态选中态写进持久会话历史。
+ */
+activeDocument?: ActiveDocumentTarget,
 /** 可选的用户侧展示卡；模型仍接收 text 原文。 */
 displayCard?: ActionCardData,
 /** 审查菜单发起时的结构化类型/模板标识；只约束当前回合。 */

@@ -10,7 +10,10 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import { useToast } from "../../../system";
 import { validateCommand } from "../../../system/validators";
 import { goConfigureModel } from "../../../system/modelKeyGate";
-import type { Command } from "@qingagent/contract-ts";
+import type {
+  ActiveDocumentTarget,
+  Command,
+} from "@qingagent/contract-ts";
 import type { ChatInputHandle } from "../data/chatInputTypes";
 import {
   canRetryStreamError,
@@ -38,7 +41,11 @@ import {
   MATERIAL_PARSE_SEND_FAILED_REASON,
   type UploadedAsset,
 } from "../data/useMaterialParseTracker";
-import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
+import {
+  selectPatches,
+  type WorkspaceAction,
+  type WorkspaceState,
+} from "../data/workspaceState";
 import type { AssetSource } from "../data/sources";
 
 const STREAM_ERROR_TOAST_KEY = "workspace-stream-error";
@@ -170,8 +177,8 @@ export function useWorkspaceChatActions(input: {
   toast: ReturnType<typeof useToast>;
   handleBackHome: () => void;
   restoreExistingSession: (sessionId: string) => Promise<unknown>;
-  /** 仅进模型当轮 user message，不进入用户可见气泡。 */
-  turnContext?: string | null;
+  /** 用户点击发送时界面激活的文档；服务端据此生成仅本轮有效的路由上下文。 */
+  activeDocument: ActiveDocumentTarget;
 }) {
   const {
     dim,
@@ -199,7 +206,7 @@ export function useWorkspaceChatActions(input: {
     toast,
     handleBackHome,
     restoreExistingSession,
-    turnContext,
+    activeDocument,
   } = input;
 
   const handleSubmitChat = useCallback(() => {
@@ -207,6 +214,8 @@ export function useWorkspaceChatActions(input: {
       dim,
       askUserInputDisabled,
       stateRef.current.viewingVersion !== null,
+      undefined,
+      selectPatches(stateRef.current).length > 0,
     );
     if (blockReason) {
       showToast(blockReason.toast, blockReason.durationMs);
@@ -359,7 +368,7 @@ export function useWorkspaceChatActions(input: {
                   chips: contractChips,
                   fileIds,
                   clientMessageId,
-                  ...(turnContext ? { turnContext } : {}),
+                  activeDocument,
                   // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
                   ...(snap.chips.length > 0 && snap.richText
                     ? { richText: snap.richText }
@@ -442,7 +451,7 @@ export function useWorkspaceChatActions(input: {
     showToast,
     tiptapEditor,
     toast,
-    turnContext,
+    activeDocument,
   ]);
   // 让 chatInputBus.send 的订阅者拿到最新 handleSubmitChat(每渲染同步)。
   handleSubmitChatRef.current = handleSubmitChat;

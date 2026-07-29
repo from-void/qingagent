@@ -6,6 +6,8 @@ export interface PatchNavProps {
   activePatchIndex: number;
   isSubmitting?: boolean;
   retryOnly?: boolean;
+  /** 候选存在但正文锚点无法定位：只保留整轮提交/放弃，不显示虚假的处数与跳转。 */
+  unrenderableOnly?: boolean;
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onRejectAll: () => void;
@@ -25,6 +27,7 @@ export function PatchNav({
   activePatchIndex,
   isSubmitting = false,
   retryOnly = false,
+  unrenderableOnly = false,
   onJumpPrev,
   onJumpNext,
   onRejectAll,
@@ -33,10 +36,17 @@ export function PatchNav({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
-    <div className="patch-nav" data-wf="PatchNav" aria-busy={isSubmitting}>
+    <div
+      className="patch-nav"
+      data-wf="PatchNav"
+      data-review-fallback={unrenderableOnly || undefined}
+      aria-busy={isSubmitting}
+    >
       <span className="pn-dot" aria-hidden="true" />
       {retryOnly ? (
         <span className="pn-label">提交失败，候选待重试</span>
+      ) : unrenderableOnly ? (
+        <span className="pn-label">修改候选待确认</span>
       ) : (
         <span
           className="pn-label"
@@ -46,7 +56,7 @@ export function PatchNav({
         </span>
       )}
       {/* 上/下一处:仅当修改位置多于 1 处时才有意义,单处时不渲染 */}
-      {!retryOnly && totalCount > 1 && (
+      {!retryOnly && !unrenderableOnly && totalCount > 1 && (
         <>
           <button
             type="button"

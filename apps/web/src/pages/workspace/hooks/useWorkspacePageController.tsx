@@ -1,4 +1,5 @@
 import type {
+  ActiveDocumentTarget,
   ActionCardData,
   AnnotationGroup,
   BridgeFrame,
@@ -41,7 +42,7 @@ import type {
 } from "../data/chatInputTypes";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
-import { buildActiveDerivativeTurnContext } from "../components/derivatives/derivativeTurnContext";
+import { buildActiveDocumentTurnTarget } from "../components/derivatives/derivativeTurnContext";
 import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
@@ -333,6 +334,7 @@ export function useWorkspacePageController() {
       text: string,
       displayCard: ActionCardData,
       reviewContext?: ReviewContext,
+      targetOverride?: ActiveDocumentTarget,
     ) => void
   >(() => undefined);
   const [activeTab, setActiveTab] = useState<"main" | string>("main");
@@ -354,14 +356,15 @@ export function useWorkspacePageController() {
       );
     });
   }, [derivatives]);
-  const derivativeTurnContext = useMemo(
+  const activeDocumentTurnTarget = useMemo(
     () =>
-      buildActiveDerivativeTurnContext(
+      buildActiveDocumentTurnTarget(
         activeTab,
+        title,
         derivatives,
         activeTranslationDocId,
       ),
-    [activeTab, activeTranslationDocId, derivatives],
+    [activeTab, activeTranslationDocId, derivatives, title],
   );
   useEffect(() => {
     // 批注预览是转瞬态：切 tab 不恢复、不保留。
@@ -1024,6 +1027,9 @@ export function useWorkspacePageController() {
     hasAskUserCard &&
     (openAskUser?.status.kind === "running" ||
       openAskUser?.status.kind === "pending");
+  const allReviewPatches = useMemo(() => selectPatches(state), [state]);
+  const pendingReviewResolutionAvailable =
+    dim.content.kind === "pendingReview" && allReviewPatches.length > 0;
   const chatInputBlockReason = useMemo(
     () =>
       getChatInputBlockReason(
@@ -1031,8 +1037,15 @@ export function useWorkspacePageController() {
         askUserInputDisabled,
         viewingHistory,
         hasAskUserCard,
+        pendingReviewResolutionAvailable,
       ),
-    [dim, askUserInputDisabled, viewingHistory, hasAskUserCard],
+    [
+      dim,
+      askUserInputDisabled,
+      viewingHistory,
+      hasAskUserCard,
+      pendingReviewResolutionAvailable,
+    ],
   );
   const chatInputBlockReasonRef = useRef(chatInputBlockReason);
   chatInputBlockReasonRef.current = chatInputBlockReason;
@@ -1043,7 +1056,6 @@ export function useWorkspacePageController() {
   if (!chatInputEditorDisabled) inputWasEverActiveRef.current = true;
   const chatInputSendEnabledWhenDisabled =
     dim.content.kind === "pendingReview" && !askUserInputDisabled;
-  const allReviewPatches = useMemo(() => selectPatches(state), [state]);
   const pendingReviewPatches = useMemo(
     () =>
       allReviewPatches.filter((patch) => {
@@ -2586,10 +2598,15 @@ export function useWorkspacePageController() {
             createdItems.map((created) => created.docId),
           );
         } else {
-          sendDerivativeQueryRef.current(descriptor.queryText(item.docId), {
-            title: descriptor.cardTitle(false),
-            lines,
-          });
+          sendDerivativeQueryRef.current(
+            descriptor.queryText(item.docId),
+            {
+              title: descriptor.cardTitle(false),
+              lines,
+            },
+            undefined,
+            { kind: "derivative", docId: item.docId },
+          );
         }
       } catch (error) {
         console.error("[workspace] create derivative failed", error);
@@ -3050,7 +3067,7 @@ export function useWorkspacePageController() {
       toast,
       handleBackHome,
       restoreExistingSession,
-      turnContext: derivativeTurnContext,
+      activeDocument: activeDocumentTurnTarget.activeDocument,
     });
 
   const sendDerivativeQuery = useCallback(
@@ -3058,6 +3075,7 @@ export function useWorkspacePageController() {
       text: string,
       displayCard: ActionCardData,
       reviewContext?: ReviewContext,
+      targetOverride?: ActiveDocumentTarget,
     ) => {
       const stream = streamRef.current;
       if (!stream) {
@@ -3096,6 +3114,8 @@ export function useWorkspacePageController() {
               chips: [],
               fileIds: [],
               clientMessageId,
+              activeDocument:
+                targetOverride ?? activeDocumentTurnTarget.activeDocument,
               displayCard,
               ...(!reviewContext ? { turnKind: "generateDerivative" as const } : {}),
               ...(reviewContext ? { reviewContext } : {}),
@@ -3119,7 +3139,7 @@ export function useWorkspacePageController() {
         showToast("生成指令发送失败,请重试");
       });
     },
-    [ensureSessionId, showToast],
+    [activeDocumentTurnTarget.activeDocument, ensureSessionId, showToast],
   );
   sendDerivativeQueryRef.current = sendDerivativeQuery;
 
@@ -3340,6 +3360,7 @@ export function useWorkspacePageController() {
     derivatives,
     activeTab,
     setActiveTab,
+    activeDocumentTurnTarget,
     activeTranslationDocId,
     setActiveTranslationDocId,
     derivativeCreateOpen,

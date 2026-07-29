@@ -47,6 +47,18 @@ describe("getChatInputBlockReason", () => {
     });
   });
 
+  it("allows chat fallback when pendingReview has no resolvable candidate details", () => {
+    expect(
+      getChatInputBlockReason(
+        dim("pendingReview", "pendingReview"),
+        false,
+        false,
+        false,
+        false,
+      ),
+    ).toBeNull();
+  });
+
   it("blocks chat submit while viewing a history snapshot", () => {
     expect(getChatInputBlockReason(dim("editing", "editable"), false, true)).toEqual({
       toast: "正在看历史版本，回到当前版本后可继续对话",

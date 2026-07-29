@@ -129,6 +129,14 @@ const reviewContextSchema = z.object({
   templateName: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
 });
 
+const activeDocumentTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("main") }),
+  z.object({
+    kind: z.literal("derivative"),
+    docId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  }),
+]);
+
 const sendMessageDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   text: z.string().max(MAX_COMMAND_STRING_LENGTH),
@@ -146,6 +154,7 @@ const sendMessageDataSchema = z.object({
   richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   turnContext: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   turnKind: z.literal("generateDerivative").optional(),
+  activeDocument: activeDocumentTargetSchema.optional(),
   displayCard: actionCardDataSchema.optional(),
   reviewContext: reviewContextSchema.optional(),
 }) satisfies z.ZodType<SendMessage>;

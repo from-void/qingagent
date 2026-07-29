@@ -275,14 +275,20 @@ export async function buildBubblewrapReadWallArgs(
     context.args.push("--bind", credential.canonicalPath, credential.lexicalPath);
   }
 
-  // 技能目录等可写例外:同样在 HOME 只读投影之上叠一层可写 bind,否则"装技能"
-  // 这类命令会被写墙打死(0729 真机 P1)。放开面仅限这些目录本身。
+  // 青简安装目录等可写例外:在 HOME 只读投影之上叠一层可写 bind。
   for (const writable of policy.allowPaths.filter(
     (path) => path.writable && path.kind !== "credential" && path.kind !== "session",
   )) {
     if (!writable.exists) continue;
     if (allowInsideData(writable, policy.dataDenyPath)) continue;
     context.args.push("--bind", writable.canonicalPath, writable.lexicalPath);
+  }
+
+  // 外部 agent 技能目录在所有可写覆盖之后再叠只读 bind；最宽档也不能改写。
+  for (const readOnlySkill of policy.allowPaths.filter(
+    (path) => path.kind === "user-skills" && !path.writable && path.exists,
+  )) {
+    context.args.push("--ro-bind", readOnlySkill.canonicalPath, readOnlySkill.lexicalPath);
   }
 
   const session = policy.allowPaths.find((path) => path.kind === "session");

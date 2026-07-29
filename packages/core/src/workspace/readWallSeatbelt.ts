@@ -79,6 +79,9 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
     (path) => path.kind !== "credential" && (path.kind !== "extra" || path.exists),
   );
   const credentialExceptions = policy.allowPaths.filter((path) => path.kind === "credential");
+  const protectedReadOnlySkillPaths = policy.allowPaths.filter(
+    (path) => path.kind === "user-skills" && !path.writable,
+  );
   const session = policy.allowPaths.find((path) => path.kind === "session");
   if (!session) throw new Error("seatbelt policy is missing the session exception");
   // session 已单独发写规则;credential 走后置的 renderCredentialAllow。
@@ -123,7 +126,7 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
     '(allow file-write* (subpath "/private/tmp"))',
     '(allow file-write* (subpath "/private/var/folders"))',
     "",
-    "; 技能目录可写:装技能就是往这里写。只开技能目录,HOME 其余部分仍只读。",
+    "; 青简安装目录与缓存可写；外部 agent 技能目录不在此列。",
     ...writableExceptions.flatMap((path) =>
       pathVariants(path).map((variant) => `(allow file-write* (subpath ${sbplString(variant)}))`),
     ),
@@ -143,6 +146,13 @@ export function buildSeatbeltReadWallProfile(policy: ReadWallResolvedPolicy): st
           ),
         ]
       : []),
+    "",
+    "; 外部 agent 技能目录始终只读，即使最宽档也不得向其它 agent 注入内容。",
+    ...protectedReadOnlySkillPaths.flatMap((path) =>
+      pathVariants(path).map((variant) =>
+        `(deny file-write* (subpath ${sbplString(variant)}))`
+      ),
+    ),
     "",
     "(allow network*)",
   ];

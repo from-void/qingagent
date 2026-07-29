@@ -728,11 +728,11 @@ async function buildSessionWorkspace(
   mkdirSync(sessionDir, { recursive: true });
   // 缓存与技能目录必须先存在,写墙才能把它们 bind 成可写(bwrap 对不存在的路径无法 bind)。
   mkdirSync(SANDBOX_PACKAGE_CACHE_DIR, { recursive: true });
-  for (const skillsDir of USER_SKILL_SOURCE_DIRS) {
+  for (const skillsDir of [USER_SKILLS_DIR]) {
     try {
       mkdirSync(skillsDir, { recursive: true });
     } catch {
-      // 第三方目录创建失败(权限/只读挂载)不该拖垮整个工作区装配,跳过即可。
+      // 安装目录创建失败不该拖垮整个工作区装配,后续发现会按空目录处理。
     }
   }
 
@@ -888,11 +888,16 @@ async function buildSessionWorkspace(
               // CLI skill 要调开放 API,必须放网;文件面仍然兜死
               allowNetwork: true,
               // 技能目录 + 产品级 CLI 目录只读可执行(bwrap/seatbelt 隔离下访问 lark-cli 等)
-              readOnlyPaths: [BUILTIN_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
-              // 技能目录与包缓存可写:装技能的落点与 npx 缓存。放开面仅限这些目录。
+              readOnlyPaths: [
+                BUILTIN_SKILLS_DIR,
+                ...USER_SKILL_SOURCE_DIRS.filter((dir) => dir !== USER_SKILLS_DIR),
+                SANDBOX_BIN_DIR,
+                ...extraReadOnlyPaths,
+              ],
+              // 仅青简安装目录与包缓存可写；外部 agent 技能目录保持只读。
               readWritePaths: [
                 sessionDir,
-                ...USER_SKILL_SOURCE_DIRS,
+                USER_SKILLS_DIR,
                 SANDBOX_PACKAGE_CACHE_DIR,
               ],
             },

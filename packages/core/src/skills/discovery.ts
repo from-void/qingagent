@@ -34,6 +34,26 @@ export interface DiscoveredSkill {
   mtimeMs: number;
 }
 
+export interface SkillDiscoveryRoot {
+  path: string;
+  external?: boolean;
+}
+
+export interface ResolvedSkillSource {
+  skill: DiscoveredSkill;
+  root: SkillDiscoveryRoot;
+  rootIndex: number;
+}
+
+export interface SkillDiscoveryLogger {
+  warn(message: string, context: { droppedCount: number; droppedNames: string[] }): void;
+}
+
+export interface ResolveSkillSourcesOptions {
+  maxExternalSkills?: number;
+  logger?: SkillDiscoveryLogger;
+}
+
 type FrontmatterValue = string | boolean | string[];
 
 /**
@@ -139,6 +159,58 @@ export async function listChildSkills(skillDirectory: string): Promise<Discovere
   const parent = hierarchy.find((skill) => skill.path === parentPath);
   if (!parent) return [];
   return hierarchy.filter((skill) => skill.parentPath === parent.path);
+}
+
+/**
+ * 按根目录顺序发现并去重顶层技能；外部来源在去重后按 SKILL.md mtime 取最新若干条。
+ * 返回顺序仍保持来源优先级，mtime 只参与超限取舍，避免改变正常加载顺序。
+ */
+export async function resolveSkillSourcesFromRoots(
+  roots: readonly SkillDiscoveryRoot[],
+  options: ResolveSkillSourcesOptions = {},
+): Promise<ResolvedSkillSource[]> {
+  const groups = await Promise.all(
+    roots.map(async (root, rootIndex) => {
+      try {
+        return (await listTopLevelSkills(root.path)).map((skill) => ({
+          skill,
+          root,
+          rootIndex,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const seen = new Set<string>();
+  const unique: ResolvedSkillSource[] = [];
+  for (const entry of groups.flat()) {
+    if (seen.has(entry.skill.metadata.name)) continue;
+    seen.add(entry.skill.metadata.name);
+    unique.push(entry);
+  }
+
+  const maxExternalSkills = options.maxExternalSkills;
+  if (maxExternalSkills === undefined) return unique;
+  const external = unique.filter((entry) => entry.root.external);
+  if (external.length <= maxExternalSkills) return unique;
+
+  const newest = [...external].sort((left, right) => {
+    if (left.skill.mtimeMs !== right.skill.mtimeMs) {
+      return right.skill.mtimeMs - left.skill.mtimeMs;
+    }
+    if (left.rootIndex !== right.rootIndex) return left.rootIndex - right.rootIndex;
+    return left.skill.metadata.name.localeCompare(right.skill.metadata.name);
+  });
+  const keptPaths = new Set(
+    newest.slice(0, maxExternalSkills).map((entry) => entry.skill.path),
+  );
+  const dropped = newest.slice(maxExternalSkills);
+  (options.logger ?? console).warn("[skills] 外部技能数量超过上限，已按更新时间截断", {
+    droppedCount: dropped.length,
+    droppedNames: dropped.map((entry) => entry.skill.metadata.name),
+  });
+  return unique.filter((entry) => !entry.root.external || keptPaths.has(entry.skill.path));
 }
 
 async function readSkillMetadata(skillMdPath: string): Promise<ParsedSkillFrontmatter | null> {

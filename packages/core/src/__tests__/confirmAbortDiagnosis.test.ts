@@ -228,21 +228,26 @@ describe("沙箱写墙的放开面", () => {
     });
     const profile = buildSeatbeltReadWallProfile(policy);
 
-    // 每个技能来源都必须拿到与主技能目录一致的可写待遇:装技能可能落到其中任意一个,
-    // 只读会重演"子进程被信号打死"。
+    // 只有青简安装目录可写；外部来源只读，防止沙箱向其它 agent 注入技能内容。
     for (const writable of [
       userSkillsDir,
-      agentsSkillsDir,
-      legacyUserDataSkillsDir,
       packageCacheDir,
       sessionDir,
     ]) {
       expect(profile).toContain(`(allow file-write* (subpath ${JSON.stringify(writable)}))`);
     }
-    for (const source of [userSkillsDir, agentsSkillsDir, legacyUserDataSkillsDir]) {
-      expect(
-        policy.allowPaths.find((path) => path.lexicalPath === source),
-      ).toMatchObject({ kind: "user-skills", writable: true });
+    expect(
+      policy.allowPaths.find((path) => path.lexicalPath === userSkillsDir),
+    ).toMatchObject({ kind: "user-skills", writable: true });
+    for (const source of [agentsSkillsDir, legacyUserDataSkillsDir]) {
+      expect(policy.allowPaths.find((path) => path.lexicalPath === source))
+        .toMatchObject({ kind: "user-skills", writable: false });
+      expect(profile).not.toContain(
+        `(allow file-write* (subpath ${JSON.stringify(source)}))`,
+      );
+      expect(profile).toContain(
+        `(deny file-write* (subpath ${JSON.stringify(source)}))`,
+      );
     }
     // HOME 其余部分、内置技能目录都不得出现写规则。
     expect(profile).not.toContain(`(allow file-write* (subpath ${JSON.stringify(home)}))`);

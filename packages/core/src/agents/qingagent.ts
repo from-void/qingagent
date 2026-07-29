@@ -1,6 +1,6 @@
 import { Agent, type ToolsInput } from "@mastra/core/agent";
 import { Workspace, LocalFilesystem } from "@mastra/core/workspace";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { planDraftTool } from "../tools/planDraft.js";
 import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
@@ -8,6 +8,7 @@ import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
 import {
   BUILTIN_SKILLS_DIR,
+  MAX_EXTERNAL_USER_SKILLS,
   USER_SKILLS_DIR,
   USER_SKILL_SOURCE_DIRS,
 } from "../skills/paths.js";
@@ -19,7 +20,10 @@ import {
 } from "../workspace/sessionWorkspace.js";
 import { getSessionFolderSources } from "../folderSources/runtime.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
-import { listTopLevelSkills } from "../skills/discovery.js";
+import {
+  resolveSkillSourcesFromRoots,
+  type SkillDiscoveryLogger,
+} from "../skills/discovery.js";
 import { beforeSkillToolCall } from "../skills/toolGate.js";
 import {
   wrapToolCallRepairingModel,
@@ -171,44 +175,40 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
   }
   const roots = [
     ...BUILTIN_SKILL_CATEGORIES.map((category) => join(BUILTIN_SKILLS_DIR, category)),
-    // 用户技能可能装在我们自己的目录,也可能被别的 agent CLI 装到 ~/.agents/skills。
-    // 两处都扫,否则用户明明装过却被告知"没安装"。
+    // 用户技能可能装在我们自己的目录,也可能被第三方安装器放进外部 agent 目录。
     ...USER_SKILL_SOURCE_DIRS,
   ];
-  return resolveEnabledSkillDirsFromRoots(roots, disabled);
+  return resolveEnabledSkillDirsFromRoots(roots, disabled, {
+    externalRoots: USER_SKILL_SOURCE_DIRS.slice(1),
+    logger: console,
+  });
+}
+
+export interface ResolveEnabledSkillDirsOptions {
+  externalRoots?: readonly string[];
+  maxExternalSkills?: number;
+  logger?: SkillDiscoveryLogger;
 }
 
 export async function resolveEnabledSkillDirsFromRoots(
   roots: string[],
   disabled: Set<string>,
+  options: ResolveEnabledSkillDirsOptions = {},
 ): Promise<string[]> {
-  const groups = await Promise.all(
-    roots.map(async (root) => {
-      try {
-        return await listTopLevelSkills(root);
-      } catch {
-        // A broken user install directory or mount must not make all built-in
-        // skills disappear from the Workspace.
-        return [];
-      }
-    }),
+  const externalRoots = new Set((options.externalRoots ?? []).map((root) => resolve(root)));
+  const sources = await resolveSkillSourcesFromRoots(
+    roots.map((path) => ({ path, external: externalRoots.has(resolve(path)) })),
+    externalRoots.size > 0
+      ? {
+          maxExternalSkills: options.maxExternalSkills ?? MAX_EXTERNAL_USER_SKILLS,
+          logger: options.logger,
+        }
+      : {},
   );
-  // 多来源同名必须有确定优先级:roots 顺序即优先级,先出现的来源赢。
-  // (安装目录 > 内置额外来源 > env 追加;详见 skills/paths.ts 的 USER_SKILL_SOURCE_DIRS)
-  // 否则同一个技能名会被重复交给 Workspace,加载顺序决定行为,排障时无从解释。
-  const seen = new Set<string>();
   const dirs: string[] = [];
-  for (const skill of groups.flat()) {
+  for (const { skill } of sources) {
     const name = skill.metadata.name;
     if (isArchivedBuiltinSkillName(name) || disabled.has(name)) continue;
-    if (seen.has(name)) {
-      console.info("[skills] 同名技能命中多个来源,按来源顺序取先出现的那个", {
-        name,
-        ignoredPath: toPosixPath(skill.path),
-      });
-      continue;
-    }
-    seen.add(name);
     dirs.push(toPosixPath(skill.path));
   }
   return dirs;

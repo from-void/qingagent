@@ -10,6 +10,7 @@ vi.mock("../../../system/transition/homeStage", () => ({
     playForward: vi.fn(() => Promise.resolve({ left: 0, top: 0, width: 800, height: 600 })),
     playReturn: vi.fn(() => Promise.resolve()),
     snapArrived: vi.fn(),
+    settleReturn: vi.fn(),
     dispose: vi.fn(),
   }),
 }));

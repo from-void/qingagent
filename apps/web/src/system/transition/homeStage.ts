@@ -51,6 +51,11 @@ export interface HomeTransitionStage {
    * 新建卡皮(噪点/棕框/朱砂角标)再被 playReturn 切掉。
    */
   snapArrived: (rect: StageRect, plain?: boolean) => void;
+  /**
+   * 强制结算返程并恢复浅色首页。用于调用方超时兜底：即使双 rAF 一帧都没执行，
+   * 也必须撤掉 snapArrived 留下的深底与 morph。
+   */
+  settleReturn: () => void;
   dispose: () => void;
 }
 
@@ -67,6 +72,9 @@ const RETURN_SLIDE_MS = 340;
 const RETURN_SLIDE_FADE_MS = 300;
 // morph / WebGL 任一链路不回调时也必须把控制权交还调用方；调用方会降级为直接导航。
 const FORWARD_SETTLE_TIMEOUT_MS = 3_000;
+// 返程同样不能把首页永久锁在 qj-arriving。正常最慢路径为 760ms 飞行 + 360ms 淡出，
+// 留出掉帧余量后仍未完成就强制隐藏 morph 并结算，让调用方恢复首页内容。
+const RETURN_SETTLE_TIMEOUT_MS = 1_600;
 
 /**
  * 在 host(首页根容器)内挂出固定覆盖层(space/dust/ink/morph),返回过渡控制器。
@@ -429,6 +437,43 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     setMorphRect(rect);
   }
 
+  function settleReturnVisuals() {
+    cancelDarkFallback();
+    host.classList.remove("is-ink-wipe");
+    try {
+      ink?.hide();
+    } catch {
+      /* 返程已进入强制收尾，墨层异常不能阻止首页恢复。 */
+    }
+    darkOff();
+    face.style.opacity = "0";
+    // 后台/遮挡窗口会把 CSS transition 永久停在 currentTime=0；
+    // 强制推进到终态，不能仅靠移除 class 后等待下一合成帧。
+    const visualLayers: Element[] = [
+      space,
+      dustCanvas,
+      inkCanvas,
+      morph,
+      face,
+    ];
+    for (const layer of visualLayers) {
+      for (const animation of layer.getAnimations?.() ?? []) {
+        try {
+          animation.finish();
+        } catch {
+          /* 非有限动画不影响返程资源的确定性收尾。 */
+        }
+      }
+    }
+  }
+
+  function settleReturn() {
+    if (disposed) return;
+    operationGeneration += 1;
+    for (const settle of [...pendingReturnSettlements]) settle();
+    settleReturnVisuals();
+  }
+
   // 返回首页,按来源分流:
   //  · animate=false(文档编辑页返回):不做"卡飞回卡片位置"的形变(落点常不稳/找不到),
   //    纸停在工作区文档落点、往下滑出视口收起,深背景与墨层同步平滑退去,首页内容随后淡入。
@@ -445,6 +490,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     const generation = ++operationGeneration;
     return new Promise((resolve) => {
       let settled = false;
+      let watchdogTimer: number | null = null;
       const isCurrent = () =>
         !disposed &&
         !settled &&
@@ -452,13 +498,25 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
       const settle = () => {
         if (settled) return;
         settled = true;
+        clearStageTimer(watchdogTimer);
+        watchdogTimer = null;
         pendingReturnSettlements.delete(settle);
+        try {
+          settleReturnVisuals();
+        } catch {
+          /* 视觉层已异常时也必须把控制权还给调用方。 */
+        }
         resolve();
       };
       const finish = () => {
         if (isCurrent()) settle();
       };
       pendingReturnSettlements.add(settle);
+      watchdogTimer = setStageTimer(
+        settle,
+        RETURN_SETTLE_TIMEOUT_MS,
+        settle,
+      );
 
       try {
         cancelDarkFallback(); // 返程要变浅,别让去程遗留的兜底又把背景置深
@@ -535,5 +593,5 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     morph.remove();
   }
 
-  return { playForward, playReturn, snapArrived, dispose };
+  return { playForward, playReturn, snapArrived, settleReturn, dispose };
 }

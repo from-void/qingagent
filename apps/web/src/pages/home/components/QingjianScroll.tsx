@@ -125,6 +125,9 @@ const MAT_PAD = 38;
 const PAD_TOP = 14;
 const PAD_BOT = 14;
 const NEW_CARD_H = 380;
+// homeStage 自身有 1.6s 返程看门狗；页面再留 200ms 余量兜底，
+// 即使舞台 Promise 异常静默也必须恢复首页内容与滚动原点。
+const HOME_RETURN_SETTLE_TIMEOUT_MS = 1_800;
 const COLUMN_PATTERN = [3, 2, 3];
 // 新建卡固定槽位:独占首列、不参与瀑布流随机分布。left = PAD_LEFT,top = 画心垂直居中。
 // 同时把这个确定坐标导出到 origin,供新建页返回时精确飞回(像素级对准)。
@@ -1191,6 +1194,7 @@ export function QingjianScroll({
   const transitionGenerationRef = useRef(0);
   const initialHomeViewXRef = useRef<number | null>(null);
   const scrollPositionRef = useRef({ viewX: 0, targetX: 0 });
+  const settleScrollViewRef = useRef<((nextViewX: number) => void) | null>(null);
 
   const [containerH, setContainerH] = useState(0);
   const [containerW, setContainerW] = useState(0);
@@ -1307,20 +1311,6 @@ export function QingjianScroll({
     };
   }, [findArticleSlot]);
 
-  const computeArticleHomeViewX = useCallback((sessionId: string): number | null => {
-    const scroller = scrollRef.current;
-    const inner = innerRef.current;
-    const stage = stageRef.current;
-    const core = coreRef.current;
-    const slot = findArticleSlot(sessionId);
-    if (!scroller || !inner || !stage || !core || !slot) return null;
-    const maxX = Math.max(0, inner.scrollWidth - scroller.clientWidth);
-    const stageStartX = core.offsetLeft + stage.offsetLeft;
-    const slotLeft = parseFloat(slot.style.left) || 0;
-    const cardCenter = stageStartX + slotLeft + CARD_WIDTH / 2;
-    return clamp(cardCenter - scroller.clientWidth / 2, 0, maxX);
-  }, [findArticleSlot]);
-
   // —— 方案4:首页核心动效舞台 + 返回到达态编排 ——
   // 舞台整页生命周期内复用一份;返回到达态在首页挂载后跑反向核心动效再淡回内容。
   // ⚠️ 用 useLayoutEffect:返回到达态(snapArrived 置深背景 + 卡静停 + 隐藏内容)必须在
@@ -1337,22 +1327,71 @@ export function QingjianScroll({
     // 待反向动效真正启动(下方 rAF 内)再 clearHomeArrive。
     const arrive = peekHomeArrive();
     let cancelled = false;
+    let arrivalFinished = false;
+    let returnSettleTimer: number | null = null;
+    let contentFadeTimer: number | null = null;
+    const finishArrival = () => {
+      if (cancelled || arrivalFinished) return;
+      arrivalFinished = true;
+      if (returnSettleTimer !== null) {
+        window.clearTimeout(returnSettleTimer);
+        returnSettleTimer = null;
+      }
+      // 返回稿件的位置只服务于过场几何，不能晋升为首页的持久滚动状态。
+      // 淡回内容前统一回到新建卡所在原点，transform 只经同一个滚动控制器写入。
+      // 若用户已在返程中再次打开文章，新 playForward 已接管同一舞台；
+      // 旧返程兜底只能清页面到达态，不能再使新去程代次失效。
+      if (!transitioningRef.current) stage.settleReturn();
+      initialHomeViewXRef.current = 0;
+      scrollPositionRef.current = { viewX: 0, targetX: 0 };
+      settleScrollViewRef.current?.(0);
+      // 后台/遮挡窗口可能暂停合成帧，CSS transition 会永久停在 currentTime=0。
+      // 返回收尾不应依赖“下一帧总会到”：首屏卡直接完成到 qj-in 终态，确保入口真实可见。
+      const scroller = scrollRef.current;
+      const scrollerRect = scroller?.getBoundingClientRect();
+      root.querySelectorAll<HTMLElement>(".qj-card-slot").forEach((slot) => {
+        const rect = slot.getBoundingClientRect();
+        if (
+          slot.dataset.kind === "new" ||
+          (
+            scrollerRect &&
+            rect.right > scrollerRect.left &&
+            rect.left < scrollerRect.right
+          )
+        ) {
+          slot.classList.add("qj-in");
+          slot.style.transitionDelay = "0ms";
+          void getComputedStyle(slot).transform;
+          for (const animation of slot.getAnimations?.() ?? []) {
+            try {
+              animation.finish();
+            } catch {
+              /* 非有限动画不影响卡片的确定性 class 终态。 */
+            }
+          }
+        }
+      });
+      root.classList.remove("qj-arriving");
+      root.classList.add("qj-content-fadein");
+      contentFadeTimer = window.setTimeout(() => {
+        if (!cancelled) root.classList.remove("qj-content-fadein");
+      }, 800);
+    };
     const reduceReturnMotion =
       reduceMotion ||
       (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
     if (arrive && reduceReturnMotion) {
       // 减动效直接消费交接态并渲染正常首页，不挂深底静帧，也不播放 620ms 渐出。
       clearHomeArrive();
+      initialHomeViewXRef.current = 0;
+      scrollPositionRef.current = { viewX: 0, targetX: 0 };
     } else if (arrive) {
       root.classList.add("qj-arriving");
-      if (arrive.source === "workspace" && arrive.sessionId) {
-        const viewX = computeArticleHomeViewX(arrive.sessionId);
-        const inner = innerRef.current;
-        if (viewX !== null && inner) {
-          initialHomeViewXRef.current = viewX;
-          inner.style.transform = `translate3d(${(-viewX).toFixed(2)}px,0,0)`;
-        }
-      }
+      // 首页返回后核心入口必须可达。旧实现先直接写 inner transform，再让滚动 RAF
+      // 消费另一份 viewX；候选稿位于长卷尾部时，临时 -6xxx 位移会被持久保存。
+      // 现在只给 RAF 一个明确的原点，不再存在第二条 inline transform 写入路径。
+      initialHomeViewXRef.current = 0;
+      scrollPositionRef.current = { viewX: 0, targetX: 0 };
       // 首帧(paint 前):卡静停在「离开时的 rect」,背景瞬时已深(零入场动画)。
       // 从编辑页返回时首帧即切纯净纸 —— 那张纸就是刚才的文档纸,不该闪新建卡皮。
       stage.snapArrived(arrive.rect, arrive.source === "workspace");
@@ -1378,21 +1417,22 @@ export function QingjianScroll({
           stage
             // 新建页返回保留形变动效;文档编辑页返回只淡出(animate=false)
             .playReturn(arrive.rect, to, inkOrigin, arrive.source !== "workspace")
-            .then(() => {
-              if (cancelled) return;
-              // 反向核心动效到达正常首页静止帧:淡回内容,settle。
-              root.classList.remove("qj-arriving");
-              root.classList.add("qj-content-fadein");
-              window.setTimeout(() => {
-                if (!cancelled) root.classList.remove("qj-content-fadein");
-              }, 800);
-            });
+            .catch(() => {
+              // 舞台失败不向用户暴露内部异常；finally 统一恢复首页。
+            })
+            .finally(finishArrival);
         });
       });
+      returnSettleTimer = window.setTimeout(
+        finishArrival,
+        HOME_RETURN_SETTLE_TIMEOUT_MS,
+      );
     }
 
     return () => {
       cancelled = true;
+      if (returnSettleTimer !== null) window.clearTimeout(returnSettleTimer);
+      if (contentFadeTimer !== null) window.clearTimeout(contentFadeTimer);
       transitionGenerationRef.current += 1;
       transitioningRef.current = false;
       stage.dispose();
@@ -1768,6 +1808,20 @@ export function QingjianScroll({
     function requestFrame() {
       if (!raf) raf = requestAnimationFrame(frame);
     }
+    const settleScrollView = (nextViewX: number) => {
+      measure();
+      const next = clamp(nextViewX, 0, maxX);
+      viewX = next;
+      targetX = next;
+      velocity = 0;
+      dragging = false;
+      scrollPositionRef.current = { viewX: next, targetX: next };
+      inner.style.transform = `translate3d(${(-next).toFixed(2)}px,0,0)`;
+      updateStageMoments();
+      updateNewFab();
+      pollReveal();
+    };
+    settleScrollViewRef.current = settleScrollView;
 
     // —— 滚轮:纵向滚轮 → 横向展卷 ——
     const onWheel = (e: WheelEvent) => {
@@ -2098,6 +2152,9 @@ export function QingjianScroll({
 
     return () => {
       scrollPositionRef.current = { viewX, targetX };
+      if (settleScrollViewRef.current === settleScrollView) {
+        settleScrollViewRef.current = null;
+      }
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);

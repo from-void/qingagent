@@ -5,6 +5,7 @@ import {
   installSkillFiles,
   isSkillMutationAllowed,
   listSerializedSkills,
+  READ_ONLY_SKILL_ERROR_CODE,
   replaceInstalledSkillFiles,
   setSkillEnabledByName,
 } from "./skills";
@@ -150,7 +151,10 @@ function skillMutationError(
   }
   if (
     message === "skill already exists" ||
-    message === "builtin skill is read only"
+    (
+      error instanceof Error &&
+      (error as Error & { code?: unknown }).code === READ_ONLY_SKILL_ERROR_CODE
+    )
   ) {
     logSkillRequest(c.req.header("x-qa-client"), evt, startedAt, "rejected:CONFLICT");
     return externalError(

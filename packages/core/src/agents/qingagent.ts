@@ -6,7 +6,11 @@ import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import {
+  BUILTIN_SKILLS_DIR,
+  USER_SKILLS_DIR,
+  USER_SKILL_SOURCE_DIRS,
+} from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import {
   acquireSessionWorkspace,
@@ -167,7 +171,9 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
   }
   const roots = [
     ...BUILTIN_SKILL_CATEGORIES.map((category) => join(BUILTIN_SKILLS_DIR, category)),
-    USER_SKILLS_DIR,
+    // 用户技能可能装在我们自己的目录,也可能被别的 agent CLI 装到 ~/.agents/skills。
+    // 两处都扫,否则用户明明装过却被告知"没安装"。
+    ...USER_SKILL_SOURCE_DIRS,
   ];
   return resolveEnabledSkillDirsFromRoots(roots, disabled);
 }

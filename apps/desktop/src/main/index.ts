@@ -240,9 +240,11 @@ if (app.isPackaged && !process.env.QINGAGENT_SKILLS_DIR) {
   process.env.QINGAGENT_SKILLS_DIR = path.join(process.resourcesPath, "skills");
 }
 
-if (app.isPackaged && !process.env.QINGAGENT_USER_SKILLS_DIR) {
-  process.env.QINGAGENT_USER_SKILLS_DIR = path.join(userDataDir, "skills");
-}
+// 用户技能目录不再改写到 userData:打包版曾指向
+// ~/Library/Application Support/@qingagent/desktop/skills,与用户/其它 CLI 实际的
+// 安装位置(~/.qingagent/skills、~/.agents/skills)全都对不上,于是明明装过却被
+// 告知"没安装"(0729 真机 P1)。这里保持 core 默认口径,由 core 统一多来源发现。
+// 需要自定义时仍可显式设 QINGAGENT_USER_SKILLS_DIR。
 
 if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS = [

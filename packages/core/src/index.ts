@@ -104,6 +104,7 @@ export {
 export type { ApprovalAgent } from "./bridge/index.js";
 export type { ConnectorInfoDto } from "./connectors/index.js";
 export {
+  CONFIRM_RESUME_WALL_TIMEOUT_MS,
   CONFIRM_TTL_MS,
   ConfirmDecisionError,
   ConfirmService,

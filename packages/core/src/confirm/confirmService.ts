@@ -15,7 +15,8 @@ import {
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
 import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
-import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+import { AGENT_FIRST_CHUNK_TIMEOUT_MS } from "../agent-run/agentLimits.js";
 import type { PendingConfirm, SessionState } from "../session/sessionState.js";
 import { persistSessionMetadata, schedulePersist } from "../session/threadPersistence.js";
 import {
@@ -40,7 +41,35 @@ import {
 import { markCredentialAccessRejected } from "./credentialAccessCooldown.js";
 import { secretLeaseStore, type SecretLeaseStore } from "./secretLeaseStore.js";
 
-export const CONFIRM_TTL_MS = 10 * 60 * 1_000;
+// 确认卡有效期。体验优先:用户离开工位、被会议打断再回来点确认属于常态,
+// 10 分钟经常不够(真机上出现过"这张确认卡已过期");挂起等待本就不进入任何
+// 回合预算,放宽到 30 分钟不引入新的资源占用。
+export const CONFIRM_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.QINGAGENT_CONFIRM_TTL_MS) || 30 * 60 * 1_000,
+);
+
+/**
+ * 用户已确认后,整条恢复流(命令执行 + 模型收尾)的兜底墙。
+ *
+ * 铁律:它必须严格宽于前台命令自身的预算 SANDBOX_TIMEOUT_MS。两者相等时(旧值
+ * 双 120s),任何接近自身预算的已确认命令都会先被上层墙掐死——命令被 kill、
+ * 卡片落成笼统失败/中止,用户永远看不到"已超时"这种可操作真因,模型拿到的也
+ * 只有一句"命令已取消",于是编出"可能是确认弹窗没有及时点击"。(0729 真机 P1)
+ */
+export const CONFIRM_RESUME_WALL_TIMEOUT_MS = Math.max(
+  Number(process.env.QINGAGENT_CONFIRM_RESUME_TIMEOUT_MS) || 0,
+  SANDBOX_TIMEOUT_MS + AGENT_FIRST_CHUNK_TIMEOUT_MS + 30_000,
+);
+
+/** 确认卡被提前收走的来源。只进日志,不进模型上下文,也不进卡面。 */
+export type ConfirmCancelSource =
+  | "turn-cleanup:userAbort"
+  | "turn-cleanup:preemptedByNewMessage"
+  | "turn-cleanup:globalStop"
+  | "abort-signal"
+  | "request-self-abort"
+  | "unknown";
 export const CONFIRM_CAPABLE_TOOLS = new Set<string>([
   WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
   REQUEST_CREDENTIAL_ACCESS_TOOL,
@@ -260,7 +289,7 @@ export class ConfirmService {
       return { ok: false, reason: "确认请求无法安全持久化" };
     }
     if (requestAborted()) {
-      await this.cancelRequestedCommandConfirm(input.state, pending);
+      await this.cancelRequestedCommandConfirm(input.state, pending, "request-self-abort");
       return { ok: false, reason: "确认请求已取消" };
     }
     if (grantState?.grant) {
@@ -273,7 +302,7 @@ export class ConfirmService {
           input.abortSignal,
         );
         if (requestAborted()) {
-          await this.cancelRequestedCommandConfirm(input.state, pending);
+          await this.cancelRequestedCommandConfirm(input.state, pending, "request-self-abort");
           return { ok: false, reason: "确认请求已取消" };
         }
         return {
@@ -283,7 +312,7 @@ export class ConfirmService {
         };
       } catch (error) {
         if (requestAborted()) {
-          await this.cancelRequestedCommandConfirm(input.state, pending);
+          await this.cancelRequestedCommandConfirm(input.state, pending, "request-self-abort");
           return { ok: false, reason: "确认请求已取消" };
         }
         if (
@@ -315,7 +344,7 @@ export class ConfirmService {
       }
     }
     if (requestAborted()) {
-      await this.cancelRequestedCommandConfirm(input.state, pending);
+      await this.cancelRequestedCommandConfirm(input.state, pending, "request-self-abort");
       return { ok: false, reason: "确认请求已取消" };
     }
     return { ok: true, pending, frame: this.requestedFrame(pending) };
@@ -390,7 +419,20 @@ export class ConfirmService {
   async cancelRequestedCommandConfirm(
     state: SessionState,
     pending: PendingConfirm,
+    source: ConfirmCancelSource = "unknown",
   ): Promise<void> {
+    // 真机排障唯一入口:确认卡被谁收走,一行日志说清。
+    console.info("[confirm-lifecycle] confirm cancelled", {
+      sessionId: state.sessionId,
+      confirmId: pending.confirmId,
+      toolCallId: pending.toolCallId,
+      kind: pending.spec.kind,
+      status: pending.status,
+      source,
+      requestedAt: pending.requestedAt,
+      expiresAt: pending.expiresAt,
+      waitedMs: Math.max(0, this.#now() - Date.parse(pending.requestedAt)),
+    });
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
     if (state.pendingConfirms.get(pending.toolCallId) !== pending) return;

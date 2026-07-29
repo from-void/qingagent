@@ -5,6 +5,7 @@ import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-conte
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import {
   AGENT_MAX_STEPS,
+  CONFIRM_RESUME_WALL_TIMEOUT_MS,
   ConfirmDecisionError,
   buildCapabilityTools,
   beginTurnOwnership,
@@ -41,7 +42,6 @@ export interface ConfirmRuntimeDependencies {
 }
 
 const CONFIRM_EXPIRY_WALL_TIMEOUT_MS = 5_000;
-const CONFIRM_RESUME_WALL_TIMEOUT_MS = 120_000;
 const CONFIRM_PERSIST_TIMEOUT_MS = 5_000;
 export const CONFIRM_DECLINE_CLEANUP_TIMEOUT_MS = 1_500;
 
@@ -113,6 +113,68 @@ function safeResumeRequestContext(
     ["patchValidationResults", session.patchValidationResults],
     ["modelOverrides", session.modelOverrides],
   ]);
+}
+
+const RESUME_WALL_TIMEOUT_LABEL = "confirm resume fullStream";
+
+/** 恢复失败的真实归因。卡面/toast 与回传模型的说明都由它派生,不再一律"已中止"。 */
+type ResumeFailureKind =
+  | "resume-wall-timeout"
+  | "externally-stopped"
+  | "resume-unavailable"
+  | "execution-unknown";
+
+function classifyResumeFailure(input: {
+  error: unknown;
+  signal: AbortSignal;
+  resolvedEmitted: boolean;
+  approvalMayHaveStartedExecution: boolean;
+}): ResumeFailureKind {
+  const reason = input.signal.reason;
+  const message = input.error instanceof Error ? input.error.message : "";
+  if (
+    message.startsWith(RESUME_WALL_TIMEOUT_LABEL) ||
+    (reason instanceof Error && reason.message.startsWith(RESUME_WALL_TIMEOUT_LABEL))
+  ) {
+    return "resume-wall-timeout";
+  }
+  // 字符串 reason 只由外部停止链路写入(userAbort / globalStop / preemptedByNewMessage)。
+  if (input.signal.aborted && typeof reason === "string") return "externally-stopped";
+  return input.resolvedEmitted || input.approvalMayHaveStartedExecution
+    ? "execution-unknown"
+    : "resume-unavailable";
+}
+
+/** 给用户看的一句话:说清发生了什么 + 下一步能做什么,不吓人也不甩锅。 */
+function resumeFailureUserReason(kind: ResumeFailureKind): string {
+  switch (kind) {
+    case "resume-wall-timeout":
+      return "命令运行时间超过本次上限，已停止。可以让我改成后台运行后再试一次。";
+    case "externally-stopped":
+      return "命令被停止，没有跑完。需要的话我可以重新执行一次。";
+    case "resume-unavailable":
+      return "这次确认没能送到执行端，命令没有执行。可以再确认一次。";
+    case "execution-unknown":
+      return "确认已提交，但没有收到命令结果。为避免重复操作没有自动重试，请先查看命令输出再决定是否重来。";
+  }
+}
+
+/** 同一件事写给模型:堵死"可能是你没及时点确认"这类瞎猜。 */
+function resumeFailureModelNote(kind: ResumeFailureKind): string {
+  const cause = kind === "resume-wall-timeout"
+    ? "命令执行超过了本次运行上限而被系统停止"
+    : kind === "externally-stopped"
+      ? "命令执行期间被停止指令打断"
+      : kind === "resume-unavailable"
+        ? "确认已被用户点下，但恢复执行链路没能启动"
+        : "确认已被用户点下并进入执行，但没有拿回结果";
+  return (
+    `[系统事实] 用户已经点了确认，${cause}。` +
+    "不要说是用户取消、拒绝或没有及时点击确认；" +
+    (kind === "resume-wall-timeout"
+      ? "如果仍需执行，改用后台方式（background）重新发起。"
+      : "如果仍需执行，重新发起同一条命令的确认。")
+  );
 }
 
 function createCompletion(): { promise: Promise<void>; resolve: () => void } {
@@ -462,9 +524,21 @@ export async function* handleConfirmDecision(
     session,
     `${streamId}:confirm:${pending.toolCallId}`,
   );
+  const previousActiveConfirmedToolCallId = session._activeConfirmedToolCallId;
   session.streamId = streamId;
   session._abortController = abortController;
   session._activeTurnPromise = completion.promise;
+  // 用户已确认、正在执行 = 受保护工作:卡级停止要认得它,断连宽限期/新消息抢占
+  // 也必须放它跑完,不能把用户已经付出的确认动作白白丢掉。
+  session._activeConfirmedToolCallId = pending.toolCallId;
+  console.info("[confirm-lifecycle] resume started", {
+    sessionId: session.sessionId,
+    confirmId: pending.confirmId,
+    toolCallId: pending.toolCallId,
+    kind: pending.spec.kind,
+    accepted: submission.decision.accepted,
+    resumeTimeoutMs,
+  });
   let resolvedEmitted = false;
   let approvalMayHaveStartedExecution = false;
   let storedGrantApprovals: Array<{
@@ -581,7 +655,7 @@ export async function* handleConfirmDecision(
       }),
       abortController,
       resumeTimeoutMs,
-      "confirm resume fullStream",
+      RESUME_WALL_TIMEOUT_LABEL,
     );
     storedGrantApprovals = outcome.storedGrantApprovals;
     // 执行已结束后 proof 必已消费/清除；终态持久化失败也不能重放命令。
@@ -602,7 +676,7 @@ export async function* handleConfirmDecision(
       key: `confirm:audit:${resolution}`,
       operation: () => service.recordDecisionFinished(session, pending, resolution),
     };
-  } catch {
+  } catch (error) {
     // snapshot/恢复/工具链任一错误都只关闭卡并拒绝；绝不走 askUser 的 fresh-turn。
     service.failDecisionInMemory(session, pending);
     terminalPersistence = {
@@ -613,10 +687,38 @@ export async function* handleConfirmDecision(
       key: "confirm:audit:failed",
       operation: () => service.recordDecisionFailed(session, pending),
     };
-    const reason = resolvedEmitted || approvalMayHaveStartedExecution
-      ? "确认恢复异常，执行结果未知且未自动重试"
-      : "确认恢复失败，命令未执行";
-    const failed = failConfirmedToolCall(session, pending.toolCallId, reason);
+    const failureKind = classifyResumeFailure({
+      error,
+      signal: abortController.signal,
+      resolvedEmitted,
+      approvalMayHaveStartedExecution,
+    });
+    const reason = resumeFailureUserReason(failureKind);
+    console.warn("[confirm-lifecycle] resume failed", {
+      sessionId: session.sessionId,
+      confirmId: pending.confirmId,
+      toolCallId: pending.toolCallId,
+      failureKind,
+      resolvedEmitted,
+      approvalMayHaveStartedExecution,
+      abortReason: typeof abortController.signal.reason === "string"
+        ? abortController.signal.reason
+        : abortController.signal.reason instanceof Error
+          ? abortController.signal.reason.message
+          : null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // 模型只看到"取消"就会替用户编理由;这里把真实归因直接写进模型上下文。
+    session.messages.push({
+      role: "system",
+      content: resumeFailureModelNote(failureKind),
+    });
+    const failed = failConfirmedToolCall(session, pending.toolCallId, reason, {
+      retriable: failureKind !== "execution-unknown",
+      ...(failureKind === "resume-wall-timeout"
+        ? { terminalKind: "timedOut" as const }
+        : {}),
+    });
     if (failed) {
       yield {
         kind: "toolCallUpdated",
@@ -627,11 +729,16 @@ export async function* handleConfirmDecision(
         },
       };
     }
-    if (!resolvedEmitted) yield service.resolvedFrame(pending, "failed", reason);
+    // 即使 accepted 的 resolved 已经发过,也必须再发一条带真实原因的收口:
+    // 否则用户点完确认后只剩一张笼统的灰卡,拿不到"为什么"和"下一步"。
+    yield service.resolvedFrame(pending, "failed", reason);
   } finally {
     if (session.streamId === streamId) session.streamId = previousStreamId;
     if (session._abortController === abortController) {
       session._abortController = previousAbortController;
+    }
+    if (session._activeConfirmedToolCallId === pending.toolCallId) {
+      session._activeConfirmedToolCallId = previousActiveConfirmedToolCallId;
     }
     endTurnOwnership(session, turnOwnership);
     completion.resolve();
@@ -701,6 +808,16 @@ export async function* handleConfirmExpiry(
   const pending = session?.pendingConfirms.get(toolCallId);
   if (!session || !pending || pending.status !== "pending") return;
   if (Date.parse(pending.expiresAt) > Date.now()) return;
+  console.info("[confirm-lifecycle] confirm cancelled", {
+    sessionId: session.sessionId,
+    confirmId: pending.confirmId,
+    toolCallId: pending.toolCallId,
+    kind: pending.spec.kind,
+    status: pending.status,
+    source: "expired",
+    requestedAt: pending.requestedAt,
+    expiresAt: pending.expiresAt,
+  });
 
   const timeoutMs = dependencies.expiryTimeoutMs ??
     dependencies.declineTimeoutMs ??

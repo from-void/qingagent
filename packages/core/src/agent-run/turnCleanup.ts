@@ -22,6 +22,7 @@ import { alignCommandCardWithStatus } from "./toolCards.js";
 import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
 import {
   confirmService,
+  type ConfirmCancelSource,
   type ConfirmService,
 } from "../confirm/confirmService.js";
 
@@ -37,6 +38,41 @@ function abortReasonForCleanup(reason: TurnCleanupReason): string {
   if (reason === "preemptedByNewMessage") return "preemptedByNewMessage";
   if (reason === "globalStop") return "globalStop";
   return USER_ABORT_REASON;
+}
+
+function confirmCancelSourceFor(reason: TurnCleanupReason): ConfirmCancelSource {
+  return `turn-cleanup:${reason}` as ConfirmCancelSource;
+}
+
+/**
+ * 待确认卡被回合清理收走时给用户的说明。必须如实、可操作:绝不能让用户以为
+ * 是自己"没及时点",也绝不能只丢一个笼统的"已中止"。
+ */
+function abortedConfirmMessage(reason: TurnCleanupReason): string {
+  if (reason === "preemptedByNewMessage") {
+    return "刚才那张确认卡随上一条消息一起结束了，命令没有执行。需要的话我可以重新发起。";
+  }
+  if (reason === "globalStop") {
+    return "已停止，这张确认卡一并收回，命令没有执行。需要的话我可以重新发起。";
+  }
+  return "本轮已结束，这张确认卡没能送达，命令没有执行。需要的话我可以重新发起。";
+}
+
+/**
+ * 同一句真话也要给模型。模型只看到含糊的"已取消"时会自己编原因(真机上编出
+ * "可能是确认弹窗没有及时点击"),这里把真实归因写进模型上下文堵死瞎猜。
+ */
+function abortedConfirmModelNote(reason: TurnCleanupReason): string {
+  const cause = reason === "preemptedByNewMessage"
+    ? "上一轮被用户的新消息接替"
+    : reason === "globalStop"
+      ? "用户点了停止"
+      : "本轮在等待期间被系统结束";
+  return (
+    `[系统事实] 上一张命令确认卡因为${cause}而被收回，命令没有执行。` +
+    "这不是用户拒绝，也不是用户没有及时点击确认；不要向用户这样解释。" +
+    "如果这一步仍然必要，直接重新发起同一条命令的确认。"
+  );
 }
 
 export function createTurnCompletion(streamId: string): {
@@ -249,15 +285,29 @@ export async function* abortAndCleanupTurn(
       continue;
     }
     try {
-      await confirmationService.cancelRequestedCommandConfirm(state, pending);
+      await confirmationService.cancelRequestedCommandConfirm(
+        state,
+        pending,
+        confirmCancelSourceFor(reason),
+      );
     } catch (error) {
       logger.error("Failed to persist aborted confirm during turn cleanup", {
         streamId: abortedStreamId,
         toolCallId: pending.toolCallId,
+        source: confirmCancelSourceFor(reason),
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    yield confirmationService.resolvedFrame(pending, "aborted");
+    // 用户侧看到真话(带 message 的 resolved 会 toast 出来),模型侧也拿到真话。
+    state.messages.push({
+      role: "system",
+      content: abortedConfirmModelNote(reason),
+    });
+    yield confirmationService.resolvedFrame(
+      pending,
+      "aborted",
+      abortedConfirmMessage(reason),
+    );
   }
 
   const updates = terminalizeInFlightToolCalls(state, reason);

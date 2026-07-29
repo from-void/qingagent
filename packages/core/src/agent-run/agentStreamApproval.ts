@@ -59,6 +59,7 @@ export async function* handleApprovalEvent(
       await context.confirmService.cancelRequestedCommandConfirm(
         context.state,
         result.pending,
+        "abort-signal",
       );
     }
     return "handled";

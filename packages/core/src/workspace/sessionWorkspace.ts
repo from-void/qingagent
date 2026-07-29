@@ -60,8 +60,18 @@ import {
   type PreparedReadWall,
 } from "./readWallSandbox.js";
 import type { CredentialWallMode } from "./readWallPolicy.js";
-import { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
-export { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
+import {
+  QINGAGENT_DATA_DIR,
+  SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
+  SANDBOX_SESSIONS_BASE,
+} from "./sandboxPaths.js";
+export {
+  QINGAGENT_DATA_DIR,
+  SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
+  SANDBOX_SESSIONS_BASE,
+} from "./sandboxPaths.js";
 
 /** 单命令默认超时(ms),运维可调。 */
 function positiveNumberEnv(value: string | undefined, fallback: number): number {
@@ -222,8 +232,39 @@ function shouldBypassProxyForFeishu(): boolean {
   return process.env.QINGAGENT_SANDBOX_FEISHU_NO_PROXY !== "0";
 }
 
+/** 产品自带 Node 运行时在沙箱 PATH 上的站位。 */
+export type NodeRuntimePathPlacement =
+  /** 排在宿主 PATH **之前**:沙箱内的 `node` 一律用产品自带运行时。 */
+  | "runtime-first"
+  /** 排在宿主 PATH **之后**:宿主自己的 Node 优先,产品运行时只作"宿主没有 Node"时的兜底。 */
+  | "host-first";
+
+/**
+ * 决定产品自带 Node 运行时排在宿主 PATH 前面还是后面。
+ *
+ * 病根(0729 真机):产品运行时以通用名 `node` 常驻 PATH 最前,于是用户自己装的
+ * `#!/usr/bin/env node` CLI 被产品主程序(而非用户终端里的 Node)拉起。系统凭据存储
+ * 按**调用程序身份**判权,身份一换就读不到用户终端里原有的登录态,CLI 只好转去重新授权。
+ *
+ * 口径与凭证墙档位保持一致(resolveCredentialWallMode),避免两套安全语义各说各话:
+ * - **最宽档**(用户勾了「以后不用再问我」,或本就无文件隔离且放开了未隔离命令执行):
+ *   命令本来就以用户本人身份直接执行,理应完整复用用户终端里的一切——**宿主 Node 优先**。
+ *   产品运行时退到 PATH 末尾,只在宿主根本没有 `node` 时兜底(此时无任何宿主 Node 可劫持)。
+ * - **标准档**(真文件隔离):宿主 Node 未必在沙箱里可执行,凭据本来也被读墙挡着,
+ *   维持产品运行时优先,保证技能脚本稳定可跑。
+ *
+ * QINGAGENT_SANDBOX_NODE_RUNTIME 可显式指定:`system` = 永远宿主优先,`shim` = 永远产品优先。
+ */
+export function resolveNodeRuntimePathPlacement(): NodeRuntimePathPlacement {
+  const forced = process.env.QINGAGENT_SANDBOX_NODE_RUNTIME;
+  if (forced === "system") return "host-first";
+  if (forced === "shim") return "runtime-first";
+  return resolveCredentialWallMode() === "wide" ? "host-first" : "runtime-first";
+}
+
 /** 沙箱进程 env:最小化——只带必需系统变量(按平台)+代理,绝不继承宿主全量环境或托管凭据。
- *  PATH 前置产品级 SANDBOX_BIN_DIR,让沙箱优先用产品自带/锁版本的 CLI(lark-cli 等)。 */
+ *  PATH 前置产品级 SANDBOX_BIN_DIR,让沙箱优先用产品自带/锁版本的 CLI(lark-cli 等);
+ *  产品自带 Node 运行时单独成目录,按 resolveNodeRuntimePathPlacement 决定排在宿主前还是后。 */
 export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const systemKeys = process.platform === "win32" ? SYSTEM_ENV_KEYS_WIN : SYSTEM_ENV_KEYS_POSIX;
@@ -233,7 +274,15 @@ export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   // 产品级 CLI 目录前置进 PATH(Windows 用 ; 分隔,其余用 :)
   const sep = process.platform === "win32" ? ";" : ":";
   const basePath = env.PATH ?? env.Path ?? "";
-  const prefixedPath = basePath ? `${SANDBOX_BIN_DIR}${sep}${basePath}` : SANDBOX_BIN_DIR;
+  // Node 运行时目录单独站位:宿主优先档放到 PATH 末尾,只当"宿主没有 Node"时的兜底,
+  // 绝不劫持用户自己的 Node CLI;产品优先档维持在最前(与 bin 目录同侧)。
+  const runtimeFirst = resolveNodeRuntimePathPlacement() === "runtime-first";
+  const prefixedPath = [
+    SANDBOX_BIN_DIR,
+    ...(runtimeFirst ? [SANDBOX_NODE_RUNTIME_DIR] : []),
+    ...(basePath ? [basePath] : []),
+    ...(runtimeFirst ? [] : [SANDBOX_NODE_RUNTIME_DIR]),
+  ].join(sep);
   env.PATH = prefixedPath;
   if (process.platform === "win32") env.Path = prefixedPath;
   if (effectiveHome && process.platform !== "win32") env.HOME = effectiveHome;
@@ -257,6 +306,25 @@ export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
     env.no_proxy = merged; // 大小写都给,Go 与各工具识别习惯不一
   }
   return env;
+}
+
+/**
+ * 「这次调用必须用产品自带 Node 运行时」时叠加的 env(只影响本次调用)。
+ *
+ * 用途:产品自带的技能脚本 / CLI 是我们自己的代码,依赖的 Node 版本由产品保证,不该被
+ * 宿主上装了什么版本左右;而用户自己的 CLI 必须走宿主 Node(见 resolveNodeRuntimePathPlacement)。
+ * 两者的区别就落在这里——**按调用点显式指定运行时**,而不是给所有人挂一个全局 `node` 劫持。
+ *
+ * 产品运行时本来就排在最前(标准档)时返回空对象,不做任何无谓改写。
+ */
+export function productNodeRuntimePathEnv(basePath?: string): NodeJS.ProcessEnv {
+  if (resolveNodeRuntimePathPlacement() === "runtime-first") return {};
+  const sep = process.platform === "win32" ? ";" : ":";
+  const currentPath = basePath ?? buildSandboxEnv().PATH ?? "";
+  const merged = currentPath
+    ? `${SANDBOX_NODE_RUNTIME_DIR}${sep}${currentPath}`
+    : SANDBOX_NODE_RUNTIME_DIR;
+  return process.platform === "win32" ? { PATH: merged, Path: merged } : { PATH: merged };
 }
 
 /** 额外只读挂载路径:给打包态 Electron/bwrap 暴露主二进制与 resources 深层依赖。 */

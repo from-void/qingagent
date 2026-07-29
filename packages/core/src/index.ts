@@ -271,6 +271,7 @@ export type {
 export {
   BROWSER_FOLDER_BRIDGE_FAILURE_REASON_CODES,
   SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
   __browserFolderBridgeStatsForTest,
   __resetBrowserFolderBridgeForTest,
   buildSandboxEnv,
@@ -286,6 +287,7 @@ export {
   resolveBrowserFolderBridgeResponse,
   resolveCredentialWallMode,
   resolveEffectiveIsolation,
+  resolveNodeRuntimePathPlacement,
   resolveSandboxCredentialPaths,
   resolveIsolation,
   unregisterBrowserFolderSession,

@@ -453,6 +453,61 @@ function trustedNodeCredentialConsumer(
   return fileArgDecision ? undefined : "trusted-node-skill";
 }
 
+/**
+ * 只读登录态查询的子命令名。这些命令的语义就是"看看我是谁/登没登录",
+ * 它们**只查不改**,永远没有理由附带强制重新认证。
+ */
+const IDENTITY_PROBE_SUBCOMMANDS = new Set([
+  "whoami",
+  "who-am-i",
+  "userinfo",
+  "user-info",
+]);
+
+/** 会强制重新认证 / 重建客户端的参数。命中即意味着"推倒重来",不是查询。
+ *  只收长参数:`-f` 在别的命令里太常见(tail -f 之类),放进来会误伤。 */
+const FORCE_REAUTH_FLAGS = new Set([
+  "--force",
+  "--relogin",
+  "--re-login",
+  "--reauth",
+  "--re-auth",
+  "--force-login",
+  "--force-auth",
+  "--force-reauth",
+  "--renew",
+]);
+
+function isForceReauthFlag(arg: string): boolean {
+  const lower = arg.toLowerCase();
+  const flag = lower.startsWith("--") && lower.includes("=") ? lower.slice(0, lower.indexOf("=")) : lower;
+  return FORCE_REAUTH_FLAGS.has(flag);
+}
+
+/**
+ * 只读登录态查询不得附带强制重新认证参数。
+ *
+ * 病根(0729 真机):`yuque whoami --json` 在本机读不到登录后被我们超时掐掉,链路却自作主张
+ * 改跑 `yuque --force whoami --json`——那是**重新走一遍 OAuth**,把用户原有登录态推倒重来,
+ * 用户既没被问过,也不知道自己刚刚被重新授权了。
+ *
+ * 这条规则是**无状态**的:查询就是查询,加了强制重认证参数它就不再是查询,一律拒。
+ * 用户确实要重新授权时走正常的 login/auth 子命令(仍受既有风险策略与确认卡管辖),不受影响。
+ */
+function evaluateIdentityProbeReauth(command: AnalyzedSimpleCommand): PolicyDecision | null {
+  const args = command.argv;
+  const hasProbe = args.some((arg) => IDENTITY_PROBE_SUBCOMMANDS.has(arg.toLowerCase()));
+  if (!hasProbe) return null;
+  const forced = args.find((arg) => isForceReauthFlag(arg));
+  if (!forced) return null;
+  return {
+    action: "deny",
+    reason:
+      "只读的登录态查询不允许附带强制重新认证参数——那会把用户已有的登录推倒重来。" +
+      "请去掉该参数;确实需要重新授权时,先征求用户同意,再用工具自己的登录命令走后台执行",
+  };
+}
+
 function stripLarkGlobalFlags(args: string[]): string[] {
   const positional: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
@@ -504,6 +559,12 @@ function evaluateCommandPolicyInner(command: string, options: CommandPolicyOptio
     if (commandName(simpleCommand.argv[0] ?? "") !== "lark-cli") continue;
     const larkDecision = evaluateLarkCli(simpleCommand.argv.slice(1), options);
     if (larkDecision.action === "deny") return larkDecision;
+  }
+
+  // 只读登录态查询 + 强制重新认证参数:任何 CLI 都不放行,compound / shell -c 内同样兜住。
+  for (const simpleCommand of analysis.commands) {
+    const probeDecision = evaluateIdentityProbeReauth(simpleCommand);
+    if (probeDecision) return probeDecision;
   }
 
   // 凭据只是能力标记，不是 allow 资格。必须是整条命令唯一的直接 simple-command。

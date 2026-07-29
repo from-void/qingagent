@@ -213,8 +213,8 @@ describe("安全设置路由", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       categories: [
-        { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"] },
-        { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"] },
+        { kind: "install", label: "安装软件", grantMode: "ask", grantModes: ["ask", "always"] },
+        { kind: "command", label: "删除或移动文件", grantMode: "always", grantModes: ["ask", "always"] },
         { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask", "always"] },
         { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask", "always"] },
       ],

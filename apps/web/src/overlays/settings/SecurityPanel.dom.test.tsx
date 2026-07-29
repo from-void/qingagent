@@ -28,8 +28,8 @@ function response(body: unknown, status = 200): Response {
 }
 
 const categories = [
-  { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
-  { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },
+  { kind: "install", label: "安装软件", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
+  { kind: "command", label: "删除或移动文件", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },
   { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
   { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
 ];
@@ -74,7 +74,7 @@ async function choose(select: HTMLButtonElement, value: "ask" | "always") {
   await act(async () => {
     select.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-  const label = value === "always" ? "总是允许" : "每次询问";
+  const label = value === "always" ? "不再询问" : "每次询问";
   const option = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
     .find((node) => node.textContent?.includes(label));
   expect(option).toBeDefined();
@@ -88,10 +88,10 @@ function categorySelect(label: string): HTMLButtonElement {
 }
 
 function bypassSelect(): HTMLButtonElement {
-  return host!.querySelector<HTMLButtonElement>('button[aria-label="执行命令前是否先问我"]')!;
+  return host!.querySelector<HTMLButtonElement>('button[aria-label="执行命令前是否询问"]')!;
 }
 
-async function chooseBypass(label: "先问我" | "不用再问") {
+async function chooseBypass(label: "每次询问" | "不再询问") {
   await act(async () => {
     bypassSelect().dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
@@ -117,13 +117,13 @@ describe("SecurityPanel", () => {
   it("每类一行使用暗墨自定义下拉，说明无重复状态且采用暗底说明色", async () => {
     await renderPanel();
 
-    // 四类 + 顶部「执行命令前先问我」总开关一行
+    // 四类 + 顶部总开关一行
     const selects = [...host!.querySelectorAll<HTMLElement>(".security-select")];
     expect(selects).toHaveLength(5);
     expect(selects.every((select) => select.classList.contains("skin-select--ink"))).toBe(true);
-    expect(categorySelect("安装").textContent).toContain("每次询问");
-    expect(categorySelect("同类操作").textContent).toContain("总是允许");
-    // 两类已解锁:与安装/同类操作同等可选
+    expect(categorySelect("安装软件").textContent).toContain("每次询问");
+    expect(categorySelect("删除或移动文件").textContent).toContain("不再询问");
+    // 两类已解锁:与其它分类同等可选
     expect(categorySelect("向外发送内容").disabled).toBe(false);
     expect(categorySelect("连接账号").disabled).toBe(false);
     expect(host!.querySelector("select")).toBeNull();
@@ -134,7 +134,7 @@ describe("SecurityPanel", () => {
       "普通命令不受影响",
     );
     expect(host!.querySelector("#security-command-effect")?.textContent).toContain(
-      "之后同类操作直接执行",
+      "这一类以后不再询问",
     );
 
     const css = readFileSync(
@@ -145,17 +145,17 @@ describe("SecurityPanel", () => {
     expect(css).toMatch(/\.security-description\{[^}]*font-size:11\.5px/);
   });
 
-  // 「以后不用再问我」的常驻控制点:状态看得见、一键能改回,改回即恢复默认形态。
-  it("默认形态下这一行显示「先问我」，不显示已关闭的说明", async () => {
+  // 总开关的常驻控制点:状态看得见、一键能改回,改回即恢复默认形态。
+  it("默认形态下这一行显示「每次询问」，不显示已关闭的说明", async () => {
     await renderPanel();
 
     const row = host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!;
     expect(row.dataset.bypass).toBe("off");
-    expect(row.textContent).toContain("执行命令前先问我");
-    expect(bypassSelect().textContent).toContain("先问我");
+    expect(row.textContent).toContain("执行命令前是否询问");
+    expect(bypassSelect().textContent).toContain("每次询问");
     expect(host!.querySelector("#security-bypass-effect")).toBeNull();
     // 默认形态下四类仍然可改
-    expect(categorySelect("安装").disabled).toBe(false);
+    expect(categorySelect("安装软件").disabled).toBe(false);
   });
 
   it("已关闭询问时状态可见，且四类设置标注为暂不生效", async () => {
@@ -165,11 +165,11 @@ describe("SecurityPanel", () => {
 
     const row = host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!;
     expect(row.dataset.bypass).toBe("on");
-    expect(bypassSelect().textContent).toContain("不用再问");
+    expect(bypassSelect().textContent).toContain("不再询问");
     expect(host!.querySelector("#security-bypass-effect")?.textContent).toContain(
-      "当前不再询问",
+      "当前所有操作都不再询问",
     );
-    expect(categorySelect("安装").disabled).toBe(true);
+    expect(categorySelect("安装软件").disabled).toBe(true);
   });
 
   it("一键改回默认:发出关闭请求并提示已恢复询问与隔离", async () => {
@@ -181,7 +181,7 @@ describe("SecurityPanel", () => {
       .mockResolvedValue(response({ enabled: false, enabledAt: null }));
     await renderWithFetch(fetchMock);
 
-    await chooseBypass("先问我");
+    await chooseBypass("每次询问");
 
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/bypass",
@@ -200,7 +200,7 @@ describe("SecurityPanel", () => {
 
   it("改回每次询问调用 revoke 语义并给出轻提示", async () => {
     const fetchMock = await renderPanel();
-    const command = categorySelect("同类操作");
+    const command = categorySelect("删除或移动文件");
     await choose(command, "ask");
 
     const [, request] = fetchMock.mock.calls.at(-1)!;
@@ -216,13 +216,13 @@ describe("SecurityPanel", () => {
     expect(command.textContent).toContain("每次询问");
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       tone: "success",
-      message: "同类操作已恢复每次询问。已在执行的不受影响。",
+      message: "删除或移动文件恢复每次询问。已在执行的不受影响。",
     }));
   });
 
-  it("未走过确认卡也能直接选总是允许并显示生效语义", async () => {
+  it("未走过确认卡也能直接选不再询问并显示生效语义", async () => {
     const fetchMock = await renderPanel();
-    const install = categorySelect("安装");
+    const install = categorySelect("安装软件");
     await choose(install, "always");
 
     const [, request] = fetchMock.mock.calls.at(-1)!;
@@ -235,12 +235,12 @@ describe("SecurityPanel", () => {
       operationId: expect.any(String),
       baseVersion: 0,
     });
-    expect(install.textContent).toContain("总是允许");
+    expect(install.textContent).toContain("不再询问");
     expect(host!.querySelector("#security-install-effect")?.textContent).toContain(
-      "已记住，之后同类操作直接执行；可随时改回。",
+      "这一类以后不再询问，直接执行；可随时改回。",
     );
     expect(toast).toHaveBeenCalledWith({
-      message: "安装已设为总是允许。",
+      message: "安装软件以后不再询问。",
       tone: "success",
     });
   });
@@ -248,7 +248,7 @@ describe("SecurityPanel", () => {
   it.each([
     ["向外发送内容", "send"],
     ["连接账号", "connect"],
-  ])("%s 也能选总是允许并按既有通道落盘", async (label, kind) => {
+  ])("%s 也能选不再询问并按既有通道落盘", async (label, kind) => {
     const fetchMock = await renderPanel();
     const select = categorySelect(label);
     await choose(select, "always");
@@ -257,15 +257,15 @@ describe("SecurityPanel", () => {
       `/api/v1/settings/security/${kind}`,
       expect.objectContaining({ body: expect.any(String) }),
     );
-    expect(select.textContent).toContain("总是允许");
+    expect(select.textContent).toContain("不再询问");
     expect(host!.querySelector(`#security-${kind}-effect`)?.textContent).toContain(
-      "已记住，之后同类操作直接执行；可随时改回。",
+      "这一类以后不再询问，直接执行；可随时改回。",
     );
   });
 
   it("卡侧状态事件按版本立即更新已打开的下拉", async () => {
     await renderPanel();
-    const install = categorySelect("安装");
+    const install = categorySelect("安装软件");
     expect(install.textContent).toContain("每次询问");
 
     await act(async () => {
@@ -276,7 +276,7 @@ describe("SecurityPanel", () => {
         version: 3,
       });
     });
-    expect(install.textContent).toContain("总是允许");
+    expect(install.textContent).toContain("不再询问");
   });
 
   it("窗口重获焦点时重读 canonical 状态", async () => {
@@ -294,7 +294,7 @@ describe("SecurityPanel", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(categorySelect("安装").textContent).toContain("总是允许");
+    expect(categorySelect("安装软件").textContent).toContain("不再询问");
   });
 
   it("设置加载失败使用统一提示", async () => {
@@ -317,14 +317,14 @@ describe("SecurityPanel", () => {
       .mockResolvedValueOnce(response({ error: "timeout" }, 504))
       .mockResolvedValueOnce(response({ categories: canonicalAfterFailure }));
     await renderWithFetch(fetchMock);
-    await choose(categorySelect("安装"), "always");
+    await choose(categorySelect("安装软件"), "always");
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(toast).toHaveBeenCalledWith({
       message: "设置保存失败，请再试一次",
       tone: "error",
     });
-    expect(categorySelect("安装").textContent).toContain("总是允许");
+    expect(categorySelect("安装软件").textContent).toContain("不再询问");
 
     await act(async () => {
       publishRememberGrantState({
@@ -340,7 +340,7 @@ describe("SecurityPanel", () => {
         version: 6,
       });
     });
-    expect(categorySelect("安装").textContent).toContain("每次询问");
+    expect(categorySelect("安装软件").textContent).toContain("每次询问");
   });
 
   it("POST 超时后不 abort，保持未定态轮询到该操作提交", async () => {
@@ -393,24 +393,24 @@ describe("SecurityPanel", () => {
       });
     });
     await renderWithFetch(fetchMock);
-    await choose(categorySelect("安装"), "always");
+    await choose(categorySelect("安装软件"), "always");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
     expect(postSignal).toBeUndefined();
     expect(reconcileReads).toBe(1);
-    expect(categorySelect("安装").disabled).toBe(true);
+    expect(categorySelect("安装软件").disabled).toBe(true);
     expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(750);
     });
     expect(reconcileReads).toBe(2);
-    expect(categorySelect("安装").textContent).toContain("总是允许");
-    expect(categorySelect("安装").disabled).toBe(false);
+    expect(categorySelect("安装软件").textContent).toContain("不再询问");
+    expect(categorySelect("安装软件").disabled).toBe(false);
     expect(toast).toHaveBeenCalledWith({
-      message: "安装已设为总是允许。",
+      message: "安装软件以后不再询问。",
       tone: "success",
     });
   });
@@ -452,13 +452,13 @@ describe("SecurityPanel", () => {
       });
     });
     await renderWithFetch(fetchMock);
-    await choose(categorySelect("安装"), "always");
+    await choose(categorySelect("安装软件"), "always");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
     expect(reconcileReads).toBe(1);
-    expect(categorySelect("安装").disabled).toBe(true);
+    expect(categorySelect("安装软件").disabled).toBe(true);
     expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "success" }));
     expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({
       message: "设置保存失败，请再试一次",
@@ -468,7 +468,7 @@ describe("SecurityPanel", () => {
       await vi.advanceTimersByTimeAsync(750);
     });
     expect(reconcileReads).toBe(2);
-    expect(categorySelect("安装").disabled).toBe(false);
+    expect(categorySelect("安装软件").disabled).toBe(false);
     expect(toast).toHaveBeenCalledWith({
       message: "设置保存失败，请再试一次",
       tone: "error",

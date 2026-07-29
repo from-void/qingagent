@@ -193,6 +193,13 @@
 .security-head h2{margin:0 0 6px;color:var(--qj-ink);font:700 16px/1.4 var(--font-zh-serif)}
 .security-head p{margin:0;color:var(--ink-desc);font-size:13px;line-height:1.7}
 .security-list{display:flex;flex-direction:column}
+/* 分类小节:视觉上从属于上方总开关;总开关关掉询问时整块淡出表示暂不生效 */
+.security-subhead{margin:18px 0 2px;color:var(--ink-desc);font:700 12px/1.5 var(--font-zh-serif);letter-spacing:.04em}
+.security-subhead[data-inactive="true"],
+.security-list[data-inactive="true"]{opacity:.5}
+.security-list[data-inactive="true"]{pointer-events:none}
+/* 总开关自己是独立一块,不与分类同列 */
+.security-row[data-wf="SecurityBypassRow"]{border-bottom:0}
 .security-row{display:grid;grid-template-columns:minmax(0,1fr) 128px;align-items:center;gap:24px;min-height:72px;padding:10px 0;border-bottom:1px solid var(--qj-switch-border)}
 .security-copy{display:flex;min-width:0;flex-direction:column;gap:4px}
 .security-label{color:var(--qj-ink);font-size:13px;font-weight:700;line-height:1.45}

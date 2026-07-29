@@ -25,13 +25,13 @@ const POST_TIMEOUT_MS = 8_000;
 const RECONCILE_INTERVAL_MS = 750;
 const modeLabels: Record<SecurityGrantMode, string> = {
   ask: "每次询问",
-  always: "总是允许",
+  always: "不再询问",
 };
 const categoryDescriptions: Record<SecurityGrantKind, string> = {
-  install: "安装软件或依赖前先询问，避免在不知情时改变本机环境。",
-  command: "仅影响会删除、移动或产生多种影响的同类操作，普通命令不受影响。",
-  send: "内容发出后不能撤回，涉及对外发送的操作按这里的设置处理。",
-  connect: "连接会改变可访问的内容，账号连接按这里的设置处理。",
+  install: "装软件或依赖会改变你的电脑环境。",
+  command: "删除、移动文件这类不好撤销的操作；普通命令不受影响。",
+  send: "内容发出去就收不回来了。",
+  connect: "连接后，青简能读到这个账号里的内容。",
 };
 
 // 「以后不用再问我」的常驻控制点。用户在确认卡上勾过之后,这里就是他唯一能看到
@@ -39,8 +39,8 @@ const categoryDescriptions: Record<SecurityGrantKind, string> = {
 const BYPASS_ASK = "ask";
 const BYPASS_NEVER = "never";
 const bypassModeLabels = {
-  [BYPASS_ASK]: "先问我",
-  [BYPASS_NEVER]: "不用再问",
+  [BYPASS_ASK]: "每次询问",
+  [BYPASS_NEVER]: "不再询问",
 } as const;
 
 function parseBypass(value: unknown): SecurityBypassState {
@@ -382,8 +382,8 @@ export function SecurityPanel() {
         publishRememberGrantState(outcome.canonical);
         toast.show({
           message: outcome.canonical.grantMode === "always"
-            ? `${category.label}已设为总是允许。`
-            : `${category.label}已恢复每次询问。已在执行的不受影响。`,
+            ? `${category.label}以后不再询问。`
+            : `${category.label}恢复每次询问。已在执行的不受影响。`,
           tone: "success",
         });
       } else if (outcome.status === "failed") {
@@ -409,19 +409,19 @@ export function SecurityPanel() {
             data-bypass={bypassEnabled ? "on" : "off"}
           >
             <div className="security-copy">
-              <span className="security-label">执行命令前先问我</span>
+              <span className="security-label">执行命令前是否询问</span>
               <span className="security-description" id="security-bypass-description">
-                默认会在安装、对外发送、删除这类操作前先问你一句。改成「不用再问」之后，命令会直接执行。
+                这是总开关，管住下面所有类别。改成「不再询问」之后，命令都直接执行，不再打断你。
               </span>
               {bypassEnabled && (
                 <span className="security-effect" id="security-bypass-effect">
-                  当前不再询问，命令会直接执行；下面按类别的设置暂时不生效。
+                  当前所有操作都不再询问，下面的分类设置暂时不起作用。
                 </span>
               )}
             </div>
             <SkinSelect
               className="security-select"
-              ariaLabel="执行命令前是否先问我"
+              ariaLabel="执行命令前是否询问"
               ariaDescribedBy={[
                 "security-bypass-description",
                 bypassEnabled ? "security-bypass-effect" : "",
@@ -439,7 +439,18 @@ export function SecurityPanel() {
           </div>
         </div>
       )}
-      <div className="security-list" aria-busy={settings === null}>
+      {/* 分类是总开关的下级:总开关关掉询问时,这一整块只是陈列,不再生效——
+          必须让层级在视觉上一眼可见,否则五行平铺会被读成五个平级开关。 */}
+      {settings && (
+        <p className="security-subhead" data-inactive={bypassEnabled ? "true" : undefined}>
+          {bypassEnabled ? "按类别细分（当前不生效）" : "按类别细分"}
+        </p>
+      )}
+      <div
+        className="security-list"
+        aria-busy={settings === null}
+        data-inactive={bypassEnabled ? "true" : undefined}
+      >
         {settings?.categories.map((category) => {
           const phase = updatePhases[category.kind] ?? "idle";
           const mutable = category.grantModes.length > 1;
@@ -461,7 +472,7 @@ export function SecurityPanel() {
                 </span>
                 {effectId && (
                   <span className="security-effect" id={effectId}>
-                    已记住，之后同类操作直接执行；可随时改回。
+                    这一类以后不再询问，直接执行；可随时改回。
                   </span>
                 )}
               </div>

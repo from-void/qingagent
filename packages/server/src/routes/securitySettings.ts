@@ -86,8 +86,8 @@ export function createSecuritySettingsRoutes(
     const body: SecuritySettingsResponse = {
       bypass,
       categories: [
-        category("install", "安装"),
-        category("command", "同类操作"),
+        category("install", "安装软件"),
+        category("command", "删除或移动文件"),
         category("send", "向外发送内容"),
         category("connect", "连接账号"),
       ],

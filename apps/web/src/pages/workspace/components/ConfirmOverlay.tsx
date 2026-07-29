@@ -59,6 +59,7 @@ export function ConfirmOverlay({
   const titleId = useId();
   const sayId = useId();
   const rememberRiskId = useId();
+  const bypassHintId = useId();
   const [selectedOption, setSelectedOption] = useState(() =>
     initialOptionValue(spec),
   );
@@ -69,8 +70,12 @@ export function ConfirmOverlay({
     { phase: "confirming" | "submitting"; accepted: boolean } | null
   >(null);
   const [remember, setRemember] = useState(false);
+  const [bypassAll, setBypassAll] = useState(false);
   const rememberCapability = window.electron?.requestConfirmRememberGrant;
-  const showRemember = Boolean(
+  // 「以后不用再问我」是卡面上唯一的减少打扰出口:声明了就只出这一个勾选,
+  // 不再叠加按类别记忆的勾选(两个勾选并排等于逼用户做档位选择)。
+  const showBypass = Boolean(sessionId && spec.bypassOption);
+  const showRemember = !showBypass && Boolean(
     sessionId && spec.rememberCategory
       && (rememberCapability || spec.rememberCategory.insecureWithoutDesktop),
   );
@@ -131,6 +136,9 @@ export function ConfirmOverlay({
     }
     if (accepted && spec.widget?.type === "secretInput") {
       decision.secretValue = secretInputRef.current?.value ?? "";
+    }
+    if (accepted && bypassAll && showBypass) {
+      decision.bypassAll = true;
     }
     if (accepted && remember && showRemember && spec.rememberCategory) {
       if (rememberCapability && sessionId) {
@@ -307,9 +315,9 @@ export function ConfirmOverlay({
 
       <div className="cf-foot">
         {(spec.footHint ||
-          (!showRemember && sessionId && spec.rememberCategory)) && (
+          (!showRemember && !showBypass && sessionId && spec.rememberCategory)) && (
           <div className="cf-foot-copy">
-            {!showRemember && sessionId && spec.rememberCategory && (
+            {!showRemember && !showBypass && sessionId && spec.rememberCategory && (
               <p className="cf-remember-unavailable">
                 开启记忆需要在桌面应用中完成确认。
               </p>
@@ -318,6 +326,26 @@ export function ConfirmOverlay({
           </div>
         )}
         <div className="cf-actions">
+          {showBypass && spec.bypassOption && (
+            <label className="cf-remember">
+              <input
+                type="checkbox"
+                checked={bypassAll}
+                disabled={busy}
+                aria-describedby={bypassHintId}
+                onChange={(event) => setBypassAll(event.currentTarget.checked)}
+              />
+              <span className="cf-remember-box" aria-hidden="true">
+                {bypassAll && <CheckIcon size={11} />}
+              </span>
+              <span className="cf-remember-copy">
+                <span>{spec.bypassOption.label}</span>
+                <span className="cf-remember-risk" id={bypassHintId}>
+                  {spec.bypassOption.hint}
+                </span>
+              </span>
+            </label>
+          )}
           {showRemember && spec.rememberCategory && (
             <label className="cf-remember">
               <input

@@ -285,12 +285,25 @@ export {
   requestBrowserFolderBridge,
   resolveBrowserFolderBridgeResponse,
   resolveCredentialWallMode,
+  resolveEffectiveIsolation,
   resolveSandboxCredentialPaths,
   resolveIsolation,
   unregisterBrowserFolderSession,
   unregisterBrowserFolderSource,
   withBrowserFolderBridgeAbortSignal,
 } from "./workspace/index.js";
+export {
+  SETTING_SECURITY_BYPASS,
+  __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
+  bypassModeLoaded,
+  bypassSnapshot,
+  isBypassEnabled,
+  loadBypassMode,
+  setBypassMode,
+  type SecurityBypassSnapshot,
+} from "./security/bypassMode.js";
+export { applyBypassMode } from "./security/bypassModeControl.js";
 export {
   SETTING_DEEPSEEK_GLOBAL_KEY,
   SETTING_KIMI_GLOBAL_KEY,

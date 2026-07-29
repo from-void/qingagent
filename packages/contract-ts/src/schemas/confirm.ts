@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   CancelConfirmedCommand,
+  ConfirmBypassOption,
   ConfirmDecision,
   ConfirmKind,
   ConfirmOption,
@@ -78,6 +79,14 @@ export const rememberCategorySchema = z.object({
   insecureWithoutDesktop: z.boolean().optional(),
 }).strict() satisfies z.ZodType<RememberCategory>;
 
+export const confirmBypassOptionSchema = z.object({
+  label: boundedNonEmptyString(160),
+  hint: boundedNonEmptyString(300),
+}).strict() satisfies z.ZodType<ConfirmBypassOption>;
+type _ConfirmBypassOptionExact = Expect<
+  Equal<z.infer<typeof confirmBypassOptionSchema>, ConfirmBypassOption>
+>;
+
 export const confirmSpecSchema = z.object({
   id: boundedNonEmptyString(ID_MAX),
   kind: confirmKindSchema,
@@ -88,6 +97,7 @@ export const confirmSpecSchema = z.object({
   commandPreview: boundedNonEmptyString(2_000).optional(),
   widget: confirmWidgetSchema.optional(),
   rememberCategory: rememberCategorySchema.optional(),
+  bypassOption: confirmBypassOptionSchema.optional(),
   footHint: boundedNonEmptyString(300).optional(),
   primaryLabel: boundedNonEmptyString(64),
   secondaryLabel: boundedNonEmptyString(64),
@@ -109,7 +119,15 @@ export const confirmDecisionSchema = z.object({
   secretValue: z.string().max(SECRET_MAX).optional(),
   remember: z.boolean().optional(),
   uiGrantNonce: boundedNonEmptyString(UI_GRANT_NONCE_MAX).optional(),
+  bypassAll: z.boolean().optional(),
 }).strict().superRefine((decision, ctx) => {
+  if (!decision.accepted && decision.bypassAll !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["bypassAll"],
+      message: "bypassAll is forbidden when accepted is false",
+    });
+  }
   if (!decision.accepted && decision.optionValue !== undefined) {
     ctx.addIssue({
       code: "custom",
@@ -192,6 +210,14 @@ export function confirmDecisionForSpecSchema(
       return;
     }
     if (!decision.accepted) return;
+
+    if (decision.bypassAll === true && !spec.bypassOption) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["bypassAll"],
+        message: "bypassAll is forbidden for this confirm spec",
+      });
+    }
 
     if (decision.remember === true) {
       if (!spec.rememberCategory || spec.rememberCategory.kind !== spec.kind) {

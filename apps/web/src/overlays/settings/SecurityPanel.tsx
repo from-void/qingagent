@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDelayedVisible } from "../../system/useDelayedVisible";
 import type {
+  SecurityBypassState,
   SecurityGrantCategory,
   SecurityGrantKind,
   SecurityGrantMode,
@@ -33,6 +34,25 @@ const categoryDescriptions: Record<SecurityGrantKind, string> = {
   connect: "连接会改变可访问的内容，账号连接按这里的设置处理。",
 };
 
+// 「以后不用再问我」的常驻控制点。用户在确认卡上勾过之后,这里就是他唯一能看到
+// 当前状态、也能一键改回默认的地方;改回后立刻恢复弹确认卡,已有会话即时生效。
+const BYPASS_ASK = "ask";
+const BYPASS_NEVER = "never";
+const bypassModeLabels = {
+  [BYPASS_ASK]: "先问我",
+  [BYPASS_NEVER]: "不用再问",
+} as const;
+
+function parseBypass(value: unknown): SecurityBypassState {
+  if (!value || typeof value !== "object") return { enabled: false, enabledAt: null };
+  const input = value as Record<string, unknown>;
+  if (input.enabled !== true) return { enabled: false, enabledAt: null };
+  return {
+    enabled: true,
+    enabledAt: typeof input.enabledAt === "string" ? input.enabledAt : null,
+  };
+}
+
 function isGrantMode(value: unknown): value is SecurityGrantMode {
   return value === "ask" || value === "always";
 }
@@ -63,6 +83,7 @@ function parseSettings(value: unknown): SecuritySettingsResponse {
   }
   return {
     categories: input.categories,
+    bypass: parseBypass(input.bypass),
     credentialShare: parseCredentialShareItems({ items: input.credentialShare }),
     operation: input.operation === undefined
       ? undefined
@@ -159,7 +180,8 @@ function mergeSettings(
       const previous = currentByKind.get(item.kind);
       return previous && previous.version > item.version ? previous : item;
     }),
-    // 共享条目没有版本线,服务端最新一次结果即真值。
+    // 免询问开关与共享条目都没有版本线,服务端最新一次结果即真值。
+    bypass: incoming.bypass ?? { enabled: false, enabledAt: null },
     credentialShare: incoming.credentialShare ?? [],
   };
 }
@@ -235,6 +257,35 @@ export function SecurityPanel() {
     window.addEventListener("focus", revalidate);
     return () => window.removeEventListener("focus", revalidate);
   }, [readSettings, toast]);
+
+  const [bypassBusy, setBypassBusy] = useState(false);
+  const bypassEnabled = settings?.bypass?.enabled === true;
+
+  const updateBypass = async (enabled: boolean) => {
+    if (bypassBusy || enabled === bypassEnabled) return;
+    setBypassBusy(true);
+    try {
+      const response = await fetch("/api/v1/settings/security/bypass", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const next = parseBypass(await response.json());
+      setSettings((current) => current ? { ...current, bypass: next } : current);
+      toast.show({
+        message: next.enabled
+          ? "以后不再询问，命令会直接执行。随时可以在这里改回。"
+          : "已恢复默认：这些操作会先问你一句，命令也重新隔离执行。",
+        tone: "success",
+      });
+    } catch {
+      toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
+      await readSettings().catch(() => undefined);
+    } finally {
+      if (mountedRef.current) setBypassBusy(false);
+    }
+  };
 
   const setUpdatePhase = (kind: SecurityGrantKind, phase: UpdatePhase) => {
     setUpdatePhases((current) => ({ ...current, [kind]: phase }));
@@ -350,6 +401,44 @@ export function SecurityPanel() {
         <h2>操作确认</h2>
         <p>按操作类别选择确认方式。授权会立即生效，也可以随时改回。</p>
       </header>
+      {settings && (
+        <div className="security-list">
+          <div
+            className="security-row"
+            data-wf="SecurityBypassRow"
+            data-bypass={bypassEnabled ? "on" : "off"}
+          >
+            <div className="security-copy">
+              <span className="security-label">执行命令前先问我</span>
+              <span className="security-description" id="security-bypass-description">
+                默认会在安装、对外发送、删除这类操作前先问你一句。改成「不用再问」之后，命令会直接执行。
+              </span>
+              {bypassEnabled && (
+                <span className="security-effect" id="security-bypass-effect">
+                  当前不再询问，命令会直接执行；下面按类别的设置暂时不生效。
+                </span>
+              )}
+            </div>
+            <SkinSelect
+              className="security-select"
+              ariaLabel="执行命令前是否先问我"
+              ariaDescribedBy={[
+                "security-bypass-description",
+                bypassEnabled ? "security-bypass-effect" : "",
+              ].filter(Boolean).join(" ")}
+              ariaBusy={bypassBusy}
+              value={bypassEnabled ? BYPASS_NEVER : BYPASS_ASK}
+              disabled={bypassBusy}
+              onChange={(value) => void updateBypass(value === BYPASS_NEVER)}
+              skin="ink"
+              options={[
+                { value: BYPASS_ASK, label: bypassModeLabels[BYPASS_ASK] },
+                { value: BYPASS_NEVER, label: bypassModeLabels[BYPASS_NEVER] },
+              ]}
+            />
+          </div>
+        </div>
+      )}
       <div className="security-list" aria-busy={settings === null}>
         {settings?.categories.map((category) => {
           const phase = updatePhases[category.kind] ?? "idle";
@@ -382,7 +471,10 @@ export function SecurityPanel() {
                 ariaDescribedBy={[descriptionId, effectId].filter(Boolean).join(" ")}
                 ariaBusy={phase === "updating" || phase === "uncertain"}
                 value={category.grantMode}
-                disabled={!mutable || phase === "updating" || phase === "uncertain"}
+                disabled={
+                  !mutable || bypassEnabled ||
+                  phase === "updating" || phase === "uncertain"
+                }
                 onChange={(value) => void updateGrantMode(category, value as SecurityGrantMode)}
                 skin="ink"
                 options={category.grantModes.map((mode) => ({

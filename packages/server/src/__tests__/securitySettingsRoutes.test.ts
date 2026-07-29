@@ -9,7 +9,16 @@ import type {
 } from "@qingagent/db";
 import { createSecuritySettingsRoutes } from "../routes/securitySettings";
 
-function makeHarness(initial: ConfirmGrant[] = []) {
+function makeHarness(
+  initial: ConfirmGrant[] = [],
+  initialBypass: { enabled: boolean; enabledAt: string | null } = {
+    enabled: false,
+    enabledAt: null,
+  },
+) {
+  // 「以后不用再问我」在这一页必须可见、可一键改回;改回即恢复默认形态。
+  const bypass = { ...initialBypass };
+  const bypassWrites: boolean[] = [];
   const stored = new Map<ConfirmGrantKind, ConfirmGrant>(initial.map((grant) => [grant.kind, grant]));
   const created: Array<{ kind: ConfirmGrantKind; source: ConfirmGrantSource }> = [];
   const revoked: ConfirmGrantKind[] = [];
@@ -76,8 +85,15 @@ function makeHarness(initial: ConfirmGrant[] = []) {
         },
       };
     },
+    readBypass: async () => ({ ...bypass }),
+    writeBypass: async (enabled: boolean) => {
+      bypassWrites.push(enabled);
+      bypass.enabled = enabled;
+      bypass.enabledAt = enabled ? "2026-07-29T00:00:00.000Z" : null;
+      return { ...bypass };
+    },
   }));
-  return { app, stored, created, revoked };
+  return { app, stored, created, revoked, bypass, bypassWrites };
 }
 
 async function post(
@@ -95,6 +111,95 @@ async function post(
     body: JSON.stringify(body),
   });
 }
+
+describe("安全设置路由:「以后不用再问我」", () => {
+  it("默认形态在设置页读出来就是未开启", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      bypass: { enabled: false, enabledAt: null },
+    });
+  });
+
+  it("已开启时设置页看得到当前状态", async () => {
+    const harness = makeHarness([], {
+      enabled: true,
+      enabledAt: "2026-07-29T00:00:00.000Z",
+    });
+    const response = await harness.app.request("/api/v1/settings/security");
+    expect(await response.json()).toMatchObject({
+      bypass: { enabled: true, enabledAt: "2026-07-29T00:00:00.000Z" },
+    });
+  });
+
+  it("可以一键改回默认:关掉后再读就是未开启", async () => {
+    const harness = makeHarness([], {
+      enabled: true,
+      enabledAt: "2026-07-29T00:00:00.000Z",
+    });
+    const response = await harness.app.request("/api/v1/settings/security/bypass", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ enabled: false, enabledAt: null });
+    expect(harness.bypassWrites).toEqual([false]);
+
+    const reread = await harness.app.request("/api/v1/settings/security");
+    expect(await reread.json()).toMatchObject({ bypass: { enabled: false } });
+  });
+
+  it("也可以在设置页直接开启", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security/bypass", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ enabled: true });
+    expect(harness.bypassWrites).toEqual([true]);
+  });
+
+  it("bypass 不会被当成第五个确认类别", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security");
+    const body = await response.json() as { categories: Array<{ kind: string }> };
+    expect(body.categories.map((item) => item.kind)).toEqual([
+      "install",
+      "command",
+      "send",
+      "connect",
+    ]);
+  });
+
+  it("不受信 Origin 不能借设置端点关闭询问", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security/bypass", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example",
+      },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(response.status).toBe(403);
+    expect(harness.bypassWrites).toEqual([]);
+  });
+
+  it("请求体不合法时不改动状态", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security/bypass", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: "yes" }),
+    });
+    expect(response.status).toBe(400);
+    expect(harness.bypassWrites).toEqual([]);
+  });
+});
 
 describe("安全设置路由", () => {
   it("读取真实授权档位，四类都可在每次询问 / 始终允许之间选", async () => {

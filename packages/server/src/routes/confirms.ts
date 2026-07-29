@@ -14,7 +14,7 @@ import {
   type ConfirmService,
   type SafeSubmitConfirmDecision,
 } from "@qingagent/core/confirm";
-import { cancelConfirmedCommand } from "@qingagent/core";
+import { applyBypassMode, cancelConfirmedCommand } from "@qingagent/core";
 import {
   getOrRestoreSession,
   sessionManager,
@@ -75,6 +75,7 @@ function safeSubmission(
     secretValue: _secretValue,
     remember: _remember,
     uiGrantNonce: _uiGrantNonce,
+    bypassAll: _bypassAll,
     ...decision
   } = input.decision;
   return {
@@ -129,6 +130,7 @@ interface ConfirmRoutesDependencies {
     expectedRevocationEpoch: number;
   }) => Promise<ConfirmGrantMutation>;
   cancelCommand?: typeof cancelConfirmedCommand;
+  applyBypass?: typeof applyBypassMode;
 }
 
 export function createConfirmRoutes(
@@ -145,6 +147,7 @@ export function createConfirmRoutes(
     ?? insecureRememberAllowed;
   const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
   const cancelCommand = dependencies.cancelCommand ?? cancelConfirmedCommand;
+  const applyBypass = dependencies.applyBypass ?? applyBypassMode;
 
   routes.post("/confirms/cancel", async (c) => {
     const originError = requireTrustedOrigin(c);
@@ -255,6 +258,14 @@ export function createConfirmRoutes(
       }
     }
   }
+  // 「以后不用再问我」:只认当前这张卡自己声明过该勾选、且用户点的是「同意」。
+  // 卡片过期/串卡(confirmId 对不上)一律不认,避免旧卡越过用户后来的设置变更。
+  const bypassAuthorized = Boolean(
+    parsed.decision.accepted &&
+    parsed.decision.bypassAll === true &&
+    pending?.confirmId === parsed.decision.id &&
+    pending?.spec.bypassOption,
+  );
   if (parsed.decision.secretValue !== undefined) {
     service.stageSecret(session, {
       confirmId: parsed.decision.id,
@@ -307,9 +318,21 @@ export function createConfirmRoutes(
           }
         : {}),
     }));
+    // 决策已经落定后才切换全局开关:本次命令仍按用户刚刚看到的那张卡执行,
+    // 从下一条命令起不再询问、不再隔离。切换会让已有会话立即换形态。
+    let bypassEnabled = false;
+    if (bypassAuthorized) {
+      try {
+        bypassEnabled = (await applyBypass(true)).enabled;
+      } catch {
+        // 开关没存上不影响本次操作;用户下次仍会看到确认卡,自己再勾一次即可。
+        console.error("[security-bypass] 保存「以后不用再问我」失败，维持默认形态");
+      }
+    }
     return c.json({
       accepted: true,
       remembered: rememberCreated,
+      ...(bypassAuthorized ? { bypassEnabled } : {}),
       ...(canonicalGrantState ?? {}),
       ...(rememberFailure ? { rememberFailure } : {}),
     });

@@ -11,6 +11,7 @@ import {
 import { consumeApprovalProof, type ApprovalProofSession } from "../confirm/approvalProof.js";
 import { credentialAccessIsCooling } from "../confirm/credentialAccessCooldown.js";
 import { ensureCredentialPathExists } from "../skills/credentialRequests.js";
+import { isBypassEnabled } from "../security/bypassMode.js";
 import { invalidateSessionWorkspace } from "../workspace/sessionWorkspace.js";
 
 /**
@@ -60,6 +61,9 @@ export function createRequestCredentialAccessTool(
     outputSchema,
     // 冷却中的路径不再挂起确认,直接由 execute 回一句"已拒绝",避免反复弹卡。
     requireApproval: (input: RequestCredentialAccessInput) => {
+      // 用户已勾「以后不用再问我」时不再弹任何确认卡;此时命令本就以用户本人身份
+      // 执行,这条申请通道没有任何要授权的东西,execute 会直接告诉模型可以重试。
+      if (isBypassEnabled()) return false;
       const checked = checkRequestedCredentialAccess(input, home);
       if (!checked.ok) return false;
       return !cooling(checked.declared);
@@ -68,6 +72,12 @@ export function createRequestCredentialAccessTool(
       input: RequestCredentialAccessInput,
       context?: ToolExecutionContext,
     ) => {
+      if (isBypassEnabled()) {
+        return {
+          granted: true,
+          message: "现在不需要额外授权，直接重试刚才的命令即可。",
+        };
+      }
       const checked = checkRequestedCredentialAccess(input, home);
       if (!checked.ok) {
         return { granted: false, message: `不能共享这个位置:${checked.message}` };

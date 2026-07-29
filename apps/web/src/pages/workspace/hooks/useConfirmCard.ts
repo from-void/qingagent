@@ -280,6 +280,21 @@ export function useConfirmCard({
             ...result.grantState,
           });
         }
+        // 勾了「以后不用再问我」:用一条普通 toast 交代清楚现在是什么形态、去哪改回。
+        // 不在工作区常驻标识——常驻只会变成一个天天在的提醒条,与"少打扰"的诉求相反。
+        if (result.bypassEnabled === true) {
+          toast.show({
+            message: "以后不再询问，命令会直接执行。可在 设置 → 安全 里改回。",
+            tone: "success",
+            dedupeKey: `confirm-bypass-enabled:${decision.id}`,
+          });
+        } else if (result.bypassEnabled === false) {
+          toast.show({
+            message: "本次操作会继续，但这项设置没有保存成功；下次仍会询问。",
+            tone: "warn",
+            dedupeKey: `confirm-bypass-not-saved:${decision.id}`,
+          });
+        }
         if (result.remembered) {
           const message = liveConfirm.spec.kind === "install"
             ? "已记住：以后安装时不再询问。可在 设置 → 安全 中恢复每次询问。"

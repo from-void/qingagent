@@ -10,6 +10,20 @@ export interface RememberCategory {
   insecureWithoutDesktop?: boolean;
 }
 
+/**
+ * 确认卡上的「以后不用再问我」勾选项。
+ *
+ * 设计口径(不要按"少弹一个框"的直觉删掉确认卡本身):确认卡是产品可信度与安全设计
+ * 的一环,默认必弹;这个勾选是**用户主动**关闭询问的唯一出口,勾了之后全局永久生效,
+ * 且可以在 设置 → 安全 里随时改回默认。
+ */
+export interface ConfirmBypassOption {
+  /** 勾选项主文案,面向普通用户,不得出现任何内部机制词。 */
+  label: string;
+  /** 一句副说明:讲清后果 + 去哪改回。 */
+  hint: string;
+}
+
 export interface ConfirmOption {
   value: string;
   label: string;
@@ -38,6 +52,8 @@ export interface ConfirmSpec {
   commandPreview?: string;
   widget?: ConfirmWidget;
   rememberCategory?: RememberCategory;
+  /** 声明本张卡可以勾「以后不用再问我」。声明了就优先于 rememberCategory 渲染,卡面只出现一个勾选。 */
+  bypassOption?: ConfirmBypassOption;
   footHint?: string;
   primaryLabel: string;
   secondaryLabel: string;
@@ -50,6 +66,8 @@ export interface ConfirmDecision {
   secretValue?: string;
   remember?: boolean;
   uiGrantNonce?: string;
+  /** 用户在卡上勾了「以后不用再问我」:批准的同时全局永久关闭询问。 */
+  bypassAll?: boolean;
 }
 
 export interface SubmitConfirmDecision {

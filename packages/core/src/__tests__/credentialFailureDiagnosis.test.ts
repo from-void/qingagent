@@ -76,13 +76,16 @@ describe("各失败态分档互不混淆", () => {
     expect(diagnosis?.kind).toBe("cli-auth-timeout");
   });
 
-  it("被我们超时终止的登录命令 = sandbox-timeout,并澄清不是用户的问题", () => {
+  // 口径修正(0729 语雀真机):我们只知道"是自己掐的",完全不知道用户那边的授权行不行——
+  // 事实上那次恰恰就是登录态读不到。没有证据的断言一律不许出现在用户文案里。
+  it("被我们超时终止的登录命令 = sandbox-timeout,只陈述事实、不替用户下结论", () => {
     const diagnosis = diagnoseCredentialFailure({
       output: "waiting for authorization ...",
       timedOut: true,
     });
     expect(diagnosis?.kind).toBe("sandbox-timeout");
-    expect(diagnosis?.userMessage).toContain("不是你的授权出了问题");
+    expect(diagnosis?.userMessage).toBe("这条命令等待太久，已经被我这边结束了。");
+    expect(diagnosis?.userMessage).not.toContain("不是你的授权出了问题");
   });
 
   it("与登录无关的普通超时不归本模块管,免得和超时归因那条线打架", () => {

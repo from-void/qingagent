@@ -155,6 +155,11 @@ function formatOutput(
 /**
  * 后台进程退出的分档归因。与前台 execute_command 同一套口径：
  * 我们的 TTL 掐掉 ≠ 进程自己返回失败，模型不许把后者说成超时。
+ *
+ * 刻意不含前台那档 `auth-required`：**后台就是"真心要走扫码授权"的正道**，
+ * 识别到授权信号只会提前把控制权还给模型（见 hasInteractiveAuthOutputSignal，
+ * 它只结束本次 wait，绝不 kill 进程），进程必须继续活着等用户扫码。
+ * 任何把前台快速收口逻辑搬到这里的改动都会把正常授权流程打断。
  */
 export function backgroundExitAttribution(
   terminal: { timedOut: boolean; exitCode: number } | null,

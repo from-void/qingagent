@@ -116,6 +116,9 @@ export function commandCardFromResult(
   );
   const cancelled = structured?.cancelled === true;
   const timedOut = structured?.timedOut === true;
+  // 交互式授权收口:不是超时、不是失败、更不是用户中止,卡面必须单独说清,
+  // 否则用户只会看到"未完成"却不知道该做什么(0729 语雀真机)。
+  const authRequired = !cancelled && !timedOut && structured?.authRequired === true;
   // killed = 被信号打死但不是我们主动取消:必须与"已中止"分开,否则用户看到的
   // 结论是"你把它停了",而真相可能是沙箱写墙拒绝或 OOM(0729 真机 P1)。
   const killedBySignal = !cancelled && !timedOut && structured?.killed === true;
@@ -125,7 +128,8 @@ export function commandCardFromResult(
   const background =
     structured?.background === true && pid !== null && structured?.success === true;
   const structuredFailed = structured !== null && (
-    structured.success === false || exitCode !== 0 || cancelled || timedOut || killedBySignal
+    structured.success === false || exitCode !== 0 || cancelled || timedOut ||
+    killedBySignal || authRequired
   );
   const legacyNonZeroExit = structured === null && exitMatch !== null && exitCode !== 0;
   const policyBlock = commandPolicyBlockFromOutput(outRaw);
@@ -154,11 +158,13 @@ export function commandCardFromResult(
       ? "timedOut"
       : cancelled
         ? "aborted"
-        : killedBySignal
-          ? "killed"
-          : failed
-            ? "failed"
-            : "succeeded";
+        : authRequired
+          ? "authRequired"
+          : killedBySignal
+            ? "killed"
+            : failed
+              ? "failed"
+              : "succeeded";
   return {
     title: cardTitle,
     icon: verdict.icon,

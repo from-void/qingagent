@@ -6,6 +6,8 @@ export type CommandTerminalKind =
   | "aborted"
   | "failed"
   | "timedOut"
+  /** 命令转入交互式授权等待、被系统提前收口：不是失败也不是超时，卡面说"需要重新授权"。 */
+  | "authRequired"
   | "succeeded";
 
 export type CommandCardBody = {

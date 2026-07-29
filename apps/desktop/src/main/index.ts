@@ -245,6 +245,21 @@ if (app.isPackaged && !process.env.QINGAGENT_SKILLS_DIR) {
 // 安装位置(~/.qingagent/skills、~/.agents/skills)全都对不上,于是明明装过却被
 // 告知"没安装"(0729 真机 P1)。这里保持 core 默认口径,由 core 统一多来源发现。
 // 需要自定义时仍可显式设 QINGAGENT_USER_SKILLS_DIR。
+//
+// 但历史 userData 目录必须继续被扫到:存量用户此前经打包版装的技能就落在那里,
+// 直接摘掉等于在他们身上复发同一个病。按"只增不搬"处理——追加成额外来源,
+// 不迁移任何文件,也不把它变回默认安装位置。追加而非覆盖,保留用户自设的值。
+if (app.isPackaged) {
+  const legacyUserSkillsDir = path.join(userDataDir, "skills");
+  const existing = (process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (!existing.includes(legacyUserSkillsDir)) {
+    process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = [...existing, legacyUserSkillsDir]
+      .join(path.delimiter);
+  }
+}
 
 if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS = [

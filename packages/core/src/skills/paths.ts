@@ -27,19 +27,26 @@ export const SKILLS_INSTALL_DIR = USER_SKILLS_DIR;
  */
 const DEFAULT_EXTRA_USER_SKILL_SOURCES = [resolve(homedir(), ".agents", "skills")];
 
+/**
+ * env 是**追加**而不是覆盖:这条清单的语义就是"只增不搬"。若写成覆盖,任何一处
+ * 设了环境变量(例如 desktop 追加历史 userData 目录)都会静默丢掉内置来源,
+ * 把"装过的技能突然查无此技能"这个病重新犯一遍。
+ */
 function parseExtraUserSkillSources(): string[] {
-  const raw = process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
-  if (!raw) return DEFAULT_EXTRA_USER_SKILL_SOURCES;
-  return raw
+  const fromEnv = (process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS ?? "")
     .split(delimiter)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
     .map(absolutize);
+  return [...DEFAULT_EXTRA_USER_SKILL_SOURCES, ...fromEnv];
 }
 
 /**
  * 用户技能的全部来源目录,首位恒为安装目录 USER_SKILLS_DIR。发现、沙箱可写面、
  * 可信脚本判定都必须走这一份清单,避免各处各记一半。
+ *
+ * 顺序即优先级:同名技能以**靠前的来源为准**(安装目录 > 内置额外来源 > env 追加),
+ * 由 resolveEnabledSkillDirsFromRoots 按名去重落实,避免多来源同名时行为不确定。
  */
 export const USER_SKILL_SOURCE_DIRS: readonly string[] = [
   ...new Set([USER_SKILLS_DIR, ...parseExtraUserSkillSources()]),

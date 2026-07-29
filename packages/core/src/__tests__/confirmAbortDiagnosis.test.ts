@@ -197,6 +197,8 @@ describe("沙箱写墙的放开面", () => {
     const builtinSkillsDir = join(home, "product", "skills");
     const userSkillsDir = join(home, ".qingagent", "skills");
     const agentsSkillsDir = join(home, ".agents", "skills");
+    // 历史打包版落点:存量用户的技能就在这里,可写待遇必须与主技能目录一致。
+    const legacyUserDataSkillsDir = join(home, "Library", "@qingagent", "desktop", "skills");
     const packageCacheDir = join(dataDir, "package-cache");
     const documentsDir = join(home, "Documents");
     await Promise.all([
@@ -205,6 +207,7 @@ describe("沙箱写墙的放开面", () => {
       mkdir(builtinSkillsDir, { recursive: true }),
       mkdir(userSkillsDir, { recursive: true }),
       mkdir(agentsSkillsDir, { recursive: true }),
+      mkdir(legacyUserDataSkillsDir, { recursive: true }),
       mkdir(packageCacheDir, { recursive: true }),
       mkdir(documentsDir, { recursive: true }),
     ]);
@@ -217,7 +220,7 @@ describe("沙箱写墙的放开面", () => {
       sandboxBinDir,
       builtinSkillsDir,
       userSkillsDir,
-      extraUserSkillsDirs: [agentsSkillsDir],
+      extraUserSkillsDirs: [agentsSkillsDir, legacyUserDataSkillsDir],
       packageCacheDir,
       extraReadOnlyPaths: [],
       effectiveUid: typeof process.geteuid === "function" ? process.geteuid() : -1,
@@ -225,8 +228,21 @@ describe("沙箱写墙的放开面", () => {
     });
     const profile = buildSeatbeltReadWallProfile(policy);
 
-    for (const writable of [userSkillsDir, agentsSkillsDir, packageCacheDir, sessionDir]) {
+    // 每个技能来源都必须拿到与主技能目录一致的可写待遇:装技能可能落到其中任意一个,
+    // 只读会重演"子进程被信号打死"。
+    for (const writable of [
+      userSkillsDir,
+      agentsSkillsDir,
+      legacyUserDataSkillsDir,
+      packageCacheDir,
+      sessionDir,
+    ]) {
       expect(profile).toContain(`(allow file-write* (subpath ${JSON.stringify(writable)}))`);
+    }
+    for (const source of [userSkillsDir, agentsSkillsDir, legacyUserDataSkillsDir]) {
+      expect(
+        policy.allowPaths.find((path) => path.lexicalPath === source),
+      ).toMatchObject({ kind: "user-skills", writable: true });
     }
     // HOME 其余部分、内置技能目录都不得出现写规则。
     expect(profile).not.toContain(`(allow file-write* (subpath ${JSON.stringify(home)}))`);

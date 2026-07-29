@@ -7,15 +7,16 @@ import { ConnectionsPanel } from "../../../overlays/settings/ConnectionsPanel";
 import type { ConnectorId } from "@qingagent/contract-ts";
 import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
+import { MemoryPanel } from "../../../overlays/settings/MemoryPanel";
 import "../../../overlays/settings/settings.css";
 import { dismissTopOverlay } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
-// tab:外观(明暗/字体/进场/动效) · 模型(看板) · 技能 · 搜索 · 快捷键。数据 tab 暂隐藏。
+// tab:模型(看板) · 技能 · 连接 · 记忆 · 安全 · 快捷键 · 反馈 · 关于。
 
-export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "security" | "diagnostics" | "shortcuts" | "about";
+export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "memory" | "security" | "diagnostics" | "shortcuts" | "about";
 
 interface SheetOption<T extends string> {
   id: T;
@@ -47,6 +48,7 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   // 「外观」整组已隐藏:产品只保留浅色宣纸,无深/浅模式与外观设置。
   { id: "skills", label: "技能" },
   { id: "connections", label: "连接" },
+  { id: "memory", label: "记忆" },
   { id: "security", label: "安全" },
   { id: "shortcuts", label: "快捷键" },
   { id: "diagnostics", label: "反馈" },
@@ -316,6 +318,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                 onSelectedIdChange={setSelectedConnectorId}
               />
             )}
+            {tab === "memory" && <MemoryPanel />}
             {tab === "security" && <SecurityPanel />}
             {tab === "diagnostics" && <FeedbackPanel />}
             {tab === "shortcuts" && <ShortcutsPanel />}

@@ -45,6 +45,20 @@ export type { SelectedSkillInput } from "./sessionTools.js";
 export {
   ensureWorkingMemorySnapshot,
   ensureWorkingMemorySnapshotWithStatus,
+  mergeWorkingMemoryOperations,
+  normalizeWorkingMemoryContent,
+  readWorkingMemoryContent,
+  writeWorkingMemoryContent,
+  withWorkingMemoryWriteLock,
+  QINGAGENT_WORKING_MEMORY_MAX_CHARS,
+  QINGAGENT_WORKING_MEMORY_SECTIONS,
+  QINGAGENT_WORKING_MEMORY_TEMPLATE,
+  WorkingMemoryContentError,
+} from "./workingMemory.js";
+export type {
+  WorkingMemoryOperation,
+  WorkingMemorySection,
+  WorkingMemoryStorageTarget,
 } from "./workingMemory.js";
 
 export {

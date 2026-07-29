@@ -88,6 +88,20 @@ export {
 export {
   ensureWorkingMemorySnapshot,
   ensureWorkingMemorySnapshotWithStatus,
+  mergeWorkingMemoryOperations,
+  normalizeWorkingMemoryContent,
+  readWorkingMemoryContent,
+  writeWorkingMemoryContent,
+  withWorkingMemoryWriteLock,
+  QINGAGENT_WORKING_MEMORY_MAX_CHARS,
+  QINGAGENT_WORKING_MEMORY_SECTIONS,
+  QINGAGENT_WORKING_MEMORY_TEMPLATE,
+  WorkingMemoryContentError,
+} from "../session/workingMemory.js";
+export type {
+  WorkingMemoryOperation,
+  WorkingMemorySection,
+  WorkingMemoryStorageTarget,
 } from "../session/workingMemory.js";
 
 export {

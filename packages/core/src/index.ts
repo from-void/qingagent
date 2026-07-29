@@ -53,6 +53,15 @@ export {
   ensureDraftCandidateDoc,
   ensureWorkingMemorySnapshot,
   ensureWorkingMemorySnapshotWithStatus,
+  mergeWorkingMemoryOperations,
+  normalizeWorkingMemoryContent,
+  readWorkingMemoryContent,
+  writeWorkingMemoryContent,
+  withWorkingMemoryWriteLock,
+  QINGAGENT_WORKING_MEMORY_MAX_CHARS,
+  QINGAGENT_WORKING_MEMORY_SECTIONS,
+  QINGAGENT_WORKING_MEMORY_TEMPLATE,
+  WorkingMemoryContentError,
   endTurnOwnership,
   finalizeLingeringRunningToolCalls,
   failConfirmedToolCall,
@@ -101,7 +110,12 @@ export {
   updatePatchVerdict,
   upsertMaterialByFileId,
 } from "./bridge/index.js";
-export type { ApprovalAgent } from "./bridge/index.js";
+export type {
+  ApprovalAgent,
+  WorkingMemoryOperation,
+  WorkingMemorySection,
+  WorkingMemoryStorageTarget,
+} from "./bridge/index.js";
 export type { ConnectorInfoDto } from "./connectors/index.js";
 export {
   CONFIRM_RESUME_WALL_TIMEOUT_MS,

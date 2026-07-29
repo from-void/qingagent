@@ -235,7 +235,11 @@ describe("Working Memory 冻结快照", () => {
 
       await expect(tool.execute!(
         {
-          memory: "# 不应落库",
+          ops: [{
+            action: "upsert",
+            section: "稳定偏好",
+            entry: "写作风格: 不应落库",
+          }],
           reason: "模拟迟到副作用",
         },
         {
@@ -274,7 +278,11 @@ describe("Working Memory 冻结快照", () => {
 
     const resultPromise = tool.execute!(
       {
-        memory: "# 已越过写边界",
+        ops: [{
+          action: "upsert",
+          section: "稳定偏好",
+          entry: "写作风格: 已越过写边界",
+        }],
         reason: "模拟 stop 与无 abort 的 Mastra 写并发",
       },
       {
@@ -291,8 +299,143 @@ describe("Working Memory 冻结快照", () => {
       ok: true,
       effective: "next_session",
     });
-    expect(mockState.workingMemoryValue).toBe("# 已越过写边界");
+    expect(mockState.workingMemoryValue).toContain("- 写作风格: 已越过写边界");
     expect(state._workingMemoryUpdatedThisSession).toBe(true);
+  });
+
+  it("条目级 upsert 支持追加与首个匹配替换，并保留其他条目", async () => {
+    const { mergeWorkingMemoryOperations } = await import("../session/workingMemory.js");
+    const current = [
+      "# 用户长期记忆",
+      "",
+      "## 稳定偏好",
+      "- 写作风格: 凝练",
+      "- 称呼: 老师",
+      "",
+      "## 长期任务与背景",
+      "- 当前长期目标: 完成长篇",
+      "",
+      "## 其他可复用事实",
+      "- 常住城市: 杭州",
+    ].join("\n");
+
+    const merged = mergeWorkingMemoryOperations(current, [
+      {
+        action: "upsert",
+        section: "稳定偏好",
+        entry: "常用格式: Markdown",
+      },
+      {
+        action: "upsert",
+        section: "稳定偏好",
+        entry: "写作风格: 温柔、详细",
+        match: "写作风格:",
+      },
+    ]);
+
+    expect(merged).toContain("- 写作风格: 温柔、详细");
+    expect(merged).not.toContain("- 写作风格: 凝练");
+    expect(merged).toContain("- 称呼: 老师");
+    expect(merged).toContain("- 常用格式: Markdown");
+    expect(merged).toContain("- 当前长期目标: 完成长篇");
+    expect(merged).toContain("- 常住城市: 杭州");
+  });
+
+  it("无 match 重复 upsert 同一条目时保持内容不变", async () => {
+    const { mergeWorkingMemoryOperations } = await import("../session/workingMemory.js");
+    const operation = {
+      action: "upsert" as const,
+      section: "稳定偏好" as const,
+      entry: "写作风格: 凝练",
+    };
+    const current = mergeWorkingMemoryOperations("", [operation]);
+
+    expect(mergeWorkingMemoryOperations(current, [operation])).toBe(current);
+  });
+
+  it("条目级 remove 删除首个命中，未命中时明确报错且不生成结果", async () => {
+    const { mergeWorkingMemoryOperations } = await import("../session/workingMemory.js");
+    const current = "# 用户长期记忆\n\n## 稳定偏好\n- 称呼: 老师";
+
+    expect(mergeWorkingMemoryOperations(current, [{
+      action: "remove",
+      section: "稳定偏好",
+      entry: "称呼:",
+    }])).not.toContain("称呼: 老师");
+    expect(() => mergeWorkingMemoryOperations(current, [{
+      action: "remove",
+      section: "稳定偏好",
+      entry: "不存在的条目",
+    }])).toThrow("未在「稳定偏好」找到");
+  });
+
+  it("空记忆首写自动创建三节模板结构", async () => {
+    const {
+      mergeWorkingMemoryOperations,
+      QINGAGENT_WORKING_MEMORY_SECTIONS,
+    } = await import("../session/workingMemory.js");
+
+    const merged = mergeWorkingMemoryOperations("", [{
+      action: "upsert",
+      section: "其他可复用事实",
+      entry: "常住城市: 杭州",
+    }]);
+
+    expect(merged).toContain("# 用户长期记忆");
+    for (const section of QINGAGENT_WORKING_MEMORY_SECTIONS) {
+      expect(merged).toContain(`## ${section}`);
+    }
+    expect(merged).toContain("- 称呼:");
+    expect(merged).toContain("- 当前长期目标:");
+    expect(merged).toContain("- 常住城市: 杭州");
+  });
+
+  it("合并后超出 6000 字明确报错，不截断", async () => {
+    const {
+      mergeWorkingMemoryOperations,
+      QINGAGENT_WORKING_MEMORY_MAX_CHARS,
+    } = await import("../session/workingMemory.js");
+    const longCurrent = [
+      "# 用户长期记忆",
+      "",
+      "## 稳定偏好",
+      `- ${"旧".repeat(QINGAGENT_WORKING_MEMORY_MAX_CHARS - 100)}`,
+    ].join("\n");
+
+    expect(() => mergeWorkingMemoryOperations(longCurrent, [{
+      action: "upsert",
+      section: "稳定偏好",
+      entry: "新".repeat(100),
+    }])).toThrow("请先 remove 旧条目");
+  });
+
+  it("跨会话并发条目写入按 resource 串行合并，不互相覆盖", async () => {
+    const { createUpdateWorkingMemoryTool } = await import("../session/workingMemory.js");
+    mockState.workingMemoryValue = "";
+    const firstTool = createUpdateWorkingMemoryTool(createSession("wm-concurrent-a"));
+    const secondTool = createUpdateWorkingMemoryTool(createSession("wm-concurrent-b"));
+
+    const [first, second] = await Promise.all([
+      firstTool.execute!({
+        ops: [{
+          action: "upsert",
+          section: "稳定偏好",
+          entry: "称呼: 老师",
+        }],
+      }, {} as never),
+      secondTool.execute!({
+        ops: [{
+          action: "upsert",
+          section: "长期任务与背景",
+          entry: "当前长期目标: 完成长篇",
+        }],
+      }, {} as never),
+    ]);
+
+    expect(first).toMatchObject({ ok: true });
+    expect(second).toMatchObject({ ok: true });
+    expect(mockState.workingMemoryValue).toContain("- 称呼: 老师");
+    expect(mockState.workingMemoryValue).toContain("- 当前长期目标: 完成长篇");
   });
 
   it.each([
@@ -318,14 +461,19 @@ describe("Working Memory 冻结快照", () => {
     const tools = createSessionScopedTools(state);
     await expect(tools.updateWorkingMemory!.execute!(
       {
-        memory: "# 用户长期记忆\n- 写作风格: 温柔、详细",
+        ops: [{
+          action: "upsert",
+          section: "稳定偏好",
+          entry: "写作风格: 温柔、详细",
+          match: "写作风格:",
+        }],
         reason: "测试更新",
       },
       {} as never,
     )).resolves.toMatchObject({ ok: true, effective: "next_session" });
 
     await collectFrames(runAgentTurn(state, "第二轮"));
-    expect(mockState.memory.getWorkingMemory).toHaveBeenCalledTimes(1);
+    expect(mockState.memory.getWorkingMemory).toHaveBeenCalledTimes(2);
     expect(state.messages.filter((message) => messageText(message).includes("[长期记忆快照"))).toHaveLength(1);
     expect(
       mockState.agentStreamCalls[1]!.messages.slice(0, firstProviderMessages.length),
@@ -335,7 +483,7 @@ describe("Working Memory 冻结快照", () => {
 
     const nextState = createSession(`wm-next-${flag ?? "off"}`);
     await collectFrames(runAgentTurn(nextState, "新会话"));
-    expect(mockState.memory.getWorkingMemory).toHaveBeenCalledTimes(2);
+    expect(mockState.memory.getWorkingMemory).toHaveBeenCalledTimes(3);
     expect(allProviderText(mockState.agentStreamCalls[2]!)).toContain("写作风格: 温柔、详细");
   });
 });

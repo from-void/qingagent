@@ -496,6 +496,31 @@
 .qj-sheet-body .sm-note{font-size:13px;letter-spacing:.04em;line-height:1.6;color:var(--ink-desc);margin-top:10px}
 .qj-sheet-body .sm-message{font-size:12px;color:var(--qj-cinnabar);margin-top:10px}
 
+/* —— 长期记忆:沿用设置页暗墨输入与暖金主操作 —— */
+.settings-memory{display:flex;flex-direction:column;gap:10px;padding:2px 6px 6px 0}
+.settings-memory .memory-description,
+.settings-memory .memory-empty{
+  margin:0;font-size:12.5px;line-height:1.7;color:var(--ink-desc);
+}
+.settings-memory .memory-empty{font-size:12px;color:var(--qj-header-sub)}
+.settings-memory .memory-editor{
+  box-sizing:border-box;width:100%;min-height:290px;padding:11px 12px;resize:vertical;
+  border:1px solid var(--qj-switch-border);border-radius:0;outline:none;
+  background:rgba(3,6,8,.46);color:var(--qj-ink);
+  font-family:var(--font-zh-serif);font-size:12.5px;line-height:1.7;
+  transition:border-color .2s;
+}
+.settings-memory .memory-editor:focus{border-color:var(--qj-cinnabar)}
+.settings-memory .memory-editor:disabled{opacity:.64}
+.settings-memory .memory-editor::placeholder{color:rgba(238,227,203,.46)}
+.settings-memory .memory-footer{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.settings-memory .memory-count{
+  font-family:var(--font-mono);font-size:11px;color:var(--qj-header-sub);
+}
+.settings-memory .memory-count[data-over-limit="true"]{color:var(--qj-cinnabar-lite)}
+
 /* —— 反馈 tab:提需求 + 报bug(勾选文档导出报错记录) —— */
 .settings-feedback{display:flex;flex-direction:column;gap:14px;padding:2px 6px 6px 0}
 .settings-feedback .fb-card{

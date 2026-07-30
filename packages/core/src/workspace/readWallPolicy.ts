@@ -75,7 +75,7 @@ export interface ResolveReadWallPolicyOptions {
   builtinSkillsDir: string;
   /** 技能安装目录(可写)。 */
   userSkillsDir: string;
-  /** 其它 agent 工具链的技能目录，只读放行，避免沙箱向其它 agent 注入提示词。 */
+  /** 其它技能来源目录(含 legacy 自有目录)，只读放行，避免 agent 会话改写。 */
   extraUserSkillsDirs?: string[];
   /** 包管理器缓存目录(可写)。让 npm/npx 写这里,而不是去写 HOME 下的 ~/.npm。 */
   packageCacheDir?: string;
@@ -640,7 +640,7 @@ export async function resolveReadWallPolicy(
     resolveAllowPath(options.sessionDir, "session", true, effectiveHome),
     resolveAllowPath(options.sandboxBinDir, "bin", false, effectiveHome),
     resolveAllowPath(options.builtinSkillsDir, "builtin-skills", false, effectiveHome),
-    // 只有青简自己的安装目录可写；外部 agent 技能目录必须保持只读。
+    // 只有现装目录可写；legacy 自有目录与外部 agent 技能目录都必须保持只读。
     resolveAllowPath(options.userSkillsDir, "user-skills", true, effectiveHome),
     ...(options.extraUserSkillsDirs ?? []).map((path) =>
       resolveAllowPath(path, "user-skills", false, effectiveHome),

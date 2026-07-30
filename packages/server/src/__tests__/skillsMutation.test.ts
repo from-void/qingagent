@@ -8,12 +8,21 @@ const TEST_SKILLS_DIR = vi.hoisted(() => {
   process.env.QINGAGENT_USER_SKILLS_DIR = path;
   return path;
 });
+const TEST_LEGACY_SKILLS_DIR = vi.hoisted(() => {
+  const path = `/tmp/qingagent-legacy-skills-mutation-${process.pid}`;
+  process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = path;
+  return path;
+});
 import { parseSkillFrontmatter } from "../routes/skills";
 
 afterAll(async () => {
   const { rm } = await import("node:fs/promises");
-  await rm(TEST_SKILLS_DIR, { recursive: true, force: true });
+  await Promise.all([
+    rm(TEST_SKILLS_DIR, { recursive: true, force: true }),
+    rm(TEST_LEGACY_SKILLS_DIR, { recursive: true, force: true }),
+  ]);
   delete process.env.QINGAGENT_USER_SKILLS_DIR;
+  delete process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS;
 });
 
 // 技能 mutation 开关:仅 QINGAGENT_ALLOW_SKILL_MUTATION 显式真值时放行安装/删除,启停始终放行。
@@ -296,13 +305,17 @@ describe("技能导入 UX 元数据", () => {
     process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
     const { mkdir } = await import("node:fs/promises");
     const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+    await Promise.all([
+      mkdir(SKILLS_INSTALL_DIR, { recursive: true }),
+      mkdir(TEST_LEGACY_SKILLS_DIR, { recursive: true }),
+    ]);
   });
 
   afterEach(async () => {
     delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
+    const { rm } = await import("node:fs/promises");
+    await rm(TEST_LEGACY_SKILLS_DIR, { recursive: true, force: true });
     if (installedNames.size > 0) {
-      const { rm } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
       await Promise.all(
@@ -349,6 +362,100 @@ describe("技能导入 UX 元数据", () => {
     const saved = await readFile(join(SKILLS_INSTALL_DIR, skillName, "SKILL.md"), "utf8");
     expect(saved).toContain(`name: ${skillName}`);
     expect(parseSkillFrontmatter(saved)?.label).toBe(longLabel);
+  });
+
+  it("legacy 技能归为已安装，PATCH 会在条目实际路径修改显示名", async () => {
+    const app = await loadApp();
+    const skillName = "legacy-rename-label-demo";
+    const skillDir = `${TEST_LEGACY_SKILLS_DIR}/${skillName}`;
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      `${skillDir}/SKILL.md`,
+      `---\nname: ${skillName}\ndescription: 历史自有技能\nlabel: 旧显示名\n---\n# demo`,
+      "utf8",
+    );
+
+    const list = await app.request("/api/v1/skills");
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as {
+      skills: Array<{ name: string; source: string }>;
+    };
+    expect(listed.skills.find((skill) => skill.name === skillName)?.source).toBe("installed");
+
+    const rename = await app.request(`/api/v1/skills/${skillName}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "历史技能新名" }),
+    });
+    expect(rename.status).toBe(200);
+    const saved = await fs.readFile(`${skillDir}/SKILL.md`, "utf8");
+    expect(parseSkillFrontmatter(saved)?.label).toBe("历史技能新名");
+  });
+
+  it("legacy 技能 DELETE 会删除条目实际目录", async () => {
+    const app = await loadApp();
+    const skillName = "legacy-delete-demo";
+    const skillDir = `${TEST_LEGACY_SKILLS_DIR}/${skillName}`;
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      `${skillDir}/SKILL.md`,
+      `---\nname: ${skillName}\ndescription: 待删除的历史自有技能\n---\n# demo`,
+      "utf8",
+    );
+
+    const response = await app.request(`/api/v1/skills/${skillName}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(200);
+    await expect(fs.access(skillDir)).rejects.toThrow();
+  });
+
+  it("mutation 路径守卫拒绝伪装成 installed 的已知根外路径", async () => {
+    const fs = await import("node:fs/promises");
+    const outside = `/tmp/qingagent-skill-path-traversal-${process.pid}`;
+    await fs.mkdir(outside, { recursive: true });
+    try {
+      const { resolveInstalledSkillMutationPath } = await import("../routes/skills");
+      await expect(resolveInstalledSkillMutationPath({
+        path: outside,
+        source: "installed",
+      })).rejects.toThrow("技能路径不合法");
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("PATCH 路由拒绝 legacy 技能文件符号链接逃逸，且不改写根外目标", async () => {
+    const app = await loadApp();
+    const skillName = "legacy-file-symlink-escape";
+    const skillDir = `${TEST_LEGACY_SKILLS_DIR}/${skillName}`;
+    const linkPath = `${skillDir}/SKILL.md`;
+    const outside = `/tmp/qingagent-skill-route-escape-${process.pid}`;
+    const outsideSkillMd = `${outside}/SKILL.md`;
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    await fs.writeFile(
+      outsideSkillMd,
+      `---\nname: ${skillName}\ndescription: 根外技能\n---\n# demo`,
+      "utf8",
+    );
+    await fs.symlink(outsideSkillMd, linkPath, "file");
+    try {
+      const response = await app.request(`/api/v1/skills/${skillName}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: "不应写出" }),
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "技能路径不合法" });
+      expect(await fs.readFile(outsideSkillMd, "utf8")).not.toContain("不应写出");
+    } finally {
+      await fs.rm(skillDir, { recursive: true, force: true });
+      await fs.rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("安装技能缺省 user-invocable 时按已安装技能默认可插入，显式 false 仍不进菜单", async () => {

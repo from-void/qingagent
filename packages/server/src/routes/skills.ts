@@ -2,7 +2,16 @@ import { Hono } from "hono";
 import JSZip from "jszip";
 import type { JSZipObject } from "jszip";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   BUILTIN_SKILLS_DIR,
@@ -37,6 +46,8 @@ export const READ_ONLY_SKILL_ERROR_CODE = "READ_ONLY_SKILL" as const;
 export class ReadOnlySkillError extends Error {
   readonly code = READ_ONLY_SKILL_ERROR_CODE;
 }
+
+export class InvalidSkillPathError extends Error {}
 
 export interface SkillMarkdownInstallOperations {
   mkdtemp: typeof mkdtemp;
@@ -292,7 +303,8 @@ skillsRoutes.patch("/skills/:name", async (c) => {
       return c.json({ error: "只读来源技能不能修改显示名" }, 400);
     }
 
-    const skillMdPath = join(skill.path, "SKILL.md");
+    const skillPath = await resolveInstalledSkillMutationPath(skill);
+    const skillMdPath = await resolveSkillMutationFilePath(skillPath, "SKILL.md");
     const skillMd = await readFile(skillMdPath, "utf8");
     const updated = setSkillLabelInMarkdown(skillMd, labelResult.label);
     await writeFile(skillMdPath, updated, "utf8");
@@ -300,7 +312,7 @@ skillsRoutes.patch("/skills/:name", async (c) => {
     return c.json({ name, label: labelResult.label });
   } catch (error) {
     const message = error instanceof Error ? error.message : "update failed";
-    return c.json({ error: message }, 500);
+    return c.json({ error: message }, error instanceof InvalidSkillPathError ? 400 : 500);
   }
 });
 
@@ -318,12 +330,13 @@ skillsRoutes.delete("/skills/:name", async (c) => {
     if (skill.source !== "installed") {
       return c.json({ error: "只读来源技能不能删除" }, 400);
     }
-    await rm(skill.path, { recursive: true, force: true });
+    const skillPath = await resolveInstalledSkillMutationPath(skill);
+    await rm(skillPath, { recursive: true, force: true });
     await refreshSkills();
     return c.json({ deleted: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "delete failed";
-    return c.json({ error: message }, 500);
+    return c.json({ error: message }, error instanceof InvalidSkillPathError ? 400 : 500);
   }
 });
 
@@ -570,20 +583,22 @@ export async function replaceInstalledSkillFiles(
   const skill = await findSkillOnDisk(name);
   if (!skill) throw new Error("not found");
   if (skill.source !== "installed") throw new ReadOnlySkillError("只读来源技能不可修改");
+  const skillPath = await resolveInstalledSkillMutationPath(skill);
 
   const validated = validateSkillFiles(input);
   if (validated.root.name !== name) throw new Error("技能名称与路径参数不一致");
 
-  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
-  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".update-"));
-  const backup = `${skill.path}.backup-${randomSuffix()}`;
+  const skillParent = dirname(skillPath);
+  await mkdir(skillParent, { recursive: true });
+  const staging = await mkdtemp(join(skillParent, ".update-"));
+  const backup = `${skillPath}.backup-${randomSuffix()}`;
   try {
     await writeSkillFilesInto(staging, validated.files);
-    await rename(skill.path, backup);
+    await rename(skillPath, backup);
     try {
-      await rename(staging, skill.path);
+      await rename(staging, skillPath);
     } catch (error) {
-      await rename(backup, skill.path).catch(() => undefined);
+      await rename(backup, skillPath).catch(() => undefined);
       throw error;
     }
     try {
@@ -591,12 +606,12 @@ export async function replaceInstalledSkillFiles(
     } catch (cleanupError) {
       // 备份清理也属于整体替换的一部分：清理失败就把旧版换回，
       // 避免磁盘上同时出现两个同名可发现技能。
-      const failedNew = `${skill.path}.failed-${randomSuffix()}`;
-      await rename(skill.path, failedNew);
+      const failedNew = `${skillPath}.failed-${randomSuffix()}`;
+      await rename(skillPath, failedNew);
       try {
-        await rename(backup, skill.path);
+        await rename(backup, skillPath);
       } catch (restoreError) {
-        await rename(failedNew, skill.path).catch(() => undefined);
+        await rename(failedNew, skillPath).catch(() => undefined);
         throw restoreError;
       }
       await rm(failedNew, { recursive: true, force: true }).catch(() => undefined);
@@ -604,8 +619,8 @@ export async function replaceInstalledSkillFiles(
     }
   } catch (error) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    if (existsSync(backup) && !existsSync(skill.path)) {
-      await rename(backup, skill.path).catch(() => undefined);
+    if (existsSync(backup) && !existsSync(skillPath)) {
+      await rename(backup, skillPath).catch(() => undefined);
     }
     throw error;
   }
@@ -618,7 +633,8 @@ export async function deleteInstalledSkill(name: string): Promise<boolean> {
   const skill = await findSkillOnDisk(name);
   if (!skill) return false;
   if (skill.source !== "installed") throw new ReadOnlySkillError("只读来源技能不可删除");
-  await rm(skill.path, { recursive: true, force: true });
+  const skillPath = await resolveInstalledSkillMutationPath(skill);
+  await rm(skillPath, { recursive: true, force: true });
   await refreshSkills();
   return true;
 }
@@ -808,6 +824,41 @@ export async function skillExists(name: string): Promise<boolean> {
 export async function findSkillOnDisk(name: string): Promise<SkillListItem | null> {
   const disabled = await readDisabledSet();
   return (await listAllSkillItems(disabled)).find((skill) => skill.name === name) ?? null;
+}
+
+/**
+ * 管理操作必须落到发现条目自己的真实路径，同时把目标约束在已知用户技能根内。
+ * 不能用请求 name 重新拼 SKILLS_INSTALL_DIR：legacy 技能并不位于现装目录；
+ * 也不能只信发现结果里的字符串路径，真实路径校验会拒绝符号链接逃逸。
+ */
+export async function resolveInstalledSkillMutationPath(
+  skill: Pick<SkillListItem, "path" | "source">,
+): Promise<string> {
+  if (skill.source !== "installed") {
+    throw new ReadOnlySkillError("只读来源技能不可修改");
+  }
+  const skillPath = await realpath(skill.path).catch(() => null);
+  if (!skillPath) throw new InvalidSkillPathError("技能路径不合法");
+
+  const roots = await Promise.all(
+    USER_SKILL_SOURCE_DIRS.map((root) => realpath(root).catch(() => null)),
+  );
+  const isManagedPath = roots.some((root) =>
+    root !== null && skillPath !== root && isInside(root, skillPath)
+  );
+  if (!isManagedPath) throw new InvalidSkillPathError("技能路径不合法");
+  return skillPath;
+}
+
+async function resolveSkillMutationFilePath(
+  skillPath: string,
+  relativePath: string,
+): Promise<string> {
+  const filePath = await realpath(join(skillPath, relativePath)).catch(() => null);
+  if (!filePath || !isInside(skillPath, filePath)) {
+    throw new InvalidSkillPathError("技能路径不合法");
+  }
+  return filePath;
 }
 
 async function collectAllSkillDirs(): Promise<Array<{ path: string; source: SkillSourceLabel; mtimeMs: number }>> {

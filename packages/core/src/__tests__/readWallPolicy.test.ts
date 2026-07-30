@@ -173,6 +173,31 @@ describe("read-wall deny v1 与路径解析", () => {
     expect(policy.credentialDenyPaths.find((path) => path.lexicalPath.endsWith(".npmrc"))?.type).toBe("file");
   });
 
+  it("legacy 用户技能目录只读，只有首位现装目录进入可写清单", async () => {
+    const options = await fixture();
+    const legacyUserSkillsDir = join(
+      options.effectiveHome!,
+      "Library",
+      "@qingagent",
+      "desktop",
+      "skills",
+    );
+    await mkdir(legacyUserSkillsDir, { recursive: true });
+    const policy = await resolveReadWallPolicy({
+      ...options,
+      extraUserSkillsDirs: [legacyUserSkillsDir],
+    });
+    const installed = policy.allowPaths.find(
+      (entry) => entry.lexicalPath === options.userSkillsDir,
+    );
+    const legacy = policy.allowPaths.find(
+      (entry) => entry.lexicalPath === legacyUserSkillsDir,
+    );
+
+    expect(installed).toMatchObject({ kind: "user-skills", writable: true });
+    expect(legacy).toMatchObject({ kind: "user-skills", writable: false });
+  });
+
   it("现存 deny 路径类型与 v1 声明不符时拒绝，避免 literal/subpath 失配", async () => {
     const options = await fixture();
     await mkdir(join(options.effectiveHome!, ".npmrc"), { recursive: true });

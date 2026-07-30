@@ -6,6 +6,7 @@ const fixture = vi.hoisted(() => {
   const home = `/tmp/example-skill-source-home-${process.pid}`;
   process.env.HOME = home;
   process.env.QINGAGENT_USER_SKILLS_DIR = `${home}/.qingagent/skills`;
+  delete process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS;
   delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
   return {
     home,

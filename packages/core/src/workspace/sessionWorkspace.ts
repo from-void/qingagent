@@ -894,7 +894,7 @@ async function buildSessionWorkspace(
                 SANDBOX_BIN_DIR,
                 ...extraReadOnlyPaths,
               ],
-              // 仅青简安装目录与包缓存可写；外部 agent 技能目录保持只读。
+              // 仅现装目录与包缓存可写；legacy 自有目录及外部 agent 技能目录保持只读。
               readWritePaths: [
                 sessionDir,
                 USER_SKILLS_DIR,

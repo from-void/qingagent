@@ -7,6 +7,7 @@ import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
 const roots: string[] = [];
 const savedEnv = {
   userSkills: process.env.QINGAGENT_USER_SKILLS_DIR,
+  legacyUserSkills: process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS,
   extraUserSkills: process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS,
   home: process.env.HOME,
 };
@@ -29,9 +30,13 @@ beforeEach(() => {
 afterEach(async () => {
   vi.resetModules();
   process.env.QINGAGENT_USER_SKILLS_DIR = savedEnv.userSkills;
+  process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = savedEnv.legacyUserSkills;
   process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = savedEnv.extraUserSkills;
   process.env.HOME = savedEnv.home;
   if (savedEnv.userSkills === undefined) delete process.env.QINGAGENT_USER_SKILLS_DIR;
+  if (savedEnv.legacyUserSkills === undefined) {
+    delete process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS;
+  }
   if (savedEnv.extraUserSkills === undefined) delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -42,6 +47,7 @@ describe("用户技能的多来源目录", () => {
     roots.push(root);
     process.env.HOME = root;
     delete process.env.QINGAGENT_USER_SKILLS_DIR;
+    delete process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS;
     delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
 
     const { SKILLS_INSTALL_DIR, USER_SKILL_SOURCE_DIRS, USER_SKILLS_DIR } =
@@ -57,54 +63,83 @@ describe("用户技能的多来源目录", () => {
   it("QINGAGENT_EXTRA_USER_SKILLS_DIRS 是追加而不是覆盖,内置来源不会被挤掉", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-user-skill-sources-env-"));
     roots.push(root);
-    // 模拟打包版把历史 userData 目录追加进来的场景。
-    const legacyUserData = join(root, "Library", "@qingagent", "desktop", "skills");
+    const extraA = join(root, "extra-a");
     const extraB = join(root, "extra-b");
     process.env.HOME = root;
-    process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = [legacyUserData, extraB].join(delimiter);
+    process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = [extraA, extraB].join(delimiter);
 
     const { USER_SKILL_SOURCE_DIRS, USER_SKILLS_DIR } = await import("../skills/paths.js");
     expect(USER_SKILL_SOURCE_DIRS[0]).toBe(USER_SKILLS_DIR);
-    expect(USER_SKILL_SOURCE_DIRS).toContain(legacyUserData);
+    expect(USER_SKILL_SOURCE_DIRS).toContain(extraA);
     expect(USER_SKILL_SOURCE_DIRS).toContain(extraB);
     // 内置来源必须仍在:覆盖语义会让存量用户的技能再次"查无此技能"。
     expect(USER_SKILL_SOURCE_DIRS).toContain(join(root, ".agents", "skills"));
     // 顺序即优先级:安装目录 > 内置额外来源 > env 追加。
     expect(USER_SKILL_SOURCE_DIRS.indexOf(join(root, ".agents", "skills")))
-      .toBeLessThan(USER_SKILL_SOURCE_DIRS.indexOf(legacyUserData));
+      .toBeLessThan(USER_SKILL_SOURCE_DIRS.indexOf(extraA));
   });
 
-  it("历史 userData 技能目录仍能被发现(打包版存量用户不掉技能)", async () => {
+  it("legacy env 会 trim/过滤/绝对化，且历史 userData 来源归类为已安装", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-user-skill-legacy-"));
     roots.push(root);
     const legacyUserData = join(root, "Library", "@qingagent", "desktop", "skills");
-    await writeSkill(legacyUserData, "legacy-packaged-skill");
-    const installDir = join(root, ".qingagent", "skills");
-    await mkdir(installDir, { recursive: true });
+    process.env.HOME = root;
+    process.env.QINGAGENT_USER_SKILLS_DIR = join(root, ".qingagent", "skills");
+    process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = [
+      `  ${legacyUserData}  `,
+      "",
+      legacyUserData,
+    ].join(delimiter);
 
-    const dirs = await resolveEnabledSkillDirsFromRoots(
-      [installDir, legacyUserData],
-      new Set<string>(),
-    );
-    expect(dirs.some((dir) => dir.endsWith("legacy-packaged-skill"))).toBe(true);
+    const {
+      USER_SKILL_SOURCE_DIRS,
+      USER_SKILLS_DIR,
+      classifyUserSkillSource,
+    } = await import("../skills/paths.js");
+    expect(USER_SKILL_SOURCE_DIRS[0]).toBe(USER_SKILLS_DIR);
+    expect(USER_SKILL_SOURCE_DIRS[1]).toBe(legacyUserData);
+    expect(USER_SKILL_SOURCE_DIRS.filter((dir) => dir === legacyUserData)).toHaveLength(1);
+    expect(classifyUserSkillSource(legacyUserData)).toBe("installed");
   });
 
-  it("安装目录与 Claude 目录同名时安装目录优先", async () => {
+  it("同名去重优先级是现装目录 > legacy 历史自有目录 > 外部目录", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-user-skill-dedupe-"));
     roots.push(root);
     const installDir = join(root, ".qingagent", "skills");
+    const legacyDir = join(root, "Library", "@qingagent", "desktop", "skills");
     const claudeDir = join(root, ".claude", "skills");
-    const winner = await writeSkill(installDir, "duplicated-skill");
-    const loser = await writeSkill(claudeDir, "duplicated-skill");
+    process.env.HOME = root;
+    process.env.QINGAGENT_USER_SKILLS_DIR = installDir;
+    process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = legacyDir;
+    delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
+    const installedWinner = await writeSkill(installDir, "all-sources-duplicate");
+    await writeSkill(legacyDir, "all-sources-duplicate");
+    await writeSkill(claudeDir, "all-sources-duplicate");
+    const legacyWinner = await writeSkill(legacyDir, "legacy-external-duplicate");
+    await writeSkill(claudeDir, "legacy-external-duplicate");
+
+    const {
+      USER_SKILL_SOURCE_DIRS,
+      classifyUserSkillSource,
+    } = await import("../skills/paths.js");
+    expect(USER_SKILL_SOURCE_DIRS.indexOf(installDir))
+      .toBeLessThan(USER_SKILL_SOURCE_DIRS.indexOf(legacyDir));
+    expect(USER_SKILL_SOURCE_DIRS.indexOf(legacyDir))
+      .toBeLessThan(USER_SKILL_SOURCE_DIRS.indexOf(claudeDir));
 
     const dirs = await resolveEnabledSkillDirsFromRoots(
-      [installDir, claudeDir],
+      [...USER_SKILL_SOURCE_DIRS],
       new Set<string>(),
-      { externalRoots: [claudeDir] },
+      {
+        externalRoots: USER_SKILL_SOURCE_DIRS.filter((dir) =>
+          classifyUserSkillSource(dir).startsWith("external-")
+        ),
+      },
     );
-    expect(dirs).toContain(winner.replace(/\\/g, "/"));
-    expect(dirs).not.toContain(loser.replace(/\\/g, "/"));
-    expect(dirs.filter((dir) => dir.endsWith("duplicated-skill"))).toHaveLength(1);
+    expect(dirs).toContain(installedWinner.replace(/\\/g, "/"));
+    expect(dirs).toContain(legacyWinner.replace(/\\/g, "/"));
+    expect(dirs.filter((dir) => dir.endsWith("all-sources-duplicate"))).toHaveLength(1);
+    expect(dirs.filter((dir) => dir.endsWith("legacy-external-duplicate"))).toHaveLength(1);
   });
 
   it("只存在于 Claude 目录的技能能被发现,不需要搬动任何文件", async () => {

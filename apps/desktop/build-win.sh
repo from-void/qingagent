@@ -11,8 +11,8 @@
 #      —— 从本地盘运行才有硬件加速;从 \\wsl.localhost UNC 路径运行 GPU 子进程会崩
 #
 # 用法:bash apps/desktop/build-win.sh
-# 产物:apps/desktop/release/win-unpacked/青简.exe
-#       以及 C:\qingagent\win-unpacked\青简.exe(可直接双击)
+# 产物:apps/desktop/release/win-unpacked/qingagent.exe
+#       以及 C:\qingagent\win-unpacked\qingagent.exe(可直接双击)
 
 set -euo pipefail
 
@@ -84,9 +84,9 @@ if [ -d /mnt/c ]; then
   mkdir -p "$WIN_DEST"
   cp -r "$UNPACKED" "$WIN_DEST/win-unpacked"
   WIN_DEST_WINPATH="C:$(printf '%s' "${WIN_DEST#/mnt/c}" | tr '/' '\\')"
-  echo "    完成 → ${WIN_DEST_WINPATH}\\win-unpacked\\青简.exe"
+  echo "    完成 → ${WIN_DEST_WINPATH}\\win-unpacked\\qingagent.exe"
 else
   echo "    跳过:未挂载 /mnt/c(不在 WSL 环境)。产物在 $UNPACKED"
 fi
 
-echo "==> 构建完成。双击 ${WIN_DEST_WINPATH:-$WIN_DEST}\\win-unpacked\\青简.exe 启动(本地盘运行=硬件加速)。"
+echo "==> 构建完成。双击 ${WIN_DEST_WINPATH:-$WIN_DEST}\\win-unpacked\\qingagent.exe 启动(本地盘运行=硬件加速)。"

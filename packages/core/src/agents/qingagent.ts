@@ -11,6 +11,7 @@ import {
   MAX_EXTERNAL_USER_SKILLS,
   USER_SKILLS_DIR,
   USER_SKILL_SOURCE_DIRS,
+  classifyUserSkillSource,
 } from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import {
@@ -179,7 +180,9 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
     ...USER_SKILL_SOURCE_DIRS,
   ];
   return resolveEnabledSkillDirsFromRoots(roots, disabled, {
-    externalRoots: USER_SKILL_SOURCE_DIRS.slice(1),
+    externalRoots: USER_SKILL_SOURCE_DIRS.filter((root) =>
+      classifyUserSkillSource(root).startsWith("external-")
+    ),
     logger: console,
   });
 }

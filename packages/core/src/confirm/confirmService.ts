@@ -31,6 +31,13 @@ import {
   executeCommandInputSchema,
 } from "./commandConfirmation.js";
 import {
+  buildConnectAccountConfirmSpec,
+  CONNECT_ACCOUNT_AUTH_TOOLS,
+  connectAccountConfirmationDigest,
+  isConnectAccountAuthTool,
+  parseConnectAccountAuthInput,
+} from "./connectAccountConfirmation.js";
+import {
   buildCredentialAccessConfirmSpec,
   checkRequestedCredentialAccess,
   credentialAccessDigest,
@@ -73,6 +80,7 @@ export type ConfirmCancelSource =
 export const CONFIRM_CAPABLE_TOOLS = new Set<string>([
   WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
   REQUEST_CREDENTIAL_ACCESS_TOOL,
+  ...CONNECT_ACCOUNT_AUTH_TOOLS,
 ]);
 
 export interface SafeSubmitConfirmDecision {
@@ -136,12 +144,13 @@ interface TerminalTombstone {
  * 确认流水线。
  *
  * **产品设计口径(改动前务必读):确认卡是本产品可信度与安全设计的一环,默认必弹。**
- * 装/外发/破坏三类操作照旧弹卡,不是待优化项,也不许为了"少一个框更顺"或"测试好写"
+ * 装/外发/破坏/连接四类操作照旧弹卡,不是待优化项,也不许为了"少一个框更顺"或"测试好写"
  * 而把默认改成不弹。唯一的关闭出口是用户**主动**勾选确认卡上的「以后不用再问我」
  * (或在 设置 → 安全 里打开同一个开关);用户随时能在设置里改回默认,改回后立刻
  * 恢复弹卡与隔离执行。全局开关本身见 ../security/bypassMode.ts。
  *
- * 注意:开关生效点在工具门禁(gatedExecuteCommandTool 的 requireApproval)——开着时
+ * 注意:总开关生效点在各工具门禁(gatedExecuteCommandTool 与连接器授权工具的
+ * requireApproval)——开着时
  * 根本不会产生审批事件,本服务不会被调到;本服务自身**不做**任何"要不要弹"的降级,
  * 一旦被调到就一定按默认形态老老实实走完确认。
  */
@@ -206,10 +215,12 @@ export class ConfirmService {
     if (!input.runId || !input.toolCallId) {
       return { ok: false, reason: "确认请求缺少运行标识" };
     }
-    // 凭证共享申请与命令确认共用同一条确认流水线,只是卡面与摘要口径不同。
+    // 凭证共享、连接器授权与命令确认共用同一条确认流水线,只是卡面与摘要口径不同。
     let confirmReason = "";
     const credentialAccess = input.toolName === REQUEST_CREDENTIAL_ACCESS_TOOL;
+    const connectAccount = isConnectAccountAuthTool(input.toolName);
     let credential: { declared: string; reason: string; digest: string } | null = null;
+    let connectorAuth: ReturnType<typeof parseConnectAccountAuthInput> = null;
     let parsed: ReturnType<typeof executeCommandInputSchema.safeParse> | null = null;
     if (credentialAccess) {
       const credentialArgs = requestCredentialAccessInputSchema.safeParse(input.args);
@@ -224,6 +235,9 @@ export class ConfirmService {
         reason: checked.reason,
         digest: credentialAccessDigest(input.state.sessionId, credentialArgs.data),
       };
+    } else if (connectAccount) {
+      connectorAuth = parseConnectAccountAuthInput(input.toolName, input.args);
+      if (!connectorAuth) return { ok: false, reason: "确认请求参数无效" };
     } else {
       parsed = executeCommandInputSchema.safeParse(input.args);
       if (!parsed.success) return { ok: false, reason: "确认请求参数无效" };
@@ -254,7 +268,9 @@ export class ConfirmService {
     try {
       spec = credential
         ? buildCredentialAccessConfirmSpec(credential, confirmId)
-        : buildCommandConfirmSpec(parsed!.data, confirmReason, confirmId);
+        : connectorAuth
+          ? buildConnectAccountConfirmSpec(connectorAuth, confirmId)
+          : buildCommandConfirmSpec(parsed!.data, confirmReason, confirmId);
     } catch {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
@@ -285,7 +301,9 @@ export class ConfirmService {
       toolName: input.toolName,
       commandDigest: credential
         ? credential.digest
-        : commandConfirmationDigest(input.state.sessionId, parsed!.data),
+        : connectorAuth
+          ? connectAccountConfirmationDigest(input.state.sessionId, connectorAuth)
+          : commandConfirmationDigest(input.state.sessionId, parsed!.data),
       spec,
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CONFIRM_TTL_MS).toISOString(),

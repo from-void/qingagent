@@ -49,7 +49,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function* handleSpecialToolResult(
   input: ToolResultContext,
 ): AsyncGenerator<BridgeFrame, ToolResultHandlerResult> {
-  const { turn, toolName, toolCallId, args, rawArgs, toolResult } = input;
+  const {
+    turn,
+    toolName,
+    toolCallId,
+    args,
+    rawArgs,
+    rawToolResult,
+    toolResult,
+  } = input;
   const { state, agentMessageId, outcome } = turn;
 
   if (toolName === "show_qr") {
@@ -154,7 +162,7 @@ export async function* handleSpecialToolResult(
     return "handled";
   }
 
-  if (toolName === "wechat_auth_start") {
+  if (toolName === "wechat_auth_start" && isRecord(rawToolResult)) {
     const doneSpec = authCardToolCallSpec({
       toolCallId,
       toolName,
@@ -390,7 +398,7 @@ export async function* handleSpecialToolResult(
     return "handled";
   }
 
-  if (toolName === "github_auth_start" && isRecord(toolResult)) {
+  if (toolName === "github_auth_start" && isRecord(rawToolResult)) {
     const spec = authCardToolCallSpec({
       toolCallId,
       toolName,
@@ -416,7 +424,7 @@ export async function* handleSpecialToolResult(
     return "handled";
   }
 
-  if (toolName === "feishu_auth_start" && isRecord(toolResult)) {
+  if (toolName === "feishu_auth_start" && isRecord(rawToolResult)) {
     const mode = toolResult.mode === "configuration" ? "configuration" : "authorization";
     const url =
       mode === "configuration"

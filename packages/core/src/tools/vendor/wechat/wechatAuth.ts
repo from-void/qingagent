@@ -1,6 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { wechatAuthService } from "../../../connectors/wechatAuthService.js";
+import {
+  WECHAT_AUTH_START_TOOL,
+  wechatAuthStartInputSchema,
+} from "../../../confirm/connectAccountConfirmation.js";
+import { isBypassEnabled } from "../../../security/bypassMode.js";
 import { askUserQuestionInputSchema } from "../../askUserQuestionAdapter.js";
 import { startToolHeartbeat } from "../../toolHeartbeat.js";
 
@@ -14,9 +19,10 @@ function createWechatSearchRouteQuestionnaire(): z.infer<typeof askUserQuestionI
 }
 
 export const wechatAuthStartTool = createTool({
-  id: "wechat_auth_start",
+  id: WECHAT_AUTH_START_TOOL,
   description: "发起微信公众号后台登录；流层会自动展示扫码授权卡，并在后台等待扫码成功后保存微信登录凭据，不要再调用 show_qr。",
-  inputSchema: z.object({}),
+  inputSchema: wechatAuthStartInputSchema,
+  requireApproval: () => !isBypassEnabled(),
   outputSchema: z.object({
     ok: z.boolean(), imageDataUri: z.string(), expiresInSec: z.number(),
     expiresAt: z.number(),

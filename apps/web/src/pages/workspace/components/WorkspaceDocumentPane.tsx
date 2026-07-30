@@ -32,6 +32,7 @@ import {
 import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
 import { isCurrentSessionTitleRename } from "../data/sessionTitleRename";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
+import { useWorkspaceEditorSelection } from "../hooks/useWorkspaceEditorSelection";
 import type { DerivativeItem } from "./derivatives/types";
 import type { DerivativeDocument } from "./derivatives/types";
 
@@ -175,6 +176,10 @@ export function WorkspaceDocumentPane({
   currentTitleRef.current = title;
   const sourceMaterialAvailable = materialParseRows.some(
     (row) => row.state === "ready",
+  );
+  const handleMainEditorReady = useWorkspaceEditorSelection(
+    state.sessionId,
+    setTiptapEditor,
   );
 
   useEffect(() => {
@@ -543,7 +548,7 @@ export function WorkspaceDocumentPane({
             onPatchVerdict={handlePatchVerdict}
             onCancelAskUser={handleCancelAskUser}
             onCloseViewingVersion={closeViewingVersion}
-            onEditorReady={setTiptapEditor}
+            onEditorReady={handleMainEditorReady}
             onEditorChange={handleEditorChange}
             onPresentationFinish={clearPresentationRun}
             onPresentationCancel={clearPresentationRun}

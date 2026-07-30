@@ -125,6 +125,83 @@ describe("useMaterialParseTracker state machine", () => {
     ]);
   });
 
+  it("同 fileId 二次注入已有 ready 素材时仍保持一条且不会翻成 error", () => {
+    const ready = resource({
+      id: "mat-1",
+      displayName: "server.docx",
+      fileId: "file-1",
+      parseState: "ready",
+      updatedAt: "2026-07-30T09:00:00.000Z",
+    });
+    let state = reduce(initialMaterialParseTrackerState, {
+      type: "markParsing",
+      assets: [uploaded("file-1", "server.docx")],
+      agentActive: false,
+      turnKey: 1,
+      resources: [],
+    });
+    state = reduce(state, { type: "resourcesChanged", resources: [ready] });
+
+    state = reduce(state, {
+      type: "markParsing",
+      assets: [uploaded("file-1", "server.docx")],
+      agentActive: false,
+      turnKey: 2,
+      resources: [ready],
+    });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: true });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: false });
+
+    expect(state.entries).toEqual([]);
+    expect(buildMaterialParseRows(state, [ready])).toMatchObject([
+      {
+        id: "mat-1",
+        fileId: "file-1",
+        filename: "server.docx",
+        state: "ready",
+        source: "resource",
+      },
+    ]);
+  });
+
+  it("同 fileId 二次注入后若收到权威 error resource 仍呈现真失败", () => {
+    const ready = resource({
+      id: "mat-1",
+      displayName: "server.docx",
+      fileId: "file-1",
+      parseState: "ready",
+      updatedAt: "2026-07-30T09:00:00.000Z",
+    });
+    const failed = resource({
+      id: "mat-1",
+      displayName: "server.docx",
+      fileId: "file-1",
+      parseState: "error",
+      parseError: "解析失败：文件损坏",
+      updatedAt: "2026-07-30T09:01:00.000Z",
+    });
+    let state = reduce(initialMaterialParseTrackerState, {
+      type: "markParsing",
+      assets: [uploaded("file-1", "server.docx")],
+      agentActive: false,
+      turnKey: 2,
+      resources: [ready],
+    });
+
+    state = reduce(state, { type: "resourcesChanged", resources: [failed] });
+
+    expect(state.entries).toEqual([]);
+    expect(buildMaterialParseRows(state, [failed])).toMatchObject([
+      {
+        id: "mat-1",
+        fileId: "file-1",
+        state: "error",
+        parseError: "解析失败：文件损坏",
+        source: "resource",
+      },
+    ]);
+  });
+
   it("error resource 到达同样清掉本地条，错误由 resource 行呈现", () => {
     const failed = resource({
       id: "mat-err",

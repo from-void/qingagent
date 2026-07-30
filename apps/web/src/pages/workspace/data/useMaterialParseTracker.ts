@@ -175,6 +175,13 @@ function withMarkedAssets(
   for (const asset of assets) {
     if (!asset.fileId || !requiresMaterialParseTracking(asset)) continue;
     const currentResource = currentResources.get(asset.fileId) ?? null;
+    // 上传层会让完全相同的文件复用同一 fileId。普通发送再次带上已有 ready 素材时，
+    // 既有资源已经是权威成功态，不应再用一个本地 parsing 覆盖它并在回合结束后误判失败。
+    // 显式“重试解析”仍走 retry action；后端若发布新的 error resource 也会照常显示真失败。
+    if (currentResource && materialParseState(currentResource) === "ready") {
+      byFileId.delete(asset.fileId);
+      continue;
+    }
     byFileId.set(asset.fileId, {
       fileId: asset.fileId,
       filename: asset.filename,

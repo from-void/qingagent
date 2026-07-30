@@ -144,9 +144,9 @@ describe("SkillsPanel 导入提交终态", () => {
       expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/v1/skills/install"))
         .toBe(true);
     });
-    const importCard = host?.querySelector<HTMLButtonElement>('[data-wf="SkillImportCard"]');
-    expect(importCard?.disabled).toBe(true);
-    expect(importCard?.textContent).toContain("导入中…");
+    const importButton = host?.querySelector<HTMLButtonElement>('[data-wf="SkillImportButton"]');
+    expect(importButton?.disabled).toBe(true);
+    expect(importButton?.textContent).toContain("导入中…");
     expect(toastByMessage("技能已导入")).toBeNull();
 
     resolveInstall(jsonResponse({ name: "custom-research" }));

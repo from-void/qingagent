@@ -198,6 +198,8 @@ function RaceHarness({
     chatScrollRef,
     sessionId: null,
     reducedMotion: false,
+    generationActive: false,
+    confirmGenerationInterrupt: async () => true,
     flushPendingDocSave: async () => undefined,
   });
 

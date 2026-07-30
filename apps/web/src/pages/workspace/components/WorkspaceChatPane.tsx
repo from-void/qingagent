@@ -3,7 +3,6 @@ import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageList, shouldShowPreTokenLoading } from "./ChatMessageList";
-import { ChatTurnTarget } from "./ChatTurnTarget";
 import { ConfirmOverlay, ConfirmRecordBar } from "./ConfirmOverlay";
 import { extractAskUser } from "./RightPane";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
@@ -31,7 +30,6 @@ export function WorkspaceChatPane({
     inputContentOut,
     chatInputRef,
     chatInputPlaceholder,
-    activeDocumentTurnTarget,
     agentActive,
     chatInputSendEnabledWhenDisabled,
     handleSubmitChat,
@@ -103,7 +101,6 @@ export function WorkspaceChatPane({
           ref={inputMorphRef}
           className={`ws-input-morph${chatInputEditorDisabled ? " is-morph-out" : ""}${inputContentOut ? " is-content-out" : ""}${inputHidden ? " is-morph-hidden" : ""}${inlineConfirm ? " is-confirm-hidden" : ""}`}
         >
-          <ChatTurnTarget label={activeDocumentTurnTarget.label} />
           <ChatInput
             ref={chatInputRef}
             placeholder={chatInputPlaceholder}

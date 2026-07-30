@@ -3388,7 +3388,7 @@ describe("WorkspacePage review controls", () => {
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
   });
 
-  it("切到衍生稿后界面标明目标，发送载荷绑定当前衍生稿而非主稿", async () => {
+  it("切到衍生稿后发送载荷绑定当前衍生稿而非主稿", async () => {
     const derivative = {
       docId: "deriv-current-target",
       dtype: "gzh",
@@ -3411,17 +3411,11 @@ describe("WorkspacePage review controls", () => {
     });
     await flushMicrotasks(5);
 
-    expect(
-      host?.querySelector('[data-wf="ChatTurnTarget"]')?.textContent,
-    ).toContain("主稿 · 《测试批注》");
     const derivativeTab = Array.from(
       host!.querySelectorAll<HTMLElement>('[role="tab"]'),
     ).find((tab) => tab.textContent?.includes("公众号文章"));
     expect(derivativeTab).toBeTruthy();
     await clickElement(derivativeTab!);
-    expect(
-      host?.querySelector('[data-wf="ChatTurnTarget"]')?.textContent,
-    ).toContain("公众号稿 · 故事叙事文");
 
     const editor = getChatEditor();
     bindInnerText(editor);

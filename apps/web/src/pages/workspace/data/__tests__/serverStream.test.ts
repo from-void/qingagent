@@ -4,7 +4,7 @@ import {
   ServerStream,
   STREAM_STALL_TIMEOUT_MS,
 } from "../serverStream";
-import type { AskUserQuestion, BridgeFrame } from "@qingagent/contract-ts";
+import type { AskUserQuestion, BridgeFrame, Command } from "@qingagent/contract-ts";
 import type { WorkspaceLocalAction } from "../protocol";
 import {
   buildAttachFolderCommand,
@@ -71,6 +71,17 @@ function commandResponse(body: unknown = { accepted: true, sessionId: "s-1", epo
     status,
     json: () => Promise.resolve(body),
   } as unknown as Response);
+}
+
+function commandResponseFrom(factory: (command: Command) => unknown) {
+  return vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+    const command = JSON.parse(String(init?.body)) as Command;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(factory(command)),
+    } as unknown as Response);
+  });
 }
 
 function ssePayload(...frames: unknown[]): string {
@@ -949,6 +960,41 @@ describe("ServerStream", () => {
     });
   });
 
+  it("衍生稿列表只收到 HTTP 成功帧时立即返回空列表，不依赖 EventSource 副本", async () => {
+    globalThis.fetch = commandResponseFrom((command) => [{
+      kind: "derivativesListed",
+      data: {
+        requestId: (command.data as { requestId: string }).requestId,
+        items: [],
+      },
+    } satisfies BridgeFrame]);
+    const stream = new ServerStream();
+
+    await expect(stream.listDerivatives("s-1")).resolves.toEqual([]);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("HTTP 成功帧的 requestId 不匹配时立即报协议错误", async () => {
+    globalThis.fetch = commandResponse([{
+      kind: "derivativesListed",
+      data: { requestId: "wrong-request-id", items: [] },
+    } satisfies BridgeFrame]);
+    const stream = new ServerStream();
+
+    await expect(stream.listDerivatives("s-1")).rejects.toThrow(
+      "derivativesListed response missing",
+    );
+  });
+
+  it("HTTP 200 缺少目标成功帧时立即报协议错误", async () => {
+    globalThis.fetch = commandResponse([]);
+    const stream = new ServerStream();
+
+    await expect(stream.listDerivatives("s-1")).rejects.toThrow(
+      "derivativesListed response missing",
+    );
+  });
+
   it("cancelAskUser 的专项失败标记由统一 422 协议保留", async () => {
     globalThis.fetch = commandResponse({
       error: {
@@ -1068,86 +1114,158 @@ describe("ServerStream", () => {
     expect(frames.map((frame) => frame.kind)).toEqual(["sessionMeta", "chatMessageAppended"]);
   });
 
-  it("审查模板与文档补充命令通过 EventSource 返回对应持久化结果", async () => {
-    globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
+  it("审查模板与文档补充命令使用各自 HTTP 响应帧返回持久化结果", async () => {
+    globalThis.fetch = commandResponseFrom((command) => {
+      const requestId = (command.data as { requestId: string }).requestId;
+      if (command.kind === "listReviewTemplates") {
+        return [{
+          kind: "reviewTemplatesListed",
+          data: {
+            requestId,
+            items: [{ id: "source-default", type: "source", name: "标准来源核查", prompt: "核对金额", builtin: true, createdAt: "t", updatedAt: "t" }],
+            selectedTemplateId: "source-default",
+          },
+        } satisfies BridgeFrame];
+      }
+      if (command.kind === "getReviewSupplement") {
+        return [{
+          kind: "reviewSupplementLoaded",
+          data: { requestId, type: "source", supplement: "只看金额" },
+        } satisfies BridgeFrame];
+      }
+      if (command.kind === "deleteReviewTemplate") {
+        return [{
+          kind: "reviewTemplateDeleted",
+          data: { requestId, id: "source-default", selectedTemplateId: "source-default", error: "每类至少保留一个模板" },
+        } satisfies BridgeFrame];
+      }
+      return [{
+        kind: "styleTemplateDeleted",
+        data: { requestId, id: "gzh-layout-classic", error: "每类至少保留一个模板" },
+      } satisfies BridgeFrame];
+    });
     const stream = new ServerStream();
-    const start = stream.startSession({ mode: { kind: "new", data: { template: null } } });
-    const source = await waitForEventSource();
-    source.emitFrame(VALID_FRAME, "1");
-    await start;
 
-    const listPromise = stream.listReviewTemplates("s-1", "source");
-    await Promise.resolve();
-    const requestId = () => JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1].body as string).data.requestId as string;
-    const listRequestId = requestId();
-    source.emitFrame({
-      kind: "reviewTemplatesListed",
-      data: {
-        requestId: listRequestId,
-        items: [{ id: "source-default", type: "source", name: "标准来源核查", prompt: "核对金额", builtin: true, createdAt: "t", updatedAt: "t" }],
-        selectedTemplateId: "source-default",
-      },
-    } satisfies BridgeFrame, "2");
-    await expect(listPromise).resolves.toMatchObject({ selectedTemplateId: "source-default" });
-
-    const supplementPromise = stream.getReviewSupplement("s-1", "source");
-    await Promise.resolve();
-    source.emitFrame({ kind: "reviewSupplementLoaded", data: { requestId: requestId(), type: "source", supplement: "只看金额" } } satisfies BridgeFrame, "3");
-    await expect(supplementPromise).resolves.toBe("只看金额");
-
-    const reviewDeletePromise = stream.deleteReviewTemplate("s-1", "source-default");
-    await Promise.resolve();
-    const reviewDeleteRequestId = requestId();
-    source.emitFrame({
-      kind: "reviewTemplateDeleted",
-      data: { requestId: reviewDeleteRequestId, id: "source-default", selectedTemplateId: "source-default", error: "每类至少保留一个模板" },
-    } satisfies BridgeFrame, "4");
-    await expect(reviewDeletePromise).rejects.toThrow("每类至少保留一个模板");
-
-    const styleDeletePromise = stream.deleteStyleTemplate("s-1", "gzh-layout-classic");
-    await Promise.resolve();
-    const styleDeleteRequestId = requestId();
-    source.emitFrame({
-      kind: "styleTemplateDeleted",
-      data: { requestId: styleDeleteRequestId, id: "gzh-layout-classic", error: "每类至少保留一个模板" },
-    } satisfies BridgeFrame, "5");
-    await expect(styleDeletePromise).rejects.toThrow("每类至少保留一个模板");
+    await expect(stream.listReviewTemplates("s-1", "source")).resolves.toMatchObject({
+      selectedTemplateId: "source-default",
+    });
+    await expect(stream.getReviewSupplement("s-1", "source")).resolves.toBe("只看金额");
+    await expect(stream.deleteReviewTemplate("s-1", "source-default"))
+      .rejects.toThrow("每类至少保留一个模板");
+    await expect(stream.deleteStyleTemplate("s-1", "gzh-layout-classic"))
+      .rejects.toThrow("每类至少保留一个模板");
   });
 
-  it("并发同类请求按 requestId 接收乱序响应，不会串稿或串模板", async () => {
-    globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
+  it("两个并发衍生稿列表的 HTTP 响应乱序时仍按 requestId 结算", async () => {
+    const pending: Array<{
+      command: Extract<Command, { kind: "listDerivatives" }>;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        pending.push({
+          command: JSON.parse(String(init?.body)) as Extract<Command, { kind: "listDerivatives" }>,
+          resolve,
+        });
+      }),
+    );
+    const stream = new ServerStream();
+    const listA = stream.listDerivatives("session-a");
+    const listB = stream.listDerivatives("session-b");
+    await Promise.resolve();
+    expect(pending).toHaveLength(2);
+
+    for (const request of [...pending].reverse()) {
+      const suffix = request.command.data.sessionId === "session-a" ? "a" : "b";
+      request.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([{
+          kind: "derivativesListed",
+          data: {
+            requestId: request.command.data.requestId,
+            items: [{
+              docId: `derivative-${suffix}`,
+              dtype: "translate",
+              templateId: "template",
+              templateName: "模板",
+              privatePrompt: "",
+              sourceVersion: null,
+              currentSourceVersion: 0,
+              generatedAt: null,
+              stale: false,
+            }],
+          },
+        } satisfies BridgeFrame]),
+      } as unknown as Response);
+    }
+
+    await expect(listA).resolves.toMatchObject([{ docId: "derivative-a" }]);
+    await expect(listB).resolves.toMatchObject([{ docId: "derivative-b" }]);
+  });
+
+  it("并发同类请求按各自 HTTP requestId 接收乱序响应，不会串稿或串模板", async () => {
+    const pending: Array<{
+      command: Extract<Command, { kind: "getDerivativeDoc" | "getStyleTemplate" }>;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        pending.push({
+          command: JSON.parse(String(init?.body)) as Extract<
+            Command,
+            { kind: "getDerivativeDoc" | "getStyleTemplate" }
+          >,
+          resolve,
+        });
+      }),
+    );
     const stream = new ServerStream();
     const docA = stream.getDerivativeDoc("s-1", "derivative-a");
     const docB = stream.getDerivativeDoc("s-1", "derivative-b");
     const styleA = stream.getStyleTemplate("s-1", "style-a");
     const styleB = stream.getStyleTemplate("s-1", "style-b");
-    const source = await waitForEventSource();
     await Promise.resolve();
-    const requests = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
-      .slice(-4)
-      .map(([, init]) => JSON.parse((init as RequestInit).body as string).data.requestId as string);
-    const [docARequestId, docBRequestId, styleARequestId, styleBRequestId] = requests;
+    expect(pending).toHaveLength(4);
     const derivative = (docId: string) => ({
       docId, dtype: "translate", templateId: "template", templateName: "模板", privatePrompt: "",
       sourceVersion: null, currentSourceVersion: 0, generatedAt: null, stale: false,
     });
 
-    source.emitFrame({
-      kind: "derivativeDocLoaded",
-      data: { requestId: docBRequestId!, meta: derivative("derivative-b"), docPm: "{}", docVersion: 1, title: "B" },
-    } satisfies BridgeFrame, "1");
-    source.emitFrame({
-      kind: "styleTemplateLoaded",
-      data: { requestId: styleBRequestId!, item: { id: "style-b", dtype: "gzh", slot: "writing", name: "B", detail: "", prompt: "", builtin: false } },
-    } satisfies BridgeFrame, "2");
-    source.emitFrame({
-      kind: "derivativeDocLoaded",
-      data: { requestId: docARequestId!, meta: derivative("derivative-a"), docPm: "{}", docVersion: 1, title: "A" },
-    } satisfies BridgeFrame, "3");
-    source.emitFrame({
-      kind: "styleTemplateLoaded",
-      data: { requestId: styleARequestId!, item: { id: "style-a", dtype: "gzh", slot: "writing", name: "A", detail: "", prompt: "", builtin: false } },
-    } satisfies BridgeFrame, "4");
+    for (const request of [...pending].reverse()) {
+      const requestId = (request.command.data as { requestId: string }).requestId;
+      const frame: BridgeFrame = request.command.kind === "getDerivativeDoc"
+        ? {
+            kind: "derivativeDocLoaded",
+            data: {
+              requestId,
+              meta: derivative(request.command.data.docId),
+              docPm: "{}",
+              docVersion: 1,
+              title: request.command.data.docId === "derivative-a" ? "A" : "B",
+            },
+          }
+        : {
+            kind: "styleTemplateLoaded",
+            data: {
+              requestId,
+              item: {
+                id: request.command.data.id,
+                dtype: "gzh",
+                slot: "writing",
+                name: request.command.data.id === "style-a" ? "A" : "B",
+                detail: "",
+                prompt: "",
+                builtin: false,
+              },
+            },
+          };
+      request.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([frame]),
+      } as unknown as Response);
+    }
 
     await expect(docA).resolves.toMatchObject({ meta: { docId: "derivative-a" }, title: "A" });
     await expect(docB).resolves.toMatchObject({ meta: { docId: "derivative-b" }, title: "B" });

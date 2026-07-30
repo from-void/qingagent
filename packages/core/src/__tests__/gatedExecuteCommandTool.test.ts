@@ -82,6 +82,7 @@ function createToolHarness(
     simulateBackgroundTimeout?: boolean;
     backgroundWait?: Promise<void>;
     retainWorkspace?: () => () => void;
+    onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
     firstListGate?: Promise<void>;
     spawnGate?: Promise<void>;
     killError?: Error;
@@ -182,6 +183,7 @@ function createToolHarness(
     state: options.state,
     getWorkspace: async () => workspace,
     retainWorkspace: options.retainWorkspace,
+    onBackgroundStarted: options.onBackgroundStarted,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
   });
@@ -911,6 +913,37 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(result.output).toContain("最长运行: 10 秒");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
+    expect(spawnCalls[0]?.abortSignal).toBeUndefined();
+  });
+
+  it("后台进程成功交付后登记 owner，后续 turn abort 不再传入 spawn 杀进程", async () => {
+    const onBackgroundStarted = vi.fn();
+    const { tool, spawnCalls, killCallCount, runningProcessCount } = createToolHarness(
+      "gated-background-turn-decoupled",
+      { onBackgroundStarted },
+    );
+    const controller = new AbortController();
+
+    await expect(executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+    }, {
+      toolCallId: "background-owner",
+      messages: [],
+      abortSignal: controller.signal,
+      agent: { toolCallId: "background-owner" },
+    } as never)).resolves.toMatchObject({
+      success: true,
+      pid: "12345",
+      background: true,
+    });
+
+    expect(spawnCalls[0]?.abortSignal).toBeUndefined();
+    expect(onBackgroundStarted).toHaveBeenCalledWith("12345", "background-owner");
+    controller.abort("preemptedByNewMessage");
+    await Promise.resolve();
+    expect(killCallCount()).toBe(0);
+    expect(runningProcessCount()).toBe(1);
   });
 
   it("后台进程退出前持续持有 Workspace 租约", async () => {

@@ -77,6 +77,8 @@ export interface GatedExecuteCommandToolOptions {
   getWorkspace: () => Promise<Workspace>;
   /** 后台进程需把 Workspace 租约延长到自身退出。 */
   retainWorkspace?: () => () => void;
+  /** 进程成功交付后立即登记到会话现有 PID→owner 索引，不能等 turn 结果帧。 */
+  onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
   /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
@@ -460,6 +462,7 @@ export function createGatedExecuteCommandTool({
   state,
   getWorkspace,
   retainWorkspace,
+  onBackgroundStarted,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
 }: GatedExecuteCommandToolOptions) {
@@ -629,7 +632,6 @@ export function createGatedExecuteCommandTool({
               ...perCallCredentialEnv,
               timeout: timeoutPolicy.effectiveMs,
               maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-              abortSignal,
             });
           } catch (error) {
             abortSignal?.removeEventListener("abort", markSpawnAborted);
@@ -647,6 +649,9 @@ export function createGatedExecuteCommandTool({
           }
           // 检查与移除监听之间没有 await，abort 不能插入这段同步临界区。
           abortSignal?.removeEventListener("abort", markSpawnAborted);
+          if (toolCallId) {
+            onBackgroundStarted?.(String(handle.pid), toolCallId);
+          }
           // wait 可被轮询工具重复调用；这里只负责在真实退出后释放后台活动引用。
           void handle.wait().then(
             () => releaseWorkspace?.(),

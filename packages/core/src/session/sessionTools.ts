@@ -12,6 +12,7 @@ import {
 } from "../agents/toolSearch.js";
 import { createGatedExecuteCommandTool } from "../workspace/gatedExecuteCommandTool.js";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
+import { registerBackgroundCommandOwner } from "./backgroundCommand.js";
 import { createRequestCredentialAccessTool } from "../tools/requestCredentialAccess.js";
 import { createCredentialGrant } from "@qingagent/db";
 import {
@@ -1400,6 +1401,9 @@ export function createSessionScopedTools(
         state,
         getWorkspace: getWorkspace!,
         retainWorkspace: workspaceOptions.retainWorkspace,
+        onBackgroundStarted: (pid, ownerToolCallId) => {
+          registerBackgroundCommandOwner(state, pid, ownerToolCallId);
+        },
       })
     : null;
   const getProcessOutput = state

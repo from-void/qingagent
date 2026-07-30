@@ -69,6 +69,9 @@ export {
   abortAndCleanupTurn,
   finalizeLingeringRunningToolCalls,
 } from "../agent-run/turnCleanup.js";
+export {
+  terminateSessionBackgroundCommands,
+} from "../agent-run/backgroundCommandTermination.js";
 
 export {
   buildCapabilityTools,

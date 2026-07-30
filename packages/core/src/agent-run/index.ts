@@ -19,6 +19,9 @@ export type {
   BackgroundCommandSettlement,
   BackgroundCommandTerminal,
 } from "./backgroundCommandSettlement.js";
+export {
+  terminateSessionBackgroundCommands,
+} from "./backgroundCommandTermination.js";
 
 export {
   runAgentTurn,

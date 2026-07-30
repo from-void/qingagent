@@ -20,6 +20,7 @@ import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
 import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
+import { terminateSessionBackgroundCommands } from "./backgroundCommandTermination.js";
 import {
   confirmService,
   type ConfirmCancelSource,
@@ -105,6 +106,15 @@ function terminalizeInFlightToolCalls(
       const part = message.parts[i]!;
       if (part.kind !== "toolCall") continue;
       if (part.data.status.kind !== "pending" && part.data.status.kind !== "running") {
+        continue;
+      }
+      if (
+        reason === "preemptedByNewMessage" &&
+        (
+          isPersistentBackgroundCommand(part.data) ||
+          [...(state._backgroundCommandOwnerByPid?.values() ?? [])].includes(part.data.id)
+        )
+      ) {
         continue;
       }
       const spec = alignCommandCardWithStatus({
@@ -231,6 +241,8 @@ export async function* abortAndCleanupTurn(
       ConfirmService,
       "cancelRequestedCommandConfirm" | "resolvedFrame"
     >;
+    /** 仅供生命周期单测注入；生产统一走会话 workspace。 */
+    terminateBackgroundCommands?: typeof terminateSessionBackgroundCommands;
   } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
@@ -308,6 +320,19 @@ export async function* abortAndCleanupTurn(
       "aborted",
       abortedConfirmMessage(reason),
     );
+  }
+
+  if (reason === "userAbort" || reason === "globalStop") {
+    const settlements = await (
+      options.terminateBackgroundCommands ?? terminateSessionBackgroundCommands
+    )(state, "userStop");
+    for (const settlement of settlements) {
+      yield toolCallUpdated(
+        settlement.messageId,
+        settlement.toolCallId,
+        settlement.spec,
+      );
+    }
   }
 
   const updates = terminalizeInFlightToolCalls(state, reason);

@@ -9,6 +9,7 @@ import type { Material } from "../types/material.js";
 import {
   resolveParseFileBinding,
   upsertParseFileErrorMaterial,
+  upsertParseFileReadyMaterial,
 } from "./agentStreamTurnContext.js";
 import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 import {
@@ -17,7 +18,11 @@ import {
   resourceUpserted,
   toolCallUpdated,
 } from "./frames.js";
-import { parseFileFailureFromResult } from "../session/materialResource.js";
+import {
+  findMaterialByFileId,
+  materialToResource,
+  parseFileFailureFromResult,
+} from "../session/materialResource.js";
 import { redactedSerializedText } from "./redaction.js";
 import {
   appendPartToChatHistory,
@@ -34,7 +39,7 @@ const logger = mastra.getLogger();
 export async function* handleMaterialToolResultSideEffects(
   input: ToolResultContext,
 ): AsyncGenerator<BridgeFrame, void> {
-  const { turn, toolName, toolCallId, args, toolResult } = input;
+  const { turn, toolName, toolCallId, args, toolResult, toolResultOk } = input;
   const { state, agentMessageId } = turn;
   const articleScrape = toolName === "fetchArticle";
 
@@ -102,6 +107,31 @@ export async function* handleMaterialToolResultSideEffects(
       if (filename) turn.extractedTexts.set(filename, entry);
       turn.extractionEventsThisTurn.push(entry);
       extractionCached = true;
+      const metadata =
+        toolResult.metadata !== null &&
+        typeof toolResult.metadata === "object" &&
+        !Array.isArray(toolResult.metadata)
+          ? toolResult.metadata as Record<string, unknown>
+          : null;
+      if (
+        toolResultOk &&
+        toolResult.text.trim().length > 0 &&
+        metadata &&
+        (metadata.pages === null || typeof metadata.pages === "number") &&
+        typeof metadata.wordCount === "number" &&
+        (metadata.title === null || typeof metadata.title === "string")
+      ) {
+        upsertParseFileReadyMaterial(turn, args, {
+          ok: true,
+          text: toolResult.text,
+          metadata: {
+            pages: metadata.pages,
+            wordCount: metadata.wordCount,
+            title: metadata.title,
+            indexable: true,
+          },
+        });
+      }
     }
     logger.info("parseFile result processed", {
       sessionId: state.sessionId,
@@ -169,7 +199,7 @@ export async function* handleMaterialToolResultSideEffects(
   ) {
     const materialId = toolResult.materialId;
     const now = new Date().toISOString();
-    const existing = state.materials.get(materialId);
+    const resultMaterial = state.materials.get(materialId);
     const filename = typeof args.filename === "string" ? args.filename : undefined;
     const title = typeof args.title === "string" ? args.title : undefined;
     const argumentMaterialId =
@@ -199,8 +229,22 @@ export async function* handleMaterialToolResultSideEffects(
       (typeof args.fileId === "string" && args.fileId ? args.fileId : null) ??
       turn.fileIdMap.get(args.filename as string) ??
       bound?.fileId ??
-      existing?.fileId ??
+      resultMaterial?.fileId ??
       null;
+    const fileMaterial = matchedFileId
+      ? findMaterialByFileId(state, matchedFileId)
+      : null;
+    const parseCreatedMaterial =
+      fileMaterial !== null && turn.parseCreatedMaterialIds.has(fileMaterial.id);
+    const shouldAdoptStoreMaterialId =
+      parseCreatedMaterial &&
+      (!resultMaterial || resultMaterial.id === fileMaterial.id);
+    const targetMaterialId = fileMaterial
+      ? shouldAdoptStoreMaterialId
+        ? materialId
+        : fileMaterial.id
+      : materialId;
+    const existing = fileMaterial ?? resultMaterial;
     const fullText = bound?.text ?? existing?.text ?? "";
     const hollowWebContent =
       !!bound?.sourceUrl &&
@@ -244,16 +288,16 @@ export async function* handleMaterialToolResultSideEffects(
       return;
     }
     const material: Material = {
-      id: materialId,
+      id: targetMaterialId,
       filename: args.filename as string,
       mimeType: args.mimeType as string,
       text: fullText,
-      summary: (args.summary as string | undefined) ?? null,
+      summary: (args.summary as string | undefined) ?? existing?.summary ?? null,
       fileId: matchedFileId,
       metadata: {
-        pages: (args.pages as number | null) ?? null,
+        pages: (args.pages as number | null | undefined) ?? existing?.metadata.pages ?? null,
         wordCount: fullText.length,
-        title: (args.title as string | null) ?? null,
+        title: (args.title as string | null | undefined) ?? existing?.metadata.title ?? null,
         sourceUrl: bound?.sourceUrl ?? null,
         parseState: "ready",
         parseError: null,
@@ -261,7 +305,17 @@ export async function* handleMaterialToolResultSideEffects(
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now,
     };
-    state.materials.set(materialId, material);
+    if (fileMaterial) {
+      turn.materialFrames = turn.materialFrames.filter((frame) =>
+        !(
+          frame.kind === "resourceUpserted" &&
+          frame.data.resource.resourceRef.id === fileMaterial.id
+        )
+      );
+      turn.parseCreatedMaterialIds.delete(fileMaterial.id);
+      if (fileMaterial.id !== targetMaterialId) state.materials.delete(fileMaterial.id);
+    }
+    state.materials.set(targetMaterialId, material);
     const metadata = {
       ...material.metadata,
       fileId: matchedFileId,
@@ -269,18 +323,12 @@ export async function* handleMaterialToolResultSideEffects(
     };
     // 当场 yield 而非攒进 materialFrames 等回合收尾:输入框的「已关联素材」要在
     // 存储素材卡片落地的同时联动刷新。前端 resourceUpserted/resourceUpdated 均幂等。
-    if (existing) {
-      yield resourceUpdated(materialId, material.summary, metadata);
+    if (fileMaterial) {
+      yield resourceUpserted(materialToResource(material));
+    } else if (resultMaterial) {
+      yield resourceUpdated(targetMaterialId, material.summary, metadata);
     } else {
-      yield resourceUpserted({
-        resourceRef: { id: materialId, domain: { kind: "file" } },
-        displayName: material.filename,
-        summary: material.summary ?? "",
-        mime: material.mimeType,
-        byteLen: material.text.length,
-        createdAt: material.createdAt,
-        metadata,
-      });
+      yield resourceUpserted(materialToResource(material));
     }
     schedulePersist(state, "tool_result:storeMaterial").catch((error) =>
       logger.error("Persist after storeMaterial failed", { error: String(error) }),

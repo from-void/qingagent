@@ -136,6 +136,127 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     }
   });
 
+  it("parseFile 成功但未调用 storeMaterial 时仍发布 ready 素材", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("parse-ready-without-store");
+    const fileId = "11111111-2222-4333-8444-555555555555";
+    const text = "Markdown 单文件解析成功后的正文。".repeat(20);
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          toolCall("parseFile", "p-ready-only", {
+            fileId,
+            filename: "说明.md",
+            mimeType: "text/markdown",
+          }),
+          toolResult("parseFile", "p-ready-only", {
+            fileId,
+            filename: "说明.md",
+            mimeType: "text/markdown",
+          }, {
+            ok: true,
+            text,
+            metadata: { pages: null, wordCount: text.length, title: null },
+          }),
+        ),
+        { state, agentMessageId: "m", streamId: "s-ready-only", runId: "r" },
+      ),
+    );
+
+    const materials = [...state.materials.values()];
+    expect(materials).toHaveLength(1);
+    expect(materials[0]).toMatchObject({
+      filename: "说明.md",
+      mimeType: "text/markdown",
+      text,
+      fileId,
+      metadata: {
+        parseState: "ready",
+        parseError: null,
+      },
+    });
+    const readyFrames = frames.filter((frame) =>
+      frame.kind === "resourceUpserted" &&
+      (frame.data.resource.metadata as { fileId?: unknown; parseState?: unknown }).fileId === fileId
+    );
+    expect(readyFrames).toHaveLength(1);
+    expect(readyFrames[0]?.kind).toBe("resourceUpserted");
+    if (readyFrames[0]?.kind === "resourceUpserted") {
+      expect((readyFrames[0].data.resource.metadata as { parseState?: unknown }).parseState)
+        .toBe("ready");
+    }
+  });
+
+  it("parseFile 成功后调用 storeMaterial 时合并为一条素材并补摘要", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("parse-ready-then-store");
+    const fileId = "22222222-3333-4444-8555-666666666666";
+    const text = "演示文稿解析出的正文。".repeat(30);
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          toolCall("parseFile", "p-ready-store", {
+            fileId,
+            filename: "汇报.pptx",
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          }),
+          toolResult("parseFile", "p-ready-store", {
+            fileId,
+            filename: "汇报.pptx",
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          }, {
+            ok: true,
+            text,
+            metadata: { pages: 6, wordCount: text.length, title: "季度汇报" },
+          }),
+          toolCall("storeMaterial", "s-ready-store", {
+            filename: "汇报.pptx",
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            pages: 6,
+            title: "季度汇报",
+            summary: "季度汇报摘要",
+          }),
+          toolResult("storeMaterial", "s-ready-store", {
+            filename: "汇报.pptx",
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            pages: 6,
+            title: "季度汇报",
+            summary: "季度汇报摘要",
+          }, {
+            materialId: "mat-ready-store",
+            stored: true,
+          }),
+        ),
+        { state, agentMessageId: "m", streamId: "s-ready-store", runId: "r" },
+      ),
+    );
+
+    expect(state.materials.size).toBe(1);
+    expect(state.materials.get("mat-ready-store")).toMatchObject({
+      text,
+      summary: "季度汇报摘要",
+      fileId,
+      metadata: {
+        pages: 6,
+        title: "季度汇报",
+        parseState: "ready",
+        parseError: null,
+      },
+    });
+    const materialFrames = frames.filter((frame) =>
+      frame.kind === "resourceUpserted" &&
+      (frame.data.resource.metadata as { fileId?: unknown }).fileId === fileId
+    );
+    expect(materialFrames).toHaveLength(1);
+    expect(materialFrames[0]?.kind).toBe("resourceUpserted");
+    if (materialFrames[0]?.kind === "resourceUpserted") {
+      expect(materialFrames[0].data.resource.resourceRef.id).toBe("mat-ready-store");
+      expect(materialFrames[0].data.resource.summary).toBe("季度汇报摘要");
+    }
+  });
+
   it("parseFile→storeMaterial:按 filename 引用 parseFile 全文落库", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("ref-parse");

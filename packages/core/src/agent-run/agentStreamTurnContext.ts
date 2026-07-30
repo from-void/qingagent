@@ -20,9 +20,11 @@ import {
   type ResolvedUploadedFile,
 } from "../session/uploadFileResolver.js";
 import {
+  findMaterialByFileId,
   upsertMaterialByFileId,
   type MaterialParseFailure,
 } from "../session/materialResource.js";
+import type { ParseFileBufferResult } from "../tools/parseFile.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import type {
   AskUserPurposeKind,
@@ -113,6 +115,8 @@ export interface AgentStreamTurnContext {
   chunkTypeCounts: Map<string, number>;
   reasoningId: string | null;
   materialFrames: BridgeFrame[];
+  /** 本轮由 parseFile 首次创建、尚可与后续 storeMaterial 合并身份的素材 ID。 */
+  parseCreatedMaterialIds: Set<string>;
   extractedTexts: Map<string, ExtractedTextEntry>;
   researchFullTexts: Map<string, { text: string; materialId: string | null }>;
   extractionEventsThisTurn: ExtractedTextEntry[];
@@ -241,6 +245,7 @@ export async function createAgentStreamTurnContext(
     chunkTypeCounts: new Map(),
     reasoningId: null,
     materialFrames: [],
+    parseCreatedMaterialIds: new Set(),
     extractedTexts,
     researchFullTexts: new Map(),
     extractionEventsThisTurn: [],
@@ -349,7 +354,8 @@ export function upsertParseFileErrorMaterial(
     });
     return;
   }
-  const { frame } = upsertMaterialByFileId(
+  const existing = findMaterialByFileId(context.state, binding.fileId);
+  const { material, frame } = upsertMaterialByFileId(
     context.state,
     {
       fileId: binding.fileId,
@@ -358,8 +364,40 @@ export function upsertParseFileErrorMaterial(
     },
     failure,
   );
+  if (!existing) context.parseCreatedMaterialIds.add(material.id);
   context.materialFrames.push(frame);
   schedulePersist(context.state, "tool_result:parseFile_error_material").catch((error) =>
     logger.error("Persist after parseFile error material failed", { error: String(error) }),
+  );
+}
+
+export function upsertParseFileReadyMaterial(
+  context: AgentStreamTurnContext,
+  args: Record<string, unknown>,
+  result: ParseFileBufferResult,
+): void {
+  const binding = resolveParseFileBinding(context, args);
+  if (!binding.fileId) {
+    logger.warn("parseFile 成功但无法绑定 fileId，跳过 ready 素材落库", {
+      sessionId: context.state.sessionId,
+      hasFilename: typeof args.filename === "string" && args.filename.length > 0,
+      hasFilePath: typeof args.filePath === "string" && args.filePath.length > 0,
+    });
+    return;
+  }
+  const existing = findMaterialByFileId(context.state, binding.fileId);
+  const { material, frame } = upsertMaterialByFileId(
+    context.state,
+    {
+      fileId: binding.fileId,
+      filename: binding.filename,
+      mimeType: binding.mimeType,
+    },
+    result,
+  );
+  if (!existing) context.parseCreatedMaterialIds.add(material.id);
+  context.materialFrames.push(frame);
+  schedulePersist(context.state, "tool_result:parseFile_ready_material").catch((error) =>
+    logger.error("Persist after parseFile ready material failed", { error: String(error) }),
   );
 }

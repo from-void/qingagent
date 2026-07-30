@@ -2381,6 +2381,35 @@ describe("WorkspacePage review controls", () => {
     expect(onAcceptAll).not.toHaveBeenCalled();
   });
 
+  it("后端标记整稿替换时不再受 70% 猜测阈值影响", async () => {
+    const { deriveReviewRenderMode, RightPane } = await import("./WorkspacePage");
+    const editedDoc = multiGroupDoc(7);
+    const mode = deriveReviewRenderMode({
+      effectiveReview: true,
+      editedNewDoc: editedDoc,
+      changeRatio: 0.01,
+      wholeDocReviewThreshold: 0.7,
+      wholeDocument: true,
+    });
+
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            wholeDocReview: mode.wholeDocReview,
+            effectiveReview: mode.inlinePatchReview,
+            editedNewDoc: editedDoc,
+          })}
+        />
+      </section>,
+    );
+
+    expect(mode.wholeDocReview).toBe(true);
+    expect(mode.inlinePatchReview).toBe(false);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+  });
+
   it("历史快照未加载时不回退渲染当前正文", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const currentDoc = pmDocToViewDocumentSnapshot(

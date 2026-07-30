@@ -94,12 +94,14 @@ export function docDiffReady(
   suggestions: DocSuggestion[] = [],
   previewDoc?: PmDoc,
   editedDoc?: PmDoc,
+  wholeDocument = false,
 ): BridgeFrame {
   return {
     kind: "docDiffReady",
     data: {
       baseVersion,
       suggestions,
+      ...(wholeDocument ? { wholeDocument: true } : {}),
       ...(previewDoc ? { previewDoc } : {}),
       ...(editedDoc ? { editedDoc } : {}),
     },

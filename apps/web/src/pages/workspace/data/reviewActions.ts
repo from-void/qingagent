@@ -271,6 +271,7 @@ export function deriveReviewRenderMode(input: {
   editedNewDoc: ViewDocumentSnapshot | null;
   changeRatio: number;
   wholeDocReviewThreshold: number;
+  wholeDocument?: boolean;
 }): {
   wholeDocReview: boolean;
   awaitingWholeDocReviewMaterial: boolean;
@@ -279,7 +280,8 @@ export function deriveReviewRenderMode(input: {
   const wholeDocReview =
     input.effectiveReview &&
     input.editedNewDoc != null &&
-    input.changeRatio >= input.wholeDocReviewThreshold;
+    (input.wholeDocument === true ||
+      input.changeRatio >= input.wholeDocReviewThreshold);
   return {
     wholeDocReview,
     // docDiffReady 是一次性帧;缺 editedDoc 是老会话/坏帧,不是可等待的后续材料。

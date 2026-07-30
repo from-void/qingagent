@@ -605,12 +605,13 @@ describe("handleCommand existing-session restore", () => {
     expect(replayedReviewing).toBe(false);
   });
 
-  it("恢复 pendingReview 时补发 docDiffReady 带 editedDoc", async () => {
+  it("恢复整稿 pendingReview 时补发 docDiffReady 保留整稿语义与 editedDoc", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     const baseDoc = legacySectionsToPm([section("旧正文")] as never);
     const editedDoc = markedPmDoc("新正文");
     const suggestion = reviewSuggestion("restore-h1");
+    suggestion.batchId = "review:whole:4:restore";
     session.docState = { kind: "pendingReview" };
     session.doc = baseDoc;
     session.legacySections = [section("旧正文")];
@@ -639,6 +640,7 @@ describe("handleCommand existing-session restore", () => {
     if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady");
     expect(diffFrame.data.previewDoc).toEqual(baseDoc);
     expect(diffFrame.data.editedDoc).toEqual(editedDoc);
+    expect(diffFrame.data.wholeDocument).toBe(true);
   });
 
   it("只读快照不消费冲突帧，activate 恢复仍只补发一次", async () => {

@@ -11,7 +11,10 @@ import {
 } from "@qingagent/pm-schema";
 import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
-import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
+import {
+  createSuggestionBatchId,
+  createSuggestionFromDiffHunk,
+} from "../doc-engine/draftReviewSuggestions.js";
 import { commitReviewGroups, updatePatchVerdict } from "../doc-engine/reviewCommit.js";
 import { createSession } from "../session/sessionState.js";
 import {
@@ -274,6 +277,47 @@ describe("pending draft rehydrate", () => {
     expect(result.kind === "restored" ? result.frames.some((frame) => frame.kind === "docDiffReady") : false).toBe(true);
     expect(docText(state.doc)).toBe("旧正文");
     expect(state.docState).toEqual({ kind: "pendingReview" });
+  });
+
+  it("整稿待审批次冷恢复后仍按完整新旧版本审阅", async () => {
+    const sessionId = "rehy-whole-document-review";
+    const base = doc([paragraph("base-block", "结构化原稿")]);
+    const draft = doc([paragraph("draft-block", "完整替换后的新稿")]);
+    const batchId = createSuggestionBatchId(1, draft, { wholeDocument: true });
+    await seedDocument(sessionId, base);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+      batchId,
+    });
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    for (const hunk of hunks) {
+      await upsertDocumentSuggestion(createSuggestionFromDiffHunk({
+        hunk,
+        docId: sessionId,
+        baseVersion: 1,
+        baseSchemaVersion: 1,
+        batchId,
+      }));
+    }
+    const state = createSession(sessionId);
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+
+    const restored = await rehydratePendingDraft(state);
+    const diffFrame = restored.kind === "restored"
+      ? restored.frames.find((frame) => frame.kind === "docDiffReady")
+      : undefined;
+
+    expect(diffFrame?.kind === "docDiffReady"
+      ? diffFrame.data.wholeDocument
+      : false).toBe(true);
+    expect(state.doc).toEqual(base);
+    expect(state.docDraftCandidateDoc).toEqual(draft);
   });
 
   it("启动恢复命中 0025 阻断时保留草稿与建议原状", async () => {

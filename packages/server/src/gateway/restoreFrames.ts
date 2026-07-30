@@ -19,6 +19,7 @@ import {
   emitProjectedDocState,
   getActiveSuspensionOwner,
   getDocumentVersionCommittedAt,
+  isWholeDocumentSuggestionBatchId,
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
   normalizeRestoredDocStateKind,
@@ -384,11 +385,15 @@ export function* emitRestoreFrames(
     session.docState.kind === "pendingReview" &&
     session.suggestions.size > 0
   ) {
+    const suggestions = [...session.suggestions.values()].map((record) => record.suggestion);
     yield {
       kind: "docDiffReady",
       data: {
         baseVersion: session.suggestionBaseVersion ?? session.docVersion,
-        suggestions: [...session.suggestions.values()].map((record) => record.suggestion),
+        suggestions,
+        ...(isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId)
+          ? { wholeDocument: true }
+          : {}),
         ...(session.suggestionBaseDoc ? { previewDoc: session.suggestionBaseDoc } : {}),
         ...(session.docDraftCandidateDoc ? { editedDoc: session.docDraftCandidateDoc } : {}),
       },

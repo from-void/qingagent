@@ -28,6 +28,7 @@ import { applyDiffHunks } from "./proposalDiff.js";
 import {
   createSuggestionBatchId,
   createSuggestionFromDiffHunk,
+  isWholeDocumentSuggestionBatchId,
 } from "./draftReviewSuggestions.js";
 import {
   rebaseRemainingPendingDraft,
@@ -559,7 +560,10 @@ async function rebuildPendingReviewAfterRebase(input: {
     input.previousRemainingRecords[0]?.messageId ??
     `rebased-pending-review:${state.docId}:${committedVersion}`;
 
-  const batchId = createSuggestionBatchId(committedVersion, nextDraftDoc);
+  const wholeDocument = input.previousRemainingRecords.some((record) =>
+    isWholeDocumentSuggestionBatchId(record.suggestion.batchId)
+  );
+  const batchId = createSuggestionBatchId(committedVersion, nextDraftDoc, { wholeDocument });
   const suggestions = hunks.map((hunk) => {
     const suggestion = createSuggestionFromDiffHunk({
       hunk,
@@ -752,6 +756,7 @@ export async function* commitPatches(
           suggestions,
           currentPmDoc(state),
           rebase.nextDraftDoc,
+          isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId),
         );
         for (const record of state.suggestions.values()) {
           yield toolCallUpdated(
@@ -1288,7 +1293,13 @@ export async function* commitPatches(
           (record) => !droppedIds.has(record.suggestion.id),
         ),
       });
-      yield docDiffReady(result.docVersion, suggestions, result.doc, rebase.nextDraftDoc);
+      yield docDiffReady(
+        result.docVersion,
+        suggestions,
+        result.doc,
+        rebase.nextDraftDoc,
+        isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId),
+      );
       for (const record of state.suggestions.values()) {
         yield toolCallUpdated(
           record.messageId,

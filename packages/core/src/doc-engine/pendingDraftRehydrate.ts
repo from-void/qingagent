@@ -22,6 +22,7 @@ import { buildDraftDiff } from "./proposalDiff.js";
 import {
   createSuggestionBatchId,
   createSuggestionFromDiffHunk,
+  isWholeDocumentSuggestionBatchId,
 } from "./draftReviewSuggestions.js";
 import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
@@ -46,10 +47,17 @@ function docDiffReady(
   suggestions: DocSuggestion[],
   previewDoc: PmDoc,
   editedDoc?: PmDoc,
+  wholeDocument = false,
 ): BridgeFrame {
   return {
     kind: "docDiffReady",
-    data: { baseVersion, suggestions, previewDoc, ...(editedDoc ? { editedDoc } : {}) },
+    data: {
+      baseVersion,
+      suggestions,
+      previewDoc,
+      ...(editedDoc ? { editedDoc } : {}),
+      ...(wholeDocument ? { wholeDocument: true } : {}),
+    },
   };
 }
 
@@ -162,7 +170,9 @@ async function replayInterruptedReviewRebase(
   });
   if (rebased.status !== "pending") return false;
 
-  const batchId = createSuggestionBatchId(state.docVersion, rebased.nextDraftDoc);
+  const batchId = createSuggestionBatchId(state.docVersion, rebased.nextDraftDoc, {
+    wholeDocument: isWholeDocumentSuggestionBatchId(row.batchId),
+  });
   const available = [...remainingRecords];
   const rebasedSuggestions = rebased.hunks.map((hunk) => {
     const exactIndex = available.findIndex((record) => record.diffHunk?.hunkId === hunk.hunkId);
@@ -426,7 +436,13 @@ export async function rehydratePendingDraft(
 
   return {
     kind: "restored",
-    frames: [docDiffReady(baseVersion, suggestions, currentDoc, draftDoc)],
+    frames: [docDiffReady(
+      baseVersion,
+      suggestions,
+      currentDoc,
+      draftDoc,
+      isWholeDocumentSuggestionBatchId(row.batchId),
+    )],
     hunks,
   };
 }

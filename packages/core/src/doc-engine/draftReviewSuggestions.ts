@@ -2,8 +2,19 @@ import crypto from "node:crypto";
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { getPmContentHash, type PmDoc, type PmStep } from "@qingagent/pm-schema";
 
-export function createSuggestionBatchId(baseVersion: number, draftDoc: PmDoc): string {
-  return `review:${baseVersion}:${getPmContentHash(draftDoc)}`;
+const WHOLE_DOCUMENT_REVIEW_BATCH_PREFIX = "review:whole:";
+
+export function createSuggestionBatchId(
+  baseVersion: number,
+  draftDoc: PmDoc,
+  options: { wholeDocument?: boolean } = {},
+): string {
+  const prefix = options.wholeDocument ? WHOLE_DOCUMENT_REVIEW_BATCH_PREFIX : "review:";
+  return `${prefix}${baseVersion}:${getPmContentHash(draftDoc)}`;
+}
+
+export function isWholeDocumentSuggestionBatchId(batchId: string | null | undefined): boolean {
+  return batchId?.startsWith(WHOLE_DOCUMENT_REVIEW_BATCH_PREFIX) ?? false;
 }
 
 function hashSuggestionText(text: string): string {

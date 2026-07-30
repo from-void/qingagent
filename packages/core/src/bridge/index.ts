@@ -66,6 +66,10 @@ export {
 } from "../doc-engine/settleDraftCandidate.js";
 
 export {
+  isWholeDocumentSuggestionBatchId,
+} from "../doc-engine/draftReviewSuggestions.js";
+
+export {
   abortAndCleanupTurn,
   finalizeLingeringRunningToolCalls,
 } from "../agent-run/turnCleanup.js";

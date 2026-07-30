@@ -4,6 +4,7 @@ import {
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   decideBroadcastDocumentFrame,
+  shouldHandleBroadcastDocumentFrame,
   shouldHandleDocWriteResult,
   splitStreamEndFinalDocument,
 } from "./docWriteResultOwnership";
@@ -103,6 +104,23 @@ describe("decideBroadcastDocumentFrame", () => {
       kind: "conflict",
       reason: "local_editor_changes",
     });
+  });
+
+  it("pendingReview 的审阅投影不能反过来拦掉权威 docDiffReady", () => {
+    const diffFrame = versionWritingFrames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady fixture");
+
+    expect(shouldHandleBroadcastDocumentFrame({
+      frame: diffFrame,
+      hasLocalDocumentChanges: true,
+      reviewActive: true,
+    })).toBe(true);
+    expect(shouldHandleBroadcastDocumentFrame({
+      frame: diffFrame,
+      hasLocalDocumentChanges: true,
+      reviewActive: false,
+    })).toBe(false);
   });
 
   it("会写版本的帧都能取出该版本与正文,供登记为本会话已知产出", () => {

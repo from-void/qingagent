@@ -1215,6 +1215,7 @@ export function useWorkspacePageController() {
     editedNewDoc,
     changeRatio,
     wholeDocReviewThreshold: WHOLE_DOC_REVIEW_THRESHOLD,
+    wholeDocument: state.docDiff?.wholeDocument,
   });
   const wholeDocReview = reviewRenderMode.wholeDocReview;
   const awaitingWholeDocReviewMaterial =
@@ -1855,6 +1856,7 @@ export function useWorkspacePageController() {
         const decision = decideBroadcastDocumentFrame({
           frame,
           ...dirty,
+          reviewActive: stateRef.current.docState.kind === "pendingReview",
           afterDeferredDrain,
         });
         if (decision.kind === "defer") {

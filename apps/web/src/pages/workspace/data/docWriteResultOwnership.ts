@@ -117,6 +117,21 @@ function isAgentFinalDocumentFrame(frame: BridgeFrame): boolean {
   );
 }
 
+export function shouldHandleBroadcastDocumentFrame(input: {
+  frame: BridgeFrame;
+  hasLocalDocumentChanges: boolean;
+  /** pendingReview 里的正文差异来自审阅投影，不是用户尚未落盘的编辑。 */
+  reviewActive?: boolean;
+}): boolean {
+  if (input.frame.kind === "docDiffReady" && input.reviewActive === true) {
+    return true;
+  }
+  return !(
+    input.hasLocalDocumentChanges &&
+    broadcastContentFrameWritesDocumentVersion(input.frame)
+  );
+}
+
 /**
  * stream end 的生命周期终态必须先消费；正文回执再单独走 dirty 决策。
  * 转成 generation_finished 后可复用 presentation/reducer/版本账本链。
@@ -169,9 +184,17 @@ export function decideBroadcastDocumentFrame(input: {
   pendingDocWrite: boolean;
   queuedDocWrite: boolean;
   scheduledDocWrite: boolean;
+  /** pendingReview 里的正文差异来自审阅投影，不是用户尚未落盘的编辑。 */
+  reviewActive?: boolean;
   /** 保存 drain 后的二次判定，不再把持续 editor dirty 当成 debounce。 */
   afterDeferredDrain?: boolean;
 }): DocumentFrameDecision {
+  if (
+    input.frame.kind === "docDiffReady" &&
+    input.reviewActive === true
+  ) {
+    return { kind: "apply" };
+  }
   if (!broadcastContentFrameWritesDocumentVersion(input.frame)) {
     return { kind: "apply" };
   }

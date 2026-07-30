@@ -926,6 +926,7 @@ describe("validateBridgeFrame", () => {
       kind: "docDiffReady",
       data: {
         baseVersion: 1,
+        wholeDocument: true,
         editedDoc: {
           type: "doc",
           attrs: { schemaVersion: 1 },
@@ -1007,11 +1008,22 @@ describe("validateBridgeFrame", () => {
         } as never,
       },
     };
+    const badWholeDocumentFrame = {
+      kind: "docDiffReady",
+      data: {
+        baseVersion: 1,
+        suggestions: [],
+        wholeDocument: "yes",
+      },
+    } as unknown as BridgeFrame;
 
     expect(() => validateBridgeFrame(okFrame)).not.toThrow();
     expect(() => validateBridgeFrame(badFrame)).toThrow(BridgeFrameValidationError);
     expect(() => validateBridgeFrame(badEditedDocFrame)).toThrow(BridgeFrameValidationError);
     expect(() => validateBridgeFrame(badEditedDocChildFrame)).toThrow(BridgeFrameValidationError);
+    expect(() => validateBridgeFrame(badWholeDocumentFrame)).toThrow(
+      "DocDiffReady.wholeDocument must be a boolean when present",
+    );
   });
 
   it("accepts valid docGenerationEvent frames and rejects malformed PM final docs", () => {

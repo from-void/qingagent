@@ -7,7 +7,10 @@ import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";
 import { buildDraftDiff } from "./proposalDiff.js";
-import { createSuggestionBatchId } from "./draftReviewSuggestions.js";
+import {
+  createSuggestionBatchId,
+  isWholeDocumentSuggestionBatchId,
+} from "./draftReviewSuggestions.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 import { appendPartToChatHistory, nextSeq } from "../session/sessionState.js";
 import {
@@ -108,7 +111,7 @@ export async function* settleDraftCandidate(opts: {
         }
         warnIfSelectionDiffEscapesSelectedBlocks({ state, hunks, streamId, runId });
 
-        const batchId = createSuggestionBatchId(baseVersion, draftDoc);
+        const batchId = createSuggestionBatchId(baseVersion, draftDoc, { wholeDocument });
         const suggestions = hunks.map((hunk) =>
           suggestionFromDiffHunk({
             hunk,
@@ -171,7 +174,7 @@ export async function* settleDraftCandidate(opts: {
           state.suggestions.set(suggestion.id, record);
         });
 
-        yield docDiffReady(baseVersion, suggestions, baseDoc, draftDoc);
+        yield docDiffReady(baseVersion, suggestions, baseDoc, draftDoc, wholeDocument);
 
         for (const record of state.suggestions.values()) {
           const spec = buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" });
@@ -217,6 +220,7 @@ export async function* settleDraftCandidate(opts: {
       suggestions,
       state.doc,
       state.docDraftCandidateDoc ?? undefined,
+      isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId),
     );
 
     for (const record of state.suggestions.values()) {

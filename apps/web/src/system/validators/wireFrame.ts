@@ -943,6 +943,12 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       if (!Number.isInteger(frame.data.baseVersion)) {
         fail(`DocDiffReady.baseVersion must be an integer`);
       }
+      if (
+        frame.data.wholeDocument !== undefined &&
+        typeof frame.data.wholeDocument !== "boolean"
+      ) {
+        fail("DocDiffReady.wholeDocument must be a boolean when present");
+      }
       for (const suggestion of frame.data.suggestions) checkDocSuggestion(suggestion);
       if (frame.data.previewDoc) checkPmDoc(frame.data.previewDoc, "DocDiffReady.previewDoc");
       if (frame.data.editedDoc) checkPmDoc(frame.data.editedDoc, "DocDiffReady.editedDoc");

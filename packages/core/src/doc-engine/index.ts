@@ -13,6 +13,10 @@ export {
 } from "./settleDraftCandidate.js";
 
 export {
+  isWholeDocumentSuggestionBatchId,
+} from "./draftReviewSuggestions.js";
+
+export {
   updatePatchVerdict,
   commitPatches,
   expandReviewIds,
@@ -115,4 +119,3 @@ export type {
   MigrationOptions,
   MigrationStats,
 } from "./migrateThreadMetadataToDocuments.js";
-

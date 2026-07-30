@@ -173,6 +173,14 @@ function docText(doc: PmDoc | undefined): string {
     .join("\n");
 }
 
+function recursiveDocText(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const node = value as { type?: unknown; text?: unknown; content?: unknown };
+  if (node.type === "text" && typeof node.text === "string") return node.text;
+  if (!Array.isArray(node.content)) return "";
+  return node.content.map(recursiveDocText).join("\n");
+}
+
 function tableTexts(doc: PmDoc | undefined): string[][] {
   const table = doc?.content.find((block): block is Extract<PmBlockNode, { type: "table" }> => block.type === "table");
   return (table?.content ?? []).map((row) =>
@@ -910,6 +918,7 @@ describe("candidate-diff backend flow", () => {
     if (diffFrame?.kind === "docDiffReady") {
       expect(diffFrame.data.baseVersion).toBe(1);
       expect(diffFrame.data.suggestions.length).toBeGreaterThan(0);
+      expect(diffFrame.data.wholeDocument).toBe(true);
     }
     expect(state.docVersion).toBe(1);
     expect(state.suggestions.size).toBeGreaterThan(0);
@@ -920,6 +929,7 @@ describe("candidate-diff backend flow", () => {
       baseVersion: 1,
       baseHash: getPmContentHash(baseDoc),
       status: "pending_review",
+      batchId: expect.stringMatching(/^review:whole:/),
     });
     expect(docText(pendingDraft?.draftPmDoc)).toBe("第一版正文");
 
@@ -931,6 +941,106 @@ describe("candidate-diff backend flow", () => {
     expect(state.lastContentEditedAt)
       .toBe((await findOpByDocumentVersion(state.docId, state.docVersion))?.createdAt);
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+  });
+
+  it("结构化旧稿整体替换后，待审新版与最终 doc_pm 都不保留旧标题、清单或表格", async () => {
+    const { createSession, commitPatches, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("candidate-structured-replace");
+    const baseDoc = pmDoc([
+      {
+        type: "heading",
+        attrs: { blockId: "old-heading", level: 2 },
+        content: [text("原稿二级标题：发布检查")],
+      } as PmBlockNode,
+      {
+        type: "bulletList",
+        attrs: { blockId: "old-checklist" },
+        content: [
+          {
+            type: "listItem",
+            attrs: { blockId: "old-item-a" },
+            content: [paragraph("old-item-a-p", "原稿检查点：确认时间")],
+          },
+          {
+            type: "listItem",
+            attrs: { blockId: "old-item-b" },
+            content: [paragraph("old-item-b-p", "原稿检查点：确认负责人")],
+          },
+        ],
+      } as PmBlockNode,
+      {
+        type: "table",
+        attrs: { blockId: "old-table" },
+        content: [{
+          type: "tableRow",
+          content: [
+            { type: "tableHeader", content: [paragraph("old-th-a", "原稿表头")] },
+            { type: "tableCell", content: [paragraph("old-td-a", "原稿表值")] },
+          ],
+        }],
+      } as PmBlockNode,
+    ]);
+    const candidateDoc = pmDoc([
+      {
+        type: "heading",
+        attrs: { blockId: "heat-heading", level: 1 },
+        content: [text("城市热岛效应")],
+      } as PmBlockNode,
+      paragraph(
+        "heat-intro",
+        "城市中的建筑、道路会吸收并储存太阳能量，使城区夜间降温慢于郊区。",
+      ),
+      paragraph(
+        "heat-response",
+        "增加树荫、透水地面与浅色屋顶，可以缓解热量积聚并改善体感。",
+      ),
+    ]);
+    state.doc = baseDoc;
+    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftCandidateDoc = candidateDoc;
+    state.docDraftCandidateSections =
+      pmToLegacySections(candidateDoc) as unknown as LegacySection[];
+    await seedDocument({
+      docId: state.docId,
+      sessionId: state.sessionId,
+      docVersion: 1,
+      doc: baseDoc,
+    });
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          writeDraftCall("wd-structured-replace"),
+          writeDraftResult("wd-structured-replace"),
+        ),
+        {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-structured-replace",
+          runId: "run-structured-replace",
+        },
+      ),
+    );
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind === "docDiffReady" ? diffFrame.data.wholeDocument : false).toBe(true);
+    expect(diffFrame?.kind === "docDiffReady"
+      ? recursiveDocText(diffFrame.data.editedDoc)
+      : "").toContain("城市热岛效应");
+    expect(diffFrame?.kind === "docDiffReady"
+      ? recursiveDocText(diffFrame.data.editedDoc)
+      : "").not.toContain("原稿检查点");
+
+    await collectFrames(commitPatches(state, [...state.suggestions.keys()]));
+
+    const canonical = await documentRepo.load(state.docId);
+    const canonicalText = recursiveDocText(canonical?.pmDoc);
+    expect(canonical?.pmDoc).toEqual(candidateDoc);
+    expect(canonicalText).toContain("城市热岛效应");
+    expect(canonicalText).not.toContain("原稿二级标题");
+    expect(canonicalText).not.toContain("原稿检查点");
+    expect(canonicalText).not.toContain("原稿表头");
   });
 
   it("已有两处候选后 idle timeout 以成功提示收口，不发 draftingFailed", async () => {
@@ -1070,7 +1180,11 @@ describe("candidate-diff backend flow", () => {
     );
 
     expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
-    expect(frames.find((frame) => frame.kind === "docDiffReady")?.kind).toBe("docDiffReady");
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    expect(diffFrame?.kind === "docDiffReady"
+      ? diffFrame.data.wholeDocument
+      : undefined).toBeUndefined();
     expect(state.suggestions.size).toBe(1);
 
     await collectFrames(commitPatches(state, [...state.suggestions.keys()]));

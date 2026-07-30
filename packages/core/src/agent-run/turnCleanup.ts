@@ -20,6 +20,7 @@ import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
 import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
+import { terminateSessionBackgroundCommands } from "./backgroundCommandTermination.js";
 import {
   confirmService,
   type ConfirmCancelSource,
@@ -107,6 +108,15 @@ function terminalizeInFlightToolCalls(
       if (part.data.status.kind !== "pending" && part.data.status.kind !== "running") {
         continue;
       }
+      if (
+        reason === "preemptedByNewMessage" &&
+        (
+          isPersistentBackgroundCommand(part.data) ||
+          [...(state._backgroundCommandOwnerByPid?.values() ?? [])].includes(part.data.id)
+        )
+      ) {
+        continue;
+      }
       const spec = alignCommandCardWithStatus({
         ...part.data,
         status: { kind: "aborted" },
@@ -141,6 +151,62 @@ function activeTurnToolCallIds(state: SessionState): Set<string> {
     message.parts
       .filter((part) => part.kind === "toolCall")
       .map((part) => part.data.id),
+  );
+}
+
+interface InterruptedToolFact {
+  id: string;
+  name: string;
+  backgroundPid: string | null;
+}
+
+function interruptedToolFacts(
+  state: SessionState,
+  activeAgentMessageId: string | null,
+  excludedToolCallIds: ReadonlySet<string>,
+): InterruptedToolFact[] {
+  if (!activeAgentMessageId) return [];
+  const message = state.chatHistory.find((item) => item.id === activeAgentMessageId);
+  if (!message) return [];
+  const pidsByOwner = new Map<string, string>();
+  for (const [pid, ownerToolCallId] of state._backgroundCommandOwnerByPid ?? []) {
+    pidsByOwner.set(ownerToolCallId, pid);
+  }
+  return message.parts.flatMap((part) => {
+    if (
+      part.kind !== "toolCall" ||
+      excludedToolCallIds.has(part.data.id) ||
+      (part.data.status.kind !== "pending" && part.data.status.kind !== "running") ||
+      isPersistentBackgroundCommand(part.data)
+    ) {
+      return [];
+    }
+    const backgroundPid = pidsByOwner.get(part.data.id) ?? null;
+    if (part.data.result !== null && backgroundPid === null) return [];
+    return [{
+      id: part.data.id,
+      name: part.data.name,
+      backgroundPid,
+    }];
+  });
+}
+
+function interruptedToolModelNote(facts: InterruptedToolFact[]): string {
+  const items = facts.map((fact) =>
+    fact.backgroundPid
+      ? `${fact.name}（toolCallId:${fact.id}，后台 PID:${fact.backgroundPid}，进程仍在运行）`
+      : `${fact.name}（toolCallId:${fact.id}）`
+  ).join("、");
+  const backgroundPids = facts
+    .map((fact) => fact.backgroundPid)
+    .filter((pid): pid is string => pid !== null);
+  const nextStep = backgroundPids.length > 0
+    ? `后台进程仍属本会话，可用原 PID ${backgroundPids.join("、")} 继续轮询；其余步骤如仍需要，再重新发起。`
+    : "这些步骤如仍需要，请重新发起，不能假装已经拿到结果。";
+  return (
+    `[系统事实] 上一轮被用户的新消息接替，以下工具结果未送达：${items}。` +
+    "这不是工具或其背后服务失败，也不表示登录态失效；不要据此猜测。" +
+    nextStep
   );
 }
 
@@ -231,15 +297,20 @@ export async function* abortAndCleanupTurn(
       ConfirmService,
       "cancelRequestedCommandConfirm" | "resolvedFrame"
     >;
+    /** 仅供生命周期单测注入；生产统一走会话 workspace。 */
+    terminateBackgroundCommands?: typeof terminateSessionBackgroundCommands;
   } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
+  const reason = options.reason ?? "userAbort";
+  const interruptedAgentMessageId = reason === "preemptedByNewMessage"
+    ? state._activeAgentMessageId
+    : null;
   const abortedStreamId = state.streamId;
   const activeTurnOwnsStreamEnd =
     activeTurnPromise !== null &&
     abortedStreamId !== null &&
     turnCompletionOwnsStreamEnd(activeTurnPromise, abortedStreamId);
-  const reason = options.reason ?? "userAbort";
   const currentToolCallIds = activeTurnToolCallIds(state);
   const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
     (pending) =>
@@ -308,6 +379,37 @@ export async function* abortAndCleanupTurn(
       "aborted",
       abortedConfirmMessage(reason),
     );
+  }
+
+  if (reason === "preemptedByNewMessage") {
+    // 待确认调用有专门的确认取消事实注记，且命令尚未执行，不能重复标成“工具结果未送达”。
+    const confirmedToolCallIds = new Set(
+      pendingConfirms.map((pending) => pending.toolCallId),
+    );
+    const facts = interruptedToolFacts(
+      state,
+      interruptedAgentMessageId,
+      confirmedToolCallIds,
+    );
+    if (facts.length > 0) {
+      state.messages.push({
+        role: "system",
+        content: interruptedToolModelNote(facts),
+      });
+    }
+  }
+
+  if (reason === "userAbort" || reason === "globalStop") {
+    const settlements = await (
+      options.terminateBackgroundCommands ?? terminateSessionBackgroundCommands
+    )(state, "userStop");
+    for (const settlement of settlements) {
+      yield toolCallUpdated(
+        settlement.messageId,
+        settlement.toolCallId,
+        settlement.spec,
+      );
+    }
   }
 
   const updates = terminalizeInFlightToolCalls(state, reason);

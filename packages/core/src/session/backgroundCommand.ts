@@ -1,5 +1,9 @@
 import type { ToolCallSpec } from "@qingagent/contract-ts";
-import type { SessionState } from "./sessionState.js";
+import type {
+  BackgroundCommandSystemExitReason,
+  BackgroundCommandTombstone,
+  SessionState,
+} from "./sessionState.js";
 
 export function isPersistentBackgroundCommand(spec: ToolCallSpec): boolean {
   return (
@@ -24,6 +28,7 @@ export function registerBackgroundCommandOwner(
 ): void {
   if (!pid || !ownerToolCallId) return;
   (state._backgroundCommandOwnerByPid ??= new Map()).set(pid, ownerToolCallId);
+  state._backgroundCommandTombstones?.delete(pid);
 }
 
 export function forgetBackgroundCommandOwner(
@@ -31,6 +36,40 @@ export function forgetBackgroundCommandOwner(
   pid: string,
 ): void {
   state._backgroundCommandOwnerByPid?.delete(pid);
+}
+
+export function recordBackgroundCommandTombstone(
+  state: SessionState,
+  pid: string,
+  reason: BackgroundCommandSystemExitReason,
+  at = new Date().toISOString(),
+): BackgroundCommandTombstone {
+  const tombstone = { pid, reason, at };
+  (state._backgroundCommandTombstones ??= new Map()).set(pid, tombstone);
+  return tombstone;
+}
+
+export function backgroundCommandTombstone(
+  state: SessionState,
+  pid: string,
+): BackgroundCommandTombstone | null {
+  return state._backgroundCommandTombstones?.get(pid) ?? null;
+}
+
+const SYSTEM_EXIT_REASON_LABELS: Record<BackgroundCommandSystemExitReason, string> = {
+  userStop: "用户停止",
+  runtimeLimit: "超过运行时限",
+  sessionClosed: "会话关闭",
+  outputLimit: "输出超过上限",
+};
+
+export function backgroundCommandTombstoneNotice(
+  tombstone: BackgroundCommandTombstone,
+): string {
+  return (
+    `该进程已由系统回收(原因:${SYSTEM_EXIT_REASON_LABELS[tombstone.reason]}),` +
+    "不是命令自身失败;不要据此推断命令背后的服务或登录态。"
+  );
 }
 
 /**

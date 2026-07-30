@@ -15,6 +15,7 @@ export {
   TODO_AWARENESS_REQUEST_CONTEXT_KEY,
   UPLOADS_BASE,
   abortAndCleanupTurn,
+  terminateSessionBackgroundCommands,
   activeSuspensionOwnedBy,
   advanceLastContentEditedAt,
   appendAskUserAnswerMessageIfMissing,

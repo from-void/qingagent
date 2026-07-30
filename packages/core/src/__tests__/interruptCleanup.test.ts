@@ -212,10 +212,68 @@ describe("abortAndCleanupTurn", () => {
 
     expect(frames.some((frame) => frame.kind === "chatMessageAdded")).toBe(false);
     expect(frames.some((frame) => frame.kind === "chatMessageAppended")).toBe(false);
-    expect(state.messages).toEqual([]);
+    if (withRunningCard) {
+      expect(state.messages).toEqual([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("上一轮被用户的新消息接替"),
+        }),
+      ]);
+      expect(String(state.messages[0]?.content)).toContain("结果未送达");
+      expect(String(state.messages[0]?.content)).toContain("不是工具或其背后服务失败");
+    } else {
+      expect(state.messages).toEqual([]);
+    }
     const oldMessage = state.chatHistory.find((message) => message.id === "old-agent-message");
     expect(oldMessage?.parts.some((part) => part.kind === "text")).toBe(false);
     expect(state._activeAgentMessageId).toBeNull();
+  });
+
+  it("新消息抢占保留已交付后台 owner 与原 PID，不调用会话止付", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("preempt-background-survives");
+    const terminateBackgroundCommands = vi.fn(async () => []);
+    setSingleToolCall(state, runningBackgroundCommand("background-owner", "4242"));
+    state._backgroundCommandOwnerByPid?.set("4242", "background-owner");
+
+    await collectFrames(abortAndCleanupTurn(state, {
+      emitStreamEnd: false,
+      reason: "preemptedByNewMessage",
+      terminateBackgroundCommands,
+    }));
+
+    expect(terminateBackgroundCommands).not.toHaveBeenCalled();
+    expect(findToolCallSpec(state, "background-owner")).toMatchObject({
+      status: { kind: "running" },
+      body: {
+        kind: "commandCard",
+        data: { pid: "4242", background: true },
+      },
+    });
+    expect(state._backgroundCommandOwnerByPid?.get("4242")).toBe("background-owner");
+  });
+
+  it("后台 spawn 已成功但结果未送达时，抢占注记给出原 PID 与轮询出口", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("preempt-background-result-undelivered");
+    const spec = runningCommand("background-spawn");
+    setSingleToolCall(state, spec);
+    state._activeAgentMessageId = "agent-msg";
+    state._backgroundCommandOwnerByPid?.set("5151", "background-spawn");
+
+    await collectFrames(abortAndCleanupTurn(state, {
+      emitStreamEnd: false,
+      reason: "preemptedByNewMessage",
+    }));
+
+    expect(findToolCallSpec(state, "background-spawn")?.status.kind).toBe("running");
+    expect(state.messages).toHaveLength(1);
+    const note = String(state.messages[0]?.content);
+    expect(note).toContain("mastra_workspace_execute_command");
+    expect(note).toContain("后台 PID:5151");
+    expect(note).toContain("进程仍在运行");
+    expect(note).toContain("可用原 PID 5151 继续轮询");
+    expect(note).toContain("不表示登录态失效");
   });
 
   it("aborts, waits for the active turn finally, terminalizes in-flight tools, and projects idle", async () => {
@@ -492,11 +550,15 @@ describe("abortAndCleanupTurn", () => {
     }));
   });
 
-  it("全局急停把后台 owner 与读取输出卡收成 aborted，不误报 killed", async () => {
+  it("全局急停调用会话止付并保留其后台 owner 权威终态", async () => {
     const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const { settleBackgroundCommand } = await import(
+      "../agent-run/backgroundCommandSettlement.js"
+    );
     const state = createSession("global-stop-background");
     state.streamId = "stream-global-stop";
     state._abortController = new AbortController();
+    state._backgroundCommandOwnerByPid?.set("7373", "background-owner");
     state.chatHistory = [{
       id: "agent-global-stop",
       role: { kind: "agent" },
@@ -518,18 +580,33 @@ describe("abortAndCleanupTurn", () => {
       ],
     }];
 
+    const terminateBackgroundCommands = vi.fn(async () => {
+      const settlement = settleBackgroundCommand(
+        state,
+        "7373",
+        { kind: "killed", signal: "用户停止" },
+      );
+      return settlement ? [settlement] : [];
+    });
+
     await collectFrames(abortAndCleanupTurn(state, {
       emitStreamEnd: false,
       reason: "globalStop",
+      terminateBackgroundCommands,
     }));
 
+    expect(terminateBackgroundCommands).toHaveBeenCalledWith(state, "userStop");
     const owner = findToolCallSpec(state, "background-owner");
-    expect(owner?.status).toEqual({ kind: "aborted" });
-    expect(owner?.body).toMatchObject({
-      kind: "commandCard",
-      data: { terminalKind: "aborted", pid: "7373" },
+    expect(owner).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "已终止（用户停止）" },
+      },
+      body: {
+        kind: "commandCard",
+        data: { terminalKind: "killed", pid: "7373" },
+      },
     });
-    expect(JSON.stringify(owner)).not.toContain("killed");
     expect(findToolCallSpec(state, "background-read")).toMatchObject({
       status: { kind: "aborted" },
       body: {

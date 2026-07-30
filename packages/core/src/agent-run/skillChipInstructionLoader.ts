@@ -8,6 +8,7 @@ import type {
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import { resolveTopLevelSkillId } from "../skills/skillIdResolver.js";
+import { injectExternalSkillPositioningNotice } from "../skills/externalSkillNotice.js";
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values));
@@ -95,7 +96,7 @@ export function createSkillChipInstructionLoader(
         ok: true,
         id: resolvedId,
         source: raw.source,
-        content: raw.content,
+        content: injectExternalSkillPositioningNotice(raw.source, raw.content),
       };
     } catch (error) {
       return {

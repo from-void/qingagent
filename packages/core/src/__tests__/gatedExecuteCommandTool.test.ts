@@ -12,6 +12,7 @@ import {
   type GatedCommandResult,
 } from "../workspace/gatedExecuteCommandTool.js";
 import { formatCommandDuration } from "../workspace/backgroundCommandLimits.js";
+import { FOREGROUND_TIMEOUT_LIMIT_SECONDS } from "../workspace/commandTimeoutPolicy.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import { RequestContext } from "@mastra/core/request-context";
 import { createSession } from "../session/sessionState.js";
@@ -82,6 +83,28 @@ function createToolHarness(
     simulateBackgroundTimeout?: boolean;
     backgroundWait?: Promise<void>;
     retainWorkspace?: () => () => void;
+    onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
+    onBackgroundExited?: (
+      pid: string,
+      result: {
+        success: boolean;
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        executionTimeMs: number;
+        timedOut?: boolean;
+        killed?: boolean;
+      },
+    ) => void;
+    backgroundResult?: {
+      success: boolean;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      executionTimeMs: number;
+      timedOut?: boolean;
+      killed?: boolean;
+    };
     firstListGate?: Promise<void>;
     spawnGate?: Promise<void>;
     killError?: Error;
@@ -164,7 +187,7 @@ function createToolHarness(
               waitCalls += 1;
               await options.backgroundWait;
               if (options.waitError) throw options.waitError;
-              return {
+              return options.backgroundResult ?? {
                 success: true,
                 exitCode: 0,
                 stdout: "",
@@ -182,6 +205,8 @@ function createToolHarness(
     state: options.state,
     getWorkspace: async () => workspace,
     retainWorkspace: options.retainWorkspace,
+    onBackgroundStarted: options.onBackgroundStarted,
+    onBackgroundExited: options.onBackgroundExited,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
   });
@@ -880,6 +905,10 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(result.output).toContain("Exit code: -1");
     expect(result.output).toContain("已被系统终止");
     expect(result.output).toContain("background:true");
+    expect(result.output).toContain(
+      `如需继续:可加大 timeoutSeconds(前台上限 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS} 秒)重试,` +
+        "或改 background:true 后台执行后轮询输出。",
+    );
   });
 
   it("Gap4 回归:前台 executeCommand 显式设置输出保留上限", async () => {
@@ -911,6 +940,37 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(result.output).toContain("最长运行: 10 秒");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
+    expect(spawnCalls[0]?.abortSignal).toBeUndefined();
+  });
+
+  it("后台进程成功交付后登记 owner，后续 turn abort 不再传入 spawn 杀进程", async () => {
+    const onBackgroundStarted = vi.fn();
+    const { tool, spawnCalls, killCallCount, runningProcessCount } = createToolHarness(
+      "gated-background-turn-decoupled",
+      { onBackgroundStarted },
+    );
+    const controller = new AbortController();
+
+    await expect(executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+    }, {
+      toolCallId: "background-owner",
+      messages: [],
+      abortSignal: controller.signal,
+      agent: { toolCallId: "background-owner" },
+    } as never)).resolves.toMatchObject({
+      success: true,
+      pid: "12345",
+      background: true,
+    });
+
+    expect(spawnCalls[0]?.abortSignal).toBeUndefined();
+    expect(onBackgroundStarted).toHaveBeenCalledWith("12345", "background-owner");
+    controller.abort("preemptedByNewMessage");
+    await Promise.resolve();
+    expect(killCallCount()).toBe(0);
+    expect(runningProcessCount()).toBe(1);
   });
 
   it("后台进程退出前持续持有 Workspace 租约", async () => {
@@ -934,6 +994,31 @@ describe("gated execute_command tool cwd 约束", () => {
 
     finishBackground();
     await vi.waitFor(() => expect(releaseWorkspace).toHaveBeenCalledTimes(1));
+  });
+
+  it("后台 TTL 的权威 wait 结果送入会话事实回调", async () => {
+    const onBackgroundExited = vi.fn();
+    const { tool } = createToolHarness("gated-background-timeout-fact", {
+      onBackgroundExited,
+      backgroundResult: {
+        success: false,
+        exitCode: 124,
+        stdout: "",
+        stderr: "",
+        executionTimeMs: 10_000,
+        timedOut: true,
+        killed: true,
+      },
+    });
+
+    await expect(executeToolResult(tool, {
+      command: allowedFileCommand,
+      background: true,
+    })).resolves.toMatchObject({ pid: "12345", background: true });
+    await vi.waitFor(() => expect(onBackgroundExited).toHaveBeenCalledWith(
+      "12345",
+      expect.objectContaining({ timedOut: true, exitCode: 124 }),
+    ));
   });
 
   it("P2-6 回归:无 timeout 后台 dev 命令不确认，静默套用并展示实际 TTL", async () => {

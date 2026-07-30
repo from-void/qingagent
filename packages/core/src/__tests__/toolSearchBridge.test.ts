@@ -4,6 +4,9 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   getActivatedSkillRegistrations,
 } from "../skills/writeInject.js";
+import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
+import { EXTERNAL_SKILL_POSITIONING_NOTICE } from "../skills/externalSkillNotice.js";
+import { join } from "node:path";
 
 const h = vi.hoisted(() => ({
   disabledSkills: new Set<string>(),
@@ -223,6 +226,52 @@ describe("ToolSearch bridge", () => {
       },
     });
     expect(getActivatedSkillRegistrations(disabledContext)).toEqual([]);
+  });
+
+  it("skill() 只给非 builtin 技能正文追加第三方定位声明", async () => {
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
+    const externalSkill = {
+      name: "external-cli",
+      description: "外部 CLI",
+      path: "/tmp/qingagent-external-cli",
+      instructions: "# 外部技能\n执行 external-cli",
+      source: "local",
+      references: [],
+      scripts: [],
+      assets: [],
+    };
+    const builtinSkill = {
+      ...externalSkill,
+      name: "review",
+      path: join(BUILTIN_SKILLS_DIR, "capability", "review"),
+      instructions: "# 文档审查",
+    };
+    const skills = {
+      maybeRefresh: vi.fn(async () => undefined),
+      get: vi.fn(async (name: string) =>
+        name === "external-cli"
+          ? externalSkill
+          : name === "review"
+            ? builtinSkill
+            : null
+      ),
+    };
+    const workspace = { skills };
+
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "external-cli" },
+      context: { workspace },
+    } as never)).resolves.toEqual({
+      proceed: false,
+      output: expect.stringContaining(EXTERNAL_SKILL_POSITIONING_NOTICE),
+    });
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "review" },
+      context: { workspace },
+    } as never)).resolves.toBeUndefined();
   });
 
   it("ToolSearch 工具签名变化时替换旧 processor,不保留关闭前 schema", async () => {

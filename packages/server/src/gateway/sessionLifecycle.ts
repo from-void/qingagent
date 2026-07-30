@@ -3,6 +3,7 @@ import {
   clearQuestionBranch,
   clearSessionSnapshot,
   invalidateSessionWorkspace,
+  terminateSessionBackgroundCommands,
   loadSessionFromThread,
   resolveSessionDocumentId,
   unregisterBrowserFolderSession,
@@ -205,6 +206,14 @@ export function forgetSession(sessionId: string): boolean {
   return deleted;
 }
 
+async function closeSessionRuntime(sessionId: string): Promise<void> {
+  const session = sessions.get(sessionId);
+  if (session) {
+    await terminateSessionBackgroundCommands(session, "sessionClosed");
+  }
+  forgetSession(sessionId);
+}
+
 // confirmRuntime 不得反向依赖本模块(依赖环);它取会话统一走这里注册的解析器。
 registerConfirmSessionResolver(getOrRestoreSession);
 
@@ -218,9 +227,7 @@ export const sessionManager = new SessionManager({
     }
     session._abortController?.abort(reason);
   },
-  cleanupSession: (sessionId) => {
-    forgetSession(sessionId);
-  },
+  cleanupSession: closeSessionRuntime,
   resolveSessionDocumentId: async (sessionId) =>
     sessions.get(sessionId)?.docId ?? resolveSessionDocumentId(sessionId),
   deletionStore: {
@@ -302,7 +309,7 @@ export async function disposeAllSessionsForShutdown(): Promise<void> {
 
   await sessionManager.disposeAll();
   for (const sessionId of [...sessions.keys()]) {
-    forgetSession(sessionId);
+    await closeSessionRuntime(sessionId);
   }
 
   // 等所有被 abort 的轮真正收尾完成(持久化落盘),再让进程退出。

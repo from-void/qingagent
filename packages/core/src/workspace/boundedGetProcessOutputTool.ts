@@ -10,6 +10,11 @@ import {
 import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import {
+  backgroundCommandTombstone,
+  backgroundCommandTombstoneNotice,
+} from "../session/backgroundCommand.js";
+import type { SessionState } from "../session/sessionState.js";
+import {
   credentialFailureNotice,
   diagnoseCredentialFailure,
 } from "../credentials/credentialFailureDiagnosis.js";
@@ -100,6 +105,7 @@ export const PROCESS_WAIT_MAX_MS = normalizeWaitMaxMs(
 
 export interface BoundedGetProcessOutputToolOptions {
   getWorkspace: () => Promise<Workspace>;
+  state?: SessionState;
   /** 仅供单测注入较短等待上限；生产使用 PROCESS_WAIT_MAX_MS。 */
   waitMaxMs?: number;
 }
@@ -213,6 +219,7 @@ async function safeCustom(
 
 export function createBoundedGetProcessOutputTool({
   getWorkspace,
+  state,
   waitMaxMs: configuredWaitMaxMs = PROCESS_WAIT_MAX_MS,
 }: BoundedGetProcessOutputToolOptions) {
   const waitMaxMs = normalizeWaitMaxMs(configuredWaitMaxMs);
@@ -242,6 +249,8 @@ Use this after starting a background command with execute_command (background: t
 
         const handle = await sandbox.processes.get(pid);
         if (!handle) {
+          const tombstone = state ? backgroundCommandTombstone(state, pid) : null;
+          if (tombstone) return backgroundCommandTombstoneNotice(tombstone);
           return `No background process found with PID ${pid}.`;
         }
 

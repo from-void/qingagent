@@ -1,6 +1,8 @@
 import type { CommandResult, Workspace } from "@mastra/core/workspace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
+import { recordBackgroundCommandTombstone } from "../session/backgroundCommand.js";
+import { createSession, type SessionState } from "../session/sessionState.js";
 
 interface WaitOptions {
   onStdout?: (data: string) => void | Promise<void>;
@@ -33,11 +35,16 @@ function workspaceWithHandle(handle: FakeProcessHandle | undefined): Workspace {
   } as unknown as Workspace;
 }
 
-function createHarness(handle: FakeProcessHandle | undefined, waitMaxMs = 20) {
+function createHarness(
+  handle: FakeProcessHandle | undefined,
+  waitMaxMs = 20,
+  state?: SessionState,
+) {
   const workspace = workspaceWithHandle(handle);
   const tool = createBoundedGetProcessOutputTool({
     getWorkspace: async () => workspace,
     waitMaxMs,
+    state,
   });
   return { tool, workspace };
 }
@@ -256,6 +263,23 @@ describe("bounded get_process_output", () => {
 
     await expect(executeTool(tool, { pid: "missing" }))
       .resolves.toBe("No background process found with PID missing.");
+  });
+
+  it.each([
+    ["userStop", "用户停止"],
+    ["runtimeLimit", "超过运行时限"],
+    ["sessionClosed", "会话关闭"],
+  ] as const)("pid 不存在但命中 %s 墓碑时返回系统真实死因", async (reason, label) => {
+    const state = createSession(`tombstone-${reason}`);
+    recordBackgroundCommandTombstone(state, "missing", reason, "2026-07-30T00:00:00.000Z");
+    const { tool } = createHarness(undefined, 20, state);
+
+    const output = await executeTool(tool, { pid: "missing" });
+
+    expect(output).toBe(
+      `该进程已由系统回收(原因:${label}),不是命令自身失败;` +
+        "不要据此推断命令背后的服务或登录态。",
+    );
   });
 
   it("无 wait 观察到已退出进程时也发送带 PID 的退出事件", async () => {

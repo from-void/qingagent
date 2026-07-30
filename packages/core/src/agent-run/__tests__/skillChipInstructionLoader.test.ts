@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BUILTIN_SKILLS_DIR } from "../../skills/paths.js";
+import { EXTERNAL_SKILL_POSITIONING_NOTICE } from "../../skills/externalSkillNotice.js";
 
 vi.mock("../../skills/enabledStore.js", () => ({
   readDisabledSet: vi.fn(async () => new Set<string>()),
@@ -57,6 +59,7 @@ describe("skill chip 母子技能加载", () => {
       source: join(parentDir, "SKILL.md"),
     });
     if (parent.ok) {
+      expect(parent.content).toContain(EXTERNAL_SKILL_POSITIONING_NOTICE);
       expect(parent.content).toContain("# 文档审查");
       expect(parent.content).toContain("`sensitive/SKILL.md`");
       expect(parent.content).not.toContain("# 敏感词审查");
@@ -73,5 +76,31 @@ describe("skill chip 母子技能加载", () => {
       source: join(parentDir, "SKILL.md"),
       content: expect.stringContaining("# 文档审查"),
     });
+  });
+
+  it("外部技能注入定位声明，builtin 技能正文保持原样", async () => {
+    const builtinDir = join(BUILTIN_SKILLS_DIR, "capability", "review");
+    const skills = {
+      get: vi.fn(async (id: string) =>
+        id === "review"
+          ? { name: "review", path: builtinDir }
+          : null
+      ),
+      has: vi.fn(async (id: string) => id === "review"),
+      list: vi.fn(async () => [
+        { name: "review", path: builtinDir, description: "文档审查" },
+      ]),
+    } as unknown as WorkspaceSkills;
+
+    const result = await createSkillChipInstructionLoader(skills)({
+      id: "review",
+      label: "文档审查",
+      index: 0,
+    });
+
+    expect(result).toMatchObject({ ok: true, source: join(builtinDir, "SKILL.md") });
+    if (result.ok) {
+      expect(result.content).not.toContain(EXTERNAL_SKILL_POSITIONING_NOTICE);
+    }
   });
 });

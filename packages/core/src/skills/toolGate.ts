@@ -1,6 +1,8 @@
 import { readDisabledSet } from "./enabledStore.js";
 import type { RequestContext } from "@mastra/core/request-context";
+import { formatSkillActivation, type Workspace } from "@mastra/core/workspace";
 import { activateSkill } from "./writeInject.js";
+import { injectExternalSkillPositioningNotice } from "./externalSkillNotice.js";
 
 export const SKILL_DISABLED_TOOL_RESULT_CODE = "SKILL_DISABLED";
 
@@ -162,7 +164,10 @@ export async function beforeSkillToolCall({
   toolName: string;
   input: unknown;
   context?: unknown;
-}): Promise<{ proceed: false; output: SkillDisabledToolResult } | undefined> {
+}): Promise<{
+  proceed: false;
+  output: SkillDisabledToolResult | string;
+} | undefined> {
   const disabledSkills = await readDisabledSet();
   const requestedSkillName =
     toolName === "skill" &&
@@ -185,18 +190,35 @@ export async function beforeSkillToolCall({
     };
   }
   if (requestedSkillName) {
-    const requestContext =
-      context &&
-      typeof context === "object" &&
-      "requestContext" in context
-        ? (context as { requestContext?: RequestContext }).requestContext
+    const executionContext =
+      context && typeof context === "object"
+        ? context as {
+            requestContext?: RequestContext;
+            workspace?: Workspace;
+          }
         : undefined;
+    const requestContext = executionContext?.requestContext;
     const userText = requestContext?.get("userText");
     activateSkill(
       requestContext,
       requestedSkillName,
       typeof userText === "string" ? userText : "",
     );
+    const skills = executionContext?.workspace?.skills;
+    if (skills) {
+      await skills.maybeRefresh();
+      const skill = await skills.get(requestedSkillName);
+      if (skill) {
+        const activation = formatSkillActivation(skill);
+        const content = injectExternalSkillPositioningNotice(
+          skill.path,
+          activation,
+        );
+        if (content !== activation) {
+          return { proceed: false, output: content };
+        }
+      }
+    }
   }
   return undefined;
 }

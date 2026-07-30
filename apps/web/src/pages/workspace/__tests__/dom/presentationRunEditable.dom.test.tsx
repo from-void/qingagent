@@ -343,6 +343,84 @@ describe("presentationRun editable unlock", () => {
     expect(visualButton.getAttribute("aria-busy")).toBe("false");
   });
 
+  it("终稿图表揭示自然完成前后入口都保持可用", async () => {
+    const baselineDoc = pmDocToViewDocumentSnapshot(diagramPmDoc(), 14, "自然揭示旧稿");
+    const doc = pmDocToViewDocumentSnapshot(
+      diagramPmDoc("自然揭示剩余正文".repeat(120)),
+      15,
+      "自然揭示终稿",
+    );
+    const initialRun: NativePresentationRun = {
+      id: 15,
+      docVersion: doc.version,
+      sessionId: "session-diagram-natural-finish",
+      mode: "whole",
+      finalDoc: doc.pmDoc,
+      baselineSections: baselineDoc.sections,
+      finalSections: doc.sections,
+    };
+    const onPresentationFinish = vi.fn();
+    const editorRef: { current: Editor | null } = { current: null };
+
+    function Harness() {
+      const [run, setRun] = useState<NativePresentationRun | null>(initialRun);
+      return createElement(DocumentSnapshotView, {
+        doc,
+        editable: true,
+        interactiveEditable: run === null,
+        canInterruptPresentationForEdit: run !== null,
+        showPatches: false,
+        acceptedPatches: new Set<string>(),
+        rejectedPatches: new Set<string>(),
+        onEditorReady: (editor) => {
+          editorRef.current = editor;
+        },
+        presentationRun: run,
+        presentationReducedMotion: false,
+        onPresentationFinish: () => {
+          onPresentationFinish();
+          setRun(null);
+        },
+      });
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    const activeVisualButton = await waitForSelector(
+      ".pm-diagram-view-actions .pm-diagram-view-btn",
+      container ?? document.body,
+    ) as HTMLButtonElement;
+
+    expect(container?.querySelector(".native-presentation-active")).not.toBeNull();
+    expect(editorRef.current?.isEditable).toBe(false);
+    expect(activeVisualButton.textContent?.trim()).toBe("可视化编辑");
+    expect(activeVisualButton.disabled).toBe(false);
+    expect(activeVisualButton.getAttribute("aria-busy")).toBe("false");
+
+    await drainAnimationFrames(() => onPresentationFinish.mock.calls.length > 0);
+    await flush(2);
+
+    const settledVisualButton = container?.querySelector<HTMLButtonElement>(
+      ".pm-diagram-view-actions .pm-diagram-view-btn",
+    );
+    expect(onPresentationFinish).toHaveBeenCalledTimes(1);
+    expect(container?.querySelector(".native-presentation-active")).toBeNull();
+    expect(editorRef.current?.isEditable).toBe(true);
+    expect(settledVisualButton?.textContent?.trim()).toBe("可视化编辑");
+    expect(settledVisualButton?.disabled).toBe(false);
+    expect(settledVisualButton?.getAttribute("aria-busy")).toBe("false");
+
+    await act(async () => {
+      settledVisualButton?.click();
+    });
+    await drainAnimationFramesAllowingGaps(
+      () => Boolean(document.body.querySelector(".graph-diagram-editor")),
+    );
+
+    expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
+  });
+
   it("agent/stream 等真实编辑锁存在时，揭示中的图表操作区仍不挂载", async () => {
     const doc = pmDocToViewDocumentSnapshot(diagramPmDoc("仍在生成"), 13, "忙碌图表");
     const run = presentationRunFor(doc);

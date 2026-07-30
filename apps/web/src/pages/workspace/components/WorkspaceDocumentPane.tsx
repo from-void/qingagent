@@ -180,6 +180,8 @@ export function WorkspaceDocumentPane({
   const handleMainEditorReady = useWorkspaceEditorSelection(
     state.sessionId,
     setTiptapEditor,
+    controller.hydration.sessionId === state.sessionId &&
+      controller.hydration.phase === "ready",
   );
 
   useEffect(() => {

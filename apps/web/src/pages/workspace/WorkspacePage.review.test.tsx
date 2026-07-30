@@ -6125,9 +6125,14 @@ function mockPendingCommit(stream: MockServerStreamInstance): {
 }
 
 async function render(element: ReactNode): Promise<void> {
-  const [{ ConfirmProvider }, { ToastProvider }] = await Promise.all([
+  const [
+    { ConfirmProvider },
+    { ToastProvider },
+    { WorkspaceEditorSelectionProvider },
+  ] = await Promise.all([
     import("../../system/ConfirmProvider"),
     import("../../system/ToastProvider"),
+    import("../../system/WorkspaceEditorSelectionCache"),
   ]);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -6135,7 +6140,11 @@ async function render(element: ReactNode): Promise<void> {
   await act(async () => {
     root?.render(
       <ToastProvider>
-        <ConfirmProvider>{element}</ConfirmProvider>
+        <ConfirmProvider>
+          <WorkspaceEditorSelectionProvider>
+            {element}
+          </WorkspaceEditorSelectionProvider>
+        </ConfirmProvider>
       </ToastProvider>,
     );
   });

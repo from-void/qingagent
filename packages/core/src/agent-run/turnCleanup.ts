@@ -163,6 +163,7 @@ interface InterruptedToolFact {
 function interruptedToolFacts(
   state: SessionState,
   activeAgentMessageId: string | null,
+  excludedToolCallIds: ReadonlySet<string>,
 ): InterruptedToolFact[] {
   if (!activeAgentMessageId) return [];
   const message = state.chatHistory.find((item) => item.id === activeAgentMessageId);
@@ -174,6 +175,7 @@ function interruptedToolFacts(
   return message.parts.flatMap((part) => {
     if (
       part.kind !== "toolCall" ||
+      excludedToolCallIds.has(part.data.id) ||
       (part.data.status.kind !== "pending" && part.data.status.kind !== "running") ||
       isPersistentBackgroundCommand(part.data)
     ) {
@@ -380,7 +382,15 @@ export async function* abortAndCleanupTurn(
   }
 
   if (reason === "preemptedByNewMessage") {
-    const facts = interruptedToolFacts(state, interruptedAgentMessageId);
+    // 待确认调用有专门的确认取消事实注记，且命令尚未执行，不能重复标成“工具结果未送达”。
+    const confirmedToolCallIds = new Set(
+      pendingConfirms.map((pending) => pending.toolCallId),
+    );
+    const facts = interruptedToolFacts(
+      state,
+      interruptedAgentMessageId,
+      confirmedToolCallIds,
+    );
     if (facts.length > 0) {
       state.messages.push({
         role: "system",

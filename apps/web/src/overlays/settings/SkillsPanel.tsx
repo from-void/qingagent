@@ -507,12 +507,36 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     );
   }
 
+  const skillGroups = [
+    { title: "我的技能", skills: skills.filter((skill) => skill.source === "installed") },
+    { title: "内置技能", skills: skills.filter((skill) => skill.source === "builtin") },
+    {
+      title: "共享技能",
+      skills: skills.filter((skill) => skill.source.startsWith("external-")),
+    },
+  ].filter((group) => group.skills.length > 0);
+  const showGroupTitles = skillGroups.length > 1;
+
   return (
     <div className="settings-skills" data-wf="SkillsPanel">
-      <p className="sm-note" style={{ marginTop: 0 }}>
-        停用后模型不再使用该技能；点击卡片查看详情。
-        {canMutate ? "可导入 .zip 技能包或 .md 文件。" : "技能的导入与删除仅在桌面客户端开放。"}
-      </p>
+      <div className="sk-list-header">
+        <p className="sm-note">
+          模型可借助以下技能完成更复杂的任务。
+          {!canMutate && "技能的导入与删除仅在桌面客户端开放。"}
+        </p>
+        {canMutate && (
+          <button
+            type="button"
+            className="sk-import-btn"
+            data-wf="SkillImportButton"
+            title="支持 .zip 技能包或单个 .md 文件"
+            disabled={busy === "__import__"}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {busy === "__import__" ? "导入中…" : "导入技能"}
+          </button>
+        )}
+      </div>
 
       {showListLoading && <p className="sm-empty">加载中…</p>}
       {error && <p className="sm-message">{error}</p>}
@@ -528,73 +552,49 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
         />
       )}
 
-      <div className="sk-grid">
-        {skills.map((s) => (
-          <div
-            key={s.name}
-            className={`sk-card${s.enabled ? "" : " sk-off"}`}
-            data-wf="SkillEntry"
-            role="button"
-            tabIndex={0}
-            onClick={() => openSkill(s)}
-            onKeyDown={(e) => openSkillByKey(e, s)}
-            onContextMenu={(e) => openMenu(e, s)}
-          >
-            <div className="sk-card-head">
-              <SkIcon icon={s.icon} />
-              <span className="sk-card-title">{s.label}</span>
-              {s.source.startsWith("external-") && (
-                <span className="sk-card-tag">{sourceLabel(s.source)}</span>
-              )}
-              <button
-                type="button"
-                className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
-                disabled={busy === s.name}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void toggle(s.name, !s.enabled);
-                }}
-                aria-pressed={s.enabled}
-                title={s.enabled ? "停用" : "启用"}
-              >
-                <span className="sk-toggle-dot" aria-hidden="true" />
-                {s.enabled ? "已启用" : "已停用"}
-              </button>
+      <div className="sk-groups">
+        {skillGroups.map((group) => (
+          <section className="sk-group" key={group.title}>
+            {showGroupTitles && <h3 className="sk-group-title">{group.title}</h3>}
+            <div className="sk-grid">
+              {group.skills.map((s) => (
+                <div
+                  key={s.name}
+                  className={`sk-card${s.enabled ? "" : " sk-off"}`}
+                  data-wf="SkillEntry"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openSkill(s)}
+                  onKeyDown={(e) => openSkillByKey(e, s)}
+                  onContextMenu={(e) => openMenu(e, s)}
+                >
+                  <div className="sk-card-head">
+                    <SkIcon icon={s.icon} />
+                    <span className="sk-card-title" title={s.label}>{s.label}</span>
+                    <button
+                      type="button"
+                      className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
+                      disabled={busy === s.name}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void toggle(s.name, !s.enabled);
+                      }}
+                      aria-pressed={s.enabled}
+                      title={s.enabled
+                        ? "停用后模型将不再使用该技能"
+                        : "启用后模型可使用该技能"}
+                    >
+                      <span className="sk-toggle-dot" aria-hidden="true" />
+                      {s.enabled ? "已启用" : "已停用"}
+                    </button>
+                  </div>
+                  {/* 简介最多两行;子技能数量只在详情页展示,列表卡保持等高、保持轻。 */}
+                  <p className="sk-card-summary">{s.summary}</p>
+                </div>
+              ))}
             </div>
-            {/* 简介最多两行;子技能数量只在详情页展示,列表卡保持等高、保持轻。 */}
-            <p className="sk-card-summary">{s.summary}</p>
-          </div>
+          </section>
         ))}
-
-        {canMutate && (
-          <button
-            type="button"
-            className="sk-card sk-card--import"
-            data-wf="SkillImportCard"
-            disabled={busy === "__import__"}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <div className="sk-card-head">
-              <svg
-                className="sk-card-icon"
-                viewBox="0 0 20 20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M10 3v9m0 0 3.2-3.2M10 12 6.8 8.8" />
-                <path d="M3.6 13.4v1.6c0 .8.6 1.4 1.4 1.4h10c.8 0 1.4-.6 1.4-1.4v-1.6" />
-              </svg>
-              <span className="sk-card-title">{busy === "__import__" ? "导入中…" : "导入技能"}</span>
-            </div>
-            <p className="sk-card-desc">
-              从本地选择 .zip 技能包或单个 .md 文件；声明 user-invocable 的技能导入即出现在输入框菜单。
-            </p>
-          </button>
-        )}
       </div>
 
       {menu &&

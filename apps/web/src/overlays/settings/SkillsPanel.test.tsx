@@ -132,20 +132,20 @@ describe("SkillsPanel 导入门控", () => {
   it("mutationEnabled=false 时不渲染导入入口与文件选择器", async () => {
     h.caps = { skills: { mutationEnabled: false } };
     await render();
-    expect(q('[data-wf="SkillImportCard"]')).toBeNull();
+    expect(q('[data-wf="SkillImportButton"]')).toBeNull();
     expect(q('[data-wf="SkillImportInput"]')).toBeNull();
   });
 
   it("capabilities 未就绪(null)时同样不渲染导入入口", async () => {
     h.caps = null;
     await render();
-    expect(q('[data-wf="SkillImportCard"]')).toBeNull();
+    expect(q('[data-wf="SkillImportButton"]')).toBeNull();
   });
 
   it("mutationEnabled=true 时渲染导入入口与文件选择器", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     await render();
-    expect(q('[data-wf="SkillImportCard"]')).not.toBeNull();
+    expect(q('[data-wf="SkillImportButton"]')).not.toBeNull();
     expect(q('[data-wf="SkillImportInput"]')).not.toBeNull();
   });
 
@@ -220,23 +220,26 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.textContent).toContain("研资料");
   });
 
-  it("列表态只渲染技能网格和末尾导入卡，卡片使用 API 下发短名与 summary", async () => {
+  it("列表态在顶部渲染导入按钮，卡片使用 API 下发短名与 summary", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = sampleSkills();
     await render();
 
-    expect(host?.textContent).toContain("停用后模型不再使用该技能；点击卡片查看详情。");
+    expect(host?.textContent).toContain("模型可借助以下技能完成更复杂的任务。");
+    expect(host?.textContent).not.toContain("点击卡片查看详情");
     expect(host?.textContent).toContain("联网搜");
     expect(host?.textContent).toContain("搜资料、核事实、找出处");
     expect(host?.textContent).toContain("读资料");
     expect(host?.textContent).not.toContain("配置搜索引擎");
     expect(host?.querySelector(".sk-card--span")).toBeNull();
 
-    const cards = Array.from(host?.querySelectorAll<HTMLElement>(".sk-grid > .sk-card") ?? []);
-    expect(cards.at(-1)?.dataset.wf).toBe("SkillImportCard");
+    expect(q('[data-wf="SkillImportButton"]')?.getAttribute("title"))
+      .toBe("支持 .zip 技能包或单个 .md 文件");
+    expect(host?.querySelector(".sk-card--import")).toBeNull();
+    expect(host?.querySelector(".sk-group-title")).toBeNull();
   });
 
-  it("外部技能显示轻量来源徽标，且不开放删除菜单", async () => {
+  it("外部技能列表不显示来源徽标，且不开放删除菜单", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [{
       name: "claude-directory-skill",
@@ -251,12 +254,46 @@ describe("SkillsPanel 导入门控", () => {
     }];
     await render();
 
-    expect(host?.textContent).toContain("来自 Claude 目录");
+    expect(host?.textContent).not.toContain("来自 Claude 目录");
+    expect(q('[data-wf="SkillEntry"] .sk-card-tag')).toBeNull();
     const card = q('[data-wf="SkillEntry"]');
     await act(async () => {
       card?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
     });
     expect(document.body.querySelector(".sk-ctxmenu")).toBeNull();
+  });
+
+  it("按我的、内置、共享分组并保持组内顺序", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      { ...sampleSkills()[0]!, name: "builtin-a", label: "内置 A" },
+      { ...sampleSkills()[0]!, name: "external-a", label: "共享 A", source: "external-codex" },
+      { ...sampleSkills()[0]!, name: "installed-a", label: "我的 A", source: "installed" },
+      { ...sampleSkills()[0]!, name: "builtin-b", label: "内置 B" },
+      { ...sampleSkills()[0]!, name: "external-b", label: "共享 B", source: "external-claude" },
+    ];
+    await render();
+
+    const groups = Array.from(host?.querySelectorAll<HTMLElement>(".sk-group") ?? []);
+    expect(groups.map((group) => group.querySelector(".sk-group-title")?.textContent))
+      .toEqual(["我的技能", "内置技能", "共享技能"]);
+    expect(Array.from(groups[0]?.querySelectorAll(".sk-card-title") ?? []).map((node) => node.textContent))
+      .toEqual(["我的 A"]);
+    expect(Array.from(groups[1]?.querySelectorAll(".sk-card-title") ?? []).map((node) => node.textContent))
+      .toEqual(["内置 A", "内置 B"]);
+    expect(Array.from(groups[2]?.querySelectorAll(".sk-card-title") ?? []).map((node) => node.textContent))
+      .toEqual(["共享 A", "共享 B"]);
+  });
+
+  it("技能标题保留全名 tooltip，启停按钮说明行为结果", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = sampleSkills();
+    await render();
+
+    expect(q(".sk-card-title")?.getAttribute("title")).toBe("联网搜");
+    const toggles = Array.from(host?.querySelectorAll<HTMLButtonElement>(".sk-toggle") ?? []);
+    expect(toggles[0]?.title).toBe("停用后模型将不再使用该技能");
+    expect(toggles[1]?.title).toBe("启用后模型可使用该技能");
   });
 
   it("点击卡片进入详情页，显示工具、配置区和去 frontmatter 的 SKILL.md 正文", async () => {

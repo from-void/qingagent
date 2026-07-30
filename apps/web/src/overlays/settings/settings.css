@@ -240,11 +240,16 @@
 .qj-appear .qj-swatch::before{display:none}
 
 /* —— 技能 tab:卡片网格 —— */
+.qj-sheet-body .sk-list-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px;padding-right:6px}
+.qj-sheet-body .sk-list-header .sm-note{margin:0}
+.qj-sheet-body .sk-import-btn{flex:0 0 auto;height:28px;padding:0 13px;border-radius:0;cursor:pointer;border:1px solid var(--qj-switch-border);background:transparent;color:var(--qj-ink);font:700 12px/1 var(--font-zh-serif)}
+.qj-sheet-body .sk-import-btn:hover:not(:disabled),.qj-sheet-body .sk-import-btn:focus-visible{outline:none;background:var(--qj-switch-active-bg);border-color:var(--qj-cinnabar)}
+.qj-sheet-body .sk-import-btn:disabled{opacity:.5;cursor:default}
+.qj-sheet-body .sk-groups{display:flex;flex-direction:column;gap:18px}
+.qj-sheet-body .sk-group{min-width:0}
+.qj-sheet-body .sk-group-title{margin:0 0 7px;font-family:var(--font-zh-serif);font-size:11.5px;font-weight:700;letter-spacing:.06em;color:var(--qj-header-sub)}
 .qj-sheet-body .sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:2px 6px 0 0;align-items:stretch}
 .qj-sheet-body .sk-card{
-  /* 导入卡是 <button>:不写 font 就吃 UA 默认无衬线字体,标题/正文整块跳出全应用宋体
-     (用户亲测点名)。与 .sk-child-item 同法用 font:inherit 承接面板宋体。 */
-  font:inherit;
   display:flex;flex-direction:column;gap:7px;min-width:0;text-align:left;
   padding:11px 13px;border-radius:0;
   border:1px solid var(--qj-switch-border);
@@ -254,17 +259,12 @@
 }
 /* 旧配置卡类留给 UIKit/历史展示;生产技能列表不再渲染特殊配置卡 */
 .qj-sheet-body .sk-card--span{grid-column:1 / -1}
-.qj-sheet-body .sk-card:not(.sk-card--import):hover{border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg)}
+.qj-sheet-body .sk-card:hover{border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg)}
 .qj-sheet-body .sk-card.sk-off{opacity:.58}
-/* 导入技能:独占整行的虚线按钮卡,点击打开本地文件选择器 */
-.qj-sheet-body .sk-card--import{grid-column:1 / -1;cursor:pointer;border-style:dashed;background:rgba(236,227,208,.03);transition:border-color .18s,background .18s}
-.qj-sheet-body .sk-card--import:hover:not(:disabled){border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg)}
-.qj-sheet-body .sk-card--import:disabled{opacity:.55;cursor:default}
-.qj-sheet-body .sk-card--import .sk-card-icon{color:var(--qj-cinnabar)}
 /* 头部:标题在左,开关在右上 */
 .qj-sheet-body .sk-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .qj-sheet-body .sk-card-icon{flex:0 0 auto;width:18px;height:18px;color:var(--qj-cinnabar)}
-.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13.5px;font-weight:700;color:var(--qj-ink);line-height:1.2}
+.qj-sheet-body .sk-card-title{flex:1 1 auto;min-width:0;font-family:var(--font-zh-serif);font-size:13.5px;font-weight:700;color:var(--qj-ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .qj-sheet-body .sk-card-tag{font-size:9.5px;font-style:normal;color:var(--qj-header-sub);border:1px solid var(--qj-switch-border);border-radius:0;padding:1px 5px;white-space:nowrap}
 /* 一句话简介:列表态压成单行 */
 /* 简介比标题小一档,最多两行;配合删掉子技能徽标,列表卡自然等高 */

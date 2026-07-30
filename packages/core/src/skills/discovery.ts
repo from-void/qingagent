@@ -371,6 +371,11 @@ function fallbackLabel(name: string): string {
 }
 
 function fallbackSummary(description: string): string {
-  const first = description.match(/^[^，。：——\n]+/)?.[0]?.trim() || description.trim();
-  return first.length > 14 ? first.slice(0, 14) : first;
+  const firstSegment = description.match(/^[^，。：——\n]+/)?.[0]?.trim() || description.trim();
+  const first = firstSegment.match(/^.*?(?=\.(?:\s|$)|$)/)?.[0]?.trim() || firstSegment;
+  if (first.length <= 40) return first;
+  const candidate = first.slice(0, 40);
+  const lastSpace = candidate.lastIndexOf(" ");
+  const truncated = lastSpace > 0 ? candidate.slice(0, lastSpace) : candidate;
+  return `${truncated.trimEnd()}…`;
 }

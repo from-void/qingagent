@@ -10,6 +10,11 @@ export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
   return legacySectionsToPm(doc.sections.map(viewSectionToLegacy) as never);
 }
 
+/** 标识同一 Editor 实例当前应承载的 canonical 正文，供异步 setContent 完成通知配对。 */
+export function viewDocumentSyncRevision(doc: ViewDocumentSnapshot): string {
+  return JSON.stringify(doc.pmDoc ?? doc.sections);
+}
+
 export function hasMissingPresentationBlockId(doc: unknown): boolean {
   let missing = false;
   const visit = (node: unknown) => {

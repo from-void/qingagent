@@ -100,6 +100,7 @@ interface RightPaneProps {
   onCancelAskUser: (toolCall: ToolCallSpec) => void;
   onCloseViewingVersion: () => void;
   onEditorReady: (editor: Editor | null) => void;
+  onEditorContentReady?: (editor: Editor, revision: string) => void;
   onEditorChange: EditorDocChange;
   onPresentationFinish: () => void;
   onPresentationCancel: () => void;
@@ -190,6 +191,7 @@ export function RightPane({
   onCancelAskUser,
   onCloseViewingVersion,
   onEditorReady,
+  onEditorContentReady,
   onEditorChange,
   onPresentationFinish,
   onPresentationCancel,
@@ -290,6 +292,7 @@ export function RightPane({
             patchMeta={patchMeta}
             activePatchId={activePatchId}
             onEditorReady={onEditorReady}
+            onEditorContentReady={onEditorContentReady}
             onEditorChange={onEditorChange}
             onToast={onToast}
             presentationRun={presentationRun}
@@ -320,6 +323,7 @@ export function RightPane({
           patchMeta={patchMeta}
           activePatchId={activePatchId}
           onEditorReady={onEditorReady}
+          onEditorContentReady={onEditorContentReady}
         />
       </>
     );
@@ -412,6 +416,7 @@ export function RightPane({
             patchMeta={patchMeta}
             activePatchId={null}
             onEditorReady={onEditorReady}
+            onEditorContentReady={onEditorContentReady}
           />
         </div>
       </>
@@ -477,6 +482,7 @@ export function RightPane({
         reviewTargets={reviewTargets}
         activeReviewTargetId={activeReviewTargetId}
         onEditorReady={onEditorReady}
+        onEditorContentReady={onEditorContentReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
         onAiModify={onAiModify}

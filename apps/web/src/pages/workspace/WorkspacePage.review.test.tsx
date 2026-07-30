@@ -761,6 +761,53 @@ describe("WorkspacePage review controls", () => {
     expect(stream.dispose).toHaveBeenCalledTimes(1);
   }, 60_000);
 
+  it("恢复帧残留 empty 但正文已到达时挂载编辑器，并保留审查/导出入口", async () => {
+    window.location.hash = "#/workspace?session=s-empty-projection";
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    await emitFrames(stream, [
+      {
+        kind: "sessionMeta",
+        data: {
+          sessionId: "s-empty-projection",
+          title: "恢复态文档",
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "empty" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("restored-body", "恢复后的可见正文")]),
+            7,
+          ),
+        },
+      },
+      {
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "s-empty-projection" },
+      },
+    ]);
+    await flushMicrotasks(8);
+
+    expect(host?.querySelector(".ProseMirror.wf-doc")).not.toBeNull();
+    expect(
+      host?.querySelector<HTMLButtonElement>('.ws-docfns button[title="审查"]'),
+    ).not.toBeNull();
+    expect(
+      host?.querySelector<HTMLButtonElement>('.ws-docfns button[title="导出"]'),
+    ).not.toBeNull();
+  }, 60_000);
+
   it("卸载工作区会等待 deferred 文档 flush，StrictMode 演练不重复 flush", async () => {
     let resolveFlush!: () => void;
     const deferredFlush = new Promise<void>((resolve) => {

@@ -139,7 +139,12 @@ export {
 } from "./doc/structureNodes";
 import { pickFile } from "./doc/pickFile";
 export { pickFile } from "./doc/pickFile";
-import { hasMissingPresentationBlockId, viewDocToPm, viewSectionsToHtml } from "../data/viewDocHtml";
+import {
+  hasMissingPresentationBlockId,
+  viewDocumentSyncRevision,
+  viewDocToPm,
+  viewSectionsToHtml,
+} from "../data/viewDocHtml";
 import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
@@ -264,6 +269,7 @@ export interface DocumentSnapshotViewProps {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady?: (editor: Editor | null) => void;
+  onEditorContentReady?: (editor: Editor, revision: string) => void;
   onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
@@ -301,6 +307,7 @@ export const DocumentSnapshotView = forwardRef<
     reviewTargets,
     activeReviewTargetId,
     onEditorReady,
+    onEditorContentReady,
     onEditorChange,
     onToast,
     onAiModify,
@@ -386,6 +393,7 @@ export const DocumentSnapshotView = forwardRef<
         reviewTargets={reviewTargets}
         activeReviewTargetId={activeReviewTargetId}
         onEditorReady={handleEditorReady}
+        onEditorContentReady={onEditorContentReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
         onAiModify={onAiModify}
@@ -464,6 +472,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   activeReviewTargetId?: string | null;
   onEditorReady: (editor: Editor | null) => void;
+  onEditorContentReady?: (editor: Editor, revision: string) => void;
   onEditorChange?: EditorDocChange;
   onToast?: (message: string) => void;
   onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
@@ -496,6 +505,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     reviewTargets,
     activeReviewTargetId,
     onEditorReady,
+    onEditorContentReady,
     onEditorChange,
     onToast,
     onAiModify,
@@ -871,9 +881,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     pasteImageEditorRef.current = editor ?? null;
     if (editor) {
       onEditorReady(editor);
+      onEditorContentReady?.(editor, lastSyncedDocRevisionRef.current);
       return () => onEditorReady(null);
     }
-  }, [editor, onEditorReady]);
+  }, [editor, onEditorContentReady, onEditorReady]);
 
   useReviewPatchDecorations({
     editor,
@@ -1115,6 +1126,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
               }
             }
           }
+          // 只有真实正文已同步（或确认本来就是同一正文）后才放行跨实例选区恢复。
+          // hydration 的 ready 可能早于本 microtask，不能拿它替代这条内容落地信号。
+          onEditorContentReady?.(editor, scheduledRevision);
         } catch (err) {
           console.error("[doc] setContent 装载失败,保留上一版可见内容", {
             version: scheduledVersion,
@@ -1132,6 +1146,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     docRevision,
     editor,
     finishApplyingRemoteSoon,
+    onEditorContentReady,
     onToast,
     presentationRun?.docVersion,
   ]);
@@ -1281,6 +1296,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       clearTimers();
       setNativePresentationDecorations(editor, []);
       setContentSilently(finalContent ?? finalHtml);
+      if (!editor.isDestroyed) {
+        lastSyncedDocRevisionRef.current = docRevision;
+        onEditorContentReady?.(editor, docRevision);
+      }
       const releasePresentation = () => {
         isPresentationApplyingRef.current = false;
         activePresentationRef.current = null;
@@ -1368,10 +1387,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       }
     };
   }, [
-    doc.version,
     beginApplyingRemote,
+    doc.version,
+    docRevision,
     editor,
     finishApplyingRemoteSoon,
+    onEditorContentReady,
     onPresentationCancel,
     onPresentationFinish,
     presentationReducedMotion,
@@ -1389,6 +1410,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     // presentationRun 在本 effect 已 early-return 守护,microtask 在下一次 render 前执行,期间不会切到揭示态。
     const targetDoc = doc.pmDoc;
     const targetVersion = doc.version;
+    const targetRevision = docRevision;
     scheduleMicrotask(() => {
       if (!editor || editor.isDestroyed) return;
       // 延后期间状态可能变化(揭示动画起播/外部 setContent 已修好 blockId):microtask 内
@@ -1399,7 +1421,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         setRemoteEditorContent(editor, targetDoc);
         lastVersionRef.current = targetVersion;
-        lastSyncedDocRevisionRef.current = viewDocumentSyncRevision(doc);
+        lastSyncedDocRevisionRef.current = targetRevision;
+        onEditorContentReady?.(editor, targetRevision);
       } finally {
         finishApplyingRemoteSoon();
       }
@@ -1408,8 +1431,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     beginApplyingRemote,
     doc.pmDoc,
     doc.version,
+    docRevision,
     editor,
     finishApplyingRemoteSoon,
+    onEditorContentReady,
     presentationRun,
   ]);
 
@@ -1717,8 +1742,4 @@ function scheduleMicrotask(callback: () => void): void {
     return;
   }
   setTimeout(callback, 0);
-}
-
-function viewDocumentSyncRevision(doc: ViewDocumentSnapshot): string {
-  return JSON.stringify(doc.pmDoc ?? doc.sections);
 }

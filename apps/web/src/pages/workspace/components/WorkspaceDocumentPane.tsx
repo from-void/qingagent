@@ -1,5 +1,5 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
@@ -31,6 +31,7 @@ import {
 } from "../data/revisionedMutation";
 import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
 import { isCurrentSessionTitleRename } from "../data/sessionTitleRename";
+import { viewDocumentSyncRevision } from "../data/viewDocHtml";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import { useWorkspaceEditorSelection } from "../hooks/useWorkspaceEditorSelection";
 import type { DerivativeItem } from "./derivatives/types";
@@ -177,11 +178,21 @@ export function WorkspaceDocumentPane({
   const sourceMaterialAvailable = materialParseRows.some(
     (row) => row.state === "ready",
   );
-  const handleMainEditorReady = useWorkspaceEditorSelection(
+  // 该缓存只跟踪主稿；衍生稿由 DerivativeView 独立承载，故主稿以 sessionId
+  // 作为稳定作用域即可，不会与同会话下的衍生稿互相覆盖。
+  const mainSelectionRevision = useMemo(
+    () => state.doc ? viewDocumentSyncRevision(state.doc) : null,
+    [state.doc],
+  );
+  const {
+    handleEditorReady: handleMainEditorReady,
+    handleEditorContentReady: handleMainEditorContentReady,
+  } = useWorkspaceEditorSelection(
     state.sessionId,
     setTiptapEditor,
     controller.hydration.sessionId === state.sessionId &&
       controller.hydration.phase === "ready",
+    mainSelectionRevision,
   );
 
   useEffect(() => {
@@ -551,6 +562,7 @@ export function WorkspaceDocumentPane({
             onCancelAskUser={handleCancelAskUser}
             onCloseViewingVersion={closeViewingVersion}
             onEditorReady={handleMainEditorReady}
+            onEditorContentReady={handleMainEditorContentReady}
             onEditorChange={handleEditorChange}
             onPresentationFinish={clearPresentationRun}
             onPresentationCancel={clearPresentationRun}

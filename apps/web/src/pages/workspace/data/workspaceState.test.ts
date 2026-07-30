@@ -710,6 +710,22 @@ describe("annotationGroupsReady 来源增量", () => {
         { kind: "text", text: "Body." },
       ]);
     });
+
+    it("恢复正文到达时把残留 empty 收敛为 editing", () => {
+      const next = workspaceReducer(initialWorkspaceState, {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: legacyWireSnapshot({
+            version: 14,
+            ts: "2026-07-30T00:00:00Z",
+            sections: [{ kind: "p", data: { text: "已恢复正文" } }],
+          }),
+        },
+      });
+
+      expect(next.docState).toEqual({ kind: "editing" });
+      expect(next.doc?.version).toBe(14);
+    });
   });
 
   describe("docGenerationEvent", () => {

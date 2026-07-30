@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../data/protocol";
+import { viewDocumentSyncRevision } from "../data/viewDocHtml";
 import { DocumentSnapshotView } from "../components/DocumentSnapshotView";
 import { WorkspaceEditorSelectionProvider } from "../../../system/WorkspaceEditorSelectionCache";
 import { useWorkspaceEditorSelection } from "./useWorkspaceEditorSelection";
@@ -57,17 +58,23 @@ function SelectionHarness({
   onEditorReady,
   restoreReady = true,
   doc = documentSnapshot,
+  selectionRevision = viewDocumentSyncRevision(doc),
 }: {
   activeTab: "main" | "derivative";
   documentId: string;
   onEditorReady: (editor: Editor | null) => void;
   restoreReady?: boolean;
   doc?: typeof documentSnapshot;
+  selectionRevision?: string;
 }) {
-  const handleEditorReady = useWorkspaceEditorSelection(
+  const {
+    handleEditorReady,
+    handleEditorContentReady,
+  } = useWorkspaceEditorSelection(
     documentId,
     onEditorReady,
     restoreReady,
+    selectionRevision,
   );
   return (
     <>
@@ -81,6 +88,7 @@ function SelectionHarness({
           acceptedPatches={new Set()}
           rejectedPatches={new Set()}
           onEditorReady={handleEditorReady}
+          onEditorContentReady={handleEditorContentReady}
         />
       ) : (
         <article data-testid="derivative-document">另一篇文档</article>
@@ -235,6 +243,47 @@ describe("useWorkspaceEditorSelection", () => {
     );
   });
 
+  it("非空选区缓存不会被随后到达的折叠 selectionUpdate 覆盖", async () => {
+    let editor: Editor | null = null;
+    const handleEditorReady = (nextEditor: Editor | null) => {
+      editor = nextEditor;
+    };
+    const render = (activeTab: "main" | "derivative") => {
+      act(() => {
+        root.render(
+          <WorkspaceEditorSelectionProvider>
+            <SelectionHarness
+              activeTab={activeTab}
+              documentId="collapsed-update-document"
+              onEditorReady={handleEditorReady}
+            />
+          </WorkspaceEditorSelectionProvider>,
+        );
+      });
+    };
+
+    render("main");
+    await flush();
+    const firstEditor = requireEditor(editor);
+    act(() => {
+      firstEditor.commands.setTextSelection({ from: 2, to: 6 });
+      // 模拟选中文字后由失焦/DOM 同步补发的一次折叠 selectionUpdate。
+      firstEditor.commands.setTextSelection(1);
+    });
+    expect(firstEditor.state.selection.empty).toBe(true);
+
+    render("derivative");
+    await flush();
+    render("main");
+    await flush();
+
+    const remountedEditor = requireEditor(editor);
+    act(() => {
+      remountedEditor.view.focus();
+    });
+    expect(window.getSelection()?.toString()).toBe("乙丙丁戊");
+  });
+
   it("A → B 不串选区，返回 A 后恢复 A 的原选区", async () => {
     let editor: Editor | null = null;
     const handleEditorReady = (nextEditor: Editor | null) => {
@@ -360,7 +409,7 @@ describe("useWorkspaceEditorSelection", () => {
     );
   });
 
-  it("旧选区等待异步正文 setContent 完成后才恢复，不被装载期默认 caret 覆盖", async () => {
+  it("hydration 先 ready、正文 setContent 后到时，旧选区仍在真实内容落地后恢复", async () => {
     const hydratingDocumentSnapshot = pmDocToViewDocumentSnapshot(
       {
         type: "doc",
@@ -379,6 +428,9 @@ describe("useWorkspaceEditorSelection", () => {
       documentSnapshot.pmDoc!,
       2,
     );
+    const hydratedRevision = viewDocumentSyncRevision(
+      hydratedDocumentSnapshot,
+    );
     let editor: Editor | null = null;
     const handleEditorReady = (nextEditor: Editor | null) => {
       editor = nextEditor;
@@ -387,6 +439,7 @@ describe("useWorkspaceEditorSelection", () => {
       activeTab: "main" | "derivative",
       restoreReady: boolean,
       doc = hydratedDocumentSnapshot,
+      selectionRevision = viewDocumentSyncRevision(doc),
     ) => {
       act(() => {
         root.render(
@@ -397,6 +450,7 @@ describe("useWorkspaceEditorSelection", () => {
               onEditorReady={handleEditorReady}
               restoreReady={restoreReady}
               doc={doc}
+              selectionRevision={selectionRevision}
             />
           </WorkspaceEditorSelectionProvider>,
         );
@@ -417,13 +471,26 @@ describe("useWorkspaceEditorSelection", () => {
     const remountedEditor = requireEditor(editor);
     expect(remountedEditor.state.selection.empty).toBe(true);
 
-    render("main", false, hydratedDocumentSnapshot);
+    // hydration 门先打开，但最终 canonical 正文尚未 setContent；不能在短正文上
+    // 提前消费旧选区，也不能让默认 caret 覆盖缓存。
+    render(
+      "main",
+      true,
+      hydratingDocumentSnapshot,
+      hydratedRevision,
+    );
     await flush();
-    expect(remountedEditor.getText()).toBe("甲乙丙丁戊己庚辛壬癸");
     expect(remountedEditor.state.selection.empty).toBe(true);
 
-    render("main", true, hydratedDocumentSnapshot);
+    // 最终正文后到并触发真实 setContent，恢复必须排在它完成之后。
+    render(
+      "main",
+      true,
+      hydratedDocumentSnapshot,
+      hydratedRevision,
+    );
     await flush();
+    expect(remountedEditor.getText()).toBe("甲乙丙丁戊己庚辛壬癸");
     act(() => {
       remountedEditor.view.focus();
     });

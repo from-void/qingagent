@@ -379,6 +379,13 @@ function workspaceReducerMut(
     case "documentSnapshotWritten":
       markRejectedOnlyPatchSummariesAbandonedMut(draft);
       draft.doc = wireDocToView(action.data.doc);
+      // 服务端 canonical 快照本身就是“文档已存在”的权威事实。恢复流偶发把
+      // docStateChanged(empty) 留在前面且没有后续 editing 帧时，若这里不收敛，
+      // 页面会有正文/版本却只挂静态 article，编辑器与审查/导出入口一起消失。
+      // overlay / agentBusy 是独立锁维度，推进 content state 不会擅自解锁交互。
+      if (draft.docState.kind === "empty") {
+        draft.docState = { kind: "editing" };
+      }
       draft.generationDraft = null;
       draft.docDiff = null;
       draft.version = action.data.doc.version;

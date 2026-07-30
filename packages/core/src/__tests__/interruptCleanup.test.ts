@@ -212,7 +212,18 @@ describe("abortAndCleanupTurn", () => {
 
     expect(frames.some((frame) => frame.kind === "chatMessageAdded")).toBe(false);
     expect(frames.some((frame) => frame.kind === "chatMessageAppended")).toBe(false);
-    expect(state.messages).toEqual([]);
+    if (withRunningCard) {
+      expect(state.messages).toEqual([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("上一轮被用户的新消息接替"),
+        }),
+      ]);
+      expect(String(state.messages[0]?.content)).toContain("结果未送达");
+      expect(String(state.messages[0]?.content)).toContain("不是工具或其背后服务失败");
+    } else {
+      expect(state.messages).toEqual([]);
+    }
     const oldMessage = state.chatHistory.find((message) => message.id === "old-agent-message");
     expect(oldMessage?.parts.some((part) => part.kind === "text")).toBe(false);
     expect(state._activeAgentMessageId).toBeNull();
@@ -240,6 +251,29 @@ describe("abortAndCleanupTurn", () => {
       },
     });
     expect(state._backgroundCommandOwnerByPid?.get("4242")).toBe("background-owner");
+  });
+
+  it("后台 spawn 已成功但结果未送达时，抢占注记给出原 PID 与轮询出口", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("preempt-background-result-undelivered");
+    const spec = runningCommand("background-spawn");
+    setSingleToolCall(state, spec);
+    state._activeAgentMessageId = "agent-msg";
+    state._backgroundCommandOwnerByPid?.set("5151", "background-spawn");
+
+    await collectFrames(abortAndCleanupTurn(state, {
+      emitStreamEnd: false,
+      reason: "preemptedByNewMessage",
+    }));
+
+    expect(findToolCallSpec(state, "background-spawn")?.status.kind).toBe("running");
+    expect(state.messages).toHaveLength(1);
+    const note = String(state.messages[0]?.content);
+    expect(note).toContain("mastra_workspace_execute_command");
+    expect(note).toContain("后台 PID:5151");
+    expect(note).toContain("进程仍在运行");
+    expect(note).toContain("可用原 PID 5151 继续轮询");
+    expect(note).toContain("不表示登录态失效");
   });
 
   it("aborts, waits for the active turn finally, terminalizes in-flight tools, and projects idle", async () => {

@@ -6,6 +6,7 @@ import type {
 import { acquireQingagentSessionWorkspace } from "../agents/qingagent.js";
 import {
   forgetBackgroundCommandOwner,
+  recordBackgroundCommandTombstone,
 } from "../session/backgroundCommand.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
@@ -90,7 +91,9 @@ export async function terminateSessionBackgroundCommands(
       try {
         killed = await handle.kill();
       } catch {
-        // workspace.destroy 仍是会话关闭的最终兜底；这里继续 wait 获取权威终态。
+        // kill 抛错时不能无界 await 一个仍活着的进程；会话关闭还有随后
+        // workspace.destroy 的兜底，用户停止则保留索引供后续再次止付/TTL 回收。
+        continue;
       }
       if (!killed) {
         const settlement = await settleAlreadyExited(state, pid, handle).catch(() => null);
@@ -98,6 +101,7 @@ export async function terminateSessionBackgroundCommands(
         continue;
       }
       await handle.wait().catch(() => undefined);
+      recordBackgroundCommandTombstone(state, pid, reason);
       const settlement = settleBackgroundCommand(
         state,
         pid,

@@ -154,6 +154,60 @@ function activeTurnToolCallIds(state: SessionState): Set<string> {
   );
 }
 
+interface InterruptedToolFact {
+  id: string;
+  name: string;
+  backgroundPid: string | null;
+}
+
+function interruptedToolFacts(
+  state: SessionState,
+  activeAgentMessageId: string | null,
+): InterruptedToolFact[] {
+  if (!activeAgentMessageId) return [];
+  const message = state.chatHistory.find((item) => item.id === activeAgentMessageId);
+  if (!message) return [];
+  const pidsByOwner = new Map<string, string>();
+  for (const [pid, ownerToolCallId] of state._backgroundCommandOwnerByPid ?? []) {
+    pidsByOwner.set(ownerToolCallId, pid);
+  }
+  return message.parts.flatMap((part) => {
+    if (
+      part.kind !== "toolCall" ||
+      (part.data.status.kind !== "pending" && part.data.status.kind !== "running") ||
+      isPersistentBackgroundCommand(part.data)
+    ) {
+      return [];
+    }
+    const backgroundPid = pidsByOwner.get(part.data.id) ?? null;
+    if (part.data.result !== null && backgroundPid === null) return [];
+    return [{
+      id: part.data.id,
+      name: part.data.name,
+      backgroundPid,
+    }];
+  });
+}
+
+function interruptedToolModelNote(facts: InterruptedToolFact[]): string {
+  const items = facts.map((fact) =>
+    fact.backgroundPid
+      ? `${fact.name}（toolCallId:${fact.id}，后台 PID:${fact.backgroundPid}，进程仍在运行）`
+      : `${fact.name}（toolCallId:${fact.id}）`
+  ).join("、");
+  const backgroundPids = facts
+    .map((fact) => fact.backgroundPid)
+    .filter((pid): pid is string => pid !== null);
+  const nextStep = backgroundPids.length > 0
+    ? `后台进程仍属本会话，可用原 PID ${backgroundPids.join("、")} 继续轮询；其余步骤如仍需要，再重新发起。`
+    : "这些步骤如仍需要，请重新发起，不能假装已经拿到结果。";
+  return (
+    `[系统事实] 上一轮被用户的新消息接替，以下工具结果未送达：${items}。` +
+    "这不是工具或其背后服务失败，也不表示登录态失效；不要据此猜测。" +
+    nextStep
+  );
+}
+
 // 自然收尾时把残留在 running 的工具调用落终态,清掉"工具调用完、对话已回复,
 // 但 toolCall 仍转圈 loading"的残留(如 result 帧缺失 / 达 maxSteps 截断)。
 // 只有流式参数起始帧、没有任何参数/结果的空占位，能确定本轮没有真正执行工具，必须落 failed；
@@ -246,12 +300,15 @@ export async function* abortAndCleanupTurn(
   } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
+  const reason = options.reason ?? "userAbort";
+  const interruptedAgentMessageId = reason === "preemptedByNewMessage"
+    ? state._activeAgentMessageId
+    : null;
   const abortedStreamId = state.streamId;
   const activeTurnOwnsStreamEnd =
     activeTurnPromise !== null &&
     abortedStreamId !== null &&
     turnCompletionOwnsStreamEnd(activeTurnPromise, abortedStreamId);
-  const reason = options.reason ?? "userAbort";
   const currentToolCallIds = activeTurnToolCallIds(state);
   const pendingConfirms = Array.from(state.pendingConfirms.values()).filter(
     (pending) =>
@@ -320,6 +377,16 @@ export async function* abortAndCleanupTurn(
       "aborted",
       abortedConfirmMessage(reason),
     );
+  }
+
+  if (reason === "preemptedByNewMessage") {
+    const facts = interruptedToolFacts(state, interruptedAgentMessageId);
+    if (facts.length > 0) {
+      state.messages.push({
+        role: "system",
+        content: interruptedToolModelNote(facts),
+      });
+    }
   }
 
   if (reason === "userAbort" || reason === "globalStop") {

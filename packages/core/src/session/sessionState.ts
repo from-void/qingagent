@@ -20,6 +20,18 @@ import type { ModelOverrides } from "../llm/modelConfig.js";
 import type { QingagentToolSearchProcessor } from "../agents/toolSearch.js";
 import { isQuestionnaireTool } from "../agent-run/questionnaireTools.js";
 
+export type BackgroundCommandSystemExitReason =
+  | "userStop"
+  | "runtimeLimit"
+  | "sessionClosed"
+  | "outputLimit";
+
+export interface BackgroundCommandTombstone {
+  pid: string;
+  reason: BackgroundCommandSystemExitReason;
+  at: string;
+}
+
 export interface PatchValidationResult {
   ok: boolean;
   applied: boolean;
@@ -168,6 +180,8 @@ export interface SessionState {
   _activeConfirmedToolCallId: string | null;
   /** Runtime-only：后台进程 PID 到启动命令卡 toolCallId 的显式归属索引。 */
   _backgroundCommandOwnerByPid?: Map<string, string>;
+  /** Runtime-only：本会话内由系统终结的后台进程事实；会话关闭即丢弃，不持久化。 */
+  _backgroundCommandTombstones?: Map<string, BackgroundCommandTombstone>;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
   _activeTurnPromise: Promise<void> | null;
   /** Runtime-only：当前 agent 尝试产生写入时使用的 owner。 */
@@ -363,6 +377,7 @@ export function createSession(
     _abortController: null,
     _activeConfirmedToolCallId: null,
     _backgroundCommandOwnerByPid: new Map(),
+    _backgroundCommandTombstones: new Map(),
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,

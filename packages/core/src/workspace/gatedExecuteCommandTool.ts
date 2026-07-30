@@ -79,6 +79,8 @@ export interface GatedExecuteCommandToolOptions {
   retainWorkspace?: () => () => void;
   /** 进程成功交付后立即登记到会话现有 PID→owner 索引，不能等 turn 结果帧。 */
   onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
+  /** 后台 handle 的权威 wait 结果，用于会话事实记账。 */
+  onBackgroundExited?: (pid: string, result: Awaited<ReturnType<ProcessHandle["wait"]>>) => void;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
   /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
@@ -239,7 +241,9 @@ export function timedOutCommandNotice(timeoutMs: number, background = false): st
       "也不得说成模型服务、网络或对端服务异常;向用户只能陈述这条命令在本机执行时被超时终止。",
     background
       ? "如需更久,请把任务拆小后重试,不要把超时写得更大——上限不可越过。"
-      : "如果它本来就要等更久(例如等待扫码/登录授权),请改用 background:true 后台执行,再用 mastra_workspace_get_process_output 轮询输出。",
+      : `如需继续:可加大 timeoutSeconds(前台上限 ${
+        FOREGROUND_TIMEOUT_LIMIT_SECONDS
+      } 秒)重试,或改 background:true 后台执行后轮询输出。`,
   ].join("");
 }
 
@@ -463,6 +467,7 @@ export function createGatedExecuteCommandTool({
   getWorkspace,
   retainWorkspace,
   onBackgroundStarted,
+  onBackgroundExited,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
 }: GatedExecuteCommandToolOptions) {
@@ -654,7 +659,10 @@ export function createGatedExecuteCommandTool({
           }
           // wait 可被轮询工具重复调用；这里只负责在真实退出后释放后台活动引用。
           void handle.wait().then(
-            () => releaseWorkspace?.(),
+            (result) => {
+              onBackgroundExited?.(String(handle.pid), result);
+              releaseWorkspace?.();
+            },
             () => releaseWorkspace?.(),
           );
           const clampedLabel = timeoutPolicy.clamped ? "，已按后台上限钳制" : "";

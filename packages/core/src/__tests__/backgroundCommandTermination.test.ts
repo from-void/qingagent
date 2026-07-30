@@ -57,6 +57,11 @@ describe("会话后台进程止付", () => {
       expect(handle.kill).toHaveBeenCalledOnce();
       expect(handle.wait).toHaveBeenCalledOnce();
       expect(state._backgroundCommandOwnerByPid?.has("4242")).toBe(false);
+      expect(state._backgroundCommandTombstones?.get("4242")).toMatchObject({
+        pid: "4242",
+        reason,
+        at: expect.any(String),
+      });
       expect(release).toHaveBeenCalledOnce();
     },
   );

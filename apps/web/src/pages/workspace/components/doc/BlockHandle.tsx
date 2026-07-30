@@ -620,7 +620,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       if (
         e.currentTarget.contains(next) ||
         (panel?.contains(next) ?? false) ||
-        (menuRef.current?.contains(next) ?? false)
+        (menuRef.current?.contains(next) ?? false) ||
+        (next instanceof Element && Boolean(next.closest(".table-size-picker")))
       ) return;
     }
     scheduleSubmenuClose();

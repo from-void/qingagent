@@ -172,6 +172,59 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(inserted?.content?.flatMap((row) => row.content ?? []).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
   });
 
+  it("非空正文的插入子菜单移焦到尺寸浮层后保持展开，插表不吞原文", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(editorElement, paragraph("existing", "必须完整保留的既有正文"));
+    editor.commands.setTextSelection(2);
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} />));
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/", ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+
+    const insertMenu = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.trim() === "插入");
+    await act(async () => insertMenu?.focus());
+    const insertTable = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("插入表格"));
+    expect(insertTable).not.toBeUndefined();
+
+    await act(async () => {
+      insertTable?.focus();
+      insertTable?.click();
+    });
+    const picker = workspace.querySelector<HTMLElement>(".table-size-picker");
+    expect(picker).not.toBeNull();
+    await act(async () => picker?.focus());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+
+    expect(workspace.querySelector(".table-size-picker")).not.toBeNull();
+    expect(insertMenu?.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      workspace.querySelector<HTMLButtonElement>('[data-row="2"][data-col="3"]')?.click();
+    });
+
+    const doc = editor.getJSON() as {
+      content?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string; content?: Array<{ type?: string }> }>;
+      }>;
+    };
+    expect(doc.content?.map((node) => node.type).slice(0, 2)).toEqual(["paragraph", "table"]);
+    expect(doc.content?.[0]?.content?.[0]?.text).toBe("必须完整保留的既有正文");
+    expect(doc.content?.[1]?.content).toHaveLength(2);
+    expect(doc.content?.[1]?.content?.every((row) => row.content?.length === 3)).toBe(true);
+  });
+
   it("尺寸浮层可跨菜单间隙抵达，hover 同级其他项时立即收起", async () => {
     const workspace = document.createElement("div");
     workspace.id = "view-workspace";

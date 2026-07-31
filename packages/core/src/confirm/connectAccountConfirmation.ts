@@ -82,8 +82,11 @@ export function connectAccountConfirmationDigest(
   sessionId: string,
   input: ConnectAccountAuthInput,
 ): string {
+  const digestArgs = input.toolName === FEISHU_AUTH_START_TOOL
+    ? { ...input.args, domains: [...input.args.domains].sort() }
+    : input.args;
   return createHash("sha256")
-    .update(JSON.stringify([sessionId, input.toolName, input.args]))
+    .update(JSON.stringify([sessionId, input.toolName, digestArgs]))
     .digest("hex");
 }
 

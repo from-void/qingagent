@@ -223,6 +223,31 @@ describe("连接账号确认门禁", () => {
     expect(connectAccountConfirmationDigest("session-b", github)).not.toBe(digest);
   });
 
+  it("飞书连接确认摘要忽略 domains 顺序且不修改原始参数", () => {
+    const docsBase = parseConnectAccountAuthInput(
+      FEISHU_AUTH_START_TOOL,
+      { domains: ["docs", "base"] },
+    );
+    const baseDocs = parseConnectAccountAuthInput(
+      FEISHU_AUTH_START_TOOL,
+      { domains: ["base", "docs"] },
+    );
+    expect(docsBase && baseDocs).toBeTruthy();
+    if (!docsBase || !baseDocs) return;
+    expect(docsBase.toolName).toBe(FEISHU_AUTH_START_TOOL);
+    expect(baseDocs.toolName).toBe(FEISHU_AUTH_START_TOOL);
+    if (
+      docsBase.toolName !== FEISHU_AUTH_START_TOOL ||
+      baseDocs.toolName !== FEISHU_AUTH_START_TOOL
+    ) return;
+
+    expect(connectAccountConfirmationDigest("session-a", docsBase)).toBe(
+      connectAccountConfirmationDigest("session-a", baseDocs),
+    );
+    expect(docsBase.args.domains).toEqual(["docs", "base"]);
+    expect(baseDocs.args.domains).toEqual(["base", "docs"]);
+  });
+
   it("GitHub 取消确认只走 decline，不生成配对码或授权卡", async () => {
     const state = createSession("connect-github-reject");
     const service = new ConfirmService({

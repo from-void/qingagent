@@ -1757,7 +1757,7 @@ describe("annotationGroupsReady 来源增量", () => {
       expect(ended.agentBusy).toBe(false);
     });
 
-    it("stream end 的 finalDocument 缺失 generation_finished 时仍提交正文并独立收口生命周期", () => {
+    it("直接 dispatch 未拆分的 stream end.finalDocument 视为契约违规", () => {
       const started = reduce(
         {
           kind: "docStateChanged",
@@ -1781,29 +1781,23 @@ describe("annotationGroupsReady 来源增量", () => {
         },
       );
 
-      const ended = workspaceReducer(started, {
-        kind: "stream",
-        data: {
-          kind: "end",
+      expect(() =>
+        workspaceReducer(started, {
+          kind: "stream",
           data: {
-            streamId: "receipt-stream",
-            reason: { kind: "done" },
-            finalDocument: {
-              version: 9,
-              contentHash: "pmv1-receipt",
-              doc: streamedPmDoc,
+            kind: "end",
+            data: {
+              streamId: "receipt-stream",
+              reason: { kind: "done" },
+              finalDocument: {
+                version: 9,
+                contentHash: "pmv1-receipt",
+                doc: streamedPmDoc,
+              },
             },
           },
-        },
-      });
-
-      expect(ended.doc?.version).toBe(9);
-      expect(ended.doc?.pmDoc?.content[0]).toEqual(streamedPmNode);
-      expect(ended.generationDraft).toBeNull();
-      expect(ended.streamActive).toBe(false);
-      expect(ended.activeStreamIds).toEqual([]);
-      expect(ended.agentBusy).toBe(false);
-      expect(ended.toolCalls.get(runningCommandToolCall.id)?.status.kind).toBe("running");
+        }),
+      ).toThrow(/stream end\.finalDocument 必须先经 splitStreamEndFinalDocument 拆分/);
     });
 
     it("clears streamActive on stream end error", () => {

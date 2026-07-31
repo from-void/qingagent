@@ -263,6 +263,42 @@ test("拒绝目录穿越、绝对路径、错误扩展名和超长文件名", ()
   }
 });
 
+test("拒绝 Windows 保留设备名 stem，且不误伤相邻普通名称", () => {
+  const harness = createHarness();
+  try {
+    for (const filename of [
+      "CON.pdf",
+      "con.pdf",
+      "PrN.pdf",
+      "aux.pdf",
+      "NuL.pdf",
+      ...Array.from({ length: 9 }, (_, index) => `CoM${index + 1}.pdf`),
+      ...Array.from({ length: 9 }, (_, index) => `lPt${index + 1}.pdf`),
+    ]) {
+      assert.equal(
+        harness.coordinator.register(harness.owner as unknown as WebContents, {
+          filename,
+          format: "pdf",
+        }),
+        null,
+        filename,
+      );
+    }
+
+    for (const filename of ["CONSOLE.pdf", "COM10.pdf"]) {
+      assert.ok(
+        harness.coordinator.register(harness.owner as unknown as WebContents, {
+          filename,
+          format: "pdf",
+        }),
+        filename,
+      );
+    }
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("未被 will-download 认领的意图短期回收，已认领的慢下载不受该超时影响", async () => {
   const harness = createHarness({ unclaimedTimeoutMs: 10 });
   try {

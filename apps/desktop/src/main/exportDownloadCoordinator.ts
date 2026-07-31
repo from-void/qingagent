@@ -67,6 +67,8 @@ const FORMAT_EXTENSIONS: Record<ExportDownloadFormat, string> = {
 const DEFAULT_UNCLAIMED_TIMEOUT_MS = 30_000;
 const DEFAULT_REVEAL_TTL_MS = 10 * 60_000;
 const MAX_FILENAME_LENGTH = 180;
+const WINDOWS_RESERVED_DEVICE_STEM =
+  /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 /**
  * 接管主窗口已登记的导出下载。未登记或不匹配的普通下载保持 Electron 默认行为。
@@ -338,6 +340,8 @@ function validateRegistrationInput(
     return null;
   }
   const typedFormat = format as ExportDownloadFormat;
+  const extension = path.extname(filename);
+  const stem = filename.slice(0, -extension.length);
   if (
     filename.length === 0 ||
     filename.length > MAX_FILENAME_LENGTH ||
@@ -347,7 +351,8 @@ function validateRegistrationInput(
     path.win32.basename(filename) !== filename ||
     /[\u0000-\u001f<>:"/\\|?*]/.test(filename) ||
     /[. ]$/.test(filename) ||
-    path.extname(filename).toLowerCase() !== FORMAT_EXTENSIONS[typedFormat]
+    extension.toLowerCase() !== FORMAT_EXTENSIONS[typedFormat] ||
+    WINDOWS_RESERVED_DEVICE_STEM.test(stem)
   ) {
     return null;
   }

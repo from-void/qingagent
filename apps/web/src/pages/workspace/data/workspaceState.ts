@@ -866,18 +866,13 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
       reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     case "end":
+      if (s.data.finalDocument) {
+        throw new Error(
+          "契约违规：stream end.finalDocument 必须先经 splitStreamEndFinalDocument 拆分",
+        );
+      }
       markStreamInactiveMut(draft, s.data.streamId);
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
-      if (s.data.finalDocument) {
-        draft.doc = pmDocToViewDocumentSnapshot(
-          s.data.finalDocument.doc as PmDoc,
-          s.data.finalDocument.version,
-        );
-        draft.generationDraft = null;
-        draft.docDiff = null;
-        draft.version = s.data.finalDocument.version;
-        draft.progressPct = 1;
-      }
       if (s.data.reason.kind === "cancelled") {
         terminalizeInFlightToolCallsMut(draft, "aborted");
         draft.streamError = { kind: "cancelled", reason: "" };

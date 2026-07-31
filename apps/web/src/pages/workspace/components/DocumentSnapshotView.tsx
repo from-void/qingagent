@@ -849,6 +849,15 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         ) {
           return true;
         }
+        // 远端 setContent / presentation 逐帧揭示会暂时让 TipTap 正文不同于
+        // canonical，但它们不是用户编辑。若把这段内部过渡报成 dirty，紧随其后的
+        // terminal finalDocument 会被误判为并发冲突，留下假的“重载”横幅。
+        if (
+          isApplyingRemoteRef.current ||
+          isPresentationApplyingRef.current
+        ) {
+          return false;
+        }
         // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
         if (
           latestDocVersionRef.current !== lastVersionRef.current ||

@@ -801,6 +801,13 @@ describe("WorkspacePage review controls", () => {
 
     expect(host?.querySelector(".ProseMirror.wf-doc")).not.toBeNull();
     expect(
+      host?.querySelector<HTMLElement>(".ProseMirror.wf-doc")?.getAttribute(
+        "contenteditable",
+      ),
+    ).toBe("true");
+    expect(document.body.dataset.content).toBe("editing");
+    expect(document.body.dataset.tool).toBe("none");
+    expect(
       host?.querySelector<HTMLButtonElement>('.ws-docfns button[title="审查"]'),
     ).not.toBeNull();
     expect(
@@ -1347,10 +1354,6 @@ describe("WorkspacePage review controls", () => {
         data: { doc: wireSnapshotFromPmDoc(initialDoc, 3) },
       },
       {
-        kind: "docStateChanged",
-        data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
-      },
-      {
         kind: "stream",
         data: { kind: "start", data: { streamId: "stream-receipt-only" } },
       },
@@ -1380,6 +1383,7 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.activeStreamIds).toEqual([]);
     expect(captured.current?.state.streamActive).toBe(false);
     expect(captured.current?.state.agentBusy).toBe(false);
+    expect(captured.current?.state.docState).toEqual({ kind: "editing" });
     expect(captured.current?.agentActive).toBe(false);
     expect(
       [...(host?.querySelectorAll("button") ?? [])].some(

@@ -1009,11 +1009,23 @@ function reduceDocGenerationEventMut(
     }
     case "generation_finished":
       draft.doc = pmDocToViewDocumentSnapshot(event.data.doc as PmDoc, event.data.finalVersion);
+      // generation_finished 与 documentSnapshotWritten 都是 canonical 正文已经存在的
+      // 权威事实。若恢复/换线漏掉了前置 editing 投影，不能留下“有正文但 content=empty”
+      // 的只读壳；pendingReview 则必须保留，不能被终稿回执越权退出审阅。
+      if (draft.docState.kind === "empty") {
+        draft.docState = { kind: "editing" };
+      }
       draft.generationDraft = null;
       draft.docDiff = null;
       draft.version = event.data.finalVersion;
       draft.progressPct = 1;
       draft.streamError = null;
+      // terminal-* 是服务端 stream terminal 携带的 canonical finalDocument 标识。
+      // 生命周期帧正常会先清 busy；这里再按同一服务端终态事实收敛一次，吸收
+      // 两帧之间迟到的 running tool 快照，避免挂尾。
+      if (event.data.generationId.startsWith("terminal-")) {
+        reduceAgentBusyMut(draft, { kind: "turnTerminated" });
+      }
       return;
     case "generation_failed":
       if (

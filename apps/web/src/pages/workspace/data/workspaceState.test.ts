@@ -726,9 +726,72 @@ describe("annotationGroupsReady 来源增量", () => {
       expect(next.docState).toEqual({ kind: "editing" });
       expect(next.doc?.version).toBe(14);
     });
+
+    it("重开已完成文档时 restoreReset 清掉旧 busy，canonical 快照直接恢复 editing", () => {
+      const stale = reduce(
+        {
+          kind: "sessionMeta",
+          data: { sessionId: "reopen-finished", title: "已完成文档" },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "stale-stream" } },
+        },
+      );
+      const restoreFrames: WorkspaceAction[] = [
+        { kind: "restoreReset", data: { epoch: 2, snapshotSeq: 20 } },
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "empty" },
+            activeOverlay: null,
+            agentBusy: false,
+          },
+        },
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: legacyWireSnapshot({
+              version: 15,
+              ts: "2026-08-01T00:00:00Z",
+              sections: [{ kind: "p", data: { text: "重开后的正文" } }],
+            }),
+          },
+        },
+      ];
+      const reopened = restoreFrames.reduce(workspaceReducer, stale);
+
+      expect(reopened.streamActive).toBe(false);
+      expect(reopened.activeStreamIds).toEqual([]);
+      expect(reopened.agentBusy).toBe(false);
+      expect(reopened.docState).toEqual({ kind: "editing" });
+      const dimensions = deriveDocDimensions(reopened);
+      expect(dimensions.editor).toBe("editable");
+      expect(canEditDocument(dimensions, null)).toBe(true);
+    });
   });
 
   describe("docGenerationEvent", () => {
+    it("canonical 终稿到达时把残留 empty 收敛为 editing", () => {
+      const finished = workspaceReducer(initialWorkspaceState, {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_finished",
+          data: {
+            generationId: "generation-canonical",
+            seq: 1,
+            prevSeq: null,
+            doc: streamedPmDoc,
+            finalVersion: 1,
+            contentHash: "pmv1-canonical",
+          },
+        },
+      });
+
+      expect(finished.docState).toEqual({ kind: "editing" });
+      expect(deriveDocDimensions(finished).editor).toBe("editable");
+    });
+
     it("assembles block/run events into a non-canonical generation draft with marks", () => {
       const state = reduce(
         {
@@ -1755,6 +1818,61 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(ended.streamActive).toBe(false);
       expect(ended.agentBusy).toBe(false);
+    });
+
+    it("terminal + canonical 吸收两帧间迟到的 running 卡并最终清除 agentBusy", () => {
+      const started = reduce(
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "terminal-stream" } },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: "m-agent",
+            toolCallId: runningCommandToolCall.id,
+            spec: runningCommandToolCall,
+          },
+        },
+      );
+      const terminalized = workspaceReducer(started, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: { streamId: "terminal-stream", reason: { kind: "done" } },
+        },
+      });
+      const lateRunning = workspaceReducer(terminalized, {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-agent",
+          toolCallId: runningCommandToolCall.id,
+          spec: runningCommandToolCall,
+        },
+      });
+      expect(lateRunning.streamActive).toBe(false);
+      expect(lateRunning.agentBusy).toBe(true);
+
+      const converged = workspaceReducer(lateRunning, {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_finished",
+          data: {
+            generationId: "terminal-terminal-stream",
+            seq: 1,
+            prevSeq: null,
+            doc: streamedPmDoc,
+            finalVersion: 2,
+            contentHash: "pmv1-terminal",
+          },
+        },
+      });
+
+      expect(converged.streamActive).toBe(false);
+      expect(converged.activeStreamIds).toEqual([]);
+      expect(converged.agentBusy).toBe(false);
+      expect(converged.docState).toEqual({ kind: "editing" });
+      expect(deriveDocDimensions(converged).editor).toBe("editable");
     });
 
     it("直接 dispatch 未拆分的 stream end.finalDocument 视为契约违规", () => {

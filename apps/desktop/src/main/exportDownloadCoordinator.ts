@@ -90,12 +90,20 @@ export class ExportDownloadCoordinator {
     item: DownloadItem,
     webContents: WebContents,
   ): void => {
-    const pending = this.findMatchingPending(
-      webContents,
-      item.getFilename(),
-      readRequestIdFromDownloadUrl(item.getURL()),
-    );
+    const actualFilename = item.getFilename();
+    const requestId = readRequestIdFromDownloadUrl(item.getURL());
+    const pending = this.findMatchingPending(webContents, requestId);
     if (!pending) return;
+
+    // requestId 是可信渲染进程登记后签发的高熵唯一键；Chromium 的建议文件名只作诊断，
+    // 最终保存位置始终使用主进程在 register 阶段校验并预留的 targetPath。
+    if (pending.expectedFilename !== actualFilename) {
+      console.info("[export-download] Chromium 调整了下载建议文件名", {
+        requestId: pending.requestId,
+        expectedFilename: pending.expectedFilename,
+        actualFilename,
+      });
+    }
 
     pending.claimed = true;
     clearTimeout(pending.unclaimedTimer);
@@ -232,21 +240,12 @@ export class ExportDownloadCoordinator {
 
   private findMatchingPending(
     owner: WebContents,
-    filename: string,
     requestId: string | null,
   ): PendingExportDownload | null {
     if (!requestId) return null;
-    for (const pending of this.pending.values()) {
-      if (
-        !pending.claimed &&
-        pending.owner === owner &&
-        pending.requestId === requestId &&
-        pending.expectedFilename === filename
-      ) {
-        return pending;
-      }
-    }
-    return null;
+    const pending = this.pending.get(requestId);
+    if (!pending || pending.claimed || pending.owner !== owner) return null;
+    return pending;
   }
 
   private reserveTargetPath(filename: string): string {

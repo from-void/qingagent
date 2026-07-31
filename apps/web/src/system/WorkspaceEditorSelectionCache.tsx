@@ -14,8 +14,8 @@ const WorkspaceEditorSelectionCacheContext =
   createContext<WorkspaceEditorSelectionCache | null>(null);
 
 /**
- * 选区缓存必须位于路由之上：WorkspacePage 回首页时会完整卸载，
- * 但同一次应用生命周期内再次打开文档仍应能恢复原选区。
+ * 选区缓存只在当前 WorkspacePage 会话内存活：页面内编辑器实例重建时复用，
+ * Workspace 路由卸载时随页面一起清空，不把纯编辑器高亮带过路由。
  */
 export function WorkspaceEditorSelectionProvider({
   children,

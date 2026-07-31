@@ -343,7 +343,7 @@ describe("useWorkspaceEditorSelection", () => {
     ).toBe(true);
   });
 
-  it("Workspace 路由完整卸载后再回来，仍从应用级缓存恢复原文档选区", async () => {
+  it("Workspace 路由完整卸载后再回来，不恢复离开前的纯编辑器高亮", async () => {
     let editor: Editor | null = null;
     const handleEditorReady = (nextEditor: Editor | null) => {
       editor = nextEditor;
@@ -354,17 +354,17 @@ describe("useWorkspaceEditorSelection", () => {
     ) => {
       act(() => {
         root.render(
-          <WorkspaceEditorSelectionProvider>
-            {route === "workspace" ? (
+          route === "workspace" ? (
+            <WorkspaceEditorSelectionProvider>
               <SelectionHarness
                 activeTab="main"
                 documentId={documentId}
                 onEditorReady={handleEditorReady}
               />
-            ) : (
-              <main data-testid="home-route" />
-            )}
-          </WorkspaceEditorSelectionProvider>,
+            </WorkspaceEditorSelectionProvider>
+          ) : (
+            <main data-testid="home-route" />
+          ),
         );
       });
     };
@@ -402,11 +402,66 @@ describe("useWorkspaceEditorSelection", () => {
       restoredEditor.view.focus();
     });
     const restoredSelection = window.getSelection();
-    expect(restoredSelection?.toString()).toBe("乙丙丁戊");
+    expect(restoredEditor.state.selection.empty).toBe(true);
+    expect(restoredEditor.state.selection.from).toBe(1);
+    expect(restoredSelection?.toString()).toBe("");
     expect(restoredSelection?.rangeCount).toBe(1);
     expect(selectionBelongsTo(restoredSelection!, restoredEditor.view.dom)).toBe(
       true,
     );
+  });
+
+  it("主动取消选中后切走再切回，旧高亮不会复活", async () => {
+    let editor: Editor | null = null;
+    const handleEditorReady = (nextEditor: Editor | null) => {
+      editor = nextEditor;
+    };
+    const render = (route: "home" | "workspace") => {
+      act(() => {
+        root.render(
+          route === "workspace" ? (
+            <WorkspaceEditorSelectionProvider>
+              <SelectionHarness
+                activeTab="main"
+                documentId="cancelled-route-document"
+                onEditorReady={handleEditorReady}
+              />
+            </WorkspaceEditorSelectionProvider>
+          ) : (
+            <main data-testid="home-route" />
+          ),
+        );
+      });
+    };
+
+    render("workspace");
+    await flush();
+    const firstEditor = requireEditor(editor);
+    act(() => {
+      firstEditor.commands.setTextSelection({ from: 2, to: 6 });
+      firstEditor.view.focus();
+    });
+    expect(window.getSelection()?.toString()).toBe("乙丙丁戊");
+
+    act(() => {
+      firstEditor.commands.setTextSelection(1);
+    });
+    expect(firstEditor.state.selection.empty).toBe(true);
+    expect(window.getSelection()?.toString()).toBe("");
+
+    render("home");
+    await flush();
+    render("workspace");
+    await flush();
+
+    const remountedEditor = requireEditor(editor);
+    expect(remountedEditor).not.toBe(firstEditor);
+    act(() => {
+      remountedEditor.view.focus();
+    });
+    expect(remountedEditor.state.selection.empty).toBe(true);
+    expect(remountedEditor.state.selection.from).toBe(1);
+    expect(window.getSelection()?.toString()).toBe("");
   });
 
   it("hydration 先 ready、正文 setContent 后到时，旧选区仍在真实内容落地后恢复", async () => {

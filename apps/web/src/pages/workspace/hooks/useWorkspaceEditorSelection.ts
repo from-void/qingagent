@@ -31,8 +31,8 @@ function scheduleSelectionRestore(callback: () => void): void {
 }
 
 /**
- * 主稿与衍生稿互斥挂载、Workspace 路由卸载都会销毁主稿 EditorView。DOM 节点引用无法
- * 跨实例复用，因此按文档保存 ProseMirror 的位置表示，并在正文 hydration 完成后恢复。
+ * 主稿与衍生稿互斥挂载会销毁主稿 EditorView。DOM 节点引用无法跨实例复用，因此在当前
+ * WorkspacePage 会话内按文档保存 ProseMirror 的位置表示，并在正文 hydration 完成后恢复。
  */
 export function useWorkspaceEditorSelection(
   selectionScopeId: string | null,

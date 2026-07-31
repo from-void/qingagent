@@ -6,7 +6,6 @@ import { EditContextMenu } from "./system/EditContextMenu";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
-import { WorkspaceEditorSelectionProvider } from "./system/WorkspaceEditorSelectionCache";
 import { WORKSPACE_PAPER_CSS_VARIABLES } from "./system/workspacePaperGeometry";
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -58,9 +57,7 @@ export default function App() {
   return (
     <ToastProvider>
       <ConfirmProvider>
-        <WorkspaceEditorSelectionProvider>
-          <AppShell />
-        </WorkspaceEditorSelectionProvider>
+        <AppShell />
         <AppUpdateWatcher />
         <AuthTokenGate />
         {/* 可编辑区域的自绘右键菜单(宋体、水墨皮肤);非编辑区域不接管。 */}

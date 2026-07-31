@@ -160,6 +160,8 @@ export function ExportMenu({
             format: f.id,
           });
           if (!result.saved) {
+            // 保存失败时先收起导出菜单，避免菜单层遮住全局 qa-toast。
+            onClose();
             onAction(
               result.reason === "cancelled"
                 ? "导出已取消"

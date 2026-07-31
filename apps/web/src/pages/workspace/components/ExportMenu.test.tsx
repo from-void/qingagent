@@ -280,6 +280,7 @@ describe("ExportMenu", () => {
   it.each([
     ["cancelled", "导出已取消"],
     ["interrupted", "导出未保存 · 请重试"],
+    ["not-started", "导出未保存 · 请重试"],
   ] as const)("桌面端 %s 不误报成功并给可读失败文案", async (reason, expectedMessage) => {
     Object.defineProperty(window, "electron", {
       configurable: true,
@@ -298,7 +299,8 @@ describe("ExportMenu", () => {
     Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
     Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
     const onAction = vi.fn();
-    await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction as ToastShow} />);
+    const onClose = vi.fn();
+    await render(<ExportMenuHarness onClose={onClose} onAction={onAction as ToastShow} />);
 
     const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-docx"]');
     if (!item) throw new Error("Word export item not found");
@@ -310,6 +312,8 @@ describe("ExportMenu", () => {
     await vi.waitFor(() => {
       expect(onAction).toHaveBeenCalledWith(expectedMessage);
     });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector('[data-wf="ExportFormat-docx"]')).toBeNull();
     expect(onAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("已保存") }),
     );

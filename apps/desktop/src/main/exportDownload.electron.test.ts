@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 const electronExecutable = require("electron") as string;
 const RESULT_PREFIX = "QINGAGENT_EXPORT_DOWNLOAD_ELECTRON_RESULT=";
 
-test("真实 Electron/Chromium Blob 下载落成 md/docx/pdf 成品并为重名自动编号", async () => {
+test("真实 Electron/Chromium Blob 下载落成文本与二进制成品并为重名自动编号", async () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "qingagent-electron-download-test-"));
   const fixtureBundle = path.join(tempRoot, "fixture.mjs");
   const preloadBundle = path.join(tempRoot, "preload.cjs");
@@ -79,6 +79,9 @@ test("真实 Electron/Chromium Blob 下载落成 md/docx/pdf 成品并为重名�
     };
     assert.deepEqual(payload.savedFilenames, [
       "测试文档_20260729.md",
+      "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.md",
+      "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.txt",
+      "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.html",
       "测试文档_20260729.docx",
       "测试文档_20260729.pdf",
       "测试文档_20260729 (2).pdf",

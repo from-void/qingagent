@@ -111,38 +111,89 @@ function emitDownload(
   return event;
 }
 
-test("登记意图后只匹配同一 sender 与文件名，并立即设置下载目录路径", () => {
+test("登记意图后仅以同一 sender 与 requestId 认领，Chromium 文件名只作诊断", () => {
   const harness = createHarness();
   try {
     assert.deepEqual(
       harness.coordinator.register(harness.owner as unknown as WebContents, {
-        filename: "测试文档_20260729.pdf",
-        format: "pdf",
+        filename: "测试文档｜完整指南_20260801.md",
+        format: "markdown",
       }),
       { requestId: "request-1" },
     );
 
-    const wrongSender = new FakeDownloadItem("测试文档_20260729.pdf");
+    const wrongSender = new FakeDownloadItem("测试文档｜完整指南_20260801.md");
     emitDownload(harness.session, wrongSender, harness.otherOwner);
     assert.equal(wrongSender.savePath, null);
 
-    const wrongFilename = new FakeDownloadItem("其他文档_20260729.pdf");
-    emitDownload(harness.session, wrongFilename, harness.owner);
-    assert.equal(wrongFilename.savePath, null);
-
-    const wrongRequest = new FakeDownloadItem("测试文档_20260729.pdf", "other-request");
+    const wrongRequest = new FakeDownloadItem(
+      "测试文档｜完整指南_20260801.md",
+      "other-request",
+    );
     emitDownload(harness.session, wrongRequest, harness.owner);
     assert.equal(wrongRequest.savePath, null);
 
-    const matched = new FakeDownloadItem("测试文档_20260729.pdf");
+    // Chromium 即使按 MIME 改写建议文件名，也只能写入主进程登记时预留的 .md 路径。
+    const matched = new FakeDownloadItem("测试文档｜完整指南_20260801.txt");
     emitDownload(harness.session, matched, harness.owner);
     assert.equal(
       matched.savePath,
-      path.join(harness.downloadsDirectory, "测试文档_20260729.pdf"),
+      path.join(harness.downloadsDirectory, "测试文档｜完整指南_20260801.md"),
     );
     assert.equal(harness.owner.results.length, 0, "done 前不得回报成功");
   } finally {
     harness.cleanup();
+  }
+});
+
+test("Markdown、TXT、HTML 含全角字符时均可登记、认领并落盘", () => {
+  const cases = [
+    {
+      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.md",
+      format: "markdown",
+      content: "# Markdown 测试\n",
+    },
+    {
+      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.txt",
+      format: "txt",
+      content: "TXT 测试\n",
+    },
+    {
+      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.html",
+      format: "html",
+      content: "<!doctype html><title>HTML 测试</title>\n",
+    },
+  ] as const;
+
+  for (const exportCase of cases) {
+    const harness = createHarness();
+    try {
+      assert.deepEqual(
+        harness.coordinator.register(harness.owner as unknown as WebContents, {
+          filename: exportCase.filename,
+          format: exportCase.format,
+        }),
+        { requestId: "request-1" },
+      );
+      const item = new FakeDownloadItem(exportCase.filename);
+      emitDownload(harness.session, item, harness.owner);
+      assert.equal(
+        item.savePath,
+        path.join(harness.downloadsDirectory, exportCase.filename),
+      );
+      assert.ok(item.savePath);
+      writeFileSync(item.savePath, exportCase.content);
+      item.emit("done", {}, "completed");
+
+      assert.deepEqual(harness.owner.results, [{
+        requestId: "request-1",
+        saved: true,
+        filename: exportCase.filename,
+        revealToken: "reveal-1",
+      }]);
+    } finally {
+      harness.cleanup();
+    }
   }
 });
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
@@ -15,9 +15,121 @@ afterEach(() => {
     forgetSession(sessionId);
     sessionManager.frameLog.evict(sessionId);
   }
+  vi.restoreAllMocks();
 });
 
 describe("GET /api/v1/events 回放背压", () => {
+  it("live 溢出会结束旧 HTTP，并从最后已收 seq 重连回放候选终态", async () => {
+    const sessionId = "main-events-live-overflow-reconnect";
+    sessionIds.push(sessionId);
+    sessionManager.frameLog.append(sessionId, {
+      kind: "stream",
+      data: { kind: "start", data: { streamId: "stream-overflow" } },
+    });
+
+    const overflowLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const cancelAfterDisconnect = vi
+      .spyOn(sessionManager, "cancelRunningTurnAfterDisconnect")
+      .mockResolvedValue(false);
+    const firstResponse = await app.request(
+      `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=0`,
+    );
+
+    for (let index = 1; index <= 66; index += 1) {
+      sessionManager.frameLog.append(sessionId, {
+        kind: "sessionMeta",
+        data: {
+          sessionId,
+          title: `批量编辑帧 ${index} ${"文".repeat(2_000)}`,
+        },
+      });
+    }
+    sessionManager.frameLog.append(sessionId, {
+      kind: "docDiffReady",
+      data: {
+        baseVersion: 1,
+        suggestions: [{
+          id: "overflow-review-1",
+          docId: "doc-overflow",
+          baseVersion: 1,
+          baseSchemaVersion: 1,
+          status: "reviewing",
+          anchor: {
+            blockId: "dialogue-1",
+            pmFrom: 1,
+            pmTo: 2,
+            quote: "旧",
+            textHash: "overflow-anchor",
+          },
+          patch: {
+            kind: "prosemirror_steps",
+            steps: [{ stepType: "replace", from: 1, to: 2 }],
+          },
+          preview: { deleteText: "旧", insertText: "新" },
+          summary: "对白文言化",
+        }],
+      },
+    });
+    sessionManager.frameLog.append(sessionId, {
+      kind: "docStateChanged",
+      data: {
+        state: { kind: "pendingReview" },
+        activeOverlay: null,
+        agentBusy: false,
+      },
+    });
+    sessionManager.frameLog.append(sessionId, {
+      kind: "stream",
+      data: {
+        kind: "end",
+        data: { streamId: "stream-overflow", reason: { kind: "done" } },
+      },
+    });
+
+    const firstFrames = await readUntilClosed(firstResponse, 1_000);
+    expect(overflowLog).toHaveBeenCalledWith(
+      "[events] SSE pump closed",
+      expect.objectContaining({
+        sessionId,
+        reason: "overflow",
+        queuedFrames: 65,
+      }),
+    );
+    const overflowDetails = overflowLog.mock.calls.find(
+      ([message]) => message === "[events] SSE pump closed",
+    )?.[1] as { queuedBytes: number } | undefined;
+    expect(overflowDetails?.queuedBytes).toBeGreaterThan(128 * 1024);
+    expect(overflowDetails?.queuedBytes).toBeLessThan(512 * 1024);
+    expect(cancelAfterDisconnect).not.toHaveBeenCalled();
+
+    const after = Number(firstFrames.at(-1)?.id ?? 0);
+    const reconnectController = new AbortController();
+    const reconnectResponse = await app.request(
+      `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=${after}`,
+      { signal: reconnectController.signal },
+    );
+    const replayed = await readFramesUntil(
+      reconnectResponse,
+      reconnectController,
+      (frame) => frame.kind === "stream" && frame.data.kind === "end",
+    );
+
+    expect(replayed.find((entry) => entry.frame.kind === "docDiffReady")?.frame)
+      .toMatchObject({
+        kind: "docDiffReady",
+        data: { suggestions: [{ id: "overflow-review-1" }] },
+      });
+    expect(replayed.find((entry) => entry.frame.kind === "docStateChanged")?.frame)
+      .toMatchObject({
+        kind: "docStateChanged",
+        data: { state: { kind: "pendingReview" }, agentBusy: false },
+      });
+    expect(replayed.at(-1)?.frame).toMatchObject({
+      kind: "stream",
+      data: { kind: "end", data: { reason: { kind: "done" } } },
+    });
+  });
+
   it("70 条历史帧与超过 512 KiB 的文档快照可在同次重连完整恢复", async () => {
     const sessionId = "main-events-large-replay";
     sessionIds.push(sessionId);
@@ -261,6 +373,42 @@ async function readFrames(
     controller.abort();
     await reader.cancel().catch(() => undefined);
   }
+}
+
+async function readUntilClosed(
+  response: Response,
+  timeoutMs: number,
+): Promise<Array<{ id: string; data: string }>> {
+  expect(response.status).toBe(200);
+  const reader = response.body?.pipeThrough(new TextDecoderStream()).getReader();
+  if (!reader) throw new Error("events response has no body");
+  const frames: Array<{ id: string; data: string }> = [];
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const remaining = Math.max(1, deadline - Date.now());
+    const { value, done } = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("overflow response did not close")),
+          remaining,
+        );
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    if (done) return frames;
+    buffer += value;
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const parsed = parseFrame(chunk);
+      if (parsed) frames.push(parsed);
+    }
+  }
+  throw new Error("overflow response did not close");
 }
 
 function parseFrame(chunk: string): { id: string; data: string } | null {

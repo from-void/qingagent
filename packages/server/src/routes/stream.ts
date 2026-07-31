@@ -423,6 +423,7 @@ streamRoutes.get("/events", async (c) => {
     const settled = new Promise<void>((resolve) => { settle = resolve; });
     let cleaned = false;
     let disconnectCleanupQueued = false;
+    let overflowRollover = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
@@ -465,13 +466,20 @@ streamRoutes.get("/events", async (c) => {
         }
       },
       onClose: (reason, details) => {
+        // overflow 是服务端主动淘汰一条慢连接，不代表用户取消本轮。
+        // 让 agent 继续把候选态与 end 写入 FrameLog，客户端才能按游标重连回放。
+        overflowRollover = reason === "overflow";
         console.error("[events] SSE pump closed", {
           sessionId,
           ...details,
           reason,
         });
         stream.abort();
-        settleDisconnectedTurn();
+        if (overflowRollover) {
+          cleanup();
+        } else {
+          settleDisconnectedTurn();
+        }
       },
     });
 
@@ -521,7 +529,11 @@ streamRoutes.get("/events", async (c) => {
       }
       stream.onAbort(() => {
         pump.close();
-        settleDisconnectedTurn();
+        if (overflowRollover) {
+          cleanup();
+        } else {
+          settleDisconnectedTurn();
+        }
       });
       await settled;
       await pump.waitForIdle();

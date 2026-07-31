@@ -31,15 +31,16 @@ export function buildActiveDocumentTurnContext(
 }
 
 /**
- * 只为当前模型请求复制并增强最后一条 user message，保留持久消息数组原样。
+ * 有当轮提示时，只为当前模型请求复制并增强最后一条 user message，保留持久消息数组原样；
+ * 没有可注入提示时直接返回原引用，保持 OM 非投影/fail-open 路径的消息同一性。
  * 放在末条 user 尾部还能保持历史前缀字节稳定，避免 active tab 切换打散模型前缀缓存。
  */
 export function appendTurnContextToLatestUserMessage(
-  messages: readonly CoreMessage[],
+  messages: CoreMessage[],
   context: string | null | undefined,
 ): CoreMessage[] {
   const trimmed = context?.trim();
-  if (!trimmed) return [...messages];
+  if (!trimmed) return messages;
 
   let userIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -48,7 +49,7 @@ export function appendTurnContextToLatestUserMessage(
       break;
     }
   }
-  if (userIndex < 0) return [...messages];
+  if (userIndex < 0) return messages;
   const userMessage = messages[userIndex]!;
   const content =
     typeof userMessage.content === "string"

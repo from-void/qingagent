@@ -32,6 +32,7 @@ import {
 } from "../session/sessionState.js";
 import { toSuspensionToolName } from "../session/sessionTools.js";
 import { schedulePersist } from "../session/threadPersistence.js";
+import { flushSensitiveReviewText } from "./sensitiveReviewMasking.js";
 import {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
@@ -343,6 +344,8 @@ export async function* handleSuspensionEvent(
     yield* syncContentAndProjectDocState(state, "ask_user_suspended");
   }
 
+  const sensitiveReviewTextFrame = flushSensitiveReviewText(context);
+  if (sensitiveReviewTextFrame) yield sensitiveReviewTextFrame;
   if (context.accumulatedText) {
     state.messages.push({ role: "assistant", content: context.accumulatedText });
   }

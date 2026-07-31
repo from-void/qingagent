@@ -26,6 +26,7 @@ interface GroupInput {
   materialQuote?: string;
   checkedScope?: string;
   documentQuote?: string;
+  suggestion?: string;
   severity?: "error" | "warn" | "info";
   anchors: Array<{ find: string; all?: boolean }>;
 }
@@ -114,6 +115,49 @@ describe("create_annotation_groups 来源引句校验", () => {
 
     expect(result).toMatchObject({ ok: true, groupCount: 1, errors: [] });
     expect(state.annotationGroups[0]?.summary).toBe(Array.from(summary).slice(0, 15).join(""));
+  });
+
+  it("隐私批注在工具唯一生产入口先打码再进入运行态和持久化", async () => {
+    const { state, tool } = setup();
+    state.doc!.content = [{
+      type: "paragraph",
+      attrs: { blockId: "p-contact" },
+      content: [{ type: "text", text: "手机 13912345678，卡号 6222020200112345678，邮箱 zhangwei@example.com。" }],
+    }];
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "模型错填",
+        summary: "手机号 13912345678 未脱敏",
+        note: "「13912345678」是完整手机号，zhangwei@example.com 也是完整邮箱。",
+        suggestion: "改为 139****5678，并隐藏 zhangwei@example.com。",
+        anchors: [{ find: "13912345678" }],
+      })],
+    }, reviewCtx({
+      type: "privacy",
+      templateId: "review-privacy-default",
+      templateName: "对外发布",
+    }));
+
+    expect(result).toMatchObject({ ok: true, groupCount: 1, anchorCount: 1, errors: [] });
+    const runtimeGroup = state.annotationGroups[0]!;
+    expect(runtimeGroup).toMatchObject({
+      origin: "privacy",
+      summary: "手机号 139****5678",
+      note: "「139****5678」是完整手机号，zha***@example.com 也是完整邮箱。",
+      suggestion: "改为 139****5678，并隐藏 zha***@example.com。",
+      anchors: [{
+        quote: "139****5678",
+        textHash: "span:p-contact:4:15",
+      }],
+    });
+    expect(replaceAnnotationGroupsByOrigin).toHaveBeenCalledWith(
+      state.docId,
+      state.docVersion,
+      [runtimeGroup],
+    );
+    expect(JSON.stringify(runtimeGroup)).not.toContain("13912345678");
+    expect(JSON.stringify(runtimeGroup)).not.toContain("zhangwei@example.com");
   });
 
   it("全角引号锚句在精确失败后经归一化二次匹配命中", async () => {

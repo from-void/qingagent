@@ -109,6 +109,8 @@ export interface AgentStreamTurnContext {
 
   firstChunkLogged: boolean;
   accumulatedText: string;
+  /** 敏感类审查整段完成文本只允许在打码后发出一次。 */
+  sensitiveReviewTextFlushed: boolean;
   /** 仅由桥接层按实际可渲染帧维护；不得用内部 chunk/heartbeat 代替。 */
   hasUserVisibleOutput: boolean;
   /** 只记类型与数量，不记录 chunk 正文或工具参数。 */
@@ -241,6 +243,7 @@ export async function createAgentStreamTurnContext(
     confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
     accumulatedText: "",
+    sensitiveReviewTextFlushed: false,
     hasUserVisibleOutput: false,
     chunkTypeCounts: new Map(),
     reasoningId: null,

@@ -4,6 +4,7 @@ import type { AgentStreamTurnContext } from "./agentStreamTurnContext.js";
 import { chatMessageAppended, newId } from "./frames.js";
 import { appendPartToChatHistory, nextSeq } from "../session/sessionState.js";
 import { isLikelyInternalTextDelta } from "./streamErrors.js";
+import { isSensitiveReviewTurn } from "./sensitiveReviewMasking.js";
 
 function hasVisibleText(text: string): boolean {
   return /\S/u.test(text.replace(/\p{Cf}/gu, ""));
@@ -23,6 +24,7 @@ export async function* handleTextAndReasoningEvent(
     context.accumulatedText += text;
     context.sawTextAfterLastTool = true;
     context.lastModelChunkAt = new Date().toISOString();
+    if (isSensitiveReviewTurn(context)) return true;
     const seq = nextSeq(state, agentMessageId);
     const textPart: MessagePart = { kind: "text", data: { body: text } };
     yield chatMessageAppended(agentMessageId, seq, textPart);

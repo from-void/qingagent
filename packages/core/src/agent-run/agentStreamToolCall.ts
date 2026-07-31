@@ -1,4 +1,10 @@
-import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
+import {
+  buildSensitiveAnchorSpanKey,
+  maskSensitiveValues,
+  type BridgeFrame,
+  type MessagePart,
+  type ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { todosSchema } from "@qingagent/contract-ts/schemas";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { mastra } from "../mastra.js";
@@ -54,6 +60,10 @@ import {
 } from "./authCardDedup.js";
 import { getConnectorDefinition } from "../connectors/registry.js";
 import { summarizeParseFileInput } from "./parseFileTelemetry.js";
+import {
+  isSensitiveReviewTurn,
+  maskSensitiveReviewToolArgs,
+} from "./sensitiveReviewMasking.js";
 
 const logger = mastra.getLogger();
 export const SESSION_STATE_TOOL_NAMES = new Set(["updateTodos"]);
@@ -125,7 +135,18 @@ export async function* handleToolCallEvent(
       for (const scanned of context.annotationPreview.feed(toolCallId, argsTextDelta)) {
         const data = buildAnnotationPreviewData(state.doc, scanned.previewId, scanned.source);
         if (!data) continue;
-        yield { kind: "annotationPreview", data };
+        const visibleData = isSensitiveReviewTurn(context)
+          ? {
+              ...data,
+              summary: maskSensitiveValues(data.summary),
+              anchors: data.anchors.map((anchor) => ({
+                ...anchor,
+                quote: maskSensitiveValues(anchor.quote),
+                textHash: buildSensitiveAnchorSpanKey(anchor),
+              })),
+            }
+          : data;
+        yield { kind: "annotationPreview", data: visibleData };
         outcome.producedVisibleFrame = true;
       }
     }
@@ -141,10 +162,11 @@ export async function* handleToolCallEvent(
     if (toolName === "create_annotation_groups") {
       yield* context.annotationPreview.clear();
     }
-    const toolArgs = normalizeToolCallArgs(
+    const rawToolArgs = normalizeToolCallArgs(
       toolName,
       chunk.payload as Record<string, unknown>,
     );
+    const toolArgs = maskSensitiveReviewToolArgs(context, toolName, rawToolArgs);
     context.toolCallNameById.set(toolCallId, toolName);
     context.toolCallArgsById.set(toolCallId, toolArgs);
     if (SESSION_STATE_TOOL_NAMES.has(toolName)) {

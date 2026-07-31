@@ -93,6 +93,19 @@ function addEmptyAgentMessage(
   });
 }
 
+function privacyReviewContext() {
+  const values = new Map<string, unknown>([[
+    "reviewContext",
+    { type: "privacy", templateId: "review-privacy-default", templateName: "对外发布" },
+  ]]);
+  return {
+    get: (key: string) => values.get(key),
+    set: (key: string, value: unknown) => {
+      values.set(key, value);
+    },
+  } as never;
+}
+
 function fetchArticleResult(index: number, overrides: Record<string, unknown> = {}) {
   return {
     ok: true,
@@ -286,6 +299,76 @@ describe("processAgentStream 行为特征", () => {
     });
     expect(state.messages.at(-1)?.content)
       .toBe("审查完成，已写入3处批注。\n\n批注落地结果：2处已定位。");
+  });
+
+  it("隐私审查完成摘要跨 delta 整段打码后才展示和持久化", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("privacy-summary-masking");
+    addEmptyAgentMessage(state);
+
+    const { frames, result } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        { type: "text-delta", payload: { id: "text", text: "手机号 13912" } },
+        { type: "text-delta", payload: { id: "text", text: "345678，卡号 6222020200" } },
+        { type: "text-delta", payload: { id: "text", text: "112345678，邮箱 zhangwei@example.com。" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "privacy-summary-stream",
+        runId: "privacy-summary-run",
+        requestContext: privacyReviewContext(),
+      },
+    ));
+
+    expect(visibleTextBodies(frames)).toEqual([
+      "手机号 139****5678，卡号 6222***********5678，邮箱 zha***@example.com。",
+    ]);
+    expect(result.finalText).toBe("手机号 139****5678，卡号 6222***********5678，邮箱 zha***@example.com。");
+    expect(state.messages.at(-1)?.content).toBe(result.finalText);
+    expect(JSON.stringify({ frames, messages: state.messages, chatHistory: state.chatHistory }))
+      .not.toContain("13912345678");
+    expect(JSON.stringify({ frames, messages: state.messages, chatHistory: state.chatHistory }))
+      .not.toContain("6222020200112345678");
+    expect(JSON.stringify({ frames, messages: state.messages, chatHistory: state.chatHistory }))
+      .not.toContain("zhangwei@example.com");
+  });
+
+  it("隐私批注工具参数写入卡片和模型 transcript 前先打码", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("privacy-tool-args-masking");
+    const args = {
+      groups: [{
+        summary: "手机号 13912345678 未脱敏",
+        note: "「13912345678」属于隐私泄露。",
+        origin: "privacy",
+        suggestion: "改为 139****5678",
+        anchors: [{ find: "13912345678" }],
+      }],
+    };
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        { type: "tool-call", payload: { toolName: "create_annotation_groups", toolCallId: "privacy-tool", args } },
+        { type: "tool-result", payload: { toolName: "create_annotation_groups", toolCallId: "privacy-tool", args, result: { ok: true, groupCount: 1, anchorCount: 1, errors: [] } } },
+        { type: "text-delta", payload: { id: "text", text: "已标记 13912345678。" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "privacy-tool-stream",
+        runId: "privacy-tool-run",
+        requestContext: privacyReviewContext(),
+      },
+    ));
+
+    const persistedProjection = JSON.stringify({
+      frames,
+      messages: state.messages,
+      chatHistory: state.chatHistory,
+    });
+    expect(persistedProjection).toContain("139****5678");
+    expect(persistedProjection).not.toContain("13912345678");
   });
 
   it("step-finish 只保留 span，不再重复写 provider usage 账本", async () => {

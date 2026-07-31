@@ -1,6 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
-import type { AnnotationGroup } from "@qingagent/contract-ts";
+import {
+  maskSensitiveAnnotationGroup,
+  maskSensitiveValues,
+  type AnnotationGroup,
+} from "@qingagent/contract-ts";
 import { CaretIcon } from "./icons";
 
 const SHOW_DELAY_MS = 80;
@@ -35,10 +39,15 @@ function annotationGroupIdsAtTarget(
 }
 
 export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggestion?: string): string {
-  const quoteChars = Array.from(group.anchors[0]?.quote.trim() ?? "");
+  const safeGroup = maskSensitiveAnnotationGroup(group);
+  const anchor = safeGroup.anchors[0];
+  const quoteChars = Array.from(anchor?.quote.trim() ?? "");
   const quote = quoteChars.length > 30 ? `${quoteChars.slice(0, 30).join("")}…` : quoteChars.join("");
-  const suggestion = resolveAnnotationSuggestion(group, editedSuggestion);
-  return `按批注修改:「${quote}」——${suggestion}（批注:${group.summary}；原因:${group.note}）\n`;
+  const suggestion = resolveAnnotationSuggestion(safeGroup, editedSuggestion);
+  const location = anchor
+    ? `块 ${anchor.blockId}，PM ${anchor.pmFrom}-${anchor.pmTo}`
+    : "原批注锚点";
+  return `按批注修改（定位:${location}）:「${quote}」——${suggestion}（批注:${safeGroup.summary}；原因:${safeGroup.note}）\n`;
 }
 
 export function resolveAnnotationSuggestion(
@@ -46,7 +55,10 @@ export function resolveAnnotationSuggestion(
   editedSuggestion?: string,
 ): string {
   if (editedSuggestion !== undefined) {
-    return editedSuggestion.trim() || group.note.trim();
+    const suggestion = editedSuggestion.trim() || group.note.trim();
+    return group.origin === "privacy" || group.origin === "sensitive"
+      ? maskSensitiveValues(suggestion)
+      : suggestion;
   }
   return group.suggestion?.trim() || group.note.trim();
 }
@@ -163,12 +175,14 @@ export function AnnotationCarousel(props: {
     setPosition({ left, top: Math.max(VIEWPORT_GUTTER, top), visibility: "visible" });
   }, [hovered]);
 
+  const reviewingGroups = props.groups
+    .filter((item) => item.status === "reviewing")
+    .map(maskSensitiveAnnotationGroup);
   const group = hovered
-    ? props.groups.find((item) => item.id === hovered.groupId && item.status === "reviewing")
+    ? reviewingGroups.find((item) => item.id === hovered.groupId)
     : undefined;
   if (!group) return null;
 
-  const reviewingGroups = props.groups.filter((item) => item.status === "reviewing");
   const groupIndex = reviewingGroups.findIndex((item) => item.id === group.id);
   const hitGroups = (hovered?.groupIds ?? [])
     .map((id) => reviewingGroups.find((item) => item.id === id))

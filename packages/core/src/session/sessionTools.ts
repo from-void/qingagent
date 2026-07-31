@@ -1,4 +1,8 @@
-import type { ReviewContext, SkillRef } from "@qingagent/contract-ts";
+import {
+  maskSensitiveAnnotationGroup,
+  type ReviewContext,
+  type SkillRef,
+} from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
 import type { Workspace } from "@mastra/core/workspace";
@@ -811,7 +815,7 @@ export function createSessionScopedTools(
           : source.origin === "consistency"
             ? `文内冲突原句：${source.documentQuote}`
             : null;
-        return [{
+        return [maskSensitiveAnnotationGroup({
           id: `annotation-${crypto.randomUUID()}`,
           summary: source.summary,
           note: evidence ? `${source.note}\n${evidence}` : source.note,
@@ -820,7 +824,7 @@ export function createSessionScopedTools(
           severity: source.severity,
           status: "reviewing" as const,
           anchors,
-        }];
+        })];
       });
       if (groups.length) {
         const write = annotationGroupWriteQueue.then(async () => {

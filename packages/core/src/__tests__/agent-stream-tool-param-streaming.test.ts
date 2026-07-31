@@ -245,4 +245,56 @@ describe("processAgentStream tool-call 参数流式占位", () => {
     const clearIndex = frames.findIndex((frame) => frame.kind === "annotationPreviewCleared");
     expect(clearIndex).toBeGreaterThan(previewIndex);
   });
+
+  it("隐私审查的参数流式预览不展示原始敏感值", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { legacySectionsToPm } = await import("@qingagent/pm-schema");
+    const state = createSession("privacy-annotation-preview");
+    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "联系电话 13912345678" } }] as never);
+    const requestContext = new Map<string, unknown>([[
+      "reviewContext",
+      { type: "privacy", templateName: "对外发布", prompt: "检查隐私" },
+    ]]);
+    const args = {
+      groups: [{
+        summary: "手机号 13912345678",
+        note: "完整值不应显示",
+        origin: "privacy",
+        anchors: [{ find: "13912345678" }],
+      }],
+    };
+
+    const { frames } = await collectFramesAndReturn(
+      processAgentStream(streamOf(
+        streamingStart("create_annotation_groups", "tc-privacy-annotation"),
+        {
+          type: "tool-call-delta",
+          payload: {
+            toolCallId: "tc-privacy-annotation",
+            argsTextDelta: JSON.stringify(args),
+          },
+        },
+        toolCall("create_annotation_groups", "tc-privacy-annotation", args),
+      ), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-privacy-annotation-preview",
+        runId: "run-privacy-annotation-preview",
+        requestContext: requestContext as never,
+      }),
+    );
+
+    const visibleFrames = JSON.stringify(frames);
+    expect(frames).toContainEqual({
+      kind: "annotationPreview",
+      data: expect.objectContaining({
+        summary: "手机号 139****5678",
+        anchors: [expect.objectContaining({
+          quote: "139****5678",
+          textHash: expect.stringMatching(/^span:/u),
+        })],
+      }),
+    });
+    expect(visibleFrames).not.toContain("13912345678");
+  });
 });

@@ -31,4 +31,29 @@ describe("reviewDismissalSignalRepo", () => {
       ts: saved.ts,
     });
   });
+
+  it("隐私批注的不再提示信号也只保存打码值", async () => {
+    await runMigrations();
+    await getDocumentsClient().execute(`INSERT INTO documents(
+      id,thread_id,resource_id,title,doc_state,created_at,updated_at,role
+    ) VALUES('doc-privacy-signal','thread-privacy-signal','qingagent-user','隐私信号','editing','now','now','main')`);
+    const saved = await insertReviewDismissalSignal({
+      docId: "doc-privacy-signal",
+      origin: "privacy",
+      summary: "手机号 13912345678 未脱敏",
+      quote: "13912345678",
+    });
+
+    expect(saved).toMatchObject({
+      summary: "手机号 139****5678 未脱敏",
+      quote: "139****5678",
+    });
+    const row = (await getDocumentsClient().execute(
+      "SELECT summary,quote FROM review_dismissal_signals WHERE doc_id='doc-privacy-signal'",
+    )).rows[0];
+    expect(row).toMatchObject({
+      summary: "手机号 139****5678 未脱敏",
+      quote: "139****5678",
+    });
+  });
 });

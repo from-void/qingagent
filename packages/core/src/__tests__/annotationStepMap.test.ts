@@ -232,4 +232,43 @@ describe("annotation StepMap", () => {
     expect(mapped.invalidatedAnchorIndexes.size).toBe(0);
     expect(mapped.unlocatedGroupCount).toBe(0);
   });
+
+  it("打码锚点只靠结构 span 定位，未触碰时存活、触碰后失效", () => {
+    const raw = "13912345678";
+    const group: AnnotationGroup = {
+      id: "privacy-masked-anchor",
+      summary: "手机号未脱敏",
+      note: "需要打码",
+      origin: "privacy",
+      suggestion: "改为 139****5678",
+      status: "reviewing",
+      anchors: [{
+        blockId: "contact",
+        pmFrom: 3,
+        pmTo: 14,
+        quote: "139****5678",
+        textHash: "span:contact:3:14",
+      }],
+    };
+
+    const unchanged = mapAnnotationGroupsThroughSteps(
+      [group],
+      [{ stepType: "annotationMappingUnknown" }],
+      doc([paragraph("contact", `前缀${raw}后缀`)]),
+    );
+    expect(unchanged.groups).toEqual([group]);
+
+    const changed = mapAnnotationGroupsThroughSteps(
+      [group],
+      [{
+        stepType: "replace",
+        from: 6,
+        to: 10,
+        slice: { content: [{ type: "text", text: "0000" }], openStart: 0, openEnd: 0 },
+      }],
+      doc([paragraph("contact", "前缀13900005678后缀")]),
+    );
+    expect(changed.groups).toEqual([]);
+    expect(changed.unlocatedGroupCount).toBe(1);
+  });
 });

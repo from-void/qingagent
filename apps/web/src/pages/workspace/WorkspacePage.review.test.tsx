@@ -3552,7 +3552,7 @@ describe("WorkspacePage review controls", () => {
     expect(send.data.chips).toEqual([expect.objectContaining({
       kind: { kind: "text" },
       label: "批注·事实有误",
-      text: "按批注修改:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
+      text: "按批注修改（定位:块 p-1，PM 1-3）:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
     })]);
     expect(sendMessageCommands(stream)).toHaveLength(1);
     expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();

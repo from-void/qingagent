@@ -1,5 +1,10 @@
 import type { Client } from "@libsql/client";
-import type { AnnotationGroup, DocSuggestion, SuggestionStatus } from "@qingagent/contract-ts";
+import {
+  maskSensitiveAnnotationGroup,
+  type AnnotationGroup,
+  type DocSuggestion,
+  type SuggestionStatus,
+} from "@qingagent/contract-ts";
 import {
   commitTransaction,
   getDocumentsClient,
@@ -34,25 +39,28 @@ function annotationInsertStatements(
   groups: readonly AnnotationGroup[],
   now: string,
 ) {
-  return groups.flatMap((group) => group.anchors.map((anchor, index) => ({
-    sql: `INSERT INTO document_suggestions (
-      id, doc_id, base_version, status, anchor_json, steps_json, preview_json,
-      summary, conflict_json, kind, note, origin, group_id, group_meta_json,
-      severity, created_at, updated_at
-    ) SELECT ?, ?, ?, 'reviewing', ?, NULL, NULL, ?, NULL, 'annotation', ?, ?, ?, ?, ?, ?, ?
-    WHERE NOT EXISTS (
-      SELECT 1 FROM deleted_sessions
-      WHERE session_id = ?
-        OR session_id = (SELECT thread_id FROM documents WHERE id = ?)
-    )`,
-    args: [
-      `${group.id}:${index + 1}`, docId, baseVersion, JSON.stringify(anchor), group.summary,
-      group.note, group.origin, group.id,
-      JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }),
-      group.severity ?? null,
-      now, now, docId, docId,
-    ],
-  })));
+  return groups.flatMap((inputGroup) => {
+    const group = maskSensitiveAnnotationGroup(inputGroup);
+    return group.anchors.map((anchor, index) => ({
+      sql: `INSERT INTO document_suggestions (
+        id, doc_id, base_version, status, anchor_json, steps_json, preview_json,
+        summary, conflict_json, kind, note, origin, group_id, group_meta_json,
+        severity, created_at, updated_at
+      ) SELECT ?, ?, ?, 'reviewing', ?, NULL, NULL, ?, NULL, 'annotation', ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM deleted_sessions
+        WHERE session_id = ?
+          OR session_id = (SELECT thread_id FROM documents WHERE id = ?)
+      )`,
+      args: [
+        `${group.id}:${index + 1}`, docId, baseVersion, JSON.stringify(anchor), group.summary,
+        group.note, group.origin, group.id,
+        JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }),
+        group.severity ?? null,
+        now, now, docId, docId,
+      ],
+    }));
+  });
 }
 
 function writeTarget(docId: string, operation: DocumentWriteTarget["operation"]): DocumentWriteTarget {
@@ -185,12 +193,15 @@ export async function persistMappedAnnotationGroups(
       sql: "UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')",
       args: [now, docId],
     });
-    const statements = groups.flatMap((group) => group.anchors.map((anchor, mappedIndex) => ({
-      sql: `UPDATE document_suggestions SET status=?, anchor_json=?,
-        group_meta_json=?, severity=?, updated_at=? WHERE id=? AND doc_id=? AND kind='annotation'`,
-      args: [group.status, JSON.stringify(anchor), JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }), group.severity ?? null, now,
-        `${group.id}:${(survivingAnchorIndexes.get(group.id)?.[mappedIndex] ?? mappedIndex) + 1}`, docId],
-    })));
+    const statements = groups.flatMap((inputGroup) => {
+      const group = maskSensitiveAnnotationGroup(inputGroup);
+      return group.anchors.map((anchor, mappedIndex) => ({
+        sql: `UPDATE document_suggestions SET status=?, anchor_json=?,
+          group_meta_json=?, severity=?, updated_at=? WHERE id=? AND doc_id=? AND kind='annotation'`,
+        args: [group.status, JSON.stringify(anchor), JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }), group.severity ?? null, now,
+          `${group.id}:${(survivingAnchorIndexes.get(group.id)?.[mappedIndex] ?? mappedIndex) + 1}`, docId],
+      }));
+    });
     if (client) {
       for (const statement of statements) await c.execute(statement);
     } else if (statements.length > 0) {

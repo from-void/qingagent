@@ -27,8 +27,14 @@ import {
   resourceMutationKey,
   workspaceMutations,
 } from "./revisionedMutation";
-import type { AiRun, AiTextRun, BridgeFrame, TodoItem } from "@qingagent/contract-ts";
-import type { AnnotationGroup } from "@qingagent/contract-ts";
+import {
+  maskSensitiveAnnotationGroup,
+  type AiRun,
+  type AiTextRun,
+  type AnnotationGroup,
+  type BridgeFrame,
+  type TodoItem,
+} from "@qingagent/contract-ts";
 import {
   getDeterministicId,
   type PmBlockNode,
@@ -414,29 +420,29 @@ function workspaceReducerMut(
         draft.version = action.data.baseVersion ?? draft.version;
       }
       return;
-    case "annotationGroupsReady":
+    case "annotationGroupsReady": {
       draft.previewGroups = [];
+      const groups = action.data.groups.map(maskSensitiveAnnotationGroup);
       if (draft.sessionId) {
-        for (const group of action.data.groups) {
+        for (const group of groups) {
           workspaceMutations.reconcile(
             annotationMutationKey(draft.sessionId, group.id),
           );
         }
       }
-      if (action.data.groups.length === 0 && !action.data.replacedOrigins?.length) {
+      if (groups.length === 0 && !action.data.replacedOrigins?.length) {
         draft.annotationGroups = [];
         return;
       }
-      {
-        const replacedOrigins = new Set(
-          action.data.replacedOrigins ?? action.data.groups.map((group) => group.origin),
-        );
-        const retained = draft.annotationGroups.filter((group) => !replacedOrigins.has(group.origin));
-        // 这是服务端权威状态，不能保留同 id 的本地乐观 accepted/ignored；
-        // 否则命令失败后的 reviewing 回帧无法自愈。
-        draft.annotationGroups = [...retained, ...action.data.groups];
-      }
+      const replacedOrigins = new Set(
+        action.data.replacedOrigins ?? groups.map((group) => group.origin),
+      );
+      const retained = draft.annotationGroups.filter((group) => !replacedOrigins.has(group.origin));
+      // 这是服务端权威状态，不能保留同 id 的本地乐观 accepted/ignored；
+      // 否则命令失败后的 reviewing 回帧无法自愈。
+      draft.annotationGroups = [...retained, ...groups];
       return;
+    }
     case "annotationPreview": {
       const index = draft.previewGroups.findIndex((group) => group.previewId === action.data.previewId);
       if (index >= 0) draft.previewGroups[index] = action.data;
@@ -447,7 +453,7 @@ function workspaceReducerMut(
       draft.previewGroups = [];
       return;
     case "annotationGroupsChanged":
-      draft.annotationGroups = action.groups;
+      draft.annotationGroups = action.groups.map(maskSensitiveAnnotationGroup);
       return;
     case "manualDocSaved":
       draft.doc = pmDocToViewDocumentSnapshot(action.pmDoc, action.version);

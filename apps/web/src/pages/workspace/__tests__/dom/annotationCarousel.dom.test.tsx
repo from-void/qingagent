@@ -263,7 +263,7 @@ describe("AnnotationCarousel hover card", () => {
       suggestion.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
-    expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("按批注修改:「甲组原句」——改成五月发布（批注:事实有误；原因:时间与资料不一致）\n");
+    expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("按批注修改（定位:块 p，PM 1-3）:「甲组原句」——改成五月发布（批注:事实有误；原因:时间与资料不一致）\n");
     expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host.querySelector(".annotation-hover-card")).toBeNull();
 
@@ -279,12 +279,51 @@ describe("AnnotationCarousel hover card", () => {
   it("指令原句按 30 字截断并保留末尾换行", () => {
     const longQuote = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一";
     expect(buildAnnotationInstruction({ ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: longQuote }] }))
-      .toBe("按批注修改:「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注:事实有误；原因:时间与资料不一致）\n");
+      .toBe("按批注修改（定位:块 p，PM 1-3）:「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注:事实有误；原因:时间与资料不一致）\n");
   });
 
   it("空修改意见回退为批注原因自身，不生成静默空指令", () => {
     expect(buildAnnotationInstruction({ ...groups[0]!, suggestion: undefined }, "   "))
-      .toBe("按批注修改:「甲组原句」——时间与资料不一致（批注:事实有误；原因:时间与资料不一致）\n");
+      .toBe("按批注修改（定位:块 p，PM 1-3）:「甲组原句」——时间与资料不一致（批注:事实有误；原因:时间与资料不一致）\n");
+  });
+
+  it("隐私批注进入前端状态和生成修改指令时保持打码，并携带结构锚点", () => {
+    const rawGroup: AnnotationGroup = {
+      id: "privacy-raw",
+      summary: "手机号 13912345678 未脱敏",
+      note: "「13912345678」是手机号。",
+      origin: "privacy",
+      suggestion: "改为 139****5678。",
+      status: "reviewing",
+      anchors: [{
+        blockId: "contact-table",
+        pmFrom: 42,
+        pmTo: 53,
+        quote: "13912345678",
+        textHash: "ba6c167e885ea4be8252fb01",
+      }],
+    };
+    const state = workspaceReducer(initialWorkspaceState, {
+      kind: "annotationGroupsReady",
+      data: { groups: [rawGroup], replacedOrigins: ["privacy"] },
+    });
+    const saved = state.annotationGroups[0]!;
+    const instruction = buildAnnotationInstruction(saved);
+
+    expect(saved).toMatchObject({
+      summary: "手机号 139****5678 未脱敏",
+      note: "「139****5678」是手机号。",
+      anchors: [{
+        quote: "139****5678",
+        blockId: "contact-table",
+        pmFrom: 42,
+        pmTo: 53,
+        textHash: "span:contact-table:42:53",
+      }],
+    });
+    expect(instruction).toContain("定位:块 contact-table，PM 42-53");
+    expect(instruction).toContain("139****5678");
+    expect(instruction).not.toContain("13912345678");
   });
 
   it("严重度计数只在模板输出分级后显示，缺省项按建议档计数", () => {

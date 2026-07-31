@@ -45,3 +45,4 @@ metadata:
 5. `origin` 命名固定为：敏感词=`sensitive`、去 AI 味=`deai`、来源核查=`source-check`、一致性=`consistency`、隐私=`privacy`、格式=`format`、角色审查=`角色审查:<模板名>`、自定义审查=`自定义审查:<模板名>`。模板名必须与 query 中名称逐字一致。
 6. 同一固定 `origin` 或同名角色/自定义模板重跑时换代旧结果；不同角色或自定义模板使用不同 `origin`，结果可以共存。
 7. `create_annotation_groups` 返回参数解析失败时，拆成小批重试（每次不超过 3 组），不得把调用失败当成没有问题或空手结束。
+8. `privacy` / `sensitive` 发现若含手机号、身份证、银行卡或邮箱，只有用于精确定位的 `anchors[].find` 可以填写正文原值；`summary`、`note`、`suggestion` 与聊天审查摘要必须使用打码值（如 `139****5678`），禁止复述完整敏感值。

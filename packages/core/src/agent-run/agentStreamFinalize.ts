@@ -44,6 +44,7 @@ import {
 import { schedulePersist } from "../session/threadPersistence.js";
 import { endToolIoSpan } from "./toolIoSpans.js";
 import { recomputeUserVisibleOutput } from "./agentStreamVisibility.js";
+import { flushSensitiveReviewText } from "./sensitiveReviewMasking.js";
 
 const logger = mastra.getLogger();
 
@@ -141,6 +142,8 @@ export async function* finalizeAgentStream(
     recomputeUserVisibleOutput(context);
     return chatMessageAppended(finalTextMessageId, seq, textPart);
   };
+  const sensitiveReviewTextFrame = flushSensitiveReviewText(context);
+  if (sensitiveReviewTextFrame) yield sensitiveReviewTextFrame;
   yield* context.annotationPreview.clear();
   context.docJustGenerated = false;
   for (const frame of context.materialFrames) yield frame;

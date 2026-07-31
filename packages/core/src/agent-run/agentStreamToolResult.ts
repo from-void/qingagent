@@ -21,6 +21,7 @@ import {
   showQrDuplicatesTrustedAuthCard,
 } from "./authCardDedup.js";
 import { toolResultSucceededByContract } from "./toolResultStatus.js";
+import { maskSensitiveReviewToolArgs } from "./sensitiveReviewMasking.js";
 
 const CONNECTOR_AUTH_START_TOOL_NAMES = new Set([
   "github_auth_start",
@@ -39,7 +40,10 @@ export async function* handleToolResultEvent(
     yield* turn.annotationPreview.clear();
   }
   const rawArgs = (chunk.payload.args ?? {}) as Record<string, unknown>;
-  const args = { ...(turn.toolCallArgsById.get(toolCallId) ?? {}), ...rawArgs };
+  const args = maskSensitiveReviewToolArgs(turn, toolName, {
+    ...(turn.toolCallArgsById.get(toolCallId) ?? {}),
+    ...rawArgs,
+  });
   turn.toolCallNameById.set(toolCallId, toolName);
   turn.toolCallArgsById.set(toolCallId, args);
   if (

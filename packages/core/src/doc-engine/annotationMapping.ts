@@ -1,7 +1,11 @@
-import type {
-  AnnotationGroup,
-  DiffHunk,
-  SuggestionAnchor,
+import crypto from "node:crypto";
+import {
+  buildSensitiveAnchorSpanKey,
+  isSensitiveReviewOrigin,
+  maskSensitiveValues,
+  type AnnotationGroup,
+  type DiffHunk,
+  type SuggestionAnchor,
 } from "@qingagent/contract-ts";
 import type { PmDoc, PmInlineNode, PmStep } from "@qingagent/pm-schema";
 import { Mapping, StepMap } from "@tiptap/pm/transform";
@@ -50,6 +54,10 @@ function textBetweenPmDoc(doc: PmDoc, from: number, to: number): string {
   };
   visit(doc, 0, true);
   return chunks.join("");
+}
+
+function annotationTextHash(text: string): string {
+  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 24);
 }
 
 function insertedSize(step: PmStep): number {
@@ -220,13 +228,27 @@ export function mapAnnotationGroupsThroughSteps(
       const mappedQuote = finalDoc && (touched || fallbackValidation)
         ? textBetweenPmDoc(finalDoc, from, to)
         : anchor.quote;
-      const textChanged = mappedQuote !== anchor.quote
-        && normalizeAnnotationQuote(mappedQuote) !== normalizeAnnotationQuote(anchor.quote);
+      const textChanged = isSensitiveReviewOrigin(group.origin)
+        ? touched || (
+            fallbackValidation
+            && normalizeAnnotationQuote(maskSensitiveValues(mappedQuote))
+              !== normalizeAnnotationQuote(maskSensitiveValues(anchor.quote))
+          )
+        : mappedQuote !== anchor.quote
+          && normalizeAnnotationQuote(mappedQuote) !== normalizeAnnotationQuote(anchor.quote)
+          && annotationTextHash(mappedQuote) !== anchor.textHash;
       if (from >= to || textChanged) {
         invalidIndexes.push(index);
         return;
       }
-      anchors.push({ ...anchor, pmFrom: from, pmTo: to });
+      anchors.push({
+        ...anchor,
+        pmFrom: from,
+        pmTo: to,
+        textHash: isSensitiveReviewOrigin(group.origin)
+          ? buildSensitiveAnchorSpanKey({ blockId: anchor.blockId, pmFrom: from, pmTo: to })
+          : anchor.textHash,
+      });
       indexes.push(index);
     });
     if (invalidIndexes.length > 0) invalidatedAnchorIndexes.set(group.id, invalidIndexes);

@@ -714,6 +714,45 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(host.textContent).toContain("生成后的正文");
   });
 
+  it("presentation 逐帧写入不冒充本地 dirty，terminal canonical 可直接收敛", async () => {
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    const doc = paragraphDoc("正在逐帧揭示的 canonical 正文");
+    const snapshot = pmDocToViewDocumentSnapshot(doc, 3);
+    const run: NativePresentationRun = {
+      id: 2,
+      docVersion: 3,
+      sessionId: "session-presentation-dirty",
+      mode: "whole",
+      finalDoc: doc,
+      baselineSections: [],
+      finalSections: snapshot.sections,
+    };
+    const requestAnimationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation(() => 99);
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          ref={viewRef}
+          doc={snapshot}
+          editable
+          interactiveEditable={false}
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          presentationRun={run}
+          presentationReducedMotion={false}
+        />,
+      );
+    });
+    await flush(2);
+
+    expect(requestAnimationFrame).toHaveBeenCalled();
+    expect(host.querySelector(".native-presentation-active")).not.toBeNull();
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+  });
+
   it("presentationRun 终态用 PM 回灌并保留 paragraph/listItem blockId", async () => {
     let editor: Editor | null = null;
     const handleEditorReady = (readyEditor: Editor | null) => {

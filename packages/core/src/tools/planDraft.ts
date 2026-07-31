@@ -425,8 +425,8 @@ export const planDraftTool = createTool({
     "仅当用户明确说“直接写/别问/不要问/现在就写”或消息与写作无关时才不调用；这类话只表示跳过 planDraft，新文档直写才直接 writeDraft，已有文档局部编辑仍走 readDraft/editDraft。 " +
     "写代码/SQL 查询等编程技术求助不算本工具场景；brainstorm、取名、想标题、想口号等短产出若未明确要写入右侧文档，也不要调用本工具。 " +
     "已有文档时，仅当用户要推翻、重设整篇写作方向才再次调用；写作中途的局部选择或其他通用确认改用 askUserQuestion。 " +
-    "提供 topic 和 rationale 即可，具体问题由工具自动生成。必须单独调用本工具：同一步/同一响应里绝不能并发调用 webSearch、fetchArticle、writeDraft 等任何其它工具。 " +
-    "本工具会结束本轮并等待用户回答，并发工具调用会白跑且体验割裂。需要先搜集信息或读取材料时，先在前面的步骤单独完成，再在新的一步里只调用 planDraft。",
+    "提供 topic 和 rationale 即可，具体问题由工具自动生成。planDraft 必须是本轮最后一个动作：同一次响应里不得与其它工具并发发出；调用它之后本轮不要再调用任何工具，因为它会挂起等待用户作答。 " +
+    "调用它之前，同一轮可以先完成无副作用的准备动作，例如用 updateTodos 列任务清单、用 readDraft 读取当前稿子。需要搜索、抓取、写稿等有副作用或耗时动作时，先在前面的步骤完成，再调用 planDraft 收尾。",
   inputSchema: z.object({
     id: z.string().describe("本次写作方向建模的唯一标识"),
     rationale: z

@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { createDesktopAppProxyHandler } from "./desktopAppProtocol.js";
-import { createNodeHttpProxyFetch } from "./desktopAppProxyFetch.js";
+import {
+  createNodeHttpProxyFetch,
+  createUpstreamBodyStream,
+} from "./desktopAppProxyFetch.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -86,6 +90,29 @@ test("渲染端取消响应体时上游连接立即关闭,不泄漏 SSE 连接",
   // Electron 在渲染端关闭 EventSource 时,正是通过销毁响应体流触发这里的 cancel。
   await reader.cancel();
   await serverClosed.promise;
+});
+
+test("上游仅发 close 而没有 end/error 时也会终止 renderer 可观测流", async () => {
+  const response = new PassThrough();
+  const upstream = { destroy() { return upstream; } } as unknown as Pick<
+    import("node:http").ClientRequest,
+    "destroy"
+  >;
+  const reader = createUpstreamBodyStream(
+    upstream,
+    response as unknown as IncomingMessage,
+  ).getReader();
+
+  response.write(Buffer.from("event: frame\ndata: {}\n\n"));
+  assert.equal(await readChunk(reader), "event: frame\ndata: {}\n\n");
+  // Windows/Electron 真机的连接淘汰可能只落到 IncomingMessage close；旧适配器只监听
+  // end/error，会让 Web 流永久保持 open，直到 renderer 的 45s 半开看门狗兜底。
+  response.destroy();
+
+  await assert.rejects(
+    reader.read(),
+    /premature close|aborted/i,
+  );
 });
 
 test("并发长连接不受单主机 6 连接上限约束,全部到达服务端", async () => {

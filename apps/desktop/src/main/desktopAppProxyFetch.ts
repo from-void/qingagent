@@ -80,32 +80,15 @@ export function createUpstreamBodyStream(
   upstream: Pick<ClientRequest, "destroy">,
   response: IncomingMessage,
 ): ReadableStream<Uint8Array> {
-  let closed = false;
-  const finish = (run: () => void) => {
-    if (closed) return;
-    closed = true;
-    run();
-  };
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      response.on("data", (chunk: Uint8Array) => {
-        if (closed) return;
-        controller.enqueue(chunk);
-        // 背压:渲染端读得慢就先停上游,避免主进程堆内存被大响应撑爆。
-        if ((controller.desiredSize ?? 1) <= 0) response.pause();
-      });
-      response.on("end", () => finish(() => controller.close()));
-      response.on("error", (error) => finish(() => controller.error(error)));
-    },
-    pull() {
-      if (!closed) response.resume();
-    },
-    cancel() {
-      closed = true;
-      response.destroy();
-      upstream.destroy();
-    },
+  // Node 内建桥接通过 finished/eos 同时覆盖 end、error、aborted 与 premature close。
+  // 旧手写桥只监听 end/error；Windows Electron 的连接淘汰若只落到 close，Web 流会
+  // 永久保持 open，renderer 只能等半开看门狗。这里交回运行时处理终态与背压。
+  response.once("close", () => {
+    // renderer 取消会让 toWeb 销毁 IncomingMessage；若 HTTP 尚未完整收口，再显式销毁
+    // ClientRequest，维持“不泄漏 SSE 上游连接”的原契约。正常 EOF 保留 keep-alive。
+    if (!response.complete) upstream.destroy();
   });
+  return Readable.toWeb(response) as unknown as ReadableStream<Uint8Array>;
 }
 
 export function createNodeHttpProxyFetch(

@@ -12,6 +12,7 @@ import {
   submitAttachFolderCommand,
   type FolderAttachSelection,
 } from "../folderAttach";
+import { initialWorkspaceState, workspaceReducer } from "../workspaceState";
 
 const VALID_FRAME: BridgeFrame = {
   kind: "sessionMeta",
@@ -581,6 +582,94 @@ describe("ServerStream", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(MockEventSource.instances).toHaveLength(2);
     expect(MockEventSource.instances[1]!.url).toContain("after=7");
+
+    stream.dispose();
+  });
+
+  it("overflow 断流后按游标回放候选终态，并清除停止假态", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const stream = new ServerStream();
+    let state = initialWorkspaceState;
+    stream.subscribe((frame) => {
+      state = workspaceReducer(state, frame);
+    });
+
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "1");
+    await started;
+    source.emitFrame(STREAM_START_FRAME, "2");
+    source.emitFrame({
+      kind: "docStateChanged",
+      data: {
+        state: { kind: "editing" },
+        activeOverlay: null,
+        agentBusy: true,
+      },
+    } satisfies BridgeFrame, "3");
+    expect(state.streamActive).toBe(true);
+    expect(state.agentBusy).toBe(true);
+
+    source.onerror?.(new Event("error"));
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const replaySource = MockEventSource.instances[1]!;
+    expect(replaySource.url).toContain("after=3");
+
+    replaySource.emitFrame({
+      kind: "docDiffReady",
+      data: {
+        baseVersion: 4,
+        suggestions: [{
+          id: "overflow-review-1",
+          docId: "doc-overflow",
+          baseVersion: 4,
+          baseSchemaVersion: 1,
+          status: "reviewing",
+          anchor: {
+            blockId: "dialogue-1",
+            pmFrom: 1,
+            pmTo: 2,
+            quote: "旧",
+            textHash: "overflow-anchor",
+          },
+          patch: {
+            kind: "prosemirror_steps",
+            steps: [{ stepType: "replace", from: 1, to: 2 }],
+          },
+          preview: { deleteText: "旧", insertText: "新" },
+          summary: "对白文言化",
+        }],
+      },
+    } satisfies BridgeFrame, "4");
+    replaySource.emitFrame({
+      kind: "docStateChanged",
+      data: {
+        state: { kind: "pendingReview" },
+        activeOverlay: null,
+        agentBusy: false,
+      },
+    } satisfies BridgeFrame, "5");
+    replaySource.emitFrame({
+      kind: "stream",
+      data: {
+        kind: "end",
+        data: { streamId: "stream-1", reason: { kind: "done" } },
+      },
+    } satisfies BridgeFrame, "6");
+
+    expect(state.docState).toEqual({ kind: "pendingReview" });
+    expect(state.docDiff?.suggestions).toHaveLength(1);
+    expect(state.streamActive).toBe(false);
+    expect(state.agentBusy).toBe(false);
 
     stream.dispose();
   });

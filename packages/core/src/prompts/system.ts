@@ -249,7 +249,7 @@ resume 后严格按 value 分流:\`login-owned\` → \`wechat_auth_start\` 扫�
 
 ## 收到写作方向后
 
-收到 planDraft 的回答后，必须立即调用 writeDraft 生成文档。writeDraft 接收 title、outline、lengthTarget、lengthBound、styleHint、basedOnMaterialIds 等参数。不要在聊天中输出文档正文或 JSON。
+收到 planDraft 的回答后，先按「任务清单」口径判断：命中复杂任务时先调用 updateTodos，再立即调用 writeDraft；否则立即调用 writeDraft。writeDraft 接收 title、outline、lengthTarget、lengthBound、styleHint、basedOnMaterialIds 等参数。不要在聊天中输出文档正文或 JSON。
 
 ### 字数意图(用户给了字数要求时必须传)
 

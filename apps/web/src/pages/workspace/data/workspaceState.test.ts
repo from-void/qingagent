@@ -737,7 +737,21 @@ describe("annotationGroupsReady 来源增量", () => {
           kind: "stream",
           data: { kind: "start", data: { streamId: "stale-stream" } },
         },
+        {
+          kind: "docGenerationEvent",
+          data: {
+            kind: "generation_started",
+            data: {
+              generationId: "stale-generation",
+              seq: 1,
+              prevSeq: null,
+              sessionId: "reopen-finished",
+              baseVersion: 14,
+            },
+          },
+        },
       );
+      expect(stale.generationDraft).not.toBeNull();
       const restoreFrames: WorkspaceAction[] = [
         { kind: "restoreReset", data: { epoch: 2, snapshotSeq: 20 } },
         {
@@ -764,6 +778,7 @@ describe("annotationGroupsReady 来源增量", () => {
       expect(reopened.streamActive).toBe(false);
       expect(reopened.activeStreamIds).toEqual([]);
       expect(reopened.agentBusy).toBe(false);
+      expect(reopened.generationDraft).toBeNull();
       expect(reopened.docState).toEqual({ kind: "editing" });
       const dimensions = deriveDocDimensions(reopened);
       expect(dimensions.editor).toBe("editable");
@@ -1818,6 +1833,55 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(ended.streamActive).toBe(false);
       expect(ended.agentBusy).toBe(false);
+    });
+
+    it("最后一条 wire stream end 清掉残留 generationDraft 并恢复可编辑终稿", () => {
+      const started = reduce(
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: legacyWireSnapshot({
+              version: 9,
+              ts: "2026-08-01T16:54:05.775Z",
+              sections: [{ kind: "p", data: { text: "已落库终稿" } }],
+            }),
+          },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "snapshot-stuck-stream" } },
+        },
+        {
+          kind: "docGenerationEvent",
+          data: {
+            kind: "generation_started",
+            data: {
+              generationId: "stale-generation",
+              seq: 1,
+              prevSeq: null,
+              sessionId: "snapshot-stuck-session",
+              baseVersion: 9,
+            },
+          },
+        },
+      );
+
+      expect(started.generationDraft).not.toBeNull();
+      const ended = workspaceReducer(started, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "snapshot-stuck-stream",
+            reason: { kind: "done" },
+          },
+        },
+      });
+
+      expect(ended.generationDraft).toBeNull();
+      expect(ended.doc?.version).toBe(9);
+      expect(ended.docState).toEqual({ kind: "editing" });
+      expect(deriveDocDimensions(ended).editor).toBe("editable");
     });
 
     it("terminal + canonical 吸收两帧间迟到的 running 卡并最终清除 agentBusy", () => {

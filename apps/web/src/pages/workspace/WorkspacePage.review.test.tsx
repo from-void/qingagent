@@ -2211,6 +2211,46 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("生成前已有正文");
   });
 
+  it("终态 editing 即使残留 generationDraft 也挂可编辑 canonical 面并自愈", async () => {
+    const { RightPane } = await import("./WorkspacePage");
+    const canonicalDoc = pmDocToViewDocumentSnapshot(
+      pmDoc([pmParagraph("terminal-canonical", "已经落库的终稿")]),
+      12,
+      "t-terminal-canonical",
+    );
+    const staleDraft = pmDocToViewDocumentSnapshot(
+      pmDoc([pmParagraph("stale-generation-draft", "不应继续展示的生成草稿")]),
+      11,
+      "t-stale-generation-draft",
+    );
+
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            dimensions: reviewDimensions({
+              content: { kind: "editing" },
+              editor: "editable",
+              overlay: null,
+              agentBusy: false,
+            }),
+            doc: canonicalDoc,
+            generationDraftDoc: staleDraft,
+            effectiveReview: false,
+            remainingCount: 0,
+            visiblePatchCount: 0,
+          })}
+        />
+      </section>,
+    );
+
+    const editable = host?.querySelector<HTMLElement>(".ProseMirror.wf-doc");
+    expect(editable).not.toBeNull();
+    expect(editable?.getAttribute("contenteditable")).toBe("true");
+    expect(host?.textContent).toContain("已经落库的终稿");
+    expect(host?.textContent).not.toContain("不应继续展示的生成草稿");
+  });
+
   it("inline askUser 暂停时若已有文档,右侧保持只读正文而不是回到 loading", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const doc = pmDocToViewDocumentSnapshot(

@@ -878,6 +878,12 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
         );
       }
       markStreamInactiveMut(draft, s.data.streamId);
+      // generationDraft 是流生命周期内的瞬态投影。最后一条流已经终止就是它失效的
+      // 权威事实；不能只清 busy 却留下 draft 对象，否则 presentation 收尾后 RightPane
+      // 会把残留草稿误当成“仍在生成”，把已落库终稿降级成静态只读快照。
+      if (!draft.streamActive) {
+        draft.generationDraft = null;
+      }
       reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       if (s.data.reason.kind === "cancelled") {
         terminalizeInFlightToolCallsMut(draft, "aborted");

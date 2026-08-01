@@ -99,6 +99,8 @@ export interface UsageAggRow {
   outputTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  /** 每个会话 × 调用点 × 并发 lane 首次请求中可确知用于建缓存的 miss token。 */
+  coldStartMissTokens: number;
   cacheCreationTokens: number;
   /** hit/(hit+miss)；provider 未给缓存拆分时为 null，而不是 0。 */
   cacheHitRate: number | null;
@@ -123,6 +125,7 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
     outputTokens: Number(row.output_tokens ?? 0),
     cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
     cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
+    coldStartMissTokens: Number(row.cold_start_miss_tokens ?? 0),
     cacheCreationTokens: Number(row.cache_creation_tokens ?? 0),
     cacheHitRate: row.cache_hit_rate == null ? null : Number(row.cache_hit_rate),
     calls: Number(row.calls ?? 0),
@@ -183,7 +186,12 @@ export async function aggregateUsageByDay(
   // SQL 只做保守裁剪；精确窗口由 IANA 日历日键过滤，避免 DST 变更日误用当前偏移。
   const since = new Date(Date.now() - (normalizedDays + 2) * 86_400_000).toISOString();
   const result = await client.execute({
-    sql: `SELECT usage.created_at,
+    sql: `WITH first_cache_requests AS (
+        SELECT session_id, call_site, lane, MIN(created_at) AS first_created_at
+        FROM llm_usage_events
+        GROUP BY session_id, call_site, lane
+      )
+      SELECT usage.created_at,
         usage.session_id,
         COALESCE(document.id, usage.session_id) AS document_id,
         NULLIF(document.title, '') AS document_title,
@@ -195,8 +203,13 @@ export async function aggregateUsageByDay(
         usage.cache_miss_tokens,
         usage.cache_creation_tokens,
         usage.cache_accounting_state,
-        usage.usage_state
+        usage.usage_state,
+        CASE WHEN usage.created_at = first_cache.first_created_at THEN 1 ELSE 0 END AS is_cold_start
       FROM llm_usage_events usage
+      INNER JOIN first_cache_requests first_cache
+        ON first_cache.session_id = usage.session_id
+        AND first_cache.call_site = usage.call_site
+        AND first_cache.lane IS usage.lane
       LEFT JOIN documents document
         ON document.thread_id = usage.session_id AND document.role = 'main'
       WHERE usage.created_at >= ?
@@ -227,6 +240,7 @@ export async function aggregateUsageByDay(
       output_tokens: 0,
       cache_hit_tokens: 0,
       cache_miss_tokens: 0,
+      cold_start_miss_tokens: 0,
       cache_creation_tokens: 0,
       known_cache_hit_tokens: 0,
       known_cache_total_tokens: 0,
@@ -252,6 +266,12 @@ export async function aggregateUsageByDay(
           Number(aggregate.known_cache_total_tokens) +
           Number(row.cache_hit_tokens ?? 0) +
           Number(row.cache_miss_tokens ?? 0);
+        // attempt 随每轮 RequestContext 重置，不能识别会话冷启动。按 session/callSite/lane
+        // 的最早 created_at 判定；不同 lane 各自首发，完全同时间戳的并列首发也都计入。
+        if (Number(row.is_cold_start) === 1) {
+          aggregate.cold_start_miss_tokens =
+            Number(aggregate.cold_start_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
+        }
       }
     } else if (row.usage_state === "missing") {
       aggregate.missing_calls = Number(aggregate.missing_calls) + 1;
@@ -281,7 +301,11 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
   const client = getDocumentsClient();
   await ensureMigrated();
   const result = await client.execute({
-    sql: `WITH recent_sessions AS (
+    sql: `WITH first_cache_requests AS (
+        SELECT session_id, call_site, lane, MIN(created_at) AS first_created_at
+        FROM llm_usage_events
+        GROUP BY session_id, call_site, lane
+      ), recent_sessions AS (
         SELECT session_id, MAX(created_at) AS last_at
         FROM llm_usage_events
         GROUP BY session_id
@@ -293,6 +317,10 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded'
+          AND usage.cache_accounting_state = 'known'
+          AND usage.created_at = first_cache.first_created_at
+          THEN usage.cache_miss_tokens ELSE 0 END) AS cold_start_miss_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
         1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
           NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
@@ -302,6 +330,10 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
         MAX(usage.created_at) AS last_at
       FROM llm_usage_events usage
       INNER JOIN recent_sessions recent ON recent.session_id = usage.session_id
+      INNER JOIN first_cache_requests first_cache
+        ON first_cache.session_id = usage.session_id
+        AND first_cache.call_site = usage.call_site
+        AND first_cache.lane IS usage.lane
       GROUP BY usage.session_id, usage.call_site, usage.model_id, recent.last_at
       ORDER BY recent.last_at DESC, usage.session_id, usage.call_site, usage.model_id`,
     args: [limit],
@@ -314,19 +346,33 @@ export async function aggregateUsageTotal(): Promise<UsageAggRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
   const result = await client.execute(
-    `SELECT 'total' AS bucket, call_site, model_id,
-        SUM(CASE WHEN usage_state = 'recorded' THEN input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN COALESCE(cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        1.0 * SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens + cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
+    `WITH first_cache_requests AS (
+        SELECT session_id, call_site, lane, MIN(created_at) AS first_created_at
+        FROM llm_usage_events
+        GROUP BY session_id, call_site, lane
+      )
+      SELECT 'total' AS bucket, usage.call_site, usage.model_id,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded'
+          AND usage.cache_accounting_state = 'known'
+          AND usage.created_at = first_cache.first_created_at
+          THEN usage.cache_miss_tokens ELSE 0 END) AS cold_start_miss_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
+        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
+          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
         COUNT(*) AS calls,
-        SUM(CASE WHEN usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
-      FROM llm_usage_events GROUP BY call_site, model_id
-      ORDER BY call_site, model_id`,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
+      FROM llm_usage_events usage
+      INNER JOIN first_cache_requests first_cache
+        ON first_cache.session_id = usage.session_id
+        AND first_cache.call_site = usage.call_site
+        AND first_cache.lane IS usage.lane
+      GROUP BY usage.call_site, usage.model_id
+      ORDER BY usage.call_site, usage.model_id`,
   );
   return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));
 }

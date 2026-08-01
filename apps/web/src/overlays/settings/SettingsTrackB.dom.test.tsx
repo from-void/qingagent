@@ -1674,12 +1674,72 @@ describe("Settings Track B", () => {
     expect(toggle.textContent?.trim()).toBe("用量明细");
     expect(toggle.getAttribute("aria-label")).toContain("专家模式");
     expect(getTable().parentElement?.classList.contains("md-table-scroll")).toBe(true);
-    const headerText = Array.from(getTable().querySelectorAll("th"))
-      .map((cell) => cell.textContent ?? "")
-      .join(" ");
-    expect(headerText).toContain("模型");
-    expect(headerText).toContain("调用点");
-    expect(headerText).toContain("请求覆盖");
+    const headers = Array.from(getTable().querySelectorAll("th")).map(
+      (cell) => cell.textContent?.replace(/\?/g, "").replace(/\s+/g, " ").trim(),
+    );
+    expect(headers).toEqual([
+      "日期",
+      "模型",
+      "调用点",
+      "请求覆盖",
+      "输入",
+      "输出",
+      "总命中率",
+      "建缓存",
+      "估算费用",
+    ]);
+  });
+
+  it("普通模式展示有效命中率，专家模式可用总命中率和建缓存数对账", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [
+            {
+              ...usageRow("2026-07-31", "deepseek-v4-flash", 25_000, 1, 0.001),
+              cacheHitTokens: 0,
+              cacheMissTokens: 25_000,
+              coldStartMissTokens: 25_000,
+              cacheHitRate: 0,
+            },
+            {
+              ...usageRow("2026-07-31", "deepseek-v4-flash", 42_000, 1, 0.001),
+              cacheHitTokens: 40_000,
+              cacheMissTokens: 2_000,
+              coldStartMissTokens: 0,
+              cacheHitRate: 40_000 / 42_000,
+            },
+            {
+              ...usageRow("2026-07-31", "deepseek-v4-flash", 44_000, 1, 0.001),
+              cacheHitTokens: 42_000,
+              cacheMissTokens: 2_000,
+              coldStartMissTokens: 0,
+              cacheHitRate: 42_000 / 44_000,
+            },
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    expect(getTable().textContent).toContain("95%");
+    expect(getTable().querySelector<HTMLButtonElement>('[aria-label^="缓存命中率:"]')?.title)
+      .toContain("可能命中的输入");
+
+    await click(getButtonByWf("UsageModeToggle"));
+
+    expect(getTable().textContent).toContain("74%");
+    expect(getTable().textContent).toContain("25k");
+    expect(getTable().textContent).not.toContain("95%");
+    expect(getTable().querySelector<HTMLButtonElement>('[aria-label^="总命中率:"]')?.title)
+      .toContain("命中÷（命中+未命中）");
+    expect(getTable().querySelector<HTMLButtonElement>('[aria-label^="建缓存:"]')?.title)
+      .toContain("有效命中率=命中÷（输入−建缓存）");
   });
 
   it("专家模式按文档分组，默认收起且可展开收起调用点", async () => {

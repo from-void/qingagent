@@ -14,6 +14,8 @@ export interface UsageSummaryRow {
   outputTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  /** 每个会话调用点首次请求用于建缓存的 miss token；旧服务端可能缺省。 */
+  coldStartMissTokens?: number;
   cacheCreationTokens: number;
   cacheHitRate: number | null;
   calls: number;

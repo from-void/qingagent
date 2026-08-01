@@ -10,7 +10,10 @@ import {
   inferMimeTypeFromFilename,
   resolveFileIds,
 } from "../session/uploadFileResolver.js";
-import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
+import {
+  loadPdfParseConstructor,
+  recoverPdfTextFromOperators,
+} from "@qingagent/doc-render/browser";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
 
 type ParsedFileContent = {
@@ -102,6 +105,8 @@ const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
 // 64MiB 足以覆盖常见桌面文档素材，同时限制分块汇总缓冲区和后续解析的堆内存占用。
 const MAX_DESKTOP_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_DESKTOP_FILE_LABEL = "64MiB";
+// 防止极端超长 PDF 占满主进程；截断必须写进返回正文，不能只藏在 metadata/日志里。
+export const PDF_TEXT_PAGE_LIMIT = 500;
 
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE = 0x02014b50;
@@ -1726,14 +1731,32 @@ async function parsePdfBufferOnce(
   try {
     // pdf-parse/pdf.js 的 CPU 解析目前没有 AbortSignal/terminate 接口；本轮在调用前后与
     // 自有逐行清洗循环检查。若需硬实时取消，后续必须迁入可 terminate 的 Worker。
-    const textResult = await parser.getText();
-    signal?.throwIfAborted();
-    const text = stripPdfPaginationNoise(textResult.text, signal);
-    const pages = textResult.total;
     const infoResult = await parser.getInfo();
     signal?.throwIfAborted();
+    const reportedPages = infoResult.total ?? null;
+    const isPageLimited = reportedPages !== null && reportedPages > PDF_TEXT_PAGE_LIMIT;
+    const textResult = await parser.getText(
+      isPageLimited ? { first: PDF_TEXT_PAGE_LIMIT } : undefined,
+    );
+    signal?.throwIfAborted();
+    const pages = textResult.total;
+    const pagesToParse = isPageLimited ? PDF_TEXT_PAGE_LIMIT : pages;
+    const recoveredText = await recoverPdfTextFromOperators({
+      buffer,
+      primaryText: textResult.text,
+      pagesToParse,
+      signal,
+    });
+    signal?.throwIfAborted();
+    const body = stripPdfPaginationNoise(recoveredText, signal);
+    const truncationNotice = isPageLimited
+      ? `[解析提示：该 PDF 共 ${reportedPages} 页，仅解析前 ${PDF_TEXT_PAGE_LIMIT} 页。]`
+      : "";
+    const text = [truncationNotice, body].filter(Boolean).join("\n\n");
     const title = infoResult.info?.Title ?? null;
-    parsed = successResult(text, pages, title, text.trim().length > 0);
+    // 截断提示不算文字层；必须在 operator-list 补救完成后只看真实正文，
+    // 避免空 PDF 被提示文字误标为可索引。
+    parsed = successResult(text, pages, title, body.trim().length > 0);
   } finally {
     await parser.destroy();
   }
@@ -1742,7 +1765,7 @@ async function parsePdfBufferOnce(
 }
 
 function shouldRetryEmptyPdfResult(result: ParseFileBufferResult): boolean {
-  return result.ok && result.text.trim().length === 0 && (result.metadata.pages ?? 0) > 0;
+  return result.ok && !result.metadata.indexable && (result.metadata.pages ?? 0) > 0;
 }
 
 function successResult(text: string, pages: number | null, title: string | null, indexable = true): ParseFileBufferResult {

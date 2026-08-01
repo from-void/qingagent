@@ -3,9 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   ExportDownloadCoordinator,
-  EXPORT_DOWNLOAD_CANCEL_CHANNEL,
-  EXPORT_DOWNLOAD_REGISTER_CHANNEL,
   EXPORT_DOWNLOAD_REVEAL_CHANNEL,
+  EXPORT_DOWNLOAD_SAVE_CHANNEL,
   type ExportDownloadFormat,
   type ExportDownloadSaveResult,
 } from "./exportDownloadCoordinator.js";
@@ -44,18 +43,20 @@ void app.whenReady().then(async () => {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       preload: preloadPath,
     },
   });
-  const coordinator = new ExportDownloadCoordinator(window.webContents.session, {
+  const coordinator = new ExportDownloadCoordinator({
     downloadsDirectory,
-    unclaimedTimeoutMs: 5_000,
+    saveTimeoutMs: 5_000,
   });
-  ipcMain.handle(EXPORT_DOWNLOAD_REGISTER_CHANNEL, (event, input: unknown) => (
-    coordinator.register(event.sender, input)
-  ));
-  ipcMain.handle(EXPORT_DOWNLOAD_CANCEL_CHANNEL, (event, requestId: unknown) => (
-    coordinator.cancel(event.sender, requestId)
+  let willDownloadEvents = 0;
+  window.webContents.session.on("will-download", () => {
+    willDownloadEvents += 1;
+  });
+  ipcMain.handle(EXPORT_DOWNLOAD_SAVE_CHANNEL, (event, input: unknown) => (
+    coordinator.save(event.sender, input)
   ));
   ipcMain.handle(EXPORT_DOWNLOAD_REVEAL_CHANNEL, (event, token: unknown) => (
     coordinator.resolveRevealPath(event.sender, token) !== null
@@ -114,7 +115,7 @@ void app.whenReady().then(async () => {
     ];
     const savedFilenames: string[] = [];
     for (const downloadCase of cases) {
-      const result = await triggerChromiumBlobDownload(window, downloadCase);
+      const result = await triggerIpcSave(window, downloadCase);
       if (!result.saved) {
         throw new Error(`download failed: ${downloadCase.filename}/${result.reason}`);
       }
@@ -159,11 +160,13 @@ void app.whenReady().then(async () => {
     if (secondPdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
       throw new Error("numbered pdf magic mismatch");
     }
+    if (willDownloadEvents !== 0) {
+      throw new Error(`unexpected will-download events: ${willDownloadEvents}`);
+    }
 
-    console.log(RESULT_PREFIX + JSON.stringify({ savedFilenames }));
+    console.log(RESULT_PREFIX + JSON.stringify({ savedFilenames, willDownloadEvents }));
   } finally {
-    ipcMain.removeHandler(EXPORT_DOWNLOAD_REGISTER_CHANNEL);
-    ipcMain.removeHandler(EXPORT_DOWNLOAD_CANCEL_CHANNEL);
+    ipcMain.removeHandler(EXPORT_DOWNLOAD_SAVE_CHANNEL);
     ipcMain.removeHandler(EXPORT_DOWNLOAD_REVEAL_CHANNEL);
     protocol.unhandle("qingagent");
     coordinator.dispose();
@@ -175,30 +178,26 @@ void app.whenReady().then(async () => {
   app.exit(1);
 });
 
-function triggerChromiumBlobDownload(
+function triggerIpcSave(
   window: BrowserWindow,
   downloadCase: DownloadCase,
 ): Promise<ExportDownloadSaveResult> {
   const script = `
     (async () => {
-      const bytes = new Uint8Array(${JSON.stringify(downloadCase.bytes)});
-      const blobUrl = URL.createObjectURL(new Blob([bytes], {
+      const sourceBytes = new Uint8Array(${JSON.stringify(downloadCase.bytes)});
+      const blob = new Blob([sourceBytes], {
         type: ${JSON.stringify(downloadCase.mimeType)},
-      }));
-      try {
-        const result = await window.electron.saveExportDownload({
-          blobUrl,
-          filename: ${JSON.stringify(downloadCase.filename)},
-          format: ${JSON.stringify(downloadCase.format)},
-        });
-        if (result.saved) {
-          const revealed = await window.electron.revealExportDownload(result.revealToken);
-          if (!revealed) throw new Error("reveal token rejected");
-        }
-        return result;
-      } finally {
-        URL.revokeObjectURL(blobUrl);
+      });
+      const result = await window.electron.saveExportDownload({
+        bytes: new Uint8Array(await blob.arrayBuffer()),
+        filename: ${JSON.stringify(downloadCase.filename)},
+        format: ${JSON.stringify(downloadCase.format)},
+      });
+      if (result.saved) {
+        const revealed = await window.electron.revealExportDownload(result.revealToken);
+        if (!revealed) throw new Error("reveal token rejected");
       }
+      return result;
     })()
   `;
   return window.webContents.executeJavaScript(script, true) as Promise<ExportDownloadSaveResult>;

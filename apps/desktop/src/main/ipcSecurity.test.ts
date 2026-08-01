@@ -75,25 +75,31 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
   }
 });
 
-test("导出下载 IPC 只暴露登记/取消/定位能力，不向 renderer 暴露任意文件路径", () => {
+test("导出保存 IPC 只暴露字节写入/定位能力，不向 renderer 暴露任意文件路径", () => {
   const main = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
   const downloadBridge = readFileSync(
     path.join(__dirname, "../preload/exportDownloadBridge.ts"),
     "utf8",
   );
+  const downloadBridgeCore = readFileSync(
+    path.join(__dirname, "../preload/exportDownloadBridgeCore.ts"),
+    "utf8",
+  );
   const contract = readFileSync(path.join(__dirname, "../exportDownloadContract.ts"), "utf8");
 
   for (const channel of [
-    "EXPORT_DOWNLOAD_REGISTER_CHANNEL",
-    "EXPORT_DOWNLOAD_CANCEL_CHANNEL",
+    "EXPORT_DOWNLOAD_SAVE_CHANNEL",
     "EXPORT_DOWNLOAD_REVEAL_CHANNEL",
   ]) {
     assert.ok(main.includes(`ipcMain.handle(${channel}`), `主进程缺少 ${channel}`);
   }
-  assert.match(downloadBridge, /saveExportDownload[\s\S]*EXPORT_DOWNLOAD_REGISTER_CHANNEL/);
+  assert.match(downloadBridgeCore, /createSaveExportDownload[\s\S]*EXPORT_DOWNLOAD_SAVE_CHANNEL/);
   assert.match(downloadBridge, /revealExportDownload[\s\S]*EXPORT_DOWNLOAD_REVEAL_CHANNEL/);
-  assert.doesNotMatch(`${preload}\n${downloadBridge}`, /showItemInFolder|setSavePath/);
+  assert.doesNotMatch(
+    `${preload}\n${downloadBridge}\n${downloadBridgeCore}`,
+    /showItemInFolder|setSavePath|anchor\.click|createElement\("a"\)|blobUrl/,
+  );
   assert.doesNotMatch(
     contract,
     /\bsavedPath\b|\bfilePath\b|\bpath:\s*string/,

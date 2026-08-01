@@ -145,46 +145,47 @@ export function ExportMenu({
       }
       const specializedDiagramOverlayFallback =
         res.headers.get("X-Qingagent-Export-Notice") === SPECIALIZED_DIAGRAM_OVERLAY_NOTICE;
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const filename = `${safeFilename(sessionTitle || "qingagent-export")}_${dateStamp()}.${f.ext}`;
-      try {
-        if (window.electron?.isDesktop) {
-          if (!window.electron.saveExportDownload) {
-            throw new Error("Desktop export download bridge unavailable");
-          }
-          setBusyText("正在保存…");
-          const result = await window.electron.saveExportDownload({
-            blobUrl: url,
-            filename,
-            format: f.id,
-          });
-          if (!result.saved) {
-            // 保存失败时先收起导出菜单，避免菜单层遮住全局 qa-toast。
-            onClose();
-            onAction(
-              result.reason === "cancelled"
-                ? "导出已取消"
-                : "导出未保存 · 请重试",
-            );
-            return;
-          }
-          const message = exportResultMessage(
-            f.savedToast,
-            lossyColumns,
-            specializedDiagramOverlayFallback,
+      if (window.electron?.isDesktop) {
+        if (!window.electron.saveExportDownload) {
+          throw new Error("Desktop export download bridge unavailable");
+        }
+        setBusyText("正在保存…");
+        const result = await window.electron.saveExportDownload({
+          filename,
+          format: f.id,
+          // Electron IPC 可稳定克隆 TypedArray；DOM Blob 不能由主进程解码。
+          bytes: new Uint8Array(await res.arrayBuffer()),
+        });
+        if (!result.saved) {
+          // 保存失败时先收起导出菜单，避免菜单层遮住全局 qa-toast。
+          onClose();
+          onAction(
+            result.reason === "cancelled"
+              ? "导出已取消"
+              : "导出未保存 · 请重试",
           );
-          onAction({
-            message,
-            durationMs: lossyColumns || specializedDiagramOverlayFallback ? 7000 : 5000,
-            action: window.electron.revealExportDownload
-              ? {
-                  label: "打开所在文件夹",
-                  onClick: () => revealSavedExport(result.revealToken, onAction),
-                }
-              : undefined,
-          });
-        } else {
+          return;
+        }
+        const message = exportResultMessage(
+          f.savedToast,
+          lossyColumns,
+          specializedDiagramOverlayFallback,
+        );
+        onAction({
+          message,
+          durationMs: lossyColumns || specializedDiagramOverlayFallback ? 7000 : 5000,
+          action: window.electron.revealExportDownload
+            ? {
+                label: "打开所在文件夹",
+                onClick: () => revealSavedExport(result.revealToken, onAction),
+              }
+            : undefined,
+        });
+      } else {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        try {
           const a = document.createElement("a");
           a.href = url;
           a.download = filename;
@@ -199,14 +200,15 @@ export function ExportMenu({
             ),
             lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
           );
+        } finally {
+          URL.revokeObjectURL(url);
         }
-      } finally {
-        // 桌面端必须等 DownloadItem done 后才能释放 Blob；浏览器端在 click 返回后即可释放。
-        URL.revokeObjectURL(url);
       }
       onClose();
     } catch (err) {
       console.error("[export-menu] download failed", err);
+      // 异常与显式失败保持一致：先收起菜单，确保全局 qa-toast 可见。
+      onClose();
       onAction("导出失败 · 请重试");
     } finally {
       setBusy(null);

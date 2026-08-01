@@ -49,7 +49,14 @@ type ElectronExportDownloadResult =
   | {
       saved: false;
       filename: string;
-      reason: "cancelled" | "interrupted" | "not-started" | "missing-file" | "window-closed";
+      reason:
+        | "cancelled"
+        | "interrupted"
+        | "not-started"
+        | "missing-file"
+        | "write-failed"
+        | "timeout"
+        | "window-closed";
     };
 
 interface Window {
@@ -57,9 +64,9 @@ interface Window {
     platform: string;
     isDesktop: boolean;
     saveExportDownload?: (input: {
-      blobUrl: string;
       filename: string;
       format: ElectronExportFormat;
+      bytes: Uint8Array;
     }) => Promise<ElectronExportDownloadResult>;
     revealExportDownload?: (revealToken: string) => Promise<boolean>;
     selectFolderSource?: () => Promise<ElectronFolderSourceSelection | null>;

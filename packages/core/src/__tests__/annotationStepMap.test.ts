@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AnnotationGroup, PmStep } from "@qingagent/contract-ts";
 import {
   buildAnnotationMappingSteps,
-  buildAnnotationMappingNotice,
   mapAnnotationGroupsThroughSteps,
 } from "../doc-engine/annotationMapping.js";
 import { collectTopLevelTextBlocks } from "../utils/pmTextBlocks.js";
@@ -114,7 +113,7 @@ describe("annotation StepMap", () => {
     ]);
   });
 
-  it("单锚组全丢时给出诚实计数与显式未定位提示", () => {
+  it("单锚组全丢时给出诚实的未定位计数", () => {
     const groups: AnnotationGroup[] = [{
       id: "g-only",
       summary: "唯一锚点",
@@ -139,8 +138,6 @@ describe("annotation StepMap", () => {
     expect(mapped.groups).toEqual([]);
     expect(mapped.invalidatedAnchorIndexes.get("g-only")).toEqual([0]);
     expect(mapped.unlocatedGroupCount).toBe(1);
-    expect(buildAnnotationMappingNotice(mapped.groups.length, mapped.unlocatedGroupCount))
-      .toBe("批注落地结果：0处已定位；1处因文档已改动未能定位。");
   });
 
   it("块级尾部插入不伪造位置 0 step，前文批注坐标零平移且引句命中", () => {

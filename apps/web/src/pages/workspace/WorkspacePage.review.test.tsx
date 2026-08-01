@@ -3549,7 +3549,7 @@ describe("WorkspacePage review controls", () => {
     );
   });
 
-  it("批注意见编辑后点击生成修改会立即发送一次，并保持 reviewing 锚点", async () => {
+  it("批注意见编辑后点击生成修改只追加输入框，用户确认后才发送", async () => {
     const stream = await renderWorkspaceWithAnnotations();
     const editor = getChatEditor();
     bindInnerText(editor);
@@ -3575,26 +3575,33 @@ describe("WorkspacePage review controls", () => {
     await clickButton("生成修改");
     await flushMicrotasks(5);
 
+    expect(sendMessageCommands(stream)).toHaveLength(0);
+    expect(editor.textContent).toContain("帮我把这段润色一下");
+    expect(editor.textContent).toContain("按批注修改：");
+    expect(editor.textContent).toContain("改为五月发布");
+    expect(editor.querySelector("br")).not.toBeNull();
+    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
+    expect(host?.querySelector(".annotation-hover-card")).toBeNull();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-accepted")).toBe(false);
+
+    await clickButton("发送");
+    await flushMicrotasks(5);
     const send = sendMessageCommands(stream)[0];
     expect(send?.kind).toBe("sendMessage");
     if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
     expect(send.data.text).toContain("帮我把这段润色一下");
     expect(send.data.text).toContain("改为五月发布");
-    expect(send.data.text).toContain("原因:时间与资料不一致");
-    expect(send.data.richText).toContain("{{chip:0}}");
-    expect(send.data.chips).toEqual([expect.objectContaining({
-      kind: { kind: "text" },
-      label: "批注·事实有误",
-      text: "按批注修改（定位:块 p-1，PM 1-3）:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
-    })]);
+    expect(send.data.text).toContain("原因：时间与资料不一致");
+    expect(send.data.richText).toBeUndefined();
+    expect(send.data.chips ?? []).toEqual([]);
     expect(sendMessageCommands(stream)).toHaveLength(1);
-    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-accepted")).toBe(false);
     vi.useRealTimers();
   });
 
-  it("批注生成修改发送失败时恢复输入内容，锚点仍可再次处理", async () => {
+  it("批注回填后由用户发送，失败时恢复输入内容且锚点仍可再次处理", async () => {
     const stream = await renderWorkspaceWithAnnotations();
     stream.sendCommand.mockRejectedValueOnce(new Error("network down"));
 
@@ -3605,11 +3612,14 @@ describe("WorkspacePage review controls", () => {
       vi.advanceTimersByTime(80);
     });
     await clickButton("生成修改");
+    expect(sendMessageCommands(stream)).toHaveLength(0);
+    await clickButton("发送");
     await flushMicrotasks(8);
 
     const editor = getChatEditor();
     expect(sendMessageCommands(stream)).toHaveLength(1);
-    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).not.toBeNull();
+    expect(editor.textContent).toContain("按批注修改：");
+    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host?.querySelector(".qa-toast")?.textContent).toContain("发送失败，请重试");
     vi.useRealTimers();
@@ -3638,6 +3648,9 @@ describe("WorkspacePage review controls", () => {
       vi.advanceTimersByTime(80);
     });
     await clickButton("生成修改");
+    await flushMicrotasks(5);
+    expect(sendMessageCommands(stream)).toHaveLength(0);
+    await clickButton("发送");
     await flushMicrotasks(5);
     expect(sendMessageCommands(stream)).toHaveLength(1);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();

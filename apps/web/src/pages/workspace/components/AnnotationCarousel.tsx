@@ -47,7 +47,7 @@ export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggest
   const location = anchor
     ? `块 ${anchor.blockId}，PM ${anchor.pmFrom}-${anchor.pmTo}`
     : "原批注锚点";
-  return `按批注修改（定位:${location}）:「${quote}」——${suggestion}（批注:${safeGroup.summary}；原因:${safeGroup.note}）\n`;
+  return `按批注修改：「${quote}」——${suggestion}（批注：${safeGroup.summary}；原因：${safeGroup.note}；定位：${location}）`;
 }
 
 export function resolveAnnotationSuggestion(
@@ -87,6 +87,7 @@ export function AnnotationCarousel(props: {
   const cardRef = useRef<HTMLElement>(null);
   const showTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
+  const navigationScrollRef = useRef(false);
   const hoveredKeyRef = useRef<string | null>(null);
   hoveredKeyRef.current = hovered ? `${hovered.groupId}:${hovered.groupIds.join(",")}` : null;
 
@@ -141,7 +142,12 @@ export function AnnotationCarousel(props: {
       clearTimer(showTimerRef);
       scheduleHide();
     };
-    const closeOnViewportChange = () => hideNow();
+    const closeOnViewportChange = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && cardRef.current?.contains(target)) return;
+      if (event.type === "scroll" && navigationScrollRef.current) return;
+      hideNow();
+    };
     editorDom.addEventListener("mouseover", onMouseOver);
     editorDom.addEventListener("mouseout", onMouseOut);
     window.addEventListener("resize", closeOnViewportChange);
@@ -204,6 +210,7 @@ export function AnnotationCarousel(props: {
     scheduleHide();
   };
   const moveGroup = (delta: -1 | 1) => {
+    cancelHide();
     if (hasOverlap && hovered && hitIndex >= 0) {
       const nextGroup = hitGroups[(hitIndex + delta + hitGroups.length) % hitGroups.length];
       if (!nextGroup) return;
@@ -217,13 +224,18 @@ export function AnnotationCarousel(props: {
       props.editorDom?.querySelectorAll<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? [],
     ).find((anchor) => anchor.dataset.annotationGroup === nextGroup.id);
     if (!target) return;
+    navigationScrollRef.current = true;
     target.scrollIntoView?.({ block: "center", behavior: "auto" });
     setPosition({ visibility: "hidden" });
     setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
     requestAnimationFrame(() => {
-      if (!target.isConnected) return;
-      setPosition({ visibility: "hidden" });
-      setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
+      if (target.isConnected) {
+        setPosition({ visibility: "hidden" });
+        setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
+      }
+      requestAnimationFrame(() => {
+        navigationScrollRef.current = false;
+      });
     });
   };
 
@@ -278,7 +290,7 @@ export function AnnotationCarousel(props: {
         <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); hideNow(); }}>下次不再提示</button>
       </div>
       <div className="ahc-accept-actions">
-        <span>将按这条建议生成待确认改动</span>
+        <span>将追加到输入框，由你确认发送</span>
         <button
           className="ahc-accept"
           type="button"

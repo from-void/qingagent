@@ -168,7 +168,6 @@ export function WorkspaceDocumentPane({
     materialParseRows,
     chatInputEditorDisabled,
     chatInputRef,
-    handleSubmitChat,
   } = controller;
   const currentSessionIdRef = useRef(state.sessionId);
   const currentTitleRef = useRef(title);
@@ -628,20 +627,16 @@ export function WorkspaceDocumentPane({
             }
             onAccept={(group, suggestion) => {
               if (chatInputEditorDisabled || !chatInputRef.current) {
-                showToast("输入框当前不可用，请稍后再生成修改");
+                showToast("输入框当前不可用，请稍后再回填批注");
                 return false;
               }
-              const shortTitle = Array.from(group.summary).slice(0, 15).join("");
-              const inserted = chatInputRef.current.insertChip({
-                kind: "annotation",
-                label: `批注·${shortTitle}`,
-                text: buildAnnotationInstruction(group, suggestion),
-              });
+              const inserted = chatInputRef.current.appendText(
+                buildAnnotationInstruction(group, suggestion),
+              );
               if (!inserted) {
-                showToast("批注标记插入失败,请重试");
+                showToast("批注意见回填失败，请重试");
                 return false;
               }
-              handleSubmitChat();
               return true;
             }}
             onIgnore={(group, rememberDismissal) => {

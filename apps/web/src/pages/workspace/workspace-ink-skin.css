@@ -2067,15 +2067,16 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ahc-reason>span,#view-workspace .ahc-suggestion>label { color:var(--mark); font-size:12px; font-weight:600; }
 #view-workspace .ahc-reason p { margin:5px 0 0; color:var(--ink-1); font-size:13.5px; line-height:1.7; white-space:pre-wrap; }
 #view-workspace .ahc-suggestion { display:grid; gap:6px; padding-top:10px; }
-#view-workspace .ahc-suggestion textarea { box-sizing:border-box; width:100%; height:68px; min-height:68px; max-height:68px; overflow-y:auto; resize:none; padding:8px 10px; border:1px solid var(--line-2); border-radius:0; outline:none; background:var(--bg-paper-deep); color:var(--ink-1); font:13px/1.6 var(--font-zh-serif); }
+#view-workspace .ahc-suggestion textarea { box-sizing:border-box; width:100%; height:68px; min-height:68px; max-height:68px; overflow-y:auto; resize:none; padding:8px 10px; border:1px solid var(--line-2); border-radius:0; outline:none; background:var(--bg-canvas); color:var(--ink-1); font:13px/1.6 var(--font-zh-serif); }
 #view-workspace .ahc-suggestion textarea:focus { border-color:var(--mark); box-shadow:inset 0 0 0 1px var(--mark); }
 #view-workspace .annotation-hover-card footer { flex:none; display:flex; justify-content:flex-end; gap:8px; margin-top:13px; }
 #view-workspace .annotation-hover-card footer button { appearance:none; min-width:76px; padding:6px 14px; border-radius:0; cursor:pointer; font:600 12.5px/1.4 var(--font-zh-serif); transition:background 120ms ease,border-color 120ms ease,color 120ms ease; }
 #view-workspace .annotation-hover-card button:focus-visible { outline:2px solid var(--mark); outline-offset:2px; }
 #view-workspace .ahc-accept-actions { display:flex; align-items:center; gap:8px; }
 #view-workspace .ahc-accept-actions>span { color:var(--ink-4); font-size:11px; line-height:1.4; }
-#view-workspace .ahc-accept { border:1px solid var(--mark); background:var(--mark); color:var(--ink-surface); }
-#view-workspace .ahc-accept:hover { border-color:var(--ink-2); background:var(--ink-2); color:var(--bg-canvas); }
+#view-workspace .ahc-accept { border:1px solid var(--ink-1); background:var(--ink-1); color:var(--bg-canvas); }
+#view-workspace .ahc-accept:hover:not(:disabled) { border-color:var(--mark); background:var(--mark); color:var(--ink-surface); }
+#view-workspace .ahc-accept:disabled { border-color:var(--line-2); background:var(--bg-subtle); color:var(--ink-4); cursor:not-allowed; }
 #view-workspace .ahc-ignore { border:1px solid var(--line-2); background:transparent; color:var(--ink-2); }
 #view-workspace .ahc-ignore:hover { border-color:var(--line-3); background:var(--bg-hover); color:var(--ink-1); }
 #view-workspace .ahc-ignore-actions { display:flex; align-items:center; justify-content:flex-end; margin-right:auto; }

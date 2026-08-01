@@ -341,7 +341,7 @@ describe("processAgentStream 行为特征", () => {
     });
   });
 
-  it("审查总结追加实际存活组数，不沿用模型自报计数", async () => {
+  it("审查总结不追加批注定位固定文案", async () => {
     const { processAgentStream } = await import("../processAgentStream.js");
     const state = createSession("characterize-annotation-count");
     state.chatHistory.push({
@@ -371,19 +371,9 @@ describe("processAgentStream 行为特征", () => {
         replacedOrigins: ["consistency"],
       },
     });
-    expect(frames).toContainEqual({
-      kind: "chatMessageAppended",
-      data: {
-        messageId: "agent-message",
-        seq: 2,
-        part: {
-          kind: "text",
-          data: { body: "\n\n批注落地结果：2处已定位。" },
-        },
-      },
-    });
+    expect(JSON.stringify(frames)).not.toContain("批注落地结果");
     expect(state.messages.at(-1)?.content)
-      .toBe("审查完成，已写入3处批注。\n\n批注落地结果：2处已定位。");
+      .toBe("审查完成，已写入3处批注。");
   });
 
   it("隐私审查完成摘要跨 delta 整段打码后才展示和持久化", async () => {

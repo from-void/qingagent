@@ -3,6 +3,16 @@ import {
   revealExportDownload,
   saveExportDownload,
 } from "./exportDownloadBridge.js";
+import {
+  DESKTOP_DIALOG_READY_CHANNEL,
+  DESKTOP_DIALOG_REQUEST_CHANNEL,
+  DESKTOP_DIALOG_RESPONSE_CHANNEL,
+  isDesktopDialogKind,
+  type DesktopDialogKind,
+  type DesktopDialogRequest,
+  type DesktopDialogResponse,
+  type DesktopDialogResult,
+} from "../rendererDialogContract.js";
 
 type UpdateStatusPayload = {
   kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
@@ -75,6 +85,37 @@ async function writeDesktopConfigValue(
   return ipcRenderer.invoke("qingagent:client-config-value-set", key, value) as Promise<boolean>;
 }
 
+function isDesktopDialogRequest(value: unknown): value is DesktopDialogRequest {
+  if (!value || typeof value !== "object") return false;
+  const request = value as { id?: unknown; kind?: unknown };
+  return Number.isSafeInteger(request.id) && isDesktopDialogKind(request.kind);
+}
+
+function onDesktopDialogRequest(
+  callback: (request: DesktopDialogRequest) => void,
+): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+    if (isDesktopDialogRequest(request)) callback(request);
+  };
+  ipcRenderer.on(DESKTOP_DIALOG_REQUEST_CHANNEL, listener);
+  return () => ipcRenderer.removeListener(DESKTOP_DIALOG_REQUEST_CHANNEL, listener);
+}
+
+function markDesktopDialogReady(kinds: DesktopDialogKind[]): void {
+  // 同步握手只传两个固定枚举，确保启动壳 loadURL resolve 后主进程已看见能力，避免首个
+  // 自绘请求与异步 ready 消息竞速而误降级原生。
+  ipcRenderer.sendSync(
+    DESKTOP_DIALOG_READY_CHANNEL,
+    kinds.filter(isDesktopDialogKind),
+  );
+}
+
+function respondToDesktopDialog(id: number, result: DesktopDialogResult): void {
+  if (!Number.isSafeInteger(id) || (result !== "confirm" && result !== "cancel")) return;
+  const response: DesktopDialogResponse = { id, result };
+  ipcRenderer.send(DESKTOP_DIALOG_RESPONSE_CHANNEL, response);
+}
+
 contextBridge.exposeInMainWorld("electron", {
   platform: process.platform,
   isDesktop: true,
@@ -145,4 +186,8 @@ contextBridge.exposeInMainWorld("electron", {
   // 第三方开源声明全文;读不到返回 null,前端降级跳 GitHub。
   getThirdPartyNotices: () =>
     ipcRenderer.invoke("qingagent:third-party-notices-get") as Promise<string | null>,
+  // 主进程只发语义请求；实际确认卡由 renderer 的产品 UI 绘制并回传用户选择。
+  onDesktopDialogRequest,
+  markDesktopDialogReady,
+  respondToDesktopDialog,
 });

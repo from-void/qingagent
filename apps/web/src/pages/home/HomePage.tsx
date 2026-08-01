@@ -8,6 +8,7 @@ import { BookCurlShelf } from "./components/BookCurlShelf";
 import { QingjianScroll } from "./components/QingjianScroll";
 import { useSessionStore } from "../../stores/sessionStore";
 import { FolderPromptDialog, type FolderPromptDialogControls } from "../../system/FolderSourceControl";
+import { useToast } from "../../system";
 
 const BOOK_SOURCES = [
   {
@@ -69,6 +70,7 @@ function setDeleteConfirmSkipFor24h() {
 }
 
 export function HomePage() {
+  const toast = useToast();
   const [articleMenu, setArticleMenu] = useState<ArticleContextMenu | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [cleanMode, setCleanMode] = useState(false);
@@ -155,12 +157,16 @@ export function HomePage() {
       } else {
         setDeleteConfirm(null);
       }
-    } catch (err) {
+    } catch {
       setArticleMenu((menu) => (menu ? { ...menu, isDeleting: false } : menu));
       setDeleteConfirm((state) => (state ? { ...state, isDeleting: false } : state));
-      window.alert(err instanceof Error ? err.message : "删除失败，请重试");
+      toast.show({
+        message: "删除失败，请重试",
+        tone: "error",
+        dedupeKey: "home-delete-failed",
+      });
     }
-  }, [removeSession]);
+  }, [removeSession, toast]);
 
   const handleArticleContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
     const target = event.target instanceof Element ? event.target : null;

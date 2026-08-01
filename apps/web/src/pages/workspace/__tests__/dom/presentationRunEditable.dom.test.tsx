@@ -6,6 +6,7 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DocToolbar } from "../../components/DocToolbar";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 import { nativePresentationDecorationKey } from "../../data/nativePresentationPm";
@@ -214,6 +215,57 @@ describe("presentationRun editable unlock", () => {
     rafCallbacks.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("r34 终态同实例从只读切回 editing 时正文与工具栏同步解锁", async () => {
+    const doc = pmDocToViewDocumentSnapshot(pmDoc("终稿应立即恢复全部编辑能力"), 6, "r34");
+
+    function Harness() {
+      const [terminalEditing, setTerminalEditing] = useState(false);
+      const [editor, setEditor] = useState<Editor | null>(null);
+      return createElement(
+        "section",
+        { id: "view-workspace" },
+        createElement(
+          "button",
+          { type: "button", onClick: () => setTerminalEditing(true) },
+          "project-terminal-editing",
+        ),
+        createElement(DocumentSnapshotView, {
+          doc,
+          editable: true,
+          interactiveEditable: terminalEditing,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+          onEditorReady: setEditor,
+        }),
+        createElement(DocToolbar, {
+          active: terminalEditing,
+          editor,
+          containerSelector: "#view-workspace",
+          onAiModify: async () => false,
+        }),
+      );
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    await flush(4);
+    expect(container?.querySelector<HTMLElement>(".ProseMirror")?.getAttribute("contenteditable")).toBe("false");
+
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    await flush(4);
+
+    expect(container?.querySelector<HTMLElement>(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
+    const toolbarButtons = Array.from(
+      container?.querySelectorAll<HTMLButtonElement>('[data-wf="DocToolbar"] button') ?? [],
+    );
+    expect(toolbarButtons.length).toBeGreaterThan(0);
+    expect(toolbarButtons.every((button) => !button.disabled)).toBe(true);
   });
 
   it("presentationRun 期间即使 editable=false 也挂 TipTap 播放动画，完成后无需刷新恢复编辑", async () => {

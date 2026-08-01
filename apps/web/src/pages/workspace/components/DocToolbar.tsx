@@ -435,7 +435,27 @@ export function DocToolbar({
   const [tablePicker, setTablePicker] = useState<{ anchor: HTMLElement; autoFocus: boolean } | null>(null);
   const { openLinkEditor, closeLinkEditor, linkEditor } = useToolbarLinkEditor({ editor, onToast, ignoreRef: barRef });
   const toolbarUnlock = resolveToolbarUnlockConfig();
-  const editorEditable = editor ? editor.isEditable : true;
+  const [editorEditable, setEditorEditable] = useState(
+    () => editor ? !editor.isDestroyed && editor.isEditable : true,
+  );
+
+  useEffect(() => {
+    const syncEditorEditable = () => {
+      setEditorEditable(editor ? !editor.isDestroyed && editor.isEditable : true);
+    };
+
+    // TipTap 的 editable prop 在 DocumentSnapshotView effect 后才通过
+    // editor.setEditable() 落到 EditorView；这次内部更新不会让持有同一 Editor
+    // 对象的父组件重渲染，但会发出 update。必须订阅这条事实，否则终态会出现
+    // 正文 contenteditable=true、工具栏仍保留生成中 disabled 的分叉，直到下一次
+    // 输入或发送碰巧触发 React render 才自愈。
+    syncEditorEditable();
+    if (!editor || editor.isDestroyed) return undefined;
+    editor.on("update", syncEditorEditable);
+    return () => {
+      editor.off("update", syncEditorEditable);
+    };
+  }, [editor]);
 
   // Snapshot the editor selection text continuously so it survives
   // focus-loss that happens when the user clicks a toolbar button.

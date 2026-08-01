@@ -36,6 +36,33 @@ const skills = [
     enabled: true,
     userInvocable: true,
   },
+  {
+    name: "lark-attendance",
+    label: "lark-attendance",
+    summary: "查询自己的考勤打卡记录",
+    description: "查询自己的考勤打卡记录",
+    icon: "star",
+    enabled: true,
+    userInvocable: true,
+  },
+  {
+    name: "lark-calendar",
+    label: "lark-calendar",
+    summary: "管理日历日程和会议室",
+    description: "管理日历日程和会议室",
+    icon: "star",
+    enabled: true,
+    userInvocable: true,
+  },
+  {
+    name: "skill-name-that-is-too-long-to-fit-inside-the-menu-even-without-description",
+    label: "skill-name-that-is-too-long-to-fit-inside-the-menu-even-without-description",
+    summary: "超长名称兜底",
+    description: "超长名称兜底",
+    icon: "star",
+    enabled: true,
+    userInvocable: true,
+  },
 ];
 
 function SkillMenuTooltipFixture() {

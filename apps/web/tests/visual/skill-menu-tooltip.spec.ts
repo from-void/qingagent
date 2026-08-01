@@ -9,6 +9,16 @@ interface DescriptionLayoutEvidence {
   textWidth: number;
 }
 
+interface NameLayoutEvidence {
+  menuWidth: number;
+  nameWidth: number;
+  overflow: string;
+  rowWidth: number;
+  textWidth: number;
+  textOverflow: string;
+  whiteSpace: string;
+}
+
 test("技能菜单只为真截断描述展示完整 tooltip", async ({ page }) => {
   await page.goto("/tests/visual/fixtures/skill-menu-tooltip.html");
   await page.evaluate(async () => {
@@ -21,6 +31,9 @@ test("技能菜单只为真截断描述展示完整 tooltip", async ({ page }) =
   const sharedRow = page.getByRole("menuitem", { name: /lark-shared/ });
   const noteRow = page.getByRole("menuitem", { name: /lark-note/ });
   const okrRow = page.getByRole("menuitem", { name: /lark-okr/ });
+  const attendanceRow = page.getByRole("menuitem", { name: /lark-attendance/ });
+  const calendarRow = page.getByRole("menuitem", { name: /lark-calendar/ });
+  const extraLongNameRow = page.getByRole("menuitem", { name: /skill-name-that-is-too-long/ });
   await expect(sharedRow).toBeVisible();
 
   const evidence = {
@@ -36,6 +49,17 @@ test("技能菜单只为真截断描述展示完整 tooltip", async ({ page }) =
     "Use for lark-cli setup/auth tasks: auth login/status/logout, user vs bot identity, business-domain permissions (--domain, including all/docs/drive), missing scopes, revoking authorization, or handling _notice JSON.",
   );
   expect(evidence.okr.rowTitle).toBeNull();
+
+  const attendanceName = await nameEvidence(attendanceRow);
+  const calendarName = await nameEvidence(calendarRow);
+  const extraLongName = await nameEvidence(extraLongNameRow);
+  expect(attendanceName.textWidth - attendanceName.nameWidth).toBeLessThanOrEqual(1);
+  expect(calendarName.textWidth - calendarName.nameWidth).toBeLessThanOrEqual(1);
+  expect(extraLongName.textWidth - extraLongName.nameWidth).toBeGreaterThan(1);
+  expect(extraLongName.whiteSpace).toBe("nowrap");
+  expect(extraLongName.overflow).toBe("hidden");
+  expect(extraLongName.textOverflow).toBe("ellipsis");
+  expect(extraLongName.rowWidth).toBeLessThanOrEqual(extraLongName.menuWidth);
 
   await sharedRow.hover();
   const tooltip = page.getByRole("tooltip");
@@ -61,6 +85,26 @@ async function descriptionEvidence(row: Locator): Promise<DescriptionLayoutEvide
       scrollWidth: description.scrollWidth,
       text: description.textContent ?? "",
       textWidth: range.getBoundingClientRect().width,
+    };
+  });
+}
+
+async function nameEvidence(row: Locator): Promise<NameLayoutEvidence> {
+  return row.evaluate((element) => {
+    const name = element.querySelector<HTMLElement>(".qa-skill-name");
+    const menu = element.closest<HTMLElement>(".qa-skill-menu");
+    if (!name || !menu) throw new Error("技能名称或菜单未渲染");
+    const range = document.createRange();
+    range.selectNodeContents(name);
+    const style = getComputedStyle(name);
+    return {
+      menuWidth: menu.getBoundingClientRect().width,
+      nameWidth: name.getBoundingClientRect().width,
+      overflow: style.overflow,
+      rowWidth: element.getBoundingClientRect().width,
+      textWidth: range.getBoundingClientRect().width,
+      textOverflow: style.textOverflow,
+      whiteSpace: style.whiteSpace,
     };
   });
 }

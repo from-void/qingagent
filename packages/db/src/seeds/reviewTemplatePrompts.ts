@@ -16,7 +16,9 @@ export const REVIEW_TEMPLATE_PROMPT_SEEDS: readonly ReviewTemplateSeed[] = [
     type: "sensitive",
     name: "标准敏感词审查",
     prompt: `严格按已选择的敏感词词库扫描当前文档,逐条处理全部命中,不得因语境、专有名词或引用而自行豁免。
-有明确 replacement 的命中按词库直接做逐处最小替换;replacement 为空的仅标记命中必须逐条创建批注,summary≤15字,引句等于命中原词,并写清词库备注、命中上下文与人工确认点。
+全部命中都先创建批注;词库 replacementHint 只作候选参考,必须读取完整上下文后逐处判断,禁止按命中片段机械直替或跨语境批量套用。
+只有改写整句后仍保持原意、事实、语法和文体时才填写 suggestion;不得插入“该事项”“相关内容”等占位词。给出整句 suggestion 时,引句必须是与其对应的完整原句,确保采纳时整句替换整句。无合适改写时只标注并省略 suggestion,宁可少给建议,不可给破坏语义的建议。
+summary≤15字,引句必须逐字来自正文,并写清词库备注、命中上下文与人工确认点。
 拿不准风险时降为 severity=info 也必须呈现,禁止只在聊天中说明。零命中时如实说明,不得凭空补造风险词。`,
   },
   {

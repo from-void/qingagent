@@ -34,14 +34,14 @@ export const lexiconListTool = createTool({
 
 export const sensitiveScanTool = createTool({
   id: "sensitive_scan",
-  description: "使用指定词库确定性扫描当前会话文档。reviewAction=replace 的命中直接最小替换；reviewAction=annotate 的每个 hit 必须进入 create_annotation_groups，不得按语境自行豁免。",
+  description: "使用指定词库确定性扫描当前会话文档。每个命中只标注风险并进入上下文判断；replacementHint 仅是词库候选，禁止直接替换正文。",
   inputSchema: z.object({
     resourceIds: z.array(z.string().min(1)).min(1).describe("要启用的词库 id"),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     hits: z.array(z.object({
-      word: z.string(), replacement: z.string().nullable(), reviewAction: z.enum(["replace", "annotate"]), note: z.string().nullable(),
+      word: z.string(), replacementHint: z.string().nullable(), reviewAction: z.literal("annotate"), note: z.string().nullable(),
       count: z.number(), samples: z.array(z.string()),
     })),
     totalCount: z.number(),

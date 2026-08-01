@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { SessionMeta } from "@qingagent/contract-ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HomeSession } from "./data/sessions";
+import { ToastProvider } from "../../system/ToastProvider";
 
 const store = vi.hoisted(() => ({
   sessions: [] as SessionMeta[],
@@ -75,11 +76,14 @@ describe("HomePage 删除免提醒偏好", () => {
     store.sessions = [session];
     store.fetchSessions.mockReset();
     store.removeSession.mockReset();
-    vi.spyOn(window, "alert").mockImplementation(() => undefined);
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => root.render(<HomePage />));
+    await act(async () => root.render(
+      <ToastProvider>
+        <HomePage />
+      </ToastProvider>,
+    ));
   });
 
   afterEach(() => {
@@ -107,6 +111,9 @@ describe("HomePage 删除免提醒偏好", () => {
 
     expect(store.removeSession).toHaveBeenCalledWith(session.id);
     expect(window.localStorage.getItem("home-delete-confirm-skip-until")).toBeNull();
+    const toast = document.querySelector<HTMLElement>('[data-toast-key="home-delete-failed"]');
+    expect(toast?.className).toContain("error");
+    expect(toast?.textContent).toContain("删除失败，请重试");
   });
 
   it("只有删除成功返回后才写入免提醒期限", async () => {

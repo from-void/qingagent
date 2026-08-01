@@ -69,6 +69,18 @@ import { computeMainWindowSize } from "./windowSize.js";
 import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
+import { RendererDialogBroker } from "./rendererDialogBroker.js";
+import {
+  showNativeContentRecoveryFallback,
+  showNativeQuitFallback,
+} from "./nativeDialogFallback.js";
+import {
+  DESKTOP_DIALOG_READY_CHANNEL,
+  DESKTOP_DIALOG_RESPONSE_CHANNEL,
+  isDesktopDialogKind,
+  type DesktopDialogResponse,
+  type DesktopDialogResult,
+} from "../rendererDialogContract.js";
 import {
   ExportDownloadCoordinator,
   EXPORT_DOWNLOAD_CANCEL_CHANNEL,
@@ -83,6 +95,7 @@ const trustedRememberUiGate = new TrustedRememberUiGate();
 const nativeRememberGrantGate = new NativeRememberGrantGate();
 let mainWindowRememberGeneration = 0;
 let mainWindowRememberScope: string | null = null;
+const rendererDialogBroker = new RendererDialogBroker();
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 function assertTrustedRenderer(
@@ -91,6 +104,31 @@ function assertTrustedRenderer(
 ): void {
   assertTrustedRendererEvent(event, expectedRenderer);
 }
+
+function isDesktopDialogResponse(value: unknown): value is DesktopDialogResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as { id?: unknown; result?: unknown };
+  return (
+    typeof response.id === "number" &&
+    Number.isSafeInteger(response.id) &&
+    (response.result === "confirm" || response.result === "cancel")
+  );
+}
+
+ipcMain.on(DESKTOP_DIALOG_READY_CHANNEL, (event, rawKinds: unknown) => {
+  assertTrustedRenderer(event);
+  const kinds = Array.isArray(rawKinds)
+    ? rawKinds.filter(isDesktopDialogKind)
+    : [];
+  rendererDialogBroker.markReady(event.sender, kinds);
+  event.returnValue = true;
+});
+
+ipcMain.on(DESKTOP_DIALOG_RESPONSE_CHANNEL, (event, rawResponse: unknown) => {
+  assertTrustedRenderer(event);
+  if (!isDesktopDialogResponse(rawResponse)) return;
+  rendererDialogBroker.respond(event.sender, rawResponse);
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -399,6 +437,8 @@ let embeddedServerPort: number | null = null;
 let embeddedServerReady: Promise<{ port: number }> | null = null;
 let windowStartupInProgress = false;
 
+// data: 启动壳不能依赖 Web CSS chunk；下列色值逐字镜像 UIKit tokens.css 的暖纸/金/墨，
+// 类名与 ConfirmProvider 的 ws-folder-modal-* 保持同族，不另造一套产品视觉语言。
 const STARTUP_SHELL_HTML = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -409,12 +449,61 @@ const STARTUP_SHELL_HTML = `<!doctype html>
     body { display: grid; place-items: center; color: #2f2a22; font-family: "Songti SC", "STSong", serif; }
     .shell { display: grid; justify-items: center; gap: 14px; }
     .mark { font-size: 22px; letter-spacing: 0.36em; text-indent: 0.36em; }
-    .breath { width: 42px; height: 1px; background: #6f6252; animation: breathe 1.8s ease-in-out infinite; }
+    .breath { width: 42px; height: 1px; background: #5c5346; animation: breathe 1.8s ease-in-out infinite; }
+    .ws-folder-modal-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 26px; background: rgba(47, 42, 34, 0.34); }
+    .ws-folder-modal-overlay[hidden], .shell[hidden] { display: none; }
+    .ws-folder-confirm-modal { box-sizing: border-box; width: min(378px, 92vw); padding: 24px; color: #2f2a22; background: #efe7d6; border: 1px solid rgba(120, 90, 50, 0.28); box-shadow: 0 24px 60px rgba(50, 38, 18, 0.2), 0 4px 12px rgba(50, 38, 18, 0.08); }
+    .ws-folder-confirm-modal h3 { margin: 0 0 10px; font-size: 16px; }
+    .ws-folder-confirm-modal p { margin: 0 0 16px; color: #5c5346; font-size: 13px; line-height: 1.85; }
+    .ws-folder-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .ws-folder-modal-affirm, .ws-folder-modal-secondary { border-radius: 0; padding: 8px 16px; font: 13px/1.2 "Songti SC", "STSong", serif; cursor: pointer; }
+    .ws-folder-modal-affirm { color: #2f2a22; font-weight: 700; background: #a8823f; border: 1px solid #a8823f; }
+    .ws-folder-modal-secondary { color: #5c5346; background: transparent; border: 1px solid rgba(120, 90, 50, 0.28); }
+    .ws-folder-modal-affirm:disabled, .ws-folder-modal-secondary:disabled { cursor: wait; opacity: 0.58; }
     @keyframes breathe { 0%, 100% { opacity: 0.25; transform: scaleX(0.62); } 50% { opacity: 0.9; transform: scaleX(1); } }
     @media (prefers-reduced-motion: reduce) { .breath { animation: none; opacity: 0.65; } }
   </style>
 </head>
-<body><div class="shell"><div class="mark">青简</div><div class="breath"></div></div></body>
+<body>
+  <div class="shell" id="startup-loading"><div class="mark">青简</div><div class="breath"></div></div>
+  <div class="ws-folder-modal-overlay" id="content-recovery" hidden>
+    <section class="ws-folder-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="content-recovery-title">
+      <h3 id="content-recovery-title">内容页加载失败</h3>
+      <p>青简当前无法加载内容页。你可以重新尝试加载，或退出应用。</p>
+      <div class="ws-folder-confirm-actions">
+        <button class="ws-folder-modal-affirm" id="content-retry" type="button">重试</button>
+        <button class="ws-folder-modal-secondary" id="content-exit" type="button">退出</button>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const bridge = window.electron;
+      if (!bridge || !bridge.onDesktopDialogRequest || !bridge.markDesktopDialogReady || !bridge.respondToDesktopDialog) return;
+      const loading = document.getElementById("startup-loading");
+      const recovery = document.getElementById("content-recovery");
+      const retry = document.getElementById("content-retry");
+      const exit = document.getElementById("content-exit");
+      const detach = bridge.onDesktopDialogRequest((request) => {
+        if (request.kind !== "content-load-failed") return;
+        loading.hidden = true;
+        recovery.hidden = false;
+        retry.disabled = false;
+        exit.disabled = false;
+        const respond = (result) => {
+          retry.disabled = true;
+          exit.disabled = true;
+          bridge.respondToDesktopDialog(request.id, result);
+        };
+        retry.onclick = () => respond("confirm");
+        exit.onclick = () => respond("cancel");
+        retry.focus();
+      });
+      bridge.markDesktopDialogReady(["content-load-failed"]);
+      window.addEventListener("unload", detach, { once: true });
+    })();
+  </script>
+</body>
 </html>`;
 const STARTUP_SHELL_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STARTUP_SHELL_HTML)}`;
 const CHROMIUM_ERR_ABORTED = -3;
@@ -1110,6 +1199,7 @@ async function createWindowOnce() {
   });
 
   contentWindow.once("closed", () => {
+    rendererDialogBroker.markUnavailable(contentWindow.webContents);
     exportDownloadCoordinator.dispose();
     if (mainExportDownloadCoordinator === exportDownloadCoordinator) {
       mainExportDownloadCoordinator = null;
@@ -1140,6 +1230,18 @@ async function createWindowOnce() {
   });
 
   attachRendererDiagnostics(contentWindow.webContents, desktopLogDir);
+
+  contentWindow.webContents.on(
+    "did-start-navigation",
+    (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        rendererDialogBroker.markUnavailable(contentWindow.webContents);
+      }
+    },
+  );
+  contentWindow.webContents.on("render-process-gone", () => {
+    rendererDialogBroker.markUnavailable(contentWindow.webContents);
+  });
 
   // 外部链接走系统默认浏览器，不允许启动壳或内容页把主窗口导航到应用 origin 之外。
   // 监听器必须早于 data: 启动壳加载挂载，避免壳阶段的 http(s) 导航逃逸。
@@ -1192,9 +1294,10 @@ async function createWindowOnce() {
   } catch (error) {
     if (!isReportedServerStartupError(error)) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      console.error("[startup] 本地服务启动失败:", detail);
       dialog.showErrorBox(
         "本地服务启动失败",
-        "青简无法启动本地服务，应用将退出。\n\n" + detail,
+        "青简暂时无法启动，应用将退出。请重新打开应用；若仍失败，请查看应用日志或联系支持。",
       );
     }
     app.exit(1);
@@ -1268,17 +1371,21 @@ async function createWindowOnce() {
         }
 
         if (contentWindow.isDestroyed()) return;
-        const { response } = await dialog.showMessageBox(contentWindow, {
-          type: "warning",
-          title: "内容页加载失败",
-          message: "青简当前无法加载内容页。",
-          detail: "本地服务不可用或内容页加载失败。你可以重新尝试加载，或退出应用。",
-          buttons: ["重试", "退出"],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true,
+        // 最后一次失败会让 Chromium 错误页接管主 frame；询问前必须重新挂回自绘启动壳，
+        // 否则 renderer 能力已随导航失效，正常的内容恢复也会误降级成系统弹框。
+        await contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
+          console.warn("[startup] 恢复询问壳加载失败:", error);
         });
-        if (response === 1) {
+        if (contentWindow.isDestroyed()) return;
+        let response = await rendererDialogBroker.request(
+          contentWindow.webContents,
+          "content-load-failed",
+        );
+        if (contentWindow.isDestroyed()) return;
+        if (response === null) {
+          response = await showNativeContentRecoveryFallback(contentWindow);
+        }
+        if (response === "cancel") {
           app.exit(1);
           return;
         }
@@ -1375,21 +1482,21 @@ const quitCoordinator = createDesktopQuitCoordinator({
     }
   },
   confirmQuitDuringGeneration: async () => {
-    const prompt = {
-      type: "warning" as const,
-      title: "正在生成",
-      message: "正在生成，退出将中断",
-      detail: "退出应用会停止当前生成，尚未完成的内容可能无法保留。",
-      buttons: ["继续生成", "退出应用"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    };
     const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    const { response } = owner
-      ? await dialog.showMessageBox(owner, prompt)
-      : await dialog.showMessageBox(prompt);
-    return response === 1;
+    let response: DesktopDialogResult | null = null;
+    if (owner) {
+      if (owner.isMinimized()) owner.restore();
+      owner.show();
+      owner.focus();
+      response = await rendererDialogBroker.request(
+        owner.webContents,
+        "quit-during-generation",
+      );
+    }
+    if (response === null) {
+      response = await showNativeQuitFallback(owner);
+    }
+    return response === "confirm";
   },
   telemetryEnabled: () => telemetry.enabled,
   captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),

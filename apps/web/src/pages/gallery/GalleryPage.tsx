@@ -23,7 +23,7 @@ import {
 } from "../workspace/components/streamErrorPresenter";
 import { IMPROVED_LABELS, UToolBar, URevampPart, UTurnFold } from "./revampUi";
 import type { StreamError } from "../workspace/data/protocol";
-import { useConfirm } from "../../system";
+import { useConfirm, useToast } from "../../system";
 import "../workspace/workspace.css";
 import "../workspace/workspace-ink-skin.css";
 import "./gallery.css";
@@ -1296,7 +1296,7 @@ async function clearAllNotes(confirm: ReturnType<typeof useConfirm>) {
   });
 }
 
-function copyAllNotes() {
+function copyAllNotes(toast: ReturnType<typeof useToast>) {
   const notes = Array.from(document.querySelectorAll<HTMLTextAreaElement>(".gx-note"));
   const lines: string[] = [];
   for (const t of notes) {
@@ -1304,12 +1304,15 @@ function copyAllNotes() {
     if (v) lines.push(`【${t.dataset.key}】\n${v}`);
   }
   if (lines.length === 0) {
-    window.alert("还没填任何备注");
+    toast.show({ message: "还没填任何备注", tone: "warn" });
     return;
   }
   const text = lines.join("\n\n");
-  const done = () => window.alert(`已复制 ${lines.length} 条备注，可直接粘给我`);
-  navigator.clipboard?.writeText(text).then(done).catch(() => {
+  const done = () => toast.show({
+    message: `已复制 ${lines.length} 条备注，可直接粘给我`,
+    tone: "success",
+  });
+  const copyWithTextarea = () => {
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
@@ -1317,11 +1320,15 @@ function copyAllNotes() {
     document.execCommand("copy");
     ta.remove();
     done();
-  });
+  };
+  const clipboardWrite = navigator.clipboard?.writeText(text);
+  if (clipboardWrite) void clipboardWrite.then(done).catch(copyWithTextarea);
+  else copyWithTextarea();
 }
 
 export function GalleryPage() {
   const confirm = useConfirm();
+  const toast = useToast();
   const groups = useMemo(() => buildGroups(), []);
   const convo = useMemo(() => buildConvo(), []);
   const total = groups.reduce((n, g) => n + g.rows.length, 0);
@@ -1333,7 +1340,7 @@ export function GalleryPage() {
           <div className="gx-copybar">
             <span className="gx-savehint">● 实时存档(localStorage)·刷新不丢</span>
             <button type="button" className="gx-clearbtn" onClick={() => void clearAllNotes(confirm)}>清空</button>
-            <button type="button" className="gx-copybtn" onClick={copyAllNotes}>⧉ 复制全部备注</button>
+            <button type="button" className="gx-copybtn" onClick={() => copyAllNotes(toast)}>⧉ 复制全部备注</button>
           </div>
           <h1 className="gx-title">对话嵌入元素 · 多态画廊</h1>
           <p className="gx-sub">

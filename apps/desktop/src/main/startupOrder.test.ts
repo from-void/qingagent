@@ -77,8 +77,20 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
   assert.match(recoverySource, /recoverContentLoad\(\{ errorCode, errorDescription, validatedURL \}\)/);
   assert.match(recoverySource, /probeEmbeddedServerHealth\(port\)/);
   assert.match(recoverySource, /contentWindow\.loadURL\(STARTUP_SHELL_URL\)/);
-  assert.match(recoverySource, /dialog\.showMessageBox\(contentWindow/);
-  assert.match(recoverySource, /buttons: \["重试", "退出"\]/);
+  assert.match(recoverySource, /rendererDialogBroker\.request\([\s\S]*"content-load-failed"/);
+  assert.match(recoverySource, /showNativeContentRecoveryFallback\(contentWindow\)/);
+  assert.doesNotMatch(recoverySource, /dialog\.showMessageBox/);
+  const finalPromptIndex = recoverySource.indexOf("rendererDialogBroker.request");
+  const finalShellIndex = recoverySource.lastIndexOf(
+    "contentWindow.loadURL(STARTUP_SHELL_URL)",
+    finalPromptIndex,
+  );
+  assert.ok(finalShellIndex >= 0 && finalShellIndex < finalPromptIndex);
+  const startupShell = readStartupShellHtml(source);
+  assert.match(startupShell, /class="ws-folder-confirm-modal"/);
+  assert.match(startupShell, />重试<\/button>/);
+  assert.match(startupShell, />退出<\/button>/);
+  assert.match(startupShell, /markDesktopDialogReady\(\["content-load-failed"\]\)/);
   assert.match(recoverySource, /app\.exit\(1\)/);
   assert.match(catchSource, /recoverContentLoad\(error\)/, "loadURL rejection 也必须进入同一恢复流程");
 });
@@ -297,10 +309,21 @@ test("desktop 在 server app 求值后接管关闭信号并使用 Electron 退�
 
 test("desktop 仅在退出应用时对生成中任务给出明确中断提示", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const hostSource = readFileSync(
+    path.join(__dirname, "../../../web/src/system/DesktopDialogHost.tsx"),
+    "utf8",
+  );
+  const preloadSource = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
 
   assert.match(source, /hasActiveDesktopGeneration/);
-  assert.match(source, /message:\s*"正在生成，退出将中断"/);
-  assert.match(source, /buttons:\s*\["继续生成", "退出应用"\]/);
+  assert.match(source, /rendererDialogBroker\.request\([\s\S]*"quit-during-generation"/);
+  assert.match(source, /showNativeQuitFallback\(owner\)/);
+  assert.doesNotMatch(source, /dialog\.showMessageBox/);
+  assert.match(hostSource, /title:\s*"正在生成，退出将中断"/);
+  assert.match(hostSource, /confirmLabel:\s*"退出应用"/);
+  assert.match(hostSource, /cancelLabel:\s*"继续生成"/);
+  assert.match(preloadSource, /onDesktopDialogRequest/);
+  assert.match(preloadSource, /respondToDesktopDialog/);
   assert.match(source, /quitCoordinator\.handleWindowClose\(event\)/);
 });
 

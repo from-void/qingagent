@@ -1,6 +1,7 @@
 import { Router, useRoute } from "./shell";
 import type { RouteName } from "./shell";
 import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
+import { DesktopDialogHost } from "./system/DesktopDialogHost";
 import { AuthTokenGate } from "./system/AuthTokenGate";
 import { EditContextMenu } from "./system/EditContextMenu";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
@@ -59,6 +60,7 @@ export default function App() {
       <ConfirmProvider>
         <AppShell />
         <AppUpdateWatcher />
+        <DesktopDialogHost />
         <AuthTokenGate />
         {/* 可编辑区域的自绘右键菜单(宋体、水墨皮肤);非编辑区域不接管。 */}
         <EditContextMenu />

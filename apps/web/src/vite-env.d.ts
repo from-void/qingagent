@@ -34,6 +34,15 @@ interface ElectronKernelVersions {
   node: string;
 }
 
+type ElectronDesktopDialogKind =
+  | "quit-during-generation"
+  | "content-load-failed";
+
+interface ElectronDesktopDialogRequest {
+  id: number;
+  kind: ElectronDesktopDialogKind;
+}
+
 type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
 type ElectronExportDownloadResult =
   | { saved: true; filename: string; revealToken: string }
@@ -102,6 +111,14 @@ interface Window {
     versions?: ElectronKernelVersions;
     checkForUpdate?: () => Promise<ElectronUpdateStatus>;
     getThirdPartyNotices?: () => Promise<string | null>;
+    onDesktopDialogRequest?: (
+      callback: (request: ElectronDesktopDialogRequest) => void,
+    ) => () => void;
+    markDesktopDialogReady?: (kinds: ElectronDesktopDialogKind[]) => void;
+    respondToDesktopDialog?: (
+      id: number,
+      result: "confirm" | "cancel",
+    ) => void;
   };
   showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<FileSystemDirectoryHandle>;
 }

@@ -34,11 +34,11 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
     await runMigrations();
   } catch (err) {
     const detail = err instanceof Error ? err.stack ?? err.message : String(err);
+    console.error("[startup] 数据库迁移失败:", detail);
     dialog.showErrorBox(
       "数据库迁移失败",
-      "青简无法完成数据库升级,已停止启动以保护你的数据。\n" +
-        "最近一次迁移前的自动备份位于数据目录下的 qingagent.db.bak-pre-v* 文件。\n\n" +
-        detail,
+      "青简已停止启动，以免影响你的数据。升级前的备份仍保留在数据目录中。" +
+        "请查看应用日志或联系支持后重试。",
     );
     electronApp.exit(1);
     throw markServerStartupErrorReported(err);

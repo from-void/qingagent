@@ -30,7 +30,6 @@ import {
   toolCallUpdated,
 } from "./frames.js";
 import { settleDraftCandidate } from "../doc-engine/settleDraftCandidate.js";
-import { buildAnnotationMappingNotice } from "../doc-engine/annotationMapping.js";
 import {
   appendPartToChatHistory,
   clearSuspension,
@@ -427,10 +426,14 @@ export async function* finalizeAgentStream(
     const unlocatedGroupCount = replacedAnnotationOrigins.length > 0
       ? createdUnlocatedGroupCount
       : allUnlocatedGroupCount;
-    const notice = buildAnnotationMappingNotice(survivingGroupCount, unlocatedGroupCount);
-    const visibleText = context.accumulatedText ? `\n\n${notice}` : notice;
-    yield appendFinalVisibleText(visibleText);
-    outcome.producedVisibleFrame = true;
+    if (unlocatedGroupCount > 0) {
+      logger.warn("Annotation groups became unlocated while settling agent stream", {
+        sessionId: state.sessionId,
+        streamId,
+        survivingGroupCount,
+        unlocatedGroupCount,
+      });
+    }
   }
 
   if (

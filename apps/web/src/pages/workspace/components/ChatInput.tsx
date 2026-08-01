@@ -425,6 +425,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         savedRangeRef.current = r2.cloneRange();
         reportChange();
       },
+      appendText(text) {
+        const edit = editRef.current;
+        if (!edit || disabled || !text) return false;
+        const hasContent = !!edit.textContent?.trim() || edit.querySelector(".chat-chip") !== null;
+        if (hasContent) {
+          edit.appendChild(document.createElement("br"));
+        }
+        appendTextPreservingLines(edit, text);
+        focusEditorEnd(edit);
+        const selection = window.getSelection();
+        if (selection?.rangeCount) {
+          savedRangeRef.current = selection.getRangeAt(0).cloneRange();
+        }
+        reportChange();
+        return true;
+      },
       insertChip(spec) {
         const edit = editRef.current;
         if (!edit || disabled) return false;

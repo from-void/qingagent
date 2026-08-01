@@ -56,13 +56,12 @@ import {
   currentPmDoc,
 } from "./draftScratch.js";
 import { transitionAndProjectDocState } from "./docStateSync.js";
-import { chatMessageAdded, docDiffReady, newId, nowIso, toolCallUpdated } from "../agent-run/frames.js";
+import { docDiffReady, toolCallUpdated } from "../agent-run/frames.js";
 import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   buildAnnotationMappingSteps,
-  buildAnnotationMappingNotice,
   diffHunkToPmStep,
   mapAnnotationGroupsThroughSteps,
   pmDocContentSize,
@@ -1201,20 +1200,12 @@ export async function* commitPatches(
       data: { groups: mapped.groups, replacedOrigins },
     };
     if (mapped.unlocatedGroupCount > 0) {
-      const notice = buildAnnotationMappingNotice(
-        mapped.groups.length,
-        mapped.unlocatedGroupCount,
-      );
-      const message = {
-        id: newId(),
-        role: { kind: "agent" as const },
-        ts: nowIso(),
-        parts: [{ kind: "text" as const, data: { body: notice } }],
-        chips: null,
-      };
-      state.chatHistory.push(message);
-      state.messages.push({ role: "assistant", content: notice });
-      yield chatMessageAdded(message);
+      logger.warn("Annotation groups became unlocated while committing review", {
+        sessionId: state.sessionId,
+        docId: state.docId,
+        survivingGroupCount: mapped.groups.length,
+        unlocatedGroupCount: mapped.unlocatedGroupCount,
+      });
     }
   }
   if (shouldCommitDiffHunks) {

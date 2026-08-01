@@ -103,7 +103,10 @@ describe("workspaceCssContract", () => {
     expect(css).toContain(".ahc-suggestion textarea { box-sizing:border-box; width:100%; height:68px;");
     expect(css).toContain(".annotation-hover-card footer { flex:none;");
     expect(css).toContain("border:1px solid var(--line-2); border-radius:0; background:var(--bg-canvas); color:var(--ink-1);");
-    expect(css).toContain(".ahc-accept { border:1px solid var(--mark); background:var(--mark); color:var(--ink-surface);");
+    expect(css).toContain(".ahc-suggestion textarea { box-sizing:border-box; width:100%; height:68px;");
+    expect(css).toContain("background:var(--bg-canvas); color:var(--ink-1); font:13px/1.6 var(--font-zh-serif);");
+    expect(css).toContain(".ahc-accept { border:1px solid var(--ink-1); background:var(--ink-1); color:var(--bg-canvas);");
+    expect(css).toContain(".ahc-accept:hover:not(:disabled) { border-color:var(--mark); background:var(--mark); color:var(--ink-surface);");
     expect(css).toContain(".ahc-ignore { border:1px solid var(--line-2); background:transparent; color:var(--ink-2);");
     expect(css).toContain(".ahc-ignore:hover { border-color:var(--line-3); background:var(--bg-hover); color:var(--ink-1);");
     expect(css).toContain(".annotation-anchor-active { text-decoration-line:underline; text-decoration-style:wavy; text-decoration-color:var(--mark);");

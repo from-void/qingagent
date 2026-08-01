@@ -355,7 +355,7 @@ describe("commitPatches", () => {
     )).toBe("editable");
   });
 
-  it("提交改写导致批注组全丢时通过现有消息通道显式提示", async () => {
+  it("提交改写导致批注组全丢时不输出批注定位固定文案", async () => {
     const state = createSession("test-annotation-remap");
     seedStateWithDoc(state);
     await addPatch(state, "patch-1");
@@ -389,18 +389,10 @@ describe("commitPatches", () => {
       kind: "annotationGroupsReady",
       data: { groups: [], replacedOrigins: ["consistency"] },
     });
-    const noticeFrame = frames.find((frame) => frame.kind === "chatMessageAdded");
-    expect(noticeFrame?.kind).toBe("chatMessageAdded");
-    if (noticeFrame?.kind === "chatMessageAdded") {
-      expect(noticeFrame.data.message.parts).toEqual([{ kind: "text", data: {
-        body: "批注落地结果：0处已定位；1处因文档已改动未能定位。",
-      } }]);
-    }
+    expect(JSON.stringify(frames)).not.toContain("批注落地结果");
     expect(state.annotationGroups).toEqual([]);
-    expect(state.messages.at(-1)).toEqual({
-      role: "assistant",
-      content: "批注落地结果：0处已定位；1处因文档已改动未能定位。",
-    });
+    expect(JSON.stringify({ chatHistory: state.chatHistory, messages: state.messages }))
+      .not.toContain("批注落地结果");
   });
 
   it("提交后清理已提交项，并将缺少 diffHunk 的剩余项结算为失败", async () => {

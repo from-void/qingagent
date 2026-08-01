@@ -165,6 +165,36 @@ describe("ChatInput", () => {
     });
   });
 
+  it("appendText 始终在已有草稿末尾逐行追加，不受当前光标位置影响", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "已有草稿");
+    const range = document.createRange();
+    range.setStart(edit.firstChild!, 0);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    act(() => {
+      expect(ref.current?.appendText("按批注修改：第一条")).toBe(true);
+      expect(ref.current?.appendText("按批注修改：第二条")).toBe(true);
+    });
+
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: "已有草稿\n按批注修改：第一条\n按批注修改：第二条",
+      richText: "已有草稿\n按批注修改：第一条\n按批注修改：第二条",
+      chips: [],
+    });
+  });
+
   it("序列化并恢复时不把用户字面 chip marker 当成真实 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
@@ -773,6 +803,7 @@ describe("ChatInput", () => {
       />,
     );
     expect(disabledRef.current?.insertChip({ kind: "sel", label: "不可插入" })).toBe(false);
+    expect(disabledRef.current?.appendText("不可追加")).toBe(false);
     expect(disabledRef.current?.openFileMenu()).toBe(false);
     expect(disabledRef.current?.snapshot().chips).toEqual([]);
 
@@ -780,6 +811,7 @@ describe("ChatInput", () => {
     act(() => root?.unmount());
     root = null;
     expect(handle.insertChip({ kind: "sel", label: "已卸载" })).toBe(false);
+    expect(handle.appendText("已卸载")).toBe(false);
   });
 
   it("openFileMenu 复用输入框素材入口并直接打开菜单", async () => {

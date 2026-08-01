@@ -182,16 +182,6 @@ export type MappedAnnotationGroups = {
   unlocatedGroupCount: number;
 };
 
-export function buildAnnotationMappingNotice(
-  survivingGroupCount: number,
-  unlocatedGroupCount: number,
-): string {
-  const located = `批注落地结果：${survivingGroupCount}处已定位`;
-  return unlocatedGroupCount > 0
-    ? `${located}；${unlocatedGroupCount}处因文档已改动未能定位。`
-    : `${located}。`;
-}
-
 export function mapAnnotationGroupsThroughSteps(
   groups: readonly AnnotationGroup[],
   steps: readonly PmStep[],

@@ -247,16 +247,19 @@ describe("AnnotationCarousel hover card", () => {
     const secondAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g2"]')!;
     Object.defineProperty(firstAnchor, "scrollIntoView", {
       configurable: true,
-      value: () => document.dispatchEvent(new Event("scroll")),
+      value: () => window.setTimeout(() => document.dispatchEvent(new Event("scroll")), 50),
     });
     Object.defineProperty(secondAnchor, "scrollIntoView", {
       configurable: true,
-      value: () => document.dispatchEvent(new Event("scroll")),
+      value: () => window.setTimeout(() => document.dispatchEvent(new Event("scroll")), 50),
     });
     await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
     expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
     expect(host.textContent).toContain("第 2 / 共 2 处");
     expect(host.textContent).toContain("表述重复");
+    await act(async () => vi.advanceTimersByTime(50));
+    expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    await act(async () => vi.advanceTimersByTime(200));
     await act(async () => host!.querySelector<HTMLButtonElement>('[aria-label="上一处批注"]')!.click());
     expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g1");
     expect(host.textContent).toContain("事实有误");
@@ -268,6 +271,8 @@ describe("AnnotationCarousel hover card", () => {
       vi.advanceTimersByTime(100);
     });
     expect(host.querySelector(".annotation-hover-card")).not.toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(200));
 
     const suggestion = host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")!;
     await act(async () => suggestion.dispatchEvent(new Event("scroll")));

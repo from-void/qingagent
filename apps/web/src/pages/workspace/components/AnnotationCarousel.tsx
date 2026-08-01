@@ -9,6 +9,7 @@ import { CaretIcon } from "./icons";
 
 const SHOW_DELAY_MS = 80;
 const HIDE_DELAY_MS = 150;
+const NAVIGATION_SCROLL_IDLE_MS = 200;
 const VIEWPORT_GUTTER = 12;
 const CARD_GAP = 8;
 
@@ -88,6 +89,7 @@ export function AnnotationCarousel(props: {
   const showTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const navigationScrollRef = useRef(false);
+  const navigationScrollTimerRef = useRef<number | null>(null);
   const hoveredKeyRef = useRef<string | null>(null);
   hoveredKeyRef.current = hovered ? `${hovered.groupId}:${hovered.groupIds.join(",")}` : null;
 
@@ -97,6 +99,14 @@ export function AnnotationCarousel(props: {
     timerRef.current = null;
   };
   const cancelHide = () => clearTimer(hideTimerRef);
+  const protectNavigationScroll = () => {
+    navigationScrollRef.current = true;
+    clearTimer(navigationScrollTimerRef);
+    navigationScrollTimerRef.current = window.setTimeout(() => {
+      navigationScrollTimerRef.current = null;
+      navigationScrollRef.current = false;
+    }, NAVIGATION_SCROLL_IDLE_MS);
+  };
   const hideNow = () => {
     clearTimer(showTimerRef);
     clearTimer(hideTimerRef);
@@ -145,7 +155,10 @@ export function AnnotationCarousel(props: {
     const closeOnViewportChange = (event: Event) => {
       const target = event.target;
       if (target instanceof Node && cardRef.current?.contains(target)) return;
-      if (event.type === "scroll" && navigationScrollRef.current) return;
+      if (event.type === "scroll" && navigationScrollRef.current) {
+        protectNavigationScroll();
+        return;
+      }
       hideNow();
     };
     editorDom.addEventListener("mouseover", onMouseOver);
@@ -159,6 +172,8 @@ export function AnnotationCarousel(props: {
       window.removeEventListener("scroll", closeOnViewportChange, true);
       clearTimer(showTimerRef);
       clearTimer(hideTimerRef);
+      clearTimer(navigationScrollTimerRef);
+      navigationScrollRef.current = false;
     };
   }, [props.editorDom, props.groups]);
 
@@ -224,7 +239,7 @@ export function AnnotationCarousel(props: {
       props.editorDom?.querySelectorAll<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? [],
     ).find((anchor) => anchor.dataset.annotationGroup === nextGroup.id);
     if (!target) return;
-    navigationScrollRef.current = true;
+    protectNavigationScroll();
     target.scrollIntoView?.({ block: "center", behavior: "auto" });
     setPosition({ visibility: "hidden" });
     setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
@@ -233,9 +248,6 @@ export function AnnotationCarousel(props: {
         setPosition({ visibility: "hidden" });
         setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
       }
-      requestAnimationFrame(() => {
-        navigationScrollRef.current = false;
-      });
     });
   };
 

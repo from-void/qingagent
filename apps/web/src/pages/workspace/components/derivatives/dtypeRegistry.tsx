@@ -104,7 +104,7 @@ function XhsDesktopPreview(props: PreviewProps) {
 }
 
 function TranslationPreview({ doc, articleRef }: PreviewProps) {
-  return <article ref={articleRef} className="ws-translate-article"><PmBody doc={doc}/></article>;
+  return <article ref={articleRef} className="ws-translate-article doc-typography"><PmBody doc={doc}/></article>;
 }
 
 // 硬触发脚手架:只描述工具序列(防"承诺句停机"复发),具体纪律由 derivative_brief 返回的

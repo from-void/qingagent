@@ -909,6 +909,137 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("删除稿件");
   });
 
+  it("翻译稿复用文章阅读排版，表格网格与列表缩进有计算样式", async () => {
+    const style = document.createElement("style");
+    style.textContent = [
+      readFileSync(resolve(process.cwd(), "../../packages/ui-kit/src/tokens.css"), "utf8"),
+      readFileSync(resolve(process.cwd(), "../../packages/ui-kit/src/components.css"), "utf8"),
+      readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8"),
+    ].join("\n");
+    document.head.append(style);
+
+    const translation: DerivativeItem = {
+      ...item,
+      docId: "translate-typography",
+      dtype: "translate",
+      targetLang: "英语",
+      sourceVersion: 1,
+      generatedAt: "now",
+    };
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { blockId: "heading", level: 2 },
+          content: [{ type: "text", text: "Typography" }],
+        },
+        {
+          type: "table",
+          attrs: { blockId: "table" },
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableHeader",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+                  content: [{ type: "paragraph", attrs: { blockId: "head-a" }, content: [{ type: "text", text: "Name" }] }],
+                },
+                {
+                  type: "tableHeader",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+                  content: [{ type: "paragraph", attrs: { blockId: "head-b" }, content: [{ type: "text", text: "Value" }] }],
+                },
+              ],
+            },
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+                  content: [{ type: "paragraph", attrs: { blockId: "cell-a" }, content: [{ type: "text", text: "Alpha" }] }],
+                },
+                {
+                  type: "tableCell",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+                  content: [{ type: "paragraph", attrs: { blockId: "cell-b" }, content: [{ type: "text", text: "1" }] }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "bulletList",
+          attrs: { blockId: "list" },
+          content: [{
+            type: "listItem",
+            attrs: { blockId: "list-item" },
+            content: [{ type: "paragraph", attrs: { blockId: "list-text" }, content: [{ type: "text", text: "Indented" }] }],
+          }],
+        },
+        {
+          type: "blockquote",
+          attrs: { blockId: "quote" },
+          content: [{ type: "paragraph", attrs: { blockId: "quote-text" }, content: [{ type: "text", text: "Quoted" }] }],
+        },
+        {
+          type: "codeBlock",
+          attrs: { blockId: "code", language: "ts" },
+          content: [{ type: "text", text: "const answer = 42;" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "footnote" },
+          content: [
+            { type: "text", text: "Source" },
+            { type: "footnoteReference", attrs: { id: "source", note: "Reference" } },
+          ],
+        },
+      ],
+    });
+    const initialDocument = { meta: translation, docPm, docVersion: 1, title: "" };
+    const stream = {
+      getDerivativeDoc: vi.fn(() => new Promise<typeof initialDocument>(() => undefined)),
+    };
+
+    try {
+      await act(async () => root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={translation}
+            initialDocument={initialDocument}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={vi.fn()}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      ));
+
+      const article = host.querySelector<HTMLElement>(".ws-translate-article.doc-typography");
+      const firstHeader = article?.querySelector<HTMLElement>("th");
+      const list = article?.querySelector<HTMLElement>("ul");
+      expect(article).not.toBeNull();
+      expect(article?.classList.contains("wf-doc")).toBe(false);
+      expect(firstHeader).not.toBeNull();
+      expect(getComputedStyle(firstHeader!).borderTopStyle).not.toBe("none");
+      expect(getComputedStyle(firstHeader!).borderRightStyle).not.toBe("none");
+      expect(parseFloat(getComputedStyle(list!).paddingLeft)).toBeGreaterThan(0);
+      expect(getComputedStyle(article!.querySelector("blockquote")!).borderLeftStyle).not.toBe("none");
+      expect(article?.querySelector("pre.md-code-block")).not.toBeNull();
+      expect(article?.querySelector(".pm-footnote-reference")).not.toBeNull();
+      expect(article?.querySelector(".selectedCell, .column-resize-handle, .code-block-language-select")).toBeNull();
+    } finally {
+      style.remove();
+    }
+  });
+
   it("快速切换子 Tab 时丢弃与当前 docId 不符的乱序响应", async () => {
     const english: DerivativeItem = { ...item, docId: "translate-guard-en", dtype: "translate", targetLang: "英语", generatedAt: "en" };
     const japanese: DerivativeItem = { ...english, docId: "translate-guard-ja", targetLang: "日语", generatedAt: "ja" };

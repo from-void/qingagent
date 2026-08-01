@@ -11,6 +11,7 @@ import {
 const sessionIds: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const sessionId of sessionIds.splice(0)) {
     forgetSession(sessionId);
     sessionManager.frameLog.evict(sessionId);
@@ -28,9 +29,6 @@ describe("GET /api/v1/events 回放背压", () => {
     });
 
     const overflowLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const cancelAfterDisconnect = vi
-      .spyOn(sessionManager, "cancelRunningTurnAfterDisconnect")
-      .mockResolvedValue(false);
     const firstResponse = await app.request(
       `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=0`,
     );
@@ -100,8 +98,6 @@ describe("GET /api/v1/events 回放背压", () => {
     )?.[1] as { queuedBytes: number } | undefined;
     expect(overflowDetails?.queuedBytes).toBeGreaterThan(128 * 1024);
     expect(overflowDetails?.queuedBytes).toBeLessThan(512 * 1024);
-    expect(cancelAfterDisconnect).not.toHaveBeenCalled();
-
     const after = Number(firstFrames.at(-1)?.id ?? 0);
     const reconnectController = new AbortController();
     const reconnectResponse = await app.request(
@@ -128,6 +124,173 @@ describe("GET /api/v1/events 回放背压", () => {
       kind: "stream",
       data: { kind: "end", data: { reason: { kind: "done" } } },
     });
+  });
+
+  it("导航断开后后台完成，重进按游标回放标题、完整正文与 end 终态", async () => {
+    const sessionId = "main-events-navigation-background-finish";
+    sessionIds.push(sessionId);
+    for await (const _frame of handleCommand({
+      kind: "startSession",
+      data: {
+        mode: {
+          kind: "new",
+          data: { sessionId, template: null },
+        },
+      },
+    })) {
+      // 建立真实会话注册；本用例用同一个 SessionManager/Actor 与 /events 路由跑后台轮次。
+    }
+    const session = getSession(sessionId);
+    if (!session) throw new Error("missing navigation background session");
+
+    const generationController = new AbortController();
+    session._abortController = generationController;
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    const finalDoc = {
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: "navigation-background-final" },
+        content: [{ type: "text" as const, text: "离开首页后后台写完，回来仍是完整正文。" }],
+      }],
+    };
+
+    const running = sessionManager.runExclusive(sessionId, async function* () {
+      yield {
+        kind: "stream",
+        data: { kind: "start", data: { streamId: "navigation-background-stream" } },
+      };
+      yield {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "inline_appended",
+          data: {
+            generationId: "navigation-background-generation",
+            seq: 1,
+            prevSeq: null,
+            blockId: "navigation-background-final",
+            index: 0,
+            appendOffset: 0,
+            run: { text: "离开首页后" },
+          },
+        },
+      };
+      started();
+      await releasePromise;
+      session.title = "后台完成标题";
+      session.doc = finalDoc;
+      session.docVersion = 7;
+      yield {
+        kind: "sessionMeta",
+        data: { sessionId, title: session.title },
+      };
+      yield {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: {
+            version: 7,
+            ts: "2026-08-01T00:00:00.000Z",
+            doc: finalDoc,
+          },
+        },
+      };
+      yield {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_finished",
+          data: {
+            generationId: "navigation-background-generation",
+            seq: 2,
+            prevSeq: 1,
+            doc: finalDoc,
+            finalVersion: 7,
+            contentHash: "navigation-background-hash",
+          },
+        },
+      };
+      yield {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "navigation-background-stream",
+            reason: { kind: "done" },
+            finalDocument: {
+              version: 7,
+              contentHash: "navigation-background-hash",
+              doc: finalDoc,
+            },
+          },
+        },
+      };
+    });
+    await startedPromise;
+
+    vi.useFakeTimers();
+    const firstController = new AbortController();
+    const firstResponse = await app.request(
+      `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=0`,
+      { signal: firstController.signal },
+    );
+    const firstFrames = await readFrames(firstResponse, firstController, 2);
+    const cursor = Number(firstFrames.at(-1)?.id ?? 0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const abortedAfterNavigation = generationController.signal.aborted;
+
+    release();
+    await running;
+    vi.useRealTimers();
+
+    expect(abortedAfterNavigation).toBe(false);
+    expect(session.title).toBe("后台完成标题");
+    expect(session.doc).toEqual(finalDoc);
+    expect(sessionManager.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER).activeRunner)
+      .toBe(false);
+
+    const reconnectController = new AbortController();
+    const reconnectResponse = await app.request(
+      `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=${cursor}`,
+      { signal: reconnectController.signal },
+    );
+    const replayed = await readFramesUntil(
+      reconnectResponse,
+      reconnectController,
+      (frame) => frame.kind === "stream" && frame.data.kind === "end",
+    );
+    expect(replayed.map((entry) => entry.frame)).toEqual([
+      {
+        kind: "sessionMeta",
+        data: { sessionId, title: "后台完成标题" },
+      },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: {
+            version: 7,
+            ts: "2026-08-01T00:00:00.000Z",
+            doc: finalDoc,
+          },
+        },
+      },
+      expect.objectContaining({
+        kind: "docGenerationEvent",
+        data: expect.objectContaining({ kind: "generation_finished" }),
+      }),
+      expect.objectContaining({
+        kind: "stream",
+        data: expect.objectContaining({
+          kind: "end",
+          data: expect.objectContaining({
+            reason: { kind: "done" },
+            finalDocument: expect.objectContaining({ doc: finalDoc }),
+          }),
+        }),
+      }),
+    ]);
   });
 
   it("70 条历史帧与超过 512 KiB 的文档快照可在同次重连完整恢复", async () => {

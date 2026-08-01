@@ -2310,7 +2310,7 @@ export function QingjianScroll({
               {layout.slots.map((slot) => (
                 <div
                   key={slot.entry.id}
-                  className={`qj-card-slot${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? " qj-deleting" : ""}`}
+                  className={`qj-card-slot${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? " qj-deleting" : ""}${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.generating ? " qj-generating" : ""}`}
                   data-idx={slot.globalIdx}
                   data-kind={slot.entry.kind}
                   data-id={slot.entry.id}
@@ -2319,7 +2319,9 @@ export function QingjianScroll({
                   data-category={slot.entry.category}
                   role="button"
                   tabIndex={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? -1 : 0}
-                  aria-label={slot.entry.kind === "new" ? "新建文档" : `打开文章：${slot.entry.title}`}
+                  aria-label={slot.entry.kind === "new"
+                    ? "新建文档"
+                    : `打开文章：${slot.entry.title}${sessions.find((session) => session.id === slot.entry.id)?.generating ? "（生成中）" : ""}`}
                   aria-disabled={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? "true" : undefined}
                   style={{
                     left: `${slot.left}px`,
@@ -2343,6 +2345,18 @@ export function QingjianScroll({
                     ) : null}
                     {slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? (
                       <span className="qj-delete-pending" role="status">删除中…</span>
+                    ) : null}
+                    {slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.generating ? (
+                      <>
+                        <span className="qj-generation-shimmer" aria-hidden="true" />
+                        <span className="qj-generation-status" role="status">
+                          <span className="qj-generation-dot" aria-hidden="true" />
+                          生成中
+                        </span>
+                        <span className="qj-generation-hover-hint" role="tooltip">
+                          青简正在写作
+                        </span>
+                      </>
                     ) : null}
                   </div>
                 </div>

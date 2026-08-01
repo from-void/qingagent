@@ -37,7 +37,7 @@ export interface SessionManagerOptions {
   /**
    * 会话是否正在做"用户已经付出过动作、不能被系统悄悄丢掉"的工作
    * (当前=用户已确认且正在执行的命令,以及仍待用户决策的确认卡)。
-   * 返回 true 时,断连宽限期与新消息抢占都必须放行等它自己收口。
+   * 返回 true 时,新消息抢占必须放行等它自己收口。
    */
   hasProtectedWork?: (sessionId: string) => boolean;
 }
@@ -75,12 +75,9 @@ interface ActorEntry {
   lastAccessAt: number;
 }
 
-const DISCONNECT_GRACE_PERIOD_MS = 15_000;
-
 export class SessionManager {
   readonly frameLog: FrameLog;
   private readonly actors = new Map<string, ActorEntry>();
-  private readonly disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly deletingSessions = new Set<string>();
   private readonly backgroundDeletionJobs = new Map<string, Promise<void>>();
   private readonly maxActors: number;
@@ -133,7 +130,6 @@ export class SessionManager {
   }
 
   async disposeSession(sessionId: string): Promise<void> {
-    this.clearDisconnectGraceTimer(sessionId);
     const entry = this.actors.get(sessionId);
     entry?.actor.dispose();
     this.actors.delete(sessionId);
@@ -149,8 +145,6 @@ export class SessionManager {
   }
 
   async disposeAll(): Promise<void> {
-    for (const timer of this.disconnectGraceTimers.values()) clearTimeout(timer);
-    this.disconnectGraceTimers.clear();
     const entries = [...this.actors.entries()];
     await Promise.all(entries.map(async ([sessionId, entry]) => {
       try {
@@ -182,7 +176,6 @@ export class SessionManager {
     sessionId: string,
     timeoutMs = 5_000,
   ): Promise<DestroySessionResult> {
-    this.clearDisconnectGraceTimer(sessionId);
     await this.ensureDeletionStateRestored();
     await this.restoreDeletionStateForSession(sessionId);
     if (this.deletionLookupCache.get(sessionId) === "completed") {
@@ -277,35 +270,6 @@ export class SessionManager {
     return this.actors.get(sessionId)?.actor.state ?? null;
   }
 
-  /**
-   * 最后一个 SSE 订阅断开时，为仍在运行的 turn 调度可撤销宽限期。
-   * 多标签页/重连重叠期只要还有订阅者就不动；同一会话重复断开只保留一个定时器。
-   */
-  async cancelRunningTurnAfterDisconnect(sessionId: string): Promise<boolean> {
-    const live = this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER);
-    if (this.frameLog.hasSubscribers(sessionId) || !live.activeRunner) return false;
-    if (this.hasProtectedWork(sessionId)) {
-      console.info("[confirm-lifecycle] disconnect cleanup skipped: protected work in flight", {
-        sessionId,
-      });
-      return false;
-    }
-    if (this.disconnectGraceTimers.has(sessionId)) return true;
-
-    const timer = setTimeout(() => {
-      this.disconnectGraceTimers.delete(sessionId);
-      void this.cancelRunningTurnAfterGracePeriod(sessionId);
-    }, DISCONNECT_GRACE_PERIOD_MS);
-    if (typeof timer.unref === "function") timer.unref();
-    this.disconnectGraceTimers.set(sessionId, timer);
-    return true;
-  }
-
-  /** SSE 订阅建立后主动撤销旧宽限期，避免旧定时器影响重连后的活跃回合。 */
-  subscriberConnected(sessionId: string): void {
-    this.clearDisconnectGraceTimer(sessionId);
-  }
-
   listSessionIds(limit = 20): string[] {
     const n = Math.max(0, Math.floor(limit));
     if (n === 0) return [];
@@ -321,6 +285,16 @@ export class SessionManager {
     return [...ids];
   }
 
+  /** 只读判断是否有 turn 正在运行，供首页状态与桌面退出保护使用。 */
+  hasActiveRunner(): boolean {
+    for (const sessionId of this.listSessionIds(Number.MAX_SAFE_INTEGER)) {
+      if (this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER).activeRunner) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   getActorCountForTest(): number {
     return this.actors.size;
   }
@@ -330,48 +304,12 @@ export class SessionManager {
     this.cacheDeletionPhase(sessionId, "completed");
   }
 
-  private clearDisconnectGraceTimer(sessionId: string): void {
-    const timer = this.disconnectGraceTimers.get(sessionId);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.disconnectGraceTimers.delete(sessionId);
-  }
-
-  /** 受保护工作判定的唯一入口；未注入时按"没有受保护工作"处理，保持既有行为。 */
+  /** 受保护工作判定的唯一入口；未注入时按"没有受保护工作"处理。 */
   private hasProtectedWork(sessionId: string): boolean {
     try {
       return this.options.hasProtectedWork?.(sessionId) === true;
     } catch {
       return false;
-    }
-  }
-
-  private async cancelRunningTurnAfterGracePeriod(sessionId: string): Promise<void> {
-    const live = this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER);
-    if (this.frameLog.hasSubscribers(sessionId) || !live.activeRunner) return;
-    // 宽限期内用户点了确认、命令跑起来了：断连不能把它掐死。
-    if (this.hasProtectedWork(sessionId)) {
-      console.info("[confirm-lifecycle] disconnect cleanup skipped: protected work in flight", {
-        sessionId,
-      });
-      return;
-    }
-    try {
-      const queued = await this.submitQueued(sessionId, {
-        command: { kind: "cancelStream", data: { sessionId } },
-        origin: "agent",
-      });
-      void queued.completion.catch((error) => {
-        console.error("[sessionManager] disconnect cleanup failed", {
-          sessionId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    } catch (error) {
-      console.error("[sessionManager] disconnect cleanup failed", {
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
   }
 

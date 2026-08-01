@@ -59,6 +59,12 @@ export function desktopShutdownRecoveryMarkerPath(): string {
   );
 }
 
+/** 桌面主进程退出前只读查询：是否有会被进程退出中断的活跃生成。 */
+export async function hasActiveDesktopGeneration(): Promise<boolean> {
+  const { sessionManager } = await import("./gateway/sessionLifecycle.js");
+  return sessionManager.hasActiveRunner();
+}
+
 function uniqueSessionIds(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }

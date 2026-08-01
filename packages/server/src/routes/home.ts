@@ -9,6 +9,7 @@ import { requireTrustedOrigin } from "../lib/trustedOrigin";
 export const homeRoutes = new Hono();
 
 homeRoutes.get("/home", async (c) => {
+  c.header("Cache-Control", "no-store");
   const { threads } = await listHomeSessionThreads({
     page: 0,
     perPage: 50,
@@ -30,6 +31,9 @@ homeRoutes.get("/home", async (c) => {
       summary,
       imageUrl: articleMeta?.imageUrl ?? null,
       status: { kind: "Active" as const },
+      generating:
+        sessionManager.frameLog.hasSession(t.id) &&
+        sessionManager.frameLog.readFrom(t.id, Number.MAX_SAFE_INTEGER).activeRunner,
     };
   });
 

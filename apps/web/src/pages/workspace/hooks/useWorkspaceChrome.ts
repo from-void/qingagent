@@ -80,8 +80,6 @@ export function useWorkspaceChrome(input: {
   chatScrollRef: RefObject<HTMLDivElement | null>;
   sessionId: string | null;
   reducedMotion: boolean;
-  generationActive: boolean;
-  confirmGenerationInterrupt: () => Promise<boolean>;
   flushPendingDocSave: () => Promise<void>;
 }) {
   const homeReturnTransitionRef = useRef(false);
@@ -345,19 +343,6 @@ export function useWorkspaceChrome(input: {
   const handleBackHome = useCallback(async () => {
     if (homeReturnTransitionRef.current) return;
     homeReturnTransitionRef.current = true;
-    if (input.generationActive) {
-      let accepted: boolean;
-      try {
-        accepted = await input.confirmGenerationInterrupt();
-      } catch (error) {
-        homeReturnTransitionRef.current = false;
-        throw error;
-      }
-      if (!accepted) {
-        homeReturnTransitionRef.current = false;
-        return;
-      }
-    }
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = window.setTimeout(
@@ -404,9 +389,7 @@ export function useWorkspaceChrome(input: {
     }
     homeReturnTimerRef.current = window.setTimeout(handoff, 260);
   }, [
-    input.confirmGenerationInterrupt,
     input.flushPendingDocSave,
-    input.generationActive,
     input.reducedMotion,
     input.sessionId,
     input.viewRef,

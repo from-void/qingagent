@@ -422,8 +422,6 @@ streamRoutes.get("/events", async (c) => {
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => { settle = resolve; });
     let cleaned = false;
-    let disconnectCleanupQueued = false;
-    let overflowRollover = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
@@ -431,17 +429,6 @@ streamRoutes.get("/events", async (c) => {
       unsubscribe();
       admission.release();
       settle();
-    };
-    const settleDisconnectedTurn = () => {
-      cleanup();
-      if (disconnectCleanupQueued) return;
-      disconnectCleanupQueued = true;
-      void sessionManager.cancelRunningTurnAfterDisconnect(sessionId).catch((error) => {
-        console.error(
-          "[events] failed to settle disconnected turn:",
-          redactStreamErrorForLog(error),
-        );
-      });
     };
     const pump = new BoundedSsePump({
       write: async (message) => {
@@ -468,18 +455,13 @@ streamRoutes.get("/events", async (c) => {
       onClose: (reason, details) => {
         // overflow 是服务端主动淘汰一条慢连接，不代表用户取消本轮。
         // 让 agent 继续把候选态与 end 写入 FrameLog，客户端才能按游标重连回放。
-        overflowRollover = reason === "overflow";
         console.error("[events] SSE pump closed", {
           sessionId,
           ...details,
           reason,
         });
         stream.abort();
-        if (overflowRollover) {
-          cleanup();
-        } else {
-          settleDisconnectedTurn();
-        }
+        cleanup();
       },
     });
 
@@ -518,8 +500,6 @@ streamRoutes.get("/events", async (c) => {
       );
       if (cleaned) {
         unsubscribe();
-      } else {
-        sessionManager.subscriberConnected(sessionId);
       }
 
       if (!cleaned) {
@@ -529,11 +509,7 @@ streamRoutes.get("/events", async (c) => {
       }
       stream.onAbort(() => {
         pump.close();
-        if (overflowRollover) {
-          cleanup();
-        } else {
-          settleDisconnectedTurn();
-        }
+        cleanup();
       });
       await settled;
       await pump.waitForIdle();

@@ -1126,6 +1126,11 @@ async function createWindowOnce() {
       mainWindowRememberScope = null;
     }
   });
+  contentWindow.on("close", (event) => {
+    if (process.platform !== "darwin") {
+      quitCoordinator.handleWindowClose(event);
+    }
+  });
 
   contentWindow.webContents.on("before-input-event", (_event, input) => {
     trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
@@ -1356,6 +1361,36 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 });
 
 const quitCoordinator = createDesktopQuitCoordinator({
+  hasActiveGeneration: async () => {
+    try {
+      const { hasActiveDesktopGeneration } = await import(
+        "@qingagent/server/desktopShutdown"
+      );
+      return await hasActiveDesktopGeneration();
+    } catch (error) {
+      console.warn("[desktop] 退出前读取生成状态失败，按生成中保护", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return true;
+    }
+  },
+  confirmQuitDuringGeneration: async () => {
+    const prompt = {
+      type: "warning" as const,
+      title: "正在生成",
+      message: "正在生成，退出将中断",
+      detail: "退出应用会停止当前生成，尚未完成的内容可能无法保留。",
+      buttons: ["继续生成", "退出应用"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    };
+    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const { response } = owner
+      ? await dialog.showMessageBox(owner, prompt)
+      : await dialog.showMessageBox(prompt);
+    return response === 1;
+  },
   telemetryEnabled: () => telemetry.enabled,
   captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),
   shutdownTelemetry: () => telemetry.shutdown(2000),

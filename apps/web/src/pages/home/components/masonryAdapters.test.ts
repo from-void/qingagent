@@ -12,6 +12,7 @@ describe("masonryAdapters", () => {
       summary: "摘要",
       imageUrl: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png",
       status: { kind: "Active" },
+      generating: false,
     };
 
     const session = sessionMetaToHomeSession(meta);

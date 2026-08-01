@@ -11,7 +11,13 @@ vi.mock("@qingagent/core", async () => {
 });
 
 vi.mock("../gateway/bridgeHandler", () => ({
-  sessionManager: { destroySession: vi.fn(async () => undefined) },
+  sessionManager: {
+    destroySession: vi.fn(async () => undefined),
+    frameLog: {
+      hasSession: vi.fn(() => true),
+      readFrom: vi.fn(() => ({ activeRunner: true })),
+    },
+  },
 }));
 
 describe("GET /home content edit time", () => {
@@ -51,13 +57,18 @@ describe("GET /home content edit time", () => {
 
     const response = await app.request("/api/v1/home");
     const body = await response.json() as {
-      recent_sessions: Array<{ created_at: string; updated_at: string }>;
+      recent_sessions: Array<{
+        created_at: string;
+        updated_at: string;
+        generating: boolean;
+      }>;
     };
 
     expect(response.status).toBe(200);
     expect(body.recent_sessions[0]).toMatchObject({
       created_at: "1970-01-01T00:00:00.000Z",
       updated_at: "2026-07-08T09:10:11.123Z",
+      generating: true,
     });
   });
 });

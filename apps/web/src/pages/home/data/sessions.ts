@@ -22,6 +22,7 @@ export interface HomeSession {
   createdAt: number;
   pushedAt: number;
   isDeleting?: boolean;
+  generating?: boolean;
 }
 
 export type HomeNavId =
@@ -63,6 +64,7 @@ export function sessionMetaToHomeSession(s: SessionMeta): HomeSession {
     createdAt: createdTs,
     pushedAt: editedTs,
     isDeleting: s.status.kind === "Deleting",
+    generating: s.generating,
   };
 }
 

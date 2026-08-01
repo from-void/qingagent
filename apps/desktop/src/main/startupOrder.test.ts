@@ -295,6 +295,15 @@ test("desktop 在 server app 求值后接管关闭信号并使用 Electron 退�
   assert.ok(electronExitLine > claimLine, "desktop 必须把最终退出动作交给 Electron app.exit");
 });
 
+test("desktop 仅在退出应用时对生成中任务给出明确中断提示", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+
+  assert.match(source, /hasActiveDesktopGeneration/);
+  assert.match(source, /message:\s*"正在生成，退出将中断"/);
+  assert.match(source, /buttons:\s*\["继续生成", "退出应用"\]/);
+  assert.match(source, /quitCoordinator\.handleWindowClose\(event\)/);
+});
+
 function findLine(lines: string[], marker: string): number {
   return lines.findIndex((line) => line.includes(marker));
 }

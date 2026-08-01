@@ -1,4 +1,10 @@
-import type { CSSProperties } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { normalizeSkillIconKey, SKILL_MENU_ICON_PATHS } from "./skillIcons";
 import "./skill-menu.css";
 
@@ -98,6 +104,67 @@ const SKILL_MENU_CHROME_HEIGHT = 12; // 上下内边距 10px + 边框 2px
 export const SKILL_MENU_PEEK_HEIGHT =
   SKILL_MENU_ROW_HEIGHT * (SKILL_MENU_FULL_ROWS + 0.5) + SKILL_MENU_CHROME_HEIGHT;
 
+function SkillMenuRow({
+  skill,
+  index,
+  isActive,
+  disabled,
+  onPick,
+  onHoverIndex,
+}: {
+  skill: SkillMenuAction;
+  index: number;
+  isActive: boolean;
+  disabled?: boolean;
+  onPick: (action: SkillMenuAction) => void;
+  onHoverIndex?: (index: number) => void;
+}) {
+  const descriptionRef = useRef<HTMLSpanElement>(null);
+  const [descriptionTruncated, setDescriptionTruncated] = useState(false);
+
+  const measureDescription = useCallback(() => {
+    const description = descriptionRef.current;
+    const truncated = Boolean(
+      description && description.scrollWidth > description.clientWidth,
+    );
+    setDescriptionTruncated((current) => current === truncated ? current : truncated);
+  }, []);
+
+  useLayoutEffect(() => {
+    const description = descriptionRef.current;
+    if (!description) return undefined;
+
+    measureDescription();
+    if (typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(measureDescription);
+    observer.observe(description);
+    return () => observer.disconnect();
+  }, [measureDescription, skill.description]);
+
+  return (
+    <button
+      type="button"
+      className={`qa-skill-row${isActive ? " is-active" : ""}`}
+      role="menuitem"
+      // 只在右侧说明实际被截断时挂 title；工作区会由统一 WorkspaceTooltip 接管并绘制提示。
+      title={descriptionTruncated ? skill.description : undefined}
+      // mousedown 先于编辑器 blur 触发,保证点击能选中(不被失焦关闭抢先)。
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onPick(skill);
+      }}
+      onMouseEnter={measureDescription}
+      onMouseMove={() => onHoverIndex?.(index)}
+      disabled={disabled}
+    >
+      <SkillMenuIcon icon={skill.icon} />
+      <span className="qa-skill-name">{skill.label}</span>
+      <span ref={descriptionRef} className="qa-skill-desc">{skill.description}</span>
+    </button>
+  );
+}
+
 export function SkillMenu({
   actions,
   onPick,
@@ -139,23 +206,15 @@ export function SkillMenu({
         <div className="qa-skill-empty">暂无可用技能</div>
       ) : (
         actions.map((skill, i) => (
-          <button
+          <SkillMenuRow
             key={skill.id}
-            type="button"
-            className={`qa-skill-row${i === selectedIndex ? " is-active" : ""}`}
-            role="menuitem"
-            // mousedown 先于编辑器 blur 触发,保证点击能选中(不被失焦关闭抢先)。
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onPick(skill);
-            }}
-            onMouseMove={() => onHoverIndex?.(i)}
+            skill={skill}
+            index={i}
+            isActive={i === selectedIndex}
+            onPick={onPick}
+            onHoverIndex={onHoverIndex}
             disabled={disabled}
-          >
-            <SkillMenuIcon icon={skill.icon} />
-            <span className="qa-skill-name">{skill.label}</span>
-            <span className="qa-skill-desc">{skill.description}</span>
-          </button>
+          />
         ))
       )}
     </div>

@@ -3807,6 +3807,13 @@ describe("WorkspacePage review controls", () => {
     expect(exportButton().getAttribute("aria-disabled")).toBe("true");
     // 导出禁用文案按原因分流:问卷态直说"完成问卷",不再是笼统的双原因混排
     expect(exportButton().getAttribute("title")).toBe("请先完成问卷，再导出");
+    const derivativeAdd = host?.querySelector<HTMLButtonElement>(
+      '[aria-label="新建稿件"]',
+    );
+    expect(derivativeAdd?.getAttribute("aria-disabled")).toBe("true");
+    expect(derivativeAdd?.getAttribute("title")).toBe(
+      "请先完成问卷，再新建稿件",
+    );
 
     await act(async () => {
       const radio = host!.querySelector<HTMLInputElement>(
@@ -3830,6 +3837,8 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
     expect(exportButton().getAttribute("aria-disabled")).toBeNull();
+    expect(derivativeAdd?.getAttribute("aria-disabled")).toBeNull();
+    expect(derivativeAdd?.getAttribute("title")).toBe("新建稿件");
   });
 
   it("e2e-loop-0704 R12 回归:内联问卷提交失败时回滚,弹层与锁态恢复可重试", async () => {
@@ -4039,6 +4048,55 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(host?.textContent).toContain("主文档");
     expect(host?.textContent).toContain("公众号文章");
+  });
+
+  it("pendingReview 下禁用新建稿件并保留独立标题重命名", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("rename-gating", "batch-rename-gating", 0),
+    ]);
+
+    const add = host?.querySelector<HTMLButtonElement>(
+      '[aria-label="新建稿件"]',
+    );
+    expect(add).not.toBeNull();
+    expect(add?.classList.contains("is-disabled")).toBe(true);
+    expect(add?.getAttribute("aria-disabled")).toBe("true");
+    expect(add?.getAttribute("title")).toBe(
+      "请先确认或放弃当前修改候选，再新建稿件",
+    );
+    await clickElement(add!);
+    expect(host?.querySelector('[role="menu"]')).toBeNull();
+
+    await clickElement(
+      host!.querySelector<HTMLButtonElement>('[aria-label="修改标题"]')!,
+    );
+    const input = host?.querySelector<HTMLInputElement>(
+      '[aria-label="修改文档标题"]',
+    );
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, "候选期间的新标题");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      input!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushMicrotasks(3);
+
+    expect(stream.renameSession).toHaveBeenCalledWith(
+      "s-1",
+      "候选期间的新标题",
+    );
+    expect(host?.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain(
+      "候选期间的新标题",
+    );
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.textContent).toContain("剩余 · 1 处");
   });
 
   it("切到 B 会话后忽略 A 会话迟到的衍生稿列表", async () => {

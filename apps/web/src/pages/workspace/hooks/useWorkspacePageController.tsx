@@ -1339,11 +1339,27 @@ export function useWorkspacePageController() {
     viewingHistory,
     askUserInputDisabled,
   ]);
-  // 编辑中禁止新建子文档(公众号稿/小红书稿/翻译):生成子文档要把 query 发回对话,会与
-  // 进行中的编辑回合冲突。
-  const derivativeCreateDisabledReason = qingjianEditing
-    ? "请等待青简完成编辑"
-    : null;
+  // 新建子文档(公众号稿/小红书稿/翻译)要把 query 发回对话，因此与导出/审查共用
+  // 「不可发送态」门禁，并按具体原因给出可执行提示，避免入口看似可点却在下游静默失败。
+  const derivativeCreateDisabledReason = useMemo<string | null>(() => {
+    if (qingjianEditing) return "请等待青简完成编辑";
+    if (!chatInputEditorDisabled) return null;
+    if (viewingHistory) return "回到当前版本后可新建稿件";
+    if (askUserInputDisabled || dim.overlay === "askUser") {
+      return "请先完成问卷，再新建稿件";
+    }
+    if (dim.content.kind === "pendingReview") {
+      return "请先确认或放弃当前修改候选，再新建稿件";
+    }
+    return "请先完成当前操作，再新建稿件";
+  }, [
+    qingjianEditing,
+    chatInputEditorDisabled,
+    viewingHistory,
+    askUserInputDisabled,
+    dim.overlay,
+    dim.content.kind,
+  ]);
   const editLockPortalTarget =
     typeof document !== "undefined" ? document.body : null;
 

@@ -18,6 +18,7 @@
   /* 长列表的精确限高由 SkillMenu 按 7.5 行写入；短列表不设限高，不留半行空白。 */
   padding: 5px;
   z-index: 90;
+  overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
   background: var(--qa-menu-bg);
@@ -57,6 +58,9 @@
 /* Codex 命令面板式单行:图标 + 粗名 + 行内说明,选中/hover 整行高亮。 */
 .qa-skill-row {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -66,6 +70,7 @@
   background: transparent;
   color: var(--qa-menu-ink);
   text-align: left;
+  overflow: hidden;
   cursor: pointer;
   font-family: var(--font-zh-serif);
   transition: background 0.1s ease;
@@ -87,11 +92,16 @@
   color: var(--mark);
 }
 .qa-skill-name {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
   font-size: 13.5px;
   line-height: 1.4;
   font-weight: 600;
   color: var(--qa-menu-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .qa-skill-desc {
   flex: 1 1 auto;

@@ -7,6 +7,69 @@ import { drainDesktopSessionsForShutdown } from "@qingagent/server/desktopShutdo
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 
 describe("desktop quit coordinator", () => {
+  it("生成中退出先明确确认，取消后不排空也不退出", async () => {
+    const drainServer = mock.fn(async () => undefined);
+    const quit = mock.fn();
+    const confirmQuitDuringGeneration = mock.fn(async () => false);
+    const coordinator = createDesktopQuitCoordinator({
+      hasActiveGeneration: () => true,
+      confirmQuitDuringGeneration,
+      telemetryEnabled: () => false,
+      captureAppClosed: mock.fn(),
+      shutdownTelemetry: mock.fn(async () => undefined),
+      drainServer,
+      stopExternalInstance: mock.fn(async () => undefined),
+      quit,
+    });
+
+    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+
+    assert.equal(confirmQuitDuringGeneration.mock.callCount(), 1);
+    assert.equal(drainServer.mock.callCount(), 0);
+    assert.equal(quit.mock.callCount(), 0);
+  });
+
+  it("生成中确认退出后才排空 server 并恢复 app.quit", async () => {
+    const order: string[] = [];
+    const coordinator = createDesktopQuitCoordinator({
+      hasActiveGeneration: async () => true,
+      confirmQuitDuringGeneration: async () => {
+        order.push("confirm");
+        return true;
+      },
+      telemetryEnabled: () => false,
+      captureAppClosed: mock.fn(),
+      shutdownTelemetry: mock.fn(async () => undefined),
+      drainServer: async () => { order.push("drain"); },
+      stopExternalInstance: mock.fn(async () => undefined),
+      quit: () => { order.push("quit"); },
+    });
+
+    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    assert.deepEqual(order, ["confirm", "drain", "quit"]);
+  });
+
+  it("非 macOS 关窗先改走 app.quit，确认取消时窗口仍保留", async () => {
+    const quit = mock.fn();
+    const closeEvent = { preventDefault: mock.fn() };
+    const coordinator = createDesktopQuitCoordinator({
+      hasActiveGeneration: () => true,
+      confirmQuitDuringGeneration: async () => false,
+      telemetryEnabled: () => false,
+      captureAppClosed: mock.fn(),
+      shutdownTelemetry: mock.fn(async () => undefined),
+      drainServer: mock.fn(async () => undefined),
+      stopExternalInstance: mock.fn(async () => undefined),
+      quit,
+    });
+
+    coordinator.handleWindowClose(closeEvent);
+    assert.equal(closeEvent.preventDefault.mock.callCount(), 1);
+    assert.equal(quit.mock.callCount(), 1);
+    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    assert.equal(quit.mock.callCount(), 1);
+  });
+
   it("遥测关闭时仍等待 server 排空，完成后才恢复 app.quit", async () => {
     let releaseDrain!: () => void;
     const drain = new Promise<void>((resolve) => {

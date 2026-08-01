@@ -47,6 +47,9 @@ describe("QingjianScroll reduced-motion contract", () => {
         css,
       );
     }
+    expect(css).toContain(
+      '.qj-root[data-reduce-motion="true"] .qj-generation-shimmer::after',
+    );
   });
 
   it("disables card descendant transitions for the system preference", () => {
@@ -59,5 +62,8 @@ describe("QingjianScroll reduced-motion contract", () => {
         reducedMotionMedia,
       );
     }
+    expect(reducedMotionMedia).toContain(
+      ".qj-root .qj-generation-shimmer::after",
+    );
   });
 });

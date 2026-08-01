@@ -17,6 +17,7 @@ function session(id: string): SessionMeta {
     created_at: "2026-07-19T00:00:00.000Z",
     summary: "",
     status: { kind: "Active" },
+    generating: false,
   };
 }
 

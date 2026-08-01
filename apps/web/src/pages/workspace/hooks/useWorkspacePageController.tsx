@@ -837,20 +837,6 @@ export function useWorkspacePageController() {
     () => flushPendingDocSaveRef.current(),
     [],
   );
-  const generationActive =
-    state.streamActive || state.agentBusy || sendPending;
-  const confirmGenerationInterrupt = useCallback(
-    () =>
-      confirm({
-        title: "生成尚未完成",
-        message:
-          "现在返回首页会中断本次生成，尚未写入的内容可能无法恢复。",
-        confirmLabel: "中断并返回",
-        cancelLabel: "继续等待",
-        tone: "affirm",
-      }),
-    [confirm],
-  );
 
   const { handleBackHome } = useWorkspaceChrome({
     viewRef,
@@ -858,8 +844,6 @@ export function useWorkspacePageController() {
     chatScrollRef,
     sessionId: state.sessionId,
     reducedMotion,
-    generationActive,
-    confirmGenerationInterrupt,
     flushPendingDocSave: flushPendingDocSaveBeforeNavigation,
   });
 
@@ -871,7 +855,7 @@ export function useWorkspacePageController() {
   const dim = useMemo(() => deriveDocDimensions(state), [state]);
   // Agent 在跑 = 真实信号(流已激活 / 后端 agentBusy)并联乐观 sendPending。
   // 输入框据此挂环境辉光,覆盖"刚发出→流激活"的空窗,以及生成期间不流式输出的 writeDraft 长憋。
-  const agentActive = generationActive;
+  const agentActive = state.streamActive || state.agentBusy || sendPending;
   const fileResources = useResourceList({ kind: "file" });
   useEffect(() => {
     const reconciled = reconcileAssetPreview(previewSource, fileResources);

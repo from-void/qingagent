@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS,
   drainDesktopSessionsForShutdown,
   resumeInterruptedDesktopShutdown,
 } from "../desktopShutdown.js";
@@ -49,7 +50,7 @@ describe("desktop shutdown drain", () => {
     const never = new Promise<void>(() => undefined);
     const result = await drainDesktopSessionsForShutdown({
       recoveryMarkerPath: path,
-      timeoutMs: 10,
+      timeoutMs: DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS + 10,
       deps: {
         listRecoverableSessionIds: () => ["session-a", "session-a", "session-b"],
         drainActiveTurns: () => never,

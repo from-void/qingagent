@@ -14,8 +14,6 @@ import { useWorkspaceChrome } from "./useWorkspaceChrome";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let handleBackHome: (() => Promise<void>) | null = null;
-let generationActive = false;
-let confirmGenerationInterrupt = vi.fn(async () => true);
 let flushPendingDocSave = vi.fn(async () => undefined);
 
 describe("useWorkspaceChrome 返回首页", () => {
@@ -23,8 +21,6 @@ describe("useWorkspaceChrome 返回首页", () => {
     vi.useFakeTimers();
     window.sessionStorage.clear();
     window.history.replaceState(null, "", "#/workspace");
-    generationActive = false;
-    confirmGenerationInterrupt = vi.fn(async () => true);
     flushPendingDocSave = vi.fn(async () => undefined);
   });
 
@@ -64,9 +60,7 @@ describe("useWorkspaceChrome 返回首页", () => {
     expect(peekHomeArrive()?.sessionId).toBeUndefined();
   });
 
-  it("生成中返回首页先说明会中断，取消后留在原文档且不触发保存", async () => {
-    generationActive = true;
-    confirmGenerationInterrupt = vi.fn(async () => false);
+  it("返回首页直接执行保存与导航，不存在生成中断确认分支", async () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -78,27 +72,6 @@ describe("useWorkspaceChrome 返回首页", () => {
       await handleBackHome?.();
     });
 
-    expect(confirmGenerationInterrupt).toHaveBeenCalledTimes(1);
-    expect(flushPendingDocSave).not.toHaveBeenCalled();
-    expect(host.querySelector("#view-workspace")?.classList.contains("ws-returning"))
-      .toBe(false);
-    expect(window.location.hash).toBe("#/workspace");
-  });
-
-  it("生成中确认中断后才执行原有保存与返回首页流程", async () => {
-    generationActive = true;
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root?.render(createElement(Harness));
-    });
-
-    await act(async () => {
-      await handleBackHome?.();
-    });
-
-    expect(confirmGenerationInterrupt).toHaveBeenCalledTimes(1);
     expect(flushPendingDocSave).toHaveBeenCalledTimes(1);
     expect(host.querySelector("#view-workspace")?.classList.contains("ws-returning"))
       .toBe(true);
@@ -165,8 +138,6 @@ function Harness() {
     chatScrollRef,
     sessionId: null,
     reducedMotion: false,
-    generationActive,
-    confirmGenerationInterrupt,
     flushPendingDocSave,
   });
   handleBackHome = chrome.handleBackHome;

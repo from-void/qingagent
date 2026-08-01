@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { InMemoryFrameLog } from "../frameLog";
 import { SessionManager } from "../sessionManager";
@@ -20,22 +20,60 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("最后一个 SSE 订阅断开后 15 秒内重连，不取消 active turn", async () => {
+  it("最后一个 SSE 订阅断开后 turn 继续到自然终态，游标可回放完整终稿", async () => {
     const frameLog = new InMemoryFrameLog();
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const abortSession = vi.fn(() => release());
+    const abortSession = vi.fn();
+    const finalDoc = {
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: "disconnect-finished" },
+        content: [{ type: "text" as const, text: "断连后仍完整写完的正文" }],
+      }],
+    };
     const manager = new SessionManager({
       frameLog,
-      handleCommand: async function* (command) {
-        if (command.kind !== "cancelStream") await blocked;
+      handleCommand: async function* () {
+        yield {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "disconnect-running-stream" } },
+        };
         yield frame("disconnect-running");
+        await blocked;
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId: "disconnect-running", title: "后台完成标题" },
+        };
+        yield {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: {
+              version: 3,
+              ts: "2026-08-01T00:00:00.000Z",
+              doc: finalDoc,
+            },
+          },
+        };
+        yield {
+          kind: "stream",
+          data: {
+            kind: "end",
+            data: {
+              streamId: "disconnect-running-stream",
+              reason: { kind: "done" },
+              finalDocument: {
+                version: 3,
+                contentHash: "disconnect-final-hash",
+                doc: finalDoc,
+              },
+            },
+          },
+        };
       },
       abortSession,
       cleanupSession: vi.fn(),
@@ -47,136 +85,147 @@ describe("SessionManager", () => {
     await vi.waitFor(() => {
       expect(frameLog.readFrom("disconnect-running", 0).activeRunner).toBe(true);
     });
-    const unsubscribe = frameLog.subscribe("disconnect-running", 0, () => undefined);
-    unsubscribe();
-    vi.useFakeTimers();
-    await expect(
-      manager.cancelRunningTurnAfterDisconnect("disconnect-running"),
-    ).resolves.toBe(true);
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    const reconnectUnsubscribe = frameLog.subscribe(
+    expect(manager.hasActiveRunner()).toBe(true);
+    const beforeDisconnect = frameLog.readFrom("disconnect-running", 0);
+    const cursor = beforeDisconnect.nextSeq - 1;
+    const unsubscribe = frameLog.subscribe(
       "disconnect-running",
-      0,
+      cursor,
       () => undefined,
     );
-    manager.subscriberConnected("disconnect-running");
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    expect(abortSession).not.toHaveBeenCalled();
+    unsubscribe();
     release();
     await running;
-    reconnectUnsubscribe();
-  });
-
-  it("有受保护工作(已确认正在执行的命令)时，断连宽限期不取消 active turn", async () => {
-    const frameLog = new InMemoryFrameLog();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const abortSession = vi.fn(() => release());
-    const manager = new SessionManager({
-      frameLog,
-      handleCommand: async function* (command) {
-        if (command.kind !== "cancelStream") await blocked;
-        yield frame("disconnect-protected");
-      },
-      abortSession,
-      cleanupSession: vi.fn(),
-      hasProtectedWork: () => true,
-    });
-
-    const running = manager.submit("disconnect-protected", {
-      command: startExisting("disconnect-protected"),
-    });
-    await vi.waitFor(() => {
-      expect(frameLog.readFrom("disconnect-protected", 0).activeRunner).toBe(true);
-    });
-    vi.useFakeTimers();
-
-    // 受保护时连宽限期都不排,更不会走到 cancelStream。
-    await expect(
-      manager.cancelRunningTurnAfterDisconnect("disconnect-protected"),
-    ).resolves.toBe(false);
-    await vi.advanceTimersByTimeAsync(60_000);
     expect(abortSession).not.toHaveBeenCalled();
+    expect(manager.hasActiveRunner()).toBe(false);
 
-    vi.useRealTimers();
-    release();
-    await running;
+    const replayed = frameLog.readFrom("disconnect-running", cursor).frames
+      .map((entry) => entry.frame);
+    expect(replayed).toContainEqual({
+      kind: "sessionMeta",
+      data: { sessionId: "disconnect-running", title: "后台完成标题" },
+    });
+    expect(replayed).toContainEqual({
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          version: 3,
+          ts: "2026-08-01T00:00:00.000Z",
+          doc: finalDoc,
+        },
+      },
+    });
+    expect(replayed.at(-1)).toMatchObject({
+      kind: "stream",
+      data: {
+        kind: "end",
+        data: {
+          reason: { kind: "done" },
+          finalDocument: { version: 3, doc: finalDoc },
+        },
+      },
+    });
   });
 
-  it("最后一个 SSE 订阅断开满 15 秒且未重连，取消 active turn", async () => {
+  it("两个会话断连后仍并行跑到各自终态，回放正文互不串流", async () => {
     const frameLog = new InMemoryFrameLog();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
+    const releases = new Map<string, () => void>();
+    const waits = new Map(["background-a", "background-b"].map((sessionId) => {
+      let release!: () => void;
+      const wait = new Promise<void>((resolve) => { release = resolve; });
+      releases.set(sessionId, release);
+      return [sessionId, wait] as const;
+    }));
+    const finalDoc = (sessionId: string) => ({
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: `${sessionId}-final` },
+        content: [{ type: "text" as const, text: `${sessionId} 的独立正文` }],
+      }],
     });
-    const abortSession = vi.fn(() => release());
     const manager = new SessionManager({
       frameLog,
-      handleCommand: async function* (command) {
-        if (command.kind !== "cancelStream") await blocked;
-        yield frame("disconnect-timeout");
+      handleCommand: async function* (
+        _command,
+        _clientTraceId,
+        _origin,
+        _modelOverrides,
+        _client,
+        routedSessionId,
+      ) {
+        const sessionId = routedSessionId ?? "missing-session";
+        const doc = finalDoc(sessionId);
+        yield {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: `${sessionId}-stream` } },
+        };
+        await waits.get(sessionId);
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId, title: `${sessionId} 完成` },
+        };
+        yield {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: {
+              version: 1,
+              ts: "2026-08-01T00:00:00.000Z",
+              doc,
+            },
+          },
+        };
+        yield {
+          kind: "stream",
+          data: {
+            kind: "end",
+            data: {
+              streamId: `${sessionId}-stream`,
+              reason: { kind: "done" },
+              finalDocument: {
+                version: 1,
+                contentHash: `${sessionId}-hash`,
+                doc,
+              },
+            },
+          },
+        };
       },
-      abortSession,
+      abortSession: vi.fn(),
       cleanupSession: vi.fn(),
     });
 
-    const running = manager.submit("disconnect-timeout", {
-      command: startExisting("disconnect-timeout"),
+    const runningA = manager.submit("background-a", {
+      command: startExisting("background-a"),
+    });
+    const runningB = manager.submit("background-b", {
+      command: startExisting("background-b"),
     });
     await vi.waitFor(() => {
-      expect(frameLog.readFrom("disconnect-timeout", 0).activeRunner).toBe(true);
+      expect(frameLog.readFrom("background-a", 0).activeRunner).toBe(true);
+      expect(frameLog.readFrom("background-b", 0).activeRunner).toBe(true);
     });
-    vi.useFakeTimers();
+    frameLog.subscribe("background-a", 0, () => undefined)();
+    frameLog.subscribe("background-b", 0, () => undefined)();
 
-    await expect(
-      manager.cancelRunningTurnAfterDisconnect("disconnect-timeout"),
-    ).resolves.toBe(true);
-    await expect(
-      manager.cancelRunningTurnAfterDisconnect("disconnect-timeout"),
-    ).resolves.toBe(true);
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(abortSession).not.toHaveBeenCalled();
+    releases.get("background-b")?.();
+    await runningB;
+    expect(frameLog.readFrom("background-a", 0).activeRunner).toBe(true);
+    expect(frameLog.readFrom("background-b", 0).activeRunner).toBe(false);
+    releases.get("background-a")?.();
+    await runningA;
 
-    await vi.advanceTimersByTimeAsync(1);
-    await running;
-    expect(abortSession).toHaveBeenCalledWith("disconnect-timeout", "globalStop");
-  });
-
-  it("disposeSession 清理断连宽限定时器，不在会话销毁后再次取消", async () => {
-    const frameLog = new InMemoryFrameLog();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const abortSession = vi.fn(() => release());
-    const manager = new SessionManager({
-      frameLog,
-      handleCommand: async function* () {
-        await blocked;
-      },
-      abortSession,
-      cleanupSession: vi.fn(),
-    });
-
-    const running = manager.submit("disconnect-dispose", {
-      command: startExisting("disconnect-dispose"),
-    });
-    await vi.waitFor(() => {
-      expect(frameLog.readFrom("disconnect-dispose", 0).activeRunner).toBe(true);
-    });
-    vi.useFakeTimers();
-    await manager.cancelRunningTurnAfterDisconnect("disconnect-dispose");
-
-    await manager.disposeSession("disconnect-dispose");
-    await expect(running).rejects.toThrow("Session actor disposed");
-    expect(abortSession).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(abortSession).toHaveBeenCalledTimes(1);
+    const replayA = JSON.stringify(frameLog.readFrom("background-a", 0).frames);
+    const replayB = JSON.stringify(frameLog.readFrom("background-b", 0).frames);
+    expect(replayA).toContain("background-a 的独立正文");
+    expect(replayA).not.toContain("background-b 的独立正文");
+    expect(replayB).toContain("background-b 的独立正文");
+    expect(replayB).not.toContain("background-a 的独立正文");
+    expect(frameLog.readFrom("background-a", 0).frames.at(-1)?.frame)
+      .toMatchObject({ kind: "stream", data: { kind: "end" } });
+    expect(frameLog.readFrom("background-b", 0).frames.at(-1)?.frame)
+      .toMatchObject({ kind: "stream", data: { kind: "end" } });
   });
 
   it("RF5: 启动只加载 pending，completed 首次命令按主键惰性查询并缓存", async () => {

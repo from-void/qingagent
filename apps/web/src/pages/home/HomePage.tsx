@@ -47,6 +47,7 @@ interface DeleteConfirmState {
 
 const DELETE_CONFIRM_SKIP_UNTIL = "home-delete-confirm-skip-until";
 const DELETE_CONFIRM_SKIP_MS = 24 * 60 * 60 * 1000;
+const GENERATION_POLL_INTERVAL_MS = 2_000;
 
 function shouldSkipDeleteConfirm(): boolean {
   try {
@@ -86,6 +87,17 @@ export function HomePage() {
   useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
+
+  const hasGeneratingSession = apiSessions.some(
+    (session) => session.generating && session.status.kind === "Active",
+  );
+  useEffect(() => {
+    if (!hasGeneratingSession) return;
+    const timer = window.setInterval(() => {
+      void fetchSessions();
+    }, GENERATION_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchSessions, hasGeneratingSession]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

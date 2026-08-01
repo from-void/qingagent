@@ -928,7 +928,7 @@ describe("WorkspacePage review controls", () => {
     expect(window.location.hash).toBe("#/");
   }, 60_000);
 
-  it("首帧正文出现前返回首页会明确提示中断，选择继续等待后不离开", async () => {
+  it("首帧正文出现前返回首页不弹中断确认并直接导航", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");
     const captured: {
@@ -948,28 +948,17 @@ describe("WorkspacePage review controls", () => {
         data: { kind: "start", data: { streamId: "stream-early-switch" } },
       },
     ]);
+    vi.useFakeTimers();
 
-    let navigation: Promise<void> | undefined;
     await act(async () => {
-      navigation = captured.current?.handleBackHome();
-      await Promise.resolve();
+      await captured.current?.handleBackHome();
     });
 
     const dialog = host?.querySelector<HTMLElement>('[data-wf="GlobalConfirm"]');
-    expect(dialog?.textContent).toContain("生成尚未完成");
-    expect(dialog?.textContent).toContain(
-      "现在返回首页会中断本次生成，尚未写入的内容可能无法恢复。",
-    );
-    expect(dialog?.textContent).toContain("中断并返回");
-    expect(dialog?.textContent).toContain("继续等待");
-
-    await clickButton("继续等待");
-    await act(async () => {
-      await navigation;
-    });
-
-    expect(window.location.hash).toBe("#/workspace?session=s-1");
+    expect(dialog).toBeNull();
     expect(stream.dispose).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(260));
+    expect(window.location.hash).toBe("#/");
   }, 60_000);
 
   it("文件上传占位可规范化保存，外部同步期间无报错且完成后原位写回", async () => {
@@ -5281,6 +5270,7 @@ describe("WorkspacePage existing session title hydration", () => {
         created_at: "2026-07-27T00:00:00.000Z",
         summary: "",
         status: { kind: "Active" },
+        generating: false,
       }],
       currentSessionId: null,
       currentSessionTitle: null,
@@ -5305,6 +5295,7 @@ describe("WorkspacePage existing session title hydration", () => {
         created_at: "2026-07-27T00:00:00.000Z",
         summary: "",
         status: { kind: "Active" },
+        generating: false,
       }],
       currentSessionId: null,
       currentSessionTitle: null,

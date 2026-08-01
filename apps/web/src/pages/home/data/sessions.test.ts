@@ -45,6 +45,15 @@ describe("sessionMetaToHomeSession 相对日期", () => {
       session.pushedAt,
     ].every(Number.isFinite)).toBe(true);
   });
+
+  it("保留后端生成状态供首页卡片渲染", () => {
+    const session = sessionMetaToHomeSession({
+      ...makeSession(new Date(2026, 6, 28, 12).toISOString()),
+      generating: true,
+    });
+
+    expect(session.generating).toBe(true);
+  });
 });
 
 function makeSession(createdAt: string): SessionMeta {
@@ -54,5 +63,6 @@ function makeSession(createdAt: string): SessionMeta {
     created_at: createdAt,
     summary: "摘要",
     status: { kind: "Active" },
+    generating: false,
   };
 }

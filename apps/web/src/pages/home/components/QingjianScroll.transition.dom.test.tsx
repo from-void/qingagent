@@ -133,6 +133,29 @@ describe("QingjianScroll 首页去程生命周期", () => {
     expect(host?.querySelector(".qj-root")?.classList.contains("qj-transitioning")).toBe(false);
   });
 
+  it("多个生成中会话各自展示状态、流光与辅助文案", async () => {
+    await renderHome(
+      () => undefined,
+      [
+        { ...makeSession("generating-session-a", 1), generating: true },
+        { ...makeSession("generating-session-b", 2), generating: true },
+      ],
+    );
+
+    const slots = host?.querySelectorAll<HTMLElement>(
+      ".qj-card-slot.qj-generating",
+    );
+    expect(slots).toHaveLength(2);
+    for (const slot of slots ?? []) {
+      expect(slot.getAttribute("aria-label")).toContain("生成中");
+      expect(slot.querySelector(".qj-generation-shimmer")).not.toBeNull();
+      expect(slot.querySelector(".qj-generation-status")?.textContent?.trim())
+        .toBe("生成中");
+      expect(slot.querySelector(".qj-generation-hover-hint")?.textContent)
+        .toBe("青简正在写作");
+    }
+  });
+
   it("卸载会使旧 forward 代次失效，晚到结算不得提交导航", async () => {
     let resolveForward: ((rect: { left: number; top: number; width: number; height: number }) => void) | undefined;
     stageMock.playForward.mockImplementationOnce(() => new Promise((resolve) => {

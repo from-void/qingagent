@@ -238,6 +238,7 @@ describe("GET /api/v1/home", () => {
   it("returns 200 with valid HomeFeed shape", async () => {
     const res = await request("GET", "/api/v1/home");
     expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
     const json = await res.json();
 
     // HomeFeed has recent_sessions and pinned_docs
@@ -252,6 +253,8 @@ describe("GET /api/v1/home", () => {
     expect(session).toHaveProperty("created_at");
     expect(session).toHaveProperty("summary");
     expect(session).toHaveProperty("status");
+    expect(session).toHaveProperty("generating");
+    expect(typeof session.generating).toBe("boolean");
     expect(session.status).toEqual({ kind: "Active" });
 
     const seeded = json.recent_sessions.find(

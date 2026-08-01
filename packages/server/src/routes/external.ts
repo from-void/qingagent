@@ -1140,8 +1140,6 @@ externalRoutes.get("/sessions/:id/events", async (c) => {
       unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, enqueue);
       if (cleaned) {
         unsubscribe();
-      } else {
-        sessionManager.subscriberConnected(sessionId);
       }
       if (!cleaned) {
         heartbeat = setInterval(() => {

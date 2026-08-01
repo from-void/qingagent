@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../../session/sessionState.js";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
+const getDerivativeMetaMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
+  getDerivativeMeta: getDerivativeMetaMock,
   STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"] as const,
   documentDraftRepo: {
     clear: vi.fn(async () => undefined),
@@ -183,6 +185,89 @@ async function* annotationResultStream(
 describe("processAgentStream 行为特征", () => {
   beforeEach(() => {
     recordUsageEventMock.mockClear();
+    getDerivativeMetaMock.mockReset();
+  });
+
+  it("generate_derivative 成功后按落库元数据发衍生稿完成帧", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("derivative-finished-success");
+    const generatedAt = "2026-08-01T09:28:11.000Z";
+    getDerivativeMetaMock.mockResolvedValue({
+      docId: "derivative-doc",
+      threadId: state.sessionId,
+      generatedAt,
+    });
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-derivative-success",
+            args: { derivativeDocId: "derivative-doc", qingml: "<doc />" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-derivative-success",
+            result: { ok: true, wroteBlocks: 7, docVersion: 2 },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "derivative-finished-success-stream",
+        runId: "derivative-finished-success-run",
+      },
+    ));
+
+    expect(getDerivativeMetaMock).toHaveBeenCalledOnce();
+    expect(getDerivativeMetaMock).toHaveBeenCalledWith("derivative-doc");
+    expect(frames.filter((frame) => frame.kind === "derivativeGenFinished")).toEqual([
+      {
+        kind: "derivativeGenFinished",
+        data: { docId: "derivative-doc", generatedAt, docVersion: 2 },
+      },
+    ]);
+  });
+
+  it("generate_derivative 版本冲突失败时不查元数据且不发完成帧", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("derivative-finished-conflict");
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-derivative-conflict",
+            args: { derivativeDocId: "derivative-doc", qingml: "<doc />" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-derivative-conflict",
+            result: { ok: false, error: "衍生稿版本已被并发更新,请重试" },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "derivative-finished-conflict-stream",
+        runId: "derivative-finished-conflict-run",
+      },
+    ));
+
+    expect(getDerivativeMetaMock).not.toHaveBeenCalled();
+    expect(frames.some((frame) => frame.kind === "derivativeGenFinished")).toBe(false);
   });
 
   it("按原顺序追加 text/thinking 增量并共享单调 seq", async () => {

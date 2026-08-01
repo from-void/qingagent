@@ -1,6 +1,8 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { getDerivativeMeta } from "@qingagent/db";
 import { extractLoadedToolNamesFromToolSearchResult } from "../agents/toolSearch.js";
 import { guardContext } from "../llm/prefixCacheGuard.js";
+import { mastra } from "../mastra.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
 import type { AgentStreamTurnContext } from "./agentStreamTurnContext.js";
 import { handleDraftOrGenericToolResult } from "./agentStreamDraftResult.js";
@@ -28,6 +30,59 @@ const CONNECTOR_AUTH_START_TOOL_NAMES = new Set([
   "feishu_auth_start",
   "wechat_auth_start",
 ]);
+const logger = mastra.getLogger();
+
+async function* emitDerivativeGenFinished(
+  input: ToolResultContext,
+): AsyncGenerator<BridgeFrame, void> {
+  const { turn, toolName, args, toolResult } = input;
+  if (toolName !== "generate_derivative" || toolResult.ok !== true) return;
+
+  const docId = typeof args.derivativeDocId === "string" ? args.derivativeDocId : "";
+  const docVersion =
+    typeof toolResult.docVersion === "number" &&
+    Number.isInteger(toolResult.docVersion) &&
+    toolResult.docVersion > 0
+      ? toolResult.docVersion
+      : null;
+  if (!docId || docVersion === null) {
+    logger.warn("generate_derivative 成功结果缺少完成帧字段", {
+      sessionId: turn.state.sessionId,
+      docId: docId || null,
+      docVersion,
+    });
+    return;
+  }
+
+  try {
+    const meta = await getDerivativeMeta(docId);
+    if (
+      !meta ||
+      meta.threadId !== turn.state.sessionId ||
+      typeof meta.generatedAt !== "string" ||
+      !meta.generatedAt
+    ) {
+      logger.warn("generate_derivative 成功后未取得有效衍生稿元数据", {
+        sessionId: turn.state.sessionId,
+        docId,
+        metaSessionId: meta?.threadId ?? null,
+        hasGeneratedAt: Boolean(meta?.generatedAt),
+      });
+      return;
+    }
+    yield {
+      kind: "derivativeGenFinished",
+      data: { docId, generatedAt: meta.generatedAt, docVersion },
+    };
+  } catch (error) {
+    // 衍生稿已落库，补发 UI 刷新帧失败不能反过来破坏本轮工具成功语义。
+    logger.error("generate_derivative 成功后读取衍生稿元数据失败", {
+      sessionId: turn.state.sessionId,
+      docId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export async function* handleToolResultEvent(
   turn: AgentStreamTurnContext,
@@ -178,5 +233,6 @@ export async function* handleToolResultEvent(
     }
   }
   yield* handleMaterialToolResultSideEffects(input);
+  yield* emitDerivativeGenFinished(input);
   return true;
 }

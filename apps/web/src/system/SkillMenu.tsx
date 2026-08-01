@@ -12,7 +12,10 @@ import "./skill-menu.css";
 export interface SkillMenuAction {
   id: string;
   label: string;
+  /** 行内展示的短说明。 */
   description: string;
+  /** tooltip 使用的完整说明；旧调用方未提供时回退到行内说明。 */
+  fullDescription?: string;
   placeholder: string;
   icon: string;
 }
@@ -103,6 +106,24 @@ export const SKILL_MENU_FULL_ROWS = 7;
 const SKILL_MENU_CHROME_HEIGHT = 12; // 上下内边距 10px + 边框 2px
 export const SKILL_MENU_PEEK_HEIGHT =
   SKILL_MENU_ROW_HEIGHT * (SKILL_MENU_FULL_ROWS + 0.5) + SKILL_MENU_CHROME_HEIGHT;
+const DESCRIPTION_OVERFLOW_TOLERANCE_PX = 1;
+
+/**
+ * Range 保留亚像素文本宽度，避免 scrollWidth/clientWidth 取整后在缩放屏上误判。
+ * jsdom 没有真实 Range 布局，回退到整数宽度也让 DOM 单测只负责逻辑、不伪装真布局。
+ */
+function isDescriptionTruncated(description: HTMLElement): boolean {
+  const range = document.createRange();
+  range.selectNodeContents(description);
+  const textWidth = typeof range.getBoundingClientRect === "function"
+    ? range.getBoundingClientRect().width
+    : 0;
+  const elementWidth = description.getBoundingClientRect().width;
+  if (textWidth > 0 && elementWidth > 0) {
+    return textWidth - elementWidth > DESCRIPTION_OVERFLOW_TOLERANCE_PX;
+  }
+  return description.scrollWidth - description.clientWidth > DESCRIPTION_OVERFLOW_TOLERANCE_PX;
+}
 
 function SkillMenuRow({
   skill,
@@ -120,35 +141,61 @@ function SkillMenuRow({
   onHoverIndex?: (index: number) => void;
 }) {
   const descriptionRef = useRef<HTMLSpanElement>(null);
+  const measureRafRef = useRef<number | null>(null);
   const [descriptionTruncated, setDescriptionTruncated] = useState(false);
 
   const measureDescription = useCallback(() => {
     const description = descriptionRef.current;
-    const truncated = Boolean(
-      description && description.scrollWidth > description.clientWidth,
-    );
+    const truncated = Boolean(description && isDescriptionTruncated(description));
     setDescriptionTruncated((current) => current === truncated ? current : truncated);
   }, []);
+
+  const scheduleDescriptionMeasure = useCallback(() => {
+    if (measureRafRef.current !== null) {
+      window.cancelAnimationFrame(measureRafRef.current);
+    }
+    measureRafRef.current = window.requestAnimationFrame(() => {
+      measureRafRef.current = null;
+      measureDescription();
+    });
+  }, [measureDescription]);
 
   useLayoutEffect(() => {
     const description = descriptionRef.current;
     if (!description) return undefined;
 
+    let disposed = false;
     measureDescription();
-    if (typeof ResizeObserver === "undefined") return undefined;
+    scheduleDescriptionMeasure();
 
-    const observer = new ResizeObserver(measureDescription);
-    observer.observe(description);
-    return () => observer.disconnect();
-  }, [measureDescription, skill.description]);
+    const fontsReady = document.fonts?.ready;
+    if (fontsReady) {
+      void fontsReady.then(() => {
+        if (!disposed) scheduleDescriptionMeasure();
+      });
+    }
+
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(scheduleDescriptionMeasure);
+    observer?.observe(description);
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      if (measureRafRef.current !== null) {
+        window.cancelAnimationFrame(measureRafRef.current);
+        measureRafRef.current = null;
+      }
+    };
+  }, [measureDescription, scheduleDescriptionMeasure, skill.description]);
 
   return (
     <button
       type="button"
       className={`qa-skill-row${isActive ? " is-active" : ""}`}
       role="menuitem"
-      // 只在右侧说明实际被截断时挂 title；工作区会由统一 WorkspaceTooltip 接管并绘制提示。
-      title={descriptionTruncated ? skill.description : undefined}
+      // 只在右侧说明实际被截断时挂完整说明；工作区由统一 WorkspaceTooltip 接管并绘制提示。
+      title={descriptionTruncated ? (skill.fullDescription ?? skill.description) : undefined}
       // mousedown 先于编辑器 blur 触发,保证点击能选中(不被失焦关闭抢先)。
       onMouseDown={(e) => {
         e.preventDefault();

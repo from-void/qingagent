@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>技能菜单 tooltip 真浏览器回归</title>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #16212c;
+      }
+
+      #view-workspace {
+        min-height: 100vh;
+        padding: 96px 48px;
+        box-sizing: border-box;
+      }
+
+      .skill-menu-fixture {
+        position: relative;
+        width: 280px;
+        height: 260px;
+        margin: 0 auto;
+      }
+
+      .skill-menu-fixture .qa-skill-menu {
+        top: 0;
+        bottom: auto;
+      }
+    </style>
+  </head>
+  <body data-tool="none" data-content="editing">
+    <div id="root"></div>
+    <script type="module" src="./skill-menu-tooltip-fixture.tsx"></script>
+  </body>
+</html>

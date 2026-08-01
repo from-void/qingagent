@@ -94,6 +94,22 @@ describe("SkillMenu 横向收缩与完整说明", () => {
     expect(getMenu().querySelector(".qa-skill-row")?.hasAttribute("title")).toBe(false);
   });
 
+  it("截断的短摘要使用独立完整说明作为 tooltip", () => {
+    mockElementWidth("qa-skill-desc", { clientWidth: 96, scrollWidth: 240 });
+    renderActions([
+      {
+        id: "lark-shared",
+        label: "lark-shared",
+        description: "Use when first setting up lark-cli,…",
+        fullDescription: longDescription,
+        placeholder: "",
+        icon: "star",
+      },
+    ]);
+
+    expect(getMenu().querySelector(".qa-skill-row")?.getAttribute("title")).toBe(longDescription);
+  });
+
   it("hover 截断行时统一 tooltip 展示完整说明", () => {
     vi.useFakeTimers();
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) =>

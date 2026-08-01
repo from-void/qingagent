@@ -1595,7 +1595,10 @@ describe("Settings Track B", () => {
     expect(tableBefore.textContent).toContain("2026-06-25");
 
     await click(getDateTrigger());
-    await click(getButtonByLabel("上个月"));
+    // 用量 fixture 固定在 2026-06；测试运行日期会持续向后推进，不能假定只退一个月就到。
+    for (let month = 0; month < 24 && !document.body.querySelector('button[aria-label="2026-06-24"]'); month += 1) {
+      await click(getButtonByLabel("上个月"));
+    }
     const consumedDay = getButtonByLabel("2026-06-24");
     const idleDay = getButtonByLabel("2026-06-23");
     expect(consumedDay.querySelector(".skin-calendar__mark")).not.toBeNull();

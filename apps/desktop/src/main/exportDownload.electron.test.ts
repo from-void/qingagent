@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 const electronExecutable = require("electron") as string;
 const RESULT_PREFIX = "QINGAGENT_EXPORT_DOWNLOAD_ELECTRON_RESULT=";
 
-test("真实 Electron/Chromium Blob 下载落成文本与二进制成品并为重名自动编号", async () => {
+test("真实 Electron sandbox renderer 经 IPC 保存所有格式且不触发 will-download", async () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "qingagent-electron-download-test-"));
   const fixtureBundle = path.join(tempRoot, "fixture.mjs");
   const preloadBundle = path.join(tempRoot, "preload.cjs");
@@ -76,6 +76,7 @@ test("真实 Electron/Chromium Blob 下载落成文本与二进制成品并为�
     assert.ok(resultLine, `missing Electron result\nstdout:\n${result.stdout}`);
     const payload = JSON.parse(resultLine.slice(RESULT_PREFIX.length)) as {
       savedFilenames: string[];
+      willDownloadEvents: number;
     };
     assert.deepEqual(payload.savedFilenames, [
       "测试文档_20260729.md",
@@ -86,6 +87,7 @@ test("真实 Electron/Chromium Blob 下载落成文本与二进制成品并为�
       "测试文档_20260729.pdf",
       "测试文档_20260729 (2).pdf",
     ]);
+    assert.equal(payload.willDownloadEvents, 0);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

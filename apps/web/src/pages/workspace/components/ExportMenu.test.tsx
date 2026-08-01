@@ -215,9 +215,13 @@ describe("ExportMenu", () => {
     expect(onAction).not.toHaveBeenCalledWith(expect.stringContaining("Word"), expect.anything());
   });
 
-  it("桌面端等 DownloadItem completed 后才提示已保存，并在收口后释放 Blob URL", async () => {
+  it("桌面端把 Blob 字节交给 IPC，等主进程写盘成功后才提示且不创建 Blob URL", async () => {
     let finishDownload: ((result: ElectronExportDownloadResult) => void) | undefined;
-    const saveExportDownload = vi.fn(() => new Promise<ElectronExportDownloadResult>((resolve) => {
+    const saveExportDownload = vi.fn((_input: {
+      filename: string;
+      format: ElectronExportFormat;
+      bytes: Uint8Array;
+    }) => new Promise<ElectronExportDownloadResult>((resolve) => {
       finishDownload = resolve;
     }));
     const revealExportDownload = vi.fn(async () => true);
@@ -230,10 +234,11 @@ describe("ExportMenu", () => {
         revealExportDownload,
       },
     });
-    const fetchMock = vi.fn(async () => new Response(new Blob(["%PDF"])));
+    const fetchMock = vi.fn(async () => new Response("%PDF"));
     vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn(() => "blob:export");
     const revokeObjectURL = vi.fn();
-    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "createObjectURL", { value: createObjectURL, configurable: true });
     Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURL, configurable: true });
     const onAction = vi.fn();
     await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction as ToastShow} />);
@@ -251,6 +256,12 @@ describe("ExportMenu", () => {
     });
     expect(item.textContent).toContain("正在保存");
     expect(onAction).not.toHaveBeenCalledWith(expect.objectContaining({ message: "PDF 已保存" }));
+    const saveInput = saveExportDownload.mock.calls[0]?.[0];
+    expect(saveInput?.format).toBe("pdf");
+    expect(saveInput?.filename).toMatch(/^测试文档_\d{8}\.pdf$/);
+    expect(saveInput?.bytes).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(saveInput?.bytes)).toBe("%PDF");
+    expect(createObjectURL).not.toHaveBeenCalled();
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -266,10 +277,11 @@ describe("ExportMenu", () => {
       .map(([input]) => input)
       .find((input): input is ToastShowOptions => (
         typeof input === "object" && input?.message === "PDF 已保存"
-      ));
+    ));
     expect(success).toBeDefined();
     expect(success?.action?.label).toBe("打开所在文件夹");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:export");
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
 
     success?.action?.onClick();
     await vi.waitFor(() => {
@@ -281,6 +293,9 @@ describe("ExportMenu", () => {
     ["cancelled", "导出已取消"],
     ["interrupted", "导出未保存 · 请重试"],
     ["not-started", "导出未保存 · 请重试"],
+    ["write-failed", "导出未保存 · 请重试"],
+    ["timeout", "导出未保存 · 请重试"],
+    ["window-closed", "导出未保存 · 请重试"],
   ] as const)("桌面端 %s 不误报成功并给可读失败文案", async (reason, expectedMessage) => {
     Object.defineProperty(window, "electron", {
       configurable: true,
@@ -295,9 +310,7 @@ describe("ExportMenu", () => {
         revealExportDownload: vi.fn(async () => true),
       },
     });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["PK"]))));
-    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
-    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("PK")));
     const onAction = vi.fn();
     const onClose = vi.fn();
     await render(<ExportMenuHarness onClose={onClose} onAction={onAction as ToastShow} />);

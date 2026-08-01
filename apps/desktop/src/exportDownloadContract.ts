@@ -1,8 +1,5 @@
-export const EXPORT_DOWNLOAD_REGISTER_CHANNEL = "qingagent:export-download-register";
-export const EXPORT_DOWNLOAD_CANCEL_CHANNEL = "qingagent:export-download-cancel";
-export const EXPORT_DOWNLOAD_RESULT_CHANNEL = "qingagent:export-download-result";
+export const EXPORT_DOWNLOAD_SAVE_CHANNEL = "qingagent:export-download-save";
 export const EXPORT_DOWNLOAD_REVEAL_CHANNEL = "qingagent:export-download-reveal";
-export const EXPORT_DOWNLOAD_REQUEST_FRAGMENT_KEY = "qingagent-export-request";
 
 export type ExportDownloadFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
 export type ExportDownloadFailureReason =
@@ -10,15 +7,18 @@ export type ExportDownloadFailureReason =
   | "interrupted"
   | "not-started"
   | "missing-file"
+  | "write-failed"
+  | "timeout"
   | "window-closed";
 
-export interface ExportDownloadRegistrationInput {
+/**
+ * renderer 只传导出结果的字节，不传任意目标路径。最终文件名与 Downloads 路径均由
+ * 主进程校验、避让重名并决定。
+ */
+export interface ExportDownloadSaveInput {
   filename: string;
   format: ExportDownloadFormat;
-}
-
-export interface ExportDownloadRegistration {
-  requestId: string;
+  bytes: Uint8Array;
 }
 
 export type ExportDownloadSaveResult =
@@ -32,7 +32,3 @@ export type ExportDownloadSaveResult =
       filename: string;
       reason: ExportDownloadFailureReason;
     };
-
-export type ExportDownloadResult = ExportDownloadSaveResult & {
-  requestId: string;
-};

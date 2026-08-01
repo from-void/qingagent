@@ -83,9 +83,8 @@ import {
 } from "../rendererDialogContract.js";
 import {
   ExportDownloadCoordinator,
-  EXPORT_DOWNLOAD_CANCEL_CHANNEL,
-  EXPORT_DOWNLOAD_REGISTER_CHANNEL,
   EXPORT_DOWNLOAD_REVEAL_CHANNEL,
+  EXPORT_DOWNLOAD_SAVE_CHANNEL,
 } from "./exportDownloadCoordinator.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -809,14 +808,13 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
   }
 });
 
-ipcMain.handle(EXPORT_DOWNLOAD_REGISTER_CHANNEL, (event, input: unknown) => {
+ipcMain.handle(EXPORT_DOWNLOAD_SAVE_CHANNEL, (event, input: unknown) => {
   assertTrustedRenderer(event);
-  return mainExportDownloadCoordinator?.register(event.sender, input) ?? null;
-});
-
-ipcMain.handle(EXPORT_DOWNLOAD_CANCEL_CHANNEL, (event, requestId: unknown) => {
-  assertTrustedRenderer(event);
-  return mainExportDownloadCoordinator?.cancel(event.sender, requestId) ?? false;
+  return mainExportDownloadCoordinator?.save(event.sender, input) ?? {
+    saved: false,
+    filename: "qingagent-export",
+    reason: "not-started",
+  };
 });
 
 ipcMain.handle(EXPORT_DOWNLOAD_REVEAL_CHANNEL, (event, token: unknown) => {
@@ -1174,10 +1172,9 @@ async function createWindowOnce() {
     },
   });
   const contentWindow = mainWindow;
-  const exportDownloadCoordinator = new ExportDownloadCoordinator(
-    contentWindow.webContents.session,
-    { downloadsDirectory: app.getPath("downloads") },
-  );
+  const exportDownloadCoordinator = new ExportDownloadCoordinator({
+    downloadsDirectory: app.getPath("downloads"),
+  });
   mainExportDownloadCoordinator = exportDownloadCoordinator;
   const rememberGeneration = nativeRememberGrantGate.reset();
   const rememberScope = `desktop-window:${rememberGeneration}`;

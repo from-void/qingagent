@@ -1,45 +1,34 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import path from "node:path";
-import type {
-  DownloadItem,
-  Event as ElectronEvent,
-  Session,
-  WebContents,
-} from "electron";
 import {
-  EXPORT_DOWNLOAD_REQUEST_FRAGMENT_KEY,
-  EXPORT_DOWNLOAD_RESULT_CHANNEL,
+  mkdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import type { WebContents } from "electron";
+import {
   type ExportDownloadFailureReason,
   type ExportDownloadFormat,
-  type ExportDownloadRegistration,
-  type ExportDownloadRegistrationInput,
-  type ExportDownloadResult,
+  type ExportDownloadSaveInput,
+  type ExportDownloadSaveResult,
 } from "../exportDownloadContract.js";
 
 export {
-  EXPORT_DOWNLOAD_CANCEL_CHANNEL,
-  EXPORT_DOWNLOAD_REGISTER_CHANNEL,
-  EXPORT_DOWNLOAD_RESULT_CHANNEL,
   EXPORT_DOWNLOAD_REVEAL_CHANNEL,
+  EXPORT_DOWNLOAD_SAVE_CHANNEL,
 } from "../exportDownloadContract.js";
 export type {
   ExportDownloadFailureReason,
   ExportDownloadFormat,
-  ExportDownloadRegistration,
-  ExportDownloadRegistrationInput,
-  ExportDownloadResult,
+  ExportDownloadSaveInput,
   ExportDownloadSaveResult,
 } from "../exportDownloadContract.js";
 
-interface PendingExportDownload {
-  requestId: string;
-  owner: WebContents;
-  expectedFilename: string;
-  targetPath: string;
-  claimed: boolean;
-  unclaimedTimer: ReturnType<typeof setTimeout>;
-  cancelClaimedDownload?: () => void;
+interface PendingExportSave {
+  controller: AbortController;
+  settleAbort: (reason: ExportDownloadFailureReason) => void;
 }
 
 interface RevealEntry {
@@ -48,13 +37,26 @@ interface RevealEntry {
   expiresAt: number;
 }
 
+interface WriteFileOptions {
+  flag: "wx";
+  signal: AbortSignal;
+}
+
 export interface ExportDownloadCoordinatorOptions {
   downloadsDirectory: string;
-  unclaimedTimeoutMs?: number;
+  saveTimeoutMs?: number;
   revealTtlMs?: number;
   fileExists?: (filePath: string) => boolean;
   createId?: () => string;
   now?: () => number;
+  ensureDirectory?: (directory: string) => Promise<unknown>;
+  writeFile?: (
+    filePath: string,
+    bytes: Uint8Array,
+    options: WriteFileOptions,
+  ) => Promise<unknown>;
+  renameFile?: (from: string, to: string) => Promise<unknown>;
+  removeFile?: (filePath: string) => Promise<unknown>;
 }
 
 const FORMAT_EXTENSIONS: Record<ExportDownloadFormat, string> = {
@@ -64,152 +66,136 @@ const FORMAT_EXTENSIONS: Record<ExportDownloadFormat, string> = {
   markdown: ".md",
   txt: ".txt",
 };
-const DEFAULT_UNCLAIMED_TIMEOUT_MS = 30_000;
+const DEFAULT_SAVE_TIMEOUT_MS = 30_000;
 const DEFAULT_REVEAL_TTL_MS = 10 * 60_000;
 const MAX_FILENAME_LENGTH = 180;
 const WINDOWS_RESERVED_DEVICE_STEM =
   /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 /**
- * 接管主窗口已登记的导出下载。未登记或不匹配的普通下载保持 Electron 默认行为。
+ * 将 renderer 已取得的导出字节直接写入 Downloads。保存不再经过 blob: 导航、
+ * Chromium DownloadItem 或 will-download，因此不受 CSP、session 下载策略和窗口观察者影响。
  */
 export class ExportDownloadCoordinator {
-  private readonly pending = new Map<string, PendingExportDownload>();
+  private readonly pending = new Map<string, PendingExportSave>();
   private readonly reservedPaths = new Set<string>();
+  private readonly reservedTempPaths = new Set<string>();
   private readonly revealEntries = new Map<string, RevealEntry>();
   private readonly downloadsDirectory: string;
-  private readonly unclaimedTimeoutMs: number;
+  private readonly saveTimeoutMs: number;
   private readonly revealTtlMs: number;
   private readonly fileExists: (filePath: string) => boolean;
   private readonly createId: () => string;
   private readonly now: () => number;
+  private readonly ensureDirectory: (directory: string) => Promise<unknown>;
+  private readonly writeFile: NonNullable<ExportDownloadCoordinatorOptions["writeFile"]>;
+  private readonly renameFile: NonNullable<ExportDownloadCoordinatorOptions["renameFile"]>;
+  private readonly removeFile: NonNullable<ExportDownloadCoordinatorOptions["removeFile"]>;
   private disposed = false;
 
-  private readonly onWillDownload = (
-    event: ElectronEvent,
-    item: DownloadItem,
-    webContents: WebContents,
-  ): void => {
-    const actualFilename = item.getFilename();
-    const requestId = readRequestIdFromDownloadUrl(item.getURL());
-    const pending = this.findMatchingPending(webContents, requestId);
-    if (!pending) return;
-
-    // requestId 是可信渲染进程登记后签发的高熵唯一键；Chromium 的建议文件名只作诊断，
-    // 最终保存位置始终使用主进程在 register 阶段校验并预留的 targetPath。
-    if (pending.expectedFilename !== actualFilename) {
-      console.info("[export-download] Chromium 调整了下载建议文件名", {
-        requestId: pending.requestId,
-        expectedFilename: pending.expectedFilename,
-        actualFilename,
-      });
-    }
-
-    pending.claimed = true;
-    clearTimeout(pending.unclaimedTimer);
-
-    const onUpdated = (
-      _event: ElectronEvent,
-      state: "progressing" | "interrupted",
-    ): void => {
-      // interrupted 在 updated 阶段仍可能恢复，不能提前判失败；最终状态只认 done。
-      if (state === "interrupted") {
-        console.warn("[export-download] 下载暂时中断，等待 Electron 最终状态", {
-          requestId: pending.requestId,
-        });
-      }
-    };
-    const onDone = (
-      _event: ElectronEvent,
-      state: "completed" | "cancelled" | "interrupted",
-    ): void => {
-      item.removeListener("updated", onUpdated);
-      pending.cancelClaimedDownload = undefined;
-      if (state === "completed" && this.fileExists(pending.targetPath)) {
-        this.complete(pending);
-        return;
-      }
-      const reason: ExportDownloadFailureReason =
-        state === "completed" ? "missing-file" : state;
-      this.fail(pending, reason);
-    };
-
-    item.on("updated", onUpdated);
-    item.once("done", onDone);
-    pending.cancelClaimedDownload = () => {
-      item.removeListener("updated", onUpdated);
-      item.removeListener("done", onDone);
-      pending.cancelClaimedDownload = undefined;
-      try {
-        item.cancel();
-      } catch {
-        // 窗口销毁时 DownloadItem 可能已失效；清理监听器后无需继续抛错。
-      }
-    };
-    try {
-      item.setSavePath(pending.targetPath);
-    } catch (error) {
-      item.removeListener("updated", onUpdated);
-      item.removeListener("done", onDone);
-      pending.cancelClaimedDownload = undefined;
-      event.preventDefault();
-      console.error("[export-download] 设置导出保存路径失败", {
-        requestId: pending.requestId,
-        error,
-      });
-      this.fail(pending, "not-started");
-    }
-  };
-
-  constructor(
-    private readonly session: Session,
-    options: ExportDownloadCoordinatorOptions,
-  ) {
+  constructor(options: ExportDownloadCoordinatorOptions) {
     this.downloadsDirectory = path.resolve(options.downloadsDirectory);
-    this.unclaimedTimeoutMs = options.unclaimedTimeoutMs ?? DEFAULT_UNCLAIMED_TIMEOUT_MS;
+    this.saveTimeoutMs = options.saveTimeoutMs ?? DEFAULT_SAVE_TIMEOUT_MS;
     this.revealTtlMs = options.revealTtlMs ?? DEFAULT_REVEAL_TTL_MS;
     this.fileExists = options.fileExists ?? existsSync;
     this.createId = options.createId ?? randomUUID;
     this.now = options.now ?? Date.now;
-    this.session.on("will-download", this.onWillDownload);
+    this.ensureDirectory = options.ensureDirectory ?? ((directory) => (
+      mkdir(directory, { recursive: true })
+    ));
+    this.writeFile = options.writeFile ?? ((filePath, bytes, writeOptions) => (
+      writeFile(filePath, bytes, writeOptions)
+    ));
+    this.renameFile = options.renameFile ?? rename;
+    this.removeFile = options.removeFile ?? unlink;
   }
 
-  register(
-    owner: WebContents,
-    input: unknown,
-  ): ExportDownloadRegistration | null {
-    if (this.disposed || owner.isDestroyed()) return null;
-    const normalized = validateRegistrationInput(input);
-    if (!normalized) return null;
+  async save(owner: WebContents, input: unknown): Promise<ExportDownloadSaveResult> {
+    const fallbackFilename = readFallbackFilename(input);
+    if (this.disposed || owner.isDestroyed()) {
+      return failure(fallbackFilename, "window-closed");
+    }
+    const normalized = validateSaveInput(input);
+    if (!normalized) return failure(fallbackFilename, "not-started");
 
-    const requestId = this.createId();
+    try {
+      await this.ensureDirectory(this.downloadsDirectory);
+    } catch (error) {
+      console.error("[export-download] 创建下载目录失败", { error });
+      return failure(normalized.filename, "write-failed");
+    }
+    if (this.disposed || owner.isDestroyed()) {
+      return failure(normalized.filename, "window-closed");
+    }
+
+    const pendingId = this.createId();
     const targetPath = this.reserveTargetPath(normalized.filename);
-    const unclaimedTimer = setTimeout(() => {
-      const pending = this.pending.get(requestId);
-      if (!pending || pending.claimed) return;
-      this.fail(pending, "not-started");
-    }, this.unclaimedTimeoutMs);
-    unclaimedTimer.unref?.();
-
-    this.pending.set(requestId, {
-      requestId,
-      owner,
-      expectedFilename: normalized.filename,
-      targetPath,
-      claimed: false,
-      unclaimedTimer,
+    const tempPath = this.reserveTempPath(pendingId);
+    const controller = new AbortController();
+    let settleAbort: PendingExportSave["settleAbort"] = () => undefined;
+    const abortPromise = new Promise<ExportDownloadFailureReason>((resolve) => {
+      settleAbort = resolve;
     });
-    return { requestId };
-  }
+    const pending: PendingExportSave = {
+      controller,
+      settleAbort,
+    };
+    this.pending.set(pendingId, pending);
 
-  cancel(owner: WebContents, requestId: unknown): boolean {
-    if (typeof requestId !== "string") return false;
-    const pending = this.pending.get(requestId);
-    if (!pending || pending.owner !== owner || pending.claimed) return false;
-    clearTimeout(pending.unclaimedTimer);
-    this.pending.delete(requestId);
-    this.reservedPaths.delete(pending.targetPath);
-    return true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let renamed = false;
+    const writePromise = Promise.resolve().then(() => (
+      this.writeFile(tempPath, normalized.bytes, {
+        flag: "wx",
+        signal: controller.signal,
+      })
+    ));
+    const timeoutPromise = new Promise<ExportDownloadFailureReason>((resolve) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        resolve("timeout");
+      }, this.saveTimeoutMs);
+      timeout.unref?.();
+    });
+
+    try {
+      const outcome = await Promise.race([
+        writePromise.then(() => "written" as const),
+        timeoutPromise,
+        abortPromise,
+      ]);
+      if (outcome !== "written") {
+        controller.abort();
+        this.cleanupTempAfterSettled(writePromise, tempPath);
+        return failure(path.basename(targetPath), outcome);
+      }
+      if (this.disposed || owner.isDestroyed()) {
+        await this.removeFileIfPresent(tempPath);
+        return failure(path.basename(targetPath), "window-closed");
+      }
+
+      await this.renameFile(tempPath, targetPath);
+      renamed = true;
+      if (!this.fileExists(targetPath)) {
+        return failure(path.basename(targetPath), "missing-file");
+      }
+      return this.complete(owner, targetPath);
+    } catch (error) {
+      const reason: ExportDownloadFailureReason =
+        this.disposed || owner.isDestroyed() ? "window-closed" : "write-failed";
+      console.error("[export-download] 写入导出文件失败", {
+        filename: path.basename(targetPath),
+        reason,
+        error,
+      });
+      if (!renamed) await this.removeFileIfPresent(tempPath);
+      return failure(path.basename(targetPath), reason);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      this.pending.delete(pendingId);
+      this.reservedPaths.delete(targetPath);
+      this.reservedTempPaths.delete(tempPath);
+    }
   }
 
   resolveRevealPath(owner: WebContents, token: unknown): string | null {
@@ -230,22 +216,11 @@ export class ExportDownloadCoordinator {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.session.off("will-download", this.onWillDownload);
-    for (const pending of [...this.pending.values()]) {
-      pending.cancelClaimedDownload?.();
-      this.fail(pending, "window-closed");
+    for (const pending of this.pending.values()) {
+      pending.controller.abort();
+      pending.settleAbort("window-closed");
     }
     this.revealEntries.clear();
-  }
-
-  private findMatchingPending(
-    owner: WebContents,
-    requestId: string | null,
-  ): PendingExportDownload | null {
-    if (!requestId) return null;
-    const pending = this.pending.get(requestId);
-    if (!pending || pending.claimed || pending.owner !== owner) return null;
-    return pending;
   }
 
   private reserveTargetPath(filename: string): string {
@@ -264,45 +239,51 @@ export class ExportDownloadCoordinator {
     }
   }
 
-  private complete(pending: PendingExportDownload): void {
-    this.pending.delete(pending.requestId);
-    this.reservedPaths.delete(pending.targetPath);
+  private reserveTempPath(initialId: string): string {
+    let id = initialId;
+    while (true) {
+      const safeId = id.replace(/[^a-zA-Z0-9-]/g, "");
+      const candidatePath = path.join(
+        this.downloadsDirectory,
+        `.qingagent-export-${safeId || randomUUID()}.tmp`,
+      );
+      if (!this.fileExists(candidatePath) && !this.reservedTempPaths.has(candidatePath)) {
+        this.reservedTempPaths.add(candidatePath);
+        return candidatePath;
+      }
+      id = this.createId();
+    }
+  }
+
+  private complete(owner: WebContents, targetPath: string): ExportDownloadSaveResult {
     this.cleanupExpiredRevealEntries();
     const revealToken = this.createId();
     this.revealEntries.set(revealToken, {
-      owner: pending.owner,
-      filePath: pending.targetPath,
+      owner,
+      filePath: targetPath,
       expiresAt: this.now() + this.revealTtlMs,
     });
-    this.sendResult(pending.owner, {
-      requestId: pending.requestId,
+    return {
       saved: true,
-      filename: path.basename(pending.targetPath),
+      filename: path.basename(targetPath),
       revealToken,
-    });
+    };
   }
 
-  private fail(
-    pending: PendingExportDownload,
-    reason: ExportDownloadFailureReason,
+  private cleanupTempAfterSettled(
+    writePromise: Promise<unknown>,
+    tempPath: string,
   ): void {
-    clearTimeout(pending.unclaimedTimer);
-    this.pending.delete(pending.requestId);
-    this.reservedPaths.delete(pending.targetPath);
-    this.sendResult(pending.owner, {
-      requestId: pending.requestId,
-      saved: false,
-      filename: path.basename(pending.targetPath),
-      reason,
-    });
+    void writePromise
+      .catch(() => undefined)
+      .then(() => this.removeFileIfPresent(tempPath));
   }
 
-  private sendResult(owner: WebContents, result: ExportDownloadResult): void {
+  private async removeFileIfPresent(filePath: string): Promise<void> {
     try {
-      if (owner.isDestroyed()) return;
-      owner.send(EXPORT_DOWNLOAD_RESULT_CHANNEL, result);
+      await this.removeFile(filePath);
     } catch {
-      // renderer 与 done 事件可能同时销毁；结果无人接收时只做本地清理。
+      // 写入失败或超时后临时文件可能从未创建，清理保持静默。
     }
   }
 
@@ -314,26 +295,13 @@ export class ExportDownloadCoordinator {
   }
 }
 
-function readRequestIdFromDownloadUrl(downloadUrl: string): string | null {
-  try {
-    const hash = new URL(downloadUrl).hash.slice(1);
-    const prefix = `${EXPORT_DOWNLOAD_REQUEST_FRAGMENT_KEY}=`;
-    if (!hash.startsWith(prefix)) return null;
-    const requestId = decodeURIComponent(hash.slice(prefix.length));
-    return requestId.length > 0 ? requestId : null;
-  } catch {
-    return null;
-  }
-}
-
-function validateRegistrationInput(
-  input: unknown,
-): ExportDownloadRegistrationInput | null {
+function validateSaveInput(input: unknown): ExportDownloadSaveInput | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const { filename, format } = input as Record<string, unknown>;
+  const { filename, format, bytes } = input as Record<string, unknown>;
   if (
     typeof filename !== "string" ||
     typeof format !== "string" ||
+    !(bytes instanceof Uint8Array) ||
     !Object.hasOwn(FORMAT_EXTENSIONS, format)
   ) {
     return null;
@@ -355,5 +323,22 @@ function validateRegistrationInput(
   ) {
     return null;
   }
-  return { filename, format: typedFormat };
+  return { filename, format: typedFormat, bytes };
+}
+
+function readFallbackFilename(input: unknown): string {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return "qingagent-export";
+  }
+  const filename = (input as Record<string, unknown>).filename;
+  return typeof filename === "string" && filename.length > 0
+    ? filename
+    : "qingagent-export";
+}
+
+function failure(
+  filename: string,
+  reason: ExportDownloadFailureReason,
+): ExportDownloadSaveResult {
+  return { saved: false, filename, reason };
 }

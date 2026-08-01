@@ -1,86 +1,56 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import {
+  existsSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type {
-  DownloadItem,
-  Session,
-  WebContents,
-} from "electron";
+import type { WebContents } from "electron";
 import {
   ExportDownloadCoordinator,
-  EXPORT_DOWNLOAD_RESULT_CHANNEL,
-  type ExportDownloadResult,
+  type ExportDownloadCoordinatorOptions,
+  type ExportDownloadFormat,
 } from "./exportDownloadCoordinator.js";
 
-class FakeDownloadItem extends EventEmitter {
-  savePath: string | null = null;
-
-  constructor(
-    private readonly filename: string,
-    private readonly requestId = "request-1",
-  ) {
-    super();
-  }
-
-  getFilename(): string {
-    return this.filename;
-  }
-
-  getURL(): string {
-    return `blob:https://example.test/download#qingagent-export-request=${this.requestId}`;
-  }
-
-  setSavePath(filePath: string): void {
-    this.savePath = filePath;
-  }
-}
-
 class FakeWebContents {
-  readonly id: number;
-  readonly results: ExportDownloadResult[] = [];
   destroyed = false;
-
-  constructor(id: number) {
-    this.id = id;
-  }
 
   isDestroyed(): boolean {
     return this.destroyed;
   }
-
-  send(channel: string, result: ExportDownloadResult): void {
-    assert.equal(channel, EXPORT_DOWNLOAD_RESULT_CHANNEL);
-    this.results.push(result);
-  }
 }
 
-function createHarness(options: { existing?: string[]; unclaimedTimeoutMs?: number } = {}) {
+function createHarness(
+  options: Partial<ExportDownloadCoordinatorOptions> & { existing?: string[] } = {},
+) {
   const downloadsDirectory = mkdtempSync(path.join(tmpdir(), "qingagent-export-download-"));
   for (const filename of options.existing ?? []) {
     writeFileSync(path.join(downloadsDirectory, filename), "existing");
   }
-  const session = new EventEmitter();
-  const ids = ["request-1", "reveal-1", "request-2", "reveal-2", "request-3"];
-  const coordinator = new ExportDownloadCoordinator(
-    session as unknown as Session,
-    {
-      downloadsDirectory,
-      unclaimedTimeoutMs: options.unclaimedTimeoutMs ?? 1_000,
-      createId: () => ids.shift() ?? "fallback-id",
-    },
-  );
-  const owner = new FakeWebContents(1);
-  const otherOwner = new FakeWebContents(2);
+  const ids = [
+    "pending-1",
+    "reveal-1",
+    "pending-2",
+    "reveal-2",
+    "pending-3",
+    "reveal-3",
+  ];
+  const coordinator = new ExportDownloadCoordinator({
+    downloadsDirectory,
+    saveTimeoutMs: 1_000,
+    createId: () => ids.shift() ?? "fallback-id",
+    ...options,
+  });
+  const owner = new FakeWebContents();
+  const otherOwner = new FakeWebContents();
   return {
     downloadsDirectory,
-    session,
     coordinator,
     owner,
     otherOwner,
@@ -91,230 +61,229 @@ function createHarness(options: { existing?: string[]; unclaimedTimeoutMs?: numb
   };
 }
 
-function emitDownload(
-  session: EventEmitter,
-  item: FakeDownloadItem,
-  owner: FakeWebContents,
-): { prevented: boolean } {
-  const event = {
-    prevented: false,
-    preventDefault() {
-      this.prevented = true;
-    },
+function saveInput(
+  filename: string,
+  format: ExportDownloadFormat,
+  content: string | number[],
+) {
+  return {
+    filename,
+    format,
+    bytes: typeof content === "string"
+      ? new Uint8Array(Buffer.from(content))
+      : new Uint8Array(content),
   };
-  session.emit(
-    "will-download",
-    event,
-    item as unknown as DownloadItem,
-    owner as unknown as WebContents,
-  );
-  return event;
 }
 
-test("登记意图后仅以同一 sender 与 requestId 认领，Chromium 文件名只作诊断", () => {
-  const harness = createHarness();
-  try {
-    assert.deepEqual(
-      harness.coordinator.register(harness.owner as unknown as WebContents, {
-        filename: "测试文档｜完整指南_20260801.md",
-        format: "markdown",
-      }),
-      { requestId: "request-1" },
-    );
-
-    const wrongSender = new FakeDownloadItem("测试文档｜完整指南_20260801.md");
-    emitDownload(harness.session, wrongSender, harness.otherOwner);
-    assert.equal(wrongSender.savePath, null);
-
-    const wrongRequest = new FakeDownloadItem(
-      "测试文档｜完整指南_20260801.md",
-      "other-request",
-    );
-    emitDownload(harness.session, wrongRequest, harness.owner);
-    assert.equal(wrongRequest.savePath, null);
-
-    // Chromium 即使按 MIME 改写建议文件名，也只能写入主进程登记时预留的 .md 路径。
-    const matched = new FakeDownloadItem("测试文档｜完整指南_20260801.txt");
-    emitDownload(harness.session, matched, harness.owner);
-    assert.equal(
-      matched.savePath,
-      path.join(harness.downloadsDirectory, "测试文档｜完整指南_20260801.md"),
-    );
-    assert.equal(harness.owner.results.length, 0, "done 前不得回报成功");
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test("Markdown、TXT、HTML 含全角字符时均可登记、认领并落盘", () => {
+test("PDF、DOCX、HTML、Markdown、TXT 均由主进程字节写盘并签发 owner-scoped reveal token", async () => {
   const cases = [
-    {
-      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.md",
-      format: "markdown",
-      content: "# Markdown 测试\n",
-    },
-    {
-      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.txt",
-      format: "txt",
-      content: "TXT 测试\n",
-    },
-    {
-      filename: "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.html",
-      format: "html",
-      content: "<!doctype html><title>HTML 测试</title>\n",
-    },
+    ["测试文档_20260802.pdf", "pdf", [...Buffer.from("%PDF-1.7\n%%EOF\n")]],
+    ["测试文档_20260802.docx", "docx", [0x50, 0x4b, 0x03, 0x04]],
+    ["测试文档｜完整指南_20260802.html", "html", "<!doctype html><title>测试</title>\n"],
+    ["测试文档｜完整指南_20260802.md", "markdown", "# Markdown 测试\n"],
+    ["测试文档｜完整指南_20260802.txt", "txt", "TXT 测试\n"],
   ] as const;
 
-  for (const exportCase of cases) {
+  for (const [filename, format, content] of cases) {
     const harness = createHarness();
     try {
-      assert.deepEqual(
-        harness.coordinator.register(harness.owner as unknown as WebContents, {
-          filename: exportCase.filename,
-          format: exportCase.format,
-        }),
-        { requestId: "request-1" },
-      );
-      const item = new FakeDownloadItem(exportCase.filename);
-      emitDownload(harness.session, item, harness.owner);
-      assert.equal(
-        item.savePath,
-        path.join(harness.downloadsDirectory, exportCase.filename),
-      );
-      assert.ok(item.savePath);
-      writeFileSync(item.savePath, exportCase.content);
-      item.emit("done", {}, "completed");
-
-      assert.deepEqual(harness.owner.results, [{
-        requestId: "request-1",
-        saved: true,
-        filename: exportCase.filename,
-        revealToken: "reveal-1",
-      }]);
-    } finally {
-      harness.cleanup();
-    }
-  }
-});
-
-test("done=completed 且最终文件存在后才回报成功并签发 reveal token", () => {
-  const harness = createHarness();
-  try {
-    harness.coordinator.register(harness.owner as unknown as WebContents, {
-      filename: "测试文档_20260729.docx",
-      format: "docx",
-    });
-    const item = new FakeDownloadItem("测试文档_20260729.docx");
-    emitDownload(harness.session, item, harness.owner);
-    assert.ok(item.savePath);
-
-    item.emit("updated", {}, "progressing");
-    assert.equal(harness.owner.results.length, 0);
-    writeFileSync(item.savePath, "PK");
-    item.emit("done", {}, "completed");
-
-    assert.deepEqual(harness.owner.results, [{
-      requestId: "request-1",
-      saved: true,
-      filename: "测试文档_20260729.docx",
-      revealToken: "reveal-1",
-    }]);
-    assert.equal(
-      harness.coordinator.resolveRevealPath(
+      const input = saveInput(filename, format, content as string | number[]);
+      const result = await harness.coordinator.save(
         harness.owner as unknown as WebContents,
-        "reveal-1",
-      ),
-      item.savePath,
-    );
-    assert.equal(
-      harness.coordinator.resolveRevealPath(
-        harness.otherOwner as unknown as WebContents,
-        "reveal-1",
-      ),
-      null,
-    );
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test("cancelled、interrupted 与完成后文件缺失均回报失败", () => {
-  for (const state of ["cancelled", "interrupted", "completed"] as const) {
-    const harness = createHarness();
-    try {
-      harness.coordinator.register(harness.owner as unknown as WebContents, {
-        filename: "测试文档_20260729.md",
-        format: "markdown",
+        input,
+      );
+      assert.deepEqual(result, {
+        saved: true,
+        filename,
+        revealToken: "reveal-1",
       });
-      const item = new FakeDownloadItem("测试文档_20260729.md");
-      emitDownload(harness.session, item, harness.owner);
-      item.emit("done", {}, state);
-      assert.deepEqual(harness.owner.results, [{
-        requestId: "request-1",
-        saved: false,
-        filename: "测试文档_20260729.md",
-        reason: state === "completed" ? "missing-file" : state,
-      }]);
+      assert.deepEqual(
+        readFileSync(path.join(harness.downloadsDirectory, filename)),
+        Buffer.from(input.bytes),
+      );
+      assert.equal(
+        harness.coordinator.resolveRevealPath(
+          harness.owner as unknown as WebContents,
+          "reveal-1",
+        ),
+        path.join(harness.downloadsDirectory, filename),
+      );
+      assert.equal(
+        harness.coordinator.resolveRevealPath(
+          harness.otherOwner as unknown as WebContents,
+          "reveal-1",
+        ),
+        null,
+      );
     } finally {
       harness.cleanup();
     }
   }
 });
 
-test("同名现有文件和并发 reservation 自动追加序号且不覆盖", () => {
-  const harness = createHarness({ existing: ["测试文档_20260729.pdf"] });
+test("同名现有文件与并发 pending 保存均自动编号且不覆盖", async () => {
+  let releaseFirst: (() => void) | undefined;
+  let markFirstStarted: (() => void) | undefined;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStarted = new Promise<void>((resolve) => {
+    markFirstStarted = resolve;
+  });
+  let writeCount = 0;
+  const harness = createHarness({
+    existing: ["测试文档_20260802.pdf"],
+    writeFile: async (filePath, bytes, options) => {
+      writeCount += 1;
+      if (writeCount === 1) {
+        markFirstStarted?.();
+        await firstGate;
+      }
+      await writeFile(filePath, bytes, options);
+    },
+  });
   try {
-    harness.coordinator.register(harness.owner as unknown as WebContents, {
-      filename: "测试文档_20260729.pdf",
-      format: "pdf",
-    });
-    harness.coordinator.register(harness.owner as unknown as WebContents, {
-      filename: "测试文档_20260729.pdf",
-      format: "pdf",
-    });
-    const first = new FakeDownloadItem("测试文档_20260729.pdf");
-    const second = new FakeDownloadItem("测试文档_20260729.pdf", "reveal-1");
-    emitDownload(harness.session, first, harness.owner);
-    emitDownload(harness.session, second, harness.owner);
+    const firstSave = harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("测试文档_20260802.pdf", "pdf", "%PDF-first"),
+    );
+    await firstStarted;
+    const secondSave = harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("测试文档_20260802.pdf", "pdf", "%PDF-second"),
+    );
+    const secondResult = await secondSave;
+    releaseFirst?.();
+    const firstResult = await firstSave;
 
+    assert.equal(firstResult.filename, "测试文档_20260802 (2).pdf");
+    assert.equal(secondResult.filename, "测试文档_20260802 (3).pdf");
     assert.equal(
-      first.savePath,
-      path.join(harness.downloadsDirectory, "测试文档_20260729 (2).pdf"),
+      readFileSync(path.join(harness.downloadsDirectory, "测试文档_20260802.pdf"), "utf8"),
+      "existing",
     );
     assert.equal(
-      second.savePath,
-      path.join(harness.downloadsDirectory, "测试文档_20260729 (3).pdf"),
+      readFileSync(path.join(harness.downloadsDirectory, "测试文档_20260802 (2).pdf"), "utf8"),
+      "%PDF-first",
+    );
+    assert.equal(
+      readFileSync(path.join(harness.downloadsDirectory, "测试文档_20260802 (3).pdf"), "utf8"),
+      "%PDF-second",
     );
   } finally {
     harness.cleanup();
   }
 });
 
-test("拒绝目录穿越、绝对路径、错误扩展名和超长文件名", () => {
+test("写盘失败回报 write-failed，且不留下半成品或临时文件", async () => {
+  const harness = createHarness({
+    writeFile: async (filePath) => {
+      await writeFile(filePath, "partial", { flag: "wx" });
+      throw new Error("disk full");
+    },
+  });
+  try {
+    const result = await harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("失败.txt", "txt", "完整内容"),
+    );
+    assert.deepEqual(result, {
+      saved: false,
+      filename: "失败.txt",
+      reason: "write-failed",
+    });
+    assert.deepEqual(readdirSync(harness.downloadsDirectory), []);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("写盘超过上限会中止 pending 并回报 timeout", async () => {
+  const harness = createHarness({
+    saveTimeoutMs: 10,
+    writeFile: async () => new Promise(() => undefined),
+  });
+  try {
+    const startedAt = Date.now();
+    const result = await harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("超时.html", "html", "<p>test</p>"),
+    );
+    assert.deepEqual(result, {
+      saved: false,
+      filename: "超时.html",
+      reason: "timeout",
+    });
+    assert.ok(Date.now() - startedAt < 500, "超时结果应及时返回 renderer");
+    assert.equal(existsSync(path.join(harness.downloadsDirectory, "超时.html")), false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("窗口关闭会中止未完成保存并回报 window-closed", async () => {
+  const harness = createHarness({
+    writeFile: async () => new Promise(() => undefined),
+  });
+  try {
+    const pendingSave = harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("窗口关闭.md", "markdown", "# test"),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    harness.coordinator.dispose();
+    assert.deepEqual(await pendingSave, {
+      saved: false,
+      filename: "窗口关闭.md",
+      reason: "window-closed",
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("最终文件不存在时不误报成功", async () => {
+  const harness = createHarness({ fileExists: () => false });
+  try {
+    const result = await harness.coordinator.save(
+      harness.owner as unknown as WebContents,
+      saveInput("缺失.docx", "docx", [0x50, 0x4b]),
+    );
+    assert.deepEqual(result, {
+      saved: false,
+      filename: "缺失.docx",
+      reason: "missing-file",
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("拒绝目录穿越、绝对路径、错误扩展名、非字节载荷和超长文件名", async () => {
   const harness = createHarness();
   try {
-    for (const filename of [
-      "../测试.pdf",
-      "/tmp/测试.pdf",
-      "C:\\temp\\测试.pdf",
-      "测试.docx",
-      `${"很".repeat(181)}.pdf`,
+    for (const input of [
+      saveInput("../测试.pdf", "pdf", "%PDF"),
+      saveInput("/tmp/测试.pdf", "pdf", "%PDF"),
+      saveInput("C:\\temp\\测试.pdf", "pdf", "%PDF"),
+      saveInput("测试.docx", "pdf", "%PDF"),
+      saveInput(`${"很".repeat(181)}.pdf`, "pdf", "%PDF"),
+      { filename: "测试.pdf", format: "pdf", bytes: "%PDF" },
     ]) {
-      assert.equal(
-        harness.coordinator.register(harness.owner as unknown as WebContents, {
-          filename,
-          format: "pdf",
-        }),
-        null,
-        filename,
+      const result = await harness.coordinator.save(
+        harness.owner as unknown as WebContents,
+        input,
       );
+      assert.equal(result.saved, false);
+      assert.equal(result.saved ? null : result.reason, "not-started");
     }
+    assert.deepEqual(readdirSync(harness.downloadsDirectory), []);
   } finally {
     harness.cleanup();
   }
 });
 
-test("拒绝 Windows 保留设备名 stem，且不误伤相邻普通名称", () => {
+test("拒绝 Windows 保留设备名 stem，且不误伤相邻普通名称", async () => {
   const harness = createHarness();
   try {
     for (const filename of [
@@ -326,80 +295,22 @@ test("拒绝 Windows 保留设备名 stem，且不误伤相邻普通名称", () 
       ...Array.from({ length: 9 }, (_, index) => `CoM${index + 1}.pdf`),
       ...Array.from({ length: 9 }, (_, index) => `lPt${index + 1}.pdf`),
     ]) {
-      assert.equal(
-        harness.coordinator.register(harness.owner as unknown as WebContents, {
-          filename,
-          format: "pdf",
-        }),
-        null,
-        filename,
+      const result = await harness.coordinator.save(
+        harness.owner as unknown as WebContents,
+        saveInput(filename, "pdf", "%PDF"),
       );
+      assert.equal(result.saved, false, filename);
+      assert.equal(result.saved ? null : result.reason, "not-started", filename);
     }
 
     for (const filename of ["CONSOLE.pdf", "COM10.pdf"]) {
-      assert.ok(
-        harness.coordinator.register(harness.owner as unknown as WebContents, {
-          filename,
-          format: "pdf",
-        }),
-        filename,
+      const result = await harness.coordinator.save(
+        harness.owner as unknown as WebContents,
+        saveInput(filename, "pdf", "%PDF"),
       );
+      assert.equal(result.saved, true, filename);
     }
   } finally {
     harness.cleanup();
   }
-});
-
-test("未被 will-download 认领的意图短期回收，已认领的慢下载不受该超时影响", async () => {
-  const harness = createHarness({ unclaimedTimeoutMs: 10 });
-  try {
-    harness.coordinator.register(harness.owner as unknown as WebContents, {
-      filename: "未开始.pdf",
-      format: "pdf",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(harness.owner.results[0]?.saved, false);
-    assert.equal(
-      harness.owner.results[0]?.saved === false
-        ? harness.owner.results[0].reason
-        : null,
-      "not-started",
-    );
-
-    harness.owner.results.length = 0;
-    const slowRegistration = harness.coordinator.register(
-      harness.owner as unknown as WebContents,
-      {
-      filename: "慢文件.pdf",
-      format: "pdf",
-      },
-    );
-    assert.ok(slowRegistration);
-    const item = new FakeDownloadItem("慢文件.pdf", slowRegistration.requestId);
-    emitDownload(harness.session, item, harness.owner);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(harness.owner.results.length, 0);
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test("窗口销毁时卸载 will-download 并收口未完成请求", () => {
-  const harness = createHarness();
-  harness.coordinator.register(harness.owner as unknown as WebContents, {
-    filename: "测试文档_20260729.txt",
-    format: "txt",
-  });
-  assert.equal(harness.session.listenerCount("will-download"), 1);
-
-  harness.coordinator.dispose();
-
-  assert.equal(harness.session.listenerCount("will-download"), 0);
-  assert.deepEqual(harness.owner.results, [{
-    requestId: "request-1",
-    saved: false,
-    filename: "测试文档_20260729.txt",
-    reason: "window-closed",
-  }]);
-  rmSync(harness.downloadsDirectory, { recursive: true, force: true });
 });

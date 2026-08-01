@@ -202,6 +202,9 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             "data-patch-id": source.id,
             "data-patch-index": String(index),
             "data-patch-state": "delete",
+            // 不能只靠 width:0 视觉压扁：innerText / 复制 / 自动化仍会读出旧文，
+            // 与 replacement widget 拼成“旧文+新文”。直接退出渲染文本树，原位仅留独立游标。
+            style: "display:none",
           },
           spec,
         ),

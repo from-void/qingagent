@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
-import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { applyBlockEdits, normalizePmDoc, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
@@ -35,6 +35,141 @@ afterEach(() => {
 });
 
 describe("审阅态 PM patch decorations", () => {
+  it.each([
+    {
+      name: "r17：中文章序替换为阿拉伯数字",
+      beforeTitle: "第一章 最后的阳光",
+      afterTitle: "第1章 最后的阳光",
+      pmFrom: 2,
+      pmTo: 3,
+      beforePatch: "一",
+      afterPatch: "1",
+    },
+    {
+      name: "r19：旧小标题整块替换为 2.1 概述",
+      beforeTitle: "第二节：街角服务",
+      afterTitle: "2.1 概述",
+      pmFrom: 1,
+      pmTo: 9,
+      beforePatch: "第二节：街角服务",
+      afterPatch: "2.1 概述",
+    },
+  ])("$name：候选预览文本与 replaceBlock 终态一致", async ({
+    beforeTitle,
+    afterTitle,
+    pmFrom,
+    pmTo,
+    beforePatch,
+    afterPatch,
+  }) => {
+    const baselineDoc = headingDoc(beforeTitle);
+    const committed = applyBlockEdits(baselineDoc, [{
+      action: "replaceBlock",
+      ref: "heading-1",
+      block: { type: "heading", level: 2, runs: [{ text: afterTitle }] },
+    }]);
+    expect(committed.ok).toBe(true);
+    expect(pmToPlainText(committed.doc!).trim()).toBe(afterTitle);
+
+    const baseSuggestion = docSuggestion(
+      "heading-replace",
+      pmFrom,
+      pmTo,
+      beforePatch,
+      afterPatch,
+    );
+    const suggestion: DocSuggestion = {
+      ...baseSuggestion,
+      anchor: {
+        ...baseSuggestion.anchor,
+        blockId: "heading-1",
+      },
+    };
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)}
+          editable
+          interactiveEditable={false}
+          showPatches
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          reviewSuggestions={[suggestion]}
+          reviewAppliedPatches={[
+            appliedPatch("heading-replace", 1, "replace", beforePatch, afterPatch),
+          ]}
+        />,
+      );
+    });
+
+    await flush();
+
+    const heading = host.querySelector(".wf-doc h2");
+    expect(heading).not.toBeNull();
+    expect(renderedText(heading!)).toBe(afterTitle);
+    expect(renderedText(heading!)).not.toContain(beforeTitle);
+  });
+
+  it.each([
+    {
+      name: "插入类候选",
+      pmFrom: 2,
+      pmTo: 2,
+      beforePatch: "",
+      afterPatch: "X",
+      kind: "insert" as const,
+      expected: "aXbcdef",
+    },
+    {
+      name: "删除类候选",
+      pmFrom: 2,
+      pmTo: 4,
+      beforePatch: "bc",
+      afterPatch: "",
+      kind: "delete" as const,
+      expected: "adef",
+    },
+  ])("$name：预览区间与提交语义一致", async ({
+    pmFrom,
+    pmTo,
+    beforePatch,
+    afterPatch,
+    kind,
+    expected,
+  }) => {
+    const suggestion = docSuggestion(
+      `same-family-${kind}`,
+      pmFrom,
+      pmTo,
+      beforePatch,
+      afterPatch,
+    );
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(paragraphDoc("abcdef"), 1)}
+          editable
+          interactiveEditable={false}
+          showPatches
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          reviewSuggestions={[suggestion]}
+          reviewAppliedPatches={[
+            appliedPatch(suggestion.id, 1, kind, beforePatch, afterPatch),
+          ]}
+        />,
+      );
+    });
+
+    await flush();
+
+    const paragraph = host.querySelector(".wf-doc p");
+    expect(paragraph).not.toBeNull();
+    expect(renderedText(paragraph!)).toBe(expected);
+  });
+
   it("含重复 blockId 的存量文档在 pendingReview 延后自愈，锚点可渲染且退出审阅后修复", async () => {
     const baselineDoc = reviewDocWithDuplicateDescendants();
     const suggestion = docSuggestion("patch-duplicate-review", 2, 4, "bc", "XY");
@@ -137,9 +272,9 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector('[data-patch-id="patch-1"]')).not.toBeNull();
     expect(host.querySelector(".wf-patch-del")?.textContent).toBe("1.8");
     expect(host.querySelector(".wf-patch-ins")?.textContent).toBe("2.1");
-    // 防拼接：旧值在零宽删除 span 内，新值是独立 widget，正文没有箭头或旧新可见连排。
+    // 防拼接：旧值退出渲染文本树，新值是独立 widget，正文没有箭头或旧新可见连排。
     expect(host.querySelector(".wf-doc p")?.innerHTML).toMatchInlineSnapshot(
-      `"<span class="wf-patch-del-marker ProseMirror-widget" data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete"><span class="patch-del-cursor"></span></span><span data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete" class="wf-patch-del">1.8</span><span class="wf-patch-replace-wrap ProseMirror-widget" data-patch-state="replace" data-patch-id="patch-1" data-patch-index="1"><span class="wf-patch-ins">2.1</span></span>万"`,
+      `"<span class="wf-patch-del-marker ProseMirror-widget" data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete"><span class="patch-del-cursor"></span></span><span data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete" class="wf-patch-del" style="display: none;">1.8</span><span class="wf-patch-replace-wrap ProseMirror-widget" data-patch-state="replace" data-patch-id="patch-1" data-patch-index="1"><span class="wf-patch-ins">2.1</span></span>万"`,
     );
   });
 
@@ -1543,6 +1678,24 @@ function paragraphDoc(text: string): PmDoc {
       },
     ],
   } as PmDoc;
+}
+
+function headingDoc(text: string): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "heading",
+      attrs: { blockId: "heading-1", level: 2 },
+      content: [{ type: "text", text }],
+    }],
+  } as PmDoc;
+}
+
+function renderedText(node: Node): string {
+  if (node instanceof HTMLElement && getComputedStyle(node).display === "none") return "";
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  return Array.from(node.childNodes, renderedText).join("");
 }
 
 function reviewDocWithDuplicateDescendants(): PmDoc {

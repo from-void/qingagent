@@ -181,7 +181,7 @@ describe("buildPatchDecorations", () => {
     expect(decorations[0]?.from).toBe(2);
     expect(decorations[0]?.to).toBe(4);
     expect(className(decorations[0])).toContain("wf-patch-del");
-    expect(attrs(decorations[0]).style).toBeUndefined();
+    expect(attrs(decorations[0]).style).toBe("display:none");
     expect(attrs(decorations[0])["data-patch-state"]).toBe("delete");
     expect(spec(decorations[0])["data-patch-id"]).toBe("p-del");
     expect(decorations[1]?.from).toBe(2);
@@ -207,7 +207,7 @@ describe("buildPatchDecorations", () => {
     expect(decorations[0]?.to).toBe(5);
     expect(className(decorations[0])).toContain("wf-patch-del");
     expect(className(decorations[0])).not.toContain("wf-patch-replace-old");
-    expect(attrs(decorations[0]).style).toBeUndefined();
+    expect(attrs(decorations[0]).style).toBe("display:none");
     expect(decorations[1]?.from).toBe(3);
     expect(decorations[1]?.to).toBe(3);
     expect(widgetDom(decorations[1]).className).toContain("wf-patch-del-marker");

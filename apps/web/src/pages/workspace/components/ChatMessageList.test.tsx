@@ -1257,6 +1257,23 @@ describe("ChatMessageList", () => {
     body: { kind: "generic", data: { argsJson: "{}" } },
     result: null,
   });
+  const svgTool = (id: string): ToolCallSpec => ({
+    id,
+    name: "generateSvg",
+    render: { kind: "chatInline" },
+    status: { kind: "done" },
+    body: {
+      kind: "generateSvg",
+      data: {
+        prompt: "配图",
+        progress: {
+          stage: "done",
+          src: "/api/v1/files/x/illustration.svg",
+        },
+      },
+    } as unknown as ToolCallSpec["body"],
+    result: null,
+  });
   const turn = (parts: ChatMessage["parts"]): ChatMessage => ({
     id: "m-turn",
     role: { kind: "agent" },
@@ -1335,51 +1352,58 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("已修改 2 处");
   });
 
-  it("「已生成 N 张图片」汇总只在回合结清后出现,回合进行中(有运行工具)不出", async () => {
-    const svgTool = (id: string): ToolCallSpec => ({
-      id,
-      name: "generateSvg",
-      render: { kind: "chatInline" },
-      status: { kind: "done" },
-      body: {
-        kind: "generateSvg",
-        data: { prompt: "配图", progress: { stage: "done", src: "/api/v1/files/x/illustration.svg" } },
-      } as unknown as ToolCallSpec["body"],
-      result: null,
-    });
-    const runningTool: ToolCallSpec = {
-      ...genTool("t-running", "readDraft"),
-      status: { kind: "running", data: { progressPct: null, etaSec: null } },
-    };
-    const unsettled: ChatMessage[] = [
-      turn([{ kind: "toolCall", data: svgTool("t-svg") }, { kind: "toolCall", data: runningTool }]),
-    ];
-    await render(<ChatMessageList messages={unsettled} streamActive={false} />);
-    expect(host?.querySelector(".u-imgsum")).toBeNull();
+  const resumedImageTurn = (): ChatMessage[] => [
+    userMessage("m-user-image"),
+    {
+      ...turn([
+        { kind: "toolCall", data: svgTool("t-svg") },
+        { kind: "toolCall", data: genTool("t-skill", "skill_read") },
+        { kind: "toolCall", data: genTool("t-write", "writeDraft") },
+        { kind: "toolCall", data: askUserToolCall("ask-image") },
+      ]),
+      id: "m-before-resume",
+    },
+    askUserAnswerCardMessage("ask-image", "m-answer-image"),
+    {
+      ...turn([
+        { kind: "toolCall", data: genTool("t-read", "readDraft") },
+        { kind: "toolCall", data: genTool("t-diff", "readDiff") },
+      ]),
+      id: "m-after-resume",
+    },
+  ];
 
-    const settled: ChatMessage[] = [
-      turn([{ kind: "toolCall", data: svgTool("t-svg") }, { kind: "text", data: { body: "配好了" } }]),
-    ];
-    await render(<ChatMessageList messages={settled} streamActive={false} />);
+  it("整轮仍运行时不显示图片汇总——即使工具全 done、窄 stream 信号暂时为 false", async () => {
+    const running = resumedImageTurn();
+
+    // askUser 答卷前后的两个 agent message 属于同一逻辑轮；现场窗口里停止按钮仍在
+    // (turnActive=true)，但 state.streamActive 可因投影/子流衔接暂时为 false。
+    await render(
+      <ChatMessageList
+        messages={running}
+        streamActive={false}
+        turnActive
+      />,
+    );
+    expect(host?.querySelector(".u-imgsum")).toBeNull();
+  });
+
+  it("整轮结束后显示图片汇总", async () => {
+    await render(
+      <ChatMessageList
+        messages={resumedImageTurn()}
+        streamActive={false}
+        turnActive={false}
+      />,
+    );
     expect(host?.querySelector(".u-imgsum")).not.toBeNull();
     expect(host?.textContent ?? "").toContain("已生成 1 张图片");
   });
 
   it("汇总行门在「推理结束」而非「回合结清」:待审批 live patch 期间也要出(luna r1 第7项)", async () => {
-    const svgTool: ToolCallSpec = {
-      id: "t-svg",
-      name: "generateSvg",
-      render: { kind: "chatInline" },
-      status: { kind: "done" },
-      body: {
-        kind: "generateSvg",
-        data: { prompt: "配图", progress: { stage: "done", src: "/api/v1/files/x/illustration.svg" } },
-      } as unknown as ToolCallSpec["body"],
-      result: null,
-    };
     const pendingApproval: ChatMessage[] = [
       turn([
-        { kind: "toolCall", data: svgTool },
+        { kind: "toolCall", data: svgTool("t-svg") },
         { kind: "patchSummary", data: { count: 1, hunkIds: ["h-img"] } },
       ]),
     ];

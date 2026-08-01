@@ -39,6 +39,11 @@ export interface ChatMessageListProps {
   messages: ChatMessage[];
   /** Show a loading indicator at the bottom (e.g. during document generation). */
   showLoading?: boolean;
+  /**
+   * 当前整轮是否仍在运行。包含活跃流、后端 agentBusy 与发送后的乐观等待窗；
+   * 仅用于轮级完成判定，不能替代 streamActive 驱动逐字动画。
+   */
+  turnActive?: boolean;
   streamActive: boolean;
   /** 改动B 微调:二次编辑审批入口"打字"进行中——patchSummary 工具条显示 loading 文案。 */
   patchRevealing?: boolean;
@@ -91,6 +96,7 @@ export function ChatMessageList({
   messages,
   showLoading,
   streamActive,
+  turnActive = streamActive,
   patchRevealing,
   livePatchCount,
   liveHunkKey,
@@ -134,8 +140,8 @@ export function ChatMessageList({
   // 轮级折叠标记:把消息分轮,判断每轮是否"已结清"(非进行中流 + 无运行中工具 + 无待审批 live patch),
   // 以及该消息是否本轮最后一条 agent 消息。只有"已结清且是本轮收尾"的消息才允许折叠过程。
   const turnFlags = useMemo(
-    () => computeTurnFlags(messages, lastAssistantMessageId, streamActive, liveHunkKey),
-    [messages, lastAssistantMessageId, streamActive, liveHunkKey],
+    () => computeTurnFlags(messages, lastAssistantMessageId, turnActive, liveHunkKey),
+    [messages, lastAssistantMessageId, turnActive, liveHunkKey],
   );
   const trailingMessageId = messages[messages.length - 1]?.id;
   const messageRows = useMemo(
@@ -633,20 +639,27 @@ type TurnFoldFlag = {
   isFinalAgentMsg: boolean;
 };
 
-// 把消息按"轮"分组(user 消息开启新轮),逐轮算两个折叠判定标记:
+// 把消息按"轮"分组(普通 user 消息开启新轮,askUser 答卷续回原轮),逐轮算两个折叠判定标记:
 //  - turnSettled:本轮已结清 —— 不是进行中的流式轮、轮内没有运行中/等待中的工具、
 //    也没有待审批的 live patch(审批未接受/放弃前不折)。
 //  - isFinalAgentMsg:该消息是本轮最后一条 agent 消息(过程折叠只挂在收尾消息上)。
 function computeTurnFlags(
   messages: ChatMessage[],
   lastAssistantMessageId: string | null,
-  streamActive: boolean,
+  turnActive: boolean,
   liveHunkKey: string | undefined,
 ): Map<string, TurnFoldFlag> {
   const flags = new Map<string, TurnFoldFlag>();
   const turns: ChatMessage[][] = [];
   for (const m of messages) {
-    if (m.role.kind === "user") turns.push([m]);
+    // askUser 答卷是被挂起 agent 轮的恢复点，不是新业务轮。服务端会在答卷后新建
+    // agent message；若在这里按普通 user 切轮，lastAssistantMessageId 只能压住恢复后的
+    // 半轮，恢复前已经 done 的配图会在整轮仍运行时提前冒出汇总。
+    const resumesSuspendedTurn =
+      m.role.kind === "user" &&
+      m.parts.length > 0 &&
+      m.parts.every((part) => part.kind === "askUserAnswerCard");
+    if (m.role.kind === "user" && !resumesSuspendedTurn) turns.push([m]);
     else {
       if (turns.length === 0) turns.push([]);
       turns[turns.length - 1]!.push(m);
@@ -656,7 +669,7 @@ function computeTurnFlags(
     const agentMsgs = turn.filter((m) => m.role.kind === "agent");
     const finalAgentId = agentMsgs.length ? agentMsgs[agentMsgs.length - 1]!.id : null;
     const isActiveTurn =
-      streamActive &&
+      turnActive &&
       lastAssistantMessageId != null &&
       turn.some((m) => m.id === lastAssistantMessageId);
     const anyRunningTool = agentMsgs.some((m) =>

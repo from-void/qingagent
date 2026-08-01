@@ -2,11 +2,18 @@ import type { LexiconEntry } from "@qingagent/db";
 
 export interface ScanHit {
   word: string;
-  replacement: string | null;
-  reviewAction: "replace" | "annotate";
+  replacementHint: string | null;
+  reviewAction: "annotate";
   note: string | null;
   count: number;
   samples: string[];
+}
+
+const CONTEXT_FREE_PLACEHOLDER_REPLACEMENT = /^(?:该|此|相关|有关)(?:事项|内容|情况|问题|对象)$/u;
+
+function replacementHint(replacement: string | null): string | null {
+  if (!replacement || CONTEXT_FREE_PLACEHOLDER_REPLACEMENT.test(replacement.trim())) return null;
+  return replacement;
 }
 
 export function scanText(text: string, entries: LexiconEntry[]): ScanHit[] {
@@ -46,8 +53,9 @@ export function scanText(text: string, entries: LexiconEntry[]): ScanHit[] {
     if (!hit) {
       hit = {
         word: match.entry.word,
-        replacement: match.entry.replacement,
-        reviewAction: match.entry.replacement ? "replace" : "annotate",
+        replacementHint: replacementHint(match.entry.replacement),
+        // 扫描只负责确定性命中，词库候选不能越过语境判断直接改稿。
+        reviewAction: "annotate",
         note: match.entry.note,
         count: 0,
         samples: [],

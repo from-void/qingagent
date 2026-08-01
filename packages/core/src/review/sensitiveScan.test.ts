@@ -22,25 +22,49 @@ describe("scanText", () => {
 
   it("同词多库重复取先到的规则", () => {
     const hit = scanText("搞活动", [entry("搞活动", "开展活动", "a"), entry("搞活动", "举办活动", "b")])[0];
-    expect(hit?.replacement).toBe("开展活动");
+    expect(hit?.replacementHint).toBe("开展活动");
   });
 
   it("保留仅标记型 note", () => {
     expect(scanText("老一套", [entry("老一套", null, "r", "口语化")])[0]).toMatchObject({
-      replacement: null,
+      replacementHint: null,
       reviewAction: "annotate",
       note: "口语化",
     });
   });
 
-  it("确定性区分直接替换与必须批注，语境不参与豁免", () => {
+  it("词库替换只作为候选提示，所有命中都先进入语境批注", () => {
     expect(scanText("2020年上线第一版产品，并宣称全网最低价", [
       entry("第一", null, "r", "结合语境人工判断"),
       entry("全网最低价", "价格优惠"),
     ])).toEqual([
-      expect.objectContaining({ word: "第一", replacement: null, reviewAction: "annotate" }),
-      expect.objectContaining({ word: "全网最低价", replacement: "价格优惠", reviewAction: "replace" }),
+      expect.objectContaining({ word: "第一", replacementHint: null, reviewAction: "annotate" }),
+      expect.objectContaining({ word: "全网最低价", replacementHint: "价格优惠", reviewAction: "annotate" }),
     ]);
+  });
+
+  it("正常语境命中不产出占位词式替换建议", () => {
+    const hits = scanText(
+      "那块铭牌需要保留，爆破拆除按计划进行，会上枪毙方案也只是口头说法。",
+      [
+        entry("那块", "该事项"),
+        entry("爆破拆除", "相关事项"),
+        entry("枪毙方案", "有关内容"),
+      ],
+    );
+
+    expect(hits).toHaveLength(3);
+    expect(hits.every((hit) => hit.reviewAction === "annotate")).toBe(true);
+    expect(hits.every((hit) => hit.replacementHint === null)).toBe(true);
+    expect(JSON.stringify(hits)).not.toMatch(/该事项|相关事项|有关内容/u);
+  });
+
+  it("词库候选与命中片段发生搭配冲突时不会被扫描器直接应用", () => {
+    expect(scanText("别在奔忙中弄丢了生活", [entry("弄", "办理")])[0]).toMatchObject({
+      word: "弄",
+      replacementHint: "办理",
+      reviewAction: "annotate",
+    });
   });
 
   it("空文本、空词安全返回", () => {

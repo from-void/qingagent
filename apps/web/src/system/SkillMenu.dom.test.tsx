@@ -30,7 +30,7 @@ describe("SkillMenu 半行滚动暗示", () => {
 
     const menu = getMenu();
     const pixelCap = Number(menu.style.maxHeight.match(/,\s*([\d.]+)px\)/)?.[1]);
-    expect(pixelCap).toBe(258.75);
+    expect(pixelCap).toBe(248.25);
     expect(pixelCap).toBe(SKILL_MENU_PEEK_HEIGHT);
     expect(menu.style.maxHeight).toContain("60vh");
     expect(menu.querySelectorAll(".qa-skill-row")).toHaveLength(8);
@@ -74,9 +74,18 @@ describe("SkillMenu 横向收缩与完整说明", () => {
     expect(cssRule(css, ".qa-skill-menu")).toContain("max-width: calc(100vw - 48px)");
     expect(cssRule(css, ".qa-skill-row")).toContain("min-width: 0");
     expect(cssRule(css, ".qa-skill-row")).toContain("overflow: hidden");
-    expect(cssRule(css, ".qa-skill-name")).toContain("flex: 0 1 auto");
+    expect(cssRule(css, ".qa-skill-menu")).toContain("width: 300px");
+    expect(cssRule(css, ".qa-skill-name")).toContain("flex: 0 0 auto");
     expect(cssRule(css, ".qa-skill-name")).toContain("min-width: 0");
+    expect(cssRule(css, ".qa-skill-name")).toContain("max-width: 100%");
+    expect(cssRule(css, ".qa-skill-name")).toContain("font-size: 12.5px");
+    expect(cssRule(css, ".qa-skill-name")).toContain("white-space: nowrap");
+    expect(cssRule(css, ".qa-skill-name")).toContain("overflow: hidden");
+    expect(cssRule(css, ".qa-skill-name")).toContain("text-overflow: ellipsis");
+    expect(cssRule(css, ".qa-skill-desc")).toContain("flex: 1 1 auto");
     expect(cssRule(css, ".qa-skill-desc")).toContain("min-width: 0");
+    expect(cssRule(css, ".qa-skill-desc")).toContain("font-size: 11px");
+    expect(cssRule(css, ".qa-file-menu")).toContain("width: 308px");
   });
 
   it("未截断说明不挂 tooltip", () => {

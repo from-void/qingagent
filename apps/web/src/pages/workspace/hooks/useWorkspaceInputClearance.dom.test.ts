@@ -266,7 +266,7 @@ function RaceHarness({
                   setRect(element, {
                     top: 300,
                     bottom: 560,
-                    width: 268,
+                    width: 300,
                     height: 260,
                   });
                 }

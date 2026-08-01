@@ -98,9 +98,9 @@ export function SkillMenuIcon({ icon }: { icon: string }) {
  * 鼠标 hover 也会高亮(CSS)。关闭(点外部 / Esc)由各自页面控制开合状态。
  */
 /** 菜单宽度(与 skill-menu.css 的 width 一致),调用方夹紧 left 时用。 */
-export const SKILL_MENU_WIDTH = 268;
-/** 一行 = 13.5px × 1.4 行高 + 上下各 7px 内边距。 */
-export const SKILL_MENU_ROW_HEIGHT = 32.9;
+export const SKILL_MENU_WIDTH = 300;
+/** 一行 = 12.5px × 1.4 行高 + 上下各 7px 内边距。 */
+export const SKILL_MENU_ROW_HEIGHT = 31.5;
 /** 7 行完整展示；更多项目时再露出下一行的一半，提示菜单可滚动。 */
 export const SKILL_MENU_FULL_ROWS = 7;
 const SKILL_MENU_CHROME_HEIGHT = 12; // 上下内边距 10px + 边框 2px

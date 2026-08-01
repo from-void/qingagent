@@ -77,6 +77,7 @@ describe("usageRepo", () => {
         outputTokens: 50,
         cacheHitTokens: 30,
         cacheMissTokens: 70,
+        coldStartMissTokens: 70,
         cacheCreationTokens: 0,
         cacheHitRate: 0.3,
         calls: 2,
@@ -92,6 +93,7 @@ describe("usageRepo", () => {
         outputTokens: 5,
         cacheHitTokens: 0,
         cacheMissTokens: 0,
+        coldStartMissTokens: 0,
         cacheCreationTokens: 0,
         cacheHitRate: null,
         calls: 1,
@@ -257,6 +259,101 @@ describe("usageRepo", () => {
     ]);
   });
 
+  it("按会话调用点最早请求统计冷启动，多轮 attempt=1 不重复且并发 lane 各自计入", async () => {
+    const recordAt = async (
+      input: Parameters<typeof recordUsageEvent>[0],
+      createdAt: string,
+    ) => {
+      await recordUsageEvent(input);
+      await getDocumentsClient().execute({
+        sql: "UPDATE llm_usage_events SET created_at = ? WHERE run_id = ?",
+        args: [createdAt, input.runId ?? null],
+      });
+    };
+
+    // 验收样例：三轮都因 RequestContext 重建而从 attempt=1 开始，只有最早一轮是冷启动。
+    for (const event of [
+      { runId: "s1-agent-turn-1", inputTokens: 25_000, cacheHitTokens: 0, cacheMissTokens: 25_000, createdAt: "2026-07-31T00:00:00.000Z" },
+      { runId: "s1-agent-turn-2", inputTokens: 42_000, cacheHitTokens: 40_000, cacheMissTokens: 2_000, createdAt: "2026-07-31T00:01:00.000Z" },
+      { runId: "s1-agent-turn-3", inputTokens: 44_000, cacheHitTokens: 42_000, cacheMissTokens: 2_000, createdAt: "2026-07-31T00:02:00.000Z" },
+    ]) {
+      await recordAt({
+        sessionId: "S1",
+        runId: event.runId,
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        inputTokens: event.inputTokens,
+        outputTokens: 1,
+        cacheHitTokens: event.cacheHitTokens,
+        cacheMissTokens: event.cacheMissTokens,
+        attempt: 1,
+      }, event.createdAt);
+    }
+    // 同会话的另一调用点有自己的冷启动；单轮会话的全部 miss 都是冷启动。
+    await recordAt({
+      sessionId: "S1",
+      runId: "s1-write-draft",
+      callSite: "writeDraft",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      inputTokens: 5_000,
+      outputTokens: 1,
+      cacheHitTokens: 0,
+      cacheMissTokens: 5_000,
+      attempt: 1,
+    }, "2026-07-31T00:03:00.000Z");
+    await recordAt({
+      sessionId: "S2",
+      runId: "s2-agent-single",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      inputTokens: 3_000,
+      outputTokens: 1,
+      cacheHitTokens: 0,
+      cacheMissTokens: 3_000,
+      attempt: 1,
+    }, "2026-07-31T00:04:00.000Z");
+
+    // 赛马 lane 各自建立前缀缓存；同一 lane 后续请求不重复计建缓存。
+    for (const event of [
+      { runId: "lane-0-first", lane: 0, miss: 7_000, createdAt: "2026-07-31T00:05:00.000Z" },
+      { runId: "lane-1-first", lane: 1, miss: 8_000, createdAt: "2026-07-31T00:05:00.100Z" },
+      { runId: "lane-0-next", lane: 0, miss: 500, createdAt: "2026-07-31T00:06:00.000Z" },
+    ]) {
+      await recordAt({
+        sessionId: "S3",
+        runId: event.runId,
+        callSite: "writeDraft",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        lane: event.lane,
+        inputTokens: event.miss,
+        outputTokens: 1,
+        cacheHitTokens: 0,
+        cacheMissTokens: event.miss,
+        attempt: 1,
+      }, event.createdAt);
+    }
+
+    const sessionRows = await aggregateUsageBySession();
+    const acceptance = sessionRows.find((row) => row.bucket === "S1" && row.callSite === "agentChat");
+    expect(acceptance).toMatchObject({
+      inputTokens: 111_000,
+      cacheHitTokens: 82_000,
+      cacheMissTokens: 29_000,
+      coldStartMissTokens: 25_000,
+      cacheHitRate: 82_000 / 111_000,
+    });
+    expect(sessionRows.find((row) => row.bucket === "S1" && row.callSite === "writeDraft"))
+      .toMatchObject({ coldStartMissTokens: 5_000 });
+    expect(sessionRows.find((row) => row.bucket === "S2" && row.callSite === "agentChat"))
+      .toMatchObject({ coldStartMissTokens: 3_000 });
+    expect(sessionRows.find((row) => row.bucket === "S3" && row.callSite === "writeDraft"))
+      .toMatchObject({ cacheMissTokens: 15_500, coldStartMissTokens: 15_000 });
+  });
+
   it("Anthropic 只有 cache read/creation、miss 未知时命中率保持 null", async () => {
     await recordUsageEvent({
       sessionId: "session-glm",
@@ -273,6 +370,7 @@ describe("usageRepo", () => {
         modelId: "glm-4.6",
         cacheHitTokens: 80,
         cacheMissTokens: 0,
+        coldStartMissTokens: 0,
         cacheCreationTokens: 20,
         cacheHitRate: null,
       }),

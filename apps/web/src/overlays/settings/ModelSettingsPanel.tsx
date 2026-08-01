@@ -18,6 +18,7 @@ import {
 } from "./modelVendorMeta";
 import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
+import { aggregateUsageRows, effectiveCacheHitRate } from "./usageMetrics";
 import {
   type CustomProvider,
   type ModelProvider,
@@ -1790,10 +1791,31 @@ export function ModelSettingsPanel({
                       </th>
                       <th>
                         <span className="md-th-label">
-                          缓存命中率
-                          <HelpMark label="缓存命中率" text="命中缓存的输入 token 占总输入的比例;命中部分通常按更低单价估算。" />
+                          {usageMode === "simple" ? "缓存命中率" : "总命中率"}
+                          {usageMode === "simple" ? (
+                            <HelpMark
+                              label="缓存命中率"
+                              text="排除每个会话在各调用点首次请求的建缓存部分（该部分必然未命中）；衡量的是“在可能命中的输入里，实际命中了多少”。"
+                            />
+                          ) : (
+                            <HelpMark
+                              label="总命中率"
+                              text="总命中率=命中÷（命中+未命中）；未知记账态不参与分子和分母。"
+                            />
+                          )}
                         </span>
                       </th>
+                      {usageMode === "expert" && (
+                        <th>
+                          <span className="md-th-label">
+                            建缓存
+                            <HelpMark
+                              label="建缓存"
+                              text="每个会话在各调用点首次请求的未命中 token；输入=命中+未命中；有效命中率=命中÷（输入−建缓存）。"
+                            />
+                          </span>
+                        </th>
+                      )}
                       <th>
                         <span className="md-th-label">
                           估算费用
@@ -1944,44 +1966,6 @@ function buildDayDocumentGroups(dayKey: string, rows: UsageRow[]): UsageGroup[] 
   }));
 }
 
-function aggregateUsageRows(bucket: string, rows: UsageRow[]): UsageRow {
-  const sum = (select: (row: UsageRow) => number) =>
-    rows.reduce((total, row) => total + select(row), 0);
-  const knownCacheRows = rows.filter((row) => row.cacheHitRate !== null);
-  const cacheHitTokens = sum((row) => row.cacheHitTokens);
-  const cacheMissTokens = sum((row) => row.cacheMissTokens);
-  const knownCacheTotal = knownCacheRows.reduce(
-    (total, row) => total + row.cacheHitTokens + row.cacheMissTokens,
-    0,
-  );
-  const calls = sum((row) => row.calls);
-  const recordedCalls = sum((row) => row.recordedCalls);
-  const models = new Set(rows.map((row) => row.modelId));
-  const pricedRows = rows.filter((row) => row.costCny !== undefined);
-
-  return {
-    bucket,
-    label: rows.find((row) => row.label)?.label,
-    callSite: "",
-    modelId: models.size === 1 ? rows[0]?.modelId ?? "" : "__multiple__",
-    inputTokens: sum((row) => row.inputTokens),
-    outputTokens: sum((row) => row.outputTokens),
-    cacheHitTokens,
-    cacheMissTokens,
-    cacheCreationTokens: sum((row) => row.cacheCreationTokens),
-    cacheHitRate: knownCacheTotal > 0
-      ? knownCacheRows.reduce((total, row) => total + row.cacheHitTokens, 0) / knownCacheTotal
-      : null,
-    calls,
-    recordedCalls,
-    missingCalls: sum((row) => row.missingCalls),
-    coverageRate: calls > 0 ? recordedCalls / calls : 0,
-    ...(pricedRows.length > 0
-      ? { costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0) }
-      : {}),
-  };
-}
-
 function UsageTableRow({
   row,
   label,
@@ -1999,7 +1983,8 @@ function UsageTableRow({
   childCount?: number;
   onToggle?: () => void;
 }) {
-  const hitRate = row.cacheHitRate == null ? null : Math.round(row.cacheHitRate * 100);
+  const cacheRate = mode === "simple" ? effectiveCacheHitRate(row) : row.cacheHitRate;
+  const hitRate = cacheRate == null ? null : Math.round(cacheRate * 100);
   const isExpandable = mode === "expert" && kind !== "detail";
   const rowClass = kind === "detail"
     ? "md-usage-detail-row"
@@ -2048,7 +2033,12 @@ function UsageTableRow({
       )}
       <td className="font-mono">{formatTokens(row.inputTokens)}</td>
       <td className="font-mono">{formatTokens(row.outputTokens)}</td>
-      <td className="font-mono">{hitRate === null ? "未知" : `${hitRate}%`}</td>
+      <td className="font-mono">
+        {hitRate === null ? (mode === "simple" ? "—" : "未知") : `${hitRate}%`}
+      </td>
+      {mode === "expert" && (
+        <td className="font-mono">{formatCompactTokens(row.coldStartMissTokens ?? 0)}</td>
+      )}
       <td className="font-mono">{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</td>
     </tr>
   );
@@ -2124,6 +2114,12 @@ function fmtWords(n: number): string {
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatCompactTokens(n: number): string {
+  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(2))}M`;
+  if (n >= 1_000) return `${Number((n / 1_000).toFixed(1))}k`;
   return String(n);
 }
 

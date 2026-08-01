@@ -179,20 +179,21 @@
 .wf-msg.tool .caret { display: inline-block; font-size: 9px; color: var(--ink-3); }
 
 /* ============ Doc ============ */
-.wf-doc {
+/* .doc-typography 是只读正文的共享排版作用域；.wf-doc 继续承载编辑器 chrome。 */
+:is(.wf-doc, .doc-typography) {
   font-size: 14.5px;
   line-height: 1.85;
   color: var(--ink-1);
   font-family: var(--font-zh-serif);
 }
-.wf-doc h1 {
+:is(.wf-doc, .doc-typography) h1 {
   font-family: var(--font-zh-serif);
   font-size: 26px;
   font-weight: 600;
   margin: 16px 0 10px;
   letter-spacing: 0.012em;
 }
-.wf-doc h2 {
+:is(.wf-doc, .doc-typography) h2 {
   font-family: var(--font-zh-serif);
   font-size: 20px;
   font-weight: 600;
@@ -201,29 +202,29 @@
 }
 /* H3-H6 与 H1/H2 一样继承 .wf-doc 的 --ink-1 深色;曾用 --ink-2/--ink-3
    逐级变浅做层级,但用户要求所有标题一律深色对齐 H1(靠字号/字重区分层级即可) */
-.wf-doc h3 {
+:is(.wf-doc, .doc-typography) h3 {
   font-size: 17px;
   font-weight: 600;
   margin: 14px 0 4px;
 }
-.wf-doc h4 {
+:is(.wf-doc, .doc-typography) h4 {
   font-size: 15.5px;
   font-weight: 600;
   margin: 12px 0 4px;
 }
-.wf-doc h5 {
+:is(.wf-doc, .doc-typography) h5 {
   font-size: 14.8px;
   font-weight: 600;
   margin: 10px 0 4px;
 }
-.wf-doc h6 {
+:is(.wf-doc, .doc-typography) h6 {
   font-size: 14.5px;
   font-weight: 600;
   margin: 10px 0 4px;
   letter-spacing: 0.02em;
 }
-.wf-doc p { margin: 8px 0; }
-.wf-doc table {
+:is(.wf-doc, .doc-typography) p { margin: 8px 0; }
+:is(.wf-doc, .doc-typography) table {
   border-collapse: collapse;
   font-size: 12.5px;
   margin: 10px 0;
@@ -231,25 +232,25 @@
   border-radius: 0;
   overflow: hidden;
 }
-.wf-doc th,
-.wf-doc td {
+:is(.wf-doc, .doc-typography) th,
+:is(.wf-doc, .doc-typography) td {
   border-bottom: 1px solid var(--line-1);
   border-right: 1px solid var(--line-1);
   padding: 7px 12px;
   text-align: left;
 }
-.wf-doc th {
+:is(.wf-doc, .doc-typography) th {
   background: var(--bg-subtle);
   font-weight: 600;
   color: var(--ink-2);
   font-size: 11.5px;
   letter-spacing: 0.02em;
 }
-.wf-doc th:last-child,
-.wf-doc td:last-child {
+:is(.wf-doc, .doc-typography) th:last-child,
+:is(.wf-doc, .doc-typography) td:last-child {
   border-right: none;
 }
-.wf-doc tr:last-child td {
+:is(.wf-doc, .doc-typography) tr:last-child td {
   border-bottom: none;
 }
 

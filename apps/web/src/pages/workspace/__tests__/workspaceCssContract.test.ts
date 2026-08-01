@@ -299,8 +299,8 @@ describe("workspaceCssContract", () => {
 
     expect(workspaceCss).not.toContain(":has(> table > tbody > tr > td:first-child)");
     expect(workspaceCss).toContain(".pm-table-scroll > table{overflow:visible}");
-    expect(workspaceCss).toMatch(/\.wf-doc table\{\s*border-collapse:separate;border-spacing:0/);
-    expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:700/);
+    expect(workspaceCss).toMatch(/:is\(\.wf-doc,\.doc-typography\) table\{\s*border-collapse:separate;border-spacing:0/);
+    expect(workspaceCss).toMatch(/:is\(\.wf-doc,\.doc-typography\) th\{\s*background:var\(--bg-subtle\);font-weight:700/);
     expect(workspaceCss).toMatch(/\[data-sticky-col\]\{\s*position:sticky;left:0;z-index:4;/);
     expect(workspaceCss).toMatch(/\[data-sticky-col\]:not\(\[data-bg-color\]\)\{\s*background:var\(--bg-canvas\)/);
     expect(workspaceCss).toMatch(/\.table-header-overlay-content > \.table-header-overlay__table\{[\s\S]*border-collapse:separate;border-spacing:0/);
@@ -342,20 +342,21 @@ describe("workspaceCssContract", () => {
 
     expect(workspaceCss).toContain("#view-workspace .dt-group.flip-up .dt-menu");
     expect(workspaceCss).toContain("#view-workspace .block-handle-menu.flip-up");
-    expect(workspaceCss).toContain('#view-workspace .wf-doc mark[data-color="yellow"]{background:#fff3a3}');
-    expect(workspaceCss).toContain("#view-workspace .wf-doc .tableWrapper{overflow-x:auto;max-width:100%}");
+    expect(workspaceCss).toContain('#view-workspace :is(.wf-doc,.doc-typography) mark[data-color="yellow"]{background:#fff3a3}');
+    expect(workspaceCss).toContain("#view-workspace :is(.wf-doc,.doc-typography) .tableWrapper{overflow-x:auto;max-width:100%}");
     expect(workspaceCss).toContain("#view-workspace .wf-doc .code-block-node{\n    position:relative;margin:14px 0;\n  }");
-    expect(workspaceCss).toContain("#view-workspace .wf-doc pre .hljs-keyword");
+    expect(workspaceCss).toContain("#view-workspace :is(.wf-doc,.doc-typography) pre .hljs-keyword");
     expect(workspaceCss).toContain("border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;");
     expect(workspaceCss).not.toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
-    expect(componentCss).toMatch(/\.wf-doc h3\s*\{[^}]*font-size:\s*17px/s);
-    expect(componentCss).toMatch(/\.wf-doc h4\s*\{[^}]*font-size:\s*15\.5px/s);
-    expect(componentCss).toMatch(/\.wf-doc h5\s*\{[^}]*font-size:\s*14\.8px/s);
-    expect(componentCss).toMatch(/\.wf-doc h6\s*\{[^}]*font-size:\s*14\.5px/s);
+    expect(componentCss).toMatch(/:is\(\.wf-doc, \.doc-typography\) h3\s*\{[^}]*font-size:\s*17px/s);
+    expect(componentCss).toMatch(/:is\(\.wf-doc, \.doc-typography\) h4\s*\{[^}]*font-size:\s*15\.5px/s);
+    expect(componentCss).toMatch(/:is\(\.wf-doc, \.doc-typography\) h5\s*\{[^}]*font-size:\s*14\.8px/s);
+    expect(componentCss).toMatch(/:is\(\.wf-doc, \.doc-typography\) h6\s*\{[^}]*font-size:\s*14\.5px/s);
 
-    const body = cssFontSize(componentCss, ".wf-doc");
+    const typographySelector = ":is(.wf-doc, .doc-typography)";
+    const body = cssFontSize(componentCss, typographySelector);
     const headingSizes = [1, 2, 3, 4, 5, 6].map((level) =>
-      cssFontSize(componentCss, `.wf-doc h${level}`),
+      cssFontSize(componentCss, `${typographySelector} h${level}`),
     );
     expect(headingSizes).toEqual([26, 20, 17, 15.5, 14.8, 14.5]);
     for (let i = 1; i < headingSizes.length; i++) {

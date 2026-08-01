@@ -73,6 +73,7 @@ export function WorkspaceChatPane({
       >
         <ChatMessageList
           messages={state.messages}
+          turnActive={agentActive}
           streamActive={state.streamActive}
           showLoading={shouldShowPreTokenLoading(
             state.messages,

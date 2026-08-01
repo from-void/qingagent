@@ -21,6 +21,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 表单控件的 UA 默认字体不会可靠继承 body；这是 portal、弹窗与菜单共用的字体防线，勿删。
+ * 局部等宽/装饰字体仍可由更具体的组件规则覆盖，并会连同完整 font 属性正常继承。 */
+button,
+input,
+select,
+textarea,
+optgroup {
+  font: inherit;
+}
+
 .font-mono {
   font-family: var(--font-mono);
 }

@@ -357,7 +357,13 @@ export function RightPane({
     viewingHistory,
     viewingSnapshotDoc,
     doc,
-    generationDraftDoc,
+    // generationDraft 只是生成中的瞬态投影，不是编辑权限来源。终态偶发漏清时，
+    // dimensions 已恢复 editable 就必须以 canonical doc 自愈，不能继续展示半成品，
+    // 更不能因为一个残留对象把 TipTap 降级成静态快照。
+    generationDraftDoc:
+      dimensions.editor === "locked" && dimensions.overlay === null
+        ? generationDraftDoc
+        : null,
     showPatches,
     overlay: dimensions.overlay,
   });
@@ -365,7 +371,7 @@ export function RightPane({
   const surfaceDoc = showPatches && dimensions.content.kind === "pendingReview" && doc
     ? doc
     : renderDoc;
-  const baseEditable = canEditDocument(dimensions, viewingVersion) && !generationDraftDoc;
+  const baseEditable = canEditDocument(dimensions, viewingVersion);
   const presentationMatchesRenderDoc = presentationRun?.docVersion === surfaceDoc.version;
   // inline askUser(中途反问)期间 overlay 锁住 → baseEditable=false → 原本会落到静态 .wf-doc 渲染,
   // 而 editing 态下静态文档分支会被隐藏(display:none)→ 右侧整片黑("文档消失")。

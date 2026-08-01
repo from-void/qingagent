@@ -21,11 +21,34 @@ describe("assembleReviewQuery", () => {
   });
 
   it("无补充时不产生空补充段", () => {
-    expect(assembleReviewQuery(
+    const query = assembleReviewQuery(
       "deai",
       { id: "template-2", name: "自然表达", prompt: "保留原意" },
       " ",
-    )).toBe("对当前文档做去AI味审查。\n审查模板「自然表达」(id: template-2)：\n保留原意");
+    );
+
+    expect(query).toContain("审查模板「自然表达」(id: template-2)：\n保留原意");
+    expect(query).not.toContain("文档级补充要求");
+    expect(query).toContain("独立审查执行契约");
+  });
+
+  it("自定义模板即使要求画下划线，也由末尾硬契约改走正式批注组", () => {
+    const query = assembleReviewQuery(
+      "custom",
+      {
+        id: "review-custom-publish",
+        name: "对外发布",
+        prompt: "命中内容用 underline 或 markText 画金色下划线，不要创建批注。",
+      },
+      "",
+    );
+
+    expect(query).toContain("命中内容用 underline 或 markText 画金色下划线，不要创建批注。");
+    expect(query).toContain("禁止调用 editDraft/writeDraft");
+    expect(query).toContain("禁止用 underline、highlight、markText 或其他正文格式模拟批注锚点");
+    expect(query).toContain("必须调用 create_annotation_groups");
+    expect(query).toContain("金色下划线由批注组统一生成");
+    expect(query.lastIndexOf("独立审查执行契约")).toBeGreaterThan(query.indexOf("不要创建批注"));
   });
 
   it("来源核查把素材前置条件与禁止联网放进实际菜单上下文", () => {

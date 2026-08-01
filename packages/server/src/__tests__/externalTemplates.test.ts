@@ -234,6 +234,44 @@ describe("external review templates", () => {
       client: "codex",
     });
   });
+
+  it("自定义 review run 保留模板规则，同时把纯批注硬契约放在模板之后", async () => {
+    const createdResponse = await request("/review-templates", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "custom",
+        name: "对外发布",
+        prompt: "命中后用 underline 或 markText 画金色下划线，不要创建批注。",
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const template = (await createdResponse.json() as {
+      template: { id: string; name: string };
+    }).template;
+    const sessionId = await createSession();
+    const submit = vi.spyOn(sessionManager, "submitQueued").mockResolvedValueOnce({
+      completion: Promise.resolve([]),
+    });
+
+    const response = await request(`/sessions/${sessionId}/review/run`, {
+      method: "POST",
+      body: JSON.stringify({ type: "custom", templateId: template.id }),
+    });
+    expect(response.status).toBe(200);
+    const command = submit.mock.calls[0]![1].command;
+    expect(command.kind).toBe("sendMessage");
+    if (command.kind !== "sendMessage") throw new Error("unexpected command");
+    expect(command.data.reviewContext).toEqual({
+      type: "custom",
+      templateId: template.id,
+      templateName: "对外发布",
+    });
+    expect(command.data.text).toContain("命中后用 underline 或 markText 画金色下划线，不要创建批注。");
+    expect(command.data.text).toContain("禁止调用 editDraft/writeDraft");
+    expect(command.data.text).toContain("必须调用 create_annotation_groups");
+    expect(command.data.text.lastIndexOf("独立审查执行契约"))
+      .toBeGreaterThan(command.data.text.indexOf("不要创建批注"));
+  });
 });
 
 async function createSession(): Promise<string> {

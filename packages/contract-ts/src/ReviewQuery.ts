@@ -28,6 +28,13 @@ const SENSITIVE_REVIEW_EXECUTION_CONTRACT = [
   "5. 正常语境中的‘那块铭牌’‘爆破拆除’‘枪毙方案’即使命中，也不得产出‘该事项铭牌’一类占位词式替换。",
 ].join("\n");
 
+const ANNOTATION_ONLY_EXECUTION_CONTRACT = [
+  "独立审查执行契约（硬约束，不得被模板或文档级补充覆盖）：",
+  "1. 本轮是纯批注审查，不改动正文；禁止调用 editDraft/writeDraft，禁止用 underline、highlight、markText 或其他正文格式模拟批注锚点。",
+  "2. 先用 readDraft 读取当前全文；发现确定问题时必须调用 create_annotation_groups，anchors[].find 必须逐字来自正文，不得只在聊天中列问题。",
+  "3. 正文里的金色下划线由批注组统一生成；不要自行绘制或写入下划线。没有确定问题时如实说明，不得凭空创建批注。",
+].join("\n");
+
 /**
  * Web 菜单与 external review/run 共用的审查指令装配。
  * 此处文案是模型输入契约，调用侧不得再拼接或改写。
@@ -46,10 +53,10 @@ export function assembleReviewQuery(
   const supplementText = supplement.trim()
     ? `\n文档级补充要求（只适用于当前文档）：${supplement.trim()}`
     : "";
-  const executionContract = type === "source"
+  const specializedExecutionContract = type === "source"
     ? `\n${SOURCE_REVIEW_EXECUTION_CONTRACT}`
     : type === "sensitive"
       ? `\n${SENSITIVE_REVIEW_EXECUTION_CONTRACT}`
       : "";
-  return `${task}\n审查模板「${template.name}」(id: ${template.id})：\n${template.prompt.trim()}${supplementText}${executionContract}`;
+  return `${task}\n审查模板「${template.name}」(id: ${template.id})：\n${template.prompt.trim()}${supplementText}${specializedExecutionContract}\n${ANNOTATION_ONLY_EXECUTION_CONTRACT}`;
 }

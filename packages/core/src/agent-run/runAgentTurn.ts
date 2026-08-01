@@ -775,7 +775,10 @@ export async function* runAgentTurn(
       summarizeMaterial: sessionTools.summarizeMaterial,
     };
     sessionScopedTools.readDraft = sessionTools.readDraftAiIr;
-    sessionScopedTools.editDraft = sessionTools.editDraft;
+    // 菜单与 external review/run 都会携带 reviewContext，语义固定为纯批注。
+    // 不把写稿工具暴露给这一轮，避免模型把“标记命中”实现成普通 underline
+    // mark，造成视觉上有下划线但没有 annotation group/hover 卡。
+    if (!reviewContext) sessionScopedTools.editDraft = sessionTools.editDraft;
     sessionScopedTools.create_annotation_groups = sessionTools.createAnnotationGroups;
     sessionScopedTools.readDiff = sessionTools.readDiff;
     if (sessionTools.executeCommand) {
@@ -801,7 +804,9 @@ export async function* runAgentTurn(
     }
     if (sessionTools.readDocument) sessionScopedTools.readDocument = sessionTools.readDocument;
     if (sessionTools.searchDocuments) sessionScopedTools.searchDocuments = sessionTools.searchDocuments;
-    if (sessionTools.writeDraft) sessionScopedTools.writeDraft = sessionTools.writeDraft;
+    if (!reviewContext && sessionTools.writeDraft) {
+      sessionScopedTools.writeDraft = sessionTools.writeDraft;
+    }
     if (sessionTools.updateWorkingMemory) {
       sessionScopedTools.updateWorkingMemory = sessionTools.updateWorkingMemory;
     }

@@ -298,6 +298,78 @@ describe("AnnotationCarousel hover card", () => {
     expect(editorHost!.querySelector('[data-annotation-group="g2"]')).toBeNull();
   });
 
+  it("自定义与预置审查共用 active 锚点，hover 均可开卡且自定义意见可回填", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const reviewGroups: AnnotationGroup[] = [
+      {
+        id: "custom-publish",
+        summary: "对外发布风险",
+        note: "内部项目代号不宜直接公开。",
+        origin: "自定义审查:对外发布",
+        suggestion: "改为某内部项目",
+        status: "reviewing",
+        anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "custom-hash" }],
+      },
+      {
+        ...groups[1]!,
+        id: "preset-consistency",
+        anchors: [{ blockId: "p", pmFrom: 3, pmTo: 5, quote: "乙组", textHash: "preset-hash" }],
+      },
+    ];
+
+    function Harness() {
+      const [input, setInput] = useState("");
+      useEffect(() => installAnnotationGroupDecorations(editor!, reviewGroups), []);
+      return <>
+        <div data-testid="chat-input">{input}</div>
+        <AnnotationCarousel
+          groups={reviewGroups}
+          editorDom={editor!.view.dom}
+          onAccept={(group, suggestion) => {
+            setInput(buildAnnotationInstruction(group, suggestion));
+            return true;
+          }}
+          onIgnore={() => undefined}
+        />
+      </>;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const customAnchor = editorHost!.querySelector<HTMLElement>(
+      '.annotation-anchor-active[data-annotation-group="custom-publish"]',
+    );
+    const presetAnchor = editorHost!.querySelector<HTMLElement>(
+      '.annotation-anchor-active[data-annotation-group="preset-consistency"]',
+    );
+    expect(customAnchor).not.toBeNull();
+    expect(presetAnchor).not.toBeNull();
+
+    await act(async () => {
+      customAnchor!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId)
+      .toBe("custom-publish");
+    expect(host!.textContent).toContain("对外发布风险");
+    expect(host!.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value)
+      .toBe("改为某内部项目");
+    await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
+    expect(host!.querySelector('[data-testid="chat-input"]')?.textContent)
+      .toContain("按批注修改：「甲组」——改为某内部项目");
+
+    await act(async () => {
+      presetAnchor!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId)
+      .toBe("preset-consistency");
+    expect(host!.textContent).toContain("表述重复");
+  });
+
   it("回填文案以简短来源标记开头，原句按 30 字截断", () => {
     const longQuote = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一";
     expect(buildAnnotationInstruction({ ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: longQuote }] }))

@@ -148,4 +148,40 @@ describe("runAgentTurn skill chip context injection", () => {
       data: { body: "{{chip:0}}" },
     });
   }, 15_000);
+
+  it("结构化自定义审查回合只暴露正式批注入口，不暴露正文写稿工具", async () => {
+    const { runAgentTurn } = await import("../runAgentTurn.js");
+    const state = createSession("sess-custom-review-tools");
+
+    await collectFrames(runAgentTurn(
+      state,
+      "对当前文档做自定义审查。",
+      [],
+      [],
+      [],
+      null,
+      "m-user-custom-review",
+      undefined,
+      {
+        type: "custom",
+        templateId: "review-custom-publish",
+        templateName: "对外发布",
+      },
+    ));
+
+    expect(agentStreamCalls).toHaveLength(1);
+    const options = agentStreamCalls[0]!.options as {
+      requestContext: RequestContext;
+      toolsets: { sessionScoped: Record<string, unknown> };
+    };
+    expect(options.toolsets.sessionScoped.readDraft).toBeDefined();
+    expect(options.toolsets.sessionScoped.create_annotation_groups).toBeDefined();
+    expect(options.toolsets.sessionScoped.editDraft).toBeUndefined();
+    expect(options.toolsets.sessionScoped.writeDraft).toBeUndefined();
+    expect(options.requestContext.get("reviewContext")).toEqual({
+      type: "custom",
+      templateId: "review-custom-publish",
+      templateName: "对外发布",
+    });
+  }, 15_000);
 });

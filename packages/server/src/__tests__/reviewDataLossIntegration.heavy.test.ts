@@ -228,4 +228,113 @@ describe("审阅提交数据丢失 P0 真实命令链", () => {
     const stored = await core.documentRepo.load(session.docId);
     expect(tableTexts(stored?.pmDoc ?? null)).toEqual(["用户手改保留", "AI 补丁", "c1"]);
   });
+
+  it("自定义 review/run 只能创建正式批注组，并沿权威帧落到精确锚点", async () => {
+    agentStream.mockReset();
+    const startFrames = await collectFrames(bridge.handleCommand({
+      kind: "startSession",
+      data: { mode: { kind: "new", data: { template: null } } },
+    }));
+    const meta = startFrames.find((frame) => frame.kind === "sessionMeta");
+    if (meta?.kind !== "sessionMeta") throw new Error("missing sessionMeta");
+    const sessionId = meta.data.sessionId;
+    const originalDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [paragraph("publish-p", "本文包含内部项目代号青鸟，暂不宜对外发布。")],
+    };
+    await updateDoc(sessionId, 0, originalDoc, `custom-review-${randomUUID()}`);
+
+    const annotationArgs = {
+      groups: [{
+        summary: "内部代号泄露",
+        note: "模板要求对外发布前移除内部项目代号。",
+        origin: "模型自行填写的错误来源",
+        suggestion: "本文包含某内部项目，暂不宜对外发布。",
+        anchors: [{ find: "内部项目代号青鸟" }],
+      }],
+    };
+    agentStream.mockImplementationOnce(async (_messages: unknown[], options: Record<string, unknown>) => {
+      const toolsets = options.toolsets as {
+        sessionScoped: Record<string, {
+          execute?: (input: typeof annotationArgs, context: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        }>;
+      };
+      expect(toolsets.sessionScoped.editDraft).toBeUndefined();
+      expect(toolsets.sessionScoped.writeDraft).toBeUndefined();
+      const annotationTool = toolsets.sessionScoped.create_annotation_groups;
+      expect(annotationTool?.execute).toBeTypeOf("function");
+      const requestContext = options.requestContext;
+      return {
+        fullStream: (async function* () {
+          yield {
+            type: "tool-call",
+            payload: {
+              toolName: "create_annotation_groups",
+              toolCallId: "custom-review-annotation",
+              args: annotationArgs,
+            },
+          };
+          const result = await annotationTool!.execute!(annotationArgs, { requestContext });
+          yield {
+            type: "tool-result",
+            payload: {
+              toolName: "create_annotation_groups",
+              toolCallId: "custom-review-annotation",
+              args: annotationArgs,
+              result,
+            },
+          };
+          yield {
+            type: "text-delta",
+            payload: { text: "审查完成，已创建 1 处批注，未改动正文。" },
+          };
+        })(),
+        toolCalls: Promise.resolve([]),
+      };
+    });
+
+    const frames = await collectFrames(bridge.handleCommand({
+      kind: "sendMessage",
+      data: {
+        sessionId,
+        text: "对当前文档做自定义审查。",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+        reviewContext: {
+          type: "custom",
+          templateId: "review-custom-publish",
+          templateName: "对外发布",
+        },
+      },
+    }));
+
+    const session = bridge.getSession(sessionId);
+    if (!session) throw new Error("missing session");
+    expect(agentStream).toHaveBeenCalledTimes(1);
+    expect(session.doc).toEqual(originalDoc);
+    expect(session.suggestions.size).toBe(0);
+    expect(session.annotationGroups).toHaveLength(1);
+    expect(session.annotationGroups[0]).toMatchObject({
+      summary: "内部代号泄露",
+      origin: "自定义审查:对外发布",
+      status: "reviewing",
+      anchors: [{
+        blockId: "publish-p",
+        quote: "内部项目代号青鸟",
+        pmFrom: expect.any(Number),
+        pmTo: expect.any(Number),
+      }],
+    });
+    expect(frames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: session.annotationGroups,
+        replacedOrigins: ["自定义审查:对外发布"],
+      },
+    });
+    expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
+  });
 });

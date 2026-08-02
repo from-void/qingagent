@@ -91,7 +91,7 @@ describe("PatchNav", () => {
     ).toBe("true");
   });
 
-  it("放弃全部仍保留确认二次点击", async () => {
+  it("放弃全部以内联确认态替换底栏并保留二次点击", async () => {
     const onRejectAll = vi.fn();
     await renderPatchNav(baseProps({ onRejectAll }));
 
@@ -99,11 +99,37 @@ describe("PatchNav", () => {
       buttonByText("放弃全部").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(host?.textContent).toContain("确认放弃全部");
+    expect(host?.querySelector(".patch-nav")?.classList.contains("is-confirming")).toBe(true);
+    expect(host?.querySelector(".pn-confirm-inline")).not.toBeNull();
+    expect(host?.querySelector(".pn-confirm")).toBeNull();
+    expect(host?.textContent).not.toContain("提交 ↵");
+    expect(document.activeElement).toBe(buttonByText("取消"));
 
     act(() => {
       buttonByText("确认放弃全部").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onRejectAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("确认态按 Escape 取消并将焦点还给放弃入口", async () => {
+    const onRejectAll = vi.fn();
+    await renderPatchNav(baseProps({ onRejectAll }));
+
+    act(() => {
+      buttonByText("放弃全部").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(document.activeElement).toBe(buttonByText("取消"));
+
+    act(() => {
+      buttonByText("取消").dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+      }));
+    });
+
+    expect(onRejectAll).not.toHaveBeenCalled();
+    expect(host?.textContent).not.toContain("确认放弃全部");
+    expect(document.activeElement).toBe(buttonByText("放弃全部"));
   });
 
   it("提交中禁用提交与放弃入口", async () => {

@@ -671,32 +671,6 @@
   font-family: var(--font-zh-serif);
   letter-spacing: 0.02em;
 }
-/* 条挪到底部后,「撤销全部」确认框要改成向上弹(原 top:calc(100%+6px) 会掉出屏幕)。
-   配色也要适配深墨皮肤:原继承浅色(白底+红钮)在深底上突兀,改深底毛玻璃 + 金钮深字。 */
-#view-workspace .patch-nav .pn-confirm {
-  top: auto;
-  bottom: calc(100% + 8px);
-  right: 0;
-  background: #fffdf8 !important;
-  border-color: rgba(120, 90, 50, 0.22) !important;
-  color: var(--ink-1) !important;
-  box-shadow: 0 16px 46px rgba(60, 45, 25, 0.2) !important;
-}
-#view-workspace .patch-nav .pn-confirm > span {
-  color: var(--ink-2) !important;
-}
-/* 「确认撤销全部」:去掉刺眼红,改金色实心深字(与提交同金调,统一视觉) */
-#view-workspace .patch-nav .pn-confirm button:first-of-type {
-  background: #c8a96a !important;
-  color: var(--ink-surface) !important;
-  border-color: #c8a96a !important;
-}
-/* 「取消」:描金幽灵钮 */
-#view-workspace .patch-nav .pn-confirm button:last-of-type {
-  background: transparent !important;
-  color: #cdbf9f !important;
-  border-color: rgba(200, 169, 106, 0.28) !important;
-}
 /* 审批态:审批条 fixed 脱流后给右栏留底部安全区,避免文档尾/改动/hover 弹层被浮条遮住,
    并让 scrollIntoView(block:center) 到末尾时有补偿空间 */
 body[data-content="pendingReview"] #view-workspace .ws-right {
@@ -1197,25 +1171,36 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   opacity: 0.4 !important;
   cursor: not-allowed !important;
 }
-/* 放弃全部确认气泡:base 走浅色 --bg-canvas,这里翻成暗玻璃面板 */
-#view-workspace .patch-nav .pn-confirm,
-#view-workspace .pn-confirm {
-  background: var(--fx-workspace-input-glass-bg) !important;
-  backdrop-filter: var(--fx-workspace-backdrop-filter);
-  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
-  border-color: rgba(184, 169, 140, 0.28) !important;
-  color: rgba(236, 227, 208, 0.64) !important;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4) !important;
+/* 放弃全部确认态直接替换底栏内容。使用单层实底暖纸，避免浮层与玻璃底栏叠色。 */
+#view-workspace .patch-nav.is-confirming {
+  background: var(--bg-paper-deep) !important;
+  border-color: rgba(120, 90, 50, 0.28) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 16px 46px rgba(60, 45, 25, 0.18);
 }
-#view-workspace .pn-confirm button {
-  background: transparent !important;
-  border: 1px solid rgba(184, 169, 140, 0.28) !important;
-  color: #cdbf9f !important;
-}
-#view-workspace .pn-confirm button:first-of-type {
-  background: #b59a63 !important;
-  border-color: #b59a63 !important;
+#view-workspace .patch-nav .pn-confirm-message {
   color: var(--ink-surface) !important;
+}
+#view-workspace .patch-nav .pn-confirm-action {
+  background: var(--mark) !important;
+  border-color: var(--mark) !important;
+  color: var(--ink-surface) !important;
+  font-weight: 600;
+}
+#view-workspace .patch-nav .pn-confirm-action:hover {
+  background: #c9ad75 !important;
+  border-color: #c9ad75 !important;
+}
+#view-workspace .patch-nav .pn-confirm-cancel {
+  background: transparent !important;
+  border-color: rgba(120, 90, 50, 0.28) !important;
+  color: var(--ink-surface) !important;
+}
+#view-workspace .patch-nav .pn-confirm-cancel:hover,
+#view-workspace .patch-nav .pn-confirm-cancel:focus-visible {
+  background: var(--bg-hover) !important;
+  border-color: rgba(120, 90, 50, 0.42) !important;
 }
 /* 整篇审切换器(新版‖旧版):thumb 用 --ink-1(暗皮翻成浅奶白),active 文字用深字 */
 #view-workspace .patch-nav .wdr-toggle {

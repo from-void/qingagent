@@ -66,6 +66,17 @@ export type {
   PrepareImageEditSourceResult,
   SupportedImageEditSourceMimeType,
 } from "./prepareImageEditSource.js";
+export {
+  editSvgWithCodexFallbackTool,
+  runSvgCodexEditWithFallback,
+} from "./editSvgWithCodexFallback.js";
+export type {
+  SvgCodexEditSteps,
+  SvgCodexFallbackStage,
+  SvgEditFailureResult,
+  SvgEditResult,
+  SvgEditSuccessResult,
+} from "./editSvgWithCodexFallback.js";
 export { readImageTool } from "./readImage.js";
 export { runJsTool, runJsInWorker } from "./runJs.js";
 export type { RunJsInput, RunJsResult } from "./runJs.js";

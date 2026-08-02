@@ -6,7 +6,7 @@ icon: image
 description: 统一接收图片生成与修改意图，转诊结构化图表，检测桌面端本机 Codex，并按场景、可用能力和用户确认路由到 SVG 或 Codex 图片子技能。
 user-invocable: true
 placeholder: 描述要生成或修改的画面
-tools: [generateSvg, prepareImageEditSource, importGeneratedImage]
+tools: [generateSvg, prepareImageEditSource, editSvgWithCodexFallback, importGeneratedImage]
 metadata:
   category: capability
 ---
@@ -31,7 +31,7 @@ metadata:
    - 先结合 system prompt 判断运行形态。桌面环境按下述命令轻量探测本机 Codex；非桌面环境不探测，直接视为没有本机 Codex。
    - POSIX：`command -v codex`；Windows：`where codex`。使用 `mastra_workspace_execute_command`，`timeout` 设为 5 秒。命令失败、超时、无输出或找不到可执行文件，都视为不可用；不重试，不展示内部错误。
    - 未检测到 Codex 时不反问、不拒绝，立即用 `skill_read` 读取 `svg/SKILL.md`，自动回落到原生 SVG 定点编辑。
-   - 检测到 Codex 后，按第 3 步取得用户确认，再读取 `codex-image/SKILL.md` 执行。问卷恢复后若 Codex 启动、运行、产物核验或导入任一环节不可用，必须自动回落到原生 SVG 定点编辑；不得把换路责任交给用户，也不得整图重生。
+   - 检测到 Codex 后，按第 3 步取得用户确认，再读取 `codex-image/SKILL.md` 执行。问卷恢复后统一调用 `editSvgWithCodexFallback`：指令写入、Codex 启动/运行、产物核验或导入任一环节失败最多重试一次，仍失败立即自动执行原生 SVG 定点编辑；不得把换路责任交给用户，也不得整图重生。
 3. 检测到 Codex 后，必须确认用户是否同意把这次修改交给本机 Codex：
    - 用户已在本轮或可见上下文明确说“用本机 Codex 改”“就用 Codex P”或已经回答过这道确认，视为已经确认，不得重复询问。
    - 否则单独调用一次 `askUserQuestion`，不得与其他工具并发。只问一道单选题，参数形状照此生成：

@@ -139,6 +139,7 @@ describe("图表技能静态提示词契约", () => {
     expect(codexImage).toContain("Markdown 图片地址回给用户");
     expect(codexImage).toContain("readDiff");
     expect(codexImage).toContain("禁止复制整段对话");
+    expect(codexImage).toContain("从零生成或修改位图");
   });
 
   it("SVG 定点重绘在 Codex 不可用时自动回落原生源码编辑，且禁止整图重生", () => {
@@ -167,6 +168,11 @@ describe("图表技能静态提示词契约", () => {
     expect(codexImage).toContain("editablePath");
     expect(codexImage).toContain("只修改用户点名的图元");
     expect(codexImage).toContain("自动回落到原生 SVG 定点编辑");
+    expect(codexImage).toContain("editSvgWithCodexFallback");
+    expect(codexImage).toContain("Windows 盘符");
+    expect(codexImage).toContain("指令写入、Codex 运行/核验或导入任一步骤失败都只重试一次");
+    expect(codexImage).toContain("不得在工具外再次重试 Codex 或写指令文件");
+    expect(codexImage).toContain("不让会话停在“思考中”");
     expect(codexImage).not.toContain("修改现有图片失败时不得用 SVG 重画冒充成功");
   });
 });

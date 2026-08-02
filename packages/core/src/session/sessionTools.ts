@@ -50,6 +50,7 @@ import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
 import { importGeneratedImageTool } from "../tools/importGeneratedImage.js";
 import { prepareImageEditSourceTool } from "../tools/prepareImageEditSource.js";
+import { editSvgWithCodexFallbackTool } from "../tools/editSvgWithCodexFallback.js";
 import { readImageTool } from "../tools/readImage.js";
 import { runJsTool } from "../tools/runJs.js";
 import { showQrTool } from "../tools/showQr.js";
@@ -213,6 +214,7 @@ const CAPABILITY_TOOLS = {
   "image-gen": {
     generateSvg: generateSvgTool,
     prepareImageEditSource: prepareImageEditSourceTool,
+    editSvgWithCodexFallback: editSvgWithCodexFallbackTool,
     importGeneratedImage: importGeneratedImageTool,
   },
   "image-reading": { readImage: readImageTool },
@@ -250,7 +252,12 @@ const MATERIAL_TOOL_SEARCH_TOOLS = {
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "web-search": ["webSearch"],
-  "image-gen": ["generateSvg", "prepareImageEditSource", "importGeneratedImage"],
+  "image-gen": [
+    "generateSvg",
+    "prepareImageEditSource",
+    "editSvgWithCodexFallback",
+    "importGeneratedImage",
+  ],
   "image-reading": ["readImage"],
   "materials": ["parseFile"],
   "doc-calc": ["run_js"],
@@ -483,6 +490,15 @@ export function missingGenericToolResultFields(
       requireString("path");
       requireString("mimeType");
       requireNumber("bytes");
+      break;
+    case "editSvgWithCodexFallback":
+      requireBoolean("ok");
+      requireString("via");
+      requireString("message");
+      if (result.ok === true) {
+        requireString("imageId");
+        requireString("src");
+      }
       break;
     default:
       break;

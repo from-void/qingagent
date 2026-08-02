@@ -48,6 +48,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(bridge.alwaysTools).sort()).toEqual(["show_qr", "updateTodos"]);
     expect(Object.keys(bridge.searchableTools).sort()).toEqual(expect.arrayContaining([
       "fetchArticle",
+      "editSvgWithCodexFallback",
       "generateSvg",
       "importGeneratedImage",
       "parseFile",
@@ -59,6 +60,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(bridge.searchableTools)).not.toContain("show_qr");
     expect(Object.keys(bridge.searchableTools)).not.toContain("updateTodos");
     expect(bridge.preloadToolNames.sort()).toEqual([
+      "editSvgWithCodexFallback",
       "generateSvg",
       "importGeneratedImage",
       "parseFile",
@@ -124,6 +126,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(tools)).not.toContain("fetchArticle");
     expect(Object.keys(tools)).toContain("generateSvg");
     expect(Object.keys(tools)).toContain("prepareImageEditSource");
+    expect(Object.keys(tools)).toContain("editSvgWithCodexFallback");
     expect(Object.keys(tools)).toContain("importGeneratedImage");
     expect(Object.keys(tools)).toContain("run_js");
 
@@ -317,10 +320,20 @@ describe("ToolSearch bridge", () => {
       requestContext,
       messages: [],
       toolNames: bridge.preloadToolNames,
-    })).resolves.toEqual(["generateSvg", "prepareImageEditSource", "importGeneratedImage"]);
+    })).resolves.toEqual([
+      "generateSvg",
+      "prepareImageEditSource",
+      "editSvgWithCodexFallback",
+      "importGeneratedImage",
+    ]);
 
     const loaded = await processor.getLoadedToolsForRequestContext({ requestContext });
-    expect(Object.keys(loaded)).toEqual(["generateSvg", "prepareImageEditSource", "importGeneratedImage"]);
+    expect(Object.keys(loaded)).toEqual([
+      "generateSvg",
+      "prepareImageEditSource",
+      "editSvgWithCodexFallback",
+      "importGeneratedImage",
+    ]);
   });
 
   it("ToolSearch preload 在 pro 档使用 pro router model", async () => {

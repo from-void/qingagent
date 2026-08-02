@@ -21,7 +21,8 @@ export type SupportedImageEditSourceMimeType =
   | "image/png"
   | "image/jpeg"
   | "image/webp"
-  | "image/gif";
+  | "image/gif"
+  | "image/svg+xml";
 
 export interface PrepareImageEditSourceInput {
   image: string;
@@ -29,8 +30,11 @@ export interface PrepareImageEditSourceInput {
 
 export interface PrepareImageEditSourceResult {
   path: string;
+  workspacePath: string;
   mimeType: SupportedImageEditSourceMimeType;
   bytes: number;
+  editablePath?: string;
+  editableWorkspacePath?: string;
 }
 
 export interface PrepareImageEditSourceOptions {
@@ -42,7 +46,7 @@ export interface PrepareImageEditSourceOptions {
 function sourceExtension(
   mimeType: string,
 ): {
-  extension: "png" | "jpg" | "webp" | "gif";
+  extension: "png" | "jpg" | "webp" | "gif" | "svg";
   mimeType: SupportedImageEditSourceMimeType;
 } {
   switch (mimeType) {
@@ -54,8 +58,10 @@ function sourceExtension(
       return { extension: "webp", mimeType };
     case "image/gif":
       return { extension: "gif", mimeType };
+    case "image/svg+xml":
+      return { extension: "svg", mimeType };
     default:
-      throw new Error("源图只支持 png、jpg、jpeg、webp 或 gif");
+      throw new Error("源图只支持 png、jpg、jpeg、webp、gif 或 svg");
   }
 }
 
@@ -78,7 +84,7 @@ function resolveMaterialImageReference(
 }
 
 /**
- * 把用户明确引用的源图安全复制进当前会话工作区，供本机 Codex 图生图读取。
+ * 把用户明确引用的源图安全复制进当前会话工作区，供本机 Codex 或原生 SVG 定点编辑读取。
  * 不接受任意宿主文件路径；图片引用仍统一经过 imageInput 的路径、大小、魔数与 SSRF 校验。
  */
 export async function prepareImageEditSourceFromReference(
@@ -89,30 +95,50 @@ export async function prepareImageEditSourceFromReference(
     input.image.trim(),
     options.materials,
   );
-  const resolved = await (options.resolveImage ?? resolveImageInput)(imageReference);
+  const resolved = await (
+    options.resolveImage ??
+    ((image: string) => resolveImageInput(image, undefined, { allowSvg: true }))
+  )(imageReference);
   const sourceType = sourceExtension(resolved.mimeType);
   await mkdir(options.workspaceRoot, { recursive: true });
+  const sourceId = randomUUID();
   const destination = join(
     options.workspaceRoot,
-    `codex-image-source-${randomUUID()}.${sourceType.extension}`,
+    `codex-image-source-${sourceId}.${sourceType.extension}`,
   );
+  const workspacePath = `/workspace/codex-image-source-${sourceId}.${sourceType.extension}`;
   await writeFile(destination, resolved.buffer, { flag: "wx" });
+  const editablePath =
+    sourceType.mimeType === "image/svg+xml"
+      ? join(options.workspaceRoot, `svg-edit-output-${sourceId}.svg`)
+      : undefined;
+  const editableWorkspacePath = editablePath
+    ? `/workspace/svg-edit-output-${sourceId}.svg`
+    : undefined;
+  if (editablePath) {
+    await writeFile(editablePath, resolved.buffer, { flag: "wx" });
+  }
   return {
     path: destination,
+    workspacePath,
     mimeType: sourceType.mimeType,
     bytes: resolved.buffer.length,
+    ...(editablePath ? { editablePath } : {}),
+    ...(editableWorkspacePath ? { editableWorkspacePath } : {}),
   };
 }
 
 export const prepareImageEditSourceTool = createTool({
   id: "prepareImageEditSource",
   description:
-    "【触发限制：仅供 image-gen/codex-image 的修改现有图片流程使用】" +
-    "仅当运行在桌面客户端、已检测到本机 Codex，且用户已经确认让本机 Codex 修改图片后才可调用。" +
+    "【触发限制：仅供 image-gen 修改现有图片流程使用】" +
+    "可用于确认源图格式并准备本机 Codex 修改，或在 Codex 不可用时准备原生 SVG 定点编辑。" +
     "输入必须是用户明确指定的源图引用：刚上传图片的 fileId、正文图片块的 src、图片素材的 materialId，" +
     "或该正文图片原有的 http(s)/data:image 引用；不得输入或探测任意宿主文件路径。" +
-    "工具会把通过大小、格式、路径和网络安全校验的源图复制到当前会话沙箱工作区，" +
-    "返回供 codex exec 读取的唯一绝对 path。本工具不会修改源图、生成图片或导入产物。",
+    "工具会把通过大小、格式、路径和网络安全校验的源图复制到当前会话沙箱工作区，支持 png/jpg/jpeg/webp/gif/svg；" +
+    "返回只读源图的绝对 path 与文件工具可读的 workspacePath；SVG 还返回初始内容逐字节相同的" +
+    " editablePath 与 editableWorkspacePath 供定点修改。" +
+    "本工具不会修改源图、生成图片或导入产物。",
   inputSchema: z.object({
     image: z.string().min(1).describe(
       "用户明确指定的源图引用：fileId、/api/v1/files/... src、图片 materialId、http(s) 图片 URL 或 data:image URL",
@@ -120,13 +146,13 @@ export const prepareImageEditSourceTool = createTool({
   }),
   outputSchema: z.object({
     path: z.string(),
-    mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    workspacePath: z.string(),
+    mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]),
     bytes: z.number().int().positive(),
+    editablePath: z.string().optional(),
+    editableWorkspacePath: z.string().optional(),
   }),
   execute: async (input, context) => {
-    if (process.env.QINGAGENT_RUNTIME !== "desktop") {
-      throw new Error("当前不是桌面环境，无法调用本机 Codex 修改图片");
-    }
     const sessionId = context?.requestContext?.get("sessionId");
     if (typeof sessionId !== "string" || sessionId.length === 0) {
       throw new Error("缺少当前会话，无法准备图片修改源图");

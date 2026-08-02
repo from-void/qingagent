@@ -117,13 +117,13 @@ describe("图表技能静态提示词契约", () => {
     expect(parent).toContain("调度本机 codex 生图");
     expect(parent).toContain("用户配置的自定义生图模型");
     expect(parent).not.toContain("照片级写实图当前未接入");
-    expect(parent).toContain("修改现有图片：桌面 Codex 确认路线");
+    expect(parent).toContain("修改现有图片：先识别源格式，再选择执行路线");
     expect(parent).toContain("当前环境未配置这项本机能力");
     expect(parent).toContain("image-edit-codex-confirm");
     expect(parent).toContain("是否使用本机 Codex 修改这张图片");
     expect(parent).not.toContain("我没有编辑图片的能力");
 
-    expect(svg).toContain("本子技能只负责**生成式 SVG 插画资产**");
+    expect(svg).toContain("从零生成 SVG 插画，以及对用户指定的现有 SVG 做源码级定点修改");
     expect(svg).toContain("generateSvg");
     expect(svg).toContain("editDraft");
     expect(svg).toContain("readDiff");
@@ -139,5 +139,34 @@ describe("图表技能静态提示词契约", () => {
     expect(codexImage).toContain("Markdown 图片地址回给用户");
     expect(codexImage).toContain("readDiff");
     expect(codexImage).toContain("禁止复制整段对话");
+  });
+
+  it("SVG 定点重绘在 Codex 不可用时自动回落原生源码编辑，且禁止整图重生", () => {
+    const parent = readSkillFile("image-gen/SKILL.md");
+    const svg = readSkillFile("image-gen/svg/SKILL.md");
+    const codexImage = readSkillFile("image-gen/codex-image/SKILL.md");
+
+    expect(parent).toContain("image/svg+xml");
+    expect(parent).toContain("自动回落到原生 SVG 定点编辑");
+    expect(parent).toContain("问卷恢复");
+    expect(parent).toContain("不得把换路责任交给用户");
+    expect(parent).not.toContain("不要擅自改走 SVG");
+
+    expect(svg).toContain("修改现有 SVG：原生定点编辑");
+    expect(svg).toContain("editablePath");
+    expect(svg).toContain("mastra_workspace_read_file");
+    expect(svg).toContain("mastra_workspace_edit_file");
+    expect(svg).toContain("old_string");
+    expect(svg).toContain('"replace_all":false');
+    expect(svg).toContain("未点名图元的源码字节保持不变");
+    expect(svg).toContain("不得调用 `generateSvg`");
+    expect(svg).toContain("importGeneratedImage");
+    expect(svg).toContain("replaceBlock");
+
+    expect(codexImage).toContain("SVG 源图必须保持 SVG");
+    expect(codexImage).toContain("editablePath");
+    expect(codexImage).toContain("只修改用户点名的图元");
+    expect(codexImage).toContain("自动回落到原生 SVG 定点编辑");
+    expect(codexImage).not.toContain("修改现有图片失败时不得用 SVG 重画冒充成功");
   });
 });

@@ -13,7 +13,7 @@ export interface RendererDialogTarget {
 }
 
 interface PendingDialog {
-  target: RendererDialogTarget;
+  targetId: number;
   resolve: (result: DesktopDialogResult | null) => void;
 }
 
@@ -31,10 +31,10 @@ export class RendererDialogBroker {
     this.readyKinds.set(target.id, new Set(kinds));
   }
 
-  markUnavailable(target: RendererDialogTarget): void {
-    this.readyKinds.delete(target.id);
+  markUnavailable(targetId: number): void {
+    this.readyKinds.delete(targetId);
     for (const [id, pending] of this.pending) {
-      if (pending.target.id !== target.id) continue;
+      if (pending.targetId !== targetId) continue;
       this.pending.delete(id);
       pending.resolve(null);
     }
@@ -44,21 +44,23 @@ export class RendererDialogBroker {
     target: RendererDialogTarget,
     kind: DesktopDialogKind,
   ): Promise<DesktopDialogResult | null> {
-    if (target.isDestroyed() || !this.readyKinds.get(target.id)?.has(kind)) {
+    if (target.isDestroyed()) {
       return Promise.resolve(null);
     }
+    const targetId = target.id;
+    if (!this.readyKinds.get(targetId)?.has(kind)) return Promise.resolve(null);
 
     const request: DesktopDialogRequest = {
       id: this.nextRequestId++,
       kind,
     };
     return new Promise((resolve) => {
-      this.pending.set(request.id, { target, resolve });
+      this.pending.set(request.id, { targetId, resolve });
       try {
         target.send(DESKTOP_DIALOG_REQUEST_CHANNEL, request);
       } catch {
         this.pending.delete(request.id);
-        this.readyKinds.delete(target.id);
+        this.readyKinds.delete(targetId);
         resolve(null);
       }
     });
@@ -66,7 +68,7 @@ export class RendererDialogBroker {
 
   respond(target: RendererDialogTarget, response: DesktopDialogResponse): boolean {
     const pending = this.pending.get(response.id);
-    if (!pending || pending.target.id !== target.id) return false;
+    if (!pending || pending.targetId !== target.id) return false;
     this.pending.delete(response.id);
     pending.resolve(response.result);
     return true;

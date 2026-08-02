@@ -120,10 +120,10 @@ test("editFlags 拒绝的操作即使上下文满足也保持禁用", () => {
 test("右键菜单事件只注册到主窗口，确认模态窗与 PDF 离屏窗均不注册", () => {
   const mainSource = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const pdfRendererSource = readFileSync(path.join(__dirname, "pdfRenderer.ts"), "utf8");
-  const registrations = mainSource.match(/\.webContents\.on\("context-menu"/g) ?? [];
+  const registrations = mainSource.match(/contentWebContents\.on\("context-menu"/g) ?? [];
 
   assert.equal(registrations.length, 1);
-  assert.match(mainSource, /mainWindow\.webContents\.on\("context-menu"/);
-  assert.doesNotMatch(mainSource, /promptWindow\.webContents\.on\("context-menu"/);
-  assert.doesNotMatch(pdfRendererSource, /\.webContents\.on\("context-menu"/);
+  assert.match(mainSource, /contentWebContents\.on\("context-menu"/);
+  assert.doesNotMatch(mainSource, /promptWebContents\.on\("context-menu"/);
+  assert.doesNotMatch(pdfRendererSource, /contents\.on\("context-menu"/);
 });

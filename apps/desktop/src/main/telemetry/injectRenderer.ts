@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RendererTelemetryBootstrap } from "./index.js";
+import { getLiveWebContents } from "../windowLifecycle.js";
 
 type BuildInjectBundle = (options: { write: false }) => Promise<{ code: string | null }>;
 
@@ -17,22 +18,26 @@ export function attachRendererTelemetry(
 ): void {
   if (!bootstrap) return;
 
-  window.webContents.on("did-finish-load", () => {
-    void injectRendererTelemetry(window, bootstrap);
+  const contents = getLiveWebContents(window);
+  if (!contents) return;
+  contents.on("did-finish-load", () => {
+    void injectRendererTelemetry(window, contents, bootstrap);
   });
 }
 
 async function injectRendererTelemetry(
   window: BrowserWindow,
+  contents: BrowserWindow["webContents"],
   bootstrap: RendererTelemetryBootstrap,
 ): Promise<void> {
   const code = await getInjectBundleCode();
-  if (!code || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  if (!code || getLiveWebContents(window) !== contents) return;
 
   const bootstrapCode = `window.__QING_TELEMETRY__=${JSON.stringify(bootstrap)};`;
   try {
-    await window.webContents.executeJavaScript(bootstrapCode, true);
-    await window.webContents.executeJavaScript(code, true);
+    await contents.executeJavaScript(bootstrapCode, true);
+    if (getLiveWebContents(window) !== contents) return;
+    await contents.executeJavaScript(code, true);
   } catch {
     // 注入失败只禁用渲染端埋点,不能影响开窗或导航。
   }

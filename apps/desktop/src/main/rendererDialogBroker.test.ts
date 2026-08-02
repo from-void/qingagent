@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   DESKTOP_DIALOG_REQUEST_CHANNEL,
   type DesktopDialogRequest,
@@ -73,9 +76,44 @@ describe("renderer dialog broker", () => {
     broker.markReady(owner.target, ["quit-during-generation"]);
 
     const decision = broker.request(owner.target, "quit-during-generation");
-    broker.markUnavailable(owner.target);
+    broker.markUnavailable(owner.target.id);
 
     assert.equal(await decision, null);
     assert.equal(await broker.request(owner.target, "quit-during-generation"), null);
+  });
+
+  it("主窗销毁后按预先缓存的 renderer id 释放等待，不再解引用已销毁对象", async () => {
+    const broker = new RendererDialogBroker();
+    let destroyed = false;
+    const target: RendererDialogTarget = {
+      get id() {
+        if (destroyed) throw new TypeError("Object has been destroyed");
+        return 7;
+      },
+      isDestroyed: () => destroyed,
+      send: () => undefined,
+    };
+    broker.markReady(target, ["quit-during-generation"]);
+    const targetId = target.id;
+    const decision = broker.request(target, "quit-during-generation");
+
+    destroyed = true;
+    assert.doesNotThrow(() => broker.markUnavailable(targetId));
+    assert.equal(await decision, null);
+
+    const mainSource = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "index.ts"),
+      "utf8",
+    );
+    const destroyedRegistration = mainSource.slice(
+      mainSource.indexOf('contentWebContents.once("destroyed"'),
+      mainSource.indexOf('contentWindow.once("closed"'),
+    );
+    const closedHandler = mainSource.slice(
+      mainSource.indexOf('contentWindow.once("closed"'),
+      mainSource.indexOf('contentWindow.on("close"'),
+    );
+    assert.match(destroyedRegistration, /markUnavailable\(contentWebContentsId\)/);
+    assert.doesNotMatch(closedHandler, /contentWindow\.webContents|contentWebContents\./);
   });
 });

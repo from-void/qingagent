@@ -238,7 +238,7 @@ describe("公众号稿生成体验", () => {
     expect(calculateDesktopScale(1288, 1000)).toBeCloseTo(1208 / 1232);
   });
 
-  it("Tab 使用类型展示名，＋菜单只列未创建类型且全建完后隐藏", async () => {
+  it("Tab 使用类型展示名，已有译稿时＋菜单仍可追加未生成语种", async () => {
     const onCreate = vi.fn();
     const renderTabs = async (items: DerivativeItem[]) => act(async () => root.render(
       <DerivTabBar title="主文档" items={items} activeTab="main" onActivate={vi.fn()} onCreate={onCreate} onRename={vi.fn()} />,
@@ -263,6 +263,18 @@ describe("公众号稿生成体验", () => {
     const translateItem: DerivativeItem = { ...item, docId: "deriv-3", dtype: "translate", targetLang: "英语", templateName: "忠实精准" };
     await renderTabs([item, xhsItem, translateItem]);
     expect(host.querySelectorAll('[role="tab"]')).toHaveLength(4);
+    expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
+    const translateMenuItem = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent === "翻译")!;
+    await act(async () => translateMenuItem.click());
+    expect(onCreate).toHaveBeenLastCalledWith("translate");
+
+    const allTranslations = TRANSLATION_LANGUAGES.map((targetLang, index): DerivativeItem => ({
+      ...translateItem,
+      docId: `translate-${index}`,
+      targetLang,
+    }));
+    await renderTabs([item, xhsItem, ...allTranslations]);
     expect(host.querySelector('[aria-label="新建稿件"]')).toBeNull();
 
     await renderTabs([xhsItem]);
@@ -740,6 +752,46 @@ describe("公众号稿生成体验", () => {
     ])).toBe("把主文档翻译成英语、日语。英语写入衍生稿(doc_id: translation-en)，日语写入衍生稿(doc_id: translation-ja)。按上述顺序逐个处理：对每篇稿件先调 derivative_brief,按返回的 skillGuidance 纪律与模板、补充指令改写源文,再用 generate_derivative 提交。");
   });
 
+  it("已有日语译稿时新建翻译只提供未生成语言，可勾选英语和韩语", async () => {
+    const templates = DTYPE_REGISTRY.translate.templates.map((template) => ({
+      ...template,
+      dtype: "translate",
+      slot: "writing" as const,
+      prompt: `${template.name}提示`,
+      builtin: true,
+    }));
+    const generate = vi.fn();
+    const stream = { listStyleTemplates: vi.fn(async () => templates) };
+    await act(async () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY.translate}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        excludedTargetLanguages={["日语"]}
+        initial={{ templateId: "translate-faithful", privatePrompt: "" }}
+        onClose={vi.fn()}
+        onGenerate={generate}
+      />,
+    ));
+    await act(async () => Promise.resolve());
+
+    const chips = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-language-chips button"));
+    expect(chips).toHaveLength(TRANSLATION_LANGUAGES.length - 1);
+    expect(chips.some((chip) => chip.textContent === "日语")).toBe(false);
+    const english = chips.find((chip) => chip.textContent === "英语")!;
+    const korean = chips.find((chip) => chip.textContent === "韩语")!;
+    expect(english.disabled).toBe(false);
+    expect(korean.disabled).toBe(false);
+    expect(english.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => korean.click());
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+      targetLanguages: ["英语", "韩语"],
+    }));
+  });
+
   it("F12: 父组件用等值目标语言数组重渲染时保留翻译弹层草稿", async () => {
     const template = {
       id: "translate-faithful",
@@ -898,6 +950,15 @@ describe("公众号稿生成体验", () => {
     await act(async () => Promise.resolve());
 
     expect(onSendQuery).toHaveBeenCalledOnce();
+    expect(stream.createDerivative).toHaveBeenCalledWith(
+      "session-1",
+      "translate",
+      "translate-native",
+      "",
+      "translate-native",
+      null,
+      "日语",
+    );
     expect(onSendQuery).toHaveBeenCalledWith(
       expect.stringMatching(/重新生成日语翻译.*衍生稿\(doc_id: translate-agent-regenerate\).*derivative_brief.*generate_derivative/),
       expect.objectContaining({ title: "重新翻译文档" }),

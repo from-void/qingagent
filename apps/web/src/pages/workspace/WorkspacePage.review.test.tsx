@@ -4313,7 +4313,7 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("公众号文章");
   });
 
-  it("翻译确认只发一条可见 Agent 指令，多语种工具过程与完成帧留在同一对话轮", async () => {
+  it("已有日语稿后追加英语和韩语，两稿落库并只发一条可见 Agent 指令", async () => {
     const base: DerivativeItem = {
       docId: "translation-placeholder",
       dtype: "translate",
@@ -4326,11 +4326,18 @@ describe("WorkspacePage review controls", () => {
       generatedAt: null,
       stale: false,
     };
-    const translationItems: DerivativeItem[] = [];
+    const japanese: DerivativeItem = {
+      ...base,
+      docId: "translation-ja-existing",
+      targetLang: "日语",
+      sourceVersion: 3,
+      generatedAt: "2026-08-02T09:00:00.000Z",
+    };
+    const translationItems: DerivativeItem[] = [japanese];
     serverStreamMock.createDerivativeImpl = async (targetLang) => {
       const next = {
         ...base,
-        docId: targetLang === "日语" ? "translation-ja" : "translation-en",
+        docId: targetLang === "韩语" ? "translation-ko" : "translation-en",
         targetLang,
       };
       translationItems.push(next);
@@ -4363,13 +4370,16 @@ describe("WorkspacePage review controls", () => {
         templateId: "translate-faithful",
         writingStyleId: "translate-faithful",
         layoutStyleId: null,
-        targetLanguages: ["英语", "日语"],
+        targetLanguages: ["英语", "韩语"],
         privatePrompt: "保留产品名",
       });
     });
     await flushMicrotasks(6);
 
     expect(stream.createDerivative).toHaveBeenCalledTimes(2);
+    expect(stream.createDerivative.mock.calls.map((call) => call[6])).toEqual(["英语", "韩语"]);
+    expect(translationItems.map((item) => item.targetLang)).toEqual(["日语", "英语", "韩语"]);
+    expect(translationItems[0]).toBe(japanese);
     const sends = sendMessageCommands(stream);
     expect(sends).toHaveLength(1);
     const sent = sends[0];
@@ -4382,7 +4392,7 @@ describe("WorkspacePage review controls", () => {
         displayCard: {
           title: "翻译文档",
           lines: [
-            { label: "语言", value: "英语、日语" },
+            { label: "语言", value: "英语、韩语" },
             { label: "风格", value: "忠实精准" },
             { label: "补充", value: "保留产品名" },
           ],
@@ -4390,9 +4400,9 @@ describe("WorkspacePage review controls", () => {
       },
     });
     if (sent?.kind !== "sendMessage") throw new Error("缺少翻译用户指令");
-    expect(sent.data.text).toContain("把主文档翻译成英语、日语");
+    expect(sent.data.text).toContain("把主文档翻译成英语、韩语");
     expect(sent.data.text).toContain("英语写入衍生稿(doc_id: translation-en)");
-    expect(sent.data.text).toContain("日语写入衍生稿(doc_id: translation-ja)");
+    expect(sent.data.text).toContain("韩语写入衍生稿(doc_id: translation-ko)");
     expect(captured.current?.state.messages).toHaveLength(1);
     expect(captured.current?.state.messages[0]?.role.kind).toBe("user");
     expect(captured.current?.state.messages[0]?.parts[0]?.kind).toBe("actionCard");
@@ -4437,7 +4447,7 @@ describe("WorkspacePage review controls", () => {
       {
         kind: "derivativeGenFinished",
         data: {
-          docId: "translation-ja",
+          docId: "translation-ko",
           generatedAt: "2026-08-02T10:00:02.000Z",
           docVersion: 1,
         },
@@ -4446,7 +4456,7 @@ describe("WorkspacePage review controls", () => {
 
     expect(host?.querySelector('[data-testid="translation-agent-turn"]')?.textContent)
       .toBe("user,agent:1");
-    expect(captured.current?.activeTranslationDocId).toBe("translation-ja");
+    expect(captured.current?.activeTranslationDocId).toBe("translation-ko");
   });
 
   it("非英语单语翻译完成后把子 Tab 切到刚完成的语种", async () => {

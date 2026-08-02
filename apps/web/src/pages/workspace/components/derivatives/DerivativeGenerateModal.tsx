@@ -5,6 +5,13 @@ import { useConfirm } from "../../../../system";
 import { buildTemplateSummary, DERIVATIVE_STARTER_PRESETS, LaunchModalShell, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "../launchModal";
 import type { ServerStream } from "../../data/serverStream";
 import type { DtypeDescriptor } from "./dtypeRegistry";
+import {
+  availableTranslationLanguages,
+  MAX_TRANSLATION_LANGUAGES,
+  TRANSLATION_LANGUAGES,
+} from "./translationLanguages";
+
+export { MAX_TRANSLATION_LANGUAGES, TRANSLATION_LANGUAGES } from "./translationLanguages";
 
 export interface DerivativeGenerateParams {
   templateId: string;
@@ -13,12 +20,6 @@ export interface DerivativeGenerateParams {
   targetLanguages?: string[];
   privatePrompt: string;
 }
-
-export const TRANSLATION_LANGUAGES = [
-  "英语", "日语", "韩语", "繁体中文", "法语", "德语", "西班牙语", "葡萄牙语", "意大利语", "俄语",
-  "阿拉伯语", "泰语", "越南语", "印尼语", "马来语", "印地语", "土耳其语", "荷兰语", "波兰语", "瑞典语",
-] as const;
-export const MAX_TRANSLATION_LANGUAGES = 5;
 
 type StyleSlot = "layout" | "writing";
 type EditorState = {
@@ -61,6 +62,20 @@ function deleteErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "模板删除失败，请重试";
 }
 
+function initialTranslationLanguages(
+  dtype: DtypeDescriptor["dtype"],
+  requestedLanguages: readonly string[] | undefined,
+  singleTargetLang: string | undefined,
+  excludedTargetLanguages: readonly string[] | undefined,
+): string[] {
+  if (dtype !== "translate") return [];
+  if (singleTargetLang) return [singleTargetLang];
+  const available = availableTranslationLanguages(excludedTargetLanguages);
+  const availableSet = new Set(available);
+  const requested = [...new Set(requestedLanguages ?? [])].filter((language) => availableSet.has(language));
+  return requested.length > 0 ? requested : available.slice(0, 1);
+}
+
 export function DerivativeGenerateModal(props: {
   open: boolean;
   descriptor: DtypeDescriptor;
@@ -68,6 +83,7 @@ export function DerivativeGenerateModal(props: {
   stream: ServerStream;
   initial: Pick<DerivativeGenerateParams, "templateId" | "privatePrompt"> & Partial<Pick<DerivativeGenerateParams, "writingStyleId" | "layoutStyleId" | "targetLanguages">>;
   singleTargetLang?: string;
+  excludedTargetLanguages?: readonly string[];
   submitting?: boolean;
   onClose: () => void;
   onGenerate: (params: DerivativeGenerateParams) => void | Promise<void>;
@@ -77,7 +93,12 @@ export function DerivativeGenerateModal(props: {
   const [writingStyleId, setWritingStyleId] = useState(props.initial.writingStyleId ?? props.initial.templateId);
   const [layoutStyleId, setLayoutStyleId] = useState<string | null>(props.initial.layoutStyleId ?? null);
   const [privatePrompt, setPrivatePrompt] = useState(props.initial.privatePrompt);
-  const [targetLanguages, setTargetLanguages] = useState<string[]>(props.initial.targetLanguages ?? (props.descriptor.dtype === "translate" ? ["英语"] : []));
+  const [targetLanguages, setTargetLanguages] = useState<string[]>(() => initialTranslationLanguages(
+    props.descriptor.dtype,
+    props.initial.targetLanguages,
+    props.singleTargetLang,
+    props.excludedTargetLanguages,
+  ));
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -85,6 +106,9 @@ export function DerivativeGenerateModal(props: {
   const [error, setError] = useState("");
   const initialTargetLanguagesKey = JSON.stringify(
     [...new Set(props.initial.targetLanguages ?? [])].sort(),
+  );
+  const excludedTargetLanguagesKey = JSON.stringify(
+    [...new Set(props.excludedTargetLanguages ?? [])].sort(),
   );
   const detailRequestGenerationRef = useRef(0);
   const saveRequestGenerationRef = useRef(0);
@@ -108,7 +132,12 @@ export function DerivativeGenerateModal(props: {
     setWritingStyleId(props.initial.writingStyleId ?? props.initial.templateId);
     setLayoutStyleId(props.descriptor.dtype === "gzh" ? props.initial.layoutStyleId ?? null : null);
     setPrivatePrompt(props.initial.privatePrompt);
-    setTargetLanguages(props.singleTargetLang ? [props.singleTargetLang] : props.initial.targetLanguages ?? (props.descriptor.dtype === "translate" ? ["英语"] : []));
+    setTargetLanguages(initialTranslationLanguages(
+      props.descriptor.dtype,
+      props.initial.targetLanguages,
+      props.singleTargetLang,
+      props.excludedTargetLanguages,
+    ));
     setEditor(null);
     setError("");
     setLoading(true);
@@ -124,7 +153,7 @@ export function DerivativeGenerateModal(props: {
       }
     }).catch(() => { if (current) setError("风格模板读取失败，请重试"); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [initialTargetLanguagesKey, props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
+  }, [excludedTargetLanguagesKey, initialTargetLanguagesKey, props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
 
   const openTemplate = async (item: StyleTemplateItem) => {
     if (item.slot === "instruction") return;
@@ -319,7 +348,7 @@ export function DerivativeGenerateModal(props: {
           {props.descriptor.dtype === "translate" ? <section className="ws-translate-language-group" aria-label="目标语言">
             <h3>目标语言</h3>
             <div className="ws-translate-language-chips" role="group" aria-label="目标语言（最多选择 5 种）">
-              {TRANSLATION_LANGUAGES.map((language) => {
+              {availableTranslationLanguages(props.excludedTargetLanguages).map((language) => {
                 const selected = targetLanguages.includes(language);
                 const limitReached = !selected && targetLanguages.length >= MAX_TRANSLATION_LANGUAGES;
                 const locked = Boolean(props.singleTargetLang && language !== props.singleTargetLang);

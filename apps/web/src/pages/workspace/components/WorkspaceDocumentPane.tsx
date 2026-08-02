@@ -336,6 +336,11 @@ export function WorkspaceDocumentPane({
             templateId: DTYPE_REGISTRY[derivativeCreateDtype].templates[0]!.id,
             privatePrompt: "",
           }}
+          excludedTargetLanguages={
+            derivativeCreateDtype === "translate"
+              ? translationItems.map((item) => item.targetLang).filter((language): language is string => Boolean(language))
+              : undefined
+          }
           onClose={() => setDerivativeCreateOpen(false)}
           onGenerate={handleCreateDerivative}
         />

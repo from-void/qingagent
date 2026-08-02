@@ -1063,6 +1063,44 @@ describe("ServerStream", () => {
     expect(MockEventSource.instances).toHaveLength(1);
   });
 
+  it("listDerivatives 的 HTTP 响应晚于 SSE waiter 超时时不产生未处理拒绝", async () => {
+    vi.useFakeTimers();
+    let resolveResponse!: () => void;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      const command = JSON.parse(String(init?.body)) as Extract<Command, { kind: "listDerivatives" }>;
+      return new Promise<Response>((resolve) => {
+        resolveResponse = () => resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve([{
+            kind: "derivativesListed",
+            data: { requestId: command.data.requestId, items: [] },
+          } satisfies BridgeFrame]),
+        } as unknown as Response);
+      });
+    });
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", recordUnhandled);
+    const stream = new ServerStream();
+
+    try {
+      const pending = stream.listDerivatives("slow-session");
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(30_001);
+      await vi.runAllTicks();
+      expect(unhandled).toEqual([]);
+
+      resolveResponse();
+      await expect(pending).resolves.toEqual([]);
+      await vi.runAllTicks();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", recordUnhandled);
+      stream.dispose();
+    }
+  });
+
   it("HTTP 成功帧的 requestId 不匹配时立即报协议错误", async () => {
     globalThis.fetch = commandResponse([{
       kind: "derivativesListed",

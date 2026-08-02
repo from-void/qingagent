@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DerivativeItem } from "./types";
 import { DTYPE_REGISTRY, type DerivativeDtype } from "./dtypeRegistry";
+import { availableTranslationLanguages } from "./translationLanguages";
 
 const UNTITLED_DOCUMENT_LABEL = "未命名文档";
 
@@ -33,8 +34,13 @@ export function DerivTabBar(props: {
     setEditing(true);
   };
   const isSingleUntitled = !props.title.trim() && props.items.length === 0;
-  const availableDescriptors = Object.values(DTYPE_REGISTRY).filter(
-    (descriptor) => !props.items.some((item) => item.dtype === descriptor.dtype),
+  const generatedTranslationLanguages = props.items
+    .filter((item) => item.dtype === "translate")
+    .map((item) => item.targetLang);
+  const availableDescriptors = Object.values(DTYPE_REGISTRY).filter((descriptor) =>
+    descriptor.dtype === "translate"
+      ? availableTranslationLanguages(generatedTranslationLanguages).length > 0
+      : !props.items.some((item) => item.dtype === descriptor.dtype),
   );
   const regularItems = props.items.filter((item) => item.dtype !== "translate");
   const translationItems = props.items.filter((item) => item.dtype === "translate");

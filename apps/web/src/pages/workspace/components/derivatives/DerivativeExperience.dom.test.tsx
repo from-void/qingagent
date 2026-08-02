@@ -909,6 +909,41 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("删除稿件");
   });
 
+  it("空译稿使用未生成语义，不冒充翻译失败或重新生成", async () => {
+    const emptyTranslation: DerivativeItem = {
+      ...item,
+      docId: "translate-empty-copy",
+      dtype: "translate",
+      targetLang: "英语",
+      templateId: "translate-faithful",
+      templateName: "忠实精准",
+    };
+    const stream = { getDerivativeDoc: vi.fn(async () => null) };
+
+    await act(async () => root.render(
+      <ConfirmProvider>
+        <DerivativeView
+          sessionId="session-1"
+          item={emptyTranslation}
+          stream={stream as never}
+          streamActive={false}
+          onRefresh={vi.fn(async () => {})}
+          onDeleted={vi.fn()}
+          onToast={vi.fn()}
+          onSendQuery={vi.fn()}
+        />
+      </ConfirmProvider>,
+    ));
+    await act(async () => Promise.resolve());
+
+    expect(host.querySelector(".ws-deriv-empty strong")?.textContent)
+      .toBe("该语言还没有译文");
+    expect(host.querySelector(".ws-deriv-empty button")?.textContent)
+      .toBe("生成该语言");
+    expect(host.textContent).not.toContain("翻译未完成");
+    expect(host.textContent).not.toContain("重新生成");
+  });
+
   it("翻译稿复用文章阅读排版，表格网格与列表缩进有计算样式", async () => {
     const style = document.createElement("style");
     style.textContent = [

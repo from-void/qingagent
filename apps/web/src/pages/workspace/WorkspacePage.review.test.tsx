@@ -279,6 +279,20 @@ function pmCodeBlock(blockId: string, body: string): PmBlockNode {
   };
 }
 
+function pmTable(blockId: string, rows: readonly (readonly string[])[]): PmBlockNode {
+  return {
+    type: "table",
+    attrs: { blockId },
+    content: rows.map((row, rowIndex) => ({
+      type: "tableRow",
+      content: row.map((text, cellIndex) => ({
+        type: rowIndex === 0 ? "tableHeader" : "tableCell",
+        content: [pmParagraph(`${blockId}-r${rowIndex}-c${cellIndex}`, text)],
+      })),
+    })),
+  } as PmBlockNode;
+}
+
 function pmDoc(content: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
 }
@@ -1421,6 +1435,130 @@ describe("WorkspacePage review controls", () => {
     expect(selectPatches(captured.current!.state)).toHaveLength(1);
     expect(document.body.dataset.content).toBe("pendingReview");
     expect(document.body.textContent).not.toContain("文档已生成新版本");
+  }, 60_000);
+
+  it("表格单元格 patch 候选同基线 canonical 静默吸收，真实单元格分叉仍报冲突", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const baseTable = pmTable("commute-table", [
+      ["交通工具", "月成本"],
+      ["公交", "约120元"],
+    ]);
+    const editedTable = pmTable("commute-table", [
+      ["交通工具", "月成本"],
+      ["公交", "约150元"],
+    ]);
+    const baseDoc = pmDoc([baseTable]);
+    const candidateDoc = pmDoc([editedTable]);
+    const hunk: DiffHunk = {
+      hunkId: "commute-table-cost",
+      reviewBatchId: "batch-commute-table-cost",
+      groupMode: "independent",
+      op: "replace",
+      blockPath: [0],
+      anchor: { blockId: "commute-table", anchorKind: "position", gravity: "before" },
+      before: [baseTable] as never,
+      after: [editedTable] as never,
+      summary: "更新公交月成本",
+      beforeText: "约120元",
+      afterText: "约150元",
+    };
+    const suggestion = blockSuggestion("commute-table-cost", hunk);
+    const spec: ToolCallSpec = {
+      ...reviewToolCall("commute-table-cost", "batch-commute-table-cost", "reviewing"),
+      body: {
+        kind: "docSuggestion",
+        data: { kind: "suggestion", data: suggestion },
+      },
+    };
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "表格单格候选" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+      },
+      docStateFrame("editing"),
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc: candidateDoc,
+        },
+      },
+      toolCallUpdatedFrame(spec),
+      docStateFrame("pendingReview"),
+    ]);
+    await flushMicrotasks(5);
+
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+    expect(
+      captured.current?.docViewRef.current?.hasLocalDocumentChanges(),
+    ).toBe(true);
+    // TipTap 会给普通格补 colspan=1/rowspan=1，并在末尾表格后补一个
+    // blockId=null 的空段落脚手架；两者都不是 canonical 正文改动。
+    expect(
+      captured.current?.docViewRef.current?.canSafelyApplyIncomingDocument(baseDoc),
+    ).toBe(true);
+
+    await emitFrames(stream, [{
+      kind: "documentSnapshotWritten",
+      data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+    }]);
+
+    expect(captured.current?.state.streamError).toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(document.body.textContent).not.toContain("文档已生成新版本");
+
+    const locallyEditedDoc = pmDoc([pmTable("commute-table", [
+      ["交通工具", "月成本"],
+      ["公交", "约130元"],
+    ])]);
+    const serverNewDoc = pmDoc([pmTable("commute-table", [
+      ["交通工具", "月成本"],
+      ["公交", "约160元"],
+    ])]);
+    act(() => {
+      editor!.commands.setContent(locallyEditedDoc);
+    });
+    await flushMicrotasks(5);
+    expect(updateDocCommands(stream)).toHaveLength(0);
+    expect(
+      captured.current?.docViewRef.current?.canSafelyApplyIncomingDocument(serverNewDoc),
+    ).toBe(false);
+
+    await emitFrames(stream, [{
+      kind: "documentSnapshotWritten",
+      data: { doc: wireSnapshotFromPmDoc(serverNewDoc, 2) },
+    }]);
+
+    expect(captured.current?.state.streamError).toMatchObject({
+      kind: "docWriteConflict",
+      actualDocumentSnapshot: 2,
+    });
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+    expect(document.body.textContent).toContain("文档已生成新版本");
   }, 60_000);
 
   it("generation_finished 撞上 400ms 本地 debounce 时先 drain 保存再自动回灌终稿", async () => {

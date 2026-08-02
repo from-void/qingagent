@@ -856,8 +856,37 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return false;
         }
         try {
-          return JSON.stringify(normalizePmDoc(editor.getJSON())) ===
-            JSON.stringify(normalizePmDoc(incomingDocument));
+          // normalizePmDoc 负责清掉瞬态/无语义字段；随后再经当前编辑器 schema
+          // 物化节点默认属性，才能比较 PM 语义。否则 canonical 可省略的默认值
+          // （如普通表格格子的 colspan/rowspan=1）会在 TipTap live JSON 中出现，
+          // 同一正文也会被逐字 JSON 比较误判为分叉。
+          const liveJson = editor.getJSON();
+          const live = editor.schema.nodeFromJSON(normalizePmDoc(liveJson));
+          const incoming = editor.schema.nodeFromJSON(
+            normalizePmDoc(incomingDocument),
+          );
+          if (live.eq(incoming)) return true;
+
+          // StarterKit trailingNode 会在表格、图片等原子块后自动补一个可继续输入的
+          // 空段落。只读审阅态不会给这个编辑器脚手架补 blockId，也不会把它保存进
+          // canonical。仅当它仍是“末尾空段落 + null blockId”，且移除后整篇与来帧
+          // 等价时才吸收；用户新建的段落会由 DedupeBlockIds 获得 id，有正文更不会
+          // 命中，因此真实本地编辑仍 fail closed。
+          const trailing = liveJson.content?.at(-1);
+          if (
+            trailing?.type !== "paragraph" ||
+            (trailing.content?.length ?? 0) !== 0 ||
+            trailing.attrs?.blockId !== null
+          ) {
+            return false;
+          }
+          const liveWithoutEditorScaffold = editor.schema.nodeFromJSON(
+            normalizePmDoc({
+              ...liveJson,
+              content: liveJson.content?.slice(0, -1) ?? [],
+            }),
+          );
+          return liveWithoutEditorScaffold.eq(incoming);
         } catch {
           return false;
         }

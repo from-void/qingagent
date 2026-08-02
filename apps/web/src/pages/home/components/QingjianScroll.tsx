@@ -1616,6 +1616,7 @@ export function QingjianScroll({
     let swayAngle = 0;
     let swayVel = 0;
     let movedFlag = false;
+    let movedFlagResetTimer: ReturnType<typeof setTimeout> | undefined;
     let revealSeq = 0;
     let revealResetTimer: ReturnType<typeof setTimeout> | undefined;
     let dockHover = false;
@@ -1842,6 +1843,7 @@ export function QingjianScroll({
       dragging = true;
       velocity = 0;
       dragVel = 0;
+      clearTimeout(movedFlagResetTimer);
       movedFlag = false;
       lastPointerX = e.clientX;
       downPointerX = e.clientX;
@@ -1863,11 +1865,20 @@ export function QingjianScroll({
       requestFrame();
       pollReveal();
     };
-    const endDrag = () => {
+    const endDrag = (e: PointerEvent) => {
       if (!dragging) return;
       dragging = false;
       scroller.classList.remove("qj-dragging");
       velocity = clamp(dragVel, -40, 40);
+      if (e.type === "pointercancel") {
+        movedFlag = false;
+      } else if (movedFlag) {
+        // 浏览器会在 pointerup 后同步派发 click；仅为这一轮手势保留抑制标记。
+        // 若环境没有合成 click，下一任务也要自动清除，不能误伤后续语义 click()。
+        movedFlagResetTimer = setTimeout(() => {
+          movedFlag = false;
+        }, 0);
+      }
       requestFrame();
     };
     // 方案4:触发「首页 → 编辑页」过渡。核心动效(卡飞 + 墨水/背景变深)整段在首页跑完,
@@ -1984,16 +1995,19 @@ export function QingjianScroll({
     // 把带动画的打开出口暴露给外部(右键菜单「打开」复用同一墨水过场)。
     if (openApiRef) openApiRef.current = triggerOpenSession;
 
-    // 拖拽后短暂吞掉 click,避免误触卡片;否则坐标命中真正的卡片补发点击
+    // 拖拽后只吞掉本轮紧随的 click，避免误触卡片。
+    // 激活对象必须取事件原始目标：语义 click() 的坐标是 (0, 0)，不能用 elementFromPoint 二次猜测。
     const onClickCapture = (e: MouseEvent) => {
       if (movedFlag) {
+        clearTimeout(movedFlagResetTimer);
+        movedFlag = false;
         e.stopPropagation();
         e.preventDefault();
         return;
       }
-      const hit = document.elementFromPoint(e.clientX, e.clientY);
-      const slot = hit?.closest?.(".qj-card-slot") as HTMLElement | null;
-      if (!slot) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const slot = target?.closest<HTMLElement>(".qj-card-slot");
+      if (!slot || slot.getAttribute("aria-disabled") === "true") return;
       const kind = slot.dataset.kind;
       const id = slot.dataset.id;
       if (kind === "new") {
@@ -2158,6 +2172,7 @@ export function QingjianScroll({
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);
+      clearTimeout(movedFlagResetTimer);
       clearInterval(revealInterval);
       scroller.removeEventListener("wheel", onWheel);
       scroller.removeEventListener("dragstart", onNativeDragStart, true);

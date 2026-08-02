@@ -580,6 +580,10 @@ export class ServerStream {
         && (frame.data as { requestId?: unknown }).requestId === command.data.requestId,
       `${kind} response missing`,
     );
+    // HTTP 是这类前台命令的权威响应；EventSource waiter 只兼容 accepted+SSE 旧路径。
+    // HTTP 若排队超过 30 秒，waiter 会先超时，必须从创建时就挂拒绝处理，避免调用方
+    // 已 catch derivativeFrame 仍被内部孤儿 Promise 上报 UNHANDLED_REJECTION。
+    void framePromise.catch(() => undefined);
     try {
       const result = await this.sendCommandInternal(command);
       if (!Array.isArray(result)) {

@@ -234,6 +234,8 @@ export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;
   getLastPresentationRun: () => NativePresentationRun | null;
   hasLocalDocumentChanges: () => boolean;
+  /** 候选基线与当前正文完全一致，且没有尚待保存的本地事务。 */
+  canSafelyApplyDocumentBase: (doc: PmDoc) => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -339,6 +341,9 @@ export const DocumentSnapshotView = forwardRef<
       hasLocalDocumentChanges() {
         return tiptapRef.current?.hasLocalDocumentChanges() ?? false;
       },
+      canSafelyApplyDocumentBase(doc) {
+        return tiptapRef.current?.canSafelyApplyDocumentBase(doc) ?? false;
+      },
       flushPendingDocSave() {
         return tiptapRef.current?.flushPendingDocSave() ?? Promise.resolve();
       },
@@ -437,6 +442,7 @@ export const DocumentSnapshotView = forwardRef<
 /** 公式点击事件:扩展在模块级创建拿不到 React 状态,经 window 事件转发给 TipTapDoc 弹编辑浮层。 */
 interface TipTapDocHandle {
   hasLocalDocumentChanges: () => boolean;
+  canSafelyApplyDocumentBase: (doc: PmDoc) => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -839,6 +845,23 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
+      canSafelyApplyDocumentBase(candidateBase) {
+        if (!editor || editor.isDestroyed) return false;
+        // 即使一次编辑随后撤销到原文，只要 debounce/baseline 尚未结算，就仍让
+        // 保存链先完成；候选不能越过一笔真实产生过的本地事务。
+        if (
+          updateTimerRef.current !== null ||
+          pendingUpdateBaselineRef.current !== null
+        ) {
+          return false;
+        }
+        try {
+          return JSON.stringify(normalizePmDoc(editor.getJSON())) ===
+            JSON.stringify(normalizePmDoc(candidateBase));
+        } catch {
+          return false;
+        }
+      },
       hasLocalDocumentChanges() {
         if (!editor || editor.isDestroyed) return false;
         // debounce 已登记就是真实本地事务；不能因远端版本先进入 React props 而把它

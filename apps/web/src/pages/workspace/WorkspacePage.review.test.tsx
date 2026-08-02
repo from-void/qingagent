@@ -1219,6 +1219,103 @@ describe("WorkspacePage review controls", () => {
     expect(JSON.stringify(editor!.getJSON())).toContain("外标签本地未保存句");
   }, 60_000);
 
+  it("候选首帧早于 pendingReview 时，live 正文等于 previewDoc 不误报服务器新版本", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const staleCanonical = pmDoc([
+      pmParagraph("lyric-line", "陈旧 React 基线"),
+    ]);
+    const candidateBase = pmDoc([
+      pmParagraph("verse-1", "主歌第一行"),
+      pmParagraph("verse-2", "主歌第二行"),
+      pmParagraph("lyric-line", "副歌旧句"),
+      pmParagraph("bridge-1", "桥段第一行"),
+      pmParagraph("outro-1", "尾声第一行"),
+    ]);
+    const editedDoc = pmDoc([
+      pmParagraph("verse-1", "主歌第一行"),
+      pmParagraph("verse-2", "主歌第二行"),
+      pmParagraph("lyric-line", "站台上的名字被晚风吹成歌"),
+      pmParagraph("bridge-1", "桥段第一行"),
+      pmParagraph("outro-1", "尾声第一行"),
+    ]);
+    const spec = reviewToolCall(
+      "lyric-hunk",
+      "batch-lyric",
+      "reviewing",
+      {
+        blockId: "lyric-line",
+        before: "副歌旧句",
+        after: "站台上的名字被晚风吹成歌",
+        index: 2,
+      },
+    );
+    const suggestion = docSuggestionFromToolCall(spec);
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "候选冲突止血" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(staleCanonical, 1) },
+      },
+      docStateFrame("editing"),
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    expect(editor!.isEditable).toBe(false);
+
+    // 模拟 r47 上一帧内部投影已把正确 base 写进 TipTap，但 React canonical
+    // 仍滞后；busy-readonly 没有 onEditorChange，不会制造本地保存事务。
+    act(() => {
+      editor!.commands.setContent(candidateBase);
+    });
+    expect(updateDocCommands(stream)).toHaveLength(0);
+
+    // 服务端的固定顺序是 docDiffReady 在先，pendingReview 投影在后。
+    await emitFrames(stream, [
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: candidateBase,
+          editedDoc,
+        },
+      },
+    ]);
+
+    expect(captured.current?.state.streamError).toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(captured.current?.state.doc?.pmDoc).toEqual(candidateBase);
+
+    await emitFrames(stream, [
+      toolCallUpdatedFrame(spec),
+      docStateFrame("pendingReview"),
+    ]);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.textContent).toContain("剩余 · 1 处");
+    expect(document.body.textContent).not.toContain("文档已生成新版本");
+  }, 60_000);
+
   it("generation_finished 撞上 400ms 本地 debounce 时先 drain 保存再自动回灌终稿", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =

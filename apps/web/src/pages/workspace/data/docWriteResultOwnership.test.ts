@@ -123,6 +123,39 @@ describe("decideBroadcastDocumentFrame", () => {
     })).toBe(false);
   });
 
+  it("首个候选帧虽早于 pendingReview，只要 previewDoc 与无待办编辑器一致就直接应用", () => {
+    const diffFrame = versionWritingFrames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady fixture");
+
+    expect(decide(diffFrame, {
+      editorDirty: true,
+      reviewActive: false,
+      candidateBaseMatchesEditor: true,
+    })).toEqual({ kind: "apply" });
+    expect(decide(diffFrame, {
+      editorDirty: true,
+      reviewActive: false,
+      candidateBaseMatchesEditor: false,
+    })).toEqual({
+      kind: "conflict",
+      reason: "local_editor_changes",
+    });
+  });
+
+  it.each([
+    ["pendingDocWrite", { pendingDocWrite: true }, "pending_doc_write"],
+    ["queuedDocWrite", { queuedDocWrite: true }, "queued_doc_write"],
+    ["scheduledDocWrite", { scheduledDocWrite: true }, "scheduled_doc_write"],
+  ] as const)("候选基线匹配也不越过 %s", (_name, dirty, reason) => {
+    const diffFrame = versionWritingFrames.find((frame) => frame.kind === "docDiffReady")!;
+    expect(decide(diffFrame, {
+      ...dirty,
+      editorDirty: true,
+      candidateBaseMatchesEditor: true,
+    })).toEqual({ kind: "defer", reason });
+  });
+
   it("会写版本的帧都能取出该版本与正文,供登记为本会话已知产出", () => {
     // agent 生成流产出的版本必须进已知产出集,否则它推进版本后本标签的旧基线写
     // 会被当成"外部并发"误弹重载横幅(战役缺陷#2)。

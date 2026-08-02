@@ -1,43 +1,29 @@
 import type { SessionState } from "./sessionState.js";
+import {
+  TURN_GENERATION_REQUEST_CONTEXT_KEY,
+  TURN_OWNER_REQUEST_CONTEXT_KEY,
+  TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
+  assertTurnWriteAllowed,
+  captureTurnWriteGuard,
+  type RequestContextLike,
+  type TurnOwnership,
+  type TurnWriteGuardFactory,
+} from "../utils/turnWriteGuard.js";
 
-export const TURN_OWNER_REQUEST_CONTEXT_KEY = "qingagentTurnOwner";
-export const TURN_GENERATION_REQUEST_CONTEXT_KEY = "qingagentTurnGeneration";
-export const TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY =
-  "qingagentTurnWriteGuardFactory";
-
-export interface TurnOwnership {
-  owner: string;
-  generation: number;
-}
-
-export interface TurnWriteGuard {
-  owner: string | null;
-  generation: number;
-  abortSignal?: AbortSignal;
-}
-
-interface RequestContextLike {
-  get(key: string): unknown;
-  set?(key: string, value: unknown): void;
-}
-
-interface ToolExecutionContextLike {
-  abortSignal?: AbortSignal;
-  requestContext?: RequestContextLike;
-}
-
-export type TurnWriteGuardAssertion = () => void;
-type TurnWriteGuardFactory = (
-  abortSignal?: AbortSignal,
-) => TurnWriteGuardAssertion;
-
-function isAbortSignal(value: unknown): value is AbortSignal {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      typeof (value as AbortSignal).throwIfAborted === "function",
-  );
-}
+export {
+  TURN_GENERATION_REQUEST_CONTEXT_KEY,
+  TURN_OWNER_REQUEST_CONTEXT_KEY,
+  TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
+  assertTurnWriteAllowed,
+  captureBoundTurnWriteGuard,
+  captureTurnWriteGuard,
+  turnOwnershipFromRequestContext,
+} from "../utils/turnWriteGuard.js";
+export type {
+  TurnOwnership,
+  TurnWriteGuard,
+  TurnWriteGuardAssertion,
+} from "../utils/turnWriteGuard.js";
 
 /** 为一次 agent 尝试领取单调代次；同一 stream 的 idle-timeout 重试也必须重新领取。 */
 export function beginTurnOwnership(
@@ -85,66 +71,6 @@ export function bindTurnWriteGuardFactoryToRequestContext(
       return () => assertTurnWriteAllowed(state, guard);
     }) satisfies TurnWriteGuardFactory,
   );
-}
-
-export function captureBoundTurnWriteGuard(
-  context?: ToolExecutionContextLike,
-): TurnWriteGuardAssertion | undefined {
-  const factory = context?.requestContext?.get(
-    TURN_WRITE_GUARD_FACTORY_REQUEST_CONTEXT_KEY,
-  );
-  return typeof factory === "function"
-    ? (factory as TurnWriteGuardFactory)(context?.abortSignal)
-    : undefined;
-}
-
-export function turnOwnershipFromRequestContext(
-  requestContext: RequestContextLike | undefined,
-): TurnOwnership | null {
-  const owner = requestContext?.get(TURN_OWNER_REQUEST_CONTEXT_KEY);
-  const generation = requestContext?.get(TURN_GENERATION_REQUEST_CONTEXT_KEY);
-  return typeof owner === "string" &&
-      Number.isSafeInteger(generation) &&
-      (generation as number) >= 0
-    ? { owner, generation: generation as number }
-    : null;
-}
-
-/**
- * 工具 execute 一进入就快照 signal + owner/generation。RequestContext 在 idle 重试时
- * 会切到新 signal/代次，不能等到提交时再从可变上下文读取，否则旧工具会冒充新轮。
- */
-export function captureTurnWriteGuard(
-  state: SessionState,
-  context?: ToolExecutionContextLike,
-): TurnWriteGuard {
-  const contextualOwnership = turnOwnershipFromRequestContext(
-    context?.requestContext,
-  );
-  const contextualSignal = context?.abortSignal ??
-    context?.requestContext?.get("abortSignal");
-  return {
-    owner: contextualOwnership?.owner ?? state._turnOwner,
-    generation: contextualOwnership?.generation ?? state._turnGeneration,
-    ...(isAbortSignal(contextualSignal)
-      ? { abortSignal: contextualSignal }
-      : {}),
-  };
-}
-
-/** 写点提交前的最后一道栅栏：先服从 abort，再校验会话当前 owner/generation。 */
-export function assertTurnWriteAllowed(
-  state: SessionState,
-  guard: TurnWriteGuard,
-): void {
-  guard.abortSignal?.throwIfAborted();
-  if (
-    state._turnOwner === guard.owner &&
-    state._turnGeneration === guard.generation
-  ) {
-    return;
-  }
-  throw new DOMException("迟到的旧轮次写入已拒绝", "AbortError");
 }
 
 export function endTurnOwnership(

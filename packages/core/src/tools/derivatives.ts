@@ -24,7 +24,7 @@ import { compileAiDocumentWithBlockRetry, parseAiDocumentFromQingml } from "./ge
 import {
   captureBoundTurnWriteGuard,
   type TurnWriteGuardAssertion,
-} from "../session/turnOwnership.js";
+} from "../utils/turnWriteGuard.js";
 
 type TransactionClient = Parameters<Parameters<typeof withTransaction>[0]>[0];
 

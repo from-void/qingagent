@@ -6,6 +6,7 @@ import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
+import { isBypassEnabled } from "../security/bypassMode.js";
 import {
   BUILTIN_SKILLS_DIR,
   MAX_EXTERNAL_USER_SKILLS,
@@ -298,7 +299,7 @@ export const qingagentAgent = new Agent({
   inputProcessors: buildQingagentInputProcessors,
   outputProcessors: buildQingagentOutputProcessors,
   maxProcessorRetries: 1,
-  instructions: () => buildSystemPrompt(),
+  instructions: () => buildSystemPrompt({ bypassEnabled: isBypassEnabled() }),
   tools: (): ToolsInput => buildQingagentStaticTools(),
   hooks: {
     beforeToolCall: beforeSkillToolCall,

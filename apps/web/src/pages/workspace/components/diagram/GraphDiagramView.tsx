@@ -87,7 +87,7 @@ import {
 import { useToast } from "../../../../system";
 import { MediaBlockToolbar } from "../MediaBlockToolbar";
 import { CaretIcon } from "../icons";
-import type { DiagramVisualChange } from "./DiagramRenderer";
+import type { DiagramVisualChange } from "./diagramTypes";
 import "./graphDiagram.css";
 import "../diagramEditorChrome.css";
 

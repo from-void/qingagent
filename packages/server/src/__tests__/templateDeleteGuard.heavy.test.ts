@@ -97,24 +97,6 @@ describe("模板删除保底 bridge 路径", () => {
       },
     });
 
-    for (const [id, name] of [
-      ["gzh-layout-classic", "经典排版"],
-      ["gzh-layout-minimal", "极简排版"],
-    ] as const) {
-      await collectFrames(handleCommand({
-        kind: "saveStyleTemplate",
-        data: {
-          sessionId,
-          requestId: `request-style-save-${id}`,
-          id,
-          dtype: "gzh",
-          slot: "layout",
-          name,
-          prompt: "用户自定义排版",
-        },
-      }));
-    }
-
     const firstStyleDelete = await collectFrames(handleCommand({
       kind: "deleteStyleTemplate",
       data: { sessionId, requestId: "request-style-delete-first", id: "gzh-layout-classic" },

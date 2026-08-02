@@ -1,7 +1,11 @@
 import type { CommandResult, Workspace } from "@mastra/core/workspace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
-import { recordBackgroundCommandTombstone } from "../session/backgroundCommand.js";
+import {
+  backgroundCommandTombstone,
+  backgroundCommandTombstoneNotice,
+  recordBackgroundCommandTombstone,
+} from "../session/backgroundCommand.js";
 import { createSession, type SessionState } from "../session/sessionState.js";
 
 interface WaitOptions {
@@ -44,7 +48,12 @@ function createHarness(
   const tool = createBoundedGetProcessOutputTool({
     getWorkspace: async () => workspace,
     waitMaxMs,
-    state,
+    getMissingProcessNotice: state
+      ? (pid) => {
+          const tombstone = backgroundCommandTombstone(state, pid);
+          return tombstone ? backgroundCommandTombstoneNotice(tombstone) : null;
+        }
+      : undefined,
   });
   return { tool, workspace };
 }

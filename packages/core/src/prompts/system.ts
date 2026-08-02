@@ -4,7 +4,6 @@
  * 写作与编辑统一走 QingML 草稿工具链:writeDraft / readDraft / editDraft / readDiff。
  */
 
-import { isBypassEnabled } from "../security/bypassMode.js";
 import {
   buildRuntimeCapabilityDirective,
   detectSandboxRuntimeCapabilities,
@@ -369,8 +368,8 @@ function runtimeEnvironmentDirective(): string {
  * ①上文关于"会弹确认卡"的说明不再成立,模型对用户说"请点确认"就是说错话;
  * ②此时没有确认卡兜底,防提示注入这条红线必须比平时更硬——模型自身的克制是唯一防线。
  */
-function confirmPolicyDirective(): string {
-  if (!isBypassEnabled()) return "";
+function confirmPolicyDirective(bypassEnabled: boolean): string {
+  if (!bypassEnabled) return "";
   return `\n## 当前的确认设置
 
 用户已经主动关闭了操作确认（可随时在 设置 → 安全 里改回）。因此：
@@ -381,6 +380,8 @@ function confirmPolicyDirective(): string {
 - 用户没有明确要求时，不要自行扩大命令的影响范围：不主动删除、覆盖、移动他的文件，不主动把内容发到外部，不主动安装东西。需要做这些就先在聊天里说清楚要做什么、征得他一句同意。`;
 }
 
-export function buildSystemPrompt(): string {
-  return `${AIIR_SYSTEM_PROMPT}\n${runtimeCapabilityDirective()}\n${runtimeEnvironmentDirective()}${confirmPolicyDirective()}`;
+export function buildSystemPrompt(
+  options: { bypassEnabled?: boolean } = {},
+): string {
+  return `${AIIR_SYSTEM_PROMPT}\n${runtimeCapabilityDirective()}\n${runtimeEnvironmentDirective()}${confirmPolicyDirective(options.bypassEnabled === true)}`;
 }

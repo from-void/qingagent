@@ -18,6 +18,8 @@ import {
 import { createGatedExecuteCommandTool } from "../workspace/gatedExecuteCommandTool.js";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
 import {
+  backgroundCommandTombstone,
+  backgroundCommandTombstoneNotice,
   recordBackgroundCommandTombstone,
   registerBackgroundCommandOwner,
 } from "./backgroundCommand.js";
@@ -1525,7 +1527,10 @@ export function createSessionScopedTools(
   const getProcessOutput = state
     ? createBoundedGetProcessOutputTool({
         getWorkspace: getWorkspace!,
-        state,
+        getMissingProcessNotice: (pid) => {
+          const tombstone = backgroundCommandTombstone(state, pid);
+          return tombstone ? backgroundCommandTombstoneNotice(tombstone) : null;
+        },
       })
     : null;
   // 按需授权兜底:任意 CLI 撞凭证墙时模型就地申请,和技能声明通道共用同一张表。

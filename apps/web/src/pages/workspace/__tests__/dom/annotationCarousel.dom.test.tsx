@@ -303,6 +303,61 @@ describe("AnnotationCarousel hover card", () => {
     expect(editorHost!.querySelector('[data-annotation-group="g2"]')).toBeNull();
   });
 
+  it("翻页卡暂隐时 mouseout 与 mouseleave 推满关闭延时仍被导航 pin 保住", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, groups), []);
+      return <AnnotationCarousel
+        groups={groups}
+        editorDom={editor!.view.dom}
+        onAccept={() => true}
+        onIgnore={() => undefined}
+      />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+    const secondAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g2"]')!;
+    Object.defineProperty(secondAnchor, "scrollIntoView", {
+      configurable: true,
+      value: () => undefined,
+    });
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+
+    const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
+    await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+    expect(card.dataset.groupId).toBe("g2");
+    expect(card.style.visibility).toBe("hidden");
+
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      card.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      card.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: document.body }));
+      firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(150);
+    });
+
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    expect(card.style.visibility).toBe("visible");
+
+    await act(async () => window.dispatchEvent(new Event("resize")));
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+  });
+
   it("自定义与预置审查共用 active 锚点，hover 均可开卡且自定义意见可回填", async () => {
     vi.useFakeTimers();
     createEditor();

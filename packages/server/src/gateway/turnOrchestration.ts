@@ -70,7 +70,7 @@ async function* handleCancelAskUser(
   session: SessionState,
   toolCallId: string,
 ): AsyncGenerator<BridgeFrame> {
-  // 幂等：首个取消已经把该问卷持久化为相同 failed 终态时，重复请求直接成功。
+  // 幂等：首个取消已经把该问卷持久化为 user_cancelled 终态时，重复请求直接成功。
   // 这覆盖浏览器重试、代理重放，以及“响应丢了但服务端已完成”的场景。
   for (const message of session.chatHistory) {
     const cancelled = message.parts.some(
@@ -78,8 +78,8 @@ async function* handleCancelAskUser(
         part.kind === "toolCall" &&
         part.data.id === toolCallId &&
         isQuestionnaireTool(part.data.name) &&
-        part.data.status.kind === "failed" &&
-        part.data.status.data.reason === "用户已放弃本轮问卷",
+        part.data.status.kind === "aborted" &&
+        part.data.status.data?.reason === "user_cancelled",
     );
     if (cancelled) {
       await schedulePersist(session, "cancelAskUser");
@@ -99,6 +99,7 @@ async function* handleCancelAskUser(
     session,
     toolCallId,
     "用户已放弃本轮问卷",
+    { kind: "aborted", data: { reason: "user_cancelled" } },
   );
   if (!terminalized) {
     throw new Error(`No pending askUser toolCall: ${toolCallId}`);

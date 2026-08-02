@@ -208,6 +208,43 @@ describe("UToolBar", () => {
     expect(host.querySelector(".u-meta")?.getAttribute("title")).toBeNull();
   });
 
+  it("askUser 主动取消只保留标题且无「未完成」chip，真失败与普通中止仍按原样显示", () => {
+    const askUser = (status: ToolCallSpec["status"]): ToolCallSpec => ({
+      id: "ask-1",
+      name: "askUser",
+      render: { kind: "rightOverlay" },
+      status,
+      body: {
+        kind: "askUser",
+        data: {
+          id: "ask-1",
+          mode: { kind: "overlay" },
+          purpose: null,
+          source: null,
+          rationale: null,
+          questions: [],
+        },
+      },
+      result: null,
+    });
+
+    renderBar(askUser({ kind: "aborted", data: { reason: "user_cancelled" } }));
+    expect(host.textContent).toContain("确认方向");
+    expect(host.textContent).not.toContain("未完成");
+    expect(host.textContent).not.toContain("已中止");
+    expect(host.querySelector(".u-meta")).toBeNull();
+    expect(host.querySelector(".u-ico")).toBeNull();
+
+    renderBar(askUser({
+      kind: "failed",
+      data: { retriable: false, reason: "问卷工具执行异常" },
+    }));
+    expect(host.textContent).toContain("未完成");
+
+    renderBar(askUser({ kind: "aborted" }));
+    expect(host.textContent).toContain("已中止");
+  });
+
   it("#27 writeDraft 参数生成期占位显示「酝酿中…」", () => {
     renderBar(genericSpec("running", "", "writeDraft"));
 

@@ -376,6 +376,10 @@ export function UToolBar({
   const aborted =
     abortedStatus ||
     (spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted");
+  const userCancelledAskUser =
+    spec.body.kind === "askUser" &&
+    spec.status.kind === "aborted" &&
+    spec.status.data?.reason === "user_cancelled";
   const procOutSecs = (() => {
     if (!isProcOut) return null;
     const t = parseArgs(spec).timeout;
@@ -418,11 +422,11 @@ export function UToolBar({
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className="u-ico">{ico}</span>
+      {userCancelledAskUser ? null : <span className="u-ico">{ico}</span>}
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span className="u-meta">{statusText}</span>
+      {userCancelledAskUser ? null : <span className="u-meta">{statusText}</span>}
     </div>
   );
 }

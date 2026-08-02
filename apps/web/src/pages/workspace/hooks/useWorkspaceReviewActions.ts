@@ -59,8 +59,8 @@ export function isAuthoritativeAskUserCancelFrame(
   return (
     frame.kind === "toolCallUpdated" &&
     frame.data.spec.body.kind === "askUser" &&
-    frame.data.spec.status.kind === "failed" &&
-    frame.data.spec.status.data.reason === "用户已放弃本轮问卷"
+    frame.data.spec.status.kind === "aborted" &&
+    frame.data.spec.status.data?.reason === "user_cancelled"
   );
 }
 
@@ -565,10 +565,7 @@ export function useWorkspaceReviewActions(input: {
       const originalAgentBusy = current.agentBusy;
       const optimisticTc: ToolCallSpec = {
         ...originalTc,
-        status: {
-          kind: "failed",
-          data: { retriable: false, reason: "用户已放弃本轮问卷" },
-        },
+        status: { kind: "aborted", data: { reason: "user_cancelled" } },
       };
 
       const mutationToken = Symbol(mutationKey);
@@ -602,8 +599,8 @@ export function useWorkspaceReviewActions(input: {
           }
           const latest = stateRef.current.toolCalls.get(toolCall.id);
           const stillOptimistic =
-            latest?.status.kind === "failed" &&
-            latest.status.data.reason === "用户已放弃本轮问卷";
+            latest?.status.kind === "aborted" &&
+            latest.status.data?.reason === "user_cancelled";
           if (stillOptimistic) {
             dispatch({
               kind: "restoreAskUser",

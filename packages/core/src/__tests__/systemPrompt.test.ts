@@ -65,6 +65,13 @@ describe("system prompt S3", () => {
       "markChange",
       "改动待确认",
       "不要声称改动已生效",
+      // 回归(table-cell-followup-no-candidate):“给候选/暂不应用”是要求立即生成
+      // 待审候选，不是要求模型再用聊天文字确认一次。
+      "明确编辑指令直接产出候选",
+      "给候选 / 暂不应用",
+      "readDraft 后必须在同一轮继续调用 editDraft",
+      "不能停在纯文字确认",
+      "只把公交月成本从约88元改为约128元，其他不变；给候选，暂不应用",
       "safeRegex",
       "QingML 片段",
       "&lt; / &amp;",

@@ -1197,6 +1197,137 @@ describe("candidate-diff backend flow", () => {
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
   });
 
+  it("表格单格 replaceText 产出待审候选并在接受后只修改目标单元格", async () => {
+    const {
+      commitPatches,
+      createSession,
+      createSessionScopedTools,
+      processAgentStream,
+    } = await import("../bridge/index.js");
+    const state = createSession("candidate-table-cell-followup");
+    const baseDoc = pmDoc([{
+      type: "table",
+      attrs: { blockId: "table-commute" },
+      content: [
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableHeader", content: [paragraph("commute-h-way", "方式")] },
+            { type: "tableHeader", content: [paragraph("commute-h-cost", "月成本")] },
+            { type: "tableHeader", content: [paragraph("commute-h-time", "耗时")] },
+            { type: "tableHeader", content: [paragraph("commute-h-note", "备注")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [paragraph("commute-walk-way", "步行")] },
+            { type: "tableCell", content: [paragraph("commute-walk-cost", "约0元")] },
+            { type: "tableCell", content: [paragraph("commute-walk-time", "50分钟")] },
+            { type: "tableCell", content: [paragraph("commute-walk-note", "适合短途")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [paragraph("commute-bus-way", "公交")] },
+            { type: "tableCell", content: [paragraph("commute-bus-cost", "约88元")] },
+            { type: "tableCell", content: [paragraph("commute-bus-time", "35分钟")] },
+            { type: "tableCell", content: [paragraph("commute-bus-note", "受路况影响")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [paragraph("commute-metro-way", "地铁")] },
+            { type: "tableCell", content: [paragraph("commute-metro-cost", "约176元")] },
+            { type: "tableCell", content: [paragraph("commute-metro-time", "28分钟")] },
+            { type: "tableCell", content: [paragraph("commute-metro-note", "较准时")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [paragraph("commute-bike-way", "自行车")] },
+            { type: "tableCell", content: [paragraph("commute-bike-cost", "约20元")] },
+            { type: "tableCell", content: [paragraph("commute-bike-time", "32分钟")] },
+            { type: "tableCell", content: [paragraph("commute-bike-note", "受天气影响")] },
+          ],
+        },
+      ],
+    } as PmBlockNode]);
+    state.doc = baseDoc;
+    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    await seedDocument({
+      docId: state.docId,
+      sessionId: state.sessionId,
+      docVersion: 1,
+      doc: baseDoc,
+    });
+
+    const args = {
+      ops: [{
+        action: "replaceText" as const,
+        withinRef: "table-commute",
+        find: "约88元",
+        replace: "约128元",
+      }],
+    };
+    const { readDraftAiIr, editDraft } = createSessionScopedTools(state);
+    const readResult = await readDraftAiIr.execute!(
+      { query: "公交", includeText: true },
+      {} as never,
+    ) as { ok: boolean; blocks: Array<{ ref: string; text?: string }> };
+    expect(readResult.ok).toBe(true);
+    expect(readResult.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: "table-commute", text: expect.stringContaining("约88元") }),
+    ]));
+
+    const editResult = await editDraft.execute!(args, {} as never) as Record<string, unknown>;
+    expect(editResult).toMatchObject({ ok: true, changed: true, hunkCount: 1 });
+    expect(tableTexts(state.doc)).toEqual([
+      ["方式", "月成本", "耗时", "备注"],
+      ["步行", "约0元", "50分钟", "适合短途"],
+      ["公交", "约88元", "35分钟", "受路况影响"],
+      ["地铁", "约176元", "28分钟", "较准时"],
+      ["自行车", "约20元", "32分钟", "受天气影响"],
+    ]);
+    expect(tableTexts(state.docDraftCandidateDoc ?? undefined)).toEqual([
+      ["方式", "月成本", "耗时", "备注"],
+      ["步行", "约0元", "50分钟", "适合短途"],
+      ["公交", "约128元", "35分钟", "受路况影响"],
+      ["地铁", "约176元", "28分钟", "较准时"],
+      ["自行车", "约20元", "32分钟", "受天气影响"],
+    ]);
+
+    const frames = await collectFrames(processAgentStream(
+      streamOf(
+        editDraftCall("ed-table-cell-followup", args),
+        editDraftResult("ed-table-cell-followup", args, editResult),
+      ),
+      {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-table-cell-followup",
+        runId: "run-table-cell-followup",
+      },
+    ));
+    expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(true);
+    expect(state.suggestions.size).toBe(1);
+
+    await collectFrames(commitPatches(state, [...state.suggestions.keys()]));
+    expect(tableTexts(state.doc)).toEqual([
+      ["方式", "月成本", "耗时", "备注"],
+      ["步行", "约0元", "50分钟", "适合短途"],
+      ["公交", "约128元", "35分钟", "受路况影响"],
+      ["地铁", "约176元", "28分钟", "较准时"],
+      ["自行车", "约20元", "32分钟", "受天气影响"],
+    ]);
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+  });
+
   it("生成→updateDoc 手动编辑→tableSelection editDraft→commit 保留用户正文并应用补丁", async () => {
     const {
       commitDocumentOp,

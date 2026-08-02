@@ -165,6 +165,7 @@ export function WorkspaceDocumentPane({
     loadReviewSupplement,
     saveReviewSupplement,
     loadLexicons,
+    saveLexiconSelection,
     loadLexiconEntries,
     materialParseRows,
     chatInputEditorDisabled,
@@ -693,6 +694,7 @@ export function WorkspaceDocumentPane({
             loadSupplement={loadReviewSupplement}
             saveSupplement={saveReviewSupplement}
             loadLexicons={loadLexicons}
+            saveLexiconSelection={saveLexiconSelection}
             loadLexiconEntries={loadLexiconEntries}
             sourceMaterialAvailable={sourceMaterialAvailable}
             onAddMaterial={() => {

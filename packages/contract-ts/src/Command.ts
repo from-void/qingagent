@@ -14,7 +14,7 @@ import type { SubmitReviewOutcome } from "./SubmitReviewOutcome";
 import type { UpdateDoc } from "./UpdateDoc";
 import type { UpdateMaterialSummary } from "./UpdateMaterialSummary";
 import type { ExternalPropose } from "./ExternalPropose";
-import type { ListLexiconEntries, ListLexicons } from "./ListLexicons";
+import type { ListLexiconEntries, ListLexicons, SetEnabledLexicons } from "./ListLexicons";
 import type { RenameSession } from "./RenameSession";
 import type { CreateDerivative, DeleteDerivative, GetDerivativeDoc, ListDerivatives, ListStyleTemplates, GetStyleTemplate, SaveStyleTemplate, DeleteStyleTemplate, UpdateDerivativeParams } from "./Derivatives";
 import type { IgnoreAnnotationGroups } from "./IgnoreAnnotationGroups";
@@ -44,6 +44,7 @@ export type Command =
   | { kind: "detachFolder"; data: DetachFolder }
   | { kind: "externalPropose"; data: ExternalPropose }
   | { kind: "listLexicons"; data: ListLexicons }
+  | { kind: "setEnabledLexicons"; data: SetEnabledLexicons }
   | { kind: "listLexiconEntries"; data: ListLexiconEntries }
   | { kind: "renameSession"; data: RenameSession }
   | { kind: "listDerivatives"; data: ListDerivatives }

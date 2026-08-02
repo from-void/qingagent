@@ -223,6 +223,7 @@ function workspaceReducerMut(
 ): void {
   switch (action.kind) {
     case "lexiconsListed":
+    case "enabledLexiconsSet":
       // 命令调用方通过 ServerStream waiter 消费，工作区持久状态无需保存。
       return;
     case "derivativeGenFinished":

@@ -20,6 +20,7 @@ import {
   saveReviewTemplate,
   saveStyleTemplate,
   selectReviewTemplate,
+  setEnabledLexicons,
   upsertReviewDocSupplement,
 } from "./bridgeCore";
 import type { CommandExecutionContext } from "./commandTypes";
@@ -29,6 +30,7 @@ type TemplateCommand = Extract<Command, {
   kind:
     | "draftTemplate"
     | "listLexicons"
+    | "setEnabledLexicons"
     | "listLexiconEntries"
     | "listStyleTemplates"
     | "getStyleTemplate"
@@ -78,6 +80,17 @@ export async function* handleTemplateCommand(
     case "listLexicons": {
       await requireSession(command.data.sessionId);
       yield { kind: "lexiconsListed", data: { lexicons: await listLexicons() } };
+      return;
+    }
+    case "setEnabledLexicons": {
+      await requireSession(command.data.sessionId);
+      yield {
+        kind: "enabledLexiconsSet",
+        data: {
+          requestId: command.data.requestId,
+          lexicons: await setEnabledLexicons(command.data.enabledLexiconIds),
+        },
+      };
       return;
     }
     case "listLexiconEntries": {

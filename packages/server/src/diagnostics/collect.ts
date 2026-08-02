@@ -492,6 +492,7 @@ const L1_FRAME_RULES = {
     title: "redacted",
   },
   lexiconsListed: { lexicons: "redactedDeep" },
+  enabledLexiconsSet: { requestId: "structural", lexicons: "redactedDeep" },
   lexiconEntriesListed: { resourceId: "structural", entries: "redactedDeep" },
   restoreReset: { epoch: "structural", snapshotSeq: "structural" },
   sessionRestoreCompleted: { sessionId: "structural" },

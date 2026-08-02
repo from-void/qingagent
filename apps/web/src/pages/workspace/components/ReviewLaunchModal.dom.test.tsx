@@ -16,7 +16,7 @@ const builtins: ReviewTemplateItem[] = [
   { id: "source-default", type: "source", name: "标准来源核查", prompt: "核对事实、数字与出处。", builtin: true, createdAt: now, updatedAt: now },
   { id: "source-strict", type: "source", name: "严格来源核查", prompt: "逐字核对金额和日期。", builtin: false, createdAt: now, updatedAt: now },
 ];
-const lexicons = [{ id: "lexicon-ad", name: "广告法极限词", description: "广告合规", entryCount: 2 }];
+const lexicons = [{ id: "lexicon-ad", name: "广告法极限词", description: "广告合规", entryCount: 2, enabled: true }];
 
 describe("ReviewLaunchModal", () => {
   let host: HTMLDivElement;
@@ -366,10 +366,61 @@ describe("ReviewLaunchModal", () => {
     expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
   });
 
+  it("词库开关完成即持久化，重进后显示与审查请求集合一致", async () => {
+    const availableLexicons = [
+      { id: "lexicon-ad", name: "广告法极限词", description: "广告合规", entryCount: 2, enabled: true },
+      { id: "lexicon-medical", name: "医疗健康违禁宣称", description: "医疗合规", entryCount: 2, enabled: true },
+      { id: "lexicon-official", name: "公文规范用语对照", description: "公文规范", entryCount: 2, enabled: true },
+      { id: "lexicon-social", name: "自媒体营销高危词", description: "平台治理", entryCount: 2, enabled: true },
+    ];
+    let storedIds = new Set(availableLexicons.map((item) => item.id));
+    const loadLexicons = vi.fn(async () => availableLexicons.map((item) => ({
+      ...item,
+      enabled: storedIds.has(item.id),
+    })));
+    const saveLexiconSelection = vi.fn(async (enabledIds: string[]) => {
+      storedIds = new Set(enabledIds);
+      return loadLexicons();
+    });
+    const modalProps = props({
+      type: "sensitive" as const,
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [{ ...builtins[0]!, id: "sensitive-default", type: "sensitive", name: "标准敏感词审查" }],
+        selectedTemplateId: "sensitive-default",
+      }),
+      loadLexicons,
+      saveLexiconSelection,
+    });
+
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-resource-row .ws-launch-link")?.click());
+    const initialCheckboxes = Array.from(host.querySelectorAll<HTMLInputElement>(".ws-lexicon-check input"));
+    expect(initialCheckboxes.map((checkbox) => checkbox.checked)).toEqual([true, true, true, true]);
+    act(() => initialCheckboxes.slice(1).forEach((checkbox) => checkbox.click()));
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "完成")?.click());
+    expect(saveLexiconSelection).toHaveBeenCalledWith(["lexicon-ad"]);
+
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} open={false} />));
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} open />));
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-resource-row .ws-launch-link")?.click());
+    const reloadedCheckboxes = Array.from(host.querySelectorAll<HTMLInputElement>(".ws-lexicon-check input"));
+    expect(reloadedCheckboxes.map((checkbox) => checkbox.checked)).toEqual([true, false, false, false]);
+
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "开始审查")?.click());
+    expect(modalProps.onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sensitive-default" }),
+      "",
+      [expect.objectContaining({ id: "lexicon-ad", enabled: true })],
+    );
+  });
+
   it("切换词库会清除旧错误，且旧词条请求晚失败不会污染当前词库", async () => {
     const availableLexicons = [
       lexicons[0]!,
-      { id: "lexicon-brand", name: "品牌禁用词", description: "品牌规范", entryCount: 1 },
+      { id: "lexicon-brand", name: "品牌禁用词", description: "品牌规范", entryCount: 1, enabled: true },
     ];
     let rejectOldRequest!: (error: Error) => void;
     let resolveCurrentRequest!: (items: Array<{ word: string; replacement: string | null; note: string | null }>) => void;

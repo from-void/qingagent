@@ -23,11 +23,11 @@ function readCurrentDocument(context: unknown): PmDoc | null {
 
 export const lexiconListTool = createTool({
   id: "lexicon_list",
-  description: "列出可用于敏感词、违禁词或极限词审查的词库及词条数量。",
+  description: "列出可用于敏感词、违禁词或极限词审查的词库、启用状态及词条数量。",
   inputSchema: z.object({}),
   outputSchema: z.object({
     ok: z.boolean(),
-    lexicons: z.array(z.object({ id: z.string(), name: z.string(), entryCount: z.number() })),
+    lexicons: z.array(z.object({ id: z.string(), name: z.string(), entryCount: z.number(), enabled: z.boolean() })),
   }),
   execute: async () => ({ ok: true, lexicons: await listLexicons() }),
 });
@@ -56,7 +56,13 @@ export const sensitiveScanTool = createTool({
     // 用 editDraft 字面匹配同一套文本抽取(行内节点正确拼接、按块分行):
     // 保证扫描命中的词在后续 editDraft replaceText 的匹配空间里一定找得到。
     const text = collectTopLevelTextBlocks(doc).map((block) => block.text).join("\n");
-    const entries = await listLexiconEntries(input.resourceIds);
+    // UI 展示、模型可见列表和最终扫描共用数据库里的 enabled；即使模型误传了
+    // 已关闭词库，也不能出现“界面单库、实际四库”的静默错位。
+    const enabledResourceIds = new Set(
+      (await listLexicons()).filter((resource) => resource.enabled).map((resource) => resource.id),
+    );
+    const resourceIds = input.resourceIds.filter((id) => enabledResourceIds.has(id));
+    const entries = await listLexiconEntries(resourceIds);
     const hits = scanText(text, entries);
     return {
       ok: true,

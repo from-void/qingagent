@@ -1123,6 +1123,22 @@ describe("validateBridgeFrame", () => {
     expect(() => validateBridgeFrame({ ...frame, data: { ...frame.data, entries: [{ word: "", replacement: null, note: null }] } })).toThrow(BridgeFrameValidationError);
   });
 
+  it("校验词库选择保存帧的 requestId 与 enabled 字段", () => {
+    const frame: BridgeFrame = {
+      kind: "enabledLexiconsSet",
+      data: {
+        requestId: "request-1",
+        lexicons: [{ id: "lex-1", name: "广告法", entryCount: 2, description: "广告合规", enabled: true }],
+      },
+    };
+    expect(() => validateBridgeFrame(frame)).not.toThrow();
+    expect(() => validateBridgeFrame({ ...frame, data: { ...frame.data, requestId: "" } })).toThrow(BridgeFrameValidationError);
+    expect(() => validateBridgeFrame({
+      ...frame,
+      data: { ...frame.data, lexicons: [{ ...frame.data.lexicons[0]!, enabled: undefined as never }] },
+    })).toThrow(BridgeFrameValidationError);
+  });
+
   it("rejects docCommitted without sessionId", () => {
     const frame: BridgeFrame = {
       kind: "docCommitted",

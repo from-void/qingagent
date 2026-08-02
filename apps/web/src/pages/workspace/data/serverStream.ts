@@ -570,8 +570,8 @@ export class ServerStream {
     return frame.data;
   }
 
-  private async derivativeFrame<K extends "derivativesListed" | "derivativeCreated" | "derivativeParamsUpdated" | "derivativeDeleted" | "derivativeDocLoaded" | "styleTemplatesListed" | "styleTemplateLoaded" | "styleTemplateSaved" | "styleTemplateDeleted" | "reviewTemplatesListed" | "reviewTemplateSaved" | "reviewTemplateDeleted" | "reviewTemplateSelected" | "reviewSupplementLoaded" | "reviewSupplementSaved">(
-    command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" }>,
+  private async derivativeFrame<K extends "derivativesListed" | "derivativeCreated" | "derivativeParamsUpdated" | "derivativeDeleted" | "derivativeDocLoaded" | "styleTemplatesListed" | "styleTemplateLoaded" | "styleTemplateSaved" | "styleTemplateDeleted" | "reviewTemplatesListed" | "reviewTemplateSaved" | "reviewTemplateDeleted" | "reviewTemplateSelected" | "reviewSupplementLoaded" | "reviewSupplementSaved" | "enabledLexiconsSet">(
+    command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" | "setEnabledLexicons" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
     const framePromise = this.waitForFrame(
@@ -674,6 +674,14 @@ export class ServerStream {
   async upsertReviewSupplement(sessionId: string, type: ReviewType, supplement: string) {
     const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type, supplement } }, "reviewSupplementSaved");
     return frame.data.supplement;
+  }
+
+  async setEnabledLexicons(sessionId: string, enabledLexiconIds: string[]) {
+    const frame = await this.derivativeFrame({
+      kind: "setEnabledLexicons",
+      data: { sessionId, requestId: crypto.randomUUID(), enabledLexiconIds },
+    }, "enabledLexiconsSet");
+    return frame.data.lexicons;
   }
 
   async deleteDerivative(sessionId: string, docId: string) {

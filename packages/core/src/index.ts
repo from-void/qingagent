@@ -371,6 +371,7 @@ export {
   saveReviewTemplate,
   saveStyleTemplate,
   selectReviewTemplate,
+  setEnabledLexicons,
   setAppSetting,
   setAppSettingJsonField,
   updateParams,

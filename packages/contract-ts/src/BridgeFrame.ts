@@ -38,6 +38,7 @@ export type BridgeFrame =
   | { kind: "derivativeDeleted"; data: { requestId: string; docId: string } }
   | { kind: "derivativeDocLoaded"; data: { requestId: string; meta: DerivativeItem; docPm: string; docVersion: number; title: string } }
   | { kind: "lexiconsListed"; data: { lexicons: LexiconResourceSummary[] } }
+  | { kind: "enabledLexiconsSet"; data: { requestId: string; lexicons: LexiconResourceSummary[] } }
   | { kind: "lexiconEntriesListed"; data: { resourceId: string; entries: LexiconEntrySummary[] } }
   | { kind: "restoreReset"; data: { epoch: number; snapshotSeq: number } }
   | { kind: "sessionRestoreCompleted"; data: { sessionId: string } }

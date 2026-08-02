@@ -37,7 +37,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
     void Promise.all([loadLexicons(), loadInstruction()]).then(([items, savedInstruction]) => {
       if (!active) return;
       setLexicons(items);
-      setSelected(new Set(items.map((item) => item.id)));
+      setSelected(new Set(items.filter((item) => item.enabled !== false).map((item) => item.id)));
       setInstruction(savedInstruction);
     }).catch(() => {
       if (active) setError("词库加载失败，请重试");

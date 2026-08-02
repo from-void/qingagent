@@ -490,7 +490,7 @@ async function validateAndPrepareImage(
 }
 
 /**
- * 把当前会话沙箱内由 codex-image 流程生成或修改的图片产物复制到公开 uploads。
+ * 把当前会话沙箱内由 image-gen 流程生成或修改的图片产物复制到公开 uploads。
  * 单独导出纯函数，便于对路径边界与脏文件输入做密闭回归测试。
  */
 export async function importGeneratedImageFromPath(
@@ -545,8 +545,9 @@ export async function importGeneratedImageFromPath(
 export const importGeneratedImageTool = createTool({
   id: "importGeneratedImage",
   description:
-    "【触发限制：仅供 image-gen/codex-image 子技能使用】" +
-    "仅当本轮已经通过本机 codex exec 在当前会话沙箱工作区生成或修改图片后，才可调用本工具将该产物导入文档图片库；" +
+    "【触发限制：仅供 image-gen 的 codex-image 或 svg 子技能使用】" +
+    "仅当本轮已经通过本机 codex exec 生成或修改图片，或通过原生 SVG 定点编辑修改 editablePath 后，" +
+    "才可调用本工具将当前会话沙箱工作区内的产物导入文档图片库；" +
     "不得用于用户上传文件、资料库文件、uploads 文件或任意宿主路径，也不得借此绕过工作区路径边界。" +
     "输入沙箱内图片的绝对 path（只允许 png/jpg/jpeg/webp/svg）和可选 alt，返回真实 imageId、src 并回显 alt，" +
     "PNG/JPEG 可廉价识别时还返回 width/height。本工具只导入资产，不会把图片插进文档；" +

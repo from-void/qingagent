@@ -2,14 +2,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { editFileTool, LocalFilesystem, Workspace } from "@mastra/core/workspace";
 import {
   prepareImageEditSourceTool,
   prepareImageEditSourceFromReference,
 } from "../tools/prepareImageEditSource.js";
+import { importGeneratedImageFromPath } from "../tools/importGeneratedImage.js";
 
 const ONE_PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
+);
+const TARGETED_REDRAW_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">' +
+    '<rect width="120" height="80" fill="#efe7d6"/>' +
+    '<g id="sun"><circle cx="90" cy="20" r="8" fill="#d7a928"/></g>' +
+    '<path d="M0 60H120" stroke="#315c72"/></svg>',
+  "utf8",
 );
 const tempDirs: string[] = [];
 
@@ -24,10 +33,11 @@ afterEach(async () => {
 });
 
 describe("prepareImageEditSource", () => {
-  it("工具面把桌面、用户确认和受限源图引用写进触发契约", () => {
+  it("工具面把受限源图引用、SVG 与原生定点编辑写进触发契约", () => {
     expect(prepareImageEditSourceTool.id).toBe("prepareImageEditSource");
-    expect(prepareImageEditSourceTool.description).toContain("仅当运行在桌面客户端");
-    expect(prepareImageEditSourceTool.description).toContain("用户已经确认");
+    expect(prepareImageEditSourceTool.description).toContain("png/jpg/jpeg/webp/gif/svg");
+    expect(prepareImageEditSourceTool.description).toContain("原生 SVG 定点编辑");
+    expect(prepareImageEditSourceTool.description).toContain("editablePath");
     expect(prepareImageEditSourceTool.description).toContain("不得输入或探测任意宿主文件路径");
   });
 
@@ -49,6 +59,7 @@ describe("prepareImageEditSource", () => {
     expect(result).toMatchObject({
       mimeType: "image/png",
       bytes: ONE_PIXEL_PNG.length,
+      workspacePath: expect.stringMatching(/^\/workspace\/codex-image-source-[0-9a-f-]+\.png$/),
     });
     await expect(readFile(result.path)).resolves.toEqual(ONE_PIXEL_PNG);
   });
@@ -95,20 +106,79 @@ describe("prepareImageEditSource", () => {
     expect(resolveImage).not.toHaveBeenCalled();
   });
 
-  it("拒绝解析器返回的非白名单图片格式，不在工作区伪造扩展名", async () => {
+  it("SVG 源图通过真实 data URL 校验，并准备逐元素编辑副本", async () => {
     const workspaceRoot = await workspaceFixture();
+    const image = `data:image/svg+xml;base64,${TARGETED_REDRAW_SVG.toString("base64")}`;
+
+    const result = await prepareImageEditSourceFromReference(
+      { image },
+      { workspaceRoot },
+    );
+
+    expect(basename(result.path)).toMatch(/^codex-image-source-[0-9a-f-]+\.svg$/);
+    expect(result).toMatchObject({
+      mimeType: "image/svg+xml",
+      bytes: TARGETED_REDRAW_SVG.length,
+    });
+    expect(result.editablePath).toBeTruthy();
+    expect(result.editableWorkspacePath).toBeTruthy();
+    expect(result.editablePath).not.toBe(result.path);
+    expect(basename(result.editablePath!)).toMatch(/^svg-edit-output-[0-9a-f-]+\.svg$/);
+    expect(result.workspacePath).toMatch(/^\/workspace\/codex-image-source-[0-9a-f-]+\.svg$/);
+    expect(result.editableWorkspacePath).toMatch(/^\/workspace\/svg-edit-output-[0-9a-f-]+\.svg$/);
+    await expect(readFile(result.path)).resolves.toEqual(TARGETED_REDRAW_SVG);
+    await expect(readFile(result.editablePath!)).resolves.toEqual(TARGETED_REDRAW_SVG);
+  });
+
+  it("SVG 声明与内容不符时仍拒绝，不为脏输入准备编辑副本", async () => {
+    const workspaceRoot = await workspaceFixture();
+    const image = `data:image/svg+xml;base64,${Buffer.from("not svg", "utf8").toString("base64")}`;
 
     await expect(
-      prepareImageEditSourceFromReference(
-        { image: "source" },
+      prepareImageEditSourceFromReference({ image }, { workspaceRoot }),
+    ).rejects.toMatchObject({ kind: "unsupported_media" });
+  });
+
+  it("原生定点编辑只替换目标图元，导入后未点名图元保持不变", async () => {
+    const workspaceRoot = await workspaceFixture();
+    const uploadsRoot = join(dirname(workspaceRoot), "uploads");
+    const image = `data:image/svg+xml;base64,${TARGETED_REDRAW_SVG.toString("base64")}`;
+    const prepared = await prepareImageEditSourceFromReference({ image }, { workspaceRoot });
+    const workspace = new Workspace({
+      filesystem: new LocalFilesystem({ basePath: workspaceRoot }),
+    });
+    const oldSun = '<g id="sun"><circle cx="90" cy="20" r="8" fill="#d7a928"/></g>';
+    const newMoon = '<g id="moon"><path d="M94 12a9 9 0 1 0 0 16 7 7 0 1 1 0-16Z" fill="#d7a928"/></g>';
+
+    try {
+      await editFileTool.execute!(
         {
-          workspaceRoot,
-          resolveImage: async () => ({
-            buffer: Buffer.from("<svg/>"),
-            mimeType: "image/svg+xml",
-          }),
+          path: prepared.editablePath!,
+          old_string: oldSun,
+          new_string: newMoon,
+          replace_all: false,
         },
-      ),
-    ).rejects.toThrow("源图只支持 png、jpg、jpeg、webp 或 gif");
+        { workspace } as never,
+      );
+
+      const expected = TARGETED_REDRAW_SVG.toString("utf8").replace(oldSun, newMoon);
+      await expect(readFile(prepared.path, "utf8")).resolves.toBe(TARGETED_REDRAW_SVG.toString("utf8"));
+      await expect(readFile(prepared.editablePath!, "utf8")).resolves.toBe(expected);
+
+      const imported = await importGeneratedImageFromPath(
+        { path: prepared.editablePath!, alt: "月亮版插图" },
+        { workspaceRoot, uploadsRoot },
+      );
+      const importedSvg = await readFile(
+        join(uploadsRoot, imported.imageId, basename(imported.src)),
+        "utf8",
+      );
+      expect(importedSvg).toContain('id="moon"');
+      expect(importedSvg).not.toContain('id="sun"');
+      expect(importedSvg).toContain('<rect width="120" height="80" fill="#efe7d6"');
+      expect(importedSvg).toContain('d="M0 60H120" stroke="#315c72"');
+    } finally {
+      await workspace.destroy();
+    }
   });
 });

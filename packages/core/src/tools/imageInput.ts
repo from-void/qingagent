@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import {
   createPinnedLookup,
+  hardenInlineSvg,
   validateAndPinFetchUrl,
   type PinnedFetchUrl,
 } from "@qingagent/doc-render/browser";
@@ -18,7 +19,8 @@ export const IMAGE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_REDIRECTS = 5;
 const UPLOADS_BASE = uploadsBaseDir();
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const RASTER_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const EDIT_IMAGE_MIME_TYPES = new Set([...RASTER_IMAGE_MIME_TYPES, "image/svg+xml"]);
 const FETCH_IMAGE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -46,6 +48,10 @@ export class ImageInputError extends Error {
 export interface ResolvedImageInput {
   buffer: Buffer;
   mimeType: string;
+}
+
+export interface ResolveImageInputOptions {
+  allowSvg?: boolean;
 }
 
 export interface DownloadedRemoteImage extends ResolvedImageInput {
@@ -78,7 +84,11 @@ function contentTypeMime(value: string | null): string | null {
   return value?.split(";")[0]?.trim().toLowerCase() || null;
 }
 
-function mimeFromMagic(buffer: Buffer): string | null {
+function allowedImageMimeTypes(options?: ResolveImageInputOptions): ReadonlySet<string> {
+  return options?.allowSvg ? EDIT_IMAGE_MIME_TYPES : RASTER_IMAGE_MIME_TYPES;
+}
+
+function mimeFromMagic(buffer: Buffer, options?: ResolveImageInputOptions): string | null {
   if (
     buffer.length >= 8 &&
     buffer[0] === 0x89 &&
@@ -109,17 +119,28 @@ function mimeFromMagic(buffer: Buffer): string | null {
   ) {
     return "image/webp";
   }
+  if (
+    options?.allowSvg &&
+    hardenInlineSvg(buffer.toString("utf8"), { maxBytes: MAX_IMAGE_BYTES })
+  ) {
+    return "image/svg+xml";
+  }
   return null;
 }
 
-function assertImageMime(buffer: Buffer, declaredMimeType?: string | null): string {
+function assertImageMime(
+  buffer: Buffer,
+  declaredMimeType?: string | null,
+  options?: ResolveImageInputOptions,
+): string {
   assertImageSize(buffer.length);
+  const allowedMimeTypes = allowedImageMimeTypes(options);
   const declared = contentTypeMime(declaredMimeType ?? null);
-  if (declared && !IMAGE_MIME_TYPES.has(declared)) {
+  if (declared && !allowedMimeTypes.has(declared)) {
     throw imageInputError("unsupported_media", `不支持的图片 MIME: ${declared}`);
   }
-  const magic = mimeFromMagic(buffer);
-  if (!magic || !IMAGE_MIME_TYPES.has(magic)) {
+  const magic = mimeFromMagic(buffer, options);
+  if (!magic || !allowedMimeTypes.has(magic)) {
     throw imageInputError("unsupported_media", "图片魔数校验失败");
   }
   if (declared && declared !== magic) {
@@ -220,6 +241,8 @@ function extensionFromMime(mimeType: string): string {
       return "webp";
     case "image/gif":
       return "gif";
+    case "image/svg+xml":
+      return "svg";
     case "image/jpeg":
     default:
       return "jpg";
@@ -229,6 +252,7 @@ function extensionFromMime(mimeType: string): string {
 export async function downloadRemoteImage(
   rawUrl: string,
   parentSignal?: AbortSignal,
+  options?: ResolveImageInputOptions,
 ): Promise<DownloadedRemoteImage> {
   const deadlineSignal = AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS);
   const abortController = new AbortController();
@@ -285,12 +309,12 @@ export async function downloadRemoteImage(
         }
 
         const declaredMimeType = contentTypeMime(response.headers.get("content-type"));
-        if (declaredMimeType && !IMAGE_MIME_TYPES.has(declaredMimeType)) {
+        if (declaredMimeType && !allowedImageMimeTypes(options).has(declaredMimeType)) {
           await cancelResponseBody(response);
           throw imageInputError("unsupported_media", `不支持的图片 MIME: ${declaredMimeType}`);
         }
         const buffer = await readStreamWithLimit(response, abortController);
-        const mimeType = assertImageMime(buffer, declaredMimeType);
+        const mimeType = assertImageMime(buffer, declaredMimeType, options);
         return {
           buffer,
           mimeType,
@@ -317,7 +341,10 @@ function assertUploadContainment(path: string): void {
   }
 }
 
-async function resolveLocalUploadPath(src: string): Promise<ResolvedImageInput> {
+async function resolveLocalUploadPath(
+  src: string,
+  options?: ResolveImageInputOptions,
+): Promise<ResolvedImageInput> {
   const path = localUploadPath(src);
   if (!path) throw imageInputError("invalid_path", "本地图片路径非法");
   assertUploadContainment(path);
@@ -330,10 +357,13 @@ async function resolveLocalUploadPath(src: string): Promise<ResolvedImageInput> 
   assertImageSize(fileStat.size);
   const buffer = readLocalUploadBuffer(src);
   if (!buffer) throw imageInputError("not_found", "本地图片不存在");
-  return { buffer, mimeType: assertImageMime(buffer, null) };
+  return { buffer, mimeType: assertImageMime(buffer, null, options) };
 }
 
-async function resolveBareFileId(fileId: string): Promise<ResolvedImageInput> {
+async function resolveBareFileId(
+  fileId: string,
+  options?: ResolveImageInputOptions,
+): Promise<ResolvedImageInput> {
   if (!UUID_RE.test(fileId)) {
     throw imageInputError("invalid_path", "fileId 不是合法 UUID");
   }
@@ -357,13 +387,16 @@ async function resolveBareFileId(fileId: string): Promise<ResolvedImageInput> {
   }
   assertImageSize(fileStat.size);
   const buffer = await readFile(filePath);
-  return { buffer, mimeType: assertImageMime(buffer, null) };
+  return { buffer, mimeType: assertImageMime(buffer, null, options) };
 }
 
 // data:image/...;base64,...(正文内联图 / 文档编辑区插入的 base64 图)。
 const DATA_URL_RE = /^data:(image\/[a-z0-9.+-]+)(;[^,]*)?,(.*)$/is;
 
-function resolveDataUrl(image: string): ResolvedImageInput {
+function resolveDataUrl(
+  image: string,
+  options?: ResolveImageInputOptions,
+): ResolvedImageInput {
   const m = DATA_URL_RE.exec(image);
   const declared = m?.[1]?.toLowerCase();
   if (!declared || !/;base64/i.test(m?.[2] ?? "")) {
@@ -375,7 +408,7 @@ function resolveDataUrl(image: string): ResolvedImageInput {
   }
   const buffer = Buffer.from(b64, "base64");
   // assertImageMime 已做 体积 + MIME 白名单 + 魔数 + 声明/魔数一致性校验
-  return { buffer, mimeType: assertImageMime(buffer, declared) };
+  return { buffer, mimeType: assertImageMime(buffer, declared, options) };
 }
 
 function isLikelyBase64Image(value: string): boolean {
@@ -392,13 +425,14 @@ function rejectBase64LikeInput(value: string): never {
 export async function resolveImageInput(
   rawImage: string,
   signal?: AbortSignal,
+  options?: ResolveImageInputOptions,
 ): Promise<ResolvedImageInput> {
   const image = rawImage.trim();
   if (!image) throw imageInputError("invalid_url", "图片输入为空");
-  if (image.startsWith("/api/v1/files/")) return resolveLocalUploadPath(image);
-  if (/^https?:\/\//i.test(image)) return downloadRemoteImage(image, signal);
-  if (/^data:/i.test(image)) return resolveDataUrl(image);
-  if (UUID_RE.test(image)) return resolveBareFileId(image);
+  if (image.startsWith("/api/v1/files/")) return resolveLocalUploadPath(image, options);
+  if (/^https?:\/\//i.test(image)) return downloadRemoteImage(image, signal, options);
+  if (/^data:/i.test(image)) return resolveDataUrl(image, options);
+  if (UUID_RE.test(image)) return resolveBareFileId(image, options);
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(image)) {
     throw imageInputError("invalid_url", "图片 URL 只支持 http(s)");
   }

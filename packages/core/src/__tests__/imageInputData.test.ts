@@ -5,6 +5,10 @@ import { ImageInputError, resolveImageInput } from "../tools/imageInput.js";
 // 真实 1x1 PNG(魔数 89 50 4E 47),用于走通 解码 + 魔数 + MIME 校验。
 const PNG_1X1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const SIMPLE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>',
+  "utf8",
+).toString("base64");
 
 async function expectKind(image: string, kind: string): Promise<void> {
   await expect(resolveImageInput(image)).rejects.toMatchObject({ kind });
@@ -33,5 +37,14 @@ describe("resolveImageInput data: URL", () => {
 
   it("裸 base64(无 data: 前缀)仍被拒,提示用 data: 前缀", async () => {
     await expect(resolveImageInput(PNG_1X1)).rejects.toBeInstanceOf(ImageInputError);
+  });
+
+  it("SVG 只在图片编辑调用显式放行，默认识图路径仍拒绝", async () => {
+    const image = `data:image/svg+xml;base64,${SIMPLE_SVG}`;
+
+    await expect(resolveImageInput(image)).rejects.toMatchObject({ kind: "unsupported_media" });
+    await expect(resolveImageInput(image, undefined, { allowSvg: true })).resolves.toMatchObject({
+      mimeType: "image/svg+xml",
+    });
   });
 });

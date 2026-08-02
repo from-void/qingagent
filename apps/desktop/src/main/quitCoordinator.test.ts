@@ -3,8 +3,25 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, mock } from "node:test";
-import { drainDesktopSessionsForShutdown } from "@qingagent/server/desktopShutdown";
-import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
+import {
+  DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS,
+  drainDesktopSessionsForShutdown,
+} from "@qingagent/server/desktopShutdown";
+import {
+  createDesktopQuitCoordinator,
+  DESKTOP_QUIT_DEADLINE_MS,
+} from "./quitCoordinator.js";
+
+const DESKTOP_QUIT_DRAIN_BUDGET_MS =
+  DESKTOP_QUIT_DEADLINE_MS - DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS;
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 describe("desktop quit coordinator", () => {
   it("生成中退出先明确确认，取消后不排空也不退出", async () => {
@@ -121,93 +138,169 @@ describe("desktop quit coordinator", () => {
     assert.equal(resumedEvent.preventDefault.mock.callCount(), 0);
   });
 
-  it("外部清理永不收敛时仍按总期限写恢复标记并放行退出", async () => {
+  it("外部清理永不收敛时仍按总期限写恢复标记并放行退出", async (t) => {
+    t.mock.timers.enable({
+      apis: ["Date", "setTimeout"],
+      now: 1_000_000,
+    });
     const tempDir = mkdtempSync(join(tmpdir(), "qingagent-quit-coordinator-"));
     const recoveryMarkerPath = join(tempDir, "recovery.json");
-    const never = new Promise<void>(() => undefined);
+    const activeTurns = createDeferred();
+    const externalStop = createDeferred();
+    const drainStarted = createDeferred();
+    const drainFinished = createDeferred();
     const order: string[] = [];
     const quit = mock.fn(() => {
-      assert.equal(existsSync(recoveryMarkerPath), true);
       order.push("quit");
     });
-    const startedAt = Date.now();
     const coordinator = createDesktopQuitCoordinator({
       telemetryEnabled: () => false,
       captureAppClosed: mock.fn(),
       shutdownTelemetry: mock.fn(async () => undefined),
       drainServer: async (deadlineAtMs) => {
-        await drainDesktopSessionsForShutdown({
-          recoveryMarkerPath,
-          deadlineAtMs,
-          deps: {
-            listRecoverableSessionIds: () => ["session-never-settled"],
-            drainActiveTurns: () => never,
-            drainPersistence: mock.fn(async () => undefined),
-          },
-        });
-        order.push("marker");
+        try {
+          await drainDesktopSessionsForShutdown({
+            recoveryMarkerPath,
+            deadlineAtMs,
+            deps: {
+              listRecoverableSessionIds: () => ["session-never-settled"],
+              drainActiveTurns: () => {
+                drainStarted.resolve();
+                return activeTurns.promise;
+              },
+              drainPersistence: mock.fn(async () => undefined),
+            },
+          });
+          order.push("marker");
+        } finally {
+          drainFinished.resolve();
+        }
       },
-      stopExternalInstance: () => never,
+      stopExternalInstance: () => externalStop.promise,
       quit,
-      // 生产值为 10 秒；测试缩短同一墙钟 deadline，避免套件平白等待。
-      // 30ms 在全套并行(27 个测试进程)下会被事件循环饥饿打穿而假红,放宽到 120ms,
-      // 语义不变(清理永不收敛仍须在总期限内写标记放行),外层 <500ms 墙钟断言兜底。
-      deadlineMs: 120,
+      deadlineMs: DESKTOP_QUIT_DEADLINE_MS,
     });
+    const completion = coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
 
     try {
-      await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+      await drainStarted.promise;
+
+      t.mock.timers.tick(DESKTOP_QUIT_DRAIN_BUDGET_MS - 1);
+      await Promise.resolve();
+      assert.equal(quit.mock.callCount(), 0);
+      assert.equal(existsSync(recoveryMarkerPath), false);
+
+      t.mock.timers.tick(1);
+      await drainFinished.promise;
+      assert.deepEqual(order, ["marker"]);
+
+      t.mock.timers.tick(DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS - 1);
+      await Promise.resolve();
+      assert.equal(quit.mock.callCount(), 0);
+
+      t.mock.timers.tick(1);
+      await completion;
       assert.equal(quit.mock.callCount(), 1);
+      assert.equal(existsSync(recoveryMarkerPath), true);
       assert.deepEqual(order, ["marker", "quit"]);
       assert.deepEqual(
         JSON.parse(readFileSync(recoveryMarkerPath, "utf8")).sessionIds,
         ["session-never-settled"],
       );
-      assert.ok(Date.now() - startedAt < 500);
     } finally {
+      activeTurns.resolve();
+      externalStop.resolve();
+      await Promise.all([activeTurns.promise, externalStop.promise]);
+      await Promise.allSettled([completion, drainFinished.promise]);
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("排空与恢复标记双双卡死时仍在绝对期限内放行退出", async () => {
-    const never = new Promise<void>(() => undefined);
-    const drainActiveTurns = mock.fn(() => never);
-    const markerWrite = mock.fn(() => never);
+  it("排空与恢复标记双双卡死时仍在绝对期限内放行退出", async (t) => {
+    t.mock.timers.enable({
+      apis: ["Date", "setTimeout"],
+      now: 2_000_000,
+    });
+    const activeTurns = createDeferred();
+    const marker = createDeferred();
+    const telemetry = createDeferred();
+    const externalStop = createDeferred();
+    const drainStarted = createDeferred();
+    const markerStarted = createDeferred();
+    const drainFinished = createDeferred();
+    const drainActiveTurns = mock.fn(() => {
+      drainStarted.resolve();
+      return activeTurns.promise;
+    });
+    const markerWrite = mock.fn(() => {
+      markerStarted.resolve();
+      return marker.promise;
+    });
     const quit = mock.fn();
-    const startedAt = Date.now();
     const coordinator = createDesktopQuitCoordinator({
       telemetryEnabled: () => true,
       captureAppClosed: mock.fn(),
-      shutdownTelemetry: () => never,
-      drainServer: (deadlineAtMs) =>
-        drainDesktopSessionsForShutdown({
-          recoveryMarkerPath: join(
-            tmpdir(),
-            `qingagent-marker-hang-${process.pid}.json`,
-          ),
-          deadlineAtMs,
-          deps: {
-            listRecoverableSessionIds: () => ["session-double-hang"],
-            drainActiveTurns,
-            drainPersistence: mock.fn(async () => undefined),
-            writeRecoveryMarker: markerWrite,
-          },
-        }).then(() => undefined),
-      stopExternalInstance: () => never,
+      shutdownTelemetry: () => telemetry.promise,
+      drainServer: async (deadlineAtMs) => {
+        try {
+          await drainDesktopSessionsForShutdown({
+            recoveryMarkerPath: join(
+              tmpdir(),
+              `qingagent-marker-hang-${process.pid}.json`,
+            ),
+            deadlineAtMs,
+            deps: {
+              listRecoverableSessionIds: () => ["session-double-hang"],
+              drainActiveTurns,
+              drainPersistence: mock.fn(async () => undefined),
+              writeRecoveryMarker: markerWrite,
+            },
+          });
+        } finally {
+          drainFinished.resolve();
+        }
+      },
+      stopExternalInstance: () => externalStop.promise,
       quit,
-      // 生产值为 10 秒；测试保留真实 2 秒 marker 子预算，只缩短排空预算。
-      deadlineMs: 2_100,
+      deadlineMs: DESKTOP_QUIT_DEADLINE_MS,
     });
 
-    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    const completion = coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    try {
+      await drainStarted.promise;
 
-    assert.equal(drainActiveTurns.mock.callCount(), 1);
-    assert.equal(markerWrite.mock.callCount(), 1);
-    assert.equal(quit.mock.callCount(), 1);
-    const elapsedMs = Date.now() - startedAt;
-    assert.ok(
-      elapsedMs >= 1_900 && elapsedMs < 3_000,
-      `elapsed=${elapsedMs} 应在 2100ms 绝对期限附近退出`,
-    );
+      t.mock.timers.tick(DESKTOP_QUIT_DRAIN_BUDGET_MS - 1);
+      await Promise.resolve();
+      assert.equal(markerWrite.mock.callCount(), 0);
+      assert.equal(quit.mock.callCount(), 0);
+
+      t.mock.timers.tick(1);
+      await markerStarted.promise;
+      assert.equal(markerWrite.mock.callCount(), 1);
+      assert.equal(quit.mock.callCount(), 0);
+
+      t.mock.timers.tick(DESKTOP_SHUTDOWN_MARKER_TIMEOUT_MS - 1);
+      await Promise.resolve();
+      assert.equal(quit.mock.callCount(), 0);
+
+      t.mock.timers.tick(1);
+      await Promise.all([completion, drainFinished.promise]);
+
+      assert.equal(drainActiveTurns.mock.callCount(), 1);
+      assert.equal(markerWrite.mock.callCount(), 1);
+      assert.equal(quit.mock.callCount(), 1);
+    } finally {
+      activeTurns.resolve();
+      marker.resolve();
+      telemetry.resolve();
+      externalStop.resolve();
+      await Promise.all([
+        activeTurns.promise,
+        marker.promise,
+        telemetry.promise,
+        externalStop.promise,
+      ]);
+      await Promise.allSettled([completion, drainFinished.promise]);
+    }
   });
 });

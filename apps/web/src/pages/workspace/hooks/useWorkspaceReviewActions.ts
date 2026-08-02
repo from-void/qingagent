@@ -78,6 +78,11 @@ export function useWorkspaceReviewActions(input: {
   stateRef: MutableRefObject<WorkspaceState>;
   streamRef: MutableRefObject<ServerStream | null>;
   askUserCancelMutationTokensRef: MutableRefObject<Map<string, symbol>>;
+  reviewCommitReceiptRef: MutableRefObject<{
+    sessionId: string | null;
+    revision: number;
+    version: number;
+  }>;
   reviewCloseInFlightRef: MutableRefObject<Promise<void> | null>;
   dispatch: Dispatch<WorkspaceAction>;
   showToast: (message: string, durationMs?: number) => void;
@@ -97,6 +102,7 @@ export function useWorkspaceReviewActions(input: {
     stateRef,
     streamRef,
     askUserCancelMutationTokensRef,
+    reviewCommitReceiptRef,
     reviewCloseInFlightRef,
     dispatch,
     showToast,
@@ -252,6 +258,12 @@ export function useWorkspaceReviewActions(input: {
     const acceptReviewBatchIds = [
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
+    const receiptBefore = reviewCommitReceiptRef.current;
+    const receiptRevisionBefore = receiptBefore.revision;
+    const docVersionBefore = Math.max(
+      stateRef.current.version,
+      receiptBefore.sessionId === currentSessionId ? receiptBefore.version : 0,
+    );
     const closePromise = runReviewSettlement(async () => {
       // commitReviewGroups 已走独立 REST，并会自行保持当前 session 的 EventSource。
       // 这里不能 stop：stop 会终止同一工作区的在途保存/恢复并清本地流状态，导致
@@ -259,9 +271,17 @@ export function useWorkspaceReviewActions(input: {
       await stream
         .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
         .then((frames) => {
-          if (!reviewCommitFramesCommitted(frames)) {
+          const commitNoop = reviewCommitFramesNoop(frames);
+          const committedDuringRequest =
+            reviewCommitReceiptRef.current.sessionId === currentSessionId &&
+            reviewCommitReceiptRef.current.revision > receiptRevisionBefore &&
+            reviewCommitReceiptRef.current.version > docVersionBefore;
+          if (
+            !reviewCommitFramesCommitted(frames) &&
+            !(commitNoop && committedDuringRequest)
+          ) {
             showToast(
-              reviewCommitFramesNoop(frames)
+              commitNoop
                 ? "候选已失效，本次未写入；当前候选已保留"
                 : "提交未完成 · 候选已保留，请重试",
             );
@@ -370,6 +390,12 @@ export function useWorkspaceReviewActions(input: {
     const needsRetryOnlyEntry = currentPatches.every(
       (patch) => patch.status.kind !== "reviewing",
     );
+    const receiptBefore = reviewCommitReceiptRef.current;
+    const receiptRevisionBefore = receiptBefore.revision;
+    const docVersionBefore = Math.max(
+      stateRef.current.version,
+      receiptBefore.sessionId === currentSessionId ? receiptBefore.version : 0,
+    );
 
     const closePromise = runReviewSettlement(async () => {
       setReviewSettlementRetryPending(false);
@@ -379,11 +405,19 @@ export function useWorkspaceReviewActions(input: {
           rejectReviewBatchIds,
         })
         .then((frames) => {
-          if (!reviewCommitFramesCommitted(frames)) {
+          const commitNoop = reviewCommitFramesNoop(frames);
+          const committedDuringRequest =
+            reviewCommitReceiptRef.current.sessionId === currentSessionId &&
+            reviewCommitReceiptRef.current.revision > receiptRevisionBefore &&
+            reviewCommitReceiptRef.current.version > docVersionBefore;
+          if (
+            !reviewCommitFramesCommitted(frames) &&
+            !(commitNoop && committedDuringRequest)
+          ) {
             autoCommitReviewKeyRef.current = null;
             setReviewSettlementRetryPending(needsRetryOnlyEntry);
             showToast(
-              reviewCommitFramesNoop(frames)
+              commitNoop
                 ? "候选已失效，本次未写入；当前候选已保留"
                 : "提交未完成 · 候选已保留，请重试",
             );

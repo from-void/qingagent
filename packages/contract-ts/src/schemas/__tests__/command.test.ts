@@ -538,15 +538,15 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse(body).success).toBe(true);
   });
 
-  it("单条忽略可选择沉淀下次不再提示信号", () => {
+  it("单条忽略只需指定组，批量清理仍可缺省 groupIds", () => {
     expect(commandSchema.safeParse({
       kind: "ignoreAnnotationGroups",
-      data: { sessionId: "s", reason: "item_ignored", groupIds: ["g1"], rememberDismissal: true },
+      data: { sessionId: "s", reason: "item_ignored", groupIds: ["g1"] },
     }).success).toBe(true);
     expect(commandSchema.safeParse({
       kind: "ignoreAnnotationGroups",
-      data: { sessionId: "s", reason: "item_ignored", rememberDismissal: true },
-    }).success).toBe(false);
+      data: { sessionId: "s", reason: "discard_all" },
+    }).success).toBe(true);
   });
 
   it.each([

@@ -74,6 +74,7 @@ export * from "./ResourceDomain";
 export * from "./ResumeAskUser";
 export * from "./ResourceRef";
 export * from "./ReviewOutcome";
+export * from "./ReviewIgnoreMemory";
 export * from "./ReviewTemplates";
 export * from "./ReviewQuery";
 export * from "./ReviewRoleSeeds";

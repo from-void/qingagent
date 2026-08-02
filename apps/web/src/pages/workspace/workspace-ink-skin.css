@@ -2078,8 +2078,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ahc-ignore { border:1px solid var(--line-2); background:transparent; color:var(--ink-2); }
 #view-workspace .ahc-ignore:hover { border-color:var(--line-3); background:var(--bg-hover); color:var(--ink-1); }
 #view-workspace .ahc-ignore-actions { display:flex; align-items:center; justify-content:flex-end; margin-right:auto; }
-#view-workspace .ahc-ignore-remember { min-width:116px!important; padding-right:12px!important; padding-left:12px!important; border:1px solid var(--line-2); white-space:nowrap; background:transparent; color:var(--ink-3); }
-#view-workspace .ahc-ignore-remember:hover { background:var(--bg-hover); color:var(--ink-1); }
 #view-workspace .annotation-anchor-active { text-decoration-line:underline; text-decoration-style:wavy; text-decoration-color:var(--mark); text-decoration-thickness:1.5px; text-underline-offset:3px; background:color-mix(in srgb,var(--mark) 9%,transparent); }
 #view-workspace .annotation-anchor-active[data-annotation-severity="error"] { text-decoration-color:var(--diff-del-ink); background:color-mix(in srgb,var(--diff-del-bg) 55%,transparent); }
 #view-workspace .annotation-anchor-active[data-annotation-severity="warn"] { text-decoration-color:var(--mark); background:color-mix(in srgb,var(--mark) 9%,transparent); }

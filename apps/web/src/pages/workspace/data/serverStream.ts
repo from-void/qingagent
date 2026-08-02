@@ -473,7 +473,7 @@ export class ServerStream {
   async ignoreAnnotationGroups(
     sessionId: string,
     reason: Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"]["reason"],
-    options: Pick<Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"], "groupIds" | "rememberDismissal"> = {},
+    options: Pick<Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"], "groupIds"> = {},
   ): Promise<void> {
     const expectedIds = new Set(options.groupIds ?? []);
     const framePromise = this.waitForFrame(

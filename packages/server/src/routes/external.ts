@@ -865,15 +865,13 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   const body = await c.req.json().catch(() => null) as {
     expectedDocVersion?: unknown;
     annotationIds?: unknown;
-    rememberDismissal?: unknown;
   } | null;
   if (
     !body ||
     !isDocumentVersion(body.expectedDocVersion) ||
     !Array.isArray(body.annotationIds) ||
     body.annotationIds.length === 0 ||
-    body.annotationIds.some((id) => typeof id !== "string" || id.length === 0) ||
-    (body.rememberDismissal !== undefined && typeof body.rememberDismissal !== "boolean")
+    body.annotationIds.some((id) => typeof id !== "string" || id.length === 0)
   ) {
     externalLog("annotation_ignore", {
       sessionId,
@@ -905,7 +903,6 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
       sessionId,
       reason: "item_ignored",
       groupIds: annotationIds,
-      ...(body.rememberDismissal === true ? { rememberDismissal: true } : {}),
     },
   });
   if (!parsed.success || parsed.data.kind !== "ignoreAnnotationGroups") {

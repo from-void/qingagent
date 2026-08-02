@@ -640,7 +640,7 @@ export function WorkspaceDocumentPane({
               }
               return true;
             }}
-            onIgnore={(group, rememberDismissal) => {
+            onIgnore={(group) => {
               const sessionId = state.sessionId;
               const stream = streamRef.current;
               if (!sessionId || !stream) {
@@ -664,7 +664,6 @@ export function WorkspaceDocumentPane({
                   commit: () =>
                     stream.ignoreAnnotationGroups(sessionId, "item_ignored", {
                       groupIds: [group.id],
-                      rememberDismissal,
                     }),
                   rollback: (previous) => {
                     controller.dispatchAnnotationGroups(previous);

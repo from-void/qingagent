@@ -5,7 +5,7 @@ import {
   commitReviewGroups,
   expandReviewIds,
   ignoreAnnotationGroups,
-  insertReviewDismissalSignal,
+  rewriteReviewSupplementsForIgnoredGroups,
   updatePatchVerdict,
 } from "../bridgeCore";
 import type { CommandExecutionContext } from "../commandTypes";
@@ -17,7 +17,7 @@ vi.mock("../bridgeCore", () => ({
   commitReviewGroups: vi.fn(),
   expandReviewIds: vi.fn(),
   ignoreAnnotationGroups: vi.fn(),
-  insertReviewDismissalSignal: vi.fn(),
+  rewriteReviewSupplementsForIgnoredGroups: vi.fn(),
   updatePatchVerdict: vi.fn(),
 }));
 
@@ -175,22 +175,23 @@ describe("handleReviewCommand ignoreAnnotationGroups", () => {
     } as never);
   });
 
-  it("下次不再提示会先按文档保存命中文本与规则，再忽略当前批注", async () => {
+  it("单条忽略会先旁支改写对应补充提示词，再忽略当前批注", async () => {
     const frames = await collectFrames(handleReviewCommand({
       kind: "ignoreAnnotationGroups",
       data: {
         sessionId: "session-1",
         reason: "item_ignored",
         groupIds: ["group-1"],
-        rememberDismissal: true,
       },
     }, context));
 
-    expect(insertReviewDismissalSignal).toHaveBeenCalledWith({
+    expect(rewriteReviewSupplementsForIgnoredGroups).toHaveBeenCalledWith({
       docId: "doc-1",
-      origin: "自定义审查:老板视角挑刺",
-      summary: "行动建议空泛",
-      quote: "尽快推动项目落地",
+      groups: [expect.objectContaining({
+        id: "group-1",
+        origin: "自定义审查:老板视角挑刺",
+      })],
+      requestContext: expect.anything(),
     });
     expect(ignoreAnnotationGroups).toHaveBeenCalledWith("doc-1", ["group-1"]);
     expect(frames.at(-1)).toMatchObject({
@@ -199,17 +200,16 @@ describe("handleReviewCommand ignoreAnnotationGroups", () => {
     });
   });
 
-  it("普通忽略不保存下次不再提示信号", async () => {
+  it("缺省 groupIds 的批量清屏不写审查记忆", async () => {
     await collectFrames(handleReviewCommand({
       kind: "ignoreAnnotationGroups",
       data: {
         sessionId: "session-1",
-        reason: "item_ignored",
-        groupIds: ["group-1"],
+        reason: "discard_all",
       },
     }, context));
 
-    expect(insertReviewDismissalSignal).not.toHaveBeenCalled();
-    expect(ignoreAnnotationGroups).toHaveBeenCalledWith("doc-1", ["group-1"]);
+    expect(rewriteReviewSupplementsForIgnoredGroups).not.toHaveBeenCalled();
+    expect(ignoreAnnotationGroups).toHaveBeenCalledWith("doc-1", undefined);
   });
 });

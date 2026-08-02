@@ -1,10 +1,15 @@
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
+import crypto from "node:crypto";
+import {
+  MASTRA_THREAD_ID_KEY,
+  RequestContext,
+} from "@mastra/core/request-context";
 import {
   commitPatches as commitPatchesBridge,
   commitReviewGroups,
   expandReviewIds,
   ignoreAnnotationGroups,
-  insertReviewDismissalSignal,
+  rewriteReviewSupplementsForIgnoredGroups,
   updatePatchVerdict,
 } from "./bridgeCore";
 import { bindClientTraceId } from "./commandTracing";
@@ -152,13 +157,26 @@ export async function* handleReviewCommand(
       const selectedGroups = groupIds
         ? session.annotationGroups.filter((group) => selectedIds.has(group.id))
         : session.annotationGroups;
-      if (command.data.rememberDismissal) {
-        await Promise.all(selectedGroups.map((group) => insertReviewDismissalSignal({
+      // groupIds 缺省是“一键清理全部”及换页/发消息等批量清屏，不沉淀审查记忆。
+      if (groupIds) {
+        const abortSignal = context.commandAbortSignal ?? new AbortController().signal;
+        const requestContext = new RequestContext([
+          [MASTRA_THREAD_ID_KEY, session.threadId ?? session.sessionId],
+          ["sessionId", session.sessionId],
+          ["runId", `rewrite-review-supplement:${crypto.randomUUID()}`],
+          ["clientTraceId", session.clientTraceId ?? null],
+          ["origin", session.origin ?? "manual"],
+          ["docVersion", session.docVersion],
+          ["doc", session.doc],
+          ["legacySections", session.legacySections],
+          ["modelOverrides", session.modelOverrides],
+          ["abortSignal", abortSignal],
+        ] as never);
+        await rewriteReviewSupplementsForIgnoredGroups({
           docId: session.docId,
-          origin: group.origin,
-          summary: group.summary,
-          quote: group.anchors[0]?.quote ?? "",
-        })));
+          groups: selectedGroups,
+          requestContext,
+        });
       }
       await ignoreAnnotationGroups(session.docId, groupIds);
       session.annotationGroups = groupIds

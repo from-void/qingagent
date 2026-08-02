@@ -1,7 +1,6 @@
 import {
   maskSensitiveAnnotationGroup,
   normalizeAnnotationSuggestion,
-  type AnnotationGroup,
   type ReviewContext,
   type SkillRef,
 } from "@qingagent/contract-ts";
@@ -100,7 +99,6 @@ import {
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
-  normalizeAnnotationQuote,
   replaceTextRuns,
 } from "../doc-engine/textEditOps.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
@@ -113,9 +111,7 @@ import {
 } from "../tools/annotationGroups.js";
 import {
   insertAnnotationGroups,
-  listReviewDismissalSignals,
   replaceAnnotationGroupsByOrigin,
-  type ReviewDismissalSignal,
 } from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
@@ -136,69 +132,6 @@ import {
 } from "@qingagent/pm-schema";
 
 const logger = mastra.getLogger();
-
-const REVIEW_DISMISSAL_CONTAINMENT_MIN_CHARS = 8;
-const REVIEW_DISMISSAL_CONTAINMENT_MIN_RATIO = 0.75;
-
-function normalizeReviewDismissalQuote(quote: string): string {
-  return normalizeAnnotationQuote(quote)
-    .replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "")
-    .replace(/\s+/gu, "");
-}
-
-function reviewDismissalQuoteLength(quote: string): number {
-  return Array.from(quote.replace(/[\s\p{P}]/gu, "")).length;
-}
-
-function reviewDismissalQuotesMatch(signalQuote: string, anchorQuote: string): boolean {
-  if (signalQuote === anchorQuote) return true;
-  const signalLength = reviewDismissalQuoteLength(signalQuote);
-  const anchorLength = reviewDismissalQuoteLength(anchorQuote);
-  const shorter = signalLength <= anchorLength ? signalQuote : anchorQuote;
-  const longer = signalLength <= anchorLength ? anchorQuote : signalQuote;
-  const shorterLength = Math.min(signalLength, anchorLength);
-  const longerLength = Math.max(signalLength, anchorLength);
-  if (
-    shorterLength < REVIEW_DISMISSAL_CONTAINMENT_MIN_CHARS
-    || longerLength === 0
-    || shorterLength / longerLength < REVIEW_DISMISSAL_CONTAINMENT_MIN_RATIO
-  ) {
-    return false;
-  }
-  return longer.includes(shorter);
-}
-
-function isRememberedReviewDismissal(
-  group: AnnotationGroup,
-  signalsByOrigin: ReadonlyMap<string, ReadonlySet<string>>,
-): boolean {
-  const signalQuotes = signalsByOrigin.get(group.origin);
-  if (!signalQuotes?.size) return false;
-  // group 已在唯一生产入口完成敏感值打码；信号写入侧也按同一 origin 打码。
-  // origin 必须全等。引文先统一全半角/引号/空白并去首尾标点，再容忍少量边界漂移；
-  // 非全等包含匹配要求至少 8 个实质字符且覆盖率≥75%，避免公共短语误杀另一问题。
-  return group.anchors.some((anchor) => {
-    const anchorQuote = normalizeReviewDismissalQuote(anchor.quote);
-    if (!anchorQuote) return false;
-    return [...signalQuotes].some((signalQuote) =>
-      reviewDismissalQuotesMatch(signalQuote, anchorQuote)
-    );
-  });
-}
-
-function rememberedReviewDismissalsByOrigin(
-  signals: readonly ReviewDismissalSignal[],
-): Map<string, Set<string>> {
-  const byOrigin = new Map<string, Set<string>>();
-  for (const signal of signals) {
-    const quote = normalizeReviewDismissalQuote(signal.quote);
-    if (!quote) continue;
-    const quotes = byOrigin.get(signal.origin) ?? new Set<string>();
-    quotes.add(quote);
-    byOrigin.set(signal.origin, quotes);
-  }
-  return byOrigin;
-}
 
 function annotationGroupSemanticErrors(source: AnnotationGroupInput, groupIndex: number): string[] {
   const prefix = `第 ${groupIndex + 1} 组`;
@@ -811,7 +744,6 @@ export function createSessionScopedTools(
       ok: z.boolean(),
       groupCount: z.number(),
       anchorCount: z.number(),
-      rememberedDismissalCount: z.number().describe("因用户选择下次不再提示而未创建的批注数；这些批注不要重试"),
       errors: z.array(z.string()),
     }),
     execute: async (input, context) => {
@@ -824,17 +756,13 @@ export function createSessionScopedTools(
           field: input._parseFailure.field,
           error: input._parseFailure.message,
         });
-        return { ok: false, groupCount: 0, anchorCount: 0, rememberedDismissalCount: 0, errors: [input._parseFailure.message] };
+        return { ok: false, groupCount: 0, anchorCount: 0, errors: [input._parseFailure.message] };
       }
-      if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, rememberedDismissalCount: 0, errors: ["当前没有可批注文档"] };
+      if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
       const blocks = collectTopLevelTextBlocks(state.doc);
       const documentText = blocks.map((block) => block.text).join("\n");
       const materialTexts = [...materials.values()].map((material) => material.text);
       const errors: string[] = [];
-      const dismissalSignals = rememberedReviewDismissalsByOrigin(
-        await listReviewDismissalSignals(state.docId),
-      );
-      let rememberedDismissalCount = 0;
       const currentReviewContext = context?.requestContext?.get("reviewContext") as ReviewContext | null | undefined;
       const forcedOrigin = reviewOrigin(currentReviewContext);
       const groups = input.groups.flatMap((modelSource, groupIndex) => {
@@ -904,10 +832,6 @@ export function createSessionScopedTools(
           status: "reviewing" as const,
           anchors,
         });
-        if (isRememberedReviewDismissal(group, dismissalSignals)) {
-          rememberedDismissalCount += 1;
-          return [];
-        }
         return [group];
       });
       if (groups.length) {
@@ -939,17 +863,10 @@ export function createSessionScopedTools(
         annotationGroupWriteQueue = write.catch(() => undefined);
         await write;
       }
-      if (rememberedDismissalCount > 0) {
-        logger.info("[review] 已按文档内不再提示信号过滤批注", {
-          docId: state.docId,
-          rememberedDismissalCount,
-        });
-      }
       return {
-        ok: groups.length > 0 || rememberedDismissalCount > 0,
+        ok: groups.length > 0,
         groupCount: groups.length,
         anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0),
-        rememberedDismissalCount,
         errors,
       };
     },

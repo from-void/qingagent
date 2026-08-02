@@ -8,10 +8,12 @@ import {
 
 function fakeWindow() {
   let destroyed = false;
+  let contentsDestroyed = false;
   const received: UpdateStatusPayload[] = [];
   const window: UpdateStatusWindow = {
     isDestroyed: () => destroyed,
     webContents: {
+      isDestroyed: () => contentsDestroyed,
       send: (_channel, payload) => received.push(payload),
     },
   };
@@ -20,6 +22,9 @@ function fakeWindow() {
     received,
     destroy: () => {
       destroyed = true;
+    },
+    destroyContents: () => {
+      contentsDestroyed = true;
     },
   };
 }
@@ -62,6 +67,31 @@ test("关窗期间到达的重要状态在新窗口注册后重放一次，同�
   assert.deepEqual(first.received, []);
   assert.deepEqual(second.received, [downloaded]);
   assert.deepEqual(dispatcher.getStatus(), downloaded);
+});
+
+test("窗口尚在但 webContents 已销毁时不发送也不抛异常", () => {
+  const dispatcher = new UpdateStatusDispatcher();
+  const current = fakeWindow();
+  dispatcher.setWindow(current.window);
+  current.destroyContents();
+
+  assert.doesNotThrow(() => dispatcher.dispatch({ kind: "none" }));
+  assert.deepEqual(current.received, []);
+});
+
+test("生命周期检查后 send 仍报告 Object has been destroyed 时旁路通知不拖垮主进程", () => {
+  const dispatcher = new UpdateStatusDispatcher();
+  dispatcher.setWindow({
+    isDestroyed: () => false,
+    webContents: {
+      isDestroyed: () => false,
+      send: () => {
+        throw new TypeError("Object has been destroyed");
+      },
+    },
+  });
+
+  assert.doesNotThrow(() => dispatcher.dispatch({ kind: "none" }));
 });
 
 test("未缓存重要状态时查询返回中性 none", () => {

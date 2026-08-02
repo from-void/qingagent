@@ -202,13 +202,13 @@ test("desktop main 的每个 IPC channel 都先校验 trusted renderer", () => {
   assert.ok(rememberRegistrationIndex >= 0, "缺少记忆决策 IPC 注册");
   assert.ok(rememberHandlerIndex >= 0, "缺少记忆决策 IPC handler");
   assert.match(
-    main.slice(rememberHandlerIndex, rememberHandlerIndex + 360),
-    /const handleDecision = \([\s\S]{0,180}?\) => \{\s*try \{\s*assertTrustedRenderer\(event, promptWindow\.webContents\);\s*\} catch \{\s*return;\s*\}/,
+    main.slice(rememberHandlerIndex, rememberHandlerIndex + 480),
+    /const handleDecision = \([\s\S]{0,180}?\) => \{\s*if \(getLiveWebContents\(promptWindow\) !== promptWebContents\) return;\s*try \{\s*assertTrustedRenderer\(event, promptWebContents\);\s*\} catch \{\s*return;\s*\}/,
     "记忆决策 IPC 必须先按独立确认窗的 webContents/mainFrame 校验并 fail closed",
   );
   assert.match(
     main,
-    /function assertTrustedRenderer\([\s\S]{0,220}?expectedRenderer: WebContents \| null = mainWindow\?\.webContents \?\? null,[\s\S]{0,80}?assertTrustedRendererEvent\(event, expectedRenderer\);/,
+    /function assertTrustedRenderer\([\s\S]{0,180}?expectedRenderer\?: WebContents \| null,[\s\S]{0,180}?expectedRenderer === undefined \? getLiveWebContents\(mainWindow\) : expectedRenderer/,
     "统一 IPC 校验必须把显式指定的 renderer 传给底层身份/mainFrame 校验",
   );
 

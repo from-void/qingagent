@@ -1,8 +1,10 @@
 import type { UpdateStatusPayload } from "./updateTypes.js";
+import { getLiveWebContents } from "../windowLifecycle.js";
 
 export interface UpdateStatusWindow {
   isDestroyed(): boolean;
   webContents: {
+    isDestroyed(): boolean;
     send(channel: string, payload: UpdateStatusPayload): void;
   };
 }
@@ -28,8 +30,13 @@ export class UpdateStatusDispatcher {
 
   private sendToCurrentWindow(payload: UpdateStatusPayload): void {
     const window = this.window;
-    if (!window || window.isDestroyed()) return;
-    window.webContents.send("qingagent:update-status", payload);
+    const contents = getLiveWebContents(window);
+    if (!contents) return;
+    try {
+      contents.send("qingagent:update-status", payload);
+    } catch {
+      // 更新提示是旁路通知；renderer 正在销毁时 send 失败不能升级成主进程崩溃。
+    }
   }
 }
 

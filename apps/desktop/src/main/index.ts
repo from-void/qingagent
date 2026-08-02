@@ -70,6 +70,7 @@ import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 import { RendererDialogBroker } from "./rendererDialogBroker.js";
+import { getLiveWebContents } from "./windowLifecycle.js";
 import {
   showNativeContentRecoveryFallback,
   showNativeQuitFallback,
@@ -99,9 +100,12 @@ const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 function assertTrustedRenderer(
   event: IpcMainEvent | IpcMainInvokeEvent,
-  expectedRenderer: WebContents | null = mainWindow?.webContents ?? null,
+  expectedRenderer?: WebContents | null,
 ): void {
-  assertTrustedRendererEvent(event, expectedRenderer);
+  assertTrustedRendererEvent(
+    event,
+    expectedRenderer === undefined ? getLiveWebContents(mainWindow) : expectedRenderer,
+  );
 }
 
 function isDesktopDialogResponse(value: unknown): value is DesktopDialogResponse {
@@ -572,9 +576,12 @@ function boundedRememberId(value: unknown): string | null {
 
 function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): boolean {
   const window = mainWindow;
+  const contents = getLiveWebContents(window);
+  const devToolsContents = contents?.devToolsWebContents;
   const senderIsDevtools = Boolean(
-    window?.webContents.devToolsWebContents
-      && event.sender.id === window.webContents.devToolsWebContents.id,
+    devToolsContents
+      && !devToolsContents.isDestroyed()
+      && event.sender.id === devToolsContents.id,
   );
   const mainFrame = event.sender.mainFrame;
   const isMainFrame = event.senderFrame !== null
@@ -582,8 +589,8 @@ function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): bool
     && event.processId === mainFrame.processId;
   return isMainFrame && trustedRememberUiGate.consume({
     senderId: event.sender.id,
-    mainWindowSenderId: window && !window.isDestroyed() ? window.webContents.id : null,
-    windowFocused: Boolean(window && !window.isDestroyed() && window.isFocused()),
+    mainWindowSenderId: contents?.id ?? null,
+    windowFocused: Boolean(contents && window?.isFocused()),
     senderIsDevtools,
   });
 }
@@ -618,6 +625,8 @@ function showTrustedRememberPrompt(
       spellcheck: false,
     },
   });
+  const promptWebContents = promptWindow.webContents;
+  const promptWebContentsId = promptWebContents.id;
   const promptInputGate = new TrustedRememberUiGate();
 
   return new Promise((resolve) => {
@@ -633,34 +642,37 @@ function showTrustedRememberPrompt(
       event: Electron.IpcMainEvent,
       decision: unknown,
     ) => {
+      if (getLiveWebContents(promptWindow) !== promptWebContents) return;
       try {
-        assertTrustedRenderer(event, promptWindow.webContents);
+        assertTrustedRenderer(event, promptWebContents);
       } catch {
         return;
       }
       if (decision !== "remember" && decision !== "cancel") return;
+      const devToolsContents = promptWebContents.devToolsWebContents;
       if (decision === "remember" && !promptInputGate.consume({
         senderId: event.sender.id,
-        mainWindowSenderId: promptWindow.webContents.id,
+        mainWindowSenderId: promptWebContentsId,
         windowFocused: promptWindow.isFocused(),
         senderIsDevtools: Boolean(
-          promptWindow.webContents.devToolsWebContents &&
-          event.sender.id === promptWindow.webContents.devToolsWebContents.id,
+          devToolsContents &&
+          !devToolsContents.isDestroyed() &&
+          event.sender.id === devToolsContents.id,
         ),
       })) return;
       settle(decision);
     };
 
     ipcMain.on(REMEMBER_PROMPT_DECISION_CHANNEL, handleDecision);
-    promptWindow.webContents.on("before-input-event", (_event, input) => {
-      promptInputGate.record(promptWindow.webContents.id, input.type);
+    promptWebContents.on("before-input-event", (_event, input) => {
+      promptInputGate.record(promptWebContentsId, input.type);
     });
-    promptWindow.webContents.on("before-mouse-event", (_event, input) => {
-      promptInputGate.record(promptWindow.webContents.id, input.type);
+    promptWebContents.on("before-mouse-event", (_event, input) => {
+      promptInputGate.record(promptWebContentsId, input.type);
     });
-    promptWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    promptWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
-    promptWindow.webContents.once("render-process-gone", () => settle("cancel"));
+    promptWebContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    promptWebContents.on("will-attach-webview", (event) => event.preventDefault());
+    promptWebContents.once("render-process-gone", () => settle("cancel"));
     promptWindow.once("closed", () => settle("cancel"));
     promptWindow.once("ready-to-show", () => {
       if (!settled && !promptWindow.isDestroyed()) promptWindow.show();
@@ -682,7 +694,7 @@ ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown)
   if (!sessionId || !confirmId || !kind || record.trustedGesture !== true) return null;
   if (!consumeTrustedRememberGesture(event)) return null;
   const owner = mainWindow;
-  if (!owner || owner.isDestroyed()) return null;
+  if (!owner || !getLiveWebContents(owner)) return null;
   const generation = mainWindowRememberGeneration;
   const scope = mainWindowRememberScope;
   if (!scope) return null;
@@ -717,7 +729,7 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
   if (!kind || record.trustedGesture !== true) return null;
   if (!consumeTrustedRememberGesture(event)) return null;
   const owner = mainWindow;
-  if (!owner || owner.isDestroyed()) return null;
+  if (!owner || !getLiveWebContents(owner)) return null;
   const generation = mainWindowRememberGeneration;
   const scope = mainWindowRememberScope;
   if (!scope) return null;
@@ -741,9 +753,10 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
   assertTrustedRenderer(event);
   const startedAt = Date.now();
   let phase = "folderPicker.opened";
+  const webContentsId = event.sender.id;
   console.info("[folderPicker]", {
     event: phase,
-    webContentsId: event.sender.id,
+    webContentsId,
   });
   try {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -778,7 +791,7 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
     // 关键路径只注册选择，不同步递归扫描目录。连接成功后由 server 现有的
     // startFolderSourceFileCountRefresh 在挂载后的 Workspace 内有界后台计数。
     const selection = registerDesktopFolderSelection({
-      webContentsId: event.sender.id,
+      webContentsId,
       rootPath,
       name: path.basename(rootPath),
       pathLabel: rootPath,
@@ -851,7 +864,7 @@ ipcMain.on("qingagent:app-version", (event) => {
 ipcMain.handle("qingagent:update-check", async (event) => {
   assertTrustedRenderer(event);
   const owner = BrowserWindow.fromWebContents(event.sender);
-  if (!owner) return { kind: "none" as const };
+  if (!owner || !getLiveWebContents(owner)) return { kind: "none" as const };
   return manualCheckForUpdates({ window: owner });
 });
 
@@ -1026,6 +1039,7 @@ ipcMain.handle("qingagent:client-config-value-set", (event, key: unknown, value:
 ipcMain.handle("qingagent:export-diagnostics", async (event, opts: unknown) => {
   assertTrustedRenderer(event);
   if (!embeddedServerPort) throw new Error("embedded server is not ready");
+  const owner = BrowserWindow.fromWebContents(event.sender);
   const privacyLevel = readPrivacyLevel(opts);
   const report = readReport(opts);
   const sessionIds = readSessionIds(opts);
@@ -1048,9 +1062,9 @@ ipcMain.handle("qingagent:export-diagnostics", async (event, opts: unknown) => {
 
   const filename = filenameFromContentDisposition(res.headers.get("content-disposition")) ??
     `qingagent-diag-v1-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.zip`;
-  const owner = BrowserWindow.fromWebContents(event.sender);
-  const save = owner
-    ? await dialog.showSaveDialog(owner, {
+  const activeOwner = owner && getLiveWebContents(owner) ? owner : null;
+  const save = activeOwner
+    ? await dialog.showSaveDialog(activeOwner, {
       defaultPath: filename,
       filters: [{ name: "诊断包", extensions: ["zip"] }],
     })
@@ -1118,7 +1132,7 @@ function installPackagedRendererProtocol(port: number): void {
 }
 
 async function createWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  if (mainWindow && getLiveWebContents(mainWindow)) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
@@ -1172,6 +1186,9 @@ async function createWindowOnce() {
     },
   });
   const contentWindow = mainWindow;
+  const contentWebContents = contentWindow.webContents;
+  const contentWebContentsId = contentWebContents.id;
+  let updaterStartTimer: ReturnType<typeof setTimeout> | null = null;
   const exportDownloadCoordinator = new ExportDownloadCoordinator({
     downloadsDirectory: app.getPath("downloads"),
   });
@@ -1182,7 +1199,8 @@ async function createWindowOnce() {
   mainWindowRememberScope = rememberScope;
 
   // 仅主应用窗口开放文本编辑右键菜单；可信确认模态窗和 PDF 离屏窗保持无右键交互面。
-  mainWindow.webContents.on("context-menu", (_event, params) => {
+  contentWebContents.on("context-menu", (_event, params) => {
+    if (getLiveWebContents(contentWindow) !== contentWebContents) return;
     const template = buildEditContextMenuTemplate(params);
     // 空模板 = 可编辑区域,由渲染进程自绘宋体菜单;这里再弹就成了双菜单。
     if (template.length === 0) return;
@@ -1195,8 +1213,16 @@ async function createWindowOnce() {
     });
   });
 
+  // renderer 可用性跟随 WebContents 自身；destroyed 回调只使用预先缓存的纯数字 id，
+  // 绝不在 BrowserWindow.closed 后重新读取 window.webContents。
+  contentWebContents.once("destroyed", () => {
+    rendererDialogBroker.markUnavailable(contentWebContentsId);
+  });
   contentWindow.once("closed", () => {
-    rendererDialogBroker.markUnavailable(contentWindow.webContents);
+    if (updaterStartTimer) {
+      clearTimeout(updaterStartTimer);
+      updaterStartTimer = null;
+    }
     exportDownloadCoordinator.dispose();
     if (mainExportDownloadCoordinator === exportDownloadCoordinator) {
       mainExportDownloadCoordinator = null;
@@ -1219,30 +1245,30 @@ async function createWindowOnce() {
     }
   });
 
-  contentWindow.webContents.on("before-input-event", (_event, input) => {
-    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
+  contentWebContents.on("before-input-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWebContentsId, input.type);
   });
-  contentWindow.webContents.on("before-mouse-event", (_event, input) => {
-    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
+  contentWebContents.on("before-mouse-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWebContentsId, input.type);
   });
 
-  attachRendererDiagnostics(contentWindow.webContents, desktopLogDir);
+  attachRendererDiagnostics(contentWebContents, desktopLogDir);
 
-  contentWindow.webContents.on(
+  contentWebContents.on(
     "did-start-navigation",
     (_event, _url, isInPlace, isMainFrame) => {
       if (isMainFrame && !isInPlace) {
-        rendererDialogBroker.markUnavailable(contentWindow.webContents);
+        rendererDialogBroker.markUnavailable(contentWebContentsId);
       }
     },
   );
-  contentWindow.webContents.on("render-process-gone", () => {
-    rendererDialogBroker.markUnavailable(contentWindow.webContents);
+  contentWebContents.on("render-process-gone", () => {
+    rendererDialogBroker.markUnavailable(contentWebContentsId);
   });
 
   // 外部链接走系统默认浏览器，不允许启动壳或内容页把主窗口导航到应用 origin 之外。
   // 监听器必须早于 data: 启动壳加载挂载，避免壳阶段的 http(s) 导航逃逸。
-  contentWindow.webContents.setWindowOpenHandler(({ url }) => {
+  contentWebContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
       void shell.openExternal(url);
     }
@@ -1251,10 +1277,14 @@ async function createWindowOnce() {
   // 整页导航与服务端重定向：显式放行内置服务、开发服务器和当前同源；file:、about:、
   // 跨源及畸形 URL 都不能接管主窗口。用户主动点出的外部 Web 链接交给系统浏览器。
   const guardMainFrameNavigation = (event: MainFrameNavigationEvent, url: string): void => {
+    if (contentWebContents.isDestroyed()) {
+      event.preventDefault();
+      return;
+    }
     if (
       !isAllowedMainFrameNavigation(
         url,
-        contentWindow.webContents.getURL(),
+        contentWebContents.getURL(),
         isDev ? devContentUrl : undefined,
         allowedAppOrigins,
       )
@@ -1262,17 +1292,21 @@ async function createWindowOnce() {
       event.preventDefault();
     }
   };
-  contentWindow.webContents.on("will-navigate", (event, url) => {
+  contentWebContents.on("will-navigate", (event, url) => {
+    if (contentWebContents.isDestroyed()) {
+      event.preventDefault();
+      return;
+    }
     handleMainWindowWillNavigate(
       event,
       url,
-      contentWindow.webContents.getURL(),
+      contentWebContents.getURL(),
       isDev ? devContentUrl : undefined,
       allowedAppOrigins,
       (targetUrl) => shell.openExternal(targetUrl),
     );
   });
-  contentWindow.webContents.on("will-redirect", guardMainFrameNavigation);
+  contentWebContents.on("will-redirect", guardMainFrameNavigation);
 
   // 启动壳不依赖服务端和外部资源：先发起加载并立即显示暖纸窗口，再并行启动服务端。
   const startupShellReady = contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
@@ -1312,20 +1346,25 @@ async function createWindowOnce() {
   warmUpModelEndpoint(resolveBaseUrl());
   await maybeSeedInitialContent();
   await startupShellReady;
-  if (contentWindow.isDestroyed()) return;
+  if (getLiveWebContents(contentWindow) !== contentWebContents) return;
 
   // 启动壳已完成，遥测从此处挂载，确保首个 did-finish-load 对应真正内容页。
   attachRendererTelemetry(contentWindow, telemetry.getRendererBootstrap());
 
   const startUpdaterAfterContentLoad = (): void => {
+    if (getLiveWebContents(contentWindow) !== contentWebContents) return;
     // 恢复过程会重新展示启动壳，不能让壳页的完成事件抢走 updater 的一次性启动机会。
-    if (contentWindow.webContents.getURL() === STARTUP_SHELL_URL) return;
-    contentWindow.webContents.off("did-finish-load", startUpdaterAfterContentLoad);
-    setTimeout(() => {
-      void startDesktopUpdater({ window: contentWindow });
+    if (contentWebContents.getURL() === STARTUP_SHELL_URL) return;
+    contentWebContents.off("did-finish-load", startUpdaterAfterContentLoad);
+    updaterStartTimer = setTimeout(() => {
+      updaterStartTimer = null;
+      if (getLiveWebContents(contentWindow) !== contentWebContents) return;
+      void startDesktopUpdater({ window: contentWindow }).catch((error) => {
+        console.warn("[update] 启动检查未完成:", error);
+      });
     }, 250);
   };
-  contentWindow.webContents.on("did-finish-load", startUpdaterAfterContentLoad);
+  contentWebContents.on("did-finish-load", startUpdaterAfterContentLoad);
 
   const contentUrl = isDev
     // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
@@ -1335,23 +1374,26 @@ async function createWindowOnce() {
 
   let contentRecoveryActive = false;
   const recoverContentLoad = async (reason: unknown): Promise<void> => {
-    if (contentRecoveryActive || contentWindow.isDestroyed()) return;
+    if (
+      contentRecoveryActive ||
+      getLiveWebContents(contentWindow) !== contentWebContents
+    ) return;
     contentRecoveryActive = true;
     console.error("[startup] 内容页加载失败，开始恢复:", reason);
     try {
-      while (!contentWindow.isDestroyed()) {
+      while (getLiveWebContents(contentWindow) === contentWebContents) {
         // 覆盖 Chromium 错误页，恢复期间持续显示与启动阶段一致的暖纸壳。
         await contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
           console.warn("[startup] 恢复启动壳加载失败:", error);
         });
 
         let completedRetries = 0;
-        while (!contentWindow.isDestroyed()) {
+        while (getLiveWebContents(contentWindow) === contentWebContents) {
           const step = nextContentLoadRecoveryStep(completedRetries);
           if (step.kind === "prompt") break;
 
           await waitForContentLoadRetry(step.delayMs);
-          if (contentWindow.isDestroyed()) return;
+          if (getLiveWebContents(contentWindow) !== contentWebContents) return;
           completedRetries = step.attempt;
 
           if (!(await probeEmbeddedServerHealth(port))) {
@@ -1367,18 +1409,18 @@ async function createWindowOnce() {
           }
         }
 
-        if (contentWindow.isDestroyed()) return;
+        if (getLiveWebContents(contentWindow) !== contentWebContents) return;
         // 最后一次失败会让 Chromium 错误页接管主 frame；询问前必须重新挂回自绘启动壳，
         // 否则 renderer 能力已随导航失效，正常的内容恢复也会误降级成系统弹框。
         await contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
           console.warn("[startup] 恢复询问壳加载失败:", error);
         });
-        if (contentWindow.isDestroyed()) return;
+        if (getLiveWebContents(contentWindow) !== contentWebContents) return;
         let response = await rendererDialogBroker.request(
-          contentWindow.webContents,
+          contentWebContents,
           "content-load-failed",
         );
-        if (contentWindow.isDestroyed()) return;
+        if (getLiveWebContents(contentWindow) !== contentWebContents) return;
         if (response === null) {
           response = await showNativeContentRecoveryFallback(contentWindow);
         }
@@ -1393,7 +1435,7 @@ async function createWindowOnce() {
     }
   };
 
-  contentWindow.webContents.on(
+  contentWebContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === CHROMIUM_ERR_ABORTED) return;
@@ -1403,7 +1445,9 @@ async function createWindowOnce() {
 
   const contentLoad = contentWindow.loadURL(contentUrl);
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
-    contentWindow.webContents.openDevTools({ mode: "detach" });
+    if (!contentWebContents.isDestroyed()) {
+      contentWebContents.openDevTools({ mode: "detach" });
+    }
   }
   void contentLoad.catch((error) => {
     console.error("[startup] 内容页加载失败:", error);
@@ -1450,7 +1494,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   desktopClientConfigReady = true;
   for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send("qingagent:client-config-ready");
+    const contents = getLiveWebContents(window);
+    if (!contents) continue;
+    try {
+      contents.send("qingagent:client-config-ready");
+    } catch {
+      // ready 广播与窗口销毁竞争时跳过；renderer 重开后会通过同步 getter 读取真实状态。
+    }
   }
   if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
     const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");
@@ -1479,14 +1529,16 @@ const quitCoordinator = createDesktopQuitCoordinator({
     }
   },
   confirmQuitDuringGeneration: async () => {
-    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const candidate = mainWindow;
+    const ownerContents = getLiveWebContents(candidate);
+    const owner = candidate && ownerContents ? candidate : null;
     let response: DesktopDialogResult | null = null;
-    if (owner) {
+    if (owner && ownerContents) {
       if (owner.isMinimized()) owner.restore();
       owner.show();
       owner.focus();
       response = await rendererDialogBroker.request(
-        owner.webContents,
+        ownerContents,
         "quit-during-generation",
       );
     }

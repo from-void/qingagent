@@ -33,7 +33,7 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   const serverReadyLine = source.indexOf("({ port } = await serverReady)", startServerLine);
   const seedLine = source.indexOf("await maybeSeedInitialContent();", serverReadyLine);
   const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", seedLine);
-  const finishLoadLine = source.indexOf('contentWindow.webContents.on("did-finish-load"', telemetryLine);
+  const finishLoadLine = source.indexOf('contentWebContents.on("did-finish-load"', telemetryLine);
   const contentLoadLine = source.indexOf("contentWindow.loadURL(contentUrl)", finishLoadLine);
   const createWindowSource = source.slice(source.indexOf("async function createWindow()"), source.indexOf("// 首启示例内容"));
 
@@ -65,7 +65,7 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
 test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ERR_ABORTED", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const recoveryLine = source.indexOf("const recoverContentLoad = async");
-  const failLoadLine = source.indexOf('contentWindow.webContents.on(\n    "did-fail-load"', recoveryLine);
+  const failLoadLine = source.indexOf('contentWebContents.on(\n    "did-fail-load"', recoveryLine);
   const contentLoadLine = source.indexOf("const contentLoad = contentWindow.loadURL(contentUrl)", failLoadLine);
   const catchLine = source.indexOf("void contentLoad.catch(", contentLoadLine);
   const recoverySource = source.slice(recoveryLine, contentLoadLine);
@@ -97,7 +97,7 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
 
 test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const guardLine = source.indexOf('contentWindow.webContents.on("will-navigate"');
+  const guardLine = source.indexOf('contentWebContents.on("will-navigate"');
   const shellLoadLine = source.indexOf("contentWindow.loadURL(STARTUP_SHELL_URL)");
   const guardSource = source.slice(guardLine, shellLoadLine);
 
@@ -134,7 +134,7 @@ test("createWindow 复用现有窗口并以启动标志阻止并发 server", () 
   const workerStart = source.indexOf("async function createWindowOnce()", wrapperStart);
   const wrapperSource = source.slice(wrapperStart, workerStart);
 
-  assert.match(wrapperSource, /mainWindow && !mainWindow\.isDestroyed\(\)/);
+  assert.match(wrapperSource, /mainWindow && getLiveWebContents\(mainWindow\)/);
   assert.match(wrapperSource, /if \(windowStartupInProgress\) return/);
   assert.match(wrapperSource, /windowStartupInProgress = true/);
   assert.match(wrapperSource, /finally \{\s*windowStartupInProgress = false/s);
@@ -159,7 +159,7 @@ test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key pro
 test("QINGAGENT_DEVTOOLS=1 在打包态也以独立窗口打开主窗口 DevTools", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   assert.match(source, /isDev \|\| process\.env\.QINGAGENT_DEVTOOLS === "1"/);
-  assert.match(source, /contentWindow\.webContents\.openDevTools\(\{ mode: "detach" \}\)/);
+  assert.match(source, /contentWebContents\.openDevTools\(\{ mode: "detach" \}\)/);
 });
 
 test("desktop PDF 导出使用私有临时目录、随机文件名和最小文件权限并整目录清理", () => {
@@ -179,7 +179,23 @@ test("desktop PDF 导出使用私有临时目录、随机文件名和最小文�
   assert.match(source, /withExportSlot\(async \(\{ signal \}\) =>/);
   assert.match(source, /session:\s*exportSession\(tmpDir\)/);
   assert.match(source, /signal\.addEventListener\("abort", destroyOnAbort/);
+  assert.match(source, /const destroyOnAbort = \(\) => destroyWindowIfAlive\(win\)/);
+  assert.match(source, /finally \{[\s\S]{0,180}?destroyWindowIfAlive\(win\)/);
+  assert.doesNotMatch(source, /win\?\.destroy\(\)/);
   assert.match(mainSource, /cleanupOrphanedPdfExportDirs\(\)/);
+});
+
+test("desktop 延迟窗口操作在执行前复查生命周期，关窗时取消 updater 定时器", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const timerStart = source.indexOf("updaterStartTimer = setTimeout(");
+  const timerSource = source.slice(timerStart, source.indexOf("}, 250);", timerStart) + 8);
+  const closedStart = source.indexOf('contentWindow.once("closed"');
+  const closedSource = source.slice(closedStart, source.indexOf('contentWindow.on("close"', closedStart));
+
+  assert.ok(timerStart >= 0, "缺少 updater 延迟启动定时器");
+  assert.match(timerSource, /getLiveWebContents\(contentWindow\) !== contentWebContents/);
+  assert.match(closedSource, /clearTimeout\(updaterStartTimer\)/);
+  assert.doesNotMatch(closedSource, /contentWindow\.webContents|contentWebContents\./);
 });
 
 test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文且不可用时 fail-closed", () => {
@@ -237,7 +253,7 @@ test("desktop 配置读取保留 unknown 并在就绪后发无秘密信号", () 
   assert.match(source, /type DesktopClientConfigReadResult[\s\S]*\{ ok: false \}/);
   assert.match(source, /if \(!desktopClientConfigReady \|\| !isDesktopClientConfigKey\(key\)\) return \{ ok: false \}/);
   assert.match(source, /desktopClientConfigReady = true/);
-  assert.match(source, /webContents\.send\("qingagent:client-config-ready"\)/);
+  assert.match(source, /contents\.send\("qingagent:client-config-ready"\)/);
   assert.match(preload, /if \(!clientConfigReady\) throw new Error/);
   assert.match(preload, /if \(!result \|\| result\.ok !== true\) throw new Error/);
   assert.match(preload, /onClientConfigReady:/);

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { withExportSlot } from "@qingagent/doc-render/export";
 import { isAllowedExportRequest } from "./exportRequestFilter.js";
+import { destroyWindowIfAlive, getLiveWebContents } from "./windowLifecycle.js";
 
 /**
  * 桌面端 PDF 渲染器:用 Electron 自带 Chromium 的 webContents.printToPDF 把自包含 HTML
@@ -64,7 +65,7 @@ export async function renderPdfViaElectron(html: string): Promise<Buffer> {
     chmodSync(tmpDir, 0o700);
     const tmpFile = path.join(tmpDir, `${randomUUID()}.html`);
     let win: BrowserWindow | null = null;
-    const destroyOnAbort = () => win?.destroy();
+    const destroyOnAbort = () => destroyWindowIfAlive(win);
     signal.addEventListener("abort", destroyOnAbort, { once: true });
 
     try {
@@ -82,17 +83,25 @@ export async function renderPdfViaElectron(html: string): Promise<Buffer> {
           backgroundThrottling: false,
         },
       });
+      const contents = win.webContents;
       signal.throwIfAborted();
       await win.loadFile(tmpFile);
+      signal.throwIfAborted();
+      if (getLiveWebContents(win) !== contents) {
+        throw new Error("PDF 渲染窗口已关闭");
+      }
       // 等字体就绪(最多 4s),避免首屏用回退字体抢跑导致排版漂移;超时则用已就绪字体直接打印。
-      await win.webContents
+      await contents
         .executeJavaScript(
           "(()=>{const r=document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve();" +
             "return Promise.race([r,new Promise(res=>setTimeout(res,4000))]).then(()=>true);})()",
         )
         .catch(() => undefined);
       signal.throwIfAborted();
-      const data = await win.webContents.printToPDF({
+      if (getLiveWebContents(win) !== contents) {
+        throw new Error("PDF 渲染窗口已关闭");
+      }
+      const data = await contents.printToPDF({
         printBackground: true,
         // 页面尺寸与页边距由 CSS @page 控制(与 Playwright 路径一致);外层 margins 置 0,
         // 完全交给 CSS,避免双重留白。
@@ -102,7 +111,7 @@ export async function renderPdfViaElectron(html: string): Promise<Buffer> {
       return data;
     } finally {
       signal.removeEventListener("abort", destroyOnAbort);
-      win?.destroy();
+      destroyWindowIfAlive(win);
       try {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {

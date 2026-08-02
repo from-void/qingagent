@@ -58,8 +58,8 @@ export interface ChatInputHandle {
   removeChipAt: (index: number) => void;
   /** Insert plain text at the current caret. */
   insertText: (text: string) => void;
-  /** 在已有草稿末尾另起一行追加纯文本。 */
-  appendText: (text: string) => boolean;
+  /** 在已有草稿末尾追加纯文本；批注等独立块可要求前后各留一个空行。 */
+  appendText: (text: string, options?: { separateBlock?: boolean }) => boolean;
   /** Clear the editor. */
   clear: () => void;
   /**

@@ -425,14 +425,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         savedRangeRef.current = r2.cloneRange();
         reportChange();
       },
-      appendText(text) {
+      appendText(text, options) {
         const edit = editRef.current;
         if (!edit || disabled || !text) return false;
         const hasContent = !!edit.textContent?.trim() || edit.querySelector(".chat-chip") !== null;
         if (hasContent) {
-          edit.appendChild(document.createElement("br"));
+          ensureTrailingLineBreaks(edit, options?.separateBlock ? 2 : 1);
         }
         appendTextPreservingLines(edit, text);
+        if (options?.separateBlock) ensureTrailingLineBreaks(edit, 2);
         focusEditorEnd(edit);
         const selection = window.getSelection();
         if (selection?.rangeCount) {
@@ -1575,9 +1576,9 @@ function serializeChatInputContent(edit: HTMLElement): {
     richTextEndsWithBreak = value.endsWith("\n");
   };
 
-  const appendBreak = () => {
-    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
-    if (richTextHasContent && !richTextEndsWithBreak) appendRichText("\n");
+  const appendBreak = (preserveConsecutive = false) => {
+    if (text.length > 0 && (preserveConsecutive || !text.endsWith("\n"))) text += "\n";
+    if (richTextHasContent && (preserveConsecutive || !richTextEndsWithBreak)) appendRichText("\n");
   };
 
   const walk = (node: Node): void => {
@@ -1604,7 +1605,7 @@ function serializeChatInputContent(edit: HTMLElement): {
       return;
     }
     if (node.tagName === "BR") {
-      appendBreak();
+      appendBreak(true);
       return;
     }
 
@@ -1667,6 +1668,19 @@ function appendTextPreservingLines(parent: HTMLElement, text: string): void {
     if (index > 0) parent.appendChild(document.createElement("br"));
     if (part) parent.appendChild(document.createTextNode(part));
   });
+}
+
+function ensureTrailingLineBreaks(parent: HTMLElement, count: number): void {
+  let trailing = 0;
+  let node = parent.lastChild;
+  while (node instanceof HTMLBRElement) {
+    trailing += 1;
+    node = node.previousSibling;
+  }
+  while (trailing < count) {
+    parent.appendChild(document.createElement("br"));
+    trailing += 1;
+  }
 }
 
 function focusEditorEnd(edit: HTMLElement): void {

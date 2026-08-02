@@ -4129,9 +4129,8 @@ describe("WorkspacePage review controls", () => {
 
     expect(sendMessageCommands(stream)).toHaveLength(0);
     expect(editor.textContent).toContain("帮我把这段润色一下");
-    expect(editor.textContent).toContain("按批注修改：");
-    expect(editor.textContent).toContain("改为五月发布");
-    expect(editor.querySelector("br")).not.toBeNull();
+    expect(editor.textContent).toContain("按批注修改：事实有误——改为五月发布（原文：『甲组』）");
+    expect(editor.querySelectorAll("br")).toHaveLength(4);
     expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
     expect(host?.querySelector(".annotation-hover-card")).toBeNull();
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
@@ -4143,8 +4142,10 @@ describe("WorkspacePage review controls", () => {
     expect(send?.kind).toBe("sendMessage");
     if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
     expect(send.data.text).toContain("帮我把这段润色一下");
-    expect(send.data.text).toContain("改为五月发布");
-    expect(send.data.text).toContain("原因：时间与资料不一致");
+    expect(send.data.text).toContain("\n\n按批注修改：事实有误——改为五月发布（原文：『甲组』）");
+    expect(send.data.text).not.toContain("时间与资料不一致");
+    expect(send.data.text).not.toContain("p-1");
+    expect(send.data.text).not.toMatch(/\bPM\b/u);
     expect(send.data.richText).toBeUndefined();
     expect(send.data.chips ?? []).toEqual([]);
     expect(sendMessageCommands(stream)).toHaveLength(1);
@@ -4205,6 +4206,12 @@ describe("WorkspacePage review controls", () => {
     await clickButton("发送");
     await flushMicrotasks(5);
     expect(sendMessageCommands(stream)).toHaveLength(1);
+    const send = sendMessageCommands(stream)[0];
+    expect(send?.kind).toBe("sendMessage");
+    if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
+    expect(send.data.text).toBe("按批注修改：事实有误——改为四月发布（原文：『甲组』）");
+    expect(send.data.text).not.toContain("p-1");
+    expect(send.data.text).not.toMatch(/\bPM\b/u);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
 
     await emitFrames(stream, [

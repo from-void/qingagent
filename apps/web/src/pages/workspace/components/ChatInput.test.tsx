@@ -195,6 +195,31 @@ describe("ChatInput", () => {
     });
   });
 
+  it("appendText 追加批注块时与已有文字及下一条批注各隔一个空行", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "已有草稿");
+
+    act(() => {
+      expect(ref.current?.appendText("按批注修改：第一条", { separateBlock: true })).toBe(true);
+      expect(ref.current?.appendText("按批注修改：第二条", { separateBlock: true })).toBe(true);
+    });
+
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: "已有草稿\n\n按批注修改：第一条\n\n按批注修改：第二条",
+      richText: "已有草稿\n\n按批注修改：第一条\n\n按批注修改：第二条",
+      chips: [],
+    });
+  });
+
   it("序列化并恢复时不把用户字面 chip marker 当成真实 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(

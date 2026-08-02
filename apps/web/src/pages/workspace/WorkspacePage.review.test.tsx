@@ -5826,6 +5826,87 @@ describe("WorkspacePage review controls", () => {
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
+  it("提交已由实时帧成功结算而 REST 回执为 no-op 时不误报候选失效", async () => {
+    const patch = textReviewToolCall("p-r59", "batch-r59", 0);
+    const stream = await renderWorkspaceWithReview([patch]);
+    const committedDoc = pmDoc([
+      pmParagraph("block-p-r59", "新句子1"),
+    ]);
+    stream.commitReviewGroups.mockImplementation(async () => {
+      // r59 真机时序：同一结算的实时帧先到并确认正文、候选与审阅终态，
+      // REST 结果随后只回幂等 no-op。结果判定不能只看最后这组回执。
+      for (const frame of [
+        {
+          kind: "documentSnapshotWritten",
+          data: { doc: wireSnapshotFromPmDoc(committedDoc, 2) },
+        },
+        toolCallUpdatedFrame({ ...patch, status: { kind: "committed" } }),
+        {
+          kind: "docCommitted",
+          data: {
+            sessionId: "s-1",
+            version: 2,
+            appliedCount: 1,
+            conflictCount: 0,
+          },
+        },
+        docStateFrame("editing"),
+      ] satisfies BridgeFrame[]) {
+        stream.emit(frame);
+      }
+      return [{
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
+      } satisfies BridgeFrame];
+    });
+
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(document.body.dataset.content).toBe("editing");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+    expect(host?.textContent).toContain("新句子1");
+    expect(document.body.textContent).not.toContain("候选已失效");
+    expect(document.body.textContent).not.toContain("本次未写入");
+    expect(document.body.textContent).not.toContain("当前候选已保留");
+  });
+
+  it("CAS 真失效即使同时重放旧 docCommitted 仍保留候选并提示", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-stale", "batch-stale", 0),
+    ]);
+    stream.commitReviewGroups.mockImplementation(async () => {
+      // 恢复流可能在请求期间补发旧成功帧；版本没有前进，不能拿它给本次 no-op 背书。
+      stream.emit({
+        kind: "docCommitted",
+        data: { sessionId: "s-1", version: 1, appliedCount: 1, conflictCount: 0 },
+      });
+      return [{
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
+      } satisfies BridgeFrame];
+    });
+
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(document.body.textContent).toContain(
+      "候选已失效，本次未写入；当前候选已保留",
+    );
+  });
+
   it("A3 旧 atomic 数据内联撤销一处后不再整组移出 pending 队列", async () => {
     const first = textReviewToolCall("p-1", "batch-atomic", 0, "reviewing", "atomic");
     const second = textReviewToolCall("p-2", "batch-atomic", 1, "reviewing", "atomic");

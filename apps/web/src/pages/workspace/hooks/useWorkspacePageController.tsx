@@ -521,6 +521,13 @@ export function useWorkspacePageController() {
     sessionId: null,
   });
   const reviewCloseInFlightRef = useRef<Promise<void> | null>(null);
+  // REST 提交与 /events 共用同一 FrameLog，但到达浏览器的先后独立。
+  // 递增游标让提交结果处理能识别“实时 docCommitted 已先到、REST 随后仅回 no-op”。
+  const reviewCommitReceiptRef = useRef<{
+    sessionId: string | null;
+    revision: number;
+    version: number;
+  }>({ sessionId: null, revision: 0, version: 0 });
   // cancelAskUser 的乐观事务 token。收到同 toolCall 的权威取消成功帧即失效；
   // 之后即使 POST 响应连接迟到失败，也不得把已解锁的服务端状态回滚成旧问卷。
   const askUserCancelMutationTokensRef = useRef<Map<string, symbol>>(
@@ -1805,6 +1812,17 @@ export function useWorkspacePageController() {
             askUserCancelMutationKey(sessionId, frame.data.toolCallId),
           );
         }
+      }
+      if (frame.kind === "docCommitted") {
+        const previousReceipt = reviewCommitReceiptRef.current;
+        reviewCommitReceiptRef.current = {
+          sessionId: frame.data.sessionId,
+          revision: previousReceipt.revision + 1,
+          version:
+            previousReceipt.sessionId === frame.data.sessionId
+              ? Math.max(previousReceipt.version, frame.data.version)
+              : frame.data.version,
+        };
       }
       // 本地发起的审阅请求若返回 no-op，说明服务端目标已被其它请求结算；
       // 不能让这个“成功响应”清掉本地仍可见的候选，交由请求完成回调明确提示。
@@ -3261,6 +3279,7 @@ export function useWorkspacePageController() {
     stateRef,
     streamRef,
     askUserCancelMutationTokensRef,
+    reviewCommitReceiptRef,
     reviewCloseInFlightRef,
     dispatch,
     showToast,

@@ -75,6 +75,14 @@ function saveInput(
   };
 }
 
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 test("PDF、DOCX、HTML、Markdown、TXT 均由主进程字节写盘并签发 owner-scoped reveal token", async () => {
   const cases = [
     ["测试文档_20260802.pdf", "pdf", [...Buffer.from("%PDF-1.7\n%%EOF\n")]],
@@ -198,45 +206,90 @@ test("写盘失败回报 write-failed，且不留下半成品或临时文件", a
   }
 });
 
-test("写盘超过上限会中止 pending 并回报 timeout", async () => {
+test("写盘超过上限会中止 pending 并回报 timeout", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const writeStarted = createDeferred();
+  const writeAborted = createDeferred();
+  const cleanupFinished = createDeferred();
+  let rejectWrite: ((reason?: unknown) => void) | undefined;
   const harness = createHarness({
-    saveTimeoutMs: 10,
-    writeFile: async () => new Promise(() => undefined),
+    saveTimeoutMs: 1_000,
+    ensureDirectory: async () => undefined,
+    writeFile: async (_filePath, _bytes, { signal }) => {
+      writeStarted.resolve();
+      signal.addEventListener(
+        "abort",
+        () => writeAborted.resolve(),
+        { once: true },
+      );
+      return new Promise((_, reject) => {
+        rejectWrite = reject;
+      });
+    },
+    removeFile: async () => {
+      cleanupFinished.resolve();
+    },
   });
   try {
-    const startedAt = Date.now();
-    const result = await harness.coordinator.save(
+    let saveSettled = false;
+    const pendingSave = harness.coordinator.save(
       harness.owner as unknown as WebContents,
       saveInput("超时.html", "html", "<p>test</p>"),
-    );
+    ).then((result) => {
+      saveSettled = true;
+      return result;
+    });
+    await writeStarted.promise;
+
+    t.mock.timers.tick(999);
+    await Promise.resolve();
+    assert.equal(saveSettled, false);
+
+    t.mock.timers.tick(1);
+    await writeAborted.promise;
+    const result = await pendingSave;
     assert.deepEqual(result, {
       saved: false,
       filename: "超时.html",
       reason: "timeout",
     });
-    assert.ok(Date.now() - startedAt < 500, "超时结果应及时返回 renderer");
+    rejectWrite?.(new Error("write aborted"));
+    await cleanupFinished.promise;
     assert.equal(existsSync(path.join(harness.downloadsDirectory, "超时.html")), false);
   } finally {
+    rejectWrite?.(new Error("test cleanup"));
+    await Promise.resolve();
     harness.cleanup();
   }
 });
 
 test("窗口关闭会中止未完成保存并回报 window-closed", async () => {
+  const writeStarted = createDeferred();
+  const writeSettled = createDeferred();
   const harness = createHarness({
-    writeFile: async () => new Promise(() => undefined),
+    writeFile: async (_filePath, _bytes, { signal }) => {
+      writeStarted.resolve();
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(new Error("write aborted"));
+          writeSettled.resolve();
+        }, { once: true });
+      });
+    },
   });
   try {
     const pendingSave = harness.coordinator.save(
       harness.owner as unknown as WebContents,
       saveInput("窗口关闭.md", "markdown", "# test"),
     );
-    await new Promise((resolve) => setImmediate(resolve));
+    await writeStarted.promise;
     harness.coordinator.dispose();
     assert.deepEqual(await pendingSave, {
       saved: false,
       filename: "窗口关闭.md",
       reason: "window-closed",
     });
+    await writeSettled.promise;
   } finally {
     harness.cleanup();
   }

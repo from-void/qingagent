@@ -1437,6 +1437,138 @@ describe("WorkspacePage review controls", () => {
     expect(document.body.textContent).not.toContain("文档已生成新版本");
   }, 60_000);
 
+  it("含多图整篇候选经 HTML 揭示投影后同基线 canonical 迟到，不误报冲突", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const imageSrc = (index: number) =>
+      `/api/v1/files/550e8400-e29b-41d4-a716-446655440000/commute-${index}.svg`;
+    const images = Array.from({ length: 4 }, (_, index): PmBlockNode => ({
+      type: "image",
+      attrs: {
+        blockId: `commute-image-${index}`,
+        src: imageSrc(index),
+        alt: `城市通勤插图 ${index + 1}`,
+        caption: index % 2 === 0 ? `通勤场景 ${index + 1}` : null,
+        width: index % 2 === 0 ? 720 : null,
+        height: index % 2 === 0 ? 405 : null,
+        align: index === 1 ? "left" : index === 3 ? "right" : "center",
+      },
+    }));
+    const baseDoc = pmDoc([
+      pmParagraph("commute-title", "城市通勤指南"),
+      images[0]!,
+      pmParagraph("commute-body-1", "错峰出行能避开拥堵。"),
+      images[1]!,
+      pmParagraph("commute-body-2", "地铁与骑行可以灵活接驳。"),
+      images[2]!,
+      pmParagraph("commute-body-3", "提前规划换乘路线。"),
+      images[3]!,
+    ]);
+    const editedDoc = pmDoc([
+      pmParagraph("commute-title", "更轻松的城市通勤"),
+      ...baseDoc.content.slice(1),
+    ]);
+    const hunk: DiffHunk = {
+      hunkId: "commute-whole-document",
+      reviewBatchId: "batch-commute-whole-document",
+      groupMode: "atomic",
+      op: "replace",
+      blockPath: [0],
+      anchor: {
+        blockId: "commute-title",
+        anchorKind: "position",
+        gravity: "before",
+      },
+      before: baseDoc.content as never,
+      after: editedDoc.content as never,
+      summary: "整篇改写并保留城市通勤插图",
+      beforeText: "城市通勤指南",
+      afterText: "更轻松的城市通勤",
+    };
+    const suggestion = blockSuggestion("commute-whole-document", hunk);
+    const spec: ToolCallSpec = {
+      ...reviewToolCall(
+        "commute-whole-document",
+        "batch-commute-whole-document",
+        "reviewing",
+      ),
+      body: {
+        kind: "docSuggestion",
+        data: { kind: "suggestion", data: suggestion },
+      },
+    };
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "多图整篇候选" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+      },
+      docStateFrame("editing"),
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc,
+          wholeDocument: true,
+        },
+      },
+      toolCallUpdatedFrame(spec),
+      docStateFrame("pendingReview"),
+    ]);
+    await flushMicrotasks(5);
+
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+
+    // 整篇揭示走 HTML 中间态；image renderHTML 未透传全局 data-block-id，
+    // 因此 live 图片节点只有身份缺失，正文、顺序与持久属性仍和 canonical 一致。
+    act(() => {
+      editor!.commands.setContent(`
+        <p data-block-id="commute-title">城市通勤指南</p>
+        <img src="${imageSrc(0)}" alt="城市通勤插图 1" data-caption="通勤场景 1" width="720" height="405" data-align="center" />
+        <p data-block-id="commute-body-1">错峰出行能避开拥堵。</p>
+        <img src="${imageSrc(1)}" alt="城市通勤插图 2" data-align="left" />
+        <p data-block-id="commute-body-2">地铁与骑行可以灵活接驳。</p>
+        <img src="${imageSrc(2)}" alt="城市通勤插图 3" data-caption="通勤场景 3" width="720" height="405" data-align="center" />
+        <p data-block-id="commute-body-3">提前规划换乘路线。</p>
+        <img src="${imageSrc(3)}" alt="城市通勤插图 4" data-align="right" />
+      `);
+    });
+    await flushMicrotasks(5);
+    expect(updateDocCommands(stream)).toHaveLength(0);
+    expect(captured.current?.docViewRef.current?.hasLocalDocumentChanges()).toBe(true);
+
+    await emitFrames(stream, [{
+      kind: "documentSnapshotWritten",
+      data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+    }]);
+
+    expect(captured.current?.state.streamError).toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(document.body.textContent).not.toContain("文档已生成新版本");
+  }, 60_000);
+
   it("表格单元格 patch 候选同基线 canonical 静默吸收，真实单元格分叉仍报冲突", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =

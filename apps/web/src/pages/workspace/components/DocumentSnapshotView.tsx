@@ -145,6 +145,10 @@ import {
   viewDocToPm,
   viewSectionsToHtml,
 } from "../data/viewDocHtml";
+import {
+  comparePmDocumentSemantics,
+  type PmDocumentComparison,
+} from "../data/pmDocumentEquivalence";
 import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
@@ -236,6 +240,8 @@ export interface DocumentSnapshotViewHandle {
   hasLocalDocumentChanges: () => boolean;
   /** 来帧正文与当前正文完全一致，且没有尚待保存的本地事务。 */
   canSafelyApplyIncomingDocument: (doc: PmDoc) => boolean;
+  /** 区分已证明不等与 schema 暂时无法比较，避免同基线审阅帧因异常误报冲突。 */
+  compareIncomingDocument: (doc: PmDoc) => PmDocumentComparison;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -344,6 +350,9 @@ export const DocumentSnapshotView = forwardRef<
       canSafelyApplyIncomingDocument(doc) {
         return tiptapRef.current?.canSafelyApplyIncomingDocument(doc) ?? false;
       },
+      compareIncomingDocument(doc) {
+        return tiptapRef.current?.compareIncomingDocument(doc) ?? "unavailable";
+      },
       flushPendingDocSave() {
         return tiptapRef.current?.flushPendingDocSave() ?? Promise.resolve();
       },
@@ -443,6 +452,7 @@ export const DocumentSnapshotView = forwardRef<
 interface TipTapDocHandle {
   hasLocalDocumentChanges: () => boolean;
   canSafelyApplyIncomingDocument: (doc: PmDoc) => boolean;
+  compareIncomingDocument: (doc: PmDoc) => PmDocumentComparison;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -842,54 +852,35 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     readCurrentEditorDoc,
   ]);
 
+  const compareEditorWithIncomingDocument = useCallback((incomingDocument: PmDoc): PmDocumentComparison => {
+    if (!editor || editor.isDestroyed) return "unavailable";
+    // 即使一次编辑随后撤销到原文，只要 debounce/baseline 尚未结算，就仍让
+    // 保存链先完成；候选不能越过一笔真实产生过的本地事务。
+    if (
+      updateTimerRef.current !== null ||
+      pendingUpdateBaselineRef.current !== null
+    ) {
+      return "different";
+    }
+    try {
+      return comparePmDocumentSemantics(
+        editor.schema,
+        editor.getJSON(),
+        incomingDocument,
+      );
+    } catch {
+      return "unavailable";
+    }
+  }, [editor]);
+
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
       canSafelyApplyIncomingDocument(incomingDocument) {
-        if (!editor || editor.isDestroyed) return false;
-        // 即使一次编辑随后撤销到原文，只要 debounce/baseline 尚未结算，就仍让
-        // 保存链先完成；候选不能越过一笔真实产生过的本地事务。
-        if (
-          updateTimerRef.current !== null ||
-          pendingUpdateBaselineRef.current !== null
-        ) {
-          return false;
-        }
-        try {
-          // normalizePmDoc 负责清掉瞬态/无语义字段；随后再经当前编辑器 schema
-          // 物化节点默认属性，才能比较 PM 语义。否则 canonical 可省略的默认值
-          // （如普通表格格子的 colspan/rowspan=1）会在 TipTap live JSON 中出现，
-          // 同一正文也会被逐字 JSON 比较误判为分叉。
-          const liveJson = editor.getJSON();
-          const live = editor.schema.nodeFromJSON(normalizePmDoc(liveJson));
-          const incoming = editor.schema.nodeFromJSON(
-            normalizePmDoc(incomingDocument),
-          );
-          if (live.eq(incoming)) return true;
-
-          // StarterKit trailingNode 会在表格、图片等原子块后自动补一个可继续输入的
-          // 空段落。只读审阅态不会给这个编辑器脚手架补 blockId，也不会把它保存进
-          // canonical。仅当它仍是“末尾空段落 + null blockId”，且移除后整篇与来帧
-          // 等价时才吸收；用户新建的段落会由 DedupeBlockIds 获得 id，有正文更不会
-          // 命中，因此真实本地编辑仍 fail closed。
-          const trailing = liveJson.content?.at(-1);
-          if (
-            trailing?.type !== "paragraph" ||
-            (trailing.content?.length ?? 0) !== 0 ||
-            trailing.attrs?.blockId !== null
-          ) {
-            return false;
-          }
-          const liveWithoutEditorScaffold = editor.schema.nodeFromJSON(
-            normalizePmDoc({
-              ...liveJson,
-              content: liveJson.content?.slice(0, -1) ?? [],
-            }),
-          );
-          return liveWithoutEditorScaffold.eq(incoming);
-        } catch {
-          return false;
-        }
+        return compareEditorWithIncomingDocument(incomingDocument) === "equivalent";
+      },
+      compareIncomingDocument(incomingDocument) {
+        return compareEditorWithIncomingDocument(incomingDocument);
       },
       hasLocalDocumentChanges() {
         if (!editor || editor.isDestroyed) return false;
@@ -935,7 +926,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         await forwardCurrentEditorDoc();
       },
     }),
-    [forwardCurrentEditorDoc],
+    [compareEditorWithIncomingDocument, forwardCurrentEditorDoc],
   );
 
   useEffect(() => {

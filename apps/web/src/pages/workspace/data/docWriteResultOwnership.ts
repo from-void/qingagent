@@ -93,7 +93,10 @@ export function appliedDocVersionFromBroadcastFrame(
  */
 export type DocumentFrameDecision =
   | { kind: "apply" }
-  | { kind: "reconcile"; reason: "equivalent_review_base" }
+  | {
+      kind: "reconcile";
+      reason: "equivalent_review_base" | "unavailable_same_review_base";
+    }
   | {
       kind: "defer";
       reason:
@@ -190,6 +193,8 @@ export function decideBroadcastDocumentFrame(input: {
   scheduledDocWrite: boolean;
   /** 编辑器已无待保存事务且正文与帧携带的规范化 PM 完全相等。 */
   incomingDocumentMatchesEditor?: boolean;
+  /** 当前编辑器或 PM schema 无法完成语义比较。 */
+  incomingDocumentComparisonUnavailable?: boolean;
   /** pendingReview 里的正文差异来自审阅投影，不是用户尚未落盘的编辑。 */
   reviewActive?: boolean;
   /** 当前审阅候选所基于的 canonical 版本。 */
@@ -216,6 +221,20 @@ export function decideBroadcastDocumentFrame(input: {
     return { kind: "apply" };
   }
   if (!input.editorDirty) return { kind: "apply" };
+  if (
+    input.incomingDocumentComparisonUnavailable === true &&
+    input.reviewActive === true
+  ) {
+    const incoming = appliedDocVersionFromBroadcastFrame(input.frame);
+    if (
+      incoming !== null &&
+      input.reviewBaseVersion === incoming.version
+    ) {
+      // 同版本 canonical 只需保留当前候选，不会覆盖 live 正文。比较器异常时
+      // 把这一帧静默留在原基线上，比伪造“正文已分叉”冲突更准确也更安全。
+      return { kind: "reconcile", reason: "unavailable_same_review_base" };
+    }
+  }
   if (input.incomingDocumentMatchesEditor === true) {
     if (input.reviewActive === true) {
       const incoming = appliedDocVersionFromBroadcastFrame(input.frame);

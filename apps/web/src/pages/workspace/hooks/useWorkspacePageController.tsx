@@ -1851,15 +1851,20 @@ export function useWorkspacePageController() {
         // 粗信号。所有携带完整 PM 的版本帧统一用同一条强证明：live 正文与来帧
         // 规范化相等，且编辑器没有待保存事务。docDiffReady 首帧和迟到 canonical
         // 快照都走这里；真实用户编辑与版本分叉仍不能越过。
+        const incomingDocumentComparison = incomingDocument === null
+          ? "unavailable"
+          : docViewRef.current?.compareIncomingDocument(
+              incomingDocument.pmDoc,
+            ) ?? "unavailable";
         const incomingDocumentMatchesEditor =
-          incomingDocument !== null &&
-          docViewRef.current?.canSafelyApplyIncomingDocument(
-            incomingDocument.pmDoc,
-          ) === true;
+          incomingDocumentComparison === "equivalent";
         const decision = decideBroadcastDocumentFrame({
           frame,
           ...dirty,
           incomingDocumentMatchesEditor,
+          incomingDocumentComparisonUnavailable:
+            incomingDocument !== null &&
+            incomingDocumentComparison === "unavailable",
           reviewActive: stateRef.current.docState.kind === "pendingReview",
           reviewBaseVersion: stateRef.current.docDiff?.baseVersion ?? null,
           afterDeferredDrain,
@@ -1887,6 +1892,7 @@ export function useWorkspacePageController() {
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
             incomingDocumentMatchesEditor,
+            incomingDocumentComparison,
             ...terminalDocumentLogFields,
           });
           if (!deferredDocumentFrameDrainRef.current) {
@@ -1950,6 +1956,7 @@ export function useWorkspacePageController() {
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
             incomingDocumentMatchesEditor,
+            incomingDocumentComparison,
             ...terminalDocumentLogFields,
           });
           return;
@@ -1978,6 +1985,7 @@ export function useWorkspacePageController() {
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
             incomingDocumentMatchesEditor,
+            incomingDocumentComparison,
             ...terminalDocumentLogFields,
           });
           return;
@@ -2005,6 +2013,7 @@ export function useWorkspacePageController() {
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
             incomingDocumentMatchesEditor,
+            incomingDocumentComparison,
             ...terminalDocumentLogFields,
           });
         }

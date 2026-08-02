@@ -171,6 +171,28 @@ describe("decideBroadcastDocumentFrame", () => {
     });
   });
 
+  it("同版本审阅基线比较暂不可用时保留候选，不伪报正文分叉", () => {
+    const snapshot = versionWritingFrames[0]!;
+    expect(decide(snapshot, {
+      editorDirty: true,
+      reviewActive: true,
+      reviewBaseVersion: 2,
+      incomingDocumentComparisonUnavailable: true,
+    })).toEqual({
+      kind: "reconcile",
+      reason: "unavailable_same_review_base",
+    });
+    expect(decide(snapshot, {
+      editorDirty: true,
+      reviewActive: true,
+      reviewBaseVersion: 1,
+      incomingDocumentComparisonUnavailable: true,
+    })).toEqual({
+      kind: "conflict",
+      reason: "local_editor_changes",
+    });
+  });
+
   it.each([
     ["pendingDocWrite", { pendingDocWrite: true }, "pending_doc_write"],
     ["queuedDocWrite", { queuedDocWrite: true }, "queued_doc_write"],

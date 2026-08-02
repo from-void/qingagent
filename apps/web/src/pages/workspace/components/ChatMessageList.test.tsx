@@ -582,7 +582,7 @@ describe("ChatMessageList", () => {
     expect(host?.querySelector(".askuser-card")).toBeNull();
   });
 
-  it("恢复生成中断的空问卷时显示可继续输入说明而不是无内容消失", async () => {
+  it("真实恢复帧经 reducer 后在聊天史显示问卷中断说明并保持输入解锁", async () => {
     const interruptedAskUser: ToolCallSpec = {
       id: "tc-restore-interrupted",
       name: "askUser",
@@ -605,22 +605,52 @@ describe("ChatMessageList", () => {
       },
     };
 
+    const restoreActions: WorkspaceAction[] = [
+      {
+        kind: "restoreReset",
+        data: { epoch: 2, snapshotSeq: 0 },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      },
+      {
+        kind: "chatMessageAdded",
+        data: {
+          message: {
+            id: "m-restore-interrupted",
+            role: { kind: "agent" },
+            ts: "2026-08-03T00:00:00.000Z",
+            parts: [{ kind: "toolCall", data: interruptedAskUser }],
+            chips: null,
+          },
+          appendSeq: 1,
+        },
+      },
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-restore-interrupted",
+          toolCallId: interruptedAskUser.id,
+          spec: interruptedAskUser,
+        },
+      },
+    ];
+    const restored = restoreActions.reduce(workspaceReducer, initialWorkspaceState);
+
     await render(
       <ChatMessageList
-        messages={[{
-          id: "m-restore-interrupted",
-          role: { kind: "agent" },
-          ts: "2026-08-03T00:00:00.000Z",
-          parts: [{ kind: "toolCall", data: interruptedAskUser }],
-          chips: null,
-        }]}
+        messages={restored.messages}
         streamActive={false}
       />,
     );
 
+    expect(restored.activeOverlay).toBeNull();
+    expect(restored.agentBusy).toBe(false);
     expect(host?.textContent ?? "").toContain(
       "上次问卷生成已中断，输入已恢复，可直接重新描述需求",
     );
+    expect(host?.querySelector('[data-wf="AskUserRestoreInterrupted"]')).not.toBeNull();
     expect(host?.querySelector(".askuser-card")).toBeNull();
   });
 

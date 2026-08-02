@@ -120,6 +120,19 @@ export async function* handleToolCallEvent(
     const toolCallPart: MessagePart = { kind: "toolCall", data: spec };
     ensureAgentChatHistoryMessage(state, agentMessageId);
     appendPartToChatHistory(state, agentMessageId, toolCallPart);
+    // 问卷参数生成期还没有 Mastra suspension snapshot。桌面进程若在此时重启，
+    // 只能依靠这张 running 占位卡在冷恢复时识别“生成已中断”。必须在首帧可见前
+    // 先落盘；否则用户已经看到“正在准备问题”，持久层却仍只有空 agent 消息，
+    // 恢复链没有任何卡可终态化，也就无从展示中断说明。
+    if (isQuestionnaireTool(toolName)) {
+      await schedulePersist(state, "askUser:generating_placeholder").catch((error) =>
+        logger.error("Persist questionnaire generating placeholder failed", {
+          sessionId: state.sessionId,
+          toolCallId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
     yield chatMessageAppended(agentMessageId, seq, toolCallPart);
     context.streamingPlaceholders.add(toolCallId);
     outcome.producedVisibleFrame = true;
@@ -295,7 +308,19 @@ export async function* handleToolCallEvent(
         questions: [],
         status: { kind: "running", data: { progressPct: null, etaSec: null } },
       });
-      yield* emitOrUpdateToolCall(context, earlySpec);
+      // 先完整推进生成器，把 earlySpec 写进 chatHistory；持久化成功（或已明确降级）后
+      // 才把收集到的帧交给前端，保证“用户看见生成中”与“重启后有卡可恢复”同一边界。
+      const earlyFrames = Array.from(emitOrUpdateToolCall(context, earlySpec));
+      // 部分 provider 不发送 tool-call-input-streaming-start，完整 tool-call 才是第一张
+      // 生成中问卷卡；同样要在继续执行子 LLM 前形成可恢复快照。
+      await schedulePersist(state, "askUser:generating_tool_call").catch((error) =>
+        logger.error("Persist questionnaire generating tool call failed", {
+          sessionId: state.sessionId,
+          toolCallId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      for (const frame of earlyFrames) yield frame;
       yield* syncContentAndProjectDocState(state, "ask_user_started");
       context.askUserProgressEmitted = true;
       context.askUserProgressToolCallId = toolCallId;

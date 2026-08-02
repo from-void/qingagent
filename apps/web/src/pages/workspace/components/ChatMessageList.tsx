@@ -1804,17 +1804,28 @@ function ToolCallRow({
     const restoreInterrupted =
       spec.result?.kind === "genericText" &&
       spec.result.data === ASK_USER_RESTORE_INTERRUPTED_MESSAGE;
-    const fullpageLabel = restoreInterrupted
-      ? ASK_USER_RESTORE_INTERRUPTED_MESSAGE
-      : isAborted
-        ? "已中止"
-        : spec.status.kind === "failed"
-          ? "未完成"
-          : isPending
-            ? "等待您的确认"
-            : isRunning
-              ? "正在准备问题"
-              : (b.data.source ?? "确认方向");
+    if (restoreInterrupted) {
+      return (
+        <div
+          className="wf-msg tool"
+          style={{ color: "var(--ink-3)", fontSize: 13, cursor: "default", display: "flex", alignItems: "center", gap: 6 }}
+          data-wf="AskUserRestoreInterrupted"
+          role="status"
+        >
+          <span style={{ color: "var(--ink-3)" }} aria-hidden="true">{"·"}</span>
+          <span>{ASK_USER_RESTORE_INTERRUPTED_MESSAGE}</span>
+        </div>
+      );
+    }
+    const fullpageLabel = isAborted
+      ? "已中止"
+      : spec.status.kind === "failed"
+        ? "未完成"
+        : isPending
+          ? "等待您的确认"
+          : isRunning
+            ? "正在准备问题"
+            : (b.data.source ?? "确认方向");
     return (
       <div className="wf-msg tool" style={{ color: "var(--ink-3)", fontSize: 13, cursor: "default", display: "flex", alignItems: "center", gap: 6 }} data-wf="ToolCall">
         {isRunning && <span className="chat-loading-dots"><span /><span /><span /></span>}

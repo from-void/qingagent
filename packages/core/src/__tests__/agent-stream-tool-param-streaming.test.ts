@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
 
+const schedulePersistMock = vi.hoisted(() => vi.fn(
+  async (_state: unknown, _reason?: string): Promise<void> => undefined,
+));
+
 // 桥层回归:AI SDK/Mastra fullStream 的工具参数流式 chunk 只提前渲染白名单工具占位卡,
 // 整块 tool-call 到达后复用同一 toolCallId 更新,不能重复 append。
 
@@ -18,6 +22,11 @@ vi.mock("../agents/qingagent.js", () => ({
     has: vi.fn(async () => false),
   })),
   qingagentAgent: { stream: vi.fn(), resumeStream: vi.fn() },
+}));
+
+vi.mock("../session/threadPersistence.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../session/threadPersistence.js")>(),
+  schedulePersist: schedulePersistMock,
 }));
 
 async function* streamOf(...chunks: unknown[]): AsyncGenerator<unknown> {
@@ -83,6 +92,94 @@ function chatHistoryToolCalls(state: { chatHistory: Array<{ parts: Array<{ kind:
 describe("processAgentStream tool-call 参数流式占位", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("问卷参数生成占位在首帧可见前即耐久化，保证进程重启后有卡可终态化", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("askuser-generating-persisted");
+    let persistedToolCall: ToolCallSpec | null = null;
+    schedulePersistMock.mockImplementationOnce(async (persistedState: unknown) => {
+      persistedToolCall = structuredClone(
+        chatHistoryToolCalls(persistedState as {
+          chatHistory: Array<{ parts: Array<{ kind: string; data: unknown }> }>;
+        }).find((spec) => spec.id === "ask-generating") ?? null,
+      );
+    });
+
+    const stream = processAgentStream(
+      streamOf(streamingStart("planDraft", "ask-generating")), {
+        state,
+        agentMessageId: "agent-ask-generating",
+        streamId: "stream-ask-generating",
+        runId: "run-ask-generating",
+      },
+    );
+    const first = await stream.next();
+
+    expect(schedulePersistMock).toHaveBeenCalledWith(
+      state,
+      "askUser:generating_placeholder",
+    );
+    expect(first).toMatchObject({
+      done: false,
+      value: {
+        kind: "chatMessageAppended",
+        data: { part: { kind: "toolCall", data: { id: "ask-generating" } } },
+      },
+    });
+    expect(persistedToolCall).toMatchObject({
+      id: "ask-generating",
+      name: "planDraft",
+      status: { kind: "running" },
+      body: {
+        kind: "askUser",
+        data: { mode: { kind: "fullpage" }, questions: [] },
+      },
+    });
+    for await (const _frame of stream) {
+      // 关闭剩余流，首帧前的持久化断言已在上方完成。
+    }
+  });
+
+  it("provider 不发 streaming-start 时完整问卷 tool-call 也在首帧前耐久化", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("askuser-tool-call-persisted");
+    const stream = processAgentStream(
+      streamOf(toolCall("planDraft", "ask-tool-call", { purpose: "initialBrief" })),
+      {
+        state,
+        agentMessageId: "agent-ask-tool-call",
+        streamId: "stream-ask-tool-call",
+        runId: "run-ask-tool-call",
+      },
+    );
+
+    const first = await stream.next();
+
+    expect(schedulePersistMock).toHaveBeenCalledWith(
+      state,
+      "askUser:generating_tool_call",
+    );
+    expect(first).toMatchObject({
+      done: false,
+      value: {
+        kind: "chatMessageAppended",
+        data: {
+          part: {
+            kind: "toolCall",
+            data: {
+              id: "ask-tool-call",
+              name: "planDraft",
+              status: { kind: "running" },
+              body: { kind: "askUser" },
+            },
+          },
+        },
+      },
+    });
+    for await (const _frame of stream) {
+      // 关闭剩余流，首帧前的持久化断言已在上方完成。
+    }
   });
 
   it("白名单工具 streaming-start 会 append 一张 running generic 空参数占位卡", async () => {

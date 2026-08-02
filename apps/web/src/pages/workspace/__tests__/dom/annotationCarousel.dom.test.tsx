@@ -6,7 +6,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { AnnotationGroup } from "@qingagent/contract-ts";
-import { AnnotationCarousel, buildAnnotationInstruction, buildAnnotationSeveritySummary } from "../../components/AnnotationCarousel";
+import {
+  AnnotationCarousel,
+  buildAnnotationInstruction,
+  buildAnnotationSeveritySummary,
+  resolveAnnotationSuggestion,
+} from "../../components/AnnotationCarousel";
 import { installAnnotationGroupDecorations } from "../../data/annotationDecorations";
 import { initialWorkspaceState, workspaceReducer } from "../../data/workspaceState";
 
@@ -303,6 +308,48 @@ describe("AnnotationCarousel hover card", () => {
     });
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-ignore")!.click());
     expect(editorHost!.querySelector('[data-annotation-group="g2"]')).toBeNull();
+  });
+
+  it("不建议改写的批注只显示原因，不显示修改意见和生成修改", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const note = "改写会丢失具体违规词、破坏取证原意，故不提供整句替换建议。";
+    const annotationOnlyGroup: AnnotationGroup = {
+      ...groups[0]!,
+      summary: "最低价·取证转述语境",
+      note,
+      suggestion: note,
+      origin: "sensitive",
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    };
+    const onAccept = vi.fn(() => true);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, [annotationOnlyGroup]), []);
+      return <AnnotationCarousel
+        groups={[annotationOnlyGroup]}
+        editorDom={editor!.view.dom}
+        onAccept={onAccept}
+        onIgnore={() => undefined}
+      />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const anchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+    await act(async () => {
+      anchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+
+    const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
+    expect(card.textContent).toContain(note);
+    expect(card.querySelector('[aria-label="修改意见"]')).toBeNull();
+    expect(card.querySelector(".ahc-accept-actions")).toBeNull();
+    expect(card.textContent).not.toContain("生成修改");
+    expect(onAccept).not.toHaveBeenCalled();
   });
 
   it("点击翻页升级为 pinned，移出与所有延时跑完后仍连续显示并切换内容", async () => {
@@ -602,9 +649,10 @@ describe("AnnotationCarousel hover card", () => {
       .toBe("按批注修改：「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注：事实有误；原因：时间与资料不一致；定位：块 p，PM 1-3）");
   });
 
-  it("空修改意见回退为批注原因自身，不生成静默空指令", () => {
-    expect(buildAnnotationInstruction({ ...groups[0]!, suggestion: undefined }, "   "))
-      .toBe("按批注修改：「甲组原句」——时间与资料不一致（批注：事实有误；原因：时间与资料不一致；定位：块 p，PM 1-3）");
+  it("空修改意见不再回退为批注原因", () => {
+    const group = { ...groups[0]!, suggestion: undefined };
+    expect(resolveAnnotationSuggestion(group, "   ")).toBe("");
+    expect(buildAnnotationInstruction(group, "   ")).toBe("");
   });
 
   it("隐私批注进入前端状态和生成修改指令时保持打码，并携带结构锚点", () => {

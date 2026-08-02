@@ -119,6 +119,34 @@ describe("create_annotation_groups 来源引句校验", () => {
     expect(state.annotationGroups[0]?.summary).toBe(Array.from(summary).slice(0, 15).join(""));
   });
 
+  it("不建议改写时丢弃与批注原因重复的 suggestion", async () => {
+    const { state, tool } = setup();
+    const note = "改写会丢失具体违规词、破坏取证原意，故不提供整句替换建议。";
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "sensitive",
+        summary: "最低价·取证转述语境",
+        note,
+        suggestion: note,
+        anchors: [{ find: "收入为130亿元" }],
+      })],
+    }, reviewCtx({
+      type: "sensitive",
+      templateId: "review-sensitive-default",
+      templateName: "标准敏感词审查",
+    }));
+
+    expect(result).toMatchObject({ ok: true, groupCount: 1, errors: [] });
+    expect(state.annotationGroups[0]?.note).toBe(note);
+    expect(state.annotationGroups[0]?.suggestion).toBeUndefined();
+    expect(replaceAnnotationGroupsByOrigin).toHaveBeenCalledWith(
+      state.docId,
+      state.docVersion,
+      [expect.not.objectContaining({ suggestion: expect.any(String) })],
+    );
+  });
+
   it("隐私批注在工具唯一生产入口先打码再进入运行态和持久化", async () => {
     const { state, tool } = setup();
     state.doc!.content = [{

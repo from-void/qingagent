@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import {
   maskSensitiveAnnotationGroup,
   maskSensitiveValues,
+  normalizeAnnotationSuggestion,
   type AnnotationGroup,
 } from "@qingagent/contract-ts";
 import { CaretIcon } from "./icons";
@@ -46,6 +47,7 @@ export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggest
   const quoteChars = Array.from(anchor?.quote.trim() ?? "");
   const quote = quoteChars.length > 30 ? `${quoteChars.slice(0, 30).join("")}…` : quoteChars.join("");
   const suggestion = resolveAnnotationSuggestion(safeGroup, editedSuggestion);
+  if (!suggestion) return "";
   const location = anchor
     ? `块 ${anchor.blockId}，PM ${anchor.pmFrom}-${anchor.pmTo}`
     : "原批注锚点";
@@ -56,13 +58,13 @@ export function resolveAnnotationSuggestion(
   group: AnnotationGroup,
   editedSuggestion?: string,
 ): string {
-  if (editedSuggestion !== undefined) {
-    const suggestion = editedSuggestion.trim() || group.note.trim();
-    return group.origin === "privacy" || group.origin === "sensitive"
-      ? maskSensitiveValues(suggestion)
-      : suggestion;
-  }
-  return group.suggestion?.trim() || group.note.trim();
+  const suggestion = normalizeAnnotationSuggestion(
+    group.note,
+    editedSuggestion === undefined ? group.suggestion : editedSuggestion,
+  ) ?? "";
+  return group.origin === "privacy" || group.origin === "sensitive"
+    ? maskSensitiveValues(suggestion)
+    : suggestion;
 }
 
 const SEVERITY_LABELS = { error: "严重", warn: "建议", info: "提示" } as const;
@@ -247,9 +249,10 @@ export function AnnotationCarousel(props: {
     .filter((item): item is AnnotationGroup => item !== undefined);
   const hitIndex = hitGroups.findIndex((item) => item.id === group.id);
   const hasOverlap = hitGroups.length > 1;
-  const suggestion = suggestions[group.id]
-    ?? (group.suggestion?.trim() || group.note.trim());
+  const storedSuggestion = resolveAnnotationSuggestion(group);
+  const suggestion = suggestions[group.id] ?? storedSuggestion;
   const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
+  const hasSuggestedChange = storedSuggestion.length > 0;
   const severitySummary = buildAnnotationSeveritySummary(reviewingGroups);
 
   const keepOpen = () => {
@@ -327,7 +330,7 @@ export function AnnotationCarousel(props: {
         <span>批注原因</span>
         <p>{group.note}</p>
       </section>
-      <section className="ahc-suggestion" aria-label="修改意见">
+      {hasSuggestedChange ? <section className="ahc-suggestion" aria-label="修改意见">
         <label htmlFor={`annotation-suggestion-${group.id}`}>修改意见</label>
         <textarea
           id={`annotation-suggestion-${group.id}`}
@@ -338,14 +341,14 @@ export function AnnotationCarousel(props: {
             setSuggestions((current) => ({ ...current, [group.id]: value }));
           }}
         />
-      </section>
+      </section> : null}
     </div>
     <footer>
       <div className="ahc-ignore-actions">
         <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); closeCard(); }}>忽略</button>
         <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); closeCard(); }}>下次不再提示</button>
       </div>
-      <div className="ahc-accept-actions">
+      {hasSuggestedChange ? <div className="ahc-accept-actions">
         <span>将追加到输入框，由你确认发送</span>
         <button
           className="ahc-accept"
@@ -353,7 +356,7 @@ export function AnnotationCarousel(props: {
           disabled={!resolvedSuggestion}
           onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
         >生成修改</button>
-      </div>
+      </div> : null}
     </footer>
   </article>;
 }

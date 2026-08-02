@@ -74,3 +74,15 @@ export type AnnotationGroup = {
   status: "reviewing" | "accepted" | "ignored";
   anchors: SuggestionAnchor[];
 };
+
+/**
+ * 批注原因不是可执行修改；空值或复读原因的 suggestion 统一视为未提供。
+ */
+export function normalizeAnnotationSuggestion(
+  note: string,
+  suggestion: string | null | undefined,
+): string | undefined {
+  const normalized = suggestion?.trim();
+  if (!normalized || normalized === note.trim()) return undefined;
+  return normalized;
+}

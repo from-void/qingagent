@@ -57,6 +57,35 @@ describe("annotation cleanup op", () => {
     ]);
   });
 
+  it("与批注原因重复的 suggestion 不入库，恢复时保持为空", async () => {
+    const note = "改写会丢失具体违规词、破坏取证原意，故不提供整句替换建议。";
+    const group: AnnotationGroup = {
+      id: "annotation-only",
+      summary: "最低价·取证转述语境",
+      note,
+      origin: "sensitive",
+      suggestion: note,
+      status: "reviewing",
+      anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "最低价", textHash: "hash" }],
+    };
+
+    await insertAnnotationGroups("doc-annotation-only", 1, [group]);
+
+    const row = (await getDocumentsClient().execute({
+      sql: "SELECT group_meta_json FROM document_suggestions WHERE doc_id=? AND group_id=?",
+      args: ["doc-annotation-only", group.id],
+    })).rows[0]!;
+    expect(JSON.parse(String(row.group_meta_json))).not.toHaveProperty("suggestion");
+    await expect(listActiveAnnotationGroups("doc-annotation-only")).resolves.toEqual([{
+      id: group.id,
+      summary: group.summary,
+      note: group.note,
+      origin: group.origin,
+      status: group.status,
+      anchors: [{ ...group.anchors[0]!, textHash: "span:p:1:3" }],
+    }]);
+  });
+
   it("隐私批注在入库边界打码全部展示字段和锚点副本，后续映射不会写回原值", async () => {
     const group: AnnotationGroup = {
       id: "privacy-group",

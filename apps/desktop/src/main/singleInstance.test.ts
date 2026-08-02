@@ -7,7 +7,7 @@ import {
 } from "./singleInstance.js";
 
 function fakeApp(lockGranted: boolean) {
-  let secondInstance: (() => void) | undefined;
+  let secondInstance: ((event: unknown, commandLine: string[]) => void) | undefined;
   let quitCalls = 0;
   const app: SingleInstanceApp = {
     requestSingleInstanceLock: () => lockGranted,
@@ -23,7 +23,7 @@ function fakeApp(lockGranted: boolean) {
     get quitCalls() {
       return quitCalls;
     },
-    emitSecondInstance: () => secondInstance?.(),
+    emitSecondInstance: (commandLine: string[] = []) => secondInstance?.(undefined, commandLine),
   };
 }
 
@@ -49,9 +49,24 @@ test("锁成功后 second-instance 恢复并聚焦当前窗口", () => {
     focus: () => calls.push("focus"),
   };
 
-  assert.equal(acquireSingleInstanceLock(electron.app, () => window), true);
-  electron.emitSecondInstance();
+  const commandLines: string[][] = [];
+  assert.equal(
+    acquireSingleInstanceLock(
+      electron.app,
+      () => window,
+      (commandLine) => commandLines.push(commandLine),
+    ),
+    true,
+  );
+  electron.emitSecondInstance([
+    "qingagent.exe",
+    "qingagent://app/#/workspace?session=second-instance",
+  ]);
 
   assert.equal(electron.quitCalls, 0);
+  assert.deepEqual(commandLines, [[
+    "qingagent.exe",
+    "qingagent://app/#/workspace?session=second-instance",
+  ]]);
   assert.deepEqual(calls, ["restore", "focus"]);
 });

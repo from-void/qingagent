@@ -17,6 +17,60 @@ afterEach(() => {
 });
 
 describe("GET /api/v1/events 恢复快照背压", () => {
+  it("深链冷启动先建立 SSE 时，startSession(existing) 仍完整送达正文与长聊天史", async () => {
+    const sessionId = "events-deeplink-cold-existing-restore";
+    sessionIds.push(sessionId);
+    const session = createSession(sessionId, "2026-08-03T00:00:00.000Z");
+    session.title = "深链冷启动会话";
+    session.docState = { kind: "editing" };
+    session.docVersion = 9;
+    session.legacySections = [{ kind: "p", data: { text: "深链恢复正文" } }];
+    session.doc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "deeplink-body" },
+        content: [{ type: "text", text: "深链恢复正文" }],
+      }],
+    };
+    session._workingMemorySnapshotLoaded = true;
+    session._workingMemorySnapshotPersistable = false;
+    session.chatHistory = Array.from({ length: 70 }, (_, index) => ({
+      id: `deeplink-history-${index + 1}`,
+      role: { kind: index % 2 === 0 ? "user" as const : "agent" as const },
+      ts: "2026-08-03T00:00:00.000Z",
+      parts: [{
+        kind: "text" as const,
+        data: { body: `深链历史消息 ${index + 1}` },
+      }],
+      chips: null,
+    }));
+    sessions.set(sessionId, session);
+
+    // 模拟 URL 带 session 的首次 mount：事件通道先打开，随后后台命令才开始产出恢复批次。
+    const epoch = sessionManager.frameLog.getEpoch(sessionId);
+    const controller = new AbortController();
+    const events = await app.request(
+      `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=0&epoch=${epoch}`,
+      { signal: controller.signal },
+    );
+    const command = await app.request("/api/v1/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: sessionId } } },
+      }),
+    });
+    expect(command.status).toBe(200);
+
+    const frames = await readUntilRestoreCompleted(events, controller);
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(true);
+    expect(frames.filter((frame) => frame.kind === "chatMessageAdded")).toHaveLength(70);
+    expect(frames.at(-1)?.kind).toBe("sessionRestoreCompleted");
+  });
+
   it("恢复快照超过 live 队列帧数上限时仍能一次完整送达", async () => {
     const sessionId = "events-restore-over-live-frame-limit";
     sessionIds.push(sessionId);

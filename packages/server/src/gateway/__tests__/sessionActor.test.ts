@@ -38,6 +38,33 @@ function meta(title: string): BridgeFrame {
 }
 
 describe("SessionActor", () => {
+  it("startSession(existing) 的整批恢复帧按 replay 投递，普通命令仍按 live 投递", async () => {
+    const log = new InMemoryFrameLog();
+    const deliveries: string[] = [];
+    const unsubscribe = log.subscribe("s1", 0, (_entry, delivery) => {
+      deliveries.push(delivery);
+    });
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* (command) {
+        yield meta(command.kind);
+      },
+      abortSession: vi.fn(),
+    });
+
+    await actor.enqueue({
+      command: {
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: "s1" } } },
+      },
+    });
+    await actor.enqueue({ command: sendMessage("继续写") });
+    unsubscribe();
+
+    expect(deliveries).toEqual(["replay", "live"]);
+  });
+
   it("等待队列达到容量后立即拒绝新命令，当前项与既有排队项仍可完成", async () => {
     const log = new InMemoryFrameLog();
     let started!: () => void;

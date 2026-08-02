@@ -63,7 +63,10 @@ const serverStreamMock = vi.hoisted(() => ({
   instances: [] as MockServerStreamInstance[],
   // 可控 startSession(e2e-loop-0704 R15 回归用):置非 null 时替代默认的立即 resolve,
   // 用于模拟"建会话在途"窗口。用完的测试负责在 finally 里清回 null。
-  startSessionImpl: null as (() => Promise<string>) | null,
+  startSessionImpl: null as ((
+    stream: MockServerStreamInstance,
+    data: Extract<Command, { kind: "startSession" }>["data"],
+  ) => Promise<string>) | null,
   listDerivativesImpl: null as
     | ((sessionId: string) => Promise<unknown[]>)
     | null,
@@ -87,8 +90,12 @@ vi.mock("./data/serverStream", () => {
         });
       }
     });
-    startSession = vi.fn(async () =>
-      serverStreamMock.startSessionImpl ? serverStreamMock.startSessionImpl() : "s-1",
+    startSession = vi.fn(async (
+      data: Extract<Command, { kind: "startSession" }>["data"],
+    ) =>
+      serverStreamMock.startSessionImpl
+        ? serverStreamMock.startSessionImpl(this, data)
+        : "s-1",
     );
     listDerivatives = vi.fn(async (sessionId: string) =>
       serverStreamMock.listDerivativesImpl
@@ -6139,6 +6146,144 @@ describe("WorkspacePage existing session title hydration", () => {
     host?.remove();
     host = null;
   });
+
+  it("URL 带 session 的首次 mount 同批恢复正文、聊天、批注与候选态", async () => {
+    const annotation: AnnotationGroup = {
+      id: "deeplink-annotation",
+      summary: "深链批注已恢复",
+      note: "冷启动后仍保留锚点。",
+      origin: "自定义审查:深链",
+      suggestion: "核对这段正文",
+      severity: "error",
+      status: "reviewing",
+      anchors: [{
+        blockId: "deeplink-body",
+        pmFrom: 1,
+        pmTo: 3,
+        quote: "深链",
+        textHash: "deeplink-annotation-hash",
+      }],
+    };
+    const candidate = reviewSuggestion({
+      id: "deeplink-candidate",
+      blockId: "deeplink-body",
+      pmFrom: 1,
+      pmTo: 3,
+      before: "深链",
+      after: "冷启动深链",
+    });
+    serverStreamMock.startSessionImpl = async (stream, data) => {
+      expect(data).toEqual({
+        mode: { kind: "existing", data: { id: "s-existing" } },
+      });
+      const frames: BridgeFrame[] = [
+        {
+          kind: "restoreReset",
+          data: { epoch: 1, snapshotSeq: 1 },
+        },
+        {
+          kind: "sessionMeta",
+          data: { sessionId: "s-existing", title: "深链恢复会话" },
+        },
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "pendingReview" },
+            activeOverlay: null,
+            agentBusy: false,
+          },
+        },
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: wireSnapshotFromPmDoc(
+              pmDoc([
+                pmHeading("deeplink-heading", "深链恢复标题"),
+                pmParagraph("deeplink-body", "深链恢复正文"),
+              ]),
+              9,
+            ),
+          },
+        },
+        {
+          kind: "chatMessageAdded",
+          data: {
+            message: {
+              id: "deeplink-user",
+              role: { kind: "user" },
+              ts: "2026-08-03T00:00:00.000Z",
+              parts: [{ kind: "text", data: { body: "首轮深链提示" } }],
+              chips: null,
+            },
+            appendSeq: 0,
+          },
+        },
+        {
+          kind: "chatMessageAdded",
+          data: {
+            message: {
+              id: "deeplink-agent",
+              role: { kind: "agent" },
+              ts: "2026-08-03T00:00:01.000Z",
+              parts: [{ kind: "text", data: { body: "首轮完成文本" } }],
+              chips: null,
+            },
+            appendSeq: 0,
+          },
+        },
+        {
+          kind: "annotationGroupsReady",
+          data: { groups: [annotation] },
+        },
+        {
+          kind: "docDiffReady",
+          data: { baseVersion: 9, suggestions: [candidate] },
+        },
+        {
+          kind: "sessionRestoreCompleted",
+          data: { sessionId: "s-existing" },
+        },
+      ];
+      for (const frame of frames) stream.emit(frame);
+      return "s-existing";
+    };
+
+    const [
+      { useWorkspacePageController },
+      { WorkspaceChatPane },
+      { WorkspaceDocumentPane },
+    ] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./components/WorkspaceChatPane"),
+      import("./components/WorkspaceDocumentPane"),
+    ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function DeeplinkMountHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return (
+        <>
+          <WorkspaceChatPane controller={controller} />
+          <WorkspaceDocumentPane controller={controller} />
+        </>
+      );
+    }
+    await render(<DeeplinkMountHarness />);
+    await flushMicrotasks(8);
+
+    expect(host?.textContent).toContain("深链恢复标题");
+    expect(host?.textContent).toContain("深链恢复正文");
+    expect(host?.textContent).toContain("首轮深链提示");
+    expect(host?.textContent).toContain("首轮完成文本");
+    expect(host?.querySelectorAll('[data-wf="ChatMsg-user"]')).toHaveLength(1);
+    expect(host?.querySelectorAll('[data-wf="ChatMsg-agent"]')).toHaveLength(1);
+    expect(captured.current?.state.annotationGroups).toEqual([annotation]);
+    expect(captured.current?.state.docState).toEqual({ kind: "pendingReview" });
+    expect(captured.current ? selectPatches(captured.current.state) : []).toHaveLength(1);
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+  }, 60_000);
 
   it("B14 进入已有会话时，恢复完成前不清空 store 标题", async () => {
     const { useSessionStore } = await import("../../stores/sessionStore");

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getDocumentsClient } from "../documentsClient.js";
 import { runMigrations } from "../migrations.js";
-import { insertReviewDismissalSignal } from "../reviewDismissalSignalRepo.js";
+import {
+  insertReviewDismissalSignal,
+  listReviewDismissalSignals,
+} from "../reviewDismissalSignalRepo.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
@@ -9,7 +12,7 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-review-dismissal-"); });
 afterEach(() => db.cleanup());
 
 describe("reviewDismissalSignalRepo", () => {
-  it("只落库 docId、origin、summary、引句和时间，不参与消费", async () => {
+  it("按 docId 读取已落库的 origin、summary、引句和时间", async () => {
     await runMigrations();
     const client = getDocumentsClient();
     await client.execute(`INSERT INTO documents(
@@ -30,6 +33,8 @@ describe("reviewDismissalSignalRepo", () => {
       quote: saved.quote,
       ts: saved.ts,
     });
+    expect(await listReviewDismissalSignals("doc-signal")).toEqual([saved]);
+    expect(await listReviewDismissalSignals("doc-other")).toEqual([]);
   });
 
   it("隐私批注的不再提示信号也只保存打码值", async () => {
@@ -55,5 +60,6 @@ describe("reviewDismissalSignalRepo", () => {
       summary: "手机号 139****5678 未脱敏",
       quote: "139****5678",
     });
+    expect(await listReviewDismissalSignals("doc-privacy-signal")).toEqual([saved]);
   });
 });

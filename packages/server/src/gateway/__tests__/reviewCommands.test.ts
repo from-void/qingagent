@@ -4,6 +4,8 @@ import {
   commitPatches,
   commitReviewGroups,
   expandReviewIds,
+  ignoreAnnotationGroups,
+  insertReviewDismissalSignal,
   updatePatchVerdict,
 } from "../bridgeCore";
 import type { CommandExecutionContext } from "../commandTypes";
@@ -146,5 +148,68 @@ describe("handleReviewCommand commitPatches", () => {
       expect.objectContaining({ sessionId: "session-1" }),
       ["patch-2", "patch-3"],
     );
+  });
+});
+
+describe("handleReviewCommand ignoreAnnotationGroups", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getOrRestoreSession).mockResolvedValue({
+      sessionId: "session-1",
+      docId: "doc-1",
+      annotationGroups: [{
+        id: "group-1",
+        summary: "行动建议空泛",
+        note: "缺少负责人和期限。",
+        origin: "自定义审查:老板视角挑刺",
+        status: "reviewing",
+        anchors: [{
+          blockId: "p-1",
+          pmFrom: 1,
+          pmTo: 9,
+          quote: "尽快推动项目落地",
+          textHash: "hash-1",
+        }],
+      }],
+      patchVerdicts: new Map(),
+    } as never);
+  });
+
+  it("下次不再提示会先按文档保存命中文本与规则，再忽略当前批注", async () => {
+    const frames = await collectFrames(handleReviewCommand({
+      kind: "ignoreAnnotationGroups",
+      data: {
+        sessionId: "session-1",
+        reason: "item_ignored",
+        groupIds: ["group-1"],
+        rememberDismissal: true,
+      },
+    }, context));
+
+    expect(insertReviewDismissalSignal).toHaveBeenCalledWith({
+      docId: "doc-1",
+      origin: "自定义审查:老板视角挑刺",
+      summary: "行动建议空泛",
+      quote: "尽快推动项目落地",
+    });
+    expect(ignoreAnnotationGroups).toHaveBeenCalledWith("doc-1", ["group-1"]);
+    expect(frames.at(-1)).toMatchObject({
+      kind: "annotationGroupsReady",
+      data: { groups: [{ id: "group-1", status: "ignored" }] },
+    });
+  });
+
+  it("普通忽略不保存下次不再提示信号", async () => {
+    await collectFrames(handleReviewCommand({
+      kind: "ignoreAnnotationGroups",
+      data: {
+        sessionId: "session-1",
+        reason: "item_ignored",
+        groupIds: ["group-1"],
+      },
+    }, context));
+
+    expect(insertReviewDismissalSignal).not.toHaveBeenCalled();
+    expect(ignoreAnnotationGroups).toHaveBeenCalledWith("doc-1", ["group-1"]);
   });
 });

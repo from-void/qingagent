@@ -34,3 +34,27 @@ export async function insertReviewDismissalSignal(
   }));
   return item;
 }
+
+/** 文档内生效的“不再提示”信号；由批注唯一生产入口在写入前读取。 */
+export async function listReviewDismissalSignals(
+  docId: string,
+  client?: Client,
+): Promise<ReviewDismissalSignal[]> {
+  await ensureMigrated();
+  const db = client ?? getDocumentsClient();
+  const result = await db.execute({
+    sql: `SELECT id,doc_id,origin,summary,quote,ts
+      FROM review_dismissal_signals
+      WHERE doc_id=?
+      ORDER BY ts DESC, id ASC`,
+    args: [docId],
+  });
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    docId: String(row.doc_id),
+    origin: String(row.origin),
+    summary: String(row.summary),
+    quote: String(row.quote),
+    ts: String(row.ts),
+  }));
+}

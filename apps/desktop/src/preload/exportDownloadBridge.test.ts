@@ -12,6 +12,14 @@ const input: ExportDownloadSaveInput = {
   bytes: new Uint8Array(Buffer.from("<!doctype html><title>测试</title>")),
 };
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 test("bridge 通过专用 IPC 传 Uint8Array 并返回主进程真实成功结果", async () => {
   const invocations: Array<{ channel: string; input: ExportDownloadSaveInput }> = [];
   const save = createSaveExportDownload({
@@ -67,18 +75,39 @@ test("IPC 无 handler、拒绝或返回畸形结果时收口为 not-started", as
   }
 });
 
-test("IPC 静默不返回时 bridge 自身超时，避免 renderer 永久等待", async () => {
+test("IPC 静默不返回时 bridge 自身超时，避免 renderer 永久等待", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const invoke = createDeferred<unknown>();
   const save = createSaveExportDownload(
-    { invoke: async () => new Promise(() => undefined) },
-    10,
+    { invoke: async () => invoke.promise },
+    1_000,
   );
-  const startedAt = Date.now();
-  assert.deepEqual(await save(input), {
-    saved: false,
-    filename: input.filename,
-    reason: "timeout",
+  let settled = false;
+  const pendingSave = save(input).then((result) => {
+    settled = true;
+    return result;
   });
-  assert.ok(Date.now() - startedAt < 500);
+
+  try {
+    t.mock.timers.tick(999);
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    t.mock.timers.tick(1);
+    assert.deepEqual(await pendingSave, {
+      saved: false,
+      filename: input.filename,
+      reason: "timeout",
+    });
+  } finally {
+    invoke.resolve({
+      saved: false,
+      filename: input.filename,
+      reason: "window-closed",
+    });
+    await invoke.promise;
+    await Promise.resolve();
+  }
 });
 
 test("bridge 拒绝 Blob URL/字符串等旧载荷，不再触发 anchor 下载", async () => {

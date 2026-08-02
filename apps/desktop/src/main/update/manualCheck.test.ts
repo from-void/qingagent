@@ -54,6 +54,13 @@ function baseDeps(updater: CheckableUpdater, over: Partial<ManualCheckDeps> = {}
   };
 }
 
+async function waitForCheckCall(updater: FakeUpdater): Promise<void> {
+  for (let attempt = 0; attempt < 10 && updater.checkCalls === 0; attempt += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(updater.checkCalls, 1, "checkForUpdates 应在微任务阶段启动");
+}
+
 beforeEach(() => resetManualCheckInflightForTest());
 
 test("dev 短路:未打包直接 none,不触发底层检查", async () => {
@@ -77,10 +84,24 @@ test("error 事件 → 返回 error 态(区分于已是最新)", async () => {
   assert.equal(result.kind, "error");
 });
 
-test("检查超时 → 返回 error 态(不假报已是最新)", async () => {
+test("检查超时 → 返回 error 态(不假报已是最新)", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const updater = new FakeUpdater(); // 不自动 emit,靠 timeoutMs 兜底
-  const result = await runManualCheck(baseDeps(updater, { timeoutMs: 10 }));
-  assert.equal(result.kind, "error");
+  let settled = false;
+  const pendingResult = runManualCheck(
+    baseDeps(updater, { timeoutMs: 1_000 }),
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+
+  await waitForCheckCall(updater);
+  t.mock.timers.tick(999);
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  t.mock.timers.tick(1);
+  assert.equal((await pendingResult).kind, "error");
 });
 
 test("update-not-available → none(已是最新)", async () => {
@@ -128,8 +149,8 @@ test("并发去重:检查中再次点击复用同一 Promise,底层只检查一�
   const p1 = runManualCheck(baseDeps(updater));
   const p2 = runManualCheck(baseDeps(updater));
   assert.equal(p1, p2, "并发调用应返回同一进行中的 Promise");
-  // 等 doRun 走到 awaitCheckResult 挂好监听并调过 checkForUpdates(宏任务确保微任务全部 flush),再 emit。
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  // 等 doRun 走到 awaitCheckResult 挂好监听并调过 checkForUpdates，再 emit。
+  await waitForCheckCall(updater);
   updater.emit("update-not-available");
   const [r1, r2] = await Promise.all([p1, p2]);
   assert.deepEqual(r1, { kind: "none" });

@@ -8,7 +8,7 @@ import {
 import { CaretIcon } from "./icons";
 
 const SHOW_DELAY_MS = 80;
-const HIDE_DELAY_MS = 150;
+const HIDE_DELAY_MS = 350;
 const NAVIGATION_SCROLL_IDLE_MS = 200;
 const VIEWPORT_GUTTER = 12;
 const CARD_GAP = 8;

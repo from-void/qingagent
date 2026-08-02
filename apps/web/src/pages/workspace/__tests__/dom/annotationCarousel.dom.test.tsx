@@ -1,5 +1,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
@@ -402,7 +404,7 @@ describe("AnnotationCarousel hover card", () => {
     expect(host!.querySelector(".annotation-hover-card")).toBeNull();
   });
 
-  it("hover-only 未点击时移出锚点仍按原延时关卡", async () => {
+  it("hover-only 未点击时移出锚点按 350ms 离开宽限关卡", async () => {
     vi.useFakeTimers();
     createEditor();
     host = document.createElement("div");
@@ -425,12 +427,101 @@ describe("AnnotationCarousel hover card", () => {
       firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
       vi.advanceTimersByTime(80);
       firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
-      vi.advanceTimersByTime(149);
+      vi.advanceTimersByTime(349);
     });
     expect(host!.querySelector(".annotation-hover-card")).not.toBeNull();
 
     await act(async () => vi.advanceTimersByTime(1));
     expect(host!.querySelector(".annotation-hover-card")).toBeNull();
+  });
+
+  it("hover-only 移出锚点后在离开宽限内进入卡片仍保持显示", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, groups), []);
+      return <AnnotationCarousel
+        groups={groups}
+        editorDom={editor!.view.dom}
+        onAccept={() => true}
+        onIgnore={() => undefined}
+      />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
+
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(300);
+      card.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: firstAnchor }));
+      vi.runAllTimers();
+    });
+
+    expect(host!.querySelector(".annotation-hover-card")).toBe(card);
+
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(300);
+      card.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+      vi.runAllTimers();
+    });
+
+    expect(host!.querySelector(".annotation-hover-card")).toBe(card);
+  });
+
+  it("首帧的下次不再提示按钮已有正宽命中区且可点击", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    host.id = "view-workspace";
+    document.body.appendChild(host);
+    const style = document.createElement("style");
+    style.textContent = readFileSync(
+      resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"),
+      "utf8",
+    );
+    document.head.appendChild(style);
+    const onIgnore = vi.fn();
+    root = createRoot(host);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, groups), []);
+      return <AnnotationCarousel
+        groups={groups}
+        editorDom={editor!.view.dom}
+        onAccept={() => true}
+        onIgnore={onIgnore}
+      />;
+    }
+
+    try {
+      await act(async () => root!.render(<Harness />));
+      const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+      await act(async () => {
+        firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        vi.advanceTimersByTime(80);
+      });
+
+      const rememberButton = host.querySelector<HTMLButtonElement>(".ahc-ignore-remember")!;
+      expect(Number.parseFloat(getComputedStyle(rememberButton).minWidth)).toBeGreaterThan(0);
+      expect(getComputedStyle(rememberButton).pointerEvents).not.toBe("none");
+
+      await act(async () => rememberButton.click());
+      expect(onIgnore).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }), true);
+      expect(host.querySelector(".annotation-hover-card")).toBeNull();
+    } finally {
+      style.remove();
+    }
   });
 
   it("自定义与预置审查共用 active 锚点，hover 均可开卡且自定义意见可回填", async () => {

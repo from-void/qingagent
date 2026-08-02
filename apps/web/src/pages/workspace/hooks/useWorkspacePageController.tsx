@@ -1846,9 +1846,20 @@ export function useWorkspacePageController() {
           scheduledDocWrite:
             !bypassDirtyDecision && scheduledDocWriteRef.current,
         };
+        // docDiffReady 只是把“候选生成所基于的旧正文”投影进审阅态，并没有写出
+        // 新 canonical 版本。首帧又必然早于 pendingReview 投影，不能仅凭旧的
+        // editorDirty 布尔值把它误报成服务器新版本；只在编辑器正文与 previewDoc
+        // 完全相等且没有待保存事务时证明式放行，真实分叉仍走原冲突保护。
+        const candidateBaseMatchesEditor =
+          frame.kind === "docDiffReady" &&
+          frame.data.previewDoc !== undefined &&
+          docViewRef.current?.canSafelyApplyDocumentBase(
+            frame.data.previewDoc as PmDoc,
+          ) === true;
         const decision = decideBroadcastDocumentFrame({
           frame,
           ...dirty,
+          candidateBaseMatchesEditor,
           reviewActive: stateRef.current.docState.kind === "pendingReview",
           afterDeferredDrain,
         });
@@ -1875,6 +1886,7 @@ export function useWorkspacePageController() {
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
+            candidateBaseMatchesEditor,
             ...terminalDocumentLogFields,
           });
           if (!deferredDocumentFrameDrainRef.current) {
@@ -1943,6 +1955,7 @@ export function useWorkspacePageController() {
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
+            candidateBaseMatchesEditor,
             ...terminalDocumentLogFields,
           });
           return;
@@ -1969,6 +1982,7 @@ export function useWorkspacePageController() {
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
+            candidateBaseMatchesEditor,
             ...terminalDocumentLogFields,
           });
         }

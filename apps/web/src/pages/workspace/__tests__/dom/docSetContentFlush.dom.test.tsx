@@ -863,4 +863,78 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(host.textContent).toContain("右栏内容");
     expect(host.querySelector("[data-pm-node='diagram']")).not.toBeNull();
   });
+
+  it("纯焦点/选区/空事务不 dirty，改后撤销在保存结算前仍不放行候选基线", async () => {
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const canonical = paragraphDoc("副歌第二行");
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          ref={viewRef}
+          doc={pmDocToViewDocumentSnapshot(canonical, 7)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+
+    act(() => {
+      editor!.commands.focus();
+      editor!.view.dispatch(
+        editor!.state.tr.setSelection(
+          TextSelection.create(editor!.state.doc, 1, 3),
+        ),
+      );
+      editor!.view.dispatch(editor!.state.tr);
+      editor!.view.dom.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true }),
+      );
+      editor!.view.dom.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true }),
+      );
+    });
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+    expect(onEditorChange).not.toHaveBeenCalled();
+
+    vi.useFakeTimers();
+    act(() => {
+      const noNetChange = editor!.state.tr
+        .insertText("临", 1)
+        .delete(1, 2);
+      expect(noNetChange.docChanged).toBe(true);
+      expect(noNetChange.doc.eq(editor!.state.doc)).toBe(true);
+      editor!.view.dispatch(noNetChange);
+    });
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+
+    act(() => {
+      editor!.commands.insertContentAt(1, "临");
+      expect(editor!.commands.undo()).toBe(true);
+    });
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(true);
+    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(false);
+    expect(normalizePmDoc(editor!.getJSON())).toEqual(normalizePmDoc(canonical));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(401);
+    });
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+  });
 });

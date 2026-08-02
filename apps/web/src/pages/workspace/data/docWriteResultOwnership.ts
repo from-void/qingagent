@@ -184,17 +184,13 @@ export function decideBroadcastDocumentFrame(input: {
   pendingDocWrite: boolean;
   queuedDocWrite: boolean;
   scheduledDocWrite: boolean;
+  /** 首个候选帧到达时，编辑器已无待保存事务且正文等于候选的 previewDoc。 */
+  candidateBaseMatchesEditor?: boolean;
   /** pendingReview 里的正文差异来自审阅投影，不是用户尚未落盘的编辑。 */
   reviewActive?: boolean;
   /** 保存 drain 后的二次判定，不再把持续 editor dirty 当成 debounce。 */
   afterDeferredDrain?: boolean;
 }): DocumentFrameDecision {
-  if (
-    input.frame.kind === "docDiffReady" &&
-    input.reviewActive === true
-  ) {
-    return { kind: "apply" };
-  }
   if (!broadcastContentFrameWritesDocumentVersion(input.frame)) {
     return { kind: "apply" };
   }
@@ -206,6 +202,15 @@ export function decideBroadcastDocumentFrame(input: {
   }
   if (input.scheduledDocWrite) {
     return { kind: "defer", reason: "scheduled_doc_write" };
+  }
+  if (
+    input.frame.kind === "docDiffReady" &&
+    (
+      input.reviewActive === true ||
+      input.candidateBaseMatchesEditor === true
+    )
+  ) {
+    return { kind: "apply" };
   }
   if (!input.editorDirty) return { kind: "apply" };
   if (isAgentFinalDocumentFrame(input.frame) && !input.afterDeferredDrain) {

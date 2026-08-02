@@ -39,11 +39,15 @@ describe("desktop quit coordinator", () => {
       quit,
     });
 
-    await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    assert.equal(coordinator.isQuitting(), false);
+    const completion = coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
+    assert.equal(coordinator.isQuitting(), true);
+    await completion;
 
     assert.equal(confirmQuitDuringGeneration.mock.callCount(), 1);
     assert.equal(drainServer.mock.callCount(), 0);
     assert.equal(quit.mock.callCount(), 0);
+    assert.equal(coordinator.isQuitting(), false);
   });
 
   it("生成中确认退出后才排空 server 并恢复 app.quit", async () => {
@@ -64,6 +68,7 @@ describe("desktop quit coordinator", () => {
 
     await coordinator.handleBeforeQuit({ preventDefault: mock.fn() });
     assert.deepEqual(order, ["confirm", "drain", "quit"]);
+    assert.equal(coordinator.isQuitting(), true);
   });
 
   it("非 macOS 关窗先改走 app.quit，确认取消时窗口仍保留", async () => {

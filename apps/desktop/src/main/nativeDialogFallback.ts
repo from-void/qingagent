@@ -43,3 +43,19 @@ export function showNativeContentRecoveryFallback(
     noLink: true,
   });
 }
+
+/** renderer/GPU 在短时间内再次失败时停止自动 reload，避免恢复循环。 */
+export async function showNativeRendererRecoveryStopped(
+  owner: BrowserWindow | null,
+): Promise<void> {
+  await showMessageBoxFallback(owner, {
+    type: "warning",
+    title: "页面暂时无法恢复",
+    message: "青简的页面连续两次停止运行，已暂停自动恢复。",
+    detail: "请先重新启动青简。若问题再次出现，请保留应用日志和 Crashpad 目录以便排查。",
+    buttons: ["知道了"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+}

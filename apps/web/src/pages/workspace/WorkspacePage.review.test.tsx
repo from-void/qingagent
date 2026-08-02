@@ -1316,6 +1316,113 @@ describe("WorkspacePage review controls", () => {
     expect(document.body.textContent).not.toContain("文档已生成新版本");
   }, 60_000);
 
+  it("含图候选进入 pendingReview 后同基线 canonical 快照迟到，不误报冲突也不清候选", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const baseDoc = pmDoc([
+      pmParagraph("article-title", "夏日散步"),
+      pmParagraph("article-body", "沿着河岸慢慢走。"),
+    ]);
+    const imageBlock: PmBlockNode = {
+      type: "image",
+      attrs: {
+        blockId: "article-image",
+        src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/summer.svg",
+        alt: "河岸夏景",
+        caption: "傍晚的河岸",
+        width: 800,
+        height: 450,
+        align: "center",
+      },
+    };
+    const candidateDoc = pmDoc([...baseDoc.content, imageBlock]);
+    const hunk: DiffHunk = {
+      hunkId: "article-image-hunk",
+      reviewBatchId: "batch-article-image",
+      groupMode: "atomic",
+      op: "insert",
+      blockPath: [2],
+      anchor: { blockId: "article-body", gravity: "after" },
+      before: null,
+      after: [imageBlock] as never,
+      summary: "插入文章配图",
+      afterText: "河岸夏景",
+    };
+    const suggestion = blockSuggestion("article-image-hunk", hunk);
+    const spec: ToolCallSpec = {
+      ...reviewToolCall("article-image-hunk", "batch-article-image", "reviewing"),
+      body: {
+        kind: "docSuggestion",
+        data: { kind: "suggestion", data: suggestion },
+      },
+    };
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "含图候选" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+      },
+      docStateFrame("editing"),
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc: candidateDoc,
+          wholeDocument: true,
+        },
+      },
+      toolCallUpdatedFrame(spec),
+      docStateFrame("pendingReview"),
+    ]);
+    await flushMicrotasks(5);
+
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+
+    // 复现 r48：审阅展示已经切到含图候选，随后只读内部投影把 live PM 拉回
+    // canonical base。没有任何用户编辑或保存事务，但旧 dirty 规则会把它看成差异。
+    act(() => {
+      editor!.commands.setContent(baseDoc);
+    });
+    expect(updateDocCommands(stream)).toHaveLength(0);
+    expect(
+      captured.current?.docViewRef.current?.hasLocalDocumentChanges(),
+    ).toBe(true);
+    expect(
+      captured.current?.docViewRef.current?.canSafelyApplyIncomingDocument(baseDoc),
+    ).toBe(true);
+
+    await emitFrames(stream, [{
+      kind: "documentSnapshotWritten",
+      data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+    }]);
+
+    expect(captured.current?.state.streamError).toBeNull();
+    expect(captured.current?.state.docDiff).not.toBeNull();
+    expect(selectPatches(captured.current!.state)).toHaveLength(1);
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(document.body.textContent).not.toContain("文档已生成新版本");
+  }, 60_000);
+
   it("generation_finished 撞上 400ms 本地 debounce 时先 drain 保存再自动回灌终稿", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =

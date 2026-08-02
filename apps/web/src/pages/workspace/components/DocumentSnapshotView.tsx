@@ -234,8 +234,8 @@ export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;
   getLastPresentationRun: () => NativePresentationRun | null;
   hasLocalDocumentChanges: () => boolean;
-  /** 候选基线与当前正文完全一致，且没有尚待保存的本地事务。 */
-  canSafelyApplyDocumentBase: (doc: PmDoc) => boolean;
+  /** 来帧正文与当前正文完全一致，且没有尚待保存的本地事务。 */
+  canSafelyApplyIncomingDocument: (doc: PmDoc) => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -341,8 +341,8 @@ export const DocumentSnapshotView = forwardRef<
       hasLocalDocumentChanges() {
         return tiptapRef.current?.hasLocalDocumentChanges() ?? false;
       },
-      canSafelyApplyDocumentBase(doc) {
-        return tiptapRef.current?.canSafelyApplyDocumentBase(doc) ?? false;
+      canSafelyApplyIncomingDocument(doc) {
+        return tiptapRef.current?.canSafelyApplyIncomingDocument(doc) ?? false;
       },
       flushPendingDocSave() {
         return tiptapRef.current?.flushPendingDocSave() ?? Promise.resolve();
@@ -442,7 +442,7 @@ export const DocumentSnapshotView = forwardRef<
 /** 公式点击事件:扩展在模块级创建拿不到 React 状态,经 window 事件转发给 TipTapDoc 弹编辑浮层。 */
 interface TipTapDocHandle {
   hasLocalDocumentChanges: () => boolean;
-  canSafelyApplyDocumentBase: (doc: PmDoc) => boolean;
+  canSafelyApplyIncomingDocument: (doc: PmDoc) => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -845,7 +845,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
-      canSafelyApplyDocumentBase(candidateBase) {
+      canSafelyApplyIncomingDocument(incomingDocument) {
         if (!editor || editor.isDestroyed) return false;
         // 即使一次编辑随后撤销到原文，只要 debounce/baseline 尚未结算，就仍让
         // 保存链先完成；候选不能越过一笔真实产生过的本地事务。
@@ -857,7 +857,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         }
         try {
           return JSON.stringify(normalizePmDoc(editor.getJSON())) ===
-            JSON.stringify(normalizePmDoc(candidateBase));
+            JSON.stringify(normalizePmDoc(incomingDocument));
         } catch {
           return false;
         }

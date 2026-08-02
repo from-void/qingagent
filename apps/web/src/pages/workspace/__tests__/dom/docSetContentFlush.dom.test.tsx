@@ -907,7 +907,7 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
       );
     });
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
-    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+    expect(viewRef.current?.canSafelyApplyIncomingDocument(canonical)).toBe(true);
     expect(onEditorChange).not.toHaveBeenCalled();
 
     vi.useFakeTimers();
@@ -920,14 +920,14 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
       editor!.view.dispatch(noNetChange);
     });
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
-    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+    expect(viewRef.current?.canSafelyApplyIncomingDocument(canonical)).toBe(true);
 
     act(() => {
       editor!.commands.insertContentAt(1, "临");
       expect(editor!.commands.undo()).toBe(true);
     });
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(true);
-    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(false);
+    expect(viewRef.current?.canSafelyApplyIncomingDocument(canonical)).toBe(false);
     expect(normalizePmDoc(editor!.getJSON())).toEqual(normalizePmDoc(canonical));
 
     await act(async () => {
@@ -935,6 +935,6 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     });
     expect(onEditorChange).toHaveBeenCalledTimes(1);
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
-    expect(viewRef.current?.canSafelyApplyDocumentBase(canonical)).toBe(true);
+    expect(viewRef.current?.canSafelyApplyIncomingDocument(canonical)).toBe(true);
   });
 });

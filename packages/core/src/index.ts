@@ -84,6 +84,7 @@ export {
   hasVisibleAskUserAnswerMessage,
   invalidateDraftStateAfterCanonicalWrite,
   invalidateTurnOwnership,
+  interruptQuestionnaireSpecForRestore,
   isWholeDocumentSuggestionBatchId,
   isSensitiveField,
   isDirectionReset,

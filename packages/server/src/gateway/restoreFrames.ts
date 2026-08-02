@@ -19,6 +19,7 @@ import {
   emitProjectedDocState,
   getActiveSuspensionOwner,
   getDocumentVersionCommittedAt,
+  interruptQuestionnaireSpecForRestore,
   isWholeDocumentSuggestionBatchId,
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
@@ -34,10 +35,10 @@ interface LiveRestoreDocStateDecision {
   target: DocState;
 }
 
-function liveRestoreStatus(
+function liveRestoreSpec(
   spec: ToolCallSpec,
   opts: { preserveToolCallId?: string | null } = {},
-): ToolCallSpec["status"] | null {
+): ToolCallSpec | null {
   if (spec.id === opts.preserveToolCallId) {
     return null;
   }
@@ -46,9 +47,7 @@ function liveRestoreStatus(
     isQuestionnaireTool(spec.name) &&
     (spec.status.kind === "pending" || spec.status.kind === "running")
   ) {
-    return {
-      kind: "aborted",
-    };
+    return interruptQuestionnaireSpecForRestore(spec);
   }
 
   return null;
@@ -60,13 +59,13 @@ function terminalizeStaleLiveRestoreToolCalls(session: SessionState): void {
     for (let i = 0; i < message.parts.length; i++) {
       const part = message.parts[i]!;
       if (part.kind !== "toolCall") continue;
-      const status = liveRestoreStatus(part.data, {
+      const restoredSpec = liveRestoreSpec(part.data, {
         preserveToolCallId: activeOwner?.toolCallId ?? null,
       });
-      if (!status) continue;
+      if (!restoredSpec) continue;
       message.parts[i] = {
         kind: "toolCall",
-        data: { ...part.data, status },
+        data: restoredSpec,
       };
     }
   }

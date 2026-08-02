@@ -1861,13 +1861,15 @@ describe("thread persistence", () => {
     }
   });
 
-  it("terminalizes stale open askUser without persisted runId on cold restore", async () => {
+  it("冷恢复把尚未形成 suspension 的生成中空问卷终态化并附带可继续输入说明", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const askUser = toolCall(
       "askUser",
       { kind: "running", data: { progressPct: null, etaSec: null } },
       "ask-1",
     );
+    if (askUser.body.kind !== "askUser") throw new Error("expected askUser body");
+    askUser.body.data.questions = [];
     threads.set("askuser-stale", storedThread("askuser-stale", metadata({
       docState: legacyDocState("plan"),
       legacySections: [],
@@ -1881,6 +1883,10 @@ describe("thread persistence", () => {
     expect(restoredTool?.kind).toBe("toolCall");
     if (restoredTool?.kind === "toolCall") {
       expect(restoredTool.data.status).toEqual({ kind: "aborted" });
+      expect(restoredTool.data.result).toEqual({
+        kind: "genericText",
+        data: "上次问卷生成已中断，输入已恢复，可直接重新描述需求",
+      });
     }
   });
 

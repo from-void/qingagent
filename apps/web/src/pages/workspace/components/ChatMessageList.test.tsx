@@ -582,6 +582,48 @@ describe("ChatMessageList", () => {
     expect(host?.querySelector(".askuser-card")).toBeNull();
   });
 
+  it("恢复生成中断的空问卷时显示可继续输入说明而不是无内容消失", async () => {
+    const interruptedAskUser: ToolCallSpec = {
+      id: "tc-restore-interrupted",
+      name: "askUser",
+      render: { kind: "rightForm" },
+      status: { kind: "aborted" },
+      body: {
+        kind: "askUser",
+        data: {
+          id: "ask-restore-interrupted",
+          mode: { kind: "fullpage" },
+          purpose: { kind: "initialBrief" },
+          source: null,
+          rationale: null,
+          questions: [],
+        },
+      },
+      result: {
+        kind: "genericText",
+        data: "上次问卷生成已中断，输入已恢复，可直接重新描述需求",
+      },
+    };
+
+    await render(
+      <ChatMessageList
+        messages={[{
+          id: "m-restore-interrupted",
+          role: { kind: "agent" },
+          ts: "2026-08-03T00:00:00.000Z",
+          parts: [{ kind: "toolCall", data: interruptedAskUser }],
+          chips: null,
+        }]}
+        streamActive={false}
+      />,
+    );
+
+    expect(host?.textContent ?? "").toContain(
+      "上次问卷生成已中断，输入已恢复，可直接重新描述需求",
+    );
+    expect(host?.querySelector(".askuser-card")).toBeNull();
+  });
+
   it("默认不渲染 system 消息和 agent 内部 marker 文本", async () => {
     const messages: ChatMessage[] = [
       {

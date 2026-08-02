@@ -293,6 +293,7 @@ export type {
 export { isSensitiveField, redactSensitiveText } from "../agent-run/redaction.js";
 export { deriveTitleFromSections } from "../session/title.js";
 export {
+  interruptQuestionnaireSpecForRestore,
   isDirectionReset,
   isPlanDraftTool,
   isQuestionnaireTool,

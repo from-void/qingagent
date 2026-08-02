@@ -32,11 +32,17 @@ describe("getChatInputBlockReason", () => {
     });
   });
 
-  it("blocks askUser overlay with questionnaire copy", () => {
-    expect(getChatInputBlockReason(dim("editing", "locked", "askUser"), false)).toEqual({
+  it("blocks askUser overlay only when a visible questionnaire card is actionable", () => {
+    expect(getChatInputBlockReason(dim("editing", "locked", "askUser"), false, false, true)).toEqual({
       toast: "请先完成问卷",
       placeholder: "请先完成问卷",
     });
+  });
+
+  it("恢复后 askUser overlay 没有可见卡时默认放开发送", () => {
+    expect(
+      getChatInputBlockReason(dim("editing", "locked", "askUser"), false),
+    ).toBeNull();
   });
 
   it("blocks pendingReview content with patch resolution guidance", () => {
@@ -69,7 +75,7 @@ describe("getChatInputBlockReason", () => {
 
   it("does not set a custom toast duration for askUser overlay", () => {
     const input = dim("editing", "locked", "askUser");
-    expect(getChatInputBlockReason(input, false)).not.toHaveProperty("durationMs");
+    expect(getChatInputBlockReason(input, false, false, true)).not.toHaveProperty("durationMs");
   });
 
   it("does not set a custom toast duration for askUser blocking", () => {

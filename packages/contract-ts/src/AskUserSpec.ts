@@ -2,6 +2,10 @@ import type { AskUserMode } from "./AskUserMode";
 import type { AskUserPurpose } from "./AskUserPurpose";
 import type { AskUserQuestion } from "./AskUserQuestion";
 
+/** 恢复时发现问卷尚未形成可续跑 suspension 的固定用户可见说明。 */
+export const ASK_USER_RESTORE_INTERRUPTED_MESSAGE =
+  "上次问卷生成已中断，输入已恢复，可直接重新描述需求";
+
 export type AskUserSpec = { id: string, mode: AskUserMode,
 /**
  * 模型选择的语义意图；仅用于可观测（前端展示 / 日志），不影响渲染。null 表示未知（如冷恢复）。

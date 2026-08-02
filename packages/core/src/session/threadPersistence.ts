@@ -71,6 +71,7 @@ import {
   unregisterSessionFolderSources,
 } from "../folderSources/runtime.js";
 import {
+  interruptQuestionnaireSpecForRestore,
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
 } from "../agent-run/questionnaireTools.js";
@@ -554,20 +555,18 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
   };
 }
 
-function staleRestoreStatus(
+function staleRestoreSpec(
   spec: ToolCallSpec,
   opts: {
     preserveOpenAskUserToolCallId?: string | null;
     preservePendingConfirmToolCallIds?: ReadonlySet<string>;
   } = {},
-): ToolCallSpec["status"] | null {
+): ToolCallSpec | null {
   if (isOpenAskUserToolCall(spec)) {
     if (spec.id === opts.preserveOpenAskUserToolCallId) {
       return null;
     }
-    return {
-      kind: "aborted",
-    };
+    return interruptQuestionnaireSpecForRestore(spec);
   }
 
   if (opts.preservePendingConfirmToolCallIds?.has(spec.id)) {
@@ -581,7 +580,7 @@ function staleRestoreStatus(
   // 断线/冷恢复兜底:除持久后台进程外，持久化里仍停在 running/pending 的工具
   // 已不可能确认其结果。恢复时统一切 aborted，既不伪报完成，也不让 spinner 复活。
   if (spec.status.kind === "running" || spec.status.kind === "pending") {
-    return { kind: "aborted" };
+    return { ...spec, status: { kind: "aborted" } };
   }
 
   return null;
@@ -599,13 +598,13 @@ function terminalizeStaleRestoreToolCalls(
     let messageChanged = false;
     const parts = message.parts.map((part) => {
       if (part.kind !== "toolCall") return part;
-      const status = staleRestoreStatus(part.data, opts);
-      if (!status) return part;
+      const restoredSpec = staleRestoreSpec(part.data, opts);
+      if (!restoredSpec) return part;
       changed = true;
       messageChanged = true;
       return {
         kind: "toolCall" as const,
-        data: { ...part.data, status },
+        data: restoredSpec,
       };
     });
 

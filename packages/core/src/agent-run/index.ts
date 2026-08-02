@@ -82,6 +82,7 @@ export type { AskUserAnswerRecord } from "./askUserAnswerMessage.js";
 export { isSensitiveField, redactSensitiveText } from "./redaction.js";
 
 export {
+  interruptQuestionnaireSpecForRestore,
   isDirectionReset,
   isPlanDraftTool,
   isQuestionnaireTool,

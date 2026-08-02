@@ -7,6 +7,7 @@ import type {
   ToolCallResult,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
+import { ASK_USER_RESTORE_INTERRUPTED_MESSAGE } from "@qingagent/contract-ts";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import "./chatUnified.css";
 
@@ -399,15 +400,20 @@ export function UToolBar({
     : "处理中";
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
-  const statusText = aborted
-    ? "已中止"
-    : pending
-      ? "等待中"
-      : running
-        ? runningText
-        : failed || semanticFailed
-          ? "未完成"
-          : isProcOutTool
+  const restoreInterrupted =
+    spec.result?.kind === "genericText" &&
+    spec.result.data === ASK_USER_RESTORE_INTERRUPTED_MESSAGE;
+  const statusText = restoreInterrupted
+    ? ASK_USER_RESTORE_INTERRUPTED_MESSAGE
+    : aborted
+      ? "已中止"
+      : pending
+        ? "等待中"
+        : running
+          ? runningText
+          : failed || semanticFailed
+            ? "未完成"
+            : isProcOutTool
               ? waitReturnedWhileRunning
                 ? "本次等待结束，仍在运行"
                 : "已读取输出"

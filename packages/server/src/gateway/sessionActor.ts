@@ -1,6 +1,6 @@
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import type { ModelOverrides } from "@qingagent/core";
-import type { FrameLog, LoggedFrame } from "./frameLog";
+import type { FrameDelivery, FrameLog, LoggedFrame } from "./frameLog";
 import { terminalDocumentFrameFields } from "../lib/terminalDocumentFrame";
 
 export type SessionActorState = "idle" | "running" | "cancelling" | "disposed";
@@ -69,6 +69,16 @@ export interface SessionActorOptions {
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
+
+function commandFrameDelivery(command: Command | null): FrameDelivery | undefined {
+  // startSession(existing) 产出的是一整批权威恢复快照，不是实时增量。
+  // 冷启动时 SSE 往往先于持久层恢复就绪；若沿用 live，正文大帧写出期间
+  // 后续聊天/批注/候选帧会占满慢客户端预算并被换线清掉。历史路径本来就
+  // 由 FrameLog.subscribe 标成 replay，这里让“订阅已先建立”的时序等价。
+  return command?.kind === "startSession" && command.data.mode.kind === "existing"
+    ? "replay"
+    : undefined;
+}
 
 export class SessionActor {
   private readonly queue: QueueItem[] = [];
@@ -212,6 +222,7 @@ export class SessionActor {
       this.current = item;
       const generation = this.options.frameLog.getGeneration(this.options.sessionId) + 1;
       const produced: LoggedFrame[] = [];
+      const delivery = commandFrameDelivery(item.input?.command ?? null);
       this.options.frameLog.setGeneration(this.options.sessionId, generation);
       this.options.frameLog.setActiveRunner(this.options.sessionId, true);
       this.stateValue = "running";
@@ -237,7 +248,7 @@ export class SessionActor {
           const seq = this.options.frameLog.append(
             this.options.sessionId,
             frame,
-            { generation },
+            { generation, delivery },
           );
           if (seq !== null) {
             const terminalFields = terminalDocumentFrameFields(frame, seq);

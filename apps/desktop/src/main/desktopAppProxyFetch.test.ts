@@ -38,8 +38,18 @@ async function readChunk(reader: ReadableStreamDefaultReader<Uint8Array>): Promi
   return Buffer.from(value!).toString();
 }
 
-after(() => {
-  for (const server of servers) server.close();
+function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+after(async () => {
+  await Promise.all(servers.map(closeServer));
 });
 
 test("SSE 分块逐个透传,不等整条响应结束就能读到首帧", async () => {
@@ -71,14 +81,11 @@ test("SSE 分块逐个透传,不等整条响应结束就能读到首帧", async 
 
 test("渲染端取消响应体时上游连接立即关闭,不泄漏 SSE 连接", async () => {
   const serverClosed = deferred();
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const port = await startServer((req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     res.write("data: hello\n\n");
     // 永不主动结束,只有客户端断开才会触发 close。
-    heartbeat = setInterval(() => res.write(": ping\n\n"), 50);
     req.on("close", () => {
-      clearInterval(heartbeat);
       serverClosed.resolve();
     });
   });
@@ -208,8 +215,7 @@ test("204 等无体状态码不构造响应体,响应头按逐跳规则清洗", 
 
 test("上游连接失败时以拒绝上报,不伪造成功响应", async () => {
   const port = await startServer((_req, res) => res.end());
-  servers[servers.length - 1]!.close();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await closeServer(servers[servers.length - 1]!);
 
   await assert.rejects(() => proxyTo(port)(new Request("qingagent://app/api/v1/home")));
 });

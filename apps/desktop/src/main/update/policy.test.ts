@@ -29,11 +29,15 @@ test("policy 404 fail-open", async () => {
   assert.deepEqual(policy, { minSupported: null });
 });
 
-test("policy 超时 fail-open", async () => {
-  const policy = await fetchUpdatePolicy(
+test("policy 超时 fail-open", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let rejectFetch: ((reason?: unknown) => void) | undefined;
+  let settled = false;
+  const pendingPolicy = fetchUpdatePolicy(
     trustedPolicyUrl,
     async (_url, init) =>
       new Promise((_, reject) => {
+        rejectFetch = reject;
         const signal = init.signal;
         if (signal?.aborted) {
           reject(signal.reason);
@@ -41,10 +45,23 @@ test("policy 超时 fail-open", async () => {
         }
         signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
       }),
-    5,
-  );
+    1_000,
+  ).then((policy) => {
+    settled = true;
+    return policy;
+  });
 
-  assert.deepEqual(policy, { minSupported: null });
+  try {
+    t.mock.timers.tick(999);
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    t.mock.timers.tick(1);
+    assert.deepEqual(await pendingPolicy, { minSupported: null });
+  } finally {
+    rejectFetch?.(new Error("test cleanup"));
+    await Promise.allSettled([pendingPolicy]);
+  }
 });
 
 test("policy 非 JSON fail-open", async () => {

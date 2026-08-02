@@ -4015,11 +4015,8 @@ describe("WorkspacePage review controls", () => {
           spec: {
             ...inlineAskUserToolCall("ask-1"),
             status: {
-              kind: "failed",
-              data: {
-                retriable: false,
-                reason: "用户已放弃本轮问卷",
-              },
+              kind: "aborted",
+              data: { reason: "user_cancelled" },
             },
           },
         },

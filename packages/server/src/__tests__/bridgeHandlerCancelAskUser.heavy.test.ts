@@ -83,7 +83,7 @@ describe("R0 cancelAskUser bridge red tests", () => {
   });
 
   it.each(["askUser", "planDraft", "askUserQuestion"] as const)(
-    "OL-1b clears %s suspension state and emits failed tool unlock frames",
+    "OL-1b clears %s suspension state and emits user-cancelled tool unlock frames",
     async (toolName) => {
     const { bridge } = await loadBridge();
     const session = await createCachedSession(bridge);
@@ -127,8 +127,8 @@ describe("R0 cancelAskUser bridge red tests", () => {
         toolCallId: "ask-1",
         spec: {
           status: {
-            kind: "failed",
-            data: { retriable: false, reason: "用户已放弃本轮问卷" },
+            kind: "aborted",
+            data: { reason: "user_cancelled" },
           },
         },
       },
@@ -191,8 +191,8 @@ describe("R0 cancelAskUser bridge red tests", () => {
         toolCallId: "ask-running",
         spec: {
           status: {
-            kind: "failed",
-            data: { retriable: false, reason: "用户已放弃本轮问卷" },
+            kind: "aborted",
+            data: { reason: "user_cancelled" },
           },
         },
       },
@@ -241,8 +241,8 @@ describe("R0 cancelAskUser bridge red tests", () => {
       kind: "toolCall",
       data: {
         status: {
-          kind: "failed",
-          data: { reason: "用户已放弃本轮问卷" },
+          kind: "aborted",
+          data: { reason: "user_cancelled" },
         },
       },
     });

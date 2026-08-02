@@ -13,6 +13,7 @@ import type {
   ConfirmSpec,
   TodoItem,
   ToolCallSpec,
+  ToolCallStatus,
 } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import type { Material } from "../types/material.js";
@@ -656,6 +657,7 @@ export function terminalizeAskUserToolCall(
   state: SessionState,
   toolCallId: string,
   reason: string,
+  terminalStatus?: ToolCallStatus,
 ): ToolCallUpdate | null {
   for (const msg of state.chatHistory) {
     for (let i = 0; i < msg.parts.length; i++) {
@@ -676,7 +678,7 @@ export function terminalizeAskUserToolCall(
       }
       const spec: ToolCallSpec = {
         ...part.data,
-        status: {
+        status: terminalStatus ?? {
           kind: "failed",
           data: { retriable: false, reason },
         },

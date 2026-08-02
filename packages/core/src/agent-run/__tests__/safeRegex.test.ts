@@ -178,6 +178,26 @@ describe("safeRegex", () => {
     });
   });
 
+  it("sr-workerStartup: 冷启动不占用正则执行预算", async () => {
+    class SlowStartingWorker extends Worker {
+      constructor(source: string, options: { eval: true }) {
+        super(
+          `const readyAt = Date.now() + 300; while (Date.now() < readyAt) {}\n${source}`,
+          options,
+        );
+      }
+    }
+    __setSafeRegexWorkerCtorForTest(SlowStartingWorker as unknown as typeof Worker);
+    const compiled = compileSafeRegex("a\\d");
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+
+    await expect(execSafeRegexAll(compiled.re, "a1 b2 a3")).resolves.toMatchObject({
+      ok: true,
+      matches: [{ 0: "a1" }, { 0: "a3" }],
+    });
+  }, 5000);
+
   it("sr-workerExit: 运行中 worker 异常退出返回稳定不可用错误", async () => {
     const compiled = compileSafeRegex("(?:a|aa)+$");
     expect(compiled.ok).toBe(true);

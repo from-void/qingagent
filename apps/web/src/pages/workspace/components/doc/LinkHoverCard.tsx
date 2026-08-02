@@ -144,7 +144,7 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
     }
     editor
       .chain()
-      .focus()
+      .focus(undefined, { scrollIntoView: false })
       .setTextSelection(range)
       .extendMarkRange("link")
       .setLink({ href })
@@ -162,7 +162,7 @@ export function LinkHoverCard({ editor, onToast }: { editor: Editor; onToast?: (
     }
     editor
       .chain()
-      .focus()
+      .focus(undefined, { scrollIntoView: false })
       .setTextSelection(range)
       .extendMarkRange("link")
       .unsetLink()

@@ -2,6 +2,7 @@ import { Button } from "@qingagent/ui-kit";
 import { assembleReviewQuery } from "@qingagent/contract-ts";
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useConfirm } from "../../../system";
 import { CaretIcon } from "./icons";
 import { buildTemplateSummary, LaunchModalShell, REVIEW_STARTER_PRESETS, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "./launchModal";
 import { rankRoleReviewTemplates, roleAvatarKind, rolePosition } from "./roleReview";
@@ -132,6 +133,7 @@ type ReviewPage = "launch" | "template" | "lexicons" | "entries";
 type ReviewEditor = { source: ReviewTemplateItem | null; name: string; prompt: string };
 
 export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
+  const confirm = useConfirm();
   const meta = REVIEW_META[props.type];
   const [templates, setTemplates] = useState<ReviewTemplateItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -237,12 +239,22 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
       setPage("launch");
     }).catch(() => setError(id ? "模板保存失败，请重试" : "模板另存失败，请重试")).finally(() => setSaving(false));
   };
-  const removeTemplate = () => {
+  const removeTemplate = async () => {
     if (!editor?.source) return;
+    const template = editor.source;
+    const confirmed = await confirm({
+      title: "删除这个审查模板?",
+      subject: template.name,
+      message: "删除后不可恢复",
+      confirmLabel: "删除",
+      cancelLabel: "取消",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError(null);
-    void props.deleteTemplate(editor.source.id).then((nextSelectedId) => {
-      const remaining = templates.filter((item) => item.id !== editor.source?.id);
+    void props.deleteTemplate(template.id).then((nextSelectedId) => {
+      const remaining = templates.filter((item) => item.id !== template.id);
       const selectedAfterDelete =
         nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "";
       setTemplates(remaining);

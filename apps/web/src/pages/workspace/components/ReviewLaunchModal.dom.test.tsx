@@ -9,6 +9,7 @@ import { buildReviewActionCard, buildReviewContext, buildReviewQuery, ReviewLaun
 import { assembleReviewQuery } from "@qingagent/contract-ts";
 import { ChatMessageList } from "./ChatMessageList";
 import { ROLE_REVIEW_PROFILES } from "./roleReview";
+import { ConfirmProvider } from "../../../system";
 
 const now = "2026-07-14T00:00:00.000Z";
 const builtins: ReviewTemplateItem[] = [
@@ -56,7 +57,7 @@ describe("ReviewLaunchModal", () => {
 
   it("头部左对齐呈现动作说明且无计数，审查组标题与弱化新建入口始终存在", async () => {
     const modalProps = props();
-    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    await act(async () => root.render(<ConfirmProvider><ReviewLaunchModal {...modalProps} /></ConfirmProvider>));
     expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("来源核查（仅对照已关联素材）");
     expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("以当前会话素材为依据，不联网");
     expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("2 模板");
@@ -93,6 +94,7 @@ describe("ReviewLaunchModal", () => {
 
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑严格来源核查"]')?.click());
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除")?.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-wf="GlobalConfirm"] .ws-folder-modal-danger')?.click());
     expect(modalProps.deleteTemplate).toHaveBeenCalledWith("source-strict");
 
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑标准来源核查"]')?.click());
@@ -150,14 +152,45 @@ describe("ReviewLaunchModal", () => {
     expect(modalProps.onConfirm).not.toHaveBeenCalled();
   });
 
-  it("内置模板在同类有余量时可删，并原样展示服务端保底错误", async () => {
+  it("删除模板先确认，取消不删，确认后模板从列表消失", async () => {
+    const deleteTemplate = vi.fn().mockResolvedValue("source-default");
+    await act(async () => root.render(
+      <ConfirmProvider><ReviewLaunchModal {...props({ deleteTemplate })} /></ConfirmProvider>,
+    ));
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑严格来源核查"]')?.click());
+    const deleteButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "删除")!;
+    expect(deleteButton.dataset.danger).toBe("true");
+
+    await act(async () => deleteButton.click());
+    const firstConfirm = host.querySelector<HTMLElement>('[data-wf="GlobalConfirm"]');
+    expect(firstConfirm?.textContent).toContain("删除这个审查模板?");
+    expect(firstConfirm?.textContent).toContain("严格来源核查");
+    expect(firstConfirm?.textContent).toContain("删除后不可恢复");
+    await act(async () => Array.from(firstConfirm?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent === "取消")?.click());
+    expect(deleteTemplate).not.toHaveBeenCalled();
+    expect(host.querySelector<HTMLInputElement>(".ws-launch-editor input")?.value).toBe("严格来源核查");
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("编辑模板");
+
+    await act(async () => deleteButton.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-wf="GlobalConfirm"] .ws-folder-modal-danger')?.click());
+    expect(deleteTemplate).toHaveBeenCalledWith("source-strict");
+    expect(host.querySelector('[aria-label="编辑严格来源核查"]')).toBeNull();
+    expect(host.querySelector('[role="radio"]')?.textContent).toContain("标准来源核查");
+  });
+
+  it("内置模板删除失败时原样展示服务端保底错误", async () => {
     const deleteTemplate = vi.fn().mockRejectedValue(new Error("每类至少保留一个模板"));
-    await act(async () => root.render(<ReviewLaunchModal {...props({ deleteTemplate })} />));
+    await act(async () => root.render(
+      <ConfirmProvider><ReviewLaunchModal {...props({ deleteTemplate })} /></ConfirmProvider>,
+    ));
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑标准来源核查"]')?.click());
     const deleteButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
       .find((button) => button.textContent === "删除")!;
     expect(deleteButton.disabled).toBe(false);
     await act(async () => deleteButton.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-wf="GlobalConfirm"] .ws-folder-modal-danger')?.click());
     expect(deleteTemplate).toHaveBeenCalledWith("source-default");
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("每类至少保留一个模板");
   });

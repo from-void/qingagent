@@ -12,12 +12,12 @@ import {
   assertTurnWriteAllowed,
   captureTurnWriteGuard,
   type TurnWriteGuard,
-} from "../session/turnOwnership.js";
+} from "../utils/turnWriteGuard.js";
 import {
   DRAFT_MUTATION_CONFLICT_ERROR,
   DraftMutationConflictError,
   currentDraftMutationRevision,
-} from "../doc-engine/draftScratch.js";
+} from "../utils/draftMutation.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {

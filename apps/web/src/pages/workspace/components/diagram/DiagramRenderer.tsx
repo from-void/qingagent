@@ -3,6 +3,9 @@ import type { ErrorInfo, ReactNode } from "react";
 import type { DiagramOverlay } from "@qingagent/diagram-engine";
 import { canUseGraphVisualEditor, parseDiagram } from "@qingagent/diagram-engine";
 import { MermaidPreview } from "../MermaidPreview";
+import type { DiagramVisualChange } from "./diagramTypes";
+
+export type { DiagramVisualChange } from "./diagramTypes";
 
 const GraphDiagramView = lazy(() => import("./GraphDiagramView").then((mod) => ({ default: mod.GraphDiagramView })));
 
@@ -47,11 +50,6 @@ export interface DiagramRendererProps {
   onRedo?: () => boolean;
   canUndo?: boolean;
   canRedo?: boolean;
-}
-
-export interface DiagramVisualChange {
-  source?: string;
-  overlay?: DiagramOverlay | null;
 }
 
 export function DiagramRenderer({

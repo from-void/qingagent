@@ -5,7 +5,7 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 // 后端重启/热重载/部署后内存 session 被逐出,文档已从持久层恢复,但
 // 命令分支(sendMessage/updateDoc/材料/文件夹)此前直接 sessions.get→抛 Session not found。
 // 修复:命令分支统一走 getOrRestoreSession,内存 miss 时 loadSessionFromThread 冷加载回内存。
-// 本测试用 updateMaterialSummary 这条"只需拿到 session"的轻量命令验证冷加载兜底。
+// 本测试用 removeMaterial 的缺失素材幂等路径验证冷加载兜底。
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -68,8 +68,8 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
     // 修复前:这里会抛 "Session not found";修复后:冷加载成功、优雅返回。
     const frames = await collectFrames(
       bridge.handleCommand({
-        kind: "updateMaterialSummary",
-        data: { sessionId: id, materialId: "missing-material", summary: "x" },
+        kind: "removeMaterial",
+        data: { sessionId: id, materialId: "missing-material" },
       }),
     );
 
@@ -77,7 +77,10 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
     expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(loadSpy).toHaveBeenCalledWith(id);
     expect(bridge.getSession(id)).toBeDefined();
-    expect(frames).toEqual([]); // 目标素材不存在 → 优雅 return,无帧、无异常
+    expect(frames).toContainEqual({
+      kind: "resourceRemoved",
+      data: { resourceRef: { id: "missing-material", domain: { kind: "file" } } },
+    });
   });
 
   it("内存命中时不触发冷加载(快路径不回 thread)", async () => {
@@ -86,8 +89,8 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
 
     await collectFrames(
       bridge.handleCommand({
-        kind: "updateMaterialSummary",
-        data: { sessionId: session.sessionId, materialId: "missing-material", summary: "x" },
+        kind: "removeMaterial",
+        data: { sessionId: session.sessionId, materialId: "missing-material" },
       }),
     );
 
@@ -110,14 +113,14 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
     const [a, b] = await Promise.all([
       collectFrames(
         bridge.handleCommand({
-          kind: "updateMaterialSummary",
-          data: { sessionId: id, materialId: "m", summary: "x" },
+          kind: "removeMaterial",
+          data: { sessionId: id, materialId: "m" },
         }),
       ),
       collectFrames(
         bridge.handleCommand({
-          kind: "updateMaterialSummary",
-          data: { sessionId: id, materialId: "m", summary: "y" },
+          kind: "removeMaterial",
+          data: { sessionId: id, materialId: "m" },
         }),
       ),
     ]);
@@ -125,8 +128,12 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
     // 两条并发命令共用一次冷加载,内存里只有一个、且就是原对象。
     expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(bridge.getSession(id)).toBe(session);
-    expect(a).toEqual([]);
-    expect(b).toEqual([]);
+    for (const frames of [a, b]) {
+      expect(frames).toContainEqual({
+        kind: "resourceRemoved",
+        data: { resourceRef: { id: "m", domain: { kind: "file" } } },
+      });
+    }
   });
 
   it("持久层也没有该 session 时,仍 fail-closed 抛 Session not found", async () => {

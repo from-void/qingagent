@@ -86,13 +86,20 @@ jobs:
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
-      # desktop 包的真实 Electron 夹具即使传了 --headless,在 Linux 上仍需要可用的
-      # X display 和 D-Bus session。显式安装并在下一步同时启动两者,避免无头 runner
-      # 因 Failed to connect to the bus 卡住至夹具超时。
-      - name: install headless Electron runtime
+      # desktop 的真实 Electron 夹具需要 X display + D-Bus；doc-render 的 DOCX 富格式
+      # 矩阵还会真实渲染 Mermaid/公式，需要 CJK 字体与 Chromium。unit job 不能依赖
+      # “runner 恰好预装浏览器”或走无浏览器 fallback，否则本地/CI 路径不一致。
+      - name: install headless Electron and DOCX render runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y dbus-x11 xvfb xauth
+          sudo apt-get install -y dbus-x11 fonts-noto-cjk xvfb xauth
+
+      - name: install Playwright Chromium (DOCX rich-format matrix)
+        run: |
+          pnpm --filter @qingagent/doc-render exec playwright install --with-deps chromium
+          CHROMIUM_PATH="$(pnpm --filter @qingagent/doc-render exec node -e 'console.log(require("playwright").chromium.executablePath())')"
+          echo "QINGAGENT_BROWSER_EXECUTABLE_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
+          echo "unit doc-render browser -> $CHROMIUM_PATH"
 
       - name: pnpm test (unit, parallel)
         env:

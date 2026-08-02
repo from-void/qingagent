@@ -34,10 +34,7 @@ export type BridgeFrame =
   | { kind: "derivativeParamsUpdated"; data: { requestId: string; item: DerivativeItem } }
   | { kind: "derivativesListed"; data: { requestId: string; items: DerivativeItem[] } }
   | { kind: "derivativeCreated"; data: { requestId: string; item: DerivativeItem } }
-  | { kind: "derivativeGenStarted"; data: { docId: string; targetLang: string } }
-  | { kind: "derivativeGenDelta"; data: { docId: string; text: string } }
   | { kind: "derivativeGenFinished"; data: { docId: string; generatedAt: string; docVersion: number } }
-  | { kind: "derivativeGenFailed"; data: { docId: string; reason: string } }
   | { kind: "derivativeDeleted"; data: { requestId: string; docId: string } }
   | { kind: "derivativeDocLoaded"; data: { requestId: string; meta: DerivativeItem; docPm: string; docVersion: number; title: string } }
   | { kind: "lexiconsListed"; data: { lexicons: LexiconResourceSummary[] } }

@@ -271,8 +271,7 @@ export function WorkspaceDocumentPane({
       const cacheKey = `${state.sessionId}:${target.docId}:${target.generatedAt ?? ""}`;
       if (
         derivativeDocCache.has(cacheKey) ||
-        pendingDerivativeGeneration === target.docId ||
-        state.translationGen.has(target.docId)
+        pendingDerivativeGeneration === target.docId
       ) {
         setActiveTab(nextTab);
         return;
@@ -319,7 +318,6 @@ export function WorkspaceDocumentPane({
       setActiveTab,
       showToast,
       state.sessionId,
-      state.translationGen,
       streamRef,
       translationItems,
     ],
@@ -584,7 +582,6 @@ export function WorkspaceDocumentPane({
             }
             stream={streamRef.current}
             streamActive={agentActive}
-            translationGen={state.translationGen}
             generatingInitially={
               pendingDerivativeGeneration === activeDerivative.docId
             }

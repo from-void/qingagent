@@ -322,9 +322,6 @@ export function validateCommand(cmd: Command): void {
       if (!cmd.data.sessionId || !cmd.data.templateId || !["gzh", "xhs", "translate"].includes(cmd.data.dtype) || typeof cmd.data.privatePrompt !== "string") fail(`CreateDerivative.data is invalid`);
       if (cmd.data.dtype === "translate" && !cmd.data.targetLang?.trim()) fail(`CreateDerivative.targetLang is required`);
       return;
-    case "generateTranslations":
-      if (!cmd.data.sessionId || !Array.isArray(cmd.data.docIds) || cmd.data.docIds.length < 1 || cmd.data.docIds.length > 5 || new Set(cmd.data.docIds).size !== cmd.data.docIds.length || cmd.data.docIds.some((id) => typeof id !== "string" || !id)) fail(`GenerateTranslations.data is invalid`);
-      return;
     case "deleteDerivative":
       if (!cmd.data.sessionId || !cmd.data.docId) fail(`DeleteDerivative.data is invalid`);
       return;

@@ -38,7 +38,6 @@ export interface DerivativeItem {
 
 export interface ListDerivatives { sessionId: string; requestId: string }
 export interface CreateDerivative { sessionId: string; requestId: string; dtype: "gzh" | "xhs" | "translate"; templateId: string; writingStyleId?: string; layoutStyleId?: string | null; targetLang?: string; privatePrompt: string }
-export interface GenerateTranslations { sessionId: string; docIds: string[] }
 export interface DeleteDerivative { sessionId: string; requestId: string; docId: string }
 export interface GetDerivativeDoc { sessionId: string; requestId: string; docId: string }
 export type StyleTemplateSlot = "layout"|"writing"|"instruction";

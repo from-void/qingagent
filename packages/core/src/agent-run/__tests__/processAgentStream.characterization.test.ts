@@ -235,6 +235,85 @@ describe("processAgentStream 行为特征", () => {
     ]);
   });
 
+  it("同一 Agent 轮次逐语种提交时按工具结果顺序发全部完成帧", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("derivative-multilingual-finished");
+    getDerivativeMetaMock
+      .mockResolvedValueOnce({
+        docId: "translation-en",
+        threadId: state.sessionId,
+        generatedAt: "2026-08-02T10:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        docId: "translation-ja",
+        threadId: state.sessionId,
+        generatedAt: "2026-08-02T10:00:01.000Z",
+      });
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-en",
+            args: { derivativeDocId: "translation-en", qingml: "<p>English</p>" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-en",
+            result: { ok: true, wroteBlocks: 1, docVersion: 1 },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-ja",
+            args: { derivativeDocId: "translation-ja", qingml: "<p>日本語</p>" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "generate_derivative",
+            toolCallId: "generate-ja",
+            result: { ok: true, wroteBlocks: 1, docVersion: 1 },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "derivative-multilingual-finished-stream",
+        runId: "derivative-multilingual-finished-run",
+      },
+    ));
+
+    expect(frames.filter((frame) => frame.kind === "derivativeGenFinished"))
+      .toEqual([
+        {
+          kind: "derivativeGenFinished",
+          data: {
+            docId: "translation-en",
+            generatedAt: "2026-08-02T10:00:00.000Z",
+            docVersion: 1,
+          },
+        },
+        {
+          kind: "derivativeGenFinished",
+          data: {
+            docId: "translation-ja",
+            generatedAt: "2026-08-02T10:00:01.000Z",
+            docVersion: 1,
+          },
+        },
+      ]);
+  });
+
   it("generate_derivative 版本冲突失败时不查元数据且不发完成帧", async () => {
     const { processAgentStream } = await import("../processAgentStream.js");
     const state = createSession("derivative-finished-conflict");

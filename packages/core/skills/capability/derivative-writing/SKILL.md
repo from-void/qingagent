@@ -33,7 +33,7 @@ metadata:
 
 ### 生成路由（首次生成与源文更新后重新生成同一条路）
 
-1. 本轮**只允许两次工具调用**：先 `derivative_brief({derivativeDocId:X})` 取模板与源文，再 `generate_derivative({derivativeDocId:X, qingml})` 提交整稿。
+1. 单篇目标只允许两次工具调用：先 `derivative_brief({derivativeDocId:X})` 取模板与源文，再 `generate_derivative({derivativeDocId:X, qingml})` 提交整稿。同一条指令列出多篇衍生稿时，按用户列出的顺序逐篇执行这一组调用，不并行；每篇恰好各调用一次。
 2. 禁止 `readDraft` / `editDraft` / `writeDraft` / `planDraft` / `askUserQuestion`，禁止联网补料。源文最新全文已经在 `derivative_brief` 返回的 `sourceText` 里，不需要也不允许再去读主文档草稿。
 3. 一次写出**完整闭合**的 QingML 整文提交，不分批、不留占位。
 4. 成功后只简短告知已生成，不复述正文、不罗列模板字段。

@@ -246,14 +246,6 @@ export {
   draftTemplate,
   parseDraftTemplate,
 } from "./session/draftTemplate.js";
-export {
-  DerivativeDeltaBatcher,
-  TRANSLATION_PUBLIC_FAILURE_REASON,
-  buildTranslationSteeringTail,
-  generateTranslationDerivative,
-  generateTranslations,
-} from "./session/translationGeneration.js";
-export type { TranslationTarget } from "./session/translationGeneration.js";
 export { clearQuestionBranch } from "./services/genService.js";
 export {
   ARCHIVED_BUILTIN_SKILLS,

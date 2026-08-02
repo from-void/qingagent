@@ -617,10 +617,6 @@ export class ServerStream {
     return frame.data.item;
   }
 
-  async generateTranslations(sessionId: string, docIds: string[]): Promise<void> {
-    await this.sendCommand({ kind: "generateTranslations", data: { sessionId, docIds } });
-  }
-
   async updateDerivativeCoverTemplate(sessionId: string, docId: string, coverTemplate: "poster" | "magazine" | "wenkai" | "impact" | "note") {
     const frame = await this.derivativeFrame({ kind: "updateDerivativeParams", data: { sessionId, requestId: crypto.randomUUID(), docId, coverTemplate } }, "derivativeParamsUpdated");
     return frame.data.item;

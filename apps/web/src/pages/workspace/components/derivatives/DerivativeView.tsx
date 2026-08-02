@@ -21,48 +21,13 @@ function articleTitle(doc: PmDoc | null, fallback: string): string {
   return heading ? textOf(heading) || fallback : fallback;
 }
 
-export function streamingQingmlToParagraphs(raw: string): string[] {
-  const withoutTags = raw
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:h[1-6]|p|blockquote|li|ul|ol|pre|table|tr)>/gi, "\n\n")
-    .replace(/<[^>]*>/g, "");
-  const decoded = withoutTags.replace(
-    /&(?:amp|lt|gt|quot|apos|nbsp|#39|#x27|#\d+|#x[0-9a-f]+);/gi,
-    (entity) => {
-      const named: Record<string, string> = {
-        "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
-        "&apos;": "'", "&#39;": "'", "&#x27;": "'", "&nbsp;": " ",
-      };
-      const normalized = entity.toLowerCase();
-      const namedValue = named[normalized];
-      if (namedValue !== undefined) return namedValue;
-      const hex = normalized.match(/^&#x([0-9a-f]+);$/i);
-      const decimal = normalized.match(/^&#(\d+);$/);
-      const codePoint = Number.parseInt(hex?.[1] ?? decimal?.[1] ?? "", hex ? 16 : 10);
-      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
-        ? String.fromCodePoint(codePoint)
-        : entity;
-    },
-  );
-  return decoded.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean);
-}
-
 function RegenIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 .45 6.6"/><path d="M19 4v4h-4"/></svg>; }
 function ExportIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10 4 4 4-4"/><path d="M5 16v4h14v-4"/></svg>; }
 function MoreIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>; }
 
-type TranslationGenerationState = {
-  status: "streaming" | "failed" | "aborted";
-  text: string;
-  reason?: string;
-};
-
-const EMPTY_TRANSLATION_GEN = new Map<string, TranslationGenerationState>();
-
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
   initialDocument?: DerivativeDocument | null;
-  translationGen?: ReadonlyMap<string, TranslationGenerationState>;
   onRefresh: () => Promise<void>; onDeleted: () => void; onToast: (text: string) => void;
   onSendQuery: (text: string, displayCard: ActionCardData) => void;
   activeDocId?: string;
@@ -76,8 +41,6 @@ export function DerivativeView(props: {
   const item = props.items?.find((candidate) => candidate.docId === effectiveDocId) ?? props.item;
   const descriptor = getDtypeDescriptor(item.dtype);
   const isTranslation = descriptor.dtype === "translate";
-  const translationGen = props.translationGen ?? EMPTY_TRANSLATION_GEN;
-  const translationState = translationGen.get(item.docId);
   const [document, setDocument] = useState<DerivativeDocument | null>(
     props.initialDocument ?? null,
   );
@@ -89,18 +52,15 @@ export function DerivativeView(props: {
   const [modalOpen, setModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [translationFlightKeys, setTranslationFlightKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [coverTemplate, setCoverTemplate] = useState<XhsCoverTemplate>(item.coverTemplate ?? "poster");
   const articleRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLElement>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
-  const streamingTextRef = useRef<HTMLDivElement>(null);
   const streamActiveRef = useRef(props.streamActive);
   const sawActiveRef = useRef(props.streamActive);
   const documentRequestGenerationRef = useRef(0);
   const coverTemplateRequestGenerationRef = useRef(0);
-  const translationFlightsRef = useRef(new Map<string, Promise<void>>());
   useEffect(() => {
     if (!props.items?.length || props.items.some((candidate) => candidate.docId === effectiveDocId)) return;
     setSelectedDocId(props.items[0]!.docId);
@@ -169,7 +129,7 @@ export function DerivativeView(props: {
     return () => window.document.removeEventListener("mousedown", close);
   }, [moreOpen]);
   useEffect(() => {
-    if (isTranslation || !generating) return;
+    if (!generating) return;
     let stopped = false;
     const started = Date.now();
     const poll = async () => {
@@ -196,39 +156,10 @@ export function DerivativeView(props: {
     };
     const timer = window.setTimeout(poll, 2000);
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [generating, generationBefore, isTranslation, item.docId, props.sessionId, props.stream]);
-  useEffect(() => {
-    if (translationState?.status !== "streaming" || !translationState.text) return;
-    const element = streamingTextRef.current;
-    if (!element) return;
-    element.scrollTop = element.scrollHeight;
-  }, [translationState?.status, translationState?.text]);
+  }, [generating, generationBefore, item.docId, props.sessionId, props.stream]);
 
   const pmDoc = useMemo(() => document && document.docVersion > 0 ? normalizeStoredPmDoc(JSON.parse(document.docPm)) : null, [document]);
   const title = articleTitle(pmDoc, descriptor.label);
-  const translationFlightKey = `${props.sessionId}:${item.docId}`;
-  const translationSubmitting = translationFlightKeys.has(translationFlightKey);
-  const generateTranslationSingleFlight = (docId: string): Promise<void> => {
-    const flightKey = `${props.sessionId}:${docId}`;
-    const currentFlight = translationFlightsRef.current.get(flightKey);
-    if (currentFlight) return currentFlight;
-    const flight = Promise.resolve().then(
-      () => props.stream.generateTranslations(props.sessionId, [docId]),
-    );
-    translationFlightsRef.current.set(flightKey, flight);
-    setTranslationFlightKeys((current) => new Set(current).add(flightKey));
-    const finish = () => {
-      if (translationFlightsRef.current.get(flightKey) !== flight) return;
-      translationFlightsRef.current.delete(flightKey);
-      setTranslationFlightKeys((current) => {
-        const next = new Set(current);
-        next.delete(flightKey);
-        return next;
-      });
-    };
-    void flight.then(finish, finish);
-    return flight;
-  };
   const beginGenerate = async (params: DerivativeGenerateParams) => {
     try {
       await props.stream.createDerivative(props.sessionId, descriptor.dtype, params.templateId, params.privatePrompt, params.writingStyleId, params.layoutStyleId, item.targetLang ?? undefined);
@@ -236,16 +167,6 @@ export function DerivativeView(props: {
     } catch (error) {
       console.error("[workspace] update derivative params failed", error);
       props.onToast("生成参数保存失败，请重试");
-      return;
-    }
-    if (isTranslation) {
-      setModalOpen(false);
-      try {
-        await generateTranslationSingleFlight(item.docId);
-      } catch (error) {
-        console.error("[workspace] regenerate translation failed", error);
-        props.onToast("重新翻译失败，请重试");
-      }
       return;
     }
     const before = item.generatedAt;
@@ -257,7 +178,6 @@ export function DerivativeView(props: {
   };
   const deleteDraft = async () => {
     setMoreOpen(false);
-    if (translationState?.status === "streaming") return;
     if (!await confirm({ ...descriptor.deleteConfirm, confirmLabel: "删除", cancelLabel: "取消" })) return;
     try {
       await props.stream.deleteDerivative(props.sessionId, item.docId);
@@ -309,27 +229,20 @@ export function DerivativeView(props: {
         {exportOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item" onClick={copyDraft}>复制文案</button>{descriptor.exportImageTarget ? <button className="ws-export-item" onClick={exportImage}>导出图片</button> : null}</div> : null}
       </div> : null}
       <div className="ws-export-anchor" ref={moreRef}><button className="ws-docfn-btn" title="更多操作" aria-label="更多操作" onClick={() => { setExportOpen(false); setMoreOpen((value) => !value); }}><MoreIcon/></button>
-        {moreOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item is-danger" disabled={translationState?.status === "streaming"} title={translationState?.status === "streaming" ? "生成中不可删除" : undefined} onClick={() => void deleteDraft()}>删除稿件</button></div> : null}
+        {moreOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item is-danger" onClick={() => void deleteDraft()}>删除稿件</button></div> : null}
       </div>
     </div>
   </div>;
-  const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} submitting={isTranslation && (translationSubmitting || translationState?.status === "streaming")} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
+  const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
 
-  if (!isTranslation && generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
+  if (generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
   if (!isTranslation && (abortedEmpty || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{abortedEmpty ? "生成已中止" : "尚未生成"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>{modal}</section>;
-  const translationParagraphs = translationState?.status === "streaming"
-    ? streamingQingmlToParagraphs(translationState.text)
-    : [];
-  return <section ref={viewRef} className={`ws-deriv-view ws-deriv-${descriptor.dtype}${mode === "phone" ? " is-phone" : " is-desktop"}`} data-glow-surface={isTranslation && translationState?.status === "streaming" ? "derivative-paper" : undefined}>
-    {isTranslation && translationState?.status === "streaming" ? <div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/> : null}
+  return <section ref={viewRef} className={`ws-deriv-view ws-deriv-${descriptor.dtype}${mode === "phone" ? " is-phone" : " is-desktop"}`}>
     {toolbar}
     {isTranslation && props.items?.length ? <div className="ws-deriv-mode ws-translate-segmented" aria-label="译文语言切换">{props.items.map((candidate) => {
-      const status = translationGen.get(candidate.docId)?.status;
-      return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); props.onActiveDocIdChange?.(candidate.docId); setGenerating(false); setAbortedEmpty(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span>{status ? <i className={`ws-translate-status is-${status}`} aria-hidden="true"/> : null}</button>;
+      return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); props.onActiveDocIdChange?.(candidate.docId); setGenerating(false); setAbortedEmpty(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span></button>;
     })}</div> : null}
-    {isTranslation && translationState?.status === "streaming" ? <div ref={streamingTextRef} className="ws-deriv-streaming-paper is-generating">{translationParagraphs.length > 0 ? <article className="ws-translate-stream-text" aria-live="polite">{translationParagraphs.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>)}</article> : <QingLoading reasoning />}</div>
-      : isTranslation && (translationState?.status === "failed" || translationState?.status === "aborted") ? <div className="ws-translate-failed" role="status"><strong>{translationState.status === "aborted" ? "翻译已中止" : "翻译未完成"}</strong><button className="ws-deriv-primary" disabled={translationSubmitting} onClick={() => void generateTranslationSingleFlight(item.docId).catch(() => props.onToast("重新翻译未完成，请重试"))}>{translationSubmitting ? "重试中" : "重试"}</button></div>
-        : isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>该语言还没有译文</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>生成该语言</button></div></div>
+    {isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>{abortedEmpty ? "翻译已中止" : "该语言还没有译文"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>{abortedEmpty ? "重新生成" : "生成该语言"}</button></div></div>
           : pmDoc && PlainPreview ? <PlainPreview {...previewProps}/> : pmDoc && mode === "phone" && PhonePreview ? <><div className="ws-deriv-mode"><button className="is-active" onClick={() => setMode("phone")}>手机</button><button onClick={() => setMode("desktop")}>电脑</button></div><PhonePreview {...previewProps}/></> : pmDoc && DesktopPreview ? <><div className="ws-deriv-mode"><button onClick={() => setMode("phone")}>手机</button><button className="is-active" onClick={() => setMode("desktop")}>电脑</button></div><DesktopPreview {...previewProps}/></> : null}
     {modal}
   </section>;

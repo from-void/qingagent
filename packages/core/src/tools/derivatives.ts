@@ -211,7 +211,7 @@ export const generateDerivativeTool = createTool({
       abortSignal: context?.abortSignal,
       writeGuard,
     });
-    // 工具协议行为零变化：generatedAt 只供旁支 finished 帧使用，不扩展工具 output。
+    // 工具协议行为零变化：agent 流按落库元数据补发 finished 帧，不扩展工具 output。
     const { generatedAt: _generatedAt, ...toolResult } = result;
     return toolResult;
   },

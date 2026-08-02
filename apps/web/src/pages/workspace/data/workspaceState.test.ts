@@ -264,33 +264,19 @@ describe("workspaceReducer", () => {
     });
   });
 
-  it("翻译生成帧按 docId 累积文本、隔离失败并在完成后清理", () => {
-    const streaming = reduce(
-      { kind: "derivativeGenStarted", data: { docId: "en", targetLang: "英语" } },
-      { kind: "derivativeGenStarted", data: { docId: "ja", targetLang: "日语" } },
-      { kind: "derivativeGenDelta", data: { docId: "en", text: "<p>Hello" } },
-      { kind: "derivativeGenDelta", data: { docId: "en", text: " world</p>" } },
-      { kind: "derivativeGenFailed", data: { docId: "ja", reason: "译文生成失败，请重试" } },
-    );
-    expect(streaming.translationGen.get("en")).toEqual({ status: "streaming", text: "<p>Hello world</p>" });
-    expect(streaming.translationGen.get("ja")).toEqual({ status: "failed", text: "", reason: "译文生成失败，请重试" });
-
-    const finished = workspaceReducer(streaming, {
+  it("衍生稿完成帧不建立翻译专属状态，停止只收口通用 agent/tool 状态", () => {
+    const finished = workspaceReducer(initialWorkspaceState, {
       kind: "derivativeGenFinished",
       data: { docId: "en", generatedAt: "2026-07-15T00:00:00.000Z", docVersion: 1 },
     });
-    expect(finished.translationGen.has("en")).toBe(false);
-    expect(finished.translationGen.get("ja")?.status).toBe("failed");
+    expect(finished).toEqual(initialWorkspaceState);
 
-    const aborted = workspaceReducer(streaming, {
+    const stopped = workspaceReducer(finished, {
       kind: "streamTerminated",
       reason: "stop",
     });
-    expect(aborted.translationGen.get("en")).toEqual({
-      status: "aborted",
-      text: "<p>Hello world</p>",
-    });
-    expect(aborted.translationGen.get("ja")?.status).toBe("failed");
+    expect(stopped.streamActive).toBe(false);
+    expect(stopped.agentBusy).toBe(false);
   });
 
 describe("annotationGroupsReady 来源增量", () => {

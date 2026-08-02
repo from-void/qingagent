@@ -1,20 +1,13 @@
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
-import crypto from "node:crypto";
-import {
-  MASTRA_THREAD_ID_KEY,
-  RequestContext,
-} from "@mastra/core/request-context";
 import {
   createDerivativeDoc,
   deleteDerivativeDoc,
-  generateTranslations,
   getDerivativeDocument,
   getDerivativeMeta,
   listDerivativesByThread,
   loadMainDocumentByThread,
   updateParams,
 } from "./bridgeCore";
-import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { getOrRestoreSession } from "./sessionLifecycle";
 
@@ -22,7 +15,6 @@ type DerivativeCommand = Extract<Command, {
   kind:
     | "listDerivatives"
     | "createDerivative"
-    | "generateTranslations"
     | "updateDerivativeParams"
     | "deleteDerivative"
     | "getDerivativeDoc";
@@ -36,7 +28,7 @@ async function requireSession(sessionId: string) {
 
 export async function* handleDerivativeCommand(
   command: DerivativeCommand,
-  context: CommandExecutionContext,
+  _context: CommandExecutionContext,
 ): AsyncGenerator<BridgeFrame> {
   switch (command.kind) {
     case "listDerivatives": {
@@ -84,50 +76,6 @@ export async function* handleDerivativeCommand(
         kind: "derivativeCreated",
         data: { item: (await getDerivativeMeta(item.docId))!, requestId: command.data.requestId },
       };
-      return;
-    }
-    case "generateTranslations": {
-      const session = await requireSession(command.data.sessionId);
-      bindClientTraceId(
-        session,
-        context.resolvedClientTraceId,
-        context.origin,
-        context.modelOverrides,
-      );
-      const metas = await Promise.all(
-        command.data.docIds.map((docId) => getDerivativeMeta(docId)),
-      );
-      const targets = metas.map((meta, index) => {
-        if (
-          !meta ||
-          meta.docId !== command.data.docIds[index] ||
-          meta.threadId !== session.sessionId ||
-          meta.dtype !== "translate" ||
-          !meta.targetLang
-        ) {
-          throw new Error("翻译稿不存在或不属于当前会话");
-        }
-        return { docId: meta.docId, targetLang: meta.targetLang };
-      });
-      const abortSignal = context.commandAbortSignal ?? new AbortController().signal;
-      const requestContext = new RequestContext([
-        [MASTRA_THREAD_ID_KEY, session.threadId ?? session.sessionId],
-        ["sessionId", session.sessionId],
-        ["runId", `translate-derivative:${crypto.randomUUID()}`],
-        ["clientTraceId", session.clientTraceId ?? null],
-        ["origin", session.origin ?? "manual"],
-        ["docVersion", session.docVersion],
-        ["doc", session.doc],
-        ["legacySections", session.legacySections],
-        ["modelOverrides", session.modelOverrides],
-        ["abortSignal", abortSignal],
-      ] as never);
-      yield* generateTranslations({
-        sessionId: session.sessionId,
-        targets,
-        requestContext,
-        abortSignal,
-      });
       return;
     }
     case "updateDerivativeParams": {

@@ -18,7 +18,6 @@ export const MODEL_CALL_SITES = {
   generateSvg: "generateSvg",
   generateTitle: "generateTitle",
   draftTemplate: "draftTemplate",
-  translateDerivative: "translateDerivative",
   readImage: "readImage",
   visionTest: "visionTest",
   guardPii: "guardPii",

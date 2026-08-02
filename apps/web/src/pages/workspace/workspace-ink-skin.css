@@ -1793,8 +1793,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   background: var(--bg-paper-deep) !important;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
-#view-workspace .ws-deriv-view.is-generating > .doc-empty,
-#view-workspace .ws-deriv-streaming-paper.is-generating > .doc-empty {
+#view-workspace .ws-deriv-view.is-generating > .doc-empty {
   top: 0 !important;
   box-shadow: none;
 }

@@ -44,6 +44,8 @@ import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
 import { buildActiveDocumentTurnTarget } from "../components/derivatives/derivativeTurnContext";
 import {
+  buildTranslationAgentQuery,
+  buildTranslationDisplayCard,
   DTYPE_REGISTRY,
   type DerivativeDtype,
 } from "../components/derivatives/dtypeRegistry";
@@ -1981,7 +1983,7 @@ export function useWorkspacePageController() {
         docConflictReconcileSessionRef.current = null;
       }
       if (frame.kind === "derivativeGenFinished") {
-        // 多语并行完成时跟随刚完成的译稿；最终自然停在最后完成的一种语言。
+        // Agent 逐稿完成时跟随最新完成的译稿；最终自然停在最后一种语言。
         setActiveTranslationDocId(frame.data.docId);
         const stream = streamRef.current;
         const sessionId = stateRef.current.sessionId;
@@ -2595,24 +2597,32 @@ export function useWorkspacePageController() {
           // 不让会话里既有的空译稿截留选中态；提交后立即展示本批首个目标语种。
           setActiveTranslationDocId(item.docId);
         }
-        setPendingDerivativeGeneration(
-          descriptor.dtype === "translate" ? null : item.docId,
-        );
+        setPendingDerivativeGeneration(item.docId);
         setActiveTab(descriptor.dtype === "translate" ? "translate" : item.docId);
         const templateName =
           descriptor.templates.find(
             (template) => template.id === params.templateId,
           )?.name ?? params.templateId;
-        const lines = [{ label: "模板", value: templateName }];
-        if (params.privatePrompt.trim()) {
-          lines.push({ label: "补充", value: params.privatePrompt.trim() });
-        }
         if (descriptor.dtype === "translate") {
-          await stream.generateTranslations(
-            sessionId,
-            createdItems.map((created) => created.docId),
+          const targets = createdItems.map((created) => ({
+            docId: created.docId,
+            targetLang: created.targetLang ?? "目标语言",
+          }));
+          sendDerivativeQueryRef.current(
+            buildTranslationAgentQuery(targets),
+            buildTranslationDisplayCard(
+              targets.map((target) => target.targetLang),
+              templateName,
+              params.privatePrompt,
+            ),
+            undefined,
+            { kind: "derivative", docId: item.docId },
           );
         } else {
+          const lines = [{ label: "模板", value: templateName }];
+          if (params.privatePrompt.trim()) {
+            lines.push({ label: "补充", value: params.privatePrompt.trim() });
+          }
           sendDerivativeQueryRef.current(
             descriptor.queryText(item.docId),
             {

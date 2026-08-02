@@ -145,7 +145,6 @@ async function* routeCommand(
     }
     case "listDerivatives":
     case "createDerivative":
-    case "generateTranslations":
     case "updateDerivativeParams":
     case "deleteDerivative":
     case "getDerivativeDoc": {

@@ -1,4 +1,8 @@
-import type { AskUserSpec, ToolCallSpec } from "@qingagent/contract-ts";
+import {
+  ASK_USER_RESTORE_INTERRUPTED_MESSAGE,
+  type AskUserSpec,
+  type ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { hasCanonicalDoc } from "../doc-engine/docFacts.js";
 
 export const QUESTIONNAIRE_TOOL_NAMES = [
@@ -67,6 +71,30 @@ export function normalizeQuestionnaireSpecForRestore(spec: ToolCallSpec): ToolCa
         ...data,
         mode: { kind: "fullpage" },
       },
+    },
+  };
+}
+
+/**
+ * 生成参数阶段只有 running 占位卡，Mastra 尚未发出 tool-call-suspended，也就没有
+ * 可恢复 snapshot。冷/热恢复遇到这种孤儿问卷时统一回到可输入终态，并携带固定、
+ * 可安全展示的说明；真正拥有 suspension owner 的问卷由调用方保留，不走这里。
+ */
+export function interruptQuestionnaireSpecForRestore(
+  spec: ToolCallSpec,
+): ToolCallSpec {
+  if (
+    !isQuestionnaireTool(spec.name) ||
+    (spec.status.kind !== "pending" && spec.status.kind !== "running")
+  ) {
+    return spec;
+  }
+  return {
+    ...spec,
+    status: { kind: "aborted" },
+    result: {
+      kind: "genericText",
+      data: ASK_USER_RESTORE_INTERRUPTED_MESSAGE,
     },
   };
 }

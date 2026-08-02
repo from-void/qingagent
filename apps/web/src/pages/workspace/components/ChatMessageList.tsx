@@ -8,7 +8,11 @@ import type {
   MessagePart,
   ToolCallSpec,
 } from "../data/protocol";
-import { parseChipRichText, sanitizeVisibleText } from "@qingagent/contract-ts";
+import {
+  ASK_USER_RESTORE_INTERRUPTED_MESSAGE,
+  parseChipRichText,
+  sanitizeVisibleText,
+} from "@qingagent/contract-ts";
 import { InkBubble } from "../../../system";
 import { SparkleIcon, FileChipIcon } from "../../../system/SkillMenu";
 import { StreamingChars, useStreamFxConfig } from "./StreamingText";
@@ -1797,15 +1801,20 @@ function ToolCallRow({
         </div>
       );
     }
-    const fullpageLabel = isAborted
-      ? "已中止"
-      : spec.status.kind === "failed"
-        ? "未完成"
-        : isPending
-          ? "等待您的确认"
-          : isRunning
-            ? "正在准备问题"
-            : (b.data.source ?? "确认方向");
+    const restoreInterrupted =
+      spec.result?.kind === "genericText" &&
+      spec.result.data === ASK_USER_RESTORE_INTERRUPTED_MESSAGE;
+    const fullpageLabel = restoreInterrupted
+      ? ASK_USER_RESTORE_INTERRUPTED_MESSAGE
+      : isAborted
+        ? "已中止"
+        : spec.status.kind === "failed"
+          ? "未完成"
+          : isPending
+            ? "等待您的确认"
+            : isRunning
+              ? "正在准备问题"
+              : (b.data.source ?? "确认方向");
     return (
       <div className="wf-msg tool" style={{ color: "var(--ink-3)", fontSize: 13, cursor: "default", display: "flex", alignItems: "center", gap: 6 }} data-wf="ToolCall">
         {isRunning && <span className="chat-loading-dots"><span /><span /><span /></span>}

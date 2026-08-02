@@ -17,7 +17,7 @@ export function getChatInputBlockReason(
   dim: DocDimensions,
   askUserInputDisabled: boolean,
   viewingHistory = false,
-  hasAskUserCard = dim.overlay === "askUser",
+  hasAskUserCard = false,
   pendingReviewResolutionAvailable = true,
 ): ChatInputBlockReason | null {
   if (viewingHistory) return HISTORY_CHAT_INPUT_BLOCK_REASON;

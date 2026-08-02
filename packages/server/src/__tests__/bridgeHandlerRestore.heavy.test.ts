@@ -178,6 +178,58 @@ describe("handleCommand existing-session restore", () => {
     expect(session.docState).toEqual({ kind: "empty" });
   });
 
+  it("问卷生成中断且没有 suspension 时恢复为有说明的终态并解除交互锁", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    const askUser = toolCall(
+      "askUser",
+      { kind: "running", data: { progressPct: null, etaSec: null } },
+      "ask-generating-interrupted",
+    );
+    if (askUser.body.kind !== "askUser") throw new Error("expect askUser body");
+    askUser.body.data.questions = [];
+    session.docState = { kind: "empty" };
+    session.chatHistory = [{
+      id: "msg-ask-generating-interrupted",
+      role: { kind: "agent" },
+      ts: "2026-08-03T00:00:00.000Z",
+      parts: [{ kind: "toolCall", data: askUser }],
+      chips: null,
+    }];
+    session.runId = null;
+    session.toolCallId = null;
+    session._suspensionOwner = null;
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+
+    expect(frames.find((frame) => frame.kind === "docStateChanged")).toEqual({
+      kind: "docStateChanged",
+      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+    });
+    const restored = frames.find(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === "ask-generating-interrupted",
+    );
+    expect(restored).toMatchObject({
+      kind: "toolCallUpdated",
+      data: {
+        spec: {
+          status: { kind: "aborted" },
+          result: {
+            kind: "genericText",
+            data: "上次问卷生成已中断，输入已恢复，可直接重新描述需求",
+          },
+        },
+      },
+    });
+  });
+
   it("恢复三种问卷工具的缺失/空/非法 mode 时统一降级 fullpage", async () => {
     const dirtyModes: Array<{ label: string; value: unknown }> = [
       { label: "missing", value: undefined },

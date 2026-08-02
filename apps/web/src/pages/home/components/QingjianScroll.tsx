@@ -125,6 +125,7 @@ const MAT_PAD = 38;
 const PAD_TOP = 14;
 const PAD_BOT = 14;
 const NEW_CARD_H = 380;
+const CARD_DRAG_THRESHOLD_PX = 5;
 // homeStage 自身有 1.6s 返程看门狗；页面再留 200ms 余量兜底，
 // 即使舞台 Promise 异常静默也必须恢复首页内容与滚动原点。
 const HOME_RETURN_SETTLE_TIMEOUT_MS = 1_800;
@@ -1608,15 +1609,17 @@ export function QingjianScroll({
     let velocity = 0;
     let maxX = 1;
     let dragging = false;
-    let lastPointerX = 0;
-    let downPointerX = 0; // 本次按下的起点 x:用于「累计位移超阈值才算拖拽」,避免微抖把点击误判成拖拽
+    let dragInput: "pointer" | "mouse" | null = null;
+    let lastDragX = 0;
+    let dragStartX = 0;
     let lastMoveT = 0;
     let dragVel = 0;
     let raf = 0;
     let swayAngle = 0;
     let swayVel = 0;
-    let movedFlag = false;
-    let movedFlagResetTimer: ReturnType<typeof setTimeout> | undefined;
+    let movedBeyondThreshold = false;
+    let suppressNextClick = false;
+    let suppressClickResetTimer: ReturnType<typeof setTimeout> | undefined;
     let revealSeq = 0;
     let revealResetTimer: ReturnType<typeof setTimeout> | undefined;
     let dockHover = false;
@@ -1839,48 +1842,86 @@ export function QingjianScroll({
     };
 
     // —— 拖拽展卷(带惯性)——
-    const onPointerDown = (e: PointerEvent) => {
-      dragging = true;
+    // pointer 是真实输入主链；mouse 兼容调度方/CDP 直接派发的完整鼠标序列。
+    // 浏览器真实鼠标会先发 pointer 再发兼容 mouse，dragInput 用来避免同一手势重复记账。
+    const clearClickSuppression = () => {
+      clearTimeout(suppressClickResetTimer);
+      suppressClickResetTimer = undefined;
+      suppressNextClick = false;
+    };
+    const beginDrag = (input: "pointer" | "mouse", clientX: number) => {
+      if (dragInput && dragInput !== input) return false;
+      clearClickSuppression();
+      dragInput = input;
+      dragging = false;
       velocity = 0;
       dragVel = 0;
-      clearTimeout(movedFlagResetTimer);
-      movedFlag = false;
-      lastPointerX = e.clientX;
-      downPointerX = e.clientX;
+      movedBeyondThreshold = false;
+      lastDragX = clientX;
+      dragStartX = clientX;
       lastMoveT = performance.now();
-      scroller.classList.add("qj-dragging");
-      scroller.setPointerCapture?.(e.pointerId);
+      return true;
     };
-    const onPointerMove = (e: PointerEvent) => {
+    const moveDrag = (
+      input: "pointer" | "mouse",
+      clientX: number,
+      onDragStart?: () => void,
+    ) => {
+      if (dragInput !== input) return;
+      // 按下只记起点；只有从起点横移严格超过 5px 才把本轮手势认作拖拽。
+      if (!movedBeyondThreshold && Math.abs(clientX - dragStartX) > CARD_DRAG_THRESHOLD_PX) {
+        movedBeyondThreshold = true;
+        dragging = true;
+        scroller.classList.add("qj-dragging");
+        onDragStart?.();
+      }
       if (!dragging) return;
-      // 累计位移超过阈值(5px)才算真正拖拽 —— 否则点击时的微抖不该吞掉 click
-      if (Math.abs(e.clientX - downPointerX) > 5) movedFlag = true;
       const now = performance.now();
-      const dx = e.clientX - lastPointerX;
+      const dx = clientX - lastDragX;
       targetX = clamp(targetX - dx, 0, maxX);
       const dt = Math.max(1, now - lastMoveT);
       dragVel = (-dx / dt) * 16;
-      lastPointerX = e.clientX;
+      lastDragX = clientX;
       lastMoveT = now;
       requestFrame();
       pollReveal();
     };
-    const endDrag = (e: PointerEvent) => {
-      if (!dragging) return;
+    const finishDrag = (input: "pointer" | "mouse", cancelled = false) => {
+      if (dragInput !== input) return;
+      const shouldSuppressClick = movedBeyondThreshold && !cancelled;
       dragging = false;
+      dragInput = null;
+      movedBeyondThreshold = false;
       scroller.classList.remove("qj-dragging");
       velocity = clamp(dragVel, -40, 40);
-      if (e.type === "pointercancel") {
-        movedFlag = false;
-      } else if (movedFlag) {
+      clearClickSuppression();
+      if (shouldSuppressClick) {
         // 浏览器会在 pointerup 后同步派发 click；仅为这一轮手势保留抑制标记。
         // 若环境没有合成 click，下一任务也要自动清除，不能误伤后续语义 click()。
-        movedFlagResetTimer = setTimeout(() => {
-          movedFlag = false;
+        suppressNextClick = true;
+        suppressClickResetTimer = setTimeout(() => {
+          suppressNextClick = false;
+          suppressClickResetTimer = undefined;
         }, 0);
       }
       requestFrame();
     };
+    const onPointerDown = (e: PointerEvent) => {
+      beginDrag("pointer", e.clientX);
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      moveDrag("pointer", e.clientX, () => {
+        scroller.setPointerCapture?.(e.pointerId);
+      });
+    };
+    const onPointerEnd = (e: PointerEvent) => {
+      finishDrag("pointer", e.type === "pointercancel");
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      beginDrag("mouse", e.clientX);
+    };
+    const onMouseMove = (e: MouseEvent) => moveDrag("mouse", e.clientX);
+    const onMouseUp = () => finishDrag("mouse");
     // 方案4:触发「首页 → 编辑页」过渡。核心动效(卡飞 + 墨水/背景变深)整段在首页跑完,
     // 卡落定 + 背景已深的那一帧才切路由(onNewSession → workspace)。把「已到达态」交给编辑页,
     // 使其挂载即静帧渲染,再淡入正文。
@@ -1998,9 +2039,13 @@ export function QingjianScroll({
     // 拖拽后只吞掉本轮紧随的 click，避免误触卡片。
     // 激活对象必须取事件原始目标：语义 click() 的坐标是 (0, 0)，不能用 elementFromPoint 二次猜测。
     const onClickCapture = (e: MouseEvent) => {
-      if (movedFlag) {
-        clearTimeout(movedFlagResetTimer);
-        movedFlag = false;
+      const shouldSuppressClick = suppressNextClick || movedBeyondThreshold;
+      clearClickSuppression();
+      dragging = false;
+      dragInput = null;
+      movedBeyondThreshold = false;
+      scroller.classList.remove("qj-dragging");
+      if (shouldSuppressClick) {
         e.stopPropagation();
         e.preventDefault();
         return;
@@ -2058,9 +2103,13 @@ export function QingjianScroll({
     scroller.addEventListener("dragstart", onNativeDragStart, true);
     scroller.addEventListener("pointerdown", onPointerDown);
     scroller.addEventListener("pointermove", onPointerMove);
-    scroller.addEventListener("pointerup", endDrag);
-    scroller.addEventListener("pointercancel", endDrag);
-    window.addEventListener("pointerup", endDrag);
+    scroller.addEventListener("pointerup", onPointerEnd);
+    scroller.addEventListener("pointercancel", onPointerEnd);
+    window.addEventListener("pointerup", onPointerEnd);
+    scroller.addEventListener("mousedown", onMouseDown);
+    scroller.addEventListener("mousemove", onMouseMove);
+    scroller.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("pointermove", updateDockHotspot);
     scroller.addEventListener("click", onClickCapture, true);
     scroller.addEventListener("keydown", onKey);
@@ -2172,15 +2221,19 @@ export function QingjianScroll({
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);
-      clearTimeout(movedFlagResetTimer);
+      clearTimeout(suppressClickResetTimer);
       clearInterval(revealInterval);
       scroller.removeEventListener("wheel", onWheel);
       scroller.removeEventListener("dragstart", onNativeDragStart, true);
       scroller.removeEventListener("pointerdown", onPointerDown);
       scroller.removeEventListener("pointermove", onPointerMove);
-      scroller.removeEventListener("pointerup", endDrag);
-      scroller.removeEventListener("pointercancel", endDrag);
-      window.removeEventListener("pointerup", endDrag);
+      scroller.removeEventListener("pointerup", onPointerEnd);
+      scroller.removeEventListener("pointercancel", onPointerEnd);
+      window.removeEventListener("pointerup", onPointerEnd);
+      scroller.removeEventListener("mousedown", onMouseDown);
+      scroller.removeEventListener("mousemove", onMouseMove);
+      scroller.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("pointermove", updateDockHotspot);
       scroller.removeEventListener("click", onClickCapture, true);
       scroller.removeEventListener("keydown", onKey);

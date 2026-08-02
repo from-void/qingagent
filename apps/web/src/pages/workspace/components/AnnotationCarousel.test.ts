@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AnnotationGroup } from "@qingagent/contract-ts";
-import { buildAnnotationInstruction } from "./AnnotationCarousel";
+import {
+  buildAnnotationInstruction,
+  reviewOriginLabel,
+} from "./AnnotationCarousel";
 
 const groups: AnnotationGroup[] = [
   {
@@ -73,5 +76,43 @@ describe("buildAnnotationInstruction", () => {
     expect(instruction).toBe(
       "按批注修改：事实 有误——改为 四月发布（原文：『一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…』）",
     );
+  });
+});
+
+describe("reviewOriginLabel", () => {
+  it("全量固定审查来源与历史兼容值均显示中文", () => {
+    expect([
+      "sensitive",
+      "deai",
+      "source",
+      "source-check",
+      "consistency",
+      "privacy",
+      "format",
+      "role",
+      "role-review",
+      "custom",
+      "custom-review",
+      "system-parse-error",
+    ].map(reviewOriginLabel)).toEqual([
+      "敏感词",
+      "去 AI 味",
+      "来源核查",
+      "来源核查",
+      "一致性",
+      "隐私",
+      "格式",
+      "角色审查",
+      "角色审查",
+      "自定义审查",
+      "自定义审查",
+      "审查异常",
+    ]);
+  });
+
+  it("角色与自定义审查名保持原样，未知英文来源不直出", () => {
+    expect(reviewOriginLabel("角色审查:法务")).toBe("角色审查:法务");
+    expect(reviewOriginLabel("自定义审查:对外发布")).toBe("自定义审查:对外发布");
+    expect(reviewOriginLabel("future-review-origin")).toBe("其他审查");
   });
 });

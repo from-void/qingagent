@@ -2072,7 +2072,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .annotation-hover-card footer button { appearance:none; min-width:76px; padding:6px 14px; border-radius:0; cursor:pointer; font:600 12.5px/1.4 var(--font-zh-serif); transition:background 120ms ease,border-color 120ms ease,color 120ms ease; }
 #view-workspace .annotation-hover-card button:focus-visible { outline:2px solid var(--mark); outline-offset:2px; }
 #view-workspace .ahc-accept-actions { display:flex; align-items:center; gap:8px; }
-#view-workspace .ahc-accept-actions>span { color:var(--ink-4); font-size:11px; line-height:1.4; }
 #view-workspace .ahc-accept { border:1px solid var(--ink-1); background:var(--ink-1); color:var(--bg-canvas); }
 #view-workspace .ahc-accept:hover:not(:disabled) { border-color:var(--mark); background:var(--mark); color:var(--ink-surface); }
 #view-workspace .ahc-accept:disabled { border-color:var(--line-2); background:var(--bg-subtle); color:var(--ink-4); cursor:not-allowed; }

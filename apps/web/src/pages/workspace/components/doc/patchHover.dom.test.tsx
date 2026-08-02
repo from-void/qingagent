@@ -52,12 +52,17 @@ describe("patchHover 卡片:禁二次 diff(★裁决 260710)", () => {
     expect(host?.querySelectorAll(".patch-popup-muted").length).toBe(0);
   });
 
-  it("新增卡不显示原文", async () => {
-    // renderOriginalDiff("") → null;且 state==="insert" 分支本就不渲染原文节点。
+  it("新增卡不显示原文，只展示新增内容摘要", async () => {
     await render(
-      <PatchStatePopup state="insert" index={3} original={renderOriginalDiff("")} patchId="p3" />,
+      <PatchStatePopup
+        state="insert"
+        index={3}
+        original={renderOriginalDiff("")}
+        added="新增的安全提示"
+        patchId="p3"
+      />,
     );
-    expect(host?.querySelector(".patch-popup-original")).toBeNull();
+    expect(host?.querySelector(".patch-popup-added")?.textContent).toContain("新增的安全提示");
     expect(host?.querySelector(".patch-popup-removed-text")).toBeNull();
   });
 });

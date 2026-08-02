@@ -5,9 +5,20 @@ const PATCH_POPUP_HIDE_DELAY_MS = 200;
 
 export type PatchReviewState = "replace" | "insert" | "delete";
 
+const PATCH_CONTENT_SUMMARY_CAP = 120;
+
+/** hover 卡只需帮助用户认出本处新增；压平空白并按 Unicode 字符截断，避免长段撑满视口。 */
+export function summarizePatchContent(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  const characters = Array.from(compact);
+  return characters.length > PATCH_CONTENT_SUMMARY_CAP
+    ? `${characters.slice(0, PATCH_CONTENT_SUMMARY_CAP).join("")}…`
+    : compact;
+}
+
 /** 原文呈现:锚点粒度已在 core(proposalDiff)拆干净成纯增/纯删/覆盖三态,卡片一律
  *  不再做二次逐字 diff(那正是"绿色晚风"自相矛盾的病根)。覆盖/删除卡把整段原文划
- *  删除线;纯新增无原文(调用方 state==="insert" 时不渲染此节点)。 */
+ *  删除线；纯新增不造原文节点，另由新增内容摘要帮助用户定位。 */
 export function renderOriginalDiff(oldText: string): React.ReactNode {
   if (oldText === "") return null;
   return <span className="patch-popup-removed-text">{oldText}</span>;
@@ -243,6 +254,7 @@ export function PatchStatePopup({
   index,
   original,
   originalIsBlock,
+  added,
   patchId,
   onPatchVerdict,
 }: {
@@ -251,6 +263,8 @@ export function PatchStatePopup({
   original?: React.ReactNode;
   /** original 是块级内容(如 ReviewBlocksStatic 渲的 <div>/表格),走块布局避免 <span> 套块的非法嵌套。 */
   originalIsBlock?: boolean;
+  /** 纯新增的内容摘要；替换的新值沿用同 patch 的原文卡，不在卡内重复正文。 */
+  added?: React.ReactNode;
   patchId: string;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
 }) {
@@ -271,11 +285,16 @@ export function PatchStatePopup({
       <span className="patch-popup-original-text">{original}</span>
     </span>
   );
+  const addedNode = added ? (
+    <span className="patch-popup-original patch-popup-added">
+      <span className="patch-popup-label">新增内容</span>
+      <span className="patch-popup-original-text">{added}</span>
+    </span>
+  ) : null;
   return (
     <>
       <span className="patch-popup-title">#{index ?? "?"} · {label}</span>
-      {/* 纯新增:标题「#N · 新增」已足够,不再叠冗余「新增」徽章;非新增才展示被改/删原文 */}
-      {state !== "insert" && originalNode}
+      {state === "insert" ? addedNode : originalNode}
       <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
     </>
   );

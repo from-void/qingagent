@@ -99,6 +99,7 @@ import {
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
+  normalizeAnnotationQuote,
   replaceTextRuns,
 } from "../doc-engine/textEditOps.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
@@ -135,27 +136,67 @@ import {
 
 const logger = mastra.getLogger();
 
-function reviewDismissalKey(origin: string, quote: string): string {
-  return `${origin}\u0000${quote}`;
+const REVIEW_DISMISSAL_CONTAINMENT_MIN_CHARS = 8;
+const REVIEW_DISMISSAL_CONTAINMENT_MIN_RATIO = 0.75;
+
+function normalizeReviewDismissalQuote(quote: string): string {
+  return normalizeAnnotationQuote(quote)
+    .replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "")
+    .replace(/\s+/gu, "");
+}
+
+function reviewDismissalQuoteLength(quote: string): number {
+  return Array.from(quote.replace(/[\s\p{P}]/gu, "")).length;
+}
+
+function reviewDismissalQuotesMatch(signalQuote: string, anchorQuote: string): boolean {
+  if (signalQuote === anchorQuote) return true;
+  const signalLength = reviewDismissalQuoteLength(signalQuote);
+  const anchorLength = reviewDismissalQuoteLength(anchorQuote);
+  const shorter = signalLength <= anchorLength ? signalQuote : anchorQuote;
+  const longer = signalLength <= anchorLength ? anchorQuote : signalQuote;
+  const shorterLength = Math.min(signalLength, anchorLength);
+  const longerLength = Math.max(signalLength, anchorLength);
+  if (
+    shorterLength < REVIEW_DISMISSAL_CONTAINMENT_MIN_CHARS
+    || longerLength === 0
+    || shorterLength / longerLength < REVIEW_DISMISSAL_CONTAINMENT_MIN_RATIO
+  ) {
+    return false;
+  }
+  return longer.includes(shorter);
 }
 
 function isRememberedReviewDismissal(
   group: AnnotationGroup,
-  signals: ReadonlySet<string>,
+  signalsByOrigin: ReadonlyMap<string, ReadonlySet<string>>,
 ): boolean {
-  // summary 会随模型措辞漂移，位置会随文档编辑漂移；严格的打码后原文 + 完整 origin
-  // 既能跨重跑稳定命中，也不会把另一处文本或另一审查模板一并抑制。
-  return group.anchors.some((anchor) =>
-    signals.has(reviewDismissalKey(group.origin, anchor.quote))
-  );
+  const signalQuotes = signalsByOrigin.get(group.origin);
+  if (!signalQuotes?.size) return false;
+  // group 已在唯一生产入口完成敏感值打码；信号写入侧也按同一 origin 打码。
+  // origin 必须全等。引文先统一全半角/引号/空白并去首尾标点，再容忍少量边界漂移；
+  // 非全等包含匹配要求至少 8 个实质字符且覆盖率≥75%，避免公共短语误杀另一问题。
+  return group.anchors.some((anchor) => {
+    const anchorQuote = normalizeReviewDismissalQuote(anchor.quote);
+    if (!anchorQuote) return false;
+    return [...signalQuotes].some((signalQuote) =>
+      reviewDismissalQuotesMatch(signalQuote, anchorQuote)
+    );
+  });
 }
 
-function rememberedReviewDismissalKeys(
+function rememberedReviewDismissalsByOrigin(
   signals: readonly ReviewDismissalSignal[],
-): Set<string> {
-  return new Set(signals
-    .filter((signal) => signal.quote.length > 0)
-    .map((signal) => reviewDismissalKey(signal.origin, signal.quote)));
+): Map<string, Set<string>> {
+  const byOrigin = new Map<string, Set<string>>();
+  for (const signal of signals) {
+    const quote = normalizeReviewDismissalQuote(signal.quote);
+    if (!quote) continue;
+    const quotes = byOrigin.get(signal.origin) ?? new Set<string>();
+    quotes.add(quote);
+    byOrigin.set(signal.origin, quotes);
+  }
+  return byOrigin;
 }
 
 function annotationGroupSemanticErrors(source: AnnotationGroupInput, groupIndex: number): string[] {
@@ -789,7 +830,7 @@ export function createSessionScopedTools(
       const documentText = blocks.map((block) => block.text).join("\n");
       const materialTexts = [...materials.values()].map((material) => material.text);
       const errors: string[] = [];
-      const dismissalKeys = rememberedReviewDismissalKeys(
+      const dismissalSignals = rememberedReviewDismissalsByOrigin(
         await listReviewDismissalSignals(state.docId),
       );
       let rememberedDismissalCount = 0;
@@ -861,7 +902,7 @@ export function createSessionScopedTools(
           status: "reviewing" as const,
           anchors,
         });
-        if (isRememberedReviewDismissal(group, dismissalKeys)) {
+        if (isRememberedReviewDismissal(group, dismissalSignals)) {
           rememberedDismissalCount += 1;
           return [];
         }

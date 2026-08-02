@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CoreMessage } from "ai";
 import type {
+  AnnotationGroup,
   ChatMessage,
   LegacySection,
   DocState,
@@ -12,7 +13,12 @@ import type { SessionState } from "../session/sessionState.js";
 import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
-import { insertVersion, listVersions } from "@qingagent/db";
+import {
+  getDocumentsClient,
+  insertAnnotationGroups,
+  insertVersion,
+  listVersions,
+} from "@qingagent/db";
 import { beginSessionDeletion } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,
@@ -414,6 +420,63 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(state.sessionId);
 
     expect(restored?.docId).toBe("doc-explicit");
+  });
+
+  it("进程重启后从批注表恢复活动组及全部结构锚点", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import(
+      "../session/threadPersistence.js"
+    );
+    const state = createSession("session-annotation-rehydrate");
+    state.docId = "doc-annotation-rehydrate";
+    state.title = "批注恢复";
+    state.legacySections = [textSection("内部项目代号青鸟不宜公开，发布日期也需要复核。")];
+    state.doc = legacySectionsToPm(state.legacySections as never);
+    state.docState = { kind: "editing" };
+    state.docVersion = 1;
+    const groups: AnnotationGroup[] = [
+      {
+        id: "annotation-publish",
+        summary: "内部代号泄露",
+        note: "对外发布前应移除内部项目代号。",
+        origin: "自定义审查:对外发布",
+        suggestion: "改为某内部项目",
+        severity: "error",
+        status: "reviewing",
+        anchors: [
+          {
+            blockId: state.doc.content[0]!.attrs.blockId,
+            pmFrom: 1,
+            pmTo: 9,
+            quote: "内部项目代号青鸟",
+            textHash: "publish-anchor",
+          },
+          {
+            blockId: state.doc.content[0]!.attrs.blockId,
+            pmFrom: 14,
+            pmTo: 18,
+            quote: "发布日期",
+            textHash: "date-anchor",
+          },
+        ],
+      },
+    ];
+
+    await persistSessionMetadata(state);
+    await insertAnnotationGroups(state.docId, state.docVersion, groups);
+    const stored = await getDocumentsClient().execute({
+      sql: `SELECT COUNT(DISTINCT group_id) AS group_count, COUNT(*) AS anchor_count
+        FROM document_suggestions
+        WHERE doc_id = ? AND kind = 'annotation' AND status = 'reviewing'`,
+      args: [state.docId],
+    });
+    expect(stored.rows[0]).toMatchObject({ group_count: 1, anchor_count: 2 });
+
+    // loadSessionFromThread 会构造全新的 SessionState，等价于进程内存清空后的冷恢复。
+    const restored = await loadSessionFromThread(state.sessionId);
+
+    expect(restored).not.toBe(state);
+    expect(restored?.annotationGroups).toEqual(groups);
   });
 
   it("主元数据写失败会向直接调用方抛出", async () => {

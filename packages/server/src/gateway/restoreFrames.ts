@@ -256,6 +256,14 @@ export function* emitRestoreFrames(
     };
   }
 
+  // 批注装饰依赖文档坐标；先恢复正文，再把完整活动组作为权威状态交给新页面重建锚点与 hover 卡。
+  if (session.annotationGroups.length > 0) {
+    yield {
+      kind: "annotationGroupsReady",
+      data: { groups: structuredClone(session.annotationGroups) },
+    };
+  }
+
   // 3. Emit materials as resources
   for (const mat of session.materials.values()) {
     const metadataWithFileId = { ...mat.metadata, fileId: mat.fileId };

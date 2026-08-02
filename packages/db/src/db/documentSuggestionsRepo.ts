@@ -2,7 +2,9 @@ import type { Client } from "@libsql/client";
 import {
   maskSensitiveAnnotationGroup,
   type AnnotationGroup,
+  type AnnotationGroupMeta,
   type DocSuggestion,
+  type SuggestionAnchor,
   type SuggestionStatus,
 } from "@qingagent/contract-ts";
 import {
@@ -105,6 +107,104 @@ export async function insertAnnotationGroups(
     const results = await c.batch(annotationInsertStatements(docId, baseVersion, groups, now));
     assertSuggestionWritesAffected(results, target);
   });
+}
+
+function parseAnnotationAnchor(value: unknown): SuggestionAnchor | null {
+  if (typeof value !== "string") return null;
+  try {
+    const anchor = JSON.parse(value) as Record<string, unknown>;
+    if (
+      !anchor ||
+      typeof anchor !== "object" ||
+      typeof anchor.blockId !== "string" ||
+      !Number.isInteger(anchor.pmFrom) ||
+      !Number.isInteger(anchor.pmTo) ||
+      (anchor.pmFrom as number) < 0 ||
+      (anchor.pmTo as number) <= (anchor.pmFrom as number) ||
+      typeof anchor.quote !== "string" ||
+      typeof anchor.textHash !== "string"
+    ) {
+      return null;
+    }
+    return {
+      blockId: anchor.blockId,
+      pmFrom: anchor.pmFrom as number,
+      pmTo: anchor.pmTo as number,
+      quote: anchor.quote,
+      ...(typeof anchor.prefix === "string" ? { prefix: anchor.prefix } : {}),
+      ...(typeof anchor.suffix === "string" ? { suffix: anchor.suffix } : {}),
+      textHash: anchor.textHash,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseAnnotationGroupMeta(value: unknown): AnnotationGroupMeta | null {
+  if (typeof value !== "string") return null;
+  try {
+    const meta = JSON.parse(value) as Record<string, unknown>;
+    if (!meta || typeof meta !== "object") return null;
+    return {
+      summary: typeof meta.summary === "string" ? meta.summary : "",
+      ...(typeof meta.suggestion === "string" ? { suggestion: meta.suggestion } : {}),
+      hitCount: Number.isInteger(meta.hitCount) && (meta.hitCount as number) >= 0
+        ? meta.hitCount as number
+        : 0,
+      ...(meta.severity === "error" || meta.severity === "warn" || meta.severity === "info"
+        ? { severity: meta.severity }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 从独立批注表重组当前仍可展示的组；单条损坏记录不会阻断整次会话恢复。 */
+export async function listActiveAnnotationGroups(
+  docId: string,
+  client?: Client,
+): Promise<AnnotationGroup[]> {
+  const c = await readyClient(client);
+  const result = await c.execute({
+    sql: `SELECT group_id, status, anchor_json, summary, note, origin,
+        group_meta_json, severity
+      FROM document_suggestions
+      WHERE doc_id = ? AND kind = 'annotation'
+        AND status IN ('reviewing', 'accepted')
+      ORDER BY created_at ASC, rowid ASC`,
+    args: [docId],
+  });
+
+  const groups = new Map<string, AnnotationGroup>();
+  for (const row of result.rows) {
+    const groupId = typeof row.group_id === "string" ? row.group_id : "";
+    const origin = typeof row.origin === "string" ? row.origin : "";
+    const anchor = parseAnnotationAnchor(row.anchor_json);
+    if (!groupId || !origin || !anchor) continue;
+
+    const existing = groups.get(groupId);
+    if (existing) {
+      existing.anchors.push(anchor);
+      continue;
+    }
+
+    const meta = parseAnnotationGroupMeta(row.group_meta_json);
+    const severity = row.severity === "error" || row.severity === "warn" || row.severity === "info"
+      ? row.severity
+      : meta?.severity;
+    groups.set(groupId, {
+      id: groupId,
+      summary: typeof row.summary === "string" ? row.summary : meta?.summary ?? "",
+      note: typeof row.note === "string" ? row.note : "",
+      origin,
+      ...(meta?.suggestion ? { suggestion: meta.suggestion } : {}),
+      ...(severity ? { severity } : {}),
+      status: row.status === "accepted" ? "accepted" : "reviewing",
+      anchors: [anchor],
+    });
+  }
+  return [...groups.values()];
 }
 
 /** 同一来源的新一轮审查原子取代旧轮次；其他来源的批注不受影响。 */

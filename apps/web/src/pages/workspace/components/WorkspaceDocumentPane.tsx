@@ -12,6 +12,7 @@ import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
 } from "./derivatives/dtypeRegistry";
+import { selectTranslationItem } from "./derivatives/translationSelection";
 import { prepareEditorDrawioCaches } from "./drawioExportPreparation";
 import { ExportMenu } from "./ExportMenu";
 import {
@@ -248,9 +249,7 @@ export function WorkspaceDocumentPane({
   );
   const activeDerivative =
     activeTab === "translate"
-      ? translationItems.find(
-          (item) => item.docId === activeTranslationDocId,
-        ) ?? translationItems[0]
+      ? selectTranslationItem(translationItems, activeTranslationDocId)
       : derivatives.find((item) => item.docId === activeTab);
   const activeDerivativeCacheKey =
     state.sessionId && activeDerivative
@@ -266,9 +265,7 @@ export function WorkspaceDocumentPane({
       }
       const target =
         nextTab === "translate"
-          ? translationItems.find(
-              (item) => item.docId === activeTranslationDocId,
-            ) ?? translationItems[0]
+          ? selectTranslationItem(translationItems, activeTranslationDocId)
           : derivatives.find((item) => item.docId === nextTab);
       if (!target) return;
       const cacheKey = `${state.sessionId}:${target.docId}:${target.generatedAt ?? ""}`;

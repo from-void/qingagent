@@ -8,6 +8,7 @@ import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, Do
 import { getPmContentHash, normalizePmDoc, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./data/chatInputTypes";
 import type { DocDimensions } from "./data/docDimensions";
+import type { DerivativeItem } from "./components/derivatives/types";
 import {
   derivePatchPresentation,
   pmDocToViewDocumentSnapshot,
@@ -4090,6 +4091,75 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(host?.textContent).toContain("主文档");
     expect(host?.textContent).toContain("公众号文章");
+  });
+
+  it("非英语单语翻译完成后把子 Tab 切到刚完成的语种", async () => {
+    const english: DerivativeItem = {
+      docId: "translate-en-empty",
+      dtype: "translate" as const,
+      templateId: "translate-faithful",
+      templateName: "忠实精准",
+      targetLang: "英语",
+      privatePrompt: "",
+      sourceVersion: null,
+      currentSourceVersion: 1,
+      generatedAt: null,
+      stale: false,
+    };
+    const japanese: DerivativeItem = {
+      ...english,
+      docId: "translate-ja-new",
+      targetLang: "日语",
+    };
+    let translationItems: DerivativeItem[] = [english, japanese];
+    serverStreamMock.listDerivativesImpl = async () => translationItems;
+    window.location.hash = "#/workspace?session=s-translate-tab";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function TranslationTabHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return (
+        <output data-testid="active-translation-tab">
+          {controller.activeTab}:{controller.activeTranslationDocId ?? ""}
+        </output>
+      );
+    }
+
+    await render(<TranslationTabHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [{
+      kind: "sessionMeta",
+      data: { sessionId: "s-translate-tab", title: "翻译选中态" },
+    }]);
+    await flushMicrotasks(5);
+    expect(captured.current?.activeTranslationDocId).toBe(english.docId);
+    await act(async () => captured.current?.setActiveTab("translate"));
+
+    await emitFrames(stream, [{
+      kind: "derivativeGenStarted",
+      data: { docId: japanese.docId, targetLang: "日语" },
+    }]);
+    translationItems = [{ ...english }, {
+      ...japanese,
+      sourceVersion: 1,
+      generatedAt: "2026-08-02T08:00:00.000Z",
+    }];
+    await emitFrames(stream, [{
+      kind: "derivativeGenFinished",
+      data: {
+        docId: japanese.docId,
+        generatedAt: "2026-08-02T08:00:00.000Z",
+        docVersion: 1,
+      },
+    }]);
+    await flushMicrotasks(5);
+
+    expect(captured.current?.activeTranslationDocId).toBe(japanese.docId);
+    expect(host?.querySelector('[data-testid="active-translation-tab"]')?.textContent)
+      .toBe(`translate:${japanese.docId}`);
   });
 
   it("pendingReview 下禁用新建稿件并保留独立标题重命名", async () => {

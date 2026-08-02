@@ -47,6 +47,7 @@ import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
 } from "../components/derivatives/dtypeRegistry";
+import { selectTranslationItem } from "../components/derivatives/translationSelection";
 import type { DerivativeItem } from "../components/derivatives/types";
 import {
   isEditorRangeSingleAtomBlock,
@@ -343,17 +344,7 @@ export function useWorkspacePageController() {
   >(null);
   useEffect(() => {
     setActiveTranslationDocId((current) => {
-      if (
-        current &&
-        derivatives.some(
-          (item) => item.dtype === "translate" && item.docId === current,
-        )
-      ) {
-        return current;
-      }
-      return (
-        derivatives.find((item) => item.dtype === "translate")?.docId ?? null
-      );
+      return selectTranslationItem(derivatives, current)?.docId ?? null;
     });
   }, [derivatives]);
   const activeDocumentTurnTarget = useMemo(
@@ -1990,6 +1981,8 @@ export function useWorkspacePageController() {
         docConflictReconcileSessionRef.current = null;
       }
       if (frame.kind === "derivativeGenFinished") {
+        // 多语并行完成时跟随刚完成的译稿；最终自然停在最后完成的一种语言。
+        setActiveTranslationDocId(frame.data.docId);
         const stream = streamRef.current;
         const sessionId = stateRef.current.sessionId;
         if (stream && sessionId) {
@@ -2598,6 +2591,10 @@ export function useWorkspacePageController() {
         const item = createdItems[0]!;
         await refreshDerivatives();
         setDerivativeCreateOpen(false);
+        if (descriptor.dtype === "translate") {
+          // 不让会话里既有的空译稿截留选中态；提交后立即展示本批首个目标语种。
+          setActiveTranslationDocId(item.docId);
+        }
         setPendingDerivativeGeneration(
           descriptor.dtype === "translate" ? null : item.docId,
         );

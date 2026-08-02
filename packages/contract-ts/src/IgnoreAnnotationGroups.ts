@@ -4,6 +4,4 @@ export type IgnoreAnnotationGroups = {
   reason: "tab_changed" | "message_sent" | "doc_committed" | "discard_all" | "item_ignored";
   /** 缺省表示清理全部；批注卡单条忽略时只传当前组。 */
   groupIds?: string[];
-  /** 仅落库供未来写作记忆消费，本期不影响任何审查结果。 */
-  rememberDismissal?: boolean;
 };

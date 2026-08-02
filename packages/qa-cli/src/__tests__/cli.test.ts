@@ -711,7 +711,7 @@ describe("qa cli", () => {
     ]);
   });
 
-  it("review annotation ignore 透传 remember 与版本", async () => {
+  it("review annotation ignore 透传批注与版本", async () => {
     const { main } = await import("../cli.js");
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     globalThis.fetch = vi.fn(async (input, init) => {
@@ -721,7 +721,6 @@ describe("qa cli", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         expectedDocVersion: 3,
         annotationIds: ["annotation-1"],
-        rememberDismissal: true,
       });
       return new Response(JSON.stringify({
         status: "ignored",
@@ -741,7 +740,6 @@ describe("qa cli", () => {
       "3",
       "--annotation",
       "annotation-1",
-      "--remember",
       "--json",
     ]);
   });

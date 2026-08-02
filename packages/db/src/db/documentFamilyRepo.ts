@@ -31,10 +31,6 @@ export async function deleteDocumentFamilyByDocIds(
     args: ids,
   });
   await client.execute({
-    sql: `DELETE FROM review_dismissal_signals WHERE doc_id IN (${inSql})`,
-    args: ids,
-  });
-  await client.execute({
     sql: `DELETE FROM document_suggestions WHERE doc_id IN (${inSql})`,
     args: ids,
   });

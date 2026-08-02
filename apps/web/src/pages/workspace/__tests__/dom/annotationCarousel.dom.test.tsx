@@ -248,7 +248,7 @@ describe("AnnotationCarousel hover card", () => {
     expect(card.textContent).toContain("时间与资料不一致");
     expect(card.textContent).toContain("改为四月发布");
     expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
-    expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "下次不再提示", "生成修改"]);
+    expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "生成修改"]);
     expect(card.textContent).not.toContain("将追加到输入框，由你确认发送");
     expect(card.querySelector<HTMLButtonElement>(".ahc-accept")?.title).toBe("将追加到输入框，由你确认发送");
     expect(card.querySelectorAll(".ahc-nav button")).toHaveLength(2);
@@ -531,7 +531,7 @@ describe("AnnotationCarousel hover card", () => {
     expect(host!.querySelector(".annotation-hover-card")).toBe(card);
   });
 
-  it("首帧的下次不再提示按钮已有正宽命中区且可点击", async () => {
+  it("首帧只显示一个忽略按钮，命中区可点击", async () => {
     vi.useFakeTimers();
     createEditor();
     host = document.createElement("div");
@@ -564,12 +564,13 @@ describe("AnnotationCarousel hover card", () => {
         vi.advanceTimersByTime(80);
       });
 
-      const rememberButton = host.querySelector<HTMLButtonElement>(".ahc-ignore-remember")!;
-      expect(Number.parseFloat(getComputedStyle(rememberButton).minWidth)).toBeGreaterThan(0);
-      expect(getComputedStyle(rememberButton).pointerEvents).not.toBe("none");
+      const ignoreButton = host.querySelector<HTMLButtonElement>(".ahc-ignore")!;
+      expect(host.querySelector(".ahc-ignore-remember")).toBeNull();
+      expect(Number.parseFloat(getComputedStyle(ignoreButton).minWidth)).toBeGreaterThan(0);
+      expect(getComputedStyle(ignoreButton).pointerEvents).not.toBe("none");
 
-      await act(async () => rememberButton.click());
-      expect(onIgnore).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }), true);
+      await act(async () => ignoreButton.click());
+      expect(onIgnore).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
       expect(host.querySelector(".annotation-hover-card")).toBeNull();
     } finally {
       style.remove();

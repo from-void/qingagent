@@ -246,6 +246,11 @@ export {
   draftTemplate,
   parseDraftTemplate,
 } from "./session/draftTemplate.js";
+export {
+  buildReviewSupplementRewriteTail,
+  guardRewrittenReviewSupplement,
+  rewriteReviewSupplementsForIgnoredGroups,
+} from "./session/reviewSupplement.js";
 export { clearQuestionBranch } from "./services/genService.js";
 export {
   ARCHIVED_BUILTIN_SKILLS,
@@ -358,7 +363,6 @@ export {
   getDocumentsClient,
   getVersionSnapshot,
   ignoreAnnotationGroups,
-  insertReviewDismissalSignal,
   latestAgentUsageForSession,
   listDerivativesByThread,
   listLexiconEntries,

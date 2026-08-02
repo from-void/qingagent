@@ -77,15 +77,6 @@ const ignoreAnnotationGroupsDataSchema = z.object({
     .min(1)
     .max(MAX_COMMAND_ARRAY_LENGTH)
     .optional(),
-  rememberDismissal: z.boolean().optional(),
-}).superRefine((data, context) => {
-  if (data.rememberDismissal && !data.groupIds?.length) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["groupIds"],
-      message: "下次不再提示必须指定批注组",
-    });
-  }
 }) satisfies z.ZodType<IgnoreAnnotationGroups>;
 
 // ---- 各 command 载荷 schema(逐一锚定到手写契约类型)----

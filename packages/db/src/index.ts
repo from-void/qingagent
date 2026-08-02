@@ -16,7 +16,6 @@ export * from "./db/lexiconRepo.js";
 export * from "./db/migrations.js";
 export * from "./db/quarantine0002Recovery.js";
 export * from "./db/quarantine0002Audit.js";
-export * from "./db/reviewDismissalSignalRepo.js";
 export * from "./db/reviewTemplateRepo.js";
 export * from "./db/sessionDeletionRepo.js";
 export * from "./db/styleTemplateRepo.js";

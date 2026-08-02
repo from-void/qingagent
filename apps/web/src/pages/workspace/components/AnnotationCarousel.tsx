@@ -113,7 +113,7 @@ export function AnnotationCarousel(props: {
   groups: readonly AnnotationGroup[];
   editorDom: HTMLElement | null;
   onAccept: (group: AnnotationGroup, suggestion: string) => boolean;
-  onIgnore: (group: AnnotationGroup, rememberDismissal: boolean) => void;
+  onIgnore: (group: AnnotationGroup) => void;
 }) {
   const [hovered, setHovered] = useState<HoveredAnnotation | null>(null);
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
@@ -375,8 +375,7 @@ export function AnnotationCarousel(props: {
     </div>
     <footer>
       <div className="ahc-ignore-actions">
-        <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); closeCard(); }}>忽略</button>
-        <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); closeCard(); }}>下次不再提示</button>
+        <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group); closeCard(); }}>忽略</button>
       </div>
       {hasSuggestedChange ? <div className="ahc-accept-actions">
         <button

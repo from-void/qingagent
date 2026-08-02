@@ -96,7 +96,7 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 - \`qa review commit -s <id> --expect-version N\`:按逐处表态结算；未表态项按采纳处理;
 - \`qa review accept|reject -s <id> --expect-version N --all\`:全量采纳或拒绝并立即结算;
 - \`qa review show -s <id> --annotation <id>\`:查看批注;
-- \`qa review annotation ignore -s <id> --expect-version N --annotation <id> [--remember]\`:忽略批注。
+- \`qa review annotation ignore -s <id> --expect-version N --annotation <id>\`:忽略批注并记入该文档的审查补充要求。
 
 每次写操作都必须用刚从 \`review list\` 读到的 docVersion。局部混合裁决后一定执行
 \`review commit\`；成功响应会给出 acceptedCount/rejectedCount、reviewOutcome 是否已回流及事件 seq。

@@ -384,7 +384,6 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     const data = await client.ignoreAnnotations(sessionId, {
       expectedDocVersion,
       annotationIds: [annotationId],
-      ...(hasFlag(args, "--remember") ? { rememberDismissal: true } : {}),
     });
     return output(data, hasFlag(args, "--json"));
   }
@@ -1032,7 +1031,7 @@ qa review show -s <id> (--patch <id> | --annotation <id>) [--json]
 qa review accept -s <id> --expect-version N (--patch <id> | --all) [--json]
 qa review reject -s <id> --expect-version N (--patch <id> | --all) [--json]
 qa review commit -s <id> --expect-version N [--json]
-qa review annotation ignore -s <id> --expect-version N --annotation <id> [--remember] [--json]
+qa review annotation ignore -s <id> --expect-version N --annotation <id> [--json]
 qa chat send -s <id> "指令"
 qa chat log -s <id> [--limit N] [--json]
 qa chat tail -s <id>

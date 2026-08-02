@@ -264,7 +264,6 @@ export interface ExternalReviewCommitResponse {
 export interface ExternalAnnotationIgnoreRequest {
   expectedDocVersion: number;
   annotationIds: string[];
-  rememberDismissal?: boolean;
 }
 
 export interface ExternalAnnotationIgnoreResponse {

@@ -1,5 +1,6 @@
 import {
   maskSensitiveAnnotationGroup,
+  normalizeAnnotationSuggestion,
   type AnnotationGroup,
   type ReviewContext,
   type SkillRef,
@@ -892,12 +893,13 @@ export function createSessionScopedTools(
           : source.origin === "consistency"
             ? `文内冲突原句：${source.documentQuote}`
             : null;
+        const suggestion = normalizeAnnotationSuggestion(source.note, source.suggestion);
         const group = maskSensitiveAnnotationGroup({
           id: `annotation-${crypto.randomUUID()}`,
           summary: source.summary,
           note: evidence ? `${source.note}\n${evidence}` : source.note,
           origin: source.origin,
-          suggestion: source.suggestion,
+          ...(suggestion ? { suggestion } : {}),
           severity: source.severity,
           status: "reviewing" as const,
           anchors,

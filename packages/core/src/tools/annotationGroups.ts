@@ -28,7 +28,7 @@ export const annotationGroupInputSchema = z.object({
   summary: z.string().min(1).describe("变更类型短标题，建议≤15字，如『履历时间与素材不符』『金额口径漂移』；超出时服务端截断，细节解释一律写进 note"),
   note: z.string().min(1),
   origin: z.string().min(1).describe("模型侧审查来源；菜单审查会由工具依据本轮 reviewContext 强制覆写"),
-  suggestion: z.string().optional(),
+  suggestion: z.string().optional().describe("仅填写可直接执行的改写文本；只标注不改写时必须省略，不得复制 note 或原因说明"),
   severity: z.enum(["error", "warn", "info"]).optional()
     .describe("模板要求分级时填写；error=必须处理，warn=建议处理，info=仅提示。模板未要求时省略"),
   judgment: z.enum([

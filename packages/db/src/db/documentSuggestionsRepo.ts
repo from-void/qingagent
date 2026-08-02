@@ -1,6 +1,7 @@
 import type { Client } from "@libsql/client";
 import {
   maskSensitiveAnnotationGroup,
+  normalizeAnnotationSuggestion,
   type AnnotationGroup,
   type AnnotationGroupMeta,
   type DocSuggestion,
@@ -35,6 +36,16 @@ async function readyClient(client?: Client): Promise<Client> {
   return c;
 }
 
+function annotationGroupMeta(group: AnnotationGroup): AnnotationGroupMeta {
+  const suggestion = normalizeAnnotationSuggestion(group.note, group.suggestion);
+  return {
+    summary: group.summary,
+    ...(suggestion ? { suggestion } : {}),
+    hitCount: group.anchors.length,
+    ...(group.severity ? { severity: group.severity } : {}),
+  };
+}
+
 function annotationInsertStatements(
   docId: string,
   baseVersion: number,
@@ -57,7 +68,7 @@ function annotationInsertStatements(
       args: [
         `${group.id}:${index + 1}`, docId, baseVersion, JSON.stringify(anchor), group.summary,
         group.note, group.origin, group.id,
-        JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }),
+        JSON.stringify(annotationGroupMeta(group)),
         group.severity ?? null,
         now, now, docId, docId,
       ],
@@ -193,12 +204,14 @@ export async function listActiveAnnotationGroups(
     const severity = row.severity === "error" || row.severity === "warn" || row.severity === "info"
       ? row.severity
       : meta?.severity;
+    const note = typeof row.note === "string" ? row.note : "";
+    const suggestion = normalizeAnnotationSuggestion(note, meta?.suggestion);
     groups.set(groupId, {
       id: groupId,
       summary: typeof row.summary === "string" ? row.summary : meta?.summary ?? "",
-      note: typeof row.note === "string" ? row.note : "",
+      note,
       origin,
-      ...(meta?.suggestion ? { suggestion: meta.suggestion } : {}),
+      ...(suggestion ? { suggestion } : {}),
       ...(severity ? { severity } : {}),
       status: row.status === "accepted" ? "accepted" : "reviewing",
       anchors: [anchor],
@@ -298,7 +311,7 @@ export async function persistMappedAnnotationGroups(
       return group.anchors.map((anchor, mappedIndex) => ({
         sql: `UPDATE document_suggestions SET status=?, anchor_json=?,
           group_meta_json=?, severity=?, updated_at=? WHERE id=? AND doc_id=? AND kind='annotation'`,
-        args: [group.status, JSON.stringify(anchor), JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }), group.severity ?? null, now,
+        args: [group.status, JSON.stringify(anchor), JSON.stringify(annotationGroupMeta(group)), group.severity ?? null, now,
           `${group.id}:${(survivingAnchorIndexes.get(group.id)?.[mappedIndex] ?? mappedIndex) + 1}`, docId],
       }));
     });

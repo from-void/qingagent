@@ -220,6 +220,45 @@ describe("ChatInput", () => {
     });
   });
 
+  it("appendText 光标定位失败时仍同步发送状态，连续回填后 Enter 可提交", async () => {
+    const ref = createRef<ChatInputHandle>();
+    const onSubmit = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={onSubmit}
+      />,
+    );
+    const edit = getEditor();
+    expect(getSendButton().disabled).toBe(true);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("Selection not available");
+    vi.spyOn(selection, "addRange").mockImplementationOnce(() => {
+      throw new DOMException("Selection range is no longer valid");
+    });
+
+    act(() => {
+      expect(ref.current?.appendText("按批注修改：第一条", { separateBlock: true })).toBe(true);
+      expect(ref.current?.appendText("按批注修改：第二条", { separateBlock: true })).toBe(true);
+    });
+
+    expect(getSendButton().disabled).toBe(false);
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: "按批注修改：第一条\n\n按批注修改：第二条",
+      richText: "按批注修改：第一条\n\n按批注修改：第二条",
+      chips: [],
+    });
+
+    const event = keyboardEvent("Enter");
+    act(() => {
+      edit.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it("序列化并恢复时不把用户字面 chip marker 当成真实 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(

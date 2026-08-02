@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PatchMeta } from "../../data/patchMeta";
 import { PatchHoverLayer } from "./PatchHoverLayer";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,9 +74,103 @@ describe("PatchHoverLayer 锚点生命周期", () => {
 
     expect(mounted.workspace.querySelector(".patch-hover-popup")).toBeNull();
   });
+
+  it("替换的新值绿段与删除游标打开同一张替换卡", async () => {
+    const patchMeta = new Map<string, PatchMeta>([[
+      "patch-replace",
+      { before: "未开启照明", after: "开启防爆照明", kind: "replace", index: 2 },
+    ]]);
+    const mounted = await mountLayer(patchMeta);
+    editor = mounted.editor;
+    root = mounted.root;
+    mounted.anchor.dataset.patchId = "patch-replace";
+    mounted.anchor.dataset.patchState = "delete";
+    const inserted = document.createElement("span");
+    inserted.dataset.patchId = "patch-replace";
+    inserted.dataset.patchState = "replace";
+    inserted.className = "wf-patch-replace-wrap";
+    const greenText = document.createElement("span");
+    greenText.className = "wf-patch-ins";
+    greenText.textContent = "开启防爆照明";
+    inserted.appendChild(greenText);
+    mounted.anchor.after(inserted);
+
+    await act(async () => {
+      mounted.anchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    const deletePopupText = mounted.workspace.querySelector(".patch-hover-popup")?.textContent;
+    expect(deletePopupText).toContain("#2 · 替换");
+    expect(deletePopupText).toContain("原文");
+    expect(deletePopupText).toContain("未开启照明");
+
+    await act(async () => {
+      greenText.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: mounted.anchor }));
+    });
+    const insertPopup = mounted.workspace.querySelector(".patch-hover-popup");
+    expect(insertPopup?.textContent).toBe(deletePopupText);
+    expect(insertPopup?.querySelectorAll("button")).toHaveLength(1);
+    expect(insertPopup?.querySelector("button")?.textContent).toBe("撤销");
+  });
+
+  it("纯新增绿段打开新增卡并展示新增内容摘要", async () => {
+    const patchMeta = new Map<string, PatchMeta>([[
+      "patch-insert",
+      { before: "", after: "交接前检查照明、护栏与通信设备。", kind: "insert", index: 3 },
+    ]]);
+    const mounted = await mountLayer(patchMeta);
+    editor = mounted.editor;
+    root = mounted.root;
+    mounted.anchor.dataset.patchId = "patch-insert";
+    mounted.anchor.dataset.patchState = "insert";
+    mounted.anchor.className = "wf-patch-ins-wrap";
+    mounted.anchor.textContent = "交接前检查照明、护栏与通信设备。";
+
+    await act(async () => {
+      mounted.anchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+
+    const popup = mounted.workspace.querySelector(".patch-hover-popup");
+    expect(popup?.textContent).toContain("#3 · 新增");
+    expect(popup?.textContent).toContain("新增内容");
+    expect(popup?.textContent).toContain("交接前检查照明、护栏与通信设备。");
+    expect(popup?.querySelector("button")?.textContent).toBe("撤销");
+  });
+
+  it("granular 局部锚点继续让位且空白命中回落整块卡，避免重复或无反馈", async () => {
+    const patchMeta = new Map<string, PatchMeta>([[
+      "patch-granular",
+      { before: "旧清单", after: "新清单", kind: "replace", index: 4 },
+    ]]);
+    const mounted = await mountLayer(patchMeta);
+    editor = mounted.editor;
+    root = mounted.root;
+    mounted.anchor.dataset.patchId = "patch-granular";
+    mounted.anchor.dataset.patchState = "replace";
+    mounted.anchor.className = "wf-blockmark insert is-granular";
+    const localTarget = document.createElement("span");
+    localTarget.dataset.reviewTargetId = "patch-granular::row-1";
+    localTarget.textContent = "局部新值";
+    mounted.anchor.appendChild(localTarget);
+
+    await act(async () => {
+      localTarget.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(mounted.workspace.querySelector(".patch-hover-popup")).toBeNull();
+
+    await act(async () => {
+      mounted.anchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(mounted.workspace.querySelectorAll(".patch-hover-popup")).toHaveLength(1);
+    expect(mounted.workspace.querySelector(".patch-hover-popup")?.textContent).toContain("#4 · 替换");
+
+    await act(async () => {
+      localTarget.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: mounted.anchor }));
+    });
+    expect(mounted.workspace.querySelector(".patch-hover-popup")).toBeNull();
+  });
 });
 
-async function mountLayer(): Promise<{
+async function mountLayer(patchMeta?: Map<string, PatchMeta>): Promise<{
   editor: Editor;
   root: Root;
   workspace: HTMLElement;
@@ -105,7 +200,7 @@ async function mountLayer(): Promise<{
   const onPatchVerdict = vi.fn();
   const root = createRoot(reactHost);
   await act(async () => {
-    root.render(<PatchHoverLayer editor={editor} onPatchVerdict={onPatchVerdict} />);
+    root.render(<PatchHoverLayer editor={editor} patchMeta={patchMeta} onPatchVerdict={onPatchVerdict} />);
   });
   return {
     editor,

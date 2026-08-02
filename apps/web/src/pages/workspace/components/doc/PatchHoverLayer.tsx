@@ -8,6 +8,7 @@ import {
   patchReviewState,
   placePatchPopupByAnchorRect,
   renderOriginalDiff,
+  summarizePatchContent,
 } from "./patchHover";
 import { ReviewBlocksStatic } from "./reviewBlockDiff";
 
@@ -38,6 +39,29 @@ function closestPatchTarget(target: EventTarget | null, root: HTMLElement): HTML
 function patchIsFormat(meta: PatchMeta | undefined, anchor: HTMLElement): boolean {
   const state = anchor.dataset.patchState;
   return state === "format" || meta?.kind === "markAdd" || meta?.kind === "markRemove";
+}
+
+const GRANULAR_LOCAL_HOVER_SELECTOR = [
+  "[data-review-target-id]",
+  ".wf-list-row--added",
+  ".wf-list-row--removed",
+  ".wf-list-row--changed",
+  ".wf-table-cell--changed",
+  ".wf-table-row--added",
+  ".wf-table-row--removed",
+  ".wf-container-block--added",
+  ".wf-container-block--removed",
+  ".wf-container-block--changed",
+].join(",");
+
+/** granular 的行/格/内部块自管局部卡；只有事件确实落在这些局部锚点上时才让位。
+ *  外层绿块的空白区域没有局部接管者，必须回落整块卡，不能形成 hover 无反馈空档。 */
+function granularLocalPopupOwnsEvent(anchor: HTMLElement, eventTarget: EventTarget | null): boolean {
+  if (!anchor.classList.contains("is-granular")) return false;
+  if (anchor.classList.contains("has-block-original-hover")) return false;
+  if (!(eventTarget instanceof Element)) return false;
+  const localAnchor = eventTarget.closest(GRANULAR_LOCAL_HOVER_SELECTOR);
+  return Boolean(localAnchor && anchor.contains(localAnchor));
 }
 
 export function PatchHoverLayer({
@@ -87,9 +111,13 @@ export function PatchHoverLayer({
     const onMouseOver = (event: MouseEvent) => {
       const anchor = closestPatchTarget(event.target, root);
       if (!anchor) return;
-      // 常规 granular 块由改动行/格/块自管局部原文；若另有 tone/背景/栏宽等外壳属性变化，
-      // has-block-original-hover 统一由整块原文卡接管，块树内局部 popup 已在挂载时关闭。
-      if (anchor.classList.contains("is-granular") && !anchor.classList.contains("has-block-original-hover")) return;
+      // 常规 granular 块仅在改动行/格/块命中时让位给局部原文卡；外层空白仍由整块卡兜底。
+      // 若另有 tone/背景/栏宽等外壳属性变化，has-block-original-hover 始终由整块原文卡接管。
+      if (granularLocalPopupOwnsEvent(anchor, event.target)) {
+        // 从外层空白移入局部锚点时，立即收起刚才的整块兜底卡，交给局部卡独占。
+        setTarget((current) => current?.anchor === anchor ? null : current);
+        return;
+      }
       if (target?.anchor === anchor && containsEventTarget(anchor, event.relatedTarget)) return;
       showTarget(anchor);
     };
@@ -175,6 +203,11 @@ export function PatchHoverLayer({
           : renderOriginalDiff(meta?.before ?? "") ?? meta?.before ?? ""
       }
       originalIsBlock={hasBlockOriginal}
+      added={
+        state === "insert"
+          ? summarizePatchContent(meta?.after || target.anchor.textContent || "")
+          : undefined
+      }
       patchId={target.patchId}
       onPatchVerdict={handlePatchVerdict}
     />

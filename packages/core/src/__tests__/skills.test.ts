@@ -157,7 +157,16 @@ describe("builtin skills", () => {
     }
 
     const childRules: Record<string, string[]> = {
-      sensitive: ["`sensitive_scan`", "`replacementHint`", '`reviewAction` 都是 `"annotate"`', "宁可少给建议"],
+      sensitive: [
+        "`sensitive_scan`",
+        "`replacementHint`",
+        '`reviewAction` 都是 `"annotate"`',
+        "宁可少给建议",
+        "第一句用一句话给出用户能直接看懂的结论",
+        "后续至多两句必要说明",
+        "禁止使用“人工确认点”“命中上下文”",
+        "有真实可执行的修改建议时仍写入 `suggestion`",
+      ],
       "source-check": ["素材是唯一 ground truth", "`materialQuote`", "`checkedScope`", "素材遗漏"],
       deai: ["优先 `replaceText`", "痕迹类别：N 处", "保持段落结构、句序与篇幅"],
       consistency: ["`run_python` 或 `run_js`", "`documentQuote`", "称谓与术语"],

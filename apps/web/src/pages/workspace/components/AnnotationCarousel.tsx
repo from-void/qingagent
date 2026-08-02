@@ -5,6 +5,7 @@ import {
   maskSensitiveValues,
   normalizeAnnotationSuggestion,
   type AnnotationGroup,
+  type ReviewType,
 } from "@qingagent/contract-ts";
 import { CaretIcon } from "./icons";
 
@@ -71,6 +72,32 @@ export function resolveAnnotationSuggestion(
 }
 
 const SEVERITY_LABELS = { error: "严重", warn: "建议", info: "提示" } as const;
+
+const REVIEW_TYPE_LABELS: Readonly<Record<ReviewType, string>> = {
+  sensitive: "敏感词",
+  deai: "去 AI 味",
+  source: "来源核查",
+  consistency: "一致性",
+  privacy: "隐私",
+  format: "格式",
+  role: "角色审查",
+  custom: "自定义审查",
+};
+
+const REVIEW_ORIGIN_LABELS: Readonly<Record<string, string>> = {
+  ...REVIEW_TYPE_LABELS,
+  "source-check": "来源核查",
+  "role-review": "角色审查",
+  "custom-review": "自定义审查",
+  "system-parse-error": "审查异常",
+};
+
+export function reviewOriginLabel(origin: string): string {
+  const normalized = origin.trim();
+  const label = REVIEW_ORIGIN_LABELS[normalized];
+  if (label) return label;
+  return /[\p{Script=Han}]/u.test(normalized) ? normalized : "其他审查";
+}
 
 export function buildAnnotationSeveritySummary(groups: readonly AnnotationGroup[]): string | null {
   if (!groups.some((group) => group.severity !== undefined)) return null;
@@ -325,7 +352,7 @@ export function AnnotationCarousel(props: {
           </div>
         </div>
         <div className="ahc-meta">
-          {group.origin ? <span className="ahc-origin">{group.origin}</span> : null}
+          {group.origin ? <span className="ahc-origin">{reviewOriginLabel(group.origin)}</span> : null}
           {group.severity ? <span className="ahc-severity" data-severity={group.severity}>{SEVERITY_LABELS[group.severity]}</span> : null}
         </div>
       </header>
@@ -352,10 +379,10 @@ export function AnnotationCarousel(props: {
         <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); closeCard(); }}>下次不再提示</button>
       </div>
       {hasSuggestedChange ? <div className="ahc-accept-actions">
-        <span>将追加到输入框，由你确认发送</span>
         <button
           className="ahc-accept"
           type="button"
+          title="将追加到输入框，由你确认发送"
           disabled={!resolvedSuggestion}
           onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
         >生成修改</button>

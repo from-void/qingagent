@@ -242,12 +242,15 @@ describe("AnnotationCarousel hover card", () => {
     expect(body.querySelector(":scope > .ahc-suggestion")).not.toBeNull();
     expect(card.querySelector(":scope > footer")).not.toBeNull();
     expect(card.textContent).toContain("事实有误");
+    expect(card.querySelector(".ahc-origin")?.textContent).toBe("来源核查");
+    expect(card.textContent).not.toContain("source-check");
     expect(card.textContent).toContain("第 1 / 共 2 处");
     expect(card.textContent).toContain("时间与资料不一致");
     expect(card.textContent).toContain("改为四月发布");
     expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
     expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "下次不再提示", "生成修改"]);
-    expect(card.textContent).toContain("将追加到输入框，由你确认发送");
+    expect(card.textContent).not.toContain("将追加到输入框，由你确认发送");
+    expect(card.querySelector<HTMLButtonElement>(".ahc-accept")?.title).toBe("将追加到输入框，由你确认发送");
     expect(card.querySelectorAll(".ahc-nav button")).toHaveLength(2);
     expect(host.textContent).not.toContain("全部提交");
 
@@ -346,6 +349,8 @@ describe("AnnotationCarousel hover card", () => {
 
     const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
     expect(card.textContent).toContain(note);
+    expect(card.querySelector(".ahc-origin")?.textContent).toBe("敏感词");
+    expect(card.textContent).not.toContain("sensitive");
     expect(card.querySelector('[aria-label="修改意见"]')).toBeNull();
     expect(card.querySelector(".ahc-accept-actions")).toBeNull();
     expect(card.textContent).not.toContain("生成修改");

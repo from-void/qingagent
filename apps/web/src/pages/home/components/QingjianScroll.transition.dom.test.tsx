@@ -13,6 +13,7 @@ const stageMock = vi.hoisted(() => ({
   settleReturn: vi.fn(),
   dispose: vi.fn(),
 }));
+const setPointerCaptureMock = vi.fn();
 
 vi.mock("../../../system/transition/homeStage", () => ({
   createHomeTransitionStage: () => stageMock,
@@ -39,6 +40,7 @@ let host: HTMLDivElement | null = null;
 describe("QingjianScroll 首页去程生命周期", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    window.history.replaceState(null, "", "#/");
     stageMock.playForward.mockReset();
     stageMock.playReturn.mockReset().mockResolvedValue(undefined);
     stageMock.snapArrived.mockClear();
@@ -67,6 +69,11 @@ describe("QingjianScroll 首页去程生命周期", () => {
       configurable: true,
       value: vi.fn(),
     });
+    Object.defineProperty(Element.prototype, "setPointerCapture", {
+      configurable: true,
+      value: setPointerCaptureMock,
+    });
+    setPointerCaptureMock.mockClear();
     class ResizeObserverMock {
       observe() {}
       disconnect() {}
@@ -87,6 +94,7 @@ describe("QingjianScroll 首页去程生命周期", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     Reflect.deleteProperty(Element.prototype, "getAnimations");
+    Reflect.deleteProperty(Element.prototype, "setPointerCapture");
     window.sessionStorage.clear();
   });
 
@@ -109,6 +117,85 @@ describe("QingjianScroll 首页去程生命周期", () => {
     const slot = host.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]')!;
     vi.mocked(document.elementFromPoint).mockReturnValue(slot);
     return host.querySelector<HTMLElement>(".qj-scroll")!;
+  }
+
+  async function dispatchMouseClickSequence(
+    moveToX?: number,
+    includePointerCompatibilityEvents = false,
+  ) {
+    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
+    const startX = 20;
+    const endX = moveToX ?? startX;
+
+    await act(async () => {
+      if (includePointerCompatibilityEvents) {
+        newCard.dispatchEvent(new MouseEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: startX,
+          clientY: 20,
+        }));
+      }
+      newCard.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: startX,
+        clientY: 20,
+      }));
+      if (moveToX !== undefined) {
+        if (includePointerCompatibilityEvents) {
+          newCard.dispatchEvent(new MouseEvent("pointermove", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 1,
+            clientX: moveToX,
+            clientY: 20,
+          }));
+        }
+        newCard.dispatchEvent(new MouseEvent("mousemove", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: moveToX,
+          clientY: 20,
+        }));
+      }
+      if (includePointerCompatibilityEvents) {
+        newCard.dispatchEvent(new MouseEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          clientX: endX,
+          clientY: 20,
+        }));
+      }
+      newCard.dispatchEvent(new MouseEvent("mouseup", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 0,
+        clientX: endX,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 0,
+        clientX: endX,
+        clientY: 20,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   }
 
   it("forward 拒绝时在 finally 解锁并降级导航", async () => {
@@ -151,71 +238,69 @@ describe("QingjianScroll 首页去程生命周期", () => {
     expect(document.elementFromPoint).not.toHaveBeenCalled();
   });
 
-  it("指针按下与抬起没有位移时保留 click 激活", async () => {
-    const onNewSession = vi.fn();
-    await renderHome(onNewSession);
-    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
+  it.each([
+    ["零位移", undefined],
+    ["微位移（小于 5px）", 24],
+  ])("真实鼠标%s序列会导航到工作区", async (_label, moveToX) => {
+    await renderHome(() => {
+      window.location.hash = "#/workspace";
+    });
+
+    await dispatchMouseClickSequence(moveToX);
+
+    expect(stageMock.playForward).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe("#/workspace");
+  });
+
+  it.each([
+    ["零位移", undefined],
+    ["微位移（小于 5px）", 24],
+  ])("真实浏览器 pointer+mouse %s链在阈值前不 capture 且会导航", async (
+    _label,
+    moveToX,
+  ) => {
+    await renderHome(() => {
+      window.location.hash = "#/workspace";
+    });
+
+    await dispatchMouseClickSequence(moveToX, true);
+
+    expect(setPointerCaptureMock).not.toHaveBeenCalled();
+    expect(stageMock.playForward).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe("#/workspace");
+  });
+
+  it("真实浏览器 pointer+mouse 链只在超过 5px 后 capture 并抑制 click", async () => {
+    await renderHome(() => {
+      window.location.hash = "#/workspace";
+    });
+
+    await dispatchMouseClickSequence(26, true);
+
+    expect(setPointerCaptureMock).toHaveBeenCalledTimes(1);
+    expect(stageMock.playForward).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/");
+  });
+
+  it("真实鼠标横移超过 5px 时只滚动长卷并抑制随后 click", async () => {
+    await renderHome(() => {
+      window.location.hash = "#/workspace";
+    });
+
+    await dispatchMouseClickSequence(26);
+
+    expect(stageMock.playForward).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/");
 
     await act(async () => {
-      newCard.dispatchEvent(new MouseEvent("pointerdown", {
-        bubbles: true,
-        clientX: 20,
-        clientY: 20,
-      }));
-      newCard.dispatchEvent(new MouseEvent("pointerup", {
-        bubbles: true,
-        clientX: 20,
-        clientY: 20,
-      }));
-      newCard.dispatchEvent(new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 20,
-        clientY: 20,
-      }));
+      host?.querySelector<HTMLElement>(".qj-new-card")?.click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(stageMock.playForward).toHaveBeenCalledTimes(1);
-    expect(onNewSession).toHaveBeenCalledTimes(1);
-  });
-
-  it("指针横移超过阈值时只滚动长卷并抑制随后 click", async () => {
-    const onNewSession = vi.fn();
-    await renderHome(onNewSession);
-    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
-
-    await act(async () => {
-      newCard.dispatchEvent(new MouseEvent("pointerdown", {
-        bubbles: true,
-        clientX: 20,
-        clientY: 20,
-      }));
-      newCard.dispatchEvent(new MouseEvent("pointermove", {
-        bubbles: true,
-        clientX: 26,
-        clientY: 20,
-      }));
-      newCard.dispatchEvent(new MouseEvent("pointerup", {
-        bubbles: true,
-        clientX: 26,
-        clientY: 20,
-      }));
-      newCard.dispatchEvent(new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 26,
-        clientY: 20,
-      }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(stageMock.playForward).not.toHaveBeenCalled();
-    expect(onNewSession).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/workspace");
   });
 
   it("多个生成中会话各自展示状态、流光与辅助文案", async () => {

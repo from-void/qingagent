@@ -298,7 +298,7 @@ describe("AnnotationCarousel hover card", () => {
       reopenedSuggestion.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
-    expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("已有草稿\n按批注修改：「甲组原句」——改成五月发布（批注：事实有误；原因：时间与资料不一致；定位：块 p，PM 1-3）");
+    expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("已有草稿\n按批注修改：事实有误——改成五月发布（原文：『甲组原句』）");
     expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host.querySelector(".annotation-hover-card")).toBeNull();
 
@@ -632,7 +632,7 @@ describe("AnnotationCarousel hover card", () => {
       .toBe("改为某内部项目");
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
     expect(host!.querySelector('[data-testid="chat-input"]')?.textContent)
-      .toContain("按批注修改：「甲组」——改为某内部项目");
+      .toContain("按批注修改：对外发布风险——改为某内部项目（原文：『甲组』）");
 
     await act(async () => {
       presetAnchor!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -643,10 +643,10 @@ describe("AnnotationCarousel hover card", () => {
     expect(host!.textContent).toContain("表述重复");
   });
 
-  it("回填文案以简短来源标记开头，原句按 30 字截断", () => {
+  it("回填文案以摘要和建议开头，原句按 30 字截断", () => {
     const longQuote = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一";
     expect(buildAnnotationInstruction({ ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: longQuote }] }))
-      .toBe("按批注修改：「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注：事实有误；原因：时间与资料不一致；定位：块 p，PM 1-3）");
+      .toBe("按批注修改：事实有误——改为四月发布（原文：『一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…』）");
   });
 
   it("空修改意见不再回退为批注原因", () => {
@@ -655,7 +655,7 @@ describe("AnnotationCarousel hover card", () => {
     expect(buildAnnotationInstruction(group, "   ")).toBe("");
   });
 
-  it("隐私批注进入前端状态和生成修改指令时保持打码，并携带结构锚点", () => {
+  it("隐私批注进入前端状态和生成修改指令时保持打码，不展示结构锚点", () => {
     const rawGroup: AnnotationGroup = {
       id: "privacy-raw",
       summary: "手机号 13912345678 未脱敏",
@@ -689,9 +689,11 @@ describe("AnnotationCarousel hover card", () => {
         textHash: "span:contact-table:42:53",
       }],
     });
-    expect(instruction).toContain("定位：块 contact-table，PM 42-53");
     expect(instruction).toContain("139****5678");
     expect(instruction).not.toContain("13912345678");
+    expect(instruction).not.toContain("contact-table");
+    expect(instruction).not.toMatch(/\bPM\b/u);
+    expect(instruction).not.toContain("42-53");
   });
 
   it("严重度计数只在模板输出分级后显示，缺省项按建议档计数", () => {

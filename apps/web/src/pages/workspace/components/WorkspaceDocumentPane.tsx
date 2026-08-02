@@ -632,6 +632,7 @@ export function WorkspaceDocumentPane({
               }
               const inserted = chatInputRef.current.appendText(
                 buildAnnotationInstruction(group, suggestion),
+                { separateBlock: true },
               );
               if (!inserted) {
                 showToast("批注意见回填失败，请重试");

@@ -44,14 +44,17 @@ function annotationGroupIdsAtTarget(
 export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggestion?: string): string {
   const safeGroup = maskSensitiveAnnotationGroup(group);
   const anchor = safeGroup.anchors[0];
-  const quoteChars = Array.from(anchor?.quote.trim() ?? "");
+  const quoteChars = Array.from(compactAnnotationText(anchor?.quote ?? ""));
   const quote = quoteChars.length > 30 ? `${quoteChars.slice(0, 30).join("")}…` : quoteChars.join("");
-  const suggestion = resolveAnnotationSuggestion(safeGroup, editedSuggestion);
+  const summary = compactAnnotationText(safeGroup.summary);
+  const suggestion = compactAnnotationText(resolveAnnotationSuggestion(safeGroup, editedSuggestion));
   if (!suggestion) return "";
-  const location = anchor
-    ? `块 ${anchor.blockId}，PM ${anchor.pmFrom}-${anchor.pmTo}`
-    : "原批注锚点";
-  return `按批注修改：「${quote}」——${suggestion}（批注：${safeGroup.summary}；原因：${safeGroup.note}；定位：${location}）`;
+  const action = summary ? `${summary}——${suggestion}` : suggestion;
+  return `按批注修改：${action}${quote ? `（原文：『${quote}』）` : ""}`;
+}
+
+function compactAnnotationText(value: string): string {
+  return value.trim().replace(/\s+/gu, " ");
 }
 
 export function resolveAnnotationSuggestion(

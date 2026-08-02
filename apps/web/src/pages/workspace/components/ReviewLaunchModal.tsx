@@ -93,6 +93,7 @@ interface ReviewLaunchModalProps {
   loadSupplement: (type: ReviewType) => Promise<string>;
   saveSupplement: (type: ReviewType, supplement: string) => Promise<string>;
   loadLexicons?: () => Promise<LexiconResourceSummary[]>;
+  saveLexiconSelection?: (enabledLexiconIds: string[]) => Promise<LexiconResourceSummary[]>;
   loadLexiconEntries?: (resourceId: string) => Promise<LexiconEntrySummary[]>;
   onAiDraft?: (intent: DraftTemplateIntent, abortSignal: AbortSignal) => Promise<DraftTemplateResult>;
   sourceMaterialAvailable?: boolean;
@@ -171,7 +172,9 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
         setSelectedId(selected);
         setSupplement(savedSupplement);
         setLexicons(availableLexicons);
-        setSelectedLexicons(new Set(availableLexicons.map((item) => item.id)));
+        setSelectedLexicons(new Set(
+          availableLexicons.filter((item) => item.enabled !== false).map((item) => item.id),
+        ));
       })
       .catch(() => { if (requestRef.current === requestId) setError("审查设置加载失败，请重试"); })
       .finally(() => { if (requestRef.current === requestId) setLoading(false); });
@@ -284,6 +287,24 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
       if (requestRef.current === requestId) setLoading(false);
     });
   };
+  const saveLexiconSelection = () => {
+    if (!props.saveLexiconSelection) {
+      setError("词库设置保存失败，请重试");
+      return;
+    }
+    const enabledLexiconIds = lexicons
+      .filter((item) => selectedLexicons.has(item.id))
+      .map((item) => item.id);
+    setSaving(true);
+    setError(null);
+    void props.saveLexiconSelection(enabledLexiconIds).then((savedLexicons) => {
+      setLexicons(savedLexicons);
+      setSelectedLexicons(new Set(
+        savedLexicons.filter((item) => item.enabled).map((item) => item.id),
+      ));
+      setPage("launch");
+    }).catch(() => setError("词库设置保存失败，请重试")).finally(() => setSaving(false));
+  };
 
   const title = page === "template"
     ? editor?.source ? "编辑模板" : "新建模板"
@@ -294,6 +315,11 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     setError(null);
     if (page === "entries") setPage("lexicons");
     else {
+      if (page === "lexicons") {
+        setSelectedLexicons(new Set(
+          lexicons.filter((item) => item.enabled !== false).map((item) => item.id),
+        ));
+      }
       setEditor(null);
       setPage("launch");
     }
@@ -381,7 +407,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
             {lexicons.map((lexicon) => (
               <div className="ws-lexicon-option" key={lexicon.id}>
                 <label className="ws-lexicon-check" aria-label={`启用${lexicon.name}`}>
-                  <input className="wf-checkbox" type="checkbox" checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
+                  <input className="wf-checkbox" type="checkbox" disabled={saving} checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
                     const checked = event.currentTarget.checked;
                     setSelectedLexicons((current) => {
                       const next = new Set(current);
@@ -398,7 +424,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
               </div>
             ))}
           </div>
-          <div className="ws-launch-actions"><Button type="button" variant="primary" onClick={() => setPage("launch")}>完成</Button></div>
+          <div className="ws-launch-actions"><Button type="button" variant="primary" disabled={saving} onClick={saveLexiconSelection}>{saving ? "正在保存…" : "完成"}</Button></div>
         </>
       ) : null}
       {page === "entries" ? (

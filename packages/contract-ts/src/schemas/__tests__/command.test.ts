@@ -47,9 +47,9 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "unknown" } }).success).toBe(false);
   });
 
-  it("COMMAND_KINDS 覆盖 37 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(37);
-    expect(COMMAND_KIND_SET.size).toBe(37);
+  it("COMMAND_KINDS 覆盖 38 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(38);
+    expect(COMMAND_KIND_SET.size).toBe(38);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
   });
 
@@ -71,6 +71,17 @@ describe("commandSchema", () => {
   it("listLexiconEntries 要求会话与词库 id 都非空", () => {
     expect(commandSchema.safeParse({ kind: "listLexiconEntries", data: { sessionId: "s", resourceId: "lex-1" } }).success).toBe(true);
     expect(commandSchema.safeParse({ kind: "listLexiconEntries", data: { sessionId: "s", resourceId: "" } }).success).toBe(false);
+  });
+
+  it("setEnabledLexicons 接受空启用集合并拒绝空词库 id", () => {
+    expect(commandSchema.safeParse({
+      kind: "setEnabledLexicons",
+      data: { sessionId: "s", requestId: "request-1", enabledLexiconIds: [] },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "setEnabledLexicons",
+      data: { sessionId: "s", requestId: "request-2", enabledLexiconIds: [""] },
+    }).success).toBe(false);
   });
 
   it("renameSession 修剪标题并拒绝空串与超长标题", () => {

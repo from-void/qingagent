@@ -128,6 +128,7 @@ async function* routeCommand(
     }
     case "draftTemplate":
     case "listLexicons":
+    case "setEnabledLexicons":
     case "listLexiconEntries":
     case "listStyleTemplates":
     case "getStyleTemplate":

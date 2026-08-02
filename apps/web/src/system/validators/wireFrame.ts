@@ -794,7 +794,7 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
     "templateDrafted", "reviewTemplatesListed", "reviewTemplateSaved", "reviewTemplateDeleted",
     "reviewTemplateSelected", "reviewSupplementLoaded", "reviewSupplementSaved", "styleTemplatesListed",
     "styleTemplateLoaded", "styleTemplateSaved", "styleTemplateDeleted", "derivativeParamsUpdated",
-    "derivativesListed", "derivativeCreated", "derivativeDeleted", "derivativeDocLoaded",
+    "derivativesListed", "derivativeCreated", "derivativeDeleted", "derivativeDocLoaded", "enabledLexiconsSet",
   ]);
   if (requestCorrelatedKinds.has(frame.kind) && !((frame.data as { requestId?: unknown }).requestId)) {
     fail(`${frame.kind}.requestId must be non-empty`);
@@ -841,9 +841,10 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       if (!frame.data.meta.docId || typeof frame.data.docPm !== "string") fail("DerivativeDocLoaded.data is invalid");
       return;
     case "lexiconsListed":
+    case "enabledLexiconsSet":
       for (const lexicon of frame.data.lexicons) {
-        if (!lexicon.id || !lexicon.name || !Number.isInteger(lexicon.entryCount) || lexicon.entryCount < 0) {
-          fail("LexiconsListed.lexicons contains an invalid resource");
+        if (!lexicon.id || !lexicon.name || !Number.isInteger(lexicon.entryCount) || lexicon.entryCount < 0 || typeof lexicon.enabled !== "boolean") {
+          fail("Lexicons.lexicons contains an invalid resource");
         }
       }
       return;

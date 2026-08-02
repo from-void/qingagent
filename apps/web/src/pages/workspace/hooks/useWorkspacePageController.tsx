@@ -1401,6 +1401,13 @@ export function useWorkspacePageController() {
     return stream.listLexicons(sessionId);
   }, []);
 
+  const saveLexiconSelection = useCallback(async (enabledLexiconIds: string[]) => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.setEnabledLexicons(sessionId, enabledLexiconIds);
+  }, []);
+
   const loadLexiconEntries = useCallback(async (resourceId: string) => {
     const sessionId = stateRef.current.sessionId;
     const stream = streamRef.current;
@@ -3416,6 +3423,7 @@ export function useWorkspacePageController() {
     reviewLaunchType,
     setReviewLaunchType,
     loadLexicons,
+    saveLexiconSelection,
     loadLexiconEntries,
     loadReviewTemplates,
     saveReviewTemplate,

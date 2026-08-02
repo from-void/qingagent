@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  __resetDocumentsClientForTest,
   getDocumentsClient,
   getTxnClient,
   rollbackTransaction,
   withTransaction,
 } from "../documentsClient.js";
 import { ensureMigrated } from "../migrations.js";
-import { addLexiconEntries, createLexicon, deleteLexiconResource, listLexiconEntries, listLexicons, removeLexiconEntries, updateLexiconEntries } from "../lexiconRepo.js";
+import { addLexiconEntries, createLexicon, deleteLexiconResource, listLexiconEntries, listLexicons, removeLexiconEntries, setEnabledLexicons, updateLexiconEntries } from "../lexiconRepo.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
@@ -26,6 +27,44 @@ describe("lexiconRepo", () => {
       "lexicon-official-writing", "lexicon-social-media-marketing",
     ]);
     expect(lexicons.every((item) => item.entryCount >= 30 && item.entryCount <= 80 && item.description.length > 0)).toBe(true);
+    expect(lexicons.every((item) => item.enabled)).toBe(true);
+  });
+
+  it("持久化启用词库并由列表同源读回，同时保留资源说明", async () => {
+    const enabledId = "lexicon-advertising-superlatives";
+
+    await setEnabledLexicons([enabledId]);
+    __resetDocumentsClientForTest();
+
+    const lexicons = await listLexicons();
+    expect(lexicons.map(({ id, enabled }) => [id, enabled])).toEqual([
+      [enabledId, true],
+      ["lexicon-medical-health-claims", false],
+      ["lexicon-official-writing", false],
+      ["lexicon-social-media-marketing", false],
+    ]);
+    expect(lexicons.every((item) => item.description.length > 0)).toBe(true);
+  });
+
+  it("脏资源元数据安全回退为启用，仅明确的 boolean false 关闭", async () => {
+    await ensureMigrated();
+    const client = getDocumentsClient();
+    const cases = [
+      ["lexicon-advertising-superlatives", "{not-json", true],
+      ["lexicon-medical-health-claims", "[]", true],
+      ["lexicon-official-writing", JSON.stringify({ enabled: "false" }), true],
+      ["lexicon-social-media-marketing", JSON.stringify({ enabled: false }), false],
+    ] as const;
+    for (const [id, metaJson] of cases) {
+      await client.execute({
+        sql: "UPDATE skill_resources SET meta_json = ? WHERE id = ?",
+        args: [metaJson, id],
+      });
+    }
+
+    expect((await listLexicons(client)).map((item) => item.enabled)).toEqual(
+      cases.map(([, , enabled]) => enabled),
+    );
   });
 
   it("支持创建、添加、删除并更新 entryCount", async () => {

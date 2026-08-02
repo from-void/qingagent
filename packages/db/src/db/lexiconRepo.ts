@@ -13,6 +13,7 @@ export interface LexiconResource {
   name: string;
   entryCount: number;
   description: string;
+  enabled: boolean;
 }
 
 export interface LexiconEntry {
@@ -30,6 +31,17 @@ async function readyClient(client?: Client): Promise<Client> {
   return c;
 }
 
+function parseLexiconMeta(raw: unknown): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { ...(parsed as Record<string, unknown>) }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function listLexicons(client?: Client): Promise<LexiconResource[]> {
   const c = await readyClient(client);
   const result = await c.execute(`SELECT r.id, r.name, r.meta_json, COUNT(e.id) AS entry_count
@@ -38,12 +50,50 @@ export async function listLexicons(client?: Client): Promise<LexiconResource[]> 
     WHERE r.kind = 'lexicon'
     GROUP BY r.id, r.name, r.meta_json
     ORDER BY r.created_at, r.id`);
-  return result.rows.map((row) => ({
-    id: String(row.id),
-    name: String(row.name),
-    entryCount: Number(row.entry_count),
-    description: (() => { try { const meta=JSON.parse(String(row.meta_json)); return typeof meta.description === "string" ? meta.description : ""; } catch { return ""; } })(),
-  }));
+  return result.rows.map((row) => {
+    const meta = parseLexiconMeta(row.meta_json);
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      entryCount: Number(row.entry_count),
+      description: typeof meta.description === "string" ? meta.description : "",
+      // 旧库没有 enabled 字段；只有明确的 false 才关闭，确保升级后仍是四库全开。
+      enabled: meta.enabled !== false,
+    };
+  });
+}
+
+export async function setEnabledLexicons(
+  resourceIds: string[],
+  client?: Client,
+): Promise<LexiconResource[]> {
+  const c = await readyClient(client);
+  const enabledIds = new Set(resourceIds);
+  const update = async (writeClient: Client): Promise<void> => {
+    const resources = await writeClient.execute(
+      "SELECT id, meta_json FROM skill_resources WHERE kind = 'lexicon' ORDER BY created_at, id",
+    );
+    const now = new Date().toISOString();
+    for (const row of resources.rows) {
+      const id = String(row.id);
+      const meta = parseLexiconMeta(row.meta_json);
+      meta.enabled = enabledIds.has(id);
+      await writeClient.execute({
+        sql: "UPDATE skill_resources SET meta_json = ?, updated_at = ? WHERE id = ? AND kind = 'lexicon'",
+        args: [JSON.stringify(meta), now, id],
+      });
+    }
+  };
+
+  if (client) {
+    await update(c);
+  } else {
+    await withTransaction(async (transactionClient) => {
+      await update(transactionClient);
+      return commitTransaction(undefined);
+    });
+  }
+  return listLexicons(c);
 }
 
 export async function listLexiconEntries(
@@ -79,7 +129,7 @@ export async function createLexicon(name: string, client?: Client): Promise<Lexi
       VALUES (?, 'lexicon', ?, '{}', ?, ?)`,
     args: [id, name.trim(), now, now],
   }));
-  return { id, name: name.trim(), entryCount: 0, description: "用户自定义敏感词库。" };
+  return { id, name: name.trim(), entryCount: 0, description: "用户自定义敏感词库。", enabled: true };
 }
 
 export async function addLexiconEntries(

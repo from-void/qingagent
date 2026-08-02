@@ -1283,6 +1283,30 @@ describe("ServerStream", () => {
       .rejects.toThrow("每类至少保留一个模板");
   });
 
+  it("词库选择命令携带启用集合并返回服务端权威列表", async () => {
+    globalThis.fetch = commandResponseFrom((command) => {
+      expect(command.kind).toBe("setEnabledLexicons");
+      if (command.kind !== "setEnabledLexicons") throw new Error("unexpected command");
+      expect(command.data.enabledLexiconIds).toEqual(["lexicon-ad"]);
+      return [{
+        kind: "enabledLexiconsSet",
+        data: {
+          requestId: command.data.requestId,
+          lexicons: [
+            { id: "lexicon-ad", name: "广告法极限词", entryCount: 2, description: "广告合规", enabled: true },
+            { id: "lexicon-medical", name: "医疗健康违禁宣称", entryCount: 2, description: "医疗合规", enabled: false },
+          ],
+        },
+      } satisfies BridgeFrame];
+    });
+    const stream = new ServerStream();
+
+    await expect(stream.setEnabledLexicons("s-1", ["lexicon-ad"])).resolves.toEqual([
+      expect.objectContaining({ id: "lexicon-ad", enabled: true }),
+      expect.objectContaining({ id: "lexicon-medical", enabled: false }),
+    ]);
+  });
+
   it("两个并发衍生稿列表的 HTTP 响应乱序时仍按 requestId 结算", async () => {
     const pending: Array<{
       command: Extract<Command, { kind: "listDerivatives" }>;

@@ -21,8 +21,8 @@ describe("LexiconPickerModal", () => {
 
   async function renderModal(onClose = vi.fn()) {
     const loadLexicons = vi.fn().mockResolvedValue([
-      { id: "lex-1", name: "通用敏感词", entryCount: 2, description: "按公开口径整理，适用于通用文案。" },
-      { id: "lex-2", name: "品牌保护词", entryCount: 1, description: "保护品牌名称。" },
+      { id: "lex-1", name: "通用敏感词", entryCount: 2, description: "按公开口径整理，适用于通用文案。", enabled: true },
+      { id: "lex-2", name: "品牌保护词", entryCount: 1, description: "保护品牌名称。", enabled: true },
     ]);
     const loadLexiconEntries = vi.fn().mockResolvedValue([
       { word: "旧称", replacement: "新称", note: "品牌已升级" },

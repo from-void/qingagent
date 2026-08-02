@@ -849,8 +849,8 @@ function buildGroups(): Group[] {
     // ── Q. 审核结果缩略卡 reviewOutcome(局部采纳/全部拒绝后以用户名义回流) ──
     {
       title: "Q · 审核反馈卡 reviewOutcome",
-      meta: "PartView reviewOutcome → ReviewOutcomeCard.tsx;缩略=计数+拒绝项简述,点击展开看 before/after",
-      customNote: "用户消息内嵌卡片,默认折叠展示被拒项简述,无独立改进版",
+      meta: "PartView reviewOutcome → ReviewOutcomeCard.tsx;每处横排为状态+原文→新文,长文单侧截断",
+      customNote: "用户消息内嵌卡片,默认优先展示被拒项,点击展开全部修改",
       rows: [
         {
           state: "局部采纳(采3拒2)",
@@ -907,7 +907,7 @@ const REVIEW_OUTCOME_DEMOS: ReviewOutcome[] = [
     acceptedCount: 0,
     rejectedCount: 1,
     hunks: [
-      { verdict: "rejected", blockSummary: "把'凝练'改回啰嗦表达", beforeText: "钱塘江畔，亚运圣火点亮夜空。", afterText: "在杭州这座美丽的城市的钱塘江的旁边，亚运会的圣火被点亮了，照亮了整个夜空。" },
+      { verdict: "rejected", blockSummary: "职业替换", beforeText: "人", afterText: "司机" },
     ],
   },
 ];

@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  crashReporter,
   dialog,
   ipcMain,
   Menu,
@@ -45,6 +46,11 @@ import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
+  attachMainWindowProcessMonitor,
+  handleChildProcessGone,
+  type MainWindowProcessMonitor,
+} from "./diagnostics/processLifecycle.js";
+import {
   handleMainWindowWillNavigate,
   isAllowedMainFrameNavigation,
   type MainFrameNavigationEvent,
@@ -76,6 +82,7 @@ import { getLiveWebContents } from "./windowLifecycle.js";
 import {
   showNativeContentRecoveryFallback,
   showNativeQuitFallback,
+  showNativeRendererRecoveryStopped,
 } from "./nativeDialogFallback.js";
 import {
   DESKTOP_DIALOG_READY_CHANNEL,
@@ -91,6 +98,7 @@ import {
 } from "./exportDownloadCoordinator.js";
 
 let mainWindow: BrowserWindow | null = null;
+let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
 let mainExportDownloadCoordinator: ExportDownloadCoordinator | null = null;
 let desktopClientConfigReady = false;
 const trustedRememberUiGate = new TrustedRememberUiGate();
@@ -181,6 +189,37 @@ for (const method of ["log", "info", "warn", "error", "debug"] as const) {
     }
   };
 }
+
+// Crashpad 必须在创建任何 renderer 之前启动。转储只写 userData/Crashpad，明确不上传；
+// 这样下一轮真机既能从 main 日志看到 reason/exitCode，也能保留本地 minidump。
+const crashDumpsDir = path.join(userDataDir, "Crashpad");
+try {
+  mkdirSync(crashDumpsDir, { recursive: true });
+  app.setPath("crashDumps", crashDumpsDir);
+  crashReporter.start({
+    uploadToServer: false,
+    globalExtra: {
+      appMode: app.isPackaged ? "packaged" : "development",
+    },
+  });
+  console.info("[process-lifecycle] crash-reporter-started", {
+    crashDumpsDir,
+    uploadToServer: false,
+  });
+} catch (error) {
+  console.error("[process-lifecycle] crash-reporter-start-failed", {
+    crashDumpsDir,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+app.on("child-process-gone", (_event, details) => {
+  handleChildProcessGone(details, {
+    recoverGpu: (gpuDetails) => {
+      mainWindowProcessMonitor?.requestGpuRecovery(gpuDetails);
+    },
+  });
+});
 
 // 仅在「从 WSL/UNC 网络路径运行」或「Linux」时禁用硬件加速,走软件渲染(SwiftShader)。
 // 这些环境下 electron 的 GPU 子进程会启动失败(error_code=18)→ 反复崩溃 → FATAL
@@ -1264,6 +1303,16 @@ async function createWindowOnce() {
   });
 
   attachRendererDiagnostics(contentWebContents, desktopLogDir);
+  const processMonitor = attachMainWindowProcessMonitor(contentWebContents, {
+    isQuitting: () => quitCoordinator.isQuitting(),
+    showRecoveryStopped: () => showNativeRendererRecoveryStopped(contentWindow),
+  });
+  mainWindowProcessMonitor = processMonitor;
+  contentWindow.once("closed", () => {
+    if (mainWindowProcessMonitor === processMonitor) {
+      mainWindowProcessMonitor = null;
+    }
+  });
 
   contentWebContents.on(
     "did-start-navigation",

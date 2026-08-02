@@ -20,25 +20,6 @@ export function attachRendererDiagnostics(contents: WebContents, logDir: string)
     ]);
   });
 
-  contents.on("render-process-gone", (_event, details) => {
-    const reason = details?.reason ?? "unknown";
-    const exitCode = details?.exitCode ?? "unknown";
-    const line = `render-process-gone reason=${reason} exitCode=${exitCode}`;
-    console.error("[renderer]", line);
-    transport.write("error", [line]);
-  });
-
-  contents.on("unresponsive", () => {
-    const line = "unresponsive";
-    console.error("[renderer]", line);
-    transport.write("error", [line]);
-  });
-
-  contents.on("responsive", () => {
-    const line = "responsive";
-    console.info("[renderer]", line);
-    transport.write("info", [line]);
-  });
 }
 
 export function formatRendererConsoleLine(input: {

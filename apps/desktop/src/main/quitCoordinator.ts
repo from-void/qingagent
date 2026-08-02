@@ -17,6 +17,7 @@ export interface DesktopQuitCoordinatorOptions {
 export interface DesktopQuitCoordinator {
   handleBeforeQuit(event: BeforeQuitEvent): Promise<void> | undefined;
   handleWindowClose(event: BeforeQuitEvent): void;
+  isQuitting(): boolean;
 }
 
 export const DESKTOP_QUIT_DEADLINE_MS = 10_000;
@@ -34,6 +35,9 @@ export function createDesktopQuitCoordinator(
   let windowCloseQuitRequested = false;
 
   return {
+    isQuitting() {
+      return completion !== undefined || resumed;
+    },
     handleBeforeQuit(event) {
       if (resumed) return undefined;
       event.preventDefault();

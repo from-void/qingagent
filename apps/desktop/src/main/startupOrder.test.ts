@@ -62,6 +62,23 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   assert.doesNotMatch(readStartupShellHtml(source), /https?:\/\//i, "启动壳不得引用外部资源");
 });
 
+test("Crashpad 在任何 renderer 创建前启用且只写本地", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const mkdirLine = source.indexOf("mkdirSync(crashDumpsDir, { recursive: true })");
+  const setPathLine = source.indexOf('app.setPath("crashDumps", crashDumpsDir)');
+  const startLine = source.indexOf("crashReporter.start({");
+  const browserWindowLine = source.indexOf("mainWindow = new BrowserWindow(");
+  const crashReporterSource = source.slice(startLine, browserWindowLine);
+
+  assert.ok(
+    mkdirLine >= 0 && mkdirLine < setPathLine && setPathLine < startLine,
+    "Crashpad 目录必须先创建，再覆盖 crashDumps 并启动 reporter",
+  );
+  assert.ok(startLine < browserWindowLine, "Crashpad 必须早于首个主窗 renderer 启动");
+  assert.match(crashReporterSource, /uploadToServer:\s*false/);
+  assert.match(source, /app\.on\("child-process-gone"/);
+});
+
 test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并由恢复流程保留目标 URL", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const serverReadyLine = source.indexOf("({ port } = await serverReady)");

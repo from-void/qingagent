@@ -101,6 +101,26 @@ function paragraphDoc(text: string): PmDoc {
   } as PmDoc;
 }
 
+function longParagraphDoc(charCount: number): PmDoc {
+  const paragraphChars = 50;
+  const content = Array.from(
+    { length: Math.ceil(charCount / paragraphChars) },
+    (_, index) => {
+      const remaining = charCount - index * paragraphChars;
+      return {
+        type: "paragraph",
+        attrs: { blockId: `long-p-${index}` },
+        content: [{ type: "text", text: "长".repeat(Math.min(paragraphChars, remaining)) }],
+      };
+    },
+  );
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content,
+  } as PmDoc;
+}
+
 function listDoc(): PmDoc {
   return {
     type: "doc",
@@ -321,6 +341,36 @@ function pressEnter(editor: Editor): boolean {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
+  it("13,250 字多段正文外部 setContent 与重新挂载均保持完整页面", async () => {
+    let editor: Editor | null = null;
+    const longDoc = longParagraphDoc(13_250);
+    const handleEditorReady = (readyEditor: Editor | null) => {
+      editor = readyEditor;
+    };
+
+    renderDoc(paragraphDoc("短稿"), 1, handleEditorReady);
+    await flush();
+    const externalLoadStartedAt = performance.now();
+    renderDoc(longDoc, 2, handleEditorReady);
+    await flush();
+    const externalLoadMs = performance.now() - externalLoadStartedAt;
+
+    expect(editor).not.toBeNull();
+    expect(editor!.state.doc.textContent.length).toBe(13_250);
+    expect(host.querySelector(".ProseMirror")?.textContent?.length).toBe(13_250);
+    expect(document.body.textContent?.length).toBeGreaterThanOrEqual(13_250);
+    expect(externalLoadMs).toBeLessThan(2_000);
+
+    act(() => root.render(<div />));
+    await flush();
+    renderDoc(longDoc, 2, handleEditorReady);
+    await flush();
+
+    expect(editor).not.toBeNull();
+    expect(editor!.state.doc.textContent.length).toBe(13_250);
+    expect(host.querySelector(".ProseMirror")?.textContent?.length).toBe(13_250);
+  });
+
   it("同一 version 的流式草稿内容变化会持续刷新已挂载编辑器", async () => {
     let editor: Editor | null = null;
     const handleEditorReady = (readyEditor: Editor | null) => {

@@ -56,6 +56,7 @@ import {
 import {
   chatMessageAdded,
   newId,
+  normalizeLegacyToolTranscriptMessages,
   nowIso,
   streamEnd,
   streamStart,
@@ -267,6 +268,9 @@ export async function* runAgentTurn(
   state._abortController = abortController;
   state._activeTurnPromise = turnCompletion.promise;
   state._suspendedThisTurn = false;
+  // 老会话只在首次进入新版时做一次确定性角色迁移；随后持久化的历史继续 append-only，
+  // 不往 system 前缀塞逐轮变化内容，避免长期牺牲 DeepSeek 前缀缓存命中。
+  state.messages = normalizeLegacyToolTranscriptMessages(state.messages);
   let turnRequestContext: RequestContext | undefined;
   let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
   let omTurnStartMessageIndex = state.messages.length;

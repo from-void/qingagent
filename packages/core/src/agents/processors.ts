@@ -21,6 +21,7 @@ import {
   resolveDeepseekRouterModelId,
 } from "../llm/modelConfig.js";
 import { toolSearchProcessorFromRequestContext } from "./toolSearch.js";
+import { TOOL_TRANSCRIPT_OUTPUT_GUARD } from "./toolTranscriptOutputGuard.js";
 
 export const QINGAGENT_BATCH_PARTS_SIZE = 8;
 export const QINGAGENT_BATCH_PARTS_MAX_WAIT_MS = 10;
@@ -278,7 +279,10 @@ export function buildQingagentOutputProcessors({
   requestContext?: RequestContext;
 } = {}): OutputProcessorOrWorkflow[] {
   const flags = resolveQingagentProcessorFlags();
-  const processors: OutputProcessorOrWorkflow[] = [DEFAULT_BATCH_PARTS_PROCESSOR];
+  const processors: OutputProcessorOrWorkflow[] = [
+    DEFAULT_BATCH_PARTS_PROCESSOR,
+    TOOL_TRANSCRIPT_OUTPUT_GUARD,
+  ];
   if (hasOutputLlmGuardrail(flags)) {
     const llmGuardrails = buildOutputGuardrailWorkflow(
       flags,

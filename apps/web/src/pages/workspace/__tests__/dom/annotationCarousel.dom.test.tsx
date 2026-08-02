@@ -303,7 +303,7 @@ describe("AnnotationCarousel hover card", () => {
     expect(editorHost!.querySelector('[data-annotation-group="g2"]')).toBeNull();
   });
 
-  it("翻页卡暂隐时 mouseout 与 mouseleave 推满关闭延时仍被导航 pin 保住", async () => {
+  it("点击翻页升级为 pinned，移出与所有延时跑完后仍连续显示并切换内容", async () => {
     vi.useFakeTimers();
     createEditor();
     host = document.createElement("div");
@@ -333,29 +333,104 @@ describe("AnnotationCarousel hover card", () => {
     });
 
     const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
-    await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+    const nextButton = card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!;
+    await act(async () => nextButton.click());
     expect(card.dataset.groupId).toBe("g2");
-    expect(card.style.visibility).toBe("hidden");
+    expect(card.style.visibility).toBe("visible");
+    expect(card.textContent).toContain("第 2 / 共 2 处");
+    expect(card.textContent).toContain("表述重复");
 
     await act(async () => {
       firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
       card.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
       card.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: document.body }));
+      nextButton.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: document.body }));
       firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
-      vi.advanceTimersByTime(150);
+      vi.runAllTimers();
     });
 
     expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
     expect(card.style.visibility).toBe("visible");
 
-    await act(async () => window.dispatchEvent(new Event("resize")));
-    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g1");
+    expect(card.style.visibility).toBe("visible");
+    expect(card.textContent).toContain("第 1 / 共 2 处");
+    expect(card.textContent).toContain("事实有误");
+  });
 
+  it("pinned 下 Escape、点外与正文手动滚动均强制关卡", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, groups), []);
+      return <AnnotationCarousel
+        groups={groups}
+        editorDom={editor!.view.dom}
+        onAccept={() => true}
+        onIgnore={() => undefined}
+      />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+    const openAndPin = async () => {
+      await act(async () => {
+        firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        vi.advanceTimersByTime(80);
+      });
+      const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
+      await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+      expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    };
+
+    await openAndPin();
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(host!.querySelector(".annotation-hover-card")).toBeNull();
+
+    await openAndPin();
+    await act(async () => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(host!.querySelector(".annotation-hover-card")).toBeNull();
+
+    await openAndPin();
+    await act(async () => vi.advanceTimersByTime(201));
+    await act(async () => editor!.view.dom.dispatchEvent(new Event("scroll")));
+    expect(host!.querySelector(".annotation-hover-card")).toBeNull();
+  });
+
+  it("hover-only 未点击时移出锚点仍按原延时关卡", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, groups), []);
+      return <AnnotationCarousel
+        groups={groups}
+        editorDom={editor!.view.dom}
+        onAccept={() => true}
+        onIgnore={() => undefined}
+      />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
     await act(async () => {
-      card.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
-      vi.advanceTimersByTime(1_000);
+      firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+      firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(149);
     });
-    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    expect(host!.querySelector(".annotation-hover-card")).not.toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(host!.querySelector(".annotation-hover-card")).toBeNull();
   });
 
   it("自定义与预置审查共用 active 锚点，hover 均可开卡且自定义意见可回填", async () => {

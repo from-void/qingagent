@@ -10,7 +10,6 @@ import { CaretIcon } from "./icons";
 const SHOW_DELAY_MS = 80;
 const HIDE_DELAY_MS = 150;
 const NAVIGATION_SCROLL_IDLE_MS = 200;
-const NAVIGATION_HOVER_GRACE_MS = 250;
 const VIEWPORT_GUTTER = 12;
 const CARD_GAP = 8;
 
@@ -19,14 +18,6 @@ type HoveredAnnotation = {
   groupIds: string[];
   anchor: HTMLElement;
   anchorRect: DOMRect;
-};
-
-type NavigationPin = {
-  groupId: string;
-  target: HTMLElement;
-  anchorRectReady: boolean;
-  visibleFrameReady: boolean;
-  pendingHide: "immediate" | "delayed" | null;
 };
 
 function annotationGroupIdsAtTarget(
@@ -100,11 +91,8 @@ export function AnnotationCarousel(props: {
   const hideTimerRef = useRef<number | null>(null);
   const navigationScrollRef = useRef(false);
   const navigationScrollTimerRef = useRef<number | null>(null);
-  const navigationPinRef = useRef<NavigationPin | null>(null);
   const navigationFrameRef = useRef<number | null>(null);
-  const navigationGraceTimerRef = useRef<number | null>(null);
-  const cardHoveredRef = useRef(false);
-  const hoveredAnchorRef = useRef<HTMLElement | null>(null);
+  const pinnedRef = useRef(false);
   const hoveredKeyRef = useRef<string | null>(null);
   hoveredKeyRef.current = hovered ? `${hovered.groupId}:${hovered.groupIds.join(",")}` : null;
 
@@ -127,65 +115,31 @@ export function AnnotationCarousel(props: {
       navigationScrollRef.current = false;
     }, NAVIGATION_SCROLL_IDLE_MS);
   };
-  const deferHideWhileNavigating = (kind: NonNullable<NavigationPin["pendingHide"]>) => {
-    const pin = navigationPinRef.current;
-    if (!pin) return false;
-    if (kind === "immediate" || pin.pendingHide === null) pin.pendingHide = kind;
-    clearTimer(hideTimerRef);
-    return true;
-  };
-  const hideNow = () => {
-    if (deferHideWhileNavigating("immediate")) return;
+  const closeCard = () => {
     clearTimer(showTimerRef);
     clearTimer(hideTimerRef);
+    clearTimer(navigationScrollTimerRef);
+    clearNavigationFrame();
+    navigationScrollRef.current = false;
+    pinnedRef.current = false;
     setHovered(null);
   };
   const scheduleHide = () => {
-    if (deferHideWhileNavigating("delayed")) return;
-    clearTimer(hideTimerRef);
-    hideTimerRef.current = window.setTimeout(() => {
-      hideTimerRef.current = null;
-      setHovered(null);
-    }, HIDE_DELAY_MS);
-  };
-  const isPointerWithinNavigationTarget = (pin: NavigationPin) => {
-    const anchor = hoveredAnchorRef.current;
-    return cardHoveredRef.current
-      || Boolean(anchor && (anchor === pin.target || anchor.contains(pin.target) || pin.target.contains(anchor)));
-  };
-  const releaseNavigationPin = (keepOpen: boolean) => {
-    const pin = navigationPinRef.current;
-    if (!pin) return;
-    navigationPinRef.current = null;
-    clearNavigationFrame();
-    clearTimer(navigationGraceTimerRef);
-    if (keepOpen) {
+    if (pinnedRef.current) {
       cancelHide();
       return;
     }
-    if (pin.pendingHide === "immediate") hideNow();
-    else if (pin.pendingHide === "delayed") scheduleHide();
+    clearTimer(hideTimerRef);
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      if (pinnedRef.current) return;
+      setHovered(null);
+    }, HIDE_DELAY_MS);
   };
-  const releaseNavigationPinIfHovered = () => {
-    const pin = navigationPinRef.current;
-    if (!pin?.visibleFrameReady || !isPointerWithinNavigationTarget(pin)) return;
-    releaseNavigationPin(true);
-  };
-  const beginNavigationPin = (groupId: string, target: HTMLElement, anchorRectReady: boolean) => {
-    clearNavigationFrame();
-    clearTimer(navigationGraceTimerRef);
+  const pinCard = () => {
+    pinnedRef.current = true;
     clearTimer(showTimerRef);
     cancelHide();
-    protectNavigationScroll();
-    cardHoveredRef.current = false;
-    hoveredAnchorRef.current = null;
-    navigationPinRef.current = {
-      groupId,
-      target,
-      anchorRectReady,
-      visibleFrameReady: false,
-      pendingHide: null,
-    };
   };
 
   useEffect(() => {
@@ -200,10 +154,8 @@ export function AnnotationCarousel(props: {
       const groupIds = annotationGroupIdsAtTarget(event.target as Element, editorDom, props.groups);
       const groupId = groupIds[0];
       if (!groupId) return;
-      hoveredAnchorRef.current = target;
-      releaseNavigationPinIfHovered();
       cancelHide();
-      if (navigationPinRef.current) return;
+      if (pinnedRef.current) return;
       if (hoveredKeyRef.current === `${groupId}:${groupIds.join(",")}`) return;
       clearTimer(showTimerRef);
       showTimerRef.current = window.setTimeout(() => {
@@ -220,14 +172,6 @@ export function AnnotationCarousel(props: {
       if (!target || !editorDom.contains(target)) return;
       const related = event.relatedTarget;
       if (related instanceof Node && target.contains(related)) return;
-      const relatedElement = related instanceof Element
-        ? related
-        : related instanceof Node
-          ? related.parentElement
-          : null;
-      const relatedAnchor = relatedElement?.closest<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? null;
-      hoveredAnchorRef.current = relatedAnchor && editorDom.contains(relatedAnchor) ? relatedAnchor : null;
-      releaseNavigationPinIfHovered();
       if (related instanceof Node && cardRef.current?.contains(related)) return;
       clearTimer(showTimerRef);
       scheduleHide();
@@ -239,40 +183,46 @@ export function AnnotationCarousel(props: {
         protectNavigationScroll();
         return;
       }
-      hideNow();
+      closeCard();
+    };
+    const closeOnOutsideMouseDown = (event: globalThis.MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && cardRef.current?.contains(target)) return;
+      closeCard();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeCard();
     };
     editorDom.addEventListener("mouseover", onMouseOver);
     editorDom.addEventListener("mouseout", onMouseOut);
     window.addEventListener("resize", closeOnViewportChange);
     window.addEventListener("scroll", closeOnViewportChange, true);
+    document.addEventListener("mousedown", closeOnOutsideMouseDown);
+    document.addEventListener("keydown", closeOnEscape);
     return () => {
       editorDom.removeEventListener("mouseover", onMouseOver);
       editorDom.removeEventListener("mouseout", onMouseOut);
       window.removeEventListener("resize", closeOnViewportChange);
       window.removeEventListener("scroll", closeOnViewportChange, true);
+      document.removeEventListener("mousedown", closeOnOutsideMouseDown);
+      document.removeEventListener("keydown", closeOnEscape);
       clearTimer(showTimerRef);
       clearTimer(hideTimerRef);
       clearTimer(navigationScrollTimerRef);
-      clearTimer(navigationGraceTimerRef);
       clearNavigationFrame();
-      navigationPinRef.current = null;
       navigationScrollRef.current = false;
-      cardHoveredRef.current = false;
-      hoveredAnchorRef.current = null;
     };
   }, [props.editorDom, props.groups]);
 
   useEffect(() => {
     if (hovered && !props.groups.some((group) => group.id === hovered.groupId && group.status === "reviewing")) {
-      hideNow();
+      closeCard();
     }
   }, [hovered, props.groups]);
 
   useLayoutEffect(() => {
     const card = cardRef.current;
     if (!card || !hovered) return;
-    const pin = navigationPinRef.current;
-    if (pin?.groupId === hovered.groupId && !pin.anchorRectReady) return;
     const cardRect = card.getBoundingClientRect();
     const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - cardRect.width - VIEWPORT_GUTTER);
     const left = Math.min(maxLeft, Math.max(VIEWPORT_GUTTER, hovered.anchorRect.left));
@@ -282,28 +232,6 @@ export function AnnotationCarousel(props: {
       : Math.min(window.innerHeight - cardRect.height - VIEWPORT_GUTTER, hovered.anchorRect.bottom + CARD_GAP);
     setPosition({ left, top: Math.max(VIEWPORT_GUTTER, top), visibility: "visible" });
   }, [hovered]);
-
-  useLayoutEffect(() => {
-    const pin = navigationPinRef.current;
-    if (!pin || pin.groupId !== hovered?.groupId || !pin.anchorRectReady || position.visibility !== "visible") return;
-    clearNavigationFrame();
-    const expectedPin = pin;
-    navigationFrameRef.current = window.requestAnimationFrame(() => {
-      navigationFrameRef.current = null;
-      if (navigationPinRef.current !== expectedPin) return;
-      expectedPin.visibleFrameReady = true;
-      if (isPointerWithinNavigationTarget(expectedPin)) {
-        releaseNavigationPin(true);
-        return;
-      }
-      clearTimer(navigationGraceTimerRef);
-      navigationGraceTimerRef.current = window.setTimeout(() => {
-        navigationGraceTimerRef.current = null;
-        if (navigationPinRef.current !== expectedPin) return;
-        releaseNavigationPin(isPointerWithinNavigationTarget(expectedPin));
-      }, NAVIGATION_HOVER_GRACE_MS);
-    });
-  }, [hovered, position]);
 
   const reviewingGroups = props.groups
     .filter((item) => item.status === "reviewing")
@@ -325,12 +253,9 @@ export function AnnotationCarousel(props: {
   const severitySummary = buildAnnotationSeveritySummary(reviewingGroups);
 
   const keepOpen = () => {
-    cardHoveredRef.current = true;
     cancelHide();
-    releaseNavigationPinIfHovered();
   };
   const leaveCard = (event: ReactMouseEvent<HTMLElement>) => {
-    cardHoveredRef.current = false;
     const related = event.relatedTarget;
     if (related instanceof Node && props.editorDom?.contains(related)) {
       const element = related instanceof Element ? related : related.parentElement;
@@ -339,11 +264,10 @@ export function AnnotationCarousel(props: {
     scheduleHide();
   };
   const moveGroup = (delta: -1 | 1) => {
-    cancelHide();
+    pinCard();
     if (hasOverlap && hovered && hitIndex >= 0) {
       const nextGroup = hitGroups[(hitIndex + delta + hitGroups.length) % hitGroups.length];
       if (!nextGroup) return;
-      beginNavigationPin(nextGroup.id, hovered.anchor, true);
       setHovered({ ...hovered, groupId: nextGroup.id });
       return;
     }
@@ -354,22 +278,19 @@ export function AnnotationCarousel(props: {
       props.editorDom?.querySelectorAll<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? [],
     ).find((anchor) => anchor.dataset.annotationGroup === nextGroup.id);
     if (!target) return;
-    beginNavigationPin(nextGroup.id, target, false);
+    clearNavigationFrame();
+    protectNavigationScroll();
     target.scrollIntoView?.({ block: "center", behavior: "auto" });
-    setPosition({ visibility: "hidden" });
     setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchor: target, anchorRect: target.getBoundingClientRect() });
     navigationFrameRef.current = window.requestAnimationFrame(() => {
       navigationFrameRef.current = null;
-      const pin = navigationPinRef.current;
-      if (pin?.groupId !== nextGroup.id || pin.target !== target) return;
       if (!target.isConnected) {
-        releaseNavigationPin(false);
-        hideNow();
+        closeCard();
         return;
       }
-      pin.anchorRectReady = true;
-      setPosition({ visibility: "hidden" });
-      setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchor: target, anchorRect: target.getBoundingClientRect() });
+      setHovered((current) => current?.groupId === nextGroup.id
+        ? { ...current, anchor: target, anchorRect: target.getBoundingClientRect() }
+        : current);
     });
   };
 
@@ -383,6 +304,7 @@ export function AnnotationCarousel(props: {
     style={position}
     onMouseEnter={keepOpen}
     onMouseLeave={leaveCard}
+    onClickCapture={pinCard}
   >
     <div className="ahc-body">
       <header className="ahc-head">
@@ -420,8 +342,8 @@ export function AnnotationCarousel(props: {
     </div>
     <footer>
       <div className="ahc-ignore-actions">
-        <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); hideNow(); }}>忽略</button>
-        <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); hideNow(); }}>下次不再提示</button>
+        <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); closeCard(); }}>忽略</button>
+        <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); closeCard(); }}>下次不再提示</button>
       </div>
       <div className="ahc-accept-actions">
         <span>将追加到输入框，由你确认发送</span>
@@ -429,7 +351,7 @@ export function AnnotationCarousel(props: {
           className="ahc-accept"
           type="button"
           disabled={!resolvedSuggestion}
-          onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) hideNow(); }}
+          onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
         >生成修改</button>
       </div>
     </footer>

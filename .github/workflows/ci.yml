@@ -86,8 +86,18 @@ jobs:
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
+      # desktop 包的真实 Electron 夹具即使传了 --headless,在 Linux 上仍需要可用的
+      # X display 和 D-Bus session。显式安装并在下一步同时启动两者,避免无头 runner
+      # 因 Failed to connect to the bus 卡住至夹具超时。
+      - name: install headless Electron runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dbus-x11 xvfb xauth
+
       - name: pnpm test (unit, parallel)
-        run: pnpm test
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: dbus-run-session -- xvfb-run -a pnpm test
 
   heavy-perf-tests:
     name: Heavy / Perf 测试（资源隔离层）
@@ -117,8 +127,10 @@ jobs:
       # 需要:① 中文字体(导出排版用 Noto Sans/Serif CJK,family 名为 "Noto Sans CJK SC"/"Noto Serif CJK SC");
       #       ② Playwright 的 Chromium 二进制 + 系统依赖。没装 Chromium 时 PDF 烟测会自动 skip
       #       (browserTestGate.ts 探测),装上即真正跑、覆盖真实 PDF 字节。
-      - name: install Noto CJK font (PDF export render)
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: install Linux browser runtime (PDF export render)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dbus-x11 fonts-noto-cjk xvfb xauth
 
       - name: install Playwright Chromium (PDF export render)
         run: |
@@ -131,7 +143,11 @@ jobs:
           echo "browser pool -> $CHROMIUM_PATH"
 
       - name: pnpm test:heavy (serial)
-        run: pnpm test:heavy
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: dbus-run-session -- xvfb-run -a pnpm test:heavy
 
       - name: pnpm test:perf (serial)
-        run: pnpm test:perf
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: dbus-run-session -- xvfb-run -a pnpm test:perf

@@ -1,5 +1,6 @@
 import {
   maskSensitiveAnnotationGroup,
+  type AnnotationGroup,
   type ReviewContext,
   type SkillRef,
 } from "@qingagent/contract-ts";
@@ -110,7 +111,9 @@ import {
 } from "../tools/annotationGroups.js";
 import {
   insertAnnotationGroups,
+  listReviewDismissalSignals,
   replaceAnnotationGroupsByOrigin,
+  type ReviewDismissalSignal,
 } from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
@@ -131,6 +134,29 @@ import {
 } from "@qingagent/pm-schema";
 
 const logger = mastra.getLogger();
+
+function reviewDismissalKey(origin: string, quote: string): string {
+  return `${origin}\u0000${quote}`;
+}
+
+function isRememberedReviewDismissal(
+  group: AnnotationGroup,
+  signals: ReadonlySet<string>,
+): boolean {
+  // summary 会随模型措辞漂移，位置会随文档编辑漂移；严格的打码后原文 + 完整 origin
+  // 既能跨重跑稳定命中，也不会把另一处文本或另一审查模板一并抑制。
+  return group.anchors.some((anchor) =>
+    signals.has(reviewDismissalKey(group.origin, anchor.quote))
+  );
+}
+
+function rememberedReviewDismissalKeys(
+  signals: readonly ReviewDismissalSignal[],
+): Set<string> {
+  return new Set(signals
+    .filter((signal) => signal.quote.length > 0)
+    .map((signal) => reviewDismissalKey(signal.origin, signal.quote)));
+}
 
 function annotationGroupSemanticErrors(source: AnnotationGroupInput, groupIndex: number): string[] {
   const prefix = `第 ${groupIndex + 1} 组`;
@@ -739,7 +765,13 @@ export function createSessionScopedTools(
     id: "create_annotation_groups",
     description: "把审查发现的问题按组创建批注。一个问题一组，可关联多个正文精确锚点；这是批注的唯一生产入口。同一内置审查类型每轮复用固定 origin，角色/自定义审查分别使用『角色审查:<模板名>』『自定义审查:<模板名>』，新一轮只替换同 origin 的旧批注。",
     inputSchema: createAnnotationGroupsInputSchema,
-    outputSchema: z.object({ ok: z.boolean(), groupCount: z.number(), anchorCount: z.number(), errors: z.array(z.string()) }),
+    outputSchema: z.object({
+      ok: z.boolean(),
+      groupCount: z.number(),
+      anchorCount: z.number(),
+      rememberedDismissalCount: z.number().describe("因用户选择下次不再提示而未创建的批注数；这些批注不要重试"),
+      errors: z.array(z.string()),
+    }),
     execute: async (input, context) => {
       const writeGuard = state
         ? captureTurnWriteGuard(state, context)
@@ -750,13 +782,17 @@ export function createSessionScopedTools(
           field: input._parseFailure.field,
           error: input._parseFailure.message,
         });
-        return { ok: false, groupCount: 0, anchorCount: 0, errors: [input._parseFailure.message] };
+        return { ok: false, groupCount: 0, anchorCount: 0, rememberedDismissalCount: 0, errors: [input._parseFailure.message] };
       }
-      if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
+      if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, rememberedDismissalCount: 0, errors: ["当前没有可批注文档"] };
       const blocks = collectTopLevelTextBlocks(state.doc);
       const documentText = blocks.map((block) => block.text).join("\n");
       const materialTexts = [...materials.values()].map((material) => material.text);
       const errors: string[] = [];
+      const dismissalKeys = rememberedReviewDismissalKeys(
+        await listReviewDismissalSignals(state.docId),
+      );
+      let rememberedDismissalCount = 0;
       const currentReviewContext = context?.requestContext?.get("reviewContext") as ReviewContext | null | undefined;
       const forcedOrigin = reviewOrigin(currentReviewContext);
       const groups = input.groups.flatMap((modelSource, groupIndex) => {
@@ -815,7 +851,7 @@ export function createSessionScopedTools(
           : source.origin === "consistency"
             ? `文内冲突原句：${source.documentQuote}`
             : null;
-        return [maskSensitiveAnnotationGroup({
+        const group = maskSensitiveAnnotationGroup({
           id: `annotation-${crypto.randomUUID()}`,
           summary: source.summary,
           note: evidence ? `${source.note}\n${evidence}` : source.note,
@@ -824,7 +860,12 @@ export function createSessionScopedTools(
           severity: source.severity,
           status: "reviewing" as const,
           anchors,
-        })];
+        });
+        if (isRememberedReviewDismissal(group, dismissalKeys)) {
+          rememberedDismissalCount += 1;
+          return [];
+        }
+        return [group];
       });
       if (groups.length) {
         const write = annotationGroupWriteQueue.then(async () => {
@@ -855,7 +896,19 @@ export function createSessionScopedTools(
         annotationGroupWriteQueue = write.catch(() => undefined);
         await write;
       }
-      return { ok: groups.length > 0, groupCount: groups.length, anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0), errors };
+      if (rememberedDismissalCount > 0) {
+        logger.info("[review] 已按文档内不再提示信号过滤批注", {
+          docId: state.docId,
+          rememberedDismissalCount,
+        });
+      }
+      return {
+        ok: groups.length > 0 || rememberedDismissalCount > 0,
+        groupCount: groups.length,
+        anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0),
+        rememberedDismissalCount,
+        errors,
+      };
     },
   });
 

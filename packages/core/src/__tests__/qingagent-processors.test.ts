@@ -43,13 +43,16 @@ afterEach(() => {
 });
 
 describe("qingagent processors", () => {
-  it("默认只启用非 LLM 型 UnicodeNormalizer 与 BatchPartsProcessor", () => {
+  it("默认启用 UnicodeNormalizer、BatchParts 与工具回放输出守卫", () => {
     resetProcessorEnv();
 
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
     ]);
-    expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
+    expect(processorIds(buildQingagentOutputProcessors())).toEqual([
+      "batch-parts",
+      "tool-transcript-output-guard",
+    ]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
       "askUserQuestion",
@@ -153,7 +156,10 @@ describe("qingagent processors", () => {
       "unicode-normalizer",
       "qingagent-input-llm-guardrails",
     ]);
-    expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
+    expect(processorIds(buildQingagentOutputProcessors())).toEqual([
+      "batch-parts",
+      "tool-transcript-output-guard",
+    ]);
 
     resetProcessorEnv();
     process.env[QINGAGENT_PROCESSOR_ENV.pii] = "true";
@@ -163,6 +169,7 @@ describe("qingagent processors", () => {
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
       "batch-parts",
+      "tool-transcript-output-guard",
       "qingagent-output-llm-guardrails",
     ]);
 
@@ -174,6 +181,7 @@ describe("qingagent processors", () => {
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
       "batch-parts",
+      "tool-transcript-output-guard",
       "qingagent-output-llm-guardrails",
     ]);
   });

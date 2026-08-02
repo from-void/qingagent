@@ -297,6 +297,7 @@ export const qingagentAgent = new Agent({
   model: ({ requestContext }) => getRepairingModelFor(requestContext),
   inputProcessors: buildQingagentInputProcessors,
   outputProcessors: buildQingagentOutputProcessors,
+  maxProcessorRetries: 1,
   instructions: () => buildSystemPrompt(),
   tools: (): ToolsInput => buildQingagentStaticTools(),
   hooks: {

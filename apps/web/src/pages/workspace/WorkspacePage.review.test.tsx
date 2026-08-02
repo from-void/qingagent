@@ -3268,6 +3268,65 @@ describe("WorkspacePage review controls", () => {
       .every((text) => text.includes("已拒绝"))).toBe(true);
   });
 
+  it("ReviewOutcomeCard 每处修改横排为原文箭头新文，单条目不渲染分隔线", async () => {
+    const { ReviewOutcomeCard } = await import("./components/ReviewOutcomeCard");
+
+    await render(
+      <ReviewOutcomeCard
+        data={{
+          acceptedCount: 0,
+          rejectedCount: 1,
+          hunks: [{
+            verdict: "rejected",
+            blockSummary: "职业替换",
+            beforeText: "人",
+            afterText: "司机",
+          }],
+        }}
+      />,
+    );
+    const header = host!.querySelector<HTMLButtonElement>(".u-card-hd");
+    act(() => {
+      header!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const row = host!.querySelector<HTMLElement>(".wf-rvo-row");
+    expect(row).not.toBeNull();
+    expect(row!.querySelector(".wf-rvo-verdict")?.textContent).toBe("已拒绝");
+    expect(row!.querySelector(".wf-rvo-before")?.textContent).toBe("人");
+    expect(row!.querySelector(".wf-rvo-arrow")?.textContent).toBe("→");
+    expect(row!.querySelector(".wf-rvo-after")?.textContent).toBe("司机");
+    expect(row!.querySelector(".wf-rvo-before")?.getAttribute("title")).toBe("人");
+    expect(row!.querySelector(".wf-rvo-after")?.getAttribute("title")).toBe("司机");
+    expect(row!.classList.contains("wf-rvo-row--divided")).toBe(false);
+  });
+
+  it("ReviewOutcomeCard 用紧凑占位文案表达纯新增与纯删除", async () => {
+    const { ReviewOutcomeCard } = await import("./components/ReviewOutcomeCard");
+
+    await render(
+      <ReviewOutcomeCard
+        data={{
+          acceptedCount: 1,
+          rejectedCount: 1,
+          hunks: [
+            { verdict: "accepted", blockSummary: "补充职业", beforeText: "", afterText: "司机" },
+            { verdict: "rejected", blockSummary: "删除称谓", beforeText: "先生", afterText: "" },
+          ],
+        }}
+      />,
+    );
+    const header = host!.querySelector<HTMLButtonElement>(".u-card-hd");
+    act(() => {
+      header!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const rows = [...host!.querySelectorAll<HTMLElement>(".wf-rvo-row")];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toBe("已采纳（新增）→司机");
+    expect(rows[1]!.textContent).toBe("已拒绝先生→（删除）");
+  });
+
   it("失效 suggestion 的失败终态在聊天中只显示中性短文案", async () => {
     const { ChatMessageList } = await import("./components/ChatMessageList");
     const failedSpec: ToolCallSpec = {

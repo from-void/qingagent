@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReviewOutcome, ReviewOutcomeHunk } from "@qingagent/contract-ts";
 
 // 对话流里一轮 diff 审核结果的缩略卡片（以用户名义回流时渲染）。
-// 默认态:卡头计数 + 被拒项逐条一行简述（截断）;展开后看每处完整 before/after。
+// 默认态:卡头计数 + 被拒项逐条一行简述;展开后看全部修改。每处始终横排并单侧截断。
 // 处于 .ws-chat .u-scope 作用域内,复用 u-card token,无需额外包裹。
 
 function Chevron({ open }: { open: boolean }) {
@@ -20,46 +20,27 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function HunkDetail({ hunk }: { hunk: ReviewOutcomeHunk }) {
+function CompactHunkRow({ hunk }: { hunk: ReviewOutcomeHunk }) {
+  const beforeText = hunk.beforeText || "（新增）";
+  const afterText = hunk.afterText || "（删除）";
+
   return (
-    <div className="wf-rvo-detail" style={{ padding: "6px 0", borderTop: "var(--u-border)" }}>
-      <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginBottom: 4 }}>
-        <span
-          style={{
-            flex: "none",
-            fontSize: 11,
-            color: hunk.verdict === "accepted" ? "var(--u-ink-soft)" : "var(--u-ink-faint)",
-          }}
-        >
-          {hunk.verdict === "accepted" ? "已采纳" : "已拒绝"}
-        </span>
-        <span
-          style={{
-            color: "var(--u-ink)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={hunk.blockSummary}
-        >
-          {hunk.blockSummary || "（未命名片段）"}
-        </span>
-      </div>
-      {/* 始终渲染原/新两行,纯插入/纯删除时也让用户看清另一侧是「（空）」。 */}
-      <div className="wf-rvo-before" style={{ color: "var(--u-ink-faint)", whiteSpace: "pre-wrap", marginBottom: 2 }}>
-        <span style={{ userSelect: "none", marginRight: 6 }}>原</span>
-        {hunk.beforeText || "（空）"}
-      </div>
-      <div className="wf-rvo-after" style={{ color: "var(--u-ink-soft)", whiteSpace: "pre-wrap" }}>
-        <span style={{ userSelect: "none", marginRight: 6 }}>新</span>
-        {hunk.afterText || "（空）"}
-      </div>
+    <div
+      className="wf-rvo-detail wf-rvo-row"
+      aria-label={`${hunk.blockSummary || "修改"}：${beforeText}改为${afterText}`}
+    >
+      <span className="wf-rvo-verdict">
+        {hunk.verdict === "accepted" ? "已采纳" : "已拒绝"}
+      </span>
+      <span className="wf-rvo-text wf-rvo-before" title={beforeText}>{beforeText}</span>
+      <span className="wf-rvo-arrow" aria-hidden="true">→</span>
+      <span className="wf-rvo-text wf-rvo-after" title={afterText}>{afterText}</span>
     </div>
   );
 }
 
-/** 缩略态被拒项最多列几条,超出折叠成「另 N 处…」,避免气泡过长。 */
-const COLLAPSED_REJECTED_CAP = 4;
+/** 缩略态最多列几条,超出折叠成「另 N 处…」,避免气泡过长。 */
+const COLLAPSED_HUNK_CAP = 4;
 
 export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
   const [open, setOpen] = useState(false);
@@ -69,8 +50,8 @@ export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
   const rejectedCount = rejected.length;
   const acceptedCount = hunks.length - rejectedCount;
   const allRejected = acceptedCount === 0 && rejectedCount > 0;
-  const briefRejected = rejected.slice(0, COLLAPSED_REJECTED_CAP);
-  const moreRejected = rejectedCount - briefRejected.length;
+  const collapsedHunks = (rejectedCount > 0 ? rejected : hunks).slice(0, COLLAPSED_HUNK_CAP);
+  const moreCollapsed = (rejectedCount > 0 ? rejectedCount : hunks.length) - collapsedHunks.length;
 
   return (
     <div className="u-card wf-rvo-card" data-wf="ReviewOutcomeCard" style={{ marginBottom: 2 }}>
@@ -98,38 +79,22 @@ export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
 
       <div className="u-card-bd">
         {!open ? (
-          // 缩略态:只列被拒项一行简述,引导用户/模型聚焦未采纳的内容。
-          rejectedCount > 0 ? (
-            <div className="u-list">
-              {briefRejected.map((h, i) => (
-                <div className="u-list-row" key={`rvo-brief-${i}`}>
-                  <span className="u-list-ico" aria-hidden="true">✕</span>
-                  <div className="u-list-main">
-                    <div className="u-list-title" title={h.blockSummary}>
-                      {h.blockSummary || "（未命名片段）"}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {moreRejected > 0 ? (
-                <div className="u-list-row" key="rvo-brief-more">
-                  <span className="u-list-ico" aria-hidden="true">…</span>
-                  <div className="u-list-main">
-                    <div className="u-list-title" style={{ color: "var(--u-ink-faint)" }}>
-                      另 {moreRejected} 处（点击展开查看）
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div style={{ color: "var(--u-ink-faint)" }}>全部修改已采纳</div>
-          )
+          // 缩略态仍优先列被拒项;全部采纳时直接列采纳项。
+          <div className="wf-rvo-list">
+            {collapsedHunks.map((h, i) => (
+              <CompactHunkRow hunk={h} key={`rvo-brief-${i}`} />
+            ))}
+            {moreCollapsed > 0 ? (
+              <div className="wf-rvo-more" key="rvo-brief-more">
+                另 {moreCollapsed} 处（点击展开查看）
+              </div>
+            ) : null}
+          </div>
         ) : (
-          // 展开态:逐处完整 before/after。
-          <div>
-            {(data.hunks ?? []).map((h, i) => (
-              <HunkDetail hunk={h} key={`rvo-detail-${i}`} />
+          // 展开态:逐处展示完整清单,长文本通过各自的 title 查看全文。
+          <div className="wf-rvo-list">
+            {hunks.map((h, i) => (
+              <CompactHunkRow hunk={h} key={`rvo-detail-${i}`} />
             ))}
           </div>
         )}

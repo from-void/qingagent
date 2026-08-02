@@ -1378,8 +1378,8 @@ export function UIKitPage() {
         <Section idx="13" zh="审核态回流 · 修订" en="Review outcome / patch" id="review">
           <p className="uk-cap" style={{ display: "block", marginBottom: 12 }}>
             现役审核回流:用户在右侧审阅后点「提交(局部采纳)」或「放弃本轮修改」→ 以用户名义把
-            <code>reviewOutcome</code> 回流进对话流,渲染成 <code>ReviewOutcomeCard</code> 缩略卡(可展开看逐处
-            before/after);左侧对话流内联一条 <code>patchSummary</code> 工具条。全部走生产组件与真实分发路径。
+            <code>reviewOutcome</code> 回流进对话流,渲染成 <code>ReviewOutcomeCard</code> 缩略卡(逐处横排为
+            原文 → 新文,可展开全部);左侧对话流内联一条 <code>patchSummary</code> 工具条。全部走生产组件与真实分发路径。
           </p>
           <div id="view-workspace" className="uk-sp-view" style={{ height: "auto", overflow: "visible" }}>
             <div className="ws-left uk-sp-scope">

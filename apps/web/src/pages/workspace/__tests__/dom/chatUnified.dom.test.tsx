@@ -574,4 +574,15 @@ describe("chatUnified.css", () => {
     expect(chatCss).not.toContain(".u-command-stop");
     expect(chatCss).not.toContain(".u-command-actions");
   });
+
+  it("审核反馈条目保持单行且原文与新文各自截断", () => {
+    expect(chatCss).toMatch(
+      /\.u-scope \.wf-rvo-row \{[^}]*white-space: nowrap;[^}]*overflow: hidden;[^}]*\}/s,
+    );
+    expect(chatCss).toMatch(
+      /\.u-scope \.wf-rvo-text \{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;[^}]*\}/s,
+    );
+    const rowRule = chatCss.match(/\.u-scope \.wf-rvo-row \{[^}]*\}/s)?.[0] ?? "";
+    expect(rowRule).not.toContain("border");
+  });
 });

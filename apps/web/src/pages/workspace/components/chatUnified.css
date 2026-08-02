@@ -97,6 +97,20 @@
 /* 展开后 body 比卡头略深(用户:下边颜色比上面深一点),拉开层次 */
 .u-scope .u-card-bd { padding: var(--u-pad-y) var(--u-pad-x); border-top: var(--u-border); background: rgba(0, 0, 0, 0.16); color: var(--u-ink-soft); font-size: var(--u-fs); line-height: 1.6; }
 
+/* 审核反馈卡:一处修改严格占一行,原文/新文各自在自己的半侧截断。 */
+.u-scope .wf-rvo-card .u-card-bd { padding-top: 3px; padding-bottom: 3px; }
+.u-scope .wf-rvo-list { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.u-scope .wf-rvo-row {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 2px 0;
+  line-height: 1.4; white-space: nowrap; overflow: hidden;
+}
+.u-scope .wf-rvo-verdict { flex: none; width: 3em; color: var(--u-ink-faint); font-size: var(--u-fs-meta); }
+.u-scope .wf-rvo-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-scope .wf-rvo-before { color: var(--u-ink-faint); }
+.u-scope .wf-rvo-after { color: var(--u-ink-soft); }
+.u-scope .wf-rvo-arrow { flex: none; color: var(--u-ink-faint); user-select: none; }
+.u-scope .wf-rvo-more { padding: 2px 0 2px calc(3em + 6px); color: var(--u-ink-faint); line-height: 1.4; }
+
 /* 卡内列表(检索抓取行) */
 .u-scope .u-list { display: flex; flex-direction: column; }
 .u-scope .u-list-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: var(--u-border); }

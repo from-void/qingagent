@@ -181,7 +181,6 @@ function isBackgroundCommand(command: Command): boolean {
     command.kind === "startSession" ||
     command.kind === "sendMessage" ||
     command.kind === "resumeAskUser" ||
-    command.kind === "generateTranslations" ||
     command.kind === "cancelStream"
   );
 }

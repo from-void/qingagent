@@ -117,6 +117,27 @@ export function buildTranslationDisplayCard(languages: string[], style: string, 
   return { title: "翻译文档", lines };
 }
 
+export interface TranslationQueryTarget {
+  docId: string;
+  targetLang: string;
+}
+
+/** 一条可见用户指令承载全部语种；doc_id 只负责沿用现有衍生稿路由，不引入新定位协议。 */
+export function buildTranslationAgentQuery(
+  targets: readonly TranslationQueryTarget[],
+  regenerate = false,
+): string {
+  if (targets.length === 0) throw new Error("翻译目标不能为空");
+  const languages = targets.map((target) => target.targetLang).join("、");
+  const instruction = regenerate && targets.length === 1
+    ? `重新生成${languages}翻译`
+    : `把主文档翻译成${languages}`;
+  const destinations = targets
+    .map((target) => `${target.targetLang}写入衍生稿(doc_id: ${target.docId})`)
+    .join("，");
+  return `${instruction}。${destinations}。按上述顺序逐个处理：对每篇稿件${routeSuffix}`;
+}
+
 export const DTYPE_REGISTRY = {
   gzh: {
     dtype: "gzh", label: "公众号稿", tabLabel: "公众号文章",
@@ -145,7 +166,10 @@ export const DTYPE_REGISTRY = {
       { id: "translate-native", name: "母语化改写", detail: "像目标语言母语者写的" },
       { id: "translate-business", name: "正式商务", detail: "书面商务文体、敬语规范" },
     ],
-    queryText: (docId, targetLang) => `把主文档翻译成${targetLang ?? "目标语言"}(稿件 doc_id: ${docId}):${routeSuffix}`,
+    queryText: (docId, targetLang) => buildTranslationAgentQuery([{
+      docId,
+      targetLang: targetLang ?? "目标语言",
+    }], true),
     cardTitle: (regenerate) => `${regenerate ? "重新" : ""}翻译文档`,
     deleteConfirm: { title: "删除这份译文？", message: "只删除当前语言，删除后不可恢复" },
     copyText: (article) => ({ text: article?.innerText.trim() ?? "", toast: "已复制译文" }),

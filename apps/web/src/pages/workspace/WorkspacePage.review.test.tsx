@@ -47,6 +47,7 @@ type MockServerStreamInstance = {
   sendCommand: ReturnType<typeof vi.fn>;
   startSession: ReturnType<typeof vi.fn>;
   listDerivatives: ReturnType<typeof vi.fn>;
+  createDerivative: ReturnType<typeof vi.fn>;
   getDerivativeDoc: ReturnType<typeof vi.fn>;
   renameSession: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
@@ -65,6 +66,9 @@ const serverStreamMock = vi.hoisted(() => ({
   startSessionImpl: null as (() => Promise<string>) | null,
   listDerivativesImpl: null as
     | ((sessionId: string) => Promise<unknown[]>)
+    | null,
+  createDerivativeImpl: null as
+    | ((targetLang?: string) => Promise<DerivativeItem>)
     | null,
 }));
 
@@ -91,6 +95,20 @@ vi.mock("./data/serverStream", () => {
         ? serverStreamMock.listDerivativesImpl(sessionId)
         : [],
     );
+    createDerivative = vi.fn(async (
+      _sessionId: string,
+      _dtype: string,
+      _templateId: string,
+      _privatePrompt: string,
+      _writingStyleId?: string,
+      _layoutStyleId?: string | null,
+      targetLang?: string,
+    ) => {
+      if (!serverStreamMock.createDerivativeImpl) {
+        throw new Error("createDerivative mock is not configured");
+      }
+      return serverStreamMock.createDerivativeImpl(targetLang);
+    });
     getDerivativeDoc = vi.fn(async () => null);
     renameSession = vi.fn(async () => undefined);
     commitReviewGroups = vi.fn(async () => []);
@@ -703,6 +721,7 @@ describe("WorkspacePage review controls", () => {
     vi.resetModules();
     serverStreamMock.instances.length = 0;
     serverStreamMock.listDerivativesImpl = null;
+    serverStreamMock.createDerivativeImpl = null;
     window.location.hash = "";
     sessionStorage.clear();
     clearPageExitOutboxStorage();
@@ -4093,6 +4112,142 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("公众号文章");
   });
 
+  it("翻译确认只发一条可见 Agent 指令，多语种工具过程与完成帧留在同一对话轮", async () => {
+    const base: DerivativeItem = {
+      docId: "translation-placeholder",
+      dtype: "translate",
+      templateId: "translate-faithful",
+      templateName: "忠实精准",
+      targetLang: "英语",
+      privatePrompt: "保留产品名",
+      sourceVersion: null,
+      currentSourceVersion: 3,
+      generatedAt: null,
+      stale: false,
+    };
+    const translationItems: DerivativeItem[] = [];
+    serverStreamMock.createDerivativeImpl = async (targetLang) => {
+      const next = {
+        ...base,
+        docId: targetLang === "日语" ? "translation-ja" : "translation-en",
+        targetLang,
+      };
+      translationItems.push(next);
+      return next;
+    };
+    serverStreamMock.listDerivativesImpl = async () => translationItems;
+    window.location.hash = "#/workspace?session=s-translation-agent";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function TranslationAgentHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <output data-testid="translation-agent-turn">
+        {controller.state.messages.map((message) => message.role.kind).join(",")}
+        :{controller.state.toolCalls.size}
+      </output>;
+    }
+
+    await render(<TranslationAgentHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [{
+      kind: "sessionMeta",
+      data: { sessionId: "s-translation-agent", title: "翻译 Agent 链路" },
+    }]);
+    await act(async () => captured.current?.setDerivativeCreateDtype("translate"));
+    await act(async () => {
+      await captured.current?.handleCreateDerivative({
+        templateId: "translate-faithful",
+        writingStyleId: "translate-faithful",
+        layoutStyleId: null,
+        targetLanguages: ["英语", "日语"],
+        privatePrompt: "保留产品名",
+      });
+    });
+    await flushMicrotasks(6);
+
+    expect(stream.createDerivative).toHaveBeenCalledTimes(2);
+    const sends = sendMessageCommands(stream);
+    expect(sends).toHaveLength(1);
+    const sent = sends[0];
+    expect(sent).toMatchObject({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s-translation-agent",
+        turnKind: "generateDerivative",
+        activeDocument: { kind: "derivative", docId: "translation-en" },
+        displayCard: {
+          title: "翻译文档",
+          lines: [
+            { label: "语言", value: "英语、日语" },
+            { label: "风格", value: "忠实精准" },
+            { label: "补充", value: "保留产品名" },
+          ],
+        },
+      },
+    });
+    if (sent?.kind !== "sendMessage") throw new Error("缺少翻译用户指令");
+    expect(sent.data.text).toContain("把主文档翻译成英语、日语");
+    expect(sent.data.text).toContain("英语写入衍生稿(doc_id: translation-en)");
+    expect(sent.data.text).toContain("日语写入衍生稿(doc_id: translation-ja)");
+    expect(captured.current?.state.messages).toHaveLength(1);
+    expect(captured.current?.state.messages[0]?.role.kind).toBe("user");
+    expect(captured.current?.state.messages[0]?.parts[0]?.kind).toBe("actionCard");
+
+    const toolSpec: ToolCallSpec = {
+      id: "generate-translation-en",
+      name: "generate_derivative",
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      body: { kind: "generic", data: { argsJson: '{"derivativeDocId":"translation-en"}' } },
+      result: null,
+    };
+    await emitFrames(stream, [
+      {
+        kind: "chatMessageAdded",
+        data: {
+          message: {
+            id: "translation-agent-reply",
+            role: { kind: "agent" },
+            ts: "2026-08-02T10:00:00.000Z",
+            parts: [{ kind: "text", data: { body: "正在逐语种翻译。" } }],
+            chips: null,
+          },
+        },
+      },
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "translation-agent-reply",
+          toolCallId: toolSpec.id,
+          spec: toolSpec,
+        },
+      },
+      {
+        kind: "derivativeGenFinished",
+        data: {
+          docId: "translation-en",
+          generatedAt: "2026-08-02T10:00:01.000Z",
+          docVersion: 1,
+        },
+      },
+      {
+        kind: "derivativeGenFinished",
+        data: {
+          docId: "translation-ja",
+          generatedAt: "2026-08-02T10:00:02.000Z",
+          docVersion: 1,
+        },
+      },
+    ]);
+
+    expect(host?.querySelector('[data-testid="translation-agent-turn"]')?.textContent)
+      .toBe("user,agent:1");
+    expect(captured.current?.activeTranslationDocId).toBe("translation-ja");
+  });
+
   it("非英语单语翻译完成后把子 Tab 切到刚完成的语种", async () => {
     const english: DerivativeItem = {
       docId: "translate-en-empty",
@@ -4138,10 +4293,6 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.activeTranslationDocId).toBe(english.docId);
     await act(async () => captured.current?.setActiveTab("translate"));
 
-    await emitFrames(stream, [{
-      kind: "derivativeGenStarted",
-      data: { docId: japanese.docId, targetLang: "日语" },
-    }]);
     translationItems = [{ ...english }, {
       ...japanese,
       sourceVersion: 1,

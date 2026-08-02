@@ -13,7 +13,6 @@ vi.mock("../gateway/sessionLifecycle", () => ({
 vi.mock("../gateway/bridgeCore", () => ({
   createDerivativeDoc: vi.fn(),
   deleteDerivativeDoc: vi.fn(),
-  generateTranslations: vi.fn(),
   getDerivativeDocument: vi.fn(),
   getDerivativeMeta: vi.fn(),
   listDerivativesByThread: mocks.listDerivativesByThread,

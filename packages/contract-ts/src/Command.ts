@@ -16,7 +16,7 @@ import type { UpdateMaterialSummary } from "./UpdateMaterialSummary";
 import type { ExternalPropose } from "./ExternalPropose";
 import type { ListLexiconEntries, ListLexicons } from "./ListLexicons";
 import type { RenameSession } from "./RenameSession";
-import type { CreateDerivative, DeleteDerivative, GenerateTranslations, GetDerivativeDoc, ListDerivatives, ListStyleTemplates, GetStyleTemplate, SaveStyleTemplate, DeleteStyleTemplate, UpdateDerivativeParams } from "./Derivatives";
+import type { CreateDerivative, DeleteDerivative, GetDerivativeDoc, ListDerivatives, ListStyleTemplates, GetStyleTemplate, SaveStyleTemplate, DeleteStyleTemplate, UpdateDerivativeParams } from "./Derivatives";
 import type { IgnoreAnnotationGroups } from "./IgnoreAnnotationGroups";
 import type { DeleteReviewTemplate, GetReviewSupplement, ListReviewTemplates, SaveReviewTemplate, SelectReviewTemplate, UpsertReviewSupplement } from "./ReviewTemplates";
 import type { DraftTemplate } from "./DraftTemplate";
@@ -48,7 +48,6 @@ export type Command =
   | { kind: "renameSession"; data: RenameSession }
   | { kind: "listDerivatives"; data: ListDerivatives }
   | { kind: "createDerivative"; data: CreateDerivative }
-  | { kind: "generateTranslations"; data: GenerateTranslations }
   | { kind: "deleteDerivative"; data: DeleteDerivative }
   | { kind: "getDerivativeDoc"; data: GetDerivativeDoc }
   | { kind: "listStyleTemplates"; data: ListStyleTemplates }

@@ -831,17 +831,8 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
     case "derivativeCreated":
       if (!frame.data.item.docId) fail("DerivativeCreated.item is invalid");
       return;
-    case "derivativeGenStarted":
-      if (!frame.data.docId || !frame.data.targetLang) fail("DerivativeGenStarted.data is invalid");
-      return;
-    case "derivativeGenDelta":
-      if (!frame.data.docId || !frame.data.text) fail("DerivativeGenDelta.data is invalid");
-      return;
     case "derivativeGenFinished":
       if (!frame.data.docId || !frame.data.generatedAt || !Number.isInteger(frame.data.docVersion) || frame.data.docVersion < 1) fail("DerivativeGenFinished.data is invalid");
-      return;
-    case "derivativeGenFailed":
-      if (!frame.data.docId || !frame.data.reason) fail("DerivativeGenFailed.data is invalid");
       return;
     case "derivativeDeleted":
       if (!frame.data.docId) fail("DerivativeDeleted.docId is invalid");

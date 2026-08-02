@@ -122,11 +122,6 @@ export interface WorkspaceState {
   docDiff: DocDiffReady | null;
   annotationGroups: AnnotationGroup[];
   previewGroups: Array<Extract<BridgeFrame, { kind: "annotationPreview" }>["data"]>;
-  translationGen: Map<string, {
-    status: "streaming" | "failed" | "aborted";
-    text: string;
-    reason?: string;
-  }>;
   /** Doc revision counter. */
   version: number;
   progressPct: number;
@@ -186,7 +181,6 @@ export const initialWorkspaceState: WorkspaceState = {
   docDiff: null,
   annotationGroups: [],
   previewGroups: [],
-  translationGen: new Map(),
   // 空文档基线版本 0(此前残留 12 不合理:doc=null 却 version 12,会让空文档首写的 updateDoc
   // 带错 expectedDocumentSnapshot → createIfMissing 不触发)。真实 session 加载后由回流覆盖。
   version: 0,
@@ -231,29 +225,8 @@ function workspaceReducerMut(
     case "lexiconsListed":
       // 命令调用方通过 ServerStream waiter 消费，工作区持久状态无需保存。
       return;
-    case "derivativeGenStarted":
-      draft.translationGen.set(action.data.docId, { status: "streaming", text: "" });
-      return;
-    case "derivativeGenDelta": {
-      const current = draft.translationGen.get(action.data.docId);
-      draft.translationGen.set(action.data.docId, {
-        status: "streaming",
-        text: `${current?.text ?? ""}${action.data.text}`,
-      });
-      return;
-    }
     case "derivativeGenFinished":
-      draft.translationGen.delete(action.data.docId);
       return;
-    case "derivativeGenFailed": {
-      const current = draft.translationGen.get(action.data.docId);
-      draft.translationGen.set(action.data.docId, {
-        status: "failed",
-        text: current?.text ?? "",
-        reason: action.data.reason,
-      });
-      return;
-    }
     case "restoreReset":
       resetSessionScopedStateMut(draft);
       resources.reset();
@@ -830,7 +803,6 @@ function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.docDiff = null;
   draft.annotationGroups = [];
   draft.previewGroups = [];
-  draft.translationGen = new Map();
   draft.version = initialWorkspaceState.version;
   draft.progressPct = 0;
   draft.etaSec = null;
@@ -969,13 +941,6 @@ function terminalizeInFlightToolCallsMut(
 
   for (const [id, spec] of draft.toolCalls.entries()) {
     draft.toolCalls.set(id, settle(spec));
-  }
-  for (const [docId, state] of draft.translationGen.entries()) {
-    if (state.status !== "streaming") continue;
-    draft.translationGen.set(docId, {
-      status: terminal,
-      text: state.text,
-    });
   }
   for (const message of draft.messages) {
     for (let index = 0; index < message.parts.length; index += 1) {

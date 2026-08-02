@@ -405,7 +405,6 @@ export const COMMAND_KINDS = [
   "renameSession",
   "listDerivatives",
   "createDerivative",
-  "generateTranslations",
   "deleteDerivative",
   "getDerivativeDoc",
   "listStyleTemplates",
@@ -453,13 +452,6 @@ export const commandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("renameSession"), data: z.object({ sessionId: z.string().min(1), title: z.string().trim().min(1).max(48) }) }),
   z.object({ kind: z.literal("listDerivatives"), data: z.object({ sessionId: z.string().min(1), requestId: z.string().min(1) }) }),
   z.object({ kind: z.literal("createDerivative"), data: z.object({ sessionId: z.string().min(1), requestId: z.string().min(1), dtype: z.enum(["gzh", "xhs", "translate"]), templateId: z.string().min(1), writingStyleId:z.string().min(1).optional(),layoutStyleId:z.string().min(1).nullable().optional(),targetLang:z.string().trim().min(1).optional(), privatePrompt: z.string() }).superRefine((data,ctx)=>{if(data.dtype==="translate"&&!data.targetLang)ctx.addIssue({code:z.ZodIssueCode.custom,path:["targetLang"],message:"翻译稿必须指定目标语言"})}) }),
-  z.object({ kind: z.literal("generateTranslations"), data: z.object({
-    sessionId: z.string().min(1),
-    docIds: z.array(z.string().min(1)).min(1).max(5),
-  }).refine((data) => new Set(data.docIds).size === data.docIds.length, {
-    path: ["docIds"],
-    message: "翻译稿 id 不可重复",
-  }) }),
   z.object({ kind: z.literal("deleteDerivative"), data: z.object({ sessionId: z.string().min(1), requestId: z.string().min(1), docId: z.string().min(1) }) }),
   z.object({ kind: z.literal("getDerivativeDoc"), data: z.object({ sessionId: z.string().min(1), requestId: z.string().min(1), docId: z.string().min(1) }) }),
   z.object({kind:z.literal("listStyleTemplates"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),dtype:z.string().optional(),slot:z.enum(["layout","writing","instruction"]).optional()})}),

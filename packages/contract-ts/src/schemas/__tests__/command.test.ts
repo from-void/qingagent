@@ -46,16 +46,10 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "wenkai" } }).success).toBe(true);
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "unknown" } }).success).toBe(false);
   });
-  it("generateTranslations 接受 1-5 个唯一稿件 id", () => {
-    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["en", "ja"] } }).success).toBe(true);
-    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: [] } }).success).toBe(false);
-    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["en", "en"] } }).success).toBe(false);
-    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["1", "2", "3", "4", "5", "6"] } }).success).toBe(false);
-  });
 
-  it("COMMAND_KINDS 覆盖 38 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(38);
-    expect(COMMAND_KIND_SET.size).toBe(38);
+  it("COMMAND_KINDS 覆盖 37 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(37);
+    expect(COMMAND_KIND_SET.size).toBe(37);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
   });
 

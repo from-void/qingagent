@@ -8,7 +8,11 @@ import { DerivTabBar } from "./DerivTabBar";
 import { DerivativeGenerateModal, MAX_TRANSLATION_LANGUAGES, TRANSLATION_LANGUAGES } from "./DerivativeGenerateModal";
 import { DerivativeView } from "./DerivativeView";
 import type { DerivativeItem } from "./types";
-import { buildTranslationDisplayCard, DTYPE_REGISTRY } from "./dtypeRegistry";
+import {
+  buildTranslationAgentQuery,
+  buildTranslationDisplayCard,
+  DTYPE_REGISTRY,
+} from "./dtypeRegistry";
 import { calculatePhoneScale } from "./PhoneShell";
 import { calculateDesktopScale, DESKTOP_FRAME, DESKTOP_PAPER_INSET } from "./DesktopShell";
 
@@ -730,6 +734,10 @@ describe("公众号稿生成体验", () => {
     await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ targetLanguages: ["英语", "日语", "韩语", "法语", "德语"], writingStyleId: "translate-faithful" }));
     expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
+    expect(buildTranslationAgentQuery([
+      { docId: "translation-en", targetLang: "英语" },
+      { docId: "translation-ja", targetLang: "日语" },
+    ])).toBe("把主文档翻译成英语、日语。英语写入衍生稿(doc_id: translation-en)，日语写入衍生稿(doc_id: translation-ja)。按上述顺序逐个处理：对每篇稿件先调 derivative_brief,按返回的 skillGuidance 纪律与模板、补充指令改写源文,再用 generate_derivative 提交。");
   });
 
   it("F12: 父组件用等值目标语言数组重渲染时保留翻译弹层草稿", async () => {
@@ -787,7 +795,7 @@ describe("公众号稿生成体验", () => {
     expect(stream.listStyleTemplates).toHaveBeenCalledTimes(1);
   });
 
-  it("F2: 生成提交与失败译文重试在请求完成前保持单次在途", async () => {
+  it("F2: 翻译弹窗生成提交在请求完成前保持单次在途", async () => {
     const template = {
       id: "translate-faithful",
       dtype: "translate",
@@ -834,53 +842,66 @@ describe("公众号稿生成体验", () => {
       await createRequest;
     });
 
-    const failedItem: DerivativeItem = {
+  });
+
+  it("单语种重新生成通过可见 agent query 提交，不调用独立翻译通道", async () => {
+    const translation: DerivativeItem = {
       ...item,
-      docId: "translate-retry",
+      docId: "translate-agent-regenerate",
       dtype: "translate",
-      targetLang: "英语",
-      templateId: template.id,
-      templateName: template.name,
+      targetLang: "日语",
+      templateId: "translate-native",
+      templateName: "母语化改写",
+      sourceVersion: 1,
+      generatedAt: "old-generated-at",
     };
-    let resolveRetry!: () => void;
-    const retryRequest = new Promise<void>((resolve) => {
-      resolveRetry = resolve;
+    const template = {
+      id: "translate-native",
+      dtype: "translate",
+      slot: "writing" as const,
+      name: "母语化改写",
+      detail: "自然",
+      prompt: "母语化翻译",
+      builtin: true,
+    };
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "ja-old" },
+        content: [{ type: "text", text: "既有译文" }],
+      }],
     });
-    const generateTranslations = vi.fn(() => retryRequest);
-    const viewStream = {
-      getDerivativeDoc: vi.fn(async () => null),
-      generateTranslations,
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({ meta: translation, docPm, docVersion: 1, title: "" })),
+      listStyleTemplates: vi.fn(async () => [template]),
+      createDerivative: vi.fn(async () => translation),
     };
+    const onSendQuery = vi.fn();
     await act(async () => root.render(
-      <ConfirmProvider>
-        <DerivativeView
-          sessionId="session-1"
-          item={failedItem}
-          stream={viewStream as never}
-          streamActive={false}
-          translationGen={new Map([
-            [failedItem.docId, { status: "failed" as const, text: "" }],
-          ])}
-          onRefresh={vi.fn(async () => {})}
-          onDeleted={vi.fn()}
-          onToast={vi.fn()}
-          onSendQuery={vi.fn()}
-        />
-      </ConfirmProvider>,
+      <ConfirmProvider><DerivativeView
+        sessionId="session-1"
+        item={translation}
+        stream={stream as never}
+        streamActive={false}
+        onRefresh={vi.fn(async () => {})}
+        onDeleted={vi.fn()}
+        onToast={vi.fn()}
+        onSendQuery={onSendQuery}
+      /></ConfirmProvider>,
     ));
-    const retryButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "重试")!;
-    await act(async () => {
-      retryButton.click();
-      retryButton.click();
-      await Promise.resolve();
-    });
-    expect(generateTranslations).toHaveBeenCalledTimes(1);
-    expect(retryButton.disabled).toBe(true);
-    await act(async () => {
-      resolveRetry();
-      await retryRequest;
-    });
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="重新生成"]')!.click());
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    await act(async () => Promise.resolve());
+
+    expect(onSendQuery).toHaveBeenCalledOnce();
+    expect(onSendQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/重新生成日语翻译.*衍生稿\(doc_id: translate-agent-regenerate\).*derivative_brief.*generate_derivative/),
+      expect.objectContaining({ title: "重新翻译文档" }),
+    );
   });
 
   it("翻译稿聚合为语言 segmented，切换后显示对应译文且删除只在更多菜单", async () => {
@@ -1094,60 +1115,48 @@ describe("公众号稿生成体验", () => {
     expect(host.textContent).not.toContain("English copy");
   });
 
-  it("翻译旁支按语言独立流式浮现、失败可重试且生成中禁止删除", async () => {
-    const english: DerivativeItem = { ...item, docId: "translate-stream-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准" };
-    const japanese: DerivativeItem = { ...english, docId: "translate-stream-ja", targetLang: "日语" };
-    const generateTranslations = vi.fn(async () => {});
-    const stream = {
-      getDerivativeDoc: vi.fn(async () => null),
-      generateTranslations,
-      deleteDerivative: vi.fn(async () => {}),
+  it("翻译与其他衍生稿共用 Agent 等待态，停止后无专属残留状态", async () => {
+    vi.useFakeTimers();
+    const english: DerivativeItem = {
+      ...item,
+      docId: "translate-agent-stop",
+      dtype: "translate",
+      targetLang: "英语",
+      templateId: "translate-faithful",
+      templateName: "忠实精准",
     };
-    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed" | "aborted"; text: string; reason?: string }>) => root.render(
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({
+        meta: english,
+        docPm: "{}",
+        docVersion: 0,
+        title: "",
+      })),
+    };
+    const onRefresh = vi.fn(async () => {});
+    const renderView = (streamActive: boolean) => root.render(
       <ConfirmProvider><DerivativeView
         sessionId="session-1"
         item={english}
-        items={[english, japanese]}
         stream={stream as never}
-        streamActive={false}
-        translationGen={translationGen}
-        onRefresh={vi.fn(async () => {})}
+        streamActive={streamActive}
+        generatingInitially
+        onRefresh={onRefresh}
         onDeleted={vi.fn()}
         onToast={vi.fn()}
         onSendQuery={vi.fn()}
       /></ConfirmProvider>,
     );
 
-    await act(async () => renderView(new Map([
-      [english.docId, { status: "streaming" as const, text: "" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
-    ])));
-    expect(host.querySelector('.ws-deriv-streaming-paper [data-wf="QingLoading"]')).not.toBeNull();
-    const streamingView = host.querySelector(".ws-deriv-view")!;
-    const streamingPaper = host.querySelector(".ws-deriv-streaming-paper")!;
-    const streamingGlow = host.querySelector('[data-wf="DerivativeEditorGlow"]');
-    expect(streamingView.querySelector(":scope > .ws-editor-glow")).toBe(streamingGlow);
-    expect(streamingGlow?.parentElement).toBe(streamingView);
-    expect(streamingPaper.querySelector(".ws-editor-glow")).toBeNull();
-    expect(host.querySelectorAll(".ws-translate-status.is-streaming")).toHaveLength(1);
-    expect(host.querySelectorAll(".ws-translate-status.is-failed")).toHaveLength(1);
+    await act(async () => renderView(true));
+    expect(host.querySelector('.ws-deriv-view.is-generating [data-wf="QingLoading"]'))
+      .not.toBeNull();
 
-    await act(async () => renderView(new Map([
-      [english.docId, { status: "streaming" as const, text: "<p>Hello &amp; <mark>world</mark></p><p>Second &#x1F44B;</p>" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
-    ])));
-    expect(host.querySelector(".ws-translate-stream-text")?.textContent).toBe("Hello & worldSecond 👋");
-    expect(host.querySelector(".ws-translate-stream-text mark")).toBeNull();
-    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
-    const deleteButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除稿件")!;
-    expect(deleteButton.disabled).toBe(true);
-    expect(deleteButton.title).toBe("生成中不可删除");
-
-    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
-    expect(host.querySelector('[role="status"]')?.textContent).toContain("翻译未完成");
-    expect(host.textContent).not.toContain("Rendered page is a hollow shell");
-    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "重试")!.click());
-    expect(generateTranslations).toHaveBeenCalledWith("session-1", [japanese.docId]);
+    await act(async () => renderView(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+    expect(host.querySelector(".is-generating")).toBeNull();
+    expect(host.textContent).toContain("翻译已中止");
+    expect(onRefresh).toHaveBeenCalled();
   });
 
   it("发光、亮红和小红书双壳修复均有 CSS/DOM 回归锚点", async () => {
@@ -1157,9 +1166,8 @@ describe("公众号稿生成体验", () => {
     const xhsOverrides = readFileSync(resolve(process.cwd(), "src/pages/workspace/components/derivatives/xhsOverrides.css"), "utf8");
     expect(workspaceCss).toContain(".ws-deriv-view.is-generating{display:grid;min-height:var(--ws-paper-min-height");
     expect(workspaceCss).toContain(".ws-deriv-view>.ws-editor-glow{position:absolute;inset:0;width:auto;height:auto;box-sizing:border-box;z-index:4");
-    expect(workspaceCss).not.toContain(".ws-deriv-streaming-paper>.ws-editor-glow");
     expect(workspaceCss).not.toContain(".ws-deriv-view.is-generating>.qing-loading");
-    expect(skinCss).toContain(".ws-deriv-view.is-generating > .doc-empty,\n#view-workspace .ws-deriv-streaming-paper.is-generating > .doc-empty {\n  top: 0 !important;\n  box-shadow: none;");
+    expect(skinCss).toContain(".ws-deriv-view.is-generating > .doc-empty {\n  top: 0 !important;\n  box-shadow: none;");
     expect(skinCss).toContain(".ws-export-menu .ws-export-item.is-danger {\n  color: var(--ws-red-lite);");
     expect(xhsCss).toContain(".xhs-phone-content .xhs-article{padding-top:0}.xhs-phone-content .xhs-cover{width:calc(100% + 32px);margin:0 -16px 12px}");
     expect(xhsCss).toContain(".xhs-desktop-content .xhs-article>h1{margin-top:0}");

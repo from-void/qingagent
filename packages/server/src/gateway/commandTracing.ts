@@ -188,11 +188,6 @@ export function summarizeCommandInput(command: Command): Record<string, unknown>
       };
     case "cancelStream":
       return { streamId: command.data.streamId };
-    case "generateTranslations":
-      return {
-        sessionId: command.data.sessionId,
-        docCount: command.data.docIds.length,
-      };
     default:
       return {};
   }

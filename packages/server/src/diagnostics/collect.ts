@@ -482,10 +482,7 @@ const L1_FRAME_RULES = {
   derivativeParamsUpdated: { requestId: "structural", item: "redactedDeep" },
   derivativesListed: { requestId: "structural", items: "redactedDeep" },
   derivativeCreated: { requestId: "structural", item: "redactedDeep" },
-  derivativeGenStarted: { docId: "structural", targetLang: "structural" },
-  derivativeGenDelta: { docId: "structural", text: "redacted" },
   derivativeGenFinished: { docId: "structural", generatedAt: "structural", docVersion: "structural" },
-  derivativeGenFailed: { docId: "structural", reason: "redacted" },
   derivativeDeleted: { requestId: "structural", docId: "structural" },
   derivativeDocLoaded: {
     requestId: "structural",

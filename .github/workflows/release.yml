@@ -26,7 +26,7 @@ jobs:
             electron_builder_args: --linux
           - name: mac
             os: macos-latest
-            electron_builder_args: --mac zip
+            electron_builder_args: --mac zip --arm64 --x64
     env:
       QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
       QINGAGENT_BUNDLE_PYODIDE: '1'

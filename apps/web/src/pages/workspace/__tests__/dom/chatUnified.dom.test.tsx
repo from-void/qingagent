@@ -276,6 +276,13 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("搜索工作区");
   });
 
+  it("SVG Codex 回落工具使用中性中文标签", () => {
+    expect(TOOL_LABELS.editSvgWithCodexFallback).toBe("定点修改 SVG");
+
+    renderBar(genericSpec("done", "{}", "editSvgWithCodexFallback"));
+    expect(host.textContent).toContain("定点修改 SVG");
+  });
+
   it("skill_read 可从 id 取主参并用 API label 显示中文名", () => {
     renderBar(genericSpec("done", "{\"id\":\"lark-doc\"}", "skill_read"), {
       "lark-doc": "飞书文档",

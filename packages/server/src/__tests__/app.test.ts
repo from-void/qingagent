@@ -323,7 +323,12 @@ describe("GET /api/v1/skills", () => {
     expect(byName.get("image-gen")).toMatchObject({
       label: "画配图",
       userInvocable: true,
-      tools: ["generateSvg", "prepareImageEditSource", "importGeneratedImage"],
+      tools: [
+        "generateSvg",
+        "prepareImageEditSource",
+        "editSvgWithCodexFallback",
+        "importGeneratedImage",
+      ],
     });
     expect(byName.get("image-gen")?.children).toHaveLength(2);
     expect(byName.get("image-gen")?.children.map((skill) => skill.name)).toEqual([

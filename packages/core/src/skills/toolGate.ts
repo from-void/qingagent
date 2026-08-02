@@ -20,6 +20,7 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   fetchArticle: ["web-search"],
   generateSvg: ["image-gen"],
   prepareImageEditSource: ["image-gen"],
+  editSvgWithCodexFallback: ["image-gen"],
   importGeneratedImage: ["image-gen"],
   readImage: ["image-reading"],
   wechat_auth_start: ["wechat-official-account"],

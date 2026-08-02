@@ -81,6 +81,7 @@ describe("enabledStore", () => {
     expect(tools).not.toHaveProperty("fetchArticle");
     expect(tools).toHaveProperty("generateSvg");
     expect(tools).toHaveProperty("prepareImageEditSource");
+    expect(tools).toHaveProperty("editSvgWithCodexFallback");
     expect(tools).toHaveProperty("importGeneratedImage");
     expect(tools).toHaveProperty("run_js");
   });
@@ -104,6 +105,7 @@ describe("enabledStore", () => {
 
     expect(tools).not.toHaveProperty("generateSvg");
     expect(tools).not.toHaveProperty("prepareImageEditSource");
+    expect(tools).not.toHaveProperty("editSvgWithCodexFallback");
     expect(tools).not.toHaveProperty("importGeneratedImage");
   });
 

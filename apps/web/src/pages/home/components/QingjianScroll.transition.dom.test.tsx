@@ -114,10 +114,11 @@ describe("QingjianScroll 首页去程生命周期", () => {
   it("forward 拒绝时在 finally 解锁并降级导航", async () => {
     stageMock.playForward.mockRejectedValueOnce(new Error("animation failed"));
     const onNewSession = vi.fn();
-    const scroller = await renderHome(onNewSession);
+    await renderHome(onNewSession);
+    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
 
     await act(async () => {
-      scroller.dispatchEvent(new MouseEvent("click", {
+      newCard.dispatchEvent(new MouseEvent("click", {
         bubbles: true,
         cancelable: true,
         clientX: 20,
@@ -131,6 +132,90 @@ describe("QingjianScroll 首页去程生命周期", () => {
     expect(stageMock.playForward).toHaveBeenCalledTimes(1);
     expect(onNewSession).toHaveBeenCalledTimes(1);
     expect(host?.querySelector(".qj-root")?.classList.contains("qj-transitioning")).toBe(false);
+  });
+
+  it("语义 click 直接激活事件目标里的新建卡，不依赖视口坐标二次命中", async () => {
+    const onNewSession = vi.fn();
+    await renderHome(onNewSession);
+    vi.mocked(document.elementFromPoint).mockReturnValue(null);
+
+    await act(async () => {
+      host?.querySelector<HTMLElement>(".qj-new-card")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(stageMock.playForward).toHaveBeenCalledTimes(1);
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+    expect(document.elementFromPoint).not.toHaveBeenCalled();
+  });
+
+  it("指针按下与抬起没有位移时保留 click 激活", async () => {
+    const onNewSession = vi.fn();
+    await renderHome(onNewSession);
+    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
+
+    await act(async () => {
+      newCard.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        clientX: 20,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("pointerup", {
+        bubbles: true,
+        clientX: 20,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 20,
+        clientY: 20,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(stageMock.playForward).toHaveBeenCalledTimes(1);
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("指针横移超过阈值时只滚动长卷并抑制随后 click", async () => {
+    const onNewSession = vi.fn();
+    await renderHome(onNewSession);
+    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
+
+    await act(async () => {
+      newCard.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        clientX: 20,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("pointermove", {
+        bubbles: true,
+        clientX: 26,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("pointerup", {
+        bubbles: true,
+        clientX: 26,
+        clientY: 20,
+      }));
+      newCard.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 26,
+        clientY: 20,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(stageMock.playForward).not.toHaveBeenCalled();
+    expect(onNewSession).not.toHaveBeenCalled();
   });
 
   it("多个生成中会话各自展示状态、流光与辅助文案", async () => {
@@ -162,10 +247,11 @@ describe("QingjianScroll 首页去程生命周期", () => {
       resolveForward = resolve;
     }));
     const onNewSession = vi.fn();
-    const scroller = await renderHome(onNewSession);
+    await renderHome(onNewSession);
+    const newCard = host?.querySelector<HTMLElement>(".qj-new-card")!;
 
     await act(async () => {
-      scroller.dispatchEvent(new MouseEvent("click", {
+      newCard.dispatchEvent(new MouseEvent("click", {
         bubbles: true,
         cancelable: true,
         clientX: 20,

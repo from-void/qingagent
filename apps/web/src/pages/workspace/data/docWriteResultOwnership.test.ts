@@ -131,15 +131,43 @@ describe("decideBroadcastDocumentFrame", () => {
     expect(decide(diffFrame, {
       editorDirty: true,
       reviewActive: false,
-      candidateBaseMatchesEditor: true,
+      incomingDocumentMatchesEditor: true,
     })).toEqual({ kind: "apply" });
     expect(decide(diffFrame, {
       editorDirty: true,
       reviewActive: false,
-      candidateBaseMatchesEditor: false,
+      incomingDocumentMatchesEditor: false,
     })).toEqual({
       kind: "conflict",
       reason: "local_editor_changes",
+    });
+  });
+
+  it("pendingReview 后迟到的同基线 canonical 快照由正文相等证明吸收，真实版本分叉仍冲突", () => {
+    const snapshot = versionWritingFrames[0]!;
+
+    expect(decide(snapshot, {
+      editorDirty: true,
+      reviewActive: false,
+      incomingDocumentMatchesEditor: true,
+    })).toEqual({ kind: "apply" });
+    expect(decide(snapshot, {
+      editorDirty: true,
+      reviewActive: true,
+      reviewBaseVersion: 2,
+      incomingDocumentMatchesEditor: true,
+    })).toEqual({
+      kind: "reconcile",
+      reason: "equivalent_review_base",
+    });
+    expect(decide(snapshot, {
+      editorDirty: true,
+      reviewActive: true,
+      reviewBaseVersion: 1,
+      incomingDocumentMatchesEditor: true,
+    })).toEqual({
+      kind: "conflict",
+      reason: "review_base_version_diverged",
     });
   });
 
@@ -147,12 +175,12 @@ describe("decideBroadcastDocumentFrame", () => {
     ["pendingDocWrite", { pendingDocWrite: true }, "pending_doc_write"],
     ["queuedDocWrite", { queuedDocWrite: true }, "queued_doc_write"],
     ["scheduledDocWrite", { scheduledDocWrite: true }, "scheduled_doc_write"],
-  ] as const)("候选基线匹配也不越过 %s", (_name, dirty, reason) => {
+  ] as const)("正文相等证明也不越过 %s", (_name, dirty, reason) => {
     const diffFrame = versionWritingFrames.find((frame) => frame.kind === "docDiffReady")!;
     expect(decide(diffFrame, {
       ...dirty,
       editorDirty: true,
-      candidateBaseMatchesEditor: true,
+      incomingDocumentMatchesEditor: true,
     })).toEqual({ kind: "defer", reason });
   });
 

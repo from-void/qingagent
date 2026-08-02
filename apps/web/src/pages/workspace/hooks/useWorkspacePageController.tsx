@@ -1742,6 +1742,7 @@ export function useWorkspacePageController() {
             : null;
       const terminalDocumentLogFields = incomingDocument
         ? {
+            frameKind: incomingFrame.kind,
             frameSeq: incomingFrameObservability?.frameSeq ?? null,
             generationId: incomingGenerationId,
             documentVersion: incomingDocument.version,
@@ -1846,30 +1847,29 @@ export function useWorkspacePageController() {
           scheduledDocWrite:
             !bypassDirtyDecision && scheduledDocWriteRef.current,
         };
-        // docDiffReady 只是把“候选生成所基于的旧正文”投影进审阅态，并没有写出
-        // 新 canonical 版本。首帧又必然早于 pendingReview 投影，不能仅凭旧的
-        // editorDirty 布尔值把它误报成服务器新版本；只在编辑器正文与 previewDoc
-        // 完全相等且没有待保存事务时证明式放行，真实分叉仍走原冲突保护。
-        const candidateBaseMatchesEditor =
-          frame.kind === "docDiffReady" &&
-          frame.data.previewDoc !== undefined &&
-          docViewRef.current?.canSafelyApplyDocumentBase(
-            frame.data.previewDoc as PmDoc,
+        // editorDirty 会受只读投影/React 基线切换影响，只能作为“需要证明”的
+        // 粗信号。所有携带完整 PM 的版本帧统一用同一条强证明：live 正文与来帧
+        // 规范化相等，且编辑器没有待保存事务。docDiffReady 首帧和迟到 canonical
+        // 快照都走这里；真实用户编辑与版本分叉仍不能越过。
+        const incomingDocumentMatchesEditor =
+          incomingDocument !== null &&
+          docViewRef.current?.canSafelyApplyIncomingDocument(
+            incomingDocument.pmDoc,
           ) === true;
         const decision = decideBroadcastDocumentFrame({
           frame,
           ...dirty,
-          candidateBaseMatchesEditor,
+          incomingDocumentMatchesEditor,
           reviewActive: stateRef.current.docState.kind === "pendingReview",
+          reviewBaseVersion: stateRef.current.docDiff?.baseVersion ?? null,
           afterDeferredDrain,
         });
         if (decision.kind === "defer") {
-          const incoming = appliedDocVersionFromBroadcastFrame(frame);
           const deferred = deferredDocumentFrameRef.current;
           const deferredVersion = deferred
             ? appliedDocVersionFromBroadcastFrame(deferred.frame)?.version ?? -1
             : -1;
-          if (!deferred || (incoming?.version ?? -1) >= deferredVersion) {
+          if (!deferred || (incomingDocument?.version ?? -1) >= deferredVersion) {
             deferredDocumentFrameRef.current = {
               frame,
               streamSessionId,
@@ -1881,12 +1881,12 @@ export function useWorkspacePageController() {
             sessionId:
               streamSessionId ?? activeWorkspaceSessionTargetRef.current,
             reason: decision.reason,
-            version: incoming?.version ?? null,
+            version: incomingDocument?.version ?? null,
             editorDirty: dirty.editorDirty,
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
-            candidateBaseMatchesEditor,
+            incomingDocumentMatchesEditor,
             ...terminalDocumentLogFields,
           });
           if (!deferredDocumentFrameDrainRef.current) {
@@ -1932,8 +1932,30 @@ export function useWorkspacePageController() {
           }
           return;
         }
+        if (decision.kind === "reconcile") {
+          if (incomingDocument) {
+            knownDocVersionsRef.current.remember(
+              appliedDocWriteBaseline(incomingDocument),
+              "streamApply",
+            );
+          }
+          console.info("[workspace] canonical review baseline reconciled", {
+            stage: "reconciled",
+            sessionId:
+              streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+            reason: decision.reason,
+            version: incomingDocument?.version ?? null,
+            editorDirty: dirty.editorDirty,
+            pendingDocWrite: dirty.pendingDocWrite,
+            queuedDocWrite: dirty.queuedDocWrite,
+            scheduledDocWrite: dirty.scheduledDocWrite,
+            incomingDocumentMatchesEditor,
+            ...terminalDocumentLogFields,
+          });
+          return;
+        }
         if (decision.kind === "conflict") {
-          const conflicted = appliedDocVersionFromBroadcastFrame(frame);
+          const conflicted = incomingDocument;
           conflictedDocumentFrameRef.current = frame;
           if (conflicted) {
             knownDocVersionsRef.current.remember(
@@ -1955,7 +1977,7 @@ export function useWorkspacePageController() {
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
-            candidateBaseMatchesEditor,
+            incomingDocumentMatchesEditor,
             ...terminalDocumentLogFields,
           });
           return;
@@ -1963,7 +1985,7 @@ export function useWorkspacePageController() {
         // 走到这里这一帧就会被应用:把它带来的版本登记为"本会话已知产出"。
         // agent 生成流写出的版本正是从这条路进来的——它不是外部并发,后续冲突要静默重放。
         // 反之被上面守卫挡掉的帧不登记:本地没应用它,那才是真分叉,该弹横幅。
-        const applied = appliedDocVersionFromBroadcastFrame(frame);
+        const applied = incomingDocument;
         if (applied) {
           knownDocVersionsRef.current.remember(
             appliedDocWriteBaseline(applied),
@@ -1982,7 +2004,7 @@ export function useWorkspacePageController() {
             pendingDocWrite: dirty.pendingDocWrite,
             queuedDocWrite: dirty.queuedDocWrite,
             scheduledDocWrite: dirty.scheduledDocWrite,
-            candidateBaseMatchesEditor,
+            incomingDocumentMatchesEditor,
             ...terminalDocumentLogFields,
           });
         }

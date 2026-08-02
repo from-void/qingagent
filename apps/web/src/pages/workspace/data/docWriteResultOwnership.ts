@@ -93,6 +93,7 @@ export function appliedDocVersionFromBroadcastFrame(
  */
 export type DocumentFrameDecision =
   | { kind: "apply" }
+  | { kind: "reconcile"; reason: "equivalent_review_base" }
   | {
       kind: "defer";
       reason:
@@ -101,7 +102,10 @@ export type DocumentFrameDecision =
         | "scheduled_doc_write"
         | "agent_final_waiting_for_editor_save";
     }
-  | { kind: "conflict"; reason: "local_editor_changes" };
+  | {
+      kind: "conflict";
+      reason: "local_editor_changes" | "review_base_version_diverged";
+    };
 
 function isAgentFinalDocumentFrame(frame: BridgeFrame): boolean {
   return (
@@ -184,10 +188,12 @@ export function decideBroadcastDocumentFrame(input: {
   pendingDocWrite: boolean;
   queuedDocWrite: boolean;
   scheduledDocWrite: boolean;
-  /** 首个候选帧到达时，编辑器已无待保存事务且正文等于候选的 previewDoc。 */
-  candidateBaseMatchesEditor?: boolean;
+  /** 编辑器已无待保存事务且正文与帧携带的规范化 PM 完全相等。 */
+  incomingDocumentMatchesEditor?: boolean;
   /** pendingReview 里的正文差异来自审阅投影，不是用户尚未落盘的编辑。 */
   reviewActive?: boolean;
+  /** 当前审阅候选所基于的 canonical 版本。 */
+  reviewBaseVersion?: number | null;
   /** 保存 drain 后的二次判定，不再把持续 editor dirty 当成 debounce。 */
   afterDeferredDrain?: boolean;
 }): DocumentFrameDecision {
@@ -205,14 +211,28 @@ export function decideBroadcastDocumentFrame(input: {
   }
   if (
     input.frame.kind === "docDiffReady" &&
-    (
-      input.reviewActive === true ||
-      input.candidateBaseMatchesEditor === true
-    )
+    input.reviewActive === true
   ) {
     return { kind: "apply" };
   }
   if (!input.editorDirty) return { kind: "apply" };
+  if (input.incomingDocumentMatchesEditor === true) {
+    if (input.reviewActive === true) {
+      const incoming = appliedDocVersionFromBroadcastFrame(input.frame);
+      if (
+        incoming !== null &&
+        input.reviewBaseVersion === incoming.version
+      ) {
+        // /events gap restore 或终态收据可能在 docDiffReady 之后重放同一版
+        // canonical。它既不是新版本，也不能重新 dispatch 后清掉当前候选。
+        return { kind: "reconcile", reason: "equivalent_review_base" };
+      }
+      // 审阅基线版本真的已分叉时，即使内容偶然相等也不能悄悄让旧候选
+      // 继续挂在新版本上；交给显式冲突/重载链处理。
+      return { kind: "conflict", reason: "review_base_version_diverged" };
+    }
+    return { kind: "apply" };
+  }
   if (isAgentFinalDocumentFrame(input.frame) && !input.afterDeferredDrain) {
     return {
       kind: "defer",

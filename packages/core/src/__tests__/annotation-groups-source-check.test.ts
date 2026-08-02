@@ -407,6 +407,71 @@ describe("create_annotation_groups 来源引句校验", () => {
     expect(JSON.stringify(state.annotationGroups)).not.toContain("重跑同处");
   });
 
+  it("同规则的短公共短语不参与包含匹配，避免误杀另一问题", async () => {
+    const { state, tool } = setup();
+    state.doc!.content = [{
+      type: "paragraph",
+      attrs: { blockId: "p-shared" },
+      content: [{ type: "text", text: "项目落地缺少责任人，预算安排也没有依据。" }],
+    }];
+    vi.mocked(listReviewDismissalSignals).mockResolvedValueOnce([{
+      id: "dismissal-shared-phrase",
+      docId: state.docId,
+      origin: "自定义审查:逻辑链审查",
+      summary: "进度要求空泛",
+      quote: "项目落地",
+      ts: "2026-08-02T10:00:00.000Z",
+    }]);
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "自定义审查:逻辑链审查",
+        summary: "责任主体缺失",
+        judgment: undefined,
+        materialQuote: undefined,
+        anchors: [{ find: "项目落地缺少责任人" }],
+      })],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      groupCount: 1,
+      rememberedDismissalCount: 0,
+      errors: [],
+    });
+    expect(state.annotationGroups[0]?.summary).toBe("责任主体缺失");
+  });
+
+  it("同规则引文从较长边界缩短时仍命中，首尾标点与空白不影响", async () => {
+    const { state, tool } = setup();
+    vi.mocked(listReviewDismissalSignals).mockResolvedValueOnce([{
+      id: "dismissal-longer-boundary",
+      docId: state.docId,
+      origin: "自定义审查:逻辑链审查",
+      summary: "收入论据不足",
+      quote: " 「称收入为130亿元。」 ",
+      ts: "2026-08-02T10:00:00.000Z",
+    }]);
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "自定义审查:逻辑链审查",
+        summary: "收入缺少依据",
+        judgment: undefined,
+        materialQuote: undefined,
+        anchors: [{ find: "收入为130亿元" }],
+      })],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      groupCount: 0,
+      rememberedDismissalCount: 1,
+      errors: [],
+    });
+    expect(state.annotationGroups).toEqual([]);
+  });
+
   it("普通忽略未产生记忆信号时，同处重跑仍创建批注", async () => {
     const { state, tool } = setup();
     vi.mocked(listReviewDismissalSignals).mockResolvedValueOnce([]);

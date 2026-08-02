@@ -26,10 +26,17 @@ import {
   styleTemplateSaveTool,
 } from "../tools/styleTemplates.js";
 
-function toolContext(sessionId: string): unknown {
+function toolContext(
+  sessionId: string,
+  activeDerivativeDocId?: string,
+): unknown {
   return {
     requestContext: {
-      get: (key: string) => (key === "sessionId" ? sessionId : undefined),
+      get: (key: string) => {
+        if (key === "sessionId") return sessionId;
+        if (key === "activeDerivativeDocId") return activeDerivativeDocId;
+        return undefined;
+      },
     },
   };
 }
@@ -60,6 +67,68 @@ beforeEach(() => {
 afterEach(() => db.cleanup());
 
 describe("derivative Agent tools", () => {
+  it("普通追问只允许读写当前激活的日语译稿", async () => {
+    await documentRepo.save(
+      documentInput("main", { threadId: "thread", docVersion: 1 }),
+    );
+    const japanese = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "translate",
+      templateId: "translate-native",
+      targetLang: "日语",
+      privatePrompt: "",
+    });
+    const english = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "translate",
+      templateId: "translate-faithful",
+      targetLang: "英语",
+      privatePrompt: "",
+    });
+    const context = toolContext("thread", japanese.docId);
+
+    await expect(derivativeBriefTool.execute!(
+      { derivativeDocId: english.docId },
+      context as never,
+    )).resolves.toMatchObject({ ok: false });
+    await expect(updateDerivativeParamsTool.execute!(
+      { derivativeDocId: english.docId, privatePrompt: "语气更正式一点" },
+      context as never,
+    )).resolves.toMatchObject({ ok: false });
+    await expect(runGenerate(
+      {
+        derivativeDocId: english.docId,
+        qingml: "<p>Should not be written.</p>",
+      },
+      context,
+    )).resolves.toMatchObject({ ok: false });
+
+    expect((await getDerivativeMeta(english.docId))?.privatePrompt).toBe("");
+    expect((await getDerivativeDocument(english.docId))?.docVersion).toBe(0);
+    await expect(derivativeBriefTool.execute!(
+      { derivativeDocId: japanese.docId },
+      context as never,
+    )).resolves.toMatchObject({
+      ok: true,
+      targetLang: "日语",
+    });
+    await expect(updateDerivativeParamsTool.execute!(
+      { derivativeDocId: japanese.docId, privatePrompt: "语气更正式一点" },
+      context as never,
+    )).resolves.toMatchObject({ ok: true });
+    await expect(runGenerate(
+      {
+        derivativeDocId: japanese.docId,
+        qingml: "<p>より正式な日本語訳。</p>",
+      },
+      context,
+    )).resolves.toMatchObject({ ok: true, docVersion: 1 });
+    expect((await getDerivativeMeta(japanese.docId))?.privatePrompt)
+      .toBe("语气更正式一点");
+  });
+
   it("brief 返回目标语言、排版/写作约束，参数更新校验归属", async () => {
     await documentRepo.save(
       documentInput("main", {

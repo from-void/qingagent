@@ -25,6 +25,7 @@ import {
   captureBoundTurnWriteGuard,
   type TurnWriteGuardAssertion,
 } from "../utils/turnWriteGuard.js";
+import { ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY } from "../utils/activeDerivativeTarget.js";
 
 type TransactionClient = Parameters<Parameters<typeof withTransaction>[0]>[0];
 
@@ -32,6 +33,27 @@ function sessionIdFrom(context: unknown): string | null {
   const requestContext = (context as { requestContext?: { get?: (key: string) => unknown } })?.requestContext;
   const value = requestContext?.get?.("sessionId");
   return typeof value === "string" ? value : null;
+}
+
+function activeDerivativeDocIdFrom(context: unknown): string | null {
+  const requestContext = (context as {
+    requestContext?: { get?: (key: string) => unknown };
+  })?.requestContext;
+  const value = requestContext?.get?.(
+    ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY,
+  );
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function derivativeTargetMismatch(
+  derivativeDocId: string,
+  context: unknown,
+): { ok: false; error: string } | null {
+  const activeDerivativeDocId = activeDerivativeDocIdFrom(context);
+  if (!activeDerivativeDocId || activeDerivativeDocId === derivativeDocId) {
+    return null;
+  }
+  return { ok: false, error: "目标稿件与当前激活稿件不一致" };
 }
 
 export const derivativeBriefTool = createTool({
@@ -46,6 +68,11 @@ export const derivativeBriefTool = createTool({
     sourceVersion: z.number().optional(), error: z.string().optional(),
   }),
   execute: async (input, context) => {
+    const targetMismatch = derivativeTargetMismatch(
+      input.derivativeDocId,
+      context,
+    );
+    if (targetMismatch) return targetMismatch;
     const sessionId = sessionIdFrom(context);
     const meta = await getDerivativeMeta(input.derivativeDocId);
     if (!sessionId || !meta || meta.threadId !== sessionId) return { ok: false, error: "衍生稿不存在或不属于当前会话" };
@@ -84,10 +111,43 @@ export const listDerivativesTool = createTool({
 });
 
 export const updateDerivativeParamsTool = createTool({
-  id: "update_derivative_params", description: "更新当前会话某篇衍生稿的排版、写作风格或补充指令；privatePrompt 传入即整体替换。",
-  inputSchema: z.object({ derivativeDocId:z.string().min(1),layoutStyleId:z.string().min(1).optional(),writingStyleId:z.string().min(1).optional(),privatePrompt:z.string().optional() }),
-  outputSchema:z.object({ok:z.boolean(),error:z.string().optional()}),
-  execute:async(input,context)=>{const sessionId=sessionIdFrom(context);const meta=await getDerivativeMeta(input.derivativeDocId);if(!sessionId||!meta||meta.threadId!==sessionId)return{ok:false,error:"衍生稿不存在或不属于当前会话"};try{await updateParams(meta.docId,input.writingStyleId??meta.writingStyleId,input.privatePrompt===undefined?meta.privatePrompt:input.privatePrompt,input.layoutStyleId??meta.layoutStyleId);return{ok:true};}catch(e){return{ok:false,error:e instanceof Error?e.message:String(e)}}},
+  id: "update_derivative_params",
+  description: "更新当前会话某篇衍生稿的排版、写作风格或补充指令；privatePrompt 传入即整体替换。",
+  inputSchema: z.object({
+    derivativeDocId: z.string().min(1),
+    layoutStyleId: z.string().min(1).optional(),
+    writingStyleId: z.string().min(1).optional(),
+    privatePrompt: z.string().optional(),
+  }),
+  outputSchema: z.object({ ok: z.boolean(), error: z.string().optional() }),
+  execute: async (input, context) => {
+    const targetMismatch = derivativeTargetMismatch(
+      input.derivativeDocId,
+      context,
+    );
+    if (targetMismatch) return targetMismatch;
+    const sessionId = sessionIdFrom(context);
+    const meta = await getDerivativeMeta(input.derivativeDocId);
+    if (!sessionId || !meta || meta.threadId !== sessionId) {
+      return { ok: false, error: "衍生稿不存在或不属于当前会话" };
+    }
+    try {
+      await updateParams(
+        meta.docId,
+        input.writingStyleId ?? meta.writingStyleId,
+        input.privatePrompt === undefined
+          ? meta.privatePrompt
+          : input.privatePrompt,
+        input.layoutStyleId ?? meta.layoutStyleId,
+      );
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
 });
 
 export interface CommitDerivativeQingmlResult {
@@ -197,6 +257,11 @@ export const generateDerivativeTool = createTool({
   inputSchema: z.object({ derivativeDocId: z.string().min(1), qingml: z.string().min(1) }),
   outputSchema: z.object({ ok: z.boolean(), wroteBlocks: z.number().optional(), docVersion: z.number().optional(), error: z.string().optional() }),
   execute: async (input, context) => {
+    const targetMismatch = derivativeTargetMismatch(
+      input.derivativeDocId,
+      context,
+    );
+    if (targetMismatch) return targetMismatch;
     const writeGuard = captureBoundTurnWriteGuard(context);
     const sessionId = sessionIdFrom(context);
     const [meta, startingDocument] = await Promise.all([

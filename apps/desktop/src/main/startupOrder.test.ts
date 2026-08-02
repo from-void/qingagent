@@ -34,7 +34,7 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   const seedLine = source.indexOf("await maybeSeedInitialContent();", serverReadyLine);
   const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", seedLine);
   const finishLoadLine = source.indexOf('contentWebContents.on("did-finish-load"', telemetryLine);
-  const contentLoadLine = source.indexOf("contentWindow.loadURL(contentUrl)", finishLoadLine);
+  const contentLoadLine = source.indexOf("desktopDeepLinks.setNavigator", finishLoadLine);
   const createWindowSource = source.slice(source.indexOf("async function createWindow()"), source.indexOf("// 首启示例内容"));
 
   assert.ok(browserWindowLine >= 0, "未创建主窗口");
@@ -62,19 +62,44 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   assert.doesNotMatch(readStartupShellHtml(source), /https?:\/\//i, "启动壳不得引用外部资源");
 });
 
+test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并由恢复流程保留目标 URL", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const serverReadyLine = source.indexOf("({ port } = await serverReady)");
+  const protocolReadyLine = source.indexOf("installPackagedRendererProtocol(port)", serverReadyLine);
+  const navigatorReadyLine = source.indexOf("desktopDeepLinks.setNavigator", protocolReadyLine);
+  const initialLoadLine = source.indexOf("loadDesiredContent()", navigatorReadyLine);
+  const recoveryStart = source.indexOf("const recoverContentLoad = async");
+  const recoveryEnd = source.indexOf('contentWebContents.on(\n    "did-fail-load"', recoveryStart);
+  const recoverySource = source.slice(recoveryStart, recoveryEnd);
+
+  assert.match(source, /new DesktopAppDeepLinkDispatcher\(process\.argv\)/);
+  assert.match(source, /offerCommandLine\(commandLine\)/, "second-instance 必须转交完整启动参数");
+  assert.match(source, /app\.on\("open-url", \(event, url\) =>/);
+  assert.ok(
+    serverReadyLine >= 0
+      && protocolReadyLine > serverReadyLine
+      && navigatorReadyLine > protocolReadyLine
+      && initialLoadLine > navigatorReadyLine,
+    "深链导航器与首次内容加载必须晚于 server 及打包协议 handler 就绪",
+  );
+  assert.match(recoverySource, /contentWindow\.loadURL\(desiredContentUrl\)/);
+  assert.doesNotMatch(recoverySource, /contentWindow\.loadURL\(contentUrl\)/);
+});
+
 test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ERR_ABORTED", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const recoveryLine = source.indexOf("const recoverContentLoad = async");
+  const rejectionLine = source.indexOf("const loadDesiredContent = (): void =>", recoveryLine);
   const failLoadLine = source.indexOf('contentWebContents.on(\n    "did-fail-load"', recoveryLine);
-  const contentLoadLine = source.indexOf("const contentLoad = contentWindow.loadURL(contentUrl)", failLoadLine);
-  const catchLine = source.indexOf("void contentLoad.catch(", contentLoadLine);
-  const recoverySource = source.slice(recoveryLine, contentLoadLine);
-  const catchSource = source.slice(catchLine, source.indexOf("\n  });", catchLine) + 5);
+  const contentLoadLine = source.indexOf("desktopDeepLinks.setNavigator", failLoadLine);
+  const recoverySource = source.slice(recoveryLine, rejectionLine);
+  const rejectionSource = source.slice(rejectionLine, failLoadLine);
+  const failLoadSource = source.slice(failLoadLine, contentLoadLine);
 
   assert.ok(recoveryLine >= 0, "必须定义内容页恢复流程");
   assert.ok(failLoadLine > recoveryLine && failLoadLine < contentLoadLine, "did-fail-load 必须在首次内容页导航前注册");
-  assert.match(recoverySource, /!isMainFrame \|\| errorCode === CHROMIUM_ERR_ABORTED/);
-  assert.match(recoverySource, /recoverContentLoad\(\{ errorCode, errorDescription, validatedURL \}\)/);
+  assert.match(failLoadSource, /!isMainFrame \|\| errorCode === CHROMIUM_ERR_ABORTED/);
+  assert.match(failLoadSource, /recoverContentLoad\(\{ errorCode, errorDescription, validatedURL \}\)/);
   assert.match(recoverySource, /probeEmbeddedServerHealth\(port\)/);
   assert.match(recoverySource, /contentWindow\.loadURL\(STARTUP_SHELL_URL\)/);
   assert.match(recoverySource, /rendererDialogBroker\.request\([\s\S]*"content-load-failed"/);
@@ -92,7 +117,8 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
   assert.match(startupShell, />退出<\/button>/);
   assert.match(startupShell, /markDesktopDialogReady\(\["content-load-failed"\]\)/);
   assert.match(recoverySource, /app\.exit\(1\)/);
-  assert.match(catchSource, /recoverContentLoad\(error\)/, "loadURL rejection 也必须进入同一恢复流程");
+  assert.match(rejectionSource, /generation !== contentLoadGeneration/, "被新深链中止的旧导航不得误触发恢复");
+  assert.match(rejectionSource, /recoverContentLoad\(error\)/, "loadURL rejection 也必须进入同一恢复流程");
 });
 
 test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () => {

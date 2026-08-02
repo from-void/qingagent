@@ -8,7 +8,10 @@ export interface FocusableWindow {
 export interface SingleInstanceApp {
   requestSingleInstanceLock(): boolean;
   quit(): void;
-  on(event: "second-instance", listener: () => void): unknown;
+  on(
+    event: "second-instance",
+    listener: (event: unknown, commandLine: string[]) => void,
+  ): unknown;
 }
 
 /**
@@ -18,13 +21,15 @@ export interface SingleInstanceApp {
 export function acquireSingleInstanceLock(
   app: SingleInstanceApp,
   getActiveWindow: () => FocusableWindow | null,
+  onSecondInstance?: (commandLine: string[]) => void,
 ): boolean {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return false;
   }
 
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
+    onSecondInstance?.(commandLine);
     const window = getActiveWindow();
     if (!window || window.isDestroyed()) return;
     if (window.isMinimized()) window.restore();

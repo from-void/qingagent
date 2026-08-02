@@ -30,9 +30,11 @@ import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import { persistClientConfigValue } from "./clientConfigPersistence.js";
 import {
   createDesktopAppProxyHandler,
+  DesktopAppDeepLinkDispatcher,
   DESKTOP_APP_ORIGIN,
   DESKTOP_APP_SCHEME,
   DESKTOP_APP_URL,
+  resolveDesktopContentUrl,
 } from "./desktopAppProtocol.js";
 import { createNodeHttpProxyFetch } from "./desktopAppProxyFetch.js";
 import {
@@ -96,7 +98,16 @@ const nativeRememberGrantGate = new NativeRememberGrantGate();
 let mainWindowRememberGeneration = 0;
 let mainWindowRememberScope: string | null = null;
 const rendererDialogBroker = new RendererDialogBroker();
-const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
+const desktopDeepLinks = new DesktopAppDeepLinkDispatcher(process.argv);
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  desktopDeepLinks.offerUrl(url);
+});
+const hasSingleInstanceLock = acquireSingleInstanceLock(
+  app,
+  () => mainWindow,
+  (commandLine) => desktopDeepLinks.offerCommandLine(commandLine),
+);
 
 function assertTrustedRenderer(
   event: IpcMainEvent | IpcMainInvokeEvent,
@@ -1366,13 +1377,16 @@ async function createWindowOnce() {
   };
   contentWebContents.on("did-finish-load", startUpdaterAfterContentLoad);
 
-  const contentUrl = isDev
+  const baseContentUrl = isDev
     // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
     ? devContentUrl
     // 打包态由固定可信 origin 转发到内置 Hono，Web Storage 不再受随机监听端口影响。
     : DESKTOP_APP_URL;
 
+  let desiredContentUrl = baseContentUrl;
+  let contentLoadGeneration = 0;
   let contentRecoveryActive = false;
+  let recoveryReloadRequested = false;
   const recoverContentLoad = async (reason: unknown): Promise<void> => {
     if (
       contentRecoveryActive ||
@@ -1402,7 +1416,12 @@ async function createWindowOnce() {
           }
 
           try {
-            await contentWindow.loadURL(contentUrl);
+            recoveryReloadRequested = false;
+            const attemptedUrl = desiredContentUrl;
+            await contentWindow.loadURL(desiredContentUrl);
+            // 恢复导航进行中又收到更新的深链时，旧页面即使加载成功也不是最终目标；
+            // 不显示失败壳，直接重新进入自动恢复并加载 latest-wins 目标。
+            if (recoveryReloadRequested || attemptedUrl !== desiredContentUrl) continue;
             return;
           } catch (error) {
             console.error(`[startup] 内容页第 ${step.attempt} 次恢复失败:`, error);
@@ -1410,6 +1429,7 @@ async function createWindowOnce() {
         }
 
         if (getLiveWebContents(contentWindow) !== contentWebContents) return;
+        if (recoveryReloadRequested) continue;
         // 最后一次失败会让 Chromium 错误页接管主 frame；询问前必须重新挂回自绘启动壳，
         // 否则 renderer 能力已随导航失效，正常的内容恢复也会误降级成系统弹框。
         await contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
@@ -1435,6 +1455,18 @@ async function createWindowOnce() {
     }
   };
 
+  const loadDesiredContent = (): void => {
+    const generation = ++contentLoadGeneration;
+    const targetUrl = desiredContentUrl;
+    void contentWindow.loadURL(targetUrl).catch((error) => {
+      // 新深链替换旧导航时 Chromium 会 reject 被中止的 loadURL；旧 promise 不得反过来
+      // 把最新页面拉进恢复壳。did-fail-load 的 ERR_ABORTED 过滤与这里的 generation 成对。
+      if (generation !== contentLoadGeneration) return;
+      console.error("[startup] 内容页加载失败:", error);
+      void recoverContentLoad(error);
+    });
+  };
+
   contentWebContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -1443,16 +1475,26 @@ async function createWindowOnce() {
     },
   );
 
-  const contentLoad = contentWindow.loadURL(contentUrl);
+  const navigateToDesktopDeepLink = (deepLinkUrl: string): void => {
+    desiredContentUrl = resolveDesktopContentUrl(baseContentUrl, deepLinkUrl);
+    if (contentRecoveryActive) {
+      recoveryReloadRequested = true;
+      return;
+    }
+    loadDesiredContent();
+  };
+  // 绑定点刻意晚于 await serverReady 与 installPackagedRendererProtocol：冷启动 URL、
+  // macOS open-url、second-instance 在此之前都只排队，不会撞进未就绪的自定义协议。
+  const loadedQueuedDeepLink = desktopDeepLinks.setNavigator(navigateToDesktopDeepLink);
+  contentWindow.once("closed", () => {
+    desktopDeepLinks.clearNavigator(navigateToDesktopDeepLink);
+  });
+  if (!loadedQueuedDeepLink) loadDesiredContent();
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
     if (!contentWebContents.isDestroyed()) {
       contentWebContents.openDevTools({ mode: "detach" });
     }
   }
-  void contentLoad.catch((error) => {
-    console.error("[startup] 内容页加载失败:", error);
-    void recoverContentLoad(error);
-  });
 }
 
 // 首启示例内容(分叉骨架):桌面端「一辈子只 seed 一次」。

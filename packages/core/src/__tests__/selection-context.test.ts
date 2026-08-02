@@ -99,9 +99,41 @@ describe("selection chip edit context", () => {
       get: (key: string) => unknown;
     };
     expect(requestContext.get("usageCallSite")).toBe("generateDerivative");
+    expect(requestContext.get("activeDerivativeDocId")).toBeNull();
     expect(agentStreamCalls[0]?.options.tracingOptions).toMatchObject({
       metadata: { site: "generateDerivative" },
     });
+  });
+
+  it("普通追问把当前日语译稿绑定到工具 RequestContext", async () => {
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
+    const state = createSession("sess-japanese-translation-followup");
+
+    await collectFrames(
+      runAgentTurn(
+        state,
+        "语气更正式一点",
+        [],
+        [],
+        [],
+        null,
+        undefined,
+        undefined,
+        undefined,
+        {
+          activeDocument: {
+            kind: "derivative",
+            docId: "translation-ja-only",
+          },
+        },
+      ),
+    );
+
+    const requestContext = agentStreamCalls.at(-1)?.options.requestContext as {
+      get: (key: string) => unknown;
+    };
+    expect(requestContext.get("activeDerivativeDocId"))
+      .toBe("translation-ja-only");
   });
 
   it("同 session 历史含衍生稿标记时，主稿目标在当前轮尾部明确复位", async () => {

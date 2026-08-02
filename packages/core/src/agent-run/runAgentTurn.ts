@@ -143,6 +143,7 @@ import {
   appendTurnContextToLatestUserMessage,
   buildActiveDocumentTurnContext,
 } from "./activeDocumentContext.js";
+import { ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY } from "../utils/activeDerivativeTarget.js";
 
 const logger = mastra.getLogger();
 const AGENT_TURN_FAILED_MESSAGE = "本轮处理失败，请稍后重试。";
@@ -699,6 +700,11 @@ export async function* runAgentTurn(
           },
         ]
       : messagesForModel;
+    const activeDerivativeDocId =
+      runtimeOptions.turnKind !== "generateDerivative" &&
+        runtimeOptions.activeDocument?.kind === "derivative"
+        ? runtimeOptions.activeDocument.docId
+        : null;
     const requestContext: RequestContext = new RequestContext([
       ["materials", state.materials],
       ["messages", messagesForToolContext],
@@ -712,6 +718,7 @@ export async function* runAgentTurn(
       ],
       ["userText", userText],
       ["reviewContext", reviewContext ?? null],
+      [ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY, activeDerivativeDocId],
       ["usageCallSite", modelCallSite],
       ["sessionId", state.sessionId],
       ["streamId", streamId],

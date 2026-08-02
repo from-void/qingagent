@@ -4167,6 +4167,62 @@ describe("WorkspacePage review controls", () => {
     );
   });
 
+  it("单日语译稿内追问绑定当前语种且不暗建英语稿", async () => {
+    const japanese = {
+      docId: "translation-ja-only",
+      dtype: "translate" as const,
+      templateId: "translate-native",
+      templateName: "母语化改写",
+      targetLang: "日语",
+      privatePrompt: "",
+      sourceVersion: 1,
+      currentSourceVersion: 1,
+      generatedAt: "2026-08-03T00:00:00.000Z",
+      stale: false,
+    };
+    const stream = await renderWorkspaceWithAnnotations("reviewing", (nextStream) => {
+      nextStream.listDerivatives.mockResolvedValue([japanese]);
+      nextStream.getDerivativeDoc.mockResolvedValue({
+        meta: japanese,
+        docPm: JSON.stringify(pmDoc([
+          pmParagraph("translation-ja-p", "日本語の訳文"),
+        ])),
+        docVersion: 1,
+        title: "",
+      });
+    });
+    await flushMicrotasks(5);
+
+    const translationTab = Array.from(
+      host!.querySelectorAll<HTMLElement>('[role="tab"]'),
+    ).find((tab) => tab.textContent?.includes("翻译"));
+    expect(translationTab).toBeTruthy();
+    await clickElement(translationTab!);
+
+    const editor = getChatEditor();
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "语气更正式一点";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("发送");
+    await flushMicrotasks(5);
+
+    expect(sendMessageCommands(stream)).toContainEqual(
+      expect.objectContaining({
+        kind: "sendMessage",
+        data: expect.objectContaining({
+          text: "语气更正式一点",
+          activeDocument: {
+            kind: "derivative",
+            docId: japanese.docId,
+          },
+        }),
+      }),
+    );
+    expect(stream.createDerivative).not.toHaveBeenCalled();
+  });
+
   it("批注意见编辑后点击生成修改只追加输入框，用户确认后才发送", async () => {
     const stream = await renderWorkspaceWithAnnotations();
     const editor = getChatEditor();

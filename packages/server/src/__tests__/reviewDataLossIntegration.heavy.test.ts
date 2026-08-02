@@ -18,6 +18,15 @@ import {
   type PmDoc,
 } from "@qingagent/pm-schema";
 
+type StoredThread = {
+  id: string;
+  title: string;
+  resourceId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  metadata?: Record<string, unknown>;
+};
+
 const agentStream = vi.hoisted(() => vi.fn());
 const logger = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -25,13 +34,43 @@ const logger = vi.hoisted(() => ({
   warn: vi.fn(),
   error: vi.fn(),
 }));
+const threadMemory = vi.hoisted(() => {
+  const threads = new Map<string, StoredThread>();
+  return {
+    threads,
+    api: {
+      saveThread: vi.fn(async ({ thread }: { thread: StoredThread }) => {
+        threads.set(thread.id, structuredClone(thread));
+      }),
+      updateThread: vi.fn(async (input: {
+        id: string;
+        title: string;
+        metadata: Record<string, unknown>;
+      }) => {
+        const previous = threads.get(input.id);
+        if (!previous) throw new Error(`Thread ${input.id} not found`);
+        threads.set(input.id, {
+          ...previous,
+          title: input.title,
+          metadata: structuredClone(input.metadata),
+          updatedAt: new Date(),
+        });
+      }),
+      getThreadById: vi.fn(async ({ threadId }: { threadId: string }) =>
+        structuredClone(threads.get(threadId) ?? null)),
+      recall: vi.fn(async () => ({ messages: [] })),
+      getWorkingMemory: vi.fn(async () => null),
+    },
+  };
+});
 
 vi.mock("../../../core/src/mastra.js", () => ({
   mastra: {
     getLogger: () => logger,
-    getMemory: () => null,
+    getMemory: () => threadMemory.api,
     getAgent: () => ({}),
   },
+  getMemory: () => threadMemory.api,
   getObservability: () => null,
 }));
 
@@ -123,6 +162,7 @@ async function updateDoc(sessionId: string, version: number, doc: PmDoc, mutatio
 }
 
 beforeAll(async () => {
+  threadMemory.threads.clear();
   tempDir = mkdtempSync(join(tmpdir(), "qingagent-review-data-loss-"));
   process.env.DATABASE_URL = `file:${join(tempDir, "documents.db")}`;
   const documentsClient = await import("@qingagent/db/client");
@@ -336,5 +376,48 @@ describe("审阅提交数据丢失 P0 真实命令链", () => {
       },
     });
     expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
+
+    const persistedGroups = structuredClone(session.annotationGroups);
+    const persistedAnchorCount = persistedGroups.reduce(
+      (count, group) => count + group.anchors.length,
+      0,
+    );
+    const stored = await core.getDocumentsClient().execute({
+      sql: `SELECT COUNT(DISTINCT group_id) AS group_count, COUNT(*) AS anchor_count
+        FROM document_suggestions
+        WHERE doc_id = ? AND kind = 'annotation' AND status = 'reviewing'`,
+      args: [session.docId],
+    });
+    expect(Number(stored.rows[0]?.group_count)).toBe(persistedGroups.length);
+    expect(Number(stored.rows[0]?.anchor_count)).toBe(persistedAnchorCount);
+
+    // 等待 thread 元数据写稳并驱逐唯一内存对象，模拟客户端/服务端重启后由 session URL 冷恢复。
+    if (session.threadCreatePromise) await session.threadCreatePromise;
+    await core.drainSessionPersistence();
+    bridge.forgetSession(sessionId);
+    expect(bridge.getSession(sessionId)).toBeUndefined();
+
+    const restoreFrames = await collectFrames(bridge.handleCommand({
+      kind: "startSession",
+      data: { mode: { kind: "existing", data: { id: sessionId } } },
+    }));
+    const restored = bridge.getSession(sessionId);
+    if (!restored) throw new Error("missing cold-restored session");
+
+    expect(restored).not.toBe(session);
+    expect(restored.annotationGroups).toEqual(persistedGroups);
+    expect(restored.annotationGroups).toHaveLength(persistedGroups.length);
+    expect(restored.annotationGroups.flatMap((group) => group.anchors))
+      .toEqual(persistedGroups.flatMap((group) => group.anchors));
+    expect(restoreFrames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: { groups: persistedGroups },
+    });
+    expect(restoreFrames.findIndex((frame) => frame.kind === "documentSnapshotWritten"))
+      .toBeLessThan(restoreFrames.findIndex((frame) => frame.kind === "annotationGroupsReady"));
+    expect(restoreFrames.at(-1)).toEqual({
+      kind: "sessionRestoreCompleted",
+      data: { sessionId },
+    });
   });
 });

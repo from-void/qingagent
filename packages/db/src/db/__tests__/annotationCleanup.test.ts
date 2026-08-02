@@ -4,6 +4,7 @@ import { getDocumentsClient } from "../documentsClient.js";
 import {
   ignoreAnnotationGroups,
   insertAnnotationGroups,
+  listActiveAnnotationGroups,
   persistMappedAnnotationGroups,
   replaceAnnotationGroupsByOrigin,
 } from "../documentSuggestionsRepo.js";
@@ -99,5 +100,77 @@ describe("annotation cleanup op", () => {
     });
     expect(JSON.stringify(row)).not.toContain("13912345678");
     expect(JSON.stringify(row)).not.toContain("zhangwei@example.com");
+  });
+
+  it("恢复读取严格拒绝包裹、尾随、截断和非法坐标，只保留完整活动锚点", async () => {
+    const validAnchor = {
+      blockId: "p",
+      pmFrom: 13,
+      pmTo: 18,
+      quote: "原文含 ]、} 和 \"引号\"",
+      prefix: "前文 }",
+      suffix: "后文 ]",
+      textHash: "hash-valid",
+    };
+    const group: AnnotationGroup = {
+      id: "dirty-restore",
+      origin: "自定义审查:对外发布",
+      summary: "需要复核",
+      note: "多处命中。",
+      suggestion: "使用公开口径",
+      severity: "warn",
+      status: "reviewing",
+      anchors: [
+        { blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "hash-a" },
+        { blockId: "p", pmFrom: 5, pmTo: 7, quote: "乙组", textHash: "hash-b" },
+        { blockId: "p", pmFrom: 7, pmTo: 9, quote: "丙组", textHash: "hash-c" },
+        { blockId: "p", pmFrom: 9, pmTo: 11, quote: "丁组", textHash: "hash-d" },
+        { blockId: "p", pmFrom: 11, pmTo: 13, quote: "戊组", textHash: "hash-e" },
+        validAnchor,
+      ],
+    };
+    await insertAnnotationGroups("doc-dirty-restore", 1, [group]);
+    const client = getDocumentsClient();
+    const encodedFirst = JSON.stringify(group.anchors[0]);
+    const dirtyAnchors = [
+      `${encodedFirst} trailing prose`,
+      `\`\`\`json\n${encodedFirst}\n\`\`\``,
+      `前导说明\n${encodedFirst}`,
+      '{"blockId":"p","pmFrom":9',
+      JSON.stringify({ ...group.anchors[4], pmTo: group.anchors[4]!.pmFrom }),
+    ];
+    for (let index = 0; index < dirtyAnchors.length; index += 1) {
+      await client.execute({
+        sql: `UPDATE document_suggestions SET anchor_json = ?, group_meta_json = ?
+          WHERE doc_id = ? AND group_id = ? AND id = ?`,
+        args: [
+          dirtyAnchors[index]!,
+          '{"summary":"需要复核"} trailing prose',
+          "doc-dirty-restore",
+          group.id,
+          `${group.id}:${index + 1}`,
+        ],
+      });
+    }
+    await client.execute({
+      sql: `UPDATE document_suggestions SET group_meta_json = ?
+        WHERE doc_id = ? AND group_id = ? AND id = ?`,
+      args: [
+        '{"summary":"需要复核"} trailing prose',
+        "doc-dirty-restore",
+        group.id,
+        `${group.id}:6`,
+      ],
+    });
+
+    await expect(listActiveAnnotationGroups("doc-dirty-restore")).resolves.toEqual([{
+      id: group.id,
+      origin: group.origin,
+      summary: group.summary,
+      note: group.note,
+      severity: "warn",
+      status: "reviewing",
+      anchors: [validAnchor],
+    }]);
   });
 });

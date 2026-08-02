@@ -29,6 +29,7 @@ import { sessionIdToTraceId } from "../agent-run/agentSpans.js";
 import type { Material } from "../types/material.js";
 import {
   documentRepo,
+  listActiveAnnotationGroups,
   listConfirmCancellationTombstones,
   type DocumentRow,
 } from "@qingagent/db";
@@ -1927,6 +1928,8 @@ export async function loadSessionFromThread(
   // PROTECTED fallback — 阶段4保留；停写 metadata.legacySections 前置条件见阶段4计划，勿删。
   const legacySections = meta.legacySections ?? [];
   const doc = meta.doc ?? legacySectionsToPm(legacySections as never);
+  // 这是批注唯一真相源，读取失败不能伪装成“当前没有批注”完成恢复；让上层重试整次冷加载。
+  const annotationGroups = await listActiveAnnotationGroups(docId);
   let suggestions = deserializeSuggestions(meta.suggestions);
   let patchVerdicts = deserializePatchVerdicts(meta.patchVerdicts);
   const hasPersistedReviewState =
@@ -2086,8 +2089,8 @@ export async function loadSessionFromThread(
     _activeAgentMessageId: null,
     _pendingDraftRecoveryFrames: [],
     suggestions,
-    // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
-    annotationGroups: [],
+    // 批注独立落在 document_suggestions；恢复时按活动状态重组，不写入 thread metadata 双份真相。
+    annotationGroups,
     patchVerdicts,
     patchValidationResults: new Map(),
     docDraftBaseSections: null,

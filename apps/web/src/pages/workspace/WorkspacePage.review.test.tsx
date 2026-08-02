@@ -3813,6 +3813,64 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
   });
 
+  it("会话恢复帧在正文快照后重建全部批注锚点与 hover 卡", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    const restoredGroup: AnnotationGroup = {
+      id: "annotation-restored",
+      summary: "两处信息需要复核",
+      note: "重启后仍应显示两处原文位置。",
+      origin: "自定义审查:对外发布",
+      suggestion: "改用公开口径",
+      severity: "error",
+      status: "reviewing",
+      anchors: [
+        { blockId: "restore-p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "restore-a" },
+        { blockId: "restore-p", pmFrom: 5, pmTo: 7, quote: "乙组", textHash: "restore-b" },
+      ],
+    };
+
+    await emitFrames(stream, [
+      { kind: "restoreReset", data: { epoch: 2, snapshotSeq: 0 } },
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "恢复批注" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("restore-p", "甲组正文乙组结尾")]),
+            1,
+          ),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+      { kind: "annotationGroupsReady", data: { groups: [restoredGroup] } },
+      { kind: "sessionRestoreCompleted", data: { sessionId: "s-1" } },
+    ]);
+
+    const restoredAnchors = host!.querySelectorAll<HTMLElement>(
+      '[data-annotation-group="annotation-restored"]',
+    );
+    expect(restoredAnchors).toHaveLength(2);
+    expect(Array.from(restoredAnchors, (anchor) => anchor.textContent)).toEqual(["甲组", "乙组"]);
+    expect(Array.from(restoredAnchors, (anchor) => anchor.dataset.annotationSeverity))
+      .toEqual(["error", "error"]);
+
+    vi.useFakeTimers();
+    await act(async () => {
+      restoredAnchors[1]!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(host?.querySelector(".annotation-hover-card")?.textContent)
+      .toContain("两处信息需要复核");
+    expect(host?.querySelector(".annotation-hover-card")?.textContent)
+      .toContain("重启后仍应显示两处原文位置。");
+    expect(host?.querySelector(".annotation-hover-card")?.textContent)
+      .toContain("改用公开口径");
+    vi.useRealTimers();
+  });
+
   it("docCommitted 不再整体清空批注", async () => {
     const stream = await renderWorkspaceWithAnnotations();
 

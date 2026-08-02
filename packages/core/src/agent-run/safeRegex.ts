@@ -28,6 +28,8 @@ type WorkerResponse =
   | { id: number; ok: true; matches: WorkerMatch[] }
   | { id: number; ok: false; error: string };
 
+type WorkerMessage = { ready: true } | WorkerResponse;
+
 interface SafeRegexTask {
   request: WorkerRequest;
   resolve: (result: ExecSafeRegexResult) => void;
@@ -37,6 +39,7 @@ interface SafeRegexTask {
 
 interface PooledWorker {
   worker: Worker;
+  ready: boolean;
   busy: boolean;
   task: SafeRegexTask | null;
 }
@@ -44,8 +47,9 @@ interface PooledWorker {
 const MAX_PATTERN_LENGTH = 256;
 const MAX_TEXT_LENGTH = 20_000;
 const DEFAULT_MATCH_LIMIT = 1000;
+// RUN 只约束正则真正开始执行后的 CPU 时间；worker 冷启动和池内排队走 TOTAL。
 const RUN_TIMEOUT_MS = 200;
-const TOTAL_TIMEOUT_MS = 500;
+const TOTAL_TIMEOUT_MS = 2_000;
 const ALLOWED_FLAGS = new Set(["i", "u", "m"]);
 const EXECUTOR_UNAVAILABLE_ERROR = "安全正则执行器不可用";
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -165,7 +169,23 @@ function inlineWorkerSource(): string {
     parentPort.on("message", (input) => {
       parentPort.postMessage({ id: input.id, ...run(input) });
     });
+    parentPort.postMessage({ ready: true });
   `;
+}
+
+function startWorkerTask(pooled: PooledWorker, task: SafeRegexTask): void {
+  if (pooled.task !== task || task.runTimer) return;
+  task.runTimer = setTimeout(() => {
+    if (pooled.task !== task) return;
+    clearTimeout(task.totalTimer);
+    pooled.task = null;
+    pooled.busy = false;
+    dropWorker(pooled);
+    void pooled.worker.terminate();
+    task.resolve({ ok: false, error: "unsafe regex (timeout)" });
+    dispatchQueue();
+  }, RUN_TIMEOUT_MS);
+  pooled.worker.postMessage(task.request);
 }
 
 function createWorker(): PooledWorker {
@@ -180,9 +200,16 @@ function createWorker(): PooledWorker {
   const worker = new Ctor(inlineWorkerSource(), { eval: true });
 
   createdWorkers += 1;
-  const pooled: PooledWorker = { worker, busy: false, task: null };
+  const pooled: PooledWorker = { worker, ready: false, busy: false, task: null };
 
-  worker.on("message", (message: WorkerResponse) => {
+  worker.on("message", (message: WorkerMessage) => {
+    if ("ready" in message) {
+      if (pooled.ready) return;
+      pooled.ready = true;
+      if (pooled.task) startWorkerTask(pooled, pooled.task);
+      dispatchQueue();
+      return;
+    }
     const task = pooled.task;
     if (!task || task.request.id !== message.id) return;
     clearTimeout(task.totalTimer);
@@ -287,17 +314,7 @@ function dispatchQueue(): void {
     const task = queue.shift()!;
     worker.busy = true;
     worker.task = task;
-    task.runTimer = setTimeout(() => {
-      if (worker.task !== task) return;
-      clearTimeout(task.totalTimer);
-      worker.task = null;
-      worker.busy = false;
-      dropWorker(worker);
-      void worker.worker.terminate();
-      task.resolve({ ok: false, error: "unsafe regex (timeout)" });
-      dispatchQueue();
-    }, RUN_TIMEOUT_MS);
-    worker.worker.postMessage(task.request);
+    if (worker.ready) startWorkerTask(worker, task);
   }
 }
 

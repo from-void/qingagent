@@ -15,3 +15,32 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     value: ResizeObserverStub,
   });
 }
+
+/** jsdom 的 Range 没有布局几何 API；ProseMirror 的选区滚动会读取它们。 */
+function emptyDomRect(): DOMRect {
+  return new DOMRect(0, 0, 0, 0);
+}
+
+function emptyDomRectList(): DOMRectList {
+  const rects: DOMRect[] = [];
+  return Object.assign(rects, {
+    item: (index: number) => rects[index] ?? null,
+  }) as unknown as DOMRectList;
+}
+
+for (const prototype of [Element.prototype, Range.prototype]) {
+  if (typeof prototype.getClientRects !== "function") {
+    Object.defineProperty(prototype, "getClientRects", {
+      configurable: true,
+      writable: true,
+      value: emptyDomRectList,
+    });
+  }
+  if (typeof prototype.getBoundingClientRect !== "function") {
+    Object.defineProperty(prototype, "getBoundingClientRect", {
+      configurable: true,
+      writable: true,
+      value: emptyDomRect,
+    });
+  }
+}

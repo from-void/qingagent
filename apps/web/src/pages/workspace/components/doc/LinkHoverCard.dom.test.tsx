@@ -44,6 +44,7 @@ describe("LinkHoverCard 实时锚点", () => {
         bubbles: true,
         cancelable: true,
       }));
+      await nextAnimationFrame();
     });
 
     const json = JSON.stringify(editor.getJSON());
@@ -120,4 +121,8 @@ function setInputValue(input: HTMLInputElement, value: string) {
     "value",
   )?.set;
   setter?.call(input, value);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }

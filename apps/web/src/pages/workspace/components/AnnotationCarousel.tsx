@@ -10,13 +10,23 @@ import { CaretIcon } from "./icons";
 const SHOW_DELAY_MS = 80;
 const HIDE_DELAY_MS = 150;
 const NAVIGATION_SCROLL_IDLE_MS = 200;
+const NAVIGATION_HOVER_GRACE_MS = 250;
 const VIEWPORT_GUTTER = 12;
 const CARD_GAP = 8;
 
 type HoveredAnnotation = {
   groupId: string;
   groupIds: string[];
+  anchor: HTMLElement;
   anchorRect: DOMRect;
+};
+
+type NavigationPin = {
+  groupId: string;
+  target: HTMLElement;
+  anchorRectReady: boolean;
+  visibleFrameReady: boolean;
+  pendingHide: "immediate" | "delayed" | null;
 };
 
 function annotationGroupIdsAtTarget(
@@ -90,6 +100,11 @@ export function AnnotationCarousel(props: {
   const hideTimerRef = useRef<number | null>(null);
   const navigationScrollRef = useRef(false);
   const navigationScrollTimerRef = useRef<number | null>(null);
+  const navigationPinRef = useRef<NavigationPin | null>(null);
+  const navigationFrameRef = useRef<number | null>(null);
+  const navigationGraceTimerRef = useRef<number | null>(null);
+  const cardHoveredRef = useRef(false);
+  const hoveredAnchorRef = useRef<HTMLElement | null>(null);
   const hoveredKeyRef = useRef<string | null>(null);
   hoveredKeyRef.current = hovered ? `${hovered.groupId}:${hovered.groupIds.join(",")}` : null;
 
@@ -99,6 +114,11 @@ export function AnnotationCarousel(props: {
     timerRef.current = null;
   };
   const cancelHide = () => clearTimer(hideTimerRef);
+  const clearNavigationFrame = () => {
+    if (navigationFrameRef.current === null) return;
+    window.cancelAnimationFrame(navigationFrameRef.current);
+    navigationFrameRef.current = null;
+  };
   const protectNavigationScroll = () => {
     navigationScrollRef.current = true;
     clearTimer(navigationScrollTimerRef);
@@ -107,17 +127,65 @@ export function AnnotationCarousel(props: {
       navigationScrollRef.current = false;
     }, NAVIGATION_SCROLL_IDLE_MS);
   };
+  const deferHideWhileNavigating = (kind: NonNullable<NavigationPin["pendingHide"]>) => {
+    const pin = navigationPinRef.current;
+    if (!pin) return false;
+    if (kind === "immediate" || pin.pendingHide === null) pin.pendingHide = kind;
+    clearTimer(hideTimerRef);
+    return true;
+  };
   const hideNow = () => {
+    if (deferHideWhileNavigating("immediate")) return;
     clearTimer(showTimerRef);
     clearTimer(hideTimerRef);
     setHovered(null);
   };
   const scheduleHide = () => {
+    if (deferHideWhileNavigating("delayed")) return;
     clearTimer(hideTimerRef);
     hideTimerRef.current = window.setTimeout(() => {
       hideTimerRef.current = null;
       setHovered(null);
     }, HIDE_DELAY_MS);
+  };
+  const isPointerWithinNavigationTarget = (pin: NavigationPin) => {
+    const anchor = hoveredAnchorRef.current;
+    return cardHoveredRef.current
+      || Boolean(anchor && (anchor === pin.target || anchor.contains(pin.target) || pin.target.contains(anchor)));
+  };
+  const releaseNavigationPin = (keepOpen: boolean) => {
+    const pin = navigationPinRef.current;
+    if (!pin) return;
+    navigationPinRef.current = null;
+    clearNavigationFrame();
+    clearTimer(navigationGraceTimerRef);
+    if (keepOpen) {
+      cancelHide();
+      return;
+    }
+    if (pin.pendingHide === "immediate") hideNow();
+    else if (pin.pendingHide === "delayed") scheduleHide();
+  };
+  const releaseNavigationPinIfHovered = () => {
+    const pin = navigationPinRef.current;
+    if (!pin?.visibleFrameReady || !isPointerWithinNavigationTarget(pin)) return;
+    releaseNavigationPin(true);
+  };
+  const beginNavigationPin = (groupId: string, target: HTMLElement, anchorRectReady: boolean) => {
+    clearNavigationFrame();
+    clearTimer(navigationGraceTimerRef);
+    clearTimer(showTimerRef);
+    cancelHide();
+    protectNavigationScroll();
+    cardHoveredRef.current = false;
+    hoveredAnchorRef.current = null;
+    navigationPinRef.current = {
+      groupId,
+      target,
+      anchorRectReady,
+      visibleFrameReady: false,
+      pendingHide: null,
+    };
   };
 
   useEffect(() => {
@@ -132,14 +200,17 @@ export function AnnotationCarousel(props: {
       const groupIds = annotationGroupIdsAtTarget(event.target as Element, editorDom, props.groups);
       const groupId = groupIds[0];
       if (!groupId) return;
+      hoveredAnchorRef.current = target;
+      releaseNavigationPinIfHovered();
       cancelHide();
+      if (navigationPinRef.current) return;
       if (hoveredKeyRef.current === `${groupId}:${groupIds.join(",")}`) return;
       clearTimer(showTimerRef);
       showTimerRef.current = window.setTimeout(() => {
         showTimerRef.current = null;
         if (!target.isConnected) return;
         setPosition({ visibility: "hidden" });
-        setHovered({ groupId, groupIds, anchorRect: target.getBoundingClientRect() });
+        setHovered({ groupId, groupIds, anchor: target, anchorRect: target.getBoundingClientRect() });
       }, SHOW_DELAY_MS);
     };
     const onMouseOut = (event: globalThis.MouseEvent) => {
@@ -148,7 +219,16 @@ export function AnnotationCarousel(props: {
         : null;
       if (!target || !editorDom.contains(target)) return;
       const related = event.relatedTarget;
-      if (related instanceof Node && (target.contains(related) || cardRef.current?.contains(related))) return;
+      if (related instanceof Node && target.contains(related)) return;
+      const relatedElement = related instanceof Element
+        ? related
+        : related instanceof Node
+          ? related.parentElement
+          : null;
+      const relatedAnchor = relatedElement?.closest<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? null;
+      hoveredAnchorRef.current = relatedAnchor && editorDom.contains(relatedAnchor) ? relatedAnchor : null;
+      releaseNavigationPinIfHovered();
+      if (related instanceof Node && cardRef.current?.contains(related)) return;
       clearTimer(showTimerRef);
       scheduleHide();
     };
@@ -173,7 +253,12 @@ export function AnnotationCarousel(props: {
       clearTimer(showTimerRef);
       clearTimer(hideTimerRef);
       clearTimer(navigationScrollTimerRef);
+      clearTimer(navigationGraceTimerRef);
+      clearNavigationFrame();
+      navigationPinRef.current = null;
       navigationScrollRef.current = false;
+      cardHoveredRef.current = false;
+      hoveredAnchorRef.current = null;
     };
   }, [props.editorDom, props.groups]);
 
@@ -186,6 +271,8 @@ export function AnnotationCarousel(props: {
   useLayoutEffect(() => {
     const card = cardRef.current;
     if (!card || !hovered) return;
+    const pin = navigationPinRef.current;
+    if (pin?.groupId === hovered.groupId && !pin.anchorRectReady) return;
     const cardRect = card.getBoundingClientRect();
     const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - cardRect.width - VIEWPORT_GUTTER);
     const left = Math.min(maxLeft, Math.max(VIEWPORT_GUTTER, hovered.anchorRect.left));
@@ -195,6 +282,28 @@ export function AnnotationCarousel(props: {
       : Math.min(window.innerHeight - cardRect.height - VIEWPORT_GUTTER, hovered.anchorRect.bottom + CARD_GAP);
     setPosition({ left, top: Math.max(VIEWPORT_GUTTER, top), visibility: "visible" });
   }, [hovered]);
+
+  useLayoutEffect(() => {
+    const pin = navigationPinRef.current;
+    if (!pin || pin.groupId !== hovered?.groupId || !pin.anchorRectReady || position.visibility !== "visible") return;
+    clearNavigationFrame();
+    const expectedPin = pin;
+    navigationFrameRef.current = window.requestAnimationFrame(() => {
+      navigationFrameRef.current = null;
+      if (navigationPinRef.current !== expectedPin) return;
+      expectedPin.visibleFrameReady = true;
+      if (isPointerWithinNavigationTarget(expectedPin)) {
+        releaseNavigationPin(true);
+        return;
+      }
+      clearTimer(navigationGraceTimerRef);
+      navigationGraceTimerRef.current = window.setTimeout(() => {
+        navigationGraceTimerRef.current = null;
+        if (navigationPinRef.current !== expectedPin) return;
+        releaseNavigationPin(isPointerWithinNavigationTarget(expectedPin));
+      }, NAVIGATION_HOVER_GRACE_MS);
+    });
+  }, [hovered, position]);
 
   const reviewingGroups = props.groups
     .filter((item) => item.status === "reviewing")
@@ -215,8 +324,13 @@ export function AnnotationCarousel(props: {
   const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
   const severitySummary = buildAnnotationSeveritySummary(reviewingGroups);
 
-  const keepOpen = () => cancelHide();
+  const keepOpen = () => {
+    cardHoveredRef.current = true;
+    cancelHide();
+    releaseNavigationPinIfHovered();
+  };
   const leaveCard = (event: ReactMouseEvent<HTMLElement>) => {
+    cardHoveredRef.current = false;
     const related = event.relatedTarget;
     if (related instanceof Node && props.editorDom?.contains(related)) {
       const element = related instanceof Element ? related : related.parentElement;
@@ -229,6 +343,7 @@ export function AnnotationCarousel(props: {
     if (hasOverlap && hovered && hitIndex >= 0) {
       const nextGroup = hitGroups[(hitIndex + delta + hitGroups.length) % hitGroups.length];
       if (!nextGroup) return;
+      beginNavigationPin(nextGroup.id, hovered.anchor, true);
       setHovered({ ...hovered, groupId: nextGroup.id });
       return;
     }
@@ -239,15 +354,22 @@ export function AnnotationCarousel(props: {
       props.editorDom?.querySelectorAll<HTMLElement>(".annotation-anchor-active[data-annotation-group]") ?? [],
     ).find((anchor) => anchor.dataset.annotationGroup === nextGroup.id);
     if (!target) return;
-    protectNavigationScroll();
+    beginNavigationPin(nextGroup.id, target, false);
     target.scrollIntoView?.({ block: "center", behavior: "auto" });
     setPosition({ visibility: "hidden" });
-    setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
-    requestAnimationFrame(() => {
-      if (target.isConnected) {
-        setPosition({ visibility: "hidden" });
-        setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchorRect: target.getBoundingClientRect() });
+    setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchor: target, anchorRect: target.getBoundingClientRect() });
+    navigationFrameRef.current = window.requestAnimationFrame(() => {
+      navigationFrameRef.current = null;
+      const pin = navigationPinRef.current;
+      if (pin?.groupId !== nextGroup.id || pin.target !== target) return;
+      if (!target.isConnected) {
+        releaseNavigationPin(false);
+        hideNow();
+        return;
       }
+      pin.anchorRectReady = true;
+      setPosition({ visibility: "hidden" });
+      setHovered({ groupId: nextGroup.id, groupIds: [nextGroup.id], anchor: target, anchorRect: target.getBoundingClientRect() });
     });
   };
 

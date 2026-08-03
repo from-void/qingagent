@@ -34,6 +34,7 @@ export type ToolCallBody = { "kind": "askUser", "data": AskUserSpec } | { "kind"
 /**
  * 对话流内置二维码卡:agent 调 show_qr 工具输出。到 expiresAt(绝对时间戳)码作废、置灰打码,
  * 悬停变「刷新」按钮,点击发送 refreshQuery(预设文案)让 agent 重新生成。抽象统一,任意平台授权/分享均可复用。
+ * device-code 只展示配对码；scan 展示二维码；link 展示二维码并附带可点击链接。
  */
 export type AuthCardPresentation = "device-code" | "scan" | "link";
 

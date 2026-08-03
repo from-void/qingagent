@@ -446,6 +446,7 @@ export function DrawioEditorOverlay({
 }
 
 const DRAWIO_EMBED_STYLE_ID = "qingagent-drawio-embed-fixes";
+const DRAWIO_COMPLETE_BUTTON_ATTRIBUTE = "data-qingagent-drawio-complete";
 
 function configureDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
   try {
@@ -455,9 +456,10 @@ function configureDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
       const style = frameDocument.createElement("style");
       style.id = DRAWIO_EMBED_STYLE_ID;
       style.textContent = [
-        "/* 实时写回后只保留退出入口；offline=1 的 display:none 由宿主精确覆盖。 */",
+        "/* 只暴露 saveAndExit；offline=1 的 display:none 由宿主精确覆盖。 */",
         ".geToolbarContainer > .geButtonContainer { display: inline-flex !important; }",
-        ".geToolbarContainer > .geButtonContainer > :not(:last-child) { display: none !important; }",
+        ".geToolbarContainer > .geButtonContainer > * { display: none !important; }",
+        `.geToolbarContainer > .geButtonContainer > [${DRAWIO_COMPLETE_BUTTON_ATTRIBUTE}] { display: inline-flex !important; }`,
       ].join("\n");
       frameDocument.head.appendChild(style);
     }
@@ -466,12 +468,16 @@ function configureDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
       .forEach((container) => {
         container.style.setProperty("display", "inline-flex", "important");
         const buttons = Array.from(container.children) as HTMLElement[];
-        buttons.slice(0, -1).forEach((button) => {
+        const completeButton = buttons.find((button) =>
+          button.hasAttribute(DRAWIO_COMPLETE_BUTTON_ATTRIBUTE)
+        ) ?? buttons.find((button) => button.textContent?.trim() === "保存并退出")
+          ?? buttons.at(-2);
+        buttons.forEach((button) => {
           button.style.setProperty("display", "none", "important");
         });
-        const completeButton = buttons.at(-1);
         if (completeButton) {
-          completeButton.style.removeProperty("display");
+          completeButton.setAttribute(DRAWIO_COMPLETE_BUTTON_ATTRIBUTE, "true");
+          completeButton.style.setProperty("display", "inline-flex", "important");
           completeButton.textContent = "完成";
           completeButton.setAttribute("aria-label", "完成");
         }

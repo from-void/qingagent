@@ -2009,6 +2009,42 @@ describe("About Panel", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("版本信息已复制");
   });
+
+  it("桌面端显示硬件加速自救开关，关闭持久化并提示重启生效", async () => {
+    const setHardwareAccelerationEnabled = vi.fn(async () => true);
+    installAboutElectron({
+      getHardwareAccelerationEnabled: vi.fn(() => true),
+      setHardwareAccelerationEnabled,
+    });
+    await renderAbout();
+
+    const toggle = getButtonByWf("AboutHardwareAccelerationToggle");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.textContent).toContain("已开启");
+    expect(host?.textContent).toContain("遇到界面空白/花屏时可尝试关闭");
+    expect(host?.textContent).toContain("重启后生效");
+
+    await click(toggle);
+
+    expect(setHardwareAccelerationEnabled).toHaveBeenCalledWith(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.textContent).toContain("已关闭");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("重启后生效");
+  });
+
+  it("硬件加速配置写入失败时保持原状态并走全局 toast", async () => {
+    installAboutElectron({
+      getHardwareAccelerationEnabled: vi.fn(() => true),
+      setHardwareAccelerationEnabled: vi.fn(async () => false),
+    });
+    await renderAbout();
+
+    const toggle = getButtonByWf("AboutHardwareAccelerationToggle");
+    await click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("设置保存失败");
+  });
 });
 
 function installAboutElectron(overrides: Record<string, unknown>): void {
@@ -2028,6 +2064,8 @@ function installAboutElectron(overrides: Record<string, unknown>): void {
     openDownloadPage: vi.fn(async () => undefined),
     checkForUpdate: vi.fn(async () => ({ kind: "none" as const })),
     getThirdPartyNotices: vi.fn(async () => null),
+    getHardwareAccelerationEnabled: vi.fn(() => true),
+    setHardwareAccelerationEnabled: vi.fn(async () => true),
     ...overrides,
   };
   Object.defineProperty(window, "electron", { configurable: true, value: electron });

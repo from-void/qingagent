@@ -47,7 +47,8 @@ type DesktopConfigKey =
   | "qingagent.kimi_api_key"
   | "qingagent.kimi_custom_provider"
   | "qingagent.kimi_official_model"
-  | "qingagent.model_provider";
+  | "qingagent.model_provider"
+  | "qingagent.hardware_acceleration";
 
 type DesktopConfigReadResult =
   | { ok: true; value: string | null }
@@ -154,6 +155,10 @@ contextBridge.exposeInMainWorld("electron", {
   getModelProvider: () => readDesktopConfigValue("qingagent.model_provider"),
   setModelProvider: (value: string | null) =>
     writeDesktopConfigValue("qingagent.model_provider", value),
+  getHardwareAccelerationEnabled: () =>
+    readDesktopConfigValue("qingagent.hardware_acceleration") !== "false",
+  setHardwareAccelerationEnabled: (enabled: boolean) =>
+    writeDesktopConfigValue("qingagent.hardware_acceleration", enabled ? "true" : "false"),
   isClientConfigReady: () => clientConfigReady,
   onClientConfigReady: (cb: () => void) => {
     const listener = () => cb();

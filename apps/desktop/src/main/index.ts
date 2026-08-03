@@ -30,6 +30,10 @@ import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.j
 import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import { persistClientConfigValue } from "./clientConfigPersistence.js";
 import {
+  HARDWARE_ACCELERATION_CONFIG_KEY,
+  resolveHardwareAccelerationMode,
+} from "./hardwareAcceleration.js";
+import {
   createDesktopAppProxyHandler,
   DesktopAppDeepLinkDispatcher,
   DESKTOP_APP_ORIGIN,
@@ -48,6 +52,7 @@ import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
   attachMainWindowProcessMonitor,
   handleChildProcessGone,
+  logRenderingMode,
   type MainWindowProcessMonitor,
 } from "./diagnostics/processLifecycle.js";
 import {
@@ -227,9 +232,26 @@ app.on("child-process-gone", (_event, details) => {
 // __dirname 从 \\wsl.localhost\... / \\wsl$\... 这类 UNC 路径运行时以 `\\` 开头。
 // 必须在 app ready 之前调用。
 const runningFromUncPath = __dirname.startsWith("\\\\");
+let hardwareAccelerationConfiguredValue: string | undefined;
+try {
+  hardwareAccelerationConfiguredValue = readPrivateStringMap(
+    path.join(userDataDir, "client-config.json"),
+  )[HARDWARE_ACCELERATION_CONFIG_KEY];
+} catch {
+  // 配置损坏不能改变默认行为；后续设置页仍可覆盖并修复该文件。
+  console.warn("[client-config] 硬件加速配置读取失败，本次保持默认开启");
+}
+const renderingMode = resolveHardwareAccelerationMode({
+  platform: process.platform,
+  runningFromUncPath,
+  configuredValue: hardwareAccelerationConfiguredValue,
+});
 if (process.platform === "linux" || runningFromUncPath) {
   app.disableHardwareAcceleration();
+} else if (renderingMode.mode === "software") {
+  app.disableHardwareAcceleration();
 }
+logRenderingMode(renderingMode);
 
 // 打包 renderer 使用固定标准 scheme，保证 Web Storage 的 origin 不随内置服务监听端口变化。
 // 必须在 app ready 前登记；实际转发 handler 要等随机监听端口确定后再安装。
@@ -966,6 +988,7 @@ const DESKTOP_CLIENT_CONFIG_KEYS = new Set([
   "qingagent.kimi_official_model",
   "qingagent.kimi_model_tier",
   "qingagent.model_provider",
+  "qingagent.hardware_acceleration",
 ]);
 
 // 这些值会直接或嵌套携带桌面模型 API Key。主进程只在单项 IPC 边界解密/加密；

@@ -70,6 +70,14 @@ export function AboutPanel() {
   const pushed = useSyncExternalStore(subscribeDesktopUpdate, getDesktopUpdateSnapshot);
   const [manual, setManual] = useState<DesktopUpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const [hardwareAccelerationEnabled, setHardwareAccelerationEnabled] = useState(() => {
+    try {
+      return electron?.getHardwareAccelerationEnabled?.() ?? true;
+    } catch {
+      return true;
+    }
+  });
+  const [savingHardwareAcceleration, setSavingHardwareAcceleration] = useState(false);
 
   // 生效态:推送的就绪/强更是权威终态;否则以本次手动检查结果为准;都没有则用推送快照。
   const status: DesktopUpdateStatus | null = useMemo(() => {
@@ -103,6 +111,25 @@ export function AboutPanel() {
     const ok = await copyText(lines.filter(Boolean).join("\n"));
     if (ok) toast.show({ message: COPY_TOAST, tone: "success" });
   }, [isDesktop, appVersion, channelLabel, platform, versions, toast]);
+
+  const toggleHardwareAcceleration = useCallback(async () => {
+    if (!electron?.setHardwareAccelerationEnabled || savingHardwareAcceleration) return;
+    const nextEnabled = !hardwareAccelerationEnabled;
+    setSavingHardwareAcceleration(true);
+    try {
+      const saved = await electron.setHardwareAccelerationEnabled(nextEnabled);
+      if (!saved) {
+        toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
+        return;
+      }
+      setHardwareAccelerationEnabled(nextEnabled);
+      toast.show({ message: "硬件加速设置已保存，重启后生效", tone: "success" });
+    } catch {
+      toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
+    } finally {
+      setSavingHardwareAcceleration(false);
+    }
+  }, [electron, hardwareAccelerationEnabled, savingHardwareAcceleration, toast]);
 
   return (
     <div className="settings-about" data-wf="AboutPanel">
@@ -143,6 +170,30 @@ export function AboutPanel() {
 
       {/* —— 辅助区:链接 / 许可 / 内核,弱化(小字、细边框、无强调色) —— */}
       <section className="ab-aux">
+        {isDesktop ? (
+          <div className="ab-block ab-rendering" data-wf="AboutRenderingSettings">
+            <div className="ab-rendering-head">
+              <div>
+                <div className="ab-block-title">渲染</div>
+                <div className="ab-rendering-name">硬件加速</div>
+              </div>
+              <button
+                type="button"
+                className={`sk-toggle${hardwareAccelerationEnabled ? " sk-on" : ""}`}
+                data-wf="AboutHardwareAccelerationToggle"
+                aria-pressed={hardwareAccelerationEnabled}
+                disabled={savingHardwareAcceleration}
+                onClick={() => void toggleHardwareAcceleration()}
+              >
+                <span className="sk-toggle-dot" aria-hidden="true" />
+                {hardwareAccelerationEnabled ? "已开启" : "已关闭"}
+              </button>
+            </div>
+            <p className="ab-rendering-note">
+              遇到界面空白/花屏时可尝试关闭，重启后生效。
+            </p>
+          </div>
+        ) : null}
         <div className="ab-block">
           <div className="ab-block-title">链接</div>
           <div className="ab-block-body">

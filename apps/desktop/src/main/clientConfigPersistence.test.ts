@@ -74,3 +74,26 @@ test("清理旧明文失败时补偿恢复旧密文", () => {
   assert.equal(secretStore.value, "old-secret");
   assert.equal(secretStore.rollbackCalls, 1);
 });
+
+test("硬件加速关闭值持久化到普通 clientConfig", () => {
+  const secretStore = createSecretStore(null);
+  let written: Record<string, string> | null = null;
+
+  persistClientConfigValue({
+    key: "qingagent.hardware_acceleration",
+    nextValue: "false",
+    isSecret: false,
+    encryptionAvailable: false,
+    migratePlaintextSecrets() {},
+    readConfig: () => ({ theme: "paper" }),
+    writeConfig(config) {
+      written = config;
+    },
+    secretStore,
+  });
+
+  assert.deepEqual(written, {
+    theme: "paper",
+    "qingagent.hardware_acceleration": "false",
+  });
+});

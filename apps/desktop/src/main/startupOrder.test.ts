@@ -79,6 +79,20 @@ test("Crashpad 在任何 renderer 创建前启用且只写本地", () => {
   assert.match(source, /app\.on\("child-process-gone"/);
 });
 
+test("硬件加速配置在 app ready 前读取并应用", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preferenceLine = source.indexOf("resolveHardwareAccelerationMode({");
+  const disableLine = source.indexOf("app.disableHardwareAcceleration()", preferenceLine);
+  const logLine = source.indexOf("logRenderingMode(renderingMode)", disableLine);
+  const readyLine = source.indexOf("app.whenReady().then(async () => {");
+
+  assert.ok(preferenceLine >= 0, "启动期必须解析硬件加速配置");
+  assert.ok(
+    preferenceLine < disableLine && disableLine < logLine && logLine < readyLine,
+    "硬件加速配置必须在 app ready 前应用并记录渲染模式",
+  );
+});
+
 test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并由恢复流程保留目标 URL", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const serverReadyLine = source.indexOf("({ port } = await serverReady)");

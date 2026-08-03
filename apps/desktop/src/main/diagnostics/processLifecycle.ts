@@ -6,6 +6,11 @@ export type ProcessLifecycleLog = (
   details: Record<string, unknown>,
 ) => void;
 
+export interface RenderingModeDetails {
+  mode: "hardware" | "software";
+  reason: "default" | "user-enabled" | "user-disabled" | "linux" | "unc-path";
+}
+
 export interface RenderProcessGoneDetailsLike {
   reason?: string;
   exitCode?: number;
@@ -53,6 +58,14 @@ interface RecoveryIncident {
 const defaultLog: ProcessLifecycleLog = (level, event, details) => {
   console[level](`[process-lifecycle] ${event}`, details);
 };
+
+/** 每次主进程启动记录一行当前渲染模式，供空白屏事件统计时关联。 */
+export function logRenderingMode(
+  details: RenderingModeDetails,
+  log: ProcessLifecycleLog = defaultLog,
+): void {
+  log("info", "rendering-mode", { ...details });
+}
 
 /**
  * 主窗口 renderer 进程观测与有限恢复。

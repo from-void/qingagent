@@ -6257,6 +6257,133 @@ describe("WorkspacePage review controls", () => {
     expect(document.body.textContent).not.toContain("当前候选已保留");
   });
 
+  it("自动提交期间 SSE 已权威成功而 REST 随后超时时不残留假失败重试条", async () => {
+    const patch = textReviewToolCall("p-r92-timeout", "batch-r92-timeout", 0);
+    const stream = await renderWorkspaceWithReview([patch]);
+    let rejectCommit: (error: Error) => void = () => undefined;
+    const pendingCommit = new Promise<BridgeFrame[]>((_resolve, reject) => {
+      rejectCommit = reject;
+    });
+    stream.commitReviewGroups.mockReturnValueOnce(pendingCommit);
+
+    // r92 真机时序：逐处裁决已全部完成，自动结算请求尚在等待 REST；/events
+    // 先送达权威成功终态并让界面恢复 editing。
+    await emitFrames(stream, [
+      toolCallUpdatedFrame({ ...patch, status: { kind: "accepted" } }),
+    ]);
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    await emitFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("block-p-r92-timeout", "新句子1")]),
+            2,
+          ),
+        },
+      },
+      toolCallUpdatedFrame({ ...patch, status: { kind: "committed" } }),
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      docStateFrame("editing"),
+    ]);
+    expect(document.body.dataset.content).toBe("editing");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+
+    // REST 连接随后才以超时失败结束。迟到的传输错误不能反向覆盖已收到的
+    // docCommitted + editing，也不能渲染一个因候选已清空而永远无请求的重试按钮。
+    rejectCommit(new Error("client timeout after server commit"));
+    await flushMicrotasks(5);
+
+    expect(document.body.dataset.content).toBe("editing");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("提交失败，候选待重试");
+    expect(document.body.textContent).not.toContain("提交失败 · 候选已保留，请重试");
+  });
+
+  it("整篇显式提交结算后的 accepted 迟到帧不会再触发第二次自动提交", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    const baseDoc = pmDoc([pmParagraph("rewrite-r92-base", "旧文")]);
+    const editedDoc = pmDoc([
+      pmParagraph("rewrite-r92-next", "整篇改写后的新版正文。"),
+    ]);
+    const patch = reviewToolCall(
+      "rewrite-r92-hunk",
+      "batch-rewrite-r92",
+      "reviewing",
+      {
+        blockId: "rewrite-r92-base",
+        before: "旧文",
+        after: "整篇改写后的新版正文。",
+      },
+    );
+    const suggestion = docSuggestionFromToolCall(patch);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "r92 整篇提交" } },
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) } },
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc,
+        },
+      },
+      docStateFrame("pendingReview"),
+      { kind: "sessionRestoreCompleted", data: { sessionId: "s-1" } },
+    ]);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+
+    let resolveExplicitCommit: (frames: BridgeFrame[]) => void = () => undefined;
+    const explicitCommit = new Promise<BridgeFrame[]>((resolve) => {
+      resolveExplicitCommit = resolve;
+    });
+    stream.commitReviewGroups.mockReturnValueOnce(explicitCommit);
+    await clickButton("应用新版");
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+
+    // REST 已明确返回成功；accepted 实时帧却在该请求完成后才到。修复前自动提交
+    // effect 会把它当成逐处裁决完成，再对同一批次发一次 commitReviewGroups。
+    await act(async () => {
+      resolveExplicitCommit([
+        {
+          kind: "docCommitted",
+          data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+        },
+        docStateFrame("editing"),
+      ]);
+      await explicitCommit;
+    });
+    await flushMicrotasks(5);
+    await emitFrames(stream, [
+      {
+        kind: "docCommitted",
+        data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+      },
+      toolCallUpdatedFrame({ ...patch, status: { kind: "accepted" } }),
+    ]);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+
+    await emitFrames(stream, [
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(editedDoc, 2) } },
+      toolCallUpdatedFrame({ ...patch, status: { kind: "committed" } }),
+      docStateFrame("editing"),
+    ]);
+    expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
+  });
+
   it("CAS 真失效即使同时重放旧 docCommitted 仍保留候选并提示", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-stale", "batch-stale", 0),

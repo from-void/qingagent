@@ -46,6 +46,52 @@ const GENRE_LABELS: Record<string, string> = {
   academic: "学术/创作",
 };
 
+interface ReviewCommitReceipt {
+  sessionId: string | null;
+  revision: number;
+  version: number;
+}
+
+interface ReviewSettlementAuthorityStart {
+  sessionId: string;
+  receiptRevision: number;
+  docVersion: number;
+}
+
+function captureReviewSettlementAuthority(
+  state: WorkspaceState,
+  receipt: ReviewCommitReceipt,
+  sessionId: string,
+): ReviewSettlementAuthorityStart {
+  return {
+    sessionId,
+    receiptRevision: receipt.revision,
+    docVersion: Math.max(
+      state.version,
+      receipt.sessionId === sessionId ? receipt.version : 0,
+    ),
+  };
+}
+
+/**
+ * REST 与 /events 是同一提交的两个到达通道。只要当前会话已由权威状态进入
+ * editing，或请求期间收到了版本确实前进的 docCommitted，迟到的 REST
+ * no-op/传输错误都不能再把本地终态反向写成失败。
+ */
+function reviewSettlementHasAuthoritativeSuccess(
+  state: WorkspaceState,
+  receipt: ReviewCommitReceipt,
+  start: ReviewSettlementAuthorityStart,
+): boolean {
+  if (state.sessionId !== start.sessionId) return false;
+  if (state.docState.kind === "editing") return true;
+  return (
+    receipt.sessionId === start.sessionId &&
+    receipt.revision > start.receiptRevision &&
+    receipt.version > start.docVersion
+  );
+}
+
 export function askUserCancelMutationKey(
   sessionId: string,
   toolCallId: string,
@@ -78,11 +124,7 @@ export function useWorkspaceReviewActions(input: {
   stateRef: MutableRefObject<WorkspaceState>;
   streamRef: MutableRefObject<ServerStream | null>;
   askUserCancelMutationTokensRef: MutableRefObject<Map<string, symbol>>;
-  reviewCommitReceiptRef: MutableRefObject<{
-    sessionId: string | null;
-    revision: number;
-    version: number;
-  }>;
+  reviewCommitReceiptRef: MutableRefObject<ReviewCommitReceipt>;
   reviewCloseInFlightRef: MutableRefObject<Promise<void> | null>;
   dispatch: Dispatch<WorkspaceAction>;
   showToast: (message: string, durationMs?: number) => void;
@@ -125,6 +167,25 @@ export function useWorkspaceReviewActions(input: {
   const [isReviewSubmitting, setIsReviewSubmitting] = useState(false);
   const [reviewSettlementRetryPending, setReviewSettlementRetryPending] =
     useState(false);
+  // commitReviewGroups 本身已经是整轮结算。服务端会先逐条广播 accepted /
+  // rejected，再广播提交终态；这些中间帧不能被“全部逐处裁决完成”的自动 effect
+  // 误认成另一轮结算。按会话+batch 记住在途范围，新一轮 batch 天然不冲突。
+  const settlingReviewBatchIdsRef = useRef<{
+    sessionId: string | null;
+    batchIds: Set<string>;
+  }>({ sessionId: null, batchIds: new Set() });
+
+  const suppressRepeatedAutoCommitForSettlement = useCallback(
+    (sessionId: string, batchIds: readonly string[]) => {
+      const tracked = settlingReviewBatchIdsRef.current;
+      if (tracked.sessionId !== sessionId) {
+        tracked.sessionId = sessionId;
+        tracked.batchIds.clear();
+      }
+      for (const batchId of batchIds) tracked.batchIds.add(batchId);
+    },
+    [],
+  );
 
   const runReviewSettlement = useCallback(
     (execute: () => Promise<void>): Promise<void> => {
@@ -186,6 +247,16 @@ export function useWorkspaceReviewActions(input: {
     )
       return Promise.resolve();
 
+    suppressRepeatedAutoCommitForSettlement(currentSessionId, [
+      ...acceptReviewBatchIds,
+      ...rejectReviewBatchIds,
+    ]);
+    const authorityStart = captureReviewSettlementAuthority(
+      stateRef.current,
+      reviewCommitReceiptRef.current,
+      currentSessionId,
+    );
+
     const closePromise = runReviewSettlement(async () => {
       // commitReviewGroups 走独立 REST，并会自行保持当前 session 的 EventSource。
       // 这里只结算审阅，不能终止同一工作区的在途保存、恢复或问卷工具卡。
@@ -195,9 +266,17 @@ export function useWorkspaceReviewActions(input: {
           rejectReviewBatchIds,
         });
         const commitNoop = reviewCommitFramesNoop(frames);
-        const commitSucceeded = reviewCommitFramesCommitted(frames);
+        const authoritativeSuccess =
+          reviewSettlementHasAuthoritativeSuccess(
+            stateRef.current,
+            reviewCommitReceiptRef.current,
+            authorityStart,
+          );
+        const commitSucceeded =
+          reviewCommitFramesCommitted(frames) || authoritativeSuccess;
         const leftPendingReview =
-          reviewCommitFramesLeavePendingReview(frames);
+          reviewCommitFramesLeavePendingReview(frames) ||
+          stateRef.current.docState.kind !== "pendingReview";
         const appliedCount = reviewCommitFramesAppliedCount(frames);
         const conflictCount = reviewCommitFramesConflictCount(frames);
         const commitFailed =
@@ -237,12 +316,30 @@ export function useWorkspaceReviewActions(input: {
           sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
         }
       } catch (e) {
+        if (
+          reviewSettlementHasAuthoritativeSuccess(
+            stateRef.current,
+            reviewCommitReceiptRef.current,
+            authorityStart,
+          )
+        ) {
+          setTableTypedByPatch(null);
+          setActiveReviewTargetId(null);
+          setReviewSettlementRetryPending(false);
+          sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
+          return;
+        }
         console.error("[workspace] rejectAll failed", e);
         showToast("操作失败 · 候选已保留，请重试");
       }
     });
     return trackReviewClose(closePromise);
-  }, [runReviewSettlement, showToast, trackReviewClose]);
+  }, [
+    runReviewSettlement,
+    showToast,
+    suppressRepeatedAutoCommitForSettlement,
+    trackReviewClose,
+  ]);
 
   const handleAcceptAll = useCallback((): Promise<void> => {
     if (stateRef.current.viewingVersion !== null) {
@@ -261,11 +358,14 @@ export function useWorkspaceReviewActions(input: {
     const acceptReviewBatchIds = [
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
-    const receiptBefore = reviewCommitReceiptRef.current;
-    const receiptRevisionBefore = receiptBefore.revision;
-    const docVersionBefore = Math.max(
-      stateRef.current.version,
-      receiptBefore.sessionId === currentSessionId ? receiptBefore.version : 0,
+    suppressRepeatedAutoCommitForSettlement(
+      currentSessionId,
+      acceptReviewBatchIds,
+    );
+    const authorityStart = captureReviewSettlementAuthority(
+      stateRef.current,
+      reviewCommitReceiptRef.current,
+      currentSessionId,
     );
     const closePromise = runReviewSettlement(async () => {
       // commitReviewGroups 已走独立 REST，并会自行保持当前 session 的 EventSource。
@@ -275,13 +375,15 @@ export function useWorkspaceReviewActions(input: {
         .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
         .then((frames) => {
           const commitNoop = reviewCommitFramesNoop(frames);
-          const committedDuringRequest =
-            reviewCommitReceiptRef.current.sessionId === currentSessionId &&
-            reviewCommitReceiptRef.current.revision > receiptRevisionBefore &&
-            reviewCommitReceiptRef.current.version > docVersionBefore;
+          const authoritativeSuccess =
+            reviewSettlementHasAuthoritativeSuccess(
+              stateRef.current,
+              reviewCommitReceiptRef.current,
+              authorityStart,
+            );
           if (
             !reviewCommitFramesCommitted(frames) &&
-            !(commitNoop && committedDuringRequest)
+            !authoritativeSuccess
           ) {
             showToast(
               commitNoop
@@ -293,18 +395,36 @@ export function useWorkspaceReviewActions(input: {
           if (commitNoop) {
             showToast("修改已经提交，无需重复操作");
           }
-          if (!reviewCommitFramesLeavePendingReview(frames)) {
+          if (
+            !reviewCommitFramesLeavePendingReview(frames) &&
+            stateRef.current.docState.kind === "pendingReview"
+          ) {
             dispatch({ kind: "forceUnlockReview" });
             showToast("审阅状态未自动退出，已恢复编辑");
           }
         })
         .catch((e) => {
+          if (
+            reviewSettlementHasAuthoritativeSuccess(
+              stateRef.current,
+              reviewCommitReceiptRef.current,
+              authorityStart,
+            )
+          ) {
+            setReviewSettlementRetryPending(false);
+            return;
+          }
           console.error("[workspace] acceptAll commitReviewGroups failed", e);
           showToast("提交失败 · 候选已保留，请重试");
         });
     });
     return trackReviewClose(closePromise);
-  }, [runReviewSettlement, showToast, trackReviewClose]);
+  }, [
+    runReviewSettlement,
+    showToast,
+    suppressRepeatedAutoCommitForSettlement,
+    trackReviewClose,
+  ]);
 
   const handleJumpNext = useCallback(() => {
     const allPatchIds = visibleReviewTargetIds;
@@ -398,6 +518,10 @@ export function useWorkspaceReviewActions(input: {
       showToast("修改已经提交，无需重复操作");
       return Promise.resolve();
     }
+    suppressRepeatedAutoCommitForSettlement(currentSessionId, [
+      ...acceptReviewBatchIds,
+      ...rejectReviewBatchIds,
+    ]);
 
     // 在提交前从当前审阅快照归并审核结果（commit 语义:每处 hunk 独立表态）。
     // 提交成功后,若非全量采纳则以用户名义回流给模型。
@@ -405,11 +529,10 @@ export function useWorkspaceReviewActions(input: {
     const needsRetryOnlyEntry = currentPatches.every(
       (patch) => patch.status.kind !== "reviewing",
     );
-    const receiptBefore = reviewCommitReceiptRef.current;
-    const receiptRevisionBefore = receiptBefore.revision;
-    const docVersionBefore = Math.max(
-      stateRef.current.version,
-      receiptBefore.sessionId === currentSessionId ? receiptBefore.version : 0,
+    const authorityStart = captureReviewSettlementAuthority(
+      stateRef.current,
+      reviewCommitReceiptRef.current,
+      currentSessionId,
     );
 
     const closePromise = runReviewSettlement(async () => {
@@ -421,13 +544,15 @@ export function useWorkspaceReviewActions(input: {
         })
         .then((frames) => {
           const commitNoop = reviewCommitFramesNoop(frames);
-          const committedDuringRequest =
-            reviewCommitReceiptRef.current.sessionId === currentSessionId &&
-            reviewCommitReceiptRef.current.revision > receiptRevisionBefore &&
-            reviewCommitReceiptRef.current.version > docVersionBefore;
+          const authoritativeSuccess =
+            reviewSettlementHasAuthoritativeSuccess(
+              stateRef.current,
+              reviewCommitReceiptRef.current,
+              authorityStart,
+            );
           if (
             !reviewCommitFramesCommitted(frames) &&
-            !(commitNoop && committedDuringRequest)
+            !authoritativeSuccess
           ) {
             autoCommitReviewKeyRef.current = null;
             setReviewSettlementRetryPending(needsRetryOnlyEntry);
@@ -445,13 +570,27 @@ export function useWorkspaceReviewActions(input: {
           // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
           // commit 响应若缺状态转移帧(stale pendingReview),不兜底就永久锁输入。
           // 逐条处理完的 auto-commit 也汇入本路径,该洞影响面比手动提交更大。
-          if (!reviewCommitFramesLeavePendingReview(frames)) {
+          if (
+            !reviewCommitFramesLeavePendingReview(frames) &&
+            stateRef.current.docState.kind === "pendingReview"
+          ) {
             dispatch({ kind: "forceUnlockReview" });
             showToast("审阅状态未自动退出，已恢复编辑");
           }
           sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
         })
         .catch((e) => {
+          if (
+            reviewSettlementHasAuthoritativeSuccess(
+              stateRef.current,
+              reviewCommitReceiptRef.current,
+              authorityStart,
+            )
+          ) {
+            setReviewSettlementRetryPending(false);
+            sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
+            return;
+          }
           console.error("[workspace] commitReviewGroups failed", e);
           autoCommitReviewKeyRef.current = null;
           setReviewSettlementRetryPending(needsRetryOnlyEntry);
@@ -459,7 +598,12 @@ export function useWorkspaceReviewActions(input: {
         });
     });
     return trackReviewClose(closePromise);
-  }, [runReviewSettlement, showToast, trackReviewClose]);
+  }, [
+    runReviewSettlement,
+    showToast,
+    suppressRepeatedAutoCommitForSettlement,
+    trackReviewClose,
+  ]);
 
   /**
    * 问卷作答统一提交(BigPlan 全页问卷 + 内联反问卡共用):先乐观把 askUser 卡置 done
@@ -705,11 +849,28 @@ export function useWorkspaceReviewActions(input: {
     [allReviewPatches],
   );
   useEffect(() => {
+    const settlingBatches = settlingReviewBatchIdsRef.current;
+    if (settlingBatches.sessionId !== state.sessionId) {
+      settlingBatches.sessionId = state.sessionId;
+      settlingBatches.batchIds.clear();
+    }
     if (state.docState.kind !== "pendingReview") {
       completedReviewCommitKeyRef.current = null;
+      settlingBatches.batchIds.clear();
+    }
+    if (
+      reviewSettlementRetryPending &&
+      (state.docState.kind !== "pendingReview" ||
+        allReviewPatches.length === 0)
+    ) {
       setReviewSettlementRetryPending(false);
     }
-  }, [state.docState.kind, state.sessionId]);
+  }, [
+    allReviewPatches.length,
+    reviewSettlementRetryPending,
+    state.docState.kind,
+    state.sessionId,
+  ]);
   useEffect(() => {
     if (remainingPatches !== 0 || allReviewPatches.length === 0) {
       autoCommitReviewKeyRef.current = null;
@@ -718,6 +879,19 @@ export function useWorkspaceReviewActions(input: {
     const key = `${state.sessionId ?? ""}:${autoCommitReviewKey}`;
     if (autoCommitReviewKeyRef.current === key) return;
     autoCommitReviewKeyRef.current = key;
+    const settlingBatches = settlingReviewBatchIdsRef.current;
+    const currentBatchIds = [
+      ...new Set(allReviewPatches.map(reviewBatchIdFromPatch)),
+    ];
+    if (
+      settlingBatches.sessionId === state.sessionId &&
+      currentBatchIds.length > 0 &&
+      currentBatchIds.every((batchId) =>
+        settlingBatches.batchIds.has(batchId),
+      )
+    ) {
+      return;
+    }
     handleCommit();
   }, [
     allReviewPatches.length,
@@ -726,6 +900,10 @@ export function useWorkspaceReviewActions(input: {
     remainingPatches,
     state.sessionId,
   ]);
+  const effectiveReviewSettlementRetryPending =
+    reviewSettlementRetryPending &&
+    state.docState.kind === "pendingReview" &&
+    allReviewPatches.length > 0;
   return {
     activePatchIndex,
     currentPatchId,
@@ -740,7 +918,7 @@ export function useWorkspaceReviewActions(input: {
     handleSubmitAskUserAnswers,
     handleSubmitPlan,
     isReviewSubmitting,
-    reviewSettlementRetryPending,
+    reviewSettlementRetryPending: effectiveReviewSettlementRetryPending,
     remainingPatches,
     reviewedCount,
     submittingAskUserId,

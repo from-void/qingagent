@@ -7,7 +7,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../../system/ToastProvider";
-import { resetOverlayDismissStackForTest } from "../../../system/overlayDismissStack";
+import {
+  registerOverlay,
+  resetOverlayDismissStackForTest,
+} from "../../../system/overlayDismissStack";
 import { __resetClientPersistCacheForTests } from "../../../overlays/settings/clientPersist";
 import { setVisitorDeepseekKey } from "../../../overlays/settings/visitorKeyStore";
 import { resetSettingsDialogA11yForTest } from "../../../overlays/settings/settingsDialogA11y";
@@ -35,6 +38,7 @@ describe("HomeSettingsSheet 浮层关闭栈", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (root) {
       act(() => root?.unmount());
       root = null;
@@ -127,6 +131,50 @@ describe("HomeSettingsSheet 浮层关闭栈", () => {
     await render("model");
 
     blurFocus();
+    await escapeOn(document.body);
+    expect(isSheetClosing()).toBe(true);
+  });
+
+  it.each([
+    ["弹层内", () => getButtonByLabel("关闭")],
+    ["body", () => document.body],
+  ])("底层预览已打开且焦点在%s:Esc 只关闭栈顶的设置弹层", async (_focusName, getFocusTarget) => {
+    const dismissPreview = vi.fn();
+    registerOverlay(dismissPreview);
+    await render("model");
+
+    const focusTarget = getFocusTarget();
+    focusTarget.focus();
+    expect(document.activeElement).toBe(focusTarget);
+
+    vi.useFakeTimers();
+    await act(async () => {
+      focusTarget.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(dismissPreview).not.toHaveBeenCalled();
+    expect(isSheetClosing()).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("确认卡叠在设置之上时,第一次 Esc 只关确认卡,第二次才关设置", async () => {
+    await render("model");
+    const dismissConfirm = vi.fn();
+    registerOverlay(dismissConfirm);
+
+    await escapeOn(document.body);
+    expect(dismissConfirm).toHaveBeenCalledTimes(1);
+    expect(isSheetClosing()).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+
     await escapeOn(document.body);
     expect(isSheetClosing()).toBe(true);
   });

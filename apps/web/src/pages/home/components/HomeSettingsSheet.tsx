@@ -9,7 +9,7 @@ import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
 import { MemoryPanel } from "../../../overlays/settings/MemoryPanel";
 import "../../../overlays/settings/settings.css";
-import { dismissTopOverlay } from "../../../system/overlayDismissStack";
+import { dismissTopOverlay, useOverlayDismiss } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
@@ -114,11 +114,15 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
     });
   }, [onClose]);
 
+  // 设置面板本身也是浮层:挂进既有全局关闭栈，保证它位于底层预览之上、内部确认卡之下。
+  // 这样 Esc 永远只弹当前栈顶，不会因设置面板未入栈而误关它后面的预览。
+  useOverlayDismiss(true, handleClose);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      // Esc 的唯一出口:面板内还开着浮层(档位/下拉/日历/技能菜单)时先弹栈关掉最上层浮层
-      // 并消费掉事件——不依赖焦点落在哪个控件上;栈空了才轮到关整个设置面板。
+      // Esc 的唯一出口:设置面板与其内部浮层都在同一栈中，始终只关最上层。
+      // 不依赖焦点落在哪个控件上；栈意外为空时仍兜底关闭本面板。
       if (dismissTopOverlay()) {
         e.preventDefault();
         e.stopPropagation();

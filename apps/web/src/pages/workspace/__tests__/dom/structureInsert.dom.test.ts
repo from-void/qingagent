@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { TextSelection } from "@tiptap/pm/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createDefaultColumnListNode,
   createDefaultTableNode,
+  insertStructureNodeAtSelection,
   insertStructureNodeAfterBlock,
 } from "../../components/DocumentSnapshotView";
 
@@ -53,6 +54,26 @@ describe("block handle structural insert", () => {
     expect(table.content).toHaveLength(2);
     expect(table.content.every((row) => row.content.length === 4)).toBe(true);
     expect(table.content.flatMap((row) => row.content).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
+  });
+
+  it.each([
+    ["Mermaid 图表", { type: "diagram", attrs: { lang: "mermaid", source: "flowchart TD\nA-->B", svg: null } }],
+    ["drawio 图表", { type: "diagram", attrs: { lang: "drawio", source: DEFAULT_DRAWIO_SOURCE, svg: null } }],
+    ["公式块", { type: "blockMath", attrs: { latex: "E = mc^2" } }],
+    ["分隔线", { type: "horizontalRule" }],
+  ])("%s 与表格共用块边界插入，不劈开标题", (_label, node) => {
+    editor = createHeadingEditor();
+    editor.commands.setTextSelection(2);
+
+    expect(insertStructureNodeAtSelection(editor, node)).toBe(true);
+
+    const content = normalizePmDoc(editor.getJSON()).content;
+    expect(content.map((item) => item.type).slice(0, 2)).toEqual(["heading", node.type]);
+    const heading = content[0];
+    expect(heading?.type === "heading"
+      ? heading.content?.map((inline) => inline.type === "text" ? inline.text : "").join("")
+      : "")
+      .toBe("标题");
   });
 });
 

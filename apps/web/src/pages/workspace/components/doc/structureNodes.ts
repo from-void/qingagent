@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { Slice } from "@tiptap/pm/model";
-import { NodeSelection } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
 export function createDefaultColumnListNode(): Record<string, unknown> {
@@ -40,6 +40,42 @@ export function insertStructureNodeAfterBlock(
   if (node.type === "columnList") {
     // columnList(+1) → 第一栏 column(+1) → 首个文本块(+1)，插入后即可直接输入。
     const inserted = chain.setTextSelection(after + 3).run();
+    if (inserted) editor.view.focus();
+    return inserted;
+  }
+  return chain.run();
+}
+
+/**
+ * 从正文工具栏插入结构块：折叠光标只提供“当前顶层块”这个锚点，不允许拆开该块。
+ * 空文本块由新结构块原位替换；其余顶层块一律在块后插入。范围选区沿用既有替换语义。
+ */
+export function insertStructureNodeAtSelection(
+  editor: Pick<Editor, "state" | "chain" | "view">,
+  node: Record<string, unknown>,
+): boolean {
+  const { selection } = editor.state;
+  let target: number | { from: number; to: number } | null = null;
+
+  if (selection instanceof TextSelection && selection.empty && selection.$from.depth >= 1) {
+    const blockPos = selection.$from.before(1);
+    const block = editor.state.doc.nodeAt(blockPos);
+    if (block) {
+      target = block.isTextblock && block.content.size === 0
+        ? { from: blockPos, to: blockPos + block.nodeSize }
+        : blockPos + block.nodeSize;
+    }
+  }
+
+  if (target === null) {
+    return editor.chain().insertContent(node).run();
+  }
+
+  const insertionPos = typeof target === "number" ? target : target.from;
+  const chain = editor.chain().insertContentAt(target, node);
+  if (node.type === "columnList") {
+    // columnList(+1) → 第一栏 column(+1) → 首个文本块(+1)。
+    const inserted = chain.setTextSelection(insertionPos + 3).run();
     if (inserted) editor.view.focus();
     return inserted;
   }

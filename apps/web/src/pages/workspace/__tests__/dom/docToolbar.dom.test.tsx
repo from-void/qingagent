@@ -330,8 +330,13 @@ describe("DocToolbar round-1 regressions", () => {
     });
 
     expect(commandEditor.chain).toHaveBeenCalledTimes(2);
-    expect(commandEditor.insertDiagram).toHaveBeenCalledWith({
-      source: "flowchart LR\nA-->B",
+    expect(commandEditor.insertContent).toHaveBeenCalledWith({
+      type: "diagram",
+      attrs: {
+        lang: "mermaid",
+        source: "flowchart LR\nA-->B",
+        svg: null,
+      },
     });
     expect(commandEditor.run).toHaveBeenCalledWith(true);
     expect(onToast).not.toHaveBeenCalledWith("无法执行：插入图表");
@@ -537,7 +542,7 @@ describe("DocToolbar round-1 regressions", () => {
 
   it("工具栏新建 drawio 会先插入默认块，再把实时回调绑定到该块", async () => {
     const fakeEditor = createCommandEditor(true);
-    const insertDiagram = vi.mocked(fakeEditor.chain().insertDiagram);
+    const insertContent = vi.mocked(fakeEditor.chain().insertContent);
     const onToast = vi.fn();
     await render(
       <DocToolbar
@@ -551,12 +556,15 @@ describe("DocToolbar round-1 regressions", () => {
 
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenCalledWith(expect.objectContaining({
-      blockId: expect.stringMatching(/^drawio-/),
-      lang: "drawio",
-      source: DEFAULT_DRAWIO_SOURCE,
-      svg: null,
-    }));
+    expect(insertContent).toHaveBeenCalledWith({
+      type: "diagram",
+      attrs: expect.objectContaining({
+        blockId: expect.stringMatching(/^drawio-/),
+        lang: "drawio",
+        source: DEFAULT_DRAWIO_SOURCE,
+        svg: null,
+      }),
+    });
     expect(openDrawioEditor).toHaveBeenCalledWith(
       DEFAULT_DRAWIO_SOURCE,
       "新建 drawio 工程图",
@@ -568,12 +576,15 @@ describe("DocToolbar round-1 regressions", () => {
     vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg });
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
-    expect(insertDiagram).toHaveBeenLastCalledWith(expect.objectContaining({
-      blockId: expect.stringMatching(/^drawio-/),
-      lang: "drawio",
-      source: DEFAULT_DRAWIO_SOURCE,
-      svg: null,
-    }));
+    expect(insertContent).toHaveBeenLastCalledWith({
+      type: "diagram",
+      attrs: expect.objectContaining({
+        blockId: expect.stringMatching(/^drawio-/),
+        lang: "drawio",
+        source: DEFAULT_DRAWIO_SOURCE,
+        svg: null,
+      }),
+    });
     expect(onToast).not.toHaveBeenCalled();
   });
 
@@ -611,6 +622,72 @@ describe("DocToolbar round-1 regressions", () => {
     expect(editor.state.selection.$from.node(-1).type.name).toBe("column");
     expect(editor.state.selection.$from.index(-2)).toBe(0);
     expect(editor.view.hasFocus()).toBe(true);
+  });
+
+  it.each([
+    {
+      scene: "块中间",
+      blockId: "placement-heading",
+      offset: 3,
+      expectedTypes: ["heading", "table", "paragraph", "paragraph", "paragraph"],
+      simulatePickerFocusLoss: false,
+    },
+    {
+      scene: "空段",
+      blockId: "placement-empty",
+      offset: 0,
+      expectedTypes: ["heading", "paragraph", "table", "paragraph"],
+      simulatePickerFocusLoss: true,
+    },
+    {
+      scene: "段尾",
+      blockId: "placement-first",
+      offset: 2,
+      expectedTypes: ["heading", "paragraph", "table", "paragraph", "paragraph"],
+      simulatePickerFocusLoss: false,
+    },
+  ])("r92C 表格在$scene按块边界落位且不拆 H1", async ({
+    blockId,
+    offset,
+    expectedTypes,
+    simulatePickerFocusLoss,
+  }) => {
+    editor = createStructurePlacementEditor();
+    setCursorInBlock(editor, blockId, offset);
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    const insertButton = getButtonByText("插入");
+    await act(async () => {
+      insertButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      insertButton.click();
+    });
+    await act(async () => getButtonByText("插入表格").click());
+    if (simulatePickerFocusLoss) {
+      // 真机尺寸浮层接管焦点时，浏览器会把当前 selection 挪回前一可编辑块；
+      // 命令必须恢复打开工具栏前保存的折叠光标，才能仍在原空段落位。
+      setCursorInBlock(editor, "placement-heading", "插表复现—r92C席".length);
+    }
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-row="3"][data-col="3"]')?.click();
+    });
+
+    const content = normalizePmDoc(editor.getJSON()).content;
+    expect(content.map((node) => node.type)).toEqual(expectedTypes);
+    const heading = content.find((node) => node.type === "heading");
+    expect(heading?.type === "heading"
+      ? heading.content?.map((inline) => inline.type === "text" ? inline.text : "").join("")
+      : "")
+      .toBe("插表复现—r92C席");
+    const table = content.find((node) => node.type === "table");
+    expect(table?.type === "table" ? table.content : []).toHaveLength(3);
+    expect(table?.type === "table" ? table.content.every((row) => row.content.length === 3) : false).toBe(true);
   });
 
   it("工具栏可以切换有序列表序号样式", async () => {
@@ -925,6 +1002,50 @@ function createTwoParagraphEditor() {
   });
 }
 
+function createStructurePlacementEditor() {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  return new Editor({
+    element,
+    extensions: createQingagentExtensions(),
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { blockId: "placement-heading", level: 1 },
+          content: [{ type: "text", text: "插表复现—r92C席" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "placement-first" },
+          content: [{ type: "text", text: "首段" }],
+        },
+        { type: "paragraph", attrs: { blockId: "placement-empty" } },
+        {
+          type: "paragraph",
+          attrs: { blockId: "placement-tail" },
+          content: [{ type: "text", text: "尾段" }],
+        },
+      ],
+    } satisfies PmDoc,
+  });
+}
+
+function setCursorInBlock(instance: Editor, blockId: string, offset: number): void {
+  let blockPos: number | null = null;
+  instance.state.doc.descendants((node, pos) => {
+    if (node.attrs.blockId === blockId) {
+      blockPos = pos;
+      return false;
+    }
+    return true;
+  });
+  if (blockPos === null) throw new Error(`找不到测试块：${blockId}`);
+  instance.commands.setTextSelection(blockPos + 1 + offset);
+}
+
 function createTableEditor() {
   const element = document.createElement("div");
   document.body.appendChild(element);
@@ -990,6 +1111,8 @@ function createCommandEditor(runResult: boolean): Editor {
   const chainMethod = () => chain;
   Object.assign(chain, {
     focus: chainMethod,
+    insertContent: vi.fn(chainMethod),
+    insertContentAt: vi.fn(chainMethod),
     insertTable: chainMethod,
     toggleBlockquote: chainMethod,
     insertDiagram: vi.fn(chainMethod),
@@ -1021,13 +1144,13 @@ function createCommandEditor(runResult: boolean): Editor {
 
 function createVersionedDiagramCommandEditor() {
   let stateVersion = 0;
-  const insertDiagram = vi.fn();
+  const insertContent = vi.fn();
   const run = vi.fn();
   const chain = vi.fn(() => {
     const chainVersion = stateVersion;
     const currentChain = {
-      insertDiagram: (attrs?: { source?: string }) => {
-        insertDiagram(attrs);
+      insertContent: (node: Record<string, unknown>) => {
+        insertContent(node);
         return currentChain;
       },
       run: () => {
@@ -1063,7 +1186,7 @@ function createVersionedDiagramCommandEditor() {
   return {
     editor,
     chain,
-    insertDiagram,
+    insertContent,
     run,
     advanceState: () => {
       stateVersion += 1;

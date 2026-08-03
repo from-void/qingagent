@@ -129,12 +129,14 @@ import {
   createBlockDragPayload,
   createDefaultColumnListNode,
   createDefaultTableNode,
+  insertStructureNodeAtSelection,
   insertStructureNodeAfterBlock,
 } from "./doc/structureNodes";
 export {
   createBlockDragPayload,
   createDefaultColumnListNode,
   createDefaultTableNode,
+  insertStructureNodeAtSelection,
   insertStructureNodeAfterBlock,
 } from "./doc/structureNodes";
 import { pickFile } from "./doc/pickFile";

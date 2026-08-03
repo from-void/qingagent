@@ -36,7 +36,8 @@ import {
 import { useToolbarLinkEditor } from "./doc/ToolbarLinkEditor";
 import {
   createDefaultColumnListNode,
-  insertStructureNodeAfterBlock,
+  createDefaultTableNode,
+  insertStructureNodeAtSelection,
 } from "./doc/structureNodes";
 
 interface ToolbarPos {
@@ -98,7 +99,7 @@ export type SavedToolbarSelection =
 /** 保存 PM 选区的方向与类型；CellSelection 使用独立表格工具栏，不进入正文工具栏恢复链路。 */
 export function captureToolbarSelection(editor: Pick<Editor, "state">): SavedToolbarSelection | null {
   const selection = editor.state.selection;
-  if (selection instanceof TextSelection && !selection.empty) {
+  if (selection instanceof TextSelection) {
     return { kind: "text", anchor: selection.anchor, head: selection.head };
   }
   if (selection instanceof NodeSelection) {
@@ -828,11 +829,9 @@ export function DocToolbar({
         case "insertBlockMath": {
           const { from, to } = editor.state.selection;
           const latex = stripMathDelimiters(editor.state.doc.textBetween(from, to, "\n")) || "E = mc^2";
-          if (from !== to) {
-            run("公式块", () => chain.insertContentAt({ from, to }, { type: "blockMath", attrs: { latex } }).run());
-          } else {
-            run("公式块", () => chain.insertBlockMath({ latex }).run());
-          }
+          run("公式块", () =>
+            insertStructureNodeAtSelection(editor, { type: "blockMath", attrs: { latex } }),
+          );
           break;
         }
         case "insertDiagram": {
@@ -840,10 +839,15 @@ export function DocToolbar({
           const { from, to } = editor.state.selection;
           const selected = editor.state.doc.textBetween(from, to, "\n").trim();
           const source = await resolveDiagramSourceForInsert(selected);
-          // Mermaid 动态加载/解析期间编辑器可能已产生新事务；旧 chain 持有旧 state，
-          // 此处必须从最新 state 重建，否则 ProseMirror 会拒绝 mismatched transaction。
           run("插入图表", () =>
-            editor.chain().insertDiagram(source ? { source } : undefined).run(),
+            insertStructureNodeAtSelection(editor, {
+              type: "diagram",
+              attrs: {
+                lang: "mermaid",
+                source: source ?? "flowchart TD\n  A[开始] --> B[结束]",
+                svg: null,
+              },
+            }),
           );
           break;
         }
@@ -851,12 +855,15 @@ export function DocToolbar({
           try {
             const blockId = createDrawioBlockId();
             const inserted = run("插入 drawio 工程图", () =>
-              editor.chain().focus().insertDiagram({
-                blockId,
-                lang: "drawio",
-                source: DEFAULT_DRAWIO_SOURCE,
-                svg: null,
-              }).run(),
+              insertStructureNodeAtSelection(editor, {
+                type: "diagram",
+                attrs: {
+                  blockId,
+                  lang: "drawio",
+                  source: DEFAULT_DRAWIO_SOURCE,
+                  svg: null,
+                },
+              }),
             );
             if (!inserted) break;
             const writeBack = (result: DrawioEditorResult) => {
@@ -875,14 +882,13 @@ export function DocToolbar({
           break;
         }
         case "insertTable":
-          run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: false }).run());
+          run("插入表格", () =>
+            insertStructureNodeAtSelection(editor, createDefaultTableNode(3, 3, false)),
+          );
           break;
         case "insertColumns": {
-          // 在当前顶层块之后插入,不能用 insertContent(会替换选区:全选时清空正文,e2e V1-c1)。
-          const $from = editor.state.selection.$from;
-          const blockPos = $from.depth >= 1 ? $from.before(1) : 0;
           run("插入分栏", () =>
-            insertStructureNodeAfterBlock(editor, blockPos, createDefaultColumnListNode()),
+            insertStructureNodeAtSelection(editor, createDefaultColumnListNode()),
           );
           break;
         }
@@ -890,7 +896,9 @@ export function DocToolbar({
           run("代码块", () => chain.setCodeBlock().run());
           break;
         case "horizontalRule":
-          run("分隔线", () => chain.setHorizontalRule().run());
+          run("分隔线", () =>
+            insertStructureNodeAtSelection(editor, { type: "horizontalRule" }),
+          );
           break;
         case "justifyLeft":
           run("左对齐", () => chain.setTextAlign("left").run());
@@ -1033,7 +1041,10 @@ export function DocToolbar({
     if (!editor || !editor.isEditable || !toolbarUnlock.blocks) return;
     if (!restoreSavedCommandSelection()) return;
     reportToolbarCommandResult(
-      editor.chain().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: false }).run(),
+      insertStructureNodeAtSelection(
+        editor,
+        createDefaultTableNode(size.rows, size.cols, false),
+      ),
       "插入表格",
       onToast,
     );

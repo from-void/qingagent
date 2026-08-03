@@ -158,9 +158,18 @@ vi.mock("./data/serverStream", () => {
     }
   }
 
+  async function retryDisposedServerStreamOnce<T>(
+    initialStream: ServerStream,
+    _currentStream: () => ServerStream | null,
+    request: (stream: ServerStream) => Promise<T>,
+  ): Promise<T> {
+    return request(initialStream);
+  }
+
   return {
     ServerStream,
     loggedFrameObservabilityOf: () => null,
+    retryDisposedServerStreamOnce,
   };
 });
 

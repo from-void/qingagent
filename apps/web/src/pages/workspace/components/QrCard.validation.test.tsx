@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+import QRCode from "qrcode";
 import { QrCard } from "./QrCard";
 import type { QrCardBody } from "@qingagent/contract-ts";
 import { chatInputBus } from "../../../system";
@@ -611,16 +612,28 @@ describe("QrCard — validation loop 3", () => {
       expect(document.querySelector(".qr-card__confirm")?.textContent).toContain("复制代码并打开");
     });
 
-    it("link 形态只展示打开链接，不生成二维码", () => {
+    it("show_qr 的 link 形态同时渲染可扫二维码和打开链接", async () => {
+      const toDataURL = vi.spyOn(QRCode, "toDataURL");
+      toDataURL.mockImplementation((() =>
+        Promise.resolve("data:image/png;base64,cjY5LXFy")) as never);
       render(<QrCard data={{
         ...connectorCard(),
         presentation: "link",
+        content: "https://example.com/r69B",
         connectorId: undefined,
         pendingId: undefined,
         code: null,
       }} />);
-      expect(document.querySelector(".qr-card__frame")).toBeNull();
+
+      await act(async () => { await Promise.resolve(); });
+
+      expect(toDataURL).toHaveBeenCalledWith(
+        "https://example.com/r69B",
+        { margin: 1, width: 240, errorCorrectionLevel: "M" },
+      );
+      expect(document.querySelector("img.qr-card__img")).toBeTruthy();
       expect(document.querySelector('a.qr-card__confirm')?.textContent).toBe("打开链接");
+      expect(document.querySelector(".qr-card__expiry")?.textContent).toContain("后过期");
     });
 
     it("GitHub 输码卡过期后显示重新发起按钮而非二维码刷新", () => {

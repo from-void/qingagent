@@ -33,6 +33,13 @@ describe("workspaceCssContract", () => {
     expect(lineCount).toBe(contract.lineCount);
   });
 
+  it("块转换网格保持六列自动流,首排不会在正文前留空", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.bh-grid\{[^}]*display:grid;grid-template-columns:repeat\(6,32px\)/,
+    );
+  });
+
   it("keeps workspace ink skin fixture regenerated with workspace CSS changes", () => {
     const skinContract = contract as typeof contract & {
       skinFile: string;

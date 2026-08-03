@@ -97,6 +97,30 @@ describe("BlockHandle 转换为", () => {
     expect(editor!.state.doc.firstChild?.type.name).toBe("codeBlock");
   });
 
+  it("转换项按六列连续补位,第一排由正文紧跟 H5 填满", async () => {
+    await openBlockMenu(doc(paragraph()));
+
+    const items = Array.from(
+      workspace!.querySelectorAll<HTMLElement>(".bh-grid > [role=menuitem]"),
+      (item) => item.getAttribute("aria-label"),
+    );
+    expect(items).toEqual([
+      "一级标题",
+      "二级标题",
+      "三级标题",
+      "四级标题",
+      "五级标题",
+      "正文",
+      "六级标题",
+      "无序列表",
+      "有序列表",
+      "引用",
+      "代码块",
+      "待办清单",
+      "高亮块",
+    ]);
+  });
+
   it("菜单打开后光标移出高亮块,再点「高亮块」仍能取消包裹(不吃旧选区)", async () => {
     await openBlockMenu(doc(
       { type: "callout", content: [paragraph("提示")] },

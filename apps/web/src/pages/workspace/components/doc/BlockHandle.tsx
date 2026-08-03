@@ -23,7 +23,7 @@ import {
 import { writeBlockClipboardPayload } from "./blockClipboard";
 import { readTableBlockMenuState, setEvenTableColumnWidths, toggleTableHeader } from "./blockHandleTable";
 import { BlockHandleIcon } from "./BlockHandleIcons";
-import { HeadingLevelPicker } from "../HeadingLevelPicker";
+import { HEADING_LEVELS, headingLevelLabel } from "../HeadingLevelPicker";
 import { TableSizePicker, type TableSize } from "./TableSizePicker";
 import {
   computeBlockMenuPlacement,
@@ -1321,17 +1321,33 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           onMouseOver={closeTablePickerOnOtherMenuItem}
         >
           {tableMenuState || !convertibleHandle ? null : <div className="bh-section-label">转换为</div>}
-          {/* 标题六级与工具栏共用同一个紧凑选择器(一行六格),不再只给到三级;
-              叶子块(分隔线/图片/图表/公式)无正文可转换,与下方宫格同门禁整排不出 */}
-          {tableMenuState || !convertibleHandle ? null : (
-            <HeadingLevelPicker
-              itemRole="menuitem"
-              activeLevel={activeHeadingLevel}
-              onPick={(level) => convertBlock("heading", level)}
-            />
-          )}
+          {/* 所有转换项共用一个六列自动流：正文紧跟 H5 填满首排，空位只会留在末排。
+              叶子块(分隔线/图片/图表/公式)无正文可转换,整组不出。 */}
           {tableMenuState || !convertibleHandle ? null : <div className="bh-grid">
+            {HEADING_LEVELS.slice(0, 5).map((level) => (
+              <button
+                key={level}
+                type="button"
+                role="menuitem"
+                className={`bh-grid-btn bh-heading-btn${activeHeadingLevel === level ? " is-active" : ""}`}
+                aria-label={headingLevelLabel(level)}
+                title={headingLevelLabel(level)}
+                onClick={() => convertBlock("heading", level)}
+              >
+                H{level}
+              </button>
+            ))}
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
+            <button
+              type="button"
+              role="menuitem"
+              className={`bh-grid-btn bh-heading-btn${activeHeadingLevel === 6 ? " is-active" : ""}`}
+              aria-label={headingLevelLabel(6)}
+              title={headingLevelLabel(6)}
+              onClick={() => convertBlock("heading", 6)}
+            >
+              H6
+            </button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="无序列表" title="无序列表" onClick={() => convertBlock("bulletList")}><BlockHandleIcon name="bulletList" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="有序列表" title="有序列表" onClick={() => convertBlock("orderedList")}><BlockHandleIcon name="orderedList" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="引用" title="引用" onClick={() => convertBlock("blockquote")}><BlockHandleIcon name="quote" /></button>

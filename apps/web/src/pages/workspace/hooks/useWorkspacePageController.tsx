@@ -85,6 +85,7 @@ import {
   installAnnotationGroupDecorations,
   updateAnnotationGroupDecorations,
 } from "../data/annotationDecorations";
+import { annotationRemovalToastMessage } from "../data/annotationMessages";
 import { deriveDocDimensions } from "../data/docDimensions";
 import {
   buildAttachFolderCommand,
@@ -648,7 +649,7 @@ export function useWorkspacePageController() {
       (groups, unlocatedGroupCount) => {
         dispatch({ kind: "annotationGroupsChanged", groups });
         if (unlocatedGroupCount > 0) {
-          showToast(`${unlocatedGroupCount}处因文档已改动未能定位`);
+          showToast(annotationRemovalToastMessage(unlocatedGroupCount));
         }
       },
       current.previewGroups,

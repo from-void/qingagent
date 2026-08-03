@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmProvider } from "../../../../system";
+import { registerOverlay, resetOverlayDismissStackForTest } from "../../../../system/overlayDismissStack";
 import { DerivTabBar } from "./DerivTabBar";
 import { DerivativeGenerateModal, MAX_TRANSLATION_LANGUAGES, TRANSLATION_LANGUAGES } from "./DerivativeGenerateModal";
 import { DerivativeView } from "./DerivativeView";
@@ -41,11 +42,122 @@ function StaleDismissHarness({ stream }: { stream: object }) {
   </>;
 }
 
+async function renderDerivativeOverlayHarness(root: Root, withCreateMenu = false): Promise<void> {
+  const generatedItem: DerivativeItem = {
+    ...item,
+    sourceVersion: 1,
+    generatedAt: "2026-08-04T09:00:00.000Z",
+  };
+  const initialDocument = {
+    meta: generatedItem,
+    docPm: JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "esc-export-copy" },
+        content: [{ type: "text", text: "Esc 导出测试正文" }],
+      }],
+    }),
+    docVersion: 1,
+    title: "Esc 导出测试",
+  };
+  const stream = {
+    getDerivativeDoc: vi.fn(async () => initialDocument),
+  };
+
+  await act(async () => {
+    root.render(
+      <ConfirmProvider>
+        {withCreateMenu ? (
+          <DerivTabBar
+            title="主文档"
+            items={[]}
+            activeTab="main"
+            onActivate={vi.fn()}
+            onCreate={vi.fn()}
+            onRename={vi.fn()}
+          />
+        ) : null}
+        <DerivativeView
+          sessionId="session-1"
+          item={generatedItem}
+          initialDocument={initialDocument}
+          stream={stream as never}
+          streamActive={false}
+          onRefresh={vi.fn(async () => {})}
+          onDeleted={vi.fn()}
+          onToast={vi.fn()}
+          onSendQuery={vi.fn()}
+        />
+      </ConfirmProvider>,
+    );
+    await Promise.resolve();
+  });
+}
+
+async function pressEscape(): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+}
+
 describe("公众号稿生成体验", () => {
   let host: HTMLDivElement;
   let root: Root;
   beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
-  afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    resetOverlayDismissStackForTest();
+    vi.useRealTimers();
+  });
+
+  it("衍生稿导出与更多菜单打开后按 Esc 只关闭当前菜单", async () => {
+    const dismissBottomOverlay = vi.fn();
+    registerOverlay(dismissBottomOverlay);
+    await renderDerivativeOverlayHarness(root);
+
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
+    expect(host.querySelector(".ws-deriv-view .ws-export-menu")?.textContent).toBe("复制文案导出图片");
+    await pressEscape();
+    expect(host.querySelector(".ws-deriv-view .ws-export-menu")).toBeNull();
+    expect(dismissBottomOverlay).not.toHaveBeenCalled();
+
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
+    expect(host.querySelector(".ws-deriv-view .ws-export-menu")?.textContent).toBe("删除稿件");
+    await pressEscape();
+    expect(host.querySelector(".ws-deriv-view .ws-export-menu")).toBeNull();
+    expect(dismissBottomOverlay).not.toHaveBeenCalled();
+
+    await pressEscape();
+    expect(dismissBottomOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("衍生导出与新建菜单快速交替五轮后不残留", async () => {
+    vi.useFakeTimers();
+    await renderDerivativeOverlayHarness(root, true);
+
+    for (const delay of [90, 120, 95, 110, 100]) {
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
+      expect(host.querySelector(".ws-deriv-view .ws-export-menu")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+      await pressEscape();
+      expect(host.querySelector(".ws-deriv-view .ws-export-menu")).toBeNull();
+
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="新建稿件"]')!.click());
+      expect(host.querySelector(".ws-deriv-menu")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+      await pressEscape();
+      expect(host.querySelector(".ws-deriv-menu")).toBeNull();
+    }
+
+    expect(host.querySelectorAll('[role="menu"]')).toHaveLength(0);
+  });
 
   it.each(["gzh", "translate"] as const)("%s 配置弹窗打开后按 Esc 放弃输入并关闭", async (dtype) => {
     const onClose = vi.fn();

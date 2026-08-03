@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeStoredPmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
+import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
 import {
   retryDisposedServerStreamOnce,
   type ServerStream,
@@ -83,6 +84,8 @@ export function DerivativeView(props: {
   const sawActiveRef = useRef(props.streamActive);
   const documentRequestGenerationRef = useRef(0);
   const coverTemplateRequestGenerationRef = useRef(0);
+  useOverlayDismiss(exportOpen, () => setExportOpen(false));
+  useOverlayDismiss(moreOpen, () => setMoreOpen(false));
   useEffect(() => {
     if (!props.items?.length || props.items.some((candidate) => candidate.docId === effectiveDocId)) return;
     setSelectedDocId(props.items[0]!.docId);

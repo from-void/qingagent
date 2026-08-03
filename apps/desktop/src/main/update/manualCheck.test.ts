@@ -14,6 +14,7 @@ type Listener = (...args: unknown[]) => void;
 class FakeUpdater implements CheckableUpdater {
   listeners = new Map<string, Set<Listener>>();
   checkCalls = 0;
+  checkResult: unknown = null;
   // checkForUpdates 被调用后自动 emit 的事件(模拟底层检查回来)。null = 不自动 emit。
   autoEmit: { event: string; info?: unknown } | null = null;
 
@@ -33,10 +34,21 @@ class FakeUpdater implements CheckableUpdater {
       const { event, info } = this.autoEmit;
       queueMicrotask(() => this.emit(event, info));
     }
-    return null;
+    return this.checkResult;
   }
   emit(event: string, info?: unknown): void {
     for (const listener of [...(this.listeners.get(event) ?? [])]) listener(info);
+  }
+}
+
+class ThrowingUpdater extends FakeUpdater {
+  constructor(private readonly checkError: unknown) {
+    super();
+  }
+
+  override checkForUpdates(): Promise<unknown> {
+    this.checkCalls += 1;
+    throw this.checkError;
   }
 }
 
@@ -82,6 +94,46 @@ test("error 事件 → 返回 error 态(区分于已是最新)", async () => {
   updater.autoEmit = { event: "error", info: new Error("network down") };
   const result = await runManualCheck(baseDeps(updater));
   assert.equal(result.kind, "error");
+});
+
+test("checkForUpdates 同步抛 ENOENT 时收敛为 error 态", async () => {
+  const enoent = Object.assign(new Error("ENOENT: app-update.yml"), { code: "ENOENT" });
+  const updater = new ThrowingUpdater(enoent);
+  const reported: unknown[] = [];
+
+  const result = await runManualCheck(
+    baseDeps(updater, { onCheckError: (error) => reported.push(error) }),
+  );
+
+  assert.equal(result.kind, "error");
+  assert.deepEqual(reported, [enoent]);
+  assert.equal(updater.checkCalls, 1);
+});
+
+test("自动下载读取 app-update.yml 抛 ENOENT 时不产生 unhandledRejection", async () => {
+  const updater = new FakeUpdater();
+  const enoent = Object.assign(
+    new Error("ENOENT: no such file or directory, open 'resources/app-update.yml'"),
+    { code: "ENOENT" },
+  );
+  updater.checkResult = { downloadPromise: Promise.reject(enoent) };
+  updater.autoEmit = { event: "update-available", info: { version: "1.3.0" } };
+  const unhandled: unknown[] = [];
+  const reported: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+
+  try {
+    const result = await runManualCheck(
+      baseDeps(updater, { onCheckError: (error) => reported.push(error) }),
+    );
+    assert.equal(result.kind, "soft-available");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+    assert.deepEqual(reported, [enoent]);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandled);
+  }
 });
 
 test("检查超时 → 返回 error 态(不假报已是最新)", async (t) => {

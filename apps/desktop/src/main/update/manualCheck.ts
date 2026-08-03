@@ -1,3 +1,7 @@
+import {
+  checkForUpdatesAndWatchDownload,
+  type UpdateChecker,
+} from "./checkForUpdates.js";
 import { fetchUpdatePolicy, isBelowMinSupported, resolveUpdatePolicyUrl } from "./policy.js";
 import { RELEASES_URL, type UpdateStatusPayload } from "./updateTypes.js";
 
@@ -6,10 +10,9 @@ import { RELEASES_URL, type UpdateStatusPayload } from "./updateTypes.js";
 // 推送通道(onStatus)只在强更命中、以及后续 update-downloaded 等被动同步时使用。
 
 // 我们只依赖 AppUpdater 的这几个方法,窄接口便于注入假实现。
-export interface CheckableUpdater {
+export interface CheckableUpdater extends UpdateChecker {
   once(event: string, listener: (...args: unknown[]) => void): unknown;
   removeListener(event: string, listener: (...args: unknown[]) => void): unknown;
-  checkForUpdates(): Promise<unknown>;
 }
 
 export interface ManualCheckDeps {
@@ -19,6 +22,8 @@ export interface ManualCheckDeps {
   isPackaged: boolean;
   // 强更命中时把 force 推给渲染层(交给 AppUpdateWatcher 的 Modal 接管);可选,单测可省。
   onStatus?: (payload: UpdateStatusPayload) => void;
+  // 生产链路注入 updater.ts 的统一失败报告器，保证 emit/reject 双路径同一 WARN 口径且去重。
+  onCheckError?: (error: unknown) => void;
   fetchPolicy?: typeof fetchUpdatePolicy;
   policyUrl?: string;
   // 检查迟迟无事件回来的兜底超时,超时按 error 处理,避免渲染层永远卡在「检查中」。
@@ -83,6 +88,7 @@ function awaitCheckResult(deps: ManualCheckDeps): Promise<UpdateStatusPayload> {
   return new Promise<UpdateStatusPayload>((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const reportedErrors = new Set<unknown>();
 
     const cleanup = () => {
       if (timer) clearTimeout(timer);
@@ -111,7 +117,11 @@ function awaitCheckResult(deps: ManualCheckDeps): Promise<UpdateStatusPayload> {
       done({ kind: "soft-ready", version: readVersion(info), notesUrl: RELEASES_URL });
     };
     const onError = (err: unknown) => {
-      console.warn("[update] manual check failed:", err);
+      if (!reportedErrors.has(err)) {
+        reportedErrors.add(err);
+        if (deps.onCheckError) deps.onCheckError(err);
+        else console.warn("[update] check failed:", err);
+      }
       done({ kind: "error" });
     };
 
@@ -125,10 +135,7 @@ function awaitCheckResult(deps: ManualCheckDeps): Promise<UpdateStatusPayload> {
       done({ kind: "error" });
     }, deps.timeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS);
 
-    Promise.resolve(updater.checkForUpdates()).catch((err) => {
-      console.warn("[update] manual check failed:", err);
-      done({ kind: "error" });
-    });
+    void checkForUpdatesAndWatchDownload(updater, onError).catch(onError);
   });
 }
 

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeStoredPmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
-import type { ServerStream } from "../../data/serverStream";
+import {
+  retryDisposedServerStreamOnce,
+  type ServerStream,
+} from "../../data/serverStream";
 import { QingLoading } from "../QingLoading";
 import { DerivativeGenerateModal, type DerivativeGenerateParams } from "./DerivativeGenerateModal";
 import { getDtypeDescriptor } from "./dtypeRegistry";
@@ -27,6 +30,7 @@ function MoreIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><circle
 
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
+  currentStreamRef?: { readonly current: ServerStream | null };
   initialDocument?: DerivativeDocument | null;
   onRefresh: () => Promise<void>; onDeleted: () => void; onToast: (text: string) => void;
   onSendQuery: (text: string, displayCard: ActionCardData) => void;
@@ -80,8 +84,11 @@ export function DerivativeView(props: {
         existing?.meta.docId === item.docId ? existing : null,
       );
     }
-    void props.stream
-      .getDerivativeDoc(props.sessionId, item.docId)
+    void retryDisposedServerStreamOnce(
+      props.stream,
+      () => props.currentStreamRef?.current ?? props.stream,
+      (stream) => stream.getDerivativeDoc(props.sessionId, item.docId),
+    )
       .then((next) => {
         if (
           current &&
@@ -106,6 +113,7 @@ export function DerivativeView(props: {
     item.docId,
     item.generatedAt,
     props.initialDocument,
+    props.currentStreamRef,
     props.sessionId,
     props.stream,
   ]);

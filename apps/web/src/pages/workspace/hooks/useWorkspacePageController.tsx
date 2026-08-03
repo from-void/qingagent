@@ -141,6 +141,7 @@ import {
 import { deriveReviewUiState } from "../data/reviewUiState";
 import {
   loggedFrameObservabilityOf,
+  retryDisposedServerStreamOnce,
   ServerStream,
 } from "../data/serverStream";
 import {
@@ -2077,8 +2078,11 @@ export function useWorkspacePageController() {
         const stream = streamRef.current;
         const sessionId = stateRef.current.sessionId;
         if (stream && sessionId) {
-          void stream
-            .listDerivatives(sessionId)
+          void retryDisposedServerStreamOnce(
+            stream,
+            () => streamRef.current,
+            (currentStream) => currentStream.listDerivatives(sessionId),
+          )
             .then(setDerivatives)
             .catch((error) => {
               console.error(
@@ -2601,7 +2605,11 @@ export function useWorkspacePageController() {
     if (!stream || !requestSessionId) return;
     const requestGeneration = derivativeListGenerationRef.current + 1;
     derivativeListGenerationRef.current = requestGeneration;
-    const nextDerivatives = await stream.listDerivatives(requestSessionId);
+    const nextDerivatives = await retryDisposedServerStreamOnce(
+      stream,
+      () => streamRef.current,
+      (currentStream) => currentStream.listDerivatives(requestSessionId),
+    );
     if (
       stateRef.current.sessionId !== requestSessionId ||
       derivativeListGenerationRef.current !== requestGeneration

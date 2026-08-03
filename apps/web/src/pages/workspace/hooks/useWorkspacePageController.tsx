@@ -1243,6 +1243,13 @@ export function useWorkspacePageController() {
     presentationCount,
   });
   useLayoutEffect(() => {
+    if (!reviewUiState.reviewResolutionAvailable || activeTab === "main") return;
+    // pendingReview 与 suggestions 目前只属于 canonical 主稿；聊天锁却是会话级。
+    // 多文档场景若仍停在衍生稿，右侧裁决条不会挂载，便会形成“输入已锁、出口不可见”。
+    // 在绘制前把可裁决候选收归主稿纸面；用户随后误切衍生稿也会立即回到同一出口。
+    setActiveTab("main");
+  }, [activeTab, reviewUiState.reviewResolutionAvailable]);
+  useLayoutEffect(() => {
     const el = docScrollRef.current;
     if (!el) return;
     el.scrollTop = 0;

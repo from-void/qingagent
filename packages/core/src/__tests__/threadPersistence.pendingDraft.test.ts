@@ -14,6 +14,7 @@ import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
   createSuggestionBatchId,
   createSuggestionFromDiffHunk,
+  isWholeDocumentSuggestionBatchId,
 } from "../doc-engine/draftReviewSuggestions.js";
 import { commitReviewGroups, updatePatchVerdict } from "../doc-engine/reviewCommit.js";
 import { createSession } from "../session/sessionState.js";
@@ -27,6 +28,7 @@ import {
   listDocumentSuggestionStatusesInBatch,
   listVersions,
   runMigrations,
+  saveInitialReviewBatch,
   upsertDocumentSuggestion,
 } from "@qingagent/db";
 import {
@@ -191,6 +193,71 @@ describe("pending draft rehydrate", () => {
     expect(docText(restored?.docDraftCandidateDoc ?? undefined)).toBe("新正文");
     expect(restored?.suggestions.size).toBeGreaterThan(0);
     expect(restored?.suggestionBaseDoc).toEqual(base);
+  });
+
+  it("chat-disabled-after-multi-artifact-generation: 第二稿 19 处整稿候选连续冷开仍保留候选与整稿裁决语义", async () => {
+    const sessionId = "rehy-second-whole-document";
+    const base = doc(Array.from({ length: 19 }, (_, index) =>
+      paragraph(`block-${index + 1}`, `首稿第 ${index + 1} 段`),
+    ));
+    const draft = doc(Array.from({ length: 19 }, (_, index) =>
+      paragraph(`block-${index + 1}`, `联网对比第二稿第 ${index + 1} 段`),
+    ));
+    const batchId = createSuggestionBatchId(1, draft, { wholeDocument: true });
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    const suggestions = hunks.map((hunk) => createSuggestionFromDiffHunk({
+      hunk,
+      docId: sessionId,
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+      batchId,
+    }));
+    expect(suggestions).toHaveLength(19);
+
+    await seedDocument(sessionId, base);
+    await saveInitialReviewBatch({
+      draft: {
+        docId: sessionId,
+        threadId: sessionId,
+        baseVersion: 1,
+        baseHash: getPmContentHash(base),
+        draftPmDoc: draft,
+        batchId,
+        reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+        groupMode: suggestions[0]?.groupMode ?? null,
+      },
+      suggestions,
+    });
+    threads.set(sessionId, {
+      id: sessionId,
+      title: "多稿冷恢复",
+      resourceId: "qingagent-user",
+      createdAt: new Date("2026-08-03T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-03T00:00:00.000Z"),
+      metadata: {
+        docId: sessionId,
+        docState: { kind: "pendingReview" },
+        docVersion: 1,
+        doc: base,
+        legacySections: pmToLegacySections(base),
+        messages: [],
+      },
+    });
+
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const firstColdOpen = await loadSessionFromThread(sessionId);
+    const secondColdOpen = await loadSessionFromThread(sessionId);
+
+    const coldOpens = [firstColdOpen, secondColdOpen];
+    for (const restored of coldOpens) {
+      expect(restored?.docState).toEqual({ kind: "pendingReview" });
+      expect(restored?.doc).toEqual(base);
+      expect(restored?.docDraftCandidateDoc).toEqual(draft);
+      expect(restored?.suggestions.size).toBe(19);
+      expect([...restored!.suggestions.values()].every((record) =>
+        isWholeDocumentSuggestionBatchId(record.suggestion.batchId),
+      )).toBe(true);
+    }
   });
 
   it("连续 activate 冷恢复会持久化冲突清理，第二次不再重放旧审阅态", async () => {

@@ -4259,6 +4259,83 @@ describe("WorkspacePage review controls", () => {
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
   });
 
+  it("chat-disabled-after-multi-artifact-generation: 衍生稿纸面收到主稿第二稿候选后自动回到可裁决主稿", async () => {
+    const derivative = {
+      docId: "deriv-before-second-candidate",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      templateName: "深度观点文",
+      privatePrompt: "",
+      sourceVersion: 1,
+      currentSourceVersion: 1,
+      generatedAt: "2026-08-03T00:00:00.000Z",
+      stale: false,
+    };
+    const stream = await renderWorkspaceWithAnnotations("reviewing", (nextStream) => {
+      nextStream.listDerivatives.mockResolvedValue([derivative]);
+      nextStream.getDerivativeDoc.mockResolvedValue({
+        meta: derivative,
+        docPm: JSON.stringify(pmDoc([pmParagraph("deriv-p", "衍生稿正文")])),
+        docVersion: 1,
+        title: "",
+      });
+    });
+    await flushMicrotasks(5);
+
+    const derivativeTab = Array.from(
+      host!.querySelectorAll<HTMLElement>('[role="tab"]'),
+    ).find((tab) => tab.textContent?.includes("公众号文章"));
+    expect(derivativeTab).toBeTruthy();
+    await clickElement(derivativeTab!);
+    expect(host?.textContent).toContain("衍生稿正文");
+
+    const baseDoc = pmDoc([pmParagraph("p-1", "甲组正文")]);
+    const candidateDoc = pmDoc([
+      pmParagraph("p-1", "A 股与美股新能源板块第二稿候选正文"),
+    ]);
+    const candidate = reviewSuggestion({
+      id: "second-draft-candidate",
+      blockId: "p-1",
+      pmFrom: 1,
+      pmTo: 5,
+      before: "甲组正文",
+      after: "A 股与美股新能源板块第二稿候选正文",
+    });
+    await emitFrames(stream, [
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [candidate],
+          previewDoc: baseDoc,
+          editedDoc: candidateDoc,
+          wholeDocument: true,
+        },
+      },
+      toolCallUpdatedFrame({
+        ...reviewToolCall("second-draft-candidate", "second-draft-batch", "reviewing"),
+        body: {
+          kind: "docSuggestion",
+          data: { kind: "suggestion", data: candidate },
+        },
+      }),
+      docStateFrame("pendingReview"),
+    ]);
+    await flushMicrotasks(5);
+
+    const mainTab = Array.from(
+      host!.querySelectorAll<HTMLElement>('[role="tab"]'),
+    ).find((tab) => tab.textContent?.includes("测试批注"));
+    expect(mainTab?.classList.contains("is-active")).toBe(true);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("第二稿候选正文");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+
+    await clickElement(derivativeTab!);
+    expect(mainTab?.classList.contains("is-active")).toBe(true);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+  }, 60_000);
+
   it("切到衍生稿后发送载荷绑定当前衍生稿而非主稿", async () => {
     const derivative = {
       docId: "deriv-current-target",
@@ -6408,6 +6485,7 @@ describe("WorkspacePage existing session title hydration", () => {
   beforeEach(() => {
     vi.resetModules();
     serverStreamMock.instances.length = 0;
+    serverStreamMock.listDerivativesImpl = null;
     window.location.hash = "#/workspace?session=s-existing";
     sessionStorage.clear();
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
@@ -6416,6 +6494,7 @@ describe("WorkspacePage existing session title hydration", () => {
 
   afterEach(() => {
     serverStreamMock.startSessionImpl = null;
+    serverStreamMock.listDerivativesImpl = null;
     restoreWorkspaceDomMocks?.();
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
@@ -6564,6 +6643,96 @@ describe("WorkspacePage existing session title hydration", () => {
     expect(captured.current?.state.docState).toEqual({ kind: "pendingReview" });
     expect(captured.current ? selectPatches(captured.current.state) : []).toHaveLength(1);
     expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+  }, 60_000);
+
+  it("chat-disabled-after-multi-artifact-generation: 重启后第二稿整篇候选仍在主稿纸面且有可操作出口", async () => {
+    const derivative = {
+      docId: "deriv-before-restart",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      templateName: "深度观点文",
+      privatePrompt: "",
+      sourceVersion: 1,
+      currentSourceVersion: 1,
+      generatedAt: "2026-08-03T00:00:00.000Z",
+      stale: false,
+    };
+    serverStreamMock.listDerivativesImpl = async () => [derivative];
+    const baseDoc = pmDoc([pmParagraph("main-p", "第一稿已提交正文")]);
+    const candidateDoc = pmDoc([
+      pmHeading("candidate-title", "A 股与美股新能源对比"),
+      pmParagraph("candidate-body", "第二稿联网对比候选正文"),
+    ]);
+    const candidate = reviewSuggestion({
+      id: "restored-second-draft",
+      blockId: "main-p",
+      pmFrom: 1,
+      pmTo: 8,
+      before: "第一稿已提交正文",
+      after: "A 股与美股新能源对比\n第二稿联网对比候选正文",
+    });
+    serverStreamMock.startSessionImpl = async (stream) => {
+      for (const frame of [
+        { kind: "restoreReset", data: { epoch: 1, snapshotSeq: 1 } },
+        {
+          kind: "sessionMeta",
+          data: { sessionId: "s-existing", title: "多稿恢复会话" },
+        },
+        {
+          kind: "documentSnapshotWritten",
+          data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) },
+        },
+        {
+          kind: "docDiffReady",
+          data: {
+            baseVersion: 1,
+            suggestions: [candidate],
+            previewDoc: baseDoc,
+            editedDoc: candidateDoc,
+            wholeDocument: true,
+          },
+        },
+        docStateFrame("pendingReview"),
+        { kind: "sessionRestoreCompleted", data: { sessionId: "s-existing" } },
+      ] satisfies BridgeFrame[]) {
+        stream.emit(frame);
+      }
+      return "s-existing";
+    };
+
+    const [
+      { useWorkspacePageController },
+      { WorkspaceChatPane },
+      { WorkspaceDocumentPane },
+    ] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./components/WorkspaceChatPane"),
+      import("./components/WorkspaceDocumentPane"),
+    ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function RestartHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return (
+        <>
+          <WorkspaceChatPane controller={controller} />
+          <WorkspaceDocumentPane controller={controller} />
+        </>
+      );
+    }
+    await render(<RestartHarness />);
+    await flushMicrotasks(8);
+
+    expect(captured.current?.activeTab).toBe("main");
+    expect(captured.current?.state.doc?.pmDoc).toEqual(baseDoc);
+    expect(captured.current?.state.docDiff?.editedDoc).toEqual(candidateDoc);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("第二稿联网对比候选正文");
+    expect(host?.textContent).toContain("应用新版");
+    expect(host?.textContent).toContain("退回旧版");
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
   }, 60_000);
 
   it("B14 进入已有会话时，恢复完成前不清空 store 标题", async () => {

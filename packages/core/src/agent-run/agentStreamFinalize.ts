@@ -268,10 +268,10 @@ export async function* finalizeAgentStream(
   }
   context.toolIoSpans.clear();
   if (context.validPatchCount === 0 && state.suggestions.size === 0) {
-    console.warn(`[stream ${streamId}] Stream ended with no accepted patch suggestions.`);
+    console.warn(`[stream ${streamId}] Stream ended with no validated patch suggestions.`);
   } else {
     console.warn(
-      `[stream ${streamId}] Stream ended with acceptedSuggestionCount=${context.validPatchCount}, pendingSuggestionCount=${state.suggestions.size}`,
+      `[stream ${streamId}] Stream ended with validatedPatchCount=${context.validPatchCount}, pendingReviewSuggestionCount=${state.suggestions.size}`,
     );
   }
 

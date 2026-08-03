@@ -123,6 +123,10 @@ function terminalDocumentFields(
 /** Web 比服务端 85 秒 deadline 多留 5 秒，用于接收失败帧和 422 响应。 */
 const DRAFT_TEMPLATE_WAIT_TIMEOUT_MS = 90_000;
 
+function isMissingFrameError(error: unknown, kind: BridgeFrame["kind"]): boolean {
+  return error instanceof Error && error.message === `${kind} response missing`;
+}
+
 class CommandRequestError extends Error {
   readonly cancelAskUserServerFailure?: true;
 
@@ -612,8 +616,16 @@ export class ServerStream {
   }
 
   async listDerivatives(sessionId: string) {
-    const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId, requestId: crypto.randomUUID() } }, "derivativesListed");
-    return frame.data.items;
+    try {
+      const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId, requestId: crypto.randomUUID() } }, "derivativesListed");
+      return frame.data.items;
+    } catch (error) {
+      if (!isMissingFrameError(error, "derivativesListed")) throw error;
+      // 会话重开时旧 EventSource 关闭、新 epoch 恢复与前台列表请求会短暂交错。
+      // list 是幂等只读命令；换 requestId 静默补发一次，避免把瞬态缺帧上抛到页面。
+      const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId, requestId: crypto.randomUUID() } }, "derivativesListed");
+      return frame.data.items;
+    }
   }
 
   async createDerivative(sessionId: string, dtype: "gzh" | "xhs" | "translate", templateId: string, privatePrompt: string, writingStyleId?: string, layoutStyleId?: string | null, targetLang?: string) {

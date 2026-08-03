@@ -131,6 +131,33 @@ async function assembleAgentQuery(
 }
 
 describe("衍生稿母子技能迁移对比", () => {
+  it("聊天直接请求新建独立衍生稿时只给可执行的人话入口", async () => {
+    const skill = await motherSkillBody();
+    for (const guidance of [
+      "请先打开要生成衍生稿的文档，点右上角「新建稿件」选择公众号稿。",
+      "请先打开要生成衍生稿的文档，点右上角「新建稿件」选择小红书稿。",
+      "请先打开要生成衍生稿的文档，点右上角「新建稿件」选择翻译。",
+    ]) {
+      expect(skill).toContain(guidance);
+    }
+    expect(skill).toContain("不得要求用户提供或转发任何编号");
+    expect(skill).toContain("不得把主文档改写成衍生稿作为备选");
+    for (const internalName of [
+      "doc_id",
+      "session_id",
+      "derivativeDocId",
+      "dtype",
+      "privatePrompt",
+      "QingML",
+    ]) {
+      expect(skill).toContain(`\`${internalName}\``);
+    }
+    const translate = await loadDerivativeGuidance("translate");
+    expect(translate.text).toContain(
+      "没有选定目标语言，请从右上角「新建稿件」重新选择翻译语言。",
+    );
+  });
+
   it("dtype 与子技能一一对应且子技能文件都在", async () => {
     for (const [dtype, child] of Object.entries(DERIVATIVE_CHILD_SKILL_BY_DTYPE)) {
       const guidance = await loadDerivativeGuidance(dtype);

@@ -18,6 +18,7 @@ import {
   commitDerivativeQingml,
   derivativeBriefTool,
   generateDerivativeTool,
+  listDerivativesTool,
   updateDerivativeParamsTool,
 } from "../tools/derivatives.js";
 import {
@@ -67,6 +68,21 @@ beforeEach(() => {
 afterEach(() => db.cleanup());
 
 describe("derivative Agent tools", () => {
+  it("上下文未就绪时只返回中文人话，不暴露内部字段", async () => {
+    const result = await listDerivativesTool.execute!(
+      {},
+      { requestContext: { get: () => undefined } } as never,
+    ) as { ok: boolean; items: unknown[]; error?: string };
+    expect(result).toEqual({
+      ok: false,
+      items: [],
+      error: "当前文档还没准备好，请稍后重试",
+    });
+    expect(result.error).not.toMatch(
+      /doc_id|session_id|derivativeDocId|dtype|privatePrompt|参数/u,
+    );
+  });
+
   it("普通追问只允许读写当前激活的日语译稿", async () => {
     await documentRepo.save(
       documentInput("main", { threadId: "thread", docVersion: 1 }),

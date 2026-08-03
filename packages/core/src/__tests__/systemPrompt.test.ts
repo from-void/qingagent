@@ -220,6 +220,32 @@ describe("system prompt S3", () => {
     );
   });
 
+  it("聊天不能新建衍生稿时引导唯一入口且不暴露内部字段", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const start = prompt.indexOf("**衍生稿聊天入口边界**");
+    const end = prompt.indexOf("**衍生稿生成路由", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const route = prompt.slice(start, end);
+    expect(route).toContain(
+      "请先打开要生成衍生稿的文档，点右上角「新建稿件」选择公众号稿。",
+    );
+    expect(route).toContain("不得要求用户提供或转发任何编号");
+    expect(route).toContain("不得把主文档改写成衍生稿作为备选");
+    expect(route).toContain("不得向用户展示");
+    for (const internalName of [
+      "doc_id",
+      "session_id",
+      "derivativeDocId",
+      "dtype",
+      "privatePrompt",
+      "QingML",
+    ]) {
+      expect(route).toContain(`\`${internalName}\``);
+    }
+  });
+
   it("QingML prompt 不泄漏旧编辑协议词", () => {
     const prompt = buildSystemPrompt();
     for (const forbidden of [

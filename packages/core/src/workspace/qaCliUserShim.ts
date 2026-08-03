@@ -20,10 +20,12 @@ export interface QaCliUserShimOptions {
   /** shim 落盘目录,默认 ~/.qingagent/bin。 */
   binDir?: string;
   /**
-   * posix 下尝试建 `qa` symlink 的目录;默认 /usr/local/bin(darwin/linux)。
+   * posix 下尝试建 `qa` symlink 的候选目录,按序取第一个成功的。
+   * 默认:darwin 先试 /opt/homebrew/bin(Apple Silicon Homebrew,用户可写且在 PATH),
+   * 再试 /usr/local/bin(stock 系统属 root,常失败);linux 只试 /usr/local/bin。
    * 传 null 显式关闭(测试或不想动系统目录时)。
    */
-  symlinkDir?: string | null;
+  symlinkDirs?: string[] | null;
   platform?: NodeJS.Platform;
   /** PATH 环境变量(默认 process.env.PATH),用于判断 shim 是否已可直接调用。 */
   pathEnv?: string;
@@ -101,9 +103,13 @@ export function ensureQaCliUserShim(options: QaCliUserShimOptions): EnsuredQaCli
   const pathEnv = options.pathEnv ?? process.env.PATH;
   let symlinkPath: string | undefined;
   if (platform !== "win32") {
-    const symlinkDir =
-      options.symlinkDir === undefined ? "/usr/local/bin" : options.symlinkDir;
-    if (symlinkDir) {
+    const candidates =
+      options.symlinkDirs === undefined
+        ? platform === "darwin"
+          ? ["/opt/homebrew/bin", "/usr/local/bin"]
+          : ["/usr/local/bin"]
+        : (options.symlinkDirs ?? []);
+    for (const symlinkDir of candidates) {
       const linkPath = join(symlinkDir, "qa");
       const state = classifySymlink(linkPath, shimPath);
       try {
@@ -117,10 +123,11 @@ export function ensureQaCliUserShim(options: QaCliUserShimOptions): EnsuredQaCli
           }
           symlinkPath = linkPath;
         }
-        // foreign:用户自己的 qa,绝不覆盖
+        // foreign:用户自己的 qa,绝不覆盖,继续试下一个候选
       } catch {
-        // 无权限(stock macOS 的 /usr/local/bin 属 root)等一律静默——binDir shim 仍在
+        // 目录不存在/无权限(stock macOS 的 /usr/local/bin 属 root)静默,试下一个候选
       }
+      if (symlinkPath) break;
     }
   }
 

@@ -55,7 +55,7 @@ describe("ensureQaCliUserShim", () => {
       ...opts,
       platform: "linux",
       binDir,
-      symlinkDir: linkDir,
+      symlinkDirs: [linkDir],
       pathEnv: `/usr/bin:${linkDir}`,
     });
     expect(r.shimPath).toBe(join(binDir, "qa"));
@@ -74,7 +74,7 @@ describe("ensureQaCliUserShim", () => {
       ...opts,
       platform: "linux",
       binDir,
-      symlinkDir: linkDir,
+      symlinkDirs: [linkDir],
       pathEnv: "/usr/bin",
     });
     expect(r.symlinkPath).toBeUndefined();
@@ -91,7 +91,7 @@ describe("ensureQaCliUserShim", () => {
       ...opts,
       platform: "linux",
       binDir,
-      symlinkDir: linkDir,
+      symlinkDirs: [linkDir],
       pathEnv: "",
     });
     expect(r.symlinkPath).toBe(join(linkDir, "qa"));
@@ -104,11 +104,26 @@ describe("ensureQaCliUserShim", () => {
       ...opts,
       platform: "linux",
       binDir,
-      symlinkDir: null,
+      symlinkDirs: null,
       pathEnv: `${binDir}:/usr/bin`,
     });
     expect(r.symlinkPath).toBeUndefined();
     expect(r.onPath).toBe(true);
+  });
+
+  it("候选目录按序尝试:第一个不可写(不存在)时落到第二个", () => {
+    const binDir = tmp("qa-bin-");
+    const linkDir = tmp("qa-link-");
+    const missingDir = join(linkDir, "not-exist-subdir");
+    const r = ensureQaCliUserShim({
+      ...opts,
+      platform: "darwin",
+      binDir,
+      symlinkDirs: [missingDir, linkDir],
+      pathEnv: "",
+    });
+    expect(r.symlinkPath).toBe(join(linkDir, "qa"));
+    expect(readlinkSync(join(linkDir, "qa"))).toBe(join(binDir, "qa"));
   });
 
   it("win32:写 qa.cmd,不做 symlink", () => {

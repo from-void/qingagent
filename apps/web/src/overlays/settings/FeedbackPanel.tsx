@@ -8,6 +8,8 @@ const SUPPORT_EMAIL = "support@qingagent.com";
 // 列出最近多少篇文档供勾选;默认预勾选最近几篇。
 const MAX_DOCS = 20;
 const DEFAULT_CHECKED = 5;
+// 完整落盘路径需要留足阅读时间，不能沿用普通动作提示 2.4s 的默认时长。
+const EXPORTED_PATH_TOAST_DURATION_MS = 8_000;
 
 interface SessionRow {
   id: string;
@@ -77,7 +79,11 @@ export function FeedbackPanel() {
       if (window.electron?.isDesktop && typeof window.electron.exportDiagnostics === "function") {
         const result = await window.electron.exportDiagnostics({ privacyLevel, sessionIds });
         if (!result.saved) throw new Error(`diagnostics export failed: ${result.reason}`);
-        toast.show({ message: `报错记录已导出至：${result.path}`, tone: "success" });
+        toast.show({
+          message: `报错记录已导出至：${result.path}`,
+          tone: "success",
+          durationMs: EXPORTED_PATH_TOAST_DURATION_MS,
+        });
       } else {
         const res = await fetch("/api/v1/diagnostics/export", {
           method: "POST",

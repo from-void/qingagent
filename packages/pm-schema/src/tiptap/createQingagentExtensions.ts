@@ -18,6 +18,8 @@ import { isAllowedImageSrc, isAllowedLinkHref, isAllowedThemeColor } from "../va
 import { DedupeBlockIds } from "./dedupeBlockIds";
 export { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction } from "./dedupeBlockIds";
 
+const DEFAULT_HIGHLIGHT_COLOR = "yellow";
+
 export function getQingagentTiptapNodeNames(): readonly string[] {
   return PM_SCHEMA_NODE_NAMES;
 }
@@ -83,11 +85,12 @@ export function createQingagentExtensions(options: {
       addAttributes() {
         return {
           color: {
-            default: null,
+            // TipTap 的 Mod-Shift-H 会无参调用 toggleHighlight；默认值必须同时满足持久化 schema。
+            default: DEFAULT_HIGHLIGHT_COLOR,
             parseHTML: (element) =>
-              readThemeColor(element.getAttribute("data-color")),
+              readThemeColor(element.getAttribute("data-color")) ?? DEFAULT_HIGHLIGHT_COLOR,
             renderHTML: (attributes) =>
-              attributes.color ? { "data-color": attributes.color } : {},
+              ({ "data-color": attributes.color ?? DEFAULT_HIGHLIGHT_COLOR }),
           },
         };
       },

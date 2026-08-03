@@ -9,6 +9,7 @@ import { normalizePmDoc, pmToMarkdown, safeParsePmDoc, type PmBlockNode, type Pm
 import { describe, expect, it, vi } from "vitest";
 import { CodeBlockCM } from "../../components/CodeBlockView";
 import { createBlockDragPayload, handleQingagentPaste } from "../../components/DocumentSnapshotView";
+import { WorkspaceEditingShortcuts } from "../../components/doc/workspaceEditingShortcuts";
 
 function createEditor(content: PmDoc | JSONContent = docWithParagraph("")) {
   const element = document.createElement("div");
@@ -16,7 +17,7 @@ function createEditor(content: PmDoc | JSONContent = docWithParagraph("")) {
 
   return new Editor({
     element,
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), WorkspaceEditingShortcuts],
     content: content as JSONContent,
   });
 }
@@ -27,7 +28,10 @@ function createCodeBlockEditor(content: PmDoc | JSONContent = docWithParagraph("
 
   return new Editor({
     element,
-    extensions: createQingagentExtensions({ codeBlockExtension: CodeBlockCM }),
+    extensions: [
+      ...createQingagentExtensions({ codeBlockExtension: CodeBlockCM }),
+      WorkspaceEditingShortcuts,
+    ],
     content: content as JSONContent,
   });
 }
@@ -149,6 +153,16 @@ function setTextSelection(editor: Editor, from: number, to = from) {
 
 function key(editor: Editor, name: string) {
   return editor.commands.keyboardShortcut(name);
+}
+
+function dispatchPhysicalKey(editor: Editor, init: KeyboardEventInit) {
+  const event = new KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  editor.view.dom.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 function pasteEvent(input: { text?: string; html?: string }) {
@@ -805,6 +819,28 @@ describe("richFormatsInteraction setContent 保真", () => {
 });
 
 describe("richFormatsInteraction 代码块命令", () => {
+  it("真实 Ctrl+Alt+C 在组合键字符被键盘布局改写时仍将当前段落切换为代码块", () => {
+    const editor = createCodeBlockEditor(docWithParagraph("const x = 1;"));
+
+    try {
+      setTextSelection(editor, findTextPosition(editor, "const"));
+
+      expect(dispatchPhysicalKey(editor, {
+        // Windows AltGr / 非美式布局可能不再给出字面量 c；快捷键应按物理 KeyC 识别。
+        key: "©",
+        code: "KeyC",
+        ctrlKey: true,
+        altKey: true,
+      })).toBe(true);
+      expect(normalized(editor).content[0]).toMatchObject({
+        type: "codeBlock",
+        attrs: { blockId: "p-1", language: "plaintext" },
+      });
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
   it("R2-07 使用生产 CodeBlockCM 时 setCodeBlock/toggleCodeBlock 不再空操作", () => {
     const editor = createCodeBlockEditor(docWithParagraph("const x = 1;"));
 
@@ -976,6 +1012,66 @@ describe("richFormatsInteraction 代码块命令", () => {
       const selection = editor.state.selection;
       expect(selection.from).toBeGreaterThan(codePos);
       expect(selection.to).toBeLessThanOrEqual(codePos + editor.state.doc.nodeAt(codePos)!.nodeSize);
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+});
+
+describe("richFormatsInteraction 列表缩进快捷键", () => {
+  it("真实 Tab / Shift+Tab 在嵌入式键盘事件未给 key 时仍将第二项降级后再升级", () => {
+    const editor = createEditor(pmDoc([{
+      type: "bulletList",
+      attrs: { blockId: "list-tab" },
+      content: [
+        {
+          type: "listItem",
+          attrs: { blockId: "list-tab-1" },
+          content: [pmParagraph("list-tab-1-p", "第一项")],
+        },
+        {
+          type: "listItem",
+          attrs: { blockId: "list-tab-2" },
+          content: [pmParagraph("list-tab-2-p", "第二项")],
+        },
+      ],
+    }]));
+
+    try {
+      setTextSelection(editor, findTextPosition(editor, "第二项", "end"));
+
+      expect(dispatchPhysicalKey(editor, { key: "Unidentified", code: "Tab" })).toBe(true);
+      let doc = normalized(editor);
+      expect(doc.content[0]).toMatchObject({
+        type: "bulletList",
+        content: [{
+          type: "listItem",
+          content: [
+            { type: "paragraph" },
+            {
+              type: "bulletList",
+              content: [{
+                type: "listItem",
+                attrs: { blockId: "list-tab-2" },
+              }],
+            },
+          ],
+        }],
+      });
+
+      expect(dispatchPhysicalKey(editor, {
+        key: "Unidentified",
+        code: "Tab",
+        shiftKey: true,
+      })).toBe(true);
+      doc = normalized(editor);
+      expect(doc.content[0]).toMatchObject({
+        type: "bulletList",
+        content: [
+          { type: "listItem", attrs: { blockId: "list-tab-1" } },
+          { type: "listItem", attrs: { blockId: "list-tab-2" } },
+        ],
+      });
     } finally {
       destroyEditor(editor);
     }

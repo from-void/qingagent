@@ -12,6 +12,7 @@ import { NativePresentationDecorations } from "../../data/nativePresentationPm";
 import { PatchDecorations } from "../../data/patchDecorations";
 import { TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableStickyColumnExtension } from "../../data/tableStickyColumn";
+import { WorkspaceEditingShortcuts } from "./workspaceEditingShortcuts";
 
 export const MATH_CLICK_EVENT = "qingagent:math-click";
 
@@ -37,6 +38,7 @@ export function createWorkspaceTiptapExtensions(options: {
     },
   }),
   ListItemDnDExtension,
+  WorkspaceEditingShortcuts,
   TableAxisSelectionExtension,
   TableStickyColumnExtension,
   BlockCollapseExtension.configure({

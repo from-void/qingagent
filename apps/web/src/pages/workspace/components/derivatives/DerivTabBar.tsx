@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DerivativeItem } from "./types";
 import { DTYPE_REGISTRY, type DerivativeDtype } from "./dtypeRegistry";
 import { availableTranslationLanguages } from "./translationLanguages";
+import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
 
 const UNTITLED_DOCUMENT_LABEL = "未命名文档";
 
@@ -19,6 +20,7 @@ export function DerivTabBar(props: {
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const renameSettledRef = useRef(false);
+  useOverlayDismiss(open, () => setOpen(false));
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };

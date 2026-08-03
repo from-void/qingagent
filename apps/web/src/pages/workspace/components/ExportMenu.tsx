@@ -4,6 +4,7 @@ import { chatInputBus } from "../../../system/chatInputBus";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useSessionStore } from "../../../stores/sessionStore";
 import type { ToastShow } from "../../../system/ToastProvider";
+import { useOverlayDismiss } from "../../../system/overlayDismissStack";
 
 // 导出二级菜单:确定性格式(PDF/Word/TXT)直接走后端导出下载;
 // 平台技能(飞书,启用了才显示)点了发 query 回对话,交给 agent 走流程。
@@ -89,8 +90,9 @@ export function ExportMenu({
   const [busy, setBusy] = useState<Fmt["id"] | null>(null);
   const [busyText, setBusyText] = useState("生成中…");
   const ref = useRef<HTMLDivElement>(null);
+  useOverlayDismiss(true, onClose);
 
-  // 点菜单外 / Esc 关闭
+  // 点菜单外关闭；Esc 统一由 overlayDismissStack 消费，避免与别的菜单监听竞态。
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -99,14 +101,9 @@ export function ExportMenu({
       }
       onClose();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
     window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
     };
   }, [anchorRef, onClose]);
 

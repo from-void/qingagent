@@ -9,7 +9,7 @@ import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
 import { MemoryPanel } from "../../../overlays/settings/MemoryPanel";
 import "../../../overlays/settings/settings.css";
-import { dismissTopOverlay, useOverlayDismiss } from "../../../system/overlayDismissStack";
+import { useOverlayDismiss } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
@@ -118,22 +118,6 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
   // 这样 Esc 永远只弹当前栈顶，不会因设置面板未入栈而误关它后面的预览。
   useOverlayDismiss(true, handleClose);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      // Esc 的唯一出口:设置面板与其内部浮层都在同一栈中，始终只关最上层。
-      // 不依赖焦点落在哪个控件上；栈意外为空时仍兜底关闭本面板。
-      if (dismissTopOverlay()) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      handleClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [handleClose]);
-
   // 焦点恢复(WCAG):挂载时记下打开弹层的触发元素(齿轮按钮),卸载时把焦点还回去——
   // 否则关闭后焦点丢到 body,键盘/读屏用户失去上下文(e2e v08-h2:overlays 设置经
   // settingsDialogA11y 有恢复,但首页 HomeSettingsSheet 原本没有)。
@@ -175,6 +159,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
     >
       <div
         className="qj-sheet"
+        data-overlay-dismiss-managed="true"
         data-ink-ready={inkReady ? "true" : "false"}
         data-closing={closing ? "true" : "false"}
         role="dialog"

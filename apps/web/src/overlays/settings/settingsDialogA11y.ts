@@ -1,3 +1,5 @@
+import { registerOverlay } from "../../system/overlayDismissStack";
+
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -11,6 +13,7 @@ let observer: MutationObserver | null = null;
 let activeSheet: HTMLElement | null = null;
 let restoreTarget: HTMLElement | null = null;
 let activeCleanup: (() => void) | null = null;
+let activeOverlayCleanup: (() => void) | null = null;
 
 export function ensureSettingsDialogA11y(): void {
   if (typeof window === "undefined" || typeof document === "undefined" || observer) return;
@@ -70,6 +73,13 @@ function activateSheet(sheet: HTMLElement): void {
 
   sheet.addEventListener("keydown", onKeyDown, true);
   activeCleanup = () => sheet.removeEventListener("keydown", onKeyDown, true);
+  // 首页 HomeSettingsSheet 自己同步入栈；工作区等其他挂载点没有该包装时，
+  // 由通用设置 dialog 适配层补齐，关闭语义复用真实关闭按钮。
+  if (sheet.dataset.overlayDismissManaged !== "true") {
+    activeOverlayCleanup = registerOverlay(() => {
+      sheet.querySelector<HTMLButtonElement>(".qj-sheet-close")?.click();
+    });
+  }
 
   requestFrame(() => {
     if (!document.body.contains(sheet) || sheet.contains(document.activeElement)) return;
@@ -85,6 +95,8 @@ function activateSheet(sheet: HTMLElement): void {
 function deactivateSheet(restoreFocus: boolean): void {
   activeCleanup?.();
   activeCleanup = null;
+  activeOverlayCleanup?.();
+  activeOverlayCleanup = null;
   const target = restoreTarget;
   activeSheet = null;
   restoreTarget = null;

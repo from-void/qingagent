@@ -59,7 +59,9 @@ describe("FeedbackPanel", () => {
       privacyLevel: "L1",
       sessionIds: ["s0", "s1", "s2", "s3", "s4"],
     });
-    expect(host?.textContent).toContain("报错记录已导出");
+    expect(host?.textContent).toContain("报错记录已导出至：/tmp/qingagent-diag.zip");
+    expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
+    expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
 
   it("首拉在途:文档列表不渲染「读取文档列表中」占位(切 tab 闪帧根治)", async () => {
@@ -127,6 +129,45 @@ describe("FeedbackPanel", () => {
     expect(host?.textContent).toContain("暂无文档");
     expect(host?.textContent).not.toContain("文档列表暂时无法加载");
     expect(buttonByWf("FeedbackExportButton").disabled).toBe(true);
+  });
+
+  it("桌面写盘失败时显示中文错误 toast 并恢复导出按钮", async () => {
+    const exportDiagnostics = vi.fn(async () => ({
+      saved: false as const,
+      reason: "write-failed" as const,
+    }));
+    (window as unknown as { electron?: unknown }).electron = {
+      isDesktop: true,
+      platform: "win32",
+      exportDiagnostics,
+    };
+    await render(<FeedbackPanel />);
+
+    await click(buttonByWf("FeedbackExportButton"));
+
+    expect(host?.textContent).toContain("导出失败，未生成文件，请稍后重试");
+    expect(host?.textContent).not.toContain("已取消导出");
+    expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
+    expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
+  });
+
+  it("桌面 IPC 拒绝时显示中文错误 toast 并恢复导出按钮", async () => {
+    const exportDiagnostics = vi.fn(async () => {
+      throw new Error("raw ipc failure");
+    });
+    (window as unknown as { electron?: unknown }).electron = {
+      isDesktop: true,
+      platform: "win32",
+      exportDiagnostics,
+    };
+    await render(<FeedbackPanel />);
+
+    await click(buttonByWf("FeedbackExportButton"));
+
+    expect(host?.textContent).toContain("导出失败，未生成文件，请稍后重试");
+    expect(host?.textContent).not.toContain("raw ipc failure");
+    expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
+    expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
 });
 

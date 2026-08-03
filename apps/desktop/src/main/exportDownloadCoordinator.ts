@@ -65,6 +65,7 @@ const FORMAT_EXTENSIONS: Record<ExportDownloadFormat, string> = {
   html: ".html",
   markdown: ".md",
   txt: ".txt",
+  zip: ".zip",
 };
 const DEFAULT_SAVE_TIMEOUT_MS = 30_000;
 const DEFAULT_REVEAL_TTL_MS = 10 * 60_000;

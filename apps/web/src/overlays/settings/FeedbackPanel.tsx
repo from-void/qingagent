@@ -76,7 +76,8 @@ export function FeedbackPanel() {
     try {
       if (window.electron?.isDesktop && typeof window.electron.exportDiagnostics === "function") {
         const result = await window.electron.exportDiagnostics({ privacyLevel, sessionIds });
-        toast.show({ message: result.saved ? "报错记录已导出" : "已取消导出", tone: "success" });
+        if (!result.saved) throw new Error(`diagnostics export failed: ${result.reason}`);
+        toast.show({ message: `报错记录已导出至：${result.path}`, tone: "success" });
       } else {
         const res = await fetch("/api/v1/diagnostics/export", {
           method: "POST",
@@ -89,7 +90,7 @@ export function FeedbackPanel() {
         toast.show({ message: "报错记录已下载", tone: "success" });
       }
     } catch {
-      toast.show({ message: "导出失败，请稍后重试", tone: "error" });
+      toast.show({ message: "导出失败，未生成文件，请稍后重试", tone: "error" });
     } finally {
       setExporting(false);
     }

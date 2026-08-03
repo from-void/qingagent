@@ -53,8 +53,8 @@ function WechatMoreIcon() {
   return <svg className="wx-more-icon" viewBox="0 0 22 12" aria-hidden="true"><circle cx="3" cy="6" r="2"/><circle cx="11" cy="6" r="2"/><circle cx="19" cy="6" r="2"/></svg>;
 }
 
-function XhsShareIcon() {
-  return <svg className="xhs-share-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 4 6 5-6 5"/><path d="M20 9h-5.5C8.7 9 5 12.1 4 19c2.4-3.4 5.7-5 10.5-5H14"/></svg>;
+function XhsShareIcon({ className = "xhs-share-icon" }: { className?: string }) {
+  return <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m14 4 6 5-6 5"/><path d="M20 9h-5.5C8.7 9 5 12.1 4 19"/></svg>;
 }
 
 function WechatToolbar() { return <div className="wx-bottom-toolbar"><div className="wx-toolbar-account"><span className="wx-toolbar-avatar">青</span><strong>青简</strong></div><div className="wx-toolbar-actions"><span><LineIcon kind="like"/><small>赞</small></span><span><LineIcon kind="share"/><small>分享</small></span><span><LineIcon kind="heart"/><small>推荐</small></span><span><LineIcon kind="comment"/><small>写留言</small></span></div></div>; }
@@ -85,11 +85,11 @@ function renderXhsTopicText(text: string): ReactNode {
 
 function XhsNav() { return <div className="xhs-navbar"><span className="xhs-back"><ChevronBackIcon/></span><span className="xhs-avatar">青</span><strong>青简</strong><button type="button">关注</button><span className="xhs-share" aria-label="分享"><XhsShareIcon/></span></div>; }
 function XhsIcon({ kind }: { kind: "like" | "collect" | "comment" | "share" }) {
+  if (kind === "share") return <XhsShareIcon className="xhs-action-icon"/>;
   const paths = {
     like: <path d="M12 20.3S4.2 16 4.2 9.9c0-3.8 4.7-5.6 7.8-2.5 3.1-3.1 7.8-1.3 7.8 2.5 0 6.1-7.8 10.4-7.8 10.4Z"/>,
     collect: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3Z"/>,
     comment: <path d="M4 5.5h16v10.8H9.2L4 20V5.5Z"/>,
-    share: <><path d="m14 4 6 5-6 5"/><path d="M20 9h-5.5C8.7 9 5 12.1 4 19c2.4-3.4 5.7-5 10.5-5H14"/></>,
   };
   return <svg className="xhs-action-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[kind]}</svg>;
 }

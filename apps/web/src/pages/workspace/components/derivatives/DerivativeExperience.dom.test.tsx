@@ -1389,7 +1389,15 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector(".xhs-interaction")?.textContent).toContain("128");
     expect(host.querySelectorAll(".xhs-topic")).toHaveLength(4);
     expect(host.querySelector(".xhs-back .preview-chevron")).not.toBeNull();
-    expect(host.querySelectorAll(".xhs-share-icon path")).toHaveLength(2);
+    const topShareIcon = host.querySelector(".xhs-share-icon");
+    const bottomShareIcon = host.querySelector('.xhs-interaction [aria-label="分享"] .xhs-action-icon');
+    for (const icon of [topShareIcon, bottomShareIcon]) {
+      expect(icon?.getAttribute("fill")).toBe("none");
+      expect(Array.from(icon?.querySelectorAll("path") ?? [], (path) => path.getAttribute("d"))).toEqual([
+        "m14 4 6 5-6 5",
+        "M20 9h-5.5C8.7 9 5 12.1 4 19",
+      ]);
+    }
     await act(async () => (host.querySelector('[aria-label="导出"]') as HTMLButtonElement).click());
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("复制文案导出图片");
     await act(async () => (host.querySelector('[aria-label="更多操作"]') as HTMLButtonElement).click());

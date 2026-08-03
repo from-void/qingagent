@@ -125,8 +125,8 @@
   /* Tab 带(用户拍板):挂在 .ws-right 内、绝对定位于纸上方原顶栏空间,随文档滚走且不占流;
      整个 Tab 背景块左缘与纸左缘对齐,文字保留 12px 内边距;纸的位置不动。
      未 hover=纯文字,hover/选中=直角背景块;＋为直角线框。 */
-  #view-workspace .ws-deriv-tabs{position:absolute;top:12px;left:0;z-index:4;display:flex;align-items:center;gap:4px;height:32px;font-family:var(--font-zh-serif)}
-  #view-workspace .ws-deriv-tab{position:relative;box-sizing:border-box;display:flex;align-items:center;gap:0;height:28px;max-width:180px;padding:0 12px;border:0;border-radius:0;background:transparent;color:rgba(236,227,208,0.58);font:inherit;font-size:13px;cursor:pointer}
+  #view-workspace .ws-deriv-tabs{position:absolute;top:12px;left:0;z-index:4;display:flex;align-items:center;gap:4px;height:32px;font-family:var(--font-zh-serif);pointer-events:none}
+  #view-workspace .ws-deriv-tab{position:relative;box-sizing:border-box;display:flex;align-items:center;gap:0;height:28px;max-width:180px;padding:0 12px;border:0;border-radius:0;background:transparent;color:rgba(236,227,208,0.58);font:inherit;font-size:13px;cursor:pointer;pointer-events:auto}
   #view-workspace .ws-deriv-tab:hover{background:rgba(236,227,208,0.09)}
   #view-workspace .ws-deriv-tab.is-active{background:rgba(236,227,208,0.16);color:rgba(240,232,214,0.92)}
   #view-workspace .ws-deriv-tab.is-main{max-width:200px}.ws-deriv-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -140,8 +140,9 @@
   #view-workspace .ws-deriv-rename svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
   #view-workspace .ws-deriv-add svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
   #view-workspace .ws-deriv-title-input{box-sizing:border-box;width:180px;height:22px;padding:0 4px;border:0;border-bottom:1px solid rgba(184,169,140,0.62);border-radius:0;outline:0;background:transparent;color:rgba(240,232,214,0.92);font:inherit;font-size:13px}
-  #view-workspace .ws-deriv-add-wrap{position:relative;display:flex;align-items:center;opacity:0;pointer-events:none;transition:opacity 120ms ease}
-  #view-workspace .ws-deriv-tabs:hover .ws-deriv-add-wrap,#view-workspace .ws-deriv-tabs:focus-within .ws-deriv-add-wrap{opacity:1;pointer-events:auto}
+  /* tablist 透明层不截获命中；＋热区即使在淡隐态也保持可命中，鼠标进入后由祖先 hover 淡现。 */
+  #view-workspace .ws-deriv-add-wrap{position:relative;display:flex;align-items:center;opacity:0;pointer-events:auto;transition:opacity 120ms ease}
+  #view-workspace .ws-deriv-tabs:hover .ws-deriv-add-wrap,#view-workspace .ws-deriv-tabs:focus-within .ws-deriv-add-wrap{opacity:1}
   #view-workspace .ws-deriv-add{box-sizing:border-box;width:28px;height:28px;padding:0;display:inline-grid;place-items:center;border:1px solid rgba(184,169,140,0.34);border-radius:0;background:transparent;color:rgba(236,227,208,0.60);cursor:pointer}
   #view-workspace .ws-deriv-add:hover{color:rgba(240,232,214,0.92);border-color:rgba(184,169,140,0.62)}
   #view-workspace .ws-deriv-add.is-disabled,#view-workspace .ws-deriv-add.is-disabled:hover{opacity:0.42;cursor:not-allowed;color:rgba(236,227,208,0.60);border-color:rgba(184,169,140,0.34)}

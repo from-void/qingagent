@@ -304,6 +304,31 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain("项目复盘");
   });
 
+  it("新建稿件入口的真实鼠标命中链可达，点击后展开菜单", async () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
+    document.head.append(style);
+    try {
+      await act(async () => root.render(
+        <DerivTabBar title="主文档" items={[]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} />,
+      ));
+
+      const tabs = host.querySelector<HTMLElement>(".ws-deriv-tabs")!;
+      const addWrap = host.querySelector<HTMLElement>(".ws-deriv-add-wrap")!;
+      const add = host.querySelector<HTMLButtonElement>('[aria-label="新建稿件"]')!;
+      expect(getComputedStyle(addWrap).pointerEvents).toBe("auto");
+      expect(getComputedStyle(add).pointerEvents).toBe("auto");
+      expect(getComputedStyle(tabs).pointerEvents).toBe("none");
+
+      await act(async () => {
+        add.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(host.querySelector('[role="menu"]')).not.toBeNull();
+    } finally {
+      style.remove();
+    }
+  });
+
   it("按 Enter 提交标题后即使继续触发 blur 也只重命名一次", async () => {
     const onRename = vi.fn();
     await act(async () => root.render(

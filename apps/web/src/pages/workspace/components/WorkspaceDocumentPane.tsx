@@ -151,6 +151,7 @@ export function WorkspaceDocumentPane({
     exportAnchorRef,
     reviewAnchorRef,
     exportDisabledReason,
+    reviewDisabledReason,
     derivativeCreateDisabledReason,
     exportMenuOpen,
     setExportMenuOpen,
@@ -438,19 +439,19 @@ export function WorkspaceDocumentPane({
             <div className="ws-export-anchor" ref={reviewAnchorRef}>
               <button
                 type="button"
-                className={`ws-docfn-btn${exportDisabledReason ? " is-disabled" : ""}`}
-                title={exportDisabledReason ?? "审查"}
+                className={`ws-docfn-btn${reviewDisabledReason ? " is-disabled" : ""}`}
+                title={reviewDisabledReason ?? "审查"}
                 aria-haspopup="menu"
                 aria-expanded={reviewMenuOpen}
                 onClick={() => {
-                  if (!exportDisabledReason) {
+                  if (!reviewDisabledReason) {
                     setReviewMenuOpen((value) => !value);
                   }
                 }}
               >
                 <ReviewIcon />
               </button>
-              {reviewMenuOpen && !exportDisabledReason ? (
+              {reviewMenuOpen && !reviewDisabledReason ? (
                 <ReviewMenu
                   anchorRef={reviewAnchorRef}
                   onClose={() => setReviewMenuOpen(false)}

@@ -1344,6 +1344,26 @@ export function useWorkspacePageController() {
     viewingHistory,
     askUserInputDisabled,
   ]);
+  const reviewDisabledReason = useMemo<string | null>(() => {
+    if (dim.content.kind === "empty") return "还没有可审查的内容";
+    if (qingjianEditing) return "请等待青简完成编辑后再审查";
+    if (!chatInputEditorDisabled) return null;
+    if (viewingHistory) return "回到当前版本后可审查";
+    if (askUserInputDisabled || dim.overlay === "askUser") {
+      return "请先完成问卷，再审查";
+    }
+    if (dim.content.kind === "pendingReview") {
+      return "文档有待处理的修改，请先处理后再审查";
+    }
+    return "请先完成当前操作，再审查";
+  }, [
+    dim.content.kind,
+    dim.overlay,
+    qingjianEditing,
+    chatInputEditorDisabled,
+    viewingHistory,
+    askUserInputDisabled,
+  ]);
   // 新建子文档(公众号稿/小红书稿/翻译)要把 query 发回对话，因此与导出/审查共用
   // 「不可发送态」门禁，并按具体原因给出可执行提示，避免入口看似可点却在下游静默失败。
   const derivativeCreateDisabledReason = useMemo<string | null>(() => {
@@ -1854,6 +1874,13 @@ export function useWorkspacePageController() {
         selectPatches(stateRef.current).length > 0
       ) {
         return;
+      }
+      if (
+        frame.kind === "docStateChanged" &&
+        frame.data.reviewCompletion === "noop" &&
+        reviewCloseInFlightRef.current !== null
+      ) {
+        showToast("修改已经提交，无需重复操作");
       }
       // 服务端与编辑器两侧共用同一个完整性门。即使旧服务端或异常恢复回放了空正文，
       // 客户端也保留上一有效文档，禁止编辑器坍缩为空。
@@ -3476,6 +3503,7 @@ export function useWorkspacePageController() {
     exportAnchorRef,
     reviewAnchorRef,
     exportDisabledReason,
+    reviewDisabledReason,
     derivativeCreateDisabledReason,
     exportMenuOpen,
     setExportMenuOpen,

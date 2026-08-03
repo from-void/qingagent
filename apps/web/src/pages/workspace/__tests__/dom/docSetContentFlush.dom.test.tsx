@@ -101,6 +101,31 @@ function paragraphDoc(text: string): PmDoc {
   } as PmDoc;
 }
 
+function manualFormattingDoc(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: ["高亮文本", "引用文本", "列表文本", "二级标题"].map((text, index) => ({
+      type: "paragraph" as const,
+      attrs: { blockId: `manual-format-${index + 1}` },
+      content: [{ type: "text" as const, text }],
+    })),
+  };
+}
+
+function selectText(editor: Editor, text: string, whole = false) {
+  let from: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (from !== null || !node.isText || node.text !== text) return;
+    from = pos;
+  });
+  expect(from).not.toBeNull();
+  editor.commands.setTextSelection({
+    from: from!,
+    to: whole ? from! + text.length : from!,
+  });
+}
+
 function longParagraphDoc(charCount: number): PmDoc {
   const paragraphChars = 50;
   const content = Array.from(
@@ -341,6 +366,86 @@ function pressEnter(editor: Editor): boolean {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
+  it("真实手动高亮与块级快捷键经自动保存、重新挂载后全部保留", async () => {
+    let editor: Editor | null = null;
+    let saved: PmDoc | null = null;
+    const onEditorChange = vi.fn(async (doc: PmDoc) => {
+      saved = doc;
+    });
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(manualFormattingDoc(), 1)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+    vi.useFakeTimers();
+
+    act(() => {
+      selectText(editor!, "高亮文本", true);
+      expect(editor!.commands.keyboardShortcut("Mod-Shift-h")).toBe(true);
+      selectText(editor!, "引用文本");
+      expect(editor!.commands.keyboardShortcut("Mod-Shift-b")).toBe(true);
+      selectText(editor!, "列表文本");
+      expect(editor!.commands.keyboardShortcut("Mod-Shift-8")).toBe(true);
+      selectText(editor!, "二级标题");
+      expect(editor!.commands.keyboardShortcut("Mod-Alt-2")).toBe(true);
+    });
+
+    const liveHtml = editor!.getHTML();
+    expect(liveHtml).toContain("<mark");
+    expect(liveHtml).toContain("<blockquote ");
+    expect(liveHtml).toContain("<ul ");
+    expect(liveHtml).toContain("<h2");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(401);
+    });
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(saved).not.toBeNull();
+
+    vi.useRealTimers();
+    act(() => root.render(<div />));
+    await flush();
+    editor = null;
+    renderDoc(saved!, 2, (readyEditor) => {
+      editor = readyEditor;
+    });
+    await flush();
+
+    const reopened = normalizePmDoc(editor!.getJSON());
+    expect(reopened.content.map((block) => block.type)).toEqual([
+      "paragraph",
+      "blockquote",
+      "bulletList",
+      "heading",
+    ]);
+    expect(reopened.content[3]).toMatchObject({
+      type: "heading",
+      attrs: { level: 2 },
+    });
+    const highlighted = reopened.content[0];
+    expect(highlighted?.type).toBe("paragraph");
+    expect(highlighted?.type === "paragraph" ? highlighted.content?.[0] : null)
+      .toMatchObject({
+        type: "text",
+        marks: [{ type: "highlight", attrs: { color: "yellow" } }],
+      });
+  });
+
   it("13,250 字多段正文外部 setContent 与重新挂载均保持完整页面", async () => {
     let editor: Editor | null = null;
     const longDoc = longParagraphDoc(13_250);

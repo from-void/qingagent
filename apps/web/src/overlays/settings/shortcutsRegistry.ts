@@ -59,8 +59,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ["Mod", "Shift", "7"], label: "有序列表", source: "tiptap" },
       { keys: ["Mod", "Shift", "B"], label: "引用块", source: "tiptap" },
       { keys: ["Mod", "Alt", "C"], label: "代码块", source: "app" },
-      { keys: ["Tab"], label: "列表项降级", source: "tiptap" },
-      { keys: ["Shift", "Tab"], label: "列表项升级", source: "tiptap" },
+      { keys: ["Tab"], label: "列表项降级", source: "app" },
+      { keys: ["Shift", "Tab"], label: "列表项升级", source: "app" },
     ],
   },
   {

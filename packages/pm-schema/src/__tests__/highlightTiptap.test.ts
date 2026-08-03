@@ -3,8 +3,43 @@
 import { Editor } from "@tiptap/core";
 import { describe, expect, it } from "vitest";
 import { createQingagentExtensions } from "../tiptap/createQingagentExtensions";
+import { normalizePmDoc } from "../validators";
 
 describe("highlight TipTap extension", () => {
+  it("无参高亮快捷键生成可持久化的默认主题色", () => {
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "p-shortcut-highlight" },
+            content: [{ type: "text", text: "快捷键高亮" }],
+          },
+        ],
+      },
+    });
+
+    try {
+      editor.commands.setTextSelection({ from: 1, to: 6 });
+      expect(editor.commands.keyboardShortcut("Mod-Shift-h")).toBe(true);
+
+      const doc = normalizePmDoc(editor.getJSON());
+      expect(doc).toMatchObject({
+        content: [{
+          content: [{
+            marks: [{ type: "highlight", attrs: { color: "yellow" } }],
+          }],
+        }],
+      });
+      expect(editor.getHTML()).toContain('data-color="yellow"');
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("renders highlight color as data-color without inline background style", () => {
     const editor = new Editor({
       extensions: createQingagentExtensions(),

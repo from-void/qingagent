@@ -26,6 +26,7 @@ describe("FeedbackPanel", () => {
     document.body.innerHTML = "";
     delete (window as unknown as { electron?: unknown }).electron;
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("提需求卡片链接指向反馈站", async () => {
@@ -52,6 +53,7 @@ describe("FeedbackPanel", () => {
       exportDiagnostics,
     };
     await render(<FeedbackPanel />);
+    vi.useFakeTimers();
 
     await click(buttonByWf("FeedbackExportButton"));
 
@@ -59,7 +61,15 @@ describe("FeedbackPanel", () => {
       privacyLevel: "L1",
       sessionIds: ["s0", "s1", "s2", "s3", "s4"],
     });
-    expect(host?.textContent).toContain("报错记录已导出至：/tmp/qingagent-diag.zip");
+    const successToast = toastNode();
+    expect(successToast.textContent).toContain("已导出");
+    expect(successToast.textContent).toContain("/tmp/qingagent-diag.zip");
+
+    // 完整路径不是一闪而过的短提示：跨过 qa-toast 的全局默认 2.4s 后仍应可见。
+    await act(async () => {
+      vi.advanceTimersByTime(2_400);
+    });
+    expect(toastNode().textContent).toContain("报错记录已导出至：/tmp/qingagent-diag.zip");
     expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
     expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
@@ -145,8 +155,8 @@ describe("FeedbackPanel", () => {
 
     await click(buttonByWf("FeedbackExportButton"));
 
-    expect(host?.textContent).toContain("导出失败，未生成文件，请稍后重试");
-    expect(host?.textContent).not.toContain("已取消导出");
+    expect(toastNode().textContent).toContain("导出失败，未生成文件，请稍后重试");
+    expect(toastNode().textContent).not.toContain("已取消导出");
     expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
     expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
@@ -164,8 +174,8 @@ describe("FeedbackPanel", () => {
 
     await click(buttonByWf("FeedbackExportButton"));
 
-    expect(host?.textContent).toContain("导出失败，未生成文件，请稍后重试");
-    expect(host?.textContent).not.toContain("raw ipc failure");
+    expect(toastNode().textContent).toContain("导出失败，未生成文件，请稍后重试");
+    expect(toastNode().textContent).not.toContain("raw ipc failure");
     expect(buttonByWf("FeedbackExportButton").disabled).toBe(false);
     expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
@@ -240,4 +250,10 @@ function buttonByWf(dataWf: string): HTMLButtonElement {
   const button = host?.querySelector<HTMLButtonElement>(`button[data-wf="${dataWf}"]`);
   if (!button) throw new Error(`${dataWf} not found`);
   return button;
+}
+
+function toastNode(): HTMLElement {
+  const toast = host?.querySelector<HTMLElement>('[data-wf="GlobalToast"]');
+  if (!toast) throw new Error("global toast not found");
+  return toast;
 }

@@ -25,6 +25,7 @@ import { CaretIcon } from "../../system/icons";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import type { ConnectorId, CredentialShareItem } from "@qingagent/contract-ts";
 import { buildCredentialShareSpec, updateCredentialShare } from "./credentialShare";
+import { resolveSkillDisplayMetadata } from "../../system/skillDisplay";
 
 ensureSettingsDialogA11y();
 
@@ -496,27 +497,32 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
                 <div className="sk-children-heading">
                   <div>
                     <h3>子技能</h3>
-                    <p>随母技能「{selectedFromList.label}」统一启用或停用</p>
+                    <p>
+                      随母技能「{resolveSkillDisplayMetadata(selectedFromList).displayName}」统一启用或停用
+                    </p>
                   </div>
                   <span className="sk-card-tag">{selectedChildren.length} 项</span>
                 </div>
                 <div className="sk-child-list">
-                  {selectedChildren.map((child) => (
-                    <button
-                      type="button"
-                      className="sk-child-item"
-                      data-wf="SkillChildEntry"
-                      key={child.name}
-                      onClick={() => setSelectedChildName(child.name)}
-                    >
-                      <SkIcon icon={child.icon} />
-                      <span className="sk-child-copy">
-                        <span className="sk-child-title">{child.label}</span>
-                        <span className="sk-child-summary">{child.summary || child.description}</span>
-                      </span>
-                      <span className="sk-child-go" aria-hidden="true"><CaretIcon size={14} direction="right" /></span>
-                    </button>
-                  ))}
+                  {selectedChildren.map((child) => {
+                    const presentation = resolveSkillDisplayMetadata(child);
+                    return (
+                      <button
+                        type="button"
+                        className="sk-child-item"
+                        data-wf="SkillChildEntry"
+                        key={child.name}
+                        onClick={() => setSelectedChildName(child.name)}
+                      >
+                        <SkIcon icon={child.icon} />
+                        <span className="sk-child-copy">
+                          <span className="sk-child-title">{presentation.displayName}</span>
+                          <span className="sk-child-summary">{presentation.summary}</span>
+                        </span>
+                        <span className="sk-child-go" aria-hidden="true"><CaretIcon size={14} direction="right" /></span>
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
             )}
@@ -590,41 +596,46 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
           <section className="sk-group" key={group.title}>
             {showGroupTitles && <h3 className="sk-group-title">{group.title}</h3>}
             <div className="sk-grid">
-              {group.skills.map((s) => (
-                <div
-                  key={s.name}
-                  className={`sk-card${s.enabled ? "" : " sk-off"}`}
-                  data-wf="SkillEntry"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openSkill(s)}
-                  onKeyDown={(e) => openSkillByKey(e, s)}
-                  onContextMenu={(e) => openMenu(e, s)}
-                >
-                  <div className="sk-card-head">
-                    <SkIcon icon={s.icon} />
-                    <span className="sk-card-title" title={s.label}>{s.label}</span>
-                    <button
-                      type="button"
-                      className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
-                      disabled={busy === s.name}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void toggle(s.name, !s.enabled);
-                      }}
-                      aria-pressed={s.enabled}
-                      title={s.enabled
-                        ? "停用后模型将不再使用该技能"
-                        : "启用后模型可使用该技能"}
-                    >
-                      <span className="sk-toggle-dot" aria-hidden="true" />
-                      {s.enabled ? "已启用" : "已停用"}
-                    </button>
+              {group.skills.map((s) => {
+                const presentation = resolveSkillDisplayMetadata(s);
+                return (
+                  <div
+                    key={s.name}
+                    className={`sk-card${s.enabled ? "" : " sk-off"}`}
+                    data-wf="SkillEntry"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openSkill(s)}
+                    onKeyDown={(e) => openSkillByKey(e, s)}
+                    onContextMenu={(e) => openMenu(e, s)}
+                  >
+                    <div className="sk-card-head">
+                      <SkIcon icon={s.icon} />
+                      <span className="sk-card-title" title={presentation.displayName}>
+                        {presentation.displayName}
+                      </span>
+                      <button
+                        type="button"
+                        className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
+                        disabled={busy === s.name}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggle(s.name, !s.enabled);
+                        }}
+                        aria-pressed={s.enabled}
+                        title={s.enabled
+                          ? "停用后模型将不再使用该技能"
+                          : "启用后模型可使用该技能"}
+                      >
+                        <span className="sk-toggle-dot" aria-hidden="true" />
+                        {s.enabled ? "已启用" : "已停用"}
+                      </button>
+                    </div>
+                    {/* 简介最多两行;子技能数量只在详情页展示,列表卡保持等高、保持轻。 */}
+                    <p className="sk-card-summary">{presentation.summary}</p>
                   </div>
-                  {/* 简介最多两行;子技能数量只在详情页展示,列表卡保持等高、保持轻。 */}
-                  <p className="sk-card-summary">{s.summary}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))}
@@ -752,19 +763,21 @@ function ChildSkillDetail({
   bodyError: string | null;
 }) {
   const showBodyLoading = useDelayedVisible(bodyLoading && !body);
+  const childPresentation = resolveSkillDisplayMetadata(child);
+  const parentPresentation = resolveSkillDisplayMetadata(parent);
   return (
     <div data-wf="SkillChildDetail">
       <div className="sk-detail-hero">
         <SkIcon icon={child.icon} />
-        <span className="sk-detail-name">{child.label}</span>
+        <span className="sk-detail-name">{childPresentation.displayName}</span>
       </div>
       <p className="sk-detail-meta">
-        <span className="k">隶属：</span>{parent.label}
+        <span className="k">隶属：</span>{parentPresentation.displayName}
         {" · "}
         <span className="k">状态：</span>随母技能{parent.enabled ? "启用" : "停用"}
       </p>
       <div className="sk-md-body">
-        <p>{child.description || child.summary}</p>
+        <p>{childPresentation.summary}</p>
       </div>
       <h3 className="sk-detail-sec-title">技能正文(SKILL.md · 只读)</h3>
       <div className="sk-md-body" data-wf="SkillChildDetailBody">
@@ -773,7 +786,7 @@ function ChildSkillDetail({
         {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
       </div>
       <p className="sm-note sk-child-inherited-note">
-        此子技能不单独启停，由母技能「{parent.label}」统一控制。
+        此子技能不单独启停，由母技能「{parentPresentation.displayName}」统一控制。
       </p>
     </div>
   );
@@ -808,6 +821,7 @@ function SkillDetail({
   const labelInputRef = useRef<HTMLInputElement>(null);
   const configNode = renderConfig(skill.config);
   const isInstalled = skill.source === "installed";
+  const presentation = resolveSkillDisplayMetadata(skill);
   useEffect(() => {
     setLabelDraft(skill.label);
     setEditingLabel(false);
@@ -843,7 +857,7 @@ function SkillDetail({
         <SkIcon icon={skill.icon} />
         {!isInstalled ? (
           <>
-            <span className="sk-detail-name">{skill.label}</span>
+            <span className="sk-detail-name">{presentation.displayName}</span>
             {/* 只读来源改不了名，来源标直接跟在名字后面。 */}
             <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
           </>
@@ -896,9 +910,9 @@ function SkillDetail({
             disabled={!canMutate || busy}
             data-wf="SkillLabelEdit"
             onClick={beginLabelEdit}
-            aria-label={`编辑显示名：${skill.label}`}
+            aria-label={`编辑显示名：${presentation.displayName}`}
           >
-            <span>{skill.label}</span>
+            <span>{presentation.displayName}</span>
             <svg
               className="sk-label-edit-icon"
               viewBox="0 0 16 16"

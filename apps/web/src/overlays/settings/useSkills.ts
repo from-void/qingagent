@@ -10,6 +10,7 @@ export const SKILLS_CHANGED_EVENT = "qingagent:skills-changed";
 
 export interface SkillBaseInfo {
   name: string;
+  displayName?: string;
   description: string;
   label: string;
   summary: string;

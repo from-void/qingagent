@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseSkillFrontmatter } from "./discovery.js";
+import { resolve } from "node:path";
+import { parseSkillFrontmatter, scanSkillHierarchy } from "./discovery.js";
 
 describe("技能发现摘要后备", () => {
   it("英文长描述按首句断词截断并追加省略号", () => {
@@ -43,5 +44,30 @@ describe("技能发现摘要后备", () => {
     );
 
     expect(parsed?.summary).toBe("自定义摘要");
+  });
+
+  it("displayName 作为中文展示名并兼容既有 label", () => {
+    const displayName = parseSkillFrontmatter(
+      "---\nname: image-helper\ndisplayName: 图片处理\ndescription: Handle images.\n---\n",
+    );
+    const legacyLabel = parseSkillFrontmatter(
+      "---\nname: legacy-helper\nlabel: 旧版显示名\ndescription: Handle files.\n---\n",
+    );
+
+    expect(displayName).toMatchObject({ displayName: "图片处理", label: "图片处理" });
+    expect(legacyLabel).toMatchObject({ displayName: "旧版显示名", label: "旧版显示名" });
+  });
+
+  it("仓内全部技能 manifest 都声明中文显示名与中文摘要", async () => {
+    const skills = await scanSkillHierarchy(resolve(process.cwd(), "skills"));
+    const missingChineseMetadata = skills
+      .filter(({ metadata }) => (
+        !/[\u3400-\u9fff]/u.test(metadata.displayName ?? metadata.label)
+        || !/[\u3400-\u9fff]/u.test(metadata.summary)
+      ))
+      .map(({ metadata }) => metadata.name);
+
+    expect(skills.length).toBeGreaterThan(0);
+    expect(missingChineseMetadata).toEqual([]);
   });
 });

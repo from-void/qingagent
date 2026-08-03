@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface MockSkillInfo {
   name: string;
+  displayName?: string;
   description: string;
   label: string;
   summary: string;
@@ -237,6 +238,43 @@ describe("SkillsPanel 导入门控", () => {
       .toBe("支持 .zip 技能包或单个 .md 文件");
     expect(host?.querySelector(".sk-card--import")).toBeNull();
     expect(host?.querySelector(".sk-group-title")).toBeNull();
+  });
+
+  it("设置技能列表优先显示内置中文名，外部英文元数据使用中性回退", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "imagegen",
+        description: "Generate or edit raster images with the OpenAI Image API.",
+        label: "imagegen",
+        summary: "Generate or edit raster images…",
+        icon: "star",
+        source: "external-codex",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+      {
+        name: "third-party-helper",
+        description: "Perform proprietary operations with an external service.",
+        label: "third-party-helper",
+        summary: "Perform proprietary operations…",
+        icon: "star",
+        source: "external-shared",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+    ];
+    await render();
+
+    const cards = Array.from(host?.querySelectorAll<HTMLElement>('[data-wf="SkillEntry"]') ?? []);
+    expect(cards[0]?.querySelector(".sk-card-title")?.textContent).toBe("图片生成");
+    expect(cards[0]?.querySelector(".sk-card-summary")?.textContent).toBe("生成或编辑图片");
+    expect(cards[1]?.querySelector(".sk-card-title")?.textContent).toBe("third-party-helper");
+    expect(cards[1]?.querySelector(".sk-card-summary")?.textContent).toBe("第三方技能");
+    expect(host?.textContent).not.toContain("Generate or edit raster images");
+    expect(host?.textContent).not.toContain("Perform proprietary operations");
   });
 
   it("外部技能列表不显示来源徽标，且不开放删除菜单", async () => {

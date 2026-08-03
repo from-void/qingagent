@@ -1,4 +1,5 @@
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, type ReactNode } from "react";
+import { dismissTopOverlay, useOverlayDismiss } from "../../../../system/overlayDismissStack";
 import { CaretIcon } from "../icons";
 
 export function LaunchModalShell(props: {
@@ -11,6 +12,23 @@ export function LaunchModalShell(props: {
   children: ReactNode;
 }) {
   const titleId = useId();
+
+  // 审查与衍生稿配置共用同一 modal 壳。自身进栈后，确认卡等后开的浮层
+  // 会自然排在上面；Esc 始终只弹栈顶，不会一并关掉底层配置或预览。
+  useOverlayDismiss(true, () => {
+    if (!props.closeDisabled) props.onClose();
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!dismissTopOverlay()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <div

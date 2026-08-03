@@ -495,6 +495,7 @@ export function WorkspaceDocumentPane({
                 type="button"
                 className={`ws-doc-btn ws-docfn-btn${exportDisabledReason ? " is-disabled" : ""}`}
                 title={exportDisabledReason ?? "导出"}
+                aria-label="导出"
                 aria-haspopup="menu"
                 aria-expanded={exportMenuOpen}
                 aria-disabled={exportDisabledReason ? true : undefined}

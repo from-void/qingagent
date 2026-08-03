@@ -11,6 +11,7 @@ import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
 import type { PendingConfirm } from "../session/sessionState.js";
 import {
+  AGENT_AUTOMATIC_LENGTH_REVISION_TIMEOUT_MS,
   AGENT_FIRST_CHUNK_TIMEOUT_MS,
   AGENT_IDLE_TIMEOUT_MS,
   AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
@@ -52,6 +53,8 @@ export interface ProcessAgentStreamOptions {
   firstChunkTimeoutMs?: number;
   /** 连续只有 tool-heartbeat、没有真实流事件时的硬收口窗口。 */
   toolHeartbeatTimeoutMs?: number;
+  /** writeDraft 超硬上限后自动精简整段的绝对时限。 */
+  automaticLengthRevisionTimeoutMs?: number;
   /** 调用方能安全自动重试时，零产出 idle-timeout 先只返回 outcome，不在本层展示失败。 */
   deferRetryableIdleTimeout?: boolean;
   abortController?: AbortController;
@@ -104,6 +107,7 @@ export interface AgentStreamTurnContext {
   readonly timeoutMs: number;
   readonly firstChunkTimeoutMs: number;
   readonly toolHeartbeatTimeoutMs: number;
+  readonly automaticLengthRevisionTimeoutMs: number;
   readonly deferRetryableIdleTimeout: boolean;
   readonly confirmService: ConfirmService;
 
@@ -159,6 +163,7 @@ export interface AgentStreamTurnContext {
   sawNonUiToolCall: boolean;
   sawToolHeartbeat: boolean;
   sawIdleTimeout: boolean;
+  sawAutomaticLengthRevisionTimeout: boolean;
   lastStepFinishReason: string | null;
   sawTextAfterLastTool: boolean;
   stepIndex: number;
@@ -239,6 +244,9 @@ export async function createAgentStreamTurnContext(
       opts.firstChunkTimeoutMs ?? AGENT_FIRST_CHUNK_TIMEOUT_MS,
     toolHeartbeatTimeoutMs:
       opts.toolHeartbeatTimeoutMs ?? AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
+    automaticLengthRevisionTimeoutMs:
+      opts.automaticLengthRevisionTimeoutMs ??
+      AGENT_AUTOMATIC_LENGTH_REVISION_TIMEOUT_MS,
     deferRetryableIdleTimeout: opts.deferRetryableIdleTimeout === true,
     confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
@@ -288,6 +296,7 @@ export async function createAgentStreamTurnContext(
     sawNonUiToolCall: false,
     sawToolHeartbeat: false,
     sawIdleTimeout: false,
+    sawAutomaticLengthRevisionTimeout: false,
     lastStepFinishReason: null,
     sawTextAfterLastTool: true,
     stepIndex: -1,

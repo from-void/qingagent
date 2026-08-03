@@ -39,6 +39,7 @@ import {
 import {
   draftingFailedFrame,
   isUserAbortSignal,
+  USER_ABORT_REASON,
 } from "./streamErrors.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { endToolIoSpan } from "./toolIoSpans.js";
@@ -199,12 +200,20 @@ export async function* finalizeAgentStream(
       state.docDraftBaseDoc ?? currentPmDoc(state),
     );
 
-  // idle timeout 需要保住已经生成的可用资产；用户停止/新消息抢占则必须丢弃旧轮候选。
+  const explicitlyStopped =
+    abortController.signal.reason === USER_ABORT_REASON ||
+    abortController.signal.reason === "globalStop";
+
+  // idle timeout 和显式停止都要保住已完整交付给用户的可用资产；新消息抢占仍丢弃
+  // 旧轮候选，避免旧结果越权覆盖新意图。
   if (
     !context.wasSuspended &&
     (
       !abortController.signal.aborted ||
-      (context.sawIdleTimeout && hasUsableDraftCandidateFromThisTurn)
+      (
+        hasUsableDraftCandidateFromThisTurn &&
+        (context.sawIdleTimeout || explicitlyStopped)
+      )
     )
   ) {
     const settled = yield* settleDraftCandidate({
@@ -373,7 +382,11 @@ export async function* finalizeAgentStream(
       context.validPatchCount > 0 ||
       state.suggestions.size > 0)
   ) {
-    const stepNotice = context.sawIdleTimeout
+    const stepNotice = context.sawAutomaticLengthRevisionTimeout
+      ? draftPreservedThisTurn
+        ? "自动精简已超时，已保留精简前的完整草稿；需要的话可以稍后再精简。"
+        : "自动精简已超时，且未产出可用草稿，请重试或稍后再试。"
+      : context.sawIdleTimeout
       ? draftPreservedThisTurn
         ? "已保留本轮生成的部分草稿，但最后一步被中断，还没收尾。回复“继续”我接着处理。"
         : "草稿生成长时间无响应并已超时，未产出可用草稿，请重试或稍后再试。"

@@ -84,6 +84,22 @@ function startsContentSegment(chunk: AgentStreamEvent): boolean {
   return (stepResult?.reason ?? payload.finishReason ?? payload.reason) === "tool-calls";
 }
 
+/** writeDraft 已交付但超硬上限：从此进入产品自动精简的有界收尾段。 */
+function startsAutomaticLengthRevision(chunk: AgentStreamEvent): boolean {
+  if (chunk.type !== "tool-result" || chunk.payload.toolName !== "writeDraft") {
+    return false;
+  }
+  const payload = chunk.payload as Record<string, unknown>;
+  const rawResult = Object.prototype.hasOwnProperty.call(payload, "result")
+    ? payload.result
+    : payload.output;
+  return Boolean(
+    rawResult &&
+      typeof rawResult === "object" &&
+      (rawResult as { lengthStatus?: unknown }).lengthStatus === "above_hard_max",
+  );
+}
+
 function countChunkType(context: AgentStreamTurnContext, chunk: AgentStreamEvent): void {
   const type = typeof chunk.type === "string" && chunk.type.length > 0
     ? chunk.type
@@ -146,6 +162,9 @@ export async function* processAgentStream(
         heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,
         isContentful: isContentfulStreamEvent,
         startsContentSegment,
+        startsAbsoluteTimeout: startsAutomaticLengthRevision,
+        absoluteTimeoutMs: context.automaticLengthRevisionTimeoutMs,
+        absoluteTimeoutKind: "automatic_length_revision",
         isHeartbeat: (chunk) => {
           const heartbeat = isToolHeartbeatEvent(chunk);
           if (heartbeat && heartbeatReceivedCount++ === 0) {

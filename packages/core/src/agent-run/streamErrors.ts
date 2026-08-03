@@ -21,6 +21,10 @@ export interface IdleTimeoutOptions<T> {
   isContentful?: (chunk: T) => boolean;
   /** 工具结果等边界会开启下一模型段的首内容宽限。 */
   startsContentSegment?: (chunk: T) => boolean;
+  /** 命中后开启不受普通 chunk 刷新的绝对阶段时限。 */
+  startsAbsoluteTimeout?: (chunk: T) => boolean;
+  absoluteTimeoutMs?: number;
+  absoluteTimeoutKind?: string;
   /** 外部取消时提前结束等待，并走底层迭代器收尾。 */
   abortSignal?: AbortSignal;
 }
@@ -34,7 +38,10 @@ export function isUserAbortSignal(signal: AbortSignal): boolean {
  * 「有待用户确认的卡片」这类没有帧、但绝不是卡死的状态显式标成活跃信号;
  * 否决后计时器从头开始,底层迭代器不受影响。
  */
-export type IdleTimeoutVerdict = (info: { heartbeatOnly: boolean }) => boolean | void;
+export type IdleTimeoutVerdict = (info: {
+  heartbeatOnly: boolean;
+  absoluteTimeoutKind?: string;
+}) => boolean | void;
 
 export async function* withIdleTimeout<T>(
   source: AsyncIterable<T>,
@@ -46,8 +53,10 @@ export async function* withIdleTimeout<T>(
   let timedOut = false;
   let waitingForSegmentContent = true;
   let heartbeatOnlySince: number | null = null;
+  let absoluteDeadlineAt: number | null = null;
   const idleTimeoutSignal = Symbol("idle-timeout");
   const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
+  const absoluteTimeoutSignal = Symbol("absolute-timeout");
   const abortedSignal = Symbol("aborted");
   let naturallyEnded = false;
   // 判死被否决时挂起的 next 必须复用；重复调用 iterator.next() 会丢 chunk。
@@ -56,6 +65,7 @@ export async function* withIdleTimeout<T>(
     for (;;) {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+      let absoluteTimer: ReturnType<typeof setTimeout> | null = null;
       const activeIdleTimeoutMs = waitingForSegmentContent
         ? options.firstChunkTimeoutMs ?? timeoutMs
         : timeoutMs;
@@ -69,6 +79,7 @@ export async function* withIdleTimeout<T>(
           | IteratorResult<T>
           | typeof idleTimeoutSignal
           | typeof heartbeatTimeoutSignal
+          | typeof absoluteTimeoutSignal
           | typeof abortedSignal
         >
       > = [next, idleTimeout];
@@ -95,10 +106,23 @@ export async function* withIdleTimeout<T>(
           );
         }));
       }
+      if (
+        absoluteDeadlineAt !== null &&
+        options.absoluteTimeoutMs !== undefined
+      ) {
+        const remainingMs = Math.max(0, absoluteDeadlineAt - Date.now());
+        races.push(new Promise<typeof absoluteTimeoutSignal>((resolve) => {
+          absoluteTimer = setTimeout(
+            () => resolve(absoluteTimeoutSignal),
+            remainingMs,
+          );
+        }));
+      }
       const raced = await Promise.race(races);
       if (abortListener) options.abortSignal?.removeEventListener("abort", abortListener);
       if (idleTimer) clearTimeout(idleTimer);
       if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      if (absoluteTimer) clearTimeout(absoluteTimer);
       if (raced === abortedSignal) {
         void next.then(
           () => undefined,
@@ -106,12 +130,25 @@ export async function* withIdleTimeout<T>(
         );
         return;
       }
-      if (raced === idleTimeoutSignal || raced === heartbeatTimeoutSignal) {
+      if (
+        raced === idleTimeoutSignal ||
+        raced === heartbeatTimeoutSignal ||
+        raced === absoluteTimeoutSignal
+      ) {
         const heartbeatOnly = raced === heartbeatTimeoutSignal;
+        const absoluteTimeoutKind = raced === absoluteTimeoutSignal
+          ? options.absoluteTimeoutKind ?? "absolute"
+          : undefined;
         // 判死可被否决(如本轮正等用户点确认卡):否决时不 abort、不产错误帧,
         // 也不能丢掉仍在跑的 next——把它接回下一轮竞速,继续等真正的 chunk。
-        if (onTimeout({ heartbeatOnly }) === false) {
+        if (onTimeout({ heartbeatOnly, absoluteTimeoutKind }) === false) {
           if (heartbeatOnly) heartbeatOnlySince = Date.now();
+          if (
+            absoluteTimeoutKind !== undefined &&
+            options.absoluteTimeoutMs !== undefined
+          ) {
+            absoluteDeadlineAt = Date.now() + options.absoluteTimeoutMs;
+          }
           pendingNext = next;
           continue;
         }
@@ -127,6 +164,7 @@ export async function* withIdleTimeout<T>(
           payload: {
             idleTimeout: true,
             heartbeatOnly: raced === heartbeatTimeoutSignal,
+            absoluteTimeoutKind,
             error: new Error("agent stream idle timeout"),
           },
         };
@@ -145,6 +183,12 @@ export async function* withIdleTimeout<T>(
         } else if (options.isContentful?.(raced.value) ?? true) {
           waitingForSegmentContent = false;
         }
+      }
+      if (
+        options.absoluteTimeoutMs !== undefined &&
+        options.startsAbsoluteTimeout?.(raced.value)
+      ) {
+        absoluteDeadlineAt = Date.now() + options.absoluteTimeoutMs;
       }
       yield raced.value;
     }

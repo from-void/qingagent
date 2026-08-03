@@ -15,6 +15,7 @@ import {
 } from "./drawioEmbedProtocol";
 import { DrawioEditorOverlay } from "./DrawioEditorOverlay";
 import { renderDrawio } from "./drawioRender";
+import { ConfirmProvider } from "../../../system/ConfirmProvider";
 
 const diagramEditorChromeCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagramEditorChrome.css"), "utf8");
 const drawioEditorCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/DrawioEditorOverlay.css"), "utf8");
@@ -86,7 +87,7 @@ describe("drawio 全屏编辑面板", () => {
     expect(fake.postMessage.mock.calls[0]?.[1]).toBe(window.location.origin);
   });
 
-  it("offline 模式隐藏保存语义，只保留「完成」出口", async () => {
+  it("offline 模式按真实嵌套 DOM 保留「完成 / 退出」两个出口", async () => {
     const fake = await createFakeV31Embed(vi.fn(), vi.fn());
     const frameDocument = fake.iframe.contentDocument;
     if (!frameDocument) throw new Error("iframe contentDocument 缺失");
@@ -99,30 +100,32 @@ describe("drawio 全屏编辑面板", () => {
       ?? frameRoot.appendChild(frameDocument.createElement("body"));
     const toolbar = frameDocument.createElement("div");
     toolbar.className = "geToolbarContainer";
+    const toolbarInner = frameDocument.createElement("div");
     const buttonContainer = frameDocument.createElement("div");
     buttonContainer.className = "geButtonContainer";
     buttonContainer.style.display = "none";
-    for (const label of ["保存", "保存并退出", "退出"]) {
+    for (const label of ["保存并退出", "退出"]) {
       const button = frameDocument.createElement("button");
       button.textContent = label;
+      button.title = label === "保存并退出" ? "保存并退出 (Ctrl+S)" : label;
       buttonContainer.appendChild(button);
     }
-    toolbar.appendChild(buttonContainer);
+    toolbarInner.appendChild(buttonContainer);
+    toolbar.appendChild(toolbarInner);
     frameBody.appendChild(toolbar);
 
     await act(async () => fake.iframe.dispatchEvent(new Event("load")));
 
     expect(
       frameDocument.getElementById("qingagent-drawio-embed-fixes")?.textContent,
-    ).toContain(".geToolbarContainer > .geButtonContainer");
+    ).toContain(".geButtonContainer");
     expect(fake.frameWindow.getComputedStyle(buttonContainer).display).toBe("inline-flex");
     expect(Array.from(buttonContainer.children).map((button) => ({
       label: button.textContent,
       display: fake.frameWindow.getComputedStyle(button).display,
     }))).toEqual([
-      { label: "保存", display: "none" },
       { label: "完成", display: expect.not.stringMatching(/^none$/) },
-      { label: "退出", display: "none" },
+      { label: "退出", display: expect.not.stringMatching(/^none$/) },
     ]);
   });
 
@@ -189,6 +192,80 @@ describe("drawio 全屏编辑面板", () => {
       svg: expect.stringContaining("快递入站"),
     });
     expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
+  });
+
+  it("未保存编辑点「退出」先确认，继续编辑保留内容，确认放弃后才关闭且不保存", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+    const latest = drawioSource("尚未保存的节点");
+    const frameDocument = fake.iframe.contentDocument;
+    if (!frameDocument) throw new Error("iframe contentDocument 缺失");
+    const frameRoot = frameDocument.documentElement
+      ?? frameDocument.appendChild(frameDocument.createElement("html"));
+    if (!frameDocument.head) frameRoot.appendChild(frameDocument.createElement("head"));
+    const frameBody = frameDocument.body
+      ?? frameRoot.appendChild(frameDocument.createElement("body"));
+    const buttonContainer = frameDocument.createElement("div");
+    buttonContainer.className = "geButtonContainer";
+    const exitButton = frameDocument.createElement("button");
+    exitButton.textContent = "退出";
+    exitButton.title = "退出";
+    const vendorExit = vi.fn(() => void fake.exit());
+    exitButton.addEventListener("click", vendorExit);
+    buttonContainer.appendChild(exitButton);
+    frameBody.appendChild(buttonContainer);
+    await act(async () => fake.iframe.dispatchEvent(new Event("load")));
+    const configuredExitButton = buttonContainer.querySelector<HTMLButtonElement>(
+      '[data-qingagent-drawio-exit-capture="true"]',
+    );
+    if (!configuredExitButton) throw new Error("宿主退出按钮缺失");
+
+    await fake.autosave(latest);
+    await act(async () => {
+      configuredExitButton.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(vendorExit).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.querySelector(".drawio-editor-overlay")).not.toBeNull();
+    expect(document.querySelector('[data-wf="GlobalConfirm"]')?.textContent).toContain(
+      "放弃本次修改？",
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(DRAWIO_AUTOSAVE_DEBOUNCE_MS * 2));
+    expect(onSave).not.toHaveBeenCalled();
+
+    await clickButton("继续编辑");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.querySelector(".drawio-editor-overlay")).not.toBeNull();
+
+    await act(async () => {
+      configuredExitButton.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await clickButton("放弃修改");
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledWith(null);
+  });
+
+  it("无改动点「退出」直接关闭，不弹确认", async () => {
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.exit();
+
+    expect(document.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith(null);
   });
 
   it("autosave 事件约一秒防抖，只为最后一版启动 snapshot 写回", async () => {
@@ -326,7 +403,7 @@ describe("drawio 全屏编辑面板", () => {
     ]);
   });
 
-  it("普通保存等待导出期间收到 exit，会在保存完成后携结果关闭", async () => {
+  it("普通保存等待导出期间点退出先确认，继续编辑后保存仍可完成", async () => {
     const onSave = vi.fn();
     const onClose = vi.fn();
     const fake = await createFakeV31Embed(onSave, onClose);
@@ -336,6 +413,9 @@ describe("drawio 全屏编辑面板", () => {
     await fake.save(source, false);
     await fake.exit();
     expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-wf="GlobalConfirm"]')).not.toBeNull();
+
+    await clickButton("继续编辑");
 
     await fake.exportSvg(svgDataUri("保存期间退出"));
 
@@ -344,6 +424,9 @@ describe("drawio 全屏编辑面板", () => {
       svg: expect.stringContaining("保存期间退出"),
     };
     expect(onSave).toHaveBeenCalledWith(expected);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await fake.exit();
     expect(onClose).toHaveBeenCalledWith(expected);
   });
 
@@ -919,12 +1002,14 @@ async function renderOverlay(
   root = createRoot(host);
   await act(async () => {
     root?.render(
-      <DrawioEditorOverlay
-        source={source}
-        title="测试 drawio"
-        onSave={onSave}
-        onClose={onClose}
-      />,
+      <ConfirmProvider>
+        <DrawioEditorOverlay
+          source={source}
+          title="测试 drawio"
+          onSave={onSave}
+          onClose={onClose}
+        />
+      </ConfirmProvider>,
     );
   });
 }
@@ -939,6 +1024,14 @@ function requireCloseButton(): HTMLButtonElement {
   const button = document.querySelector<HTMLButtonElement>('button[aria-label="关闭"]');
   if (!button) throw new Error("drawio 关闭按钮缺失");
   return button;
+}
+
+async function clickButton(label: string): Promise<void> {
+  const button = Array.from(document.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (!(button instanceof HTMLButtonElement)) throw new Error(`按钮缺失：${label}`);
+  await act(async () => button.click());
 }
 
 async function dispatchV31(source: MessageEventSource, origin: string, data: unknown) {

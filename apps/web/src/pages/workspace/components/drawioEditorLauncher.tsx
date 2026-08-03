@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { normalizeDrawioSource } from "@qingagent/pm-schema";
 import { DrawioEditorOverlay } from "./DrawioEditorOverlay";
 import type { DrawioEditorResult } from "./drawioEmbedProtocol";
+import { ConfirmProvider } from "../../../system/ConfirmProvider";
 
 type ActiveEditorSession = {
   host: HTMLDivElement;
@@ -57,7 +58,9 @@ export function openDrawioEditor(
     activeEditorSession = session;
     try {
       root.render(
-        <DrawioEditorOverlay source={source} title={title} onSave={onSave} onClose={finish} />,
+        <ConfirmProvider>
+          <DrawioEditorOverlay source={source} title={title} onSave={onSave} onClose={finish} />
+        </ConfirmProvider>,
       );
     } catch (renderError) {
       finish(null);

@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { ExportMenu, docHasNodeType } from "./ExportMenu";
+import { DerivTabBar } from "./derivatives/DerivTabBar";
 import type { ToastShow, ToastShowOptions } from "../../../system/ToastProvider";
+import { resetOverlayDismissStackForTest } from "../../../system/overlayDismissStack";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,7 +37,29 @@ describe("ExportMenu", () => {
     host?.remove();
     host = null;
     Object.defineProperty(window, "electron", { configurable: true, value: undefined });
+    resetOverlayDismissStackForTest();
+    vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("导出与衍生菜单以 90–120ms 快速交替五轮后，每次 Esc 都只关闭当前菜单", async () => {
+    vi.useFakeTimers();
+    await render(<AlternatingMenusHarness />);
+    const delays = [90, 120, 95, 110, 100];
+
+    for (const delay of delays) {
+      await act(async () => host?.querySelector<HTMLButtonElement>('[data-wf="RapidExportTrigger"]')?.click());
+      expect(host?.querySelector('[data-wf="ExportMenu"]')).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+      await pressEscape();
+      expect(host?.querySelector('[data-wf="ExportMenu"]')).toBeNull();
+
+      await act(async () => host?.querySelector<HTMLButtonElement>('[aria-label="新建稿件"]')?.click());
+      expect(host?.querySelector(".ws-deriv-menu")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+      await pressEscape();
+      expect(host?.querySelector(".ws-deriv-menu")).toBeNull();
+    }
   });
 
   it("菜单打开时再点导出按钮只走按钮 toggle,不会被 outside-click 先关闭后重开", async () => {
@@ -374,6 +398,39 @@ function ExportMenuHarness({
   );
 }
 
+function AlternatingMenusHarness() {
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportAnchorRef = useRef<HTMLDivElement>(null);
+  return (
+    <>
+      <div ref={exportAnchorRef}>
+        <button
+          type="button"
+          data-wf="RapidExportTrigger"
+          onClick={() => setExportOpen((open) => !open)}
+        >
+          导出
+        </button>
+        {exportOpen ? (
+          <ExportMenu
+            anchorRef={exportAnchorRef}
+            onClose={() => setExportOpen(false)}
+            onAction={() => "test-toast"}
+          />
+        ) : null}
+      </div>
+      <DerivTabBar
+        title="主文档"
+        items={[]}
+        activeTab="main"
+        onActivate={() => undefined}
+        onCreate={() => undefined}
+        onRename={() => undefined}
+      />
+    </>
+  );
+}
+
 function columnDoc(): PmDoc {
   return {
     type: "doc",
@@ -450,4 +507,14 @@ function getTrigger(): HTMLButtonElement {
 
 function mouse(type: "mousedown" | "mouseup"): MouseEvent {
   return new MouseEvent(type, { bubbles: true, cancelable: true });
+}
+
+async function pressEscape(): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
 }

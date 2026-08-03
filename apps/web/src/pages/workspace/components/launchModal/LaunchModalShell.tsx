@@ -1,5 +1,5 @@
-import { useEffect, useId, type ReactNode } from "react";
-import { dismissTopOverlay, useOverlayDismiss } from "../../../../system/overlayDismissStack";
+import { useId, type ReactNode } from "react";
+import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
 import { CaretIcon } from "../icons";
 
 export function LaunchModalShell(props: {
@@ -18,17 +18,6 @@ export function LaunchModalShell(props: {
   useOverlayDismiss(true, () => {
     if (!props.closeDisabled) props.onClose();
   });
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (!dismissTopOverlay()) return;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   return (
     <div

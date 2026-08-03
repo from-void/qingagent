@@ -5,8 +5,8 @@
 // 焦点在别处(例如点开菜单后 activeElement 掉回 body)时按 Esc 就无人响应——菜单不关,
 // 面板级守卫又因"检测到浮层还开着"而不关面板,结果整个 Esc 完全无操作(luna e2e 实锤)。
 //
-// 现在收敛成单一出口:面板级 Esc 守卫先问本栈,栈非空就弹栈关掉最上层浮层并消费掉事件;
-// 栈空才按原语义关设置面板。关闭动作由浮层自己注册的回调执行(含把焦点还回触发器)。
+// 现在收敛成单一出口:栈在非空期间只挂一个全局 Esc 监听，每次只弹栈顶并消费事件。
+// 关闭动作由浮层自己注册的回调执行(含把焦点还回触发器)。
 import { useEffect, useRef } from "react";
 
 export type OverlayDismiss = () => void;
@@ -17,14 +17,35 @@ interface OverlayEntry {
 
 // 后进先出:最后打开的浮层排在栈顶,Esc 先关它
 const stack: OverlayEntry[] = [];
+let escapeListenerAttached = false;
+
+function onEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  if (!dismissTopOverlay()) return;
+  event.preventDefault();
+  // 同一个 window 上仍有媒体预览等历史 Esc 监听；栈已消费后必须截断本次事件，
+  // 否则一次按键会继续关闭第二层。
+  event.stopImmediatePropagation();
+}
+
+function syncEscapeListener(): void {
+  if (typeof window === "undefined") return;
+  const shouldAttach = stack.length > 0;
+  if (shouldAttach === escapeListenerAttached) return;
+  escapeListenerAttached = shouldAttach;
+  if (shouldAttach) window.addEventListener("keydown", onEscape);
+  else window.removeEventListener("keydown", onEscape);
+}
 
 /** 注册一个可被 Esc 关闭的浮层,返回注销函数(幂等) */
 export function registerOverlay(dismiss: OverlayDismiss): () => void {
   const entry: OverlayEntry = { dismiss };
   stack.push(entry);
+  syncEscapeListener();
   return () => {
     const index = stack.indexOf(entry);
     if (index >= 0) stack.splice(index, 1);
+    syncEscapeListener();
   };
 }
 
@@ -37,6 +58,7 @@ export function hasOpenOverlay(): boolean {
 export function dismissTopOverlay(): boolean {
   const entry = stack.pop();
   if (!entry) return false;
+  syncEscapeListener();
   entry.dismiss();
   return true;
 }
@@ -44,6 +66,7 @@ export function dismissTopOverlay(): boolean {
 /** 测试夹具:用例之间清干净,避免上一条用例的残留浮层影响下一条 */
 export function resetOverlayDismissStackForTest(): void {
   stack.length = 0;
+  syncEscapeListener();
 }
 
 /**

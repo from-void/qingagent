@@ -5,6 +5,8 @@ import { SKILL_NAME_RE, stripSkillSourceBom } from "./frontmatter.js";
 export interface ParsedSkillFrontmatter {
   name: string;
   description: string;
+  /** manifest 显式声明的展示名；兼容历史 label 字段。 */
+  displayName?: string;
   label: string;
   summary: string;
   icon: string;
@@ -67,7 +69,12 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
   const name = typeof data.name === "string" ? data.name.trim() : "";
   const description = typeof data.description === "string" ? data.description.trim() : "";
   if (!SKILL_NAME_RE.test(name) || !description) return null;
-  const label = nonEmptyString(data.label) ?? fallbackLabel(name);
+  // label 是既有可编辑字段；若用户在带 displayName 的第三方 manifest 上改名，服务端会写入
+  // label，因此它必须覆盖原始 displayName，保持现有“编辑显示名”交互有效。
+  const displayName = nonEmptyString(data.label)
+    ?? nonEmptyString(data.displayName)
+    ?? nonEmptyString(data["display-name"]);
+  const label = displayName ?? fallbackLabel(name);
   const summary = nonEmptyString(data.summary) ?? fallbackSummary(description);
   const icon = nonEmptyString(data.icon) ?? "star";
   const placeholder = nonEmptyString(data.placeholder);
@@ -81,6 +88,7 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
   return {
     name,
     description,
+    ...(displayName ? { displayName } : {}),
     label,
     summary,
     icon,

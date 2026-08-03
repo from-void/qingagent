@@ -161,6 +161,7 @@ skillsRoutes.get("/skills/:name", async (c) => {
       return c.json({
         name: child.metadata.name,
         description: child.metadata.description,
+        displayName: child.metadata.displayName,
         label: child.metadata.label,
         summary: child.metadata.summary,
         icon: child.metadata.icon,
@@ -184,6 +185,7 @@ skillsRoutes.get("/skills/:name", async (c) => {
     return c.json({
       name: skill.name,
       description: skill.description,
+      displayName: skill.displayName,
       label: skill.label,
       summary: skill.summary,
       icon: skill.icon,
@@ -793,6 +795,7 @@ export async function serializeSkillListItem(
   return {
     name: skill.name,
     description: skill.description,
+    displayName: skill.displayName,
     label: skill.label,
     summary: skill.summary,
     icon: skill.icon,

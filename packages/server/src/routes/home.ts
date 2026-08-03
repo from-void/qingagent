@@ -25,7 +25,12 @@ homeRoutes.get("/home", async (c) => {
 
     return {
       id: t.id,
-      title: articleMeta?.title || meta.title || t.title || "未命名草稿",
+      // 手动改名后 metadata.title 是用户钉住的权威标题；未手改会话仍从正文首标题派生。
+      title:
+        (meta.titlePinned === true ? meta.title : articleMeta?.title) ||
+        meta.title ||
+        t.title ||
+        "未命名草稿",
       created_at: t.createdAtIso,
       updated_at: t.contentEditedAt,
       summary,

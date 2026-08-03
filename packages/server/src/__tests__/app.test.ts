@@ -1,7 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as core from "@qingagent/core";
 import { getMemory, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { app } from "../app";
+import {
+  forgetSession,
+  getSession,
+  handleCommand,
+  sessionManager,
+} from "../gateway/bridgeHandler";
 import {
   publicStreamErrorReason,
   redactStreamErrorForLog,
@@ -267,6 +275,59 @@ describe("GET /api/v1/home", () => {
       expect(doc).toHaveProperty("id");
       expect(doc).toHaveProperty("title");
       expect(doc).toHaveProperty("updated_at");
+    }
+  });
+
+  it("手动改名后首页列表立即使用新标题且持久化后仍覆盖正文首标题", async () => {
+    const sessionId = `home-title-rename-sync-${randomUUID()}`;
+    try {
+      for await (const _frame of handleCommand({
+        kind: "startSession",
+        data: {
+          mode: {
+            kind: "new",
+            data: { template: null, sessionId },
+          },
+        },
+      })) {
+        // 消费完整命令，确保准备文档前会话已注册。
+      }
+      const session = getSession(sessionId);
+      if (!session) throw new Error("测试会话创建失败");
+      await session.threadCreatePromise;
+      session.title = "自动元数据标题";
+      session.legacySections = [
+        { kind: "h1", data: { text: "社区旧物交换日" } },
+        { kind: "p", data: { text: "这是正文。" } },
+      ];
+      session.doc = legacySectionsToPm(session.legacySections);
+      session.docVersion = 1;
+      await core.persistSessionMetadata(session, "test:home_title_before_rename");
+
+      const beforeRenameResponse = await request("GET", "/api/v1/home");
+      const beforeRename = await beforeRenameResponse.json() as {
+        recent_sessions: Array<{ id: string; title: string }>;
+      };
+      expect(beforeRename.recent_sessions.find((item) => item.id === sessionId)?.title)
+        .toBe("社区旧物交换日");
+
+      const renameResponse = await request("POST", "/api/v1/commands", {
+        kind: "renameSession",
+        data: { sessionId, title: "r67A-标题链验证" },
+      });
+      expect(renameResponse.status).toBe(200);
+      // 清掉进程内会话，确保首页断言只依赖 renameSession 已落盘的数据。
+      forgetSession(sessionId);
+
+      const homeResponse = await request("GET", "/api/v1/home");
+      const home = await homeResponse.json() as {
+        recent_sessions: Array<{ id: string; title: string }>;
+      };
+      expect(home.recent_sessions.find((item) => item.id === sessionId)?.title)
+        .toBe("r67A-标题链验证");
+    } finally {
+      await sessionManager.destroySession(sessionId);
+      forgetSession(sessionId);
     }
   });
 });

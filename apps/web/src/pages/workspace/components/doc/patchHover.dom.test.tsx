@@ -64,5 +64,6 @@ describe("patchHover 卡片:禁二次 diff(★裁决 260710)", () => {
     );
     expect(host?.querySelector(".patch-popup-added")?.textContent).toContain("新增的安全提示");
     expect(host?.querySelector(".patch-popup-removed-text")).toBeNull();
+    expect(Array.from(host?.querySelectorAll(".patch-popup-label") ?? [], (node) => node.textContent)).not.toContain("原文");
   });
 });

@@ -2044,14 +2044,12 @@ export function UIKitPage() {
               </div>
             </div>
           </Group>
-          <Group title="三态正文标记" code=".wf-patch-replace-old + .wf-patch-replace-separator + .wf-patch-ins / .patch-del-cursor">
+          <Group title="三态正文标记" code=".wf-patch-replace-wrap / .wf-patch-ins-wrap / .patch-del-cursor">
             <div id="view-workspace" style={{ background: "transparent" }}>
               <div className="wf-doc" style={{ fontSize: 14 }}>
                 <p>
                   替换:
-                  <span className="wf-patch-del wf-patch-replace-old" data-patch-state="delete">旧内容</span>
                   <span className="wf-patch-replace-wrap" data-patch-state="replace">
-                    <span className="wf-patch-replace-separator" aria-label="替换为">→</span>
                     <span className="wf-patch-ins">新内容</span>
                   </span>
                   {" "}新增:

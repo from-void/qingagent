@@ -1,6 +1,6 @@
 {
   "file": "apps/web/src/pages/workspace/workspace.css",
-  "sha256": "e4147cc5edbb253b2b1d530e0cb124bc9fa822860271ef1135f5d06c122a220e",
+  "sha256": "cc52eb64edb3ad5a5423c8255589a2ff22d182886f1d2642faca3f45dfe581fe",
   "lineCount": 3654,
   "selectors": [
     ".wf-doc",

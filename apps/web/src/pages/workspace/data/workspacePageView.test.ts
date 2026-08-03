@@ -8,6 +8,7 @@ import {
   selectFullpageAsk,
   selectRenderDoc,
   workspaceDataAttrs,
+  workspaceEntryIntentFromHash,
   workspaceHashWithViewingVersion,
   workspaceHistorySnapshotUrl,
   workspaceSessionIdFromHash,
@@ -202,5 +203,30 @@ describe("workspace page R3 view derivations", () => {
     expect(workspaceHistorySnapshotUrl("version / 6", "session-a")).toBe(
       "/api/v1/history/version%20%2F%206?sessionId=session-a",
     );
+  });
+
+  it("入口会话归属确定化：裸路由新建，只有 session 恢复，显式 new 压过残留 session", () => {
+    expect(workspaceEntryIntentFromHash("#/workspace")).toEqual({
+      kind: "new",
+      explicit: false,
+    });
+    expect(workspaceEntryIntentFromHash("#/workspace?intent=new")).toEqual({
+      kind: "new",
+      explicit: true,
+    });
+    expect(workspaceEntryIntentFromHash("#/workspace?session=s-old")).toEqual({
+      kind: "existing",
+      sessionId: "s-old",
+    });
+    expect(
+      workspaceEntryIntentFromHash(
+        "#/workspace?session=s-stale&intent=new;modal-import",
+      ),
+    ).toEqual({ kind: "new", explicit: true });
+    expect(
+      workspaceSessionIdFromHash(
+        "#/workspace?session=s-stale&intent=new",
+      ),
+    ).toBeNull();
   });
 });

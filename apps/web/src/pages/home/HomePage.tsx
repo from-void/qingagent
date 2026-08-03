@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
-import { routeToHash } from "../../shell";
+import { routeToHash, routeToNewWorkspaceHash } from "../../shell";
 import "./home.css";
 import { makeMockSessions, sessionMetaToHomeSession } from "./data/sessions";
 import type { HomeSession } from "./data/sessions";
@@ -133,8 +133,8 @@ export function HomePage() {
   }, [sessions]);
 
   const handleCreate = useCallback(() => {
-    // 点「新建」直接进编辑页空态(惰性创建 + 空引导态)。
-    window.location.hash = routeToHash("workspace");
+    // 点「新建」显式携带 new 意图；只有 session=<id> 才代表恢复历史会话。
+    window.location.hash = routeToNewWorkspaceHash();
   }, []);
 
   const closeArticleMenu = useCallback(() => {

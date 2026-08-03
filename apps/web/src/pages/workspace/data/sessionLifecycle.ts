@@ -45,7 +45,9 @@ export function workspaceHashWithSession(hash: string, sessionId: string): strin
   // resolve——此时不改写他页 hash,否则首页 URL 会被污染成 `#/?session=xxx`。
   if (route !== "#/workspace") return hash;
   const params = new URLSearchParams(query);
-  if (params.get("session")) return hash;
+  // intent=new 必须压过残留 session；新会话落定后 URL 只保留权威 session 身份。
+  if (params.get("session") && params.get("intent") !== "new") return hash;
+  params.delete("intent");
   params.set("session", sessionId);
   const nextBase = `${route || "#/workspace"}?${params.toString()}`;
   return suffix ? `${nextBase};${suffix}` : nextBase;

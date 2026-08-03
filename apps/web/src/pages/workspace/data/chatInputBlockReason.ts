@@ -13,6 +13,20 @@ export const HISTORY_CHAT_INPUT_BLOCK_REASON: ChatInputBlockReason = {
   durationMs: 3500,
 };
 
+export function sessionRestoreChatInputBlockReason(
+  failed: boolean,
+): ChatInputBlockReason {
+  return failed
+    ? {
+        toast: "请先重试恢复会话",
+        placeholder: "恢复会话后可继续对话",
+      }
+    : {
+        toast: "正在恢复会话，请稍候",
+        placeholder: "正在恢复会话…",
+      };
+}
+
 export function getChatInputBlockReason(
   dim: DocDimensions,
   askUserInputDisabled: boolean,

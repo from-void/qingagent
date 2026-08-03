@@ -3508,6 +3508,48 @@ describe("WorkspacePage review controls", () => {
     expect(rows[1]!.textContent).toBe("已拒绝先生→（删除）");
   });
 
+  it("ReviewOutcomeCard 仅保留标题折叠与全量展开两态", async () => {
+    const { ReviewOutcomeCard } = await import("./components/ReviewOutcomeCard");
+    const hunks = Array.from({ length: 5 }, (_, index) => ({
+      verdict: "rejected" as const,
+      blockSummary: `修改 ${index + 1}`,
+      beforeText: `原文 ${index + 1}`,
+      afterText: `新文 ${index + 1}`,
+    }));
+
+    await render(
+      <ReviewOutcomeCard
+        data={{
+          acceptedCount: 0,
+          rejectedCount: hunks.length,
+          hunks,
+        }}
+      />,
+    );
+
+    const header = host!.querySelector<HTMLButtonElement>(".u-card-hd");
+    expect(header?.getAttribute("aria-expanded")).toBe("false");
+    expect(host!.querySelector(".u-card-bd")).toBeNull();
+    expect(host!.querySelectorAll(".wf-rvo-row")).toHaveLength(0);
+
+    act(() => {
+      header!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(header?.getAttribute("aria-expanded")).toBe("true");
+    const rows = [...host!.querySelectorAll<HTMLElement>(".wf-rvo-row")];
+    expect(rows).toHaveLength(5);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "已拒绝原文 1→新文 1",
+      "已拒绝原文 2→新文 2",
+      "已拒绝原文 3→新文 3",
+      "已拒绝原文 4→新文 4",
+      "已拒绝原文 5→新文 5",
+    ]);
+    expect(host!.querySelector(".wf-rvo-more")).toBeNull();
+    expect(host!.textContent).not.toMatch(/另\s*\d+\s*处/);
+  });
+
   it("失效 suggestion 的失败终态在聊天中只显示中性短文案", async () => {
     const { ChatMessageList } = await import("./components/ChatMessageList");
     const failedSpec: ToolCallSpec = {

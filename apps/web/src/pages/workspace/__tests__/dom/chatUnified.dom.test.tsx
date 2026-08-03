@@ -584,6 +584,9 @@ describe("chatUnified.css", () => {
 
   it("审核反馈条目保持单行且原文与新文各自截断", () => {
     expect(chatCss).toMatch(
+      /\.u-scope \.wf-rvo-card \.u-card-bd \{[^}]*max-height: min\(320px, 50vh\);[^}]*overflow-y: auto;[^}]*\}/s,
+    );
+    expect(chatCss).toMatch(
       /\.u-scope \.wf-rvo-row \{[^}]*white-space: nowrap;[^}]*overflow: hidden;[^}]*\}/s,
     );
     expect(chatCss).toMatch(

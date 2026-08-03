@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { ReviewOutcome, ReviewOutcomeHunk } from "@qingagent/contract-ts";
 
-// 对话流里一轮 diff 审核结果的缩略卡片（以用户名义回流时渲染）。
-// 默认态:卡头计数 + 被拒项逐条一行简述;展开后看全部修改。每处始终横排并单侧截断。
+// 对话流里一轮 diff 审核结果的折叠卡片（以用户名义回流时渲染）。
+// 折叠态只显示卡头;展开态显示全部修改。每处始终横排并单侧截断。
 // 处于 .ws-chat .u-scope 作用域内,复用 u-card token,无需额外包裹。
 
 function Chevron({ open }: { open: boolean }) {
@@ -39,9 +39,6 @@ function CompactHunkRow({ hunk }: { hunk: ReviewOutcomeHunk }) {
   );
 }
 
-/** 缩略态最多列几条,超出折叠成「另 N 处…」,避免气泡过长。 */
-const COLLAPSED_HUNK_CAP = 4;
-
 export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
   const [open, setOpen] = useState(false);
   const hunks = data.hunks ?? [];
@@ -50,8 +47,6 @@ export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
   const rejectedCount = rejected.length;
   const acceptedCount = hunks.length - rejectedCount;
   const allRejected = acceptedCount === 0 && rejectedCount > 0;
-  const collapsedHunks = (rejectedCount > 0 ? rejected : hunks).slice(0, COLLAPSED_HUNK_CAP);
-  const moreCollapsed = (rejectedCount > 0 ? rejectedCount : hunks.length) - collapsedHunks.length;
 
   return (
     <div className="u-card wf-rvo-card" data-wf="ReviewOutcomeCard" style={{ marginBottom: 2 }}>
@@ -77,28 +72,16 @@ export function ReviewOutcomeCard({ data }: { data: ReviewOutcome }) {
         </span>
       </button>
 
-      <div className="u-card-bd">
-        {!open ? (
-          // 缩略态仍优先列被拒项;全部采纳时直接列采纳项。
-          <div className="wf-rvo-list">
-            {collapsedHunks.map((h, i) => (
-              <CompactHunkRow hunk={h} key={`rvo-brief-${i}`} />
-            ))}
-            {moreCollapsed > 0 ? (
-              <div className="wf-rvo-more" key="rvo-brief-more">
-                另 {moreCollapsed} 处（点击展开查看）
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          // 展开态:逐处展示完整清单,长文本通过各自的 title 查看全文。
+      {open ? (
+        <div className="u-card-bd">
+          {/* 展开态逐处展示完整清单,长文本通过各自的 title 查看全文。 */}
           <div className="wf-rvo-list">
             {hunks.map((h, i) => (
               <CompactHunkRow hunk={h} key={`rvo-detail-${i}`} />
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

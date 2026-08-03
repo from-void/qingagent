@@ -659,6 +659,7 @@ export function WorkspaceDocumentPane({
                 showToast("批注意见回填失败，请重试");
                 return false;
               }
+              showToast("已填入修改要求，请点击发送");
               return true;
             }}
             onIgnore={(group) => {

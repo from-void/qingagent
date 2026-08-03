@@ -369,6 +369,60 @@ describe("ChatMessageList", () => {
     expect(anchors.some((anchor) => /^(?:javascript|data):/u.test(anchor.href))).toBe(false);
   });
 
+  it("模型连续使用 1. 时按 markdown 规则递增编号并保留子级无序列表", async () => {
+    await render(
+      <div>
+        {renderSimpleMarkdown([
+          "1. 敏感词一",
+          "   - 语境：第一处上下文",
+          "   - 已附整句改写建议：建议一",
+          "1. 敏感词二",
+          "   - 语境：第二处上下文",
+          "   - 已附整句改写建议：建议二",
+        ].join("\n"))}
+      </div>,
+    );
+
+    const orderedLists = host!.querySelectorAll("ol");
+    expect(orderedLists).toHaveLength(1);
+    const parentItems = Array.from(orderedLists[0]!.children) as HTMLLIElement[];
+    expect(parentItems).toHaveLength(2);
+    expect(parentItems.map((item, index) => item.value || orderedLists[0]!.start + index)).toEqual([1, 2]);
+    expect(parentItems.map((item) => item.querySelectorAll(":scope > ul > li").length)).toEqual([2, 2]);
+  });
+
+  it("空行分隔的有序项保持同一列表且子级列表不被提升到父级", async () => {
+    await render(
+      <div>
+        {renderSimpleMarkdown([
+          "1. 第一处问题",
+          "",
+          "   - 语境：第一处上下文",
+          "",
+          "2. 第二处问题",
+          "",
+          "   - 语境：第二处上下文",
+        ].join("\n"))}
+      </div>,
+    );
+
+    const orderedLists = host!.querySelectorAll("ol");
+    expect(orderedLists).toHaveLength(1);
+    const parentItems = Array.from(orderedLists[0]!.children) as HTMLLIElement[];
+    expect(parentItems.map((item, index) => item.value || orderedLists[0]!.start + index)).toEqual([1, 2]);
+    expect(parentItems.every((item) => item.querySelector(":scope > ul") !== null)).toBe(true);
+    expect(host!.querySelectorAll(":scope > div > ul")).toHaveLength(0);
+  });
+
+  it("有序列表显式跳号时尊重源序号", async () => {
+    await render(<div>{renderSimpleMarkdown("1. 第一项\n3. 第三项")}</div>);
+
+    const orderedList = host!.querySelector("ol")!;
+    const items = Array.from(orderedList.children) as HTMLLIElement[];
+    expect(items.map((item, index) => item.value || orderedList.start + index)).toEqual([1, 3]);
+    expect(items[1]!.getAttribute("value")).toBe("3");
+  });
+
   it("skill/skill_read 工具卡技能名使用 skills API label", async () => {
     vi.stubGlobal(
       "fetch",

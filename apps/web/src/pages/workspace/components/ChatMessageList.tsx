@@ -984,21 +984,105 @@ function parseStandaloneLink(value: string): { title: string; href: string } | n
 export function renderSimpleMarkdown(text: string) {
   const lines = text.split("\n");
   const result: JSX.Element[] = [];
-  let listItems: JSX.Element[] = [];
-  let listType: "ul" | "ol" | null = null;
+  type MarkdownListToken = {
+    content: string;
+    indent: number;
+    line: number;
+    ordinal: number | null;
+    type: "ul" | "ol";
+  };
+  let listTokens: MarkdownListToken[] = [];
   let blockKey = 0;
 
-  function flushList() {
-    if (listItems.length > 0 && listType) {
-      const Tag = listType;
-      result.push(
-        <Tag key={`list-${blockKey++}`} style={{ margin: "4px 0 4px 16px", paddingLeft: 0 }}>
-          {listItems}
-        </Tag>,
-      );
-      listItems = [];
-      listType = null;
+  function parseListLine(line: string, lineIndex: number): MarkdownListToken | null {
+    const match = /^([ \t]*)([-*+]|(\d+)[.)])\s+(.*)$/.exec(line);
+    if (!match) return null;
+    const indent = Array.from(match[1]!).reduce(
+      (width, character) => width + (character === "\t" ? 4 : 1),
+      0,
+    );
+    return {
+      content: match[4]!,
+      indent,
+      line: lineIndex,
+      ordinal: match[3] == null ? null : Number.parseInt(match[3], 10),
+      type: match[3] == null ? "ul" : "ol",
+    };
+  }
+
+  function nextNonBlankLineIsList(lineIndex: number): boolean {
+    for (let index = lineIndex + 1; index < lines.length; index++) {
+      const candidate = lines[index]!;
+      if (candidate.trim() === "") continue;
+      return parseListLine(candidate, index) !== null;
     }
+    return false;
+  }
+
+  function flushList() {
+    if (listTokens.length === 0) return;
+    const listBlockKey = blockKey++;
+
+    function renderListAt(start: number, depth: number): { node: JSX.Element; next: number } {
+      const first = listTokens[start]!;
+      const Tag = first.type;
+      const items: JSX.Element[] = [];
+      let index = start;
+      let expectedOrdinal = first.ordinal ?? 1;
+
+      while (index < listTokens.length) {
+        const token = listTokens[index]!;
+        if (token.indent !== first.indent || token.type !== first.type) break;
+        index += 1;
+
+        const children: JSX.Element[] = [];
+        while (index < listTokens.length && listTokens[index]!.indent > first.indent) {
+          const nested = renderListAt(index, depth + 1);
+          children.push(nested.node);
+          index = nested.next;
+        }
+
+        // Markdown 允许作者把每个自动编号项都写成 `1.`；除 1 外的跳号才视为显式序号。
+        const explicitValue =
+          token.type === "ol" &&
+          token.ordinal !== null &&
+          token.ordinal !== 1 &&
+          token.ordinal !== expectedOrdinal
+            ? token.ordinal
+            : undefined;
+        items.push(
+          <li key={`li-${listBlockKey}-${token.line}`} value={explicitValue}>
+            {renderInline(token.content, `li-${listBlockKey}-${token.line}`)}
+            {children}
+          </li>,
+        );
+        if (token.type === "ol") {
+          expectedOrdinal = (explicitValue ?? expectedOrdinal) + 1;
+        }
+      }
+
+      const startOrdinal = first.type === "ol" ? first.ordinal ?? 1 : undefined;
+      return {
+        node: (
+          <Tag
+            key={`list-${listBlockKey}-${first.line}-${depth}`}
+            className={depth === 0 ? "chat-list" : "chat-list chat-list-nested"}
+            start={startOrdinal}
+          >
+            {items}
+          </Tag>
+        ),
+        next: index,
+      };
+    }
+
+    let index = 0;
+    while (index < listTokens.length) {
+      const rendered = renderListAt(index, 0);
+      result.push(rendered.node);
+      index = rendered.next;
+    }
+    listTokens = [];
   }
 
   function renderInline(str: string, key: string): JSX.Element {
@@ -1122,8 +1206,7 @@ export function renderSimpleMarkdown(text: string) {
       fenceLines.push(line);
       continue;
     }
-    const ulMatch = line.match(/^[\s]*[-*]\s+(.*)/);
-    const olMatch = line.match(/^[\s]*\d+[.)]\s+(.*)/);
+    const listMatch = parseListLine(line, i);
     const headingMatch = line.match(/^(#{1,4})\s+(.*)/);
     const bqMatch = line.match(/^>\s?(.*)/);
     const hrMatch = /^\s*(---+|\*\*\*+|___+)\s*$/.test(line);
@@ -1170,15 +1253,17 @@ export function renderSimpleMarkdown(text: string) {
             {renderInline(headingMatch[2]!, `h-${i}`)}
           </Tag>,
         );
-      } else if (ulMatch) {
-        if (listType !== "ul") flushList();
-        listType = "ul";
-        listItems.push(<li key={`li-${i}`}>{renderInline(ulMatch[1]!, `li-${i}`)}</li>);
-      } else if (olMatch) {
-        if (listType !== "ol") flushList();
-        listType = "ol";
-        listItems.push(<li key={`li-${i}`}>{renderInline(olMatch[1]!, `li-${i}`)}</li>);
+      } else if (listMatch) {
+        listTokens.push(listMatch);
       } else {
+        // 列表项/子列表之间的空行只影响松紧，不应把一个列表切成多个从 1 开始的列表。
+        if (
+          line.trim() === "" &&
+          listTokens.length > 0 &&
+          nextNonBlankLineIsList(i)
+        ) {
+          continue;
+        }
         flushList();
         const trimmed = line.trim();
         const standaloneLink = parseStandaloneLink(trimmed);

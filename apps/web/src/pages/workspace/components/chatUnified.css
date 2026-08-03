@@ -181,6 +181,8 @@
 .u-scope .chat-markdown-body { min-width: 0; max-width: 100%; }
 .u-scope .chat-markdown-inline,
 .u-scope .chat-link { overflow-wrap: anywhere; word-break: break-word; }
+.u-scope .chat-list { margin: 4px 0 4px 16px; padding-left: 0; }
+.u-scope .chat-list .chat-list { margin: 2px 0; padding-left: 20px; }
 
 /* 命令卡 body:代码块 + 输出块,各自限高,溢出滚动 */
 .u-scope .u-card-bd--cmd { display: flex; flex-direction: column; gap: 6px; }

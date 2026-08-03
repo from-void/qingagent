@@ -607,6 +607,21 @@ export function updateToolCallInChatHistory(
 }
 
 /**
+ * 审阅建议只通过 toolCallUpdated 帧维护前端候选映射，不保证在聊天正文里有 toolCall part。
+ * 这类合成 tool call 的终态同步应尽力而为，缺席不代表协议破绽。
+ */
+export function updateToolCallInChatHistoryIfPresent(
+  state: SessionState,
+  messageId: string,
+  toolCallId: string,
+  spec: import("@qingagent/contract-ts").ToolCallSpec,
+): boolean {
+  const msg = state.chatHistory.find((message) => message.id === messageId);
+  if (!msg) return false;
+  return replaceToolCallPartInMessage(msg, { kind: "toolCall", data: spec });
+}
+
+/**
  * 把审阅提交终态写回原 patchSummary，而不是只依赖本次页面内 reducer。
  * chatHistory 会随 thread metadata 持久化，因此 reload 后仍能区分“已写入”与
  * “冲突回滚”；同时 fail-closed，迟到的失败结算不得覆盖已确认成功的摘要。

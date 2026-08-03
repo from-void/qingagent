@@ -47,6 +47,14 @@ function paragraph(blockId: string, value: string): PmBlockNode {
   };
 }
 
+function heading(blockId: string, value: string): PmBlockNode {
+  return {
+    type: "heading",
+    attrs: { blockId, level: 1 },
+    content: [text(value)],
+  };
+}
+
 function doc(content: PmBlockNode[]): PmDoc {
   return {
     type: "doc",
@@ -285,6 +293,54 @@ afterEach(() => {
 });
 
 describe("commitReviewGroups", () => {
+  it("提交单处 H1 标题候选会写入正文，titlePinned 元标题保持不变且不报伪缺失", async () => {
+    const state = createSession("commit-pinned-h1-title");
+    const base = doc([
+      heading("title-block", "晚灯书屋速写—r81A席乙"),
+      paragraph("body-block", "正文保持不变。"),
+    ]);
+    const draft = doc([
+      heading("title-block", "晚灯书屋"),
+      paragraph("body-block", "正文保持不变。"),
+    ]);
+    state.title = "晚灯书屋速写—r81A席乙";
+    state.titlePinned = true;
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+    state.chatHistory.push({
+      id: "msg-review-v1",
+      role: { kind: "agent" },
+      ts: "2026-08-03T08:00:42.000Z",
+      parts: [],
+      chips: null,
+    });
+    await seedDocumentRow(state);
+    const hunks = await seedReviewRound(state, base, draft);
+    const historyWarning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunks[0]!.reviewBatchId ?? hunks[0]!.hunkId],
+    }));
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      anchor: { blockId: "title-block" },
+      beforeText: "速写—r81A席乙",
+      afterText: "",
+    });
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(docText(state.doc)).toBe("晚灯书屋\n正文保持不变。");
+    expect(state.title).toBe("晚灯书屋速写—r81A席乙");
+    expect(docText((await documentRepo.load(state.docId))?.pmDoc)).toBe(
+      "晚灯书屋\n正文保持不变。",
+    );
+    expect(historyWarning).not.toHaveBeenCalledWith(
+      "updateToolCallInChatHistory: toolCall part not found",
+      expect.anything(),
+    );
+  });
+
   it("连续三轮大候选全部应用均基于最新落库版本写入权威候选", async () => {
     const state = createSession("three-large-apply-all-rounds");
     const initial = doc(

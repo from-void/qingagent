@@ -19,7 +19,7 @@ import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 import {
   updatePatchSummaryOutcomeInChatHistory,
-  updateToolCallInChatHistory,
+  updateToolCallInChatHistoryIfPresent,
 } from "../session/sessionState.js";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
@@ -251,7 +251,7 @@ function suggestionPersistenceFailedFrame(
     kind: "failed",
     data: { retriable: true, reason: SUGGESTION_PERSIST_FAILURE_MESSAGE },
   });
-  updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
+  updateToolCallInChatHistoryIfPresent(state, record.messageId, record.suggestion.id, spec);
   return toolCallUpdated(record.messageId, record.suggestion.id, spec);
 }
 
@@ -288,7 +288,7 @@ async function* settleResolvedReviewRecords(
     }
     const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: terminalStatus });
     yield toolCallUpdated(record.messageId, record.suggestion.id, spec);
-    updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
+    updateToolCallInChatHistoryIfPresent(state, record.messageId, record.suggestion.id, spec);
     record.suggestion = nextSuggestion;
     deleteSettledRecord(state, record);
   }
@@ -333,7 +333,7 @@ async function* settleUnappliedReviewRecords(
       }
       const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: "rejected" });
       yield toolCallUpdated(record.messageId, id, spec);
-      updateToolCallInChatHistory(state, record.messageId, id, spec);
+      updateToolCallInChatHistoryIfPresent(state, record.messageId, id, spec);
       record.suggestion = nextSuggestion;
       deleteSettledRecord(state, record);
       continue;
@@ -359,7 +359,7 @@ async function* settleUnappliedReviewRecords(
       data: { retriable: false, reason: conflict.message },
     });
     yield toolCallUpdated(record.messageId, id, spec);
-    updateToolCallInChatHistory(state, record.messageId, id, spec);
+    updateToolCallInChatHistoryIfPresent(state, record.messageId, id, spec);
     record.suggestion = nextSuggestion;
     deleteSettledRecord(state, record);
   }
@@ -487,7 +487,7 @@ export async function* updatePatchVerdict(
     state.suggestions.set(id, suggestionRecord);
     const spec = buildSuggestionToolCallSpec(suggestion, status);
     yield toolCallUpdated(suggestionRecord.messageId, id, spec);
-    updateToolCallInChatHistory(state, suggestionRecord.messageId, id, spec);
+    updateToolCallInChatHistoryIfPresent(state, suggestionRecord.messageId, id, spec);
   }
 }
 

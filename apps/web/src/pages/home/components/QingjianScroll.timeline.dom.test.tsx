@@ -174,6 +174,13 @@ describe("QingjianScroll 时间轴身份与日期", () => {
     expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 
+  it("新建卡位于首屏时浮钮仍保持可点击显示态", () => {
+    const fab = host.querySelector<HTMLButtonElement>(".qj-new-fab")!;
+
+    expect(fab.classList.contains("qj-show")).toBe(true);
+    expect(fab.tabIndex).toBe(0);
+  });
+
   it("会话数据更新重建布局后保留并钳制当前长卷位置", async () => {
     const scroller = host.querySelector<HTMLElement>(".qj-scroll")!;
     const inner = host.querySelector<HTMLElement>(".qj-inner")!;
@@ -303,9 +310,12 @@ function mockTimelineGeometry(): void {
   const progress = host.querySelector<HTMLElement>(".qj-dock-prog")!;
   Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 400 });
   Object.defineProperty(inner, "scrollWidth", { configurable: true, value: 2_000 });
+  scroller.getBoundingClientRect = () => domRect(0, 0, 400, 600);
   inner.getBoundingClientRect = () => domRect(0, 0, 2_000, 600);
   host.querySelector<HTMLElement>(".qj-stage")!.getBoundingClientRect =
     () => domRect(0, 0, 2_000, 600);
+  host.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]')!.getBoundingClientRect =
+    () => domRect(64, 100, 320, 380);
   dock.getBoundingClientRect = () => domRect(0, 0, 100, 40);
   progress.getBoundingClientRect = () => domRect(0, 0, 100, 20);
 }

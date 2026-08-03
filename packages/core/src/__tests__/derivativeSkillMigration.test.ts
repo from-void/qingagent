@@ -97,7 +97,11 @@ async function motherSkillBody(): Promise<string> {
  * 母技能正文只在聊天侧 `skill()` 路径出现,这里一并拼进来做全量覆盖核对。
  * 共用要点(SHARED_LEGACY_POINTS)全部由系统提示词的硬触发路由段承载,不依赖母技能正文。
  */
-async function assembleAgentQuery(dtype: "gzh" | "xhs" | "translate", templateId: string): Promise<string> {
+async function assembleAgentQuery(
+  dtype: "gzh" | "xhs" | "translate",
+  templateId: string,
+  privatePrompt = "补充要求原样保留",
+): Promise<string> {
   await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
   const meta = await createDerivativeDoc({
     threadId: "thread",
@@ -105,7 +109,7 @@ async function assembleAgentQuery(dtype: "gzh" | "xhs" | "translate", templateId
     dtype,
     templateId,
     ...(dtype === "translate" ? { targetLang: "目标语言" } : {}),
-    privatePrompt: "补充要求原样保留",
+    privatePrompt,
   });
   const brief = (await derivativeBriefTool.execute!(
     { derivativeDocId: meta.docId },
@@ -155,6 +159,18 @@ describe("衍生稿母子技能迁移对比", () => {
     }
     const template = await getStyleTemplate("xhs-recommend");
     expect(assembled).toContain(template!.prompt);
+  });
+
+  it.each([
+    "结尾给出 3 到 5 个相关话题标签",
+    "文末只保留 3 个话题标签",
+    "话题标签最多四个",
+  ])("小红书数量约束提示词回归：%s", async (privatePrompt) => {
+    const assembled = await assembleAgentQuery("xhs", "xhs-recommend", privatePrompt);
+    expect(assembled).toContain(privatePrompt);
+    expect(assembled).toMatch(/显式数量约束逐字服从/);
+    expect(assembled).toMatch(/话题标签默认\s*3-5\s*个/);
+    expect(assembled).toMatch(/不得超过用户显式给出的标签数量上限/);
   });
 
   it("译文新装配覆盖旧版全部纪律要点", async () => {

@@ -246,6 +246,32 @@ describe("derivative Agent tools", () => {
     expect((await getDerivativeDocument(meta.docId))?.docVersion).toBe(1);
   });
 
+  it("generate_derivative 提交小红书稿前按补充要求裁掉超量话题标签", async () => {
+    await documentRepo.save(
+      documentInput("main", { threadId: "thread", docVersion: 1 }),
+    );
+    const meta = await createDerivativeDoc({
+      threadId: "thread",
+      sourceDocId: "main",
+      dtype: "xhs",
+      templateId: "xhs-recommend",
+      privatePrompt: "结尾给出 3 到 5 个相关话题标签",
+    });
+
+    await expect(runGenerate(
+      {
+        derivativeDocId: meta.docId,
+        qingml: "<h1>标题</h1><p>正文。</p><p>#一 #二 #三 #四 #五 #六 #七</p>",
+      },
+      toolContext("thread"),
+    )).resolves.toMatchObject({ ok: true, docVersion: 1 });
+
+    const stored = JSON.stringify((await getDerivativeDocument(meta.docId))?.pmDoc);
+    expect(stored).toContain("#五");
+    expect(stored).not.toContain("#六");
+    expect(stored).not.toContain("#七");
+  });
+
   it("CAS 未命中不插版本、不盖生成章", async () => {
     const execute = vi
       .fn()

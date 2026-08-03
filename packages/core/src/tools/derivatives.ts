@@ -5,6 +5,7 @@ import {
   getStablePmJson,
   pmToAiIr,
   pmToPlainText,
+  type AiBlock,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import { z } from "zod";
@@ -26,6 +27,10 @@ import {
   type TurnWriteGuardAssertion,
 } from "../utils/turnWriteGuard.js";
 import { ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY } from "../utils/activeDerivativeTarget.js";
+import {
+  capXhsTopicTags,
+  resolveXhsTopicTagLimit,
+} from "../derivatives/xhsTopicTags.js";
 
 type TransactionClient = Parameters<Parameters<typeof withTransaction>[0]>[0];
 
@@ -164,6 +169,10 @@ export interface DerivativeCommitGuard {
   writeGuard?: TurnWriteGuardAssertion;
 }
 
+export interface DerivativeContentLimits {
+  maxTopicTags?: number;
+}
+
 function assertDerivativeCommitAllowed(
   guard: Pick<DerivativeCommitGuard, "abortSignal" | "writeGuard">,
 ): void {
@@ -233,10 +242,14 @@ export async function commitDerivativeQingml(
   sessionId: string,
   qingml: string,
   guard: DerivativeCommitGuard,
+  contentLimits: DerivativeContentLimits = {},
 ): Promise<CommitDerivativeQingmlResult> {
   let compiled;
   try {
     const parsed = parseAiDocumentFromQingml(qingml);
+    if (contentLimits.maxTopicTags !== undefined) {
+      capXhsTopicTags(parsed.document.blocks as AiBlock[], contentLimits.maxTopicTags);
+    }
     compiled = await compileAiDocumentWithBlockRetry(parsed.document, undefined, 0);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -275,7 +288,9 @@ export const generateDerivativeTool = createTool({
       expectedDocVersion: startingDocument.docVersion,
       abortSignal: context?.abortSignal,
       writeGuard,
-    });
+    }, meta.dtype === "xhs"
+      ? { maxTopicTags: resolveXhsTopicTagLimit(meta.privatePrompt) }
+      : undefined);
     // 工具协议行为零变化：agent 流按落库元数据补发 finished 帧，不扩展工具 output。
     const { generatedAt: _generatedAt, ...toolResult } = result;
     return toolResult;

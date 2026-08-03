@@ -81,7 +81,10 @@ import {
 import { logClientEvent } from "../data/clientLog";
 import { newClientMessageId } from "../data/clientMessageId";
 import { cloneViewSections } from "../data/cloneViewDoc";
-import { installAnnotationGroupDecorations } from "../data/annotationDecorations";
+import {
+  installAnnotationGroupDecorations,
+  updateAnnotationGroupDecorations,
+} from "../data/annotationDecorations";
 import { deriveDocDimensions } from "../data/docDimensions";
 import {
   buildAttachFolderCommand,
@@ -638,18 +641,27 @@ export function useWorkspacePageController() {
   const showToast = toast.show;
   useEffect(() => {
     if (!tiptapEditor || tiptapEditor.isDestroyed) return;
+    const current = stateRef.current;
     return installAnnotationGroupDecorations(
       tiptapEditor,
-      state.docState.kind === "pendingReview" ? [] : state.annotationGroups,
+      current.docState.kind === "pendingReview" ? [] : current.annotationGroups,
       (groups, unlocatedGroupCount) => {
         dispatch({ kind: "annotationGroupsChanged", groups });
         if (unlocatedGroupCount > 0) {
           showToast(`${unlocatedGroupCount}处因文档已改动未能定位`);
         }
       },
+      current.previewGroups,
+    );
+  }, [showToast, tiptapEditor]);
+  useEffect(() => {
+    if (!tiptapEditor || tiptapEditor.isDestroyed) return;
+    updateAnnotationGroupDecorations(
+      tiptapEditor,
+      state.docState.kind === "pendingReview" ? [] : state.annotationGroups,
       state.previewGroups,
     );
-  }, [showToast, state.annotationGroups, state.docState.kind, state.previewGroups, tiptapEditor]);
+  }, [state.annotationGroups, state.docState.kind, state.previewGroups, tiptapEditor]);
   const dispatchAnnotationGroups = useCallback((groups: AnnotationGroup[]) => {
     dispatch({ kind: "annotationGroupsChanged", groups });
   }, []);

@@ -82,8 +82,14 @@ export function mapAnnotationGroupsThroughTransaction(
 
 type AnnotationPluginState = {
   groups: readonly AnnotationGroup[];
+  previewGroups: readonly AnnotationPreviewDecorationGroup[];
   revision: number;
   unlocatedGroupCount: number;
+};
+
+type AnnotationDecorationSync = {
+  groups: readonly AnnotationGroup[];
+  previewGroups: readonly AnnotationPreviewDecorationGroup[];
 };
 
 export interface AnnotationPreviewDecorationGroup {
@@ -111,13 +117,29 @@ export function installAnnotationGroupDecorations(
   editor.registerPlugin(new Plugin({
     key,
     state: {
-      init: (): AnnotationPluginState => ({ groups, revision: 0, unlocatedGroupCount: 0 }),
+      init: (): AnnotationPluginState => ({
+        groups,
+        previewGroups,
+        revision: 0,
+        unlocatedGroupCount: 0,
+      }),
       apply(transaction, value): AnnotationPluginState {
+        const synced = transaction.getMeta(key) as AnnotationDecorationSync | undefined;
+        if (synced) {
+          return {
+            groups: synced.groups,
+            previewGroups: synced.previewGroups,
+            // 权威换代不是本地正文漂移，不回调 annotationGroupsChanged 形成状态环。
+            revision: value.revision,
+            unlocatedGroupCount: 0,
+          };
+        }
         const nextGroups = mapAnnotationGroupsThroughTransaction(value.groups, transaction);
         return nextGroups === value.groups
           ? value
           : {
               groups: nextGroups,
+              previewGroups: value.previewGroups,
               revision: value.revision + 1,
               unlocatedGroupCount: Math.max(0, value.groups.length - nextGroups.length),
             };
@@ -128,7 +150,7 @@ export function installAnnotationGroupDecorations(
         const pluginState = key.getState(state) as AnnotationPluginState | undefined;
         const renderGroups: RenderAnnotationGroup[] = [
           ...(pluginState?.groups ?? groups),
-          ...previewGroups.map((group) => ({
+          ...(pluginState?.previewGroups ?? previewGroups).map((group) => ({
             id: group.previewId,
             status: "previewing" as const,
             anchors: group.anchors,
@@ -185,8 +207,16 @@ export function installAnnotationGroupDecorations(
           if (!pluginState || pluginState.revision === notifiedRevision) return;
           notifiedRevision = pluginState.revision;
           const nextGroups = pluginState.groups as AnnotationGroup[];
+          const revision = pluginState.revision;
           queueMicrotask(() => {
-            if (!disposed) onGroupsChange?.(nextGroups, pluginState.unlocatedGroupCount);
+            const current = key.getState(view.state) as AnnotationPluginState | undefined;
+            if (
+              !disposed
+              && current?.revision === revision
+              && current.groups === nextGroups
+            ) {
+              onGroupsChange?.(nextGroups, pluginState.unlocatedGroupCount);
+            }
           });
         },
       };
@@ -196,4 +226,21 @@ export function installAnnotationGroupDecorations(
     disposed = true;
     if (!editor.isDestroyed) editor.unregisterPlugin(key);
   };
+}
+
+/**
+ * 将服务端/React 的权威批注集合原子写进现有装饰插件。组退场与下划线退场使用
+ * 同一事务，避免正文远端替换与 effect 重装交错时留下不可交互的旧装饰。
+ */
+export function updateAnnotationGroupDecorations(
+  editor: Editor,
+  groups: readonly AnnotationGroup[],
+  previewGroups: readonly AnnotationPreviewDecorationGroup[] = [],
+): void {
+  if (editor.isDestroyed || !key.getState(editor.state)) return;
+  editor.view.dispatch(
+    editor.state.tr
+      .setMeta(key, { groups, previewGroups } satisfies AnnotationDecorationSync)
+      .setMeta("addToHistory", false),
+  );
 }

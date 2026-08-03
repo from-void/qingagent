@@ -12,7 +12,10 @@ import {
   buildAnnotationSeveritySummary,
   resolveAnnotationSuggestion,
 } from "../../components/AnnotationCarousel";
-import { installAnnotationGroupDecorations } from "../../data/annotationDecorations";
+import {
+  installAnnotationGroupDecorations,
+  updateAnnotationGroupDecorations,
+} from "../../data/annotationDecorations";
 import { initialWorkspaceState, workspaceReducer } from "../../data/workspaceState";
 
 const groups: AnnotationGroup[] = [
@@ -111,6 +114,103 @@ describe("AnnotationCarousel hover card", () => {
     } finally {
       window.matchMedia = originalMatchMedia;
     }
+  });
+
+  it("提交权威组剔除失位项时同步清掉僵尸锚点，存活组仍可点击开卡", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const committingGroups: AnnotationGroup[] = [
+      {
+        ...groups[0]!,
+        id: "unlocated-after-commit",
+        anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+      },
+      {
+        ...groups[1]!,
+        id: "located-after-commit",
+        anchors: [{ ...groups[1]!.anchors[0]!, quote: "乙组" }],
+      },
+    ];
+
+    function Harness() {
+      const [currentGroups, setCurrentGroups] = useState(committingGroups);
+      useEffect(() => installAnnotationGroupDecorations(editor!, []), []);
+      useEffect(() => {
+        updateAnnotationGroupDecorations(editor!, currentGroups);
+      }, [currentGroups]);
+      return <>
+        <button
+          data-testid="settle-commit"
+          onClick={() => setCurrentGroups([committingGroups[1]!])}
+        >
+          提交
+        </button>
+        <AnnotationCarousel
+          groups={currentGroups}
+          editorDom={editor!.view.dom}
+          onAccept={() => true}
+          onIgnore={() => undefined}
+        />
+      </>;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    expect(editorHost!.querySelector('[data-annotation-group="unlocated-after-commit"]'))
+      .not.toBeNull();
+    expect(editorHost!.querySelector('[data-annotation-group="located-after-commit"]'))
+      .not.toBeNull();
+
+    await act(async () => {
+      host!.querySelector<HTMLButtonElement>('[data-testid="settle-commit"]')!.click();
+    });
+
+    expect(editorHost!.querySelector('[data-annotation-group="unlocated-after-commit"]'))
+      .toBeNull();
+    const locatedAnchor = editorHost!.querySelector<HTMLElement>(
+      '[data-annotation-group="located-after-commit"]',
+    );
+    expect(locatedAnchor).not.toBeNull();
+    await act(async () => {
+      locatedAnchor!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId)
+      .toBe("located-after-commit");
+    expect(host!.textContent).toContain("表述重复");
+  });
+
+  it("提交权威重定位先到时丢弃排队中的本地失位回调，不让旧空集合复活", async () => {
+    createEditor();
+    const onGroupsChange = vi.fn();
+    const original: AnnotationGroup = {
+      ...groups[0]!,
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    };
+    const uninstall = installAnnotationGroupDecorations(
+      editor!,
+      [original],
+      onGroupsChange,
+    );
+
+    editor!.commands.insertContentAt(2, "新");
+    updateAnnotationGroupDecorations(editor!, [{
+      ...original,
+      anchors: [{
+        ...original.anchors[0]!,
+        pmFrom: 1,
+        pmTo: 4,
+        quote: "甲新组",
+      }],
+    }]);
+    await Promise.resolve();
+
+    expect(onGroupsChange).not.toHaveBeenCalled();
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.textContent)
+      .toBe("甲新组");
+    uninstall();
   });
 
   it("锚内漂移一字时多锚组保留未受影响的存活锚点", async () => {

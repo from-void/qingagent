@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import type { BridgeFrame, LegacySection, ToolCallSpec } from "@qingagent/contract-ts";
-import { deleteDocumentFamily, documentDraftRepo } from "@qingagent/db";
+import {
+  deleteDocumentFamily,
+  documentDraftRepo,
+  documentRepo,
+} from "@qingagent/db";
 import { legacySectionsToPm, pmToLegacySections } from "@qingagent/pm-schema";
 
 // 回归:上游 LLM 调用最终失败(网络/超时/服务异常,重试耗尽)时,Mastra 把错误作为
@@ -1420,6 +1424,187 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
         (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
       )).toBe(false);
     } finally {
+      await deleteDocumentFamily(sessionId);
+    }
+  });
+
+  it("显式停止发生在完整 writeDraft 之后仍提交停止前已可见正文", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { USER_ABORT_REASON } = await import("../agent-run/streamErrors.js");
+    const sessionId = "user-stop-after-visible-write-draft";
+    await deleteDocumentFamily(sessionId);
+    const state = createSession(sessionId);
+    const abortController = new AbortController();
+    const requestContext = new RequestContext([
+      ["abortSignal", abortController.signal],
+    ] as never);
+    const candidateSections: LegacySection[] = [{
+      kind: "p",
+      data: { text: "这是停止前已经完整显示的九百九十八字正文" },
+    }];
+    const candidate = legacySectionsToPm(candidateSections as never);
+    state.docDraftCandidateDoc = candidate;
+    state.docDraftCandidateSections =
+      pmToLegacySections(candidate) as unknown as LegacySection[];
+
+    async function* writeDraftThenUserStop(): AsyncGenerator<unknown> {
+      const args = {
+        title: "测试",
+        outline: "大纲",
+        lengthTarget: 800,
+      };
+      yield {
+        type: "tool-call",
+        payload: { toolName: "writeDraft", toolCallId: "write-before-stop", args },
+      };
+      yield {
+        type: "tool-result",
+        payload: {
+          toolName: "writeDraft",
+          toolCallId: "write-before-stop",
+          args,
+          result: {
+            ok: true,
+            blockCount: 1,
+            wordCount: 998,
+            maxLength: 880,
+            lengthStatus: "above_hard_max",
+          },
+        },
+      };
+      abortController.abort(USER_ABORT_REASON);
+    }
+
+    try {
+      const { frames, result } = await collectFramesAndReturn(
+        processAgentStream(writeDraftThenUserStop(), {
+          state,
+          agentMessageId: "agent-before-user-stop",
+          streamId: "stream-before-user-stop",
+          runId: "run-before-user-stop",
+          abortController,
+          requestContext,
+        }),
+      );
+
+      expect(result.streamWasUserAborted).toBe(true);
+      expect(state.docVersion).toBe(1);
+      expect(state.doc).toEqual(candidate);
+      expect(state.docState).toEqual({ kind: "editing" });
+      await expect(documentRepo.load(state.docId)).resolves.toMatchObject({
+        docVersion: 1,
+        pmDoc: candidate,
+      });
+      expect(await documentDraftRepo.load(state.docId)).toBeNull();
+      expect(frames.some((frame) =>
+        frame.kind === "documentSnapshotWritten" ||
+        (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
+      )).toBe(true);
+      expect(frames).not.toContainEqual({
+        kind: "docStateChanged",
+        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      });
+    } finally {
+      await deleteDocumentFamily(sessionId);
+    }
+  });
+
+  it("超字数自动精简有总时限，持续 reasoning 也不能无限续命", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { USER_ABORT_REASON } = await import("../agent-run/streamErrors.js");
+    const sessionId = "auto-length-revision-bounded";
+    await deleteDocumentFamily(sessionId);
+    const state = createSession(sessionId);
+    const abortController = new AbortController();
+    const requestContext = new RequestContext([
+      ["abortSignal", abortController.signal],
+    ] as never);
+    const candidateSections: LegacySection[] = [{
+      kind: "p",
+      data: { text: "这是已经完整显示、等待自动精简的九百九十八字正文" },
+    }];
+    const candidate = legacySectionsToPm(candidateSections as never);
+    state.docDraftCandidateDoc = candidate;
+    state.docDraftCandidateSections =
+      pmToLegacySections(candidate) as unknown as LegacySection[];
+
+    async function* writeDraftThenReasonForever(): AsyncGenerator<unknown> {
+      const args = {
+        title: "测试",
+        outline: "大纲",
+        lengthTarget: 800,
+      };
+      yield {
+        type: "tool-call",
+        payload: { toolName: "writeDraft", toolCallId: "write-before-autoslim", args },
+      };
+      yield {
+        type: "tool-result",
+        payload: {
+          toolName: "writeDraft",
+          toolCallId: "write-before-autoslim",
+          args,
+          result: {
+            ok: true,
+            blockCount: 1,
+            wordCount: 998,
+            maxLength: 880,
+            lengthStatus: "above_hard_max",
+          },
+        },
+      };
+      yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+      yield { type: "step-start", payload: {} };
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        yield { type: "reasoning-delta", payload: { text: "继续思考如何精简" } };
+      }
+    }
+
+    let done = false;
+    const resultPromise = collectFramesAndReturn(
+      processAgentStream(writeDraftThenReasonForever(), {
+        state,
+        agentMessageId: "agent-auto-length-revision",
+        streamId: "stream-auto-length-revision",
+        runId: "run-auto-length-revision",
+        abortController,
+        requestContext,
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+        automaticLengthRevisionTimeoutMs: 20,
+      }),
+    ).then((result) => {
+      done = true;
+      return result;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(21);
+      expect(done).toBe(true);
+      const { frames, result } = await resultPromise;
+      expect(result.streamWasUserAborted).toBe(false);
+      expect(state.docVersion).toBe(1);
+      expect(state.doc).toEqual(candidate);
+      expect(state.docState).toEqual({ kind: "editing" });
+      await expect(documentRepo.load(state.docId)).resolves.toMatchObject({
+        docVersion: 1,
+        pmDoc: candidate,
+      });
+      expect(frames.some((frame) =>
+        frame.kind === "documentSnapshotWritten" ||
+        (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
+      )).toBe(true);
+      expect(textBodies(frames)).toContain(
+        "自动精简已超时，已保留精简前的完整草稿；需要的话可以稍后再精简。",
+      );
+    } finally {
+      if (!done) {
+        abortController.abort(USER_ABORT_REASON);
+        await vi.runAllTimersAsync();
+        await resultPromise;
+      }
       await deleteDocumentFamily(sessionId);
     }
   });

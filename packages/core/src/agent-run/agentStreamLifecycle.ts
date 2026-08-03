@@ -57,7 +57,12 @@ export async function* handleLifecycleEvent(
       });
       return "handled";
     }
-    if (idleTimeout) context.sawIdleTimeout = true;
+    if (idleTimeout) {
+      context.sawIdleTimeout = true;
+      if (chunk.payload.absoluteTimeoutKind === "automatic_length_revision") {
+        context.sawAutomaticLengthRevisionTimeout = true;
+      }
+    }
     const errorDetails = streamErrorDetails(chunk);
     const transient = isTransientStreamErrorChunk(chunk);
     logger.error("LLM stream error chunk", {

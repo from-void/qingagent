@@ -35,6 +35,15 @@ export const AGENT_TOOL_HEARTBEAT_TIMEOUT_MS = Math.max(
   Number(process.env.QINGAGENT_TOOL_HEARTBEAT_TIMEOUT_MS) || 5 * 60_000,
 );
 
+// writeDraft 返回 above_hard_max 后，外层 agent 会按系统提示自动执行一次精简。
+// 这段是产品自动收尾，不应像开放式 agent 任务一样被持续 reasoning 无限续命；
+// 给整段（含 readDiff/readDraft/editDraft/复核）一个绝对上限，超时仍沿同一
+// AbortSignal 收口，并由 finalize 保住已经完整产出的首稿。
+export const AGENT_AUTOMATIC_LENGTH_REVISION_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.QINGAGENT_AUTOMATIC_LENGTH_REVISION_TIMEOUT_MS) || 90_000,
+);
+
 export const TURN_RETRY_LIMIT = 2;
 export const MAX_CONSECUTIVE_ASKUSER_SUSPENDS = 2;
 export const ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS = 5000;

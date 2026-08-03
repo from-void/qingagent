@@ -194,9 +194,13 @@ export async function* finalizeAgentStream(
       state.docDraftBaseDoc ?? currentPmDoc(state),
     );
 
+  // idle timeout 需要保住已经生成的可用资产；用户停止/新消息抢占则必须丢弃旧轮候选。
   if (
     !context.wasSuspended &&
-    (!abortController.signal.aborted || hasUsableDraftCandidateFromThisTurn)
+    (
+      !abortController.signal.aborted ||
+      (context.sawIdleTimeout && hasUsableDraftCandidateFromThisTurn)
+    )
   ) {
     const settled = yield* settleDraftCandidate({
       state,

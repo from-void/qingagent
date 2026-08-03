@@ -1363,6 +1363,67 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }
   });
 
+  it("新消息抢占发生在有效 editDraft 之后也不结算旧轮候选", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const sessionId = "preempt-after-valid-edit-draft";
+    await deleteDocumentFamily(sessionId);
+    const state = createSession(sessionId);
+    const abortController = new AbortController();
+    const candidateSections: LegacySection[] = [{
+      kind: "p",
+      data: { text: "这段旧轮候选不应在新消息到达后落地" },
+    }];
+    const candidate = legacySectionsToPm(candidateSections as never);
+    state.docDraftCandidateDoc = candidate;
+    state.docDraftCandidateSections =
+      pmToLegacySections(candidate) as unknown as LegacySection[];
+
+    async function* editDraftThenPreempt(): AsyncGenerator<unknown> {
+      const args = {
+        ops: [{ action: "replaceText", find: "旧文", replace: "新文" }],
+      };
+      yield {
+        type: "tool-call",
+        payload: { toolName: "editDraft", toolCallId: "edit-before-preempt", args },
+      };
+      yield {
+        type: "tool-result",
+        payload: {
+          toolName: "editDraft",
+          toolCallId: "edit-before-preempt",
+          args,
+          result: { ok: true, applied: ["block-a"], changed: true, hunkCount: 1 },
+        },
+      };
+      abortController.abort("preemptedByNewMessage");
+    }
+
+    try {
+      const { frames, result } = await collectFramesAndReturn(
+        processAgentStream(editDraftThenPreempt(), {
+          state,
+          agentMessageId: "agent-before-preempt",
+          streamId: "stream-before-preempt",
+          runId: "run-before-preempt",
+          abortController,
+        }),
+      );
+
+      expect(result.streamWasUserAborted).toBe(true);
+      expect(state.docVersion).toBe(0);
+      expect(state.docDraftCandidateDoc).toBeNull();
+      expect(state.suggestions.size).toBe(0);
+      expect(await documentDraftRepo.load(state.docId)).toBeNull();
+      expect(frames.some((frame) =>
+        frame.kind === "documentSnapshotWritten" ||
+        frame.kind === "docDiffReady" ||
+        (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
+      )).toBe(false);
+    } finally {
+      await deleteDocumentFamily(sessionId);
+    }
+  });
+
   it("writeDraft 零候选便 idle 超时时仍 clear 并明确提示未产出可用草稿", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const { IDLE_TIMEOUT_ABORT_REASON } = await import("../agent-run/streamErrors.js");

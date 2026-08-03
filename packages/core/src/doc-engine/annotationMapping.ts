@@ -9,10 +9,17 @@ import {
 } from "@qingagent/contract-ts";
 import type { PmDoc, PmInlineNode, PmStep } from "@qingagent/pm-schema";
 import { Mapping, StepMap } from "@tiptap/pm/transform";
-import { projectInlineNodeText } from "../utils/pmTextBlocks.js";
+import {
+  collectTopLevelTextBlocks,
+  projectInlineNodeText,
+  type TextBlockRef,
+} from "../utils/pmTextBlocks.js";
 import { diffHunkToStep } from "./draftReviewSuggestions.js";
 import { buildDraftDiff } from "./proposalDiff.js";
-import { normalizeAnnotationQuote } from "./textEditOps.js";
+import {
+  findAnnotationQuoteMatches,
+  normalizeAnnotationQuote,
+} from "./textEditOps.js";
 
 function nodeSize(node: unknown): number {
   if (!node || typeof node !== "object") return 0;
@@ -182,6 +189,55 @@ export type MappedAnnotationGroups = {
   unlocatedGroupCount: number;
 };
 
+function annotationAnchorRangeKey(anchor: SuggestionAnchor): string {
+  return `${anchor.blockId}\u0000${anchor.pmFrom}\u0000${anchor.pmTo}`;
+}
+
+function blockMatchesAnchor(block: TextBlockRef, blockId: string): boolean {
+  return block.blockId === blockId
+    || block.topBlockId === blockId
+    || block.ancestorBlockIds.includes(blockId);
+}
+
+/**
+ * 大段/整块 replace 会把块内坐标压到替换边界，但原引文可能仍留在终稿。
+ * 先限定原 blockId，再复用批注创建侧的“精确优先、空白/引号归一化兜底”匹配；
+ * 同组重复引文按原锚顺序逐一占用，避免三处同短语全部吸到同一命中。
+ */
+function relocateAnnotationAnchor(
+  anchor: SuggestionAnchor,
+  finalBlocks: readonly TextBlockRef[],
+  occupiedRanges: Set<string>,
+): SuggestionAnchor | null {
+  const anchoredBlocks = finalBlocks.filter((block) =>
+    blockMatchesAnchor(block, anchor.blockId)
+  );
+  const searchBlocks = anchoredBlocks.length > 0 ? anchoredBlocks : finalBlocks;
+  const matches = findAnnotationQuoteMatches(
+    searchBlocks,
+    anchor.quote,
+    true,
+  ).filter((match) => !occupiedRanges.has(annotationAnchorRangeKey({
+    ...anchor,
+    blockId: match.blockId,
+    pmFrom: match.pmFrom,
+    pmTo: match.pmTo,
+  })));
+
+  // 原 blockId 已消失时只接受全文唯一命中，不跨块猜测重复短语属于哪一处。
+  if (anchoredBlocks.length === 0 && matches.length !== 1) return null;
+  const match = matches[0];
+  if (!match) return null;
+  return {
+    ...anchor,
+    blockId: match.blockId,
+    pmFrom: match.pmFrom,
+    pmTo: match.pmTo,
+    quote: match.matchText,
+    textHash: annotationTextHash(match.matchText),
+  };
+}
+
 export function mapAnnotationGroupsThroughSteps(
   groups: readonly AnnotationGroup[],
   steps: readonly PmStep[],
@@ -193,11 +249,12 @@ export function mapAnnotationGroupsThroughSteps(
   const survivingAnchorIndexes = new Map<string, number[]>();
   const invalidatedAnchorIndexes = new Map<string, number[]>();
   let unlocatedGroupCount = 0;
+  const finalBlocks = finalDoc ? collectTopLevelTextBlocks(finalDoc) : [];
   const mapped = groups.flatMap((group) => {
     const anchors: SuggestionAnchor[] = [];
     const indexes: number[] = [];
     const invalidIndexes: number[] = [];
-    group.anchors.forEach((anchor, index) => {
+    const mappedAnchors = group.anchors.map((anchor, index) => {
       let from = anchor.pmFrom;
       let to = anchor.pmTo;
       let touched = false;
@@ -228,19 +285,49 @@ export function mapAnnotationGroupsThroughSteps(
           && normalizeAnnotationQuote(mappedQuote) !== normalizeAnnotationQuote(anchor.quote)
           && annotationTextHash(mappedQuote) !== anchor.textHash;
       if (from >= to || textChanged) {
-        invalidIndexes.push(index);
-        return;
+        return { anchor, index, mapped: null };
       }
-      anchors.push({
-        ...anchor,
-        pmFrom: from,
-        pmTo: to,
-        textHash: isSensitiveReviewOrigin(group.origin)
-          ? buildSensitiveAnchorSpanKey({ blockId: anchor.blockId, pmFrom: from, pmTo: to })
-          : anchor.textHash,
-      });
-      indexes.push(index);
+      return {
+        anchor,
+        index,
+        mapped: {
+          ...anchor,
+          pmFrom: from,
+          pmTo: to,
+          ...(isSensitiveReviewOrigin(group.origin)
+            ? {
+                textHash: buildSensitiveAnchorSpanKey({
+                  blockId: anchor.blockId,
+                  pmFrom: from,
+                  pmTo: to,
+                }),
+              }
+            : finalDoc && (touched || fallbackValidation) && mappedQuote !== anchor.quote
+              ? {
+                  quote: mappedQuote,
+                  textHash: annotationTextHash(mappedQuote),
+                }
+              : { textHash: anchor.textHash }),
+        },
+      };
     });
+    const occupiedRanges = new Set(mappedAnchors.flatMap((entry) =>
+      entry.mapped ? [annotationAnchorRangeKey(entry.mapped)] : []
+    ));
+    for (const entry of mappedAnchors) {
+      const relocated = entry.mapped ?? (
+        finalDoc && !isSensitiveReviewOrigin(group.origin)
+          ? relocateAnnotationAnchor(entry.anchor, finalBlocks, occupiedRanges)
+          : null
+      );
+      if (!relocated) {
+        invalidIndexes.push(entry.index);
+        continue;
+      }
+      anchors.push(relocated);
+      indexes.push(entry.index);
+      occupiedRanges.add(annotationAnchorRangeKey(relocated));
+    }
     if (invalidIndexes.length > 0) invalidatedAnchorIndexes.set(group.id, invalidIndexes);
     // 同一问题的多个落点可以独立漂移：只忽略失效锚点，至少一个落点仍在就保留该组。
     if (anchors.length === 0) {

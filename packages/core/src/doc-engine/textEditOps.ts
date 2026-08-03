@@ -144,7 +144,7 @@ export function containsLiteralMatch(text: string, find: string): boolean {
   return findNormalizedLiteralRanges(text, find, "remove").length > 0;
 }
 
-function exactLiteralMatches(blocks: TextBlockRef[], find: string): QuoteMatch[] {
+function exactLiteralMatches(blocks: readonly TextBlockRef[], find: string): QuoteMatch[] {
   const matches: QuoteMatch[] = [];
   for (const block of blocks) {
     let index = block.text.indexOf(find);
@@ -158,7 +158,7 @@ function exactLiteralMatches(blocks: TextBlockRef[], find: string): QuoteMatch[]
 }
 
 export function findLiteralMatches(
-  blocks: TextBlockRef[],
+  blocks: readonly TextBlockRef[],
   find: string,
   all: boolean,
 ): QuoteMatch[] {
@@ -171,7 +171,7 @@ export function findLiteralMatches(
  * 全/半角与中英文引号变体做二次定位。这样不会把原本的唯一性失败放宽成猜测。
  */
 export function findAnnotationQuoteMatches(
-  blocks: TextBlockRef[],
+  blocks: readonly TextBlockRef[],
   find: string,
   all: boolean,
 ): QuoteMatch[] {

@@ -113,6 +113,80 @@ describe("annotation StepMap", () => {
     ]);
   });
 
+  it("整块重写压扁三处同引文坐标时按 blockId 与归一化引文逐一重定位，只淘汰真实消失组", () => {
+    const oldQuote = "三连 “方面”";
+    const newQuote = "三连 「方面」";
+    const baseText = `${oldQuote}；${oldQuote}；${oldQuote}；已经删除。`;
+    const finalText = `改写后：${newQuote}；${newQuote}；${newQuote}。`;
+    const finalDoc = doc([paragraph("rewrite-block", finalText)]);
+    const quoteOffsets: number[] = [];
+    for (let from = baseText.indexOf(oldQuote); from >= 0;) {
+      quoteOffsets.push(from);
+      from = baseText.indexOf(oldQuote, from + oldQuote.length);
+    }
+    const deletedOffset = baseText.indexOf("已经删除");
+    const groups: AnnotationGroup[] = [
+      {
+        id: "g-three-anchors",
+        summary: "三连方面",
+        note: "同一短语有三处命中",
+        origin: "deai",
+        status: "reviewing",
+        anchors: quoteOffsets.map((offset) =>
+          anchor("rewrite-block", offset + 1, offset + 1 + oldQuote.length, oldQuote)
+        ),
+      },
+      {
+        id: "g-really-gone",
+        summary: "真实消失",
+        note: "终稿中已不存在",
+        origin: "deai",
+        status: "reviewing",
+        anchors: [anchor(
+          "rewrite-block",
+          deletedOffset + 1,
+          deletedOffset + 1 + "已经删除".length,
+          "已经删除",
+        )],
+      },
+    ];
+    const wholeBlockReplace: PmStep = {
+      stepType: "replace",
+      from: 0,
+      to: baseText.length + 2,
+      slice: { content: [finalDoc.content[0]!], openStart: 0, openEnd: 0 },
+    };
+
+    const mapped = mapAnnotationGroupsThroughSteps(
+      groups,
+      [wholeBlockReplace],
+      finalDoc,
+    );
+    const finalOffsets: number[] = [];
+    for (let from = finalText.indexOf(newQuote); from >= 0;) {
+      finalOffsets.push(from);
+      from = finalText.indexOf(newQuote, from + newQuote.length);
+    }
+
+    expect(mapped.groups).toEqual([
+      expect.objectContaining({
+        id: "g-three-anchors",
+        anchors: finalOffsets.map((offset) =>
+          expect.objectContaining({
+            blockId: "rewrite-block",
+            pmFrom: offset + 1,
+            pmTo: offset + 1 + newQuote.length,
+            quote: newQuote,
+          })
+        ),
+      }),
+    ]);
+    expect(mapped.survivingAnchorIndexes.get("g-three-anchors")).toEqual([0, 1, 2]);
+    expect(mapped.invalidatedAnchorIndexes.has("g-three-anchors")).toBe(false);
+    expect(mapped.invalidatedAnchorIndexes.get("g-really-gone")).toEqual([0]);
+    expect(mapped.unlocatedGroupCount).toBe(1);
+  });
+
   it("单锚组全丢时给出诚实的未定位计数", () => {
     const groups: AnnotationGroup[] = [{
       id: "g-only",

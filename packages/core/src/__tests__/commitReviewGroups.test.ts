@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
+import type {
+  AnnotationGroup,
+  BridgeFrame,
+  DiffHunk,
+  DocSuggestion,
+} from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   legacySectionsToPm,
@@ -21,6 +26,7 @@ import {
   documentDraftRepo,
   documentRepo,
   getDocumentsClient,
+  insertAnnotationGroups,
   listDocumentSuggestionStatuses,
   upsertDocumentSuggestion,
 } from "@qingagent/db";
@@ -834,6 +840,87 @@ describe("commitReviewGroups", () => {
     expect(state.doc).toEqual(draft);
     expect(state.suggestions.size).toBe(0);
     expect(deriveContentState(state)).toEqual({ kind: "editing" });
+  });
+
+  it("提交整块重写时重定位三处同引文锚点，权威帧只保留可交互组", async () => {
+    const state = createSession("commit-relocates-three-annotation-anchors");
+    const oldQuote = "三连 “方面”";
+    const newQuote = "三连 「方面」";
+    const baseText = `${oldQuote}；${oldQuote}；${oldQuote}；已经删除。`;
+    const finalText = `改写后：${newQuote}；${newQuote}；${newQuote}。`;
+    const base = doc([paragraph("rewrite-block", baseText)]);
+    const draft = doc([paragraph("rewrite-block", finalText)]);
+    const quoteOffsets: number[] = [];
+    for (let from = baseText.indexOf(oldQuote); from >= 0;) {
+      quoteOffsets.push(from);
+      from = baseText.indexOf(oldQuote, from + oldQuote.length);
+    }
+    const deletedOffset = baseText.indexOf("已经删除");
+    const annotationGroups: AnnotationGroup[] = [
+      {
+        id: "g-three-anchors",
+        summary: "三连方面",
+        note: "同一短语有三处命中",
+        origin: "deai",
+        status: "reviewing",
+        anchors: quoteOffsets.map((offset, index) => ({
+          blockId: "rewrite-block",
+          pmFrom: offset + 1,
+          pmTo: offset + 1 + oldQuote.length,
+          quote: oldQuote,
+          textHash: `three-${index}`,
+        })),
+      },
+      {
+        id: "g-really-gone",
+        summary: "真实消失",
+        note: "终稿中已不存在",
+        origin: "deai",
+        status: "reviewing",
+        anchors: [{
+          blockId: "rewrite-block",
+          pmFrom: deletedOffset + 1,
+          pmTo: deletedOffset + 1 + "已经删除".length,
+          quote: "已经删除",
+          textHash: "deleted",
+        }],
+      },
+    ];
+    const hunks = await seedDiffState(state, base, draft);
+    state.annotationGroups = annotationGroups;
+    await seedDocumentRow(state);
+    await insertAnnotationGroups(state.docId, state.docVersion, annotationGroups);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [
+        ...new Set(hunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId)),
+      ],
+    }));
+    const annotationFrame = frames.find((frame) =>
+      frame.kind === "annotationGroupsReady"
+    );
+    const finalOffsets: number[] = [];
+    for (let from = finalText.indexOf(newQuote); from >= 0;) {
+      finalOffsets.push(from);
+      from = finalText.indexOf(newQuote, from + newQuote.length);
+    }
+
+    expect(annotationFrame).toEqual({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: [expect.objectContaining({
+          id: "g-three-anchors",
+          anchors: finalOffsets.map((offset) => expect.objectContaining({
+            pmFrom: offset + 1,
+            pmTo: offset + 1 + newQuote.length,
+            quote: newQuote,
+          })),
+        })],
+        replacedOrigins: ["deai"],
+      },
+    });
+    expect(state.annotationGroups.map((group) => group.id)).toEqual(["g-three-anchors"]);
+    expect(state.annotationGroups[0]?.anchors).toHaveLength(3);
   });
 
   it("只拒绝部分 review group 后重发 docDiffReady 带 rebase 后 editedDoc", async () => {

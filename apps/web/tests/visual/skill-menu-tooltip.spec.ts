@@ -28,25 +28,27 @@ test("技能菜单只为真截断描述展示完整 tooltip", async ({ page }) =
     }));
   });
 
-  const sharedRow = page.getByRole("menuitem", { name: /lark-shared/ });
-  const noteRow = page.getByRole("menuitem", { name: /lark-note/ });
-  const okrRow = page.getByRole("menuitem", { name: /lark-okr/ });
-  const attendanceRow = page.getByRole("menuitem", { name: /lark-attendance/ });
-  const calendarRow = page.getByRole("menuitem", { name: /lark-calendar/ });
+  const longSummaryRow = page.getByRole("menuitem", { name: /资料整理/ });
+  const sharedRow = page.getByRole("menuitem", { name: /飞书连接与授权/ });
+  const noteRow = page.getByRole("menuitem", { name: /飞书会议纪要/ });
+  const okrRow = page.getByRole("menuitem", { name: /飞书 OKR/ });
+  const attendanceRow = page.getByRole("menuitem", { name: /飞书考勤/ });
+  const calendarRow = page.getByRole("menuitem", { name: /飞书日历/ });
   const extraLongNameRow = page.getByRole("menuitem", { name: /skill-name-that-is-too-long/ });
+  await expect(longSummaryRow).toBeVisible();
   await expect(sharedRow).toBeVisible();
 
   const evidence = {
-    shared: await descriptionEvidence(sharedRow),
+    longSummary: await descriptionEvidence(longSummaryRow),
     note: await descriptionEvidence(noteRow),
     okr: await descriptionEvidence(okrRow),
   };
   console.log(`SKILL_MENU_REAL_LAYOUT ${JSON.stringify(evidence)}`);
 
-  expect(evidence.shared.textWidth - evidence.shared.elementWidth).toBeGreaterThan(1);
+  expect(evidence.longSummary.textWidth - evidence.longSummary.elementWidth).toBeGreaterThan(1);
   expect(evidence.okr.textWidth - evidence.okr.elementWidth).toBeLessThanOrEqual(1);
-  expect(evidence.shared.rowTitle).toBe(
-    "Use for lark-cli setup/auth tasks: auth login/status/logout, user vs bot identity, business-domain permissions (--domain, including all/docs/drive), missing scopes, revoking authorization, or handling _notice JSON.",
+  expect(evidence.longSummary.rowTitle).toBe(
+    "查询并整理完整的异常状态、上下班时间、原始记录与详细说明。",
   );
   expect(evidence.okr.rowTitle).toBeNull();
 
@@ -61,9 +63,9 @@ test("技能菜单只为真截断描述展示完整 tooltip", async ({ page }) =
   expect(extraLongName.textOverflow).toBe("ellipsis");
   expect(extraLongName.rowWidth).toBeLessThanOrEqual(extraLongName.menuWidth);
 
-  await sharedRow.hover();
+  await longSummaryRow.hover();
   const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toHaveText(evidence.shared.rowTitle!);
+  await expect(tooltip).toHaveText(evidence.longSummary.rowTitle!);
 
   await page.mouse.move(8, 8);
   await expect(tooltip).toHaveCount(0);

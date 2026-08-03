@@ -10,6 +10,15 @@ import "../../../src/pages/workspace/workspace-ink-skin.css";
 
 const skills = [
   {
+    name: "long-summary-helper",
+    label: "资料整理",
+    summary: "查询并整理完整的异常状态、上下班时间与详细说明",
+    description: "查询并整理完整的异常状态、上下班时间、原始记录与详细说明。",
+    icon: "star",
+    enabled: true,
+    userInvocable: true,
+  },
+  {
     name: "lark-shared",
     label: "lark-shared",
     summary: "Use when first setting up lark-cli,…",
@@ -17,6 +26,7 @@ const skills = [
     icon: "star",
     enabled: true,
     userInvocable: true,
+    source: "external-shared",
   },
   {
     name: "lark-note",
@@ -26,6 +36,7 @@ const skills = [
     icon: "star",
     enabled: true,
     userInvocable: true,
+    source: "external-shared",
   },
   {
     name: "lark-okr",
@@ -35,6 +46,7 @@ const skills = [
     icon: "star",
     enabled: true,
     userInvocable: true,
+    source: "external-shared",
   },
   {
     name: "lark-attendance",
@@ -44,6 +56,7 @@ const skills = [
     icon: "star",
     enabled: true,
     userInvocable: true,
+    source: "external-shared",
   },
   {
     name: "lark-calendar",
@@ -53,6 +66,7 @@ const skills = [
     icon: "star",
     enabled: true,
     userInvocable: true,
+    source: "external-shared",
   },
   {
     name: "skill-name-that-is-too-long-to-fit-inside-the-menu-even-without-description",

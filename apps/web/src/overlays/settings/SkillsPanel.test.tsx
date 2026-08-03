@@ -240,7 +240,7 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.querySelector(".sk-group-title")).toBeNull();
   });
 
-  it("设置技能列表优先显示内置中文名，外部英文元数据使用中性回退", async () => {
+  it("设置技能列表显示内置与随包 lark 中文名，未知外部技能使用中性回退", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [
       {
@@ -250,6 +250,17 @@ describe("SkillsPanel 导入门控", () => {
         summary: "Generate or edit raster images…",
         icon: "star",
         source: "external-codex",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+      {
+        name: "lark-base",
+        description: "Manage Base tables, fields, records, and views.",
+        label: "lark-base",
+        summary: "Manage Base data…",
+        icon: "star",
+        source: "external-shared",
         userInvocable: true,
         tools: [],
         enabled: true,
@@ -271,9 +282,14 @@ describe("SkillsPanel 导入门控", () => {
     const cards = Array.from(host?.querySelectorAll<HTMLElement>('[data-wf="SkillEntry"]') ?? []);
     expect(cards[0]?.querySelector(".sk-card-title")?.textContent).toBe("图片生成");
     expect(cards[0]?.querySelector(".sk-card-summary")?.textContent).toBe("生成或编辑图片");
-    expect(cards[1]?.querySelector(".sk-card-title")?.textContent).toBe("third-party-helper");
-    expect(cards[1]?.querySelector(".sk-card-summary")?.textContent).toBe("第三方技能");
+    expect(cards[1]?.querySelector(".sk-card-title")?.textContent).toBe("飞书多维表格");
+    expect(cards[1]?.querySelector(".sk-card-summary")?.textContent)
+      .toBe("管理多维表格、字段、记录与视图");
+    expect(cards[2]?.querySelector(".sk-card-title")?.textContent).toBe("third-party-helper");
+    expect(cards[2]?.querySelector(".sk-card-summary")?.textContent).toBe("第三方技能");
     expect(host?.textContent).not.toContain("Generate or edit raster images");
+    expect(host?.textContent).not.toContain("lark-base");
+    expect(host?.textContent).not.toContain("Manage Base");
     expect(host?.textContent).not.toContain("Perform proprietary operations");
   });
 

@@ -9,6 +9,7 @@ import {
   SkillMenu,
   type SkillMenuAction,
 } from "./SkillMenu";
+import { invocableSkillActionsFromApi } from "./skillDisplay";
 
 let host: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -171,6 +172,27 @@ describe("SkillMenu 横向收缩与完整说明", () => {
     });
     expect(onHoverIndex).toHaveBeenCalledWith(0);
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: "lark-event" }));
+  });
+});
+
+describe("SkillMenu 技能中文展示", () => {
+  it("随包 lark 技能在 DOM 中显示中文名与中文摘要", () => {
+    renderActions(invocableSkillActionsFromApi([{
+      name: "lark-calendar",
+      label: "lark-calendar",
+      summary: "Manage calendars and meetings…",
+      description: "Manage calendars, events, attendees, availability, and meeting rooms.",
+      icon: "star",
+      enabled: true,
+      userInvocable: true,
+      source: "external-shared",
+    }]));
+
+    const row = getMenu().querySelector<HTMLElement>('[role="menuitem"]');
+    expect(row?.textContent).toContain("飞书日历");
+    expect(row?.textContent).toContain("管理日程、参会人与会议室");
+    expect(row?.textContent).not.toContain("lark-calendar");
+    expect(row?.textContent).not.toContain("Manage calendars");
   });
 });
 

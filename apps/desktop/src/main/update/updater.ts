@@ -1,5 +1,6 @@
 import { app, type BrowserWindow } from "electron";
 import type { AppUpdater } from "electron-updater";
+import { checkForUpdatesAndWatchDownload } from "./checkForUpdates.js";
 import { fetchUpdatePolicy, isBelowMinSupported, resolveUpdatePolicyUrl } from "./policy.js";
 import { runManualCheck, type CheckableUpdater } from "./manualCheck.js";
 import { RELEASES_URL, type UpdateStatusPayload } from "./updateTypes.js";
@@ -25,6 +26,17 @@ let cachedAutoUpdater: AppUpdater | null = null;
 // 重复 configure 会叠加 .on 监听导致对渲染层重复推送。首配置后置真,后续只刷 feed/开关不再挂监听。
 let autoUpdaterConfigured = false;
 const updateStatusDispatcher = new UpdateStatusDispatcher();
+const reportedCheckErrors = new WeakSet<object>();
+
+function reportCheckFailure(err: unknown): void {
+  if ((typeof err === "object" && err !== null) || typeof err === "function") {
+    const errorObject = err as object;
+    if (reportedCheckErrors.has(errorObject)) return;
+    reportedCheckErrors.add(errorObject);
+  }
+  console.warn("[update] check failed:", err);
+  updateStatusDispatcher.dispatch({ kind: "none" });
+}
 
 async function getAutoUpdater(): Promise<AppUpdater> {
   if (!cachedAutoUpdater) {
@@ -73,8 +85,7 @@ function configureAutoUpdater(updater: AppUpdater, appVersion: string): void {
   });
 
   updater.on("error", (err) => {
-    console.warn("[update] check failed:", err);
-    updateStatusDispatcher.dispatch({ kind: "none" });
+    reportCheckFailure(err);
   });
 }
 
@@ -104,10 +115,9 @@ export async function startDesktopUpdater(options: StartDesktopUpdaterOptions): 
   const updater = await getAutoUpdater();
   configureAutoUpdater(updater, appVersion);
   try {
-    await updater.checkForUpdates();
+    await checkForUpdatesAndWatchDownload(updater, reportCheckFailure);
   } catch (err) {
-    console.warn("[update] check failed:", err);
-    updateStatusDispatcher.dispatch({ kind: "none" });
+    reportCheckFailure(err);
   }
 }
 
@@ -132,6 +142,7 @@ export async function manualCheckForUpdates(options: {
     appVersion,
     isPackaged: app.isPackaged,
     onStatus: (payload) => updateStatusDispatcher.dispatch(payload),
+    onCheckError: reportCheckFailure,
   });
 }
 

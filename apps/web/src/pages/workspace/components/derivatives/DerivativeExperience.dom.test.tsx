@@ -1519,6 +1519,162 @@ describe("公众号稿生成体验", () => {
     consoleError.mockRestore();
   });
 
+  it("小红书清单复制文案与预览一致且每项只出现一次", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const xhsItem: DerivativeItem = {
+      ...item,
+      dtype: "xhs",
+      templateId: "xhs-checklist",
+      templateName: "干货清单",
+      sourceVersion: 1,
+      generatedAt: "now",
+    };
+    const listItems = ["提前查路线", "带一把折叠伞", "错峰十分钟", "到站再收耳机"];
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, blockId: "title" },
+          content: [{ type: "text", text: "通勤避坑清单" }],
+        },
+        {
+          type: "bulletList",
+          attrs: { blockId: "checklist" },
+          content: listItems.map((text, index) => ({
+            type: "listItem",
+            attrs: { blockId: `item-${index}` },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: `item-${index}-paragraph` },
+              content: [{ type: "text", text }],
+            }],
+          })),
+        },
+      ],
+    });
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({
+        meta: xhsItem,
+        docPm,
+        docVersion: 1,
+        title: "",
+      })),
+    };
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={xhsItem}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={vi.fn()}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(Array.from(host.querySelectorAll(".xhs-body li"), (node) => node.textContent))
+      .toEqual(listItems);
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "复制文案")!.click());
+
+    expect(writeText).toHaveBeenCalledWith(`通勤避坑清单\n\n${listItems.join("\n\n")}`);
+  });
+
+  it("公众号清单复制 HTML 与预览保持同一组列表项且不重复", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const gzhItem: DerivativeItem = {
+      ...item,
+      sourceVersion: 1,
+      generatedAt: "now",
+    };
+    const listItems = ["先确认目标", "再拆分步骤", "最后检查结果"];
+    const docPm = JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, blockId: "title" },
+          content: [{ type: "text", text: "行动清单" }],
+        },
+        {
+          type: "orderedList",
+          attrs: { blockId: "checklist", start: 1 },
+          content: listItems.map((text, index) => ({
+            type: "listItem",
+            attrs: { blockId: `item-${index}` },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: `item-${index}-paragraph` },
+              content: [{ type: "text", text }],
+            }],
+          })),
+        },
+      ],
+    });
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => ({
+        meta: gzhItem,
+        docPm,
+        docVersion: 1,
+        title: "",
+      })),
+    };
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={gzhItem}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={vi.fn()}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const previewItems = Array.from(
+      host.querySelectorAll(".wx-article #js_content li"),
+      (node) => node.textContent,
+    );
+    expect(previewItems).toEqual(listItems);
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "复制文案")!.click());
+
+    const copiedHtml = writeText.mock.calls[0]?.[0] ?? "";
+    const copiedDocument = new DOMParser().parseFromString(copiedHtml, "text/html");
+    expect(Array.from(copiedDocument.querySelectorAll("#js_content li"), (node) => node.textContent))
+      .toEqual(previewItems);
+    for (const listItem of listItems) {
+      expect(copiedHtml.split(listItem)).toHaveLength(2);
+    }
+  });
+
   it("微信手机预览包含真实 meta 形态和四组底栏操作", async () => {
     const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "正文" }] }] } as never;
     await act(async () => root.render(<DTYPE_REGISTRY.gzh.PhonePreview doc={doc} title="标题" articleRef={vi.fn()}/>));

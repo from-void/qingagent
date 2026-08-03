@@ -155,7 +155,17 @@ export const DTYPE_REGISTRY = {
     queryText: (docId) => `为衍生稿(doc_id: ${docId})生成小红书稿:${routeSuffix}`,
     cardTitle: (regenerate) => `${regenerate ? "重新" : ""}生成小红书稿`,
     deleteConfirm: { title: "删除这篇小红书稿？", message: "删除后不可恢复" },
-    copyText: (article) => { const title = article?.querySelector(":scope > h1")?.textContent?.trim() ?? ""; const blocks = Array.from(article?.querySelectorAll(".xhs-body p, .xhs-body h2, .xhs-body h3, .xhs-body li") ?? []).map((node) => node.textContent?.trim()).filter(Boolean); return { text: `${title}\n\n${blocks.join("\n\n")}`, toast: "已复制小红书文案" }; },
+    copyText: (article) => {
+      const title = article?.querySelector(":scope > h1")?.textContent?.trim() ?? "";
+      // 列表项由 PmStaticView 渲染为 li > p；只收实际文字块，避免父 li 与子 p 各复制一次。
+      const blocks = Array.from(
+        article?.querySelectorAll(".xhs-body p, .xhs-body h2, .xhs-body h3") ?? [],
+      ).map((node) => node.textContent?.trim()).filter(Boolean);
+      return {
+        text: `${title}\n\n${blocks.join("\n\n")}`,
+        toast: "已复制小红书文案",
+      };
+    },
     exportImageTarget: (view) => view?.querySelector<HTMLElement>(".xhs-desktop-media .xhs-cover, .xhs-cover") ?? null,
     PhonePreview: XhsPhonePreview, DesktopPreview: XhsDesktopPreview,
   },

@@ -1651,10 +1651,12 @@ export function UIKitPage() {
               </div>
               <div className="block-handle-menu" role="menu">
                 <div className="bh-section-label">转换为</div>
-                <HeadingLevelPicker activeLevel={1} onPick={() => {}} />
                 <div className="bh-grid">
-                  {["正文", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
-                    <button key={i} className="bh-grid-btn" role="menuitem" type="button" aria-label={`转换 ${g}`}>
+                  {["H1", "H2", "H3", "H4", "H5"].map((g) => (
+                    <button key={g} className={`bh-grid-btn bh-heading-btn${g === "H1" ? " is-active" : ""}`} role="menuitem" type="button" aria-label={`转换 ${g}`}>{g}</button>
+                  ))}
+                  {["正文", "H6", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g) => (
+                    <button key={g} className={`bh-grid-btn${g === "H6" ? " bh-heading-btn" : ""}`} role="menuitem" type="button" aria-label={`转换 ${g}`}>
                       {g === "task" ? <CheckIcon size={12} /> : <span dangerouslySetInnerHTML={{ __html: g }} />}
                     </button>
                   ))}

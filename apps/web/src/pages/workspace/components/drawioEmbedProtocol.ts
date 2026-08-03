@@ -11,7 +11,7 @@ import {
  *   而不是 `fill: light-dark(浅, 深)`——后者在深色系统上会把图渲染成黑块。
  */
 export const DRAWIO_EMBED_PATH =
-  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&saveAndExit=1&keepmodified=1&suppressNewWindows=1&dark=0&contrast=0";
+  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&noSaveBtn=1&saveAndExit=1&keepmodified=1&suppressNewWindows=1&dark=0&contrast=0";
 
 export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
 export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;

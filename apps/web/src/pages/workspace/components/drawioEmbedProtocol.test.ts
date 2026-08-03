@@ -17,6 +17,7 @@ describe("drawio JSON embed 协议", () => {
     expect(DRAWIO_EMBED_PATH).toContain("embed=1");
     expect(DRAWIO_EMBED_PATH).toContain("proto=json");
     expect(DRAWIO_EMBED_PATH).toContain("offline=1");
+    expect(DRAWIO_EMBED_PATH).toContain("noSaveBtn=1");
     expect(DRAWIO_EMBED_PATH).toContain("keepmodified=1");
     // 图表缓存必须与查看者主题无关：编辑器钉浅色，导出写字面颜色。
     expect(DRAWIO_EMBED_PATH).toContain("dark=0");

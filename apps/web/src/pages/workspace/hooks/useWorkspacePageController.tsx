@@ -298,6 +298,26 @@ function isAbortError(error: unknown): boolean {
     error.name === "AbortError";
 }
 
+function reconcileFinishedDerivativeGenerations(
+  items: DerivativeItem[],
+  finishedAtByDocId: ReadonlyMap<string, string>,
+): DerivativeItem[] {
+  return items.map((item) => {
+    const finishedAt = finishedAtByDocId.get(item.docId);
+    if (!finishedAt || (item.generatedAt != null && item.generatedAt >= finishedAt)) {
+      return item;
+    }
+    // generate_derivative 的成功事务会把 source_version 盖到当时主稿版本；
+    // generatedAt 旧于完成帧的列表响应只是旧快照，不得把红点重新写回来。
+    return {
+      ...item,
+      sourceVersion: item.currentSourceVersion,
+      generatedAt: finishedAt,
+      stale: false,
+    };
+  });
+}
+
 export function useWorkspacePageController() {
   const initialSessionId =
     typeof window === "undefined"
@@ -333,6 +353,7 @@ export function useWorkspacePageController() {
     null,
   );
   const [derivatives, setDerivatives] = useState<DerivativeItem[]>([]);
+  const finishedDerivativeGenerationRef = useRef<Map<string, string>>(new Map());
   const [derivativeCreateOpen, setDerivativeCreateOpen] = useState(false);
   const [derivativeCreateDtype, setDerivativeCreateDtype] =
     useState<DerivativeDtype>("gzh");
@@ -2114,6 +2135,21 @@ export function useWorkspacePageController() {
         docConflictReconcileSessionRef.current = null;
       }
       if (frame.kind === "derivativeGenFinished") {
+        const previousFinishedAt = finishedDerivativeGenerationRef.current.get(
+          frame.data.docId,
+        );
+        if (!previousFinishedAt || frame.data.generatedAt > previousFinishedAt) {
+          finishedDerivativeGenerationRef.current.set(
+            frame.data.docId,
+            frame.data.generatedAt,
+          );
+        }
+        setDerivatives((current) =>
+          reconcileFinishedDerivativeGenerations(
+            current,
+            finishedDerivativeGenerationRef.current,
+          ),
+        );
         // Agent 逐稿完成时跟随最新完成的译稿；最终自然停在最后一种语言。
         setActiveTranslationDocId(frame.data.docId);
         const stream = streamRef.current;
@@ -2124,7 +2160,12 @@ export function useWorkspacePageController() {
             () => streamRef.current,
             (currentStream) => currentStream.listDerivatives(sessionId),
           )
-            .then(setDerivatives)
+            .then((items) => {
+              setDerivatives(reconcileFinishedDerivativeGenerations(
+                items,
+                finishedDerivativeGenerationRef.current,
+              ));
+            })
             .catch((error) => {
               console.error(
                 "[workspace] refresh finished translation failed",
@@ -2670,13 +2711,17 @@ export function useWorkspacePageController() {
     ) {
       return;
     }
-    setDerivatives(nextDerivatives);
+    setDerivatives(reconcileFinishedDerivativeGenerations(
+      nextDerivatives,
+      finishedDerivativeGenerationRef.current,
+    ));
   }, []);
 
   useEffect(() => {
     setDerivatives([]);
     setActiveTab("main");
     setActiveTranslationDocId(null);
+    finishedDerivativeGenerationRef.current.clear();
     if (!state.sessionId) return;
     void refreshDerivatives().catch((error) =>
       console.error("[workspace] list derivatives failed", error),

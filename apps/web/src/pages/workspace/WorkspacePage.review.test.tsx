@@ -5091,6 +5091,97 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("公众号文章");
   });
 
+  it("衍生稿重生成成功后即使列表仍返回旧快照也自动清除 stale 红点", async () => {
+    const staleDerivative: DerivativeItem = {
+      docId: "gzh-stale-regenerated",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      templateName: "深度观点文",
+      privatePrompt: "",
+      sourceVersion: 1,
+      currentSourceVersion: 2,
+      generatedAt: "2026-08-04T08:00:00.000Z",
+      stale: true,
+    };
+    // 模拟真机上完成帧先到、紧随其后的列表读取仍命中生成前旧快照。
+    serverStreamMock.listDerivativesImpl = async () => [{ ...staleDerivative }];
+    window.location.hash = "#/workspace?session=s-stale-regenerated";
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    await emitFrames(stream, [{
+      kind: "sessionMeta",
+      data: { sessionId: "s-stale-regenerated", title: "重生成红点" },
+    }]);
+    await flushMicrotasks(5);
+    expect(host?.querySelector(".ws-deriv-stale-dot")).not.toBeNull();
+
+    await emitFrames(stream, [{
+      kind: "derivativeGenFinished",
+      data: {
+        docId: staleDerivative.docId,
+        generatedAt: "2026-08-04T08:05:00.000Z",
+        docVersion: 2,
+      },
+    }]);
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector(".ws-deriv-stale-dot")).toBeNull();
+  });
+
+  it("翻译聚合仅在所有 stale 语种都重生成成功后清除红点", async () => {
+    const staleTranslations: DerivativeItem[] = ["英语", "日语"].map(
+      (targetLang, index) => ({
+        docId: `translate-stale-${index}`,
+        dtype: "translate",
+        templateId: "translate-faithful",
+        templateName: "忠实精准",
+        targetLang,
+        privatePrompt: "",
+        sourceVersion: 1,
+        currentSourceVersion: 2,
+        generatedAt: `2026-08-04T08:0${index}:00.000Z`,
+        stale: true,
+      }),
+    );
+    serverStreamMock.listDerivativesImpl = async () =>
+      staleTranslations.map((item) => ({ ...item }));
+    window.location.hash = "#/workspace?session=s-stale-translations";
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    await emitFrames(stream, [{
+      kind: "sessionMeta",
+      data: { sessionId: "s-stale-translations", title: "翻译红点" },
+    }]);
+    await flushMicrotasks(5);
+    expect(host?.querySelector(".ws-deriv-stale-dot")).not.toBeNull();
+
+    await emitFrames(stream, [{
+      kind: "derivativeGenFinished",
+      data: {
+        docId: staleTranslations[0]!.docId,
+        generatedAt: "2026-08-04T08:05:00.000Z",
+        docVersion: 2,
+      },
+    }]);
+    await flushMicrotasks(5);
+    expect(host?.querySelector(".ws-deriv-stale-dot")).not.toBeNull();
+
+    await emitFrames(stream, [{
+      kind: "derivativeGenFinished",
+      data: {
+        docId: staleTranslations[1]!.docId,
+        generatedAt: "2026-08-04T08:06:00.000Z",
+        docVersion: 2,
+      },
+    }]);
+    await flushMicrotasks(5);
+    expect(host?.querySelector(".ws-deriv-stale-dot")).toBeNull();
+  });
+
   it("已有日语稿后追加英语和韩语，两稿落库并只发一条可见 Agent 指令", async () => {
     const base: DerivativeItem = {
       docId: "translation-placeholder",

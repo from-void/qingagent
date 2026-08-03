@@ -151,6 +151,78 @@ describe("公众号稿生成体验", () => {
     consoleError.mockRestore();
   });
 
+  it("会话重开 dispose 旧流时改用新流静默重试正文加载", async () => {
+    const generated = {
+      ...item,
+      sourceVersion: 1,
+      generatedAt: "2026-08-03T09:00:00.000Z",
+    };
+    const loadedDocument = {
+      meta: generated,
+      docPm: JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "reopened" },
+            content: [{ type: "text", text: "新流加载成功" }],
+          },
+        ],
+      }),
+      docVersion: 1,
+      title: "重开稿件",
+    };
+    let rejectOldRequest!: (error: Error) => void;
+    const oldStream = {
+      getDerivativeDoc: vi.fn(
+        () =>
+          new Promise<typeof loadedDocument>((_resolve, reject) => {
+            rejectOldRequest = reject;
+          }),
+      ),
+      dispose: () => rejectOldRequest(new Error("ServerStream disposed")),
+    };
+    const newStream = {
+      getDerivativeDoc: vi.fn(async () => loadedDocument),
+    };
+    const currentStreamRef = { current: oldStream as never };
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={generated}
+            stream={oldStream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={onToast}
+            onSendQuery={vi.fn()}
+            currentStreamRef={currentStreamRef}
+          />
+        </ConfirmProvider>,
+      );
+    });
+    expect(oldStream.getDerivativeDoc).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      oldStream.dispose();
+      currentStreamRef.current = newStream as never;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(newStream.getDerivativeDoc).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("新流加载成功");
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(onToast).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
     const legacyBrokenTable = JSON.stringify({
       type: "doc", attrs: { schemaVersion: 1 }, content: [{

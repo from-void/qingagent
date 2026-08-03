@@ -33,6 +33,7 @@ import {
 import { isCurrentDerivativePrefetch } from "../data/derivativeSessionIsolation";
 import { isCurrentSessionTitleRename } from "../data/sessionTitleRename";
 import { viewDocumentSyncRevision } from "../data/viewDocHtml";
+import { retryDisposedServerStreamOnce } from "../data/serverStream";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import { useWorkspaceEditorSelection } from "../hooks/useWorkspaceEditorSelection";
 import type { DerivativeItem } from "./derivatives/types";
@@ -261,7 +262,8 @@ export function WorkspaceDocumentPane({
     (nextTab: "main" | string) => {
       const requestId = derivativeTabRequestRef.current + 1;
       derivativeTabRequestRef.current = requestId;
-      if (nextTab === "main" || !state.sessionId || !streamRef.current) {
+      const requestStream = streamRef.current;
+      if (nextTab === "main" || !state.sessionId || !requestStream) {
         setActiveTab(nextTab);
         return;
       }
@@ -281,8 +283,11 @@ export function WorkspaceDocumentPane({
 
       // 既有衍生稿先取正文再换 tab：网络等待期保留当前稳定纸面，避免先挂空纸再替换。
       const requestSessionId = state.sessionId;
-      void streamRef.current
-        .getDerivativeDoc(requestSessionId, target.docId)
+      void retryDisposedServerStreamOnce(
+        requestStream,
+        () => streamRef.current,
+        (stream) => stream.getDerivativeDoc(requestSessionId, target.docId),
+      )
         .then((document) => {
           if (!isCurrentDerivativePrefetch({
             currentRequestId: derivativeTabRequestRef.current,
@@ -602,6 +607,7 @@ export function WorkspaceDocumentPane({
               activeTab === "translate" ? setActiveTranslationDocId : undefined
             }
             stream={streamRef.current}
+            currentStreamRef={streamRef}
             streamActive={agentActive}
             generatingInitially={
               pendingDerivativeGeneration === activeDerivative.docId

@@ -127,6 +127,10 @@ function isMissingFrameError(error: unknown, kind: BridgeFrame["kind"]): boolean
   return error instanceof Error && error.message === `${kind} response missing`;
 }
 
+export function isServerStreamDisposedError(error: unknown): error is Error {
+  return error instanceof Error && error.message === "ServerStream disposed";
+}
+
 class CommandRequestError extends Error {
   readonly cancelAskUserServerFailure?: true;
 
@@ -1440,5 +1444,24 @@ export class ServerStream {
       reason,
       ...(streamIds ? { streamIds } : {}),
     });
+  }
+}
+
+/**
+ * 会话重开会同步 dispose 旧流并把 stream ref 换成新实例。只读请求若正挂在旧流 waiter 上，
+ * 仅对该精确生命周期错误改用已经就绪的新实例补发一次；补发失败保持原样上抛。
+ */
+export async function retryDisposedServerStreamOnce<T>(
+  initialStream: ServerStream,
+  currentStream: () => ServerStream | null,
+  request: (stream: ServerStream) => Promise<T>,
+): Promise<T> {
+  try {
+    return await request(initialStream);
+  } catch (error) {
+    if (!isServerStreamDisposedError(error)) throw error;
+    const reopenedStream = currentStream();
+    if (!reopenedStream || reopenedStream === initialStream) throw error;
+    return request(reopenedStream);
   }
 }

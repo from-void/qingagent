@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  retryDisposedServerStreamOnce,
   isStreamStalled,
   ServerStream,
   STREAM_STALL_TIMEOUT_MS,
@@ -1158,6 +1159,90 @@ describe("ServerStream", () => {
     expect(MockEventSource.instances.at(-1)!.url).toContain("epoch=2");
     expect(consoleError).not.toHaveBeenCalled();
     stream.dispose();
+  });
+
+  it("旧流 waiter 被 dispose 后在新流上静默补发一次", async () => {
+    let requestCount = 0;
+    globalThis.fetch = commandResponseFrom((command) => {
+      if (command.kind !== "getDerivativeDoc") throw new Error("unexpected command");
+      requestCount += 1;
+      if (requestCount === 1) {
+        return { accepted: true, sessionId: command.data.sessionId, epoch: 1 };
+      }
+      return [{
+        kind: "derivativeDocLoaded",
+        data: {
+          requestId: command.data.requestId,
+          meta: {
+            docId: command.data.docId,
+            dtype: "translate",
+            templateId: "translate-default",
+            templateName: "翻译",
+            privatePrompt: "",
+            sourceVersion: 1,
+            currentSourceVersion: 1,
+            generatedAt: "2026-08-03T09:00:00.000Z",
+            stale: false,
+          },
+          docPm: "{}",
+          docVersion: 1,
+          title: "重开译稿",
+        },
+      } satisfies BridgeFrame];
+    });
+    const oldStream = new ServerStream();
+    let currentStream: ServerStream | null = oldStream;
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const request = retryDisposedServerStreamOnce(
+      oldStream,
+      () => currentStream,
+      (stream) => stream.getDerivativeDoc("session-1", "translate-1"),
+    ).catch((error) => {
+      console.error("[workspace] load derivative document failed", error);
+      onToast("稿件加载失败，请重试");
+      return null;
+    });
+
+    oldStream.dispose();
+    const reopenedStream = new ServerStream();
+    currentStream = reopenedStream;
+
+    await expect(request).resolves.toMatchObject({
+      meta: { docId: "translate-1" },
+      title: "重开译稿",
+    });
+    expect(requestCount).toBe(2);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(onToast).not.toHaveBeenCalled();
+    reopenedStream.dispose();
+  });
+
+  it("dispose 近似错误不静默重试", async () => {
+    const oldStream = {} as ServerStream;
+    const reopenedStream = {} as ServerStream;
+    const error = new Error("ServerStream disposed after reopen");
+    const request = vi.fn().mockRejectedValue(error);
+
+    await expect(
+      retryDisposedServerStreamOnce(oldStream, () => reopenedStream, request),
+    ).rejects.toBe(error);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose 补发后的二次失败原样上抛", async () => {
+    const oldStream = {} as ServerStream;
+    const reopenedStream = {} as ServerStream;
+    const retryError = new Error("second request failed");
+    const request = vi.fn()
+      .mockRejectedValueOnce(new Error("ServerStream disposed"))
+      .mockRejectedValueOnce(retryError);
+
+    await expect(
+      retryDisposedServerStreamOnce(oldStream, () => reopenedStream, request),
+    ).rejects.toBe(retryError);
+    expect(request).toHaveBeenNthCalledWith(1, oldStream);
+    expect(request).toHaveBeenNthCalledWith(2, reopenedStream);
   });
 
   it("cancelAskUser 的专项失败标记由统一 422 协议保留", async () => {

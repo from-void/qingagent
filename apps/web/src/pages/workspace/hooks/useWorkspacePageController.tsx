@@ -76,6 +76,7 @@ import {
 import {
   DEFAULT_CHAT_INPUT_PLACEHOLDER,
   getChatInputBlockReason,
+  sessionRestoreChatInputBlockReason,
 } from "../data/chatInputBlockReason";
 import { logClientEvent } from "../data/clientLog";
 import { newClientMessageId } from "../data/clientMessageId";
@@ -1030,21 +1031,32 @@ export function useWorkspacePageController() {
   const allReviewPatches = useMemo(() => selectPatches(state), [state]);
   const pendingReviewResolutionAvailable =
     dim.content.kind === "pendingReview" && allReviewPatches.length > 0;
+  // 既有会话恢复期间，正文/聊天史仍被 hydration 门隐藏；此时若输入可提交，视觉上是
+  // “空白新稿”，实际却会把消息写进旧 session。恢复完成且内容表面可画前必须硬禁提交；
+  // 4s 展示超时只允许露出已有部分，不能绕过数据归属门。
+  const sessionRestoreBlocked =
+    hydration.sessionId !== null &&
+    (hydration.phase === "waiting" || !hydration.restoreCompleted);
+  const sessionRestoreFailed = state.streamError?.kind === "failed";
   const chatInputBlockReason = useMemo(
     () =>
-      getChatInputBlockReason(
-        dim,
-        askUserInputDisabled,
-        viewingHistory,
-        hasAskUserCard,
-        pendingReviewResolutionAvailable,
-      ),
+      sessionRestoreBlocked
+        ? sessionRestoreChatInputBlockReason(sessionRestoreFailed)
+        : getChatInputBlockReason(
+            dim,
+            askUserInputDisabled,
+            viewingHistory,
+            hasAskUserCard,
+            pendingReviewResolutionAvailable,
+          ),
     [
       dim,
       askUserInputDisabled,
       viewingHistory,
       hasAskUserCard,
       pendingReviewResolutionAvailable,
+      sessionRestoreBlocked,
+      sessionRestoreFailed,
     ],
   );
   const chatInputBlockReasonRef = useRef(chatInputBlockReason);
@@ -3427,6 +3439,7 @@ export function useWorkspacePageController() {
     viewRef,
     dataAttrs,
     hydration,
+    sessionRestoreBlocked,
     title,
     setTitle,
     handleBackHome,

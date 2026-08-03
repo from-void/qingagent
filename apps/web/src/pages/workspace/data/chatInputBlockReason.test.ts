@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getChatInputBlockReason } from "./chatInputBlockReason";
+import {
+  getChatInputBlockReason,
+  sessionRestoreChatInputBlockReason,
+} from "./chatInputBlockReason";
 import type { ActiveOverlay, DocDimensions } from "./docDimensions";
 import type { ContentDocState, EditorState } from "./protocol";
 
@@ -18,6 +21,17 @@ function dim(
 }
 
 describe("getChatInputBlockReason", () => {
+  it("恢复既有会话期间与失败后都给出不可提交的明确身份", () => {
+    expect(sessionRestoreChatInputBlockReason(false)).toEqual({
+      toast: "正在恢复会话，请稍候",
+      placeholder: "正在恢复会话…",
+    });
+    expect(sessionRestoreChatInputBlockReason(true)).toEqual({
+      toast: "请先重试恢复会话",
+      placeholder: "恢复会话后可继续对话",
+    });
+  });
+
   it.each([
     dim("empty", "empty"),
     dim("editing", "editable"),

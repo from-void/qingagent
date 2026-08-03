@@ -2,7 +2,12 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { isRouteAvailable, parseRoute, useRoute } from "./Router";
+import {
+  isRouteAvailable,
+  parseRoute,
+  routeToNewWorkspaceHash,
+  useRoute,
+} from "./Router";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,6 +58,11 @@ describe("Router dev-only routes", () => {
     expect(parseRoute("#/new?template=essay")).toBe("home");
     expect(parseRoute("#/new;modal-import")).toBe("home");
     expect(parseRoute("#/new", { devRoutesEnabled: true })).toBe("home");
+  });
+
+  it("首页新建入口用 query 明示 new 意图", () => {
+    expect(routeToNewWorkspaceHash()).toBe("#/workspace?intent=new");
+    expect(parseRoute(routeToNewWorkspaceHash())).toBe("workspace");
   });
 });
 

@@ -75,6 +75,7 @@ export function WorkspaceDocumentPane({
     handleFillTemplate,
     handleCreateBlankDoc,
     handleRetryRestore,
+    sessionRestoreBlocked,
     state,
     wholeDocReview,
     wholeDocVersion,
@@ -355,6 +356,20 @@ export function WorkspaceDocumentPane({
           data-wf={WORKSPACE_PAPER_DOM.paperShellDataWf}
           aria-hidden="true"
         />
+        {sessionRestoreBlocked &&
+        (state.streamError?.kind !== "failed" ||
+          controller.hydration.phase === "waiting") ? (
+          <div
+            className="ws-hydration-status"
+            data-wf="WorkspaceHydrationStatus"
+            role="status"
+            aria-live="polite"
+          >
+            {state.streamError?.kind === "failed"
+              ? "会话恢复未完成"
+              : "正在恢复会话…"}
+          </div>
+        ) : null}
         <div
           className={WORKSPACE_PAPER_DOM.documentContentClass}
           data-wf="WorkspaceHydrationDocumentContent"

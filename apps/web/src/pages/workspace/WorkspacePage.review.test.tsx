@@ -802,6 +802,150 @@ describe("WorkspacePage review controls", () => {
     expect(stream.dispose).toHaveBeenCalledTimes(1);
   }, 60_000);
 
+  it("重启后裸 workspace 永远新建，不暗绑 store 中的旧会话", async () => {
+    const { useSessionStore } = await import("../../stores/sessionStore");
+    useSessionStore.setState({
+      sessions: [{
+        id: "session-old",
+        title: "睡眠科普",
+        created_at: "2026-08-01T00:00:00.000Z",
+        summary: "旧文档",
+        status: { kind: "Active" },
+        generating: false,
+      }],
+      currentSessionId: "session-old",
+      currentSessionTitle: "睡眠科普",
+    });
+    serverStreamMock.startSessionImpl = async (stream, data) => {
+      expect(data).toEqual({
+        mode: { kind: "new", data: { template: null } },
+      });
+      stream.emit({
+        kind: "sessionMeta",
+        data: { sessionId: "session-new", title: "未命名草稿" },
+      });
+      return "session-new";
+    };
+
+    try {
+      window.history.replaceState(null, "", "#/workspace");
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      const stream = latestServerStream();
+
+      expect(stream.startSession).not.toHaveBeenCalled();
+      expect(host?.textContent).not.toContain("睡眠科普");
+      expect(
+        host?.querySelector('[data-wf="WorkspaceHydrationStatus"]'),
+      ).toBeNull();
+      const editor = getChatEditor();
+      expect(editor.getAttribute("contenteditable")).toBe("true");
+      bindInnerText(editor);
+      await act(async () => {
+        editor.innerText = "海边旧信箱";
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await clickButton("发送");
+
+      expect(stream.startSession).toHaveBeenCalledTimes(1);
+      expect(sendMessageCommands(stream)).toEqual([
+        expect.objectContaining({
+          kind: "sendMessage",
+          data: expect.objectContaining({
+            sessionId: "session-new",
+            text: "海边旧信箱",
+          }),
+        }),
+      ]);
+      expect(window.location.hash).toBe("#/workspace?session=session-new");
+      expect(useSessionStore.getState().currentSessionId).toBe("session-new");
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  }, 60_000);
+
+  it("既有会话恢复超时后仍展示真实身份并禁止提交，完整恢复后才解锁", async () => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, "", "#/workspace?session=session-old");
+    let resolveRestore!: (sessionId: string) => void;
+    serverStreamMock.startSessionImpl = (_stream, data) => {
+      expect(data).toEqual({
+        mode: { kind: "existing", data: { id: "session-old" } },
+      });
+      return new Promise<string>((resolve) => {
+        resolveRestore = resolve;
+      });
+    };
+
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      const stream = latestServerStream();
+      const editor = getChatEditor();
+
+      expect(editor.getAttribute("contenteditable")).toBe("false");
+      expect(editor.dataset.placeholder).toBe("正在恢复会话…");
+      expect(buttonByText("发送").disabled).toBe(true);
+      expect(host?.textContent).toContain("正在恢复会话…");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      expect(host?.querySelector(".ws-body")?.getAttribute("data-hydration")).toBe(
+        "ready",
+      );
+      expect(editor.getAttribute("contenteditable")).toBe("false");
+      expect(buttonByText("发送").disabled).toBe(true);
+      expect(host?.textContent).toContain("正在恢复会话…");
+      expect(sendMessageCommands(stream)).toHaveLength(0);
+
+      await emitFrames(stream, [
+        {
+          kind: "sessionMeta",
+          data: { sessionId: "session-old", title: "睡眠科普" },
+        },
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: wireSnapshotFromPmDoc(
+              pmDoc([pmParagraph("old-body", "旧会话正文")]),
+              7,
+            ),
+          },
+        },
+        {
+          kind: "chatMessageAdded",
+          data: {
+            message: {
+              id: "old-chat",
+              role: { kind: "user" },
+              ts: "2026-08-01T00:00:00.000Z",
+              parts: [{ kind: "text", data: { body: "旧会话聊天" } }],
+              chips: null,
+            },
+            appendSeq: 0,
+          },
+        },
+        {
+          kind: "sessionRestoreCompleted",
+          data: { sessionId: "session-old" },
+        },
+      ]);
+      await act(async () => resolveRestore("session-old"));
+      await flushMicrotasks(8);
+
+      expect(host?.textContent).toContain("睡眠科普");
+      expect(host?.textContent).toContain("旧会话正文");
+      expect(host?.textContent).toContain("旧会话聊天");
+      expect(
+        host?.querySelector('[data-wf="WorkspaceHydrationStatus"]'),
+      ).toBeNull();
+      expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  }, 60_000);
+
   it("恢复帧残留 empty 但正文已到达时挂载编辑器，并保留审查/导出入口", async () => {
     window.location.hash = "#/workspace?session=s-empty-projection";
     const { WorkspacePage } = await import("./WorkspacePage");

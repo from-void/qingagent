@@ -173,5 +173,14 @@ describe("ensureSessionIdOnce", () => {
     expect(workspaceHashWithSession("#/workspace?session=s-old", "s-new")).toBe(
       "#/workspace?session=s-old",
     );
+    expect(
+      workspaceHashWithSession(
+        "#/workspace?session=s-stale&intent=new",
+        "s-new",
+      ),
+    ).toBe("#/workspace?session=s-new");
+    expect(workspaceHashWithSession("#/workspace?intent=new", "s-new")).toBe(
+      "#/workspace?session=s-new",
+    );
   });
 });

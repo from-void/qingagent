@@ -153,13 +153,33 @@ export function workspaceViewingVersionIdFromHash(hash: string): string | null {
   return raw && raw.trim() ? raw : null;
 }
 
-export function workspaceSessionIdFromHash(hash: string): string | null {
+export type WorkspaceEntryIntent =
+  | { kind: "new"; explicit: boolean }
+  | { kind: "existing"; sessionId: string };
+
+/**
+ * 工作区入口的唯一会话归属规则：
+ * - `intent=new` 明示新建，并优先于任何残留 session 参数；
+ * - 只有 `session=<id>` 才恢复既有会话；
+ * - 裸 `#/workspace` 永远是新工作区，不读取 store 中的最近会话。
+ */
+export function workspaceEntryIntentFromHash(hash: string): WorkspaceEntryIntent {
   const routeHash = hash.split(";")[0] ?? hash;
   const queryIdx = routeHash.indexOf("?");
-  if (queryIdx < 0) return null;
+  if (queryIdx < 0) return { kind: "new", explicit: false };
   const params = new URLSearchParams(routeHash.slice(queryIdx + 1));
-  const raw = params.get("session");
-  return raw && raw.trim() ? raw : null;
+  if (params.get("intent") === "new") {
+    return { kind: "new", explicit: true };
+  }
+  const sessionId = params.get("session")?.trim();
+  return sessionId
+    ? { kind: "existing", sessionId }
+    : { kind: "new", explicit: false };
+}
+
+export function workspaceSessionIdFromHash(hash: string): string | null {
+  const entry = workspaceEntryIntentFromHash(hash);
+  return entry.kind === "existing" ? entry.sessionId : null;
 }
 
 export function workspaceHistorySnapshotUrl(versionId: string, sessionId: string): string {

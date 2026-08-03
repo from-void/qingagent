@@ -55,7 +55,12 @@ export function workspaceHydrationReducer(
     if (state.sessionId === action.sessionId) return state;
     return initialWorkspaceHydration(action.sessionId);
   }
-  if (state.sessionId !== action.sessionId || state.phase === "ready") {
+  if (state.sessionId !== action.sessionId) {
+    return state;
+  }
+  // 正常 ready 后忽略重放信号；但 timeout 只是“允许露出已有部分”的展示兜底，
+  // 不是恢复完成事实。超时后的迟到帧仍须推进 restoreCompleted，否则输入归属门会永久锁死。
+  if (state.phase === "ready" && !state.timedOut) {
     return state;
   }
 

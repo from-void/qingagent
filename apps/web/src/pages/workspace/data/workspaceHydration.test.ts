@@ -94,6 +94,23 @@ describe("workspace hydration presentation gate", () => {
     });
   });
 
+  it("展示超时后仍记录迟到的恢复完成事实，供提交归属门解锁", () => {
+    const timedOut = workspaceHydrationReducer(
+      initialWorkspaceHydration("session-slow"),
+      { kind: "timeout", sessionId: "session-slow" },
+    );
+    const completed = workspaceHydrationReducer(timedOut, {
+      kind: "restoreCompleted",
+      sessionId: "session-slow",
+    });
+
+    expect(completed).toMatchObject({
+      phase: "ready",
+      timedOut: true,
+      restoreCompleted: true,
+    });
+  });
+
   it("同一会话 ready 后重复 begin 永不回跳 waiting", () => {
     const ready = workspaceHydrationReducer(
       initialWorkspaceHydration("session-existing"),

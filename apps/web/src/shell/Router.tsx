@@ -112,3 +112,8 @@ export function parseRoute(
 export function routeToHash(route: RouteName): string {
   return ROUTE_TO_HASH[route];
 }
+
+/** 首页「新建」入口必须把意图写进 URL，不能与无参数深链混为同一条隐式路径。 */
+export function routeToNewWorkspaceHash(): string {
+  return `${ROUTE_TO_HASH.workspace}?intent=new`;
+}

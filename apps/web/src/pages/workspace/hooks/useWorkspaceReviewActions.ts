@@ -120,6 +120,7 @@ export function useWorkspaceReviewActions(input: {
   );
   const [, setGoalLabel] = useState<string | null>(null);
   const autoCommitReviewKeyRef = useRef<string | null>(null);
+  const completedReviewCommitKeyRef = useRef<string | null>(null);
   const reviewSettlementInFlightRef = useRef<Promise<void> | null>(null);
   const [isReviewSubmitting, setIsReviewSubmitting] = useState(false);
   const [reviewSettlementRetryPending, setReviewSettlementRetryPending] =
@@ -220,6 +221,8 @@ export function useWorkspaceReviewActions(input: {
         setReviewSettlementRetryPending(false);
         if (acceptReviewBatchIds.length === 0) {
           showToast("已撤销本轮全部修改");
+        } else if (commitNoop) {
+          showToast("修改已经提交，无需重复操作");
         } else if (!commitNoop) {
           showToast(
             conflictCount !== null && conflictCount > 0
@@ -286,6 +289,9 @@ export function useWorkspaceReviewActions(input: {
                 : "提交未完成 · 候选已保留，请重试",
             );
             return;
+          }
+          if (commitNoop) {
+            showToast("修改已经提交，无需重复操作");
           }
           if (!reviewCommitFramesLeavePendingReview(frames)) {
             dispatch({ kind: "forceUnlockReview" });
@@ -383,6 +389,15 @@ export function useWorkspaceReviewActions(input: {
 
     const { acceptReviewBatchIds, rejectReviewBatchIds } =
       buildReviewGroupCommitSelection(currentPatches);
+    const reviewCommitKey = JSON.stringify({
+      sessionId: currentSessionId,
+      acceptReviewBatchIds: [...acceptReviewBatchIds].sort(),
+      rejectReviewBatchIds: [...rejectReviewBatchIds].sort(),
+    });
+    if (completedReviewCommitKeyRef.current === reviewCommitKey) {
+      showToast("修改已经提交，无需重复操作");
+      return Promise.resolve();
+    }
 
     // 在提交前从当前审阅快照归并审核结果（commit 语义:每处 hunk 独立表态）。
     // 提交成功后,若非全量采纳则以用户名义回流给模型。
@@ -423,6 +438,10 @@ export function useWorkspaceReviewActions(input: {
             );
             return;
           }
+          if (commitNoop) {
+            showToast("修改已经提交，无需重复操作");
+          }
+          completedReviewCommitKeyRef.current = reviewCommitKey;
           // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
           // commit 响应若缺状态转移帧(stale pendingReview),不兜底就永久锁输入。
           // 逐条处理完的 auto-commit 也汇入本路径,该洞影响面比手动提交更大。
@@ -687,6 +706,7 @@ export function useWorkspaceReviewActions(input: {
   );
   useEffect(() => {
     if (state.docState.kind !== "pendingReview") {
+      completedReviewCommitKeyRef.current = null;
       setReviewSettlementRetryPending(false);
     }
   }, [state.docState.kind, state.sessionId]);

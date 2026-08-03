@@ -4096,6 +4096,31 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
+  it("成功回执已到但候选态尚未收口时不重复提交同一批修改", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-settled", "batch-settled", 0),
+    ]);
+    stream.commitReviewGroups.mockResolvedValue([
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      docStateFrame("editing"),
+    ]);
+
+    await clickButton("提交 ↵");
+    await clickButton("提交 ↵");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("修改已经提交，无需重复操作");
+  });
+
   it("放弃全部成功解锁后可继续追问", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
@@ -5224,6 +5249,13 @@ describe("WorkspacePage review controls", () => {
       textReviewToolCall("rename-gating", "batch-rename-gating", 0),
     ]);
 
+    const review = host?.querySelector<HTMLButtonElement>(
+      '.ws-docfns button[aria-haspopup="menu"]',
+    );
+    expect(review?.getAttribute("title")).toBe(
+      "文档有待处理的修改，请先处理后再审查",
+    );
+
     const add = host?.querySelector<HTMLButtonElement>(
       '[aria-label="新建稿件"]',
     );
@@ -6219,6 +6251,7 @@ describe("WorkspacePage review controls", () => {
     expect(document.body.dataset.content).toBe("editing");
     expect(host?.querySelector('[data-wf="PatchNav"]')).toBeNull();
     expect(host?.textContent).toContain("新句子1");
+    expect(document.body.textContent).toContain("修改已经提交，无需重复操作");
     expect(document.body.textContent).not.toContain("候选已失效");
     expect(document.body.textContent).not.toContain("本次未写入");
     expect(document.body.textContent).not.toContain("当前候选已保留");

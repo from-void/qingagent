@@ -152,6 +152,7 @@ describe("builtin skills", () => {
       "只有模板明确要求严重度时才传",
       "同一固定 `origin` 或同名角色/自定义模板重跑时换代旧结果",
       "每次不超过 3 组",
+      "本轮审查没有发现需要处理的问题",
     ]) {
       expect(skill).toContain(commonRule);
     }
@@ -168,7 +169,12 @@ describe("builtin skills", () => {
         "有真实可执行的修改建议时仍写入 `suggestion`",
       ],
       "source-check": ["素材是唯一 ground truth", "`materialQuote`", "`checkedScope`", "素材遗漏"],
-      deai: ["优先 `replaceText`", "痕迹类别：N 处", "保持段落结构、句序与篇幅"],
+      deai: [
+        "优先 `replaceText`",
+        "痕迹类别：N 处",
+        "本轮审查没有发现需要处理的问题",
+        "保持段落结构、句序与篇幅",
+      ],
       consistency: ["`run_python` 或 `run_js`", "`documentQuote`", "称谓与术语"],
       privacy: ["模式类、语义类与间接组合泄露", "138****1234", "同一敏感值多次出现合为一组"],
       format: ["真实 heading level", "列表、表格与分栏", "不同统一目标不要塞进同一组"],

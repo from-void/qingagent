@@ -112,7 +112,7 @@ export const derivativeBriefTool = createTool({
 export const listDerivativesTool = createTool({
   id: "list_derivatives", description: "列出当前会话衍生稿及其排版风格、写作风格、补充指令和过期状态。",
   inputSchema: z.object({}), outputSchema: z.object({ ok: z.boolean(), items: z.array(z.object({ docId:z.string(),dtype:z.string(),layoutStyleName:z.string().nullable(),writingStyleName:z.string(),privatePrompt:z.string(),stale:z.boolean() })), error:z.string().optional() }),
-  execute: async (_input, context) => { const sessionId=sessionIdFrom(context); if(!sessionId) return {ok:false,items:[],error:"缺少当前会话"}; const xs=await listDerivativesByThread(sessionId); return {ok:true,items:xs.map(x=>({docId:x.docId,dtype:x.dtype,layoutStyleName:x.layoutStyleName,writingStyleName:x.writingStyleName,privatePrompt:x.privatePrompt,stale:x.stale}))}; },
+  execute: async (_input, context) => { const sessionId=sessionIdFrom(context); if(!sessionId) return {ok:false,items:[],error:"当前文档还没准备好，请稍后重试"}; const xs=await listDerivativesByThread(sessionId); return {ok:true,items:xs.map(x=>({docId:x.docId,dtype:x.dtype,layoutStyleName:x.layoutStyleName,writingStyleName:x.writingStyleName,privatePrompt:x.privatePrompt,stale:x.stale}))}; },
 });
 
 export const updateDerivativeParamsTool = createTool({
@@ -147,9 +147,10 @@ export const updateDerivativeParamsTool = createTool({
       );
       return { ok: true };
     } catch (error) {
+      console.error("[derivatives] update params failed", error);
       return {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: "稿件设置更新失败，请重试",
       };
     }
   },

@@ -194,35 +194,33 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
   });
 
-  it("把替换旧值折叠为删除游标并在末尾渲染新值，防止旧新文本拼接", () => {
+  it("替换只渲染绿色新值，不生成删除态节点或删除游标", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       suggestions: [suggestion("p-replace", 3, 5, "cd", "XY", "replace")],
       applied: [applied("p-replace", 3, "replace", "cd", "XY")],
     });
 
-    // 替换 = 折叠旧范围 + 起点删除游标 + 末尾绿色新文本，不在正文展示旧值或箭头。
-    expect(decorations).toHaveLength(3);
+    // 旧范围仅作无交互隐藏，不得复用纯删除的红色节点/游标；用户唯一可见、可 hover 的锚点是绿色新值。
+    expect(decorations).toHaveLength(2);
     expect(decorations[0]?.from).toBe(3);
     expect(decorations[0]?.to).toBe(5);
-    expect(className(decorations[0])).toContain("wf-patch-del");
-    expect(className(decorations[0])).not.toContain("wf-patch-replace-old");
+    expect(className(decorations[0])).toBe("wf-patch-replace-source");
+    expect(className(decorations[0])).not.toContain("wf-patch-del");
     expect(attrs(decorations[0]).style).toBe("display:none");
-    expect(decorations[1]?.from).toBe(3);
-    expect(decorations[1]?.to).toBe(3);
-    expect(widgetDom(decorations[1]).className).toContain("wf-patch-del-marker");
-    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
-    expect(decorations[2]?.from).toBe(5);
-    expect(decorations[2]?.to).toBe(5);
-    expect(spec(decorations[2])).toMatchObject({
+    expect(attrs(decorations[0])["data-patch-state"]).toBeUndefined();
+    expect(decorations[1]?.from).toBe(5);
+    expect(decorations[1]?.to).toBe(5);
+    expect(spec(decorations[1])).toMatchObject({
       "data-patch-id": "p-replace",
       patchKind: "replace",
     });
-    expect(widgetDom(decorations[2]).className).toContain("wf-patch-replace-wrap");
-    expect(widgetDom(decorations[2]).querySelector(".wf-patch-ins")?.textContent).toBe("XY");
-    expect(widgetDom(decorations[2]).querySelector(".wf-patch-replace-separator")).toBeNull();
+    expect(widgetDom(decorations[1]).className).toContain("wf-patch-replace-wrap");
+    expect(widgetDom(decorations[1]).querySelector(".wf-patch-ins")?.textContent).toBe("XY");
+    expect(widgetDom(decorations[1]).querySelector(".wf-patch-replace-separator")).toBeNull();
+    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).toBeNull();
     // 防拼接：可见新值锚在旧范围末端，不与隐藏的旧值共用同一正文位置。
-    expect(decorations[2]!.from).toBe(decorations[0]!.to);
+    expect(decorations[1]!.from).toBe(decorations[0]!.to);
   });
 
   it("把 markChange 构建为 wf-patch-mark inline decoration", () => {

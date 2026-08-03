@@ -263,19 +263,49 @@ describe("审阅态 PM patch decorations", () => {
     expect(normalizePmDoc(editor!.state.doc.toJSON())).toEqual(normalizePmDoc(baselineDoc));
     expect(host.querySelector(".ProseMirror")).not.toBeNull();
     expect(host.querySelector(".wf-patch-ins")).not.toBeNull();
-    expect(host.querySelector(".wf-patch-del")).not.toBeNull();
     expect(host.querySelector(".wf-patch-replace-wrap")).not.toBeNull();
+    expect(host.querySelector(".wf-patch-replace-source")).not.toBeNull();
+    expect(host.querySelector(".wf-patch-del")).toBeNull();
+    expect(host.querySelector('[data-patch-state="delete"]')).toBeNull();
     expect(host.querySelector(".wf-patch-replace-old")).toBeNull();
     expect(host.querySelector(".wf-patch-replace-separator")).toBeNull();
-    // 替换旧值与纯删除一致，只在原位留下紧凑游标；新值仍高亮嵌入。
-    expect(host.querySelector(".patch-del-cursor")).not.toBeNull();
+    // 替换正文只显示绿色新值，不复用纯删除的红色游标。
+    expect(host.querySelector(".patch-del-cursor")).toBeNull();
     expect(host.querySelector('[data-patch-id="patch-1"]')).not.toBeNull();
-    expect(host.querySelector(".wf-patch-del")?.textContent).toBe("1.8");
+    expect(host.querySelector(".wf-patch-replace-source")?.textContent).toBe("1.8");
     expect(host.querySelector(".wf-patch-ins")?.textContent).toBe("2.1");
-    // 防拼接：旧值退出渲染文本树，新值是独立 widget，正文没有箭头或旧新可见连排。
+    // 防拼接：旧值通过无交互隐藏层退出渲染文本树，新值是唯一可 hover 的 widget。
     expect(host.querySelector(".wf-doc p")?.innerHTML).toMatchInlineSnapshot(
-      `"<span class="wf-patch-del-marker ProseMirror-widget" data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete"><span class="patch-del-cursor"></span></span><span data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete" class="wf-patch-del" style="display: none;">1.8</span><span class="wf-patch-replace-wrap ProseMirror-widget" data-patch-state="replace" data-patch-id="patch-1" data-patch-index="1"><span class="wf-patch-ins">2.1</span></span>万"`,
+      `"<span aria-hidden="true" class="wf-patch-replace-source" style="display: none;">1.8</span><span class="wf-patch-replace-wrap ProseMirror-widget" data-patch-state="replace" data-patch-id="patch-1" data-patch-index="1"><span class="wf-patch-ins">2.1</span></span>万"`,
     );
+  });
+
+  it("纯删除正文只留下删除游标，原文节点不参与可见渲染", async () => {
+    const baselineDoc = paragraphDoc("1.8万");
+    const suggestion = docSuggestion("patch-delete", 1, 4, "1.8", "");
+    const applied = appliedPatch("patch-delete", 1, "delete", "1.8", "");
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)}
+          editable
+          interactiveEditable={false}
+          showPatches
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          reviewSuggestions={[suggestion]}
+          reviewAppliedPatches={[applied]}
+        />,
+      );
+    });
+
+    await flush();
+
+    expect(host.querySelectorAll(".wf-patch-del-marker")).toHaveLength(1);
+    expect(host.querySelectorAll(".patch-del-cursor")).toHaveLength(1);
+    expect(host.querySelector(".wf-patch-ins")).toBeNull();
+    expect((host.querySelector(".wf-patch-del") as HTMLElement | null)?.style.display).toBe("none");
   });
 
   it("只读 PM 上屏块级新增 decoration 时渲出待接受块且不改 editor.state.doc", async () => {

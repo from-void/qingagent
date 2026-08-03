@@ -234,7 +234,7 @@ describe("workspaceCssContract", () => {
     );
   });
 
-  it("keeps deleted and replaced old text collapsed behind the compact cursor", () => {
+  it("keeps pure deleted text collapsed behind the compact cursor", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
 
     expect(workspaceCss).toMatch(

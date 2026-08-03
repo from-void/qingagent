@@ -75,16 +75,15 @@ describe("PatchHoverLayer 锚点生命周期", () => {
     expect(mounted.workspace.querySelector(".patch-hover-popup")).toBeNull();
   });
 
-  it("替换的新值绿段与删除游标打开同一张替换卡", async () => {
+  it("替换只从新值绿段打开替换卡，并完整展示原文", async () => {
+    const original = `未开启照明${"，需逐项核对原始安全条款".repeat(15)}`;
     const patchMeta = new Map<string, PatchMeta>([[
       "patch-replace",
-      { before: "未开启照明", after: "开启防爆照明", kind: "replace", index: 2 },
+      { before: original, after: "开启防爆照明", kind: "replace", index: 2 },
     ]]);
     const mounted = await mountLayer(patchMeta);
     editor = mounted.editor;
     root = mounted.root;
-    mounted.anchor.dataset.patchId = "patch-replace";
-    mounted.anchor.dataset.patchState = "delete";
     const inserted = document.createElement("span");
     inserted.dataset.patchId = "patch-replace";
     inserted.dataset.patchState = "replace";
@@ -96,20 +95,18 @@ describe("PatchHoverLayer 锚点生命周期", () => {
     mounted.anchor.after(inserted);
 
     await act(async () => {
-      mounted.anchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-    });
-    const deletePopupText = mounted.workspace.querySelector(".patch-hover-popup")?.textContent;
-    expect(deletePopupText).toContain("#2 · 替换");
-    expect(deletePopupText).toContain("原文");
-    expect(deletePopupText).toContain("未开启照明");
-
-    await act(async () => {
-      greenText.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: mounted.anchor }));
+      greenText.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     });
     const insertPopup = mounted.workspace.querySelector(".patch-hover-popup");
-    expect(insertPopup?.textContent).toBe(deletePopupText);
+    expect(insertPopup?.textContent).toContain("#2 · 替换");
+    expect(insertPopup?.textContent).toContain("原文");
+    expect(insertPopup?.querySelector(".patch-popup-original-text")?.textContent).toBe(original);
     expect(insertPopup?.querySelectorAll("button")).toHaveLength(1);
     expect(insertPopup?.querySelector("button")?.textContent).toBe("撤销");
+    await act(async () => {
+      insertPopup?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    expect(mounted.onPatchVerdict).toHaveBeenCalledWith("patch-replace", "rejected");
   });
 
   it("纯新增绿段打开新增卡并展示新增内容摘要", async () => {
@@ -133,7 +130,12 @@ describe("PatchHoverLayer 锚点生命周期", () => {
     expect(popup?.textContent).toContain("#3 · 新增");
     expect(popup?.textContent).toContain("新增内容");
     expect(popup?.textContent).toContain("交接前检查照明、护栏与通信设备。");
+    expect(Array.from(popup?.querySelectorAll(".patch-popup-label") ?? [], (node) => node.textContent)).not.toContain("原文");
     expect(popup?.querySelector("button")?.textContent).toBe("撤销");
+    await act(async () => {
+      popup?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    expect(mounted.onPatchVerdict).toHaveBeenCalledWith("patch-insert", "rejected");
   });
 
   it("granular 局部锚点继续让位且空白命中回落整块卡，避免重复或无反馈", async () => {

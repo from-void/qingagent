@@ -3391,8 +3391,8 @@
     background:rgba(220, 80, 70, 0.6);
     transform:translateX(-50%);
   }
-  /* 审阅态删除铁律：含 replace 旧值在内，被删正文原位只留「竖线+圆点」游标，
-     原文仅在 hover 卡展示。改此处前先读 AGENTS.md UI Iron Rules。 */
+  /* 审阅态纯删除铁律：被删正文原位只留「竖线+圆点」游标，原文仅在 hover 卡展示。
+     替换不走此红色分支，只显示绿色新值。改此处前先读 AGENTS.md UI Iron Rules。 */
   #view-workspace .wf-doc .wf-patch-del{
     display:inline-block;
     width:0;

@@ -186,47 +186,58 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       continue;
     }
 
-    // 审阅态删除铁律：含 replace 旧值在内，被删正文原位只留「竖线+圆点」游标，
-    // 原文仅在 hover 卡展示。改此处前先读 AGENTS.md UI Iron Rules。
+    // 审阅态删除铁律：纯删除的正文原位只留「竖线+圆点」游标，原文仅在 hover 卡展示。
+    // 替换只显示绿色新值：基座旧范围仍需退出渲染文本树，但不能再生成删除态节点或游标。
     if (kind === "delete" || kind === "replace") {
       if (to! <= from!) {
         dropped.push(source.id);
         continue;
       }
+      const isDelete = kind === "delete";
       decorations.push(
         Decoration.inline(
           from!,
           to!,
-          {
-            class: `wf-patch-del${currentClass}${statusClass}`,
-            "data-patch-id": source.id,
-            "data-patch-index": String(index),
-            "data-patch-state": "delete",
-            // 不能只靠 width:0 视觉压扁：innerText / 复制 / 自动化仍会读出旧文，
-            // 与 replacement widget 拼成“旧文+新文”。直接退出渲染文本树，原位仅留独立游标。
-            style: "display:none",
-          },
+          isDelete
+            ? {
+                class: `wf-patch-del${currentClass}${statusClass}`,
+                "data-patch-id": source.id,
+                "data-patch-index": String(index),
+                "data-patch-state": "delete",
+                // 不能只靠 width:0 视觉压扁：innerText / 复制 / 自动化仍会读出旧文。
+                // 直接退出渲染文本树，原位仅留独立游标。
+                style: "display:none",
+              }
+            : {
+                // 这是基座保真所需的无交互隐藏层，不是用户可见的删除节点。
+                // hover 与撤销只锚到后面的绿色 replacement widget。
+                class: "wf-patch-replace-source",
+                style: "display:none",
+                "aria-hidden": "true",
+              },
           spec,
         ),
       );
-      decorations.push(
-        Decoration.widget(
-          from!,
-          () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
-          {
-            ...spec,
-            // 稳定 key(含 current/accepted 状态):切换 activePatchId 时 ProseMirror 靠 key
-            // 复用未变 widget,只重建高亮状态真正变化的一两处,避免全量重挂导致满屏闪烁。
-            key: `pdel-${source.id}-${index}-${currentClass}-${statusClass}`,
-            side: 1,
-            ignoreSelection: true,
-          },
-        ),
-      );
+      if (isDelete) {
+        decorations.push(
+          Decoration.widget(
+            from!,
+            () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
+            {
+              ...spec,
+              // 稳定 key(含 current/accepted 状态):切换 activePatchId 时 ProseMirror 靠 key
+              // 复用未变 widget,只重建高亮状态真正变化的一两处,避免全量重挂导致满屏闪烁。
+              key: `pdel-${source.id}-${index}-${currentClass}-${statusClass}`,
+              side: 1,
+              ignoreSelection: true,
+            },
+          ),
+        );
+      }
     }
 
     if (kind === "insert" || kind === "replace") {
-      // replace 新值锚到隐藏旧范围末尾，与其起点的紧凑删除游标分离；正文中不会出现旧新拼接。
+      // replace 新值锚到隐藏旧范围末尾；正文中只显示绿色新值，不会出现旧新拼接。
       const insertAt = kind === "replace" ? to! : from!;
       const insertedText = revealedInsertedText(source.id, after, args.typedByPatch);
       if (insertedText.length > 0) {

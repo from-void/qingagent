@@ -47,6 +47,35 @@ describe("公众号稿生成体验", () => {
   beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
+  it.each(["gzh", "translate"] as const)("%s 配置弹窗打开后按 Esc 放弃输入并关闭", async (dtype) => {
+    const onClose = vi.fn();
+    const stream = {
+      listStyleTemplates: vi.fn(async () => dtype === "gzh"
+        ? [
+            { id: "layout-a", dtype, slot: "layout", name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true },
+            { id: "gzh-opinion", dtype, slot: "writing", name: "深度观点文", detail: "深入", prompt: "写作提示", builtin: true },
+          ]
+        : [{ id: "translate-faithful", dtype, slot: "writing", name: "忠实精准", detail: "准确", prompt: "翻译提示", builtin: true }]),
+    };
+    await act(async () => root.render(
+      <DerivativeGenerateModal
+        descriptor={DTYPE_REGISTRY[dtype]}
+        sessionId="session-1"
+        stream={stream as never}
+        open
+        initial={{ templateId: dtype === "gzh" ? "gzh-opinion" : "translate-faithful", privatePrompt: "尚未提交的输入" }}
+        onClose={onClose}
+        onGenerate={vi.fn()}
+      />,
+    ));
+    expect(host.querySelector('[data-wf="DerivativeGenerateModal"]')).not.toBeNull();
+
+    const supplement = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    act(() => supplement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("既有衍生稿用预取正文首帧成画，不先挂空纸等待二次请求", async () => {
     const generated = { ...item, sourceVersion: 1, generatedAt: "now" };
     const initialDocument = {

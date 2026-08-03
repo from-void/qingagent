@@ -10,6 +10,7 @@ import { assembleReviewQuery } from "@qingagent/contract-ts";
 import { ChatMessageList } from "./ChatMessageList";
 import { ROLE_REVIEW_PROFILES } from "./roleReview";
 import { ConfirmProvider } from "../../../system";
+import { registerOverlay, resetOverlayDismissStackForTest } from "../../../system/overlayDismissStack";
 
 const now = "2026-07-14T00:00:00.000Z";
 const builtins: ReviewTemplateItem[] = [
@@ -28,7 +29,11 @@ describe("ReviewLaunchModal", () => {
     document.body.append(host);
     root = createRoot(host);
   });
-  afterEach(() => { act(() => root.unmount()); host.remove(); });
+  afterEach(() => {
+    act(() => root.unmount());
+    resetOverlayDismissStackForTest();
+    host.remove();
+  });
 
   function props(overrides: Record<string, unknown> = {}) {
     return {
@@ -54,6 +59,65 @@ describe("ReviewLaunchModal", () => {
       ...overrides,
     };
   }
+
+  it.each([
+    ["sensitive", "敏感词审查"],
+    ["custom", "自定义审查"],
+  ] as const)("%s 配置弹窗打开后按 Esc 放弃输入并关闭", async (type, title) => {
+    const template = { ...builtins[0]!, id: `review-${type}-default`, type, name: title };
+    const modalProps = props({
+      type,
+      loadTemplates: vi.fn().mockResolvedValue({ items: [template], selectedTemplateId: template.id }),
+    });
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    expect(host.querySelector('[data-wf="ReviewLaunchModal"]')).not.toBeNull();
+
+    const supplement = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(supplement, "尚未提交的输入");
+      supplement.dispatchEvent(new Event("input", { bubbles: true }));
+      supplement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+
+    expect(modalProps.onClose).toHaveBeenCalledTimes(1);
+    expect(modalProps.onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("删除确认叠在自定义审查配置之上时，Esc 每次只关闭栈顶", async () => {
+    const customTemplate = { ...builtins[1]!, id: "review-custom-user", type: "custom" as const, name: "法务合规视角" };
+    const fallbackTemplate = { ...builtins[0]!, id: "review-custom-default", type: "custom" as const, name: "通用审查" };
+    const modalProps = props({
+      type: "custom",
+      loadTemplates: vi.fn().mockResolvedValue({ items: [fallbackTemplate, customTemplate], selectedTemplateId: customTemplate.id }),
+    });
+    await act(async () => root.render(
+      <ConfirmProvider><ReviewLaunchModal {...modalProps} /></ConfirmProvider>,
+    ));
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑法务合规视角"]')?.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "删除")?.click());
+    expect(host.querySelector('[data-wf="GlobalConfirm"]')).not.toBeNull();
+
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(host.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
+    expect(host.querySelector('[data-wf="ReviewLaunchModal"]')).not.toBeNull();
+    expect(modalProps.onClose).not.toHaveBeenCalled();
+
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(modalProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("底层预览已入栈时，Esc 只关闭后打开的审查配置", async () => {
+    const dismissPreview = vi.fn();
+    registerOverlay(dismissPreview);
+    const modalProps = props();
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+
+    expect(modalProps.onClose).toHaveBeenCalledTimes(1);
+    expect(dismissPreview).not.toHaveBeenCalled();
+  });
 
   it("头部左对齐呈现动作说明且无计数，审查组标题与弱化新建入口始终存在", async () => {
     const modalProps = props();

@@ -121,9 +121,74 @@ describe("drawio 全屏编辑面板", () => {
       display: fake.frameWindow.getComputedStyle(button).display,
     }))).toEqual([
       { label: "保存", display: "none" },
-      { label: "保存并退出", display: "none" },
       { label: "完成", display: expect.not.stringMatching(/^none$/) },
+      { label: "退出", display: "none" },
     ]);
+  });
+
+  it("编辑标签后点击「完成」会通过保存并退出持久化最新 XML", async () => {
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+    const latest = drawioSource("快递入站");
+    const frameDocument = fake.iframe.contentDocument;
+    if (!frameDocument) throw new Error("iframe contentDocument 缺失");
+    const frameRoot = frameDocument.documentElement
+      ?? frameDocument.appendChild(frameDocument.createElement("html"));
+    if (!frameDocument.head) {
+      frameRoot.appendChild(frameDocument.createElement("head"));
+    }
+    const frameBody = frameDocument.body
+      ?? frameRoot.appendChild(frameDocument.createElement("body"));
+    const toolbar = frameDocument.createElement("div");
+    toolbar.className = "geToolbarContainer";
+    const buttonContainer = frameDocument.createElement("div");
+    buttonContainer.className = "geButtonContainer";
+    const emit = (data: unknown) => {
+      window.dispatchEvent(new MessageEvent("message", {
+        source: fake.frameWindow,
+        origin: window.location.origin,
+        data: JSON.stringify(data),
+      }));
+    };
+    const saveButton = frameDocument.createElement("button");
+    saveButton.textContent = "保存";
+    saveButton.addEventListener("click", () => emit({ event: "save", xml: latest }));
+    const saveAndExitButton = frameDocument.createElement("button");
+    saveAndExitButton.textContent = "保存并退出";
+    saveAndExitButton.addEventListener("click", () => emit({
+      event: "save",
+      xml: latest,
+      exit: true,
+    }));
+    const exitButton = frameDocument.createElement("button");
+    exitButton.textContent = "退出";
+    exitButton.addEventListener("click", () => emit({ event: "exit", modified: true }));
+    buttonContainer.append(saveButton, saveAndExitButton, exitButton);
+    toolbar.appendChild(buttonContainer);
+    frameBody.appendChild(toolbar);
+
+    await act(async () => fake.iframe.dispatchEvent(new Event("load")));
+    const completeButton = Array.from(buttonContainer.children).find(
+      (button) => button.textContent === "完成",
+    ) as HTMLButtonElement | undefined;
+    if (!completeButton) throw new Error("完成按钮缺失");
+
+    await act(async () => completeButton.click());
+    expect(fake.postedActions().slice(-2)).toEqual([
+      { action: "status", modified: true },
+      { action: "snapshot" },
+    ]);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await fake.exportSvg(svgDataUri("快递入站"));
+
+    expect(onSave).toHaveBeenCalledWith({
+      source: latest,
+      svg: expect.stringContaining("快递入站"),
+    });
+    expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[0]?.[0]);
   });
 
   it("autosave 事件约一秒防抖，只为最后一版启动 snapshot 写回", async () => {

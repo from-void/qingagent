@@ -1,4 +1,5 @@
 export { ensureLarkCliShim } from "./larkCliShim.js";
+export { ensureQaCliUserShim, renderQaCliUserShim } from "./qaCliUserShim.js";
 export {
   ensureNodeRuntimeShim,
   isElectronRuntime,

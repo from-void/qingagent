@@ -2,6 +2,14 @@
 
 `qa` 是青简本机 external API 的命令行客户端，供 Claude Code、Codex 和其他自动化 Agent 读写文档、处理审查、管理审查模板与已安装技能。
 
+## 安装
+
+`qa` 随桌面客户端分发：安装并首次启动青简后，自动写入 `~/.qingagent/bin/qa`（mac/linux 会尽力 symlink 到 `/usr/local/bin/qa`；运行时借应用自带的 Electron-as-Node，无需另装 Node）。终端里没有 `qa` 命令时，补一行 PATH 即可：
+
+```bash
+export PATH="$HOME/.qingagent/bin:$PATH"   # Windows: %USERPROFILE%\.qingagent\bin
+```
+
 启动青简后先检查实例：
 
 ```bash

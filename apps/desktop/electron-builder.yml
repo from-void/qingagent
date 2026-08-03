@@ -44,6 +44,10 @@ extraResources:
   # flag 关时只含占位文件(安装包体积不变);flag 开时含 ~12MB wasm/stdlib。
   - from: build/pyodide
     to: pyodide
+  # qa CLI:build.mjs 无条件打成单文件暂存到 build/qa-cli,首启写用户终端 shim
+  # (~/.qingagent/bin/qa),外部 Agent(Claude Code/Codex)装完应用即可用 qa 命令。
+  - from: build/qa-cli
+    to: qa-cli
   # 飞书 lark-cli:由 build.mjs 按 QINGAGENT_BUNDLE_LARK_CLI 暂存到 build/lark-cli。
   # flag 关时只含占位文件;flag 开时含 @larksuite/cli + 依赖(~26MB)。
   # 运行时 ensureLarkCliShim 据 Resources/lark-cli/node_modules/@larksuite/cli/scripts/run.js 写 PATH shim。

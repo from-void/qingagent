@@ -97,6 +97,21 @@ if (BUNDLE_PYODIDE) {
   console.log("Pyodide bundling OFF (set QINGAGENT_BUNDLE_PYODIDE=1 to include the Python runtime)");
 }
 
+// qa CLI:随包分发的用户终端命令行(零运行时依赖),esbuild 直接把 workspace TS 打成单文件
+// ESM(.mjs,Node 按扩展名认 ESM,目录里无需 package.json)暂存到 build/qa-cli,
+// electron-builder 通过 extraResources 拷进 Resources/qa-cli。首启由主进程写
+// ~/.qingagent/bin/qa 终端 shim(ELECTRON_RUN_AS_NODE 借应用运行时,用户无需装 Node)。
+await build({
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "esm",
+  entryPoints: ["../../packages/qa-cli/src/cli.ts"],
+  outfile: "build/qa-cli/cli.mjs",
+  sourcemap: false,
+});
+console.log("qa CLI bundled -> build/qa-cli/cli.mjs");
+
 // 飞书 lark-cli(@larksuite/cli)按 build flag 暂存到 build/lark-cli,electron-builder 通过
 // extraResources 拷进 Resources/lark-cli。桌面「全能力包」默认 ON;显式
 // QINGAGENT_BUNDLE_LARK_CLI=0/false/off/no 关掉出「不含飞书」瘦包。带版本缓存,重复构建不重装。

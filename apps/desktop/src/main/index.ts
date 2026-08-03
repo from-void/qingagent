@@ -448,6 +448,33 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
       }
     }
   }
+
+  // qa CLI:随包带到 Resources/qa-cli(build.mjs 打单文件,extraResources 拷入),
+  // 首启写**用户终端**的 qa 命令(~/.qingagent/bin/qa,区别于沙箱 PATH 的 lark shim):
+  // ELECTRON_RUN_AS_NODE 借应用自带运行时,用户机器不需要 Node。mac/linux 尽力
+  // symlink /usr/local/bin/qa;两处都不在 PATH 时打印补 PATH 提示,不弹窗打扰。
+  if (app.isPackaged) {
+    const qaCliJs = path.join(process.resourcesPath, "qa-cli", "cli.mjs");
+    if (existsSync(qaCliJs)) {
+      try {
+        const { ensureQaCliUserShim } = await import("@qingagent/core/workspace/runtime-shims");
+        const qaShim = ensureQaCliUserShim({
+          execPath: process.execPath,
+          cliJsPath: qaCliJs,
+        });
+        if (qaShim.onPath) {
+          console.info("[qa-cli] 终端 qa 命令已就绪", qaShim);
+        } else {
+          console.info(
+            `[qa-cli] shim 已写入 ${qaShim.shimPath},但其目录不在 PATH;` +
+              `终端使用前请执行:export PATH="$HOME/.qingagent/bin:$PATH"`,
+          );
+        }
+      } catch (err) {
+        console.warn("[qa-cli] 终端 shim 写入失败,qa 命令可能不可用:", err);
+      }
+    }
+  }
 }
 
 // 桌面端是单用户本地环境,技能插拔(安装/删除)等同装自己的本地软件,默认放开。

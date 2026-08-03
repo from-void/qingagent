@@ -140,6 +140,7 @@ import {
 } from "../data/reviewActions";
 import { deriveReviewUiState } from "../data/reviewUiState";
 import {
+  isServerStreamDisposedError,
   loggedFrameObservabilityOf,
   retryDisposedServerStreamOnce,
   ServerStream,
@@ -2605,11 +2606,24 @@ export function useWorkspacePageController() {
     if (!stream || !requestSessionId) return;
     const requestGeneration = derivativeListGenerationRef.current + 1;
     derivativeListGenerationRef.current = requestGeneration;
-    const nextDerivatives = await retryDisposedServerStreamOnce(
-      stream,
-      () => streamRef.current,
-      (currentStream) => currentStream.listDerivatives(requestSessionId),
-    );
+    let nextDerivatives: DerivativeItem[];
+    try {
+      nextDerivatives = await retryDisposedServerStreamOnce(
+        stream,
+        () => streamRef.current,
+        (currentStream) => currentStream.listDerivatives(requestSessionId),
+      );
+    } catch (error) {
+      // 离开工作区会 dispose 旧控制器的流并清空其 ref；随后重开的流属于新的
+      // React 实例，旧请求既无法也不应跨实例补发。新实例会自行刷新列表。
+      if (
+        isServerStreamDisposedError(error) &&
+        streamRef.current !== stream
+      ) {
+        return;
+      }
+      throw error;
+    }
     if (
       stateRef.current.sessionId !== requestSessionId ||
       derivativeListGenerationRef.current !== requestGeneration

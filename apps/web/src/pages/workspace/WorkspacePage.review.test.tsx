@@ -166,8 +166,13 @@ vi.mock("./data/serverStream", () => {
     return request(initialStream);
   }
 
+  function isServerStreamDisposedError(error: unknown): error is Error {
+    return error instanceof Error && error.message === "ServerStream disposed";
+  }
+
   return {
     ServerStream,
+    isServerStreamDisposedError,
     loggedFrameObservabilityOf: () => null,
     retryDisposedServerStreamOnce,
   };
@@ -5347,6 +5352,60 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).not.toContain("公众号文章");
     serverStreamMock.startSessionImpl = null;
     serverStreamMock.listDerivativesImpl = null;
+  });
+
+  it("Tab 激活刷新遇到旧工作区 dispose、新工作区尚未就绪时不外泄错误", async () => {
+    vi.useFakeTimers();
+    window.location.hash = "#/workspace?session=s-1";
+    let listCallCount = 0;
+    let rejectTabRefresh!: (error: Error) => void;
+    serverStreamMock.listDerivativesImpl = async () => {
+      listCallCount += 1;
+      if (listCallCount === 1) return [];
+      return new Promise<unknown[]>((_resolve, reject) => {
+        rejectTabRefresh = reject;
+      });
+    };
+
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const oldStream = latestServerStream();
+    await emitFrames(oldStream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "生成中稿件" } },
+    ]);
+    expect(listCallCount).toBe(1);
+
+    await act(async () => {
+      captured.current?.setActiveTab("gzh-generating");
+    });
+    await flushMicrotasks(2);
+    expect(listCallCount).toBe(2);
+
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    await act(async () => {
+      root?.render(<div>首页</div>);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(75);
+    });
+    expect(oldStream.dispose).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectTabRefresh(new Error("ServerStream disposed"));
+      await Promise.resolve();
+    });
+
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("连续重命名中 T1 成功、T2 失败时回滚到即时标题 T1", async () => {

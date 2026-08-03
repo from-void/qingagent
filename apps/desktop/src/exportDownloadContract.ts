@@ -1,7 +1,7 @@
 export const EXPORT_DOWNLOAD_SAVE_CHANNEL = "qingagent:export-download-save";
 export const EXPORT_DOWNLOAD_REVEAL_CHANNEL = "qingagent:export-download-reveal";
 
-export type ExportDownloadFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
+export type ExportDownloadFormat = "pdf" | "docx" | "html" | "markdown" | "txt" | "zip";
 export type ExportDownloadFailureReason =
   | "cancelled"
   | "interrupted"

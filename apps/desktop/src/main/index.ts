@@ -101,6 +101,8 @@ import {
   EXPORT_DOWNLOAD_REVEAL_CHANNEL,
   EXPORT_DOWNLOAD_SAVE_CHANNEL,
 } from "./exportDownloadCoordinator.js";
+import { DIAGNOSTICS_EXPORT_CHANNEL } from "../diagnosticsExportContract.js";
+import { exportDiagnosticsToDownloads } from "./diagnosticsExport.js";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -1136,81 +1138,20 @@ ipcMain.handle("qingagent:client-config-value-set", (event, key: unknown, value:
   return writeClientConfigValue(key, value);
 });
 
-ipcMain.handle("qingagent:export-diagnostics", async (event, opts: unknown) => {
+ipcMain.handle(DIAGNOSTICS_EXPORT_CHANNEL, async (event, opts: unknown) => {
   assertTrustedRenderer(event);
-  if (!embeddedServerPort) throw new Error("embedded server is not ready");
-  const owner = BrowserWindow.fromWebContents(event.sender);
-  const privacyLevel = readPrivacyLevel(opts);
-  const report = readReport(opts);
-  const sessionIds = readSessionIds(opts);
+  const coordinator = mainExportDownloadCoordinator;
+  if (!embeddedServerPort || !coordinator) {
+    return { saved: false, reason: "not-started" as const };
+  }
   const origin = `http://127.0.0.1:${embeddedServerPort}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Origin: origin,
-  };
-  if (process.env.QINGAGENT_AUTH_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.QINGAGENT_AUTH_TOKEN}`;
-  }
-  const res = await fetch(`${origin}/api/v1/diagnostics/export`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ privacyLevel, report, sessionIds }),
+  return exportDiagnosticsToDownloads(opts, {
+    serverOrigin: origin,
+    downloadsDirectory: app.getPath("downloads"),
+    authToken: process.env.QINGAGENT_AUTH_TOKEN,
+    save: (input) => coordinator.save(event.sender, input),
   });
-  if (!res.ok) {
-    throw new Error(`diagnostics export failed: HTTP ${res.status}`);
-  }
-
-  const filename = filenameFromContentDisposition(res.headers.get("content-disposition")) ??
-    `qingagent-diag-v1-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.zip`;
-  const activeOwner = owner && getLiveWebContents(owner) ? owner : null;
-  const save = activeOwner
-    ? await dialog.showSaveDialog(activeOwner, {
-      defaultPath: filename,
-      filters: [{ name: "诊断包", extensions: ["zip"] }],
-    })
-    : await dialog.showSaveDialog({
-      defaultPath: filename,
-      filters: [{ name: "诊断包", extensions: ["zip"] }],
-    });
-  if (save.canceled || !save.filePath) return { saved: false };
-
-  writeFileSync(save.filePath, Buffer.from(await res.arrayBuffer()));
-  return { saved: true, path: save.filePath };
 });
-
-function readPrivacyLevel(opts: unknown): "L1" | "L2" {
-  if (opts && typeof opts === "object" && (opts as { privacyLevel?: unknown }).privacyLevel === "L2") {
-    return "L2";
-  }
-  return "L1";
-}
-
-function readSessionIds(opts: unknown): string[] | undefined {
-  if (!opts || typeof opts !== "object") return undefined;
-  const raw = (opts as { sessionIds?: unknown }).sessionIds;
-  if (!Array.isArray(raw)) return undefined;
-  const ids = raw.filter((v): v is string => typeof v === "string" && v.length > 0);
-  return ids.length > 0 ? ids : undefined;
-}
-
-function readReport(opts: unknown): string {
-  const value = opts && typeof opts === "object" ? (opts as { report?: unknown }).report : undefined;
-  return typeof value === "string" ? value : "";
-}
-
-function filenameFromContentDisposition(value: string | null): string | null {
-  if (!value) return null;
-  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(value)?.[1];
-  if (utf8) {
-    try {
-      return decodeURIComponent(utf8);
-    } catch {
-      return utf8;
-    }
-  }
-  const plain = /filename="([^"]+)"/i.exec(value)?.[1] ?? /filename=([^;]+)/i.exec(value)?.[1];
-  return plain ? plain.trim() : null;
-}
 
 function addAllowedOrigin(origins: Set<string>, url: string): void {
   try {

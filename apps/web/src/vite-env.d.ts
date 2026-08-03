@@ -43,7 +43,7 @@ interface ElectronDesktopDialogRequest {
   kind: ElectronDesktopDialogKind;
 }
 
-type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
+type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt" | "zip";
 type ElectronExportDownloadResult =
   | { saved: true; filename: string; revealToken: string }
   | {
@@ -74,7 +74,21 @@ interface Window {
       privacyLevel: "L1" | "L2";
       report?: string;
       sessionIds?: string[];
-    }) => Promise<{ saved: boolean; path?: string }>;
+    }) => Promise<
+      | { saved: true; path: string }
+      | {
+          saved: false;
+          reason:
+            | "cancelled"
+            | "interrupted"
+            | "not-started"
+            | "missing-file"
+            | "write-failed"
+            | "timeout"
+            | "window-closed"
+            | "request-failed";
+        }
+    >;
     // 客户端凭证/模型配置持久化(落 userData,见 clientPersist.ts)：只暴露固定用途的单项 API，
     // 不把整份解密配置挂到 window。
     getDeepseekApiKey?: () => string | null;

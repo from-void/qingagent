@@ -3,6 +3,7 @@ import {
   revealExportDownload,
   saveExportDownload,
 } from "./exportDownloadBridge.js";
+import { exportDiagnostics } from "./diagnosticsExportBridge.js";
 import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_REQUEST_CHANNEL,
@@ -123,8 +124,7 @@ contextBridge.exposeInMainWorld("electron", {
   saveExportDownload,
   revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),
-  exportDiagnostics: (opts: { privacyLevel: "L1" | "L2"; report?: string; sessionIds?: string[] }) =>
-    ipcRenderer.invoke("qingagent:export-diagnostics", opts),
+  exportDiagnostics,
   getDeepseekApiKey: () => readDesktopConfigValue("qingagent.deepseek_api_key"),
   setDeepseekApiKey: (value: string | null) =>
     writeDesktopConfigValue("qingagent.deepseek_api_key", value),

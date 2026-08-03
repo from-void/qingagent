@@ -97,6 +97,8 @@ interface Window {
     setKimiOfficialModel?: (value: string | null) => Promise<boolean>;
     getModelProvider?: () => string | null;
     setModelProvider?: (value: string | null) => Promise<boolean>;
+    getHardwareAccelerationEnabled?: () => boolean;
+    setHardwareAccelerationEnabled?: (enabled: boolean) => Promise<boolean>;
     isClientConfigReady?: () => boolean;
     onClientConfigReady?: (cb: () => void) => () => void;
     requestConfirmRememberGrant?: (input: {

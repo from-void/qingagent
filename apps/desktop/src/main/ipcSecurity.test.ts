@@ -70,6 +70,8 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
     "setKimiModelTier",
     "getModelProvider",
     "setModelProvider",
+    "getHardwareAccelerationEnabled",
+    "setHardwareAccelerationEnabled",
   ]) {
     assert.match(preload, new RegExp(`\\b${api}\\b`), `缺少具名 preload API: ${api}`);
   }
@@ -119,6 +121,7 @@ test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", ()
     "qingagent.kimi_official_model",
     "qingagent.kimi_model_tier",
     "qingagent.model_provider",
+    "qingagent.hardware_acceleration",
   ]) {
     assert.ok(configSetSource.includes(`"${key}"`), `主进程白名单缺少：${key}`);
     assert.ok(preload.includes(`"${key}"`), `preload 白名单缺少：${key}`);

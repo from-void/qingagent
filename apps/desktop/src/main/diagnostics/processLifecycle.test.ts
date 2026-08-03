@@ -4,8 +4,21 @@ import { describe, it, mock } from "node:test";
 import {
   attachMainWindowProcessMonitor,
   handleChildProcessGone,
+  logRenderingMode,
   type ProcessLifecycleLog,
 } from "./processLifecycle.js";
+
+it("每次启动以 processLifecycle 事件记录当前渲染模式", () => {
+  const logs = createLogSink();
+
+  logRenderingMode({ mode: "software", reason: "user-disabled" }, logs.log);
+
+  assert.deepEqual(logs.entries, [{
+    level: "info",
+    event: "rendering-mode",
+    details: { mode: "software", reason: "user-disabled" },
+  }]);
+});
 
 class MockWebContents extends EventEmitter {
   readonly id = 59;

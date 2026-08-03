@@ -1122,6 +1122,44 @@ describe("ServerStream", () => {
     );
   });
 
+  it("会话重开切换 SSE epoch 时 listDerivatives 首次缺帧会换 requestId 静默重试", async () => {
+    const requestsBySession = new Map<string, string[]>();
+    globalThis.fetch = commandResponseFrom((command) => {
+      if (command.kind !== "listDerivatives") throw new Error("unexpected command");
+      const requests = requestsBySession.get(command.data.sessionId) ?? [];
+      requests.push(command.data.requestId);
+      requestsBySession.set(command.data.sessionId, requests);
+      if (command.data.sessionId === "session-b" && requests.length === 1) {
+        return [];
+      }
+      return [{
+        kind: "derivativesListed",
+        data: { requestId: command.data.requestId, items: [] },
+      } satisfies BridgeFrame];
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stream = new ServerStream();
+
+    await expect(stream.listDerivatives("session-a")).resolves.toEqual([]);
+    const sourceA = MockEventSource.instances.at(-1)!;
+
+    const reopenedList = stream.listDerivatives("session-b");
+    const sourceB = MockEventSource.instances.at(-1)!;
+    expect(sourceA.closed).toBe(true);
+    expect(sourceB.url).toContain("sessionId=session-b");
+    sourceB.emitFrame({
+      kind: "restoreReset",
+      data: { epoch: 2, snapshotSeq: 1 },
+    } satisfies BridgeFrame, "1");
+
+    await expect(reopenedList).resolves.toEqual([]);
+    expect(requestsBySession.get("session-b")).toHaveLength(2);
+    expect(new Set(requestsBySession.get("session-b"))).toHaveProperty("size", 2);
+    expect(MockEventSource.instances.at(-1)!.url).toContain("epoch=2");
+    expect(consoleError).not.toHaveBeenCalled();
+    stream.dispose();
+  });
+
   it("cancelAskUser 的专项失败标记由统一 422 协议保留", async () => {
     globalThis.fetch = commandResponse({
       error: {
@@ -1360,8 +1398,11 @@ describe("ServerStream", () => {
       command: Extract<Command, { kind: "getDerivativeDoc" | "getStyleTemplate" }>;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
-      new Promise<Response>((resolve) => {
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url !== "/api/v1/commands") {
+        return Promise.resolve({ ok: true } as Response);
+      }
+      return new Promise<Response>((resolve) => {
         pending.push({
           command: JSON.parse(String(init?.body)) as Extract<
             Command,
@@ -1369,8 +1410,8 @@ describe("ServerStream", () => {
           >,
           resolve,
         });
-      }),
-    );
+      });
+    });
     const stream = new ServerStream();
     const docA = stream.getDerivativeDoc("s-1", "derivative-a");
     const docB = stream.getDerivativeDoc("s-1", "derivative-b");

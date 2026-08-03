@@ -28,6 +28,7 @@ test("bridge 通过专用 IPC 传 Uint8Array 并返回主进程真实成功结�
       return {
         saved: true,
         filename: receivedInput.filename,
+        path: `/downloads/${receivedInput.filename}`,
         revealToken: "reveal-1",
       };
     },
@@ -36,6 +37,7 @@ test("bridge 通过专用 IPC 传 Uint8Array 并返回主进程真实成功结�
   assert.deepEqual(await save(input), {
     saved: true,
     filename: input.filename,
+    path: `/downloads/${input.filename}`,
     revealToken: "reveal-1",
   });
   assert.equal(invocations[0]?.channel, EXPORT_DOWNLOAD_SAVE_CHANNEL);

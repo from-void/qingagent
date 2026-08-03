@@ -9,7 +9,10 @@ import {
 import { QingLoading } from "../QingLoading";
 import { DerivativeGenerateModal, type DerivativeGenerateParams } from "./DerivativeGenerateModal";
 import { getDtypeDescriptor } from "./dtypeRegistry";
-import { exportElementAsPng } from "./exportElementAsPng";
+import {
+  exportElementAsPng,
+  imageExportErrorMessage,
+} from "./exportElementAsPng";
 import type { XhsCoverTemplate } from "./XhsCover";
 import type { DerivativeDocument, DerivativeItem } from "./types";
 
@@ -27,6 +30,21 @@ function articleTitle(doc: PmDoc | null, fallback: string): string {
 function RegenIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 .45 6.6"/><path d="M19 4v4h-4"/></svg>; }
 function ExportIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10 4 4 4-4"/><path d="M5 16v4h14v-4"/></svg>; }
 function MoreIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>; }
+
+export async function exportDerivativeImage(
+  target: HTMLElement,
+  filename: string,
+  onToast: (text: string) => void,
+  exporter: typeof exportElementAsPng = exportElementAsPng,
+): Promise<void> {
+  try {
+    const result = await exporter(target, filename);
+    onToast(result.path ? `图片已导出：${result.path}` : "图片已开始下载");
+  } catch (error) {
+    console.error("[workspace] export derivative image failed", error);
+    onToast(imageExportErrorMessage(error));
+  }
+}
 
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
@@ -207,10 +225,11 @@ export function DerivativeView(props: {
     setExportOpen(false);
     const target = descriptor.exportImageTarget?.(viewRef.current);
     if (!target) { props.onToast("当前稿件没有可导出的图片"); return; }
-    void exportElementAsPng(target, `${descriptor.label}-${item.targetLang ?? title}`).then(() => props.onToast("图片已导出")).catch((error) => {
-      console.error("[workspace] export derivative image failed", error);
-      props.onToast("图片导出失败，请重试");
-    });
+    void exportDerivativeImage(
+      target,
+      `${descriptor.label}-${item.targetLang ?? title}`,
+      props.onToast,
+    );
   };
   const changeCoverTemplate = (next: XhsCoverTemplate) => {
     const previous = coverTemplate;

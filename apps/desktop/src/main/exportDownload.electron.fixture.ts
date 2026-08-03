@@ -107,6 +107,12 @@ void app.whenReady().then(async () => {
         bytes: [...Buffer.from("%PDF-1.7\n%%EOF\n", "ascii")],
       },
       {
+        filename: "公众号稿-测试标题.png",
+        format: "png",
+        mimeType: "image/png",
+        bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      },
+      {
         filename: "测试文档_20260729.pdf",
         format: "pdf",
         mimeType: "application/pdf",
@@ -118,6 +124,9 @@ void app.whenReady().then(async () => {
       const result = await triggerIpcSave(window, downloadCase);
       if (!result.saved) {
         throw new Error(`download failed: ${downloadCase.filename}/${result.reason}`);
+      }
+      if (result.path !== path.join(downloadsDirectory, result.filename)) {
+        throw new Error(`unexpected saved path: ${result.path}`);
       }
       savedFilenames.push(result.filename);
     }
@@ -147,6 +156,7 @@ void app.whenReady().then(async () => {
     const docx = readFileSync(path.join(downloadsDirectory, "测试文档_20260729.docx"));
     const pdf = readFileSync(path.join(downloadsDirectory, "测试文档_20260729.pdf"));
     const secondPdf = readFileSync(path.join(downloadsDirectory, "测试文档_20260729 (2).pdf"));
+    const png = readFileSync(path.join(downloadsDirectory, "公众号稿-测试标题.png"));
     if (markdown !== "# 测试\n") throw new Error("markdown content mismatch");
     if (fullwidthMarkdown !== "# Markdown 测试\n") {
       throw new Error("fullwidth markdown content mismatch");
@@ -159,6 +169,9 @@ void app.whenReady().then(async () => {
     if (pdf.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("pdf magic mismatch");
     if (secondPdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
       throw new Error("numbered pdf magic mismatch");
+    }
+    if (!png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+      throw new Error("png magic mismatch");
     }
     if (willDownloadEvents !== 0) {
       throw new Error(`unexpected will-download events: ${willDownloadEvents}`);

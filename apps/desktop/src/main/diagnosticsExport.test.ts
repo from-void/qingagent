@@ -30,6 +30,7 @@ test("服务端 200 后不等待原生保存框，直接把 ZIP 原子写入 Dow
         return {
           saved: true,
           filename: input.filename,
+          path: path.join("C:", "Users", "tester", "Downloads", input.filename),
           revealToken: "reveal-diag",
         };
       },

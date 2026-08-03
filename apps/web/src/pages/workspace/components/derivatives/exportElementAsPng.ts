@@ -27,6 +27,27 @@ const RESOURCE_HREF_ELEMENTS = new Set([
 ]);
 const FONT_CACHE_MAX_ENTRIES = Object.keys(XHS_COVER_FONT_FACES).length;
 const FONT_CACHE_MAX_BYTES = 6 * 1024 * 1024;
+const DEFAULT_RENDER_TIMEOUT_MS = 35_000;
+const MAX_EXPORT_FILENAME_LENGTH = 180;
+const WINDOWS_RESERVED_DEVICE_STEM = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+export interface ExportedPng {
+  /** 桌面端为主进程确认存在的绝对路径；Web 端只能确认浏览器下载已发起。 */
+  path: string | null;
+}
+
+export class ImageExportError extends Error {
+  constructor(readonly userMessage: string) {
+    super(userMessage);
+    this.name = "ImageExportError";
+  }
+}
+
+export function imageExportErrorMessage(error: unknown): string {
+  return error instanceof ImageExportError
+    ? error.userMessage
+    : "图片导出失败，请重试";
+}
 
 interface ResourceDataUrlCache {
   getOrLoad(key: string, load: () => Promise<string>): Promise<string>;
@@ -403,17 +424,91 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-export async function exportElementAsPng(element: HTMLElement, filename: string): Promise<void> {
-  const canvas = await renderElementToOriginCleanCanvas(element);
-  const blob = await canvasToPngBlob(canvas);
+function truncateUtf16WithoutSplitting(value: string, maxLength: number): string {
+  let result = "";
+  for (const character of value) {
+    if (result.length + character.length > maxLength) break;
+    result += character;
+  }
+  return result;
+}
+
+export function safePngFilename(rawFilename: string): string {
+  const sanitized = rawFilename
+    .replace(/[\u0000-\u001f<>:"/\\|?*]/g, "-")
+    .trim()
+    .replace(/[. ]+$/g, "") || "qingagent-image";
+  let stem = truncateUtf16WithoutSplitting(
+    sanitized,
+    MAX_EXPORT_FILENAME_LENGTH - ".png".length,
+  )
+    .replace(/[. ]+$/g, "") || "qingagent-image";
+  if (WINDOWS_RESERVED_DEVICE_STEM.test(stem)) stem = `青简-${stem}`;
+  return `${stem}.png`;
+}
+
+function renderPngBlobWithTimeout(
+  element: HTMLElement,
+  timeoutMs: number,
+): Promise<Blob> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new ImageExportError("图片渲染超时，请重试"));
+    }, timeoutMs);
+  });
+  const renderPromise = renderElementToOriginCleanCanvas(element)
+    .then(canvasToPngBlob);
+  return Promise.race([renderPromise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+type ElectronSaveFailureReason = Extract<
+  ElectronExportDownloadResult,
+  { saved: false }
+>["reason"];
+
+function saveFailureMessage(reason: ElectronSaveFailureReason): string {
+  if (reason === "timeout") return "图片保存超时，请重试";
+  if (reason === "window-closed") return "窗口已关闭，图片未保存";
+  return "图片未保存，请重试";
+}
+
+export async function exportElementAsPng(
+  element: HTMLElement,
+  filename: string,
+  options: { renderTimeoutMs?: number } = {},
+): Promise<ExportedPng> {
+  const blob = await renderPngBlobWithTimeout(
+    element,
+    options.renderTimeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS,
+  );
+  const safeFilename = safePngFilename(filename);
+  if (window.electron?.isDesktop) {
+    const save = window.electron.saveExportDownload;
+    if (!save) {
+      throw new ImageExportError("当前桌面版本无法保存图片，请更新后重试");
+    }
+    const result = await save({
+      filename: safeFilename,
+      format: "png",
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+    });
+    if (!result.saved) {
+      throw new ImageExportError(saveFailureMessage(result.reason));
+    }
+    return { path: result.path };
+  }
   // 这里的 blob URL 只承载已编码完成的最终 PNG 下载，不会再作为 image 源绘回 canvas。
   const downloadUrl = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement("a");
     anchor.href = downloadUrl;
-    anchor.download = `${filename.replace(/[\\/:*?"<>|]/g, "-")}.png`;
+    anchor.download = safeFilename;
     anchor.click();
   } finally {
     URL.revokeObjectURL(downloadUrl);
   }
+  return { path: null };
 }

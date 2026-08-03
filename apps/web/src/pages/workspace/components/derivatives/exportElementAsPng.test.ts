@@ -5,11 +5,25 @@ import {
   arrayBufferToDataUrl,
   DataUrlLruCache,
   externalSvgResourceReferences,
+  safePngFilename,
   svgMarkupToDataUrl,
 } from "./exportElementAsPng";
 import { XHS_COVER_FONT_FACES, xhsCoverFontFaceCss } from "./xhsCoverFonts";
 
 describe("衍生稿 PNG 导出资源自包含", () => {
+  it("PNG 文件名清洗路径字符、控制符、Windows 设备名、尾点和超长 emoji", () => {
+    const unsafe = safePngFilename("  公众号/标题:\u0000*?<>|.  ");
+    expect(unsafe).toBe("公众号-标题-------.png");
+    expect(unsafe).not.toMatch(/[\u0000-\u001f<>:"/\\|?*]/);
+    expect(safePngFilename("CON. ")).toBe("青简-CON.png");
+    expect(safePngFilename("  ...  ")).toBe("qingagent-image.png");
+
+    const longEmoji = safePngFilename("😀".repeat(200));
+    expect(longEmoji.length).toBeLessThanOrEqual(180);
+    expect(longEmoji).toMatch(/\.png$/);
+    expect(Array.from(longEmoji.slice(0, -".png".length)).at(-1)).toBe("😀");
+  });
+
   it("字体 data URL 缓存同时受 LRU 容量和字节预算约束", async () => {
     const byEntries = new DataUrlLruCache(2, 100);
     await byEntries.getOrLoad("a", async () => "aaaa");

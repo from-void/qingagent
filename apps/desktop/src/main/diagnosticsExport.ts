@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   DiagnosticsExportInput,
   DiagnosticsExportResult,
@@ -53,7 +52,7 @@ export async function exportDiagnosticsToDownloads(
     if (!saved.saved) return { saved: false, reason: saved.reason };
     return {
       saved: true,
-      path: path.join(dependencies.downloadsDirectory, saved.filename),
+      path: saved.path,
     };
   } catch {
     return { saved: false, reason: "write-failed" };

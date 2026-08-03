@@ -292,6 +292,7 @@ describe("ExportMenu", () => {
       finishDownload?.({
         saved: true,
         filename: "测试文档_20260729.pdf",
+        path: "C:\\Users\\tester\\Downloads\\测试文档_20260729.pdf",
         revealToken: "reveal-pdf",
       });
       await Promise.resolve();

@@ -43,9 +43,9 @@ interface ElectronDesktopDialogRequest {
   kind: ElectronDesktopDialogKind;
 }
 
-type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt" | "zip";
+type ElectronExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt" | "zip" | "png";
 type ElectronExportDownloadResult =
-  | { saved: true; filename: string; revealToken: string }
+  | { saved: true; filename: string; path: string; revealToken: string }
   | {
       saved: false;
       filename: string;

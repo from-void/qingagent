@@ -85,6 +85,7 @@ test("真实 Electron sandbox renderer 经 IPC 保存所有格式且不触发 wi
       "2026运动手环选购攻略｜小白也能看懂的完整指南_20260801.html",
       "测试文档_20260729.docx",
       "测试文档_20260729.pdf",
+      "公众号稿-测试标题.png",
       "测试文档_20260729 (2).pdf",
     ]);
     assert.equal(payload.willDownloadEvents, 0);

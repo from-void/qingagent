@@ -70,7 +70,8 @@ function isSaveResult(value: unknown): value is ExportDownloadSaveResult {
     return false;
   }
   return result.saved
-    ? typeof result.revealToken === "string" && result.revealToken.length > 0
+    ? typeof result.path === "string" && result.path.length > 0
+      && typeof result.revealToken === "string" && result.revealToken.length > 0
     : typeof result.reason === "string" && (
       FAILURE_REASONS.has(result.reason as ExportDownloadFailureReason)
     );

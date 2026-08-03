@@ -77,7 +77,7 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
   }
 });
 
-test("导出保存 IPC 只暴露字节写入/定位能力，不向 renderer 暴露任意文件路径", () => {
+test("导出保存 IPC 不接受 renderer 指定路径，只回传主进程确认落盘的目标路径", () => {
   const main = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
   const downloadBridge = readFileSync(
@@ -102,10 +102,19 @@ test("导出保存 IPC 只暴露字节写入/定位能力，不向 renderer 暴�
     `${preload}\n${downloadBridge}\n${downloadBridgeCore}`,
     /showItemInFolder|setSavePath|anchor\.click|createElement\("a"\)|blobUrl/,
   );
+  const saveInputStart = contract.indexOf("export interface ExportDownloadSaveInput");
+  const saveResultStart = contract.indexOf("export type ExportDownloadSaveResult");
+  const saveInputContract = contract.slice(saveInputStart, saveResultStart);
+  const saveResultContract = contract.slice(saveResultStart);
   assert.doesNotMatch(
-    contract,
+    saveInputContract,
     /\bsavedPath\b|\bfilePath\b|\bpath:\s*string/,
-    "renderer 回执不得携带本机文件路径",
+    "renderer 不得指定主进程写盘路径",
+  );
+  assert.match(
+    saveResultContract,
+    /saved:\s*true;[\s\S]*path:\s*string;/,
+    "成功回执必须携带主进程确认的完整路径，供成功 toast 展示",
   );
 });
 

@@ -1,8 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  exportElementAsPng,
   measureExportLayoutBounds,
   serializeElementAsSelfContainedSvg,
 } from "./exportElementAsPng";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+type ImageSaveResult =
+  | {
+      saved: true;
+      filename: string;
+      path: string;
+      revealToken: string;
+    }
+  | {
+      saved: false;
+      filename: string;
+      reason: "write-failed";
+    };
 
 function mockBox(
   element: HTMLElement,
@@ -34,10 +56,150 @@ function px(value: string | null | undefined): number {
   return Number.parseFloat(value ?? "0");
 }
 
+function installRasterMocks(): void {
+  class LoadedImage {
+    decoding = "auto";
+    onerror: (() => void) | null = null;
+    onload: (() => void) | null = null;
+
+    set src(_value: string) {
+      queueMicrotask(() => this.onload?.());
+    }
+  }
+  vi.stubGlobal("Image", LoadedImage);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
+    scale: vi.fn(),
+  } as never);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    callback({
+      arrayBuffer: async () => bytes.buffer,
+      type: "image/png",
+    } as Blob);
+  });
+}
+
 describe("衍生稿 PNG 导出布局", () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
+  it("桌面端等主进程落盘成功后才允许成功 toast，并返回完整路径", async () => {
+    installRasterMocks();
+    const saveFinished = createDeferred<ImageSaveResult>();
+    const saveExportDownload = vi.fn(() => saveFinished.promise);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: { isDesktop: true, saveExportDownload },
+    });
+    const createObjectURL = vi.fn(() => "blob:should-not-be-used");
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = vi.fn();
+    });
+    const target = document.createElement("article");
+    target.textContent = "公众号图片导出";
+    document.body.append(target);
+    mockBox(target, { width: 320, height: 240 }, { width: 320, height: 240 });
+    const onToast = vi.fn();
+
+    const pending = exportElementAsPng(target, "公众号稿-测试标题")
+      .then((result) => onToast(
+        `图片已导出：${(result as unknown as { path: string }).path}`,
+      ))
+      .catch(() => onToast("图片未保存，请重试"));
+
+    await vi.waitFor(() => expect(saveExportDownload).toHaveBeenCalledTimes(1));
+    expect(onToast).not.toHaveBeenCalled();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(saveExportDownload).toHaveBeenCalledWith({
+      filename: "公众号稿-测试标题.png",
+      format: "png",
+      bytes: expect.any(Uint8Array),
+    });
+
+    saveFinished.resolve({
+      saved: true,
+      filename: "公众号稿-测试标题.png",
+      path: "C:\\Users\\tester\\Downloads\\公众号稿-测试标题.png",
+      revealToken: "reveal-image",
+    });
+    await pending;
+
+    expect(onToast).toHaveBeenCalledOnce();
+    expect(onToast).toHaveBeenCalledWith(
+      "图片已导出：C:\\Users\\tester\\Downloads\\公众号稿-测试标题.png",
+    );
+  });
+
+  it("桌面端落盘失败只给中文失败 toast，绝不误报图片已导出", async () => {
+    installRasterMocks();
+    const saveFinished = createDeferred<ImageSaveResult>();
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        saveExportDownload: vi.fn(() => saveFinished.promise),
+      },
+    });
+    const target = document.createElement("section");
+    target.textContent = "小红书封面导出";
+    document.body.append(target);
+    mockBox(target, { width: 343, height: 457 }, { width: 343, height: 457 });
+    const onToast = vi.fn();
+
+    const pending = exportElementAsPng(target, "小红书稿-封面")
+      .then((result) => onToast(
+        `图片已导出：${(result as unknown as { path: string }).path}`,
+      ))
+      .catch(() => onToast("图片未保存，请重试"));
+
+    await vi.waitFor(() => {
+      expect(window.electron?.saveExportDownload).toHaveBeenCalledTimes(1);
+    });
+    expect(onToast).not.toHaveBeenCalled();
+
+    saveFinished.resolve({
+      saved: false,
+      filename: "小红书稿-封面.png",
+      reason: "write-failed",
+    });
+    await pending;
+
+    expect(onToast).toHaveBeenCalledOnce();
+    expect(onToast).toHaveBeenCalledWith("图片未保存，请重试");
+    expect(onToast).not.toHaveBeenCalledWith(expect.stringContaining("已导出"));
+  });
+
+  it("图片渲染静默不返回时按阶段超时，且不会进入主进程落盘", async () => {
+    const fontsReady = createDeferred<void>();
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: { ready: fontsReady.promise },
+    });
+    const saveExportDownload = vi.fn();
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: { isDesktop: true, saveExportDownload },
+    });
+    const target = document.createElement("article");
+    document.body.append(target);
+    mockBox(target, { width: 320, height: 240 }, { width: 320, height: 240 });
+
+    await expect(exportElementAsPng(target, "渲染超时", { renderTimeoutMs: 10 }))
+      .rejects.toThrow("图片渲染超时，请重试");
+    expect(saveExportDownload).not.toHaveBeenCalled();
+
+    fontsReady.resolve();
+    await fontsReady.promise;
   });
 
   it("正文图片仅在单次导出内去重，导出结束后不跨文档常驻", async () => {

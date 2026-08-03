@@ -83,7 +83,7 @@ function createDeferred<T = void>() {
   return { promise, resolve };
 }
 
-test("PDF、DOCX、HTML、Markdown、TXT、诊断 ZIP 均由主进程字节写盘并签发 owner-scoped reveal token", async () => {
+test("PDF、DOCX、HTML、Markdown、TXT、诊断 ZIP 与衍生稿 PNG 均由主进程字节写盘并签发 owner-scoped reveal token", async () => {
   const cases = [
     ["测试文档_20260802.pdf", "pdf", [...Buffer.from("%PDF-1.7\n%%EOF\n")]],
     ["测试文档_20260802.docx", "docx", [0x50, 0x4b, 0x03, 0x04]],
@@ -91,6 +91,7 @@ test("PDF、DOCX、HTML、Markdown、TXT、诊断 ZIP 均由主进程字节写�
     ["测试文档｜完整指南_20260802.md", "markdown", "# Markdown 测试\n"],
     ["测试文档｜完整指南_20260802.txt", "txt", "TXT 测试\n"],
     ["qingagent-diag-v1-20260802.zip", "zip", [0x50, 0x4b, 0x03, 0x04]],
+    ["公众号稿-测试标题.png", "png", [0x89, 0x50, 0x4e, 0x47]],
   ] as const;
 
   for (const [filename, format, content] of cases) {
@@ -104,6 +105,7 @@ test("PDF、DOCX、HTML、Markdown、TXT、诊断 ZIP 均由主进程字节写�
       assert.deepEqual(result, {
         saved: true,
         filename,
+        path: path.join(harness.downloadsDirectory, filename),
         revealToken: "reveal-1",
       });
       assert.deepEqual(

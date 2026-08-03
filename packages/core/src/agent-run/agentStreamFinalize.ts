@@ -46,6 +46,11 @@ import { recomputeUserVisibleOutput } from "./agentStreamVisibility.js";
 import { flushSensitiveReviewText } from "./sensitiveReviewMasking.js";
 
 const logger = mastra.getLogger();
+const ANNOTATION_MUTATION_NO_PATCH_NOTICE = "未能生成修改，可再试或手动编辑。";
+
+function isAnnotationMutationRequest(userText: string): boolean {
+  return /(?:^|\n)\s*按批注修改[：:]/u.test(userText);
+}
 
 function markTerminalFailure(
   outcome: ProcessOutcome,
@@ -271,13 +276,12 @@ export async function* finalizeAgentStream(
     });
   }
   context.toolIoSpans.clear();
-  if (context.validPatchCount === 0 && state.suggestions.size === 0) {
-    console.warn(`[stream ${streamId}] Stream ended with no validated patch suggestions.`);
-  } else {
-    console.warn(
-      `[stream ${streamId}] Stream ended with validatedPatchCount=${context.validPatchCount}, pendingReviewSuggestionCount=${state.suggestions.size}`,
-    );
-  }
+  logger.info("Agent stream patch summary", {
+    sessionId: state.sessionId,
+    streamId,
+    validPatchCount: context.validPatchCount,
+    pendingReviewSuggestionCount: state.suggestions.size,
+  });
 
   const streamWasUserAborted =
     isUserAbortSignal(abortController.signal) && !context.sawIdleTimeout;
@@ -290,11 +294,34 @@ export async function* finalizeAgentStream(
   const accumulatedTextHadNonWhitespaceBeforeFallbacks =
     /\S/u.test(context.accumulatedText);
   let visibilityInvariantFallbackEmitted = false;
+  if (
+    !context.wasSuspended &&
+    !streamWasUserAborted &&
+    outcome.terminalOutcome.kind === "ok" &&
+    isAnnotationMutationRequest(context.userText) &&
+    context.validPatchCount === 0
+  ) {
+    const visibleText = context.accumulatedText
+      ? `\n\n${ANNOTATION_MUTATION_NO_PATCH_NOTICE}`
+      : ANNOTATION_MUTATION_NO_PATCH_NOTICE;
+    yield appendFinalVisibleText(visibleText);
+    outcome.producedVisibleFrame = true;
+    logger.warn("Annotation mutation ended without a validated patch", {
+      sessionId: state.sessionId,
+      streamId,
+      sawAnyToolCall: context.sawAnyToolCall,
+      sawValidDraftMutation: context.sawValidDraftMutation,
+      pendingReviewSuggestionCount: state.suggestions.size,
+    });
+    yield draftingFailedFrame(streamId, ANNOTATION_MUTATION_NO_PATCH_NOTICE);
+    markTerminalFailure(outcome, ANNOTATION_MUTATION_NO_PATCH_NOTICE);
+  }
   // 破损 draft 参数必须显式报错；失败工具卡或模型谎称已修改的正文虽已可见，
   // 都不能替代可重试提示与 draftingFailed 终态。
   if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
+    outcome.terminalOutcome.kind === "ok" &&
     context.sawFailedDraftMutationInput &&
     !context.sawValidDraftMutation &&
     context.validPatchCount === 0 &&

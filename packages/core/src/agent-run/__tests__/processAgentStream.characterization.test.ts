@@ -1014,4 +1014,44 @@ describe("processAgentStream 行为特征", () => {
       ),
     ).toBe(true);
   });
+
+  it("批注修改请求有文字回复但零候选时发出可重试失败终态", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("annotation-mutation-without-patch");
+    addEmptyAgentMessage(state);
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf({
+          type: "text-delta",
+          payload: { id: "text", text: "我会按批注意见处理。" },
+        }),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-annotation-mutation-without-patch",
+          runId: "run-annotation-mutation-without-patch",
+          userText: "按批注修改：手机号明文泄露——138****8000（原文：『138****8000』）",
+        },
+      ),
+    );
+
+    const failures = frames.filter(
+      (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+    );
+    expect(failures).toEqual([
+      {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: expect.objectContaining({
+            streamId: "stream-annotation-mutation-without-patch",
+            reason: "未能生成修改，可再试或手动编辑。",
+            retriable: true,
+          }),
+        },
+      },
+    ]);
+    expect(result.terminalOutcome.kind).toBe("error");
+  });
 });

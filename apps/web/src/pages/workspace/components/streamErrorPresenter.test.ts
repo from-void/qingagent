@@ -27,6 +27,20 @@ describe("streamErrorPresenter", () => {
     expect(canRetryStreamError(empty)).toBe(true);
   });
 
+  it("批注修改零候选直接展示中性中文反馈", () => {
+    const annotationMutation = {
+      kind: "draftingFailed" as const,
+      reason: "未能生成修改，可再试或手动编辑。",
+      retriable: true,
+    };
+
+    expect(streamErrorToastMessage(annotationMutation)).toBe(
+      "未能生成修改，可再试或手动编辑。",
+    );
+    expect(streamErrorToastTone(annotationMutation)).toBe("warn");
+    expect(canRetryStreamError(annotationMutation)).toBe(true);
+  });
+
   it("402 余额/配额不足不可重试，并提示检查模型设置/余额", () => {
     const quota = {
       kind: "draftingFailed" as const,

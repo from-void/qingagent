@@ -240,6 +240,29 @@ describe("QingML draft tools", () => {
     expect(inlineText(state.doc!.content[0]!)).toBe("旧文本");
   });
 
+  it("editDraft 接受在指定块内把明文手机号替换为星号打码", async () => {
+    const state = createSession("s-edit-mask-phone");
+    bindDoc(state, doc([
+      paragraph("contact-block", "如需沟通，请联系：手机号13800138000。"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceText",
+        withinRef: "contact-block",
+        find: "13800138000",
+        replace: "138****8000",
+      }],
+    }, ctx) as any;
+
+    expect(result).toMatchObject({ ok: true, changed: true, hunkCount: 1 });
+    expect(inlineText(state.docDraftCandidateDoc!.content[0]!)).toBe(
+      "如需沟通，请联系：手机号138****8000。",
+    );
+    expect(inlineText(state.doc!.content[0]!)).toContain("13800138000");
+  });
+
   it("editDraft replaceBlock 使用 readDraft 返回的 qingml 片段", async () => {
     const state = createSession("s-edit-envelope-replace");
     bindDoc(state, doc([paragraph("block-a", "旧文本")]));

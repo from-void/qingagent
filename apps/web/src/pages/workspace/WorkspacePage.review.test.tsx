@@ -4487,6 +4487,9 @@ describe("WorkspacePage review controls", () => {
     expect(sendMessageCommands(stream)).toHaveLength(0);
     expect(editor.textContent).toContain("帮我把这段润色一下");
     expect(editor.textContent).toContain("按批注修改：事实有误——改为五月发布（原文：『甲组』）");
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "已填入修改要求，请点击发送",
+    );
     expect(editor.querySelectorAll("br")).toHaveLength(4);
     expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
     expect(host?.querySelector(".annotation-hover-card")).toBeNull();

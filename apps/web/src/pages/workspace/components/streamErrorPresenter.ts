@@ -1,6 +1,13 @@
 import type { ToastTone } from "../../../system/ToastProvider";
 import type { StreamError } from "../data/protocol";
 
+const ANNOTATION_MUTATION_NO_PATCH_NOTICE = "未能生成修改，可再试或手动编辑。";
+
+function isAnnotationMutationNoPatch(error: StreamError): boolean {
+  return error.kind === "draftingFailed"
+    && error.reason.trim() === ANNOTATION_MUTATION_NO_PATCH_NOTICE;
+}
+
 export function streamErrorLabel(error: StreamError): string {
   if (error.kind === "cancelled") return "已取消";
   if (error.kind === "docWriteConflict") return "文档已被改动";
@@ -33,12 +40,14 @@ export function streamErrorActionLabel(error: StreamError): string | null {
 }
 
 export function streamErrorToastMessage(error: StreamError): string {
+  if (isAnnotationMutationNoPatch(error)) return ANNOTATION_MUTATION_NO_PATCH_NOTICE;
   const label = streamErrorLabel(error);
   const reason = error.reason.trim();
   return reason ? `${label} · ${reason}` : label;
 }
 
 export function streamErrorToastTone(error: StreamError): ToastTone {
+  if (isAnnotationMutationNoPatch(error)) return "warn";
   return error.kind === "cancelled" || error.kind === "docWriteConflict" ? "warn" : "error";
 }
 

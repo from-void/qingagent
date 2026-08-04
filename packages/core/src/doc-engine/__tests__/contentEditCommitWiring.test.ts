@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   AnnotationGroup,
@@ -132,20 +132,28 @@ describe("content-edit commit wiring", () => {
       join(workspaceRoot, "packages/server/src"),
     ];
     const unwired: Array<{ file: string; commits: number; advances: number }> = [];
-    let totalCommits = 0;
+    const registeredCommitSites = new Map<string, number>([
+      ["packages/core/src/doc-engine/pendingDraftRehydrate.ts", 1],
+      ["packages/core/src/doc-engine/reviewCommit.ts", 1],
+      ["packages/core/src/doc-engine/settleDraftCandidate.ts", 1],
+      ["packages/server/src/gateway/docWriteCommands.ts", 2],
+    ]);
+    const discoveredCommitSites = new Map<string, number>();
 
     for (const file of roots.flatMap(productionTypeScriptFiles)) {
       const source = readFileSync(file, "utf8");
       const commits = source.match(/await\s+commitDocumentOp\s*\(/g)?.length ?? 0;
       if (commits === 0) continue;
       const advances = source.match(/advanceLastContentEditedAt\s*\(/g)?.length ?? 0;
-      totalCommits += commits;
+      discoveredCommitSites.set(relative(workspaceRoot, file), commits);
       if (advances < commits) {
         unwired.push({ file, commits, advances });
       }
     }
 
-    expect(totalCommits).toBe(5);
+    expect([...discoveredCommitSites.entries()].sort()).toEqual(
+      [...registeredCommitSites.entries()].sort(),
+    );
     expect(unwired).toEqual([]);
   });
 });

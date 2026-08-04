@@ -516,6 +516,26 @@ describe("commitReviewGroups", () => {
     );
   });
 
+  it("跳过未知目标时记录当前真实 suggestion 数量", async () => {
+    const state = createSession("noop-commit-with-pending-suggestion");
+    const base = doc([paragraph("block-a", "正文")]);
+    const draft = doc([paragraph("block-a", "修改后正文")]);
+    await seedDiffState(state, base, draft);
+    const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: ["resolved-accept"],
+    }));
+
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped unknown or resolved review target",
+      expect.objectContaining({
+        stateSuggestionRecordCount: 1,
+        skipped: "acceptReviewBatchId",
+      }),
+    );
+  });
+
   it("单 patch id 不再按 groupMode 扩展为整组", async () => {
     const state = createSession("per-hunk-expand");
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);

@@ -539,7 +539,9 @@ export function applySuggestionsToDoc(
       ? storedRangeResult
       : applySuggestionToDoc(nextDoc, suggestion, currentVersion);
     if (!result.ok) {
-      conflicts.push(storedRangeResult.ok ? result.conflict : storedRangeResult.conflict);
+      // stored range 只是快速路径；fallback 已基于 quote/context 检查过当前全文，
+      // 双失败时它的原因更贴近最终无法应用的真实状态。
+      conflicts.push(result.conflict);
       continue;
     }
     nextDoc = result.doc;

@@ -2,6 +2,7 @@
 // 这里绝不执行、展开或重写命令；分析结果只用于 policy/确认卡，沙箱始终收到原始 command。
 
 import { basename } from "node:path";
+import { parseLarkCliCommandPath } from "./larkCliCommand.js";
 
 export type CommandRisk = "safe" | "confirm" | "deny";
 export type CommandEffect = "install" | "send" | "destructive";
@@ -1080,24 +1081,13 @@ function larkWrites(command: AnalyzedSimpleCommand): boolean {
     "send", "reply", "forward", "create", "update", "append", "upload", "import", "publish", "delete",
     "+send", "+reply", "+forward", "+create", "+update", "+append", "+upload", "+import", "+publish", "+delete",
   ]);
-  const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
-  const commandPath: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
-    if (arg === "--profile") {
-      i += 1;
-      continue;
-    }
-    if (arg.startsWith("--profile=") || arg === "-h" || arg === "--help" || arg === "-v" || arg === "--version") {
-      continue;
-    }
-    if (arg.startsWith("-")) break;
-    commandPath.push(arg);
-  }
+  const parsed = parseLarkCliCommandPath(command.argv.slice(1));
+  if (!parsed.ok) return true;
+  const commandPath = parsed.commandPath;
   // lark-cli 的写动作只看模块后的实际子命令位，不能扫 flag value/正文中的通用 create/update 等词。
   if (writeActions.has(commandPath[1] ?? "") || writeActions.has(commandPath[2] ?? "")) return true;
-  const apiIndex = args.indexOf("api");
-  return apiIndex >= 0 && new Set(["post", "put", "patch", "delete"]).has(args[apiIndex + 1] ?? "");
+  return commandPath[0] === "api"
+    && new Set(["post", "put", "patch", "delete"]).has(commandPath[1] ?? "");
 }
 
 const CURL_LOCAL_OUTPUT_LONG_OPTIONS = new Set([

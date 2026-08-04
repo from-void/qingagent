@@ -351,6 +351,23 @@ describe("commandPolicy P0 gate", () => {
     }
   });
 
+  it("lark-cli 前置全局 flag 不得绕过 auth 硬拒绝或外部写入确认", () => {
+    expect(decision("lark-cli --json auth logout").action).toBe("deny");
+    expect(decision("lark-cli --verbose im send --chat x --text hi").action).toBe("confirm");
+    expect(decision("lark-cli --profile sandbox auth logout").action).toBe("deny");
+
+    expect(decision("lark-cli auth logout").action).toBe("deny");
+    expect(decision("lark-cli im send --chat x --text hi").action).toBe("confirm");
+  });
+
+  it("lark-cli 未知分离值 flag 保守拒绝，已确定的只读路径不误伤", () => {
+    expect(decision("lark-cli --foo bar auth logout").action).toBe("deny");
+    expect(decision("lark-cli --json im list").action).toBe("allow");
+    expect(decision("lark-cli --profile sandbox im list").action).toBe("allow");
+    expect(decision("lark-cli --future=value im list").action).toBe("allow");
+    expect(decision("lark-cli im list --foo bar").action).toBe("allow");
+  });
+
   it("R19 回归:lark-cli 本地文件参数只能位于会话工作目录内", () => {
     const dir = mkdtempSync(join(tmpdir(), "command-policy-lark-file-"));
     const sessionDir = join(dir, "session");

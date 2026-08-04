@@ -10,6 +10,7 @@ import {
   assessCommandAnalysis,
   type AnalyzedSimpleCommand,
 } from "./commandRisk.js";
+import { parseLarkCliCommandPath } from "./larkCliCommand.js";
 import { SANDBOX_SESSIONS_BASE } from "./sessionWorkspace.js";
 
 export type PolicyDecision =
@@ -508,22 +509,6 @@ function evaluateIdentityProbeReauth(command: AnalyzedSimpleCommand): PolicyDeci
   };
 }
 
-function stripLarkGlobalFlags(args: string[]): string[] {
-  const positional: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
-    if (arg === "--profile") {
-      i += 1;
-      continue;
-    }
-    if (arg.startsWith("--profile=") || arg === "-h" || arg === "--help" || arg === "-v" || arg === "--version") {
-      continue;
-    }
-    positional.push(arg);
-  }
-  return positional;
-}
-
 // lark-cli 写操作现在进入 send confirm；授权/自更新与本地路径仍是硬 deny。
 // 授权编排只允许 connector service 的固定 argv runner 执行，模型命令 gate 封死全部授权入口。
 //  - update/upgrade:触发 npm 自更新,网络阻塞/版本漂移,版本由产品锁定,不许 agent 跑。
@@ -531,13 +516,18 @@ function stripLarkGlobalFlags(args: string[]): string[] {
 //    唯一入口是 feishu_auth_start → connector service 的固定 argv runner;模型侧封死,
 //    防止绕过连接器拼接授权命令(device_code 只在 service 内部,不得进入对话链路)。
 function evaluateLarkCli(args: string[], options: CommandPolicyOptions): PolicyDecision {
-  // cobra 持久全局 flag 可在子命令前或中间出现;先剥掉已知全局 flag,再判断真实子命令序列。
-  const cleanArgs = stripLarkGlobalFlags(args);
-  const sub = (cleanArgs[0] ?? "").toLowerCase();
+  const parsed = parseLarkCliCommandPath(args);
+  if (!parsed.ok) {
+    return {
+      action: "deny",
+      reason: `${parsed.reason}，为避免绕过授权与外部写入保护，已拒绝执行`,
+    };
+  }
+  const sub = parsed.commandPath[0] ?? "";
   if (sub === "update" || sub === "upgrade") {
     return { action: "deny", reason: "不允许 agent 触发 lark-cli 自更新(版本由产品锁定)" };
   }
-  const action = (cleanArgs[1] ?? "").toLowerCase();
+  const action = parsed.commandPath[1] ?? "";
   if ((sub === "auth" && (action === "login" || action === "logout" || action === "qrcode")) ||
       (sub === "config" && action === "init")) {
     return {

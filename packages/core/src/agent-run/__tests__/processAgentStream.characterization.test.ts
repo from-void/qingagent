@@ -108,6 +108,19 @@ function privacyReviewContext() {
   } as never;
 }
 
+function sensitiveReviewContext() {
+  const values = new Map<string, unknown>([[
+    "reviewContext",
+    { type: "sensitive", templateId: "review-sensitive-default", templateName: "敏感词审查" },
+  ]]);
+  return {
+    get: (key: string) => values.get(key),
+    set: (key: string, value: unknown) => {
+      values.set(key, value);
+    },
+  } as never;
+}
+
 function fetchArticleResult(index: number, overrides: Record<string, unknown> = {}) {
   return {
     ok: true,
@@ -486,6 +499,107 @@ describe("processAgentStream 行为特征", () => {
       .not.toContain("6222020200112345678");
     expect(JSON.stringify({ frames, messages: state.messages, chatHistory: state.chatHistory }))
       .not.toContain("zhangwei@example.com");
+  });
+
+  it("敏感审查 reasoning 中的手机号和邮箱在帧与持久化前打码", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("sensitive-reasoning-masking");
+    addEmptyAgentMessage(state);
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        { type: "reasoning-start", payload: { id: "reasoning-sensitive" } },
+        {
+          type: "reasoning-delta",
+          payload: {
+            id: "reasoning-sensitive",
+            text: "需复核手机号 13800138000，邮箱 zhangwei@example.com。",
+          },
+        },
+        { type: "reasoning-end", payload: { id: "reasoning-sensitive" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "sensitive-reasoning-stream",
+        runId: "sensitive-reasoning-run",
+        requestContext: sensitiveReviewContext(),
+      },
+    ));
+
+    const projection = JSON.stringify({ frames, chatHistory: state.chatHistory });
+    expect(projection).toContain("需复核手机号 138****8000，邮箱 zha***@example.com。");
+    expect(projection).not.toContain("13800138000");
+    expect(projection).not.toContain("zhangwei@example.com");
+  });
+
+  it("敏感审查按 reasoning id 分段缓冲并打码跨 delta 手机号", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("sensitive-reasoning-split-masking");
+    addEmptyAgentMessage(state);
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        { type: "reasoning-start", payload: { id: "reasoning-a" } },
+        { type: "reasoning-delta", payload: { id: "reasoning-a", text: "号码 13800" } },
+        { type: "reasoning-delta", payload: { id: "reasoning-a", text: "138000" } },
+        { type: "reasoning-end", payload: { id: "reasoning-a" } },
+        { type: "reasoning-start", payload: { id: "reasoning-b" } },
+        { type: "reasoning-delta", payload: { id: "reasoning-b", text: "备用 13912345678" } },
+        { type: "reasoning-end", payload: { id: "reasoning-b" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "sensitive-reasoning-split-stream",
+        runId: "sensitive-reasoning-split-run",
+        requestContext: sensitiveReviewContext(),
+      },
+    ));
+
+    const thinkingParts = frames.flatMap((frame) =>
+      frame.kind === "chatMessageAppended" && frame.data.part.kind === "thinking"
+        ? [frame.data.part]
+        : []
+    );
+    expect(thinkingParts).toEqual([
+      { kind: "thinking", data: { id: "reasoning-a", steps: ["号码 138****8000"] } },
+      { kind: "thinking", data: { id: "reasoning-b", steps: ["备用 139****5678"] } },
+    ]);
+    expect(state.chatHistory[0]?.parts).toEqual(expect.arrayContaining(thinkingParts));
+  });
+
+  it("非敏感审查 reasoning 继续按 delta 原样透传", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("ordinary-reasoning-streaming");
+    addEmptyAgentMessage(state);
+
+    const { frames } = await collectFramesAndReturn(processAgentStream(
+      streamOf(
+        { type: "reasoning-start", payload: { id: "reasoning-ordinary" } },
+        { type: "reasoning-delta", payload: { id: "reasoning-ordinary", text: "号码 13800" } },
+        { type: "reasoning-delta", payload: { id: "reasoning-ordinary", text: "138000" } },
+        { type: "reasoning-end", payload: { id: "reasoning-ordinary" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "ordinary-reasoning-stream",
+        runId: "ordinary-reasoning-run",
+      },
+    ));
+
+    expect(frames.flatMap((frame) =>
+      frame.kind === "chatMessageAppended" && frame.data.part.kind === "thinking"
+        ? [frame.data.part]
+        : []
+    )).toEqual([
+      {
+        kind: "thinking",
+        data: { id: "reasoning-ordinary", steps: ["号码 13800", "138000"] },
+      },
+      { kind: "thinking", data: { id: "reasoning-ordinary", steps: ["138000"] } },
+    ]);
   });
 
   it("隐私批注工具参数写入卡片和模型 transcript 前先打码", async () => {

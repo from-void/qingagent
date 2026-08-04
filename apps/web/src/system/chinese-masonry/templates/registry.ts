@@ -40,10 +40,15 @@ export class TemplateRegistry {
       throw new Error(`Template "${id}" is not registered.`);
     }
 
-    const promise = loader().then((template) => {
-      this.register(template);
-      return template;
-    });
+    const promise = loader()
+      .then((template) => {
+        this.register(template);
+        return template;
+      })
+      .catch((error: unknown) => {
+        if (this.loading.get(id) === promise) this.loading.delete(id);
+        throw error;
+      });
     this.loading.set(id, promise);
     return promise;
   }

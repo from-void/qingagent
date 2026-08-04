@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from "react";
+import { act, StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider, useToast } from "./ToastProvider";
@@ -58,6 +58,22 @@ describe("ToastProvider", () => {
     expect(host!.querySelector("[data-toast-key='sticky-error']")).toBeNull();
     expect(onDismiss).not.toHaveBeenCalled();
   });
+
+  it("StrictMode 下 dismiss 的 onDismiss 只执行一次", async () => {
+    const onDismiss = vi.fn();
+    await render(
+      <StrictMode>
+        <ToastProvider>
+          <ToastHarness onDismiss={onDismiss} />
+        </ToastProvider>
+      </StrictMode>,
+    );
+
+    await click(buttonByText("sticky"));
+    await click(buttonByText("dismiss-sticky"));
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
 });
 
 function ToastHarness({ onDismiss }: { onDismiss: () => void }) {
@@ -97,6 +113,9 @@ function ToastHarness({ onDismiss }: { onDismiss: () => void }) {
       <button type="button" onClick={() => toast.show("普通 C")}>info-c</button>
       <button type="button" onClick={() => toast.dismiss("sticky-error", { runOnDismiss: false })}>
         clear-sticky
+      </button>
+      <button type="button" onClick={() => toast.dismiss("sticky-error")}>
+        dismiss-sticky
       </button>
     </div>
   );

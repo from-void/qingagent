@@ -37,6 +37,13 @@
   padding: 6px 25px;
 }
 
+/* 静态气泡在 WebGL 就绪前先绘制墨色首帧；padding 留在正文规则上，
+   切换为 canvas 时不会发生布局跳动。 */
+.ink-bubble--prepaint {
+  background: var(--ink-1);
+  border-radius: 6px;
+}
+
 .ink-bubble--static-fallback {
   background: var(--ink-1);
   color: var(--ink-on-dark);
@@ -51,6 +58,10 @@
 #view-workspace .ink-bubble.wf-msg.user.ink-bubble--static-fallback {
   background: var(--ink-1);
   color: var(--ink-on-dark);
+}
+
+#view-workspace .ink-bubble.wf-msg.user.ink-bubble--prepaint {
+  background: var(--ink-1);
 }
 
 #view-workspace .ink-bubble.wf-msg.user.ink-bubble--static-fallback .ink-bubble__content {

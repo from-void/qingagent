@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const inkBubbleCss = readFileSync(
@@ -140,6 +141,44 @@ describe("InkBubble WebGL snapshot settling", () => {
     vi.restoreAllMocks();
   });
 
+  it("非动画气泡首帧自带深色预绘兜底且不触发正文浮现动画", () => {
+    const initialMarkup = renderToStaticMarkup(
+      <InkBubble animate={false}>静止气泡</InkBubble>,
+    );
+    const initialHost = document.createElement("div");
+    initialHost.innerHTML = initialMarkup;
+
+    const wrap = initialHost.querySelector<HTMLElement>(".ink-bubble");
+    const content = initialHost.querySelector<HTMLElement>(".ink-bubble__content");
+    expect(wrap?.classList.contains("ink-bubble--prepaint")).toBe(true);
+    expect(content?.classList.contains("ink-bubble__content--visible")).toBe(false);
+
+    const compactCss = inkBubbleCss.replace(/\s+/g, "");
+    expect(compactCss).toContain(
+      ".ink-bubble--prepaint{background:var(--ink-1);border-radius:6px;}",
+    );
+    expect(compactCss).toContain(
+      "#view-workspace.ink-bubble.wf-msg.user.ink-bubble--prepaint{background:var(--ink-1);}",
+    );
+    expect(compactCss).not.toContain(
+      ".ink-bubble--prepaint.ink-bubble__content{padding:",
+    );
+  });
+
+  it("动画气泡首帧不使用深色预绘兜底且仍等待终帧浮现正文", () => {
+    const initialMarkup = renderToStaticMarkup(
+      <InkBubble animate>动画气泡</InkBubble>,
+    );
+    const initialHost = document.createElement("div");
+    initialHost.innerHTML = initialMarkup;
+
+    const wrap = initialHost.querySelector<HTMLElement>(".ink-bubble");
+    const content = initialHost.querySelector<HTMLElement>(".ink-bubble__content");
+    expect(wrap?.classList.contains("ink-bubble--animate")).toBe(true);
+    expect(wrap?.classList.contains("ink-bubble--prepaint")).toBe(false);
+    expect(content?.classList.contains("ink-bubble__content--visible")).toBe(false);
+  });
+
   it("非动画气泡渲染终帧后立即替换为同尺寸 2D 快照并释放 WebGL context", async () => {
     await render(<InkBubble animate={false}>静止气泡</InkBubble>);
 
@@ -163,6 +202,7 @@ describe("InkBubble WebGL snapshot settling", () => {
     expect(renderer.dispose).toHaveBeenCalledTimes(1);
     expect(renderer.forceContextLoss).toHaveBeenCalledTimes(1);
     expect(renderer.domElement.isConnected).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--prepaint")).toBe(false);
     expect(threeMockState.operations).toEqual(["render", "drawImage", "dispose", "forceContextLoss"]);
   });
 
@@ -202,6 +242,7 @@ describe("InkBubble WebGL snapshot settling", () => {
 
     expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
     expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--prepaint")).toBe(false);
     expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
     const compactCss = inkBubbleCss.replace(/\s+/g, "");
     expect(compactCss).toContain(
@@ -212,6 +253,39 @@ describe("InkBubble WebGL snapshot settling", () => {
     );
     expect(getCanvasContainer().querySelector("canvas")).toBeNull();
     expect(rafCallbacks.size).toBe(0);
+  });
+
+  it("非动画气泡 WebGL 初始化失败时用静态兜底替换预绘类且正文不播放浮现动画", async () => {
+    threeMockState.constructorError = new Error("webgl unavailable");
+
+    await render(<InkBubble animate={false}>静止初始化失败气泡</InkBubble>);
+
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--prepaint")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
+    expect(getCanvasContainer().querySelector("canvas")).toBeNull();
+    expect(rafCallbacks.size).toBe(0);
+  });
+
+  it("animate 翻转时清理上一路径手工写入的兜底与正文类", async () => {
+    threeMockState.constructorError = new Error("webgl unavailable");
+    await render(<InkBubble animate>动画初始化失败气泡</InkBubble>);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(true);
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(true);
+
+    threeMockState.constructorError = null;
+    await rerender(<InkBubble animate={false}>切为静止气泡</InkBubble>);
+    expect(getWrap().classList.contains("ink-bubble--animate")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--prepaint")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(false);
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(false);
+
+    await rerender(<InkBubble animate>切回动画气泡</InkBubble>);
+    expect(getWrap().classList.contains("ink-bubble--animate")).toBe(true);
+    expect(getWrap().classList.contains("ink-bubble--prepaint")).toBe(false);
+    expect(getWrap().classList.contains("ink-bubble--static-fallback")).toBe(false);
+    expect(getContent().classList.contains("ink-bubble__content--visible")).toBe(false);
   });
 
   it("动画帧渲染失败时显示正文并释放已创建的 WebGL context", async () => {
@@ -238,6 +312,12 @@ async function render(element: ReactNode): Promise<void> {
   host.style.setProperty("--ink-on-dark", "#fffaf0");
   document.body.appendChild(host);
   root = createRoot(host);
+  await act(async () => {
+    root?.render(element);
+  });
+}
+
+async function rerender(element: ReactNode): Promise<void> {
   await act(async () => {
     root?.render(element);
   });

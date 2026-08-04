@@ -82,6 +82,7 @@ export function createRollingConsoleTransport(
   const flushIntervalMs = opts.flushIntervalMs ?? 1000;
   const maxBufferBytes = opts.maxBufferBytes ?? 64 * 1024;
   let buffer = "";
+  let bufferBytes = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const flush = async (): Promise<void> => {
@@ -92,6 +93,7 @@ export function createRollingConsoleTransport(
     if (!buffer) return;
     const chunk = buffer;
     buffer = "";
+    bufferBytes = 0;
     try {
       await appendRollingChunk(dir, prefix, chunk, {
         extension,
@@ -115,8 +117,10 @@ export function createRollingConsoleTransport(
   return {
     write(method, args) {
       try {
-        buffer += formatConsoleLine(method, args);
-        if (new TextEncoder().encode(buffer).byteLength >= maxBufferBytes) {
+        const line = formatConsoleLine(method, args);
+        buffer += line;
+        bufferBytes += new TextEncoder().encode(line).byteLength;
+        if (bufferBytes >= maxBufferBytes) {
           void flush();
         } else {
           scheduleFlush();

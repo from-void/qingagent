@@ -17,6 +17,7 @@
     "./components.css": "./src/components.css"
   },
   "scripts": {
+    "test": "node --import tsx src/Modal.test.tsx",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {

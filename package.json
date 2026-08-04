@@ -29,14 +29,14 @@
     "pm:image:check": "node scripts/pm-image-check.mjs",
     "pm:history:check": "node scripts/pm-history-check.mjs",
     "pm:commit:check": "pnpm --filter @qingagent/core test -- commitDocumentOp",
-    "db:restore-quarantine-0002": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs packages/db/scripts/restore-quarantine-0002.mts",
-    "db:identify-quarantine-0002-overwrites": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs packages/db/scripts/identify-quarantine-0002-overwrites.mts",
+    "db:restore-quarantine-0002": "node --import tsx packages/db/scripts/restore-quarantine-0002.mts",
+    "db:identify-quarantine-0002-overwrites": "node --import tsx packages/db/scripts/identify-quarantine-0002-overwrites.mts",
     "pm:css:check": "node scripts/pm-css-check.mjs",
     "lint:skills": "node scripts/check-skill-scripts.mjs",
     "export:matrix": "pnpm --filter @qingagent/doc-render test -- export-format-matrix",
     "external-contract:generate": "pnpm --filter @qingagent/contract-ts generate:external",
     "external-contract:check": "pnpm --filter @qingagent/contract-ts check:external",
-    "eval:role-review": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/evaluate-role-recommendation.mts"
+    "eval:role-review": "node --import tsx scripts/evaluate-role-recommendation.mts"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",

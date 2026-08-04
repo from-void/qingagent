@@ -444,7 +444,7 @@ async function status(json: boolean): Promise<void> {
 
 async function parseOps(
   args: string[],
-  preflightStrReplaceValues?: string[][],
+  preflightStrReplaceValues?: Array<[string, string]>,
 ): Promise<ExternalProposeOp[]> {
   const opsFile = optionValue(args, "--ops");
   if (opsFile) return JSON.parse(await readFile(opsFile, "utf8")) as ExternalProposeOp[];
@@ -460,11 +460,11 @@ async function parseOps(
   return ops;
 }
 
-function parseStrReplaceValues(args: string[]): string[][] {
+function parseStrReplaceValues(args: string[]): Array<[string, string]> {
   return optionValues(args, "--str-replace", 2, {
     knownOptionNames: DOC_PROPOSE_OPTION_NAMES,
     missingMessage: "--str-replace 需要旧文和新文",
-  });
+  }).map((values) => [values[0]!, values[1]!]);
 }
 
 async function events(client: ApiClient, sessionId: string, options: EventOptions): Promise<void> {

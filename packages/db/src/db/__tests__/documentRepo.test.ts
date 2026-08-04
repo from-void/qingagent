@@ -633,15 +633,17 @@ describe("documentRepo", () => {
       input("exists-b"),
       input("other-resource", { resourceId: "other-user" }),
       input("derivative"),
+      input("invalid-pm"),
     ]);
     const client = getDocumentsClient();
     await client.execute({
       sql: "UPDATE documents SET role = 'derivative' WHERE id = ?",
       args: ["derivative"],
     });
+    await client.execute("UPDATE documents SET doc_pm = '{broken' WHERE id = 'invalid-pm'");
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
     await client.execute(
-      "INSERT INTO mastra_threads (id) VALUES ('exists-a'), ('exists-b'), ('other-resource'), ('derivative')",
+      "INSERT INTO mastra_threads (id) VALUES ('exists-a'), ('exists-b'), ('other-resource'), ('derivative'), ('invalid-pm')",
     );
     const execute = vi.spyOn(client, "execute");
 
@@ -652,12 +654,14 @@ describe("documentRepo", () => {
       "exists-a",
       "other-resource",
       "derivative",
+      "invalid-pm",
     ]);
 
     expect(existing).toEqual(new Set(["exists-a", "exists-b"]));
     const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
     expect(sql).toMatch(/INNER JOIN mastra_threads/i);
     expect(sql).toMatch(/resource_id = \? AND d\.role = 'main' AND d\.id IN/i);
+    expect(sql).toMatch(/json_valid\(d\.doc_pm\)/i);
     expect(sql).not.toContain("*");
     await expect(documentRepo.existsByIds(
       "qingagent-user",

@@ -75,6 +75,7 @@ function makeHarness(
       versions.set(kind, version);
       return {
         revokedGrant: grant,
+        stale: false,
         state: {
           kind,
           present: false,
@@ -202,6 +203,28 @@ describe("安全设置路由:「以后不用再问我」", () => {
 });
 
 describe("安全设置路由", () => {
+  it("连续保存时旧 baseVersion 返回 409 且不覆盖较新设置", async () => {
+    const harness = makeHarness();
+    const first = await post(harness.app, "install", {
+      grantMode: "always",
+      operationId: "security-current-write",
+      baseVersion: 0,
+    });
+    expect(first.status).toBe(200);
+
+    const stale = await post(harness.app, "install", {
+      grantMode: "ask",
+      operationId: "security-stale-write",
+      baseVersion: 0,
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      error: "设置已被别处修改，请刷新后重试。",
+    });
+    expect(harness.revoked).toEqual([]);
+    expect(harness.stored.has("install")).toBe(true);
+  });
+
   it("读取真实授权档位，四类都可在每次询问 / 始终允许之间选", async () => {
     const harness = makeHarness([{
       grantId: "grant-command",

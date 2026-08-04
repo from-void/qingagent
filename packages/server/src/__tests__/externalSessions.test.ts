@@ -19,6 +19,7 @@ import { getExternalToken, startExternalInstance, stopExternalInstance } from ".
 
 const dirs: string[] = [];
 const syntheticSessionIds: string[] = [];
+const volatileSessionIds: string[] = [];
 const originalDatabaseUrl = process.env.DATABASE_URL;
 let token = "";
 
@@ -49,6 +50,10 @@ afterEach(async () => {
   await sessionManager.disposeAll();
   const ids = syntheticSessionIds.splice(0);
   for (const sessionId of ids) sessions.delete(sessionId);
+  for (const sessionId of volatileSessionIds.splice(0)) {
+    sessions.delete(sessionId);
+    sessionManager.frameLog.evict(sessionId);
+  }
   await deleteDocumentFamilyByDocIds(getDocumentsClient(), ids);
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
@@ -245,7 +250,7 @@ describe("external sessions", () => {
       sessions: Array<{ id: string; title: string }>;
       total: number;
     };
-    expect(listSessionIds).toHaveBeenCalledWith(50);
+    expect(listSessionIds).not.toHaveBeenCalled();
     expect(body.sessions.filter((session) => session.id === persistedId)).toHaveLength(1);
     expect(body.sessions).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: memoryOnlyId, title: "仅内存会话" }),
@@ -292,6 +297,8 @@ describe("external sessions", () => {
     // Mastra thread 表写入 102 条极晚时间夹具而污染并行的首页排序用例。
     vi.spyOn(documentRepo, "listWithExistingThreads")
       .mockImplementation((opts) => documentRepo.list(opts));
+    vi.spyOn(documentRepo, "existsByIds")
+      .mockImplementation(async (_resourceId, candidateIds) => new Set(candidateIds));
     // 固定为最晚时间，避免并行测试新建会话改变本用例的分页边界。
     const updatedAt = "9999-12-31T23:59:59.999Z";
     const prefix = `pagination-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -301,7 +308,7 @@ describe("external sessions", () => {
       const session = createSession(id, updatedAt);
       session.title = `分页会话 ${id}`;
       sessions.set(id, session);
-      syntheticSessionIds.push(id);
+      volatileSessionIds.push(id);
     }
     await documentRepo.saveMany(ids.map((id) => ({
       id,
@@ -324,7 +331,7 @@ describe("external sessions", () => {
       hasMore: boolean;
     };
     expect(firstBody.sessions.map((session) => session.id)).toEqual(ids.slice(0, 100));
-    expect(firstBody.total).toBeGreaterThanOrEqual(ids.length);
+    expect(firstBody.total).toBe(ids.length);
     expect(firstBody.hasMore).toBe(true);
 
     const second = await app.request("/api/v1/external/sessions?limit=2&offset=100", {
@@ -337,8 +344,52 @@ describe("external sessions", () => {
       hasMore: boolean;
     };
     expect(secondBody.sessions.map((session) => session.id)).toEqual(ids.slice(100, 102));
-    expect(secondBody.total).toBeGreaterThanOrEqual(ids.length);
-    expect(secondBody.hasMore).toBe(102 < secondBody.total);
+    expect(secondBody.total).toBe(ids.length);
+    expect(secondBody.hasMore).toBe(false);
+  });
+
+  it("仅内存会话超过 50 条时深分页 total 准确且顺序稳定", async () => {
+    vi.spyOn(documentRepo, "listWithExistingThreads").mockResolvedValue({
+      rows: [],
+      total: 0,
+    });
+    vi.spyOn(documentRepo, "existsByIds").mockResolvedValue(new Set());
+    const createdAt = "2026-08-04T00:00:00.000Z";
+    const ids = Array.from(
+      { length: 55 },
+      (_, index) => `memory-deep-${String(index).padStart(2, "0")}`,
+    );
+    for (const id of ids) {
+      const memorySession = createSession(id, createdAt);
+      memorySession.title = `深分页 ${id}`;
+      sessions.set(id, memorySession);
+      sessionManager.frameLog.append(id, {
+        kind: "sessionMeta",
+        data: { sessionId: id, title: memorySession.title },
+      });
+      volatileSessionIds.push(id);
+    }
+
+    const readPage = async () => {
+      const response = await app.request(
+        "/api/v1/external/sessions?limit=10&offset=50",
+        { headers: authHeaders() },
+      );
+      expect(response.status).toBe(200);
+      return response.json() as Promise<{
+        sessions: Array<{ id: string; updatedAt: string }>;
+        total: number;
+        hasMore: boolean;
+      }>;
+    };
+
+    const first = await readPage();
+    const second = await readPage();
+    expect(first.total).toBe(55);
+    expect(first.sessions.map((session) => session.id)).toEqual(ids.slice(50));
+    expect(first.sessions.every((session) => session.updatedAt === createdAt)).toBe(true);
+    expect(first.hasMore).toBe(false);
+    expect(second).toEqual(first);
   });
 
   it("快照游标在页间更新时间变化时不重复或遗漏会话", async () => {

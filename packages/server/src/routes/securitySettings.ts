@@ -129,14 +129,17 @@ export function createSecuritySettingsRoutes(
     const grantKind = kind as ConfirmGrantKind;
     const grantMode: SecurityGrantMode = parsed.data.grantMode;
     const operationId = parsed.data.operationId ?? randomUUID();
-    const baseVersion = parsed.data.baseVersion ?? 0;
+    const requestedBaseVersion = parsed.data.baseVersion;
     const existingOperation = operations.get(operationId);
     if (
       existingOperation &&
       (
         existingOperation.kind !== grantKind ||
         existingOperation.grantMode !== grantMode ||
-        existingOperation.baseVersion !== baseVersion
+        (
+          requestedBaseVersion !== undefined &&
+          existingOperation.baseVersion !== requestedBaseVersion
+        )
       )
     ) {
       return c.json({ error: "设置请求已失效，请刷新后重试。" }, 409);
@@ -147,8 +150,32 @@ export function createSecuritySettingsRoutes(
     if (existingOperation?.status === "failed") {
       return c.json({ error: "设置保存失败，请再试一次。" }, 500);
     }
+    if (existingOperation?.status === "conflict") {
+      return c.json({ error: "设置已被别处修改，请刷新后重试。" }, 409);
+    }
     if (existingOperation?.status === "pending") {
       return c.json({ operation: existingOperation }, 202);
+    }
+
+    let currentState: Awaited<ReturnType<typeof listGrantStates>>[number] | undefined;
+    try {
+      currentState = (await listGrantStates()).find((state) => state.kind === grantKind);
+    } catch {
+      return c.json({ error: "设置保存失败，请再试一次。" }, 500);
+    }
+    if (!currentState) {
+      return c.json({ error: "设置保存失败，请再试一次。" }, 500);
+    }
+    const baseVersion = requestedBaseVersion ?? currentState.version;
+    if (requestedBaseVersion !== undefined && requestedBaseVersion !== currentState.version) {
+      rememberOperation({
+        operationId,
+        kind: grantKind,
+        grantMode,
+        baseVersion,
+        status: "conflict",
+      });
+      return c.json({ error: "设置已被别处修改，请刷新后重试。" }, 409);
     }
     rememberOperation({
       operationId,
@@ -160,7 +187,23 @@ export function createSecuritySettingsRoutes(
 
     try {
       if (grantMode === "ask") {
-        const result = await revokeGrant(grantKind, "settings");
+        const result = await revokeGrant(
+          grantKind,
+          "settings",
+          undefined,
+          undefined,
+          baseVersion,
+        );
+        if (result.stale) {
+          rememberOperation({
+            operationId,
+            kind: grantKind,
+            grantMode,
+            baseVersion,
+            status: "conflict",
+          });
+          return c.json({ error: "设置已被别处修改，请刷新后重试。" }, 409);
+        }
         const body: UpdateSecurityGrantResponse = {
           kind: grantKind,
           grantMode,
@@ -181,7 +224,22 @@ export function createSecuritySettingsRoutes(
         return c.json(body);
       }
 
-      const result = await createGrant({ kind: grantKind, source: "settings" });
+      const result = await createGrant({
+        kind: grantKind,
+        source: "settings",
+        expectedVersion: baseVersion,
+        expectedRevocationEpoch: currentState.revocationEpoch,
+      });
+      if (result.stale) {
+        rememberOperation({
+          operationId,
+          kind: grantKind,
+          grantMode,
+          baseVersion,
+          status: "conflict",
+        });
+        return c.json({ error: "设置已被别处修改，请刷新后重试。" }, 409);
+      }
       const body: UpdateSecurityGrantResponse = {
         kind: grantKind,
         grantMode: result.state.present ? "always" : "ask",

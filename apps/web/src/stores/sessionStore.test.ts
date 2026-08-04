@@ -110,15 +110,45 @@ describe("sessionStore", () => {
       ));
     vi.stubGlobal("fetch", fetchMock);
 
-    await useSessionStore.getState().removeSession(removing.id);
+    const removal = useSessionStore.getState().removeSession(removing.id);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(useSessionStore.getState().sessions).toEqual([
       expect.objectContaining({ id: removing.id, status: { kind: "Deleting" } }),
     ]);
 
     await vi.advanceTimersByTimeAsync(500);
+    await expect(removal).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(useSessionStore.getState().sessions).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("删除持续 pending 超过 60 秒后停止轮询并恢复为可重试", async () => {
+    vi.useFakeTimers();
+    const removing = session("timeout-session");
+    useSessionStore.setState({ sessions: [removing] });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ deleted: false, status: "pending" }),
+      { status: 202, headers: { "content-type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = useSessionStore.getState().removeSession(removing.id).then(
+      () => ({ ok: true as const, error: null }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const result = await outcome;
+    expect(result.ok).toBe(false);
+    expect(result.error).toEqual(new Error("删除失败，可重试"));
+    expect(useSessionStore.getState().sessions).toEqual([
+      expect.objectContaining({ id: removing.id, status: { kind: "Active" } }),
+    ]);
+    const callsAtTimeout = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(callsAtTimeout);
     vi.useRealTimers();
   });
 });

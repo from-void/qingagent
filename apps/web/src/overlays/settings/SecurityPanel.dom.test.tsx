@@ -343,6 +343,26 @@ describe("SecurityPanel", () => {
     expect(categorySelect("安装软件").textContent).toContain("每次询问");
   });
 
+  it("POST 返回 409 时提示设置已被别处修改并刷新最新值", async () => {
+    const latest = categories.map((item) => item.kind === "install"
+      ? { ...item, grantMode: "always", present: true, grantId: "grant-elsewhere", version: 1 }
+      : item);
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ categories }))
+      .mockResolvedValueOnce(response({ error: "设置已被别处修改，请刷新后重试。" }, 409))
+      .mockResolvedValueOnce(response({ categories: latest }));
+    await renderWithFetch(fetchMock);
+
+    await choose(categorySelect("安装软件"), "always");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(toast).toHaveBeenCalledWith({
+      message: "设置已被别处修改",
+      tone: "error",
+    });
+    expect(categorySelect("安装软件").textContent).toContain("不再询问");
+  });
+
   it("POST 超时后不 abort，保持未定态轮询到该操作提交", async () => {
     vi.useFakeTimers();
     const operationId = "security-op-timeout";

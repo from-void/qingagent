@@ -247,4 +247,31 @@ describe("confirm grant 与不可变审计仓储", () => {
     });
     expect(await getConfirmGrant("command")).toBeNull();
   });
+
+  it("设置写入的 expectedVersion 在事务内拒绝旧版本撤销", async () => {
+    const created = await createConfirmGrantCanonical({
+      kind: "send",
+      source: "settings",
+      grantId: "grant-current-send",
+      expectedVersion: 0,
+      expectedRevocationEpoch: 0,
+    });
+    expect(created).toMatchObject({ stale: false, state: { version: 1, present: true } });
+
+    const stale = await revokeConfirmGrantWithState(
+      "send",
+      "settings",
+      undefined,
+      undefined,
+      0,
+    );
+    expect(stale).toMatchObject({
+      stale: true,
+      revokedGrant: null,
+      state: { version: 1, present: true, grantId: "grant-current-send" },
+    });
+    expect(await getConfirmGrant("send")).toMatchObject({
+      grantId: "grant-current-send",
+    });
+  });
 });

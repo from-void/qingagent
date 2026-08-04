@@ -1814,6 +1814,14 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelectorAll(".wx-more-icon circle")).toHaveLength(3);
   });
 
+  it("公众号预览正文层级使用下调后的字号与等比字距", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/components/derivatives/wechatPreview.css"), "utf8");
+    expect(css).toContain(".wx-article .rich_media_title{margin:0 0 14px;color:#191919;font-size:20px;");
+    expect(css).toContain(".wx-meta>span{display:inline-block;margin:0 10px 10px 0;font-size:14px;");
+    expect(css).toContain(".wx-article #js_content{color:rgba(0,0,0,.9);font-size:16px;line-height:1.75;letter-spacing:.032em;");
+    expect(css).toContain(".wx-article #js_content h2{font-size:18px}.wx-article #js_content h3{font-size:17px}");
+  });
+
   it("小红书电脑预览为左图右文且不伪造评论", async () => {
     const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "#真实体验" }] }] } as never;
     await act(async () => root.render(<DTYPE_REGISTRY.xhs.DesktopPreview doc={doc} title="桌面笔记" articleRef={vi.fn()}/>));

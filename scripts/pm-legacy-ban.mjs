@@ -17,6 +17,8 @@ if (phase === "F" && runtimeResults.length > 0) {
   process.exit(1);
 }
 
+console.log("pm:legacy-ban PASS");
+
 function readPhase() {
   const phaseIndex = process.argv.findIndex((arg) => arg === "--phase");
   if (phaseIndex >= 0) return process.argv[phaseIndex + 1] ?? "F";

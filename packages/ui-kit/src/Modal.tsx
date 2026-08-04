@@ -21,6 +21,11 @@ export function Modal({ open, title, onClose, children }: ModalProps) {
               tabIndex={0}
               aria-label="close"
               onClick={onClose}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                onClose();
+              }}
               style={{ cursor: "pointer" }}
             >
               ×

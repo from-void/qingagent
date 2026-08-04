@@ -3255,12 +3255,6 @@ export type WorkspaceLocalAction =
    * state.doc——此前只更新版本号,canonical 文档停留在手动编辑前,导致
    * 进入审阅/拒绝后界面回退、看似"回滚吞了手动编辑"。 */
   | { kind: "manualDocSaved"; pmDoc: PmDoc; version: number }
-  /** Page-level commit: materialize all docSuggestion tool-calls with
-   * verdict accepted/rejected into the doc body, flip their status to
-   * committed, bump the version. Used by Stage B mock backend (a real
-   * server would emit a documentSnapshotWritten + tool-call-updated stream
-   * instead). */
-  | { kind: "commitPatchVerdicts"; nextVersion: number }
   | {
       kind: "restoreAskUser";
       messageId: string;

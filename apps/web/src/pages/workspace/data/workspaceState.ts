@@ -15,7 +15,6 @@ import type {
   WorkspaceFrame,
 } from "./protocol";
 import {
-  materializeDoc,
   pmDocToViewDocumentSnapshot,
   wireDocToView,
   type StreamError,
@@ -558,9 +557,6 @@ function workspaceReducerMut(
     case "streamTerminated":
       reduceStreamTerminatedMut(draft, action.streamIds, action.reason);
       return;
-    case "commitPatchVerdicts":
-      commitPatchVerdictsMut(draft, action.nextVersion);
-      return;
     case "restoreAskUser": {
       draft.toolCalls.set(action.toolCall.id, action.toolCall);
       const msgIdx = draft.messages.findIndex((m) => m.id === action.messageId);
@@ -810,32 +806,6 @@ function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.streamActive = false;
   draft.activeStreamIds = [];
   draft.streamError = null;
-}
-
-function commitPatchVerdictsMut(
-  draft: WorkspaceState,
-  nextVersion: number,
-): void {
-  if (!draft.doc) return;
-  markRejectedOnlyPatchSummariesAbandonedMut(draft);
-  const accepted: Array<{
-    id: string;
-    before: string;
-    after: string;
-    blockIndex: number;
-    verdict: "accepted" | "rejected";
-  }> = [];
-  for (const tc of draft.toolCalls.values()) {
-    if (tc.body.kind !== "docSuggestion") continue;
-    const verdict = tc.status.kind;
-    if (verdict !== "accepted" && verdict !== "rejected") continue;
-    draft.toolCalls.set(tc.id, { ...tc, status: { kind: "committed" } });
-  }
-  if (accepted.length === 0) return;
-  // materializeDoc returns a fresh object — safe to assign directly
-  draft.doc = materializeDoc(draft.doc, accepted, nextVersion);
-  draft.docDiff = null;
-  draft.version = nextVersion;
 }
 
 function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {

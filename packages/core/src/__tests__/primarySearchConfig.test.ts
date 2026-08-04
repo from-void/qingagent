@@ -15,6 +15,7 @@ const mockAppSettings = vi.hoisted(() => {
 });
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   SETTING_SEARCH_PROVIDER_CONFIG: "search_provider_config",
   SETTING_SEARCH_PRIMARY: "search_primary",
   getAppSetting: mockAppSettings.getAppSetting,

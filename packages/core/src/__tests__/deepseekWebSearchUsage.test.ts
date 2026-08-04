@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("@qingagent/db", () => ({ recordUsageEvent: recordUsageEventMock }));
+vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
+  recordUsageEvent: recordUsageEventMock,
+}));
 const { fetchDeepseekSearchLinks } = await import("../search/deepseekWebSearch.js");
 
 describe("DeepSeek webSearch usage 留痕", () => {

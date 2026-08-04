@@ -24,6 +24,7 @@ vi.mock("../mastra.js", () => ({
 vi.mock("../agent-run/agentSpans.js", () => ({ sessionIdToTraceId: (id: string) => `trace-${id}` }));
 vi.mock("@qingagent/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@qingagent/db")>()),
+  resolveDbUrl: () => "file::memory:",
   documentRepo: { load: vi.fn(async () => null) },
 }));
 

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("@qingagent/db", () => ({ recordUsageEvent: recordUsageEventMock }));
+vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
+  recordUsageEvent: recordUsageEventMock,
+}));
 const observeCacheOutcomeMock = vi.hoisted(() => vi.fn());
 vi.mock("../llm/cacheEfficiencySentinel.js", () => ({ observeCacheOutcome: observeCacheOutcomeMock }));
 const { wrapModernModelUsage } = await import("../llm/modernUsageModel.js");

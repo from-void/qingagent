@@ -110,31 +110,40 @@ describe("schedulePersist dirty-loop", () => {
   });
 
   it("短窗口内多个写点只落一份最新的累计 metadata", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { schedulePersist } = await import("../session/threadPersistence.js");
+    const writes: Array<Record<string, unknown>> = [];
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+      },
+    );
+    const state = createSession("schedule-coalesce-window");
+    const scheduled: Promise<void>[] = [];
+
+    for (let version = 1; version <= 5; version += 1) {
+      state.docVersion = version;
+      scheduled.push(schedulePersist(state, `point-${version}`));
+      await Promise.resolve();
+    }
+
+    expect(memory.updateThread).not.toHaveBeenCalled();
+    await Promise.all(scheduled);
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect(writes[0]?.docVersion).toBe(5);
+  });
+
+  it("全局假计时器不会冻结合并窗口，无需推进计时器也能完成写入", { timeout: 1_000 }, async () => {
     vi.useFakeTimers();
     try {
       const { createSession } = await import("../session/sessionState.js");
       const { schedulePersist } = await import("../session/threadPersistence.js");
-      const writes: Array<Record<string, unknown>> = [];
-      memory.updateThread.mockImplementation(
-        async ({ metadata }: { metadata: Record<string, unknown> }) => {
-          writes.push(metadata);
-        },
-      );
-      const state = createSession("schedule-coalesce-window");
-      const scheduled: Promise<void>[] = [];
+      const state = createSession("schedule-coalesce-fake-timer-safe");
 
-      for (let version = 1; version <= 5; version += 1) {
-        state.docVersion = version;
-        scheduled.push(schedulePersist(state, `point-${version}`));
-        await Promise.resolve();
-      }
-
-      expect(memory.updateThread).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(10);
-      await Promise.all(scheduled);
+      await expect(schedulePersist(state, "fake-timer-safe")).resolves.toBeUndefined();
 
       expect(memory.updateThread).toHaveBeenCalledTimes(1);
-      expect(writes[0]?.docVersion).toBe(5);
     } finally {
       vi.useRealTimers();
     }

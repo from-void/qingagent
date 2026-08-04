@@ -11,7 +11,10 @@ vi.mock("node:fs/promises", () => ({
   mkdir: mocks.mkdir,
   writeFile: mocks.writeFile,
 }));
-vi.mock("@qingagent/db", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
+vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
+  recordUsageEvent: mocks.recordUsageEvent,
+}));
 
 import {
   beginSessionSnapshotTurn,

@@ -11,6 +11,7 @@ import {
 } from "@qingagent/db";
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"],
   insertAnnotationGroups: vi.fn(async () => undefined),
   replaceAnnotationGroupsByOrigin: vi.fn(async () => undefined),

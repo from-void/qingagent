@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   listCredentialGrants: vi.fn(async () => []),
   getAppSetting: vi.fn(async (key: string) => mocks.settings.get(key) ?? null),
   setAppSetting: vi.fn(async (key: string, value: string) => {

@@ -675,6 +675,185 @@ describe("commitReviewGroups", () => {
     ]);
   });
 
+  it("同段文本与脚注两建议部分采纳成功，脚注语义与候选一致", async () => {
+    const state = createSession("footnote-inline-partial-commit");
+    const base = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("前缀旧"),
+          { type: "footnoteReference", attrs: { id: "source-old", note: "旧来源" } },
+          text("尾文"),
+        ],
+      },
+      paragraph("block-keep", "保留旧"),
+    ]);
+    const draft = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("前缀新"),
+          { type: "footnoteReference", attrs: { id: "source-new", note: "新来源" } },
+          text("尾文"),
+        ],
+      },
+      paragraph("block-keep", "保留新"),
+    ]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const targetHunks = hunks.filter((hunk) => hunk.anchor.blockId === "block-target");
+    const keepHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-keep");
+    if (targetHunks.length !== 2 || !keepHunk) throw new Error("fixture missing expected hunks");
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: targetHunks.map((hunk) => hunk.reviewBatchId),
+      keepPendingReviewBatchIds: [keepHunk.reviewBatchId],
+    }));
+
+    expect(targetHunks.some((hunk) =>
+      Array.isArray(hunk.before) && hunk.before.some((node) => node.type === "footnoteReference")
+    )).toBe(true);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(true);
+    expect(state.docVersion).toBe(2);
+    expect(state.doc).toEqual(doc([draft.content[0]!, base.content[1]!]));
+    const committedTarget = state.doc?.content[0];
+    expect(committedTarget && "content" in committedTarget ? committedTarget.content?.[1] : undefined).toEqual({
+      type: "footnoteReference",
+      attrs: { id: "source-new", note: "新来源" },
+    });
+    expect(state.suggestions.size).toBe(1);
+    expect([...state.suggestions.values()][0]?.diffHunk?.anchor.blockId).toBe("block-keep");
+  });
+
+  it("仅采纳脚注建议时逐 hunk 提交成功并保留其它段待审", async () => {
+    const state = createSession("footnote-only-partial-commit");
+    const base = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("正文"),
+          { type: "footnoteReference", attrs: { id: "source-a", note: "旧注" } },
+          text("结束"),
+        ],
+      },
+      paragraph("block-keep", "保留旧"),
+    ]);
+    const draft = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("正文"),
+          { type: "footnoteReference", attrs: { id: "source-b", note: "新注" } },
+          text("结束"),
+        ],
+      },
+      paragraph("block-keep", "保留新"),
+    ]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const footnoteHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-target");
+    const keepHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-keep");
+    if (!footnoteHunk || !keepHunk) throw new Error("fixture missing expected hunks");
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [footnoteHunk.reviewBatchId],
+      keepPendingReviewBatchIds: [keepHunk.reviewBatchId],
+    }));
+
+    expect(footnoteHunk.before).toEqual([{
+      type: "footnoteReference",
+      attrs: { id: "source-a", note: "旧注" },
+    }]);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(state.docVersion).toBe(2);
+    expect(state.doc).toEqual(doc([draft.content[0]!, base.content[1]!]));
+    expect(state.suggestions.size).toBe(1);
+  });
+
+  it("同段文本与 inlineMath 两建议部分采纳继续成功", async () => {
+    const state = createSession("inline-math-partial-commit-control");
+    const base = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("前缀旧"),
+          { type: "inlineMath", attrs: { latex: "x" } },
+          text("尾文"),
+        ],
+      },
+      paragraph("block-keep", "保留旧"),
+    ]);
+    const draft = doc([
+      {
+        type: "paragraph",
+        attrs: { blockId: "block-target" },
+        content: [
+          text("前缀新"),
+          { type: "inlineMath", attrs: { latex: "y" } },
+          text("尾文"),
+        ],
+      },
+      paragraph("block-keep", "保留新"),
+    ]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const targetHunks = hunks.filter((hunk) => hunk.anchor.blockId === "block-target");
+    const keepHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-keep");
+    if (targetHunks.length !== 2 || !keepHunk) throw new Error("fixture missing expected hunks");
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: targetHunks.map((hunk) => hunk.reviewBatchId),
+      keepPendingReviewBatchIds: [keepHunk.reviewBatchId],
+    }));
+
+    expect(targetHunks.some((hunk) =>
+      Array.isArray(hunk.before) && hunk.before.some((node) => node.type === "inlineMath")
+    )).toBe(true);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(state.docVersion).toBe(2);
+    expect(state.doc).toEqual(doc([draft.content[0]!, base.content[1]!]));
+    expect(state.suggestions.size).toBe(1);
+  });
+
+  it("全选同段文本与脚注仍以权威候选整篇提交", async () => {
+    const state = createSession("footnote-whole-candidate-commit");
+    const base = doc([{
+      type: "paragraph",
+      attrs: { blockId: "block-target" },
+      content: [
+        text("前缀旧"),
+        { type: "footnoteReference", attrs: { id: "source-old", note: "旧来源" } },
+        text("尾文"),
+      ],
+    }]);
+    const draft = doc([{
+      type: "paragraph",
+      attrs: { blockId: "block-target" },
+      content: [
+        text("前缀新"),
+        { type: "footnoteReference", attrs: { id: "source-new", note: "新来源" } },
+        text("尾文"),
+      ],
+    }]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: hunks.map((hunk) => hunk.reviewBatchId),
+    }));
+
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(state.docVersion).toBe(2);
+    expect(state.doc).toEqual(draft);
+    expect(state.suggestions.size).toBe(0);
+  });
+
   it("相邻/重叠 hunk 混合操作:采纳一处、拒绝一处、保留一处", async () => {
     const state = createSession("overlap-mixed-review");
     const base = doc([paragraph("block-a", "ABCDEFGH")]);

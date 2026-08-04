@@ -1251,7 +1251,10 @@ function resolveApplyBlockIndex(
 }
 
 function isInlineNode(node: PmNode): node is PmInlineNode {
-  return node.type === "text" || node.type === "hardBreak" || node.type === "inlineMath";
+  return node.type === "text" ||
+    node.type === "hardBreak" ||
+    node.type === "inlineMath" ||
+    node.type === "footnoteReference";
 }
 
 function isInlineNodeList(nodes: DiffHunk["before"] | DiffHunk["after"]): boolean {

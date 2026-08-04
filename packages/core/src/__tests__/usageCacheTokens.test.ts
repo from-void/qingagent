@@ -86,6 +86,25 @@ describe("usage cache tokens 采集(R2 修复回归)", () => {
     });
   });
 
+  it("同一 Kimi 嵌套 usage 在账本与 span 出口保持一致", () => {
+    const kimiUsage = {
+      inputTokens: 12_000,
+      outputTokens: 90,
+      providerMetadata: {
+        kimi: { usage: { prompt_tokens_details: { cached_tokens: 9_000 } } },
+      },
+    };
+
+    const expected = {
+      inputTokens: 12_000,
+      outputTokens: 90,
+      promptCacheHitTokens: 9_000,
+      promptCacheMissTokens: 3_000,
+    };
+    expect(normalizeLlmUsageCounts(kimiUsage)).toMatchObject(expected);
+    expect(normalizeLlmUsage(kimiUsage)).toMatchObject(expected);
+  });
+
   it("Anthropic/GLM camelCase 缓存读取与创建分别归一化，不把 creation 并进 miss", () => {
     const merged = {
       inputTokens: 9000,

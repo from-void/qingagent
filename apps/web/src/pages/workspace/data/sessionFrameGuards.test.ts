@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Command } from "@qingagent/contract-ts";
+import {
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_PURPOSE_HEADER,
+} from "@qingagent/contract-ts";
 import { ServerStream } from "./serverStream";
 import {
   DEFAULT_NATIVE_PRESENTATION_CONFIG,
@@ -184,7 +188,7 @@ class MockUploadRequest {
   method = "";
   url = "";
   headers: Record<string, string> = {};
-  body = "";
+  body: Blob | null = null;
   status = 0;
   responseText = "";
   onload: (() => void) | null = null;
@@ -203,7 +207,7 @@ class MockUploadRequest {
     this.headers[name] = value;
   }
 
-  send(body: string): void {
+  send(body: Blob): void {
     this.body = body;
   }
 
@@ -214,11 +218,12 @@ class MockUploadRequest {
   }
 
   filename(): string | undefined {
-    return (JSON.parse(this.body) as { filename?: string }).filename;
+    const encoded = this.headers[UPLOAD_FILENAME_HEADER];
+    return encoded ? decodeURIComponent(encoded) : undefined;
   }
 
   purpose(): string | undefined {
-    return (JSON.parse(this.body) as { purpose?: string }).purpose;
+    return this.headers[UPLOAD_PURPOSE_HEADER];
   }
 }
 

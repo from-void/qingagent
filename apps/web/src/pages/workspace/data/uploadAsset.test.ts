@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_PURPOSE_HEADER,
+} from "@qingagent/contract-ts";
+import {
   DEFAULT_UPLOAD_MAX_BYTES,
   uploadAssetFile,
   uploadFailureMessage,
@@ -12,7 +16,7 @@ describe("uploadAssetFile", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uploads a file through the durable upload API and reports progress", async () => {
+  it("直接发送原始 Blob，并通过持久上传 API 报告进度", async () => {
     vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
     const progress = vi.fn();
     const file = new File([new Uint8Array([1, 2, 3])], "figure.png", { type: "image/png" });
@@ -30,12 +34,9 @@ describe("uploadAssetFile", () => {
 
     expect(xhr.method).toBe("POST");
     expect(xhr.url).toBe("/api/v1/upload");
-    expect(xhr.headers["Content-Type"]).toBe("application/json");
-    expect(JSON.parse(xhr.body)).toEqual({
-      filename: "figure.png",
-      mimeType: "image/png",
-      content: "AQID",
-    });
+    expect(xhr.headers["Content-Type"]).toBe("image/png");
+    expect(xhr.headers[UPLOAD_FILENAME_HEADER]).toBe("figure.png");
+    expect(xhr.body).toBe(file);
     expect(progress).toHaveBeenCalledWith(50);
     expect(uploadedAssetUrl(uploaded)).toBe("/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png");
   });
@@ -71,10 +72,8 @@ describe("uploadAssetFile", () => {
 
     const pending = uploadAssetFile(file, { purpose: "material" });
     const xhr = await waitForRequest();
-    expect(JSON.parse(xhr.body)).toMatchObject({
-      filename: "bad.docx",
-      purpose: "material",
-    });
+    expect(decodeURIComponent(xhr.headers[UPLOAD_FILENAME_HEADER]!)).toBe("bad.docx");
+    expect(xhr.headers[UPLOAD_PURPOSE_HEADER]).toBe("material");
     xhr.reject(422, JSON.stringify({ error: "material_format_mismatch" }));
 
     await expect(pending).rejects.toMatchObject({
@@ -119,7 +118,7 @@ class MockUploadRequest {
   method = "";
   url = "";
   headers: Record<string, string> = {};
-  body = "";
+  body: Blob | null = null;
   status = 0;
   responseText = "";
   onload: (() => void) | null = null;
@@ -138,7 +137,7 @@ class MockUploadRequest {
     this.headers[name] = value;
   }
 
-  send(body: string) {
+  send(body: Blob) {
     this.body = body;
   }
 

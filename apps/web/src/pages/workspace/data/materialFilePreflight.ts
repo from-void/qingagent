@@ -14,6 +14,12 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const TEXT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".csv"]);
 const LEGACY_OFFICE_EXTENSIONS = new Set([".doc", ".xls", ".ppt"]);
 const OLE_MAGIC = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+const IMAGE_MAGIC_BYTES = 12;
+const PDF_HEADER_BYTES = IMAGE_MAGIC_BYTES;
+const PDF_TAIL_BYTES = 2048;
+const OFFICE_HEAD_BYTES = 256 * 1024;
+const OFFICE_TAIL_BYTES = 256 * 1024;
+const TEXT_SAMPLE_BYTES = 64 * 1024;
 
 const EXPECTED_MIME_TYPES: Record<string, readonly string[]> = {
   ".pdf": ["application/pdf"],
@@ -57,6 +63,10 @@ function includesAscii(bytes: Uint8Array, value: string): boolean {
     return true;
   }
   return false;
+}
+
+function samplesIncludeAscii(samples: readonly Uint8Array[], value: string): boolean {
+  return samples.some((sample) => includesAscii(sample, value));
 }
 
 function imageMimeFromMagic(bytes: Uint8Array): string | null {
@@ -118,9 +128,9 @@ function detectedKnownMime(bytes: Uint8Array): string | null {
   return imageMimeFromMagic(bytes) ?? (looksLikePdf(bytes) ? "application/pdf" : null);
 }
 
-async function fileBytes(file: File): Promise<Uint8Array> {
-  if (typeof file.arrayBuffer === "function") {
-    return new Uint8Array(await file.arrayBuffer());
+async function blobBytes(blob: Blob): Promise<Uint8Array> {
+  if (typeof blob.arrayBuffer === "function") {
+    return new Uint8Array(await blob.arrayBuffer());
   }
   return await new Promise<Uint8Array>((resolve, reject) => {
     const reader = new FileReader();
@@ -132,8 +142,24 @@ async function fileBytes(file: File): Promise<Uint8Array> {
       }
       reject(new Error("file_read_failed"));
     };
-    reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(blob);
   });
+}
+
+function fileRangeBytes(file: File, start: number, end: number): Promise<Uint8Array> {
+  return blobBytes(file.slice(start, end));
+}
+
+async function fileHeadAndTail(
+  file: File,
+  headBytes: number,
+  tailBytes: number,
+): Promise<readonly Uint8Array[]> {
+  const headEnd = Math.min(file.size, headBytes);
+  const tailStart = Math.max(headEnd, file.size - tailBytes);
+  const head = await fileRangeBytes(file, 0, headEnd);
+  if (tailStart >= file.size) return [head];
+  return [head, await fileRangeBytes(file, tailStart, file.size)];
 }
 
 function failure(error: MaterialUploadErrorCode): BrowserMaterialFilePreflightResult {
@@ -150,53 +176,58 @@ export async function preflightBrowserMaterialFile(
     return failure("material_format_mismatch");
   }
 
-  let bytes: Uint8Array;
+  if (file.size === 0) return failure("material_unreadable");
+
   try {
-    bytes = await fileBytes(file);
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      const bytes = await fileRangeBytes(file, 0, IMAGE_MAGIC_BYTES);
+      const detected = imageMimeFromMagic(bytes);
+      if (!detected) return failure("material_unreadable");
+      return EXPECTED_MIME_TYPES[ext]?.includes(detected)
+        ? { ok: true }
+        : failure("material_format_mismatch");
+    }
+
+    if (ext === ".pdf") {
+      const head = await fileRangeBytes(file, 0, PDF_HEADER_BYTES);
+      if (!looksLikePdf(head)) {
+        return failure(detectedKnownMime(head)
+          ? "material_format_mismatch"
+          : "material_unreadable");
+      }
+      const tail = await fileRangeBytes(file, Math.max(0, file.size - PDF_TAIL_BYTES), file.size);
+      return hasPdfEof(tail) ? { ok: true } : failure("material_unreadable");
+    }
+
+    const requiredParts = OFFICE_REQUIRED_PARTS[ext];
+    if (requiredParts) {
+      const samples = await fileHeadAndTail(file, OFFICE_HEAD_BYTES, OFFICE_TAIL_BYTES);
+      const head = samples[0]!;
+      if (!startsWithBytes(head, new Uint8Array([0x50, 0x4b]))) {
+        return failure(detectedKnownMime(head)
+          ? "material_format_mismatch"
+          : "material_unreadable");
+      }
+      return requiredParts.every((part) => samplesIncludeAscii(samples, part))
+        ? { ok: true }
+        : failure("material_format_mismatch");
+    }
+
+    if (LEGACY_OFFICE_EXTENSIONS.has(ext)) {
+      const bytes = await fileRangeBytes(file, 0, OLE_MAGIC.length);
+      return startsWithBytes(bytes, OLE_MAGIC)
+        ? { ok: true }
+        : failure(detectedKnownMime(bytes)
+          ? "material_format_mismatch"
+          : "material_unreadable");
+    }
+
+    if (TEXT_EXTENSIONS.has(ext)) {
+      const bytes = await fileRangeBytes(file, 0, TEXT_SAMPLE_BYTES);
+      return decodeReadableText(bytes) ? { ok: true } : failure("material_unreadable");
+    }
   } catch {
     return failure("material_unreadable");
-  }
-  if (bytes.length === 0) return failure("material_unreadable");
-
-  if (IMAGE_EXTENSIONS.has(ext)) {
-    const detected = imageMimeFromMagic(bytes);
-    if (!detected) return failure("material_unreadable");
-    return EXPECTED_MIME_TYPES[ext]?.includes(detected)
-      ? { ok: true }
-      : failure("material_format_mismatch");
-  }
-
-  if (ext === ".pdf") {
-    if (!looksLikePdf(bytes)) {
-      return failure(detectedKnownMime(bytes)
-        ? "material_format_mismatch"
-        : "material_unreadable");
-    }
-    return hasPdfEof(bytes) ? { ok: true } : failure("material_unreadable");
-  }
-
-  const requiredParts = OFFICE_REQUIRED_PARTS[ext];
-  if (requiredParts) {
-    if (!startsWithBytes(bytes, new Uint8Array([0x50, 0x4b]))) {
-      return failure(detectedKnownMime(bytes)
-        ? "material_format_mismatch"
-        : "material_unreadable");
-    }
-    return requiredParts.every((part) => includesAscii(bytes, part))
-      ? { ok: true }
-      : failure("material_format_mismatch");
-  }
-
-  if (LEGACY_OFFICE_EXTENSIONS.has(ext)) {
-    return startsWithBytes(bytes, OLE_MAGIC)
-      ? { ok: true }
-      : failure(detectedKnownMime(bytes)
-        ? "material_format_mismatch"
-        : "material_unreadable");
-  }
-
-  if (TEXT_EXTENSIONS.has(ext)) {
-    return decodeReadableText(bytes) ? { ok: true } : failure("material_unreadable");
   }
   return failure("material_unsupported");
 }

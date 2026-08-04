@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   materialPreflightErrorMessage,
   preflightBrowserMaterialFile,
@@ -21,6 +21,21 @@ async function fixtureFile(filePath: string, filename: string, type: string): Pr
 }
 
 describe("preflightBrowserMaterialFile", () => {
+  it("大文件只通过 slice 读取有界头部样本，不调用整文件 arrayBuffer", async () => {
+    const file = new File([`# 标题\n${"a".repeat(1024 * 1024)}`], "large.md", {
+      type: "text/markdown",
+    });
+    const wholeFileRead = vi.fn(async () => new ArrayBuffer(file.size));
+    Object.defineProperty(file, "arrayBuffer", { value: wholeFileRead });
+    const slice = vi.spyOn(file, "slice");
+
+    await expect(preflightBrowserMaterialFile(file)).resolves.toEqual({ ok: true });
+
+    expect(wholeFileRead).not.toHaveBeenCalled();
+    expect(slice).toHaveBeenCalledTimes(1);
+    expect(slice).toHaveBeenCalledWith(0, 64 * 1024);
+  });
+
   it("真实读取 input File 内容，在上传前拦住 PNG 改名 DOCX", async () => {
     const encoded = (await readFile(fakeImageFixturePath, "utf8")).trim();
     const file = new File(

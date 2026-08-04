@@ -93,7 +93,7 @@ interface RightPaneProps {
   onSubmitPlan: (toolCallId: string, answers: AskUserAnswers) => void;
   onJumpPrev: () => void;
   onJumpNext: () => void;
-  onRejectAll: () => void;
+  onRejectAll: () => void | Promise<void>;
   onAcceptAll?: () => void | Promise<void>;
   onCommit: () => void | Promise<void>;
   onPatchVerdict: (patchId: string, verdict: "accepted" | "rejected") => void;

@@ -390,6 +390,29 @@ describe("公众号稿生成体验", () => {
     expect(host.textContent).toContain("旧表格仍可查看");
   });
 
+  it("单篇稿件 JSON 损坏时显示局部占位，不冒泡炸掉工作区", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const damaged = { ...item, sourceVersion: 1, generatedAt: "now" };
+    const stream = { getDerivativeDoc: vi.fn(async () => ({
+      meta: damaged,
+      docPm: '{"type":"doc","content":[',
+      docVersion: 1,
+      title: "损坏稿件",
+    })) };
+
+    await act(async () => {
+      root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={damaged} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector(".ws-deriv-empty strong")?.textContent).toBe("稿件数据损坏");
+    expect(host.querySelector(".ws-deriv-view")).not.toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[workspace] parse derivative document failed",
+      expect.any(SyntaxError),
+    );
+  });
+
   it("PhoneShell 按 375×812 等比缩放并在 560px 锁档", () => {
     expect(calculatePhoneScale(812)).toBe(1);
     expect(calculatePhoneScale(686)).toBeCloseTo(686 / 812);

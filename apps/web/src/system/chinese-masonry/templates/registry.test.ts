@@ -32,4 +32,19 @@ describe('TemplateRegistry', () => {
     expect(second).toEqual(first);
     expect(calls).toBe(1);
   });
+
+  it('懒加载失败后允许再次尝试', async () => {
+    const registry = new TemplateRegistry();
+    let calls = 0;
+
+    registry.registerLazy('retryable-template', async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('temporary failure');
+      return defaultTemplates[0]!;
+    });
+
+    await expect(registry.load('retryable-template')).rejects.toThrow('temporary failure');
+    await expect(registry.load('retryable-template')).resolves.toEqual(defaultTemplates[0]);
+    expect(calls).toBe(2);
+  });
 });

@@ -187,7 +187,19 @@ export function DerivativeView(props: {
     return () => { stopped = true; window.clearTimeout(timer); };
   }, [generating, generationBefore, item.docId, props.sessionId, props.stream]);
 
-  const pmDoc = useMemo(() => document && document.docVersion > 0 ? normalizeStoredPmDoc(JSON.parse(document.docPm)) : null, [document]);
+  const parsedDocument = useMemo((): { damaged: boolean; pmDoc: PmDoc | null } => {
+    if (!document || document.docVersion <= 0) return { damaged: false, pmDoc: null };
+    try {
+      return {
+        damaged: false,
+        pmDoc: normalizeStoredPmDoc(JSON.parse(document.docPm)),
+      };
+    } catch (error) {
+      console.error("[workspace] parse derivative document failed", error);
+      return { damaged: true, pmDoc: null };
+    }
+  }, [document]);
+  const pmDoc = parsedDocument.pmDoc;
   const title = articleTitle(pmDoc, descriptor.label);
   const beginGenerate = async (params: DerivativeGenerateParams) => {
     try {
@@ -255,7 +267,7 @@ export function DerivativeView(props: {
         {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}>×</button></div> : null}
         <button className="ws-docfn-btn" title="重新生成" aria-label="重新生成" onClick={() => setModalOpen(true)}><RegenIcon/></button>
       </div>
-      {document?.docVersion ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>
+      {pmDoc ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>
         {exportOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item" onClick={copyDraft}>复制文案</button>{descriptor.exportImageTarget ? <button className="ws-export-item" onClick={exportImage}>导出图片</button> : null}</div> : null}
       </div> : null}
       <div className="ws-export-anchor" ref={moreRef}><button className="ws-docfn-btn" title="更多操作" aria-label="更多操作" onClick={() => { setExportOpen(false); setMoreOpen((value) => !value); }}><MoreIcon/></button>
@@ -267,6 +279,7 @@ export function DerivativeView(props: {
 
   if (generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
   if (!isTranslation && (abortedEmpty || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{abortedEmpty ? "生成已中止" : "尚未生成"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>{modal}</section>;
+  if (parsedDocument.damaged) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>稿件数据损坏</strong><span>暂时无法显示这篇稿件</span></div>{modal}</section>;
   return <section ref={viewRef} className={`ws-deriv-view ws-deriv-${descriptor.dtype}${mode === "phone" ? " is-phone" : " is-desktop"}`}>
     {toolbar}
     {isTranslation && props.items?.length ? <div className="ws-deriv-mode ws-translate-segmented" aria-label="译文语言切换">{props.items.map((candidate) => {

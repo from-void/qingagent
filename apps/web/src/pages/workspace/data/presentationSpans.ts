@@ -7,14 +7,15 @@ type SegmenterCtor = new (
 ) => { segment(input: string): Iterable<{ segment: string }> };
 
 const intlWithSegmenter = Intl as typeof Intl & { Segmenter?: SegmenterCtor };
+let graphemeSegmenter: InstanceType<SegmenterCtor> | null = null;
 
 export function splitGraphemes(text: string): string[] {
   if (text.length === 0) return [];
   if (typeof intlWithSegmenter.Segmenter === "function") {
-    const segmenter = new intlWithSegmenter.Segmenter(undefined, {
+    graphemeSegmenter ??= new intlWithSegmenter.Segmenter(undefined, {
       granularity: "grapheme",
     });
-    return Array.from(segmenter.segment(text), (part) => part.segment);
+    return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
   }
   return Array.from(text);
 }

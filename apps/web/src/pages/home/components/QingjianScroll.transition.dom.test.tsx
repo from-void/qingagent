@@ -360,6 +360,21 @@ describe("QingjianScroll 首页去程生命周期", () => {
     expect(onNewSession).not.toHaveBeenCalled();
   });
 
+  it("点击左下新建浮钮后 420ms 内离开首页不会再触发导航", async () => {
+    const onNewSession = vi.fn();
+    await renderHome(onNewSession);
+
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>(".qj-new-fab")?.click();
+    });
+    await act(async () => root?.unmount());
+    root = null;
+    await act(async () => vi.advanceTimersByTimeAsync(420));
+
+    expect(stageMock.playForward).not.toHaveBeenCalled();
+    expect(onNewSession).not.toHaveBeenCalled();
+  });
+
   it("远端候选稿返回后仍从新建卡原点淡入，不保留临时负位移", async () => {
     const finishAnimation = vi.fn();
     Object.defineProperty(Element.prototype, "getAnimations", {

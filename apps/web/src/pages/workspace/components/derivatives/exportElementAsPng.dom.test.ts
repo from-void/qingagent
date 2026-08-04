@@ -90,6 +90,32 @@ describe("衍生稿 PNG 导出布局", () => {
       configurable: true,
       value: undefined,
     });
+    vi.useRealTimers();
+  });
+
+  it("Web 图片导出在点击后的下一宏任务才释放 Blob URL", async () => {
+    vi.useFakeTimers();
+    installRasterMocks();
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
+    const createObjectURL = vi.fn(() => "blob:download-png");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    const clickAnchor = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const target = document.createElement("article");
+    target.textContent = "Web 图片";
+    document.body.append(target);
+    mockBox(target, { width: 320, height: 240 }, { width: 320, height: 240 });
+
+    const result = await exportElementAsPng(target, "Web 图片");
+
+    expect(result).toEqual({ path: null });
+    expect(clickAnchor).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalledWith("blob:download-png");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:download-png");
   });
 
   it("桌面端等主进程落盘成功后才允许成功 toast，并返回完整路径", async () => {

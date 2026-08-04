@@ -3,7 +3,7 @@ import { CaretIcon } from "../../system/icons";
 import "./debug.css";
 
 // F7 debug 页:skill / tool 原始视图(需求:能看到所有 skill 和 tool 的原始数据)。
-// 产品决策:生产也开放(内容已脱敏,只含能力说明与 schema,无密钥)。
+// 产品决策:仅开发环境开放；生产路由不挂载此页。
 // 样式沿用全局 ink/line design tokens(app 级变量),debug 取向从简。
 
 interface SkillItem {

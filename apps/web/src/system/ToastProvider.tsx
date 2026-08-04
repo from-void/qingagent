@@ -51,6 +51,11 @@ interface ToastItem {
   onDismiss?: () => void;
 }
 
+interface ToastState {
+  items: ToastItem[];
+  dismissedCallbacks: Array<() => void>;
+}
+
 const DEFAULT_TOAST_DURATION_MS = 2400;
 const MAX_TOASTS = 3;
 
@@ -77,36 +82,38 @@ function capToastItems(input: ToastItem[]): { kept: ToastItem[]; removed: ToastI
  * `.qa-toast` family, stacked from the bottom center.
  */
 export function ToastProvider({ children }: ToastProviderProps) {
-  const [items, setItems] = useState<ToastItem[]>([]);
+  const [state, setState] = useState<ToastState>({
+    items: [],
+    dismissedCallbacks: [],
+  });
   const nextIdRef = useRef(1);
-  const dismissedCallbacksRef = useRef<Array<() => void>>([]);
-
-  const enqueueDismissed = useCallback((item: ToastItem, options?: ToastDismissOptions) => {
-    if (options?.runOnDismiss === false) return;
-    if (item.onDismiss) dismissedCallbacksRef.current.push(item.onDismiss);
-  }, []);
 
   const dismiss = useCallback((target: string, options?: ToastDismissOptions) => {
-    setItems((current) => {
+    setState((current) => {
       const removed: ToastItem[] = [];
-      const kept = current.filter((item) => {
+      const kept = current.items.filter((item) => {
         const hit = item.id === target || item.dedupeKey === target;
         if (hit) removed.push(item);
         return !hit;
       });
-      for (const item of removed) enqueueDismissed(item, options);
-      return kept;
+      const dismissedCallbacks = options?.runOnDismiss === false
+        ? current.dismissedCallbacks
+        : [
+            ...current.dismissedCallbacks,
+            ...removed.flatMap((item) => item.onDismiss ? [item.onDismiss] : []),
+          ];
+      return { items: kept, dismissedCallbacks };
     });
-  }, [enqueueDismissed]);
+  }, []);
 
   const show = useCallback<ToastShow>((input: string | ToastShowOptions, durationMs?: number) => {
     const options: ToastShowOptions = typeof input === "string" ? { message: input, durationMs } : input;
     const fallbackId = `toast-${nextIdRef.current++}`;
     const target = options.dedupeKey ?? fallbackId;
 
-    setItems((current) => {
+    setState((current) => {
       const existing = options.dedupeKey
-        ? current.find((item) => item.dedupeKey === options.dedupeKey)
+        ? current.items.find((item) => item.dedupeKey === options.dedupeKey)
         : null;
       const id = existing?.id ?? fallbackId;
       const sticky = options.sticky ?? options.tone === "error";
@@ -122,21 +129,30 @@ export function ToastProvider({ children }: ToastProviderProps) {
         onDismiss: options.onDismiss,
       };
       const withoutDuplicate = options.dedupeKey
-        ? current.filter((currentItem) => currentItem.dedupeKey !== options.dedupeKey)
-        : current;
+        ? current.items.filter((currentItem) => currentItem.dedupeKey !== options.dedupeKey)
+        : current.items;
       const { kept, removed } = capToastItems([item, ...withoutDuplicate]);
-      for (const removedItem of removed) enqueueDismissed(removedItem);
-      return kept;
+      return {
+        items: kept,
+        dismissedCallbacks: [
+          ...current.dismissedCallbacks,
+          ...removed.flatMap((removedItem) => removedItem.onDismiss ? [removedItem.onDismiss] : []),
+        ],
+      };
     });
 
     return target;
-  }, [enqueueDismissed]);
+  }, []);
 
   useEffect(() => {
-    if (dismissedCallbacksRef.current.length === 0) return;
-    const callbacks = dismissedCallbacksRef.current.splice(0);
+    if (state.dismissedCallbacks.length === 0) return;
+    const callbacks = state.dismissedCallbacks;
+    // 先排队清空，再执行用户回调；若回调同步 show/dismiss，后续更新会基于已清空的队列。
+    setState((current) => current.dismissedCallbacks === callbacks
+      ? { ...current, dismissedCallbacks: [] }
+      : current);
     for (const callback of callbacks) callback();
-  });
+  }, [state.dismissedCallbacks]);
 
   const value = useMemo<ToastContextValue>(() => ({ show, dismiss }), [dismiss, show]);
 
@@ -144,7 +160,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
     <ToastContext.Provider value={value}>
       {children}
       <div className="qa-toast-stack" data-wf="GlobalToastHost" aria-live="polite" aria-relevant="additions">
-        {items.map((item) => (
+        {state.items.map((item) => (
           <ToastView key={item.id} item={item} onDismiss={dismiss} />
         ))}
       </div>

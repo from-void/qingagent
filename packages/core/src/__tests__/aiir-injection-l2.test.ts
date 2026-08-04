@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { createSession } from "../session/sessionState.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
@@ -19,6 +20,7 @@ function legacySections(): LegacySection[] {
 
 vi.mock("node:fs/promises", () => ({
   readdir: vi.fn(async () => []),
+  readFile: vi.fn(async () => "[]"),
   mkdir: vi.fn(async () => undefined),
   writeFile: vi.fn(async () => undefined),
 }));
@@ -71,6 +73,7 @@ describe("AI-IR prompt injection L2", () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("aiir-injection-on");
     state.legacySections = legacySections();
+    state.doc = legacySectionsToPm(state.legacySections as never);
     state.docVersion = 3;
     state.lastSyncedDocumentSnapshot = 0;
     state.docState = { kind: "editing" };
@@ -105,8 +108,12 @@ describe("AI-IR prompt injection L2", () => {
     expect(content).not.toContain("before 必须原样填写");
     expect(content).not.toContain('format:"bold"');
     expect(state._sectionToLine).toBeInstanceOf(Map);
+    expect(Array.from(state._sectionToLine ?? [])).toEqual([[0, 1], [1, 3]]);
     expect(state.lastSyncedDocumentSnapshot).toBe(3);
     expect(agentStreamCalls).toHaveLength(1);
+    const providerPrompt = JSON.stringify(agentStreamCalls[0]?.messages ?? []);
+    expect(providerPrompt).not.toContain("──── 当前文档");
+    expect(providerPrompt).not.toContain("[1] # 春天的校园");
   });
 
   it("legacy 文档同步不改写既有历史消息字节", async () => {

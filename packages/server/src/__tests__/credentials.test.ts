@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // 凭据路由:平台 key 校验 / CSRF Origin 守卫 / 不回传明文。
 // mock @qingagent/core 的凭据 API,只测路由逻辑。
@@ -44,6 +44,15 @@ async function loadApp() {
 }
 
 describe("credentials 路由", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("QINGAGENT_HOST", "127.0.0.1");
+    vi.stubEnv("QINGAGENT_PUBLIC_DEPLOYMENT", "0");
+    vi.stubEnv("QINGAGENT_RUNTIME", "server");
+    vi.stubEnv("QINGAGENT_SINGLE_USER", "1");
+    vi.stubEnv("QINGAGENT_AUTH_TOKEN", "");
+  });
+
   it("GET 返回规格+configured 状态,不含明文", async () => {
     mockCore.listCredentialMeta.mockResolvedValueOnce([
       { platform: "test-platform", key: "PLATFORM_API_SECRET", updatedAt: "t", status: "ok" },
@@ -74,6 +83,75 @@ describe("credentials 路由", () => {
     const del = await app.request("/api/v1/credentials/connector%3Awechat-mp", { method: "DELETE" });
     expect(del.status).toBe(200);
     expect(mockCore.disconnectConnector).toHaveBeenCalledWith("wechat-mp");
+  });
+
+  it("public 形态拒绝删除 connector 凭据且不触发副作用", async () => {
+    vi.stubEnv("QINGAGENT_PUBLIC_DEPLOYMENT", "1");
+    const app = await loadApp();
+
+    const response = await app.request(
+      "/api/v1/credentials/connector%3Awechat-mp",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "CONNECTOR_MUTATION_FORBIDDEN",
+      message: "当前运行环境禁止修改连接器: PUBLIC_DEPLOYMENT",
+      reasonCode: "PUBLIC_DEPLOYMENT",
+    });
+    expect(mockCore.getConnectorService).not.toHaveBeenCalled();
+    expect(mockCore.disconnectConnector).not.toHaveBeenCalled();
+    expect(mockCore.invalidateSessionWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("未 opt-in 形态拒绝删除 connector 凭据且不调用 disconnect", async () => {
+    vi.stubEnv("QINGAGENT_SINGLE_USER", "0");
+    const app = await loadApp();
+
+    const response = await app.request(
+      "/api/v1/credentials/connector%3Awechat-mp",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "CONNECTOR_MUTATION_FORBIDDEN",
+      reasonCode: "SINGLE_USER_OPT_IN_REQUIRED",
+    });
+    expect(mockCore.disconnectConnector).not.toHaveBeenCalled();
+  });
+
+  it("允许形态正常删除 connector 凭据", async () => {
+    const app = await loadApp();
+
+    const response = await app.request(
+      "/api/v1/credentials/connector%3Awechat-mp",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(mockCore.disconnectConnector).toHaveBeenCalledOnce();
+    expect(mockCore.disconnectConnector).toHaveBeenCalledWith("wechat-mp");
+    expect(mockCore.invalidateSessionWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("connector 门关闭时不影响普通凭据删除", async () => {
+    vi.stubEnv("QINGAGENT_PUBLIC_DEPLOYMENT", "1");
+    const app = await loadApp();
+
+    const response = await app.request(
+      "/api/v1/credentials/test-platform?key=PLATFORM_API_SECRET",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCore.deleteCredential).toHaveBeenCalledWith(
+      "test-platform",
+      "PLATFORM_API_SECRET",
+    );
+    expect(mockCore.getConnectorService).not.toHaveBeenCalled();
   });
 
   it("POST 保存合法字段", async () => {

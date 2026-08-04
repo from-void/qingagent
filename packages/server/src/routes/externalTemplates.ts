@@ -13,6 +13,7 @@ import {
   upsertReviewDocSupplement,
 } from "@qingagent/db";
 import { getOrRestoreSession } from "../gateway/bridgeHandler";
+import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import { externalError } from "../lib/externalError";
 import { queueExternalChat } from "../lib/externalChatQueue";
 
@@ -173,7 +174,7 @@ externalTemplateRoutes.get("/sessions/:id/review-supplement", async (c) => {
   if (!isReviewType(type)) {
     return rejected(c, "review_supplement_get", startedAt, 400, "VALIDATION", "type 不合法");
   }
-  const session = await getOrRestoreSession(c.req.param("id"));
+  const session = await getOrRestoreSessionReadOnly(c.req.param("id"));
   if (!session) {
     return rejected(c, "review_supplement_get", startedAt, 404, "SESSION_NOT_FOUND");
   }

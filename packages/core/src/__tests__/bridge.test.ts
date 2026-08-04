@@ -12,7 +12,7 @@ import {
 import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
-import { compileSuggestionFromBeforeAfter } from "../doc-engine/pmPatch.js";
+import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
 import {
   collectTopLevelTextBlocks,
   findLiteralMatches,
@@ -89,23 +89,50 @@ async function addPatch(
     ...overrides,
   };
   state.doc ??= legacySectionsToPm(state.legacySections as never);
-  const result = compileSuggestionFromBeforeAfter({
-    doc: state.doc,
+  const [match] = findLiteralMatches(
+    collectTopLevelTextBlocks(state.doc),
+    patch.before,
+    false,
+  );
+  if (!match) throw new Error(`测试夹具未找到唯一文本: ${patch.before}`);
+  const builtSuggestion = createSuggestionFromDiffHunk({
+    hunk: {
+      hunkId: id,
+      reviewBatchId: "review:test",
+      groupMode: "independent",
+      op: "replace",
+      blockPath: match.block.path,
+      anchor: {
+        blockId: match.blockId,
+        pmFrom: match.pmFrom,
+        pmTo: match.pmTo,
+      },
+      before: null,
+      after: patch.after ? [{ type: "text", text: patch.after }] : [],
+      summary: patch.summary,
+      beforeText: patch.before,
+      afterText: patch.after,
+    },
     docId: state.docId,
     baseVersion: state.docVersion,
-    suggestionId: id,
-    patch,
+    baseSchemaVersion: state.doc.attrs.schemaVersion,
   });
-  if (!result.ok) throw new Error(result.error);
+  // 这些 bridge 用例特意模拟无 diffHunk 的旧建议记录。
+  const {
+    diffHunk: _diffHunk,
+    reviewBatchId: _reviewBatchId,
+    groupMode: _groupMode,
+    ...suggestion
+  } = builtSuggestion;
   state.suggestions.set(id, {
     messageId: patch.messageId,
     toolCallId: patch.toolCallId,
     before: patch.before,
     after: patch.after,
-    blockIndex: result.record.blockIndex,
-    suggestion: result.record.suggestion,
+    blockIndex: match.block.topIndex,
+    suggestion,
   });
-  await upsertDocumentSuggestion(result.record.suggestion);
+  await upsertDocumentSuggestion(suggestion);
   state.suggestionBaseDoc ??= state.doc;
   state.suggestionBaseVersion ??= state.docVersion;
 }

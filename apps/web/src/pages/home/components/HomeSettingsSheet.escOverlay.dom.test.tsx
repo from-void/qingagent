@@ -25,14 +25,14 @@ vi.mock("./settingsInkVariants", () => ({
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-const onClose = vi.fn();
+let onClose = vi.fn();
 
 describe("HomeSettingsSheet 浮层关闭栈", () => {
   beforeEach(() => {
     __resetClientPersistCacheForTests();
     resetOverlayDismissStackForTest();
     window.localStorage.clear();
-    onClose.mockClear();
+    onClose = vi.fn();
     Object.defineProperty(window, "electron", { configurable: true, value: undefined });
     vi.stubGlobal("fetch", makeFetchMock());
   });

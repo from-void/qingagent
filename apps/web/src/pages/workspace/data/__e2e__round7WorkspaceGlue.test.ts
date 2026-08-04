@@ -16,14 +16,15 @@
 import { describe, expect, it } from "vitest";
 import type { FolderSource } from "@qingagent/contract-ts";
 import type { FolderSourceOperationResult } from "@qingagent/contract-ts";
+import { folderSourceOperationFailureToast } from "./folderAttach";
+import {
+  deriveFolderCapabilityForTest,
+} from "./r7helpers";
+import * as round7Helpers from "./r7helpers";
 import {
   workspaceReducer,
   initialWorkspaceState,
 } from "./workspaceState";
-import {
-  folderSourceOperationFailureToastForTest,
-  deriveFolderCapabilityForTest,
-} from "./r7helpers";
 
 // ───── fixtures ─────
 
@@ -227,11 +228,7 @@ describe("C. streamActive/pending 不跨会话", () => {
 
 // ───── D. folderSourceOperationResult 失败帧文案完整覆盖 ─────
 
-describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderSourceOperationFailureToast）", () => {
-  // 直接从产品代码提取纯函数进行测试
-  // WorkspacePage.tsx L255 开始的 folderSourceOperationFailureToast 是未导出的模块级函数
-  // 通过 helpers.ts 透传
-
+describe("D. folderSourceOperationResult 失败帧文案（folderAttach.folderSourceOperationFailureToast）", () => {
   const ATTACH_REASONS: Array<Extract<FolderSourceOperationResult, { ok: false }>["reason"]> = [
     "agent_busy",
     "unsupported_environment",
@@ -243,9 +240,13 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
     "unknown",
   ];
 
+  it("失败文案测试不通过 r7helpers 镜像生产逻辑", () => {
+    expect(round7Helpers).not.toHaveProperty("folderSourceOperationFailureToastForTest");
+  });
+
   for (const reason of ATTACH_REASONS) {
     it(`attach 失败 reason="${reason}" 文案包含"连接文件夹失败"`, () => {
-      const toast = folderSourceOperationFailureToastForTest({
+      const toast = folderSourceOperationFailureToast({
         ok: false,
         op: "attach",
         requestId: "attach-test",
@@ -259,7 +260,7 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
 
   for (const reason of ATTACH_REASONS) {
     it(`detach 失败 reason="${reason}" 文案包含"断开文件夹失败"`, () => {
-      const toast = folderSourceOperationFailureToastForTest({
+      const toast = folderSourceOperationFailureToast({
         ok: false,
         op: "detach",
         reason,
@@ -269,7 +270,7 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
   }
 
   it("reason=agent_busy 文案含 '青简正在处理'", () => {
-    const toast = folderSourceOperationFailureToastForTest({
+    const toast = folderSourceOperationFailureToast({
       ok: false,
       op: "attach",
       requestId: "attach-test",
@@ -280,7 +281,7 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
   });
 
   it("reason=too_many_sources 文案含 '暂只支持连接一个'", () => {
-    const toast = folderSourceOperationFailureToastForTest({
+    const toast = folderSourceOperationFailureToast({
       ok: false,
       op: "attach",
       requestId: "attach-test",
@@ -291,7 +292,7 @@ describe("D. folderSourceOperationResult 失败帧文案（WorkspacePage.folderS
   });
 
   it("reason=bridge_offline 文案含 '文件夹桥接未就绪'", () => {
-    const toast = folderSourceOperationFailureToastForTest({
+    const toast = folderSourceOperationFailureToast({
       ok: false,
       op: "attach",
       requestId: "attach-test",

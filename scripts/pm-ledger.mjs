@@ -1,5 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const legacyTerms = [
   "DocSection",
@@ -27,19 +30,21 @@ const scanRoots = ["apps", "packages"];
 const extensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
 const ignoredDirs = new Set(["node_modules", "dist", "build", ".git", ".turbo", "coverage"]);
 
-export function scanTerms({ root = process.cwd(), terms = legacyTerms } = {}) {
+export function scanTerms({ root = repoRoot, terms = legacyTerms } = {}) {
+  const absoluteRoot = path.resolve(root);
   const results = [];
   for (const scanRoot of scanRoots) {
-    walk(path.join(root, scanRoot), (file) => {
+    walk(path.join(absoluteRoot, scanRoot), (file) => {
       const content = readFileSync(file, "utf8");
       const matches = [];
       for (const term of terms) {
-        if (content.includes(term)) {
-          matches.push({ term, count: countOccurrences(content, term) });
+        const count = countOccurrences(content, term);
+        if (count > 0) {
+          matches.push({ term, count });
         }
       }
       if (matches.length > 0) {
-        const relativePath = path.relative(root, file);
+        const relativePath = path.relative(absoluteRoot, file);
         results.push({
           path: relativePath,
           group: classify(relativePath),
@@ -119,10 +124,23 @@ function countOccurrences(content, term) {
   let count = 0;
   let index = content.indexOf(term);
   while (index >= 0) {
-    count += 1;
+    if (
+      !isIdentifier(term) ||
+      (!isIdentifierPart(content[index - 1]) && !isIdentifierPart(content[index + term.length]))
+    ) {
+      count += 1;
+    }
     index = content.indexOf(term, index + term.length);
   }
   return count;
+}
+
+function isIdentifier(term) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(term);
+}
+
+function isIdentifierPart(char) {
+  return char !== undefined && /[A-Za-z0-9_$]/.test(char);
 }
 
 function walk(dir, onFile) {

@@ -1,4 +1,8 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const checks = [
   {
@@ -9,7 +13,7 @@ const checks = [
 
 let failed = false;
 for (const check of checks) {
-  const text = readFileSync(check.file, "utf8");
+  const text = readFileSync(path.join(repoRoot, check.file), "utf8");
   for (const term of check.forbidden) {
     if (text.includes(term)) {
       console.error(`${check.file}: forbidden history mock term "${term}"`);

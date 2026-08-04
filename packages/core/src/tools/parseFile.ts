@@ -127,6 +127,27 @@ const FILE_TOO_LARGE_RESULT = parseFileToolFailure(
   { errorCode: "FILE_TOO_LARGE" },
 );
 
+/** 仅用编码长度判断 content 上限，避免超大 base64 在拒绝前先被完整解码。 */
+export function exceedsBase64DecodedByteLimit(
+  encodedLength: number,
+  paddingLength: number,
+): boolean {
+  const legalPaddingLength =
+    encodedLength >= 4
+      && encodedLength % 4 === 0
+      && (paddingLength === 1 || paddingLength === 2)
+      ? paddingLength
+      : 0;
+  const decodedBytes = Math.floor(encodedLength * 3 / 4) - legalPaddingLength;
+  return decodedBytes > MAX_DESKTOP_FILE_BYTES;
+}
+
+function legalBase64PaddingLength(content: string): number {
+  if (content.length < 4 || content.length % 4 !== 0) return 0;
+  if (content.endsWith("===") || !content.endsWith("=")) return 0;
+  return content.endsWith("==") ? 2 : 1;
+}
+
 // 路径规则刻意保持短而明确：覆盖操作系统凭据区、常见 CLI 凭据和浏览器凭据库，
 // 不扩展成用户可配置的授权目录/权限系统。
 const SENSITIVE_DESKTOP_PATH_PATTERNS = [
@@ -1972,7 +1993,16 @@ export const parseFileTool = createTool({
         // 用 realpath 后的 basename 固定解析扩展名，避免声明 MIME/文件名改变解析分支。
         filename = basename(desktopFile.canonicalPath);
       } else if (content !== undefined && content !== null) {
+        if (
+          exceedsBase64DecodedByteLimit(
+            content.length,
+            legalBase64PaddingLength(content),
+          )
+        ) {
+          return FILE_TOO_LARGE_RESULT;
+        }
         buffer = Buffer.from(content, "base64");
+        if (buffer.length > MAX_DESKTOP_FILE_BYTES) return FILE_TOO_LARGE_RESULT;
       } else {
         return parseFileToolFailure("必须提供 filePath、content 或 fileId");
       }

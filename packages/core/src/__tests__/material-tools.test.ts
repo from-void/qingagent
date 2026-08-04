@@ -24,7 +24,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseFileTool } from "../tools/parseFile.js";
+import {
+  exceedsBase64DecodedByteLimit,
+  parseFileTool,
+} from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
 import type { Material } from "../types/material.js";
@@ -735,6 +738,32 @@ describe("parseFile execute — TXT", () => {
     expect(r.text).toBe("这是一段测试文本内容");
     expect(r.metadata.pages).toBeNull();
     expect(r.metadata.wordCount).toBeGreaterThan(0);
+  });
+
+  it("按 base64 长度和合法 padding 区分 64MiB 边界", () => {
+    const maxBytes = 64 * 1024 * 1024;
+    const encodedLength = Math.ceil((maxBytes + 1) / 3) * 4;
+
+    // 同一编码长度：两个 padding 恰好解码为 64MiB，一个 padding 则为 64MiB+1。
+    expect(exceedsBase64DecodedByteLimit(encodedLength, 2)).toBe(false);
+    expect(exceedsBase64DecodedByteLimit(encodedLength, 1)).toBe(true);
+  });
+
+  it("base64 解码结果长度异常时仍由解码后复核拒绝", async () => {
+    const bufferFrom = vi.spyOn(Buffer, "from").mockReturnValueOnce({
+      length: 64 * 1024 * 1024 + 1,
+    } as never);
+    try {
+      await expect(
+        executeParseFileOnDesktop({
+          content: "YQ==",
+          filename: "oversized-after-decode.txt",
+          mimeType: "text/plain",
+        }),
+      ).resolves.toEqual(FILE_TOO_LARGE_RESULT);
+    } finally {
+      bufferFrom.mockRestore();
+    }
   });
 
   it("extracts plain text from a markdown file", async () => {

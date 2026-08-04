@@ -298,7 +298,7 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
     expect(state.suggestions.size).toBe(0);
   });
 
-  it("无完整候选快照时只应用存活块，并如实结算部分成功摘要", async () => {
+  it("恢复记录仅 suggestion.diffHunk 时仍如实结算被跳过的 hunk", async () => {
     const state = createSession("commit-partial-skip-deleted-block");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
     const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
@@ -306,6 +306,8 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
     state.docDraftCandidateDoc = null;
     state.docDraftCandidateSections = null;
+    state.suggestions.get(hunkB.hunkId)!.diffHunk = undefined;
+    expect(state.suggestions.get(hunkB.hunkId)?.suggestion.diffHunk).toEqual(hunkB);
 
     await seedCanonical(state, doc([paragraph("blk-a", "甲原文")]));
     const frames = await collectFrames(

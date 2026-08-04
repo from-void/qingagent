@@ -151,6 +151,45 @@ describe("handleReviewCommand commitPatches", () => {
   });
 });
 
+describe("handleReviewCommand commitReviewGroups", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getOrRestoreSession).mockResolvedValue({
+      sessionId: "session-1",
+      docId: "doc-1",
+      annotationGroups: [],
+      patchVerdicts: new Map(),
+    } as never);
+  });
+
+  it("accept/reject 重叠异常转为明确中文失败帧", async () => {
+    vi.mocked(commitReviewGroups).mockImplementation(async function* () {
+      throw new Error("Review batch cannot be both accepted and rejected: patch-internal");
+    });
+
+    const frames = await collectFrames(handleReviewCommand({
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["batch-accept"],
+        rejectReviewBatchIds: ["batch-reject"],
+      },
+    }, context));
+
+    expect(frames).toEqual([{
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: "error",
+          reason: "审阅分组不能同时接受和拒绝，请刷新后重试",
+          retriable: true,
+        },
+      },
+    }]);
+    expect(JSON.stringify(frames)).not.toContain("patch-internal");
+  });
+});
+
 describe("handleReviewCommand ignoreAnnotationGroups", () => {
   beforeEach(() => {
     vi.clearAllMocks();

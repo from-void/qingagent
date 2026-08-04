@@ -106,4 +106,28 @@ describe("pmPatch", () => {
     expect(result.steps).toHaveLength(2);
     expect(plainText(result.nextDoc)).toBe("黄毛巾和绿帽子");
   });
+
+  it("stored range 与 quote fallback 双失败时保留更具体的 fallback 原因", () => {
+    const suggestion = suggestionFor(
+      doc("开头 蓝毛巾 结尾"),
+      "patch-double-failure",
+      "蓝毛巾",
+      "黄毛巾",
+    );
+    const drifted = legacySectionsToPm([
+      p("第一处蓝毛巾"),
+      p("第二处蓝毛巾"),
+    ]);
+
+    const result = applySuggestionsToDoc(drifted, [suggestion], 2);
+
+    expect(result.steps).toEqual([]);
+    expect(result.conflicts).toEqual([
+      expect.objectContaining({
+        kind: "ambiguous_match",
+        suggestionId: suggestion.id,
+        currentVersion: 2,
+      }),
+    ]);
+  });
 });

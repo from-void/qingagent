@@ -101,6 +101,10 @@ function recordsByReviewBatchId(state: SessionState, reviewBatchId: string): Sug
   );
 }
 
+function diffHunkForRecord(record: SuggestionRecord): DiffHunk | undefined {
+  return record.diffHunk ?? record.suggestion.diffHunk;
+}
+
 type ReviewCommandName = "accept" | "reject" | "commit" | "verdict";
 
 interface ReviewIdExpansionOptions {
@@ -167,7 +171,7 @@ export function expandReviewIds(
       logSkippedReviewTarget(state, {
         command: options.command,
         patchId: id,
-        stateSuggestionRecordCount: 0,
+        stateSuggestionRecordCount: state.suggestions.size,
         skipped: options.skipped,
         remainingValidIdCount: selected.size,
       });
@@ -182,7 +186,7 @@ export function expandReviewIds(
       logSkippedReviewTarget(state, {
         command: options.command,
         reviewBatchId,
-        stateSuggestionRecordCount: 0,
+        stateSuggestionRecordCount: state.suggestions.size,
         skipped: options.skipped,
         remainingValidIdCount: selected.size,
       });
@@ -662,7 +666,7 @@ export async function* commitPatches(
     .filter((record) => state.patchVerdicts.get(record.suggestion.id) !== "rejected");
   const accepted = acceptedRecords.map((record) => record.suggestion);
   const acceptedDiffHunks = acceptedRecords
-    .map((record) => record.diffHunk ?? record.suggestion.diffHunk)
+    .map(diffHunkForRecord)
     .filter((hunk): hunk is DiffHunk => hunk !== undefined);
   const modernDiffPayloadRequired =
     state.docDraftCandidateDoc != null ||
@@ -887,9 +891,10 @@ export async function* commitPatches(
     const skippedHunkIds = new Set(skippedHunks.map((hunk) => hunk.hunkId));
     const skippedRecords = skippedHunkIds.size === 0
       ? []
-      : records.filter((record) =>
-          record.diffHunk && skippedHunkIds.has(record.diffHunk.hunkId)
-        );
+      : records.filter((record) => {
+          const hunk = diffHunkForRecord(record);
+          return hunk !== undefined && skippedHunkIds.has(hunk.hunkId);
+        });
     return {
       skippedRecords,
       settledRecords: skippedRecords.length === 0
@@ -1395,7 +1400,7 @@ export async function* commitReviewGroups(
       logSkippedReviewTarget(state, {
         command: "commit",
         reviewBatchId,
-        stateSuggestionRecordCount: 0,
+        stateSuggestionRecordCount: state.suggestions.size,
         skipped: "keepPendingReviewBatchId",
         remainingValidIdCount: 0,
       });

@@ -29,6 +29,20 @@ type ReviewCommand = Extract<Command, {
     | "ignoreAnnotationGroups";
 }>;
 
+function overlappingReviewGroupsFrame(): BridgeFrame {
+  return {
+    kind: "stream",
+    data: {
+      kind: "draftingFailed",
+      data: {
+        streamId: "error",
+        reason: "审阅分组不能同时接受和拒绝，请刷新后重试",
+        retriable: true,
+      },
+    },
+  };
+}
+
 function inMemoryReviewSessionId(command: ReviewCommand): string | undefined {
   switch (command.kind) {
     case "acceptPatch":
@@ -145,7 +159,18 @@ export async function* handleReviewCommand(
     case "commitReviewGroups": {
       const session = await restoreReviewSession(command, context);
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-      yield* commitReviewGroups(session, command.data);
+      try {
+        yield* commitReviewGroups(session, command.data);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith("Review batch cannot be both accepted and rejected:")
+        ) {
+          yield overlappingReviewGroupsFrame();
+          return;
+        }
+        throw error;
+      }
       return;
     }
 

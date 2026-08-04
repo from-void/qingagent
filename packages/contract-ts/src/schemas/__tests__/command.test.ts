@@ -47,10 +47,40 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "unknown" } }).success).toBe(false);
   });
 
-  it("COMMAND_KINDS 覆盖 38 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(38);
-    expect(COMMAND_KIND_SET.size).toBe(38);
+  it("COMMAND_KINDS 覆盖 39 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(39);
+    expect(COMMAND_KIND_SET.size).toBe(39);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
+  });
+
+  it("接受 askMore 两阶段更新命令并拒绝 completed 阶段的 slider 问题", () => {
+    const base = {
+      kind: "updateAskMore",
+      data: {
+        phase: "completed",
+        sessionId: "s",
+        toolCallId: "plan-draft-1",
+        questions: [{
+          id: "q-extra-note",
+          label: "还有什么要求？",
+          kind: { kind: "text" },
+          options: [],
+          placeholder: "可选",
+        }],
+      },
+    };
+    expect(commandSchema.safeParse({
+      kind: "updateAskMore",
+      data: { phase: "started", sessionId: "s", toolCallId: "plan-draft-1" },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse(base).success).toBe(true);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        questions: [{ ...base.data.questions[0], kind: { kind: "slider" } }],
+      },
+    }).success).toBe(false);
   });
 
   it("接受 draftTemplate 的审查与衍生场景并拒绝空场景标签", () => {

@@ -80,6 +80,11 @@ async function* routeCommand(
   context: CommandExecutionContext,
 ): AsyncGenerator<BridgeFrame> {
   switch (command.kind) {
+    case "updateAskMore": {
+      const { handleAskMoreCommand } = await import("./askMoreCommands");
+      yield* handleAskMoreCommand(command, context);
+      return;
+    }
     case "startSession":
     case "renameSession": {
       const { handleSessionCommand } = await import("./sessionCommands");

@@ -6,6 +6,10 @@ import type { SessionMode } from "../SessionMode";
 import type { StartSession } from "../StartSession";
 import type { SendMessage } from "../SendMessage";
 import type { ActionCardData } from "../ActionCard";
+import type {
+  AskMoreQuestion,
+  UpdateAskMore,
+} from "../UpdateAskMore";
 import type { CancelStream } from "../CancelStream";
 import type { AcceptPatch } from "../AcceptPatch";
 import type { RejectPatch } from "../RejectPatch";
@@ -265,6 +269,39 @@ const askUserAnswerSchema = z.object({
 }) satisfies z.ZodType<AskUserAnswer>;
 type _AskUserAnswerExact = Expect<Equal<z.infer<typeof askUserAnswerSchema>, AskUserAnswer>>;
 
+const askMoreQuestionSchema = z.object({
+  id: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  label: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  kind: z.object({ kind: z.enum(["single", "multi", "text"]) }),
+  options: z.array(z.object({
+    value: z.string().max(MAX_COMMAND_STRING_LENGTH),
+    label: z.string().max(MAX_COMMAND_STRING_LENGTH),
+    description: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
+    preview: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
+  })).max(MAX_COMMAND_ARRAY_LENGTH),
+  placeholder: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
+}) satisfies z.ZodType<AskMoreQuestion>;
+type _AskMoreQuestionExact = Expect<
+  Equal<z.infer<typeof askMoreQuestionSchema>, AskMoreQuestion>
+>;
+
+const updateAskMoreDataSchema = z.discriminatedUnion("phase", [
+  z.object({
+    phase: z.literal("started"),
+    sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+    toolCallId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  }),
+  z.object({
+    phase: z.literal("completed"),
+    sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+    toolCallId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+    questions: z.array(askMoreQuestionSchema).max(MAX_COMMAND_ARRAY_LENGTH),
+  }),
+]) satisfies z.ZodType<UpdateAskMore>;
+type _UpdateAskMoreExact = Expect<
+  Equal<z.infer<typeof updateAskMoreDataSchema>, UpdateAskMore>
+>;
+
 const resumeAskUserDataSchema = z.object({
   sessionId: z.string().min(1),
   toolCallId: z.string().min(1),
@@ -376,6 +413,7 @@ type _ExternalProposeExact = Expect<Equal<z.infer<typeof externalProposeDataSche
 export const COMMAND_KINDS = [
   "startSession",
   "sendMessage",
+  "updateAskMore",
   "cancelStream",
   "acceptPatch",
   "rejectPatch",
@@ -424,6 +462,10 @@ export const COMMAND_KIND_SET: ReadonlySet<string> = new Set(COMMAND_KINDS);
 export const commandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("startSession"), data: startSessionDataSchema }),
   z.object({ kind: z.literal("sendMessage"), data: sendMessageDataSchema }),
+  z.object({
+    kind: z.literal("updateAskMore"),
+    data: updateAskMoreDataSchema,
+  }),
   z.object({ kind: z.literal("cancelStream"), data: cancelStreamDataSchema }),
   z.object({ kind: z.literal("acceptPatch"), data: acceptPatchDataSchema }),
   z.object({ kind: z.literal("rejectPatch"), data: rejectPatchDataSchema }),

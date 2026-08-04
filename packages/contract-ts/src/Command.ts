@@ -13,6 +13,7 @@ import type { StartSession } from "./StartSession";
 import type { SubmitReviewOutcome } from "./SubmitReviewOutcome";
 import type { UpdateDoc } from "./UpdateDoc";
 import type { UpdateMaterialSummary } from "./UpdateMaterialSummary";
+import type { UpdateAskMore } from "./UpdateAskMore";
 import type { ExternalPropose } from "./ExternalPropose";
 import type { ListLexiconEntries, ListLexicons, SetEnabledLexicons } from "./ListLexicons";
 import type { RenameSession } from "./RenameSession";
@@ -28,6 +29,7 @@ import type { DraftTemplate } from "./DraftTemplate";
 export type Command =
   | { kind: "startSession"; data: StartSession }
   | { kind: "sendMessage"; data: SendMessage }
+  | { kind: "updateAskMore"; data: UpdateAskMore }
   | { kind: "cancelStream"; data: CancelStream }
   | { kind: "acceptPatch"; data: AcceptPatch }
   | { kind: "rejectPatch"; data: RejectPatch }

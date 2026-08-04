@@ -5,8 +5,9 @@ const mockCore = vi.hoisted(() => ({
   aggregateUsageBySession: vi.fn(),
   aggregateUsageTotal: vi.fn(),
   estimateCostCny: vi.fn(() => 0.123),
+  getSessionDocumentStatsSince: vi.fn(),
+  getSessionThreadTitles: vi.fn(),
   hasModelPricing: vi.fn(() => true),
-  listSessionThreads: vi.fn(),
 }));
 
 vi.mock("@qingagent/core", () => mockCore);
@@ -45,17 +46,10 @@ describe("usageRoutes", () => {
     mockCore.aggregateUsageByDay.mockResolvedValue([usageRow]);
     mockCore.aggregateUsageBySession.mockResolvedValue([]);
     mockCore.aggregateUsageTotal.mockResolvedValue([]);
-    mockCore.listSessionThreads.mockResolvedValue({
-      threads: [
-        {
-          id: "thread-a",
-          title: "线程标题",
-          metadata: { title: "元数据标题" },
-        },
-      ],
-      total: 1,
-      hasMore: false,
-    });
+    mockCore.getSessionThreadTitles.mockResolvedValue(new Map([
+      ["thread-a", "元数据标题"],
+    ]));
+    mockCore.getSessionDocumentStatsSince.mockResolvedValue({ docs: 0, words: 0 });
   });
 
   it("按天响应新增真实文档 ID/标题且不泄露内部 sessionId", async () => {
@@ -66,6 +60,7 @@ describe("usageRoutes", () => {
 
     expect(response.status).toBe(200);
     expect(mockCore.aggregateUsageByDay).toHaveBeenCalledWith(30, "America/Los_Angeles");
+    expect(mockCore.getSessionThreadTitles).toHaveBeenCalledWith([]);
     await expect(response.json()).resolves.toEqual({
       view: "day",
       rows: [
@@ -113,70 +108,41 @@ describe("usageRoutes", () => {
     expect(body.rows[0]?.documentTitle).toBe("元数据标题");
   });
 
-  it("会话标题全量读取线程，不遗漏第 201 条后的标题", async () => {
+  it("会话标题只按聚合结果中的 id 定点读取", async () => {
     mockCore.aggregateUsageBySession.mockResolvedValue([
       { ...usageRow, bucket: "thread-201", sessionId: "thread-201" },
     ]);
-    const threads = Array.from({ length: 201 }, (_, index) => ({
-      id: `thread-${index + 1}`,
-      title: `线程 ${index + 1}`,
-      metadata: index === 200 ? { title: "第 201 条标题" } : {},
-    }));
-    mockCore.listSessionThreads.mockImplementation(async (
-      opts: { perPage?: number | false },
-    ) => ({
-      threads: opts.perPage === false ? threads : threads.slice(0, 200),
-      total: threads.length,
-      hasMore: opts.perPage !== false,
-    }));
+    mockCore.getSessionThreadTitles.mockResolvedValue(new Map([
+      ["thread-201", "第 201 条标题"],
+    ]));
     const app = await loadApp();
 
     const response = await app.request("/api/v1/usage/summary?view=session");
     const body = await response.json() as { rows: Array<{ label?: string }> };
 
     expect(body.rows[0]?.label).toBe("第 201 条标题");
-    expect(mockCore.listSessionThreads).toHaveBeenCalledWith({
-      page: 0,
-      perPage: false,
-    });
+    expect(mockCore.getSessionThreadTitles).toHaveBeenCalledWith(["thread-201"]);
   });
 
-  it("文档统计全量读取线程，不在 updatedAt 前 200 条上截断 createdAt 窗口", async () => {
-    const oldDate = new Date(Date.now() - 30 * 86_400_000);
-    const recentDate = new Date();
-    const threads = Array.from({ length: 201 }, (_, index) => ({
-      id: `thread-${index + 1}`,
-      createdAt: index === 200 ? recentDate : oldDate,
-      metadata: index === 200
-        ? {
-            doc: {
-              type: "doc",
-              content: [
-                { type: "paragraph", content: [{ type: "text", text: "遗漏文档" }] },
-              ],
-            },
-          }
-        : {},
-    }));
-    mockCore.listSessionThreads.mockImplementation(async (
-      opts: { perPage?: number | false },
-    ) => ({
-      threads: opts.perPage === false ? threads : threads.slice(0, 200),
-      total: threads.length,
-      hasMore: opts.perPage !== false,
-    }));
-    const app = await loadApp();
+  it("文档统计把精确时间窗下推到字段级查询", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-04T12:00:00.000Z"));
+      mockCore.getSessionDocumentStatsSince.mockResolvedValue({ docs: 1, words: 4 });
+      const app = await loadApp();
 
-    const response = await app.request("/api/v1/usage/docstats?days=7");
+      const response = await app.request("/api/v1/usage/docstats?days=7");
 
-    await expect(response.json()).resolves.toEqual({
-      days: 7,
-      docs: 1,
-      words: 4,
-    });
-    expect(mockCore.listSessionThreads).toHaveBeenCalledWith({
-      page: 0,
-      perPage: false,
-    });
+      await expect(response.json()).resolves.toEqual({
+        days: 7,
+        docs: 1,
+        words: 4,
+      });
+      expect(mockCore.getSessionDocumentStatsSince).toHaveBeenCalledWith(
+        Date.parse("2026-07-28T12:00:00.000Z"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

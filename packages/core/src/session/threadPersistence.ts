@@ -86,6 +86,9 @@ const PRIMARY_METADATA_WRITE_MAX_ATTEMPTS = 5;
 const PRIMARY_METADATA_WRITE_INITIAL_BACKOFF_MS = 50;
 const SCHEDULE_PERSIST_MAX_ATTEMPTS = 3;
 const SCHEDULE_PERSIST_INITIAL_BACKOFF_MS = 50;
+// 同一事件链里的 tool-result / stream-end 等写点先合并，再序列化整包 metadata。
+// 文件格式保持不变；短窗口结束或调用方 await 时仍会完成一次耐久写。
+const SCHEDULE_PERSIST_COALESCE_WINDOW_MS = 10;
 const CONTENT_TIME_EPOCH = "1970-01-01T00:00:00.000Z";
 
 /** 把任意日期输入收敛成可安全输出的 ISO 字符串；非法值返回 null。 */
@@ -1459,6 +1462,10 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
           persistDirty.set(sid, false);
           break;
         }
+        // updateThread 会重写完整 metadata（含累计 messages/chatHistory）。先给同一
+        // 事件链一个很短的 trailing-edge 合并窗口，避免每个中间写点都重复序列化、
+        // 写入同一份增长中的快照。窗口内只保留最新 state/reason。
+        await retryDelay(SCHEDULE_PERSIST_COALESCE_WINDOW_MS);
         const pending = pendingPersists.get(sid);
         if (!pending) {
           persistDirty.set(sid, false);

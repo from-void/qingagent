@@ -4,6 +4,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import {
   PrefixCacheGuardError,
+  __getPrefixCacheGuardModeForTest,
   __getPrefixCacheGuardSizeForTest,
   __resetPrefixCacheGuardForTest,
   guardBeforeProviderCall,
@@ -193,6 +194,24 @@ describe("prefixCacheGuard", () => {
     else process.env.QINGAGENT_PREFIX_CACHE_GUARD = previousEnv.cacheGuard;
     if (previousEnv.ci === undefined) delete process.env.CI;
     else process.env.CI = previousEnv.ci;
+  });
+
+  it("非 CI 默认关闭且不读取长 prompt/tools，显式诊断模式仍由既有用例覆盖", () => {
+    delete process.env.QINGAGENT_PREFIX_CACHE_GUARD;
+    delete process.env.CI;
+    const unreadableOptions = new Proxy({}, {
+      get() {
+        throw new Error("默认路径不应读取 provider options");
+      },
+    });
+
+    const result = guardContext.run(
+      { sessionId: "default-off", lineage: "turn" },
+      () => guardBeforeProviderCall(unreadableOptions),
+    );
+
+    expect(__getPrefixCacheGuardModeForTest()).toBe("off");
+    expect(result).toEqual({ status: "skipped", reason: "off" });
   });
 
   it("同 session 前缀增长通过，工具集合乱序仍稳定", () => {

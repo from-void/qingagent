@@ -109,6 +109,37 @@ describe("schedulePersist dirty-loop", () => {
     tempDb.cleanup();
   });
 
+  it("短窗口内多个写点只落一份最新的累计 metadata", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createSession } = await import("../session/sessionState.js");
+      const { schedulePersist } = await import("../session/threadPersistence.js");
+      const writes: Array<Record<string, unknown>> = [];
+      memory.updateThread.mockImplementation(
+        async ({ metadata }: { metadata: Record<string, unknown> }) => {
+          writes.push(metadata);
+        },
+      );
+      const state = createSession("schedule-coalesce-window");
+      const scheduled: Promise<void>[] = [];
+
+      for (let version = 1; version <= 5; version += 1) {
+        state.docVersion = version;
+        scheduled.push(schedulePersist(state, `point-${version}`));
+        await Promise.resolve();
+      }
+
+      expect(memory.updateThread).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.all(scheduled);
+
+      expect(memory.updateThread).toHaveBeenCalledTimes(1);
+      expect(writes[0]?.docVersion).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("慢写期间再次 mutate 会补写 trailing-edge 快照且合并 N 次 schedule", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const {

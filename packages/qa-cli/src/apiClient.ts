@@ -26,31 +26,37 @@ export class ApiClient {
   async request<T extends ExternalSuccessResponse>(path: string, init: RequestInit = {}): Promise<T> {
     const deadline = createRequestDeadline(init.signal, API_REQUEST_DEADLINE_MS);
     try {
-      const res = await fetchWithRateLimitRetry(
-        `http://127.0.0.1:${this.instance.port}/api/v1/external${path}`,
-        {
-          ...init,
-          signal: deadline.signal,
-          headers: {
-            Authorization: `Bearer ${this.instance.token}`,
-            ...(init.body ? { "Content-Type": "application/json" } : {}),
-            ...(init.method && init.method !== "GET"
-              ? { "X-QA-Client": detectQaClient(process.env) }
-              : {}),
-            ...(init.headers ?? {}),
+      let res: Response;
+      try {
+        res = await fetchWithRateLimitRetry(
+          `http://127.0.0.1:${this.instance.port}/api/v1/external${path}`,
+          {
+            ...init,
+            signal: deadline.signal,
+            headers: {
+              Authorization: `Bearer ${this.instance.token}`,
+              ...(init.body ? { "Content-Type": "application/json" } : {}),
+              ...(init.method && init.method !== "GET"
+                ? { "X-QA-Client": detectQaClient(process.env) }
+                : {}),
+              ...(init.headers ?? {}),
+            },
           },
-        },
-      );
+        );
+      } catch {
+        throw new QaCliError(
+          "NO_INSTANCE",
+          deadline.timedOut() ? "实例请求超时" : "实例不可达",
+        );
+      }
       await this.assertResponseOk(res);
-      const text = await res.text();
-      const json = parseJsonResponse(text);
-      return json as T;
-    } catch (error) {
-      if (error instanceof QaCliError) throw error;
-      throw new QaCliError(
-        "NO_INSTANCE",
-        deadline.timedOut() ? "实例请求超时" : "实例不可达",
-      );
+      let text: string;
+      try {
+        text = await res.text();
+      } catch {
+        throw new QaCliError("INVALID_RESPONSE", "实例响应读取失败", { endpoint: path });
+      }
+      return parseSuccessResponse<T>(text, path);
     } finally {
       deadline.dispose();
     }
@@ -148,7 +154,7 @@ export class ApiClient {
     if (response.status >= 500) {
       throw new QaCliError("SERVICE_UNAVAILABLE", "青简服务暂时不可用");
     }
-    const json = parseJsonResponse(text);
+    const json = tryParseJsonResponse(text);
     const body = json as Partial<ExternalErrorResponse> | null;
     const fallbackCode = response.status === 401
       ? "AUTH_FAILED"
@@ -211,13 +217,37 @@ export function detectQaClient(env: NodeJS.ProcessEnv): "claudecode" | "codex" |
   return "agent";
 }
 
-function parseJsonResponse(text: string): unknown {
+function tryParseJsonResponse(text: string): unknown {
   if (!text) return null;
   try {
     return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
+}
+
+function parseSuccessResponse<T extends ExternalSuccessResponse>(text: string, endpoint: string): T {
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new QaCliError("INVALID_RESPONSE", "实例响应无效(非 JSON)", {
+      endpoint,
+      bodySnippet: compactResponseBody(text),
+    });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new QaCliError("INVALID_RESPONSE", "实例响应无效(响应体必须是 JSON 对象)", {
+      endpoint,
+      bodySnippet: compactResponseBody(text),
+    });
+  }
+  return value as T;
+}
+
+function compactResponseBody(text: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}...` : trimmed;
 }
 
 function compactErrorText(text: string, fallback: string): string {

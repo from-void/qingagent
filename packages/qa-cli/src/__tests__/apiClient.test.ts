@@ -81,6 +81,87 @@ describe("ApiClient", () => {
     } satisfies Partial<QaCliError>);
   });
 
+  it("200 + 非法 JSON 归类为实例响应无效并保留排障上下文", async () => {
+    globalThis.fetch = vi.fn(async () => new Response('{"sessions":[')) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/invalid-json")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "INVALID_RESPONSE",
+      message: "实例响应无效(非 JSON)",
+      details: {
+        endpoint: "/invalid-json",
+        bodySnippet: '{"sessions":[',
+      },
+    });
+  });
+
+  it.each([
+    ["尾随散文", '{}\n处理完成'],
+    ["JSON fence", '```json\n{}\n```'],
+    ["前导文本", '响应如下: {}'],
+    ["截断对象", '{"message":"unterminated'],
+  ])("200 + %s 不被宽松提取为成功 JSON", async (_label, body) => {
+    globalThis.fetch = vi.fn(async () => new Response(body)) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/dirty-json")).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      details: { endpoint: "/dirty-json", bodySnippet: body.replace(/\s+/g, " ").trim() },
+    });
+  });
+
+  it("合法 JSON 字符串中的括号与转义引号不干扰解析", async () => {
+    const body = { message: '正文含 ]} 与 "引号"' };
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body))) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/valid-json")).resolves.toEqual(body);
+  });
+
+  it("非法 JSON 的排障片段会截断", async () => {
+    const body = `{"value":"${"x".repeat(240)}`;
+    globalThis.fetch = vi.fn(async () => new Response(body)) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/long-invalid-json")).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      details: {
+        endpoint: "/long-invalid-json",
+        bodySnippet: `${body.slice(0, 200)}...`,
+      },
+    });
+  });
+
+  it.each([null, [], "ok", 1])("200 + 非对象 JSON %j 归类为实例响应无效", async (body) => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body))) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/invalid-shape")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "INVALID_RESPONSE",
+      message: "实例响应无效(响应体必须是 JSON 对象)",
+      details: {
+        endpoint: "/invalid-shape",
+        bodySnippet: JSON.stringify(body),
+      },
+    });
+  });
+
+  it("响应解码异常不误归因为实例不可达", async () => {
+    const response = new Response("{}");
+    vi.spyOn(response, "text").mockRejectedValue(new TypeError("decoder bug"));
+    globalThis.fetch = vi.fn(async () => response) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/decoder-error")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "INVALID_RESPONSE",
+      message: "实例响应读取失败",
+      details: { endpoint: "/decoder-error" },
+    });
+  });
+
   it("普通 API 悬挂到 deadline 后归类为实例不可达", async () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn((_input, init) =>

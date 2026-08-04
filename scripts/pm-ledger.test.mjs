@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -46,6 +46,37 @@ test("代码片段规则继续按字面匹配", async () => {
 
     assert.equal(results.length, 1);
     assert.deepEqual(results[0].matches, [{ term: "text.replace(before", count: 1 }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("跳过悬空符号链接且不计入扫描结果", async () => {
+  const root = await makeFixtureRoot();
+  try {
+    await symlink(
+      path.join(root, "missing-target.ts"),
+      path.join(root, "packages", "escape.ts"),
+    );
+
+    const results = scanTerms({ root, terms: ["DocVersion"] });
+
+    assert.deepEqual(results, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("跳过隐藏目录内的源码文件", async () => {
+  const root = await makeFixtureRoot();
+  try {
+    const hiddenDir = path.join(root, "packages", ".hidden");
+    await mkdir(hiddenDir);
+    await writeFile(path.join(hiddenDir, "banned.ts"), "type DocVersion = number;\n");
+
+    const results = scanTerms({ root, terms: ["DocVersion"] });
+
+    assert.deepEqual(results, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

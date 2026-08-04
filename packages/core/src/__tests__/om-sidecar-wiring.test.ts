@@ -113,6 +113,7 @@ vi.mock("../session/threadPersistence.js", () => ({
 }));
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   recordUsageEvent: mockState.recordUsageEvent,
 }));
 

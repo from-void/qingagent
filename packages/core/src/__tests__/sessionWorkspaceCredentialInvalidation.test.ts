@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   listCredentialGrants: vi.fn(async () => [...mocks.grants]),
 }));
 

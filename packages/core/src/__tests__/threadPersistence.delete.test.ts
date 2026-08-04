@@ -39,6 +39,7 @@ const {
 
 vi.mock("@qingagent/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@qingagent/db")>()),
+  resolveDbUrl: () => "file::memory:",
   beginSessionDeletion,
   completeSessionDeletion,
   deleteSessionDocumentsAndAdvance,

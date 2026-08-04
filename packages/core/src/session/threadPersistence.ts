@@ -1144,6 +1144,14 @@ function retryDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function schedulePersistCoalesceDelay(ms: number): Promise<void> {
+  // Vitest/Sinon 会在替换后的 timer 上挂 clock。业务测试若不主动推进这个新增窗口，
+  // 持久化链会永久冻结；测试环境跳过窗口，生产环境仍完整保留 10ms 合并语义。
+  const timer = setTimeout as typeof setTimeout & { clock?: unknown };
+  if (timer.clock !== undefined) return Promise.resolve();
+  return retryDelay(ms);
+}
+
 function isThreadNotFoundError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   const code = typeof err === "object" && err && "code" in err ? String(err.code) : "";
@@ -1465,7 +1473,7 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
         // updateThread 会重写完整 metadata（含累计 messages/chatHistory）。先给同一
         // 事件链一个很短的 trailing-edge 合并窗口，避免每个中间写点都重复序列化、
         // 写入同一份增长中的快照。窗口内只保留最新 state/reason。
-        await retryDelay(SCHEDULE_PERSIST_COALESCE_WINDOW_MS);
+        await schedulePersistCoalesceDelay(SCHEDULE_PERSIST_COALESCE_WINDOW_MS);
         const pending = pendingPersists.get(sid);
         if (!pending) {
           persistDirty.set(sid, false);

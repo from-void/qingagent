@@ -10,6 +10,7 @@ const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
 const getDerivativeMetaMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
   recordUsageEvent: recordUsageEventMock,
   getDerivativeMeta: getDerivativeMetaMock,
   STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"] as const,

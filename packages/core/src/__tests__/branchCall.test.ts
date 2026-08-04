@@ -5,7 +5,10 @@ const mocks = vi.hoisted(() => ({
   recordUsageEvent: vi.fn(),
   observeCacheOutcome: vi.fn(),
 }));
-vi.mock("@qingagent/db", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
+vi.mock("@qingagent/db", () => ({
+  resolveDbUrl: () => "file::memory:",
+  recordUsageEvent: mocks.recordUsageEvent,
+}));
 vi.mock("../llm/cacheEfficiencySentinel.js", () => ({
   observeCacheOutcome: mocks.observeCacheOutcome,
 }));

@@ -1215,13 +1215,9 @@ function getObserverFlashModelFor(
   }
 
   const modelId = resolveModelId(requestContext, "flash");
-  const cacheKey = `${baseUrl}|${modelId}|${effectiveKey}`;
-  let model = observerModelCache.get(cacheKey);
-  if (!model) {
-    model = wrapToolCallRepairingModel(createSnapshottingQingagentModel(requestContext));
-    evict();
-    observerModelCache.set(cacheKey, model);
-  }
+  // OpenAI 兼容 provider 的 snapshot fetch 会闭包捕获本轮 RequestContext；实例本身很轻，
+  // 每次按动态模型工厂构建，避免全局缓存把首轮会话上下文带到后续 observer 调用。
+  const model = wrapToolCallRepairingModel(createSnapshottingQingagentModel(requestContext));
   const fallback = wrapModernModelUsage(model, {
     requestContext,
     callSite,

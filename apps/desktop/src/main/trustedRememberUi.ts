@@ -12,9 +12,17 @@ interface TrustedInput {
   at: number;
 }
 
-export type RememberGrantKind = "install" | "command" | "send" | "connect";
+const rememberGrantKinds = ["install", "command", "send", "connect"] as const;
+
+export type RememberGrantKind = (typeof rememberGrantKinds)[number];
 export type RememberGrantPurpose = "confirm" | "settings";
 export type RememberPromptDecision = "remember" | "cancel";
+
+const rememberGrantKindSet = new Set<unknown>(rememberGrantKinds);
+
+export function rememberGrantKind(value: unknown): RememberGrantKind | null {
+  return rememberGrantKindSet.has(value) ? value as RememberGrantKind : null;
+}
 
 export const REMEMBER_PROMPT_DECISION_CHANNEL = "qingagent:remember-prompt-decision";
 

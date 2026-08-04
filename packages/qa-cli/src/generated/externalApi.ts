@@ -45,6 +45,16 @@ export interface ExternalSession {
   updatedAt: string;
 }
 
+/** GET /sessions 的可选分页参数；不传时保留默认首页响应。 */
+export interface ExternalSessionsListQuery {
+  /** 单页数量，服务端当前接受 1–500。 */
+  limit?: number;
+  /** 普通稳定排序分页的零基偏移。与 cursor 二选一。 */
+  offset?: number;
+  /** 快照游标；首请求传 `start`，后续传响应中的 nextCursor。 */
+  cursor?: string;
+}
+
 export interface ExternalSessionsListResponse {
   sessions: ExternalSession[];
   total: number;

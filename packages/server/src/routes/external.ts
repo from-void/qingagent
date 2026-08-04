@@ -31,7 +31,6 @@ import {
   QINGAGENT_RESOURCE_ID,
 } from "@qingagent/core";
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
-import { isMissingMastraThreadsTableError } from "@qingagent/db";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
@@ -42,7 +41,7 @@ import {
   sessionExists,
   sessionManager,
 } from "../gateway/bridgeHandler";
-import { loadSessionFromThread } from "../gateway/bridgeCore";
+import { sessions as loadedSessionRegistry } from "../gateway/sessionRegistry";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
@@ -83,6 +82,8 @@ type ExternalSessionSummary = {
   state: ContentDocState["kind"];
   updatedAt: string;
 };
+
+const EXISTS_BY_IDS_BATCH_SIZE = 50;
 
 type ReviewOutcomeCompletionResult =
   | { status: "completed" }
@@ -224,8 +225,8 @@ async function listExternalSessions(
       updatedAt: row.updatedAt,
     });
   }
-  const memoryOnlySessions: ExternalSessionSummary[] = [];
-  const memorySessionIds = sessionManager.listSessionIds(50);
+  const loadedSessions = [...loadedSessionRegistry.values()];
+  const memorySessionIds = loadedSessions.map((session) => session.sessionId);
   // 当前页之外的真实落盘会话也不能作为内存会话重复出现；但仅有 documents
   // 孤儿行不算落盘列表会话，必须经同一条 thread 恢复路径确认。
   const persistedSessionIds = new Set(sessions.map((session) => session.id));
@@ -233,32 +234,25 @@ async function listExternalSessions(
     (sessionId) => !persistedSessionIds.has(sessionId),
   );
   if (unresolvedMemoryIds.length > 0) {
-    const offPageDocumentIds = await documentRepo.existsByIds(
-      QINGAGENT_RESOURCE_ID,
-      unresolvedMemoryIds,
-    );
-    for (const sessionId of offPageDocumentIds) {
-      try {
-        if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
-          persistedSessionIds.add(sessionId);
-        }
-      } catch (error) {
-        // Mastra memory domain 尚未建表时，该候选仍按内存会话处理；其他错误照常暴露。
-        if (!isMissingMastraThreadsTableError(error)) throw error;
+    for (let start = 0; start < unresolvedMemoryIds.length; start += EXISTS_BY_IDS_BATCH_SIZE) {
+      const offPageDocumentIds = await documentRepo.existsByIds(
+        QINGAGENT_RESOURCE_ID,
+        unresolvedMemoryIds.slice(start, start + EXISTS_BY_IDS_BATCH_SIZE),
+      );
+      for (const sessionId of offPageDocumentIds) {
+        persistedSessionIds.add(sessionId);
       }
     }
   }
-  for (const sessionId of memorySessionIds) {
-    if (persistedSessionIds.has(sessionId)) continue;
-    const session = await getOrRestoreSessionReadOnly(sessionId);
-    if (!session) continue;
-    memoryOnlySessions.push({
-      id: sessionId,
+  const memoryOnlySessions = loadedSessions
+    .filter((session) => !persistedSessionIds.has(session.sessionId))
+    .map((session): ExternalSessionSummary => ({
+      id: session.sessionId,
       title: session.title || "未命名草稿",
       state: deriveContentState(session).kind,
-      updatedAt: new Date().toISOString(),
-    });
-  }
+      updatedAt: stableMemorySessionUpdatedAt(session.lastContentEditedAt),
+    }))
+    .sort(compareExternalSessions);
   const memoryOffset = Math.max(0, offset - persistedTotal);
   const memoryPage = memoryOnlySessions.slice(
     memoryOffset,
@@ -288,19 +282,35 @@ async function snapshotExternalSessions(): Promise<ExternalSessionSummary[] | nu
     updatedAt: row.updatedAt,
   }));
   const persistedSessionIds = new Set(sessions.map((session) => session.id));
-  for (const sessionId of sessionManager.listSessionIds(50)) {
-    if (persistedSessionIds.has(sessionId)) continue;
-    const session = await getOrRestoreSessionReadOnly(sessionId);
-    if (!session) continue;
-    sessions.push({
-      id: sessionId,
+  const memoryOnlySessions = [...loadedSessionRegistry.values()]
+    .filter((session) => !persistedSessionIds.has(session.sessionId))
+    .map((session): ExternalSessionSummary => ({
+      id: session.sessionId,
       title: session.title || "未命名草稿",
       state: deriveContentState(session).kind,
-      updatedAt: new Date().toISOString(),
-    });
+      updatedAt: stableMemorySessionUpdatedAt(session.lastContentEditedAt),
+    }))
+    .sort(compareExternalSessions);
+  for (const session of memoryOnlySessions) {
+    sessions.push(session);
     if (sessions.length > MAX_SESSION_SNAPSHOT_ITEMS) return null;
   }
   return sessions;
+}
+
+function stableMemorySessionUpdatedAt(value: string | null): string {
+  return value && Number.isFinite(Date.parse(value))
+    ? value
+    : "1970-01-01T00:00:00.000Z";
+}
+
+function compareExternalSessions(
+  left: ExternalSessionSummary,
+  right: ExternalSessionSummary,
+): number {
+  const updatedOrder = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+  if (updatedOrder) return updatedOrder;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
 function normalizedExternalSessionState(docState: string): ContentDocState["kind"] {

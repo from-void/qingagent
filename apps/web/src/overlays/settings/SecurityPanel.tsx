@@ -131,7 +131,12 @@ function parseOperation(value: unknown): SecuritySettingsOperation {
     !isGrantMode(input.grantMode) ||
     !Number.isSafeInteger(input.baseVersion) ||
     Number(input.baseVersion) < 0 ||
-    !(input.status === "pending" || input.status === "failed" || input.status === "committed")
+    !(
+      input.status === "pending" ||
+      input.status === "failed" ||
+      input.status === "conflict" ||
+      input.status === "committed"
+    )
   ) {
     throw new Error("invalid operation state");
   }
@@ -154,6 +159,7 @@ function parseOperation(value: unknown): SecuritySettingsOperation {
 
 type UpdateOutcome =
   | { status: "committed"; canonical: UpdateSecurityGrantResponse }
+  | { status: "conflict" }
   | { status: "failed" }
   | { status: "uncertain" };
 
@@ -314,6 +320,7 @@ export function SecurityPanel() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ grantMode, operationId, baseVersion }),
         });
+        if (response.status === 409) return { status: "conflict" };
         if (!response.ok) return { status: "failed" };
         const canonical = parseCanonical(category.kind, await response.json());
         if (
@@ -348,6 +355,7 @@ export function SecurityPanel() {
         while (mountedRef.current) {
           if (
             directOutcome?.status === "committed" ||
+            directOutcome?.status === "conflict" ||
             directOutcome?.status === "failed"
           ) {
             outcome = directOutcome;
@@ -361,6 +369,13 @@ export function SecurityPanel() {
               operation.status === "committed"
             ) {
               outcome = { status: "committed", canonical: operation.result };
+              break;
+            }
+            if (
+              operation?.operationId === operationId &&
+              operation.status === "conflict"
+            ) {
+              outcome = { status: "conflict" };
               break;
             }
             if (
@@ -386,6 +401,9 @@ export function SecurityPanel() {
             : `${category.label}恢复每次询问。已在执行的不受影响。`,
           tone: "success",
         });
+      } else if (outcome.status === "conflict") {
+        toast.show({ message: "设置已被别处修改", tone: "error" });
+        await readSettings().catch(() => undefined);
       } else if (outcome.status === "failed") {
         toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
         await readSettings().catch(() => undefined);

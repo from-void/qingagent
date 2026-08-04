@@ -81,7 +81,7 @@ export type SecuritySettingsOperation =
       kind: SecurityGrantKind;
       grantMode: SecurityGrantMode;
       baseVersion: number;
-      status: "pending" | "failed";
+      status: "pending" | "failed" | "conflict";
     }
   | {
       operationId: string;

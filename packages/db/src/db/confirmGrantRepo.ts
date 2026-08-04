@@ -56,6 +56,7 @@ export interface ConfirmGrantMutation {
 export interface ConfirmGrantRevocation {
   state: ConfirmGrantState;
   revokedGrant: ConfirmGrant | null;
+  stale: boolean;
 }
 
 export interface ConfirmAuditEvent {
@@ -268,6 +269,7 @@ export async function createConfirmGrantCanonical(input: {
   grantId?: string;
   now?: string;
   subjectId?: string;
+  expectedVersion?: number;
   expectedRevocationEpoch?: number;
 }): Promise<ConfirmGrantMutation> {
   await ensureMigrated();
@@ -287,6 +289,10 @@ export async function createConfirmGrantCanonical(input: {
     const row = existing.rows[0] as Record<string, unknown> | undefined;
     const currentGrant = row ? mapGrant(row) : null;
     if (
+      (
+        input.expectedVersion !== undefined &&
+        input.expectedVersion !== version
+      ) ||
       input.expectedRevocationEpoch !== undefined &&
       input.expectedRevocationEpoch !== revocationEpoch
     ) {
@@ -376,6 +382,7 @@ export async function revokeConfirmGrantWithState(
   source: ConfirmGrantSource = "settings",
   now = new Date().toISOString(),
   subjectId = "local-user",
+  expectedVersion?: number,
 ): Promise<ConfirmGrantRevocation> {
   await ensureMigrated();
   return withTransaction(async (client) => {
@@ -385,13 +392,22 @@ export async function revokeConfirmGrantWithState(
     });
     const stateRow = stateResult.rows[0] as Record<string, unknown> | undefined;
     if (!stateRow) throw new Error(`confirm grant state missing for ${kind}`);
-    const nextVersion = Number(stateRow.version) + 1;
+    const version = Number(stateRow.version);
+    const revocationEpoch = Number(stateRow.revocation_epoch);
     const existing = await client.execute({
       sql: `SELECT grant_id, kind, created_at, source FROM confirm_grants WHERE kind = ?`,
       args: [kind],
     });
     const row = existing.rows[0] as Record<string, unknown> | undefined;
     const grant = row ? mapGrant(row) : null;
+    if (expectedVersion !== undefined && expectedVersion !== version) {
+      return commitTransaction<ConfirmGrantRevocation>({
+        state: mapGrantState(kind, version, revocationEpoch, grant),
+        revokedGrant: null,
+        stale: true,
+      });
+    }
+    const nextVersion = version + 1;
     if (grant) {
       await client.execute({ sql: `DELETE FROM confirm_grants WHERE kind = ?`, args: [kind] });
       await client.execute({
@@ -428,6 +444,7 @@ export async function revokeConfirmGrantWithState(
     return commitTransaction<ConfirmGrantRevocation>({
       state: mapGrantState(kind, nextVersion, nextVersion, null),
       revokedGrant: grant,
+      stale: false,
     });
   });
 }

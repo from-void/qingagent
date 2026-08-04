@@ -815,7 +815,8 @@ export const documentRepo: DocumentRepo = {
         // 只取指定资源且 thread 仍存在的主文档主键；禁止退化成 documents 全行扫描。
         sql: `SELECT d.id FROM documents d
           INNER JOIN mastra_threads t ON t.id = d.thread_id
-          WHERE d.resource_id = ? AND d.role = 'main' AND d.id IN (${placeholders})`,
+          WHERE d.resource_id = ? AND d.role = 'main' AND d.id IN (${placeholders})
+            AND ${sqlValidPmCondition("d")}`,
         args: [resourceId, ...uniqueIds],
       });
       return new Set(result.rows.map((row) => valueAsString(row.id)));

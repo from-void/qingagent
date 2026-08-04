@@ -1,6 +1,16 @@
 import { create } from "zustand";
 import type { SessionMeta } from "@qingagent/contract-ts";
 
+const DELETION_POLL_TIMEOUT_MS = 60_000;
+
+interface DeletionOperation {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  startedAt: number;
+  previousStatus: SessionMeta["status"] | undefined;
+}
+
 interface SessionStore {
   /** All sessions for the home page */
   sessions: SessionMeta[];
@@ -31,25 +41,56 @@ export const useSessionStore = create<SessionStore>((set, get) => {
   const pendingDeletionIds = new Set<string>();
   const deletionPollAttempts = new Map<string, number>();
   const deletionPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const deletionOperations = new Map<string, DeletionOperation>();
 
-  const finalizeDeletion = (id: string) => {
+  const clearDeletionRuntime = (id: string) => {
     const timer = deletionPollTimers.get(id);
     if (timer) clearTimeout(timer);
     deletionPollTimers.delete(id);
     deletionPollAttempts.delete(id);
     pendingDeletionIds.delete(id);
+  };
+
+  const finalizeDeletion = (id: string) => {
+    clearDeletionRuntime(id);
     deletedSessionIds.add(id);
     latestFetchRequest += 1;
     set({
       sessions: get().sessions.filter((session) => session.id !== id),
       isLoading: false,
     });
+    const operation = deletionOperations.get(id);
+    deletionOperations.delete(id);
+    operation?.resolve();
+  };
+
+  const failDeletion = (id: string, error: Error) => {
+    clearDeletionRuntime(id);
+    const operation = deletionOperations.get(id);
+    deletionOperations.delete(id);
+    if (operation?.previousStatus) {
+      set((state) => ({
+        sessions: state.sessions.map((session) => (
+          session.id === id
+            ? { ...session, status: operation.previousStatus! }
+            : session
+        )),
+      }));
+    }
+    operation?.reject(error);
   };
 
   const scheduleDeletionPoll = (id: string) => {
     if (deletionPollTimers.has(id)) return;
+    const operation = deletionOperations.get(id);
+    if (!operation) return;
+    const remainingMs = DELETION_POLL_TIMEOUT_MS - (Date.now() - operation.startedAt);
+    if (remainingMs <= 0) {
+      failDeletion(id, new Error("删除失败，可重试"));
+      return;
+    }
     const attempt = deletionPollAttempts.get(id) ?? 0;
-    const delayMs = Math.min(500 * 2 ** attempt, 5_000);
+    const delayMs = Math.min(500 * 2 ** attempt, 5_000, remainingMs);
     deletionPollAttempts.set(id, attempt + 1);
     const timer = setTimeout(() => {
       deletionPollTimers.delete(id);
@@ -92,7 +133,10 @@ export const useSessionStore = create<SessionStore>((set, get) => {
         scheduleDeletionPoll(id);
         return;
       }
-      throw error;
+      failDeletion(
+        id,
+        error instanceof Error ? error : new Error("删除失败，可重试"),
+      );
     }
   };
 
@@ -140,8 +184,23 @@ export const useSessionStore = create<SessionStore>((set, get) => {
       }),
 
     removeSession: async (id) => {
-      if (pendingDeletionIds.has(id)) return;
-      await requestDeletion(id, false);
+      const existing = deletionOperations.get(id);
+      if (existing) return existing.promise;
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+      });
+      deletionOperations.set(id, {
+        promise,
+        resolve,
+        reject,
+        startedAt: Date.now(),
+        previousStatus: get().sessions.find((session) => session.id === id)?.status,
+      });
+      void requestDeletion(id, false);
+      return promise;
     },
 
     updateSessionTitle: (id, title) =>

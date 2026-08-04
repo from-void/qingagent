@@ -44,7 +44,10 @@ import {
 import { schedulePersist } from "../session/threadPersistence.js";
 import { endToolIoSpan } from "./toolIoSpans.js";
 import { recomputeUserVisibleOutput } from "./agentStreamVisibility.js";
-import { flushSensitiveReviewText } from "./sensitiveReviewMasking.js";
+import {
+  flushSensitiveReviewReasoning,
+  flushSensitiveReviewText,
+} from "./sensitiveReviewMasking.js";
 
 const logger = mastra.getLogger();
 const ANNOTATION_MUTATION_NO_PATCH_NOTICE = "未能生成修改，可再试或手动编辑。";
@@ -147,6 +150,7 @@ export async function* finalizeAgentStream(
     recomputeUserVisibleOutput(context);
     return chatMessageAppended(finalTextMessageId, seq, textPart);
   };
+  for (const frame of flushSensitiveReviewReasoning(context)) yield frame;
   const sensitiveReviewTextFrame = flushSensitiveReviewText(context);
   if (sensitiveReviewTextFrame) yield sensitiveReviewTextFrame;
   yield* context.annotationPreview.clear();

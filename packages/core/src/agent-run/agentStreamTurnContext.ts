@@ -120,6 +120,8 @@ export interface AgentStreamTurnContext {
   /** 只记类型与数量，不记录 chunk 正文或工具参数。 */
   chunkTypeCounts: Map<string, number>;
   reasoningId: string | null;
+  /** 敏感类审查按 reasoning id 整段缓冲，避免跨 delta 的敏感值穿透。 */
+  sensitiveReviewReasoningBuffers: Map<string, string>;
   materialFrames: BridgeFrame[];
   /** 本轮由 parseFile 首次创建、尚可与后续 storeMaterial 合并身份的素材 ID。 */
   parseCreatedMaterialIds: Set<string>;
@@ -255,6 +257,7 @@ export async function createAgentStreamTurnContext(
     hasUserVisibleOutput: false,
     chunkTypeCounts: new Map(),
     reasoningId: null,
+    sensitiveReviewReasoningBuffers: new Map(),
     materialFrames: [],
     parseCreatedMaterialIds: new Set(),
     extractedTexts,

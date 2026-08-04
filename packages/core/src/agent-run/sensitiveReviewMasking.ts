@@ -69,3 +69,35 @@ export function flushSensitiveReviewText(
   context.outcome.producedVisibleFrame ||= /\S/u.test(context.accumulatedText);
   return chatMessageAppended(context.agentMessageId, seq, part);
 }
+
+/**
+ * 敏感类审查的推理文本按 reasoning id 整段打码后再发，避免跨 delta 泄漏。
+ * 未传 id 时用于流收口，按首次出现顺序清空所有尚未结束的分段。
+ */
+export function flushSensitiveReviewReasoning(
+  context: AgentStreamTurnContext,
+  reasoningId?: string,
+): BridgeFrame[] {
+  if (!isSensitiveReviewTurn(context)) return [];
+  const ids = reasoningId === undefined
+    ? [...context.sensitiveReviewReasoningBuffers.keys()]
+    : [reasoningId];
+  const frames: BridgeFrame[] = [];
+
+  for (const id of ids) {
+    const buffered = context.sensitiveReviewReasoningBuffers.get(id);
+    context.sensitiveReviewReasoningBuffers.delete(id);
+    if (!buffered) continue;
+
+    const part: MessagePart = {
+      kind: "thinking",
+      data: { id, steps: [maskSensitiveValues(buffered)] },
+    };
+    const seq = nextSeq(context.state, context.agentMessageId);
+    ensureAgentChatHistoryMessage(context.state, context.agentMessageId);
+    appendPartToChatHistory(context.state, context.agentMessageId, part);
+    frames.push(chatMessageAppended(context.agentMessageId, seq, part));
+  }
+
+  return frames;
+}

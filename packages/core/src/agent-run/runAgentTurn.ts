@@ -46,7 +46,6 @@ import {
 } from "../session/sessionState.js";
 import { isServerReanchorEnabled } from "../doc-engine/draftFeatureFlags.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
-import { pmToMarkdown } from "@qingagent/pm-schema";
 import { schedulePersist, QINGAGENT_RESOURCE_ID } from "../session/threadPersistence.js";
 import {
   AGENT_MAX_OUTPUT_TOKENS,
@@ -517,83 +516,12 @@ export async function* runAgentTurn(
   omTurnStartMessageIndex = state.messages.length;
   state.messages.push({ role: "user", content: fullUserText });
 
-  // Inject current document snapshot into the last user message when the
-  // doc has changed since the last sync, so the agent always sees the latest
-  // version and prompt-cache can match on the stable prefix.
-  // Also builds sectionToLine map for position-based selection matching.
+  // 保留已同步版本标记供持久化/文档结算链路读取；正文通过文档工具按需读取，
+  // 此处不再重复序列化未注入 prompt 的全文快照。
   if (
     state.docVersion > state.lastSyncedDocumentSnapshot &&
     state.legacySections.length > 0
   ) {
-    const docLines: string[] = [];
-    const sectionToLineForSnapshot = new Map<number, number>();
-    let lineNum = 1;
-    const markdown = state.doc ? pmToMarkdown(state.doc) : null;
-
-    if (markdown) {
-      for (let si = 0; si < state.legacySections.length; si++) {
-        sectionToLineForSnapshot.set(si, si + 1);
-      }
-      for (const line of markdown.split("\n")) {
-        docLines.push(`[${lineNum}] ${line}`);
-        lineNum++;
-      }
-    } else {
-      for (let si = 0; si < state.legacySections.length; si++) {
-        // Add blank line between sections (except before the first)
-        if (si > 0) {
-          docLines.push(`[${lineNum}]`);
-          lineNum++;
-        }
-        sectionToLineForSnapshot.set(si, lineNum);
-        const s = state.legacySections[si]!;
-        switch (s.kind) {
-          case "h1":
-            docLines.push(`[${lineNum}] # ${s.data.text}`);
-            lineNum++;
-            break;
-          case "h2":
-            docLines.push(`[${lineNum}] ## ${s.data.text}`);
-            lineNum++;
-            break;
-          case "p":
-            docLines.push(`[${lineNum}] ${s.data.text}`);
-            lineNum++;
-            break;
-          case "penNote":
-            docLines.push(`[${lineNum}] > ${s.data.text}`);
-            lineNum++;
-            break;
-          case "code":
-            docLines.push(`[${lineNum}] \`\`\`\n${s.data.body}\n\`\`\``);
-            lineNum++;
-            break;
-          case "table": {
-            const head = s.data.head.join(" | ");
-            const sep = s.data.head.map(() => "---").join(" | ");
-            const rows = s.data.rows
-              .map((r) => r.join(" | "))
-              .join("\n");
-            docLines.push(`[${lineNum}] ${head}\n${sep}\n${rows}`);
-            lineNum++;
-            break;
-          }
-          case "image":
-            docLines.push(`[${lineNum}] ![${s.data.alt}](${s.data.src})${s.data.caption ? ` ${s.data.caption}` : ""}`);
-            lineNum++;
-            break;
-          default:
-            docLines.push(`[${lineNum}]`);
-            lineNum++;
-            break;
-        }
-      }
-    }
-
-    // Store sectionToLine on session state for use by selection context
-    state._sectionToLine = sectionToLineForSnapshot;
-
-    void docLines;
     state.lastSyncedDocumentSnapshot = state.docVersion;
   }
 

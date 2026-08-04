@@ -249,8 +249,7 @@ export async function buildActivatedSkillWriteInject(
     .sort((left, right) =>
       left.name === right.name ? 0 : left.name < right.name ? -1 : 1
     );
-  const chunks: string[] = [];
-  const injectedSkillNames: string[] = [];
+  const candidates: Array<{ skillName: string; payload: string }> = [];
 
   for (const registration of registrations) {
     let rawSource: string | null | undefined;
@@ -290,22 +289,50 @@ export async function buildActivatedSkillWriteInject(
       }
     }
     if (typeof payload !== "string" || payload.trim().length === 0) continue;
-    chunks.push(renderWriteInjectChunk(registration.name, payload.trim()));
-    injectedSkillNames.push(registration.name);
+    candidates.push({ skillName: registration.name, payload: payload.trim() });
   }
 
+  const chunks = candidates.map(({ skillName, payload }) =>
+    renderWriteInjectChunk(skillName, payload)
+  );
   const fullContent = chunks.join("\n\n");
   const truncated = fullContent.length > maxChars;
+  const boundedChunks: string[] = [];
+  const injectedSkillNames: string[] = [];
+  if (!truncated) {
+    boundedChunks.push(...chunks);
+    injectedSkillNames.push(...candidates.map(({ skillName }) => skillName));
+  } else {
+    let usedChars = 0;
+    for (const { skillName, payload } of candidates) {
+      const separatorChars = boundedChunks.length > 0 ? 2 : 0;
+      const availableChars = maxChars - usedChars - separatorChars;
+      const emptyChunkChars = renderWriteInjectChunk(skillName, "").length;
+      if (availableChars < emptyChunkChars) break;
+      const fullChunk = renderWriteInjectChunk(skillName, payload);
+      const chunk = fullChunk.length <= availableChars
+        ? fullChunk
+        : renderWriteInjectChunk(
+          skillName,
+          payload.slice(0, Math.max(0, availableChars - emptyChunkChars)),
+        );
+      boundedChunks.push(chunk);
+      injectedSkillNames.push(skillName);
+      usedChars += separatorChars + chunk.length;
+      if (chunk.length < fullChunk.length) break;
+    }
+  }
+  const content = boundedChunks.join("\n\n");
   if (truncated) {
     onWarning({
       kind: "truncated",
       message:
         `已激活技能写稿注入共 ${fullContent.length} 字符，超过硬上限 ${maxChars}，` +
-        `已截断为 ${maxChars} 字符。`,
+        `已按完整 XML 块裁剪为 ${content.length} 字符。`,
     });
   }
   return {
-    content: truncated ? fullContent.slice(0, maxChars) : fullContent,
+    content,
     injectedSkillNames,
     originalCharCount: fullContent.length,
     truncated,

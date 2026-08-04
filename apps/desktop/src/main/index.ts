@@ -73,11 +73,12 @@ import {
   buildRememberPromptHtml,
   NativeRememberGrantGate,
   REMEMBER_PROMPT_DECISION_CHANNEL,
+  rememberGrantKind,
   TrustedRememberUiGate,
-  type RememberGrantKind,
   type RememberPromptCopy,
   type RememberPromptDecision,
 } from "./trustedRememberUi.js";
+import { createConfirmRememberGrantHandler } from "./confirmRememberGrantHandler.js";
 import { computeMainWindowSize } from "./windowSize.js";
 import { nextContentLoadRecoveryStep } from "./contentLoadRecovery.js";
 import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
@@ -665,16 +666,6 @@ function installTelemetryProcessErrorHandlers() {
   });
 }
 
-function rememberGrantKind(value: unknown): RememberGrantKind | null {
-  return value === "install" || value === "command" ? value : null;
-}
-
-function boundedRememberId(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 && value.length <= 128
-    ? value
-    : null;
-}
-
 function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): boolean {
   const window = mainWindow;
   const contents = getLiveWebContents(window);
@@ -785,41 +776,38 @@ function showTrustedRememberPrompt(
   });
 }
 
+const confirmRememberGrantHandler = createConfirmRememberGrantHandler({
+  consumeTrustedRememberGesture,
+  getContext: () => {
+    const owner = mainWindow;
+    const scope = mainWindowRememberScope;
+    if (!owner || !getLiveWebContents(owner) || !scope) return null;
+    return {
+      generation: mainWindowRememberGeneration,
+      scope,
+      showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
+    };
+  },
+  gate: nativeRememberGrantGate,
+  register: async ({ sessionId, confirmId, kind, scope }) => {
+    const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+    return registerConfirmUiGrant({
+      purpose: "confirm",
+      sessionId,
+      confirmId,
+      kind,
+      ttlMs: 60_000,
+      scope,
+    });
+  },
+  revoke: async (nonce) => {
+    const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+    revokeConfirmUiGrant(nonce);
+  },
+});
 ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown) => {
   assertTrustedRenderer(event);
-  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const record = input as Record<string, unknown>;
-  const sessionId = boundedRememberId(record.sessionId);
-  const confirmId = boundedRememberId(record.confirmId);
-  const kind = rememberGrantKind(record.kind);
-  if (!sessionId || !confirmId || !kind || record.trustedGesture !== true) return null;
-  if (!consumeTrustedRememberGesture(event)) return null;
-  const owner = mainWindow;
-  if (!owner || !getLiveWebContents(owner)) return null;
-  const generation = mainWindowRememberGeneration;
-  const scope = mainWindowRememberScope;
-  if (!scope) return null;
-  return nativeRememberGrantGate.request({
-    purpose: "confirm",
-    kind,
-    showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
-    generation,
-    register: async () => {
-      const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
-      return registerConfirmUiGrant({
-        purpose: "confirm",
-        sessionId,
-        confirmId,
-        kind,
-        ttlMs: 60_000,
-        scope,
-      });
-    },
-    revoke: async (nonce) => {
-      const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
-      revokeConfirmUiGrant(nonce);
-    },
-  });
+  return confirmRememberGrantHandler(event, input);
 });
 
 ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown) => {

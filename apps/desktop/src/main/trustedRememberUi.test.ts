@@ -4,6 +4,7 @@ import {
   buildRememberPromptCopy,
   buildRememberPromptHtml,
   NativeRememberGrantGate,
+  rememberGrantKind,
   TrustedRememberUiGate,
 } from "./trustedRememberUi.js";
 
@@ -15,6 +16,15 @@ function validInput() {
     senderIsDevtools: false,
   };
 }
+
+test("记住授权类别接受四类合法值并拒绝非法值", () => {
+  assert.equal(rememberGrantKind("install"), "install");
+  assert.equal(rememberGrantKind("command"), "command");
+  assert.equal(rememberGrantKind("send"), "send");
+  assert.equal(rememberGrantKind("connect"), "connect");
+  assert.equal(rememberGrantKind("unknown"), null);
+  assert.equal(rememberGrantKind(null), null);
+});
 
 test("真实键鼠输入可消费一次，程序化调用与重放拒绝", () => {
   const gate = new TrustedRememberUiGate(() => 1_000);

@@ -19,7 +19,7 @@ test("两类 telemetry handler 都在触发时读取实时监听器数量", () =
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const handlerSource = source.slice(
     source.indexOf("function installTelemetryProcessErrorHandlers()"),
-    source.indexOf("function rememberGrantKind("),
+    source.indexOf("function consumeTrustedRememberGesture("),
   );
 
   assert.doesNotMatch(handlerSource, /existingUncaughtExceptionListeners|existingUnhandledRejectionListeners/);

@@ -22,73 +22,110 @@ import { join } from "node:path";
 /** 日志目录（worktree 内持久目录，已 gitignore）。 */
 const LOG_DIR = process.env.QINGAGENT_LOG_DIR ?? ".logs";
 
-/** 当天日志文件路径，如 .logs/server-2026-05-31.log。 */
-function logFilePath(): string {
-  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  return join(LOG_DIR, `server-${date}.log`);
+export interface DurableFileLoggerOptions {
+  logDir: string;
+  now?: () => Date;
 }
 
-const LOG_PATH = logFilePath();
-
-/** 进程内 append write stream（懒创建；失败不致命）。 */
-let stream: WriteStream | undefined;
-
-function ensureStream(): WriteStream | undefined {
-  if (stream) return stream;
-  try {
-    mkdirSync(LOG_DIR, { recursive: true });
-    stream = createWriteStream(LOG_PATH, { flags: "a" });
-    // 监听 stream 的 error 事件（如 EPIPE / 磁盘满）：否则未处理的 'error' 事件
-    // 会反过来抛成 uncaughtException，讽刺地把崩溃守卫自己搞崩。静默吞掉即可
-    // （durable log 是旁路，console 仍在）。
-    stream.on("error", () => {
-      stream = undefined;
-    });
-    return stream;
-  } catch {
-    // 落盘失败不致命：console 仍在，产品逻辑不受影响。
-    return undefined;
-  }
+export interface DurableFileLogger {
+  path(): string;
+  log(level: string, message: string, extra?: unknown): void;
+  logSync(level: string, message: string, extra?: unknown): void;
+  close(): Promise<void>;
 }
+
+/** 可注入时钟的 durable logger；生产与测试共走同一套跨日轮换逻辑。 */
+export function createDurableFileLogger(options: DurableFileLoggerOptions): DurableFileLogger {
+  const now = options.now ?? (() => new Date());
+  let stream: WriteStream | undefined;
+  let streamPath: string | undefined;
+  const pendingCloses: Promise<void>[] = [];
+
+  const pathFor = (date: Date) =>
+    join(options.logDir, `server-${date.toISOString().slice(0, 10)}.log`);
+  const closeStream = (target: WriteStream): Promise<void> => new Promise((resolve) => {
+    target.end(resolve);
+  });
+  const rotateIfNeeded = (nextPath: string): void => {
+    if (!stream || streamPath === nextPath) return;
+    const previous = stream;
+    stream = undefined;
+    streamPath = undefined;
+    pendingCloses.push(closeStream(previous));
+  };
+  const ensureStream = (nextPath: string): WriteStream | undefined => {
+    rotateIfNeeded(nextPath);
+    if (stream) return stream;
+    try {
+      mkdirSync(options.logDir, { recursive: true });
+      const next = createWriteStream(nextPath, { flags: "a" });
+      stream = next;
+      streamPath = nextPath;
+      // durable log 是旁路；磁盘错误必须静默，不能反向触发 uncaughtException。
+      next.on("error", () => {
+        if (stream === next) {
+          stream = undefined;
+          streamPath = undefined;
+        }
+      });
+      return next;
+    } catch {
+      return undefined;
+    }
+  };
+  const lineFor = (at: Date, level: string, message: string, extra?: unknown) =>
+    JSON.stringify({
+      ts: at.toISOString(),
+      pid: process.pid,
+      level,
+      message,
+      ...(extra !== undefined ? { extra } : {}),
+    }) + "\n";
+
+  return {
+    path: () => pathFor(now()),
+    log(level, message, extra) {
+      try {
+        const at = now();
+        ensureStream(pathFor(at))?.write(lineFor(at, level, message, extra));
+      } catch {
+        // 静默：console 仍在，产品逻辑不受影响。
+      }
+    },
+    logSync(level, message, extra) {
+      try {
+        const at = now();
+        const nextPath = pathFor(at);
+        rotateIfNeeded(nextPath);
+        mkdirSync(options.logDir, { recursive: true });
+        appendFileSync(nextPath, lineFor(at, level, message, extra));
+      } catch {
+        // 静默：崩溃路径上 console.error 仍会打印。
+      }
+    },
+    async close() {
+      if (stream) {
+        const current = stream;
+        stream = undefined;
+        streamPath = undefined;
+        pendingCloses.push(closeStream(current));
+      }
+      await Promise.all(pendingCloses.splice(0));
+    },
+  };
+}
+
+const durableLogger = createDurableFileLogger({ logDir: LOG_DIR });
+export const getCrashLogPath = (): string => durableLogger.path();
 
 /** 异步写一行 durable log（普通事件）。失败静默。 */
 function durableLog(level: string, message: string, extra?: unknown): void {
-  try {
-    const s = ensureStream();
-    if (!s) return;
-    const line =
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        pid: process.pid,
-        level,
-        message,
-        ...(extra !== undefined ? { extra } : {}),
-      }) + "\n";
-    s.write(line);
-  } catch {
-    // 静默
-  }
+  durableLogger.log(level, message, extra);
 }
 
-/**
- * 同步写一行 durable log（崩溃/退出场景必须落盘）。
- * 用 appendFileSync 绕过异步 stream 缓冲，保证 process.exit 前写入。
- */
+/** 同步写一行 durable log（崩溃/退出场景必须落盘）。 */
 function durableLogSync(level: string, message: string, extra?: unknown): void {
-  try {
-    mkdirSync(LOG_DIR, { recursive: true });
-    const line =
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        pid: process.pid,
-        level,
-        message,
-        ...(extra !== undefined ? { extra } : {}),
-      }) + "\n";
-    appendFileSync(LOG_PATH, line);
-  } catch {
-    // 静默：崩溃路径上 console.error 仍会打印。
-  }
+  durableLogger.logSync(level, message, extra);
 }
 
 /** 是否已开始优雅关闭（防止重复触发）。 */
@@ -188,11 +225,7 @@ async function gracefulShutdown(
     deps.flushObservability ?? flushObservabilityBestEffort,
   );
 
-  try {
-    stream?.end();
-  } catch {
-    // 静默
-  }
+  await durableLogger.close();
 
   clearTimeout(timer);
   durableLogSync("info", `shutdown complete (${signal})`);
@@ -294,10 +327,9 @@ export function installCrashGuard(): void {
   if (installed) return;
   installed = true;
 
-  ensureStream();
   // 用同步写：保证「已安装」这行一定落盘，即使进程在毫秒级内就崩溃（如端口占用
   // 的 EADDRINUSE 同步抛错），也留下"crashGuard 确实装上了"的证据。
-  durableLogSync("info", "crashGuard installed", { logPath: LOG_PATH });
+  durableLogSync("info", "crashGuard installed", { logPath: durableLogger.path() });
 
   // 1) uncaughtException：状态不可靠 → 记录后 exit(1) 让外层（tsx watch / 进程管理器）重启。
   process.on("uncaughtException", (err) => {
@@ -374,4 +406,4 @@ export function __setSignalShutdownDepsForTest(deps: GracefulShutdownDeps): void
   signalShutdownDepsForTest = deps;
 }
 
-export { durableLog, LOG_PATH };
+export { durableLog };

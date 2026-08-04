@@ -198,7 +198,8 @@ export function ExportMenu({
             lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
           );
         } finally {
-          URL.revokeObjectURL(url);
+          const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+          window.setTimeout(() => revokeObjectURL(url), 0);
         }
       }
       onClose();

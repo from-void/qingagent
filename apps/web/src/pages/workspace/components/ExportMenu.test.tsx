@@ -124,6 +124,27 @@ describe("ExportMenu", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/export/session-1?format=html");
   });
 
+  it("Web 导出在点击后的下一宏任务才释放 Blob URL", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["# md"]))));
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURL, configurable: true });
+    const clickAnchor = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    await render(<ExportMenuHarness onClose={() => undefined} />);
+
+    await act(async () => {
+      host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-markdown"]')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(clickAnchor).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:export");
+  });
+
   it("专有图表回退官方布局时在成功 toast 提示画布布局未应用", async () => {
     const fetchMock = vi.fn(async () => new Response(
       new Blob(["<html></html>"]),

@@ -508,7 +508,8 @@ export async function exportElementAsPng(
     anchor.download = safeFilename;
     anchor.click();
   } finally {
-    URL.revokeObjectURL(downloadUrl);
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+    window.setTimeout(() => revokeObjectURL(downloadUrl), 0);
   }
   return { path: null };
 }

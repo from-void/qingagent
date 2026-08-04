@@ -38,7 +38,7 @@ function WechatArticle({ doc, title, articleRef }: { doc: PmDoc; title: string; 
 function LineIcon({ kind }: { kind: "like" | "share" | "heart" | "comment" }) {
   const paths = {
     like: <path d="M8 20H4V9h4m0 11h8.2a2 2 0 0 0 1.9-1.4l2.3-7A2 2 0 0 0 18.5 9H14l.7-3.5A2.9 2.9 0 0 0 12 2L8 9v11Z"/>,
-    share: <><path d="M14 5l5 4-5 4"/><path d="M19 9h-6a8 8 0 0 0-8 8v1a8 8 0 0 1 8-5h1"/></>,
+    share: <><path d="m14 4 6 5-6 5"/><path d="M20 9h-5.5C8.7 9 5 12.1 4 19"/></>,
     heart: <path d="M12 20S4 15.5 4 9.5A4.5 4.5 0 0 1 12 6a4.5 4.5 0 0 1 8 3.5C20 15.5 12 20 12 20Z"/>,
     comment: <><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M12 8v5M9.5 10.5h5"/></>,
   };

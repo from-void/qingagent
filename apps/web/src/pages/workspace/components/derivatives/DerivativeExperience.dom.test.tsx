@@ -1801,6 +1801,12 @@ describe("公众号稿生成体验", () => {
     expect(Array.from(host.querySelectorAll(".wx-meta > span")).map((node) => node.textContent)).toEqual(["青简", "刚刚", "广东"]);
     expect(Array.from(host.querySelectorAll(".wx-toolbar-actions small")).map((node) => node.textContent)).toEqual(["赞", "分享", "推荐", "写留言"]);
     expect(host.querySelectorAll(".wx-toolbar-actions svg")).toHaveLength(4);
+    const sharePaths = Array.from(
+      host.querySelectorAll(".wx-toolbar-actions > span:nth-child(2) svg path"),
+      (path) => path.getAttribute("d"),
+    );
+    expect(sharePaths).toEqual(["m14 4 6 5-6 5", "M20 9h-5.5C8.7 9 5 12.1 4 19"]);
+    expect(sharePaths.every((path) => !path?.includes("v1"))).toBe(true);
     expect(host.querySelector(".ps-cellular rect:nth-child(4)")?.getAttribute("height")).toBe("12");
     expect(host.querySelectorAll(".ps-wifi path")).toHaveLength(3);
     expect(host.querySelector(".ps-battery-fill")?.getAttribute("width")).toBe("16.2");

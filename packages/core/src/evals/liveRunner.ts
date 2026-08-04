@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { parse as parseDotenv } from "dotenv";
 import { createTool } from "@mastra/core/tools";
 import { runEvals } from "@mastra/core/evals";
 import { RequestContext } from "@mastra/core/request-context";
@@ -103,12 +104,14 @@ export type AskUserTriggerEvalArtifact =
       cases: AskUserTriggerCaseResult[];
     };
 
-function loadServerEnv(): void {
+export function loadServerEnv(
+  envPath = resolve(process.cwd(), "packages/server/.env"),
+  target: NodeJS.ProcessEnv = process.env,
+): void {
   try {
-    const envText = readFileSync(resolve(process.cwd(), "packages/server/.env"), "utf8");
-    for (const line of envText.split("\n")) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^['"]|['"]$/g, "");
+    const parsed = parseDotenv(readFileSync(envPath, "utf8"));
+    for (const [key, value] of Object.entries(parsed)) {
+      if (target[key] === undefined) target[key] = value;
     }
   } catch {
     // .env 不存在时走 ENV_SKIP。

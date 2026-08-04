@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -153,8 +153,15 @@ function walk(dir, onFile) {
   for (const entry of entries) {
     if (ignoredDirs.has(entry)) continue;
     const fullPath = path.join(dir, entry);
-    const stat = statSync(fullPath);
+    let stat;
+    try {
+      stat = lstatSync(fullPath);
+    } catch {
+      continue;
+    }
+    if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) {
+      if (entry.startsWith(".")) continue;
       walk(fullPath, onFile);
       continue;
     }

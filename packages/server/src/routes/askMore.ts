@@ -1,16 +1,17 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { isPlanDraftTool, streamMoreQuestions, schedulePersist } from "@qingagent/core";
-import type { AskUserQuestion } from "@qingagent/contract-ts";
+import { isPlanDraftTool, streamMoreQuestions } from "@qingagent/core";
+import type { AskMoreQuestion as AskMoreCommandQuestion } from "@qingagent/contract-ts";
 import { RequestContext } from "@mastra/core/request-context";
-import { getSession } from "../gateway/bridgeHandler";
+import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 
 export const askMoreRoutes = new Hono();
+export { appendAskMoreQuestions } from "../gateway/askMoreCommands";
 
 /** ask-more 请求体:sessionId 必填;当前问卷/答案沿用前端形状(与旧内联类型一致)。 */
 const askMoreBodySchema = z.object({
@@ -111,53 +112,19 @@ export function findOpenPlanDraftQuestionnaireId(
   return null;
 }
 
-export function appendAskMoreQuestions(
-  session: NonNullable<ReturnType<typeof getSession>>,
-  toolCallId: string,
-  newQuestions: AskMoreQuestion[],
-): boolean {
-  if (newQuestions.length === 0) return false;
-  for (let mi = session.chatHistory.length - 1; mi >= 0; mi--) {
-    const msg = session.chatHistory[mi]!;
-    for (let pi = msg.parts.length - 1; pi >= 0; pi--) {
-      const part = msg.parts[pi]!;
-      if (part.kind !== "toolCall") continue;
-      const spec = part.data;
-      if (spec.id !== toolCallId) continue;
-      if (!isPlanDraftTool(spec.name)) continue;
-      if (spec.body.kind !== "askUser") continue;
-      if (spec.status.kind !== "pending" && spec.status.kind !== "running") continue;
-      const existing = new Set(spec.body.data.questions.map((q) => q.id));
-      const mapped: AskUserQuestion[] = newQuestions
-        .filter((q) => !existing.has(q.id))
-        .map((q) => ({
-          id: q.id,
-          label: q.label,
-          kind: q.kind,
-          options: q.options.map((o) => ({
-            value: o.value,
-            label: o.label,
-            description: o.description ?? null,
-            preview: o.preview ?? null,
-          })),
-          placeholder: q.placeholder ?? null,
-        }));
-      if (mapped.length === 0) return false;
-      msg.parts[pi] = {
-        kind: "toolCall",
-        data: {
-          ...spec,
-          body: {
-            kind: "askUser",
-            data: { ...spec.body.data, questions: [...spec.body.data.questions, ...mapped] },
-          },
-        },
-      };
-      void schedulePersist(session, "askMore").catch(() => {});
-      return true;
-    }
-  }
-  return false;
+function normalizeAskMoreQuestions(questions: AskMoreQuestion[]): AskMoreCommandQuestion[] {
+  return questions.map((question) => ({
+    id: question.id,
+    label: question.label,
+    kind: question.kind,
+    options: question.options.map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description ?? null,
+      preview: option.preview ?? null,
+    })),
+    placeholder: question.placeholder ?? null,
+  }));
 }
 
 /**
@@ -195,7 +162,6 @@ askMoreRoutes.post("/ask-more", async (c) => {
     visionModel: c.req.header("x-vision-model"),
     visionProtocol: c.req.header("x-vision-protocol"),
   });
-  session.modelOverrides = modelOverrides;
   const requestContext = new RequestContext([
     ["sessionId", session.sessionId],
     ["modelOverrides", modelOverrides],
@@ -227,6 +193,21 @@ askMoreRoutes.post("/ask-more", async (c) => {
   }
   return streamSSE(c, async (stream) => {
     try {
+      // started 与 completed 共用同一非抢占 actor 命令：前者保持模型覆盖的请求顺序，
+      // 后者把终态问题回填到同一串行队列；中间的模型流仍直接写当前 SSE。
+      const startedSubmission = await sessionManager.submitQueued(sessionId, {
+        command: {
+          kind: "updateAskMore",
+          data: { phase: "started", sessionId, toolCallId: targetToolCallId },
+        },
+        modelOverrides,
+      });
+      // 只等入队，不等前方会话命令跑完，避免阻塞 askMore 的首个 progress；立即挂
+      // rejection handler 防止生成期间出现未处理拒绝，completed 入队前再验收结果。
+      const startedSettlement = startedSubmission.completion.then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
       let lastQuestions: unknown[] = [];
       for await (const partial of streamMoreQuestions({
         conversationSummary,
@@ -243,7 +224,19 @@ askMoreRoutes.post("/ask-more", async (c) => {
       }
       // 回写到 open askUser toolCall,确保提交后折叠卡片能展示这些追加问答。
       // 只允许回写请求开始时捕获的同一张问卷；期间提交/取消后不污染新问卷。
-      appendAskMoreQuestions(session, targetToolCallId, lastQuestions as AskMoreQuestion[]);
+      const startedResult = await startedSettlement;
+      if (!startedResult.ok) throw startedResult.error;
+      await sessionManager.submit(sessionId, {
+        command: {
+          kind: "updateAskMore",
+          data: {
+            phase: "completed",
+            sessionId,
+            toolCallId: targetToolCallId,
+            questions: normalizeAskMoreQuestions(lastQuestions as AskMoreQuestion[]),
+          },
+        },
+      });
       await stream.writeSSE({
         event: "done",
         data: JSON.stringify({ questions: lastQuestions }),

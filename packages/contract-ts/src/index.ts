@@ -10,6 +10,7 @@ export * from "./AskUserPurpose";
 export * from "./AskUserQuestion";
 export * from "./AskUserQuestionKind";
 export * from "./AskUserSpec";
+export * from "./UpdateAskMore";
 export * from "./CancelAskUser";
 export * from "./CancelStream";
 export * from "./ChatChip";

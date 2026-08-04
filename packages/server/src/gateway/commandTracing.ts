@@ -126,6 +126,14 @@ export function summarizeCommandInput(command: Command): Record<string, unknown>
         toolCallId: command.data.toolCallId ?? null,
         answerCount: Object.keys(command.data.answers ?? {}).length,
       };
+    case "updateAskMore":
+      return {
+        toolCallId: command.data.toolCallId,
+        phase: command.data.phase,
+        questionCount: command.data.phase === "completed"
+          ? command.data.questions.length
+          : 0,
+      };
     case "cancelAskUser":
       return {
         sessionId: command.data.sessionId,

@@ -1155,6 +1155,10 @@ export function QingjianScroll({
   }, []);
 
   const textures = useMemo(() => buildNewCardTextures(), []);
+  const sessionsById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions],
+  );
 
   // —— 把 sessions 转为时间升序的卡片序列(新建卡置首)——
   const entries = useMemo<CardEntry[]>(() => {
@@ -2179,11 +2183,14 @@ export function QingjianScroll({
     dockProg?.addEventListener("pointerleave", onProgLeave);
 
     // —— 左下＋:先平滑滚回最左让新建卡进入视口,再从其 rect 触发过渡 ——
+    let newSessionTimer: number | undefined;
     const onFabClick = () => {
       targetX = 0;
       velocity = 0;
       requestFrame();
-      window.setTimeout(() => {
+      if (newSessionTimer !== undefined) window.clearTimeout(newSessionTimer);
+      newSessionTimer = window.setTimeout(() => {
+        newSessionTimer = undefined;
         triggerNewSession();
       }, 420);
     };
@@ -2222,6 +2229,7 @@ export function QingjianScroll({
       clearTimeout(revealResetTimer);
       clearTimeout(dockHideTimer);
       clearTimeout(suppressClickResetTimer);
+      if (newSessionTimer !== undefined) window.clearTimeout(newSessionTimer);
       clearInterval(revealInterval);
       scroller.removeEventListener("wheel", onWheel);
       scroller.removeEventListener("dragstart", onNativeDragStart, true);
@@ -2375,10 +2383,14 @@ export function QingjianScroll({
               {layout.stageMoments.map((moment) => (
                 <QingjianStageMoment key={moment.id} moment={moment} />
               ))}
-              {layout.slots.map((slot) => (
+              {layout.slots.map((slot) => {
+                const session = slot.entry.kind === "real"
+                  ? sessionsById.get(slot.entry.id)
+                  : undefined;
+                return (
                 <div
                   key={slot.entry.id}
-                  className={`qj-card-slot${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? " qj-deleting" : ""}${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.generating ? " qj-generating" : ""}`}
+                  className={`qj-card-slot${session?.isDeleting ? " qj-deleting" : ""}${session?.generating ? " qj-generating" : ""}`}
                   data-idx={slot.globalIdx}
                   data-kind={slot.entry.kind}
                   data-id={slot.entry.id}
@@ -2386,11 +2398,11 @@ export function QingjianScroll({
                   data-title={slot.entry.title}
                   data-category={slot.entry.category}
                   role="button"
-                  tabIndex={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? -1 : 0}
+                  tabIndex={session?.isDeleting ? -1 : 0}
                   aria-label={slot.entry.kind === "new"
                     ? "新建文档"
-                    : `打开文章：${slot.entry.title}${sessions.find((session) => session.id === slot.entry.id)?.generating ? "（生成中）" : ""}`}
-                  aria-disabled={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? "true" : undefined}
+                    : `打开文章：${slot.entry.title}${session?.generating ? "（生成中）" : ""}`}
+                  aria-disabled={session?.isDeleting ? "true" : undefined}
                   style={{
                     left: `${slot.left}px`,
                     top: `${slot.top}px`,
@@ -2411,10 +2423,10 @@ export function QingjianScroll({
                         colorConfig={colorConfig}
                       />
                     ) : null}
-                    {slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? (
+                    {session?.isDeleting ? (
                       <span className="qj-delete-pending" role="status">删除中…</span>
                     ) : null}
-                    {slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.generating ? (
+                    {session?.generating ? (
                       <>
                         <span className="qj-generation-shimmer" aria-hidden="true" />
                         <span className="qj-generation-status" role="status">
@@ -2428,7 +2440,8 @@ export function QingjianScroll({
                     ) : null}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

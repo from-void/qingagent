@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DemoBarKind } from "../components/MorphDebugPanel";
 import { morphTuning } from "../data/barMorph";
 import {
@@ -24,6 +24,20 @@ export function useWorkspaceDebugControls() {
     getRevealPresentationConfig(),
   );
   const [revealReplayNonce, setRevealReplayNonce] = useState(0);
+  const morphTimersRef = useRef<Set<number>>(new Set());
+
+  const clearMorphTimers = useCallback(() => {
+    for (const timer of morphTimersRef.current) window.clearTimeout(timer);
+    morphTimersRef.current.clear();
+  }, []);
+
+  const scheduleMorph = useCallback((callback: () => void, delayMs: number) => {
+    const timer = window.setTimeout(() => {
+      morphTimersRef.current.delete(timer);
+      callback();
+    }, delayMs);
+    morphTimersRef.current.add(timer);
+  }, []);
 
   useEffect(() => subscribeRevealPresentationConfig(setRevealConfig), []);
 
@@ -50,20 +64,23 @@ export function useWorkspaceDebugControls() {
 
   useEffect(() => {
     if (!devToolsOpen) {
+      clearMorphTimers();
       setDemoBarShown(false);
       setInputContentOut(false);
     }
-  }, [devToolsOpen]);
+    return clearMorphTimers;
+  }, [clearMorphTimers, devToolsOpen]);
 
   const morphEnterFresh = useCallback(() => {
     setInputContentOut(true);
-    window.setTimeout(() => setDemoBarShown(true), MORPH_FADE_MS);
-  }, []);
+    scheduleMorph(() => setDemoBarShown(true), MORPH_FADE_MS);
+  }, [scheduleMorph]);
 
   const handleMorphReturn = useCallback(() => {
+    clearMorphTimers();
     setDemoBarShown(false);
     setInputContentOut(false);
-  }, []);
+  }, [clearMorphTimers]);
 
   const handleMorphEnter = useCallback(() => {
     if (!demoBarShown) {
@@ -71,24 +88,24 @@ export function useWorkspaceDebugControls() {
       return;
     }
     handleMorphReturn();
-    window.setTimeout(
+    scheduleMorph(
       morphEnterFresh,
       morphTuning.durationMs + MORPH_FADE_MS + 140,
     );
-  }, [demoBarShown, handleMorphReturn, morphEnterFresh]);
+  }, [demoBarShown, handleMorphReturn, morphEnterFresh, scheduleMorph]);
 
   const handleMorphKind = useCallback(
     (kind: DemoBarKind) => {
       setDemoBarKind(kind);
       if (demoBarShown) {
         handleMorphReturn();
-        window.setTimeout(
+        scheduleMorph(
           morphEnterFresh,
           morphTuning.durationMs + MORPH_FADE_MS + 140,
         );
       }
     },
-    [demoBarShown, handleMorphReturn, morphEnterFresh],
+    [demoBarShown, handleMorphReturn, morphEnterFresh, scheduleMorph],
   );
 
   useEffect(() => {

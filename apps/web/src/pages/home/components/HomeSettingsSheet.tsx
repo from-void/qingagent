@@ -85,6 +85,21 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
   const [inkExiting, setInkExiting] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const scrollPositionsRef = useRef<Partial<Record<SettingsSheetTab, number>>>({});
+  const closeStartedRef = useRef(false);
+  const closeTimersRef = useRef<Set<number>>(new Set());
+
+  const scheduleCloseStep = useCallback((callback: () => void, delayMs: number) => {
+    const timer = window.setTimeout(() => {
+      closeTimersRef.current.delete(timer);
+      callback();
+    }, delayMs);
+    closeTimersRef.current.add(timer);
+  }, []);
+
+  useEffect(() => () => {
+    for (const timer of closeTimersRef.current) window.clearTimeout(timer);
+    closeTimersRef.current.clear();
+  }, []);
 
   const switchTab = useCallback((nextTab: SettingsSheetTab) => {
     if (nextTab === tab) return;
@@ -105,14 +120,13 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
 
   // 关闭:先播墨退场动画(墨球四散+淡出),退场结束再真正卸载
   const handleClose = useCallback(() => {
-    setClosing((prev) => {
-      if (prev) return prev;
-      // closing=true 让面板内容立即淡出;160ms 后再触发墨退场;墨退场结束再卸载
-      window.setTimeout(() => setInkExiting(true), 160);
-      window.setTimeout(onClose, 700);
-      return true;
-    });
-  }, [onClose]);
+    if (closeStartedRef.current) return;
+    closeStartedRef.current = true;
+    setClosing(true);
+    // closing=true 让面板内容立即淡出;160ms 后再触发墨退场;墨退场结束再卸载
+    scheduleCloseStep(() => setInkExiting(true), 160);
+    scheduleCloseStep(onClose, 700);
+  }, [onClose, scheduleCloseStep]);
 
   // 设置面板本身也是浮层:挂进既有全局关闭栈，保证它位于底层预览之上、内部确认卡之下。
   // 这样 Esc 永远只弹当前栈顶，不会因设置面板未入栈而误关它后面的预览。

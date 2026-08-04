@@ -133,4 +133,17 @@ describe("HomeSettingsSheet tab 滚动位置", () => {
     act(renderSheet);
     expect(host!.querySelector<HTMLDivElement>(".qj-sheet-body")!.scrollTop).toBe(0);
   });
+
+  it("关闭动画尚未结束就卸载时不再触发 onClose", () => {
+    const onClose = vi.fn();
+    act(() => root?.render(<HomeSettingsSheet {...props} onClose={onClose} />));
+
+    act(() => host!.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click());
+    expect(host!.querySelector(".qj-sheet-backdrop")?.getAttribute("data-closing")).toBe("true");
+    act(() => root?.unmount());
+    root = null;
+    act(() => vi.advanceTimersByTime(700));
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

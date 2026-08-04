@@ -31,7 +31,7 @@ const P = {
   spread: 150, fadeIn: 360, hold: 1160, fadeOut: 1020, gap: 140, jitter: 90,
   maxOpacity: 0.41, centerGlow: 20,
   inkColor: "#9a9081", tagColor: "#6b6256", centerColor: "#a8823f",
-  font: '"Songti SC","STSong","SimSun",serif',
+  font: "var(--font-zh-serif)",
 };
 
 function stripCJK(s: string): string[] {

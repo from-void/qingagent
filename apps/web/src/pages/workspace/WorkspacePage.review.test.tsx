@@ -5328,6 +5328,95 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.activeTranslationDocId).toBe("translation-ko");
   });
 
+  it("多语种创建第二项失败时，立即入账已创建语种并关闭弹窗提示失败语种", async () => {
+    const created: DerivativeItem[] = [];
+    serverStreamMock.createDerivativeImpl = async (targetLang) => {
+      if (targetLang === "韩语") throw new Error("第二个语种失败");
+      const item: DerivativeItem = {
+        docId: `translation-${targetLang}`,
+        dtype: "translate",
+        templateId: "translate-faithful",
+        templateName: "忠实精准",
+        targetLang,
+        privatePrompt: "",
+        sourceVersion: null,
+        currentSourceVersion: 1,
+        generatedAt: null,
+        stale: false,
+      };
+      created.push(item);
+      return item;
+    };
+    serverStreamMock.listDerivativesImpl = async () =>
+      created.map((item) => ({ ...item }));
+    window.location.hash = "#/workspace?session=s-partial-translation-create";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function PartialTranslationCreateHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <output>{controller.derivatives.map((item) => item.targetLang).join("、")}</output>;
+    }
+
+    await render(<PartialTranslationCreateHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [{
+      kind: "sessionMeta",
+      data: { sessionId: "s-partial-translation-create", title: "部分创建" },
+    }]);
+    await flushMicrotasks(5);
+    const refreshesBefore = stream.listDerivatives.mock.calls.length;
+    await act(async () => {
+      captured.current?.setDerivativeCreateDtype("translate");
+      captured.current?.setDerivativeCreateOpen(true);
+    });
+
+    await act(async () => {
+      await captured.current?.handleCreateDerivative({
+        templateId: "translate-faithful",
+        writingStyleId: "translate-faithful",
+        layoutStyleId: null,
+        targetLanguages: ["英语", "韩语", "日语"],
+        privatePrompt: "",
+      });
+    });
+    await flushMicrotasks(5);
+
+    expect(stream.createDerivative.mock.calls.map((call) => call[6])).toEqual(["英语", "韩语"]);
+    expect(stream.listDerivatives).toHaveBeenCalledTimes(refreshesBefore + 1);
+    expect(captured.current?.derivatives.map((item) => item.targetLang)).toEqual(["英语"]);
+    expect(captured.current?.derivativeCreateOpen).toBe(false);
+    const toastText = host?.querySelector(".qa-toast")?.textContent ?? "";
+    expect(toastText).toContain("已创建英语");
+    expect(toastText).toContain("韩语创建失败");
+    expect(toastText).toContain("可重试");
+
+    const refreshesAfterPartialCreate = stream.listDerivatives.mock.calls.length;
+    serverStreamMock.createDerivativeImpl = async () => {
+      throw new Error("首个语种失败");
+    };
+    await act(async () => captured.current?.setDerivativeCreateOpen(true));
+    await act(async () => {
+      await captured.current?.handleCreateDerivative({
+        templateId: "translate-faithful",
+        writingStyleId: "translate-faithful",
+        layoutStyleId: null,
+        targetLanguages: ["日语"],
+        privatePrompt: "",
+      });
+    });
+
+    expect(stream.listDerivatives).toHaveBeenCalledTimes(refreshesAfterPartialCreate);
+    expect(captured.current?.derivativeCreateOpen).toBe(true);
+    expect(
+      Array.from(host?.querySelectorAll(".qa-toast") ?? [])
+        .map((toast) => toast.textContent)
+        .join("\n"),
+    ).toContain("创建翻译失败 · 请重试");
+  });
+
   it("非英语单语翻译完成后把子 Tab 切到刚完成的语种", async () => {
     const english: DerivativeItem = {
       docId: "translate-en-empty",

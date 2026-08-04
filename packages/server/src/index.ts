@@ -66,13 +66,13 @@ const {
 await loadBypassMode().catch(() => undefined);
 const { probeBrowserCapability } = await import("@qingagent/doc-render/browser");
 
-// app/core/doc-render 的完整依赖图此时已求值；移除其后装的竞争信号 handler，确保只有
-// crashGuard 有权结束进程，active turn / persistence / observability drain 不会被抢断。
-claimShutdownSignalOwnership();
-
 // 在开放监听端口前完成浏览器启动能力探测。受限容器无法创建 Chromium sandbox 时，
 // 服务主体仍可启动，但健康状态会标明浏览器/PDF 能力禁用，导出路由直接返回 503。
-await probeBrowserCapability();
+// probeBrowserCapability() 会同步进入 getBrowser() 并在首建池时登记清理钩子；先启动
+// probe promise，随即移除竞争 handler，再等待探测完成，确保 crashGuard 独占宿主退出权。
+const browserCapabilityProbe = probeBrowserCapability();
+claimShutdownSignalOwnership();
+await browserCapabilityProbe;
 
 // 先恢复并续跑持久化删除墓碑，再启动任何可能写 documents 的后台任务。
 await sessionManager.resumePendingDeletions();

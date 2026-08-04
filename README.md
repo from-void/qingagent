@@ -191,7 +191,7 @@ server {
 | `QINGAGENT_BROWSER_PROXY_ACL` | 未设置 | 未设置 | 浏览器配置了 `HTTP_PROXY` / `HTTPS_PROXY` 时必须设为 `deny-private`，确认代理在实际连接层拒绝私网/环回/链路本地/元数据地址；否则代理浏览器 fail-closed。 |
 | `QINGAGENT_ENABLE_DEBUG` | 未设置 | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
 | `QINGAGENT_UPLOAD_MAX_BYTES` | `52428800`（50 MB） | 同 server | 单个上传文件解码后的最大字节数；服务端同时限制 base64 JSON 请求体，前端按默认 50 MB 预检。 |
-| `DATABASE_URL` | `file:./qingagent.db` | Electron `userData/qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
+| `DATABASE_URL` | `~/.qingagent/qingagent.db`（运行时解析为绝对 file URL） | Electron `userData/qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
 | `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许 agent 在本机执行未隔离命令;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
 | `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。会把凭据注入执行环境;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
 | `QINGAGENT_ALLOW_SKILL_MUTATION` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许安装/删除技能;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
@@ -199,7 +199,7 @@ server {
 
 安全建议（本单仅披露现状,不改代码默认值）:`QINGAGENT_OM_SIDECAR` / `QINGAGENT_OM_COMPRESS` 缺省开启会在没有独立授权步骤时产生额外模型调用与费用,建议后续改为显式 opt-in；桌面形态缺省开启三项高危能力虽服务于本机单用户体验,仍建议按最小权限重新评估,尤其不要沿用到外部可达部署。
 
-数据与备份:默认服务端数据库是 `DATABASE_URL` 指向的 libsql 文件,未设置时为 `file:./qingagent.db`;桌面端数据库位于 Electron `userData` 目录下的 `qingagent.db`。备份时复制该数据库文件;如果同目录存在 `qingagent.db-wal` / `qingagent.db-shm`,也一并复制或先停服务再备份。沙箱凭据存放在同库的 `sandbox_credentials` 表中,值加密落库;备份数据库即同时备份这些凭据密文。
+数据与备份:默认服务端数据库是 `DATABASE_URL` 指向的 libsql 文件,未设置时固定为用户目录下的 `~/.qingagent/qingagent.db`（启动时解析为绝对 file URL，不依赖 cwd）;桌面端数据库位于 Electron `userData` 目录下的 `qingagent.db`。备份时复制该数据库文件;如果同目录存在 `qingagent.db-wal` / `qingagent.db-shm`,也一并复制或先停服务再备份。沙箱凭据存放在同库的 `sandbox_credentials` 表中,值加密落库;备份数据库即同时备份这些凭据密文。
 
 漏洞报告渠道见 [SECURITY.md](SECURITY.md)。请不要在公开 issue 中披露未修复漏洞。
 

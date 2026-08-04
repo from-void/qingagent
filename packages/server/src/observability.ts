@@ -10,6 +10,7 @@ import {
   configureObservability,
   mastra,
 } from "@qingagent/core";
+import { resolveDbUrl } from "@qingagent/db";
 import {
   OBSERVABILITY_RETENTION_INTERVAL_MS,
   enforceObservabilityTraceRetention,
@@ -30,7 +31,7 @@ import { registerObservabilityStore } from "./observabilityStore.js";
 
 const libsqlStore = new LibSQLStore({
   id: "qingagent-storage",
-  url: process.env.DATABASE_URL ?? "file:./qingagent.db",
+  url: resolveDbUrl(),
 });
 
 const duckdbPath = process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb";

@@ -5,6 +5,7 @@ import { systemBrowserExecutablePath } from "./systemBrowser.js";
 let browserPromise: Promise<Browser> | null = null;
 let browserInstance: Browser | null = null;
 let sandboxAuditLogged = false;
+let processHooksRegistered = false;
 export const ALLOW_NO_SANDBOX_ENV = "QINGAGENT_ALLOW_NO_SANDBOX";
 
 export type BrowserCapabilityState = {
@@ -271,6 +272,7 @@ export async function getBrowser(): Promise<Browser> {
   }
 
   if (!browserPromise) {
+    registerProcessHooks();
     const wasAvailable = browserCapabilityState.status === "available";
     browserPromise = launchBrowser().then((browser) => {
       browserInstance = browser;
@@ -283,6 +285,7 @@ export async function getBrowser(): Promise<Browser> {
       return browser;
     }).catch((error) => {
       browserPromise = null;
+      if (!browserInstance) unregisterProcessHooks();
       // 已通过启动探测的浏览器在断连后可能遇到一次瞬时重启失败。此时只让当前调用失败，
       // 不把进程能力永久降级，后续调用仍可在环境恢复后重新初始化。
       if (wasAvailable) {
@@ -302,8 +305,12 @@ export async function closeBrowser(): Promise<void> {
   browserInstance = null;
   browserPromise = null;
 
-  if (browser?.isConnected()) {
-    await browser.close();
+  try {
+    if (browser?.isConnected()) {
+      await browser.close();
+    }
+  } finally {
+    unregisterProcessHooks();
   }
 }
 
@@ -324,10 +331,26 @@ function closeBrowserSync(): void {
   }
 }
 
-process.once("exit", closeBrowserSync);
-process.once("SIGINT", () => {
+function handleSigint(): void {
   void closeBrowser().finally(() => process.exit(130));
-});
-process.once("SIGTERM", () => {
+}
+
+function handleSigterm(): void {
   void closeBrowser().finally(() => process.exit(143));
-});
+}
+
+function registerProcessHooks(): void {
+  if (processHooksRegistered) return;
+  processHooksRegistered = true;
+  process.once("exit", closeBrowserSync);
+  process.once("SIGINT", handleSigint);
+  process.once("SIGTERM", handleSigterm);
+}
+
+function unregisterProcessHooks(): void {
+  if (!processHooksRegistered) return;
+  processHooksRegistered = false;
+  process.removeListener("exit", closeBrowserSync);
+  process.removeListener("SIGINT", handleSigint);
+  process.removeListener("SIGTERM", handleSigterm);
+}

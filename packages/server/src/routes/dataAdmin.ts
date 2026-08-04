@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { getDocumentsClient, listSessionThreads } from "@qingagent/core";
+import { resolveDbUrl } from "@qingagent/db";
 import { isDebugEndpointEnabled } from "../lib/debugGate";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
@@ -64,7 +65,7 @@ dataAdminRoutes.get("/data/stats", async (c) => {
       client.execute("SELECT COUNT(*) n, MIN(created_at) oldest FROM llm_usage_events").catch(() => null),
       client.execute("SELECT COUNT(*) n FROM document_versions").catch(() => null),
     ]);
-    const dbUrl = process.env.DATABASE_URL ?? "file:./qingagent.db";
+    const dbUrl = resolveDbUrl();
     let dbSizeBytes: number | null = null;
     const dbPath = resolveLocalDatabasePath(dbUrl);
     if (dbPath) {

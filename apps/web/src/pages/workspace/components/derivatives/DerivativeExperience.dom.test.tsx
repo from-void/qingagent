@@ -1801,11 +1801,25 @@ describe("公众号稿生成体验", () => {
     expect(Array.from(host.querySelectorAll(".wx-meta > span")).map((node) => node.textContent)).toEqual(["青简", "刚刚", "广东"]);
     expect(Array.from(host.querySelectorAll(".wx-toolbar-actions small")).map((node) => node.textContent)).toEqual(["赞", "分享", "推荐", "写留言"]);
     expect(host.querySelectorAll(".wx-toolbar-actions svg")).toHaveLength(4);
+    const sharePaths = Array.from(
+      host.querySelectorAll(".wx-toolbar-actions > span:nth-child(2) svg path"),
+      (path) => path.getAttribute("d"),
+    );
+    expect(sharePaths).toEqual(["m14 4 6 5-6 5", "M20 9h-5.5C8.7 9 5 12.1 4 19"]);
+    expect(sharePaths.every((path) => !path?.includes("v1"))).toBe(true);
     expect(host.querySelector(".ps-cellular rect:nth-child(4)")?.getAttribute("height")).toBe("12");
     expect(host.querySelectorAll(".ps-wifi path")).toHaveLength(3);
     expect(host.querySelector(".ps-battery-fill")?.getAttribute("width")).toBe("16.2");
     expect(host.querySelector(".wx-back .preview-chevron path")?.getAttribute("d")).toBe("m15 3-9 9 9 9");
     expect(host.querySelectorAll(".wx-more-icon circle")).toHaveLength(3);
+  });
+
+  it("公众号预览正文层级使用下调后的字号与等比字距", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/components/derivatives/wechatPreview.css"), "utf8");
+    expect(css).toContain(".wx-article .rich_media_title{margin:0 0 14px;color:#191919;font-size:20px;");
+    expect(css).toContain(".wx-meta>span{display:inline-block;margin:0 10px 10px 0;font-size:14px;");
+    expect(css).toContain(".wx-article #js_content{color:rgba(0,0,0,.9);font-size:16px;line-height:1.75;letter-spacing:.032em;");
+    expect(css).toContain(".wx-article #js_content h2{font-size:18px}.wx-article #js_content h3{font-size:17px}");
   });
 
   it("小红书电脑预览为左图右文且不伪造评论", async () => {

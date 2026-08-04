@@ -1,5 +1,6 @@
 export type QaErrorCode =
   | "NO_INSTANCE"
+  | "INVALID_RESPONSE"
   | "EVENT_TARGET_NOT_REACHED"
   | "AUTH_FAILED"
   | "AGENT_BUSY"
@@ -14,6 +15,7 @@ export type QaErrorCode =
   | "SERVICE_UNAVAILABLE";
 
 export const NEXT_STEP: Record<QaErrorCode, string> = {
+  INVALID_RESPONSE: "确认青简与 qa-cli 版本匹配；仍失败请重启青简后重试一次",
   REVIEW_PENDING: "用 `qa review list -s <id>` 查看待审修改,再用 `qa review accept|reject|commit` 完成审查",
   CONFLICT: "远端资源已变化,请重新读取最新版本后再提交",
   AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
@@ -119,6 +121,7 @@ export function commandErrorHint(
 function commonErrorHint(code: QaErrorCode): string | null {
   if (
     code === "NO_INSTANCE" ||
+    code === "INVALID_RESPONSE" ||
     code === "AUTH_FAILED" ||
     code === "AGENT_BUSY" ||
     code === "REVIEW_PENDING" ||

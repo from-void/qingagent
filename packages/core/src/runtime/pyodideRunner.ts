@@ -3,6 +3,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { Worker, type WorkerOptions } from "node:worker_threads";
+import { RunPythonMemoryBudgetCoordinator } from "./pythonMemoryBudget.js";
 
 const require = createRequire(import.meta.url);
 
@@ -50,6 +51,25 @@ const MAX_STDERR_CHARS = 16_384;
 const MAX_RESULT_STRING_CHARS = 16_384;
 const WORKER_RSS_LIMIT_DELTA_BYTES = 1024 * 1024 * 1024;
 const WORKER_RSS_POLL_INTERVAL_MS = 100;
+const workerMemoryBudget = new RunPythonMemoryBudgetCoordinator(WORKER_RSS_LIMIT_DELTA_BYTES);
+let workerMemoryTimer: ReturnType<typeof setInterval> | undefined;
+
+function registerWorkerMemoryGuard(onExceeded: () => void): () => void {
+  const releaseBudget = workerMemoryBudget.register(process.memoryUsage().rss, onExceeded);
+  if (!workerMemoryTimer) {
+    workerMemoryTimer = setInterval(() => {
+      workerMemoryBudget.poll(process.memoryUsage().rss);
+    }, WORKER_RSS_POLL_INTERVAL_MS);
+    if (typeof workerMemoryTimer.unref === "function") workerMemoryTimer.unref();
+  }
+  return () => {
+    releaseBudget();
+    if (workerMemoryBudget.activeCount === 0 && workerMemoryTimer) {
+      clearInterval(workerMemoryTimer);
+      workerMemoryTimer = undefined;
+    }
+  };
+}
 
 function normalizeFlag(value: string | undefined): "enabled" | "disabled" {
   const normalized = (value ?? "").trim().toLowerCase();
@@ -521,7 +541,6 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
   const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS;
   return new Promise<RunPythonResult>((resolveResult) => {
     let settled = false;
-    const startedRss = process.memoryUsage().rss;
     const workerOptions: WorkerOptions & { type: "module" } = {
       eval: true,
       type: "module",
@@ -548,7 +567,7 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
 
     const cleanup = () => {
       clearTimeout(timer);
-      clearInterval(memoryTimer);
+      releaseMemoryBudget();
       abortSignal?.removeEventListener("abort", onAbort);
     };
     const finish = (result: RunPythonResult) => {
@@ -565,16 +584,20 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
       void worker.terminate().catch(() => {});
       resolveResult(result);
     };
+    const releaseMemoryBudget = registerWorkerMemoryGuard(() => {
+      terminateWith({
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: "global run_python memory total budget exceeded",
+      });
+    });
     const onAbort = () => terminateWith({ ok: false, stdout: "", stderr: "", error: "aborted" });
     const timer = setTimeout(() => {
       terminateWith({ ok: false, stdout: "", stderr: "", error: "timeout" });
     }, timeoutMs);
-    // Pyodide 的 WASM 堆不受 V8 worker resourceLimits 约束;主线程轮询 RSS 兜住内存炸弹。
-    const memoryTimer = setInterval(() => {
-      if (process.memoryUsage().rss > startedRss + WORKER_RSS_LIMIT_DELTA_BYTES) {
-        terminateWith({ ok: false, stdout: "", stderr: "", error: "memory limit exceeded" });
-      }
-    }, WORKER_RSS_POLL_INTERVAL_MS);
+    // Pyodide 的 WASM 堆不受 V8 worker resourceLimits 约束；模块级协调器按所有活跃
+    // run_python Worker 的进程 RSS 增量总额兜底，避免并发调用互相算进各自基线。
 
     abortSignal?.addEventListener("abort", onAbort, { once: true });
     worker.once("message", (message: WorkerMessage) => {

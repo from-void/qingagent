@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
  *   仅靠不透明度做从中心扩散的波浪，外围圆形遮罩，整轮浮现后换下一首诗；
  *   鼠标移到圆圈上才显示双行署名（标题/作者）。
  *
- * 动效为命令式（rAF + 直接改 style），不触发 React 重渲染；reasoning 经 ref 实时读取。
+ * 动效为命令式（rAF + 直接改 style），不触发 React 重渲染；reasoning 切换时重启调度。
  */
 
 interface Poem { title: string; author: string; text: string }
@@ -47,8 +47,6 @@ function buildRadialSeq(poem: Poem): string[] {
 export function QingLoading({ reasoning }: { reasoning: boolean }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const tagInnerRef = useRef<HTMLDivElement>(null);
-  const reasoningRef = useRef(reasoning);
-  reasoningRef.current = reasoning;
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -147,7 +145,7 @@ export function QingLoading({ reasoning }: { reasoning: boolean }) {
     assignChars();
     let raf = 0;
     const frame = (now: number) => {
-      if (reasoningRef.current) {
+      if (reasoning) {
         const phase = now - cycleStart;
         for (const c of cells) {
           const e = envelope(phase - (c.d * P.spread + c.rnd * P.jitter));
@@ -164,12 +162,13 @@ export function QingLoading({ reasoning }: { reasoning: boolean }) {
         // 静止态：只剩青字；辉光由 CSS 控制（含 hover 加深），清掉推理态遗留的 inline filter。
         for (const c of cells) { if (c.el.style.opacity !== "0") c.el.style.opacity = "0"; }
         if (centerEl.style.filter) centerEl.style.filter = "";
+        return;
       }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [reasoning]);
 
   return (
     <div className={"doc-empty qing-empty" + (reasoning ? "" : " is-static")} data-wf="QingLoading">

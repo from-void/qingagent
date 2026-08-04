@@ -74,6 +74,51 @@ function suggestion(id: string, docId: string) {
 }
 
 describe("documentsClient transactions", () => {
+  it("嵌套 withTransaction 会立即抛出明确错误而不是永久挂起", async () => {
+    const timeoutMs = 300;
+    const startedAt = performance.now();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const guardedTransaction = Promise.race([
+      withTransaction(async () => {
+        await withTransaction(async () => commitTransaction("inner"));
+        return commitTransaction("outer");
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`嵌套事务未在 ${timeoutMs}ms 内快速失败`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+
+    let thrown: unknown;
+    try {
+      await guardedTransaction;
+    } catch (error) {
+      thrown = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    if (thrown instanceof Error) {
+      expect(thrown.message).toBe(
+        "嵌套事务不受支持，请传递同一 client 组合原子操作",
+      );
+      expect(thrown.stack).toContain("withTransaction");
+      expect(performance.now() - startedAt).toBeLessThan(timeoutMs);
+    }
+  });
+
+  it("顺序两次 withTransaction 均成功", async () => {
+    await expect(
+      withTransaction(async () => commitTransaction("first")),
+    ).resolves.toBe("first");
+    await expect(
+      withTransaction(async () => commitTransaction("second")),
+    ).resolves.toBe("second");
+  });
+
   it("事务 rollback 不会卷走事务期间共享连接写入的 suggestions", async () => {
     await seedDocument("doc-txn-isolation");
     await useFastBusyTimeoutForTest();

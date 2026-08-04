@@ -1,9 +1,11 @@
 import { createClient, type Client } from "@libsql/client";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 let client: Client | null = null;
 let txnClient: Client | null = null;
 let pragmaClients = new WeakSet<Client>();
 let txnChain: Promise<unknown> = Promise.resolve();
+const transactionContext = new AsyncLocalStorage<boolean>();
 
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
@@ -112,7 +114,16 @@ async function runExclusiveTransaction<T>(
 export async function withTransaction<T>(
   fn: (client: Client) => Promise<TransactionOutcome<T>>,
 ): Promise<T> {
-  const run = txnChain.then(() => runExclusiveTransaction(fn));
+  if (transactionContext.getStore()) {
+    throw new Error(
+      "嵌套事务不受支持，请传递同一 client 组合原子操作",
+    );
+  }
+  const run = txnChain.then(() =>
+    runExclusiveTransaction((client) =>
+      transactionContext.run(true, () => fn(client)),
+    ),
+  );
   txnChain = run.catch(() => {});
   return run;
 }

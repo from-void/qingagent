@@ -7,6 +7,7 @@ import contract from "../__fixtures__/workspace-css-contract.json";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "../../../../../..");
+const toolFailureDangerPattern = /isFailed[^\n]*var\(--danger/;
 
 describe("workspaceCssContract", () => {
   it("Mermaid 与 Drawio 共用直角金墨编辑器 chrome，主操作栏脱离文档流沉底居中", () => {
@@ -89,7 +90,8 @@ describe("workspaceCssContract", () => {
     expect(unifiedView).not.toContain("spec.status.data.reason");
     expect(unifiedView).not.toContain("body.progress?.error");
     expect(unifiedView).not.toMatch(/className=.*is-error/);
-    expect(chatView).not.toMatch(/isFailed[^\\n]*var\(--danger/);
+    expect('isFailed ? cn("x") : var(--danger').toMatch(toolFailureDangerPattern);
+    expect(chatView).not.toMatch(toolFailureDangerPattern);
     expect(derivativeView).not.toMatch(/<p>\{translationState\.reason/);
   });
 

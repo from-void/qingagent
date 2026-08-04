@@ -8,7 +8,13 @@ import { createNativeCursorWidget } from "./nativePresentationPm";
 import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";
 import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ReviewTarget, ViewBlock } from "./protocol";
-import type { PmBlockNode, PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
+import {
+  isAllowedLinkHref,
+  type PmBlockNode,
+  type PmDoc,
+  type PmMark,
+  type PmNode,
+} from "@qingagent/pm-schema";
 import type { Root } from "react-dom/client";
 import { TOOLBAR_HIGHLIGHT_COLORS, TOOLBAR_TEXT_COLORS } from "./toolbarUnlock";
 import type { ReviewTableCellTypedCounts, ReviewTableTypedByPatch } from "./tableTypewriter";
@@ -738,8 +744,10 @@ function renderMarkedTextDom(text: string, marks?: readonly PmMark[]): Node {
         break;
       }
       case "link": {
+        const href = mark.attrs.href.trim();
+        if (!isAllowedLinkHref(href)) break;
         const el = wrapNode("a", node) as HTMLAnchorElement;
-        el.href = mark.attrs.href;
+        el.href = href;
         if (mark.attrs.title) el.title = mark.attrs.title;
         el.target = "_blank";
         el.rel = "noopener noreferrer";

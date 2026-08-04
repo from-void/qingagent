@@ -125,7 +125,7 @@ function sectionToHtml(section: ViewBlock): string {
       const tag = section.ordered ? "ol" : "ul";
       const attrs = [
         section.ordered && section.start !== undefined
-          ? ` start="${section.start}"`
+          ? ` start="${escAttr(String(section.start))}"`
           : "",
         section.ordered && section.listStyle
           ? ` data-list-style="${escAttr(section.listStyle)}" style="list-style-type: ${escAttr(section.listStyle)}"`
@@ -167,13 +167,13 @@ function sectionToHtml(section: ViewBlock): string {
 	      const imgAttrs = [
 	        `src="${escAttr(section.src)}"`,
 	        `alt="${escAttr(section.alt)}"`,
-	        `data-align="${align}"`,
+	        `data-align="${escAttr(align)}"`,
 	        section.caption ? `data-caption="${escAttr(section.caption)}"` : "",
-	        width ? `width="${width}"` : "",
-	        height ? `height="${height}"` : "",
+	        width ? `width="${escAttr(String(width))}"` : "",
+	        height ? `height="${escAttr(String(height))}"` : "",
 	        `style="${escAttr(imageHtmlStyle(width, align))}"`,
 	      ].filter(Boolean).join(" ");
-	      return `<figure data-pm-node="image" data-align="${align}" style="margin:16px 0"><img ${imgAttrs}/>${caption}</figure>`;
+	      return `<figure data-pm-node="image" data-align="${escAttr(align)}" style="margin:16px 0"><img ${imgAttrs}/>${caption}</figure>`;
 	    }
     case "fileAttachment":
       return [
@@ -182,8 +182,8 @@ function sectionToHtml(section: ViewBlock): string {
         ` data-file-id="${escAttr(section.fileId)}"`,
         ` data-filename="${escAttr(section.filename)}"`,
         ` data-mime-type="${escAttr(section.mimeType)}"`,
-        ` data-size="${section.size}">`,
-        `<a href="/api/v1/files/${encodeURIComponent(section.fileId)}" download="${escAttr(section.filename)}">${esc(section.filename)}</a>`,
+        ` data-size="${escAttr(String(section.size))}">`,
+        `<a href="${escAttr(`/api/v1/files/${encodeURIComponent(section.fileId)}`)}" download="${escAttr(section.filename)}">${esc(section.filename)}</a>`,
         "</div>",
       ].join("");
     // 保真块:把原始 pm 节点经 pmToClipboardHtml 序列化成 TipTap 可重解析的 HTML
@@ -210,7 +210,7 @@ function spanToText(span: ViewDocSpan): string {
     span.kind === "patchInsFootnote" ||
     span.kind === "patchDelFootnote"
   ) {
-    return `<sup data-pm-node="footnoteReference" data-footnote-id="${esc(span.id)}" data-footnote-note="${esc(span.note)}">※</sup>`;
+    return `<sup data-pm-node="footnoteReference" data-footnote-id="${escAttr(span.id)}" data-footnote-note="${escAttr(span.note)}">※</sup>`;
   }
   return esc(span.text);
 }

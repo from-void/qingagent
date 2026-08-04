@@ -13,6 +13,10 @@ import {
   listCredentialMeta,
   saveCredentialRecord,
 } from "@qingagent/core";
+import {
+  ConnectorMutationForbiddenError,
+  getConnectorRuntimeAccess,
+} from "../lib/connectorRuntimeGate";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
 
@@ -92,6 +96,19 @@ credentialsRoutes.delete("/credentials/:platform", async (c) => {
   }
   const key = c.req.query("key");
   if (platform === "connector:wechat-mp") {
+    try {
+      // 铁律：门禁必须先于 connector service 解析及任何断连副作用。
+      getConnectorRuntimeAccess().assertMutationAllowed();
+    } catch (error) {
+      if (error instanceof ConnectorMutationForbiddenError) {
+        return c.json({
+          error: error.code,
+          message: error.message,
+          reasonCode: error.reasonCode,
+        }, 403);
+      }
+      throw error;
+    }
     await getConnectorService().disconnect("wechat-mp");
   } else {
     await deleteCredential(platform, key || undefined);

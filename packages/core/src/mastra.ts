@@ -3,6 +3,7 @@ import type { ObservabilityEntrypoint } from "@mastra/core/observability";
 import type { MastraCompositeStore } from "@mastra/core/storage";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
+import { resolveDbUrl } from "@qingagent/db";
 import { setDocRenderLogger } from "@qingagent/doc-render";
 import { qingagentAgent } from "./agents/qingagent.js";
 import { registerObservabilityEntrypoint } from "./observability/runtime.js";
@@ -22,11 +23,9 @@ export { getObservability } from "./observability/runtime.js";
  * Create LibSQL storage from DATABASE_URL.
  */
 function createStorage(): LibSQLStore {
-  const dbUrl = process.env.DATABASE_URL ?? "file:./qingagent.db";
-
   return new LibSQLStore({
     id: "qingagent-storage",
-    url: dbUrl,
+    url: resolveDbUrl(),
   });
 }
 

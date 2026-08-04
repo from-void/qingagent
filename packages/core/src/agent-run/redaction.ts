@@ -16,7 +16,7 @@ export function getToolIoMaxBytes(): number {
 }
 
 const SENSITIVE_FIELD_SOURCE =
-  String.raw`(?:bearer[_-]?token|access[_-]?token|api[_-]?key|token|secret|password|key)`;
+  String.raw`(?:bearer[_-]?token|access[_-]?token|api[_-]?key|secret[_-]?key|token|secret|password)`;
 const SENSITIVE_FIELD_RE = new RegExp(String.raw`^${SENSITIVE_FIELD_SOURCE}$`, "i");
 const ENV_SENSITIVE_FIELD_SOURCE =
   String.raw`[A-Z][A-Z0-9_]*_(?:SECRET|TOKEN|PASSWORD|API_?KEY|APP_?KEY|ACCESS_?KEY)`;

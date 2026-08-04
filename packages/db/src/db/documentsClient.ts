@@ -1,5 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 let client: Client | null = null;
 let txnClient: Client | null = null;
@@ -10,12 +14,24 @@ const transactionContext = new AsyncLocalStorage<boolean>();
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
 let lastWarnAt = Number.NEGATIVE_INFINITY;
+const defaultDbDir = join(homedir(), ".qingagent");
+const defaultDbPath = join(defaultDbDir, "qingagent.db");
+const defaultDbUrl = pathToFileURL(defaultDbPath).href;
+let defaultDbLocationLogged = false;
 
 export const SHADOW_CIRCUIT_FAIL_THRESHOLD = 5;
 export const SHADOW_CIRCUIT_COOLDOWN_MS = 30_000;
 
 export function resolveDbUrl(): string {
-  return process.env.DATABASE_URL ?? "file:./qingagent.db";
+  const configured = process.env.DATABASE_URL;
+  if (configured !== undefined) return configured;
+
+  mkdirSync(defaultDbDir, { recursive: true, mode: 0o700 });
+  if (!defaultDbLocationLogged) {
+    defaultDbLocationLogged = true;
+    console.info(`[database] 未配置 DATABASE_URL，使用默认数据库位置: ${defaultDbPath}`);
+  }
+  return defaultDbUrl;
 }
 
 export function getDocumentsClient(): Client {

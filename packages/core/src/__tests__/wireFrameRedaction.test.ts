@@ -31,6 +31,11 @@ describe("bridge redaction", () => {
     expect(out).toContain("***");
   });
 
+  it("P3 回归:普通 key 字段不误打码，组合凭据字段仍脱敏", () => {
+    expect(redactedSerializedText({ key: "market" })).toBe('{"key":"market"}');
+    expect(redactedSerializedText({ apiKey: "sk-secret" })).toBe('{"apiKey":"***"}');
+  });
+
   it("Round11 回归:空格分隔 + 引号包裹的敏感值也脱敏(password 'x' / api_key \"x\" / --token 'x')", () => {
     for (const [input, secret] of [
       ["password 'mysecret1'", "mysecret1"],

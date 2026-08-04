@@ -9,7 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../gateway/bridgeHandler";
+import {
+  forgetSession,
+  getSession,
+  sessionManager,
+} from "../gateway/bridgeHandler";
 import {
   getExternalToken,
   startExternalInstance,
@@ -189,6 +193,27 @@ describe("external review templates", () => {
       .toBe(404);
     expect((await request(`/sessions/${sessionId}/review-supplement?type=bad`)).status)
       .toBe(400);
+  });
+
+  it("冷会话读取 review supplement 不写回常驻注册表且响应内容不变", async () => {
+    const sessionId = await createSession();
+    const saved = await request(
+      `/sessions/${sessionId}/review-supplement?type=source`,
+      { method: "PUT", body: JSON.stringify({ supplement: "只读恢复校验" }) },
+    );
+    expect(saved.status).toBe(200);
+    expect(forgetSession(sessionId)).toBe(true);
+    expect(getSession(sessionId)).toBeUndefined();
+
+    const loaded = await request(`/sessions/${sessionId}/review-supplement?type=source`);
+
+    expect(loaded.status).toBe(200);
+    await expect(loaded.json()).resolves.toEqual({
+      sessionId,
+      type: "source",
+      supplement: "只读恢复校验",
+    });
+    expect(getSession(sessionId)).toBeUndefined();
   });
 
   it("review run 复用菜单同一 query 和 sendMessage 通道并携带 reviewContext", async () => {

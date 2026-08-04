@@ -97,7 +97,7 @@ Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `R
   bundled files, and expose an argv/stdin interface. No `.py` scripts or bare
   third-party imports unless the bundling rule and guard are explicitly updated.
 - **Agent-tool 心跳（耗时工具防 idle 看门狗误杀）:** agent 主流有个空闲看门狗
-  `withIdleTimeout`（`packages/core/src/bridge/wireFrameEmitter.ts`，默认 90s）——工具
+  `withIdleTimeout`（`packages/core/src/agent-run/streamErrors.ts`，默认 90s）——工具
   `execute()` 期间若 agent 主流连续静默超过该时长就 **abort 整轮、产物丢失**（线上 session
   b9186915:generateImage 生成 SVG 60s 期间静默被掐、配图没插入）。**新增或修改 agent 工具时,
   只要 execute 内部可能长时间静默**（内部再调 LLM / 浏览器自动化 / 子进程沙箱 / 大文件解析 /

@@ -1,4 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
+import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { modelFetch } from "./modelTransport.js";
 
@@ -7,6 +8,8 @@ export const BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY = "branchSnapshotEpoch";
 export const BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY = "branchSnapshotLease";
 export const MAX_SESSION_SNAPSHOTS = 256;
 export const SESSION_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
+export const MAX_SESSION_SNAPSHOT_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_SESSION_SNAPSHOT_TOTAL_BYTES = 32 * 1024 * 1024;
 
 export type BranchMessage = Record<string, unknown> & {
   role: "system" | "user" | "assistant" | "tool";
@@ -45,6 +48,19 @@ function pruneSessionSnapshots(now = Date.now()): void {
     const oldest = sessionSnapshots.keys().next().value as string | undefined;
     if (!oldest) break;
     sessionSnapshots.delete(oldest);
+  }
+  let totalBytes = 0;
+  for (const entry of sessionSnapshots.values()) {
+    if (entry.snapshot) totalBytes += Buffer.byteLength(entry.snapshot.bodyText, "utf8");
+  }
+  while (totalBytes > MAX_SESSION_SNAPSHOT_TOTAL_BYTES) {
+    const oldest = sessionSnapshots.entries().next().value as
+      | [string, SnapshotRegistryEntry]
+      | undefined;
+    if (!oldest) break;
+    const [sessionId, entry] = oldest;
+    if (entry.snapshot) totalBytes -= Buffer.byteLength(entry.snapshot.bodyText, "utf8");
+    sessionSnapshots.delete(sessionId);
   }
 }
 
@@ -154,6 +170,15 @@ function captureSessionSnapshot(
     typeof generation !== "number" || typeof leaseId !== "string"
   ) return;
   if (typeof init?.body !== "string") return;
+  if (Buffer.byteLength(init.body, "utf8") > MAX_SESSION_SNAPSHOT_BODY_BYTES) {
+    const entry = sessionSnapshots.get(sessionId);
+    if (entry && entry.activeGeneration === generation && entry.leaseId === leaseId) {
+      entry.snapshot = null;
+      entry.touchedAt = Date.now();
+      pruneSessionSnapshots(entry.touchedAt);
+    }
+    return;
+  }
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(init.body) as Record<string, unknown>;
@@ -189,6 +214,9 @@ function captureSessionSnapshot(
     safeHeaders: Object.freeze(headersToRecord(init.headers)),
     authFingerprint: sessionSnapshotAuthFingerprint(apiKey, endpoint, body.model),
   });
+  sessionSnapshots.delete(sessionId);
+  sessionSnapshots.set(sessionId, entry);
+  pruneSessionSnapshots(entry.touchedAt);
 }
 
 export function createBranchSnapshotFetch(

@@ -398,6 +398,58 @@ describe("OM sidecar 接线形状", () => {
     );
   });
 
+  it("OpenAI observer model 每次轻构建，后续调用不会复用首次 RequestContext", async () => {
+    const {
+      beginSessionSnapshotTurn,
+      clearSessionSnapshot,
+      getSessionSnapshot,
+    } = await import("../llm/modelConfig.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
+    const state = createSession("om-model-context-owner");
+    state.threadId = state.sessionId;
+    state.messages.push({ role: "user", content: "初始化 sidecar" });
+    await runOmSidecarAfterTurn(state, new RequestContext([
+      ["sessionId", state.sessionId],
+    ] as never));
+    const modelFactory = mockState.omInstances[0]!.config.model as (
+      input: { requestContext?: RequestContext },
+    ) => any;
+    const overrides = {
+      visitorApiKey: "context-owner-key",
+      baseUrl: "https://context-owner.test/v1",
+      modelIds: { flash: "context-owner-flash" },
+      protocol: "openai",
+    };
+    const firstContext = new RequestContext([
+      ["sessionId", "om-context-first"],
+      ["streamId", "stream-first"],
+      ["modelOverrides", overrides],
+    ] as never) as RequestContext;
+    const secondContext = new RequestContext([
+      ["sessionId", "om-context-second"],
+      ["streamId", "stream-second"],
+      ["modelOverrides", overrides],
+    ] as never) as RequestContext;
+    beginSessionSnapshotTurn(firstContext);
+    beginSessionSnapshotTurn(secondContext);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("data: [DONE]\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    })));
+
+    await modelFactory({ requestContext: firstContext }).doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "first-marker" }] }],
+    });
+    await modelFactory({ requestContext: secondContext }).doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "second-marker" }] }],
+    });
+
+    expect(getSessionSnapshot(firstContext)?.bodyText).toContain("first-marker");
+    expect(getSessionSnapshot(firstContext)?.bodyText).not.toContain("second-marker");
+    expect(getSessionSnapshot(secondContext)?.bodyText).toContain("second-marker");
+    clearSessionSnapshot("om-context-first");
+    clearSessionSnapshot("om-context-second");
+  });
+
   it("getStatus.shouldObserve 时以对象参数触发 observe，不走 buffer", async () => {
     const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     mockState.setStatus({ shouldObserve: true, shouldBuffer: true });

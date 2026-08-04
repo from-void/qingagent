@@ -168,4 +168,28 @@ describe("已激活技能写稿注入管道", () => {
       message: expect.stringContaining("超过硬上限 200000"),
     }));
   });
+
+  it("刚好越界一个字符时只截 payload，XML 包装标签仍完整", async () => {
+    const requestContext = new RequestContext();
+    activateSkill(requestContext, "boundary-skill");
+    const full = await buildActivatedSkillWriteInject({
+      requestContext,
+      hintText: "",
+      loadSkill: async (name) => skillSource(name, "边界正文"),
+    });
+
+    const truncated = await buildActivatedSkillWriteInject({
+      requestContext,
+      hintText: "",
+      maxChars: full.content.length - 1,
+      loadSkill: async (name) => skillSource(name, "边界正文"),
+    });
+
+    expect(truncated.truncated).toBe(true);
+    expect(truncated.content.length).toBeLessThanOrEqual(full.content.length - 1);
+    expect(truncated.content).toMatch(
+      /^<activated_skill_write_inject name="boundary-skill">\n[\s\S]*\n<\/activated_skill_write_inject>$/,
+    );
+    expect(truncated.content.endsWith("</activated_skill_write_inject>")).toBe(true);
+  });
 });

@@ -429,4 +429,42 @@ describe("GithubConnector 授权生命周期", () => {
     expect(pendingStore.current("github", "default:repo")?.pendingId).toBe("pending-2");
     await connector.disconnect();
   });
+
+  it("新授权开始前线性清理所有过期 terminal，而非只清理被查询的 pendingId", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/login/device/code")) {
+        return new Response(JSON.stringify({
+          device_code: "device-public",
+          user_code: "PUBLIC",
+          verification_uri: "https://github.test/device",
+          expires_in: 300,
+          interval: 1,
+        }));
+      }
+      throw new Error(`unexpected ${String(input)}`);
+    }) as typeof globalThis.fetch;
+    const connector = new GithubConnector({
+      clientId: "cid",
+      oauthBaseUrl: "https://github.test",
+      fetch,
+      sleep: (_ms, signal) => new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }),
+    });
+    const terminals = (connector as unknown as {
+      terminalByPending: Map<string, { status: object; expiresAt: number }>;
+    }).terminalByPending;
+    terminals.set("expired-unrelated", { status: {}, expiresAt: Date.now() - 1 });
+
+    const started = await connector.start({ scope: "public_repo" });
+
+    expect(terminals.has("expired-unrelated")).toBe(false);
+    terminals.set("expired-before-terminal-write", { status: {}, expiresAt: Date.now() - 1 });
+    (connector as unknown as {
+      setTerminal: (pendingId: string, status: object) => void;
+    }).setTerminal("fresh-terminal", {});
+    expect(terminals.has("expired-before-terminal-write")).toBe(false);
+    expect(terminals.has("fresh-terminal")).toBe(true);
+    await connector.cancel(started.pendingId);
+  });
 });

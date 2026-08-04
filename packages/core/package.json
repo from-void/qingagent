@@ -54,6 +54,7 @@
     "ai-v5": "npm:ai@^5.0.210",
     "cheerio": "^1.2.0",
     "diff-match-patch": "^1.0.5",
+    "dotenv": "^16.4.7",
     "jpeg-js": "0.4.4",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",

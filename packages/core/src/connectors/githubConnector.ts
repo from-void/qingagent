@@ -157,6 +157,7 @@ export class GithubConnector implements ConnectorAdapter {
   }
 
   private async startInternal(scope: "public_repo" | "repo"): Promise<GithubStartResult> {
+    this.sweepExpiredTerminals();
     if (this.currentPendingId) {
       const pendingId = this.currentPendingId;
       const currentScope = this.scopeByPending.get(pendingId);
@@ -219,17 +220,17 @@ export class GithubConnector implements ConnectorAdapter {
       });
       this.lastReasonCode = null;
       this.lastCheckedAt = checkedAt;
-      this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });
+      this.setTerminal(pendingId, createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }));
       this.pending.complete(pendingId, "github", this.pendingScope(targetScopes[0] as "public_repo" | "repo"));
     } catch (error) {
       if (!signal.aborted) {
         this.lastReasonCode = error instanceof GithubConnectorError ? error.code : "GITHUB_AUTH_FAILED";
-        this.terminalByPending.set(pendingId, {
-          status: oldBundle
+        this.setTerminal(
+          pendingId,
+          oldBundle
             ? createConnectorStatus("connected", { reasonCode: this.lastReasonCode, account: oldBundle.payload.account, scopes: oldBundle.payload.grantedScopes, statusFreshness: "fresh", canProbe: true })
             : createConnectorStatus("disconnected", { reasonCode: this.lastReasonCode, statusFreshness: "fresh" }),
-          expiresAt: Date.now() + 60_000,
-        });
+        );
         try { this.pending.complete(pendingId, "github", this.pendingScope(targetScopes[0] as "public_repo" | "repo")); } catch {}
       }
     } finally {
@@ -315,6 +316,16 @@ export class GithubConnector implements ConnectorAdapter {
     return verification;
   }
   private pendingScope(scope: "public_repo" | "repo" | undefined = "public_repo") { return `default:${scope ?? "public_repo"}`; }
+  private sweepExpiredTerminals(now = Date.now()): void {
+    for (const [pendingId, terminal] of this.terminalByPending) {
+      if (terminal.expiresAt <= now) this.terminalByPending.delete(pendingId);
+    }
+  }
+  private setTerminal(pendingId: string, status: ConnectorStatusDto): void {
+    const now = Date.now();
+    this.sweepExpiredTerminals(now);
+    this.terminalByPending.set(pendingId, { status, expiresAt: now + 60_000 });
+  }
   private publicStart(device: GithubDeviceCode, providerExpiresAt: number, pendingId: string, reused: boolean): GithubStartResult {
     return { user_code: device.user_code, verification_uri: device.verification_uri, expiresAt: new Date(providerExpiresAt).toISOString(), pendingId, reused };
   }

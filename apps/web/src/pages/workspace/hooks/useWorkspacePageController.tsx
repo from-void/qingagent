@@ -2763,8 +2763,10 @@ export function useWorkspacePageController() {
         return;
       }
       setDerivativeCreating(true);
+      const descriptor = DTYPE_REGISTRY[derivativeCreateDtype];
+      const createdItems: DerivativeItem[] = [];
+      let failedTargetLang: string | undefined;
       try {
-        const descriptor = DTYPE_REGISTRY[derivativeCreateDtype];
         const targetLanguages =
           descriptor.dtype === "translate"
             ? (params.targetLanguages ?? [])
@@ -2772,8 +2774,8 @@ export function useWorkspacePageController() {
         if (descriptor.dtype === "translate" && targetLanguages.length === 0) {
           throw new Error("请至少选择一种目标语言");
         }
-        const createdItems: DerivativeItem[] = [];
         for (const targetLang of targetLanguages) {
+          failedTargetLang = targetLang;
           createdItems.push(
             await stream.createDerivative(
               sessionId,
@@ -2785,6 +2787,7 @@ export function useWorkspacePageController() {
               targetLang,
             ),
           );
+          failedTargetLang = undefined;
         }
         const item = createdItems[0]!;
         await refreshDerivatives();
@@ -2831,6 +2834,28 @@ export function useWorkspacePageController() {
         }
       } catch (error) {
         console.error("[workspace] create derivative failed", error);
+        if (
+          descriptor.dtype === "translate" &&
+          createdItems.length > 0 &&
+          failedTargetLang
+        ) {
+          try {
+            await refreshDerivatives();
+          } catch (refreshError) {
+            console.error(
+              "[workspace] refresh derivatives after partial create failed",
+              refreshError,
+            );
+          }
+          setDerivativeCreateOpen(false);
+          const createdLanguages = createdItems
+            .map((created) => created.targetLang ?? "目标语言")
+            .join("、");
+          showToast(
+            `已创建${createdLanguages}；${failedTargetLang}创建失败，可重试未完成语种`,
+          );
+          return;
+        }
         showToast(
           `创建${DTYPE_REGISTRY[derivativeCreateDtype].label}失败 · 请重试`,
         );

@@ -255,6 +255,9 @@ export function InkBubble({
     const contentEl = contentRef.current;
     if (!wrap || !container || !contentEl) return;
     wrap.classList.remove("ink-bubble--static-fallback");
+    wrap.classList.toggle("ink-bubble--animate", animate);
+    wrap.classList.toggle("ink-bubble--prepaint", !animate);
+    contentEl.classList.remove("ink-bubble__content--visible");
 
     // Canvas dimensions = content + overflow padding on each side
     const contentW = wrap.offsetWidth;
@@ -278,9 +281,10 @@ export function InkBubble({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = 0;
       }
-      contentEl.classList.add("ink-bubble__content--visible");
+      contentEl.classList.toggle("ink-bubble__content--visible", animate);
       wrap.classList.remove("ink-bubble--animate");
       wrap.classList.add("ink-bubble--static-fallback");
+      wrap.classList.remove("ink-bubble--prepaint");
       container.replaceChildren();
     };
 
@@ -401,6 +405,7 @@ export function InkBubble({
         };
       }
       settleToSnapshot();
+      wrap.classList.remove("ink-bubble--prepaint");
       return () => {
         disposeRenderer();
         snapshotCanvas?.remove();
@@ -452,12 +457,12 @@ export function InkBubble({
   return (
     <div
       ref={wrapRef}
-      className={`ink-bubble ${animate ? "ink-bubble--animate" : ""} ${className}`.trim()}
+      className={`ink-bubble ${animate ? "ink-bubble--animate" : "ink-bubble--prepaint"} ${className}`.trim()}
     >
       <div ref={canvasContainerRef} className="ink-bubble__canvas" />
       <div
         ref={contentRef}
-        className={`ink-bubble__content${!animate ? " ink-bubble__content--visible" : ""}`}
+        className="ink-bubble__content"
       >
         {children}
       </div>

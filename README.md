@@ -98,7 +98,7 @@ pnpm dev          # 前端 http://localhost:6173(web 代理 /api → :8080)
 | 变量 | 作用 |
 |---|---|
 | `QINGAGENT_BROWSER_*` | CDP_URL / HEADFUL / ALLOW_DOMAINS / STORAGE_STATE / PROFILE_DIR(`agentBrowser.ts`) |
-| `QINGAGENT_PREFIX_CACHE_GUARD` | 前缀缓存守卫 off/warn/strict(默认 warn,CI strict) |
+| `QINGAGENT_PREFIX_CACHE_GUARD` | 前缀缓存守卫 off/warn/strict(默认 off,显式诊断可设 warn,CI strict) |
 | `QINGAGENT_AGENT_MAX_STEPS` / `QINGAGENT_AGENT_IDLE_TIMEOUT_MS` | agent 单轮步数上限 / 空闲超时 |
 | `QINGAGENT_USER_VERSION_WINDOW_MS` | 用户编辑版本折叠窗口(默认 60000,0 关闭) |
 | `QINGAGENT_SKILLS_DIR` / `QINGAGENT_USER_SKILLS_DIR` / `QINGAGENT_LOG_DIR` | 路径覆盖 |

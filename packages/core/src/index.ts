@@ -10,6 +10,10 @@ export type {
   SessionState,
 } from "./bridge/index.js";
 export {
+  getSessionDocumentStatsSince,
+  getSessionThreadTitles,
+} from "./session/usageThreadMetadata.js";
+export {
   MODEL_CALL_SITES,
   isModelCallSite,
   resolveAgentModelCallSite,

@@ -188,7 +188,7 @@ export function __getPrefixCacheGuardModeForTest(): PrefixCacheGuardMode {
 function getGuardMode(): PrefixCacheGuardMode {
   const raw = (
     process.env.QINGAGENT_PREFIX_CACHE_GUARD ??
-    (process.env.CI === "true" ? "strict" : "warn")
+    (process.env.CI === "true" ? "strict" : "off")
   ).toLowerCase();
   if (raw === "off" || raw === "0" || raw === "false") return "off";
   if (raw === "strict") return "strict";

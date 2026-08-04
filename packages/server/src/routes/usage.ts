@@ -4,12 +4,11 @@ import {
   aggregateUsageBySession,
   aggregateUsageTotal,
   estimateCostCny,
+  getSessionDocumentStatsSince,
+  getSessionThreadTitles,
   hasModelPricing,
-  listSessionThreads,
 } from "@qingagent/core";
-import type { QingagentThreadMetadata } from "@qingagent/core";
 import type { UsageSummaryResponse } from "@qingagent/contract-ts";
-import { countDocVisibleChars, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
 export const usageRoutes = new Hono();
 
@@ -38,13 +37,11 @@ usageRoutes.get("/usage/summary", async (c) => {
   // 会话视图沿用 bucket→标题；按天视图在 documents.title 为空时兼容旧线程 metadata 标题。
   let titleMap: Map<string, string> | null = null;
   if (view === "session" || view === "day") {
-    const { threads } = await listSessionThreads({ page: 0, perPage: false });
-    titleMap = new Map(
-      threads.map((t) => {
-        const meta = (t.metadata ?? {}) as unknown as QingagentThreadMetadata;
-        return [t.id, meta.title || t.title || ""];
-      }),
-    );
+    const titleSessionIds = rows.flatMap((row) => {
+      if (view === "day" && row.documentTitle) return [];
+      return [row.sessionId ?? row.bucket];
+    });
+    titleMap = await getSessionThreadTitles(titleSessionIds);
   }
 
   const response = {
@@ -78,24 +75,6 @@ usageRoutes.get("/usage/summary", async (c) => {
 usageRoutes.get("/usage/docstats", async (c) => {
   const days = Math.max(1, Math.min(90, Math.round(Number(c.req.query("days") ?? 7)) || 7));
   const cutoff = Date.now() - days * 86_400_000;
-  const { threads } = await listSessionThreads({ page: 0, perPage: false });
-  let docs = 0;
-  let words = 0;
-  for (const t of threads) {
-    if (t.createdAt.getTime() < cutoff) continue;
-    docs += 1;
-    const doc = resolveThreadDoc((t.metadata ?? {}) as unknown as QingagentThreadMetadata);
-    if (doc) words += countDocVisibleChars(doc);
-  }
+  const { docs, words } = await getSessionDocumentStatsSince(cutoff);
   return c.json({ days, docs, words });
 });
-
-function resolveThreadDoc(meta: QingagentThreadMetadata): PmDoc | null {
-  if (meta.doc) return meta.doc;
-  if (!meta.legacySections || meta.legacySections.length === 0) return null;
-  try {
-    return legacySectionsToPm(meta.legacySections as never);
-  } catch {
-    return null;
-  }
-}

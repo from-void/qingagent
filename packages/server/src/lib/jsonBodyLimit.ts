@@ -16,7 +16,7 @@ export function resolveJsonBodyLimit(
 }
 
 /**
- * API 通用请求体护栏。upload 自带更大的 base64 上传限额，必须继续由其路由级
+ * API 通用请求体护栏。upload 自带更大的二进制上传限额，必须继续由其路由级
  * bodyLimit 处理；其余 /api/* 请求在鉴权和路由解析前统一限流。
  */
 export function createJsonBodyLimitMiddleware(

@@ -59,14 +59,11 @@ describe("D6-P1 parseBody 边界", () => {
     expect(await ok.json()).toMatchObject({ ok: true });
   });
 
-  it("upload:缺 filename/content → 400", async () => {
+  it("upload:缺文件名请求头或空内容 → 400", async () => {
     expect((await post("/api/v1/upload", "{bad")).status).toBe(400);
     const empty = await post("/api/v1/upload", '{"filename":"","content":""}');
     expect(empty.status).toBe(400);
-    expect(await empty.json()).toMatchObject({
-      error: expect.stringContaining("filename"),
-      issues: expect.arrayContaining([expect.objectContaining({ path: "filename" })]),
-    });
+    expect(await empty.json()).toEqual({ error: "filename required" });
     expect((await post("/api/v1/upload", "{}")).status).toBe(400);
   });
 

@@ -1,7 +1,11 @@
 import type {
   MaterialUploadErrorCode,
   UploadPurpose,
-  UploadRequest,
+} from "@qingagent/contract-ts";
+import {
+  removeUnpairedSurrogates,
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_PURPOSE_HEADER,
 } from "@qingagent/contract-ts";
 import { materialPreflightErrorMessage } from "./materialFilePreflight";
 
@@ -65,58 +69,25 @@ export function uploadFailureMessage(error: unknown, fallback: string): string {
 export async function uploadAssetFile(file: File, options: UploadAssetOptions = {}): Promise<UploadedAsset> {
   const sizeError = uploadFileSizeError(file);
   if (sizeError) throw sizeError;
-  const content = await fileToBase64(file);
-  const body: UploadRequest = {
-    filename: file.name,
-    mimeType: file.type || "application/octet-stream",
-    content,
-    ...(options.purpose ? { purpose: options.purpose } : {}),
-  };
-  return uploadJson(
-    file,
-    JSON.stringify(body),
-    options,
-  );
+  return uploadBinary(file, options);
 }
 
 export function uploadedAssetUrl(asset: Pick<UploadedAsset, "fileId" | "filename">): string {
   return `/api/v1/files/${encodeURIComponent(asset.fileId)}/${encodeURIComponent(asset.filename)}`;
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = typeof file.arrayBuffer === "function"
-    ? await file.arrayBuffer()
-    : await readFileAsArrayBuffer(file);
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 8192;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`));
-    reader.onload = () => {
-      if (reader.result instanceof ArrayBuffer) {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error(`Failed to read ${file.name}`));
-    };
-    reader.readAsArrayBuffer(file);
-  });
-}
-
-function uploadJson(file: File, body: string, options: UploadAssetOptions): Promise<UploadedAsset> {
+function uploadBinary(file: File, options: UploadAssetOptions): Promise<UploadedAsset> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/v1/upload");
-    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.setRequestHeader(
+      UPLOAD_FILENAME_HEADER,
+      encodeURIComponent(removeUnpairedSurrogates(file.name)),
+    );
+    if (options.purpose) {
+      xhr.setRequestHeader(UPLOAD_PURPOSE_HEADER, options.purpose);
+    }
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) {
         options.onProgress?.(null);
@@ -170,7 +141,8 @@ function uploadJson(file: File, body: string, options: UploadAssetOptions): Prom
         ));
       }
     };
-    xhr.send(body);
+    // 直接交给浏览器网络栈发送 Blob，避免 arrayBuffer/base64/JSON 的整文件副本。
+    xhr.send(file);
   });
 }
 

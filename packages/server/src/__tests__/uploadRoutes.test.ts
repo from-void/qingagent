@@ -4,6 +4,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
+import {
+  removeUnpairedSurrogates,
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_PURPOSE_HEADER,
+} from "@qingagent/contract-ts";
 
 const originalCwd = process.cwd();
 let tmpDir: string;
@@ -36,15 +41,15 @@ async function postUpload(
     purpose?: "material";
   },
 ) {
+  const content = Buffer.from(input.content);
   const res = await app.request("/api/v1/upload", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      filename: input.filename,
-      mimeType: input.mimeType,
-      content: Buffer.from(input.content).toString("base64"),
-      ...(input.purpose ? { purpose: input.purpose } : {}),
-    }),
+    headers: {
+      "Content-Type": input.mimeType ?? "application/octet-stream",
+      [UPLOAD_FILENAME_HEADER]: encodeURIComponent(removeUnpairedSurrogates(input.filename)),
+      ...(input.purpose ? { [UPLOAD_PURPOSE_HEADER]: input.purpose } : {}),
+    },
+    body: content,
   });
   return {
     res,
@@ -275,11 +280,11 @@ describe("uploadRoutes 下载响应头", () => {
     );
   });
 
-  it("MIME 与文件名中的控制字符不能注入下载响应头", async () => {
+  it("非法 MIME 参数与文件名控制字符不能污染下载响应头", async () => {
     const { app } = await createUploadApp();
     const uploaded = await postUpload(app, {
       filename: "报告\r\nX-Test: yes.txt",
-      mimeType: "image/png\r\nX-Evil: yes",
+      mimeType: "image/png; boundary=evil",
       content: "safe text",
     });
 
@@ -289,7 +294,6 @@ describe("uploadRoutes 下载响应头", () => {
     expect(res.headers.get("content-type")).toContain("text/plain");
     expect(contentDisposition).not.toMatch(/[\r\n]/);
     expect(res.headers.has("x-test")).toBe(false);
-    expect(res.headers.has("x-evil")).toBe(false);
   });
 
   it("两个会话共享同一 fileId 时，首个会话删除后另一个仍可下载，最后删除才移除文件", async () => {
@@ -394,7 +398,7 @@ describe("uploadRoutes 下载响应头", () => {
   });
 });
 
-describe("uploadRoutes 上传上限与 base64 校验", () => {
+describe("uploadRoutes 二进制上传上限与元数据校验", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-limit-"));
     process.chdir(tmpDir);
@@ -412,10 +416,11 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
     const res = await app.request("/api/v1/upload", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/octet-stream",
         "Content-Length": String(80 * 1024),
+        [UPLOAD_FILENAME_HEADER]: "big.bin",
       },
-      body: "{}",
+      body: Buffer.alloc(1),
     });
 
     expect(res.status).toBe(413);
@@ -427,8 +432,11 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
     const { app, uploadDir } = await createUploadApp();
     const request = new Request("http://localhost/api/v1/upload", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: "big.bin", content: "A".repeat(70 * 1024) }),
+      headers: {
+        "Content-Type": "application/octet-stream",
+        [UPLOAD_FILENAME_HEADER]: "big.bin",
+      },
+      body: Buffer.alloc(9),
     });
     expect(request.headers.get("content-length")).toBeNull();
 
@@ -439,19 +447,19 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
     expect(await uploadEntries(uploadDir)).toEqual([]);
   });
 
-  it("请求体未超限但解码后文件超限时 413，且不落盘、不写索引", async () => {
+  it("空文件拒绝为 400，且不落盘、不写索引", async () => {
     const { app, uploadDir } = await createUploadApp();
     const res = await app.request("/api/v1/upload", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: "nine.bin",
-        content: Buffer.alloc(9, 1).toString("base64"),
-      }),
+      headers: {
+        "Content-Type": "application/octet-stream",
+        [UPLOAD_FILENAME_HEADER]: "empty.bin",
+      },
+      body: new Uint8Array(),
     });
 
-    expect(res.status).toBe(413);
-    await expect(res.json()).resolves.toEqual({ error: "file_too_large", maxBytes: 8 });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "empty file" });
     expect(await uploadEntries(uploadDir)).toEqual([]);
   });
 
@@ -466,11 +474,11 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
 
     const overLimit = await app.request("/api/v1/upload", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: "nine.bin",
-        content: Buffer.alloc(9, 1).toString("base64"),
-      }),
+      headers: {
+        "Content-Type": "application/octet-stream",
+        [UPLOAD_FILENAME_HEADER]: "nine.bin",
+      },
+      body: Buffer.alloc(9, 1),
     });
     expect(overLimit.status).toBe(413);
     await expect(overLimit.json()).resolves.toEqual({
@@ -480,16 +488,22 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
     expect(await uploadDirs(uploadDir)).toEqual([atLimit.body.fileId]);
   });
 
-  it.each(["%%%...==", "AAA", "AB=="])("非法或非规范 base64 拒绝为 400：%s", async (content) => {
+  it.each([
+    ["缺文件名", {}],
+    ["坏文件名编码", { [UPLOAD_FILENAME_HEADER]: "%E0%A4%A" }],
+    ["非法用途", { [UPLOAD_FILENAME_HEADER]: "bad.bin", [UPLOAD_PURPOSE_HEADER]: "other" }],
+  ])("%s 拒绝为 400", async (_name, metadataHeaders) => {
     const { app, uploadDir } = await createUploadApp();
     const res = await app.request("/api/v1/upload", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: "bad.bin", content }),
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...metadataHeaders,
+      },
+      body: Buffer.from("x"),
     });
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({ error: "invalid_base64" });
     expect(await uploadEntries(uploadDir)).toEqual([]);
   });
 });

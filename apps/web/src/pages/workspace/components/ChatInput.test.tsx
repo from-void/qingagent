@@ -486,11 +486,16 @@ describe("ChatInput", () => {
     );
     let resolveBytes!: (value: ArrayBuffer) => void;
     const file = new File(["pending"], "pending.md", { type: "text/markdown" });
-    Object.defineProperty(file, "arrayBuffer", {
-      configurable: true,
-      value: () => new Promise<ArrayBuffer>((resolve) => {
-        resolveBytes = resolve;
-      }),
+    const originalSlice = file.slice.bind(file);
+    vi.spyOn(file, "slice").mockImplementation((start, end, contentType) => {
+      const sample = originalSlice(start, end, contentType);
+      Object.defineProperty(sample, "arrayBuffer", {
+        configurable: true,
+        value: () => new Promise<ArrayBuffer>((resolve) => {
+          resolveBytes = resolve;
+        }),
+      });
+      return sample;
     });
     const input = getFileInput();
     Object.defineProperty(input, "files", {

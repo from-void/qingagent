@@ -55,11 +55,11 @@ describe("API JSON 请求体上限", () => {
     });
   });
 
-  it("upload 继续使用路由自身的更大上限", async () => {
+  it("二进制 upload 继续使用路由自身的更大上限", async () => {
     const response = await app.request("/api/v1/upload", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/octet-stream",
         "Content-Length": String(DEFAULT_JSON_BODY_LIMIT_BYTES + 1),
       },
       body: "{}",

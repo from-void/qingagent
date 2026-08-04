@@ -8,9 +8,6 @@ export type MaterialUploadErrorCode = (typeof MATERIAL_UPLOAD_ERROR_CODES)[numbe
 
 export type UploadPurpose = "material";
 
-export interface UploadRequest {
-  filename: string;
-  mimeType?: string;
-  content: string;
-  purpose?: UploadPurpose;
-}
+/** 原始二进制上传请求头；文件名使用 encodeURIComponent 编码。 */
+export const UPLOAD_FILENAME_HEADER = "X-QingAgent-Filename";
+export const UPLOAD_PURPOSE_HEADER = "X-QingAgent-Upload-Purpose";

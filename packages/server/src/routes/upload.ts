@@ -5,8 +5,12 @@ import { stream } from "hono/streaming";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import { z } from "zod";
-import { removeUnpairedSurrogates, type UploadPurpose } from "@qingagent/contract-ts";
+import {
+  removeUnpairedSurrogates,
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_PURPOSE_HEADER,
+  type UploadPurpose,
+} from "@qingagent/contract-ts";
 import { preflightMaterialFileBuffer } from "@qingagent/core/material-preflight";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
@@ -17,25 +21,23 @@ import {
   isWithinUploadDir,
 } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { resolveUploadMaxBytes, uploadBodyMaxBytes } from "../lib/uploadLimits";
-import { parseBody } from "../lib/validation";
-import { decodeBase64 } from "../lib/base64";
+import { resolveUploadMaxBytes } from "../lib/uploadLimits";
 
 export const uploadRoutes = new Hono();
 const uploadMaxBytes = resolveUploadMaxBytes();
-const uploadRequestMaxBytes = uploadBodyMaxBytes(uploadMaxBytes);
-
-/** 上传请求体:filename/content 必填非空(base64),mimeType 可选;路径安全在下方业务校验。 */
-const uploadBodySchema = z.object({
-  filename: z.string().min(1),
-  content: z.string().min(1),
-  mimeType: z.string().optional(),
-  purpose: z.enum(["material"] satisfies UploadPurpose[]).optional(),
-});
 
 /** Validate that a filename does not contain path separators or traversal sequences. */
 function isSafeFilename(filename: string): boolean {
   return !filename.includes("/") && !filename.includes("\\") && !filename.includes("..");
+}
+
+function decodeUploadFilename(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw) || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Sanitize a filename for use in Content-Disposition header. */
@@ -110,36 +112,45 @@ function shouldServeInline(contentType: string): boolean {
 }
 
 /**
- * POST /api/v1/upload — receive a file as JSON { filename, mimeType, content (base64) }
- * and persist it to disk under ./uploads/<fileId>/<filename>.
+ * POST /api/v1/upload — receive raw file bytes, with encoded filename/purpose in headers,
+ * and persist them to disk under ./uploads/<fileId>/<filename>.
  * Returns { fileId, filename, mimeType, size }.
  */
 uploadRoutes.post(
   "/upload",
   bodyLimit({
-    maxSize: uploadRequestMaxBytes,
+    maxSize: uploadMaxBytes,
     onError: (c) => c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413),
   }),
   async (c) => {
     const rejected = requireTrustedOrigin(c);
     if (rejected) return rejected;
 
-    const parsed = await parseBody(c, uploadBodySchema);
-    if (!parsed.ok) return parsed.response;
-    const { filename, mimeType, content, purpose } = parsed.data;
+    const filename = decodeUploadFilename(c.req.header(UPLOAD_FILENAME_HEADER));
+    if (!filename) {
+      return c.json({ error: "filename required" }, 400);
+    }
 
     if (!isSafeFilename(filename)) {
       return c.json({ error: "filename must not contain path separators or '..'" }, 400);
     }
 
-    const buffer = decodeBase64(content);
-    if (!buffer) {
-      return c.json({ error: "invalid_base64" }, 400);
+    const purposeHeader = c.req.header(UPLOAD_PURPOSE_HEADER);
+    if (purposeHeader && purposeHeader !== "material") {
+      return c.json({ error: "invalid purpose" }, 400);
+    }
+    const purpose: UploadPurpose | undefined = purposeHeader === "material"
+      ? "material"
+      : undefined;
+    const buffer = Buffer.from(await c.req.arrayBuffer());
+    if (buffer.byteLength === 0) {
+      return c.json({ error: "empty file" }, 400);
     }
     if (buffer.byteLength > uploadMaxBytes) {
       return c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413);
     }
-    const normalizedMimeType = normalizeMimeType(mimeType) ?? "application/octet-stream";
+    const normalizedMimeType = normalizeMimeType(c.req.header("content-type"))
+      ?? "application/octet-stream";
     if (purpose === "material") {
       const preflight = await preflightMaterialFileBuffer({
         buffer,

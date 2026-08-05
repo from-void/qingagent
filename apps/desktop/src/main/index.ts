@@ -86,6 +86,7 @@ import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 import { RendererDialogBroker } from "./rendererDialogBroker.js";
 import { getLiveWebContents } from "./windowLifecycle.js";
 import {
+  showNativeBrowserCredentialCleanupFailure,
   showNativeContentRecoveryFallback,
   showNativeQuitFallback,
   showNativeRendererRecoveryStopped,
@@ -104,6 +105,10 @@ import {
 } from "./exportDownloadCoordinator.js";
 import { DIAGNOSTICS_EXPORT_CHANNEL } from "../diagnosticsExportContract.js";
 import { exportDiagnosticsToDownloads } from "./diagnosticsExport.js";
+import {
+  legacyAgentBrowserDirectories,
+  migrateLegacyAgentBrowserData,
+} from "./browserCredentialMigration.js";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -277,6 +282,48 @@ protocol.registerSchemesAsPrivileged([
 // 加载——@qingagent/core 在模块求值期就读这些环境变量。
 loadEnvFile({ path: path.join(userDataDir, ".env") });
 process.env.QINGAGENT_LOG_DIR = desktopLogDir;
+
+// agent browser 的 storageState(JSON cookie/localStorage)与完整 profile 都是敏感凭据。
+// desktop 只负责把 Electron userData 通过现有环境变量注入 doc-render，不让后者依赖 electron。
+// 同时迁移旧版曾按 cwd 写到安装目录/C:\Windows 的存量；目标已有时以目标为准并清理旧副本。
+if (!process.env.QINGAGENT_BROWSER_STORAGE_STATE?.trim()) {
+  process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(
+    userDataDir,
+    ".qingagent-browser-state.json",
+  );
+}
+if (!process.env.QINGAGENT_BROWSER_PROFILE_DIR?.trim()) {
+  process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(
+    userDataDir,
+    ".qingagent-browser-profile",
+  );
+}
+const browserCredentialMigration = hasSingleInstanceLock
+  ? migrateLegacyAgentBrowserData({
+      legacyDirectories: legacyAgentBrowserDirectories(),
+      storageStatePath: process.env.QINGAGENT_BROWSER_STORAGE_STATE!,
+      profileDir: process.env.QINGAGENT_BROWSER_PROFILE_DIR!,
+    })
+  : { migrated: [], cleaned: [], discarded: [], failures: [] };
+if (
+  browserCredentialMigration.migrated.length > 0 ||
+  browserCredentialMigration.cleaned.length > 0
+) {
+  console.info("[agentBrowser] 旧浏览器登录数据已迁移/清理", {
+    migrated: browserCredentialMigration.migrated,
+    cleaned: browserCredentialMigration.cleaned,
+  });
+}
+if (browserCredentialMigration.discarded.length > 0) {
+  console.warn("[agentBrowser] 旧浏览器登录数据无法迁移，已安全清理", {
+    discarded: browserCredentialMigration.discarded,
+  });
+}
+if (browserCredentialMigration.failures.length > 0) {
+  console.error("[agentBrowser] 旧浏览器登录数据无法清理", {
+    failures: browserCredentialMigration.failures,
+  });
+}
 
 // Set DATABASE_URL before importing server so that @qingagent/core's LibSQL
 // storage resolves to the user's app data directory instead of cwd.
@@ -1550,6 +1597,14 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  if (browserCredentialMigration.failures.length > 0) {
+    const paths = browserCredentialMigration.failures.map(
+      (failure) => failure.path,
+    );
+    await showNativeBrowserCredentialCleanupFailure(paths);
+    app.exit(1);
+    return;
+  }
   cleanupClientConfigTempFiles();
   const { cleanupOrphanedPdfExportDirs } = await import("./pdfRenderer.js");
   cleanupOrphanedPdfExportDirs();

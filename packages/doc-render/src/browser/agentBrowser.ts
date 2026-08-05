@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chromium } from "playwright";
 import type { BrowserContext } from "playwright";
@@ -16,6 +16,10 @@ import { systemBrowserExecutablePath } from "./systemBrowser.js";
 import { browserUnavailableToolResult } from "./browserErrors.js";
 import { isTruthyFlag } from "./envFlag.js";
 import { installBrowserRequestPolicy } from "./browserSecurity.js";
+import {
+  resolveAgentBrowserProfileDir,
+  resolveAgentBrowserStorageStatePath,
+} from "./agentBrowserPaths.js";
 
 /**
  * 0603 — 浏览器自主操作(browser_*)能力接入点。
@@ -32,7 +36,8 @@ import { installBrowserRequestPolicy } from "./browserSecurity.js";
  * 默认关闭(避免平白给主 agent 增加十几个工具的上下文)。通过环境变量启用:
  *   - QINGAGENT_AGENT_BROWSER=1          启用(自启 Chromium,复用仓库已装 Playwright)
  *   - QINGAGENT_BROWSER_CDP_URL=ws://…   客户端形态:连已运行的持久登录 Chrome(强制 scope:'shared')
- *   - QINGAGENT_BROWSER_STORAGE_STATE=…  登录态 JSON 路径(留空则默认 <cwd>/.qingagent-browser-state.json)
+ *   - QINGAGENT_BROWSER_STORAGE_STATE=…  登录态 JSON 路径(留空则默认 ~/.qingagent 下的用户级路径)
+ *   - QINGAGENT_BROWSER_PROFILE_DIR=…    完整 profile 路径(留空同样默认 ~/.qingagent 下)
  *   - QINGAGENT_BROWSER_HEADFUL=1        有头模式(首次扫码/人工登录时用,登录后可改回无头复用 storageState)
  *   - QINGAGENT_BROWSER_ALLOW_DOMAINS=…  逗号分隔的入口/首站域名白名单(留空=不额外限制)。
  *                                         这不是全程导航隔离；后续点击/重定向出名单后，
@@ -63,10 +68,9 @@ export function isAgentBrowserEnabled(): boolean {
 
 /** 登录态 JSON 路径:显式配置优先;否则启用时给默认路径,让"在 agent 浏览器里存登录态"开箱即用。 */
 function storageStatePath(): string | undefined {
-  const explicit = process.env.QINGAGENT_BROWSER_STORAGE_STATE?.trim();
-  if (explicit) return explicit;
-  if (!isAgentBrowserEnabled()) return undefined;
-  return join(process.cwd(), ".qingagent-browser-state.json");
+  return resolveAgentBrowserStorageStatePath({
+    enabled: isAgentBrowserEnabled(),
+  });
 }
 
 /** 入口/首站域名白名单；只约束 browser_goto，不把后续点击/重定向锁在名单内。 */
@@ -238,9 +242,8 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
     stopProxiedChromium();
   }
   const proxy = proxyFromEnv();
-  const profileDir =
-    process.env.QINGAGENT_BROWSER_PROFILE_DIR?.trim() ||
-    join(process.cwd(), ".qingagent-browser-profile");
+  const profileDir = resolveAgentBrowserProfileDir();
+  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
   const activePortPath = join(profileDir, "DevToolsActivePort");
   // 不删除已有 marker（它可能属于仍在运行的外部浏览器）。只接受 spawn 之后发生变化的
   // marker；若 profile 正被占用，新进程会因 profile lock 退出并 fail-closed。
@@ -379,8 +382,17 @@ function schedulePersist(browser: AgentBrowser, savePath: string | undefined): v
   if (!savePath) return;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
+    try {
+      mkdirSync(dirname(savePath), { recursive: true, mode: 0o700 });
+    } catch (e) {
+      console.warn(
+        `[agentBrowser] 登录态目录创建失败: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
     browser
       .exportStorageState(savePath)
+      .then(() => chmodSync(savePath, 0o600))
       .catch((e) =>
         console.warn(`[agentBrowser] 持久化登录态失败: ${e instanceof Error ? e.message : String(e)}`),
       );

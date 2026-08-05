@@ -49,6 +49,7 @@ function fakeChild(): FakeChild {
 
 const savedProxy = process.env.HTTPS_PROXY;
 const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
+const savedProfileDir = process.env.QINGAGENT_BROWSER_PROFILE_DIR;
 const savedNoSandbox = process.env.QINGAGENT_ALLOW_NO_SANDBOX;
 
 describe("代理 Chromium 进程所有权", () => {
@@ -60,6 +61,7 @@ describe("代理 Chromium 进程所有权", () => {
     process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
     delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
     delete process.env.QINGAGENT_BROWSER_CDP_URL;
+    delete process.env.QINGAGENT_BROWSER_PROFILE_DIR;
     process.env.QINGAGENT_AGENT_BROWSER = "1";
   });
 
@@ -72,6 +74,8 @@ describe("代理 Chromium 进程所有权", () => {
     else process.env.HTTPS_PROXY = savedProxy;
     if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
     else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
+    if (savedProfileDir === undefined) delete process.env.QINGAGENT_BROWSER_PROFILE_DIR;
+    else process.env.QINGAGENT_BROWSER_PROFILE_DIR = savedProfileDir;
     if (savedNoSandbox === undefined) delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
     else process.env.QINGAGENT_ALLOW_NO_SANDBOX = savedNoSandbox;
     delete process.env.QINGAGENT_AGENT_BROWSER;

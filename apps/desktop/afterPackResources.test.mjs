@@ -9,16 +9,24 @@ import { LARK_CLI_RUN_JS_RELATIVE } from "./stageLarkCli.mjs";
 
 function makeFixture() {
   const root = mkdtempSync(join(tmpdir(), "desktop-after-pack-"));
-  return {
+  const fixture = {
     root,
     projectDir: join(root, "project"),
     resourcesDir: join(root, "app", "resources"),
   };
+  writeFixtureFile(
+    join(fixture.projectDir, "dist/main/index.js"),
+    [
+      'process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(userDataDir, ".qingagent-browser-state.json");',
+      'process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(userDataDir, ".qingagent-browser-profile");',
+    ].join("\n"),
+  );
+  return fixture;
 }
 
-function writeFixtureFile(path) {
+function writeFixtureFile(path, content = "fixture\n") {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, "fixture\n");
+  writeFileSync(path, content);
 }
 
 function stageLarkCli(projectDir) {
@@ -96,5 +104,31 @@ test("完整暂存资源全部进入包时通过", () => {
     assert.doesNotThrow(() => assertPackagedResources(fixture));
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("最终 bundle 中任一 agent browser 敏感路径回退 cwd 时构建失败", () => {
+  for (const sensitiveName of [
+    ".qingagent-browser-state.json",
+    ".qingagent-browser-profile",
+  ]) {
+    const fixture = makeFixture();
+    try {
+      writeFixtureFile(
+        join(fixture.projectDir, "dist/main/index.js"),
+        [
+          'process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(userDataDir, ".qingagent-browser-state.json");',
+          'process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(userDataDir, ".qingagent-browser-profile");',
+          `const leakedPath = join(process.cwd(), "${sensitiveName}");`,
+        ].join("\n"),
+      );
+
+      assert.throws(
+        () => assertPackagedResources(fixture),
+        new RegExp(`桌面运行时资源校验失败:[\\s\\S]*agent browser 敏感路径仍依赖 cwd:${sensitiveName.replace(".", "\\.")}`),
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
   }
 });

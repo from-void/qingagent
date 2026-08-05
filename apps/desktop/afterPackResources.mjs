@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REQUIRED_PYODIDE_RUNTIME_FILES } from "./buildPyodideStage.mjs";
 import { LARK_CLI_RUN_JS_RELATIVE } from "./stageLarkCli.mjs";
@@ -9,6 +9,36 @@ import { LARK_CLI_RUN_JS_RELATIVE } from "./stageLarkCli.mjs";
  */
 export function assertPackagedResources({ projectDir, resourcesDir }) {
   const errors = [];
+
+  const desktopMainBundle = resolve(projectDir, "dist/main/index.js");
+  if (!existsSync(desktopMainBundle)) {
+    errors.push(`桌面主进程 bundle 缺失:${desktopMainBundle}`);
+  } else {
+    const source = readFileSync(desktopMainBundle, "utf8");
+    for (const variable of [
+      "QINGAGENT_BROWSER_STORAGE_STATE",
+      "QINGAGENT_BROWSER_PROFILE_DIR",
+    ]) {
+      const injection = new RegExp(
+        `process\\.env\\.${variable}\\s*=\\s*[\\s\\S]{0,160}?userDataDir`,
+      );
+      if (!injection.test(source)) {
+        errors.push(`agent browser 缺少 userData 路径注入:${variable}`);
+      }
+    }
+    for (const sensitiveName of [
+      ".qingagent-browser-state.json",
+      ".qingagent-browser-profile",
+    ]) {
+      const escapedName = sensitiveName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const cwdNearSensitivePath = new RegExp(
+        `(?:process\\.cwd\\(\\)[\\s\\S]{0,160}${escapedName}|${escapedName}[\\s\\S]{0,160}process\\.cwd\\(\\))`,
+      );
+      if (cwdNearSensitivePath.test(source)) {
+        errors.push(`agent browser 敏感路径仍依赖 cwd:${sensitiveName}`);
+      }
+    }
+  }
 
   const stagedLarkRunJs = resolve(projectDir, "build/lark-cli", LARK_CLI_RUN_JS_RELATIVE);
   if (existsSync(stagedLarkRunJs)) {

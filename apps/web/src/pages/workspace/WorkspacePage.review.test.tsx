@@ -6290,6 +6290,11 @@ describe("WorkspacePage review controls", () => {
 
     await clickButton("提交 ↵");
     expect(buttonByText("撤销本次修改")).not.toBeNull();
+    expect(
+      host
+        ?.querySelector('[data-wf="ReviewCommitUndoBanner"]')
+        ?.classList.contains("ws-review-commit-undo-banner"),
+    ).toBe(true);
 
     await act(async () => {
       window.location.hash = "#/workspace?session=s-2";

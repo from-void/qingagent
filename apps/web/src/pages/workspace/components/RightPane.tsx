@@ -447,7 +447,7 @@ export function RightPane({
       {historyBanner}
       {reviewCommitUndoAvailable && onUndoReviewCommit ? (
         <div
-          className="wf-region"
+          className="wf-region ws-review-commit-undo-banner"
           data-wf="ReviewCommitUndoBanner"
           style={{
             marginBottom: 10,

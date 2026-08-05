@@ -10,6 +10,7 @@ import type {
 
 const STATES: ConnectorState[] = [
   "unavailable",
+  "checking",
   "unconfigured",
   "disconnected",
   "pending",
@@ -18,12 +19,13 @@ const STATES: ConnectorState[] = [
 ];
 
 const LEGAL_TARGETS: Readonly<Record<ConnectorState, readonly ConnectorState[]>> = {
-  unavailable: ["unconfigured", "disconnected"],
-  unconfigured: ["unavailable", "disconnected"],
-  disconnected: ["unavailable", "unconfigured", "pending", "connected"],
-  pending: ["unavailable", "unconfigured", "disconnected", "connected"],
-  connected: ["unavailable", "unconfigured", "disconnected", "pending", "needs_reauth"],
-  needs_reauth: ["unavailable", "unconfigured", "disconnected", "pending", "connected"],
+  unavailable: ["checking", "unconfigured", "disconnected"],
+  checking: ["unavailable", "unconfigured", "disconnected", "pending", "connected", "needs_reauth"],
+  unconfigured: ["unavailable", "checking", "disconnected"],
+  disconnected: ["unavailable", "checking", "unconfigured", "pending", "connected"],
+  pending: ["unavailable", "checking", "unconfigured", "disconnected", "connected"],
+  connected: ["unavailable", "checking", "unconfigured", "disconnected", "pending", "needs_reauth"],
+  needs_reauth: ["unavailable", "checking", "unconfigured", "disconnected", "pending", "connected"],
 };
 
 function buildTransitionTable(): ConnectorTransitionTable {

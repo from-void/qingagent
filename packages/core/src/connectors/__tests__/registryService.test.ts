@@ -11,6 +11,7 @@ import type { ConnectorId, ConnectorState } from "../types.js";
 
 const STATES: ConnectorState[] = [
   "unavailable",
+  "checking",
   "unconfigured",
   "disconnected",
   "pending",
@@ -52,7 +53,7 @@ describe("connector registry", () => {
 
 describe("connector transition tables", () => {
   for (const connectorId of ["github", "feishu", "wechat-mp"] as const) {
-    it(`${connectorId} 完整 6×6 迁移矩阵按表执行`, () => {
+    it(`${connectorId} 完整 7×7 迁移矩阵按表执行`, () => {
       for (const from of STATES) {
         for (const to of STATES) {
           const status = createConnectorStatus(from, {

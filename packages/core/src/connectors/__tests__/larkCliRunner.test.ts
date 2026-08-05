@@ -143,6 +143,40 @@ exit 0
     });
   });
 
+  it("成功版本检查在 runner 生命周期内复用，冷启动超时不缓存并允许下次自愈", async () => {
+    let versionAttempts = 0;
+    const execFile = vi.fn(async (_file: string, args: readonly string[]) => {
+      if (args.at(-1) === "--version") {
+        versionAttempts += 1;
+        if (versionAttempts === 1) {
+          throw Object.assign(new Error("cold start timeout"), { code: "ETIMEDOUT" });
+        }
+        return { stdout: "lark-cli version 1.0.65", stderr: "" };
+      }
+      return { stdout: '{"configured":false}', stderr: "" };
+    });
+    const runner = new LarkCliRunner({
+      execFile,
+      shimPath: "/definitely/missing/lark-cli",
+    });
+
+    await expect(runner.run(["config", "show"])).resolves.toMatchObject({
+      ok: false,
+      reasonCode: "LARK_CLI_VERSION_TIMEOUT",
+    });
+    await expect(runner.run(["config", "show"])).resolves.toMatchObject({
+      ok: true,
+      cliVersion: "1.0.65",
+    });
+    await expect(runner.run(["config", "show"])).resolves.toMatchObject({
+      ok: true,
+      cliVersion: "1.0.65",
+    });
+
+    expect(versionAttempts).toBe(2);
+    expect(execFile.mock.calls.filter(([, args]) => args.at(-1) === "--version")).toHaveLength(2);
+  });
+
   it("允许授权编排固定形态并把 AbortSignal 交给子进程", async () => {
     const execFile = vi.fn(async (_file: string, args: readonly string[]) =>
       args[0] === "--version"

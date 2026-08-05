@@ -82,6 +82,7 @@ function startLabel(connector: ConnectorInfo): string {
 
 const STATUS_LABELS: Record<ConnectorState, string> = {
   unavailable: "此环境不可用",
+  checking: "检查中",
   unconfigured: "未配置",
   disconnected: "未连接",
   pending: "等待授权",
@@ -146,6 +147,7 @@ function displayScopes(id: ConnectorId, scopes: readonly string[]): string[] {
 const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> = {
   github: {
     unavailable: "当前环境无法使用 GitHub 连接",
+    checking: "正在检查 GitHub 连接",
     unconfigured: "尚未配置 GitHub OAuth App",
     disconnected: "连接后可搜索和读取账号可见仓库",
     pending: "授权验证进行中，请在发起处的授权卡完成",
@@ -154,6 +156,7 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
   },
   feishu: {
     unavailable: "当前环境无法使用飞书连接",
+    checking: "正在检查飞书连接，稍后会自动更新",
     unconfigured: "尚未配置飞书应用",
     disconnected: "应用已配置，授权后可代你操作飞书",
     pending: "扫码验证进行中，请在发起处的授权卡完成",
@@ -162,6 +165,7 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
   },
   "wechat-mp": {
     unavailable: "当前环境无法使用公众号连接",
+    checking: "正在检查公众号连接",
     unconfigured: "尚未登录微信公众平台",
     disconnected: "贴文章链接无需登录；按公众号名搜索才需扫码",
     pending: "扫码验证进行中，请在发起处的授权卡完成",
@@ -215,6 +219,27 @@ function connectedLine(connector: ConnectorInfo): string | null {
   return `已登录「${name}」公众号`;
 }
 
+const FEISHU_TRANSIENT_REASON_CODES = new Set([
+  "LARK_CLI_VERSION_TIMEOUT",
+  "LARK_CLI_TIMEOUT",
+  "LARK_CLI_OUTPUT_LIMIT",
+  "LARK_CLI_DIRTY_OUTPUT",
+  "LARK_CLI_FAILED",
+]);
+
+/** 兼容仍把瞬时 CLI 故障返回 unavailable 的旧服务端，列表和详情统一呈现为检查中。 */
+function presentationState(connector: ConnectorInfo): ConnectorState {
+  if (
+    connector.id === "feishu" &&
+    connector.status.state === "unavailable" &&
+    connector.status.reasonCode &&
+    FEISHU_TRANSIENT_REASON_CODES.has(connector.status.reasonCode)
+  ) {
+    return "checking";
+  }
+  return connector.status.state;
+}
+
 function listSubtitle(connector: ConnectorInfo, state = connector.status.state): string {
   if (state !== connector.status.state) return STATE_COPY[connector.id][state] ?? STATUS_LABELS[state];
   const line = connectedLine(connector);
@@ -224,23 +249,24 @@ function listSubtitle(connector: ConnectorInfo, state = connector.status.state):
 
 // 详情页状态行:开场白已介绍用途,这里只讲「当前是什么状态」。
 // 未连接/未配置时返回 null(徽标已表达,不再重复一句废话)。
-function detailStatus(connector: ConnectorInfo): string | null {
+function detailStatus(
+  connector: ConnectorInfo,
+  state: ConnectorState = presentationState(connector),
+): string | null {
   if (connector.id === "github" && connector.status.reasonCode === "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED") {
     return "检测到授权账号发生变化。为避免误切账号，当前连接未被替换；请先断开，再明确连接新账号。";
   }
   if (connector.id === "github" && connector.status.reasonCode === "INSUFFICIENT_SCOPE") {
     return "当前授权范围不足，重新授权即可扩展；失败不会影响现有连接。";
   }
-  if (connector.id === "feishu" && connector.status.state === "unavailable") {
+  if (connector.id === "feishu" && state === "checking") {
+    return STATE_COPY.feishu.checking!;
+  }
+  if (connector.id === "feishu" && state === "unavailable") {
     const copy: Record<string, string> = {
       LARK_CLI_MISSING: "未找到飞书连接组件。当前安装包可能未包含该组件，请重新安装完整桌面客户端。",
       LARK_CLI_SPAWN_FAILED: "飞书连接组件未能启动。请重启客户端；若仍未恢复，请重新安装完整桌面客户端。",
-      LARK_CLI_VERSION_TIMEOUT: "飞书连接组件版本检查超时。请稍后重试或重启客户端。",
-      LARK_CLI_TIMEOUT: "飞书连接组件响应超时。请稍后重试。",
       LARK_CLI_VERSION_UNSUPPORTED: "飞书连接组件版本暂不兼容。请更新桌面客户端。",
-      LARK_CLI_OUTPUT_LIMIT: "飞书连接组件返回内容异常。请重启客户端后重试。",
-      LARK_CLI_DIRTY_OUTPUT: "飞书连接状态暂时无法确认。请重启客户端后重试。",
-      LARK_CLI_FAILED: "飞书连接组件未能正常完成检查。请重启客户端后重试。",
     };
     return connector.status.reasonCode
       ? copy[connector.status.reasonCode] ?? STATE_COPY.feishu.unavailable!
@@ -248,7 +274,7 @@ function detailStatus(connector: ConnectorInfo): string | null {
   }
   // 已连接的账号句放在页面底部断开区,这里不重复;未连接/未配置由徽标表达,同样不占一行。
   if (["connected", "disconnected", "unconfigured"].includes(connector.status.state)) return null;
-  return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
+  return STATE_COPY[connector.id][state] ?? STATUS_LABELS[state];
 }
 
 export interface ConnectionsPanelProps {
@@ -319,7 +345,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
     const selectedAuthSession = pendingSessions[selected.id] ?? null;
     const selectedAuthCard = selectedAuthSession?.card ?? null;
-    const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
+    const visibleState: ConnectorState = selectedAuthCard ? "pending" : presentationState(selected);
     const initiate = async () => {
       setBusy(true);
       try {
@@ -380,8 +406,8 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           <Badge state={visibleState} connectorId={selected.id} />
         </div>
         <p className="cnd-desc">{DESCRIPTIONS[selected.id]}</p>
-        {(selectedAuthCard || detailStatus(selected)) && (
-          <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态。" : detailStatus(selected)}</p>
+        {(selectedAuthCard || detailStatus(selected, visibleState)) && (
+          <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态。" : detailStatus(selected, visibleState)}</p>
         )}
         {selectedAuthCard ? (
           <>
@@ -475,7 +501,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       <div className="cn-list">
         {connectors.map((connector) => {
           const pendingSession = pendingSessions[connector.id];
-          const visibleState: ConnectorState = pendingSession ? "pending" : connector.status.state;
+          const visibleState: ConnectorState = pendingSession ? "pending" : presentationState(connector);
           return (
             <div className="cn-row-wrap" key={connector.id}>
               <button type="button" className="cn-row" onClick={() => select(connector.id)}>

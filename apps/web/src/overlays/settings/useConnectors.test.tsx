@@ -29,6 +29,38 @@ afterEach(() => {
 });
 
 describe("useConnectors", () => {
+  it("检查中状态会自动重试，并在拿到 needs_reauth 后停止", async () => {
+    vi.useFakeTimers();
+    let state: "checking" | "needs_reauth" = "checking";
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      connectors: [{
+        id: "feishu", name: "飞书", icon: "feishu", official: true,
+        authPresentation: "scan", riskNote: null, usedBySkills: ["feishu"],
+        status: {
+          state,
+          reasonCode: state === "checking" ? "LARK_CLI_VERSION_TIMEOUT" : "LARK_AUTH_EXPIRED",
+          account: null, scopes: [], lastCheckedAt: null,
+          statusFreshness: state === "checking" ? "unknown" : "fresh",
+          canProbe: state === "needs_reauth",
+        },
+      }],
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root?.render(<Harness />); });
+    expect(hook.connectors[0]?.status.state).toBe("checking");
+
+    state = "needs_reauth";
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(hook.connectors[0]?.status.state).toBe("needs_reauth");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("start 失败展示服务端实际返回的 message 与 reasonCode", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

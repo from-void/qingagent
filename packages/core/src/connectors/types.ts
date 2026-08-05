@@ -28,6 +28,7 @@ export interface ConnectorDefinition {
 
 export type ConnectorState =
   | "unavailable"
+  | "checking"
   | "unconfigured"
   | "disconnected"
   | "pending"

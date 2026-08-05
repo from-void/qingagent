@@ -6,6 +6,14 @@ import {
 } from "./connectorAuthSession";
 
 const PENDING_REFRESH_INTERVAL_MS = 30_000;
+const CHECKING_REFRESH_INTERVAL_MS = 5_000;
+const FEISHU_TRANSIENT_REASON_CODES = new Set([
+  "LARK_CLI_VERSION_TIMEOUT",
+  "LARK_CLI_TIMEOUT",
+  "LARK_CLI_OUTPUT_LIMIT",
+  "LARK_CLI_DIRTY_OUTPUT",
+  "LARK_CLI_FAILED",
+]);
 
 export function useConnectors() {
   const [connectors, setConnectors] = useState<ConnectorInfo[]>([]);
@@ -83,6 +91,24 @@ export function useConnectors() {
       window.clearInterval(interval);
     };
   }, [hasPending, refresh]);
+
+  const hasChecking = connectors.some(
+    (connector) => connector.status.state === "checking" || (
+      connector.id === "feishu" &&
+      connector.status.reasonCode !== null &&
+      FEISHU_TRANSIENT_REASON_CODES.has(connector.status.reasonCode)
+    ),
+  );
+  useEffect(() => {
+    if (!hasChecking) return;
+    const refreshChecking = () => { void refresh().catch(() => undefined); };
+    const interval = window.setInterval(refreshChecking, CHECKING_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshChecking);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshChecking);
+    };
+  }, [hasChecking, refresh]);
 
   const mutate = useCallback(async (id: ConnectorId, method: "POST" | "DELETE") => {
     const path = method === "POST"

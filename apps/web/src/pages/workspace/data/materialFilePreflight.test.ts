@@ -21,6 +21,26 @@ async function fixtureFile(filePath: string, filename: string, type: string): Pr
 }
 
 describe("preflightBrowserMaterialFile", () => {
+  it("接受超过 64KiB 且 UTF-8 多字节字符跨越采样边界的中文文本", async () => {
+    const file = new File(["一".repeat(30_000)], "boundary.md", {
+      type: "text/markdown",
+    });
+
+    expect(file.size).toBeGreaterThan(64 * 1024);
+    await expect(preflightBrowserMaterialFile(file)).resolves.toEqual({ ok: true });
+  });
+
+  it("接受超过 64KiB 且 UTF-16 代理对跨越采样边界的文本", async () => {
+    const file = new File(
+      [new Uint8Array([0xff, 0xfe]), Buffer.from("😀".repeat(20_000), "utf16le")],
+      "utf16-boundary.txt",
+      { type: "text/plain" },
+    );
+
+    expect(file.size).toBeGreaterThan(64 * 1024);
+    await expect(preflightBrowserMaterialFile(file)).resolves.toEqual({ ok: true });
+  });
+
   it("大文件只通过 slice 读取有界头部样本，不调用整文件 arrayBuffer", async () => {
     const file = new File([`# 标题\n${"a".repeat(1024 * 1024)}`], "large.md", {
       type: "text/markdown",
@@ -67,6 +87,50 @@ describe("preflightBrowserMaterialFile", () => {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     await expect(preflightBrowserMaterialFile(file)).resolves.toEqual({ ok: true });
+  });
+
+  it("截断样本仍拒绝内部混合编码、NUL 与控制字符", async () => {
+    // F5 夹具前 96B：GBK 第一段后切到带 BOM 的 UTF-8，非法点位于样本内部。
+    const mixedEncodingPrefix = Buffer.from(
+      "tdrSu7bOo7rV4srHIEdCSyCx4MLrtcTW0M7E1f3OxKOsuqzIq73Ht/u6xaO6o7uhuKG5obaht6GqoaqhrQ0K77u/56ys5LqM5q6177ya6L+Z5piv5bimIEJPTSDnmoQg",
+      "base64",
+    );
+    const largeAsciiTail = Buffer.alloc(64 * 1024, 0x61);
+
+    await expect(preflightBrowserMaterialFile(new File(
+      [Buffer.concat([mixedEncodingPrefix, largeAsciiTail])],
+      "mixed.txt",
+      { type: "text/plain" },
+    ))).resolves.toEqual({ ok: false, error: "material_unreadable" });
+    await expect(preflightBrowserMaterialFile(new File(
+      ["可读前缀", new Uint8Array([0]), largeAsciiTail],
+      "nul.txt",
+      { type: "text/plain" },
+    ))).resolves.toEqual({ ok: false, error: "material_unreadable" });
+    await expect(preflightBrowserMaterialFile(new File(
+      ["可读前缀\u0001", largeAsciiTail],
+      "control.txt",
+      { type: "text/plain" },
+    ))).resolves.toEqual({ ok: false, error: "material_unreadable" });
+  });
+
+  it("完整文件末尾的不完整多字节序列仍按不可读拒绝", async () => {
+    await expect(preflightBrowserMaterialFile(new File(
+      [new Uint8Array([0x61, 0xe4])],
+      "truncated-utf8.txt",
+      { type: "text/plain" },
+    ))).resolves.toEqual({
+      ok: false,
+      error: "material_unreadable",
+    });
+    await expect(preflightBrowserMaterialFile(new File(
+      [new Uint8Array([0xff, 0xfe, 0x3d, 0xd8])],
+      "truncated-utf16.txt",
+      { type: "text/plain" },
+    ))).resolves.toEqual({
+      ok: false,
+      error: "material_unreadable",
+    });
   });
 
   it.each([

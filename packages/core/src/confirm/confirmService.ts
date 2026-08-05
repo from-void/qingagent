@@ -222,6 +222,7 @@ export class ConfirmService {
     let credential: { declared: string; reason: string; digest: string } | null = null;
     let connectorAuth: ReturnType<typeof parseConnectAccountAuthInput> = null;
     let parsed: ReturnType<typeof executeCommandInputSchema.safeParse> | null = null;
+    let requiresExplicitApproval = false;
     if (credentialAccess) {
       const credentialArgs = requestCredentialAccessInputSchema.safeParse(input.args);
       if (!credentialArgs.success) return { ok: false, reason: "确认请求参数无效" };
@@ -250,6 +251,7 @@ export class ConfirmService {
         return { ok: false, reason: "确认请求与当前命令策略不匹配" };
       }
       confirmReason = decision.reason;
+      requiresExplicitApproval = decision.requiresExplicitApproval === true;
     }
 
     const existing = input.state.pendingConfirms.get(input.toolCallId);
@@ -270,17 +272,22 @@ export class ConfirmService {
         ? buildCredentialAccessConfirmSpec(credential, confirmId)
         : connectorAuth
           ? buildConnectAccountConfirmSpec(connectorAuth, confirmId)
-          : buildCommandConfirmSpec(parsed!.data, confirmReason, confirmId);
+          : buildCommandConfirmSpec(parsed!.data, confirmReason, confirmId, {
+              requiresExplicitApproval,
+            });
     } catch {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
     let grantState: ConfirmGrantState | null = null;
-    // 设置里把某类设成"始终允许"后,这一类的确认卡不再弹,直接按存量授权放行
+    // 普通命令可按类别存量授权放行；安全边界例外永远不读取这类授权。
     if (
-      spec.kind === "install" ||
-      spec.kind === "command" ||
-      spec.kind === "send" ||
-      spec.kind === "connect"
+      !requiresExplicitApproval &&
+      (
+        spec.kind === "install" ||
+        spec.kind === "command" ||
+        spec.kind === "send" ||
+        spec.kind === "connect"
+      )
     ) {
       try {
         grantState = await this.#loadGrantState(spec.kind);

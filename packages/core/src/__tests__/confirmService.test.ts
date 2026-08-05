@@ -338,6 +338,42 @@ describe("ConfirmService", () => {
     expect(consumeApprovalProof(secondState, proofInput)).toBe(false);
   });
 
+  it("工作目录外读取忽略 command 类存量授权并只生成按次确认卡", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const loadGrant = vi.fn(async () => ({
+      grantId: "grant-command",
+      kind: "command" as const,
+      createdAt: "2026-07-21T00:00:00.000Z",
+      source: "settings" as const,
+    }));
+    try {
+      const state = createSession("confirm-external-read");
+      const service = new ConfirmService({
+        createId: () => "confirm-external-read",
+        persist: async () => undefined,
+        loadGrant,
+      });
+      const result = await service.requestCommandConfirm({
+        state,
+        runId: "run-external-read",
+        toolCallId: "tool-external-read",
+        toolName: "mastra_workspace_execute_command",
+        args: { command: "type D:\\report.docx", reason: "读取用户指定的报告" },
+        aborted: false,
+      });
+
+      expect(result).toMatchObject({ ok: true });
+      if (!result.ok) return;
+      expect(result.storedGrantApproval).toBeUndefined();
+      expect(result.frame?.kind).toBe("confirmRequested");
+      expect(result.pending.spec.bypassOption).toBeUndefined();
+      expect(result.pending.spec.rememberCategory).toBeUndefined();
+      expect(loadGrant).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("grant 撤销后下一条同类命令重新发确认卡", async () => {
     let activeGrant: ConfirmGrant | null = {
       grantId: "grant-before-revoke",

@@ -127,12 +127,15 @@ export function buildCommandConfirmSpec(
   input: ExecuteCommandInput,
   policyReason: string,
   id: string = randomUUID(),
+  options: { requiresExplicitApproval?: boolean } = {},
 ): ConfirmSpec {
   const verdict = assessCommand(input.command);
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
   const kind = verdict.confirmKind ?? "command";
   const isMultiEffect = verdict.effects.length > 1;
-  const riskSub = kind === "install" && !input.background
+  const riskSub = options.requiresExplicitApproval
+    ? "将读取当前会话工作目录之外的本地文件"
+    : kind === "install" && !input.background
     ? undefined
     : verdict.risk === "safe"
       ? "资源受限后台命令"
@@ -148,7 +151,9 @@ export function buildCommandConfirmSpec(
       formatCommandDuration(resolveCommandTimeout(input, { background: true }).effectiveMs)
     } · ${riskSub}`
     : riskSub;
-  const primaryLabel = kind === "install"
+  const primaryLabel = options.requiresExplicitApproval
+    ? "确认读取"
+    : kind === "install"
     ? "确认安装"
     : kind === "send"
       ? verdict.title.includes("发布") || verdict.title.includes("推送") ? "确认发布" : "确认发送"
@@ -170,7 +175,8 @@ export function buildCommandConfirmSpec(
       ? [verdict.detail]
       : [policyReason, verdict.detail];
   const explanation = joinExplanationParts(explanationParts);
-  const rememberCategory = kind === "install" || kind === "command" || kind === "send"
+  const rememberCategory = !options.requiresExplicitApproval &&
+    (kind === "install" || kind === "command" || kind === "send")
     ? {
         kind,
         label: kind === "install"
@@ -183,24 +189,25 @@ export function buildCommandConfirmSpec(
           : {}),
       }
     : undefined;
-  // 「以后不用再问我」:确认卡上唯一的减少打扰出口。勾选并批准后全局永久生效——
-  // 之后所有命令不再询问、直接执行。默认(不勾)一律照旧弹卡,这是产品可信度的一部分。
-  // 副说明必须把后果和改回路径一句话讲清,不得出现任何内部机制词。
-  const bypassOption = {
+  // 「以后不用再问我」:普通命令确认卡上唯一的减少打扰出口。安全边界例外不展示，
+  // 否则卡面会暗示一个实际上不会生效的跳过通道。副说明不得出现任何内部机制词。
+  const bypassOption = options.requiresExplicitApproval ? undefined : {
     label: "以后不用再问我",
     hint: "以后的命令会直接执行；可以在 设置 → 安全 里改回。",
   };
   return confirmSpecSchema.parse({
     id,
     kind,
-    title: input.background && verdict.risk === "safe"
-      ? "启动后台命令"
-      : verdict.title.replace(/^需要执行：/, ""),
+    title: options.requiresExplicitApproval
+      ? "读取本地文件"
+      : input.background && verdict.risk === "safe"
+        ? "启动后台命令"
+        : verdict.title.replace(/^需要执行：/, ""),
     ...(sub ? { sub } : {}),
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     ...(rememberCategory ? { rememberCategory } : {}),
-    bypassOption,
+    ...(bypassOption ? { bypassOption } : {}),
     primaryLabel,
     secondaryLabel: "取消",
   });

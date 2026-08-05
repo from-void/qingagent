@@ -6,7 +6,7 @@
 // - 关掉之后必须**完全**回到默认形态,一处都不能残留。
 // 任何"为了让实现简单/让别的测试好过"而放松默认形态的改动,都会在这里红。
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
 import {
   __resetBypassModeForTest,
@@ -117,6 +117,19 @@ describe("全局免询问开关:命令工具门禁", () => {
     expect(JSON.stringify(result)).toContain("缺少有效的用户确认");
   });
 
+  it("工作目录外读取即使开启免询问也必须逐次确认", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    __setBypassModeCacheForTest(true);
+    try {
+      const externalRead = "type D:\\report.docx";
+      expect(requireApproval(tool, externalRead)).toBe(true);
+      const result = await tool.execute!({ command: externalRead }, toolInvocationOptions);
+      expect(JSON.stringify(result)).toContain("缺少有效的用户确认");
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("工具 id 仍是命令执行本体,没有被换成别的通道", () => {
     expect(tool.id).toBe(WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND);
   });
@@ -138,6 +151,19 @@ describe("确认卡上的「以后不用再问我」", () => {
     for (const forbidden of ["sandbox", "沙箱", "seatbelt", "bwrap", "隔离", "read-wall", "bypass"]) {
       expect(copy.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
+  });
+
+  it("工作目录外读取的按次确认卡不提供记住或全局免询问入口", () => {
+    const spec = buildCommandConfirmSpec(
+      { command: "type D:\\report.docx", reason: "读取用户指定的报告" },
+      "读取当前会话工作目录之外的文件",
+      "confirm-external-read",
+      { requiresExplicitApproval: true },
+    );
+    expect(spec.title).toBe("读取本地文件");
+    expect(spec.primaryLabel).toBe("确认读取");
+    expect(spec.bypassOption).toBeUndefined();
+    expect(spec.rememberCategory).toBeUndefined();
   });
 });
 

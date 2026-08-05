@@ -9,7 +9,11 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import { isBypassEnabled } from "../security/bypassMode.js";
-import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
+import {
+  commandPolicyDenyMessage,
+  commandPolicyRequiresApproval,
+  evaluateCommandPolicy,
+} from "./commandPolicy.js";
 import { consumeApprovalProof, type ApprovalProofSession } from "../confirm/approvalProof.js";
 import {
   commandConfirmationDigest,
@@ -489,15 +493,14 @@ export function createGatedExecuteCommandTool({
       "re-issue QR codes.",
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
-      // 用户主动勾了「以后不用再问我」时不再要求确认。默认(未勾)一律照旧弹卡——
-      // 确认卡是产品可信度的一部分,不允许因为"少一个框更顺"而被削弱。
-      if (isBypassEnabled()) return false;
       try {
-        return evaluateCommandPolicy(input.command, {
+        const decision = evaluateCommandPolicy(input.command, {
           workspaceCwd: sessionWorkspaceDir(sessionId),
           background: input.background === true,
           sandboxBinDir,
-        }).action === "confirm";
+        });
+        // 普通副作用确认尊重“以后不用再问我”；安全边界例外始终逐次确认。
+        return commandPolicyRequiresApproval(decision, isBypassEnabled());
       } catch {
         // Mastra 也将 predicate 异常按需审批处理；这里显式保持 fail-safe。
         return true;
@@ -533,9 +536,9 @@ export function createGatedExecuteCommandTool({
       }
 
       let proofConsumed = false;
-      // 勾了「以后不用再问我」时不会有确认卡,自然也不会有确认凭据;此处与
-      // requireApproval 用同一个判定,免得一边不弹卡、一边又拦着说"缺少确认"。
-      if (decision.action === "confirm" && !isBypassEnabled()) {
+      // 普通 confirm 在免询问开启时不会有确认凭据；安全边界例外仍必须逐次签发 proof。
+      // 此处与 requireApproval 共用判定，免得一边不弹卡、一边又拦着说“缺少确认”。
+      if (commandPolicyRequiresApproval(decision, isBypassEnabled())) {
         const runId = context?.requestContext?.get("runId");
         const toolCallId = context?.agent?.toolCallId;
         const hasProof =

@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import {
+  commandPolicyRequiresApproval,
   commandPolicyDenyMessage,
   evaluateCommandPolicy,
   runWithCommandPolicy,
@@ -85,6 +86,54 @@ describe("commandPolicy P0 gate", () => {
         reason: expect.stringContaining("凭据或配置"),
       });
     }
+  });
+
+  it("Windows read allow-list:个人目录枚举与用户凭据目录默认硬拒绝", () => {
+    const denied = [
+      "dir C:\\Users\\alice\\Documents",
+      "dir \\Users\\alice\\Documents",
+      "powershell -NoProfile -Command \"Get-ChildItem ~\\Documents\"",
+      "dir %USERPROFILE:~0,3%Users\\alice\\Documents",
+      "type ~\\.ssh\\id_ed25519",
+      "type ~/.ssh/id_ed25519",
+      "type %USERPROFILE%\\.aws\\credentials",
+      "type \"%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Login Data\"",
+      "type %UNTRUSTED_READ_TARGET%",
+    ];
+    for (const command of denied) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "deny" });
+    }
+  });
+
+  it("Windows read allow-list:工作目录内读取直通，工作目录外单文件只可按次确认放行", () => {
+    const inside = [
+      "type report.docx",
+      `type "${windowsWorkspace}\\sources\\report.docx"`,
+    ];
+    for (const command of inside) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "allow" });
+    }
+
+    const explicitFile = windowsDecision("type D:\\report.docx");
+    expect(explicitFile).toMatchObject({
+      action: "confirm",
+      requiresExplicitApproval: true,
+      reason: expect.stringContaining("工作目录之外"),
+    });
+    expect(commandPolicyRequiresApproval(explicitFile, false)).toBe(true);
+    expect(commandPolicyRequiresApproval(explicitFile, true)).toBe(true);
+
+    const ordinaryConfirm = windowsDecision("del result.txt");
+    expect(ordinaryConfirm.action).toBe("confirm");
+    expect(commandPolicyRequiresApproval(ordinaryConfirm, false)).toBe(true);
+    expect(commandPolicyRequiresApproval(ordinaryConfirm, true)).toBe(false);
+  });
+
+  it("Windows read allow-list:按次读取例外不能降级 lark-cli 的本地文件硬边界", () => {
+    expect(windowsDecision("lark-cli drive +upload --file D:\\report.docx")).toMatchObject({
+      action: "deny",
+      reason: expect.stringContaining("lark-cli --file"),
+    });
   });
 
   it("Windows write-wall:工作目录外写入与不透明编码命令硬拒绝", () => {

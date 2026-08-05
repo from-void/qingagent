@@ -17,7 +17,21 @@ import { evaluateWindowsCommandBoundary } from "./windowsCommandBoundary.js";
 export type PolicyDecision =
   | { action: "allow"; credentialConsumer?: "trusted-node-skill" }
   | { action: "deny"; reason: string }
-  | { action: "confirm"; reason: string; credentialConsumer?: "trusted-node-skill" };
+  | {
+      action: "confirm";
+      reason: string;
+      credentialConsumer?: "trusted-node-skill";
+      /** 安全边界例外必须逐次确认，不接受全局免询问或类别授权。 */
+      requiresExplicitApproval?: true;
+    };
+
+export function commandPolicyRequiresApproval(
+  decision: PolicyDecision,
+  bypassEnabled: boolean,
+): boolean {
+  return decision.action === "confirm" &&
+    (decision.requiresExplicitApproval === true || !bypassEnabled);
+}
 
 export interface CommandPolicyOptions {
   /** 相对 node 脚本路径的解析基准。生产环境传会话沙箱目录;测试可传临时目录。 */

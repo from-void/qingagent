@@ -8,9 +8,11 @@ export interface WindowsCommandBoundaryOptions {
   dataDir: string;
 }
 
-export interface WindowsCommandBoundaryDenial {
-  action: "deny";
+export interface WindowsCommandBoundaryDecision {
+  action: "deny" | "confirm";
   reason: string;
+  /** 工作目录外普通文件读取只能按本次命令确认，不能被全局免询问或类别授权跳过。 */
+  requiresExplicitApproval?: true;
 }
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
@@ -22,6 +24,10 @@ const INLINE_CODE_WRITE_INTENT =
   /(?:\b(?:writefile(?:sync)?|appendfile(?:sync)?|createwritestream|copyfile(?:sync)?|rename(?:sync)?|mkdir(?:sync)?|rm(?:sync)?|unlink(?:sync)?)\s*\(|::(?:writealltext|writeallbytes|appendalltext|create|openwrite)\s*\(|\.(?:write_text|write_bytes|mkdir|unlink|rename|replace)\s*\(|\bopen\s*\([^)]{0,240},\s*r?["'][^"']*[wax+])/i;
 const DYNAMIC_PATH_REFERENCE = /%[^%]+%|![^!]+!|\$(?:env:|\{env:)?[A-Za-z_][A-Za-z0-9_]*(?:})?/i;
 const OUTPUT_REDIRECTION_SYNTAX = /(?:^|[^>])>>?(?![&=])/;
+const DIRECTORY_ENUMERATION_INTENT =
+  /(?:^|[\s;&|("'])(?:dir|tree|ls|get-childitem|gci)(?:\.exe)?(?=$|[\s;&|)"'])/i;
+const FILE_READ_INTENT =
+  /(?:^|[\s;&|("'])(?:type|more|findstr|cat|head|tail|grep|stat|get-content|gc|import-csv|select-string|test-path|resolve-path|dir|tree|ls|get-childitem|gci)(?:\.exe)?(?=$|[\s;&|)"'])/i;
 
 function lookupEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const direct = env[name];
@@ -131,7 +137,53 @@ function containsCredentialPath(text: string, options: WindowsCommandBoundaryOpt
     ")",
     "i",
   );
-  return protectedUnderUserData.test(text);
+  if (protectedUnderUserData.test(text)) return true;
+
+  // 通用凭据与浏览器身份库是永久硬拒绝面。allow-list 的按次确认只给普通文件开口，
+  // 不能把“确认了一条 type 命令”变成读取 SSH key、云凭据或浏览器 cookie 的通行证。
+  const credentialRoots = new Set<string>();
+  const addRoot = (root: string | undefined): void => {
+    if (root?.trim()) credentialRoots.add(root.trim());
+  };
+  if (home) {
+    for (const relative of [
+      ".ssh",
+      ".aws",
+      ".gnupg",
+      ".kube",
+      ".azure",
+      ".docker",
+      ".terraform.d",
+      ".config\\gcloud",
+      ".config\\gh",
+    ]) {
+      addRoot(win32.join(home, relative));
+    }
+  }
+  const roaming = lookupEnv(options.env, "APPDATA") ??
+    (home ? win32.join(home, "AppData", "Roaming") : undefined);
+  const local = lookupEnv(options.env, "LOCALAPPDATA") ??
+    (home ? win32.join(home, "AppData", "Local") : undefined);
+  for (const base of [roaming, local]) {
+    if (!base) continue;
+    for (const relative of [
+      "Google\\Chrome\\User Data",
+      "Chromium\\User Data",
+      "Microsoft\\Edge\\User Data",
+      "BraveSoftware\\Brave-Browser\\User Data",
+      "Mozilla\\Firefox\\Profiles",
+      "Opera Software",
+      "Microsoft\\Credentials",
+      "Microsoft\\Vault",
+      "Microsoft\\Crypto",
+      "Microsoft\\Protect",
+    ]) {
+      addRoot(win32.join(base, relative));
+    }
+  }
+  if ([...credentialRoots].some((root) => containsPathRoot(text, root))) return true;
+
+  return /(?:^|\\)(?:\.netrc|\.npmrc|\.git-credentials|\.pypirc)(?:$|[\s,;|&><)\]}])/i.test(text);
 }
 
 interface RedirectionTarget {
@@ -212,14 +264,14 @@ function isInsideWorkspace(path: string, workspaceCwd: string): boolean {
 
 function normalizeCandidate(raw: string): string | null {
   let value = raw.trim().replace(/^[,;]+|[,;]+$/g, "");
+  if (!value) return null;
   const driveIndex = value.search(/[A-Za-z]:[\\/]/);
   const uncIndex = value.search(/\\\\[^\\/]+[\\/]/);
   const indexes = [driveIndex, uncIndex].filter((index) => index >= 0);
   if (indexes.length > 0) value = value.slice(Math.min(...indexes)).replace(/^[=:(]+/, "");
   if (!win32.isAbsolute(value)) {
     const traversal = value.match(/(?:^|[\s=:(])(\.\.[\\/][^\s"';&|<>()]*)/);
-    if (!traversal) return null;
-    value = traversal[1]!;
+    if (traversal) value = traversal[1]!;
   }
   return value;
 }
@@ -242,7 +294,7 @@ function isSameOrInside(candidate: string, root: string): boolean {
 function sensitiveCandidateDenial(
   expandedCommand: string,
   options: WindowsCommandBoundaryOptions,
-): WindowsCommandBoundaryDenial | null {
+): WindowsCommandBoundaryDecision | null {
   const workspace = canonicalizeWithMissingTail(options.workspaceCwd);
   const appRoot = canonicalizeWithMissingTail(userDataRoot(options.dataDir));
   const protectedSystemRoots = systemRoots(options.env).map(canonicalizeWithMissingTail);
@@ -267,7 +319,7 @@ function outsideWriteDenial(
   expandedCommand: string,
   analysis: CommandAnalysis,
   options: WindowsCommandBoundaryOptions,
-): WindowsCommandBoundaryDenial | null {
+): WindowsCommandBoundaryDecision | null {
   const redirections = outputRedirectionTargets(expandedCommand);
   for (const target of redirections) {
     if (target.dynamic) {
@@ -303,6 +355,47 @@ function outsideWriteDenial(
   return null;
 }
 
+function outsideReadDecision(
+  expandedCommand: string,
+  analysis: CommandAnalysis,
+  options: WindowsCommandBoundaryOptions,
+): WindowsCommandBoundaryDecision | null {
+  if (FILE_READ_INTENT.test(expandedCommand) && DYNAMIC_PATH_REFERENCE.test(expandedCommand)) {
+    return {
+      action: "deny",
+      reason: "Windows 读取目标无法静态确定，已拒绝工作目录外读取",
+    };
+  }
+  const containsLarkCli = analysis.commands.some((command) =>
+    win32.basename(command.argv[0] ?? "").toLowerCase() === "lark-cli"
+  );
+  for (const candidate of pathCandidates(expandedCommand)) {
+    const resolved = win32.isAbsolute(candidate)
+      ? candidate
+      : win32.resolve(options.workspaceCwd, candidate);
+    if (isInsideWorkspace(resolved, options.workspaceCwd)) continue;
+    // lark-cli 的本地文件参数有更窄的专用硬边界；这里不能把 deny 降成可确认例外。
+    if (containsLarkCli) {
+      return {
+        action: "deny",
+        reason: "lark-cli --file 等本地路径参数只能读取当前会话工作目录内的文件",
+      };
+    }
+    if (DIRECTORY_ENUMERATION_INTENT.test(expandedCommand)) {
+      return {
+        action: "deny",
+        reason: "Windows 命令不允许枚举当前会话工作目录之外的目录；请先通过资料库选择器连接该目录",
+      };
+    }
+    return {
+      action: "confirm",
+      reason: "Windows 命令读取当前会话工作目录之外的文件，需要用户按次确认",
+      requiresExplicitApproval: true,
+    };
+  }
+  return null;
+}
+
 /**
  * Windows 没有 Mastra 原生文件隔离时的同步执行 gate。
  * 它不依赖模型判断：任何命中都在 subprocess 创建前直接拒绝，前后台命令共用。
@@ -311,7 +404,7 @@ export function evaluateWindowsCommandBoundary(
   command: string,
   analysis: CommandAnalysis,
   options: WindowsCommandBoundaryOptions,
-): WindowsCommandBoundaryDenial | null {
+): WindowsCommandBoundaryDecision | null {
   if (!command || CONTROL_CHARACTERS.test(command.replace(/[\r\n\t]/g, ""))) {
     return { action: "deny", reason: "Windows 命令包含不安全的控制字符" };
   }
@@ -324,9 +417,11 @@ export function evaluateWindowsCommandBoundary(
     return { action: "deny", reason: "Windows 命令不允许读取或写入系统路径" };
   }
   if (containsCredentialPath(comparable, options)) {
-    return { action: "deny", reason: "Windows 命令不允许读取或写入应用凭据或配置路径" };
+    return { action: "deny", reason: "Windows 命令不允许读取或写入凭据或配置路径" };
   }
   const sensitiveCandidate = sensitiveCandidateDenial(expanded, options);
   if (sensitiveCandidate) return sensitiveCandidate;
-  return outsideWriteDenial(expanded, analysis, options);
+  const outsideWrite = outsideWriteDenial(expanded, analysis, options);
+  if (outsideWrite) return outsideWrite;
+  return outsideReadDecision(expanded, analysis, options);
 }

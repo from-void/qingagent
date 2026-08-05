@@ -105,7 +105,10 @@ import {
   replaceTextRuns,
 } from "../doc-engine/textEditOps.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
-import { MATERIAL_CONTEXT_MAX_CHARS } from "../tools/materialContextBudget.js";
+import {
+  applyMaterialContextBudget,
+  MATERIAL_CONTEXT_MAX_CHARS,
+} from "../tools/materialContextBudget.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import {
   createAnnotationGroupsInputSchema,
@@ -792,62 +795,15 @@ export function createSessionScopedTools(
             sourceText.length,
           )
         : sourceText.length;
-      const rangeEnd = Math.min(
+      const budgeted = applyMaterialContextBudget(sourceText, {
+        rangeStart,
         requestedEnd,
-        rangeStart + MATERIAL_CONTEXT_MAX_CHARS,
-      );
-      const requestedChars = requestedEnd - rangeStart;
-      const truncated = requestedChars > MATERIAL_CONTEXT_MAX_CHARS;
-
-      if (!truncated) {
-        const text = sourceText.slice(rangeStart, rangeEnd);
-        return {
-          ok: true,
-          text,
-          filename: mat.filename,
-          wordCount: mat.metadata.wordCount,
-          truncated: false,
-          originalChars: sourceText.length,
-          returnedChars: text.length,
-          omittedChars: 0,
-          rangeStart,
-          rangeEnd,
-        };
-      }
-
-      // 提示放在正文前，避免正文再次被上游截断时模型仍看不到关键信号。
-      // 提示自身也计入预算；只向下收缩正文预算，数字位数变化也不会触发二次静默截断。
-      let returnedChars = MATERIAL_CONTEXT_MAX_CHARS;
-      let notice = "";
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const omittedChars = requestedChars - returnedChars;
-        notice =
-          `【素材截断提示】请求读取 ${requestedChars} 字符，本次只返回 ${returnedChars} 字符素材正文，` +
-          `已省略 ${omittedChars} 字符。可改用 summary 模式读取摘要，或使用 range 模式并指定 start/end 分段读取。`;
-        const availableChars = Math.max(
-          0,
-          MATERIAL_CONTEXT_MAX_CHARS - notice.length - 2,
-        );
-        if (availableChars >= returnedChars) break;
-        returnedChars = availableChars;
-      }
-      const actualRangeEnd = rangeStart + returnedChars;
-      const omittedChars = requestedChars - returnedChars;
-      notice =
-        `【素材截断提示】请求读取 ${requestedChars} 字符，本次只返回 ${returnedChars} 字符素材正文，` +
-        `已省略 ${omittedChars} 字符。可改用 summary 模式读取摘要，或使用 range 模式并指定 start/end 分段读取。`;
-      const text = `${notice}\n\n${sourceText.slice(rangeStart, actualRangeEnd)}`;
+      });
       return {
         ok: true,
-        text,
         filename: mat.filename,
         wordCount: mat.metadata.wordCount,
-        truncated: true,
-        originalChars: sourceText.length,
-        returnedChars,
-        omittedChars,
-        rangeStart,
-        rangeEnd: actualRangeEnd,
+        ...budgeted,
       };
     },
   });

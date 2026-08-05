@@ -870,6 +870,66 @@ describe("parseFile execute — TXT", () => {
     expect(r.text).toBe(md);
     expect(r.metadata.pages).toBeNull();
   });
+
+  it("模型侧默认结果超预算时自动截断并告知全量分段读取路径", async () => {
+    const sourceText = `${"甲".repeat(MATERIAL_CONTEXT_MAX_CHARS + 321)}尾部暗号`;
+    const rawOutput = await executeParseFileOnDesktop({
+      content: Buffer.from(sourceText).toString("base64"),
+      filename: "large-material.txt",
+      mimeType: "text/plain",
+    });
+    expect(rawOutput).toMatchObject({ ok: true, text: sourceText });
+
+    const modelOutput = await parseFileTool.toModelOutput?.(rawOutput as never);
+    const result = modelOutput as {
+      ok: boolean;
+      text: string;
+      metadata: { pages: number | null; wordCount: number; title: string | null };
+      truncated: boolean;
+      originalChars: number;
+      returnedChars: number;
+      omittedChars: number;
+      rangeStart: number;
+      rangeEnd: number;
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(MATERIAL_CONTEXT_MAX_CHARS);
+    expect(result.text.startsWith("【素材截断提示】")).toBe(true);
+    expect(result.text).toContain("storeMaterial");
+    expect(result.text).toContain("readMaterial");
+    expect(result.text).toContain("range");
+    expect(result).toMatchObject({
+      metadata: { pages: null, wordCount: sourceText.length, title: null },
+      truncated: true,
+      originalChars: sourceText.length,
+      rangeStart: 0,
+    });
+    expect(result.returnedChars).toBe(result.rangeEnd);
+    expect(result.omittedChars).toBe(sourceText.length - result.returnedChars);
+    expect(result.text.endsWith(sourceText.slice(0, result.returnedChars))).toBe(true);
+  });
+
+  it("模型侧默认结果未超预算时保留全文并携带未截断元数据", async () => {
+    const sourceText = "短素材正文";
+    const modelOutput = await parseFileTool.toModelOutput?.({
+      ok: true,
+      text: sourceText,
+      metadata: { pages: 1, wordCount: 5, title: null },
+    });
+
+    expect(modelOutput).toEqual({
+      ok: true,
+      text: sourceText,
+      metadata: { pages: 1, wordCount: 5, title: null },
+      truncated: false,
+      originalChars: sourceText.length,
+      returnedChars: sourceText.length,
+      omittedChars: 0,
+      rangeStart: 0,
+      rangeEnd: sourceText.length,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

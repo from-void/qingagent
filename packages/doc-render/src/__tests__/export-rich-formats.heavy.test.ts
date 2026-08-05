@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmCalloutTone, PmDoc } from "@qingagent/pm-schema";
 import { PM_CALLOUT_TONES } from "@qingagent/pm-schema";
 import { toDocx, toHtml, toMarkdown, toPdf } from "../export/index.js";
@@ -7,6 +8,7 @@ import { hasChromium } from "./browserTestGate.js";
 
 const INLINE_LATEX = String.raw`E=mc^2`;
 const BLOCK_LATEX = String.raw`\int_0^1 x^2 dx = \frac{1}{3}`;
+const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 const CALLOUT_EMOJI: Record<PmCalloutTone, string> = {
   info: "ℹ️",
@@ -95,6 +97,11 @@ const columnPmDoc: PmDoc = {
   attrs: { schemaVersion: 1 },
   content: [
     {
+      type: "paragraph",
+      attrs: { blockId: "before-columns" },
+      content: [{ type: "text", text: "分栏前正文" }],
+    },
+    {
       type: "columnList",
       attrs: { blockId: "columns-export" },
       content: [
@@ -112,6 +119,23 @@ const columnPmDoc: PmDoc = {
               attrs: { blockId: "column-left-p" },
               content: [{ type: "text", text: "左栏正文" }],
             },
+            {
+              type: "bulletList",
+              attrs: { blockId: "column-left-list" },
+              content: [
+                {
+                  type: "listItem",
+                  attrs: { blockId: "column-left-list-item" },
+                  content: [
+                    {
+                      type: "paragraph",
+                      attrs: { blockId: "column-left-list-p" },
+                      content: [{ type: "text", text: "左栏列表项" }],
+                    },
+                  ],
+                },
+              ],
+            },
           ],
         },
         {
@@ -123,9 +147,45 @@ const columnPmDoc: PmDoc = {
               attrs: { blockId: "column-right-p" },
               content: [{ type: "text", text: "右栏正文" }],
             },
+            {
+              type: "table",
+              attrs: { blockId: "column-right-table" },
+              content: [
+                {
+                  type: "tableRow",
+                  content: [
+                    {
+                      type: "tableCell",
+                      content: [
+                        {
+                          type: "paragraph",
+                          attrs: { blockId: "column-right-table-p" },
+                          content: [{ type: "text", text: "右栏表格" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "image",
+              attrs: {
+                blockId: "column-right-image",
+                src: `data:image/png;base64,${PNG_1X1}`,
+                alt: "右栏图片",
+                width: 24,
+                height: 24,
+              },
+            },
           ],
         },
       ],
+    },
+    {
+      type: "paragraph",
+      attrs: { blockId: "after-columns" },
+      content: [{ type: "text", text: "分栏后正文" }],
     },
   ],
 };
@@ -215,10 +275,31 @@ describe("rich PM export formats", () => {
     expect(numberingXml).toContain('<w:numFmt w:val="bullet"');
   });
 
-  it("exports DOCX columnList by flattening columns without losing text", async () => {
+  it("用连续分节与列分页符原生导出 DOCX 分栏，且保留栏内复杂块", async () => {
     const docx = await toDocx(columnPmDoc, { title: "分栏导出" });
 
     expect(docx.subarray(0, 2).toString("utf8")).toBe("PK");
+
+    const documentXml = await docxXml(docx, "word/document.xml");
+    const zip = await JSZip.loadAsync(docx);
+    const media = Object.keys(zip.files).filter((path) => /^word\/media\/.+\.png$/i.test(path));
+
+    // columnList 必须成为 Word 原生分栏节，并用显式列分页符固定各逻辑栏的起点；
+    // 前后正文则恢复单栏，避免后续内容继续流进分栏。
+    expect(documentXml).toMatch(/<w:cols\b[^>]*\bw:num="2"[^>]*>/);
+    expect(documentXml).toContain('<w:br w:type="column"/>');
+    expect(documentXml.match(/<w:type w:val="continuous"\/>/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(documentXml.match(/<w:cols\b[^>]*\bw:num="1"[^>]*>/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+
+    // 非等宽 35/65 分栏应写出自定义列宽；栏内列表、表格、图片仍保留原生节点。
+    const multiColumnXml = documentXml.match(/<w:cols\b[^>]*\bw:num="2"[^>]*>[\s\S]*?<\/w:cols>/)?.[0] ?? "";
+    expect(multiColumnXml.match(/<w:col\b/g)?.length ?? 0).toBe(2);
+    expect(new Set([...multiColumnXml.matchAll(/\bw:w="(\d+)"/g)].map((match) => match[1])).size).toBe(2);
+    expect(documentXml).toContain("<w:numPr>");
+    expect(documentXml).toContain("<w:tbl>");
+    expect(documentXml).toContain("右栏表格");
+    expect(documentXml).toContain("<w:drawing>");
+    expect(media.length).toBeGreaterThanOrEqual(1);
 
     const mammoth = await import("mammoth");
     const raw = await mammoth.extractRawText({ buffer: docx });
@@ -227,8 +308,32 @@ describe("rich PM export formats", () => {
     expect(text).toContain("左栏标题");
     expect(text).toContain("左栏正文");
     expect(text).toContain("右栏正文");
+    expect(text).toContain("左栏列表项");
+    expect(text).toContain("右栏表格");
     expect(text.indexOf("左栏标题")).toBeLessThan(text.indexOf("左栏正文"));
     expect(text.indexOf("左栏正文")).toBeLessThan(text.indexOf("右栏正文"));
+    expect(text.indexOf("分栏前正文")).toBeLessThan(text.indexOf("左栏标题"));
+    expect(text.indexOf("右栏正文")).toBeLessThan(text.indexOf("分栏后正文"));
+  });
+
+  it("用段落底边框原生导出 PM 与 legacy 水平线，不写入可编辑的线条字符", async () => {
+    const pmHorizontalRule: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        { type: "paragraph", attrs: { blockId: "before-hr" }, content: [{ type: "text", text: "线上" }] },
+        { type: "horizontalRule", attrs: { blockId: "hr" } },
+        { type: "paragraph", attrs: { blockId: "after-hr" }, content: [{ type: "text", text: "线下" }] },
+      ],
+    };
+    const legacyHorizontalRule: LegacySection[] = [{ kind: "hr", data: {} }];
+
+    for (const source of [pmHorizontalRule, legacyHorizontalRule]) {
+      const documentXml = await docxXml(await toDocx(source), "word/document.xml");
+      expect(documentXml).toContain("<w:pBdr>");
+      expect(documentXml).toContain("<w:bottom");
+      expect(documentXml).not.toMatch(/<w:t(?:\s[^>]*)?>[—─]+<\/w:t>/);
+    }
   });
 
   it("R3-04 exports structured Markdown", () => {

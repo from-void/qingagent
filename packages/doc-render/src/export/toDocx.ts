@@ -1,6 +1,8 @@
 import {
   AlignmentType,
   BorderStyle,
+  Column,
+  ColumnBreak,
   Document,
   ExternalHyperlink,
   FootnoteReferenceRun,
@@ -10,14 +12,17 @@ import {
   LevelFormat,
   Packer,
   Paragraph,
+  SectionType,
   ShadingType,
   Table,
+  TableBorders,
   TableCell,
   TableRow,
   TextRun,
   UnderlineType,
   WidthType,
   type IRunOptions,
+  type ISectionOptions,
   type ParagraphChild,
 } from "docx";
 import type { LegacySection } from "@qingagent/contract-ts";
@@ -113,6 +118,9 @@ function latexToDocxRun(latex: string, displayMode: boolean, mathImages: MathIma
 }
 
 const FONT = "Noto Sans CJK SC";
+const DOCX_PAGE_WIDTH_TWIPS = 11_906;
+const DOCX_HORIZONTAL_MARGIN_TWIPS = 1_440;
+const DOCX_COLUMN_GAP_TWIPS = 720;
 const BULLET_NUMBERING = "qingagent-bullet-list";
 const ORDERED_NUMBERING_BY_STYLE: Record<PmOrderedListStyle, string> = {
   decimal: "qingagent-ordered-list-decimal",
@@ -175,17 +183,8 @@ export async function toDocx(
     ? await buildMathImages(collectMathFormulas(prepared))
     : new Map<string, ImageRun | null>();
   const numbering = createDocxNumberingRegistry();
-  const sectionChildren = isPmDocDocument(prepared)
-    ? await pmDocToDocx(prepared, mathImages, numbering, footnotes.numberById)
-    : (await Promise.all(prepared.map((section) =>
-        sectionToDocx(
-          section,
-          numbering,
-          section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
-        ),
-      ))).flat();
   const title = options.title?.trim();
-  const children = [
+  const titleChildren = [
     // 正文开头已是同名标题就不再加一遍(去重),避免两个标题
     ...(title && !documentLeadsWithTitle(prepared, title)
       ? [
@@ -195,8 +194,27 @@ export async function toDocx(
           }),
         ]
       : []),
-    ...sectionChildren,
   ];
+  const sections: readonly ISectionOptions[] = isPmDocDocument(prepared)
+    ? await pmDocToDocxSections(
+        prepared,
+        titleChildren,
+        mathImages,
+        numbering,
+        footnotes.numberById,
+      )
+    : [{
+        children: [
+          ...titleChildren,
+          ...(await Promise.all(prepared.map((section) =>
+            sectionToDocx(
+              section,
+              numbering,
+              section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
+            ),
+          ))).flat(),
+        ],
+      }];
 
   const doc = new Document({
     styles: {
@@ -228,21 +246,131 @@ export async function toDocx(
           ])),
         }
       : {}),
-    sections: [{ children }],
+    sections,
   });
 
   return Packer.toBuffer(doc);
 }
 
-async function pmDocToDocx(
+/**
+ * 把顶层 PM 流切成 Word 连续分节。
+ *
+ * columnList 使用节属性 w:cols；逻辑栏之间插入 w:br type=column，避免 Word
+ * 按内容高度自动重排到相邻栏。分栏前后的普通内容显式回到单栏节，防止布局外溢。
+ */
+async function pmDocToDocxSections(
   doc: PmDoc,
+  leadingChildren: Array<Paragraph | Table>,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
-): Promise<Array<Paragraph | Table>> {
-  return (await Promise.all(doc.content.map((node) =>
-    pmBlockToDocx(node, 0, {}, mathImages, numbering, footnoteNumbers),
-  ))).flat();
+): Promise<ISectionOptions[]> {
+  const hasColumns = doc.content.some((node) => node.type === "columnList");
+  if (!hasColumns) {
+    return [{
+      children: [
+        ...leadingChildren,
+        ...(await Promise.all(doc.content.map((node) =>
+          pmBlockToDocx(node, 0, {}, mathImages, numbering, footnoteNumbers),
+        ))).flat(),
+      ],
+    }];
+  }
+
+  const sections: ISectionOptions[] = [];
+  let singleColumnChildren = [...leadingChildren];
+  const flushSingleColumn = (): void => {
+    if (singleColumnChildren.length === 0) return;
+    sections.push({
+      properties: {
+        type: SectionType.CONTINUOUS,
+        column: { count: 1 },
+      },
+      children: singleColumnChildren,
+    });
+    singleColumnChildren = [];
+  };
+
+  for (const node of doc.content) {
+    if (node.type !== "columnList") {
+      singleColumnChildren.push(...await pmBlockToDocx(
+        node,
+        0,
+        {},
+        mathImages,
+        numbering,
+        footnoteNumbers,
+      ));
+      continue;
+    }
+
+    flushSingleColumn();
+    const columnChildren: Array<Paragraph | Table> = [];
+    for (const [index, column] of node.content.entries()) {
+      if (index > 0) {
+        columnChildren.push(new Paragraph({ children: [new ColumnBreak()] }));
+      }
+      for (const child of column.content) {
+        columnChildren.push(...await pmBlockToDocx(
+          child,
+          0,
+          {},
+          mathImages,
+          numbering,
+          footnoteNumbers,
+        ));
+      }
+    }
+    sections.push({
+      properties: {
+        type: SectionType.CONTINUOUS,
+        column: docxColumns(node.content.map((column) => column.attrs.widthRatio)),
+      },
+      children: columnChildren,
+    });
+  }
+
+  flushSingleColumn();
+  return sections;
+}
+
+/** 按 PM widthRatio 计算 A4 正文区内的 Word 自定义列宽，所有值均为 twip。 */
+function docxColumns(widthRatios: readonly (number | null | undefined)[]) {
+  const count = Math.max(1, widthRatios.length);
+  const gap = Math.min(
+    DOCX_COLUMN_GAP_TWIPS,
+    Math.max(0, Math.floor((DOCX_PAGE_WIDTH_TWIPS - DOCX_HORIZONTAL_MARGIN_TWIPS * 2) / (count * 4))),
+  );
+  const availableWidth = DOCX_PAGE_WIDTH_TWIPS
+    - DOCX_HORIZONTAL_MARGIN_TWIPS * 2
+    - gap * (count - 1);
+  const weights = normalizedColumnWeights(widthRatios);
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || count;
+  let allocatedWidth = 0;
+  const children = weights.map((weight, index) => {
+    const width = index === count - 1
+      ? Math.max(1, availableWidth - allocatedWidth)
+      : Math.max(1, Math.round(availableWidth * weight / weightTotal));
+    allocatedWidth += width;
+    return new Column({
+      width,
+      ...(index < count - 1 ? { space: gap } : {}),
+    });
+  });
+
+  return {
+    count,
+    equalWidth: false,
+    children,
+  };
+}
+
+function normalizedColumnWeights(
+  widthRatios: readonly (number | null | undefined)[],
+): number[] {
+  return widthRatios.map((ratio) =>
+    typeof ratio === "number" && Number.isFinite(ratio) && ratio > 0 ? ratio : 1,
+  );
 }
 
 // 引用块视觉装饰:左缩进 + 左侧竖边框 + 浅暖底纹(与 callout/codeBlock 同色系),
@@ -255,6 +383,21 @@ const QUOTE_PARAGRAPH_DECORATION = {
   shading: { type: ShadingType.CLEAR, fill: "F5F2EC", color: "auto" },
 } as const;
 
+/** Word 原生水平线：空段落的底边框（w:pBdr/w:bottom），不写入可编辑字符。 */
+function horizontalRuleParagraph(): Paragraph {
+  return new Paragraph({
+    border: {
+      bottom: {
+        style: BorderStyle.SINGLE,
+        size: 6,
+        space: 1,
+        color: "C8C2B6",
+      },
+    },
+    spacing: { before: 80, after: 180 },
+  });
+}
+
 async function pmBlockToDocx(
   node: PmBlockNode,
   depth: number,
@@ -266,15 +409,16 @@ async function pmBlockToDocx(
   const quoteDeco = opts.inQuote ? QUOTE_PARAGRAPH_DECORATION : {};
   switch (node.type) {
     case "columnList":
-      return (
-        await Promise.all(
-          node.content.map((column) =>
-            Promise.all(column.content.map((child) =>
-              pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers),
-            )),
-          ),
-        )
-      ).flat(2);
+      // 顶层 columnList 在 pmDocToDocxSections 中转换为 w:cols。若合法 PM 把分栏
+      // 嵌进表格单元格等容器，sectPr 不能位于容器内部；改用无边框 Word 表格保持
+      // 真正并排且让每栏继续容纳列表/表格/图片，绝不退回纵向拍平。
+      return [await nestedColumnListToDocx(
+        node,
+        depth,
+        mathImages,
+        numbering,
+        footnoteNumbers,
+      )];
     case "diagram":
       // 图表块:有渲染好的 svg 就当图片嵌入(走 image 的 svg→png 路径),否则源码降级为 code 块。
       return sectionToDocx(
@@ -323,7 +467,7 @@ async function pmBlockToDocx(
       ))).flat();
     }
     case "horizontalRule":
-      return [new Paragraph({ text: "————————", spacing: { after: 180 } })];
+      return [horizontalRuleParagraph()];
     case "codeBlock":
       return [
         new Paragraph({
@@ -412,6 +556,32 @@ async function pmBlockToDocx(
       ];
     }
   }
+}
+
+async function nestedColumnListToDocx(
+  node: Extract<PmBlockNode, { type: "columnList" }>,
+  depth: number,
+  mathImages: MathImages,
+  numbering: DocxNumberingRegistry,
+  footnoteNumbers: ReadonlyMap<string, number>,
+): Promise<Table> {
+  const weights = normalizedColumnWeights(node.content.map((column) => column.attrs.widthRatio));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || Math.max(1, weights.length);
+  const cells = await Promise.all(node.content.map(async (column, index) => {
+    const children = (await Promise.all(column.content.map((child) =>
+      pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers),
+    ))).flat();
+    return new TableCell({
+      width: { size: weights[index]! / weightTotal * 100, type: WidthType.PERCENTAGE },
+      children: children.length > 0 ? children : [new Paragraph("")],
+    });
+  }));
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: TableBorders.NONE,
+    rows: [new TableRow({ children: cells })],
+  });
 }
 
 async function pmListItemToDocx(
@@ -795,7 +965,7 @@ async function sectionToDocx(
         }),
       ];
     case "hr":
-      return [new Paragraph({ text: "─".repeat(30) })];
+      return [horizontalRuleParagraph()];
     case "list": {
       const reference = section.data.ordered
         ? numbering.referenceFor(section, "decimal", 1)

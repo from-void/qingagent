@@ -1698,6 +1698,29 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("UsageModeToggle").querySelector("small")).toBeNull();
   });
 
+  it("费用单元格标注北京时间高峰倍率与调用次数", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [{
+            ...usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.002),
+            peakPricedCalls: 2,
+            peakPricingMultiplierMin: 2,
+            peakPricingMultiplierMax: 2,
+          }],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    expect(getTable().textContent).toContain("高峰 2× · 2 次");
+  });
+
   it("点击用量明细标题切换专家模式并披露完整列", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);

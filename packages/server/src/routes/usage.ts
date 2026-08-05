@@ -47,33 +47,62 @@ usageRoutes.get("/usage/summary", async (c) => {
   const response = {
     view,
     rows: rows.map((row) => {
-      const { sessionId, ...publicRow } = row;
+      const {
+        sessionId,
+        pricingSnapshotCalls,
+        legacyPricingCalls,
+        legacyInputTokens,
+        legacyOutputTokens,
+        legacyCacheHitTokens,
+        legacyCacheMissTokens,
+        legacyEstimatedInputTokens,
+        legacyEstimatedOutputTokens,
+        legacyEstimatedCacheHitTokens,
+        legacyEstimatedCacheMissTokens,
+        ...publicRow
+      } = row;
       const fallbackTitle = titleMap?.get(sessionId ?? row.bucket) || undefined;
+      // 旧 core 响应没有快照计数，等价视为迁移前数据；已有快照金额的行绝不再走现价重算。
+      const legacyWholeRow = pricingSnapshotCalls === undefined &&
+        legacyPricingCalls === undefined &&
+        row.costCny === undefined &&
+        row.estimatedCostCny === undefined;
+      const hasLegacyUsage = legacyWholeRow || (legacyPricingCalls ?? 0) > 0;
+      const legacyPriced = hasLegacyUsage && hasModelPricing(row.modelId);
+      const legacyCostCny = legacyPriced
+        ? estimateCostCny(row.modelId, {
+            input: legacyWholeRow ? row.inputTokens : legacyInputTokens,
+            output: legacyWholeRow ? row.outputTokens : legacyOutputTokens,
+            cacheHit: legacyWholeRow ? row.cacheHitTokens : legacyCacheHitTokens,
+            cacheMiss: legacyWholeRow ? row.cacheMissTokens : legacyCacheMissTokens,
+          })
+        : undefined;
+      const hasLegacyEstimated = hasLegacyUsage && (
+        legacyWholeRow
+          ? (row.estimatedCalls ?? 0) > 0
+          : (legacyEstimatedInputTokens ?? 0) > 0 || (legacyEstimatedOutputTokens ?? 0) > 0
+      );
+      const legacyEstimatedCostCny = legacyPriced && hasLegacyEstimated
+        ? estimateCostCny(row.modelId, {
+            input: legacyWholeRow ? row.estimatedInputTokens : legacyEstimatedInputTokens,
+            output: legacyWholeRow ? row.estimatedOutputTokens : legacyEstimatedOutputTokens,
+            cacheHit: legacyWholeRow ? row.estimatedCacheHitTokens : legacyEstimatedCacheHitTokens,
+            cacheMiss: legacyWholeRow ? row.estimatedCacheMissTokens : legacyEstimatedCacheMissTokens,
+          })
+        : undefined;
+      const hasRecordedCost = row.costCny !== undefined || legacyCostCny !== undefined;
+      const hasEstimatedCost = row.estimatedCostCny !== undefined || legacyEstimatedCostCny !== undefined;
       return {
         ...publicRow,
         ...(view === "session" ? { label: fallbackTitle } : {}),
         ...(view === "day"
           ? { documentTitle: row.documentTitle || fallbackTitle }
           : {}),
-        ...(hasModelPricing(row.modelId)
-          ? {
-              costCny: estimateCostCny(row.modelId, {
-                input: row.inputTokens,
-                output: row.outputTokens,
-                cacheHit: row.cacheHitTokens,
-                cacheMiss: row.cacheMissTokens,
-              }),
-              ...((row.estimatedCalls ?? 0) > 0
-                ? {
-                    estimatedCostCny: estimateCostCny(row.modelId, {
-                      input: row.estimatedInputTokens,
-                      output: row.estimatedOutputTokens,
-                      cacheHit: row.estimatedCacheHitTokens,
-                      cacheMiss: row.estimatedCacheMissTokens,
-                    }),
-                  }
-                : {}),
-            }
+        ...(hasRecordedCost
+          ? { costCny: (row.costCny ?? 0) + (legacyCostCny ?? 0) }
+          : {}),
+        ...(hasEstimatedCost
+          ? { estimatedCostCny: (row.estimatedCostCny ?? 0) + (legacyEstimatedCostCny ?? 0) }
           : {}),
       };
     }),

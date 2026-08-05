@@ -1,4 +1,4 @@
-import { DEEPSEEK_MODEL_IDS, KIMI_MODEL_IDS } from "./modelConfig.js";
+import { DEEPSEEK_MODEL_IDS, KIMI_MODEL_IDS } from "./modelTypes.js";
 
 export interface ModelPricing {
   inputCacheHitPerMillion: number;
@@ -14,6 +14,39 @@ export interface TokenUsageForCost {
   cacheHit?: number;
   cacheMiss?: number;
 }
+
+export interface PeakPricingWindow {
+  start: string;
+  end: string;
+}
+
+export interface DeepSeekPeakPricingConfig {
+  enabled: boolean;
+  multiplier: number;
+  windows: PeakPricingWindow[];
+}
+
+export interface ModelCostSnapshot {
+  costCny: number;
+  pricingTier: "standard" | "peak";
+  pricingMultiplier: number;
+}
+
+/** DeepSeek 峰谷时段由官方按北京时间定义，不随服务进程或看板客户端时区变化。 */
+export const DEEPSEEK_PRICING_TIME_ZONE = "Asia/Shanghai";
+
+/**
+ * 官网当前公告值；“即将生效”的准确日期尚未公布，因此默认关闭。
+ * 生效时只需配置 DEEPSEEK_PEAK_PRICING_JSON，无需修改计价代码。
+ */
+export const DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG: DeepSeekPeakPricingConfig = {
+  enabled: false,
+  multiplier: 2,
+  windows: [
+    { start: "09:00", end: "12:00" },
+    { start: "14:00", end: "18:00" },
+  ],
+};
 
 // 来源: 各厂商官方中文价目页(人民币计价——产品决策:金额统一用人民币)。单位: CNY(元) / 1M tokens。
 //
@@ -54,6 +87,74 @@ export const DEFAULT_MODEL_PRICING_CNY_PER_MILLION: ModelPricingTable = {
 
 function asFiniteNonNegative(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function asFinitePositive(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function clockMinute(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+    ? hour * 60 + minute
+    : null;
+}
+
+function normalizePeakWindows(value: unknown): PeakPricingWindow[] | null {
+  if (!Array.isArray(value)) return null;
+  const windows: PeakPricingWindow[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") return null;
+    const record = entry as Record<string, unknown>;
+    const startMinute = clockMinute(record.start);
+    const endMinute = clockMinute(record.end);
+    if (
+      startMinute === null ||
+      endMinute === null ||
+      startMinute === endMinute ||
+      typeof record.start !== "string" ||
+      typeof record.end !== "string"
+    ) {
+      return null;
+    }
+    windows.push({ start: record.start, end: record.end });
+  }
+  return windows;
+}
+
+/** 配置格式:{ enabled, multiplier, windows:[{ start:"HH:mm", end:"HH:mm" }] }。 */
+export function getDeepSeekPeakPricingConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): DeepSeekPeakPricingConfig {
+  const raw = env.DEEPSEEK_PEAK_PRICING_JSON;
+  if (!raw) return DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (parsed === null || typeof parsed !== "object") {
+      return DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG;
+    }
+    const enabled = parsed.enabled === undefined
+      ? DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG.enabled
+      : typeof parsed.enabled === "boolean"
+        ? parsed.enabled
+        : null;
+    const multiplier = parsed.multiplier === undefined
+      ? DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG.multiplier
+      : asFinitePositive(parsed.multiplier);
+    const windows = parsed.windows === undefined
+      ? DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG.windows
+      : normalizePeakWindows(parsed.windows);
+    if (enabled === null || multiplier === null || windows === null) {
+      return DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG;
+    }
+    return { enabled, multiplier, windows: windows.map((window) => ({ ...window })) };
+  } catch {
+    return DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG;
+  }
 }
 
 function normalizePricingEntry(value: unknown): ModelPricing | null {
@@ -125,4 +226,62 @@ export function estimateCostCny(
     (cacheMiss / 1_000_000) * pricing.inputCacheMissPerMillion +
     (output / 1_000_000) * pricing.outputPerMillion
   );
+}
+
+const beijingClockFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: DEEPSEEK_PRICING_TIME_ZONE,
+  hourCycle: "h23",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function clockMinuteInBeijing(occurredAt: string | number | Date): number | null {
+  const date = occurredAt instanceof Date ? occurredAt : new Date(occurredAt);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = beijingClockFormatter.formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return Number.isInteger(hour) && Number.isInteger(minute) ? hour * 60 + minute : null;
+}
+
+function minuteInWindow(minute: number, window: PeakPricingWindow): boolean {
+  const start = clockMinute(window.start);
+  const end = clockMinute(window.end);
+  if (start === null || end === null || start === end) return false;
+  // [start,end)；跨午夜窗口也可配置，例如 23:00～02:00。
+  return start < end
+    ? minute >= start && minute < end
+    : minute >= start || minute < end;
+}
+
+function isDeepSeekModel(modelId: string): boolean {
+  return Object.values(DEEPSEEK_MODEL_IDS).some((candidate) => candidate === modelId);
+}
+
+/**
+ * 按调用发生时刻生成不可变金额快照。未收录模型返回 null；调用方应将其标为 unpriced，
+ * 避免模型日后加入价表时反向改写历史费用。
+ */
+export function estimateCostCnyAt(
+  modelId: string,
+  usage: TokenUsageForCost,
+  occurredAt: string | number | Date,
+  peakPricing: DeepSeekPeakPricingConfig = getDeepSeekPeakPricingConfig(),
+  pricingTable: ModelPricingTable = getModelPricingTable(),
+): ModelCostSnapshot | null {
+  if (!hasModelPricing(modelId, pricingTable)) return null;
+  const baseCostCny = estimateCostCny(modelId, usage, pricingTable);
+  if (!isDeepSeekModel(modelId) || !peakPricing.enabled || peakPricing.multiplier === 1) {
+    return { costCny: baseCostCny, pricingTier: "standard", pricingMultiplier: 1 };
+  }
+  const minute = clockMinuteInBeijing(occurredAt);
+  const peak = minute !== null && peakPricing.windows.some((window) => minuteInWindow(minute, window));
+  if (!peak) {
+    return { costCny: baseCostCny, pricingTier: "standard", pricingMultiplier: 1 };
+  }
+  return {
+    costCny: baseCostCny * peakPricing.multiplier,
+    pricingTier: "peak",
+    pricingMultiplier: peakPricing.multiplier,
+  };
 }

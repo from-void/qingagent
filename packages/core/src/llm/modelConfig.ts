@@ -70,9 +70,19 @@ export {
   type BranchMessage,
   type SessionSnapshot,
 } from "./sessionSnapshots.js";
-import type { ApiKeyOrigin } from "./modelTypes.js";
+import {
+  DEEPSEEK_MODEL_IDS,
+  KIMI_MODEL_IDS,
+  type ApiKeyOrigin,
+  type DeepseekTier,
+} from "./modelTypes.js";
 import { allowGlobalModelFallback } from "./modelSourcePolicy.js";
-export type { ApiKeyOrigin } from "./modelTypes.js";
+export {
+  DEEPSEEK_MODEL_IDS,
+  KIMI_MODEL_IDS,
+  type ApiKeyOrigin,
+  type DeepseekTier,
+} from "./modelTypes.js";
 
 type InnerLanguageModel = Exclude<LanguageModel, string>;
 
@@ -777,20 +787,7 @@ function envModelProtocol(): ModelProtocol | undefined {
   return v === "anthropic" || v === "openai" ? v : undefined;
 }
 
-export type DeepseekTier = "flash" | "pro";
 export type ModelProtocol = "openai" | "anthropic";
-
-/** 模型 id 单一来源。Flash 为默认档位,Pro 由请求档位显式选择。 */
-export const DEEPSEEK_MODEL_IDS: Record<DeepseekTier, string> = {
-  flash: "deepseek-v4-flash",
-  pro: "deepseek-v4-pro",
-};
-
-/** Kimi 只开放两档:Flash → K2.7 Code,Pro → K3。 */
-export const KIMI_MODEL_IDS: Record<DeepseekTier, string> = {
-  flash: "kimi-for-coding",
-  pro: "k3",
-};
 
 /** 上下文窗口(tokens)。DeepSeek flash/pro 当前按 1M 估算口径展示,UI 标注"约"。 */
 export const DEEPSEEK_CONTEXT_WINDOWS: Record<string, number> = {

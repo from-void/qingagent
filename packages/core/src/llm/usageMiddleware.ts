@@ -3,6 +3,7 @@ import { TokenCounter } from "@mastra/memory/processors";
 import type { LanguageModelMiddleware } from "ai-v5";
 import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelTypes.js";
+import { estimateCostCnyAt } from "./modelPricing.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
@@ -32,9 +33,12 @@ export interface ModelCallUsageEstimate {
 
 /**
  * Mastra 的 TokenCounter 对纯文本使用 tokenx 粗估，并不会按当前 provider/model
- * 切换到实际 tokenizer。席位受控样本显示中文方向性低估；provider 又不为已中止请求
- * 返回最终 usage。在有稳定的 provider/model-specific 依据前不乘经验系数，避免把一组
- * 样本偏差固化成所有模型的系统误差；正常完成的请求仍始终以 provider usage 为准。
+ * 切换到实际 tokenizer。tokenx 对 CJK 直接按字符计数（一个汉字记一个 token），而
+ * DeepSeek 实测约为 0.53～0.63 token/字，因此中文方向是高估，不是低估。若拿“可见
+ * 正文的 tokenx 结果”去对比“包含 system、tool schema 与消息框架的 prompt_tokens”，
+ * 前者仍可能更小，但那是漏算上下文内容，不能反推分词器低估。在没有稳定的
+ * provider/model-specific tokenizer 前不乘经验系数，避免把中文推到约两倍高估；正常
+ * 完成的请求始终以 provider usage 为准。
  */
 const usageTokenCounter = new TokenCounter();
 
@@ -203,6 +207,22 @@ export async function recordModelCallOutcome(
       ` finish=${options.finishReason ?? "?"}`,
   );
 
+  const costSnapshot = counts
+    ? estimateCostCnyAt(options.modelId, {
+        input: counts.inputTokens,
+        output: counts.outputTokens,
+        cacheHit: counts.promptCacheHitTokens,
+        cacheMiss: counts.promptCacheMissTokens,
+      }, options.startedAt)
+    : null;
+  const pricingFields = costSnapshot
+    ? {
+        costCny: costSnapshot.costCny,
+        pricingTier: costSnapshot.pricingTier,
+        pricingMultiplier: costSnapshot.pricingMultiplier,
+      }
+    : { pricingTier: "unpriced" as const };
+
   try {
     if (recorded && typeof hitTokens === "number" && typeof missTokens === "number") {
       void observeCacheOutcome({
@@ -223,6 +243,8 @@ export async function recordModelCallOutcome(
         attempt: options.attempt,
         usageState: "missing",
         reason,
+        occurredAt: options.startedAt,
+        pricingTier: "unpriced",
       });
       return;
     }
@@ -244,6 +266,8 @@ export async function recordModelCallOutcome(
         : "unknown",
       usageState,
       reason,
+      occurredAt: options.startedAt,
+      ...pricingFields,
     });
   } catch (error) {
     // 观测链路永远旁路，不得改变 provider 请求结果。

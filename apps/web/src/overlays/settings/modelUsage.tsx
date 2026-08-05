@@ -109,6 +109,9 @@ export function UsageTableRow({
     : kind === "document"
       ? "UsageDocumentRow"
       : "UsageGroupRow";
+  const peakMultiplier = row.peakPricingMultiplierMin === row.peakPricingMultiplierMax
+    ? `${row.peakPricingMultiplierMin}×`
+    : `${row.peakPricingMultiplierMin}～${row.peakPricingMultiplierMax}×`;
 
   return (
     <tr
@@ -157,6 +160,11 @@ export function UsageTableRow({
         {(row.estimatedCostCny ?? 0) > 0 ? (
           <small title="按已发送 prompt 与中止前已收 delta 本地估算">
             估 {`¥${row.estimatedCostCny!.toFixed(3)}`}
+          </small>
+        ) : null}
+        {(row.peakPricedCalls ?? 0) > 0 ? (
+          <small title="DeepSeek 按调用开始时的北京时间高峰窗口计价，倍率已计入上方金额">
+            高峰 {peakMultiplier} · {row.peakPricedCalls} 次
           </small>
         ) : null}
       </td>

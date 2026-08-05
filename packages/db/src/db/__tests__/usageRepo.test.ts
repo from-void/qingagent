@@ -24,6 +24,75 @@ afterEach(() => {
 });
 
 describe("usageRepo", () => {
+  it("金额快照与高峰档位随事件落库并分别聚合 recorded/estimated", async () => {
+    await recordUsageEvent({
+      sessionId: "session-priced",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      inputTokens: 100,
+      outputTokens: 20,
+      usageState: "recorded",
+      costCny: 0.0123,
+      pricingTier: "peak",
+      pricingMultiplier: 2,
+      occurredAt: "2026-08-06T01:30:00.000Z",
+    });
+    await recordUsageEvent({
+      sessionId: "session-priced",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      inputTokens: 70,
+      outputTokens: 10,
+      usageState: "estimated",
+      costCny: 0.0045,
+      pricingTier: "peak",
+      pricingMultiplier: 2,
+      occurredAt: "2026-08-06T01:31:00.000Z",
+    });
+    await getDocumentsClient().execute(
+      `INSERT INTO llm_usage_events
+       (id, session_id, call_site, model_id, key_origin, input_tokens, output_tokens,
+        cache_hit_tokens, cache_miss_tokens, cache_accounting_state, usage_state, created_at)
+       VALUES ('legacy-priced', 'session-priced', 'agentChat', 'deepseek-v4-flash',
+        'visitor', 30, 3, 20, 10, 'known', 'recorded', '2026-08-06T01:29:00.000Z')`,
+    );
+
+    expect(await aggregateUsageTotal()).toEqual([
+      expect.objectContaining({
+        costCny: 0.0123,
+        estimatedCostCny: 0.0045,
+        peakPricedCalls: 2,
+        peakPricingMultiplierMin: 2,
+        peakPricingMultiplierMax: 2,
+        pricingSnapshotCalls: 2,
+        legacyPricingCalls: 1,
+        legacyInputTokens: 30,
+        legacyOutputTokens: 3,
+        legacyCacheHitTokens: 20,
+        legacyCacheMissTokens: 10,
+      }),
+    ]);
+    const stored = await getDocumentsClient().execute(
+      "SELECT created_at, cost_cny, pricing_tier, pricing_multiplier FROM llm_usage_events WHERE pricing_tier IS NOT NULL ORDER BY created_at",
+    );
+    expect(stored.rows).toEqual([
+      expect.objectContaining({
+        created_at: "2026-08-06T01:30:00.000Z",
+        cost_cny: 0.0123,
+        pricing_tier: "peak",
+        pricing_multiplier: 2,
+      }),
+      expect.objectContaining({
+        created_at: "2026-08-06T01:31:00.000Z",
+        cost_cny: 0.0045,
+        pricing_tier: "peak",
+        pricing_multiplier: 2,
+      }),
+    ]);
+  });
+
   it("estimated 单列聚合，不混入 recorded token 与精确覆盖率", async () => {
     await recordUsageEvent({
       sessionId: "session-estimated",
@@ -135,6 +204,7 @@ describe("usageRepo", () => {
         recordedCalls: 1,
         missingCalls: 1,
         coverageRate: 0.5,
+        pricingSnapshotCalls: 2,
       },
       {
         bucket,
@@ -151,6 +221,7 @@ describe("usageRepo", () => {
         recordedCalls: 1,
         missingCalls: 0,
         coverageRate: 1,
+        pricingSnapshotCalls: 1,
       },
     ];
     expect(await aggregateUsageByDay(1)).toEqual(

@@ -26,6 +26,8 @@ export function aggregateUsageRows(
   const estimatedCalls = sum((row) => row.estimatedCalls ?? 0);
   const models = new Set(rows.map((row) => row.modelId));
   const pricedRows = rows.filter((row) => row.costCny !== undefined);
+  const estimatedPricedRows = rows.filter((row) => row.estimatedCostCny !== undefined);
+  const peakRows = rows.filter((row) => (row.peakPricedCalls ?? 0) > 0);
 
   return {
     bucket,
@@ -51,9 +53,27 @@ export function aggregateUsageRows(
     ...(pricedRows.length > 0
       ? {
           costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0),
-          estimatedCostCny: pricedRows.reduce(
+        }
+      : {}),
+    ...(estimatedPricedRows.length > 0
+      ? {
+          estimatedCostCny: estimatedPricedRows.reduce(
             (total, row) => total + (row.estimatedCostCny ?? 0),
             0,
+          ),
+        }
+      : {}),
+    ...(peakRows.length > 0
+      ? {
+          peakPricedCalls: peakRows.reduce(
+            (total, row) => total + (row.peakPricedCalls ?? 0),
+            0,
+          ),
+          peakPricingMultiplierMin: Math.min(
+            ...peakRows.map((row) => row.peakPricingMultiplierMin ?? 1),
+          ),
+          peakPricingMultiplierMax: Math.max(
+            ...peakRows.map((row) => row.peakPricingMultiplierMax ?? 1),
           ),
         }
       : {}),

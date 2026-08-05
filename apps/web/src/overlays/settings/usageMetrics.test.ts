@@ -95,4 +95,45 @@ describe("aggregateUsageRows", () => {
       estimatedCostCny: 2.545,
     });
   });
+
+  it("只有 estimated 金额的行仍进入分组估算金额", () => {
+    const summary = aggregateUsageRows("S1", [
+      {
+        ...usageRow(0, 0),
+        recordedCalls: 0,
+        estimatedCalls: 1,
+        estimatedInputTokens: 800,
+        estimatedOutputTokens: 90,
+        estimatedCostCny: 0.2545,
+      },
+    ]);
+
+    expect(summary.costCny).toBeUndefined();
+    expect(summary.estimatedCostCny).toBe(0.2545);
+  });
+
+  it("汇总高峰计价次数并保留倍率范围供看板解释价差", () => {
+    const summary = aggregateUsageRows("S1", [
+      {
+        ...usageRow(100, 20),
+        costCny: 0.01,
+        peakPricedCalls: 1,
+        peakPricingMultiplierMin: 1.5,
+        peakPricingMultiplierMax: 1.5,
+      },
+      {
+        ...usageRow(200, 40),
+        costCny: 0.02,
+        peakPricedCalls: 2,
+        peakPricingMultiplierMin: 2,
+        peakPricingMultiplierMax: 2,
+      },
+    ]);
+
+    expect(summary).toMatchObject({
+      peakPricedCalls: 3,
+      peakPricingMultiplierMin: 1.5,
+      peakPricingMultiplierMax: 2,
+    });
+  });
 });

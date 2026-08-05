@@ -30,6 +30,10 @@ export interface UsageSummaryRow {
   coverageRate: number;
   costCny?: number;
   estimatedCostCny?: number;
+  /** 按北京时间高峰窗口计价的请求数及其实际倍率范围。 */
+  peakPricedCalls?: number;
+  peakPricingMultiplierMin?: number;
+  peakPricingMultiplierMax?: number;
 }
 
 export interface UsageSummaryResponse {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG,
   estimateCostCny,
+  estimateCostCnyAt,
+  getDeepSeekPeakPricingConfig,
   hasModelPricing,
 } from "../llm/modelPricing.js";
 
@@ -44,5 +47,95 @@ describe("modelPricing provider 边界", () => {
     // Kimi:8k × 2 + 2k × 20 + 1k × 100 = 0.016 + 0.04 + 0.1
     expect(kimi).toBeCloseTo(0.156, 10);
     expect(deepseek + kimi).toBeCloseTo(0.16016, 10);
+  });
+
+  it("北京时间高峰窗口内对 DeepSeek 所有计费项应用配置倍率", () => {
+    const usage = { input: 10_000, output: 1_000, cacheHit: 8_000 };
+    const result = estimateCostCnyAt(
+      "deepseek-v4-flash",
+      usage,
+      // UTC 01:30 = 北京时间 09:30，不能按进程本地时区判定。
+      new Date("2026-08-06T01:30:00.000Z"),
+      {
+        ...DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG,
+        enabled: true,
+      },
+    );
+
+    expect(result).toEqual({
+      costCny: estimateCostCny("deepseek-v4-flash", usage) * 2,
+      pricingTier: "peak",
+      pricingMultiplier: 2,
+    });
+  });
+
+  it("北京时间平峰窗口保持基础单价", () => {
+    const usage = { input: 10_000, output: 1_000, cacheHit: 8_000 };
+    const result = estimateCostCnyAt(
+      "deepseek-v4-flash",
+      usage,
+      // UTC 04:30 = 北京时间 12:30，位于两个高峰窗口之间。
+      new Date("2026-08-06T04:30:00.000Z"),
+      {
+        ...DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG,
+        enabled: true,
+      },
+    );
+
+    expect(result).toEqual({
+      costCny: estimateCostCny("deepseek-v4-flash", usage),
+      pricingTier: "standard",
+      pricingMultiplier: 1,
+    });
+  });
+
+  it("峰谷开关关闭时与原计算逐厘完全相同", () => {
+    const usage = { input: 10_000, output: 1_000, cacheHit: 8_000 };
+    const before = estimateCostCny("deepseek-v4-flash", usage);
+    const after = estimateCostCnyAt(
+      "deepseek-v4-flash",
+      usage,
+      new Date("2026-08-06T01:30:00.000Z"),
+      DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG,
+    );
+
+    expect(after?.costCny).toBe(before);
+    expect(after).toMatchObject({ pricingTier: "standard", pricingMultiplier: 1 });
+    const multiplierOne = estimateCostCnyAt(
+      "deepseek-v4-flash",
+      usage,
+      new Date("2026-08-06T01:30:00.000Z"),
+      { ...DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG, enabled: true, multiplier: 1 },
+    );
+    expect(multiplierOne?.costCny).toBe(before);
+    expect(multiplierOne).toMatchObject({ pricingTier: "standard", pricingMultiplier: 1 });
+  });
+
+  it("峰谷倍率与窗口可由配置覆盖，默认仍关闭", () => {
+    expect(DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG).toEqual({
+      enabled: false,
+      multiplier: 2,
+      windows: [
+        { start: "09:00", end: "12:00" },
+        { start: "14:00", end: "18:00" },
+      ],
+    });
+    expect(getDeepSeekPeakPricingConfig({
+      DEEPSEEK_PEAK_PRICING_JSON: JSON.stringify({
+        enabled: true,
+        multiplier: 1.5,
+        windows: [{ start: "10:15", end: "11:45" }],
+      }),
+    } as NodeJS.ProcessEnv)).toEqual({
+      enabled: true,
+      multiplier: 1.5,
+      windows: [{ start: "10:15", end: "11:45" }],
+    });
+    expect(getDeepSeekPeakPricingConfig({
+      DEEPSEEK_PEAK_PRICING_JSON: JSON.stringify({ enabled: true }),
+    } as NodeJS.ProcessEnv)).toEqual({
+      ...DEFAULT_DEEPSEEK_PEAK_PRICING_CONFIG,
+      enabled: true,
+    });
   });
 });

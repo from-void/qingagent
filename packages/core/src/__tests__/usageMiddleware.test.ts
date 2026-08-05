@@ -85,6 +85,39 @@ describe("usage middleware", () => {
     }));
   });
 
+  it("统一终态以调用开始时刻固化北京时间高峰金额", async () => {
+    const previous = process.env.DEEPSEEK_PEAK_PRICING_JSON;
+    process.env.DEEPSEEK_PEAK_PRICING_JSON = JSON.stringify({ enabled: true });
+    try {
+      const startedAt = Date.parse("2026-08-06T01:30:00.000Z");
+      await recordModelCallOutcome({
+        sessionId: "session-peak",
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        attempt: 1,
+        transport: "manual-api",
+        startedAt,
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 20,
+        },
+      });
+
+      expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        occurredAt: startedAt,
+        costCny: expect.closeTo(0.000164, 12),
+        pricingTier: "peak",
+        pricingMultiplier: 2,
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.DEEPSEEK_PEAK_PRICING_JSON;
+      else process.env.DEEPSEEK_PEAK_PRICING_JSON = previous;
+    }
+  });
+
   it("估算素材面对循环 prompt 与脏 stream part 时 fail-closed", () => {
     const circular: { prompt?: unknown; self?: unknown } = { prompt: ["ok"] };
     circular.self = circular;

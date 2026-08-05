@@ -27,6 +27,7 @@ import { createRequestCredentialAccessTool } from "../tools/requestCredentialAcc
 import { createCredentialGrant } from "@qingagent/db";
 import {
   createProtectedFolderSourceEditFileTool,
+  createFolderSourceListFilesTool,
   createProtectedFolderSourceGrepTool,
   createProtectedFolderSourceReadFileTool,
   createProtectedFolderSourceSearchTool,
@@ -1578,6 +1579,11 @@ export function createSessionScopedTools(
         getWorkspace: getWorkspace!,
       })
     : null;
+  const workspaceListFiles = state && hasFolderSources
+    ? createFolderSourceListFilesTool({
+        getWorkspace: getWorkspace!,
+      })
+    : null;
   const workspaceEditFile = state && hasFolderSources
     ? createProtectedFolderSourceEditFileTool({
         getWorkspace: getWorkspace!,
@@ -1609,6 +1615,7 @@ export function createSessionScopedTools(
     readDocument,
     searchDocuments,
     workspaceReadFile,
+    workspaceListFiles,
     workspaceEditFile,
     workspaceGrep,
     workspaceSearch,

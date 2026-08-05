@@ -922,8 +922,9 @@ async function buildSessionWorkspace(
   }
   if (folderSources.length > 0) {
     // /sources 正文只能经 readDocument/searchDocuments 的受控契约进入模型。
-    // Mastra 内置 read_file/edit_file/grep/search 先禁用，再由 sessionScoped 注入同 id 包装工具。
+    // Mastra 内置 read_file/list_files/edit_file/grep/search 先禁用，再由 sessionScoped 注入同 id 包装工具。
     toolsConfig[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = { enabled: false };
+    toolsConfig[WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES] = { enabled: false };
     toolsConfig[WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE] = { enabled: false };
     toolsConfig[WORKSPACE_TOOLS.FILESYSTEM.GREP] = { enabled: false };
     toolsConfig[WORKSPACE_TOOLS.SEARCH.SEARCH] = { enabled: false };

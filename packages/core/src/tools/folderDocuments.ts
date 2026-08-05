@@ -218,6 +218,11 @@ async function resolveHostReadPath(args: {
   const { filesystem, path, source, relPath } = args;
   args.signal?.throwIfAborted();
   if (source?.provider === "desktop-local" && source.desktopRootPath && relPath) {
+    // Windows 的 Node FileHandle 无法反查最终宿主路径，verifyOpenedFilePath 会按安全策略
+    // 明确 fail-closed。这里必须留在已挂载的只读 LocalFilesystem 内读取：CompositeFilesystem
+    // 会把 /sources/<mountName>/ 前缀剥掉，LocalFilesystem 再做 basePath/realpath containment。
+    // 否则 list_files 能列出的路径一到 readDocument/searchDocuments 就必然全军覆没。
+    if (process.platform === "win32") return null;
     let root: string;
     try {
       args.signal?.throwIfAborted();

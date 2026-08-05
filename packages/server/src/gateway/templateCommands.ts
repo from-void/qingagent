@@ -1,4 +1,4 @@
-import type { BridgeFrame, Command } from "@qingagent/contract-ts";
+import type { BridgeFrame, Command, ReviewType } from "@qingagent/contract-ts";
 import crypto from "node:crypto";
 import {
   MASTRA_THREAD_ID_KEY,
@@ -48,6 +48,19 @@ async function requireSession(sessionId: string) {
   const session = await getOrRestoreSession(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
   return session;
+}
+
+async function resolveReviewSupplementTemplateId(
+  type: ReviewType,
+  templateId?: string,
+): Promise<string> {
+  const template = templateId
+    ? await getReviewTemplate(templateId)
+    : await getSelectedReviewTemplate(type);
+  if (templateId && (!template || template.type !== type)) {
+    throw new Error("审查模板不存在或类型不匹配");
+  }
+  return template?.id ?? "";
 }
 
 export async function* handleTemplateCommand(
@@ -210,23 +223,46 @@ export async function* handleTemplateCommand(
     }
     case "getReviewSupplement": {
       const session = await requireSession(command.data.sessionId);
-      const supplement = await getReviewDocSupplement(session.docId, command.data.type);
+      const templateId = await resolveReviewSupplementTemplateId(
+        command.data.type,
+        command.data.templateId,
+      );
+      const supplement = await getReviewDocSupplement(
+        session.docId,
+        command.data.type,
+        templateId,
+      );
       yield {
         kind: "reviewSupplementLoaded",
-        data: { type: command.data.type, supplement, requestId: command.data.requestId },
+        data: {
+          type: command.data.type,
+          ...(templateId ? { templateId } : {}),
+          supplement,
+          requestId: command.data.requestId,
+        },
       };
       return;
     }
     case "upsertReviewSupplement": {
       const session = await requireSession(command.data.sessionId);
+      const templateId = await resolveReviewSupplementTemplateId(
+        command.data.type,
+        command.data.templateId,
+      );
       const supplement = await upsertReviewDocSupplement(
         session.docId,
         command.data.type,
         command.data.supplement,
+        templateId,
       );
       yield {
         kind: "reviewSupplementSaved",
-        data: { type: command.data.type, supplement, requestId: command.data.requestId },
+        data: {
+          type: command.data.type,
+          ...(templateId ? { templateId } : {}),
+          supplement,
+          requestId: command.data.requestId,
+        },
       };
       return;
     }

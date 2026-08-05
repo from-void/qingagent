@@ -319,6 +319,7 @@ describe("create_annotation_groups 来源引句校验", () => {
 
       expect(result).toMatchObject({ ok: true, errors: [] });
       expect(state.annotationGroups[0]?.origin).toBe(item.expected);
+      expect(state.annotationGroups[0]?.reviewTemplateId).toBe(item.context.templateId);
       matrix[item.context.type] = state.annotationGroups[0]!.origin;
     }
 

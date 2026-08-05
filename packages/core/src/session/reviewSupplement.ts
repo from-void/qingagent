@@ -5,6 +5,7 @@ import {
   buildReviewIgnoreLine,
   maskPersistedReviewIgnoreValue,
   reviewIgnoreDecisionKeyFromLine,
+  reviewSupplementScopeFromAnnotationOrigin,
   reviewTypeFromAnnotationOrigin,
   splitReviewSupplement,
   type AnnotationGroup,
@@ -43,6 +44,7 @@ function decisionFromGroup(
   const quote = maskPersistedReviewIgnoreValue(anchor.quote);
   const key = buildReviewIgnoreDecisionKey({
     origin: group.origin,
+    templateId: group.reviewTemplateId,
     summary,
     anchor,
   });
@@ -113,43 +115,58 @@ export function guardRewrittenReviewSupplement(
   if (requiredDecisions.some((decision) =>
     reviewIgnoreDecisionKeyFromLine(decision.line) !== decision.key
   )) return null;
-  const expectedUserText = splitReviewSupplement(
+  const currentParts = splitReviewSupplement(
     appendReviewIgnoreLines(currentSupplement, []),
-  ).userText;
+  );
+  const expectedUserText = currentParts.userText;
   const candidateParts = splitReviewSupplement(candidate);
   if (!candidateParts.hasManagedSection) return null;
   if (candidateParts.userText !== expectedUserText) return null;
-  const expectedParts = splitReviewSupplement(appendReviewIgnoreLines(
-    currentSupplement,
+  const currentLines = decisionLineMap(currentParts.ignoreLines);
+  const requiredLines = decisionLineMap(
     requiredDecisions.map((decision) => decision.line),
-  ));
-  const expectedLines = decisionLineMap(expectedParts.ignoreLines);
+  );
   const outputLines = decisionLineMap(candidateParts.ignoreLines);
-  if (!expectedLines || !outputLines || expectedLines.size !== outputLines.size) return null;
+  // 先按原始输入校验基数，禁止用已经去重的结果反证“没有碰撞”。
+  if (
+    !currentLines
+    || !requiredLines
+    || requiredLines.size !== requiredDecisions.length
+    || !outputLines
+  ) return null;
+  const expectedLines = new Map(currentLines);
+  for (const [key, line] of requiredLines) {
+    if (!expectedLines.has(key)) expectedLines.set(key, line);
+  }
+  if (expectedLines.size !== outputLines.size) return null;
   for (const [key, line] of expectedLines) {
     if (outputLines.get(key) !== line) return null;
   }
   return candidate;
 }
 
-function uniqueDecisions(
-  decisions: readonly IgnoredReviewDecision[],
-): IgnoredReviewDecision[] {
-  const result = new Map<string, IgnoredReviewDecision>();
-  for (const decision of decisions) {
-    if (!result.has(decision.key)) result.set(decision.key, decision);
-  }
-  return [...result.values()];
-}
-
 async function rewriteReviewSupplementForType(input: {
   docId: string;
   type: ReviewType;
+  templateScope: string;
   decisions: readonly IgnoredReviewDecision[];
   requestContext?: RequestContext;
 }): Promise<void> {
-  const currentSupplement = await getReviewDocSupplement(input.docId, input.type);
-  const requiredDecisions = uniqueDecisions(input.decisions);
+  const requiredDecisionLines = decisionLineMap(
+    input.decisions.map((decision) => decision.line),
+  );
+  if (
+    !requiredDecisionLines
+    || requiredDecisionLines.size !== input.decisions.length
+  ) {
+    throw new Error("忽略决定身份发生碰撞，未写入审查记忆");
+  }
+  const currentSupplement = await getReviewDocSupplement(
+    input.docId,
+    input.type,
+    input.templateScope,
+  );
+  const requiredDecisions = [...input.decisions];
   const mechanicalFallback = () => appendReviewIgnoreLines(
     currentSupplement,
     requiredDecisions.map((decision) => decision.line),
@@ -183,7 +200,12 @@ async function rewriteReviewSupplementForType(input: {
     });
     supplement = mechanicalFallback();
   }
-  await upsertReviewDocSupplement(input.docId, input.type, supplement);
+  await upsertReviewDocSupplement(
+    input.docId,
+    input.type,
+    supplement,
+    input.templateScope,
+  );
 }
 
 /** 显式选择批注并忽略时，按审查类型回填可见、可编辑的文档补充提示词。 */
@@ -195,17 +217,27 @@ export async function rewriteReviewSupplementsForIgnoredGroups(input: {
 }): Promise<void> {
   if (input.groups.length === 0) return;
   const date = reviewIgnoreDate(input.now ?? new Date());
-  const grouped = new Map<ReviewType, IgnoredReviewDecision[]>();
+  const grouped = new Map<string, {
+    type: ReviewType;
+    templateScope: string;
+    decisions: IgnoredReviewDecision[];
+  }>();
   for (const group of input.groups) {
     const type = reviewTypeFromAnnotationOrigin(group.origin);
-    const decisions = grouped.get(type) ?? [];
-    decisions.push(decisionFromGroup(group, date));
-    grouped.set(type, decisions);
+    const templateScope = reviewSupplementScopeFromAnnotationOrigin(
+      group.origin,
+      group.reviewTemplateId,
+    );
+    const groupKey = `${type}\0${templateScope}`;
+    const entry = grouped.get(groupKey) ?? { type, templateScope, decisions: [] };
+    entry.decisions.push(decisionFromGroup(group, date));
+    grouped.set(groupKey, entry);
   }
-  await Promise.all([...grouped].map(([type, decisions]) =>
+  await Promise.all([...grouped.values()].map(({ type, templateScope, decisions }) =>
     rewriteReviewSupplementForType({
       docId: input.docId,
       type,
+      templateScope,
       decisions,
       requestContext: input.requestContext,
     })

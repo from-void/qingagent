@@ -426,7 +426,11 @@ describe("ReviewLaunchModal", () => {
       currentTextarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
-    expect(modalProps.saveSupplement).toHaveBeenCalledWith("sensitive", "这次只看引述");
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "sensitive",
+      "这次只看引述",
+      "sensitive-default",
+    );
     expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
   });
 
@@ -462,11 +466,65 @@ describe("ReviewLaunchModal", () => {
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
 
     const expected = `更新后的用户要求\n\n## 已确认忽略\n${ignoreLine}`;
-    expect(modalProps.saveSupplement).toHaveBeenCalledWith("custom", expected);
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "custom",
+      expected,
+      "custom-default",
+    );
     expect(modalProps.onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ id: "custom-default" }),
       expected,
       [],
+    );
+  });
+
+  it("切换自定义模板时按模板加载和保存补充要求，不把另一模板正文带入", async () => {
+    const templateX = {
+      ...builtins[0]!,
+      id: "review-custom-x",
+      type: "custom" as const,
+      name: "模板 X",
+    };
+    const templateY = {
+      ...builtins[1]!,
+      id: "review-custom-y",
+      type: "custom" as const,
+      name: "模板 Y",
+    };
+    const supplements = new Map([
+      [templateX.id, "只属于模板 X 的补充要求"],
+      [templateY.id, "只属于模板 Y 的补充要求"],
+    ]);
+    const modalProps = props({
+      type: "custom" as const,
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [templateX, templateY],
+        selectedTemplateId: templateX.id,
+      }),
+      loadSupplement: vi.fn().mockImplementation(
+        async (_type: string, templateId?: string) => supplements.get(templateId ?? "") ?? "",
+      ),
+    });
+
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.value)
+      .toBe("只属于模板 X 的补充要求");
+
+    const yCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes("模板 Y"));
+    await act(async () => {
+      yCard?.click();
+      await Promise.resolve();
+    });
+
+    const textarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    expect(textarea.value).toBe("只属于模板 Y 的补充要求");
+    expect(textarea.value).not.toContain("模板 X");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "custom",
+      "只属于模板 Y 的补充要求",
+      templateY.id,
     );
   });
 

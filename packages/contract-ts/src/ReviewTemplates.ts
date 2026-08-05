@@ -29,5 +29,5 @@ export interface ListReviewTemplates { sessionId: string; requestId: string; typ
 export interface SaveReviewTemplate { sessionId: string; requestId: string; id?: string; type: ReviewType; name: string; prompt: string }
 export interface DeleteReviewTemplate { sessionId: string; requestId: string; id: string }
 export interface SelectReviewTemplate { sessionId: string; requestId: string; type: ReviewType; templateId: string }
-export interface GetReviewSupplement { sessionId: string; requestId: string; type: ReviewType }
-export interface UpsertReviewSupplement { sessionId: string; requestId: string; type: ReviewType; supplement: string }
+export interface GetReviewSupplement { sessionId: string; requestId: string; type: ReviewType; templateId?: string }
+export interface UpsertReviewSupplement { sessionId: string; requestId: string; type: ReviewType; templateId?: string; supplement: string }

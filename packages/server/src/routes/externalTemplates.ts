@@ -171,6 +171,7 @@ externalTemplateRoutes.post("/review-templates/:id/select", async (c) => {
 externalTemplateRoutes.get("/sessions/:id/review-supplement", async (c) => {
   const startedAt = Date.now();
   const type = c.req.query("type");
+  const requestedTemplateId = c.req.query("templateId");
   if (!isReviewType(type)) {
     return rejected(c, "review_supplement_get", startedAt, 400, "VALIDATION", "type 不合法");
   }
@@ -178,7 +179,17 @@ externalTemplateRoutes.get("/sessions/:id/review-supplement", async (c) => {
   if (!session) {
     return rejected(c, "review_supplement_get", startedAt, 404, "SESSION_NOT_FOUND");
   }
-  const supplement = await getReviewDocSupplement(session.docId, type);
+  const template = requestedTemplateId
+    ? await getReviewTemplate(requestedTemplateId)
+    : await getSelectedReviewTemplate(type);
+  if (requestedTemplateId && (!template || template.type !== type)) {
+    return rejected(c, "review_supplement_get", startedAt, 404, "NOT_FOUND", "审查模板不存在或类型不匹配");
+  }
+  const supplement = await getReviewDocSupplement(
+    session.docId,
+    type,
+    template?.id ?? "",
+  );
   logTemplateRequest(c, "review_supplement_get", startedAt, "ok");
   return c.json({ sessionId: session.sessionId, type, supplement });
 });
@@ -188,6 +199,7 @@ externalTemplateRoutes.put("/sessions/:id/review-supplement", async (c) => {
   const gated = requireTemplateMutation(c, "review_supplement_put", startedAt);
   if (gated) return gated;
   const type = c.req.query("type");
+  const requestedTemplateId = c.req.query("templateId");
   const body = await c.req.json().catch(() => null) as { supplement?: unknown } | null;
   if (!isReviewType(type) || typeof body?.supplement !== "string") {
     return rejected(
@@ -203,10 +215,17 @@ externalTemplateRoutes.put("/sessions/:id/review-supplement", async (c) => {
   if (!session) {
     return rejected(c, "review_supplement_put", startedAt, 404, "SESSION_NOT_FOUND");
   }
+  const template = requestedTemplateId
+    ? await getReviewTemplate(requestedTemplateId)
+    : await getSelectedReviewTemplate(type);
+  if (requestedTemplateId && (!template || template.type !== type)) {
+    return rejected(c, "review_supplement_put", startedAt, 404, "NOT_FOUND", "审查模板不存在或类型不匹配");
+  }
   const supplement = await upsertReviewDocSupplement(
     session.docId,
     type,
     body.supplement,
+    template?.id ?? "",
   );
   logTemplateRequest(c, "review_supplement_put", startedAt, "saved");
   return c.json({ sessionId: session.sessionId, type, supplement });
@@ -238,7 +257,7 @@ externalTemplateRoutes.post("/sessions/:id/review/run", async (c) => {
   }
   const supplement = typeof body.supplement === "string"
     ? body.supplement
-    : await getReviewDocSupplement(session.docId, body.type);
+    : await getReviewDocSupplement(session.docId, body.type, template.id);
   const text = assembleReviewQuery(body.type, template, supplement);
   return queueExternalChat(c, {
     sessionId: session.sessionId,

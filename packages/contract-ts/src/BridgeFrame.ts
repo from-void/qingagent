@@ -25,8 +25,8 @@ export type BridgeFrame =
   | { kind: "reviewTemplateSaved"; data: { requestId: string; item: ReviewTemplateItem } }
   | { kind: "reviewTemplateDeleted"; data: { requestId: string; id: string; selectedTemplateId: string | null; error?: string } }
   | { kind: "reviewTemplateSelected"; data: { requestId: string; type: string; templateId: string } }
-  | { kind: "reviewSupplementLoaded"; data: { requestId: string; type: string; supplement: string } }
-  | { kind: "reviewSupplementSaved"; data: { requestId: string; type: string; supplement: string } }
+  | { kind: "reviewSupplementLoaded"; data: { requestId: string; type: string; templateId?: string; supplement: string } }
+  | { kind: "reviewSupplementSaved"; data: { requestId: string; type: string; templateId?: string; supplement: string } }
   | { kind: "styleTemplatesListed"; data: { requestId: string; items: StyleTemplateItem[] } }
   | { kind: "styleTemplateLoaded"; data: { requestId: string; item: StyleTemplateItem } }
   | { kind: "styleTemplateSaved"; data: { requestId: string; item: StyleTemplateItem } }

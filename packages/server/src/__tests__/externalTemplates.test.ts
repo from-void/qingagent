@@ -195,6 +195,40 @@ describe("external review templates", () => {
       .toBe(400);
   });
 
+  it("同一 custom 类型按 templateId 隔离补充要求", async () => {
+    const create = async (name: string) => {
+      const response = await request("/review-templates", {
+        method: "POST",
+        body: JSON.stringify({ type: "custom", name, prompt: "检查行动项。" }),
+      });
+      expect(response.status).toBe(201);
+      return (await response.json() as { template: { id: string } }).template.id;
+    };
+    const templateX = await create("模板 X");
+    const templateY = await create("模板 Y");
+    const sessionId = await createSession();
+    const supplementUrl = (templateId: string) =>
+      `/sessions/${sessionId}/review-supplement?type=custom&templateId=${encodeURIComponent(templateId)}`;
+
+    expect((await request(supplementUrl(templateX), {
+      method: "PUT",
+      body: JSON.stringify({ supplement: "只属于模板 X" }),
+    })).status).toBe(200);
+    expect((await request(supplementUrl(templateY), {
+      method: "PUT",
+      body: JSON.stringify({ supplement: "只属于模板 Y" }),
+    })).status).toBe(200);
+
+    await expect((await request(supplementUrl(templateX))).json()).resolves.toMatchObject({
+      type: "custom",
+      supplement: "只属于模板 X",
+    });
+    await expect((await request(supplementUrl(templateY))).json()).resolves.toMatchObject({
+      type: "custom",
+      supplement: "只属于模板 Y",
+    });
+  });
+
   it("冷会话读取 review supplement 不写回常驻注册表且响应内容不变", async () => {
     const sessionId = await createSession();
     const saved = await request(

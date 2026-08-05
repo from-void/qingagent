@@ -83,6 +83,46 @@ describe("审查忽略补充提示词纯函数", () => {
     expect(firstKey).not.toBe(secondKey);
   });
 
+  it("两个自定义模板在同一位置给出同一问题时仍有不同身份键", () => {
+    const base = {
+      summary: "行动建议空泛",
+      anchor: { blockId: "same-block", pmFrom: 4, pmTo: 12 },
+    };
+    const first = {
+      ...base,
+      origin: "自定义审查:模板甲",
+      templateId: "review-custom-x",
+    };
+    const second = {
+      ...base,
+      origin: "自定义审查:模板乙",
+      templateId: "review-custom-y",
+    };
+
+    expect(buildReviewIgnoreDecisionKey(first)).not.toBe(
+      buildReviewIgnoreDecisionKey(second),
+    );
+  });
+
+  it("缺少模板 id 的历史自定义 origin 仍参与身份且不会把名称中的 PII 写进键", () => {
+    const base = {
+      summary: "行动建议空泛",
+      anchor: { blockId: "same-block", pmFrom: 4, pmTo: 12 },
+    };
+    const firstKey = buildReviewIgnoreDecisionKey({
+      ...base,
+      origin: "自定义审查:客户 13912345678 复核",
+    });
+    const secondKey = buildReviewIgnoreDecisionKey({
+      ...base,
+      origin: "自定义审查:客户 13787654321 复核",
+    });
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(decodeURIComponent(firstKey)).not.toContain("13912345678");
+    expect(decodeURIComponent(secondKey)).not.toContain("13787654321");
+  });
+
   it.each([
     ["9 位", "待核对号码 139123456", "139123456"],
     ["10 位", "联系电话疑似截断为 1380013800", "1380013800"],

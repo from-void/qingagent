@@ -11,6 +11,19 @@ export const REVIEW_IGNORE_DECISION_KEY_PREFIX = "<!-- qingagent-review-ignore-k
 
 const REVIEW_IGNORE_QUOTE_MAX_CHARS = 48;
 
+function opaqueReviewScopeFingerprint(value: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first ^= code;
+    first = Math.imul(first, 0x01000193);
+    second ^= code + index;
+    second = Math.imul(second, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 /** 批注唯一生产入口的 origin 到文档补充提示词类型的反向映射。 */
 export function reviewTypeFromAnnotationOrigin(origin: string): ReviewType {
   if (origin === "sensitive") return "sensitive";
@@ -22,6 +35,19 @@ export function reviewTypeFromAnnotationOrigin(origin: string): ReviewType {
   if (origin === "角色审查" || origin.startsWith("角色审查:")) return "role";
   // 自定义审查以及历史上由模型自由填写的未知 origin 都归入 custom，避免迁移丢决定。
   return "custom";
+}
+
+/**
+ * 多模板审查的补充要求存储作用域。新批注使用稳定模板 id；老批注没有这个维度时继续
+ * 留在空作用域兼容基线，避免升级后写进任何模板都读不到的孤立记录。
+ */
+export function reviewSupplementScopeFromAnnotationOrigin(
+  origin: string,
+  templateId?: string,
+): string {
+  const type = reviewTypeFromAnnotationOrigin(origin);
+  if (type !== "custom" && type !== "role") return "";
+  return templateId?.trim() ?? "";
 }
 
 export function summarizeReviewIgnoreQuote(quote: string, summary: string): string {
@@ -45,12 +71,25 @@ export interface ReviewIgnoreDecision {
  */
 export function buildReviewIgnoreDecisionKey(input: {
   origin: string;
+  templateId?: string;
   summary: string;
   anchor: Pick<SuggestionAnchor, "blockId" | "pmFrom" | "pmTo">;
 }): string {
+  const type = reviewTypeFromAnnotationOrigin(input.origin);
+  const storageScope = reviewSupplementScopeFromAnnotationOrigin(
+    input.origin,
+    input.templateId,
+  );
+  const dynamicTemplateType = type === "custom" || type === "role";
+  const identityScope = storageScope || (dynamicTemplateType
+    ? `origin-${opaqueReviewScopeFingerprint(input.origin)}`
+    : "");
   const parts = [
-    "v1",
-    reviewTypeFromAnnotationOrigin(input.origin),
+    identityScope ? "v2" : "v1",
+    type,
+    ...(identityScope
+      ? [`scope-${opaqueReviewScopeFingerprint(identityScope)}`]
+      : []),
     buildSensitiveAnchorSpanKey(input.anchor),
     summarizeReviewIgnoreQuote(input.summary, ""),
   ];

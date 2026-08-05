@@ -41,6 +41,7 @@ const group: AnnotationGroup = {
   summary: "行动建议空泛",
   note: "缺少负责人和期限。",
   origin: "自定义审查:老板视角挑刺",
+  reviewTemplateId: "review-custom-boss",
   status: "reviewing" as const,
   anchors: [{
     blockId: "p-1",
@@ -81,6 +82,7 @@ function ignoredDecision(
   const anchor = safeGroup.anchors[0]!;
   const key = buildReviewIgnoreDecisionKey({
     origin: safeGroup.origin,
+    templateId: safeGroup.reviewTemplateId,
     summary: safeGroup.summary,
     anchor,
   });
@@ -117,7 +119,12 @@ describe("忽略批注回填审查补充提示词", () => {
       "## 已确认忽略",
       line,
     ].join("\n");
-    await upsertReviewDocSupplement("doc-review-supplement", "custom", userText);
+    await upsertReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+      userText,
+      group.reviewTemplateId,
+    );
     mocks.branchCall.mockResolvedValue({
       ok: true,
       text: expected,
@@ -132,7 +139,11 @@ describe("忽略批注回填审查补充提示词", () => {
       now: new Date("2026-08-03T12:00:00.000Z"),
     });
 
-    expect(await getReviewDocSupplement("doc-review-supplement", "custom")).toBe(expected);
+    expect(await getReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+      group.reviewTemplateId,
+    )).toBe(expected);
     expect(mocks.branchCall).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "rewriteReviewSupplement",
       steeringTail: expect.stringContaining("自定义审查:老板视角挑刺"),
@@ -142,7 +153,12 @@ describe("忽略批注回填审查补充提示词", () => {
   it("模型改动用户手写内容时守卫拒绝，机械追加仍保存本次决定", async () => {
     const userText = "用户手写：保留 Product-X，金额不要四舍五入。";
     const line = ignoredDecision(group, "2026-08-03").line;
-    await upsertReviewDocSupplement("doc-review-supplement", "custom", userText);
+    await upsertReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+      userText,
+      group.reviewTemplateId,
+    );
     mocks.branchCall.mockResolvedValue({
       ok: true,
       text: [
@@ -162,7 +178,11 @@ describe("忽略批注回填审查补充提示词", () => {
       now: new Date("2026-08-03T12:00:00.000Z"),
     });
 
-    expect(await getReviewDocSupplement("doc-review-supplement", "custom")).toBe([
+    expect(await getReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+      group.reviewTemplateId,
+    )).toBe([
       userText,
       "",
       "## 已确认忽略",
@@ -254,6 +274,7 @@ describe("忽略批注回填审查补充提示词", () => {
       id: `custom-phone-${fragment.length}`,
       summary,
       origin: "自定义审查:联系方式复核",
+      reviewTemplateId: "review-custom-contact",
       anchors: [{
         blockId: `contact-${fragment.length}`,
         pmFrom: 4,
@@ -269,7 +290,11 @@ describe("忽略批注回填审查补充提示词", () => {
       now: new Date("2026-08-06T12:00:00.000Z"),
     });
 
-    const supplement = await getReviewDocSupplement("doc-review-supplement", "custom");
+    const supplement = await getReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+      customGroup.reviewTemplateId,
+    );
     const [line] = splitReviewSupplement(supplement).ignoreLines;
     expect(supplement).not.toContain(fragment);
     expect(decodeURIComponent(line ?? "")).not.toContain(fragment);
@@ -328,5 +353,141 @@ describe("忽略批注回填审查补充提示词", () => {
       [second],
       `${current}\n${second.line}`,
     )).toBe(`${current}\n${second.line}`);
+  });
+
+  it("guard 在合并前校验本次决定基数，不能用去重结果证明碰撞成功", () => {
+    const decision = ignoredDecision(group);
+    const candidate = `## 已确认忽略\n${decision.line}`;
+
+    expect(guardRewrittenReviewSupplement("", [decision, decision], candidate)).toBeNull();
+  });
+
+  it("两个自定义模板的同形批注分别留痕、互不误抑制且补充要求不串台", async () => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    const getScoped = getReviewDocSupplement as unknown as (
+      docId: string,
+      type: "custom",
+      templateScope: string,
+    ) => Promise<string>;
+    const upsertScoped = upsertReviewDocSupplement as unknown as (
+      docId: string,
+      type: "custom",
+      supplement: string,
+      templateScope: string,
+    ) => Promise<string>;
+    const sameAnchor = [{
+      blockId: "same-block",
+      pmFrom: 4,
+      pmTo: 12,
+      quote: "尽快推动项目落地",
+      textHash: "same-hash",
+    }];
+    const templateX = {
+      ...group,
+      id: "group-template-x",
+      origin: "自定义审查:模板 X",
+      reviewTemplateId: "review-custom-x",
+      anchors: sameAnchor,
+    };
+    const templateY = {
+      ...group,
+      id: "group-template-y",
+      origin: "自定义审查:模板 Y",
+      reviewTemplateId: "review-custom-y",
+      anchors: sameAnchor,
+    };
+    await upsertScoped(
+      "doc-review-supplement",
+      "custom",
+      "只属于模板 X 的补充要求",
+      "review-custom-x",
+    );
+    await upsertScoped(
+      "doc-review-supplement",
+      "custom",
+      "只属于模板 Y 的补充要求",
+      "review-custom-y",
+    );
+
+    await rewriteReviewSupplementsForIgnoredGroups({
+      docId: "doc-review-supplement",
+      groups: [templateX],
+      now: new Date("2026-08-06T12:00:00.000Z"),
+    });
+    await rewriteReviewSupplementsForIgnoredGroups({
+      docId: "doc-review-supplement",
+      groups: [templateY],
+      now: new Date("2026-08-06T12:01:00.000Z"),
+    });
+
+    const supplementX = await getScoped(
+      "doc-review-supplement",
+      "custom",
+      "review-custom-x",
+    );
+    const supplementY = await getScoped(
+      "doc-review-supplement",
+      "custom",
+      "review-custom-y",
+    );
+    const [lineX] = splitReviewSupplement(supplementX).ignoreLines;
+    const [lineY] = splitReviewSupplement(supplementY).ignoreLines;
+
+    expect(splitReviewSupplement(supplementX).ignoreLines).toHaveLength(1);
+    expect(splitReviewSupplement(supplementY).ignoreLines).toHaveLength(1);
+    expect(lineX).not.toBe(lineY);
+    expect(supplementX).toContain("只属于模板 X 的补充要求");
+    expect(supplementX).not.toContain("只属于模板 Y 的补充要求");
+    expect(supplementY).toContain("只属于模板 Y 的补充要求");
+    expect(supplementY).not.toContain("只属于模板 X 的补充要求");
+
+    const queryX = assembleReviewQuery("custom", {
+      id: "review-custom-x",
+      name: "模板 X",
+      prompt: "检查行动项。",
+    }, supplementX);
+    const queryY = assembleReviewQuery("custom", {
+      id: "review-custom-y",
+      name: "模板 Y",
+      prompt: "检查行动项。",
+    }, supplementY);
+    expect(queryX).toContain(lineX!);
+    expect(queryX).not.toContain(lineY!);
+    expect(queryY).toContain(lineY!);
+    expect(queryY).not.toContain(lineX!);
+  });
+
+  it("升级前没有模板 id 的两个 custom origin 仍在兼容基线保留两条决定", async () => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    const { reviewTemplateId: _templateId, ...legacyGroup } = group;
+    const first = {
+      ...legacyGroup,
+      id: "legacy-template-x",
+      origin: "自定义审查:旧模板 X",
+    };
+    const second = {
+      ...legacyGroup,
+      id: "legacy-template-y",
+      origin: "自定义审查:旧模板 Y",
+    };
+
+    await rewriteReviewSupplementsForIgnoredGroups({
+      docId: "doc-review-supplement",
+      groups: [first],
+      now: new Date("2026-08-06T12:00:00.000Z"),
+    });
+    await rewriteReviewSupplementsForIgnoredGroups({
+      docId: "doc-review-supplement",
+      groups: [second],
+      now: new Date("2026-08-06T12:01:00.000Z"),
+    });
+
+    const supplement = await getReviewDocSupplement(
+      "doc-review-supplement",
+      "custom",
+    );
+    const lines = splitReviewSupplement(supplement).ignoreLines;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).not.toBe(lines[1]);
   });
 });

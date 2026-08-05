@@ -8,9 +8,9 @@ const LONG_NUMBER_RE = /(?<!\d)\d{13,19}(?!\d)/g;
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}\b/gi;
 
 const NUMERIC_NEGATIVE_CONTEXT_RE =
-  /(?:订单(?:号|编号)?|项目(?:号|编号)?|合同(?:号|编号)?|快递单号|运单号|流水号|序列号|编号|年份|金额|价格)\s*[：:]?\s*$/;
-const ID_CARD_CONTEXT_RE = /(?:身份证(?:号|号码|编号)?|公民身份号码|证件号)\s*[：:]?\s*$/;
-const CARD_CONTEXT_RE = /(?:银行卡(?:号|号码|编号)?|信用卡(?:号|号码|编号)?|借记卡(?:号|号码|编号)?|储蓄卡(?:号|号码|编号)?|银联卡?(?:号|号码|编号)?|会员卡(?:号|号码|编号)?|卡号|银行账号)\s*[：:]?\s*$/;
+  /(?:订单(?:号|编号)?|项目(?:号|编号)?|合同(?:号|编号)?|快递单号|运单号|流水号|序列号|编号|年份|金额|价格)[ \t]*[：:]?[ \t]*$/;
+const ID_CARD_CONTEXT_RE = /(?:身份证(?:号|号码|编号)?|公民身份号码|证件号)[ \t]*[：:]?[ \t]*$/;
+const CARD_CONTEXT_RE = /(?:银行卡(?:号|号码|编号)?|信用卡(?:号|号码|编号)?|借记卡(?:号|号码|编号)?|储蓄卡(?:号|号码|编号)?|银联卡?(?:号|号码|编号)?|会员卡(?:号|号码|编号)?|卡号|银行账号)[ \t]*[：:]?[ \t]*$/;
 
 function leftContext(text: string, offset: number): string {
   return text.slice(Math.max(0, offset - 24), offset);
@@ -85,14 +85,14 @@ export function buildSensitiveAnchorSpanKey(
 /**
  * 审查展示与审计副本使用的保守打码器。
  *
- * 长数字只有在校验通过、命中银行卡号段或紧邻明确类型标签时才处理；订单号、编号、
- * 年份和金额标签拥有更高优先级，避免破坏普通引用型批注。
+ * 严格命中大陆手机号形态时一律处理；业务数字标签只能豁免身份证候选、长数字候选等
+ * 低置信形态，不能反压完整手机号。长数字只有在校验通过、命中银行卡号段或紧邻明确
+ * 类型标签时才处理，避免破坏普通引用型批注。
  */
 export function maskSensitiveValues(input: string): string {
   let output = input.replace(EMAIL_RE, (value) => maskEmail(value));
 
-  output = output.replace(MOBILE_RE, (value, offset: number) => {
-    if (hasNumericNegativeContext(output, offset)) return value;
+  output = output.replace(MOBILE_RE, (value) => {
     const digits = value.replace(/[^\d]/g, "");
     return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
   });
@@ -129,8 +129,9 @@ export function maskSensitiveValues(input: string): string {
  * 持久化审查决定专用的二次脱敏。
  *
  * 普通展示链路只识别完整手机号；忽略决定会长期入库并反复进入模型上下文，因此还要兜住
- * 9/10 位、以大陆手机号号段开头的截断片段。明确标成订单号、项目编号、金额等业务数字时
- * 继续保留，避免把常见的正常数字误当成 PII；其余命中只保留前三位，不保留可与别处拼接的尾数。
+ * 9/10 位、以大陆手机号号段开头的截断片段。完整 11 位形态已无条件处理；截断片段仍允许
+ * 同一行紧邻的订单号、项目编号、金额等标签豁免，避免把低置信的正常数字误当成 PII。
+ * 其余命中只保留前三位，不保留可与别处拼接的尾数。
  */
 export function maskPersistedReviewIgnoreValue(input: string): string {
   const output = maskSensitiveValues(input);

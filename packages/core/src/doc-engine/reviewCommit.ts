@@ -1202,7 +1202,13 @@ export async function* commitPatches(
     state.annotationGroups = mapped.groups;
     yield {
       kind: "annotationGroupsReady",
-      data: { groups: mapped.groups, replacedOrigins },
+      data: {
+        groups: mapped.groups,
+        replacedOrigins,
+        ...(mapped.invalidatedAnchorCount > 0
+          ? { invalidatedAnchorCount: mapped.invalidatedAnchorCount }
+          : {}),
+      },
     };
     if (mapped.unlocatedGroupCount > 0) {
       logger.warn("Annotation groups became unlocated while committing review", {

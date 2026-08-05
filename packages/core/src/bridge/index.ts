@@ -165,6 +165,12 @@ export {
 } from "../doc-engine/draftFeatureFlags.js";
 
 export {
+  buildAnnotationMappingSteps,
+  mapAnnotationGroupsThroughSteps,
+} from "../doc-engine/annotationMapping.js";
+export type { MappedAnnotationGroups } from "../doc-engine/annotationMapping.js";
+
+export {
   coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,

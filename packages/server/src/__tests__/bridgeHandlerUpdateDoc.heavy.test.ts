@@ -21,6 +21,7 @@ function h1(text: string): LegacySection {
 async function loadBridge() {
   vi.resetModules();
   const commitDocumentOp = vi.fn();
+  const persistMappedAnnotationGroups = vi.fn(async () => undefined);
   const persistSessionMetadata = vi.fn(async () => undefined);
   const schedulePersist = vi.fn(async () => undefined);
   const runAgentTurn = vi.fn(async function* (..._args: unknown[]): AsyncGenerator<BridgeFrame> {});
@@ -38,11 +39,16 @@ async function loadBridge() {
       createSessionThread: vi.fn(async () => undefined),
     };
   });
+  vi.doMock("@qingagent/db", async () => {
+    const actual = await vi.importActual<typeof import("@qingagent/db")>("@qingagent/db");
+    return { ...actual, persistMappedAnnotationGroups };
+  });
 
   const bridge = await import("../gateway/bridgeHandler");
   return {
     bridge,
     commitDocumentOp,
+    persistMappedAnnotationGroups,
     persistSessionMetadata,
     runAgentTurn,
     invalidateDraftStateAfterCanonicalWrite,
@@ -175,6 +181,94 @@ describe("handleCommand updateDoc", () => {
     expect(session.lastSyncedDocumentSnapshot).toBe(1);
     expect(invalidateDraftStateAfterCanonicalWrite).toHaveBeenCalledWith(session);
     expect(persistSessionMetadata).toHaveBeenCalledWith(session);
+  });
+
+  it("前部净增 N 字保存后重定位后方未结算批注并持久化", async () => {
+    const {
+      bridge,
+      commitDocumentOp,
+      persistMappedAnnotationGroups,
+    } = await loadBridge();
+    const session = await createDraftSession(bridge);
+    const insertedPrefix = "ABCDE";
+    const secondBlockTextStart = "前文".length + 3;
+    const quote = "超过 3 秒";
+    const baseDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "before-block" },
+          content: [{ type: "text", text: "前文" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "annotated-block" },
+          content: [{ type: "text", text: `${quote}后仍有 YYMARK` }],
+        },
+      ],
+    };
+    const submittedDoc: PmDoc = {
+      ...baseDoc,
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "before-block" },
+          content: [{ type: "text", text: `${insertedPrefix}前文` }],
+        },
+        baseDoc.content[1]!,
+      ],
+    };
+    session.doc = baseDoc;
+    session.legacySections = [section("前文"), section(`${quote}后仍有 YYMARK`)];
+    session.annotationGroups = [{
+      id: "annotation-after-prefix",
+      summary: "后方原句",
+      note: "hover 文案必须对应原句",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{
+        blockId: "annotated-block",
+        pmFrom: secondBlockTextStart,
+        pmTo: secondBlockTextStart + quote.length,
+        quote,
+        textHash: "quote-hash",
+      }],
+    }];
+    commitDocumentOp.mockImplementation(async (input, options) => {
+      const result = {
+        status: "committed" as const,
+        docVersion: 2,
+        contentHash: "hash-2",
+        doc: submittedDoc,
+        versionId: "version-2",
+        createdNewVersion: true,
+        committedAt: "2026-08-05T03:00:00.000Z",
+      };
+      await options?.transactionalEffect?.({ client: {} as never, result });
+      return result;
+    });
+
+    const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
+      doc: submittedDoc as never,
+    })));
+
+    expect(session.annotationGroups[0]?.anchors[0]).toMatchObject({
+      quote,
+      pmFrom: secondBlockTextStart + insertedPrefix.length,
+      pmTo: secondBlockTextStart + insertedPrefix.length + quote.length,
+    });
+    expect(persistMappedAnnotationGroups).toHaveBeenCalledWith(
+      session.docId,
+      session.annotationGroups,
+      expect.any(Map),
+      expect.anything(),
+    );
+    expect(frames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: { groups: session.annotationGroups, replacedOrigins: ["consistency"] },
+    });
   });
 
   it("幂等回放即使返回版本高于陈旧内存，也不推进内容时间", async () => {

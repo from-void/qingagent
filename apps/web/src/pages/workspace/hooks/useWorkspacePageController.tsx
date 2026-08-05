@@ -667,10 +667,13 @@ export function useWorkspacePageController() {
     return installAnnotationGroupDecorations(
       tiptapEditor,
       current.docState.kind === "pendingReview" ? [] : current.annotationGroups,
-      (groups, unlocatedGroupCount) => {
+      (groups, invalidatedAnchorCount) => {
         dispatch({ kind: "annotationGroupsChanged", groups });
-        if (unlocatedGroupCount > 0) {
-          showToast(annotationRemovalToastMessage(unlocatedGroupCount));
+        if (invalidatedAnchorCount > 0) {
+          showToast({
+            message: annotationRemovalToastMessage(invalidatedAnchorCount),
+            dedupeKey: "annotation-anchor-invalidated",
+          });
         }
       },
       current.previewGroups,
@@ -1876,6 +1879,15 @@ export function useWorkspacePageController() {
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
         sessionIdRef.current = frame.data.sessionId;
+      }
+      if (
+        frame.kind === "annotationGroupsReady" &&
+        (frame.data.invalidatedAnchorCount ?? 0) > 0
+      ) {
+        showToast({
+          message: annotationRemovalToastMessage(frame.data.invalidatedAnchorCount!),
+          dedupeKey: "annotation-anchor-invalidated",
+        });
       }
       if (isAuthoritativeAskUserCancelFrame(frame)) {
         const sessionId =

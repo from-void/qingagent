@@ -24,10 +24,12 @@ import {
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
   normalizeRestoredDocStateKind,
+  mapAnnotationGroupsThroughSteps,
   schedulePersist,
   transitionDocState,
   type SessionState,
 } from "./bridgeCore";
+import { persistMappedAnnotationGroups } from "@qingagent/db";
 import { folderSourcesChangedFrame } from "./folderSourceFrames";
 import { takeConfirmRecoveryFrames } from "./confirmRecovery";
 
@@ -177,6 +179,34 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
 }
 
 /**
+ * 恢复边界不信任历史绝对坐标：用当前正文逐条校验 quote，错位时在原 blockId 内重搜。
+ * 修复结果写回同一批注表；原文确实不存在时持久化失效，绝不把碎片范围重新交给前端。
+ */
+export async function reconcileSessionAnnotationAnchors(
+  session: SessionState,
+): Promise<boolean> {
+  if (!session.doc || session.annotationGroups.length === 0) return false;
+  const before = JSON.stringify(session.annotationGroups);
+  const mapped = mapAnnotationGroupsThroughSteps(
+    session.annotationGroups,
+    [{ stepType: "annotationMappingUnknown" }],
+    session.doc,
+  );
+  if (JSON.stringify(mapped.groups) === before) return false;
+
+  await persistMappedAnnotationGroups(
+    session.docId,
+    mapped.groups,
+    mapped.survivingAnchorIndexes,
+  );
+  session.annotationGroups = mapped.groups;
+  if (mapped.invalidatedAnchorCount > 0) {
+    session._invalidatedAnnotationAnchorCountForRestore = mapped.invalidatedAnchorCount;
+  }
+  return true;
+}
+
+/**
  * Re-emit all state frames needed to restore the frontend workspace
  * from a persisted session. Called when mode.kind === "existing".
  */
@@ -256,11 +286,16 @@ export function* emitRestoreFrames(
   }
 
   // 批注装饰依赖文档坐标；先恢复正文，再把完整活动组作为权威状态交给新页面重建锚点与 hover 卡。
-  if (session.annotationGroups.length > 0) {
+  const invalidatedAnchorCount = session._invalidatedAnnotationAnchorCountForRestore ?? 0;
+  if (session.annotationGroups.length > 0 || invalidatedAnchorCount > 0) {
     yield {
       kind: "annotationGroupsReady",
-      data: { groups: structuredClone(session.annotationGroups) },
+      data: {
+        groups: structuredClone(session.annotationGroups),
+        ...(invalidatedAnchorCount > 0 ? { invalidatedAnchorCount } : {}),
+      },
     };
+    if (!readOnly) session._invalidatedAnnotationAnchorCountForRestore = 0;
   }
 
   // 3. Emit materials as resources

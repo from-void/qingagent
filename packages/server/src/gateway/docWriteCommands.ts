@@ -5,10 +5,18 @@ import type {
   ExternalProposeOp,
   LegacySection,
 } from "@qingagent/contract-ts";
-import { markdownToPm, normalizePmDoc, pmToLegacySections, pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
+import {
+  legacySectionsToPm,
+  markdownToPm,
+  normalizePmDoc,
+  pmToLegacySections,
+  pmToMarkdown,
+  type PmDoc,
+} from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import {
   advanceLastContentEditedAt,
+  buildAnnotationMappingSteps,
   clonePmDoc,
   collectTopLevelTextBlocks,
   commitDocumentOp,
@@ -21,12 +29,14 @@ import {
   ensureDraftCandidateDoc,
   findLiteralMatches,
   invalidateDraftStateAfterCanonicalWrite,
+  mapAnnotationGroupsThroughSteps,
   persistSessionMetadata,
   replaceDraftCandidateDoc,
   replaceTextRuns,
   settleDraftCandidate,
   transitionDocState,
 } from "./bridgeCore";
+import { persistMappedAnnotationGroups } from "@qingagent/db";
 import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { USER_VERSION_WINDOW_MS } from "./docWriteConfig";
@@ -149,7 +159,13 @@ export async function* handleDocWriteCommand(
       }
 
       const previousDocVersion = session.docVersion;
-      const result = await commitDocumentOp({
+      const previousDoc = session.doc ?? legacySectionsToPm(session.legacySections as never);
+      type PendingAnnotationMapping = {
+        mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
+        replacedOrigins: string[];
+      };
+      const transactionAnnotationMapping = { current: null as PendingAnnotationMapping | null };
+      const commitInput = {
         docId: session.docId ?? session.sessionId,
         threadId: session.threadId ?? session.sessionId,
         resourceId: session.resourceId,
@@ -171,7 +187,35 @@ export async function* handleDocWriteCommand(
           : { coalesce: { windowMs: USER_VERSION_WINDOW_MS } }),
         summary: "用户编辑保存",
         apply: () => ({ nextDoc: submittedDoc }),
-      });
+      } as const;
+      const commitOptions: Parameters<typeof commitDocumentOp>[1] =
+        session.annotationGroups.length > 0
+          ? {
+              transactionalEffect: async ({ client: transactionClient, result: committed }) => {
+                // 幂等回放若落后于当前内存版本，不得用旧文档反向映射当前锚点。
+                if (committed.docVersion < previousDocVersion) return;
+                const replacedOrigins = [
+                  ...new Set(session.annotationGroups.map((group) => group.origin)),
+                ];
+                const mapped = mapAnnotationGroupsThroughSteps(
+                  session.annotationGroups,
+                  buildAnnotationMappingSteps(previousDoc, committed.doc),
+                  committed.doc,
+                );
+                await persistMappedAnnotationGroups(
+                  session.docId,
+                  mapped.groups,
+                  mapped.survivingAnchorIndexes,
+                  transactionClient,
+                );
+                transactionAnnotationMapping.current = { mapped, replacedOrigins };
+              },
+            }
+          : undefined;
+      const result = await commitDocumentOp(
+        commitInput,
+        ...(commitOptions ? [commitOptions] as const : []),
+      );
 
       if (result.status === "not_found") {
         yield docWriteReason(command.data.clientMutationId, "not_found");
@@ -208,6 +252,9 @@ export async function* handleDocWriteCommand(
         session.doc = result.doc;
         session.legacySections = legacySections;
         session.docVersion = result.docVersion;
+        if (transactionAnnotationMapping.current) {
+          session.annotationGroups = transactionAnnotationMapping.current.mapped.groups;
+        }
         await invalidateDraftStateAfterCanonicalWrite(session);
         session._directionChangeAskedSinceLastWrite = false;
         transitionDocState(session, deriveContentState(session), "user_doc_write", {
@@ -230,6 +277,22 @@ export async function* handleDocWriteCommand(
       // 否则前端停在 empty 态、把新文档渲染成只读静态视图无法编辑。emitProjectedDocState 从
       // doc 派生并幂等去重,常规编辑(已 editing)重复调用会被去重、无副作用。
       yield* emitProjectedDocState(session, "user_doc_write");
+
+      if (transactionAnnotationMapping.current) {
+        yield {
+          kind: "annotationGroupsReady",
+          data: {
+            groups: transactionAnnotationMapping.current.mapped.groups,
+            replacedOrigins: transactionAnnotationMapping.current.replacedOrigins,
+            ...(transactionAnnotationMapping.current.mapped.invalidatedAnchorCount > 0
+              ? {
+                  invalidatedAnchorCount:
+                    transactionAnnotationMapping.current.mapped.invalidatedAnchorCount,
+                }
+              : {}),
+          },
+        };
+      }
 
       yield {
         kind: "docWriteResult",

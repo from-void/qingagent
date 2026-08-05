@@ -414,7 +414,11 @@ describe("commitPatches", () => {
 
     expect(frames).toContainEqual({
       kind: "annotationGroupsReady",
-      data: { groups: [], replacedOrigins: ["consistency"] },
+      data: {
+        groups: [],
+        replacedOrigins: ["consistency"],
+        invalidatedAnchorCount: 1,
+      },
     });
     expect(JSON.stringify(frames)).not.toContain("批注落地结果");
     expect(state.annotationGroups).toEqual([]);

@@ -96,6 +96,7 @@ describe("annotation StepMap", () => {
     })]);
     expect(mapped.survivingAnchorIndexes.get("g-multi")).toEqual([1]);
     expect(mapped.invalidatedAnchorIndexes.get("g-multi")).toEqual([0]);
+    expect(mapped.invalidatedAnchorCount).toBe(1);
     expect(mapped.unlocatedGroupCount).toBe(0);
 
     await insertAnnotationGroups("doc-map-partial", 1, groups);
@@ -211,6 +212,7 @@ describe("annotation StepMap", () => {
     const mapped = mapAnnotationGroupsThroughSteps(groups, [step], finalDoc);
     expect(mapped.groups).toEqual([]);
     expect(mapped.invalidatedAnchorIndexes.get("g-only")).toEqual([0]);
+    expect(mapped.invalidatedAnchorCount).toBe(1);
     expect(mapped.unlocatedGroupCount).toBe(1);
   });
 

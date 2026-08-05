@@ -84,7 +84,7 @@ type AnnotationPluginState = {
   groups: readonly AnnotationGroup[];
   previewGroups: readonly AnnotationPreviewDecorationGroup[];
   revision: number;
-  unlocatedGroupCount: number;
+  invalidatedAnchorCount: number;
 };
 
 type AnnotationDecorationSync = {
@@ -109,7 +109,7 @@ type RenderAnnotationGroup =
 export function installAnnotationGroupDecorations(
   editor: Editor,
   groups: readonly AnnotationGroup[],
-  onGroupsChange?: (groups: AnnotationGroup[], unlocatedGroupCount: number) => void,
+  onGroupsChange?: (groups: AnnotationGroup[], invalidatedAnchorCount: number) => void,
   previewGroups: readonly AnnotationPreviewDecorationGroup[] = [],
 ): () => void {
   editor.unregisterPlugin(key);
@@ -121,7 +121,7 @@ export function installAnnotationGroupDecorations(
         groups,
         previewGroups,
         revision: 0,
-        unlocatedGroupCount: 0,
+        invalidatedAnchorCount: 0,
       }),
       apply(transaction, value): AnnotationPluginState {
         const synced = transaction.getMeta(key) as AnnotationDecorationSync | undefined;
@@ -131,7 +131,7 @@ export function installAnnotationGroupDecorations(
             previewGroups: synced.previewGroups,
             // 权威换代不是本地正文漂移，不回调 annotationGroupsChanged 形成状态环。
             revision: value.revision,
-            unlocatedGroupCount: 0,
+            invalidatedAnchorCount: 0,
           };
         }
         const nextGroups = mapAnnotationGroupsThroughTransaction(value.groups, transaction);
@@ -141,7 +141,11 @@ export function installAnnotationGroupDecorations(
               groups: nextGroups,
               previewGroups: value.previewGroups,
               revision: value.revision + 1,
-              unlocatedGroupCount: Math.max(0, value.groups.length - nextGroups.length),
+              invalidatedAnchorCount: Math.max(
+                0,
+                value.groups.reduce((count, group) => count + group.anchors.length, 0)
+                  - nextGroups.reduce((count, group) => count + group.anchors.length, 0),
+              ),
             };
       },
     },
@@ -215,7 +219,7 @@ export function installAnnotationGroupDecorations(
               && current?.revision === revision
               && current.groups === nextGroups
             ) {
-              onGroupsChange?.(nextGroups, pluginState.unlocatedGroupCount);
+              onGroupsChange?.(nextGroups, pluginState.invalidatedAnchorCount);
             }
           });
         },

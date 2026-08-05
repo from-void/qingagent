@@ -88,6 +88,25 @@ describe("图表技能静态提示词契约", () => {
     }
   });
 
+  it("Mermaid 技能声明着色配方适用矩阵，并禁止 classDiagram 套用 classDef", () => {
+    const mermaid = readSkillFile("diagram-viz/mermaid/SKILL.md");
+    const palettes = readSkillFile("diagram-viz/references/palettes.md");
+
+    for (const keyword of [
+      "着色 / 主题配方适用矩阵",
+      "flowchart / stateDiagram-v2",
+      "classDiagram 铁则",
+      "`class User` 是声明类的语法关键字",
+      "classDiagram 中禁止追加 `classDef ink ...`",
+      "类图只用 `%%{init: ... themeVariables ...}%%`",
+      "此范本是 flowchart，不得套到 classDiagram",
+    ]) {
+      expect(mermaid).toContain(keyword);
+    }
+    expect(palettes).toContain("下面 Mermaid 范本中的 `classDef` / `class` / `subgraph` 配方以 flowchart 为适用范围");
+    expect(palettes).toContain("classDiagram 与其他图型禁止机械套用");
+  });
+
   it("diagram-viz 单独画图时反问引擎，并只保留三个豁免", () => {
     const skill = readSkillFile("diagram-viz/SKILL.md");
     for (const keyword of [

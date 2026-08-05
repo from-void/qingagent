@@ -9,7 +9,8 @@ import {
   truncateAskUserPreview,
 } from "./AskUserPreview";
 
-vi.mock("./mermaidRender", () => ({
+vi.mock("./mermaidRender", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./mermaidRender")>(),
   renderMermaid: vi.fn().mockRejectedValue(new Error("测试降级")),
 }));
 
@@ -73,7 +74,8 @@ describe("AskUserPreview", () => {
       await Promise.resolve();
     });
 
-    expect(host?.querySelector(".pm-diagram-error")?.textContent).toContain("图表渲染失败");
+    expect(host?.querySelector(".pm-diagram-error")?.textContent).toContain("Mermaid 语法错误");
+    expect(host?.querySelector(".pm-diagram-error")?.textContent).not.toContain("图表渲染失败:Mermaid 语法错误");
     expect(host?.querySelector(".pm-diagram-error")?.textContent).toContain(source);
   });
 

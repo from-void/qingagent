@@ -77,6 +77,24 @@ function ensureMermaid(): void {
 
 let renderSeq = 0;
 
+function mermaidErrorLine(error: string): number | null {
+  const english = error.match(/\bline\s+(\d+)\b/i);
+  const chinese = error.match(/第\s*(\d+)\s*行/);
+  const value = Number(english?.[1] ?? chinese?.[1]);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/** 把解析器错误收敛成不重复、不泄漏内部细节的用户文案。 */
+export function diagramErrorMessage(
+  lang: string,
+  error: string,
+  editable = false,
+): string {
+  const title = lang === "drawio" ? "draw.io 图表无法解析" : "Mermaid 语法错误";
+  const line = lang === "mermaid" ? mermaidErrorLine(error) : null;
+  return `${title}${line ? `（第 ${line} 行）` : ""}${editable ? "。双击进入编辑器修正" : ""}`;
+}
+
 /** 清掉 mermaid 渲染失败时遗留在 document.body 的临时/错误元素。 */
 function cleanupMermaidArtifacts(id: string): void {
   if (typeof document === "undefined") return;
@@ -110,7 +128,16 @@ export async function renderMermaid(rawSource: string): Promise<string> {
         valid = true;
       }
     }
-    if (!valid) throw new Error("Mermaid 语法错误");
+    if (!valid) {
+      // suppressErrors 只返回 false，不带定位；再做一次不抑制的 parse，保留“line N”供 UI
+      // 转成安全的中文行号。parse 不渲染 DOM，不会产生 Mermaid 错误图残留。
+      try {
+        await mermaid.parse(rawSource);
+      } catch (cause) {
+        throw new Error(cause instanceof Error ? cause.message : String(cause));
+      }
+      throw new Error("Mermaid 语法错误");
+    }
   }
   renderSeq += 1;
   const id = `wmd-${Date.now()}-${renderSeq}`;

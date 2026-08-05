@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import type { ReviewTarget, ViewBlock } from "../../data/protocol";
-import { PmBlockView, PmTypewriterTableView } from "./PmStaticView";
+import { PmBlockView, PmFootnoteNumbersProvider, PmTypewriterTableView } from "./PmStaticView";
 import { ReviewBlockView } from "./reviewBlockDiff";
 import type { ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 
@@ -23,6 +23,7 @@ export function mountBlockPatchView(
   activeTargetId?: string | null,
   inputIndex = 0,
   tableTypedCounts?: ReviewTableCellTypedCounts,
+  footnoteNumbers: ReadonlyMap<string, number> = new Map(),
 ): Root {
   const root = createRoot(container);
   if (pmNodes && pmNodes.length > 0) {
@@ -34,12 +35,16 @@ export function mountBlockPatchView(
     } as PmDoc);
     root.render(
       createElement(
-        "div",
-        { className: "pm-static-view" },
-        pmDoc.content.map((node: PmBlockNode, i: number) =>
-          node.type === "table" && tableTypedCounts
-            ? createElement(PmTypewriterTableView, { node, blockIndex: i, typedCounts: tableTypedCounts, key: i })
-            : createElement(PmBlockView, { node, key: i }),
+        PmFootnoteNumbersProvider,
+        { numbers: footnoteNumbers },
+        createElement(
+          "div",
+          { className: "pm-static-view" },
+          pmDoc.content.map((node: PmBlockNode, i: number) =>
+            node.type === "table" && tableTypedCounts
+              ? createElement(PmTypewriterTableView, { node, blockIndex: i, typedCounts: tableTypedCounts, key: i })
+              : createElement(PmBlockView, { node, key: i }),
+          ),
         ),
       ),
     );
@@ -50,18 +55,22 @@ export function mountBlockPatchView(
   const beforeNode = beforePmNodes && beforePmNodes.length > 0 ? beforePmNodes[0] : undefined;
   root.render(
     createElement(
-      "div",
-      { className: "pm-static-view" },
-      blocks.map((block, i) => createElement(ReviewBlockView, {
-        block,
-        key: i,
-        beforeNode,
-        targetPrefix: `input:${inputIndex}/block:${i}`,
-        reviewTargets,
-        activeTargetId,
-        patchIndex,
-        suppressLocalPopup,
-      })),
+      PmFootnoteNumbersProvider,
+      { numbers: footnoteNumbers },
+      createElement(
+        "div",
+        { className: "pm-static-view" },
+        blocks.map((block, i) => createElement(ReviewBlockView, {
+          block,
+          key: i,
+          beforeNode,
+          targetPrefix: `input:${inputIndex}/block:${i}`,
+          reviewTargets,
+          activeTargetId,
+          patchIndex,
+          suppressLocalPopup,
+        })),
+      ),
     ),
   );
   return root;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
-import { renderMermaid } from "./mermaidRender";
+import { diagramErrorMessage, renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import { MediaBlockToolbar } from "./MediaBlockToolbar";
@@ -251,7 +251,7 @@ export function MermaidPreview({
   if (error) {
     return (
       <pre className="pm-diagram-error">
-        图表渲染失败:{error}
+        {diagramErrorMessage(lang, error)}
         {"\n\n"}
         {source}
       </pre>

@@ -2,6 +2,7 @@
 export type FileKind =
   | "pdf"
   | "word"
+  | "csv"
   | "excel"
   | "ppt"
   | "markdown"
@@ -13,6 +14,7 @@ export type FileKind =
 const KIND_META: Record<FileKind, { label: string; color: string }> = {
   pdf: { label: "PDF", color: "#d6453a" },
   word: { label: "DOC", color: "#2b6cb0" },
+  csv: { label: "CSV", color: "#1f8a4c" },
   excel: { label: "XLS", color: "#1f8a4c" },
   ppt: { label: "PPT", color: "#d2622b" },
   markdown: { label: "MD", color: "#4a6b78" },
@@ -30,11 +32,11 @@ export function fileKind(name: string, mime?: string): FileKind {
   if (ext === "pdf" || m === "application/pdf") return "pdf";
   if (ext === "doc" || ext === "docx" || m.includes("word") || m.includes("wordprocessing"))
     return "word";
+  if (ext === "csv" || m === "text/csv") return "csv";
   if (
-    ["xls", "xlsx", "csv"].includes(ext) ||
+    ["xls", "xlsx"].includes(ext) ||
     m.includes("excel") ||
-    m.includes("spreadsheet") ||
-    m === "text/csv"
+    m.includes("spreadsheet")
   )
     return "excel";
   if (["ppt", "pptx"].includes(ext) || m.includes("powerpoint") || m.includes("presentation"))

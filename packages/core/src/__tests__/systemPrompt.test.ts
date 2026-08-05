@@ -7,6 +7,15 @@ import {
 } from "../prompts/system.js";
 
 describe("system prompt S3", () => {
+  it("聊天收尾不泄漏原始标签或审查分级英文枚举", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("JSON 代码块");
+    expect(prompt).toContain('<pre lang="json">');
+    expect(prompt).toContain("不得把 <pre lang=\"json\"> 之类标签原样展示给用户");
+    expect(prompt).toContain("严重 / 建议 / 提示");
+    expect(prompt).toContain("不得输出内部英文枚举原值 error / warn / info");
+  });
+
   it("确认拒绝后要求如实收尾且禁止再次引导批准", () => {
     const prompt = buildSystemPrompt();
     expect(prompt).toContain("已取消，命令未执行");

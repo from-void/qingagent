@@ -5,7 +5,12 @@ vi.mock("mermaid", () => ({
   default: { initialize: vi.fn(), parse: vi.fn(), render: vi.fn() },
 }));
 
-import { normalizeMermaidQuotes } from "./mermaidRender";
+import mermaid from "mermaid";
+import {
+  diagramErrorMessage,
+  normalizeMermaidQuotes,
+  renderMermaid,
+} from "./mermaidRender";
 
 describe("normalizeMermaidQuotes — mermaid 引号兜底(只在原文parse失败时才用)", () => {
   it("弯双引号/全角双引号/书名号 → 半角直引号", () => {
@@ -31,5 +36,28 @@ describe("normalizeMermaidQuotes — mermaid 引号兜底(只在原文parse失�
 
   it("全角括号保持不变(交给prompt约束,代码不误伤标签正文)", () => {
     expect(normalizeMermaidQuotes("A[数据（实时）]")).toBe("A[数据（实时）]");
+  });
+});
+
+describe("Mermaid 错误文案", () => {
+  it("parse=false 后保留解析器行号，且不进入 render", async () => {
+    vi.mocked(mermaid.parse)
+      .mockResolvedValueOnce(false as unknown as Awaited<ReturnType<typeof mermaid.parse>>)
+      .mockRejectedValueOnce(new Error("Parse error on line 2: unexpected token"));
+
+    await expect(renderMermaid("flowchart TD\nA-->"))
+      .rejects.toThrow("Parse error on line 2");
+    expect(mermaid.render).not.toHaveBeenCalled();
+  });
+
+  it("用户文案只出现一次标题，并把英文定位转成中文行号", () => {
+    const message = diagramErrorMessage(
+      "mermaid",
+      "Mermaid 语法错误: Parse error on line 3: Expecting graph",
+      true,
+    );
+    expect(message).toBe("Mermaid 语法错误（第 3 行）。双击进入编辑器修正");
+    expect(message.match(/Mermaid 语法错误/g)).toHaveLength(1);
+    expect(message).not.toContain("Expecting graph");
   });
 });

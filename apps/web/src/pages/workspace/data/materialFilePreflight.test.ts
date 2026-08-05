@@ -72,7 +72,6 @@ describe("preflightBrowserMaterialFile", () => {
   it.each([
     ["broken.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "not-a-zip", "material_unreadable"],
     ["broken.pdf", "application/pdf", "%PDF-1.7\ntruncated", "material_unreadable"],
-    ["empty.txt", "text/plain", "", "material_unreadable"],
     ["binary.txt", "text/plain", new Uint8Array([1, 2, 3]), "material_unreadable"],
     ["wrong.pdf", "image/png", "%PDF-1.7\n%%EOF", "material_format_mismatch"],
     ["data.json", "application/json", "{}", "material_unsupported"],
@@ -80,6 +79,13 @@ describe("preflightBrowserMaterialFile", () => {
     await expect(preflightBrowserMaterialFile(
       new File([content], filename, { type }),
     )).resolves.toEqual({ ok: false, error });
+  });
+
+  it("0 字节文件明确提示内容为空，而不是误报无法读取", async () => {
+    await expect(preflightBrowserMaterialFile(
+      new File([], "empty.txt", { type: "text/plain" }),
+    )).resolves.toEqual({ ok: false, error: "material_empty" });
+    expect(materialPreflightErrorMessage("material_empty")).toBe("文件内容为空");
   });
 
   it("错误码只映射为安全短中文，不泄漏解析器详情", () => {

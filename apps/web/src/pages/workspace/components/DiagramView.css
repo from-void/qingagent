@@ -44,6 +44,12 @@
   height: min(56vh, 520px);
   min-height: 160px;
 }
+.pm-diagram-view--error {
+  height: auto !important;
+  min-height: 0;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
 /* 圆点拖拽句柄:替代原生 resize:vertical 的双斜线("两个拖拽点"),骑在图表块右下角边框线上,
    同时调宽+高;悬停/选中图表块时显现。圆心对齐边框角(right/bottom 各 -8px,圆点 16px → 居中压线),
    用户要求"落在边框上"。颜色统一成图表框棕色 rgb(176,138,62),不再朱红。 */
@@ -131,6 +137,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+  width: 100%;
   font-family: var(--font-mono);
   /* 出错时也不许撑变形:限高可滚、限宽。 */
   max-width: 100%;

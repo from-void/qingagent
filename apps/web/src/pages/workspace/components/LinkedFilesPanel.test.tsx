@@ -270,6 +270,26 @@ describe("LinkedFilesPanel", () => {
     expect(onToast).toHaveBeenCalledWith("该文件不支持预览");
   });
 
+  it("CSV 使用 CSV 徽标，并过滤文件夹中的 tmp/html 杂项", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      entries: [
+        { name: "统计.csv", kind: "file", childCount: null, byteLen: 88 },
+        { name: "下载.tmp", kind: "file", childCount: null, byteLen: 12 },
+        { name: "网页.html", kind: "file", childCount: null, byteLen: 128 },
+      ],
+      truncated: false,
+    })));
+
+    await render(panel({ folderSource: mockFolderSource }));
+    click(getBar());
+    await clickAsync(getFolderRoot());
+
+    const csvRow = rowByText("统计.csv");
+    expect(csvRow.querySelector('svg[aria-label="CSV"]')).not.toBeNull();
+    expect(host?.textContent).not.toContain("下载.tmp");
+    expect(host?.textContent).not.toContain("网页.html");
+  });
+
   it("展开子目录会请求对应 childRelPath 并收敛 loading", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

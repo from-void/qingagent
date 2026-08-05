@@ -19,6 +19,7 @@ import {
   PmTableScroll,
   applyMarks,
   MathView,
+  usePmFootnoteNumber,
   staticTableCellLogicalColumns,
   textAlignStyle,
 } from "./PmStaticView";
@@ -64,6 +65,9 @@ function applyMarksWithBreaks(text: string, marks: PmMark[]): React.ReactNode {
 }
 
 function ReviewSpan({ span }: { span: ViewDocSpan }) {
+  const footnoteNumber = usePmFootnoteNumber(
+    span.kind === "footnote" || span.kind === "patchInsFootnote" ? span.id : "",
+  );
   switch (span.kind) {
     case "text":
       return <>{applyMarksWithBreaks(span.text, span.marks ?? [])}</>;
@@ -76,7 +80,8 @@ function ReviewSpan({ span }: { span: ViewDocSpan }) {
           data-pm-node="footnoteReference"
           data-footnote-id={span.id}
           data-footnote-note={span.note}
-          data-footnote-number="※"
+          data-footnote-number={footnoteNumber}
+          aria-label={`脚注 ${footnoteNumber}：${span.note}`}
           title={span.note}
           tabIndex={0}
         />
@@ -101,7 +106,8 @@ function ReviewSpan({ span }: { span: ViewDocSpan }) {
             data-pm-node="footnoteReference"
             data-footnote-id={span.id}
             data-footnote-note={span.note}
-            data-footnote-number="※"
+            data-footnote-number={footnoteNumber}
+            aria-label={`脚注 ${footnoteNumber}：${span.note}`}
             title={span.note}
             tabIndex={0}
           />

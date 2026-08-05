@@ -1,6 +1,6 @@
 # 图表色板
 
-所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。Mermaid 每图最多四个语义 `classDef`；每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板；`subgraph` 容器颜色只靠 init 的 `clusterBkg` / `clusterBorder` 控制，不要给 `subgraph` 写 `style` 行。draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
+所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。下面 Mermaid 范本中的 `classDef` / `class` / `subgraph` 配方以 flowchart 为适用范围；stateDiagram-v2 复用时须遵守母技能的 ASCII 状态 ID 规则，classDiagram 与其他图型禁止机械套用。flowchart / stateDiagram-v2 每图最多四个语义 `classDef`；适用图型中的每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板；`subgraph` 容器颜色只靠 init 的 `clusterBkg` / `clusterBorder` 控制，不要给 `subgraph` 写 `style` 行。draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
 
 ## Token 总表
 

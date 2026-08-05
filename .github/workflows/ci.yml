@@ -66,6 +66,9 @@ jobs:
       - name: pnpm build
         run: pnpm -r --if-present build
 
+      - name: packaged worker smoke
+        run: pnpm --filter @qingagent/desktop test:packaged-workers
+
       - name: deterministic scorers
         run: pnpm scorers
 

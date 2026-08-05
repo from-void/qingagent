@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "tsx src/main/index.ts",
     "build": "node build.mjs",
+    "test:packaged-workers": "node dist/main/packaged-worker-smoke.js",
     "pack": "pnpm run build && electron-builder --dir",
     "dist": "pnpm run build && electron-builder",
     "build:win": "bash build-win.sh",

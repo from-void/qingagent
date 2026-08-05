@@ -1,6 +1,7 @@
 import type { AnnotationGroup, SuggestionAnchor } from "./DocSuggestion";
 
 const MOBILE_RE = /(?<!\d)1[3-9]\d(?:[ -]?\d){8}(?!\d)/g;
+const TRUNCATED_MOBILE_RE = /(?<!\d)1[3-9]\d{7,8}(?!\d)/g;
 const ID_CARD_18_RE = /(?<![\dA-Za-z])[1-8]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![\dA-Za-z])/g;
 const ID_CARD_15_RE = /(?<!\d)[1-8]\d{5}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}(?!\d)/g;
 const LONG_NUMBER_RE = /(?<!\d)\d{13,19}(?!\d)/g;
@@ -58,7 +59,8 @@ function passesLuhn(value: string): boolean {
 }
 
 function maskDigits(value: string, head: number, tail: number): string {
-  return `${value.slice(0, head)}${"*".repeat(value.length - head - tail)}${value.slice(-tail)}`;
+  const visibleTail = tail === 0 ? "" : value.slice(-tail);
+  return `${value.slice(0, head)}${"*".repeat(value.length - head - tail)}${visibleTail}`;
 }
 
 function maskEmail(value: string): string {
@@ -121,6 +123,21 @@ export function maskSensitiveValues(input: string): string {
   });
 
   return output;
+}
+
+/**
+ * 持久化审查决定专用的二次脱敏。
+ *
+ * 普通展示链路只识别完整手机号；忽略决定会长期入库并反复进入模型上下文，因此还要兜住
+ * 9/10 位、以大陆手机号号段开头的截断片段。明确标成订单号、项目编号、金额等业务数字时
+ * 继续保留，避免把常见的正常数字误当成 PII；其余命中只保留前三位，不保留可与别处拼接的尾数。
+ */
+export function maskPersistedReviewIgnoreValue(input: string): string {
+  const output = maskSensitiveValues(input);
+  return output.replace(TRUNCATED_MOBILE_RE, (value, offset: number) => {
+    if (hasNumericNegativeContext(output, offset)) return value;
+    return maskDigits(value, 3, 0);
+  });
 }
 
 export function maskSensitiveAnnotationGroup(group: AnnotationGroup): AnnotationGroup {

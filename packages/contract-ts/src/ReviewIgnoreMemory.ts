@@ -2,7 +2,7 @@ import type { ReviewType } from "./ReviewTemplates";
 import type { SuggestionAnchor } from "./DocSuggestion";
 import {
   buildSensitiveAnchorSpanKey,
-  maskSensitiveValues,
+  maskPersistedReviewIgnoreValue,
 } from "./SensitiveValueMask";
 
 export const REVIEW_IGNORE_SECTION_HEADING = "## 已确认忽略";
@@ -25,7 +25,7 @@ export function reviewTypeFromAnnotationOrigin(origin: string): ReviewType {
 }
 
 export function summarizeReviewIgnoreQuote(quote: string, summary: string): string {
-  const compact = maskSensitiveValues(quote.trim() || summary.trim())
+  const compact = maskPersistedReviewIgnoreValue(quote.trim() || summary.trim())
     .replace(/\s+/gu, " ");
   const chars = Array.from(compact);
   if (chars.length <= REVIEW_IGNORE_QUOTE_MAX_CHARS) return compact;

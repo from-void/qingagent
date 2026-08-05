@@ -83,6 +83,61 @@ describe("审查忽略补充提示词纯函数", () => {
     expect(firstKey).not.toBe(secondKey);
   });
 
+  it.each([
+    ["9 位", "待核对号码 139123456", "139123456"],
+    ["10 位", "联系电话疑似截断为 1380013800", "1380013800"],
+  ])("自定义审查的%s手机号片段不会进入忽略正文或机器身份键", (_label, summary, fragment) => {
+    const key = buildReviewIgnoreDecisionKey({
+      origin: "自定义审查:联系方式复核",
+      summary,
+      anchor: { blockId: "contact-fragment", pmFrom: 4, pmTo: 15 },
+    });
+    const line = buildReviewIgnoreLine({
+      quote: "139****5678",
+      summary,
+      date: "2026-08-06",
+      decisionKey: key,
+    });
+
+    expect(line).not.toContain(fragment);
+    expect(decodeURIComponent(key)).not.toContain(fragment);
+  });
+
+  it.each([
+    "订单号 139123456",
+    "金额 1380013800 元",
+    "年份 2026，普通编号 1234567890",
+  ])("持久化忽略决定不误伤正常数字：%s", (summary) => {
+    const key = buildReviewIgnoreDecisionKey({
+      origin: "自定义审查:数字复核",
+      summary,
+      anchor: { blockId: "normal-number", pmFrom: 1, pmTo: 9 },
+    });
+    const line = buildReviewIgnoreLine({
+      quote: summary,
+      summary,
+      date: "2026-08-06",
+      decisionKey: key,
+    });
+
+    expect(line).toContain(summary);
+    expect(decodeURIComponent(key)).toContain(summary);
+  });
+
+  it("机器键被删坏后按 legacy 行全等去重并保留决定", () => {
+    const keyed = buildReviewIgnoreLine({
+      quote: "需要保留的决定",
+      summary: "无需修改",
+      date: "2026-08-06",
+      decisionKey: "v1:custom:span%3Ap-1%3A1%3A2:%E6%97%A0%E9%9C%80%E4%BF%AE%E6%94%B9",
+    });
+    const damaged = keyed.replace(/ <!-- qingagent-review-ignore-key:.* -->$/u, "");
+
+    expect(reviewIgnoreDecisionKeyFromLine(damaged)).toBeNull();
+    expect(splitReviewSupplement(appendReviewIgnoreLines("", [damaged, damaged])).ignoreLines)
+      .toEqual([damaged]);
+  });
+
   it("同名标题后有手写正文时不误判为机器区块", () => {
     const text = "用户说明\n## 已确认忽略\n这里也是用户手写内容";
     expect(splitReviewSupplement(text)).toEqual({

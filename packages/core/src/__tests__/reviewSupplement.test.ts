@@ -244,6 +244,38 @@ describe("忽略批注回填审查补充提示词", () => {
     expect(reviewQuery).toContain(lines[1]!);
   });
 
+  it.each([
+    ["9 位", "待核对号码 139123456", "139123456"],
+    ["10 位", "联系电话疑似截断为 1380013800", "1380013800"],
+  ])("custom origin 的%s手机号片段不会落入补充要求正文或机器键", async (_label, summary, fragment) => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    const customGroup: AnnotationGroup = {
+      ...group,
+      id: `custom-phone-${fragment.length}`,
+      summary,
+      origin: "自定义审查:联系方式复核",
+      anchors: [{
+        blockId: `contact-${fragment.length}`,
+        pmFrom: 4,
+        pmTo: 15,
+        quote: "139****5678",
+        textHash: "masked-upstream-hash",
+      }],
+    };
+
+    await rewriteReviewSupplementsForIgnoredGroups({
+      docId: "doc-review-supplement",
+      groups: [customGroup],
+      now: new Date("2026-08-06T12:00:00.000Z"),
+    });
+
+    const supplement = await getReviewDocSupplement("doc-review-supplement", "custom");
+    const [line] = splitReviewSupplement(supplement).ignoreLines;
+    expect(supplement).not.toContain(fragment);
+    expect(decodeURIComponent(line ?? "")).not.toContain(fragment);
+    expect(line).toContain("139****5678");
+  });
+
   it("同一位置同一问题的决定重复提交时只保留一条", async () => {
     mocks.getSessionSnapshot.mockReturnValue(null);
     const repeated = sensitivePhoneGroup({

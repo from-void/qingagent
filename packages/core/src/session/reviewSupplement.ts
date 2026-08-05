@@ -3,7 +3,7 @@ import {
   appendReviewIgnoreLines,
   buildReviewIgnoreDecisionKey,
   buildReviewIgnoreLine,
-  maskSensitiveAnnotationGroup,
+  maskPersistedReviewIgnoreValue,
   reviewIgnoreDecisionKeyFromLine,
   reviewTypeFromAnnotationOrigin,
   splitReviewSupplement,
@@ -31,29 +31,29 @@ function decisionFromGroup(
   group: AnnotationGroup,
   date: string,
 ): IgnoredReviewDecision {
-  // DB 通常已经脱敏；入口再次处理，避免测试、迁移或未来旁路把明文 PII 写入补充要求。
-  const safeGroup = maskSensitiveAnnotationGroup(group);
-  const anchor = safeGroup.anchors[0] ?? {
-    blockId: safeGroup.id,
+  const anchor = group.anchors[0] ?? {
+    blockId: group.id,
     pmFrom: 0,
     pmTo: 0,
     quote: "",
     textHash: "",
   };
-  const quote = anchor.quote;
+  // 持久化边界不信任上游 origin：可见行、机器键与旁支输入共用同一份二次脱敏数据。
+  const summary = maskPersistedReviewIgnoreValue(group.summary);
+  const quote = maskPersistedReviewIgnoreValue(anchor.quote);
   const key = buildReviewIgnoreDecisionKey({
-    origin: safeGroup.origin,
-    summary: safeGroup.summary,
+    origin: group.origin,
+    summary,
     anchor,
   });
   return {
     key,
-    origin: safeGroup.origin,
-    summary: safeGroup.summary,
+    origin: group.origin,
+    summary,
     quote,
     line: buildReviewIgnoreLine({
       quote,
-      summary: safeGroup.summary,
+      summary,
       date,
       decisionKey: key,
     }),

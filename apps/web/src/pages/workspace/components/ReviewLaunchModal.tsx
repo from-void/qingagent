@@ -1,5 +1,5 @@
 import { Button } from "@qingagent/ui-kit";
-import { assembleReviewQuery } from "@qingagent/contract-ts";
+import { appendReviewIgnoreLines, assembleReviewQuery, splitReviewSupplement } from "@qingagent/contract-ts";
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "../../../system";
@@ -121,11 +121,17 @@ export function buildReviewActionCard(
   templateName: string,
   supplement: string,
 ): ActionCardData {
+  const supplementParts = splitReviewSupplement(supplement);
+  const visibleSupplement = supplementParts.hasManagedSection
+    ? supplementParts.userText
+    : supplement;
   return {
     title: REVIEW_META[type].title,
     lines: [
       { label: "模板", value: templateName },
-      ...(supplement.trim() ? [{ label: "补充", value: oneLine(supplement) }] : []),
+      ...(visibleSupplement.trim()
+        ? [{ label: "补充", value: oneLine(visibleSupplement) }]
+        : []),
     ],
   };
 }
@@ -151,6 +157,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const requestRef = useRef(0);
   const templateSelectionEpochRef = useRef(0);
   const confirmedTemplateIdRef = useRef("");
+  const loadedSupplementRef = useRef("");
 
   useEffect(() => {
     if (!props.open) return;
@@ -158,6 +165,8 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     templateSelectionEpochRef.current += 1;
     setLoading(true);
     setError(null);
+    loadedSupplementRef.current = "";
+    setSupplement("");
     setPage("launch");
     setEditor(null);
     const lexiconTask = props.type === "sensitive" && props.loadLexicons ? props.loadLexicons() : Promise.resolve([]);
@@ -170,7 +179,11 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
           : config.items[0]?.id ?? "";
         confirmedTemplateIdRef.current = selected;
         setSelectedId(selected);
-        setSupplement(savedSupplement);
+        loadedSupplementRef.current = savedSupplement;
+        const supplementParts = splitReviewSupplement(savedSupplement);
+        setSupplement(supplementParts.hasManagedSection
+          ? supplementParts.userText
+          : savedSupplement);
         setLexicons(availableLexicons);
         setSelectedLexicons(new Set(
           availableLexicons.filter((item) => item.enabled !== false).map((item) => item.id),
@@ -371,12 +384,20 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
             <Button type="button" variant="ghost" disabled={saving} onClick={props.onClose}>取消</Button>
             <Button type="button" variant="primary" disabled={loading || saving || !selected || sourceBlocked || (props.type === "sensitive" && selectedLexicons.size === 0)} onClick={() => {
               if (!selected) return;
+              const loadedParts = splitReviewSupplement(loadedSupplementRef.current);
+              const fullSupplement = loadedParts.hasManagedSection
+                ? appendReviewIgnoreLines(supplement, loadedParts.ignoreLines)
+                : supplement;
               setSaving(true);
               setError(null);
               void Promise.all([
                 props.selectTemplate(props.type, selected.id),
-                props.saveSupplement(props.type, supplement),
-              ]).then(() => props.onConfirm(selected, supplement, lexicons.filter((item) => selectedLexicons.has(item.id))))
+                props.saveSupplement(props.type, fullSupplement),
+              ]).then(([, savedSupplement]) => props.onConfirm(
+                selected,
+                savedSupplement,
+                lexicons.filter((item) => selectedLexicons.has(item.id)),
+              ))
                 .catch(() => setError("审查设置保存失败，请重试"))
                 .finally(() => setSaving(false));
             }}>{saving ? "正在保存…" : meta.action}</Button>

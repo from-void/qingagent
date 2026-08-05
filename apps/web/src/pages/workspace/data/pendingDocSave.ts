@@ -8,6 +8,8 @@ export interface PendingDocSaveWaiter {
 }
 
 export class PendingDocSaveError extends Error {
+  userNotified = false;
+
   constructor(
     message: string,
     readonly result?: DocWriteResultData,
@@ -15,6 +17,14 @@ export class PendingDocSaveError extends Error {
     super(message);
     this.name = "PendingDocSaveError";
   }
+}
+
+export function markDocSaveFailureNotified(error: unknown): void {
+  if (error instanceof PendingDocSaveError) error.userNotified = true;
+}
+
+export function wasDocSaveFailureNotified(error: unknown): boolean {
+  return error instanceof PendingDocSaveError && error.userNotified;
 }
 
 export function docWriteResultMessage(result: DocWriteResultData): string {

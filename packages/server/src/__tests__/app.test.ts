@@ -743,7 +743,7 @@ describe("POST /api/v1/stream", () => {
       expect(body).not.toContain("Session not found");
       const logged = consoleError.mock.calls.flat().map(String).join("\n");
       expect(logged).not.toContain("sk-live-session-secret");
-      expect(logged).not.toContain("Session not found");
+      expect(logged).toContain("Session not found");
     } finally {
       consoleError.mockRestore();
     }

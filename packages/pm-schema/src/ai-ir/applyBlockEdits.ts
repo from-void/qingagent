@@ -408,22 +408,21 @@ function carryOverDiagramOverlay(oldNode: PmBlockNode, newNode: PmBlockNode): Pm
   const newIds = extractDiagramStableIds(newNode.attrs.source);
   const nodeIds = intersect(oldIds.nodes, newIds.nodes);
   const edgeIds = intersect(oldIds.edges, newIds.edges);
-  const nextOverlay: PmDiagramOverlay = {
-    positions: filterRecord(overlay.positions ?? undefined, nodeIds),
-    styles: filterRecord(overlay.styles ?? undefined, nodeIds),
-    zOrders: filterRecord(overlay.zOrders ?? undefined, nodeIds),
-    edgeStyles: filterRecord(overlay.edgeStyles ?? undefined, edgeIds),
-    edgeHandles: filterRecord(overlay.edgeHandles ?? undefined, edgeIds),
-  };
-  if (
-    !nextOverlay.positions
-    && !nextOverlay.styles
-    && !nextOverlay.zOrders
-    && !nextOverlay.edgeStyles
-    && !nextOverlay.edgeHandles
-  ) {
+  const positions = filterRecord(overlay.positions ?? undefined, nodeIds);
+  const styles = filterRecord(overlay.styles ?? undefined, nodeIds);
+  const zOrders = filterRecord(overlay.zOrders ?? undefined, nodeIds);
+  const edgeStyles = filterRecord(overlay.edgeStyles ?? undefined, edgeIds);
+  const edgeHandles = filterRecord(overlay.edgeHandles ?? undefined, edgeIds);
+  if (!positions && !styles && !zOrders && !edgeStyles && !edgeHandles) {
     return { ...newNode, attrs: { ...newNode.attrs, overlay: null } };
   }
+  const nextOverlay: PmDiagramOverlay = {
+    ...(positions ? { positions } : {}),
+    ...(styles ? { styles } : {}),
+    ...(zOrders ? { zOrders } : {}),
+    ...(edgeStyles ? { edgeStyles } : {}),
+    ...(edgeHandles ? { edgeHandles } : {}),
+  };
   return { ...newNode, attrs: { ...newNode.attrs, overlay: nextOverlay } };
 }
 

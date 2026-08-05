@@ -54,7 +54,14 @@ interface RestoreInflightState {
 const restoreInflight = new Map<string, RestoreInflightState>();
 
 export function redactStreamErrorForLog(error: unknown): string {
-  const raw = error instanceof Error ? error.stack ?? error.message : String(error);
+  const wrapper = error instanceof Error ? error.stack ?? error.message : String(error);
+  const original = error instanceof SessionActorCommandError
+    && error.originalError !== error
+    ? error.originalError instanceof Error
+      ? error.originalError.stack ?? error.originalError.message
+      : String(error.originalError)
+    : null;
+  const raw = original ? `${wrapper}\noriginalError:\n${original}` : wrapper;
   return raw
     .replace(JSON_SECRET_HEADER_RE, "$1[REDACTED]$2")
     .replace(TEXT_SECRET_HEADER_RE, "$1$2[REDACTED]")

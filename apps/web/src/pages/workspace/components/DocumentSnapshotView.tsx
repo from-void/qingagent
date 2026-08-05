@@ -78,6 +78,7 @@ import {
   pushPendingSelfDocKey,
 } from "../data/docSyncClassify";
 import { canonicalDocWriteBaseline } from "../data/docWriteBaseline";
+import { wasDocSaveFailureNotified } from "../data/pendingDocSave";
 import type {
   DocWriteBaseline,
   EditorDocChange,
@@ -1032,6 +1033,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         updateTimerRef.current = null;
         void forwardCurrentEditorDoc().catch((error) => {
           console.error("[doc] diagram visual save failed", error);
+          if (!wasDocSaveFailureNotified(error)) {
+            onToast?.("图表修改未保存，请重试");
+          }
         });
         return;
       }
@@ -1041,6 +1045,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         // (如尚未填源码的 diagram)的校验异常,不让一次异常炸掉编辑器 update 转发流。
         void forwardCurrentEditorDoc().catch((error) => {
           console.error("[doc] debounced save failed", error);
+          if (!wasDocSaveFailureNotified(error)) {
+            onToast?.("文档修改未保存，请重试");
+          }
         });
       }, 400);
     };
@@ -1052,6 +1059,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         updateTimerRef.current = null;
         void forwardCurrentEditorDoc().catch((error) => {
           console.error("[doc] unmount save flush failed", error);
+          if (!wasDocSaveFailureNotified(error)) {
+            onToast?.("文档修改未保存，请重试");
+          }
         });
       }
     };
@@ -1060,6 +1070,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     currentDocWriteBaseline,
     forwardCurrentEditorDoc,
     onEditorChange,
+    onToast,
     readCurrentEditorDoc,
   ]);
 

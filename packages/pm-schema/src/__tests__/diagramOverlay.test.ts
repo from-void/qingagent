@@ -166,6 +166,14 @@ describe("diagram overlay 数据域", () => {
       Api: { x: 680, y: 77 },
     });
     expect(overlay?.zOrders).toEqual({ Web: 1, Api: 0 });
+    expect(overlay).toStrictEqual({
+      positions: {
+        Front: { x: 417, y: 11 },
+        Web: { x: 447, y: 77 },
+        Api: { x: 680, y: 77 },
+      },
+      zOrders: { Web: 1, Api: 0 },
+    });
     expect(safeParsePmDoc(result.doc).success).toBe(true);
   });
 

@@ -100,6 +100,7 @@ import {
   type NativePresentationRun,
 } from "../data/nativeDiffAnimation";
 import {
+  markDocSaveFailureNotified,
   PendingDocSaveError,
   docSaveFailureToastMessage,
   docWriteResultMessage,
@@ -862,6 +863,7 @@ export function useWorkspacePageController() {
     (error: unknown) => {
       if (foregroundDocSaveDepthRef.current > 0) return;
       showToast(docSaveFailureToastMessage(error));
+      markDocSaveFailureNotified(error);
     },
     [showToast],
   );

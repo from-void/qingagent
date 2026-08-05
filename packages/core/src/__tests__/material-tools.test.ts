@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 const nonRegularFsMock = vi.hoisted(() => ({
   path: "/__parse-file-mocked-device__",
@@ -32,6 +33,10 @@ import { MATERIAL_CONTEXT_MAX_CHARS } from "../tools/generateDoc.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
 import type { Material } from "../types/material.js";
+import {
+  guardToolModelOutputMapper,
+  validateToolModelOutput,
+} from "../tools/toolModelOutput.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: extract the Zod schema from the Mastra tool and validate.
@@ -107,6 +112,49 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+async function serializeToolOutputToProviderMessage(output: unknown): Promise<Record<string, unknown>> {
+  let requestBody: { messages?: Array<Record<string, unknown>> } | undefined;
+  const provider = createOpenAICompatible({
+    name: "material-tools-test",
+    baseURL: "https://provider.invalid/v1",
+    apiKey: "test-key",
+    fetch: async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as typeof requestBody;
+      return new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+
+  await provider.chatModel("test-model").doStream({
+    prompt: [
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "parse-file-call",
+          toolName: "parseFile",
+          input: { fileId: "small.csv" },
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "parse-file-call",
+          toolName: "parseFile",
+          output,
+        }],
+      },
+    ],
+  } as never);
+
+  const message = requestBody?.messages?.at(-1);
+  if (!message) throw new Error("provider request did not contain a tool message");
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +929,7 @@ describe("parseFile execute — TXT", () => {
     expect(rawOutput).toMatchObject({ ok: true, text: sourceText });
 
     const modelOutput = await parseFileTool.toModelOutput?.(rawOutput as never);
-    const result = modelOutput as {
+    const result = (modelOutput as { type: "json"; value: {
       ok: boolean;
       text: string;
       metadata: { pages: number | null; wordCount: number; title: string | null };
@@ -891,7 +939,7 @@ describe("parseFile execute — TXT", () => {
       omittedChars: number;
       rangeStart: number;
       rangeEnd: number;
-    };
+    } }).value;
 
     expect(result.ok).toBe(true);
     expect(result.text.length).toBeLessThanOrEqual(MATERIAL_CONTEXT_MAX_CHARS);
@@ -919,16 +967,55 @@ describe("parseFile execute — TXT", () => {
     });
 
     expect(modelOutput).toEqual({
-      ok: true,
-      text: sourceText,
-      metadata: { pages: 1, wordCount: 5, title: null },
-      truncated: false,
-      originalChars: sourceText.length,
-      returnedChars: sourceText.length,
-      omittedChars: 0,
-      rangeStart: 0,
-      rangeEnd: sourceText.length,
+      type: "json",
+      value: {
+        ok: true,
+        text: sourceText,
+        metadata: { pages: 1, wordCount: 5, title: null },
+        truncated: false,
+        originalChars: sourceText.length,
+        returnedChars: sourceText.length,
+        omittedChars: 0,
+        rangeStart: 0,
+        rangeEnd: sourceText.length,
+      },
     });
+  });
+
+  it("小素材结果序列化到 provider 工具消息后保留 content", async () => {
+    const sourceText = "name,score\n" + "示例,100\n".repeat(150);
+    const rawOutput = await executeParseFileOnDesktop({
+      content: Buffer.from(sourceText).toString("base64"),
+      filename: "small.csv",
+      mimeType: "text/csv",
+    });
+    expect(rawOutput).toMatchObject({ ok: true, text: sourceText });
+    const modelOutput = await parseFileTool.toModelOutput?.(rawOutput as never);
+
+    const providerMessage = await serializeToolOutputToProviderMessage(modelOutput);
+
+    expect(providerMessage).toEqual({
+      role: "tool",
+      tool_call_id: "parse-file-call",
+      content: JSON.stringify((modelOutput as { value: unknown }).value),
+    });
+  });
+});
+
+describe("tool model output 统一形状守卫", () => {
+  it.each([
+    { ok: true, text: "缺少 type/value 的历史非法形状" },
+    { type: "json" },
+    { type: "text", value: { nested: true } },
+    { type: "json", value: undefined },
+    { type: "content", value: "not-an-array" },
+  ])("拒绝无法序列化为 provider tool content 的输出 %#", (output) => {
+    expect(() => validateToolModelOutput(output)).toThrow(TypeError);
+  });
+
+  it("透传钩子在运行时同样拦截非法形状", async () => {
+    const guarded = guardToolModelOutputMapper(() => ({ ok: true }));
+    await expect(guarded?.("raw output")).rejects.toThrow(TypeError);
   });
 });
 

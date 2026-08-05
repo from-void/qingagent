@@ -5,6 +5,7 @@ import { open, readFile, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { jsonToolModelOutput } from "./toolModelOutput.js";
 import {
   applyMaterialContextBudget,
   PARSE_FILE_TRUNCATION_GUIDANCE,
@@ -1951,7 +1952,7 @@ export const parseFileTool = createTool({
   }),
   // Mastra 会把 execute 的原始全文保留给应用侧素材缓存，只把这里的预算结果送回模型。
   // 这样默认首轮不会用全文炸穿上下文，storeMaterial/readMaterial 又仍可读取完整原文。
-  toModelOutput: (output) => ({
+  toModelOutput: (output) => jsonToolModelOutput({
     ...output,
     ...applyMaterialContextBudget(output.text, {
       guidance: output.ok ? PARSE_FILE_TRUNCATION_GUIDANCE : undefined,

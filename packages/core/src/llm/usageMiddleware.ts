@@ -30,7 +30,38 @@ export interface ModelCallUsageEstimate {
   outputText?: string;
 }
 
+/**
+ * Mastra 的 TokenCounter 对纯文本使用 tokenx 粗估，并不会按当前 provider/model
+ * 切换到实际 tokenizer。席位受控样本显示中文方向性低估；provider 又不为已中止请求
+ * 返回最终 usage。在有稳定的 provider/model-specific 依据前不乘经验系数，避免把一组
+ * 样本偏差固化成所有模型的系统误差；正常完成的请求仍始终以 provider usage 为准。
+ */
 const usageTokenCounter = new TokenCounter();
+
+/** 只序列化 provider prompt；失败时宁可缺失，也不让旁路估算影响真实请求。 */
+export function serializeModelCallPrompt(params: unknown): string {
+  if (params === null || typeof params !== "object") return "";
+  try {
+    return JSON.stringify((params as { prompt?: unknown }).prompt) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** 收集中止前 provider 已产出的可计费文本 delta。 */
+export function modelCallOutputDelta(part: unknown): string {
+  if (part === null || typeof part !== "object") return "";
+  const value = part as { type?: unknown; delta?: unknown; textDelta?: unknown };
+  if (
+    value.type !== "text-delta" &&
+    value.type !== "reasoning-delta" &&
+    value.type !== "tool-input-delta"
+  ) {
+    return "";
+  }
+  if (typeof value.delta === "string") return value.delta;
+  return typeof value.textDelta === "string" ? value.textDelta : "";
+}
 
 function hasUsageCounts(counts: ReturnType<typeof normalizeLlmUsageCounts>): boolean {
   return !!counts && Object.values(counts).some((value) => typeof value === "number");
@@ -244,12 +275,14 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     attempt: number,
     startedAt: number,
     finishReason?: string | null,
+    usageEstimate?: ModelCallUsageEstimate | null,
   ): Promise<void> => {
     await recordModelCallOutcome({
       ...baseEvent,
       attempt,
       startedAt,
       usage,
+      usageEstimate,
       providerMetadata,
       reason: missing,
       finishReason,
@@ -261,6 +294,9 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     wrapGenerate: async ({ doGenerate, params }) => {
       const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
       const startedAt = Date.now();
+      const abortUsageEstimate = (): ModelCallUsageEstimate => ({
+        uncachedInputText: serializeModelCallPrompt(params),
+      });
       logModelCallStart({ ...baseEvent, attempt });
       try {
         const result = await doGenerate();
@@ -274,12 +310,15 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
         );
         return result;
       } catch (error) {
+        const reason = missingReason(error, params.abortSignal);
         void recordSafely(
           null,
           null,
-          missingReason(error, params.abortSignal),
+          reason,
           attempt,
           startedAt,
+          null,
+          reason === "provider_request_aborted" ? abortUsageEstimate() : null,
         );
         throw error;
       }
@@ -287,12 +326,26 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     wrapStream: async ({ doStream, params }) => {
       const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
       const startedAt = Date.now();
+      let estimatedOutputText = "";
+      const abortUsageEstimate = (): ModelCallUsageEstimate => ({
+        uncachedInputText: serializeModelCallPrompt(params),
+        outputText: estimatedOutputText,
+      });
       logModelCallStart({ ...baseEvent, attempt });
       let result: UsageMiddlewareStreamResult;
       try {
         result = await doStream();
       } catch (error) {
-        void recordSafely(null, null, missingReason(error, params.abortSignal), attempt, startedAt);
+        const reason = missingReason(error, params.abortSignal);
+        void recordSafely(
+          null,
+          null,
+          reason,
+          attempt,
+          startedAt,
+          null,
+          reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+        );
         throw error;
       }
 
@@ -300,7 +353,16 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       try {
         reader = result.stream.getReader();
       } catch (error) {
-        void recordSafely(null, null, missingReason(error, params.abortSignal), attempt, startedAt);
+        const reason = missingReason(error, params.abortSignal);
+        void recordSafely(
+          null,
+          null,
+          reason,
+          attempt,
+          startedAt,
+          null,
+          reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+        );
         throw error;
       }
       let recorded = false;
@@ -311,6 +373,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
         providerMetadata: unknown,
         reason: string | null,
         finishReason?: string | null,
+        usageEstimate?: ModelCallUsageEstimate | null,
       ) => {
         if (recorded) return;
         recorded = true;
@@ -323,9 +386,18 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           attempt,
           startedAt,
           finishReason,
+          usageEstimate,
         );
       };
-      abortHandler = () => { void recordOnce(null, null, "provider_request_aborted"); };
+      abortHandler = () => {
+        void recordOnce(
+          null,
+          null,
+          "provider_request_aborted",
+          null,
+          abortUsageEstimate(),
+        );
+      };
       if (params.abortSignal?.aborted) abortHandler();
       else params.abortSignal?.addEventListener("abort", abortHandler, { once: true });
 
@@ -343,20 +415,33 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
               return;
             }
             if (value.type === "error") sawErrorPart = true;
+            estimatedOutputText += modelCallOutputDelta(value);
             if (value.type === "finish") {
               recordOnce(value.usage, value.providerMetadata, null, value.finishReason);
             }
             controller.enqueue(value);
           } catch (error) {
-            recordOnce(null, null, missingReason(error, params.abortSignal));
+            const reason = missingReason(error, params.abortSignal);
+            recordOnce(
+              null,
+              null,
+              reason,
+              null,
+              reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+            );
             controller.error(error);
           }
         },
         async cancel(reason) {
+          const terminalReason = params.abortSignal?.aborted
+            ? "provider_request_aborted"
+            : "provider_stream_cancelled";
           recordOnce(
             null,
             null,
-            params.abortSignal?.aborted ? "provider_request_aborted" : "provider_stream_cancelled",
+            terminalReason,
+            null,
+            terminalReason === "provider_request_aborted" ? abortUsageEstimate() : null,
           );
           await reader.cancel(reason);
         },

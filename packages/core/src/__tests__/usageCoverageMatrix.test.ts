@@ -56,9 +56,13 @@ describe("LLM usage provider 边界覆盖", () => {
     expect(manual).toContain("recordModelCallOutcome({");
   });
 
-  it("主动中止的分支与联网搜索只提交估算素材，不绕过统一账本", () => {
+  it("主动中止的主链、分支与联网搜索只提交估算素材，不绕过统一账本", () => {
     const middleware = readFileSync(
       resolve(root, "packages/core/src/llm/usageMiddleware.ts"),
+      "utf8",
+    );
+    const modern = readFileSync(
+      resolve(root, "packages/core/src/llm/modernUsageModel.ts"),
       "utf8",
     );
     const branch = readFileSync(
@@ -73,8 +77,11 @@ describe("LLM usage provider 边界覆盖", () => {
     expect(middleware).toMatch(
       /usageState\s*=\s*recorded\s*\?\s*"recorded"\s*:\s*estimated\s*\?\s*"estimated"/,
     );
+    expect(middleware).toContain("usageEstimate,");
+    expect(modern).toContain("usageEstimate,");
     expect(branch).toContain("usageEstimate,");
     expect(manual).toContain("usageEstimate,");
+    expect(modern).not.toContain("recordUsageEvent");
     expect(branch).not.toContain("recordUsageEvent");
     expect(manual).not.toContain("recordUsageEvent");
   });

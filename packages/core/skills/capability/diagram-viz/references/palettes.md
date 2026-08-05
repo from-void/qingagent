@@ -1,6 +1,6 @@
 # 图表色板
 
-所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。Mermaid 每图最多四个语义 `classDef`；每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板；`subgraph` 容器颜色只靠 init 的 `clusterBkg` / `clusterBorder` 控制，不要给 `subgraph` 写 `style` 行。draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
+所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。Mermaid 每图最多四个语义 `classDef`；每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板。init 的 `clusterBkg` / `clusterBorder` 是全图分区默认色；不同分区需要不同颜色时，为每个 `subgraph` 使用稳定 ASCII id，并写 `style 分区id fill:#浅色,stroke:#深色`，可附加画布已保真支持的 `color`、`stroke-width`；不要附加 `stroke-dasharray`、节点几何或字号属性。draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
 
 ## Token 总表
 
@@ -24,7 +24,6 @@ flowchart LR
   classDef ink fill:#FFFFFF,stroke:#2F2A22,stroke-width:2px,color:#2F2A22,rx:8px,ry:8px
   classDef gold fill:#FFFFFF,stroke:#A8823F,stroke-width:2px,color:#2F2A22,rx:8px,ry:8px
   classDef emphasis fill:#FFFFFF,stroke:#A8823F,stroke-width:3px,color:#2F2A22,rx:8px,ry:8px
-  classDef container fill:#EFE7D6,stroke:#2F2A22,stroke-width:2px,stroke-dasharray:6 4,color:#2F2A22
 ```
 
 ### 经典

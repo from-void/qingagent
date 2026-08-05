@@ -49,7 +49,7 @@ write-inject: true
 4. 节点必须有 2px 边框，圆角统一为 8；有连线时节点间距至少 40。正文至少 14，标题至少 24，辅助文字 13 且用辅助灰。
 5. 色彩遵守 60–30–10：中性底约 60%，组色约 30%，强调色不超过 10%；文字与底色对比至少 4.5:1。
 6. draw.io 坐标和尺寸取 20 的倍数，标准节点 160×60，层间距至少 120、同层间距至少 60；边用正交线，标签白底并设置偏移。
-7. Mermaid 每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板；`subgraph` 容器颜色只靠 init 的 `clusterBkg` / `clusterBorder` 控制，不要给 `subgraph` 写 `style` 行。
+7. Mermaid 每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板。init 的 `clusterBkg` / `clusterBorder` 提供全图分区默认色；需要按语义给不同分区着色时，必须先给 `subgraph` 稳定 ASCII id，再用 `style 分区id fill:#浅色,stroke:#深色` 精确覆盖。分区 `style` 只使用画布已保真支持的 `fill`、`stroke`、`color`、`stroke-width`；不要写 `stroke-dasharray`、节点几何或字号属性，这些会让可视化编辑器降级为 Mermaid 预览。
 
 ## 五、六组错误与正确
 

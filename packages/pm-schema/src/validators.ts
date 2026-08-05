@@ -242,6 +242,7 @@ const diagramOverlaySchema = z.object({
     width: z.number().min(96).max(640).nullable().optional(),
     height: z.number().min(48).max(480).nullable().optional(),
   })).nullable().optional(),
+  zOrders: z.record(z.string(), z.number().finite()).nullable().optional(),
   edgeStyles: z.record(z.string(), z.object({
     stroke: diagramColorSchema,
     textColor: diagramColorSchema,

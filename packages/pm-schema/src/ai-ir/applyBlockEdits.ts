@@ -411,20 +411,33 @@ function carryOverDiagramOverlay(oldNode: PmBlockNode, newNode: PmBlockNode): Pm
   const nextOverlay: PmDiagramOverlay = {
     positions: filterRecord(overlay.positions ?? undefined, nodeIds),
     styles: filterRecord(overlay.styles ?? undefined, nodeIds),
+    zOrders: filterRecord(overlay.zOrders ?? undefined, nodeIds),
     edgeStyles: filterRecord(overlay.edgeStyles ?? undefined, edgeIds),
     edgeHandles: filterRecord(overlay.edgeHandles ?? undefined, edgeIds),
   };
-  if (!nextOverlay.positions && !nextOverlay.styles && !nextOverlay.edgeStyles && !nextOverlay.edgeHandles) {
+  if (
+    !nextOverlay.positions
+    && !nextOverlay.styles
+    && !nextOverlay.zOrders
+    && !nextOverlay.edgeStyles
+    && !nextOverlay.edgeHandles
+  ) {
     return { ...newNode, attrs: { ...newNode.attrs, overlay: null } };
   }
   return { ...newNode, attrs: { ...newNode.attrs, overlay: nextOverlay } };
 }
 
 function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: Set<string> } {
-  const lines = source.split(/\r?\n/);
-  const header = lines.find((line) => line.trim());
-  const first = header?.trim() ?? "";
-  if (/^mindmap\b/.test(first)) return extractMindmapIds(lines);
+  // Mermaid 指令既可以在图型声明前出现，也可以跨多行、连续出现。先整段剔除
+  // `%%...` 指令/注释，再定位真正的图型声明，不能把 init 正文误当成节点。
+  const lines = mermaidLinesWithoutDirectives(source);
+  const headerIndex = lines.findIndex((line) =>
+    /^(?:flowchart|graph)\s+\S+|^stateDiagram(?:-v2)?\b|^erDiagram\b|^classDiagram\b|^mindmap\b/.test(line.trim())
+  );
+  if (headerIndex < 0) return { nodes: new Set(), edges: new Set() };
+  const first = lines[headerIndex]!.trim();
+  const bodyLines = lines.slice(headerIndex + 1);
+  if (/^mindmap\b/.test(first)) return extractMindmapIds(bodyLines);
   const nodes = new Set<string>();
   const edges = new Set<string>();
   const edgeFactories = new Map<string, EdgeIdFactory>();
@@ -441,10 +454,16 @@ function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: S
     }
     edges.add(nextEdgeId({ source: sourceId, target: targetId, syntaxKind, label: label || undefined }));
   };
-  for (const line of lines) {
+  for (const line of bodyLines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("%%")) continue;
+    if (!trimmed) continue;
     if (/^(flowchart|graph)\b/.test(first)) {
+      const subgraph = trimmed.match(/^subgraph\s+([A-Za-z_][\w-]*)(?=\s|\[|\(|\{|$)/);
+      if (subgraph) {
+        addNode(subgraph[1]!);
+        continue;
+      }
+      if (/^(?:end|direction|style|classDef|class|linkStyle|click)\b/.test(trimmed)) continue;
       const edge = trimmed.match(/^([A-Za-z_][\w-]*)(?:\[[^\]]*]|\([^)]*\)|\{[^}]*})?\s+(-->|-.->|==>)(?:\|([^|]*)\|)?\s+([A-Za-z_][\w-]*)/);
       if (edge) {
         addEdge("flow", edge[1]!, edge[4]!, edge[2]!, edge[3]);
@@ -483,15 +502,35 @@ function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: S
   return { nodes, edges };
 }
 
+function mermaidLinesWithoutDirectives(source: string): string[] {
+  const out: string[] = [];
+  let inDirective = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (inDirective) {
+      if (/%%\s*$/.test(trimmed)) inDirective = false;
+      continue;
+    }
+    if (trimmed.startsWith("%%")) {
+      if (trimmed.startsWith("%%{") && !/%%\s*$/.test(trimmed.slice(3))) {
+        inDirective = true;
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 function extractMindmapIds(lines: string[]): { nodes: Set<string>; edges: Set<string> } {
   const nodes = new Set<string>();
   const edges = new Set<string>();
   const stack: Array<{ id: string; indent: number; path: string[] }> = [];
   const siblingCounters = new Map<string, Map<string, number>>();
   const nextEdgeId = createEdgeIdFactory("mind");
-  for (const line of lines.slice(1)) {
+  for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("%%")) continue;
+    if (!trimmed) continue;
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     while (stack.length > 0 && stack[stack.length - 1]!.indent >= indent) stack.pop();
     const parent = stack[stack.length - 1] ?? null;

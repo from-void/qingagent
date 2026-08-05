@@ -52,6 +52,7 @@ const expectedPublicExports = [
   "filterStableOverlay",
   "getCapabilities",
   "getFlowShapeGeometry",
+  "getGraphVisualEditorUnavailableReason",
   "getStableElementIds",
   "graphToSvg",
   "layoutDiagramGraph",

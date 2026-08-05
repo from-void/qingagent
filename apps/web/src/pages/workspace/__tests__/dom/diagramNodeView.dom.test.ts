@@ -431,10 +431,11 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await act(async () => updateFirstDiagramAttrs(editor, { source: unsupported, svg: null }));
       await flush(4);
       expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
-      expect(
-        Array.from(editor.view.dom.querySelectorAll(".pm-diagram-view-actions button"))
-          .some((button) => button.textContent?.trim() === "可视化编辑"),
-      ).toBe(false);
+      const unavailableButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑不可用");
+      expect(unavailableButton?.disabled).toBe(true);
+      expect(unavailableButton?.title).toContain("尚未支持");
 
       globalThis.requestAnimationFrame = originalRequestAnimationFrame;
       globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
@@ -463,6 +464,24 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(svgHost).not.toBeNull();
       // 桩 svg 里回填了我们传进去的源码,证明 source 真的流到了 mermaid.render。
       expect(svgHost!.getAttribute("data-src")).toBe(encodeURIComponent(source));
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("dark 主题降级时保留可视化入口、源码入口和明确原因", async () => {
+    const source = '%%{init: {"theme":"dark"}}%%\nflowchart TD\n  A --> B\n';
+    const editor = await mountEditor(diagramDoc(source));
+    try {
+      await waitForSelector(".pm-diagram-svg svg", editor.view.dom);
+      const buttons = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      );
+      const visualButton = buttons.find((button) => button.textContent?.trim() === "可视化编辑不可用");
+      expect(visualButton?.disabled).toBe(true);
+      expect(visualButton?.title).toContain("主题 dark 暂不支持");
+      expect(buttons.some((button) => button.textContent?.trim() === "编辑 Mermaid")).toBe(true);
+      expect(editor.view.dom.querySelector('[role="status"]')?.textContent).toContain("主题 dark 暂不支持");
     } finally {
       await unmount(editor);
     }
@@ -1550,10 +1569,11 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await act(async () => updateFirstDiagramAttrs(editor, { source: unsupported, svg: null }));
       await flush(4);
       expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
-      expect(
-        Array.from(editor.view.dom.querySelectorAll(".pm-diagram-view-actions button"))
-          .some((button) => button.textContent?.trim() === "可视化编辑"),
-      ).toBe(false);
+      const unavailableButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑不可用");
+      expect(unavailableButton?.disabled).toBe(true);
+      expect(unavailableButton?.title).toContain("尚未支持");
 
       globalThis.requestAnimationFrame = originalRequestAnimationFrame;
       globalThis.cancelAnimationFrame = originalCancelAnimationFrame;

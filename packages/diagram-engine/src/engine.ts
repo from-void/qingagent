@@ -8,9 +8,11 @@ import { completeOpenFlowSubgraphs, verifyFlowSubgraphsPreserved } from "./flowc
 
 import { mindmapCapabilities, parseMindmap, rewriteMindmap } from "./mindmap.js";
 
-import { parseDiagram } from "./parser.js";
+import { detectType, parseDiagram } from "./parser.js";
 
 import { registry } from "./registry.js";
+
+import { presentationSyntaxUnavailableReason } from "./theme.js";
 
 import { parseState, rewriteState, stateCapabilities } from "./state.js";
 
@@ -42,6 +44,22 @@ export function canUseGraphVisualEditor(parsed: ParseResult | null | undefined):
       || parsed.model.type === "mindmap"
     )
   );
+}
+
+/** 给可视化编辑降级态提供稳定、面向用户的短原因，避免入口无声消失。 */
+export function getGraphVisualEditorUnavailableReason(
+  source: string,
+  parsed: ParseResult | null | undefined = parseDiagram(source),
+): string | null {
+  if (!detectType(source)) {
+    return "当前 Mermaid 图类型暂不支持可视化编辑，可继续使用源码编辑";
+  }
+  if (!parsed?.ok) {
+    return "当前 Mermaid 源码无法完整解析，暂时不能使用可视化编辑，可继续使用源码编辑";
+  }
+  if (canUseGraphVisualEditor(parsed)) return null;
+  return presentationSyntaxUnavailableReason(source)
+    ?? "当前 Mermaid 语法含可视化编辑器尚未完整支持的内容，已保留 Mermaid 预览，可继续编辑源码";
 }
 
 export function getCapabilities(

@@ -10,6 +10,7 @@ import {
   filterStableOverlay,
   getCapabilities,
   getFlowShapeGeometry,
+  getGraphVisualEditorUnavailableReason,
   graphToSvg,
   layoutDiagramGraph,
   moveNodeToSubgraph,
@@ -1248,6 +1249,25 @@ flowchart TD
     }
   });
 
+  it("非 base 主题与缺失分区主题色会给出明确的可视化编辑降级原因", () => {
+    const dark = `%%{init: {"theme":"dark"}}%%
+flowchart TD
+  A --> B
+`;
+    const missingClusterColors = `%%{init: {'theme':'base','themeVariables':{'mainBkg':'#FFFFFF','nodeBorder':'#5178C6','lineColor':'#BBBFC4','textColor':'#1F2329'}}}%%
+flowchart TD
+  subgraph Zone["业务区"]
+    A --> B
+  end
+`;
+
+    expect(getGraphVisualEditorUnavailableReason(dark)).toContain("主题 dark 暂不支持");
+    expect(getGraphVisualEditorUnavailableReason(dark)).toContain("已保留 Mermaid 预览");
+    expect(getGraphVisualEditorUnavailableReason(missingClusterColors)).toContain("clusterBkg、clusterBorder");
+    expect(canUseGraphVisualEditor(parseDiagram(dark))).toBe(false);
+    expect(canUseGraphVisualEditor(parseDiagram(missingClusterColors))).toBe(false);
+  });
+
   it("r14 审核流程原始 fixture 的标准样式完整进入共享模型与 SVG", () => {
     const source = readFileSync(new URL("./fixtures-r14-review-flow.mmd", import.meta.url), "utf8");
     const parsed = parseDiagram(source);
@@ -1782,7 +1802,7 @@ flowchart TD
       "  end",
       "  classDef paper fill:#f3ecdd,stroke:#8f6d30",
       "  class Zone paper",
-      "  style Zone stroke-width:3px,fill:#efe3cc %% 分区样式",
+      "  style Zone stroke-width:3px,color:#332211,fill:#efe3cc %% 分区样式",
       "",
     ].join("\n");
     const parsed = parseDiagram(source);
@@ -1791,17 +1811,33 @@ flowchart TD
       fill: "#efe3cc",
       stroke: "#8f6d30",
       strokeWidth: 3,
+      textColor: "#332211",
     });
-    expect(graphToSvg(source)).toMatch(/data-cluster-id="Zone"[\s\S]*?<rect[^>]+fill="#efe3cc"[^>]+stroke="#8f6d30"/);
+    expect(parsed.fullyRepresented).toBe(true);
+    expect(graphToSvg(source)).toMatch(/data-cluster-id="Zone"[\s\S]*?<rect[^>]+fill="#efe3cc"[^>]+stroke="#8f6d30"[^>]+stroke-width="3"[\s\S]*?<text[^>]+fill="#332211"/);
 
     const rewritten = setSubgraphStyle(source, "Zone", { fill: "#f8e7a1", stroke: "#6a6256" });
     expect(rewritten.ok).toBe(true);
-    expect(rewritten.source).toContain("style Zone stroke-width:3px,fill:#f8e7a1,stroke:#6a6256 %% 分区样式");
+    expect(rewritten.source).toContain("style Zone stroke-width:3px,color:#332211,fill:#f8e7a1,stroke:#6a6256 %% 分区样式");
     expect((parseDiagram(rewritten.source).model as FlowGraph).perSubgraphStyles?.Zone).toMatchObject({
       fill: "#f8e7a1",
       stroke: "#6a6256",
       strokeWidth: 3,
+      textColor: "#332211",
     });
+  });
+
+  it("分区 style 仅为画布声明其可保真承载的属性开放", () => {
+    const supported = `flowchart TD
+  subgraph Zone["业务区"]
+    A
+  end
+  style Zone fill:#efe3cc,stroke:#8f6d30,stroke-width:2px,color:#332211
+`;
+    const unsupported = `${supported}  style Zone stroke-dasharray:6 4\n`;
+    expect(parseDiagram(supported).fullyRepresented).toBe(true);
+    expect(parseDiagram(unsupported).fullyRepresented).toBe(false);
+    expect(getGraphVisualEditorUnavailableReason(unsupported)).toContain("分区 Zone 的 style");
   });
 
   it("flowchart 节点 width/height 可由 Mermaid style 或持久化 overlay 驱动布局与导出", () => {

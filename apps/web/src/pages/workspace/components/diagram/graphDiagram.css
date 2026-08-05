@@ -151,10 +151,10 @@
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  border: 1.5px solid var(--graph-cluster-stroke);
+  border: var(--graph-cluster-stroke-width, 1.5px) solid var(--graph-cluster-stroke);
   border-radius: 0;
   background: color-mix(in srgb, var(--graph-cluster-fill) 72%, transparent);
-  color: var(--graph-node-text);
+  color: var(--graph-cluster-text, var(--graph-node-text));
   font-family: var(--font-zh-serif);
   transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
 }

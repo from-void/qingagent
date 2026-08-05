@@ -652,11 +652,15 @@ export function renderSvgCluster(
 ): string {
   const fill = sanitizeColor(style?.fill) ?? sanitizeColor(themePalette?.clusterFill) ?? "#f3ecdd";
   const stroke = sanitizeColor(style?.stroke) ?? sanitizeColor(themePalette?.clusterStroke) ?? "#cdbfa3";
-  const text = sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
+  const text = sanitizeColor(style?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
+  const strokeWidth = typeof style?.strokeWidth === "number"
+    ? Math.max(1, Math.min(8, style.strokeWidth))
+    : 1.5;
+  const dashArray = style?.dashArray;
   const emptyHint = cluster.empty
     ? `<text x="${cluster.x + cluster.width / 2}" y="${cluster.y + cluster.height / 2 + 12}" text-anchor="middle" font-size="12" fill="${text}" fill-opacity="0.58" font-family="${SVG_TEXT_FONT_FAMILY}">拖入节点</text>`
     : "";
-  return `<g data-cluster-id="${escapeXml(cluster.id)}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}" data-direction="${cluster.direction}" data-empty="${cluster.empty}"><rect x="${cluster.x}" y="${cluster.y}" width="${cluster.width}" height="${cluster.height}" fill="${fill}" fill-opacity="0.72" stroke="${stroke}" stroke-width="1.5"${cluster.empty ? ' stroke-dasharray="6 5"' : ""}/><text x="${cluster.x + cluster.width / 2}" y="${cluster.y + 27}" text-anchor="middle" font-size="14" font-weight="600" fill="${text}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(cluster.label)}</text>${emptyHint}</g>`;
+  return `<g data-cluster-id="${escapeXml(cluster.id)}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}" data-direction="${cluster.direction}" data-empty="${cluster.empty}"><rect x="${cluster.x}" y="${cluster.y}" width="${cluster.width}" height="${cluster.height}" fill="${fill}" fill-opacity="0.72" stroke="${stroke}" stroke-width="${strokeWidth}"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : cluster.empty ? ' stroke-dasharray="6 5"' : ""}/><text x="${cluster.x + cluster.width / 2}" y="${cluster.y + 27}" text-anchor="middle" font-size="14" font-weight="600" fill="${text}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(cluster.label)}</text>${emptyHint}</g>`;
 }
 
 export function escapeXml(value: string): string {

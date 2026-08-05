@@ -1,4 +1,4 @@
-export { applyEdit, canUseGraphVisualEditor, detectType, getCapabilities, parseDiagram, registry } from "./engine.js";
+export { applyEdit, canUseGraphVisualEditor, detectType, getCapabilities, getGraphVisualEditorUnavailableReason, parseDiagram, registry } from "./engine.js";
 export { getFlowShapeGeometry, normalizeFlowShapeName } from "./flowchart.js";
 export { dissolveSubgraph, moveNodeToSubgraph, renameSubgraph, setSubgraphStyle, wrapNodesInSubgraph } from "./flowchart-subgraphs.js";
 export { safeMermaid, safeMermaidId, safeMermaidLabel } from "./mermaid.js";

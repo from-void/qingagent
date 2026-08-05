@@ -170,7 +170,7 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("preview 可含 Mermaid 代码块");
     for (const movedDetail of [
       "Mermaid 语法只认半角",
-      "source **首行必须是合法图型声明**",
+      "首个有效非指令行必须是合法图型声明",
       "工程图/架构图 diagram(drawio)",
       "必须是**未压缩明文** mxGraph XML",
       "<drawio>&lt;mxGraphModel",

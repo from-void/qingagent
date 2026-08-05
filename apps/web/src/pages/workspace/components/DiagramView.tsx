@@ -5,7 +5,7 @@ import type { NodeViewProps } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
-import { canUseGraphVisualEditor, parseDiagram } from "@qingagent/diagram-engine";
+import { canUseGraphVisualEditor, detectType, getGraphVisualEditorUnavailableReason, parseDiagram } from "@qingagent/diagram-engine";
 import {
   DEFAULT_DRAWIO_SOURCE,
   isPoisonedMermaidSvg,
@@ -90,6 +90,10 @@ function DiagramComponent({
     [lang, source],
   );
   const supportsVisualEdit = lang === "drawio" || canUseGraphVisualEditor(parsedDiagram);
+  const hasGraphVisualEditor = lang === "drawio" || detectType(source) !== null;
+  const visualEditUnavailableReason = lang === "mermaid"
+    ? getGraphVisualEditorUnavailableReason(source, parsedDiagram)
+    : null;
   const showActions = editable || canRequestInteraction;
   const visualEditorOpening =
     interactionOpening === "visual" || drawioEditorOpening || visualEditRequest !== null;
@@ -622,16 +626,17 @@ function DiagramComponent({
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
-              {supportsVisualEdit && (
+              {hasGraphVisualEditor && (
                 <button
                   type="button"
-                  className="pm-diagram-view-btn"
-                  disabled={visualEditorOpening || interactionOpening === "source"}
+                  className={`pm-diagram-view-btn${visualEditUnavailableReason ? " is-unavailable" : ""}`}
+                  disabled={!!visualEditUnavailableReason || visualEditorOpening || interactionOpening === "source"}
                   aria-busy={visualEditorOpening}
+                  title={visualEditUnavailableReason ?? undefined}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openVisualEdit}
                 >
-                  {visualEditorOpening ? "正在打开…" : "可视化编辑"}
+                  {visualEditorOpening ? "正在打开…" : visualEditUnavailableReason ? "可视化编辑不可用" : "可视化编辑"}
                 </button>
               )}
               <button

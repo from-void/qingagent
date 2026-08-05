@@ -11,7 +11,8 @@ import {
   type AnalyzedSimpleCommand,
 } from "./commandRisk.js";
 import { parseLarkCliCommandPath } from "./larkCliCommand.js";
-import { SANDBOX_SESSIONS_BASE } from "./sessionWorkspace.js";
+import { QINGAGENT_DATA_DIR, SANDBOX_SESSIONS_BASE } from "./sessionWorkspace.js";
+import { evaluateWindowsCommandBoundary } from "./windowsCommandBoundary.js";
 
 export type PolicyDecision =
   | { action: "allow"; credentialConsumer?: "trusted-node-skill" }
@@ -27,6 +28,12 @@ export interface CommandPolicyOptions {
   sandboxBinDir?: string;
   /** 是否以后台进程方式执行(execute_command background:true)；硬 deny 不因后台模式放宽。 */
   background?: boolean;
+  /** 生产取 process.platform；测试可注入 win32 验证 Windows 执行墙。 */
+  platform?: NodeJS.Platform;
+  /** Windows 路径变量的宿主真值；不进入子进程，仅供执行前路径判定。 */
+  env?: NodeJS.ProcessEnv;
+  /** Windows 桌面 userData/data 根；用于保护 .env/*.db/Local Storage 等配置。 */
+  dataDir?: string;
 }
 
 const NODE_COMMANDS = new Set(["node", "nodejs"]);
@@ -543,6 +550,15 @@ function evaluateLarkCli(args: string[], options: CommandPolicyOptions): PolicyD
 function evaluateCommandPolicyInner(command: string, options: CommandPolicyOptions): PolicyDecision {
   const analysis = analyzeCommand(command);
   if (analysis.error) return { action: "deny", reason: analysis.error };
+
+  if ((options.platform ?? process.platform) === "win32") {
+    const boundaryDecision = evaluateWindowsCommandBoundary(command, analysis, {
+      workspaceCwd: options.workspaceCwd ?? SANDBOX_SESSIONS_BASE,
+      env: options.env ?? process.env,
+      dataDir: options.dataDir ?? QINGAGENT_DATA_DIR,
+    });
+    if (boundaryDecision) return boundaryDecision;
+  }
 
   // 所有静态可识别命令段都先过 lark 特批；首段 allow 不能遮住 compound/shell -c 内的硬禁令。
   for (const simpleCommand of analysis.commands) {

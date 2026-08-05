@@ -6,6 +6,7 @@ import {
 } from "../agent-run/redaction.js";
 import {
   commandCardFromResult,
+  scriptCardFromResult,
 } from "../agent-run/toolCards.js";
 
 describe("bridge redaction", () => {
@@ -170,5 +171,19 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
       true,
     );
     expect(card.command).not.toContain("secrettok");
+  });
+});
+
+describe("scriptCardFromResult 失败原因分档", () => {
+  it.each([
+    ["代码错误", { ok: false, stdout: "", error: "ReferenceError: missing is not defined" }, false, "codeError"],
+    ["资源超限", { ok: false, stdout: "", stderr: "", error: "global run_python memory total budget exceeded" }, false, "resourceExceeded"],
+    ["超时", { ok: false, stdout: "", error: "timeout" }, false, "timedOut"],
+    ["取消", { ok: false, stdout: "", error: "aborted" }, false, "aborted"],
+    ["成功", { ok: true, stdout: "", result: 2 }, true, "succeeded"],
+  ] as const)("%s 映射到对应结构化终态", (_label, result, ok, terminalKind) => {
+    const card = scriptCardFromResult("run_python", { code: "1 + 1" }, result, ok);
+    expect(card.terminalKind).toBe(terminalKind);
+    expect(card.phase).toBe(terminalKind === "succeeded" ? "done" : "failed");
   });
 });

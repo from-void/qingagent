@@ -5,6 +5,10 @@ export type CommandTerminalKind =
   | "killed"
   | "aborted"
   | "failed"
+  /** 脚本已运行但代码自身报错。 */
+  | "codeError"
+  /** 脚本触发内存等资源护栏。 */
+  | "resourceExceeded"
   | "timedOut"
   /** 命令转入交互式授权等待、被系统提前收口：不是失败也不是超时，卡面说"需要重新授权"。 */
   | "authRequired"

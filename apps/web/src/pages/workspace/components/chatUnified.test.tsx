@@ -342,6 +342,8 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     ["killed", -1, "SIGTERM", "已终止（SIGTERM）"],
     ["aborted", -1, undefined, "已中止"],
     ["failed", 3, undefined, "未完成"],
+    ["codeError", 1, undefined, "代码出错"],
+    ["resourceExceeded", 1, undefined, "资源超限"],
     ["timedOut", -1, undefined, "已超时"],
     ["succeeded", 0, undefined, "已完成"],
   ] as const)(

@@ -238,6 +238,15 @@ export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
   );
 }
 
+function scriptFailureTerminalKind(error: string): CommandTerminalKind {
+  if (/\b(?:aborted|cancelled|canceled)\b/i.test(error)) return "aborted";
+  if (/\b(?:timeout|timed out|time limit exceeded)\b/i.test(error)) return "timedOut";
+  const resourceExceeded =
+    /\b(?:memory|resource)[^\n]{0,48}(?:budget|limit) exceeded\b/i.test(error) ||
+    /\b(?:out of memory|heap limit|reaching memory limit|MemoryError|allocation failed|resource exhausted|worker exited with code)\b/i.test(error);
+  return resourceExceeded ? "resourceExceeded" : "codeError";
+}
+
 /** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,
  *  复用 CommandCard 的可展开样式,让用户能看到并展开运行的脚本与输出(与沙箱命令卡样式统一)。 */
 export function scriptCardFromResult(
@@ -261,7 +270,10 @@ export function scriptCardFromResult(
       .filter(Boolean)
       .join("\n"),
   );
-  const failed = !ok || Boolean(error);
+  const failed = !ok || r.ok === false || Boolean(error);
+  const terminalKind: CommandTerminalKind = failed
+    ? scriptFailureTerminalKind(error)
+    : "succeeded";
   const isPython = toolName === "run_python";
   return {
     // 统一显示名:运行时 bar 与完成时 card 都叫「运行代码」,不暴露 JS/Python 实现细节。
@@ -271,7 +283,7 @@ export function scriptCardFromResult(
     exitCode: failed ? 1 : 0,
     outputTail: output.slice(-600),
     phase: failed ? "failed" : "done",
-    terminalKind: failed ? "failed" : "succeeded",
+    terminalKind,
   };
 }
 

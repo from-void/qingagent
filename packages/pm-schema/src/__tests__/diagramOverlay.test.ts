@@ -177,6 +177,50 @@ describe("diagram overlay 数据域", () => {
     expect(safeParsePmDoc(result.doc).success).toBe(true);
   });
 
+  it("replaceBlock 保留产品生成及存量中文 Mermaid id 的 overlay", () => {
+    const oldSource = [
+      "flowchart TD",
+      '  A[开始] --> n_新节点_1["新节点"]',
+      '  n_新节点_1 --> 存量节点["存量节点"]',
+      "",
+    ].join("\n");
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-unicode-id",
+          lang: "mermaid",
+          source: oldSource,
+          svg: null,
+          overlay: {
+            positions: {
+              n_新节点_1: { x: 220, y: 80 },
+              存量节点: { x: 440, y: 80 },
+            },
+          },
+        },
+      }],
+    };
+
+    const result = applyBlockEdits(source, [{
+      action: "replaceBlock",
+      ref: "diagram-unicode-id",
+      block: {
+        type: "diagram",
+        lang: "mermaid",
+        source: oldSource.replace('["新节点"]', '["新节点（已更新）"]'),
+      },
+    }]);
+
+    expect(result.ok).toBe(true);
+    expect(firstDiagram(result.doc!).attrs.overlay?.positions).toEqual({
+      n_新节点_1: { x: 220, y: 80 },
+      存量节点: { x: 440, y: 80 },
+    });
+  });
+
   it.each([false, true])("replaceBlock 在 overlay=%s 时均继承图表持久化布局", (withOverlay) => {
     const source: PmDoc = {
       type: "doc",

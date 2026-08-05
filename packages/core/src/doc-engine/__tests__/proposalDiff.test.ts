@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "@qingagent/pm-schema";
+import {
+  applyBlockEdits,
+  type PmBlockNode,
+  type PmDiagramNode,
+  type PmDoc,
+  type PmInlineNode,
+  type PmMark,
+} from "@qingagent/pm-schema";
 import { applyDiffHunkToDoc, applyDiffHunks, buildDraftDiff } from "../proposalDiff.js";
 
 function text(textValue: string, marks?: PmMark[]): PmInlineNode {
@@ -104,6 +111,65 @@ describe("proposalDiff shadow engine", () => {
     const base = doc([diagram("diagram-1")]);
     const draft = doc([diagram("diagram-1", { positions: { A: { x: 10, y: 20 } } })]);
     expect(buildDraftDiff(base, draft)).toHaveLength(0);
+  });
+
+  it("审阅提交模型 replaceBlock 时保留 init 图的用户布局", () => {
+    const source = [
+      "%%{init: {'theme':'base'}}%%",
+      "flowchart LR",
+      "  A[入口] --> B[处理]",
+      "  B --> C[校验]",
+      "  C --> D[出口]",
+      "",
+    ].join("\n");
+    const base = doc([{
+      type: "diagram",
+      attrs: {
+        blockId: "diagram-init-review",
+        lang: "mermaid",
+        source,
+        svg: null,
+        overlay: {
+          positions: {
+            A: { x: 40, y: 60 },
+            B: { x: 260, y: 60 },
+            C: { x: 480, y: 60 },
+            D: { x: 700, y: 60 },
+          },
+        },
+      },
+    }]);
+    // 模型候选只含 AI-IR 可见域；真实链路的审阅提交必须从 canonical 回灌用户视觉域。
+    const aiVisibleBase = doc([{
+      type: "diagram",
+      attrs: {
+        blockId: "diagram-init-review",
+        lang: "mermaid",
+        source,
+        svg: null,
+      },
+    }]);
+    const edited = applyBlockEdits(aiVisibleBase, [{
+      action: "replaceBlock",
+      ref: "diagram-init-review",
+      block: {
+        type: "diagram",
+        lang: "mermaid",
+        source: source.replace("B[处理]", "B[分析处理]"),
+      },
+    }]);
+    expect(edited.ok).toBe(true);
+    const hunks = buildDraftDiff(base, edited.doc!);
+    expect(hunks).toHaveLength(1);
+
+    const committed = applyDiffHunks(base, hunks, { anchorByBlockId: true }).doc;
+    const diagramBlock = committed.content[0] as PmDiagramNode;
+    expect(diagramBlock.attrs.overlay?.positions).toEqual({
+      A: { x: 40, y: 60 },
+      B: { x: 260, y: 60 },
+      C: { x: 480, y: 60 },
+      D: { x: 700, y: 60 },
+    });
   });
 
   it("把行内文本 diff 最小化到真正变化片段", () => {

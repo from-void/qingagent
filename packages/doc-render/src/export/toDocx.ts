@@ -35,13 +35,13 @@ import {
 } from "@qingagent/pm-schema";
 import { documentLeadsWithTitle, drawioFallbackMessage, isDrawioExportSourceNormalized, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
 import { withRenderedDiagrams } from "./mermaidServer.js";
-import { rasterizeMathBatch, rasterizeSvgToPng } from "./rasterize.js";
+import { rasterizeMathBatch, rasterizeSvgToPng, type MathRasterResult } from "./rasterize.js";
 import { collectExportFootnotes } from "./footnotes.js";
 
 // ——— 公式图片预渲染 ———
 
-/** 用于在 toDocx 内传递预渲染好的公式图片(latex:displayMode → ImageRun) */
-type MathImages = ReadonlyMap<string, ImageRun | null>;
+/** 用于在 toDocx 内传递预渲染好的公式位图；ImageRun 要等拿到当前栏宽后再创建。 */
+type MathImages = ReadonlyMap<string, MathRasterResult | null>;
 
 function mathKey(latex: string, displayMode: boolean): string {
   return `${displayMode ? "D" : "I"}:${latex}`;
@@ -71,7 +71,7 @@ function collectMathFormulas(doc: PmDoc): Array<{ latex: string; displayMode: bo
 }
 
 /**
- * 批量渲染公式为 ImageRun,失败则映射到 null(调用方降级为等宽文本)。
+ * 批量预渲染公式位图,失败则映射到 null(调用方降级为等宽文本)。
  * 超过 150 个唯一公式时跳过 Chromium 渲染、全部降级为文本:
  * 防止极端文档(如压力测试)占满浏览器池导致导出超时。
  * 正常技术/学术文档 < 100 个唯一公式,不受此限制。
@@ -83,37 +83,39 @@ async function buildMathImages(formulas: Array<{ latex: string; displayMode: boo
     return new Map(formulas.map(({ latex, displayMode }) => [mathKey(latex, displayMode), null]));
   }
   const rasters = await rasterizeMathBatch(formulas);
-  const map = new Map<string, ImageRun | null>();
+  const map = new Map<string, MathRasterResult | null>();
   for (let i = 0; i < formulas.length; i++) {
     const { latex, displayMode } = formulas[i]!;
     const raster = rasters[i];
     if (!raster) { map.set(mathKey(latex, displayMode), null); continue; }
-    // 块级公式宽度上限 400px,行内公式高度上限 28px(避免撑开行距)
-    let width: number;
-    let height: number;
-    if (displayMode) {
-      width = Math.min(400, raster.width);
-      height = Math.max(1, Math.round((raster.height * width) / raster.width));
-    } else {
-      const maxH = 28;
-      height = Math.min(maxH, raster.height);
-      width = Math.max(1, Math.round((raster.width * height) / raster.height));
-    }
-    map.set(mathKey(latex, displayMode), new ImageRun({
-      type: "png",
-      data: raster.data,
-      transformation: { width, height },
-      altText: { name: latex, title: "公式", description: latex },
-    }));
+    map.set(mathKey(latex, displayMode), raster);
   }
   return map;
 }
 
 /** LaTeX → docx ParagraphChild:先查预渲染 map,失败降级为等宽文本。 */
-function latexToDocxRun(latex: string, displayMode: boolean, mathImages: MathImages): ParagraphChild {
-  const img = mathImages.get(mathKey(latex, displayMode));
-  // img===undefined:key 不在 map(不应发生),img===null:渲染失败
-  if (img) return img;
+function latexToDocxRun(
+  latex: string,
+  displayMode: boolean,
+  mathImages: MathImages,
+  availableWidthTwips: number,
+): ParagraphChild {
+  const raster = mathImages.get(mathKey(latex, displayMode));
+  // raster===undefined:key 不在 map(不应发生),raster===null:渲染失败
+  if (raster) {
+    const maxWidth = Math.min(displayMode ? 400 : Number.POSITIVE_INFINITY, twipsToPixels(availableWidthTwips));
+    const initialHeight = displayMode ? raster.height : Math.min(28, raster.height);
+    const initialWidth = raster.width * initialHeight / raster.height;
+    const scale = Math.min(1, maxWidth / initialWidth);
+    const width = Math.max(1, initialWidth * scale);
+    const height = Math.max(1, initialHeight * scale);
+    return new ImageRun({
+      type: "png",
+      data: raster.data,
+      transformation: { width, height },
+      altText: { name: latex, title: "公式", description: latex },
+    });
+  }
   return new TextRun({ text: latex, font: "Courier New" });
 }
 
@@ -121,6 +123,8 @@ const FONT = "Noto Sans CJK SC";
 const DOCX_PAGE_WIDTH_TWIPS = 11_906;
 const DOCX_HORIZONTAL_MARGIN_TWIPS = 1_440;
 const DOCX_COLUMN_GAP_TWIPS = 720;
+const DOCX_TWIPS_PER_PIXEL = 15;
+const DOCX_CONTENT_WIDTH_TWIPS = DOCX_PAGE_WIDTH_TWIPS - DOCX_HORIZONTAL_MARGIN_TWIPS * 2;
 const BULLET_NUMBERING = "qingagent-bullet-list";
 const ORDERED_NUMBERING_BY_STYLE: Record<PmOrderedListStyle, string> = {
   decimal: "qingagent-ordered-list-decimal",
@@ -181,7 +185,7 @@ export async function toDocx(
   // 批量预渲染文档中所有数学公式(单个 Chromium 上下文,避免逐公式开关上下文)。
   const mathImages = isPmDocDocument(prepared)
     ? await buildMathImages(collectMathFormulas(prepared))
-    : new Map<string, ImageRun | null>();
+    : new Map<string, MathRasterResult | null>();
   const numbering = createDocxNumberingRegistry();
   const title = options.title?.trim();
   const titleChildren = [
@@ -271,7 +275,14 @@ async function pmDocToDocxSections(
       children: [
         ...leadingChildren,
         ...(await Promise.all(doc.content.map((node) =>
-          pmBlockToDocx(node, 0, {}, mathImages, numbering, footnoteNumbers),
+          pmBlockToDocx(
+            node,
+            0,
+            { availableWidthTwips: DOCX_CONTENT_WIDTH_TWIPS },
+            mathImages,
+            numbering,
+            footnoteNumbers,
+          ),
         ))).flat(),
       ],
     }];
@@ -296,7 +307,7 @@ async function pmDocToDocxSections(
       singleColumnChildren.push(...await pmBlockToDocx(
         node,
         0,
-        {},
+        { availableWidthTwips: DOCX_CONTENT_WIDTH_TWIPS },
         mathImages,
         numbering,
         footnoteNumbers,
@@ -305,6 +316,7 @@ async function pmDocToDocxSections(
     }
 
     flushSingleColumn();
+    const columnLayout = docxColumns(node.content.map((column) => column.attrs.widthRatio));
     const columnChildren: Array<Paragraph | Table> = [];
     for (const [index, column] of node.content.entries()) {
       if (index > 0) {
@@ -314,7 +326,7 @@ async function pmDocToDocxSections(
         columnChildren.push(...await pmBlockToDocx(
           child,
           0,
-          {},
+          { availableWidthTwips: columnLayout.widths[index] ?? DOCX_CONTENT_WIDTH_TWIPS },
           mathImages,
           numbering,
           footnoteNumbers,
@@ -324,7 +336,7 @@ async function pmDocToDocxSections(
     sections.push({
       properties: {
         type: SectionType.CONTINUOUS,
-        column: docxColumns(node.content.map((column) => column.attrs.widthRatio)),
+        column: columnLayout.properties,
       },
       children: columnChildren,
     });
@@ -347,21 +359,27 @@ function docxColumns(widthRatios: readonly (number | null | undefined)[]) {
   const weights = normalizedColumnWeights(widthRatios);
   const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || count;
   let allocatedWidth = 0;
-  const children = weights.map((weight, index) => {
+  const widths = weights.map((weight, index) => {
     const width = index === count - 1
       ? Math.max(1, availableWidth - allocatedWidth)
       : Math.max(1, Math.round(availableWidth * weight / weightTotal));
     allocatedWidth += width;
-    return new Column({
+    return width;
+  });
+  const children = widths.map((width, index) =>
+    new Column({
       width,
       ...(index < count - 1 ? { space: gap } : {}),
-    });
-  });
+    }),
+  );
 
   return {
-    count,
-    equalWidth: false,
-    children,
+    properties: {
+      count,
+      equalWidth: false,
+      children,
+    },
+    widths,
   };
 }
 
@@ -398,10 +416,15 @@ function horizontalRuleParagraph(): Paragraph {
   });
 }
 
+type DocxBlockOptions = {
+  availableWidthTwips: number;
+  inQuote?: boolean;
+};
+
 async function pmBlockToDocx(
   node: PmBlockNode,
   depth: number,
-  opts: { inQuote?: boolean },
+  opts: DocxBlockOptions,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
@@ -415,6 +438,7 @@ async function pmBlockToDocx(
       return [await nestedColumnListToDocx(
         node,
         depth,
+        opts,
         mathImages,
         numbering,
         footnoteNumbers,
@@ -425,11 +449,18 @@ async function pmBlockToDocx(
         { kind: "diagram", data: { lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg } },
         numbering,
         isDrawioExportSourceNormalized(node.attrs),
+        opts.availableWidthTwips,
       );
     case "heading":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], {bold: true}, mathImages, footnoteNumbers),
+          children: pmInlineToDocx(
+            node.content ?? [],
+            {bold: true},
+            mathImages,
+            footnoteNumbers,
+            opts.availableWidthTwips,
+          ),
           heading: headingLevelToDocx(node.attrs.level),
           alignment: alignmentToDocx(node.attrs.textAlign),
           ...quoteDeco,
@@ -438,7 +469,7 @@ async function pmBlockToDocx(
     case "paragraph":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], {}, mathImages, footnoteNumbers),
+          children: pmInlineToDocx(node.content ?? [], {}, mathImages, footnoteNumbers, opts.availableWidthTwips),
           alignment: alignmentToDocx(node.attrs.textAlign),
           spacing: { after: 180 },
           ...quoteDeco,
@@ -447,23 +478,29 @@ async function pmBlockToDocx(
     case "penNote":
       return [
         new Paragraph({
-          children: pmInlineToDocx(node.content ?? [], { italics: true }, mathImages, footnoteNumbers),
+          children: pmInlineToDocx(
+            node.content ?? [],
+            { italics: true },
+            mathImages,
+            footnoteNumbers,
+            opts.availableWidthTwips,
+          ),
           spacing: { after: 180 },
         }),
       ];
     case "blockquote":
       // 把 inQuote 透传给子块,使引用内的段落/标题带上引用视觉装饰。
       return (await Promise.all(node.content.map((child) =>
-        pmBlockToDocx(child, depth, { inQuote: true }, mathImages, numbering, footnoteNumbers),
+        pmBlockToDocx(child, depth, { ...opts, inQuote: true }, mathImages, numbering, footnoteNumbers),
       ))).flat();
     case "bulletList":
       return (await Promise.all(node.content.map((item) =>
-        pmListItemToDocx(item.content, BULLET_NUMBERING, depth, mathImages, numbering, footnoteNumbers),
+        pmListItemToDocx(item.content, BULLET_NUMBERING, depth, opts, mathImages, numbering, footnoteNumbers),
       ))).flat();
     case "orderedList": {
       const reference = numbering.referenceFor(node, node.attrs.listStyle, node.attrs.start);
       return (await Promise.all(node.content.map((item) =>
-        pmListItemToDocx(item.content, reference, depth, mathImages, numbering, footnoteNumbers),
+        pmListItemToDocx(item.content, reference, depth, opts, mathImages, numbering, footnoteNumbers),
       ))).flat();
     }
     case "horizontalRule":
@@ -483,7 +520,7 @@ async function pmBlockToDocx(
           rows: await Promise.all(node.content.map(async (row) =>
             new TableRow({
               children: await Promise.all(row.content.map((cell) =>
-                pmTableCellToDocx(cell, mathImages, numbering, footnoteNumbers),
+                pmTableCellToDocx(cell, opts, mathImages, numbering, footnoteNumbers),
               )),
             }),
           )),
@@ -502,6 +539,8 @@ async function pmBlockToDocx(
           },
         },
         numbering,
+        false,
+        opts.availableWidthTwips,
       );
     case "fileAttachment":
       return [
@@ -518,15 +557,21 @@ async function pmBlockToDocx(
             children.push(new Paragraph({
               children: [
                 new TextRun({ text: item.attrs.checked ? "☑ " : "☐ ", font: FONT }),
-                ...pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
+                ...pmInlineToDocx(
+                  child.content ?? [],
+                  {},
+                  mathImages,
+                  footnoteNumbers,
+                  opts.availableWidthTwips,
+                ),
               ],
               indent: { left: depth * 360 },
               spacing: { after: 120 },
             }));
           } else if (child.type === "taskList") {
-            children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
+            children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
           } else {
-            children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers));
+            children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers));
           }
         }
       }
@@ -538,7 +583,7 @@ async function pmBlockToDocx(
         new Paragraph({
           children: [
             ...(index === 0 ? [new TextRun({ text: `${node.attrs.emoji ?? "💡"} `, font: FONT })] : []),
-            ...pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
+            ...pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers, opts.availableWidthTwips),
           ],
           shading: { type: ShadingType.CLEAR, fill },
           spacing: { after: 120 },
@@ -546,7 +591,7 @@ async function pmBlockToDocx(
       );
     }
     case "blockMath": {
-      const run = latexToDocxRun(node.attrs.latex, true, mathImages);
+      const run = latexToDocxRun(node.attrs.latex, true, mathImages, opts.availableWidthTwips);
       return [
         new Paragraph({
           children: [run],
@@ -561,6 +606,7 @@ async function pmBlockToDocx(
 async function nestedColumnListToDocx(
   node: Extract<PmBlockNode, { type: "columnList" }>,
   depth: number,
+  opts: DocxBlockOptions,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
@@ -568,8 +614,9 @@ async function nestedColumnListToDocx(
   const weights = normalizedColumnWeights(node.content.map((column) => column.attrs.widthRatio));
   const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || Math.max(1, weights.length);
   const cells = await Promise.all(node.content.map(async (column, index) => {
+    const availableWidthTwips = Math.max(1, opts.availableWidthTwips * weights[index]! / weightTotal);
     const children = (await Promise.all(column.content.map((child) =>
-      pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers),
+      pmBlockToDocx(child, depth, { ...opts, availableWidthTwips }, mathImages, numbering, footnoteNumbers),
     ))).flat();
     return new TableCell({
       width: { size: weights[index]! / weightTotal * 100, type: WidthType.PERCENTAGE },
@@ -588,6 +635,7 @@ async function pmListItemToDocx(
   content: readonly PmBlockNode[],
   reference: string,
   depth: number,
+  opts: DocxBlockOptions,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
@@ -596,33 +644,40 @@ async function pmListItemToDocx(
   for (const child of content) {
     if (child.type === "paragraph" || child.type === "heading" || child.type === "penNote") {
       children.push(new Paragraph({
-        children: pmInlineToDocx(child.content ?? [], {}, mathImages, footnoteNumbers),
+        children: pmInlineToDocx(
+          child.content ?? [],
+          {},
+          mathImages,
+          footnoteNumbers,
+          opts.availableWidthTwips,
+        ),
         numbering: { reference, level: Math.min(depth, 5) },
         spacing: { after: 120 },
       }));
       continue;
     }
     if (child.type === "bulletList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
+      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
       continue;
     }
     if (child.type === "orderedList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, {}, mathImages, numbering, footnoteNumbers));
+      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
       continue;
     }
-    children.push(...await pmBlockToDocx(child, depth, {}, mathImages, numbering, footnoteNumbers));
+    children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers));
   }
   return children;
 }
 
 async function pmTableCellToDocx(
   cell: PmTableCellNode,
+  opts: DocxBlockOptions,
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
 ): Promise<TableCell> {
   const children = (await Promise.all(cell.content.map((child) =>
-    pmBlockToDocx(child, 0, {}, mathImages, numbering, footnoteNumbers),
+    pmBlockToDocx(child, 0, opts, mathImages, numbering, footnoteNumbers),
   ))).flat();
   const colspan = normalizeTableSpan(cell.attrs?.colspan);
   const rowspan = normalizeTableSpan(cell.attrs?.rowspan);
@@ -656,10 +711,13 @@ export function pmInlineToDocx(
   base: Partial<DocxTextStyle> = {},
   mathImages: MathImages = new Map(),
   footnoteNumbers: ReadonlyMap<string, number> = new Map(),
+  availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
 ): ParagraphChild[] {
   return content.flatMap((node) => {
     if (node.type === "hardBreak") return [new TextRun({ break: 1 })];
-    if (node.type === "inlineMath") return [latexToDocxRun(node.attrs.latex, false, mathImages)];
+    if (node.type === "inlineMath") {
+      return [latexToDocxRun(node.attrs.latex, false, mathImages, availableWidthTwips)];
+    }
     if (node.type === "footnoteReference") {
       return [new FootnoteReferenceRun(footnoteNumbers.get(node.attrs.id) ?? 0)];
     }
@@ -850,10 +908,17 @@ function pmInlineText(content: readonly { type: string; text?: string }[]): stri
   return content.map((node) => (node.type === "hardBreak" ? "\n" : node.text ?? "")).join("");
 }
 
-function imageSize(section: Extract<LegacySection, { kind: "image" }>): { width: number; height: number } {
+function twipsToPixels(twips: number): number {
+  return Math.max(1, twips / DOCX_TWIPS_PER_PIXEL);
+}
+
+function imageSize(
+  section: Extract<LegacySection, { kind: "image" }>,
+  availableWidthTwips: number,
+): { width: number; height: number } {
   const naturalWidth = section.data.width ?? 800;
   const naturalHeight = section.data.height ?? 450;
-  const width = Math.min(480, naturalWidth);
+  const width = Math.min(480, twipsToPixels(availableWidthTwips), naturalWidth);
   const height = Math.max(1, Math.round((width * naturalHeight) / naturalWidth));
   return { width, height };
 }
@@ -865,8 +930,11 @@ function dataImage(section: Extract<LegacySection, { kind: "image" }>): { buffer
   return { buffer: Buffer.from(match[2]!, "base64"), type: type as "png" | "jpg" | "gif" | "bmp" };
 }
 
-async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Promise<ImageRun | null> {
-  const size = imageSize(section);
+async function imageRun(
+  section: Extract<LegacySection, { kind: "image" }>,
+  availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
+): Promise<ImageRun | null> {
+  const size = imageSize(section, availableWidthTwips);
   const data = dataImage(section);
   if (data) {
     return new ImageRun({
@@ -888,8 +956,8 @@ async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Pro
     if (!svg) return null;
     const raster = await rasterizeSvgToPng(svg);
     if (!raster) return null;
-    // 等比缩放到最大宽 480pt,保留长宽比(用 SVG 渲染后的真实像素比例)。
-    const width = Math.min(480, raster.width);
+    // 等比缩放到整页上限或当前栏宽,保留 SVG 栅格后的真实像素比例。
+    const width = Math.min(480, twipsToPixels(availableWidthTwips), raster.width);
     const height = Math.max(1, Math.round((raster.height * width) / raster.width));
     return new ImageRun({
       type: "png",
@@ -917,6 +985,7 @@ async function sectionToDocx(
   section: LegacySection,
   numbering: DocxNumberingRegistry,
   sourceNormalized = false,
+  availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
 ): Promise<Array<Paragraph | Table>> {
   switch (section.kind) {
     case "diagram": {
@@ -941,19 +1010,32 @@ async function sectionToDocx(
       if (section.data.svg && svgExceedsExportByteLimit(section.data.svg)) {
         return [
           fallbackNotice(true),
-          ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }, numbering),
+          ...await sectionToDocx(
+            { kind: "code", data: { body: section.data.source, language: section.data.lang } },
+            numbering,
+            false,
+            availableWidthTwips,
+          ),
         ];
       }
       if (isRenderableSvg(section.data.svg)) {
-        const run = await imageRun({
-          kind: "image",
-          data: { src: `data:image/svg+xml,${encodeURIComponent(section.data.svg)}`, alt: "图表", caption: null, width: null, height: null },
-        });
+        const run = await imageRun(
+          {
+            kind: "image",
+            data: { src: `data:image/svg+xml,${encodeURIComponent(section.data.svg)}`, alt: "图表", caption: null, width: null, height: null },
+          },
+          availableWidthTwips,
+        );
         if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
       }
       return [
         fallbackNotice(false),
-        ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }, numbering),
+        ...await sectionToDocx(
+          { kind: "code", data: { body: section.data.source, language: section.data.lang } },
+          numbering,
+          false,
+          availableWidthTwips,
+        ),
       ];
     }
     case "quote":
@@ -1063,7 +1145,7 @@ async function sectionToDocx(
           }),
         ];
       }
-      const run = await imageRun(section);
+      const run = await imageRun(section, availableWidthTwips);
       const caption = section.data.caption ?? section.data.alt;
       if (!run) {
         return [

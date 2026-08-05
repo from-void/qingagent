@@ -9,6 +9,16 @@ import { hasChromium } from "./browserTestGate.js";
 const INLINE_LATEX = String.raw`E=mc^2`;
 const BLOCK_LATEX = String.raw`\int_0^1 x^2 dx = \frac{1}{3}`;
 const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+const DOCX_EMUS_PER_TWIP = 635;
+const DOCX_EMUS_PER_PIXEL = 9_525;
+
+function largeGifDataUrl(width: number, height: number): string {
+  // 合法 GIF89a：逻辑画布使用测试尺寸，图像数据保持单色，避免把大二进制 fixture 写进仓库。
+  const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
+  gif.writeUInt16LE(width, 6);
+  gif.writeUInt16LE(height, 8);
+  return `data:image/gif;base64,${gif.toString("base64")}`;
+}
 
 const CALLOUT_EMOJI: Record<PmCalloutTone, string> = {
   info: "ℹ️",
@@ -314,6 +324,73 @@ describe("rich PM export formats", () => {
     expect(text.indexOf("左栏正文")).toBeLessThan(text.indexOf("右栏正文"));
     expect(text.indexOf("分栏前正文")).toBeLessThan(text.indexOf("左栏标题"));
     expect(text.indexOf("右栏正文")).toBeLessThan(text.indexOf("分栏后正文"));
+  });
+
+  it("按当前栏宽限制大图，且不缩小分栏外图片", async () => {
+    const largeImage = largeGifDataUrl(1200, 675);
+    const doc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "image",
+          attrs: {
+            blockId: "full-width-image",
+            src: largeImage,
+            alt: "分栏外大图",
+            width: 1200,
+            height: 675,
+          },
+        },
+        {
+          type: "columnList",
+          attrs: { blockId: "equal-columns" },
+          content: [
+            {
+              type: "column",
+              attrs: { blockId: "left-column", widthRatio: 0.5 },
+              content: [
+                {
+                  type: "image",
+                  attrs: {
+                    blockId: "column-large-image",
+                    src: largeImage,
+                    alt: "栏内大图",
+                    width: 1200,
+                    height: 675,
+                  },
+                },
+              ],
+            },
+            {
+              type: "column",
+              attrs: { blockId: "right-column", widthRatio: 0.5 },
+              content: [
+                {
+                  type: "paragraph",
+                  attrs: { blockId: "right-column-text" },
+                  content: [{ type: "text", text: "右栏" }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "after-large-image-columns" },
+          content: [{ type: "text", text: "分栏后" }],
+        },
+      ],
+    };
+
+    const documentXml = await docxXml(await toDocx(doc), "word/document.xml");
+    const drawingWidths = [...documentXml.matchAll(/<wp:extent\b[^>]*\bcx="(\d+)"/g)]
+      .map((match) => Number(match[1]));
+    const equalColumnWidthTwips = (11_906 - 1_440 * 2 - 720) / 2;
+
+    expect(drawingWidths).toHaveLength(2);
+    expect(drawingWidths[0]).toBe(480 * DOCX_EMUS_PER_PIXEL);
+    expect(drawingWidths[1]).toBeLessThanOrEqual(equalColumnWidthTwips * DOCX_EMUS_PER_TWIP);
   });
 
   it("用段落底边框原生导出 PM 与 legacy 水平线，不写入可编辑的线条字符", async () => {

@@ -56,7 +56,6 @@ const TEXT_EXTENSIONS = new Set([
   "tsv",
   "log",
   "xml",
-  "html",
   "css",
   "js",
   "ts",

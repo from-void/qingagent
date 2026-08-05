@@ -25,6 +25,7 @@ import {
 import {
   createReadDocumentTool,
   createSearchDocumentsTool,
+  searchDocumentsForSession,
 } from "../tools/folderDocuments.js";
 import { clearFolderSourceCache } from "../folderSources/cache.js";
 
@@ -78,6 +79,36 @@ describe("folder source generic workspace tool gate", () => {
     delete process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS;
     delete process.env.QINGAGENT_RUNTIME;
     delete process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES;
+  });
+
+  it("HTML 不进入资料库文档索引", async () => {
+    writeFileSync(join(root, "可索引.md"), "ROUND_HTML_FILTER_VALID\n", "utf8");
+    writeFileSync(
+      join(root, "网页.html"),
+      "<html><body>ROUND_HTML_FILTER_HIDDEN</body></html>\n",
+      "utf8",
+    );
+    const source = makeSource(sessionId, root);
+    registerSessionFolderSources(sessionId, [source]);
+    invalidateSessionWorkspace(sessionId);
+    const workspace = await getQingagentSessionWorkspace(sessionId);
+
+    const result = await searchDocumentsForSession({
+      sessionId,
+      sources: [source],
+      workspace,
+      query: "ROUND_HTML_FILTER_HIDDEN",
+      topK: 3,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      scannedCount: 1,
+      indexedCount: 1,
+      results: [],
+    });
+    expect(JSON.stringify(result)).not.toContain("网页.html");
+    expect(JSON.stringify(result.results)).not.toContain("ROUND_HTML_FILTER_HIDDEN");
   });
 
   it("通用 read_file/grep 拒绝 /sources，但 list_files、专用工具和 /workspace 仍可用", async () => {

@@ -44,22 +44,6 @@ export function showNativeContentRecoveryFallback(
   });
 }
 
-/** 启动期尚无 renderer 时，旧浏览器敏感数据清理失败必须显式阻止继续启动。 */
-export async function showNativeBrowserCredentialCleanupFailure(
-  paths: string[],
-): Promise<void> {
-  await showMessageBoxFallback(null, {
-    type: "error",
-    title: "浏览器登录数据清理失败",
-    message: "青简无法安全清理旧浏览器登录数据，已停止启动。",
-    detail: `请删除以下旧数据后重试：\n${paths.join("\n")}`,
-    buttons: ["知道了"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  });
-}
-
 /** renderer/GPU 在短时间内再次失败时停止自动 reload，避免恢复循环。 */
 export async function showNativeRendererRecoveryStopped(
   owner: BrowserWindow | null,

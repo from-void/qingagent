@@ -86,11 +86,14 @@ import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 import { RendererDialogBroker } from "./rendererDialogBroker.js";
 import { getLiveWebContents } from "./windowLifecycle.js";
 import {
-  showNativeBrowserCredentialCleanupFailure,
   showNativeContentRecoveryFallback,
   showNativeQuitFallback,
   showNativeRendererRecoveryStopped,
 } from "./nativeDialogFallback.js";
+import {
+  BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL,
+  type BrowserCredentialCleanupNotice,
+} from "../browserCredentialCleanupContract.js";
 import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_RESPONSE_CHANNEL,
@@ -324,6 +327,22 @@ if (browserCredentialMigration.failures.length > 0) {
     failures: browserCredentialMigration.failures,
   });
 }
+const browserCredentialCleanupNotice: BrowserCredentialCleanupNotice | null =
+  browserCredentialMigration.failures.length > 0
+    ? {
+        paths: [
+          ...new Set(
+            browserCredentialMigration.failures.map((failure) => failure.path),
+          ),
+        ],
+      }
+    : null;
+
+ipcMain.handle(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL, (event) => {
+  assertTrustedRenderer(event);
+  // 只向设置页发布可操作路径；底层错误原因留在本地日志，不暴露内部错误详情。
+  return browserCredentialCleanupNotice;
+});
 
 // Set DATABASE_URL before importing server so that @qingagent/core's LibSQL
 // storage resolves to the user's app data directory instead of cwd.
@@ -1597,14 +1616,6 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  if (browserCredentialMigration.failures.length > 0) {
-    const paths = browserCredentialMigration.failures.map(
-      (failure) => failure.path,
-    );
-    await showNativeBrowserCredentialCleanupFailure(paths);
-    app.exit(1);
-    return;
-  }
   cleanupClientConfigTempFiles();
   const { cleanupOrphanedPdfExportDirs } = await import("./pdfRenderer.js");
   cleanupOrphanedPdfExportDirs();

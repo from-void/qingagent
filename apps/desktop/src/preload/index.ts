@@ -5,6 +5,10 @@ import {
 } from "./exportDownloadBridge.js";
 import { exportDiagnostics } from "./diagnosticsExportBridge.js";
 import {
+  BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL,
+  type BrowserCredentialCleanupNotice,
+} from "../browserCredentialCleanupContract.js";
+import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_REQUEST_CHANNEL,
   DESKTOP_DIALOG_RESPONSE_CHANNEL,
@@ -125,6 +129,10 @@ contextBridge.exposeInMainWorld("electron", {
   revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),
   exportDiagnostics,
+  getBrowserCredentialCleanupNotice: () =>
+    ipcRenderer.invoke(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL) as Promise<
+      BrowserCredentialCleanupNotice | null
+    >,
   getDeepseekApiKey: () => readDesktopConfigValue("qingagent.deepseek_api_key"),
   setDeepseekApiKey: (value: string | null) =>
     writeDesktopConfigValue("qingagent.deepseek_api_key", value),

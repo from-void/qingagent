@@ -89,6 +89,9 @@ interface Window {
             | "request-failed";
         }
     >;
+    getBrowserCredentialCleanupNotice?: () => Promise<{
+      paths: string[];
+    } | null>;
     // 客户端凭证/模型配置持久化(落 userData,见 clientPersist.ts)：只暴露固定用途的单项 API，
     // 不把整份解密配置挂到 window。
     getDeepseekApiKey?: () => string | null;

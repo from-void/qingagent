@@ -25,7 +25,12 @@ export interface StartServerOptions {
   shutdownRecoveryMarkerPath?: string;
 }
 
-async function startServerOnce(options: StartServerOptions): Promise<{ port: number }> {
+export interface EmbeddedServerInfo {
+  port: number;
+  commandAuthToken: string;
+}
+
+async function startServerOnce(options: StartServerOptions): Promise<EmbeddedServerInfo> {
   // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
   // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
   // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一管理这段启动顺序。
@@ -142,12 +147,14 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
     console.warn(`[desktop] 端口 ${preferredPort} 已被占用，已回退到随机端口 ${result.port}`);
   }
   console.log(`Embedded server started on port ${result.port}`);
-  void import("@qingagent/server/externalInstance").then(({ startExternalInstance }) =>
-    startExternalInstance({ port: result.port }),
-  ).catch((error) => {
-    console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
-  });
-  return { port: result.port };
+  // command 鉴权必须在 renderer 发出首个请求前就绪；不能沿用旧 fire-and-forget，
+  // 否则冷启动窗口存在 token 尚未装配的竞态。写 instance 失败时由桌面启动路径 fail-closed。
+  const { startExternalInstance } = await import("@qingagent/server/externalInstance");
+  const instance = await startExternalInstance({ port: result.port });
+  return {
+    port: result.port,
+    commandAuthToken: process.env.QINGAGENT_AUTH_TOKEN || instance.token,
+  };
 }
 
 function listenEmbeddedServer(fetch: Parameters<typeof serve>[0]["fetch"], port: number): Promise<number> {

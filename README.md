@@ -58,17 +58,22 @@ cd qingagent
 pnpm install
 
 cp packages/server/.env.example packages/server/.env
-# 编辑 packages/server/.env,填入:DEEPSEEK_API_KEY=sk-...
+# 编辑 packages/server/.env,填入 DEEPSEEK_API_KEY，并为 Web 访问生成共享 token：
+# openssl rand -hex 32
+# QINGAGENT_AUTH_TOKEN=<上一步输出>
 
 pnpm dev:server   # 后端 http://127.0.0.1:8080
 pnpm dev          # 前端 http://localhost:6173(web 代理 /api → :8080)
 ```
 
-打开 `http://localhost:6173`,新建会话即可开写。
+打开 `http://localhost:6173`，按提示输入刚设置的 `QINGAGENT_AUTH_TOKEN`，即可新建会话。
+token 只用于换取同源 HttpOnly cookie，不会写进 URL。桌面客户端由主进程自动装配
+instance token，仍保持零配置。
 
 ## 配置参考
 
-单机自用零配置即可跑;下表按需取用,安全相关变量见下方《安全声明(Security)》。
+桌面客户端单机自用零配置即可跑；Web 源码/自部署形态须设置
+`QINGAGENT_AUTH_TOKEN`。下表按需取用，安全相关变量见下方《安全声明(Security)》。
 
 **基础**
 
@@ -123,6 +128,13 @@ packages/ui-kit 设计 token 与基础样式的唯一来源(附少量已消费�
 公网反代只适用于同一位可信用户从自己的设备访问,不能把当前服务安全地变成多人系统。
 
 默认安全边界是本机回环:后端默认只监听 `127.0.0.1`,只允许本机访问;桌面端开箱即是这个形态。要让外部设备或公网访问,必须由部署者显式改配置并承担对应加固责任。
+
+`POST /api/v1/commands`（以及历史别名 `/api/v1/stream`）始终要求确定性凭据并要求
+浏览器提供可信 Origin。桌面端由 Electron 主进程代理补充当前 instance token，renderer
+页面拿不到 token；Web-only 形态必须显式设置 `QINGAGENT_AUTH_TOKEN`，浏览器通过现有
+`/api/v1/auth/session` 换取 HttpOnly cookie。桌面内部复用 `instance.json` token 给主进程
+代理鉴权；qa-cli 等外部消费者的正规入口仍是 `/api/v1/external/*`。Web-only 不把
+instance token 当作 raw commands 通行证。
 
 `?auth=<token>` 仅是本机调试的逃生舱。应用自身日志会对它做 redact,但完整 URL 仍可能进入浏览器历史和反向代理访问日志;公网部署应禁用这种传递方式,改用 `Authorization: Bearer` header。
 
@@ -181,7 +193,7 @@ server {
 
 | 变量 | server 形态默认值 | 桌面形态默认值 | 作用 |
 |---|---|---|---|
-| `QINGAGENT_AUTH_TOKEN` | 未设置 | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
+| `QINGAGENT_AUTH_TOKEN` | Web commands 必填 | 未设置 | API token。Web-only 即使只监听回环，command mutation 也须配置；非回环监听未设置时服务端 fail-closed、拒绝启动。桌面由主进程自动使用 instance token，不要求用户配置。 |
 | `QINGAGENT_TRUSTED_ORIGINS` | 空;内置本机 Web 开发端口的精确 loopback Origin | 同 server | 额外可信完整 Origin（须含协议,不能只写 Host）,多个值用逗号分隔。公网反代须设为 `https://你的域名`。 |
 | `QINGAGENT_PUBLIC_ORIGIN` | 未设置 | 未设置 | 导出内容中 `/api/` 链接使用的 canonical origin。公网 HTTPS 反代建议显式设置，优先级高于请求与 forwarded 头。 |
 | `QINGAGENT_TRUST_PROXY` | 未设置 | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |

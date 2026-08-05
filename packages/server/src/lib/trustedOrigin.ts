@@ -1,8 +1,10 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { isCommandMutationPath } from "./commandsAuth";
 
 // CSRF 防护:敏感写操作挡掉跨站请求(恶意网页向本机后端发 POST/DELETE)。
 // 浏览器跨站请求一定带 Origin 头;受信来源=精确的本机 Web Origin+
-// QINGAGENT_TRUSTED_ORIGINS 配置的生产 Origin。无 Origin(同源/curl)放行。
+// QINGAGENT_TRUSTED_ORIGINS 配置的生产 Origin。其余路由为兼容旧同源/CLI 请求仍允许
+// 无 Origin；commands/stream mutation 必须显式带 Origin，并另有 token 主防线。
 const DEFAULT_LOCAL_WEB_PORTS = ["5173", "6173", "5191", "8090", "8091"];
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 
@@ -79,9 +81,16 @@ export function isTrustedOrigin(origin: string): boolean {
   return localWebOrigins().has(normalized) || configuredOrigins().has(normalized);
 }
 
-export function requireTrustedOrigin(c: Context): Response | null {
+export function requireTrustedOrigin(
+  c: Context,
+  options: { allowMissing?: boolean } = {},
+): Response | null {
   const origin = c.req.header("Origin");
-  if (!origin) return null; // 同源/curl 无 Origin
+  if (!origin) {
+    return options.allowMissing === false
+      ? c.json({ error: "跨站请求被拒绝" }, 403)
+      : null; // 其余旧同源/CLI 路由维持兼容；高危 command mutation 由中央守卫收紧。
+  }
   if (isTrustedOrigin(origin)) return null;
 
   const normalizedOrigin = normalizeExactOrigin(origin);
@@ -112,7 +121,10 @@ export function requireTrustedOrigin(c: Context): Response | null {
 const MUTATION_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 export const csrfMutationGuard: MiddlewareHandler = async (c, next) => {
   if (MUTATION_METHODS.has(c.req.method)) {
-    const rejected = requireTrustedOrigin(c);
+    const pathname = new URL(c.req.url).pathname;
+    const rejected = requireTrustedOrigin(c, {
+      allowMissing: !isCommandMutationPath(pathname),
+    });
     if (rejected) return rejected;
   }
   return next();

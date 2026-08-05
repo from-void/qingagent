@@ -4,6 +4,7 @@ import {
   DEFAULT_JSON_BODY_LIMIT_BYTES,
   resolveJsonBodyLimit,
 } from "../lib/jsonBodyLimit";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 describe("API JSON 请求体上限", () => {
   it("超大 commands JSON 返回 413，且服务进程仍可继续响应", async () => {
@@ -34,7 +35,7 @@ describe("API JSON 请求体上限", () => {
   });
 
   it("约 2 MiB 的正常长文 updateDoc 不被请求体护栏误拦", async () => {
-    const response = await app.request("/api/v1/commands", {
+    const response = await authenticatedCommandRequest("/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

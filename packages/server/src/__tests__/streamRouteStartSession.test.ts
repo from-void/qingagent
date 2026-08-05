@@ -18,6 +18,7 @@ import {
   clientMessageIdempotency,
   type ClientMessageIdempotencyStore,
 } from "../gateway/clientMessageIdempotency";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);
@@ -32,7 +33,7 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
 }
 
 async function request(body: unknown): Promise<Response> {
-  return app.request("/api/v1/commands", {
+  return authenticatedCommandRequest("/api/v1/commands", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

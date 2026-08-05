@@ -23,7 +23,7 @@ async function startServer(handler: Handler): Promise<number> {
 }
 
 function proxyTo(port: number) {
-  return createDesktopAppProxyHandler(port, createNodeHttpProxyFetch());
+  return createDesktopAppProxyHandler(port, createNodeHttpProxyFetch(), "test-command-token");
 }
 
 function deferred<T = void>() {
@@ -192,6 +192,7 @@ test("转发方法、路径、请求体,并按逐跳头规则清洗请求头", a
   assert.equal(request.url, "/api/v1/commands?source=desktop");
   assert.equal(request.body, JSON.stringify({ command: "write" }));
   assert.equal(request.headers.origin, `http://127.0.0.1:${port}`);
+  assert.equal(request.headers.authorization, "Bearer test-command-token");
   assert.equal(request.headers.host, `127.0.0.1:${port}`);
   // Node http 不解压,Chromium 自定义协议也不解码,必须强制 identity。
   assert.equal(request.headers["accept-encoding"], "identity");

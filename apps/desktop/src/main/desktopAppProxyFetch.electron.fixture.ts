@@ -53,7 +53,11 @@ void app.whenReady().then(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
-  const proxy = createDesktopAppProxyHandler(port, createNodeHttpProxyFetch());
+  const proxy = createDesktopAppProxyHandler(
+    port,
+    createNodeHttpProxyFetch(),
+    "fixture-command-token",
+  );
   protocol.handle(DESKTOP_APP_SCHEME, (request) => {
     if (new URL(request.url).pathname === "/") {
       return new Response("<!doctype html><title>SSE EOF fixture</title>", {

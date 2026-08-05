@@ -32,6 +32,7 @@ import { authTokenMiddleware } from "./lib/authToken";
 import { externalTokenMiddleware } from "./lib/externalAuth";
 import { csrfMutationGuard, isTrustedOrigin } from "./lib/trustedOrigin";
 import { createJsonBodyLimitMiddleware } from "./lib/jsonBodyLimit";
+import { commandsTokenMiddleware } from "./lib/commandsAuth";
 
 export const app = new Hono();
 
@@ -58,6 +59,9 @@ app.use("/api/*", createJsonBodyLimitMiddleware());
 app.use("/api/*", csrfMutationGuard);
 app.use("/api/*", authTokenMiddleware);
 app.use("/api/v1/external/*", externalTokenMiddleware);
+app.use("/api/v1/commands", commandsTokenMiddleware);
+// /stream 是历史 mutation 别名，与 /commands 共用同一个 handler，不能成为鉴权绕过。
+app.use("/api/v1/stream", commandsTokenMiddleware);
 
 // Routes
 app.route("/", healthRoutes);

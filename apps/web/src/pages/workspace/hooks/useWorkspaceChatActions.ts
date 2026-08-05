@@ -28,7 +28,10 @@ import { getChatInputBlockReason } from "../data/chatInputBlockReason";
 import { newClientMessageId } from "../data/clientMessageId";
 import { buildCancelStreamCommands } from "../data/workspacePageView";
 import { runAfterPendingDocSave } from "../data/pendingDocSave";
-import { UploadAssetError } from "../data/uploadAsset";
+import {
+  largeMaterialUploadNotice,
+  UploadAssetError,
+} from "../data/uploadAsset";
 import {
   rollbackOptimisticChatSend,
   toContractChip,
@@ -344,6 +347,16 @@ export function useWorkspaceChatActions(input: {
                 )
               ) {
                 throw new Error("workspace turn dispatch cancelled");
+              }
+              const materialNotice = largeMaterialUploadNotice(uploadedAssets);
+              if (materialNotice) {
+                toast.show({
+                  message: materialNotice,
+                  tone: "warn",
+                  sticky: true,
+                  role: "status",
+                  dedupeKey: "large-material-reference-notice",
+                });
               }
               const fileIds = uploadedAssets.map((asset) => asset.fileId);
 

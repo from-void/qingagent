@@ -530,6 +530,7 @@ export function WorkspaceDocumentPane({
             onRetryRestore={handleRetryRestore}
             doc={state.doc}
             streamError={state.streamError}
+            sessionRestoreBlocked={sessionRestoreBlocked}
             generationDraftDoc={state.generationDraft?.doc ?? null}
             viewingSnapshotDoc={state.viewingSnapshotDoc}
             wholeDocReview={wholeDocReview}

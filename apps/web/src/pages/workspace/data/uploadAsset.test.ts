@@ -5,6 +5,7 @@ import {
 } from "@qingagent/contract-ts";
 import {
   DEFAULT_UPLOAD_MAX_BYTES,
+  largeMaterialUploadNotice,
   uploadAssetFile,
   uploadFailureMessage,
   uploadedAssetUrl,
@@ -88,7 +89,7 @@ describe("uploadAssetFile", () => {
     const file = new File(["x"], "huge.bin", { type: "application/octet-stream" });
     Object.defineProperty(file, "size", { value: DEFAULT_UPLOAD_MAX_BYTES + 1 });
 
-    await expect(uploadAssetFile(file)).rejects.toThrow("文件过大（上限 50 MB）");
+    await expect(uploadAssetFile(file)).rejects.toThrow("文件过大（上传上限 50 MiB）");
     expect(MockUploadRequest.instances).toEqual([]);
   });
 
@@ -100,14 +101,26 @@ describe("uploadAssetFile", () => {
     const xhr = await waitForRequest();
     xhr.reject(413, JSON.stringify({ error: "file_too_large", maxBytes: 10 * 1024 * 1024 }));
 
-    await expect(pending).rejects.toThrow("文件过大（上限 10 MB）");
+    await expect(pending).rejects.toThrow("文件过大（上传上限 10 MiB）");
   });
 
   it("only forwards file-too-large details through production toast helpers", () => {
-    expect(uploadFailureMessage(new Error("文件过大（上限 10 MB）"), "上传失败")).toBe(
-      "文件过大（上限 10 MB）",
+    expect(uploadFailureMessage(new Error("文件过大（上传上限 10 MiB）"), "上传失败")).toBe(
+      "文件过大（上传上限 10 MiB）",
     );
     expect(uploadFailureMessage(new Error("internal path leaked"), "上传失败")).toBe("上传失败");
+  });
+
+  it("上传成功后为超过 1 MiB 的素材给出对话读取预期与分段建议", () => {
+    expect(largeMaterialUploadNotice([
+      { filename: "small.txt", size: 1024 },
+      { filename: "report.pdf", size: 2 * 1024 * 1024 },
+    ])).toBe(
+      "素材“report.pdf”较大；对话中会按相关片段参考。如需逐字处理，请拆分素材后分段发送。",
+    );
+    expect(largeMaterialUploadNotice([
+      { filename: "small.txt", size: 1024 },
+    ])).toBeNull();
   });
 });
 

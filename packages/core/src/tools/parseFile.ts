@@ -104,7 +104,7 @@ const MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
 // 64MiB 足以覆盖常见桌面文档素材，同时限制分块汇总缓冲区和后续解析的堆内存占用。
 const MAX_DESKTOP_FILE_BYTES = 64 * 1024 * 1024;
-const MAX_DESKTOP_FILE_LABEL = "64MiB";
+const MAX_DESKTOP_FILE_LABEL = "64 MiB";
 // 防止极端超长 PDF 占满主进程；截断必须写进返回正文，不能只藏在 metadata/日志里。
 export const PDF_TEXT_PAGE_LIMIT = 500;
 
@@ -123,7 +123,7 @@ const FILE_NOT_REGULAR_RESULT = parseFileToolFailure("不是常规文件", {
 });
 
 const FILE_TOO_LARGE_RESULT = parseFileToolFailure(
-  `文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
+  `文件过大（桌面本地读取上限 ${MAX_DESKTOP_FILE_LABEL}）`,
   { errorCode: "FILE_TOO_LARGE" },
 );
 

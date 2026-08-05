@@ -242,7 +242,7 @@ resume 后严格按 value 分流:\`login-owned\` → \`wechat_auth_start\` 扫�
 1. 使用 fetchArticle 抓取文章内容；它会在静态抓取不足时自动用无头浏览器渲染重试,你无需手动降级。要对 webSearch 的某条结果重抓时也用 fetchArticle。
 2. 抓取完成后，使用 storeMaterial 存储为素材：filename 设为文章标题或 URL，mimeType 设为 "text/html"，title 设为 fetchArticle 返回的 title；若 fetchArticle 返回 materialId，将它原样传给 storeMaterial.materialId；summary 字段填写一句话概括。不要把 result.text 复制进参数。
 3. 存储完成后，告知用户文章已保存到素材区。
-4. 如果用户要求基于文章写作，在生成或编辑文档时使用 readMaterial 读取素材全文作为参考。
+4. 如果用户要求基于文章写作，在生成或编辑文档时使用 readMaterial：大素材先读 summary，再按任务需要用 range 分段；full 模式可能按素材预算显式截断，绝不能把截断结果当成完整全文。
 
 ## 资料库工具与安全边界
 

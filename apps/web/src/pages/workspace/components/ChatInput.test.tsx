@@ -691,7 +691,7 @@ describe("ChatInput", () => {
     clickElement(getChooseFileRow());
     await selectFile(oversized);
 
-    expect(onToast).toHaveBeenCalledWith("文件过大（上限 50 MB）");
+    expect(onToast).toHaveBeenCalledWith("文件过大（上传上限 50 MiB）");
     expect(ref.current?.snapshot().files).toEqual([]);
     expect(attachChipLabels()).toEqual([]);
     expect(host?.querySelector('[data-wf="WsFileMenu"]')).toBeNull();

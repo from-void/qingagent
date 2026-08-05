@@ -19,6 +19,12 @@ export type StreamErrorAction =
   | "reload"
   | "none";
 
+export const MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE =
+  "素材或对话内容超出模型上下文长度。请删除部分素材、改用摘要，或拆分后分段处理。";
+
+export const MODEL_REQUEST_TOO_LARGE_MESSAGE =
+  "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。";
+
 export interface FinalDocumentReceipt {
   version: number;
   contentHash: string;

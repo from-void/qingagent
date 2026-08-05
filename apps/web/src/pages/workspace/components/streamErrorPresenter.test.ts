@@ -81,6 +81,24 @@ describe("streamErrorPresenter", () => {
     expect(streamErrorToastMessage(blocked)).toContain("内网地址");
   });
 
+  it.each([
+    [400, "素材或对话内容超出模型上下文长度。请删除部分素材、改用摘要，或拆分后分段处理。"],
+    [413, "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。"],
+  ])("HTTP %s 素材体量错误使用准确标题", (statusCode, reason) => {
+    const error = {
+      kind: "draftingFailed" as const,
+      reason,
+      retriable: false,
+      statusCode,
+      category: "request" as const,
+      userMessage: reason,
+      action: "none" as const,
+    };
+
+    expect(streamErrorLabel(error)).toBe("素材过大");
+    expect(streamErrorToastMessage(error)).toContain(reason);
+  });
+
   it("cancelled 是用户主动中止:走瞬时 warn status 而非常驻失败", () => {
     const cancelled = {
       kind: "cancelled" as const,

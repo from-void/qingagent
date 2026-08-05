@@ -1,4 +1,6 @@
 import {
+  MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  MODEL_REQUEST_TOO_LARGE_MESSAGE,
   sanitizeVisibleText,
   type BridgeFrame,
   type MessagePart,
@@ -394,6 +396,36 @@ export function streamErrorDetails(chunk: unknown): StreamErrorDetails {
       category: "rate_limit",
       userMessage,
       action: "retry",
+    };
+  }
+  if (
+    statusCode === 400 &&
+    [
+      "maximum context length",
+      "context length exceeded",
+      "context_length_exceeded",
+      "input tokens exceed",
+    ].some((marker) => streamErrorMessage(chunk).toLowerCase().includes(marker))
+  ) {
+    const userMessage = MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE;
+    return {
+      reason: userMessage,
+      retriable: false,
+      statusCode,
+      category: "request",
+      userMessage,
+      action: "none",
+    };
+  }
+  if (statusCode === 413) {
+    const userMessage = MODEL_REQUEST_TOO_LARGE_MESSAGE;
+    return {
+      reason: userMessage,
+      retriable: false,
+      statusCode,
+      category: "request",
+      userMessage,
+      action: "none",
     };
   }
   if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {

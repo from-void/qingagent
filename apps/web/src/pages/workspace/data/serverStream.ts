@@ -1,11 +1,13 @@
-import type {
-  AskUserQuestion,
-  BridgeFrame,
-  CancelConfirmedCommand,
-  Command,
-  CommandFailedResponse,
-  ReviewType,
-  SubmitConfirmDecision,
+import {
+  MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+  MODEL_REQUEST_TOO_LARGE_MESSAGE,
+  type AskUserQuestion,
+  type BridgeFrame,
+  type CancelConfirmedCommand,
+  type Command,
+  type CommandFailedResponse,
+  type ReviewType,
+  type SubmitConfirmDecision,
 } from "@qingagent/contract-ts";
 import { validateBridgeFrame } from "../../../system/validators";
 import { visitorKeyHeaders } from "../../../overlays/settings/visitorKeyStore";
@@ -148,7 +150,7 @@ class CommandRequestError extends Error {
   }
 }
 
-function streamErrorForHttpStatus(status: number): StreamError {
+function streamErrorForHttpStatus(status: number, upstreamMessage = ""): StreamError {
   if (status === 401 || status === 403) {
     return {
       kind: "draftingFailed",
@@ -180,6 +182,36 @@ function streamErrorForHttpStatus(status: number): StreamError {
       category: "rate_limit",
       userMessage: "请求太频繁，请稍后重试。",
       action: "retry",
+    };
+  }
+  if (
+    status === 400 &&
+    [
+      "maximum context length",
+      "context length exceeded",
+      "context_length_exceeded",
+      "input tokens exceed",
+    ].some((marker) => upstreamMessage.toLowerCase().includes(marker))
+  ) {
+    return {
+      kind: "draftingFailed",
+      reason: MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+      retriable: false,
+      statusCode: status,
+      category: "request",
+      userMessage: MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE,
+      action: "none",
+    };
+  }
+  if (status === 413) {
+    return {
+      kind: "draftingFailed",
+      reason: MODEL_REQUEST_TOO_LARGE_MESSAGE,
+      retriable: false,
+      statusCode: status,
+      category: "request",
+      userMessage: MODEL_REQUEST_TOO_LARGE_MESSAGE,
+      action: "none",
     };
   }
   if (status >= 500) {
@@ -828,7 +860,7 @@ export class ServerStream {
                 userMessage: message,
                 action: "none",
               }
-            : streamErrorForHttpStatus(response.status),
+            : streamErrorForHttpStatus(response.status, message),
         });
         throw new CommandRequestError(
           message,

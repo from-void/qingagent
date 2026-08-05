@@ -3,9 +3,21 @@ import { renderInsertDOM } from "./patchDecorations";
 import { viewSectionsToHtml } from "./viewDocHtml";
 
 describe("审阅装饰 HTML 安全", () => {
-  it("非法链接协议只保留文字，不生成 anchor", () => {
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "JaVaScRiPt:alert(1)",
+    "&#106;avascript:alert(1)",
+    " javascript:alert(1)",
+    "//evil.example.com",
+    String.raw`/\evil.example.com`,
+    String.raw`/\\evil.example.com`,
+    String.raw`/\/evil.example.com`,
+    String.raw`//\evil.example.com`,
+  ])("危险链接只保留文字，不生成 anchor: %s", (href) => {
     const rendered = renderInsertDOM("点我", [
-      { type: "link", attrs: { href: "javascript:alert(1)" } },
+      { type: "link", attrs: { href } },
     ] as never);
 
     expect(rendered.textContent).toBe("点我");

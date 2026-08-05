@@ -1,3 +1,5 @@
+import { isAllowedLinkHref } from "@qingagent/contract-ts";
+
 export type ToolbarCommandGroup = "marks" | "headings" | "blocks" | "align" | "table" | "resourceRef";
 
 export interface ToolbarUnlockConfig {
@@ -147,10 +149,7 @@ export function sanitizeToolbarLinkHref(input: string | null | undefined): strin
   const href = input?.trim() ?? "";
   if (!href) return null;
   if (/[\u0000-\u001f\u007f\s<>"`]/.test(href)) return null;
-  if (/^https?:\/\//i.test(href)) return href;
-  if (/^\/(?!\/)/.test(href)) return href;
-  if (/^#[^\s]*$/.test(href)) return href;
-  return null;
+  return isAllowedLinkHref(href) ? href : null;
 }
 
 function normalizeToolbarThemeColor(input: string | null | undefined, values: Record<ToolbarThemeColorKey, string>): ToolbarThemeColorKey | null {

@@ -141,6 +141,73 @@ export function maskPersistedReviewIgnoreValue(input: string): string {
   });
 }
 
+function isAsciiDigit(value: string | undefined): boolean {
+  return value !== undefined && value >= "0" && value <= "9";
+}
+
+/** 从标准手机号打码值中提取已公开的前三位；不用新的残片长度正则猜测原值。 */
+function maskedMobileHeads(value: string): Set<string> {
+  const heads = new Set<string>();
+  for (let index = 0; index + 11 <= value.length; index += 1) {
+    const candidate = value.slice(index, index + 11);
+    if (
+      candidate[0] === "1"
+      && candidate[1] !== undefined
+      && candidate[1] >= "3"
+      && candidate[1] <= "9"
+      && isAsciiDigit(candidate[2])
+      && candidate.slice(3, 7) === "****"
+      && [...candidate.slice(7)].every((char) => isAsciiDigit(char))
+      && !isAsciiDigit(value[index - 1])
+      && !isAsciiDigit(value[index + 11])
+    ) {
+      heads.add(candidate.slice(0, 3));
+    }
+  }
+  return heads;
+}
+
+/**
+ * 同一记录内，摘要对某个已打码引文只能重复其公开位，不能贡献额外连续数字。
+ * 这条约束按引文的标准打码指纹关联字段，不扩大全局手机号残片正则的误伤面。
+ */
+function constrainSummaryToQuoteDisclosure(summary: string, quote: string): string {
+  const heads = maskedMobileHeads(quote);
+  if (heads.size === 0) return summary;
+
+  let output = "";
+  let index = 0;
+  while (index < summary.length) {
+    if (!isAsciiDigit(summary[index])) {
+      output += summary[index];
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (isAsciiDigit(summary[end])) end += 1;
+    const digits = summary.slice(index, end);
+    const head = digits.slice(0, 3);
+    output += digits.length > 3 && heads.has(head)
+      ? `${head}${"*".repeat(digits.length - 3)}`
+      : digits;
+    index = end;
+  }
+  return output;
+}
+
+/** 忽略记录的跨字段脱敏：先逐字段处理，再限制摘要不能补齐引文隐藏位。 */
+export function maskPersistedReviewIgnoreRecord(input: {
+  summary: string;
+  quote: string;
+}): { summary: string; quote: string } {
+  const quote = maskPersistedReviewIgnoreValue(input.quote);
+  const summary = constrainSummaryToQuoteDisclosure(
+    maskPersistedReviewIgnoreValue(input.summary),
+    quote,
+  );
+  return { summary, quote };
+}
+
 export function maskSensitiveAnnotationGroup(group: AnnotationGroup): AnnotationGroup {
   if (!isSensitiveReviewOrigin(group.origin)) return group;
   return {

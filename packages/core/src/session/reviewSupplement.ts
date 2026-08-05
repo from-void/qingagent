@@ -3,7 +3,7 @@ import {
   appendReviewIgnoreLines,
   buildReviewIgnoreDecisionKey,
   buildReviewIgnoreLine,
-  maskPersistedReviewIgnoreValue,
+  maskPersistedReviewIgnoreRecord,
   reviewIgnoreDecisionKeyFromLine,
   reviewSupplementScopeFromAnnotationOrigin,
   reviewTypeFromAnnotationOrigin,
@@ -40,12 +40,15 @@ function decisionFromGroup(
     textHash: "",
   };
   // 持久化边界不信任上游 origin：可见行、机器键与旁支输入共用同一份二次脱敏数据。
-  const summary = maskPersistedReviewIgnoreValue(group.summary);
-  const quote = maskPersistedReviewIgnoreValue(anchor.quote);
+  const { summary, quote } = maskPersistedReviewIgnoreRecord({
+    summary: group.summary,
+    quote: anchor.quote,
+  });
   const key = buildReviewIgnoreDecisionKey({
     origin: group.origin,
     templateId: group.reviewTemplateId,
     summary,
+    quote,
     anchor,
   });
   return {

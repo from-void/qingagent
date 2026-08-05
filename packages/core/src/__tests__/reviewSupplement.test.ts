@@ -84,6 +84,7 @@ function ignoredDecision(
     origin: safeGroup.origin,
     templateId: safeGroup.reviewTemplateId,
     summary: safeGroup.summary,
+    quote: anchor.quote,
     anchor,
   });
   return {
@@ -265,6 +266,7 @@ describe("忽略批注回填审查补充提示词", () => {
   });
 
   it.each([
+    ["8 位", "摘要含手机号：13912345", "13912345"],
     ["9 位", "待核对号码 139123456", "139123456"],
     ["10 位", "联系电话疑似截断为 1380013800", "1380013800"],
   ])("custom origin 的%s手机号片段不会落入补充要求正文或机器键", async (_label, summary, fragment) => {

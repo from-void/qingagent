@@ -8,6 +8,23 @@ import {
   splitReviewSupplement,
 } from "../ReviewIgnoreMemory";
 
+function phoneBruteForceSpace(disclosure: string, target: string): number {
+  const fragments = new Set<string>();
+  for (let length = 4; length <= target.length; length += 1) {
+    for (let start = 0; start + length <= target.length; start += 1) {
+      const fragment = target.slice(start, start + length);
+      if (disclosure.includes(fragment)) fragments.add(fragment);
+    }
+  }
+
+  let candidates = 0;
+  for (let middle = 0; middle < 10_000; middle += 1) {
+    const candidate = `139${String(middle).padStart(4, "0")}5678`;
+    if ([...fragments].every((fragment) => candidate.includes(fragment))) candidates += 1;
+  }
+  return candidates;
+}
+
 describe("审查忽略补充提示词纯函数", () => {
   it.each([
     ["sensitive", "sensitive"],
@@ -46,11 +63,13 @@ describe("审查忽略补充提示词纯函数", () => {
     const first = {
       origin: "sensitive",
       summary,
+      quote: "139****5678",
       anchor: { blockId: "contact-a", pmFrom: 4, pmTo: 15 },
     };
     const second = {
       origin: "sensitive",
       summary,
+      quote: "139****5678",
       anchor: { blockId: "contact-b", pmFrom: 4, pmTo: 15 },
     };
     const firstKey = buildReviewIgnoreDecisionKey(first);
@@ -86,6 +105,7 @@ describe("审查忽略补充提示词纯函数", () => {
   it("两个自定义模板在同一位置给出同一问题时仍有不同身份键", () => {
     const base = {
       summary: "行动建议空泛",
+      quote: "尽快推动项目落地",
       anchor: { blockId: "same-block", pmFrom: 4, pmTo: 12 },
     };
     const first = {
@@ -107,6 +127,7 @@ describe("审查忽略补充提示词纯函数", () => {
   it("缺少模板 id 的历史自定义 origin 仍参与身份且不会把名称中的 PII 写进键", () => {
     const base = {
       summary: "行动建议空泛",
+      quote: "尽快推动项目落地",
       anchor: { blockId: "same-block", pmFrom: 4, pmTo: 12 },
     };
     const firstKey = buildReviewIgnoreDecisionKey({
@@ -130,6 +151,7 @@ describe("审查忽略补充提示词纯函数", () => {
     const key = buildReviewIgnoreDecisionKey({
       origin: "自定义审查:联系方式复核",
       summary,
+      quote: "139****5678",
       anchor: { blockId: "contact-fragment", pmFrom: 4, pmTo: 15 },
     });
     const line = buildReviewIgnoreLine({
@@ -143,6 +165,36 @@ describe("审查忽略补充提示词纯函数", () => {
     expect(decodeURIComponent(key)).not.toContain(fragment);
   });
 
+  it("同一忽略记录的打码引文与 8 位摘要残片不能并集拼回完整手机号", () => {
+    const phone = "13912345678";
+    const quote = "139****5678";
+    const summary = "摘要含手机号：13912345";
+    const keyInput: Parameters<typeof buildReviewIgnoreDecisionKey>[0] = {
+      origin: "sensitive",
+      summary,
+      quote,
+      anchor: { blockId: "contact-union", pmFrom: 4, pmTo: 15 },
+    };
+    const key = buildReviewIgnoreDecisionKey(keyInput);
+    const line = buildReviewIgnoreLine({
+      quote,
+      summary,
+      date: "2026-08-06",
+      decisionKey: key,
+    });
+    const controlLine = buildReviewIgnoreLine({
+      quote,
+      summary: "已获授权的客服联系信息",
+      date: "2026-08-06",
+      decisionKey: "control",
+    });
+
+    expect(line).not.toContain("13912345");
+    expect(decodeURIComponent(key)).not.toContain("13912345");
+    expect(phoneBruteForceSpace(line, phone)).toBeGreaterThanOrEqual(1_000);
+    expect(phoneBruteForceSpace(line, phone)).toBe(phoneBruteForceSpace(controlLine, phone));
+  });
+
   it.each([
     "订单号 139123456",
     "金额 1380013800 元",
@@ -151,6 +203,7 @@ describe("审查忽略补充提示词纯函数", () => {
     const key = buildReviewIgnoreDecisionKey({
       origin: "自定义审查:数字复核",
       summary,
+      quote: summary,
       anchor: { blockId: "normal-number", pmFrom: 1, pmTo: 9 },
     });
     const line = buildReviewIgnoreLine({

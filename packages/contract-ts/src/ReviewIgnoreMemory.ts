@@ -2,6 +2,7 @@ import type { ReviewType } from "./ReviewTemplates";
 import type { SuggestionAnchor } from "./DocSuggestion";
 import {
   buildSensitiveAnchorSpanKey,
+  maskPersistedReviewIgnoreRecord,
   maskPersistedReviewIgnoreValue,
 } from "./SensitiveValueMask";
 
@@ -73,6 +74,7 @@ export function buildReviewIgnoreDecisionKey(input: {
   origin: string;
   templateId?: string;
   summary: string;
+  quote: string;
   anchor: Pick<SuggestionAnchor, "blockId" | "pmFrom" | "pmTo">;
 }): string {
   const type = reviewTypeFromAnnotationOrigin(input.origin);
@@ -84,6 +86,10 @@ export function buildReviewIgnoreDecisionKey(input: {
   const identityScope = storageScope || (dynamicTemplateType
     ? `origin-${opaqueReviewScopeFingerprint(input.origin)}`
     : "");
+  const record = maskPersistedReviewIgnoreRecord({
+    summary: input.summary,
+    quote: input.quote,
+  });
   const parts = [
     identityScope ? "v2" : "v1",
     type,
@@ -91,7 +97,7 @@ export function buildReviewIgnoreDecisionKey(input: {
       ? [`scope-${opaqueReviewScopeFingerprint(identityScope)}`]
       : []),
     buildSensitiveAnchorSpanKey(input.anchor),
-    summarizeReviewIgnoreQuote(input.summary, ""),
+    summarizeReviewIgnoreQuote(record.summary, ""),
   ];
   return parts.map((part) => encodeURIComponent(part)).join(":");
 }
@@ -102,12 +108,13 @@ export function buildReviewIgnoreLine(input: {
   date: string;
   decisionKey?: string;
 }): string {
-  const quote = summarizeReviewIgnoreQuote(input.quote, input.summary);
+  const record = maskPersistedReviewIgnoreRecord(input);
+  const quote = summarizeReviewIgnoreQuote(record.quote, record.summary);
   if (!input.decisionKey) {
     // 兼容没有结构锚点的历史迁移数据；新写入必须携带 decisionKey。
     return `${REVIEW_IGNORE_LINE_PREFIX}「${quote}」(${input.date})`;
   }
-  const summary = summarizeReviewIgnoreQuote(input.summary, input.quote);
+  const summary = summarizeReviewIgnoreQuote(record.summary, record.quote);
   return `${REVIEW_IGNORE_LINE_PREFIX}「${quote}」；问题：「${summary}」(${input.date}) ${REVIEW_IGNORE_DECISION_KEY_PREFIX}${input.decisionKey} -->`;
 }
 

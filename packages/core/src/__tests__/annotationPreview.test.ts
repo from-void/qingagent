@@ -89,4 +89,20 @@ describe("批注参数增量组扫描器", () => {
       anchors: [{ find: "重复原句", all: true }],
     })?.anchors).toHaveLength(2);
   });
+
+  it("流式预览摘要先脱敏再截断，不展示 15 字边界切出的 8 位手机号残片", () => {
+    const phone = "13912345678";
+    const doc = legacySectionsToPm([
+      { kind: "p", data: { text: `联系电话 ${phone}` } },
+    ] as never);
+
+    const preview = buildAnnotationPreviewData(doc, "p-private", {
+      summary: `摘要含手机号：${phone}`,
+      anchors: [{ find: phone }],
+    });
+
+    expect(preview?.summary).toBe("摘要含手机号：139****5");
+    expect(preview?.summary).not.toMatch(/1[3-9]\d{3,}/u);
+    expect(preview?.summary).not.toContain("13912345");
+  });
 });

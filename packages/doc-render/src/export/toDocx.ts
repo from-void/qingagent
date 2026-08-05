@@ -42,6 +42,8 @@ import { collectExportFootnotes } from "./footnotes.js";
 
 /** 用于在 toDocx 内传递预渲染好的公式位图；ImageRun 要等拿到当前栏宽后再创建。 */
 type MathImages = ReadonlyMap<string, MathRasterResult | null>;
+const INLINE_MATH_MIN_READABLE_HEIGHT_PX = 16;
+const BLOCK_MATH_MIN_READABLE_HEIGHT_PX = 32;
 
 function mathKey(latex: string, displayMode: boolean): string {
   return `${displayMode ? "D" : "I"}:${latex}`;
@@ -108,7 +110,16 @@ function latexToDocxRun(
     const initialWidth = raster.width * initialHeight / raster.height;
     const scale = Math.min(1, maxWidth / initialWidth);
     const width = Math.max(1, initialWidth * scale);
-    const height = Math.max(1, initialHeight * scale);
+    // DOCX 的行内图片无法像文本一样重排公式。宽度仍严格服从当前栏预算；但等比缩放
+    // 会把长公式压成几像素高的糊条，因此高度只等比缩到可读下限，之后仅继续压缩宽度。
+    // 下限不超过图片原始目标高度，避免反向放大小公式。
+    const minReadableHeight = displayMode
+      ? BLOCK_MATH_MIN_READABLE_HEIGHT_PX
+      : INLINE_MATH_MIN_READABLE_HEIGHT_PX;
+    const height = Math.max(
+      1,
+      Math.min(initialHeight, Math.max(minReadableHeight, initialHeight * scale)),
+    );
     return new ImageRun({
       type: "png",
       data: raster.data,
@@ -519,6 +530,9 @@ async function pmBlockToDocx(
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: await Promise.all(node.content.map(async (row) =>
             new TableRow({
+              // 表格当前由 Word 按 100% 宽度自动布局，并未输出固定 tblGrid；PM colwidth
+              // 又是可选提示。这里只能把当前栏宽作为单元格内容的可靠上界，不能先猜
+              // 等分宽度去缩图片，否则图片预算会与 Word 最终算出的单元格宽度脱节。
               children: await Promise.all(row.content.map((cell) =>
                 pmTableCellToDocx(cell, opts, mathImages, numbering, footnoteNumbers),
               )),

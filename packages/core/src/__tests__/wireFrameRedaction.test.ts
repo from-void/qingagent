@@ -157,6 +157,30 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     expect(card.terminalKind).toBe("succeeded");
   });
 
+  it("旧字符串结果只读取平台追加的末行 Exit code，不被用户输出里的同名文本污染", () => {
+    const card = commandCardFromResult(
+      { command: "node report.mjs" },
+      "用户报告\nExit code: 9\n任务实际完成\nExit code: 0",
+      true,
+    );
+
+    expect(card.exitCode).toBe(0);
+    expect(card.phase).toBe("done");
+    expect(card.outputTail).toContain("Exit code: 9");
+  });
+
+  it("旧字符串成功结果不被用户输出的 Error: 前缀污染", () => {
+    const card = commandCardFromResult(
+      { command: "node report.mjs" },
+      "Error: 0\n校验完成",
+      true,
+    );
+
+    expect(card.exitCode).toBe(0);
+    expect(card.phase).toBe("done");
+    expect(card.terminalKind).toBe("succeeded");
+  });
+
   it("正常成功输出 → done", () => {
     const card = commandCardFromResult({ command: "node calc.mjs sum" }, "{\"sum\":6}", true);
     expect(card.phase).toBe("done");
@@ -176,14 +200,57 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
 
 describe("scriptCardFromResult 失败原因分档", () => {
   it.each([
-    ["代码错误", { ok: false, stdout: "", error: "ReferenceError: missing is not defined" }, false, "codeError"],
-    ["资源超限", { ok: false, stdout: "", stderr: "", error: "global run_python memory total budget exceeded" }, false, "resourceExceeded"],
-    ["超时", { ok: false, stdout: "", error: "timeout" }, false, "timedOut"],
-    ["取消", { ok: false, stdout: "", error: "aborted" }, false, "aborted"],
+    ["代码错误", { ok: false, stdout: "", error: "ReferenceError: missing is not defined", failureKind: "codeError" }, false, "codeError"],
+    ["资源超限", { ok: false, stdout: "", stderr: "", error: "worker stopped", failureKind: "resourceExceeded" }, false, "resourceExceeded"],
+    ["超时", { ok: false, stdout: "", error: "worker stopped", failureKind: "timedOut" }, false, "timedOut"],
+    ["取消", { ok: false, stdout: "", error: "worker stopped", failureKind: "aborted" }, false, "aborted"],
     ["成功", { ok: true, stdout: "", result: 2 }, true, "succeeded"],
   ] as const)("%s 映射到对应结构化终态", (_label, result, ok, terminalKind) => {
     const card = scriptCardFromResult("run_python", { code: "1 + 1" }, result, ok);
     expect(card.terminalKind).toBe(terminalKind);
     expect(card.phase).toBe(terminalKind === "succeeded" ? "done" : "failed");
+  });
+
+  it.each([
+    [
+      'raise TimeoutError("time limit exceeded")',
+      "Traceback (most recent call last):\nTimeoutError: time limit exceeded",
+    ],
+    [
+      'raise MemoryError("out of memory")',
+      "Traceback (most recent call last):\nMemoryError: out of memory",
+    ],
+    [
+      'raise RuntimeError("aborted by user")',
+      "Traceback (most recent call last):\nRuntimeError: aborted by user",
+    ],
+  ])("用户 Python 异常 %s 不污染平台失败归因", (code, error) => {
+    const card = scriptCardFromResult(
+      "run_python",
+      { code },
+      { ok: false, stdout: "", stderr: "", error, failureKind: "codeError" },
+      false,
+    );
+
+    expect(card.terminalKind).toBe("codeError");
+    expect(card.phase).toBe("failed");
+  });
+
+  it.each([
+    "timeout",
+    "time limit exceeded",
+    "MemoryError: out of memory",
+    "resource limit exceeded",
+    "aborted by user",
+    "job cancelled",
+  ])("缺少结构化信号时保守归入代码错误: %s", (error) => {
+    const card = scriptCardFromResult(
+      "run_python",
+      { code: "raise RuntimeError()" },
+      { ok: false, stdout: "", stderr: "", error },
+      false,
+    );
+
+    expect(card.terminalKind).toBe("codeError");
   });
 });

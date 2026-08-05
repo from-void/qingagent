@@ -6262,6 +6262,87 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
+  it("提交后切到另一文档再切回仍可逐字撤销本次修改", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const patch = textReviewToolCall("undo-commit", "batch-undo-commit", 0);
+    const beforeDoc = baseDocForReviewSpecs([patch]);
+    const afterDoc = pmDoc([
+      pmParagraph("block-undo-commit", "新句子1"),
+    ]);
+    const streamA = await renderWorkspaceWithReview([patch]);
+    mockCommitWithFrames(streamA, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(afterDoc, 2) },
+      },
+      {
+        kind: "docCommitted",
+        data: {
+          sessionId: "s-1",
+          version: 2,
+          appliedCount: 1,
+          conflictCount: 0,
+        },
+      },
+      toolCallUpdatedFrame({ ...patch, status: { kind: "committed" } }),
+      docStateFrame("editing"),
+    ]);
+
+    await clickButton("提交 ↵");
+    expect(buttonByText("撤销本次修改")).not.toBeNull();
+
+    await act(async () => {
+      window.location.hash = "#/workspace?session=s-2";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flushMicrotasks(5);
+    const streamB = latestServerStream();
+    await emitFrames(streamB, [
+      { kind: "sessionMeta", data: { sessionId: "s-2", title: "另一篇文档" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("other-doc", "另一篇正文")]),
+            7,
+          ),
+        },
+      },
+      docStateFrame("editing"),
+    ]);
+
+    await act(async () => {
+      window.location.hash = "#/workspace?session=s-1";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flushMicrotasks(5);
+    const restoredStreamA = latestServerStream();
+    await emitFrames(restoredStreamA, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试审阅" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(afterDoc, 2) },
+      },
+      docStateFrame("editing"),
+      { kind: "sessionRestoreCompleted", data: { sessionId: "s-1" } },
+    ]);
+
+    expect(buttonByText("撤销本次修改")).not.toBeNull();
+    await clickButton("撤销本次修改");
+
+    const undoWrites = updateDocCommands(restoredStreamA);
+    expect(undoWrites).toHaveLength(1);
+    expect(undoWrites[0]?.data.expectedDocumentSnapshot).toBe(2);
+    expect(undoWrites[0]?.data.baseContentHash).toBe(
+      getPmContentHash(afterDoc),
+    );
+    expect(normalizePmDoc(undoWrites[0]!.data.doc)).toEqual(
+      normalizePmDoc(beforeDoc),
+    );
+    expect(host?.textContent).toContain("旧句子1");
+    expect(host?.querySelector('[data-wf="ReviewCommitUndoBanner"]')).toBeNull();
+  });
+
   it("应用新版成功后保留当前文档与会话，不终止工作区流", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { WorkspacePage } = await import("./WorkspacePage");
@@ -6349,6 +6430,7 @@ describe("WorkspacePage review controls", () => {
     });
     expect(document.body.dataset.content).toBe("pendingReview");
     expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="ReviewCommitUndoBanner"]')).toBeNull();
     expect(host?.textContent).toContain("剩余 · 2 处");
     expect(document.body.textContent).toContain("提交失败 · 候选已保留，请重试");
   });

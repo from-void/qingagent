@@ -106,6 +106,14 @@ import {
   type PendingDocSaveWaiter,
 } from "../data/pendingDocSave";
 import {
+  buildReviewCommitUndoSnapshot,
+  clearReviewCommitUndoSnapshot,
+  isReviewCommitUndoApplicable,
+  readReviewCommitUndoSnapshot,
+  writeReviewCommitUndoSnapshot,
+  type ReviewCommitUndoSnapshot,
+} from "../data/reviewCommitUndo";
+import {
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   decideBroadcastDocumentFrame,
@@ -327,6 +335,13 @@ export function useWorkspacePageController() {
   const [title, setTitle] = useState(
     () => sessionTitleFromStore(initialSessionId) ?? "",
   );
+  const [reviewCommitUndo, setReviewCommitUndo] =
+    useState<ReviewCommitUndoSnapshot | null>(() =>
+      initialSessionId
+        ? readReviewCommitUndoSnapshot(initialSessionId)
+        : null,
+    );
+  const [reviewCommitUndoBusy, setReviewCommitUndoBusy] = useState(false);
   const {
     debugMode,
     demoBarKind,
@@ -2980,7 +2995,7 @@ export function useWorkspacePageController() {
     flushPendingDocSave,
     getLatestExportPmDoc,
     handleCreateBlankDoc,
-    handleEditorChange,
+    handleEditorChange: persistEditorChange,
     handleFillTemplate,
     preparePageExitDocSave,
   } = useWorkspaceDocumentEditor({
@@ -3018,6 +3033,84 @@ export function useWorkspacePageController() {
   });
   flushPendingDocSaveRef.current = flushPendingDocSave;
   preparePageExitDocSaveRef.current = preparePageExitDocSave;
+
+  useEffect(() => {
+    const sessionId = state.sessionId;
+    setReviewCommitUndo(
+      sessionId ? readReviewCommitUndoSnapshot(sessionId) : null,
+    );
+    setReviewCommitUndoBusy(false);
+  }, [state.sessionId]);
+
+  const rememberReviewCommitUndo = useCallback((input: {
+    sessionId: string;
+    before: ViewDocumentSnapshot | null;
+    frames: readonly BridgeFrame[];
+    after: ViewDocumentSnapshot | null;
+  }) => {
+    const snapshot = buildReviewCommitUndoSnapshot(input);
+    if (!snapshot) return;
+    writeReviewCommitUndoSnapshot(snapshot);
+    if (stateRef.current.sessionId === snapshot.sessionId) {
+      setReviewCommitUndo(snapshot);
+    }
+  }, []);
+
+  const reviewCommitUndoAvailable =
+    dim.editor === "editable" &&
+    isReviewCommitUndoApplicable(
+      reviewCommitUndo,
+      state.sessionId,
+      state.doc,
+    );
+
+  const handleEditorChange = useCallback(
+    (pmDoc: PmDoc, baseline?: DocWriteBaseline): Promise<void> => {
+      const currentSessionId = stateRef.current.sessionId;
+      if (
+        reviewCommitUndo &&
+        currentSessionId === reviewCommitUndo.sessionId &&
+        getPmContentHash(pmDoc) !== reviewCommitUndo.afterContentHash
+      ) {
+        clearReviewCommitUndoSnapshot(reviewCommitUndo.sessionId);
+        setReviewCommitUndo(null);
+      }
+      return Promise.resolve(persistEditorChange(pmDoc, baseline));
+    },
+    [persistEditorChange, reviewCommitUndo],
+  );
+
+  const handleUndoReviewCommit = useCallback(async (): Promise<void> => {
+    if (reviewCommitUndoBusy) return;
+    const snapshot = reviewCommitUndo;
+    const current = stateRef.current;
+    if (
+      !snapshot ||
+      deriveDocDimensions(current).editor !== "editable" ||
+      !isReviewCommitUndoApplicable(snapshot, current.sessionId, current.doc)
+    ) {
+      if (snapshot) clearReviewCommitUndoSnapshot(snapshot.sessionId);
+      setReviewCommitUndo(null);
+      showToast("当前正文已变化，不能撤销本次修改");
+      return;
+    }
+    setReviewCommitUndoBusy(true);
+    try {
+      await persistEditorChange(snapshot.beforeDoc, {
+        expectedDocumentSnapshot: snapshot.afterVersion,
+        baseContentHash: snapshot.afterContentHash,
+        baseHasSubstantiveContent: snapshot.afterHasSubstantiveContent,
+      });
+      clearReviewCommitUndoSnapshot(snapshot.sessionId);
+      setReviewCommitUndo(null);
+      showToast("已撤销本次修改");
+    } catch (error) {
+      console.error("[workspace] undo committed review failed", error);
+      showToast("撤销失败 · 请重试");
+    } finally {
+      setReviewCommitUndoBusy(false);
+    }
+  }, [persistEditorChange, reviewCommitUndo, reviewCommitUndoBusy, showToast]);
 
   const clearPresentationRun = useCallback(() => {
     setPresentationRun(null);
@@ -3442,6 +3535,7 @@ export function useWorkspacePageController() {
     setActiveReviewTargetId,
     finalizeReviewTablePatch,
     setTableTypedByPatch,
+    onReviewCommitSucceeded: rememberReviewCommitUndo,
   });
 
   // 用户在预览里编辑素材摘要并保存:乐观更新 registry(保留 metadata.fileId 不丢预览能力),
@@ -3674,6 +3768,8 @@ export function useWorkspacePageController() {
     inlinePatchReview,
     isReviewSubmitting,
     reviewSettlementRetryPending,
+    reviewCommitUndoAvailable,
+    reviewCommitUndoBusy,
     awaitingWholeDocReviewMaterial,
     fullpageAsk,
     submittingAskUserId,
@@ -3698,6 +3794,7 @@ export function useWorkspacePageController() {
     handleRejectAll,
     handleAcceptAll,
     handleCommit,
+    handleUndoReviewCommit,
     handlePatchVerdict,
     closeViewingVersion,
     setTiptapEditor,

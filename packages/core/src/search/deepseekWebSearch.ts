@@ -61,7 +61,10 @@ export async function fetchDeepseekSearchLinks(
   if (signal?.aborted) abortFromSignal();
   else signal?.addEventListener("abort", abortFromSignal, { once: true });
   const removeAbortListener = () => signal?.removeEventListener("abort", abortFromSignal);
-  const recordMissing = (reason: string) => {
+  const recordUnavailable = (
+    reason: string,
+    usageEstimate?: { uncachedInputText: string; outputText: string },
+  ) => {
     if (!usageContext) return;
     void recordModelCallOutcome({
       requestContext: usageContext.requestContext,
@@ -75,9 +78,25 @@ export async function fetchDeepseekSearchLinks(
       transport: "manual-api",
       startedAt,
       usage: null,
+      usageEstimate,
       reason,
     });
   };
+  const requestPayload = {
+    model,
+    max_tokens: 2048,
+    stream: true,
+    system: "必须先调用 web_search 检索实时网页再回答,不要只凭记忆。",
+    thinking: { type: "disabled" },
+    messages: [{ role: "user", content: query }],
+    tools: [{ type: "web_search_20250305", name: "web_search" }],
+  };
+  const requestBodyText = JSON.stringify(requestPayload);
+  const requestPromptText = JSON.stringify({
+    system: requestPayload.system,
+    messages: requestPayload.messages,
+    tools: requestPayload.tools,
+  });
   let response: Response;
   try {
     response = await fetch(DEEPSEEK_ANTHROPIC_MESSAGES_URL, {
@@ -87,28 +106,20 @@ export async function fetchDeepseekSearchLinks(
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        stream: true,
-        system: "必须先调用 web_search 检索实时网页再回答,不要只凭记忆。",
-        thinking: { type: "disabled" },
-        messages: [{ role: "user", content: query }],
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-      }),
+      body: requestBodyText,
       signal: controller.signal,
     });
   } catch (error) {
     removeAbortListener();
     const requestAborted =
       controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
-    recordMissing(requestAborted ? "provider_request_aborted" : "provider_request_error");
+    recordUnavailable(requestAborted ? "provider_request_aborted" : "provider_request_error");
     return [];
   }
   if (!response.ok || !response.body) {
     controller.abort();
     removeAbortListener();
-    recordMissing(response.ok ? "provider_stream_missing_body" : `provider_http_${response.status}`);
+    recordUnavailable(response.ok ? "provider_stream_missing_body" : `provider_http_${response.status}`);
     return [];
   }
 
@@ -118,6 +129,7 @@ export async function fetchDeepseekSearchLinks(
   let buffer = "";
   let wsIndex: number | null = null;
   let partialJson = "";
+  let receivedDeltaText = "";
   const pushResult = (r: unknown): void => {
     if (!r || typeof r !== "object") return;
     const rec = r as Record<string, unknown>;
@@ -130,7 +142,7 @@ export async function fetchDeepseekSearchLinks(
     }
   };
 
-  let settleReason = "search_links_early_abort";
+  let settleReason = "provider_stream_without_usage";
   try {
     let done = false;
     while (!done) {
@@ -151,14 +163,25 @@ export async function fetchDeepseekSearchLinks(
         const type = ev.type;
         if (type === "content_block_start") {
           const cb = (ev.content_block as Record<string, unknown> | undefined) ?? {};
+          if (typeof cb.text === "string") receivedDeltaText += cb.text;
           if (cb.type === "web_search_tool_result") {
             wsIndex = typeof ev.index === "number" ? ev.index : null;
-            if (Array.isArray(cb.content)) for (const r of cb.content) pushResult(r);
+            if (Array.isArray(cb.content)) {
+              receivedDeltaText += JSON.stringify(cb.content);
+              for (const r of cb.content) pushResult(r);
+            }
           }
-        } else if (type === "content_block_delta" && ev.index === wsIndex) {
+        } else if (type === "content_block_delta") {
           const delta = (ev.delta as Record<string, unknown> | undefined) ?? {};
-          if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          if (typeof delta.text === "string") receivedDeltaText += delta.text;
+          if (typeof delta.thinking === "string") receivedDeltaText += delta.thinking;
+          if (
+            ev.index === wsIndex &&
+            delta.type === "input_json_delta" &&
+            typeof delta.partial_json === "string"
+          ) {
             partialJson += delta.partial_json;
+            receivedDeltaText += delta.partial_json;
           }
         } else if (type === "content_block_stop" && ev.index === wsIndex) {
           if (links.length === 0 && partialJson) {
@@ -169,13 +192,16 @@ export async function fetchDeepseekSearchLinks(
               /* 忽略半截 JSON */
             }
           }
+          settleReason = "search_links_early_abort";
           done = true; // 链接已拿全 → 掐断,不等综述
           break;
         }
       }
     }
-  } catch {
-    settleReason = "provider_stream_error";
+  } catch (error) {
+    settleReason = controller.signal.aborted || (error instanceof Error && error.name === "AbortError")
+      ? "provider_request_aborted"
+      : "provider_stream_error";
     /* 流读取异常:返回已拿到的链接(可能为空) */
   } finally {
     controller.abort(); // 关连接 → 服务端停止继续生成综述
@@ -185,8 +211,11 @@ export async function fetchDeepseekSearchLinks(
     } catch {
       /* ignore */
     }
-    // 设计上拿到链接立即掐流，永远等不到 provider usage；只留请求事实，不伪造 token。
-    recordMissing(settleReason);
+    // 主动掐流拿不到 provider usage；只用已发送 prompt 与已收到 delta 做显式 estimated。
+    recordUnavailable(settleReason, {
+      uncachedInputText: requestPromptText,
+      outputText: receivedDeltaText,
+    });
   }
 
   return links.slice(0, limit);

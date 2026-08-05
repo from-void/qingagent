@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
+const recordUsageEventMock = vi.hoisted(() =>
+  vi.fn(async (_input: Record<string, unknown>) => undefined),
+);
 vi.mock("@qingagent/db", () => ({
   resolveDbUrl: () => "file::memory:",
   recordUsageEvent: recordUsageEventMock,
@@ -11,7 +13,7 @@ describe("DeepSeek webSearch usage 留痕", () => {
   beforeEach(() => recordUsageEventMock.mockClear());
   afterEach(() => vi.unstubAllGlobals());
 
-  it("拿到搜索链接后主动掐流，记 missing 而不伪造 token", async () => {
+  it("拿到搜索链接后主动掐流，以 prompt 与已收 delta 记 estimated", async () => {
     const events = [
       { type: "content_block_start", index: 1, content_block: { type: "web_search_tool_result", content: [
         { type: "web_search_result", title: "来源", url: "https://example.com/a" },
@@ -31,10 +33,21 @@ describe("DeepSeek webSearch usage 留痕", () => {
     expect(recordUsageEventMock).toHaveBeenCalledOnce();
     expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "webSearch",
-      usageState: "missing",
+      usageState: "estimated",
       reason: "search_links_early_abort",
       sessionId: "session-search",
+      cacheAccountingState: "known",
     }));
+    const event = recordUsageEventMock.mock.calls[0]?.[0] as {
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
+    };
+    expect(event.inputTokens).toBeGreaterThan(0);
+    expect(event.outputTokens).toBeGreaterThan(0);
+    expect(event.cacheHitTokens).toBe(0);
+    expect(event.cacheMissTokens).toBe(event.inputTokens);
   });
 
   it("provider 请求异常同样留 missing", async () => {

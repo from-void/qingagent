@@ -87,6 +87,46 @@ describe("usageRoutes", () => {
     });
   });
 
+  it("估算 token 与金额单列，不混入 provider 实测金额", async () => {
+    mockCore.estimateCostCny
+      .mockReturnValueOnce(5.3297)
+      .mockReturnValueOnce(2.545);
+    mockCore.aggregateUsageByDay.mockResolvedValue([{
+      ...usageRow,
+      calls: 3,
+      estimatedInputTokens: 300,
+      estimatedOutputTokens: 80,
+      estimatedCacheHitTokens: 200,
+      estimatedCacheMissTokens: 100,
+      estimatedCalls: 1,
+      missingCalls: 1,
+      coverageRate: 1 / 3,
+    }]);
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/summary?view=day");
+    const body = await response.json() as {
+      rows: Array<{ costCny?: number; estimatedCostCny?: number }>;
+    };
+
+    expect(body.rows[0]).toMatchObject({
+      costCny: 5.3297,
+      estimatedCostCny: 2.545,
+    });
+    expect(mockCore.estimateCostCny).toHaveBeenNthCalledWith(1, usageRow.modelId, {
+      input: usageRow.inputTokens,
+      output: usageRow.outputTokens,
+      cacheHit: usageRow.cacheHitTokens,
+      cacheMiss: usageRow.cacheMissTokens,
+    });
+    expect(mockCore.estimateCostCny).toHaveBeenNthCalledWith(2, usageRow.modelId, {
+      input: 300,
+      output: 80,
+      cacheHit: 200,
+      cacheMiss: 100,
+    });
+  });
+
   it("拒绝无效的 IANA 时区", async () => {
     const app = await loadApp();
     const response = await app.request(

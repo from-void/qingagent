@@ -23,6 +23,7 @@ export function aggregateUsageRows(
   const knownCacheTotal = cacheHitTokens + cacheMissTokens;
   const calls = sum((row) => row.calls);
   const recordedCalls = sum((row) => row.recordedCalls);
+  const estimatedCalls = sum((row) => row.estimatedCalls ?? 0);
   const models = new Set(rows.map((row) => row.modelId));
   const pricedRows = rows.filter((row) => row.costCny !== undefined);
 
@@ -33,6 +34,10 @@ export function aggregateUsageRows(
     modelId: models.size === 1 ? rows[0]?.modelId ?? "" : "__multiple__",
     inputTokens: sum((row) => row.inputTokens),
     outputTokens: sum((row) => row.outputTokens),
+    estimatedInputTokens: sum((row) => row.estimatedInputTokens ?? 0),
+    estimatedOutputTokens: sum((row) => row.estimatedOutputTokens ?? 0),
+    estimatedCacheHitTokens: sum((row) => row.estimatedCacheHitTokens ?? 0),
+    estimatedCacheMissTokens: sum((row) => row.estimatedCacheMissTokens ?? 0),
     cacheHitTokens,
     cacheMissTokens,
     coldStartMissTokens,
@@ -40,10 +45,17 @@ export function aggregateUsageRows(
     cacheHitRate: knownCacheTotal > 0 ? cacheHitTokens / knownCacheTotal : null,
     calls,
     recordedCalls,
+    estimatedCalls,
     missingCalls: sum((row) => row.missingCalls),
     coverageRate: calls > 0 ? recordedCalls / calls : 0,
     ...(pricedRows.length > 0
-      ? { costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0) }
+      ? {
+          costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0),
+          estimatedCostCny: pricedRows.reduce(
+            (total, row) => total + (row.estimatedCostCny ?? 0),
+            0,
+          ),
+        }
       : {}),
   };
 }

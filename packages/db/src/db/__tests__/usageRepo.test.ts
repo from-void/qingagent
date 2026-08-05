@@ -24,6 +24,57 @@ afterEach(() => {
 });
 
 describe("usageRepo", () => {
+  it("estimated 单列聚合，不混入 recorded token 与精确覆盖率", async () => {
+    await recordUsageEvent({
+      sessionId: "session-estimated",
+      callSite: "writeDraft",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheHitTokens: 80,
+      cacheMissTokens: 20,
+    });
+    await recordUsageEvent({
+      sessionId: "session-estimated",
+      callSite: "writeDraft",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      usageState: "estimated" as never,
+      reason: "provider_request_aborted",
+      inputTokens: 70,
+      outputTokens: 10,
+      cacheHitTokens: 60,
+      cacheMissTokens: 10,
+    });
+    await recordUsageEvent({
+      sessionId: "session-estimated",
+      callSite: "writeDraft",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      usageState: "missing",
+      reason: "provider_usage_missing",
+    });
+
+    expect(await aggregateUsageTotal()).toEqual([
+      expect.objectContaining({
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheHitTokens: 80,
+        cacheMissTokens: 20,
+        estimatedInputTokens: 70,
+        estimatedOutputTokens: 10,
+        estimatedCacheHitTokens: 60,
+        estimatedCacheMissTokens: 10,
+        calls: 3,
+        recordedCalls: 1,
+        estimatedCalls: 1,
+        missingCalls: 1,
+        coverageRate: 1 / 3,
+      }),
+    ]);
+  });
+
   it("在临时 file db 上写入 usage 并按天/会话/总量聚合", async () => {
     await recordUsageEvent({
       sessionId: "session-a",

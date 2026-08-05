@@ -7,7 +7,7 @@ vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
 }));
 
-const { createUsageMiddleware } = await import("../llm/usageMiddleware.js");
+const { createUsageMiddleware, recordModelCallOutcome } = await import("../llm/usageMiddleware.js");
 
 function context(): RequestContext {
   return new RequestContext([
@@ -46,6 +46,35 @@ async function drain(stream: ReadableStream<unknown>): Promise<unknown[]> {
 
 describe("usage middleware", () => {
   beforeEach(() => recordUsageEventMock.mockClear());
+
+  it("有 reason 但 usage 计数完整时仍记 recorded 并保留 reason", async () => {
+    await recordModelCallOutcome({
+      sessionId: "session-reason-with-usage",
+      callSite: "webSearch",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      attempt: 1,
+      transport: "manual-api",
+      startedAt: Date.now(),
+      usage: {
+        inputTokens: 120,
+        outputTokens: 30,
+        promptCacheHitTokens: 100,
+        promptCacheMissTokens: 20,
+      },
+      reason: "provider_stream_error_part",
+    });
+
+    expect(recordUsageEventMock).toHaveBeenCalledOnce();
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "recorded",
+      reason: "provider_stream_error_part",
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheHitTokens: 100,
+      cacheMissTokens: 20,
+    }));
+  });
 
   it("wrapGenerate 从返回值记录 usage 与 Anthropic cache creation", async () => {
     const result = {

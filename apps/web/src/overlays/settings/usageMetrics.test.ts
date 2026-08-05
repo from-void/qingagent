@@ -63,4 +63,36 @@ describe("aggregateUsageRows", () => {
     });
     expect(effectiveCacheHitRate(summary)).toBe(1);
   });
+
+  it("估算用量与金额单列，精确覆盖率只认 provider 实测", () => {
+    const summary = aggregateUsageRows("S1", [
+      {
+        ...usageRow(40_000, 2_000, 2_000),
+        calls: 3,
+        estimatedInputTokens: 8_000,
+        estimatedOutputTokens: 900,
+        estimatedCacheHitTokens: 6_000,
+        estimatedCacheMissTokens: 2_000,
+        estimatedCalls: 1,
+        missingCalls: 1,
+        coverageRate: 1 / 3,
+        costCny: 5.3297,
+        estimatedCostCny: 2.545,
+      },
+    ]);
+
+    expect(summary).toMatchObject({
+      inputTokens: 42_000,
+      estimatedInputTokens: 8_000,
+      estimatedOutputTokens: 900,
+      estimatedCacheHitTokens: 6_000,
+      estimatedCacheMissTokens: 2_000,
+      recordedCalls: 1,
+      estimatedCalls: 1,
+      missingCalls: 1,
+      coverageRate: 1 / 3,
+      costCny: 5.3297,
+      estimatedCostCny: 2.545,
+    });
+  });
 });

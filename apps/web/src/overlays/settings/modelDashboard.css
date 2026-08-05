@@ -275,6 +275,27 @@
   color: var(--qj-header-sub);
   margin-bottom: 4px;
 }
+.qj-sheet-body .md-metric-scope {
+  margin: -1px 0 5px;
+  font-size: 9px;
+  line-height: 1.35;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .md-metric-value-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.qj-sheet-body .md-usage-coverage {
+  padding: 2px 5px;
+  border: 1px solid var(--qj-switch-border);
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: 0.03em;
+  color: var(--qj-switch-text);
+}
 .qj-sheet-body .md-metric-value {
   font-size: 15px;
   font-weight: 700;
@@ -290,6 +311,24 @@
   letter-spacing: 0.04em;
   color: var(--qj-header-sub);
   margin-top: 3px;
+}
+.qj-sheet-body .md-metric-estimated,
+.qj-sheet-body .md-metric-coverage-note {
+  margin-top: 3px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .md-metric-estimated {
+  color: var(--qj-switch-text);
+}
+.qj-sheet-body .md-cost-cell small {
+  display: block;
+  margin-top: 2px;
+  color: var(--qj-header-sub);
+  font-family: var(--font-zh-serif);
+  font-size: 9px;
+  white-space: nowrap;
 }
 .qj-sheet-body .md-metric-warn {
   display: inline-flex;

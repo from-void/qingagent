@@ -63,6 +63,16 @@ usageRoutes.get("/usage/summary", async (c) => {
                 cacheHit: row.cacheHitTokens,
                 cacheMiss: row.cacheMissTokens,
               }),
+              ...((row.estimatedCalls ?? 0) > 0
+                ? {
+                    estimatedCostCny: estimateCostCny(row.modelId, {
+                      input: row.estimatedInputTokens,
+                      output: row.estimatedOutputTokens,
+                      cacheHit: row.estimatedCacheHitTokens,
+                      cacheMiss: row.estimatedCacheMissTokens,
+                    }),
+                  }
+                : {}),
             }
           : {}),
       };

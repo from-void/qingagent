@@ -20,8 +20,8 @@ export interface UsageEventInput {
   cacheCreationTokens?: number;
   /** known 仅在 hit/miss 都由 provider 给出或可可靠推导时使用。 */
   cacheAccountingState?: "known" | "unknown";
-  /** recorded=provider 返回 usage；missing=真实请求发生但无法取得 usage。 */
-  usageState?: "recorded" | "missing";
+  /** recorded=provider 实测；estimated=按 prompt/delta 本地估算；missing=无法取得或估算。 */
+  usageState?: "recorded" | "estimated" | "missing";
   reason?: string | null;
   /** 并发赛马 lane；非赛马调用可为空。 */
   lane?: number | null;
@@ -34,14 +34,14 @@ function toCount(value: number | undefined): number {
 }
 
 /** 写一条 usage 事件;失败只 console.warn,绝不抛(主链优先)。
- *  正常事件 input/output 全 0 时跳过；missing 事件即使全零也保留，以统计覆盖率。 */
+ *  recorded 的 input/output 全 0 时跳过；estimated/missing 仍保留终态事实。 */
 export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
   const usageState = input.usageState ?? "recorded";
   const cacheAccountingState = input.cacheAccountingState ?? (
     input.cacheHitTokens !== undefined && input.cacheMissTokens !== undefined ? "known" : "unknown"
   );
   if (
-    usageState !== "missing" &&
+    usageState === "recorded" &&
     toCount(input.inputTokens) === 0 &&
     toCount(input.outputTokens) === 0
   ) return;
@@ -97,6 +97,11 @@ export interface UsageAggRow {
   modelId: string;
   inputTokens: number;
   outputTokens: number;
+  /** estimated 永不混入上面的 provider 实测 token。 */
+  estimatedInputTokens?: number;
+  estimatedOutputTokens?: number;
+  estimatedCacheHitTokens?: number;
+  estimatedCacheMissTokens?: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
   /** 每个会话 × 调用点 × 并发 lane 首次请求中可确知用于建缓存的 miss token。 */
@@ -106,12 +111,18 @@ export interface UsageAggRow {
   cacheHitRate: number | null;
   calls: number;
   recordedCalls: number;
+  estimatedCalls?: number;
   missingCalls: number;
-  /** 有 usage 的请求占全部真实请求比例；missing 计入分母但不计成本。 */
+  /** provider 实测请求占全部真实请求比例；estimated/missing 都不进入精确覆盖率。 */
   coverageRate: number;
 }
 
 function rowToAgg(row: Record<string, unknown>): UsageAggRow {
+  const estimatedCalls = Number(row.estimated_calls ?? 0);
+  const estimatedInputTokens = Number(row.estimated_input_tokens ?? 0);
+  const estimatedOutputTokens = Number(row.estimated_output_tokens ?? 0);
+  const estimatedCacheHitTokens = Number(row.estimated_cache_hit_tokens ?? 0);
+  const estimatedCacheMissTokens = Number(row.estimated_cache_miss_tokens ?? 0);
   return {
     bucket: String(row.bucket ?? ""),
     ...(row.session_id == null ? {} : { sessionId: String(row.session_id) }),
@@ -123,6 +134,15 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
     modelId: String(row.model_id ?? ""),
     inputTokens: Number(row.input_tokens ?? 0),
     outputTokens: Number(row.output_tokens ?? 0),
+    ...(estimatedCalls > 0 || estimatedInputTokens > 0 || estimatedOutputTokens > 0
+      ? {
+          estimatedInputTokens,
+          estimatedOutputTokens,
+          estimatedCacheHitTokens,
+          estimatedCacheMissTokens,
+          estimatedCalls,
+        }
+      : {}),
     cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
     cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
     coldStartMissTokens: Number(row.cold_start_miss_tokens ?? 0),
@@ -246,6 +266,11 @@ export async function aggregateUsageByDay(
       known_cache_total_tokens: 0,
       calls: 0,
       recorded_calls: 0,
+      estimated_input_tokens: 0,
+      estimated_output_tokens: 0,
+      estimated_cache_hit_tokens: 0,
+      estimated_cache_miss_tokens: 0,
+      estimated_calls: 0,
       missing_calls: 0,
     };
     aggregate.calls = Number(aggregate.calls) + 1;
@@ -273,6 +298,16 @@ export async function aggregateUsageByDay(
             Number(aggregate.cold_start_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
         }
       }
+    } else if (row.usage_state === "estimated") {
+      aggregate.estimated_calls = Number(aggregate.estimated_calls) + 1;
+      aggregate.estimated_input_tokens =
+        Number(aggregate.estimated_input_tokens) + Number(row.input_tokens ?? 0);
+      aggregate.estimated_output_tokens =
+        Number(aggregate.estimated_output_tokens) + Number(row.output_tokens ?? 0);
+      aggregate.estimated_cache_hit_tokens =
+        Number(aggregate.estimated_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
+      aggregate.estimated_cache_miss_tokens =
+        Number(aggregate.estimated_cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
     } else if (row.usage_state === "missing") {
       aggregate.missing_calls = Number(aggregate.missing_calls) + 1;
     }
@@ -315,6 +350,10 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
       SELECT usage.session_id AS bucket, usage.call_site, usage.model_id,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS estimated_input_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS estimated_output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS estimated_cache_hit_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS estimated_cache_miss_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded'
@@ -326,6 +365,7 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
           NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
         COUNT(*) AS calls,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
         SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
         MAX(usage.created_at) AS last_at
       FROM llm_usage_events usage
@@ -354,6 +394,10 @@ export async function aggregateUsageTotal(): Promise<UsageAggRow[]> {
       SELECT 'total' AS bucket, usage.call_site, usage.model_id,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS estimated_input_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS estimated_output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS estimated_cache_hit_tokens,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS estimated_cache_miss_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
         SUM(CASE WHEN usage.usage_state = 'recorded'
@@ -365,6 +409,7 @@ export async function aggregateUsageTotal(): Promise<UsageAggRow[]> {
           NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
         COUNT(*) AS calls,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+        SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
         SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
       FROM llm_usage_events usage
       INNER JOIN first_cache_requests first_cache

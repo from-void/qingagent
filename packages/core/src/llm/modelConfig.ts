@@ -44,6 +44,7 @@ import {
   createUsageMiddleware,
   logModelCallStart,
   recordModelCallOutcome,
+  type ModelCallUsageEstimate,
 } from "./usageMiddleware.js";
 import { modelFetch } from "./modelTransport.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
@@ -202,6 +203,8 @@ export async function readRawBranchResponse(
   onRawContentStart?: BranchCallInput["onRawContentStart"],
   /** liveTextDeltas 专用:每读到一个正文 delta 就立刻交出去,不等验真。见 BranchCallInput。 */
   onLiveDelta?: BranchCallInput["onTextDelta"],
+  /** 记账估算专用：逐块报告已收到的正文与思考文本，不向产品流透出。 */
+  onUsageDelta?: (delta: string) => void,
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
@@ -225,7 +228,9 @@ export async function readRawBranchResponse(
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
     await onActivity?.();
+    const reasoningLength = state.reasoning.length;
     const delta = extractRawChunk(await response.json(), state);
+    onUsageDelta?.(delta + state.reasoning.slice(reasoningLength));
     if (delta) {
       recordBufferedText(delta);
       const observedAt = Date.now();
@@ -248,7 +253,9 @@ export async function readRawBranchResponse(
       .join("\n")
       .trim();
     if (!data || data === "[DONE]") return;
+    const reasoningLength = state.reasoning.length;
     const delta = extractRawChunk(JSON.parse(data), state);
+    onUsageDelta?.(delta + state.reasoning.slice(reasoningLength));
     if (delta) {
       try {
         recordBufferedText(delta);
@@ -459,6 +466,7 @@ async function recordBranchUsage(
   reason: string | null,
   startedAt: number,
   finishReason?: string | null,
+  usageEstimate?: ModelCallUsageEstimate | null,
 ): Promise<void> {
   const { origin } = resolveModelAuth(input.requestContext);
   await recordModelCallOutcome({
@@ -472,6 +480,7 @@ async function recordBranchUsage(
     transport: "branch",
     startedAt,
     usage,
+    usageEstimate,
     reason,
     finishReason,
   });
@@ -560,6 +569,12 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。
     const t0 = Date.now();
     let tFirstDelta = 0;
+    let estimatedOutputText = "";
+    const abortUsageEstimate = (): ModelCallUsageEstimate => ({
+      cachedInputText: JSON.stringify(normalizedReplayMessages),
+      uncachedInputText: JSON.stringify(tail),
+      outputText: estimatedOutputText,
+    });
     logModelCallStart({
       requestContext: input.requestContext,
       sessionId: input.sessionSnapshot.sessionId,
@@ -614,6 +629,9 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
               await input.onTextDelta?.(delta, accumulated, observedAt);
             }
           : undefined,
+        (delta) => {
+          estimatedOutputText += delta;
+        },
       );
       if (raw.firstTextAt !== null) {
         tFirstDelta = raw.firstTextAt;
@@ -621,10 +639,27 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       }
       if (raw.providerError) {
         const error = streamErrorSummary(raw.providerError);
-        void recordBranchUsage(input, raw.usage, attempt, error, t0, raw.finishReason);
+        void recordBranchUsage(
+          input,
+          raw.usage,
+          attempt,
+          error,
+          t0,
+          raw.finishReason,
+          input.abortSignal?.aborted ? abortUsageEstimate() : null,
+        );
         return { ok: false, reason: "provider_error", attempts: 1, toolCallRetries: 0, error };
       }
-      void recordBranchUsage(input, raw.usage, attempt, null, t0, raw.finishReason);
+      const terminalReason = input.abortSignal?.aborted ? "provider_request_aborted" : null;
+      void recordBranchUsage(
+        input,
+        raw.usage,
+        attempt,
+        terminalReason,
+        t0,
+        raw.finishReason,
+        terminalReason ? abortUsageEstimate() : null,
+      );
       {
         const u = asRecord(raw.usage);
         console.log(
@@ -713,7 +748,15 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       const reason = input.abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")
         ? "provider_request_aborted"
         : "provider_request_error";
-      void recordBranchUsage(input, null, attempt, reason, t0);
+      void recordBranchUsage(
+        input,
+        null,
+        attempt,
+        reason,
+        t0,
+        null,
+        reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+      );
       return {
         ok: false,
         reason: "provider_error",

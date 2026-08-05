@@ -1,4 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
+import { TokenCounter } from "@mastra/memory/processors";
 import type { LanguageModelMiddleware } from "ai-v5";
 import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelTypes.js";
@@ -18,6 +19,18 @@ export interface UsageMiddlewareOptions {
   lane?: number | null;
   attempt?: number;
 }
+
+/** provider 未返回 usage 时，仅用实际发送/收到的文本做本地估算。 */
+export interface ModelCallUsageEstimate {
+  /** 可复用的快照前缀；仅表示估算缓存命中，不冒充 provider 实测。 */
+  cachedInputText?: string;
+  /** 本次新增 prompt；按估算缓存未命中计。 */
+  uncachedInputText?: string;
+  /** 中止前已收到的正文、思考或工具结果 delta。 */
+  outputText?: string;
+}
+
+const usageTokenCounter = new TokenCounter();
 
 function hasUsageCounts(counts: ReturnType<typeof normalizeLlmUsageCounts>): boolean {
   return !!counts && Object.values(counts).some((value) => typeof value === "number");
@@ -43,9 +56,27 @@ export interface ModelCallOutcomeOptions {
   transport: ModelCallTransport;
   startedAt: number;
   usage: unknown;
+  usageEstimate?: ModelCallUsageEstimate | null;
   providerMetadata?: unknown;
   reason?: string | null;
   finishReason?: string | null;
+}
+
+function estimateUsageCounts(
+  estimate: ModelCallUsageEstimate | null | undefined,
+): ReturnType<typeof normalizeLlmUsageCounts> {
+  if (!estimate) return null;
+  const promptCacheHitTokens = usageTokenCounter.countString(estimate.cachedInputText ?? "");
+  const promptCacheMissTokens = usageTokenCounter.countString(estimate.uncachedInputText ?? "");
+  const outputTokens = usageTokenCounter.countString(estimate.outputText ?? "");
+  const inputTokens = promptCacheHitTokens + promptCacheMissTokens;
+  if (inputTokens === 0 && outputTokens === 0) return null;
+  return {
+    inputTokens,
+    outputTokens,
+    promptCacheHitTokens,
+    promptCacheMissTokens,
+  };
 }
 
 interface ModelCallContext {
@@ -121,16 +152,20 @@ export async function recordModelCallOutcome(
       ? { ...usageRecord, providerMetadata: options.providerMetadata }
       : options.usage,
   );
-  const missing = Boolean(options.reason) || !hasUsageCounts(normalized);
+  const recorded = hasUsageCounts(normalized);
+  const estimated = recorded ? null : estimateUsageCounts(options.usageEstimate);
+  const missing = !recorded && !hasUsageCounts(estimated);
+  const usageState = recorded ? "recorded" : estimated ? "estimated" : "missing";
   const reason = options.reason ?? (missing ? "provider_usage_missing" : null);
-  const hitTokens = normalized?.promptCacheHitTokens;
-  const missTokens = normalized?.promptCacheMissTokens;
+  const counts = recorded ? normalized : estimated;
+  const hitTokens = counts?.promptCacheHitTokens;
+  const missTokens = counts?.promptCacheMissTokens;
   const cacheSummary =
     typeof hitTokens === "number" && typeof missTokens === "number"
-      ? ` hit/miss=${hitTokens}/${missTokens}`
+      ? ` hit/miss=${hitTokens}/${missTokens} usage=${usageState}`
       : missing
         ? ` hit/miss=?/? usage=missing reason=${reason}`
-        : " hit/miss=?/?";
+        : ` hit/miss=?/? usage=${usageState}`;
   console.info(
     `${modelCallLogPrefix(options)} done${cacheSummary}` +
       ` latency=${Math.max(0, Date.now() - options.startedAt)}ms` +
@@ -138,7 +173,7 @@ export async function recordModelCallOutcome(
   );
 
   try {
-    if (!missing && typeof hitTokens === "number" && typeof missTokens === "number") {
+    if (recorded && typeof hitTokens === "number" && typeof missTokens === "number") {
       void observeCacheOutcome({
         sessionId: context.sessionId,
         callSite: options.callSite,
@@ -168,11 +203,16 @@ export async function recordModelCallOutcome(
       keyOrigin: options.keyOrigin,
       lane: options.lane ?? null,
       attempt: options.attempt,
-      inputTokens: normalized?.inputTokens,
-      outputTokens: normalized?.outputTokens,
+      inputTokens: counts?.inputTokens,
+      outputTokens: counts?.outputTokens,
       cacheHitTokens: hitTokens,
       cacheMissTokens: missTokens,
-      cacheCreationTokens: normalized?.promptCacheCreationTokens,
+      cacheCreationTokens: counts?.promptCacheCreationTokens,
+      cacheAccountingState: typeof hitTokens === "number" && typeof missTokens === "number"
+        ? "known"
+        : "unknown",
+      usageState,
+      reason,
     });
   } catch (error) {
     // 观测链路永远旁路，不得改变 provider 请求结果。

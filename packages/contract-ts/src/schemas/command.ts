@@ -112,6 +112,7 @@ const actionCardDataSchema = z.object({
     label: z.string().max(MAX_COMMAND_STRING_LENGTH),
     value: z.string().max(MAX_COMMAND_STRING_LENGTH),
   })).max(MAX_COMMAND_ARRAY_LENGTH),
+  status: z.enum(["running", "done", "aborted", "failed"]).optional(),
 }) satisfies z.ZodType<ActionCardData>;
 
 const reviewTypeSchema = z.enum([

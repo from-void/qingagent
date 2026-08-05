@@ -297,6 +297,14 @@ function workspaceReducerMut(
       drainAppendQueueMut(draft, action.data.messageId, [action]);
       reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
+    case "actionCardUpdated": {
+      const message = draft.messages.find((item) => item.id === action.data.messageId);
+      if (!message) return;
+      const partIndex = message.parts.findIndex((part) => part.kind === "actionCard");
+      if (partIndex < 0) return;
+      message.parts[partIndex] = { kind: "actionCard", data: action.data.card };
+      return;
+    }
     case "toolCallUpdated": {
       // 这条 update 之前该 toolCall 的旧态——既要看 toolCalls 缓存(流式 running/pending 进来的),
       // 也要看 chatHistory(冷恢复 / 历史卡只在 messages 里)。乐观清浮层要判它是否就是当前开着的那张卡。

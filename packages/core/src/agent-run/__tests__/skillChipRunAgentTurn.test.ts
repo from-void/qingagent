@@ -153,13 +153,20 @@ describe("runAgentTurn skill chip context injection", () => {
     const { runAgentTurn } = await import("../runAgentTurn.js");
     const state = createSession("sess-custom-review-tools");
 
-    await collectFrames(runAgentTurn(
+    const frames = await collectFrames(runAgentTurn(
       state,
       "对当前文档做自定义审查。",
       [],
       [],
       [],
-      null,
+      [{
+        kind: "actionCard",
+        data: {
+          title: "自定义审查",
+          lines: [{ label: "模板", value: "对外发布" }],
+          status: "running",
+        },
+      }],
       "m-user-custom-review",
       undefined,
       {
@@ -182,6 +189,17 @@ describe("runAgentTurn skill chip context injection", () => {
       type: "custom",
       templateId: "review-custom-publish",
       templateName: "对外发布",
+    });
+    expect(frames).toContainEqual({
+      kind: "actionCardUpdated",
+      data: {
+        messageId: "m-user-custom-review",
+        card: {
+          title: "自定义审查",
+          lines: [{ label: "模板", value: "对外发布" }],
+          status: "done",
+        },
+      },
     });
   }, 15_000);
 });

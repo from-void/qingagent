@@ -8,7 +8,7 @@ import {
   type HandleCommandFn,
 } from "../sessionActor";
 
-function sendMessage(text: string): Command {
+function sendMessage(text: string): Extract<Command, { kind: "sendMessage" }> {
   return {
     kind: "sendMessage",
     data: {
@@ -18,6 +18,25 @@ function sendMessage(text: string): Command {
       skills: [],
       chips: [],
       fileIds: [],
+    },
+  };
+}
+
+function sendReview(text = "开始一致性审查"): Command {
+  return {
+    ...sendMessage(text),
+    data: {
+      ...sendMessage(text).data,
+      displayCard: {
+        title: "一致性审查",
+        lines: [{ label: "模板", value: "全面自洽核查" }],
+        status: "running",
+      },
+      reviewContext: {
+        type: "consistency",
+        templateId: "review-consistency-default",
+        templateName: "全面自洽核查",
+      },
     },
   };
 }
@@ -522,6 +541,63 @@ describe("SessionActor", () => {
 });
 
 describe("SessionActor 受保护工作", () => {
+  it("审查中收到追问时不抢占，追问排队到审查真实收口且不冒充接管轮", async () => {
+    const log = new InMemoryFrameLog();
+    const order: string[] = [];
+    const preemptionReasons: Array<string | undefined> = [];
+    let reviewStarted!: () => void;
+    const reviewStartedPromise = new Promise<void>((resolve) => { reviewStarted = resolve; });
+    let releaseReview!: () => void;
+    const reviewReleasePromise = new Promise<void>((resolve) => { releaseReview = resolve; });
+    const abortSession = vi.fn();
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* (
+        command,
+        _trace,
+        _origin,
+        _overrides,
+        _client,
+        _sessionId,
+        _abortSignal,
+        preemptionReason,
+      ) {
+        if (command.kind !== "sendMessage") return;
+        preemptionReasons.push(preemptionReason);
+        order.push(`${command.data.text}:start`);
+        if (command.data.reviewContext) {
+          reviewStarted();
+          await reviewReleasePromise;
+        }
+        order.push(`${command.data.text}:end`);
+        yield meta(command.data.text);
+      },
+      abortSession,
+      hasProtectedWork: (_sessionId, activeCommand) =>
+        activeCommand?.kind === "sendMessage" && activeCommand.data.reviewContext !== undefined,
+    });
+
+    const review = actor.enqueue({ command: sendReview() });
+    await reviewStartedPromise;
+    const followup = actor.enqueue({ command: sendMessage("审查到哪了？") });
+
+    expect(abortSession).not.toHaveBeenCalled();
+    expect(order).toEqual(["开始一致性审查:start"]);
+
+    releaseReview();
+    await Promise.all([review, followup]);
+
+    expect(order).toEqual([
+      "开始一致性审查:start",
+      "开始一致性审查:end",
+      "审查到哪了？:start",
+      "审查到哪了？:end",
+    ]);
+    // 排队追问不是抢占接管轮，不能拿到“上一轮已中断”的虚假上下文。
+    expect(preemptionReasons).toEqual([undefined, undefined]);
+  });
+
   it("用户已确认、正在执行的命令不被新消息抢占,新消息排队等它收口", async () => {
     const log = new InMemoryFrameLog();
     let started!: () => void;

@@ -143,6 +143,7 @@ import {
   buildActiveDocumentTurnContext,
 } from "./activeDocumentContext.js";
 import { ACTIVE_DERIVATIVE_DOC_ID_REQUEST_CONTEXT_KEY } from "../utils/activeDerivativeTarget.js";
+import { settleReviewActionCard } from "./reviewTurnSettlement.js";
 
 const logger = mastra.getLogger();
 const AGENT_TURN_FAILED_MESSAGE = "本轮处理失败，请稍后重试。";
@@ -274,6 +275,7 @@ export async function* runAgentTurn(
   let turnRequestContext: RequestContext | undefined;
   let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
   let omTurnStartMessageIndex = state.messages.length;
+  let reviewActionCardMessageId: string | null = null;
   const agentMessageId = newId();
 
   try {
@@ -555,6 +557,12 @@ export async function* runAgentTurn(
     chips: chips.length > 0 ? chips : null,
   };
   state.chatHistory.push(userChatMessage);
+  if (
+    reviewContext &&
+    userChatMessage.parts.some((part) => part.kind === "actionCard")
+  ) {
+    reviewActionCardMessageId = userChatMessage.id;
+  }
   yield chatMessageAdded(userChatMessage);
 
   const agentMessage: ChatMessage = {
@@ -1042,6 +1050,15 @@ export async function* runAgentTurn(
       sessionWorkspaceLease?.release();
       if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
         turnOutcome = "cancelled";
+      }
+      if (reviewContext && reviewActionCardMessageId) {
+        const reviewSettlementFrame = settleReviewActionCard(
+          state,
+          reviewActionCardMessageId,
+          reviewContext,
+          turnOutcome,
+        );
+        if (reviewSettlementFrame) finalFrames.push(reviewSettlementFrame);
       }
       console.info(formatTurnLog("end", {
         session: state.sessionId,

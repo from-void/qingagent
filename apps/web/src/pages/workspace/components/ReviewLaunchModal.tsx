@@ -127,6 +127,7 @@ export function buildReviewActionCard(
       { label: "模板", value: templateName },
       ...(supplement.trim() ? [{ label: "补充", value: oneLine(supplement) }] : []),
     ],
+    status: "running",
   };
 }
 

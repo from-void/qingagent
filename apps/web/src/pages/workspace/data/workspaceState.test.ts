@@ -536,6 +536,42 @@ describe("annotationGroupsReady 来源增量", () => {
     });
   });
 
+  it("actionCardUpdated 把审查卡的假勾收敛为审查已中止", () => {
+    const message: ChatMessage = {
+      id: "review-action",
+      role: { kind: "user" },
+      ts: "2026-08-05T10:00:00.000Z",
+      parts: [{
+        kind: "actionCard",
+        data: {
+          title: "一致性审查",
+          lines: [{ label: "模板", value: "全面自洽核查" }],
+          status: "running",
+        },
+      }],
+      chips: null,
+    };
+    const next = reduce(
+      { kind: "chatMessageAdded", data: { message } },
+      {
+        kind: "actionCardUpdated",
+        data: {
+          messageId: message.id,
+          card: {
+            title: "一致性审查",
+            lines: [{ label: "模板", value: "全面自洽核查" }],
+            status: "aborted",
+          },
+        },
+      },
+    );
+
+    expect(next.messages[0]?.parts[0]).toMatchObject({
+      kind: "actionCard",
+      data: { status: "aborted" },
+    });
+  });
+
   describe("toolCallUpdated", () => {
     it("replaces tool-call snapshot + mirrors into message.parts", () => {
       const seeded = reduce(

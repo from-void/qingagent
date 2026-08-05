@@ -572,7 +572,7 @@ describe("ReviewLaunchModal", () => {
     expect(query).toContain(template.prompt);
     expect(query).toBe(assembleReviewQuery("source", template, "重点核对月活"));
     expect(query).toContain("文档级补充要求（只适用于当前文档）：重点核对月活");
-    expect(card).toEqual({ title: "来源核查（仅对照已关联素材）", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }] });
+    expect(card).toEqual({ title: "来源核查（仅对照已关联素材）", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }], status: "running" });
     expect(reviewContext).toEqual({ type: "source", templateId: "source-default", templateName: "标准来源核查" });
     expect(JSON.stringify(card)).not.toContain(template.prompt);
 

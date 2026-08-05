@@ -547,6 +547,12 @@ function checkMessagePart(p: MessagePart): void {
     case "actionCard":
       if (typeof p.data.title !== "string") fail(`actionCard.title must be a string`);
       if (!Array.isArray(p.data.lines)) fail(`actionCard.lines must be an array`);
+      if (
+        p.data.status !== undefined &&
+        !["running", "done", "aborted", "failed"].includes(p.data.status)
+      ) {
+        fail(`actionCard.status is invalid`);
+      }
       for (const line of p.data.lines) {
         if (typeof line.label !== "string" || typeof line.value !== "string") {
           fail(`actionCard.lines[] must contain string label/value`);
@@ -894,6 +900,12 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       if (!frame.data.messageId)
         fail(`ChatMessageAppended.messageId must be non-empty`);
       checkMessagePart(frame.data.part);
+      return;
+    case "actionCardUpdated":
+      if (!frame.data.messageId) {
+        fail(`ActionCardUpdated.messageId must be non-empty`);
+      }
+      checkMessagePart({ kind: "actionCard", data: frame.data.card });
       return;
     case "toolCallUpdated":
       if (!frame.data.messageId)

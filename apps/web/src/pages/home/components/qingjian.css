@@ -1753,21 +1753,12 @@ transform 平移内层) */
   color: var(--qj-switch-text);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(9px);
-  transform: translateY(140%) scale(0.85);
-  opacity: 0;
-  pointer-events: none;
-  /* visibility 同步切换:隐藏态彻底退出可访问性树,避免读屏/自动化命中隐形按钮 */
-  visibility: hidden;
-  transition: transform 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.42s ease,
-    visibility 0s linear 0.42s, border-color 0.25s, background 0.25s;
-}
-.qj-new-fab.qj-show {
   transform: translateY(0) scale(1);
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
   transition: transform 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.42s ease,
-    visibility 0s, border-color 0.25s, background 0.25s;
+    border-color 0.25s, background 0.25s;
 }
 .qj-new-fab:hover,
 .qj-new-fab:focus-visible {

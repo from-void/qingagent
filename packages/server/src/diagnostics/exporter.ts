@@ -24,7 +24,7 @@ const MAX_REPORT_BYTES = 128 * 1024;
 export interface BuildDiagnosticsZipOptions {
   privacyLevel: "L1" | "L2";
   report?: string;
-  /** 用户在「报bug」里勾选的具体文档(会话)id;不传则回退到最近 FRAMELOG_SESSIONS 个会话。 */
+  /** 用户在「报bug」里勾选的具体文档(会话)id;L2 不传有效 id 时不导出正文型 span/framelog。 */
   sessionIds?: string[];
 }
 
@@ -38,12 +38,19 @@ export async function buildDiagnosticsZip(
 ): Promise<{ buffer: Buffer; manifest: DiagManifest; filename: string }> {
   const createdAt = new Date();
   const logsDir = process.env.QINGAGENT_LOG_DIR;
+  const hasPickedSession = (opts.sessionIds ?? []).some((id) => typeof id === "string" && id.length > 0);
+  const frameLogMaxSessions = opts.privacyLevel === "L2" && !hasPickedSession ? 0 : FRAMELOG_SESSIONS;
   const [envSnapshot, settingsSnapshot, logs, spans, frameLogs] = await Promise.all([
     Promise.resolve(collectEnvSnapshot()),
     collectSettingsSnapshot(),
     collectLogs(logsDir, LOGS_DAYS),
-    collectSpans({ logsDir, spanDays: SPAN_DAYS, privacyLevel: opts.privacyLevel }),
-    collectFrameLogs(opts.privacyLevel, { maxSessions: FRAMELOG_SESSIONS, sessionIds: opts.sessionIds }),
+    collectSpans({
+      logsDir,
+      spanDays: SPAN_DAYS,
+      privacyLevel: opts.privacyLevel,
+      sessionIds: opts.sessionIds,
+    }),
+    collectFrameLogs(opts.privacyLevel, { maxSessions: frameLogMaxSessions, sessionIds: opts.sessionIds }),
   ]);
 
   const report = truncateReport(buildReportWithErrorSummary(redactDiagnosticText(opts.report ?? ""), logs));

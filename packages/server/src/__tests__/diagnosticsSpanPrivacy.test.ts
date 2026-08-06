@@ -57,7 +57,7 @@ describe("diagnostics L1 span privacy", () => {
     expect(JSON.stringify(l1)).not.toContain("山水");
     expect(l1[0]?.output?.summary).toMatch(/^\[redacted:len=\d+\]$/);
 
-    const l2 = await collectSpans({ logsDir: dir, privacyLevel: "L2" });
+    const l2 = await collectSpans({ logsDir: dir, privacyLevel: "L2", sessionIds: ["s1"] });
     expect(l2).toHaveLength(1);
     expect(l2[0]?.output?.summary).toContain("山水");
   });

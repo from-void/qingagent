@@ -19,7 +19,7 @@ export const diagnosticsRoutes = new Hono();
 const diagnosticsExportBodySchema = z.object({
   privacyLevel: z.enum(["L1", "L2"]),
   report: z.string().max(200_000).optional(),
-  // 用户在「报bug」勾选的具体文档(会话)id;上限 200 防滥用,缺省回退最近会话。
+  // 用户在「报bug」勾选的具体文档(会话)id;上限 200 防滥用。L2 缺省时正文型 span/framelog 为空。
   sessionIds: z.array(z.string().max(200)).max(200).optional(),
 });
 

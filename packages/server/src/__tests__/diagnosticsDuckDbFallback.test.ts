@@ -29,6 +29,7 @@ describe("diagnostics DuckDB fallback", () => {
       logsDir,
       duckdbPath: invalidDuckDbPath,
       privacyLevel: "L2",
+      sessionIds: ["s1"],
     })).resolves.toEqual([]);
 
     const oldLogsDir = process.env.QINGAGENT_LOG_DIR;
@@ -60,9 +61,59 @@ describe("diagnostics DuckDB fallback", () => {
       db: { getConnection, closeConnection },
     });
 
-    await expect(collectSpans({ duckdbPath, privacyLevel: "L2" })).resolves.toEqual([]);
+    await expect(collectSpans({
+      duckdbPath,
+      privacyLevel: "L2",
+      sessionIds: ["s1"],
+    })).resolves.toEqual([]);
 
     expect(getConnection).toHaveBeenCalledTimes(1);
     expect(closeConnection).toHaveBeenCalledWith(connection);
   });
+
+  it("DuckDB 路径同样只保留勾选会话并排除已删除会话", async () => {
+    const duckdbPath = path.join(tmpdir(), `diag-runtime-scope-${crypto.randomUUID()}.duckdb`);
+    const closeConnection = vi.fn();
+    const connection: ObservabilityDuckDbConnection = {
+      runAndReadAll: vi.fn(async () => ({
+        getRowObjects: () => [
+          duckRow("picked", "s-picked", "勾选会话正文"),
+          duckRow("deleted", "s-deleted", "已删除会话正文"),
+        ],
+      })),
+    };
+    registerObservabilityStore(duckdbPath, {
+      db: { getConnection: vi.fn(async () => connection), closeConnection },
+    });
+
+    const spans = await collectSpans({
+      duckdbPath,
+      privacyLevel: "L2",
+      sessionIds: ["s-picked"],
+    });
+
+    expect(spans.map((span) => span.sessionId)).toEqual(["s-picked"]);
+    expect(JSON.stringify(spans)).toContain("勾选会话正文");
+    expect(JSON.stringify(spans)).not.toContain("已删除会话正文");
+    expect(closeConnection).toHaveBeenCalledWith(connection);
+  });
 });
+
+function duckRow(id: string, sessionId: string, output: string): Record<string, unknown> {
+  return {
+    traceId: `trace-${id}`,
+    spanId: `span-${id}`,
+    parentSpanId: null,
+    name: "llm_response",
+    spanType: "generic",
+    startedAt: new Date(),
+    endedAt: new Date(),
+    sessionId,
+    requestContext: null,
+    attributes: null,
+    metadata: null,
+    input: null,
+    output: JSON.stringify(output),
+    error: null,
+  };
+}

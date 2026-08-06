@@ -80,11 +80,17 @@ export async function collectSpans(options: {
   spanDays?: number;
   duckdbPath?: string;
   privacyLevel?: "L1" | "L2";
+  sessionIds?: string[];
 } = {}): Promise<DiagSpan[]> {
   const logsDir = options.logsDir ?? process.env.QINGAGENT_LOG_DIR;
   const spanDays = options.spanDays ?? 7;
   const privacyLevel = options.privacyLevel ?? "L1";
-  const spans = await collectSpansRaw(logsDir, spanDays, options.duckdbPath);
+  const pickedSessionIds = normalizeSessionIds(options.sessionIds);
+  // L2 的正文授权范围只能来自用户明确勾选；空范围绝不能解释成全量会话。
+  if (privacyLevel === "L2" && pickedSessionIds.length === 0) return [];
+  // L1 继续保留原有全量结构信号，只做既有正文投影；本次范围授权只约束可带正文的 L2。
+  const sessionIds = privacyLevel === "L2" ? new Set(pickedSessionIds) : undefined;
+  const spans = await collectSpansRaw(logsDir, spanDays, options.duckdbPath, sessionIds);
   // PRD F1 验收铁律:L1 包不得含文档正文/对话内容。span 的 input/output summary
   // 本地就是截断原文(最多 4KB),L1 时必须整体置换为占位,只保留长度与结构信号。
   return privacyLevel === "L1" ? spans.map(applyL1SpanPrivacy) : spans;
@@ -94,9 +100,10 @@ async function collectSpansRaw(
   logsDir: string | null | undefined,
   spanDays: number,
   duckdbPathOverride?: string,
+  sessionIds?: ReadonlySet<string>,
 ): Promise<DiagSpan[]> {
   if (logsDir) {
-    const jsonlSpans = await collectSpansFromJsonl(logsDir, spanDays);
+    const jsonlSpans = await collectSpansFromJsonl(logsDir, spanDays, sessionIds);
     if (jsonlSpans.length > 0) return jsonlSpans;
   }
   if (process.env.QINGAGENT_RUNTIME === "desktop") return [];
@@ -104,10 +111,10 @@ async function collectSpansRaw(
   const duckdbPath = duckdbPathOverride ?? process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb";
   const runtimeStore = getObservabilityStore(duckdbPath);
   if (runtimeStore) {
-    return collectSpansFromDuckDb(duckdbPath, spanDays, runtimeStore);
+    return collectSpansFromDuckDb(duckdbPath, spanDays, runtimeStore, sessionIds);
   }
   if (!(await fileExists(duckdbPath))) return [];
-  return collectSpansFromDuckDb(duckdbPath, spanDays);
+  return collectSpansFromDuckDb(duckdbPath, spanDays, undefined, sessionIds);
 }
 
 /** L1 隐私:input/output 的截断原文替换为 [redacted:len=N],保留 bytes/truncated/usage。 */
@@ -211,7 +218,11 @@ async function collectRestoreFrameLogEntries(
   }
 }
 
-async function collectSpansFromJsonl(logsDir: string, spanDays: number): Promise<DiagSpan[]> {
+async function collectSpansFromJsonl(
+  logsDir: string,
+  spanDays: number,
+  sessionIds?: ReadonlySet<string>,
+): Promise<DiagSpan[]> {
   const cutoff = Date.now() - Math.max(0, spanDays) * DAY_MS;
   const files = await listMatchingFiles(logsDir, SPAN_FILE_RE, cutoff);
   const spans: DiagSpan[] = [];
@@ -222,7 +233,7 @@ async function collectSpansFromJsonl(logsDir: string, spanDays: number): Promise
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line) as unknown;
-          if (isDiagSpanLike(parsed)) {
+          if (isDiagSpanLike(parsed) && spanMatchesSessionIds(parsed, sessionIds)) {
             spans.push(redactValueDeep(parsed) as DiagSpan);
           }
         } catch {
@@ -240,6 +251,7 @@ async function collectSpansFromDuckDb(
   duckdbPath: string,
   spanDays: number,
   runtimeStore?: ObservabilityDuckDbStore,
+  sessionIds?: ReadonlySet<string>,
 ): Promise<DiagSpan[]> {
   let store: DuckDbStoreLike | null = runtimeStore ?? null;
   let connection: ObservabilityDuckDbConnection | null = null;
@@ -257,6 +269,7 @@ async function collectSpansFromDuckDb(
     return rows.getRowObjects()
       .map(rowToDuckSpanRow)
       .filter((row): row is DuckSpanRow => row !== null)
+      .filter((row) => duckSpanMatchesSessionIds(row, sessionIds))
       .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
       .map(duckSpanMapper());
   } catch (error) {
@@ -736,6 +749,25 @@ function isDiagSpanLike(value: unknown): value is DiagSpan {
     typeof record.traceId === "string" &&
     typeof record.name === "string" &&
     typeof record.layer === "string";
+}
+
+function normalizeSessionIds(sessionIds: string[] | undefined): string[] {
+  return Array.from(new Set(
+    (sessionIds ?? []).filter((id) => typeof id === "string" && id.length > 0),
+  ));
+}
+
+function spanMatchesSessionIds(span: DiagSpan, sessionIds: ReadonlySet<string> | undefined): boolean {
+  return sessionIds === undefined || (typeof span.sessionId === "string" && sessionIds.has(span.sessionId));
+}
+
+function duckSpanMatchesSessionIds(
+  row: DuckSpanRow,
+  sessionIds: ReadonlySet<string> | undefined,
+): boolean {
+  if (sessionIds === undefined) return true;
+  const sessionId = row.sessionId ?? stringValue(recordValue(jsonValue(row.requestContext))?.sessionId);
+  return typeof sessionId === "string" && sessionIds.has(sessionId);
 }
 
 async function fileExists(filePath: string): Promise<boolean> {

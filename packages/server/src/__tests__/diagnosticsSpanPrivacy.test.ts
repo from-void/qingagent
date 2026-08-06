@@ -52,7 +52,7 @@ describe("diagnostics L1 span privacy", () => {
       "utf8",
     );
 
-    const l1 = await collectSpans({ logsDir: dir, privacyLevel: "L1" });
+    const l1 = await collectSpans({ logsDir: dir, privacyLevel: "L1", sessionIds: ["s1"] });
     expect(l1).toHaveLength(1);
     expect(JSON.stringify(l1)).not.toContain("山水");
     expect(l1[0]?.output?.summary).toMatch(/^\[redacted:len=\d+\]$/);

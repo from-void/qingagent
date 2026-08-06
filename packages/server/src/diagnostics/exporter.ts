@@ -24,7 +24,7 @@ const MAX_REPORT_BYTES = 128 * 1024;
 export interface BuildDiagnosticsZipOptions {
   privacyLevel: "L1" | "L2";
   report?: string;
-  /** 用户在「报bug」里勾选的具体文档(会话)id;L2 不传有效 id 时不导出正文型 span/framelog。 */
+  /** 用户在「报bug」里勾选的具体文档(会话)id;约束 logs/spans，L2 空范围不导出正文型数据。 */
   sessionIds?: string[];
 }
 
@@ -43,7 +43,11 @@ export async function buildDiagnosticsZip(
   const [envSnapshot, settingsSnapshot, logs, spans, frameLogs] = await Promise.all([
     Promise.resolve(collectEnvSnapshot()),
     collectSettingsSnapshot(),
-    collectLogs(logsDir, LOGS_DAYS),
+    collectLogs(logsDir, {
+      days: LOGS_DAYS,
+      privacyLevel: opts.privacyLevel,
+      sessionIds: opts.sessionIds,
+    }),
     collectSpans({
       logsDir,
       spanDays: SPAN_DAYS,

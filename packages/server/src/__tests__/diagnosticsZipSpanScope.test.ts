@@ -62,6 +62,49 @@ describe("diagnostics zip span scope", () => {
     expect(spansJsonl).not.toContain("未勾选文档正文");
     expect(spansJsonl).not.toContain("已删除稿件正文");
   });
+
+  it("L1 包的 logs 不含 messagePreview 类原文字段，spans 不含已删会话记录", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "diag-zip-l1-scope-"));
+    dirs.push(dir);
+    process.env.QINGAGENT_LOG_DIR = dir;
+    process.env.QINGAGENT_RUNTIME = "desktop";
+    const day = new Date().toISOString().slice(0, 10);
+    await writeFile(
+      path.join(dir, `main-${day}.log`),
+      [
+        `[${new Date().toISOString()}] [INFO] runAgentTurn started {`,
+        "  sessionId: 's-picked',",
+        "  messagePreview: '不应进入 L1 包的用户消息',",
+        "}",
+        `[${new Date().toISOString()}] [INFO] runAgentTurn started {`,
+        "  sessionId: 's-deleted',",
+        "  messagePreview: '已删会话用户消息',",
+        "}",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(dir, `spans-${day}.jsonl`),
+      `${[
+        makeSpan("s-picked", "勾选文档正文"),
+        makeSpan("s-deleted", "已删除稿件正文"),
+      ].map((span) => JSON.stringify(span)).join("\n")}\n`,
+      "utf8",
+    );
+
+    const result = await buildDiagnosticsZip({ privacyLevel: "L1", sessionIds: ["s-picked"] });
+    const zip = await JSZip.loadAsync(result.buffer);
+    const mainLog = await zip.file(`logs/main-${day}.log`)!.async("string");
+    const spansJsonl = await zip.file("spans.jsonl")!.async("string");
+
+    expect(mainLog).toContain("messagePreview: '[redacted]'");
+    expect(mainLog).not.toContain("不应进入 L1 包的用户消息");
+    expect(mainLog).not.toContain("s-deleted");
+    expect(mainLog).not.toContain("已删会话用户消息");
+    expect(spansJsonl).toContain("s-picked");
+    expect(spansJsonl).not.toContain("s-deleted");
+    expect(spansJsonl).not.toContain("勾选文档正文");
+  });
 });
 
 function makeSpan(sessionId: string, summary: string): DiagSpan {

@@ -97,9 +97,37 @@ describe("diagnostics DuckDB fallback", () => {
     expect(JSON.stringify(spans)).not.toContain("已删除会话正文");
     expect(closeConnection).toHaveBeenCalledWith(connection);
   });
+
+  it("DuckDB 的 L1 保留勾选与全局结构 span，排除已删除会话", async () => {
+    const duckdbPath = path.join(tmpdir(), `diag-runtime-l1-scope-${crypto.randomUUID()}.duckdb`);
+    const closeConnection = vi.fn();
+    const connection: ObservabilityDuckDbConnection = {
+      runAndReadAll: vi.fn(async () => ({
+        getRowObjects: () => [
+          duckRow("picked", "s-picked", "勾选会话正文"),
+          duckRow("deleted", "s-deleted", "已删除会话正文"),
+          duckRow("global", null, "全局诊断载荷"),
+        ],
+      })),
+    };
+    registerObservabilityStore(duckdbPath, {
+      db: { getConnection: vi.fn(async () => connection), closeConnection },
+    });
+
+    const spans = await collectSpans({
+      duckdbPath,
+      privacyLevel: "L1",
+      sessionIds: ["s-picked"],
+    });
+
+    expect(spans.map((span) => span.sessionId)).toEqual(["s-picked", null]);
+    expect(JSON.stringify(spans)).not.toContain("已删除会话正文");
+    expect(spans.every((span) => span.output?.summary.startsWith("[redacted:len="))).toBe(true);
+    expect(closeConnection).toHaveBeenCalledWith(connection);
+  });
 });
 
-function duckRow(id: string, sessionId: string, output: string): Record<string, unknown> {
+function duckRow(id: string, sessionId: string | null, output: string): Record<string, unknown> {
   return {
     traceId: `trace-${id}`,
     spanId: `span-${id}`,

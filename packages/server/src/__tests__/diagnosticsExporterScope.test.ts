@@ -15,14 +15,19 @@ vi.mock("../diagnostics/snapshot.js", () => ({
 
 import { buildDiagnosticsZip } from "../diagnostics/exporter";
 
-describe("diagnostics exporter span scope", () => {
+describe("diagnostics exporter scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("把用户勾选的会话同时传给 spans 与 framelog 采集", async () => {
+  it("把用户勾选的会话和隐私级别同时传给 logs、spans 与 framelog 采集", async () => {
     await buildDiagnosticsZip({ privacyLevel: "L2", sessionIds: ["s-picked"] });
 
+    expect(mocks.collectLogs).toHaveBeenCalledWith(undefined, {
+      days: 7,
+      privacyLevel: "L2",
+      sessionIds: ["s-picked"],
+    });
     expect(mocks.collectSpans).toHaveBeenCalledWith(expect.objectContaining({
       privacyLevel: "L2",
       sessionIds: ["s-picked"],
@@ -40,5 +45,19 @@ describe("diagnostics exporter span scope", () => {
       maxSessions: 0,
       sessionIds: [""],
     });
+  });
+
+  it("L1 也把勾选会话范围传给 logs 与 spans", async () => {
+    await buildDiagnosticsZip({ privacyLevel: "L1", sessionIds: ["s-picked"] });
+
+    expect(mocks.collectLogs).toHaveBeenCalledWith(undefined, {
+      days: 7,
+      privacyLevel: "L1",
+      sessionIds: ["s-picked"],
+    });
+    expect(mocks.collectSpans).toHaveBeenCalledWith(expect.objectContaining({
+      privacyLevel: "L1",
+      sessionIds: ["s-picked"],
+    }));
   });
 });

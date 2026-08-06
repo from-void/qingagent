@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DiagSpan } from "@qingagent/contract-ts";
 import { collectSpans } from "../diagnostics/collect";
 
-function makeSpan(sessionId: string, summary: string): DiagSpan {
-  const traceId = `trace-${sessionId}`;
+function makeSpan(sessionId: string | null, summary: string): DiagSpan {
+  const traceId = `trace-${sessionId ?? "global"}`;
   return {
     key: `${traceId}::llm_response::generic::1`,
     traceId,
@@ -27,7 +27,7 @@ function makeSpan(sessionId: string, summary: string): DiagSpan {
   };
 }
 
-describe("diagnostics L2 span scope", () => {
+describe("diagnostics span scope", () => {
   const dirs: string[] = [];
 
   afterEach(async () => {
@@ -65,6 +65,41 @@ describe("diagnostics L2 span scope", () => {
     await expect(collectSpans({ logsDir: dir, privacyLevel: "L2" })).resolves.toEqual([]);
     await expect(collectSpans({ logsDir: dir, privacyLevel: "L2", sessionIds: [] })).resolves.toEqual([]);
     await expect(collectSpans({ logsDir: dir, privacyLevel: "L2", sessionIds: [""] })).resolves.toEqual([]);
+  });
+
+  it("L1 只保留勾选会话与全局结构 span，排除未勾选及已删除会话", async () => {
+    const { dir } = await writeSpans([
+      makeSpan("s-picked", "勾选会话正文"),
+      makeSpan("s-unpicked", "未勾选会话正文"),
+      makeSpan("s-deleted", "已删除会话正文"),
+      makeSpan(null, "全局诊断载荷"),
+    ]);
+    dirs.push(dir);
+
+    const spans = await collectSpans({
+      logsDir: dir,
+      privacyLevel: "L1",
+      sessionIds: ["s-picked"],
+    });
+
+    expect(spans.map((span) => span.sessionId)).toEqual(["s-picked", null]);
+    expect(spans.every((span) => span.output?.summary.startsWith("[redacted:len="))).toBe(true);
+    const text = JSON.stringify(spans);
+    expect(text).not.toContain("未勾选会话正文");
+    expect(text).not.toContain("已删除会话正文");
+  });
+
+  it("L1 没有有效勾选范围时只保留无会话的全局结构 span", async () => {
+    const { dir } = await writeSpans([
+      makeSpan("s-deleted", "已删除会话正文"),
+      makeSpan(null, "全局诊断载荷"),
+    ]);
+    dirs.push(dir);
+
+    const spans = await collectSpans({ logsDir: dir, privacyLevel: "L1", sessionIds: [] });
+
+    expect(spans.map((span) => span.sessionId)).toEqual([null]);
+    expect(spans[0]?.output?.summary).toMatch(/^\[redacted:len=\d+\]$/);
   });
 });
 

@@ -601,6 +601,8 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
     let stdout = "";
     let stderrTail = "";
     let outputExceeded = false;
+    let killRequested = false;
+    let timeoutRequested = false;
     let child;
     try {
       child = spawn(
@@ -610,6 +612,7 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
           RUN_JS_SUPERVISOR_SOURCE,
         ],
         {
+          // env 仍故意完全替换；Windows libuv 会通过 required_vars 白名单回填启动必需变量。
           env: { ELECTRON_RUN_AS_NODE: "1" },
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
@@ -630,24 +633,29 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
       cleanup();
       resolve(result);
     };
+    const requestKill = () => {
+      if (killRequested) return;
+      killRequested = true;
+      child.kill();
+    };
     const terminateWith = (result: RunJsResult) => {
       if (settled) return;
-      child.kill();
+      requestKill();
       finish(result);
     };
-    const onAbort = () => terminateWith({
-      ok: false,
-      stdout: "",
-      error: "aborted",
-      failureKind: "aborted",
-    });
-    const timer = setTimeout(() => {
+    const onAbort = () => {
+      if (timeoutRequested) return;
       terminateWith({
         ok: false,
         stdout: "",
-        error: "timeout",
-        failureKind: "timedOut",
+        error: "aborted",
+        failureKind: "aborted",
       });
+    };
+    const timer = setTimeout(() => {
+      timeoutRequested = true;
+      // 先硬杀隔离进程，但等 close/管道收尾后定档，避免丢掉已在途的 OOM 证据。
+      requestKill();
     }, timeoutMs);
 
     abortSignal?.addEventListener("abort", onAbort, { once: true });
@@ -678,12 +686,22 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
       // bootstrap/早退由 child 的 error/close 统一归到 platformError。
     });
     child.once("error", () => {
+      if (timeoutRequested) return;
       finish(platformErrorResult());
     });
     child.once("close", (code, signal) => {
       if (settled) return;
       if (signal === "SIGABRT" || code === 134) {
         finish(resourceExceededResult());
+        return;
+      }
+      if (timeoutRequested) {
+        finish({
+          ok: false,
+          stdout: "",
+          error: "timeout",
+          failureKind: "timedOut",
+        });
         return;
       }
       if (code !== 0 || outputExceeded) {

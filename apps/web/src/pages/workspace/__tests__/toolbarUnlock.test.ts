@@ -75,4 +75,13 @@ describe("toolbarUnlock", () => {
     expect(normalizeToolbarHighlightColor("transparent")).toBeNull();
     expect(normalizeToolbarTextColor("transparent")).toBeNull();
   });
+
+  it.each([
+    String.raw`/\evil.example.com`,
+    String.raw`/\\evil.example.com`,
+    String.raw`/\/evil.example.com`,
+    String.raw`//\evil.example.com`,
+  ])("工具栏链接拒绝可解析到站外的斜杠混合变体: %s", (href) => {
+    expect(sanitizeToolbarLinkHref(href)).toBeNull();
+  });
 });

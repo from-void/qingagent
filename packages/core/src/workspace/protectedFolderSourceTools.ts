@@ -3,6 +3,7 @@ import {
   WORKSPACE_TOOLS,
   createWorkspaceTools,
   editFileTool,
+  listFilesTool,
   readFileTool,
   searchTool,
   type Workspace,
@@ -128,6 +129,34 @@ function denied(error: string) {
   return { ok: false, error };
 }
 
+function expandFolderSourceTreePaths(output: unknown, rootPath: string): unknown {
+  if (typeof output !== "string") return output;
+  const normalizedRoot = normalizeVirtualPathForDecision(rootPath).replace(/\/$/, "");
+  const segments: string[] = [];
+  let inTree = true;
+
+  return output
+    .split("\n")
+    .map((line) => {
+      if (!inTree || line.length === 0) {
+        if (line.length === 0) inTree = false;
+        return line;
+      }
+      if (line === ".") return normalizedRoot;
+      if (line.startsWith("[output truncated:")) return line;
+
+      const match = /^(\t*)(.+)$/.exec(line);
+      if (!match) return line;
+      const depth = match[1]?.length ?? 0;
+      const name = match[2];
+      if (!name) return line;
+      segments.length = depth;
+      segments[depth] = name;
+      return posixPath.join(normalizedRoot, ...segments);
+    })
+    .join("\n");
+}
+
 function isFolderSourceSearchResult(result: Awaited<ReturnType<Workspace["search"]>>[number]): boolean {
   const metadataPath = result.metadata?.path;
   if (isFolderSourceVirtualPath(result.id)) return true;
@@ -168,6 +197,34 @@ export function createProtectedFolderSourceReadFileTool(
           input as never,
           delegatedContext as ToolExecutionContext,
         );
+      } finally {
+        stop();
+      }
+    },
+  });
+}
+
+export function createFolderSourceListFilesTool(
+  options: ProtectedFolderSourceWorkspaceToolOptions,
+) {
+  return createTool({
+    id: WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES,
+    description:
+      `${listFilesTool.description}\n\n` +
+      "路径契约：列举 /sources 资料库时，每个条目都返回可直接传给 readDocument 的完整虚拟路径。",
+    inputSchema: listFilesTool.inputSchema,
+    toModelOutput: listFilesTool.toModelOutput,
+    execute: async (input, context) => {
+      const stop = startToolHeartbeat(context, { tool: WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES });
+      try {
+        const delegatedContext = await withWorkspaceContext(context, options.getWorkspace);
+        const output = await listFilesTool.execute?.(
+          input as never,
+          delegatedContext as ToolExecutionContext,
+        );
+        return isFolderSourceVirtualPath(input.path)
+          ? expandFolderSourceTreePaths(output, input.path)
+          : output;
       } finally {
         stop();
       }

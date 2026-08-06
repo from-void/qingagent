@@ -732,6 +732,9 @@ export async function* runAgentTurn(
     if (sessionTools.workspaceReadFile) {
       sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = sessionTools.workspaceReadFile;
     }
+    if (sessionTools.workspaceListFiles) {
+      sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES] = sessionTools.workspaceListFiles;
+    }
     if (sessionTools.workspaceEditFile) {
       sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE] = sessionTools.workspaceEditFile;
     }

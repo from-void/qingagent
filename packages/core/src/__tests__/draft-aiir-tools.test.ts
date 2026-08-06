@@ -78,6 +78,17 @@ function codeBlock(blockId: string, text: string, language = "ts"): PmBlockNode 
   };
 }
 
+function diagram(
+  blockId: string,
+  source: string,
+  attrs: Partial<Extract<PmBlockNode, { type: "diagram" }>["attrs"]> = {},
+): PmBlockNode {
+  return {
+    type: "diagram",
+    attrs: { blockId, lang: "mermaid", source, svg: null, ...attrs },
+  };
+}
+
 function doc(content: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
 }
@@ -336,6 +347,234 @@ describe("QingML draft tools", () => {
     expect(serializedDiff).toContain("旧 API");
     expect(serializedDiff).toContain("新 API");
     expect(serializedDiff).not.toContain("<svg");
+  });
+
+  it("editDraft 顺序执行 deleteBlock + insertBlock 移图时保留四项用户布局", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("s-move-diagram-layout");
+    bindDoc(state, doc([
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-old",
+          lang: "mermaid",
+          source,
+          svg: null,
+          overlay: { positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } } },
+          width: 654,
+          height: 645,
+          align: "left",
+        },
+      },
+      paragraph("block-after", "图后正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlock({ type: "diagram", lang: "mermaid", source }),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const moved = state.docDraftCandidateDoc!.content.at(-1);
+    expect(moved?.type).toBe("diagram");
+    if (moved?.type !== "diagram") throw new Error("expected moved diagram");
+    expect(moved.attrs.blockId).not.toBe("diagram-old");
+    expect(moved.attrs.overlay).toEqual({
+      positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } },
+    });
+    expect(moved.attrs.width).toBe(654);
+    expect(moved.attrs.height).toBe(645);
+    expect(moved.attrs.align).toBe("left");
+  });
+
+  it("editDraft 移表时归一默认 span 并承接表头与列宽", async () => {
+    const tableCell = (
+      blockId: string,
+      text: string,
+      colwidth: number,
+      header = false,
+    ) => ({
+      type: header ? "tableHeader" as const : "tableCell" as const,
+      attrs: { colspan: 1, rowspan: 1, colwidth: [colwidth] },
+      content: [paragraph(blockId, text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    });
+    const state = createSession("s-move-table-width");
+    bindDoc(state, doc([
+      {
+        type: "table",
+        attrs: { blockId: "table-old" },
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              tableCell("table-old-h-a", "列A", 120, true),
+              tableCell("table-old-h-b", "列B", 240, true),
+            ],
+          },
+          {
+            type: "tableRow",
+            content: [
+              tableCell("table-old-a1", "甲", 120),
+              tableCell("table-old-b1", "乙", 240),
+            ],
+          },
+        ],
+      },
+      paragraph("block-after-table", "表后正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "table-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: "<table><tr><td><p>列A</p></td><td><p>列B</p></td></tr><tr><td><p>甲</p></td><td><p>乙</p></td></tr></table>",
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const moved = state.docDraftCandidateDoc!.content.at(-1);
+    expect(moved?.type).toBe("table");
+    if (moved?.type !== "table") throw new Error("expected moved table");
+    expect(moved.attrs.blockId).not.toBe("table-old");
+    expect(moved.content[0]!.content.map((cell) => cell.type))
+      .toEqual(["tableHeader", "tableHeader"]);
+    expect(moved.content.map((row) => row.content.map((cell) => cell.attrs?.colwidth)))
+      .toEqual([[[120], [240]], [[120], [240]]]);
+  });
+
+  it("editDraft 一张旧图移动成两张同身份新图时两侧均不承接", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("s-move-diagram-one-to-many");
+    bindDoc(state, doc([
+      diagram("diagram-old", source, {
+        overlay: { positions: { A: { x: 110, y: 160 } } },
+        width: 654,
+      }),
+      paragraph("block-after-one-to-many", "图后正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlocks([
+            { type: "diagram", lang: "mermaid", source },
+            { type: "diagram", lang: "mermaid", source },
+          ]),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const inserted = state.docDraftCandidateDoc!.content.filter((block) => block.type === "diagram");
+    expect(inserted).toHaveLength(2);
+    for (const block of inserted) {
+      if (block.type !== "diagram") throw new Error("expected inserted diagram");
+      expect(block.attrs.overlay).toBeUndefined();
+      expect(block.attrs.width).toBeUndefined();
+    }
+  });
+
+  it("editDraft 移图在没有 overlay 时仍承接 width、height、align", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("s-move-diagram-size-only");
+    bindDoc(state, doc([
+      diagram("diagram-old", source, { width: 480, height: 360, align: "right" }),
+      paragraph("block-after-size-only", "图后正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlock({ type: "diagram", lang: "mermaid", source }),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const moved = state.docDraftCandidateDoc!.content.at(-1);
+    if (moved?.type !== "diagram") throw new Error("expected moved diagram");
+    expect(moved.attrs.overlay).toBeUndefined();
+    expect(moved.attrs.width).toBe(480);
+    expect(moved.attrs.height).toBe(360);
+    expect(moved.attrs.align).toBe("right");
+  });
+
+  it("editDraft 移图身份归一首尾空白与换行，但不跨 lang 承接", async () => {
+    const whitespaceState = createSession("s-move-diagram-whitespace-identity");
+    bindDoc(whitespaceState, doc([
+      diagram("diagram-whitespace-old", "\r\nflowchart TD\r\n  A --> B\r\n", {
+        overlay: { positions: { A: { x: 10, y: 20 } } },
+      }),
+      paragraph("block-after-whitespace", "图后正文"),
+    ]));
+    const whitespaceTools = createSessionScopedTools(whitespaceState);
+    const whitespaceResult = await whitespaceTools.editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-whitespace-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlock({
+            type: "diagram",
+            lang: "mermaid",
+            source: "flowchart TD\n  A --> B",
+          }),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(whitespaceResult.ok).toBe(true);
+    const whitespaceMoved = whitespaceState.docDraftCandidateDoc!.content.at(-1);
+    if (whitespaceMoved?.type !== "diagram") throw new Error("expected whitespace diagram");
+    expect(whitespaceMoved.attrs.overlay?.positions?.A).toEqual({ x: 10, y: 20 });
+
+    const sharedSource = "<mxfile><diagram id=\"page\"><mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/></root></mxGraphModel></diagram></mxfile>";
+    const langState = createSession("s-move-diagram-lang-identity");
+    bindDoc(langState, doc([
+      diagram("diagram-lang-old", sharedSource, {
+        lang: "mermaid",
+        overlay: { positions: { A: { x: 10, y: 20 } } },
+        width: 480,
+      }),
+      paragraph("block-after-lang", "图后正文"),
+    ]));
+    const langTools = createSessionScopedTools(langState);
+    const langResult = await langTools.editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-lang-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlock({ type: "diagram", lang: "drawio", source: sharedSource }),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(langResult.ok).toBe(true);
+    const langMoved = langState.docDraftCandidateDoc!.content.at(-1);
+    if (langMoved?.type !== "diagram") throw new Error("expected lang diagram");
+    expect(langMoved.attrs.lang).toBe("drawio");
+    expect(langMoved.attrs.overlay).toBeUndefined();
+    expect(langMoved.attrs.width).toBeUndefined();
   });
 
   it("readDraft 实际读到 diagram 后标记语言，下一次 provider 调用在尾部注入对应编辑规范", async () => {

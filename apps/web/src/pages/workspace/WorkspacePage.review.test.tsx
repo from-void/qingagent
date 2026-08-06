@@ -4320,6 +4320,26 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
   });
 
+  it("docCommitted 带布局降级告知时走唯一 qa-toast 的 warn 瞬时提示", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+
+    await emitFrames(stream, [{
+      kind: "docCommitted",
+      data: {
+        sessionId: "s-1",
+        version: 2,
+        notice: "图表移动后，原有手工布局未能完整承接，请检查新图布局。",
+      },
+    } as BridgeFrame]);
+    await flushMicrotasks(3);
+
+    const toast = host?.querySelector<HTMLElement>(".qa-toast");
+    expect(toast?.textContent).toContain("移动后");
+    expect(toast?.textContent).not.toContain("内容变化较大");
+    expect(toast?.className).toContain("warn");
+    expect(toast?.className).not.toContain("sticky");
+  });
+
   it("切衍生 tab 只隐藏批注，切回主文档后 reviewing 批注仍在且不发 ignore", async () => {
     const derivative = {
       docId: "deriv-annotation-tab",

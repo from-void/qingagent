@@ -158,6 +158,47 @@ describe("modern usage model", () => {
     expect(calls.map(([event]) => event.attempt)).toEqual([1, 2]);
   });
 
+  it("agentChat 收到部分正文后被停止，以 prompt 与已收 delta 记 estimated", async () => {
+    const controller = new AbortController();
+    const model = wrapModernModelUsage({
+      doStream: vi.fn(async (_params: unknown) => ({
+        stream: new ReadableStream({
+          start(streamController) {
+            streamController.enqueue({ type: "text-delta", delta: "半截回复" });
+          },
+        }),
+      })),
+    }, { ...options(), callSite: "agentChat" });
+
+    const result = await model.doStream({
+      abortSignal: controller.signal,
+      prompt: [{ role: "user", content: [{ type: "text", text: "请分析这份中文资料" }] }],
+    });
+    const reader = result.stream.getReader();
+    await expect(reader.read()).resolves.toMatchObject({
+      done: false,
+      value: { type: "text-delta", delta: "半截回复" },
+    });
+    controller.abort();
+    await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledOnce());
+    await reader.cancel();
+
+    const calls = recordUsageEventMock.mock.calls as unknown as Array<[{
+      inputTokens?: number;
+      outputTokens?: number;
+      usageState?: string;
+      reason?: string;
+    }]>;
+    const [event] = calls[0]!;
+    expect(event).toMatchObject({
+      callSite: "agentChat",
+      usageState: "estimated",
+      reason: "provider_request_aborted",
+    });
+    expect(event.inputTokens).toBeGreaterThan(0);
+    expect(event.outputTokens).toBeGreaterThan(0);
+  });
+
   it("wrapper 构造和请求开始后才写入 runId，终态仍读取最新关联", async () => {
     let finishRequest!: () => void;
     const gate = new Promise<void>((resolve) => {

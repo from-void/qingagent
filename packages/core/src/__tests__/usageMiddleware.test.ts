@@ -7,7 +7,12 @@ vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
 }));
 
-const { createUsageMiddleware } = await import("../llm/usageMiddleware.js");
+const {
+  createUsageMiddleware,
+  modelCallOutputDelta,
+  recordModelCallOutcome,
+  serializeModelCallPrompt,
+} = await import("../llm/usageMiddleware.js");
 
 function context(): RequestContext {
   return new RequestContext([
@@ -46,6 +51,86 @@ async function drain(stream: ReadableStream<unknown>): Promise<unknown[]> {
 
 describe("usage middleware", () => {
   beforeEach(() => recordUsageEventMock.mockClear());
+
+  it("有 reason 但 usage 计数完整时仍记 recorded 并保留 reason", async () => {
+    await recordModelCallOutcome({
+      sessionId: "session-reason-with-usage",
+      callSite: "webSearch",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      attempt: 1,
+      transport: "manual-api",
+      startedAt: Date.now(),
+      usage: {
+        inputTokens: 120,
+        outputTokens: 30,
+        promptCacheHitTokens: 100,
+        promptCacheMissTokens: 20,
+      },
+      usageEstimate: {
+        uncachedInputText: "这份估算不得混入 provider 实测",
+        outputText: "估算输出",
+      },
+      reason: "provider_stream_error_part",
+    });
+
+    expect(recordUsageEventMock).toHaveBeenCalledOnce();
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "recorded",
+      reason: "provider_stream_error_part",
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheHitTokens: 100,
+      cacheMissTokens: 20,
+    }));
+  });
+
+  it("统一终态以调用开始时刻固化北京时间高峰金额", async () => {
+    const previous = process.env.DEEPSEEK_PEAK_PRICING_JSON;
+    process.env.DEEPSEEK_PEAK_PRICING_JSON = JSON.stringify({ enabled: true });
+    try {
+      const startedAt = Date.parse("2026-08-06T01:30:00.000Z");
+      await recordModelCallOutcome({
+        sessionId: "session-peak",
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        attempt: 1,
+        transport: "manual-api",
+        startedAt,
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 20,
+        },
+      });
+
+      expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        occurredAt: startedAt,
+        costCny: expect.closeTo(0.000164, 12),
+        pricingTier: "peak",
+        pricingMultiplier: 2,
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.DEEPSEEK_PEAK_PRICING_JSON;
+      else process.env.DEEPSEEK_PEAK_PRICING_JSON = previous;
+    }
+  });
+
+  it("估算素材面对循环 prompt 与脏 stream part 时 fail-closed", () => {
+    const circular: { prompt?: unknown; self?: unknown } = { prompt: ["ok"] };
+    circular.self = circular;
+    circular.prompt = circular;
+
+    expect(serializeModelCallPrompt(circular)).toBe("");
+    expect(serializeModelCallPrompt(null)).toBe("");
+    expect(modelCallOutputDelta({ type: "text-delta", delta: "正文" })).toBe("正文");
+    expect(modelCallOutputDelta({ type: "reasoning-delta", delta: "思考" })).toBe("思考");
+    expect(modelCallOutputDelta({ type: "tool-input-delta", delta: "{\"a\":" })).toBe("{\"a\":");
+    expect(modelCallOutputDelta({ type: "text-delta", delta: 42 })).toBe("");
+    expect(modelCallOutputDelta({ type: "error", delta: "内部错误" })).toBe("");
+  });
 
   it("wrapGenerate 从返回值记录 usage 与 Anthropic cache creation", async () => {
     const result = {
@@ -190,6 +275,55 @@ describe("usage middleware", () => {
       reason: "provider_request_aborted",
       attempt: 1,
     }));
+  });
+
+  it("主链流收到部分正文后被停止，以 prompt 与已收 delta 记 estimated", async () => {
+    const controller = new AbortController();
+    const agentMiddleware = createUsageMiddleware({
+      requestContext: context(),
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+    });
+    const result = await agentMiddleware.wrapStream!({
+      doGenerate: vi.fn(),
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(streamController) {
+            streamController.enqueue({ type: "text-delta", delta: "半截回复" });
+          },
+        }),
+        rawCall: { rawPrompt: null, rawSettings: {} },
+      }),
+      params: {
+        abortSignal: controller.signal,
+        prompt: [{ role: "user", content: [{ type: "text", text: "请分析这份中文资料" }] }],
+      },
+      model: {},
+    } as never);
+
+    const reader = result.stream.getReader();
+    await expect(reader.read()).resolves.toMatchObject({
+      done: false,
+      value: { type: "text-delta", delta: "半截回复" },
+    });
+    controller.abort();
+    await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledOnce());
+    await reader.cancel();
+
+    const calls = recordUsageEventMock.mock.calls as unknown as Array<[{
+      inputTokens?: number;
+      outputTokens?: number;
+      usageState?: string;
+      reason?: string;
+    }]>;
+    const [event] = calls[0]!;
+    expect(event).toMatchObject({
+      usageState: "estimated",
+      reason: "provider_request_aborted",
+    });
+    expect(event.inputTokens).toBeGreaterThan(0);
+    expect(event.outputTokens).toBeGreaterThan(0);
   });
 
   it("doStream 已发请求但返回已锁流时留 missing", async () => {

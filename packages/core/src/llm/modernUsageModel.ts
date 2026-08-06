@@ -3,7 +3,10 @@ import type { ApiKeyOrigin } from "./modelConfig.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import {
   logModelCallStart,
+  modelCallOutputDelta,
   recordModelCallOutcome,
+  serializeModelCallPrompt,
+  type ModelCallUsageEstimate,
 } from "./usageMiddleware.js";
 import type { ModelCallSite } from "./modelCallSites.js";
 
@@ -47,10 +50,12 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
     attempt: number,
     startedAt: number,
     finishReason?: string | null,
+    usageEstimate?: ModelCallUsageEstimate | null,
   ): Promise<void> => {
     await recordModelCallOutcome({
       ...baseEvent,
       usage,
+      usageEstimate,
       providerMetadata,
       reason,
       attempt,
@@ -72,6 +77,9 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
           const startedAt = Date.now();
           logModelCallStart({ ...baseEvent, attempt });
           const signal = asRecord(args[0])?.abortSignal as AbortSignal | undefined;
+          const abortUsageEstimate = (): ModelCallUsageEstimate => ({
+            uncachedInputText: serializeModelCallPrompt(args[0]),
+          });
           try {
             const result = await Reflect.apply(original, target, args) as unknown;
             const resultRecord = asRecord(result);
@@ -87,7 +95,16 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
             );
             return result;
           } catch (error) {
-            void record(null, null, missingReason(error, signal), attempt, startedAt);
+            const reason = missingReason(error, signal);
+            void record(
+              null,
+              null,
+              reason,
+              attempt,
+              startedAt,
+              null,
+              reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+            );
             throw error;
           }
         };
@@ -97,11 +114,25 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
         const startedAt = Date.now();
         logModelCallStart({ ...baseEvent, attempt });
         const signal = asRecord(args[0])?.abortSignal as AbortSignal | undefined;
+        let estimatedOutputText = "";
+        const abortUsageEstimate = (): ModelCallUsageEstimate => ({
+          uncachedInputText: serializeModelCallPrompt(args[0]),
+          outputText: estimatedOutputText,
+        });
         let result: unknown;
         try {
           result = await Reflect.apply(original, target, args);
         } catch (error) {
-          void record(null, null, missingReason(error, signal), attempt, startedAt);
+          const reason = missingReason(error, signal);
+          void record(
+            null,
+            null,
+            reason,
+            attempt,
+            startedAt,
+            null,
+            reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+          );
           throw error;
         }
         const resultRecord = asRecord(result);
@@ -114,7 +145,16 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
         try {
           reader = source.getReader();
         } catch (error) {
-          void record(null, null, missingReason(error, signal), attempt, startedAt);
+          const reason = missingReason(error, signal);
+          void record(
+            null,
+            null,
+            reason,
+            attempt,
+            startedAt,
+            null,
+            reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+          );
           throw error;
         }
         let recorded = false;
@@ -125,6 +165,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
           metadata: unknown,
           reason: string | null,
           finishReason?: string | null,
+          usageEstimate?: ModelCallUsageEstimate | null,
         ) => {
           if (recorded) return;
           recorded = true;
@@ -136,9 +177,16 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
             attempt,
             startedAt,
             finishReason,
+            usageEstimate,
           );
         };
-        abortHandler = () => recordOnce(null, null, "provider_request_aborted");
+        abortHandler = () => recordOnce(
+          null,
+          null,
+          "provider_request_aborted",
+          null,
+          abortUsageEstimate(),
+        );
         if (signal?.aborted) abortHandler();
         else signal?.addEventListener("abort", abortHandler, { once: true });
 
@@ -153,6 +201,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
               }
               const part = asRecord(value);
               if (part?.type === "error") sawErrorPart = true;
+              estimatedOutputText += modelCallOutputDelta(part);
               controller.enqueue(value);
               if (part?.type === "finish") {
                 recordOnce(
@@ -163,12 +212,28 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
                 );
               }
             } catch (error) {
-              recordOnce(null, null, missingReason(error, signal));
+              const reason = missingReason(error, signal);
+              recordOnce(
+                null,
+                null,
+                reason,
+                null,
+                reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+              );
               controller.error(error);
             }
           },
           async cancel(reason) {
-            recordOnce(null, null, signal?.aborted ? "provider_request_aborted" : "provider_stream_cancelled");
+            const terminalReason = signal?.aborted
+              ? "provider_request_aborted"
+              : "provider_stream_cancelled";
+            recordOnce(
+              null,
+              null,
+              terminalReason,
+              null,
+              terminalReason === "provider_request_aborted" ? abortUsageEstimate() : null,
+            );
             await reader.cancel(reason);
           },
         });

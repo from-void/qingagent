@@ -292,7 +292,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-cur'")).toBe(1);
   });
 
-  it("v2 旧 usage 行升级 0003/0004 后 tokens 原值不变且观测列使用安全默认值", async () => {
+  it("v2 旧 usage 行升级后 tokens 原值不变且不被补算峰谷价格", async () => {
     const client = getDocumentsClient();
     await runMigrations(MIGRATIONS.slice(0, 2));
     await client.execute(
@@ -318,6 +318,9 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(row.attempt).toBeNull();
     expect(row.cache_creation_tokens).toBeNull();
     expect(row.cache_accounting_state).toBe("unknown");
+    expect(row.cost_cny).toBeNull();
+    expect(row.pricing_tier).toBeNull();
+    expect(row.pricing_multiplier).toBeNull();
   });
 
   it("v-migrated:已有账本且 baseline 已记账 → 重跑无操作,schema/探针稳定", async () => {

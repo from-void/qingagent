@@ -109,6 +109,9 @@ export function UsageTableRow({
     : kind === "document"
       ? "UsageDocumentRow"
       : "UsageGroupRow";
+  const peakMultiplier = row.peakPricingMultiplierMin === row.peakPricingMultiplierMax
+    ? `${row.peakPricingMultiplierMin}×`
+    : `${row.peakPricingMultiplierMin}～${row.peakPricingMultiplierMax}×`;
 
   return (
     <tr
@@ -139,7 +142,7 @@ export function UsageTableRow({
       {mode === "expert" && (
         <td
           className="font-mono"
-          title={`共 ${row.calls} 次，usage 缺失 ${row.missingCalls} 次`}
+          title={`共 ${row.calls} 次，精确 ${row.recordedCalls} 次，估算 ${row.estimatedCalls ?? 0} 次，未计价 ${row.missingCalls} 次`}
         >
           {`${Math.round(row.coverageRate * 100)}% · ${row.recordedCalls}/${row.calls}`}
         </td>
@@ -152,7 +155,19 @@ export function UsageTableRow({
       {mode === "expert" && (
         <td className="font-mono">{formatCompactTokens(row.coldStartMissTokens ?? 0)}</td>
       )}
-      <td className="font-mono">{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</td>
+      <td className="font-mono md-cost-cell">
+        <span>{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</span>
+        {(row.estimatedCostCny ?? 0) > 0 ? (
+          <small title="按已发送 prompt 与中止前已收 delta 本地估算">
+            估 {`¥${row.estimatedCostCny!.toFixed(3)}`}
+          </small>
+        ) : null}
+        {(row.peakPricedCalls ?? 0) > 0 ? (
+          <small title="DeepSeek 按调用开始时的北京时间高峰窗口计价，倍率已计入上方金额">
+            高峰 {peakMultiplier} · {row.peakPricedCalls} 次
+          </small>
+        ) : null}
+      </td>
     </tr>
   );
 }
@@ -296,9 +311,33 @@ export function deriveConnectivity(
 export function summarizeRecentDays(
   rows: UsageRow[] | null,
   days: number,
-): { cost: number; tokens: number; calls: number; hasPriced: boolean } | null {
+): {
+  cost: number;
+  estimatedCost: number;
+  tokens: number;
+  estimatedTokens: number;
+  calls: number;
+  recordedCalls: number;
+  estimatedCalls: number;
+  missingCalls: number;
+  coverageRate: number;
+  hasPriced: boolean;
+} | null {
   if (rows === null) return null;
-  if (rows.length === 0) return { cost: 0, tokens: 0, calls: 0, hasPriced: false };
+  if (rows.length === 0) {
+    return {
+      cost: 0,
+      estimatedCost: 0,
+      tokens: 0,
+      estimatedTokens: 0,
+      calls: 0,
+      recordedCalls: 0,
+      estimatedCalls: 0,
+      missingCalls: 0,
+      coverageRate: 0,
+      hasPriced: false,
+    };
+  }
   // bucket 是本地日历日 YYYY-MM-DD；窗口固定为“今天及之前 N-1 天”，不按有数据日期倒推。
   const today = new Date();
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -306,17 +345,38 @@ export function summarizeRecentDays(
   const startYmd = toYMD(start);
   const endYmd = toYMD(today);
   let cost = 0;
+  let estimatedCost = 0;
   let tokens = 0;
+  let estimatedTokens = 0;
   let calls = 0;
+  let recordedCalls = 0;
+  let estimatedCalls = 0;
+  let missingCalls = 0;
   let hasPriced = false;
   for (const r of rows) {
     if (r.bucket < startYmd || r.bucket > endYmd) continue;
     cost += r.costCny ?? 0;
+    estimatedCost += r.estimatedCostCny ?? 0;
     if (r.costCny != null) hasPriced = true;
     tokens += r.inputTokens + r.outputTokens;
+    estimatedTokens += (r.estimatedInputTokens ?? 0) + (r.estimatedOutputTokens ?? 0);
     calls += r.calls;
+    recordedCalls += r.recordedCalls;
+    estimatedCalls += r.estimatedCalls ?? 0;
+    missingCalls += r.missingCalls;
   }
-  return { cost, tokens, calls, hasPriced };
+  return {
+    cost,
+    estimatedCost,
+    tokens,
+    estimatedTokens,
+    calls,
+    recordedCalls,
+    estimatedCalls,
+    missingCalls,
+    coverageRate: calls > 0 ? recordedCalls / calls : 0,
+    hasPriced,
+  };
 }
 
 // 按模型分布:total 数据按 modelId 聚合,算**费用**占比(降序)。

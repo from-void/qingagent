@@ -26,7 +26,7 @@ export function ModelSettingsPanel({
     usageView, usageMode, expandedUsageGroups, usageSettled, usageStatus,
     usageDate, setUsageDate, handleProviderChange, openConfig,
     vendorConfigured, vendorStateKnown, anyConfigured, effectiveProvider,
-    handleModelTierChange, recent, docStats, modelDist, trend,
+    handleModelTierChange, recent, usageTimeZone, docStats, modelDist, trend,
     dashboardReady, showDashboardLoading, showUsageLoading, todayYmd, usageDates,
     usageDateUnsupported, usageModelIds, selectedModelIds, allModelsSelected,
     filteredUsage, usageGroups, toggleUsageModel, selectAllUsageModels,
@@ -72,6 +72,7 @@ export function ModelSettingsPanel({
           </div>
           <ModelUsageDashboard
             recent={recent}
+            usageTimeZone={usageTimeZone}
             docStats={docStats}
             docs7={docs7}
             words7={words7}

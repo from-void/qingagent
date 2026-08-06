@@ -89,6 +89,10 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     dashboardSettled, setDashboardSettled,
   } = useModelUsageState();
   const mountedRef = useRef(true);
+  const usageTimeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
   const balanceControllerRef = useRef<AbortController | null>(null);
   const customTestRevisionRef = useRef(0);
   const customTestControllerRef = useRef<AbortController | null>(null);
@@ -241,9 +245,8 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     setUsage(null);
     setUsageStatus("loading");
     try {
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const res = await fetch(
-        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(timeZone)}`,
+        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(usageTimeZone)}`,
         { signal },
       );
       if (!res.ok) {
@@ -260,14 +263,13 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     } finally {
       if (mountedRef.current && !signal?.aborted) setUsageSettled(true);
     }
-  }, []);
+  }, [usageTimeZone]);
 
   // 看板用:按天 / 总计两份数据一次性拉取(图表始终展示这两份,与明细视图解耦)
   const loadDashboardUsage = useCallback(async (view: "day" | "total", signal?: AbortSignal) => {
     try {
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const res = await fetch(
-        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(timeZone)}`,
+        `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(usageTimeZone)}`,
         { signal },
       );
       const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
@@ -285,7 +287,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         setDashboardSettled((current) => ({ ...current, [view]: true }));
       }
     }
-  }, []);
+  }, [usageTimeZone]);
 
   const loadDocStats = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -987,6 +989,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     handleModelTierChange,
     handleSaveCustom,
     recent,
+    usageTimeZone,
     docStats,
     modelDist,
     trend,

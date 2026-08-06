@@ -71,7 +71,7 @@ describe("0038 stableStringify undefined 数据恢复", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([37, 38]);
+    expect(result.appliedIds).toEqual(MIGRATIONS.slice(36).map((migration) => migration.id));
     const rows = await getDocumentsClient().execute(
       `SELECT id, doc_pm, content_hash FROM documents
         WHERE id IN ('live-corrupt', 'quarantined-corrupt', 'quarantined-truncated')

@@ -366,6 +366,42 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
+  it("看板花费卡直显本机范围、精确覆盖率、估算额与未计价调用", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    const today = localYmd(new Date());
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [{
+            ...usageRow(today, "deepseek-v4-flash", 100, 20, 0.01),
+            estimatedInputTokens: 40,
+            estimatedOutputTokens: 10,
+            estimatedCacheHitTokens: 30,
+            estimatedCacheMissTokens: 10,
+            calls: 10,
+            recordedCalls: 7,
+            estimatedCalls: 1,
+            missingCalls: 2,
+            coverageRate: 0.7,
+            estimatedCostCny: 0.004,
+          }],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+
+    const metric = host?.querySelector(".md-metric");
+    const text = metric?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).toContain("本机本实例");
+    expect(text).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(text).toContain("精确覆盖 70%");
+    expect(text).toContain("估算 ¥0.004");
+    expect(text).toContain("另有 2 次调用未计价");
+  });
+
   it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {
     await setVisitorDeepseekKey("deepseek-local-key");
     const today = new Date();
@@ -1660,6 +1696,29 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("UsageModeToggle").textContent?.trim()).toBe("用量明细");
     expect(getButtonByWf("UsageModeToggle").getAttribute("aria-label")).toContain("小白模式");
     expect(getButtonByWf("UsageModeToggle").querySelector("small")).toBeNull();
+  });
+
+  it("费用单元格标注北京时间高峰倍率与调用次数", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=day")) {
+        return json({
+          rows: [{
+            ...usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.002),
+            peakPricedCalls: 2,
+            peakPricingMultiplierMin: 2,
+            peakPricingMultiplierMax: 2,
+          }],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    expect(getTable().textContent).toContain("高峰 2× · 2 次");
   });
 
   it("点击用量明细标题切换专家模式并披露完整列", async () => {

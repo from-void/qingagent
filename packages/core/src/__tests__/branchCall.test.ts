@@ -731,7 +731,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     })));
   });
 
-  it("将取消信号传给 raw fetch，并把中止写成 missing usage", async () => {
+  it("lane 收到部分 delta 后被取消，以快照 prompt 与 delta 写 estimated usage", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-abort", "stream-main");
@@ -739,10 +739,28 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     await triggerProviderFetch(requestContext, "main-prefix");
     const snapshot = getSessionSnapshot(requestContext)!;
     const controller = new AbortController();
-    fetchMock.mockImplementationOnce(async (_url, init) => new Promise<Response>((_resolve, reject) => {
+    fetchMock.mockImplementationOnce(async (_url, init) => {
       expect(init?.signal).toBe(controller.signal);
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
-    }));
+      const encoder = new TextEncoder();
+      let sentDelta = false;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(streamController) {
+          if (!sentDelta) {
+            sentDelta = true;
+            streamController.enqueue(encoder.encode(
+              'data: {"choices":[{"delta":{"content":"半截正文"},"finish_reason":null}]}\n\n',
+            ));
+            return;
+          }
+          return new Promise<void>((resolve) => {
+            init?.signal?.addEventListener("abort", () => {
+              streamController.error(new DOMException("aborted", "AbortError"));
+              resolve();
+            }, { once: true });
+          });
+        },
+      }), { headers: { "content-type": "text/event-stream" } });
+    });
 
     const pending = branchCall({
       sessionSnapshot: snapshot,
@@ -750,12 +768,53 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       callSite: "planDraft",
       requestContext,
       abortSignal: controller.signal,
+      liveTextDeltas: true,
+      onTextDelta: () => controller.abort(),
     });
-    controller.abort();
 
     await expect(pending).resolves.toMatchObject({ ok: false, reason: "provider_error" });
     await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
+      usageState: "estimated",
+      reason: "provider_request_aborted",
+      cacheAccountingState: "known",
+    })));
+    const event = mocks.recordUsageEvent.mock.calls[0]?.[0] as {
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
+    };
+    expect(event.inputTokens).toBeGreaterThan(0);
+    expect(event.outputTokens).toBeGreaterThan(0);
+    expect(event.cacheHitTokens).toBeGreaterThan(0);
+    expect(event.cacheMissTokens).toBeGreaterThan(0);
+  });
+
+  it("取消后 provider 流正常收口时仍按已收 delta 写 estimated", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-abort-clean-close", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(new Response(
+      'data: {"choices":[{"delta":{"content":"半截正文"},"finish_reason":null}]}\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+
+    await expect(branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+      abortSignal: controller.signal,
+      liveTextDeltas: true,
+      onTextDelta: () => controller.abort(),
+    })).resolves.toMatchObject({ ok: false, reason: "provider_error" });
+
+    await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "estimated",
       reason: "provider_request_aborted",
     })));
   });

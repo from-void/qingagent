@@ -12,6 +12,7 @@ import {
 
 interface ModelUsageDashboardProps {
   recent: ReturnType<typeof summarizeRecentDays>;
+  usageTimeZone: string;
   docStats: { docs: number; words: number } | null;
   docs7: number;
   words7: number;
@@ -26,6 +27,7 @@ interface ModelUsageDashboardProps {
 
 export function ModelUsageDashboard({
   recent,
+  usageTimeZone,
   docStats,
   docs7,
   words7,
@@ -37,20 +39,41 @@ export function ModelUsageDashboard({
   trend,
   pendingSub,
 }: ModelUsageDashboardProps) {
+  // 低于 95% 已足以让金额产生可感知偏差，同时不给偶发单次缺帧过度报警。
+  const coverageNeedsAttention =
+    recent !== null && recent.calls > 0 && recent.coverageRate < 0.95;
   return (
               <div className="md-card md-usage">
                 <h3 className="md-card-title">用量看板</h3>
                 <div className="md-metrics md-metrics--3">
                   <div className="md-metric">
                     <div className="md-metric-label">近 7 天花费</div>
-                    <div className="md-metric-value md-value-accent font-mono">
-                      {recent?.hasPriced
-                        ? <AnimatedNumber value={recent.cost} format={fmtMoney} />
-                        : "—"}
+                    <div className="md-metric-scope">本机本实例 · {usageTimeZone}</div>
+                    <div className="md-metric-value-row">
+                      <div className="md-metric-value md-value-accent font-mono" title="provider 返回 usage 的精确金额">
+                        {recent?.hasPriced
+                          ? <AnimatedNumber value={recent.cost} format={fmtMoney} />
+                          : "—"}
+                      </div>
+                      {recent && recent.calls > 0 ? (
+                        <span className="md-usage-coverage">
+                          精确覆盖 {Math.round(recent.coverageRate * 100)}%
+                        </span>
+                      ) : null}
                     </div>
                     <div className="md-metric-sub">
                       {!dashboardReady ? pendingSub : recent ? `${formatTokens(recent.tokens)} tokens` : "暂无记录"}
                     </div>
+                    {dashboardReady && recent && recent.estimatedCalls > 0 ? (
+                      <div className="md-metric-estimated" data-wf="UsageEstimatedCost">
+                        另有 {recent.estimatedCalls} 次估算 · 估算 {fmtMoney(recent.estimatedCost)}
+                      </div>
+                    ) : null}
+                    {dashboardReady && coverageNeedsAttention && recent.missingCalls > 0 ? (
+                      <div className="md-metric-coverage-note" data-wf="UsageCoverageWarning">
+                        另有 {recent.missingCalls} 次调用未计价，实际消费高于此数
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="md-metric">

@@ -43,6 +43,8 @@ const usageRow = {
 describe("usageRoutes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCore.estimateCostCny.mockReset().mockReturnValue(0.123);
+    mockCore.hasModelPricing.mockReset().mockReturnValue(true);
     mockCore.aggregateUsageByDay.mockResolvedValue([usageRow]);
     mockCore.aggregateUsageBySession.mockResolvedValue([]);
     mockCore.aggregateUsageTotal.mockResolvedValue([]);
@@ -84,6 +86,110 @@ describe("usageRoutes", () => {
           costCny: 0.123,
         },
       ],
+    });
+  });
+
+  it("估算 token 与金额单列，不混入 provider 实测金额", async () => {
+    mockCore.estimateCostCny
+      .mockReturnValueOnce(5.3297)
+      .mockReturnValueOnce(2.545);
+    mockCore.aggregateUsageByDay.mockResolvedValue([{
+      ...usageRow,
+      calls: 3,
+      estimatedInputTokens: 300,
+      estimatedOutputTokens: 80,
+      estimatedCacheHitTokens: 200,
+      estimatedCacheMissTokens: 100,
+      estimatedCalls: 1,
+      missingCalls: 1,
+      coverageRate: 1 / 3,
+    }]);
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/summary?view=day");
+    const body = await response.json() as {
+      rows: Array<{ costCny?: number; estimatedCostCny?: number }>;
+    };
+
+    expect(body.rows[0]).toMatchObject({
+      costCny: 5.3297,
+      estimatedCostCny: 2.545,
+    });
+    expect(mockCore.estimateCostCny).toHaveBeenNthCalledWith(1, usageRow.modelId, {
+      input: usageRow.inputTokens,
+      output: usageRow.outputTokens,
+      cacheHit: usageRow.cacheHitTokens,
+      cacheMiss: usageRow.cacheMissTokens,
+    });
+    expect(mockCore.estimateCostCny).toHaveBeenNthCalledWith(2, usageRow.modelId, {
+      input: 300,
+      output: 80,
+      cacheHit: 200,
+      cacheMiss: 100,
+    });
+  });
+
+  it("优先返回调用发生时已落库的金额快照，不按当前价表重算历史", async () => {
+    mockCore.estimateCostCny.mockReturnValue(999);
+    mockCore.aggregateUsageByDay.mockResolvedValue([{
+      ...usageRow,
+      calls: 2,
+      recordedCalls: 1,
+      estimatedCalls: 1,
+      estimatedInputTokens: 30,
+      estimatedOutputTokens: 5,
+      costCny: 0.0123,
+      estimatedCostCny: 0.0045,
+      peakPricedCalls: 2,
+      peakPricingMultiplierMin: 2,
+      peakPricingMultiplierMax: 2,
+    }]);
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/summary?view=day");
+    const body = await response.json() as { rows: Array<Record<string, unknown>> };
+
+    expect(body.rows[0]).toMatchObject({
+      costCny: 0.0123,
+      estimatedCostCny: 0.0045,
+      peakPricedCalls: 2,
+      peakPricingMultiplierMin: 2,
+      peakPricingMultiplierMax: 2,
+    });
+    expect(mockCore.estimateCostCny).not.toHaveBeenCalled();
+  });
+
+  it("迁移前旧行只按旧基础价兼容，不把当前高峰配置追溯到历史", async () => {
+    mockCore.estimateCostCny.mockReturnValue(0.003);
+    mockCore.aggregateUsageByDay.mockResolvedValue([{
+      ...usageRow,
+      inputTokens: 300,
+      outputTokens: 60,
+      cacheHitTokens: 120,
+      cacheMissTokens: 180,
+      pricingSnapshotCalls: 1,
+      legacyPricingCalls: 1,
+      legacyInputTokens: 200,
+      legacyOutputTokens: 40,
+      legacyCacheHitTokens: 80,
+      legacyCacheMissTokens: 120,
+      costCny: 0.0123,
+      peakPricedCalls: 1,
+      peakPricingMultiplierMin: 2,
+      peakPricingMultiplierMax: 2,
+    }]);
+    const app = await loadApp();
+
+    const response = await app.request("/api/v1/usage/summary?view=day");
+    const body = await response.json() as { rows: Array<{ costCny?: number }> };
+
+    expect(body.rows[0]?.costCny).toBeCloseTo(0.0153, 12);
+    expect(mockCore.estimateCostCny).toHaveBeenCalledOnce();
+    expect(mockCore.estimateCostCny).toHaveBeenCalledWith(usageRow.modelId, {
+      input: 200,
+      output: 40,
+      cacheHit: 80,
+      cacheMiss: 120,
     });
   });
 

@@ -98,6 +98,8 @@ export const AIIR_SYSTEM_PROMPT = `你是 Qingagent，一位专业的中文写�
 
 当请求尾部明确通知你进入 writeDraft 旁支生成模式时，暂时停止调用工具和输出聊天回复，直接把写作方向渲染成完整 QingML。此模式下第一个字符必须是 <，只输出 QingML，不要问候、确认、解释、Markdown fence 或收尾总结；默认中文，用户明确要求其他语言时例外。
 
+整篇输出直接以块级标签开始，不要在最外层再包任何容器标签。正例：<h1>标题</h1><p>正文</p>。反例（禁止）：<document><h1>标题</h1><p>正文</p></document>；同样不要使用 article、doc、root 或其他自造外壳。
+
 允许的块级标签与基础形状：标题 <h1>…</h1> 到 <h6>；段落 <p>…</p>；无序/有序列表 <ul><li>…</li></ul> / <ol style="decimal"><li>…</li></ol>；任务清单 <tasks><task checked>已完成</task><task>未完成</task></tasks>；引用 <blockquote>…</blockquote>；分隔线 <hr/>；硬换行 <br/>；代码 <pre lang="typescript">…</pre>；表格 <table><tr><th><p>表头</p></th></tr><tr><td bg="rose"><p>单元格</p></td></tr></table>（td/th 内可放 p/ul/ol/tasks/callout 等现有块，简单 cell 也用 <p> 包裹；多块单元格形状例 <td><p>结论</p><ul><li>依据</li></ul></td>；bg、colspan、rowspan 在改写已有表格时照抄，别丢）；提示框 <callout emoji="💡" tone="info">提示内容</callout>（tone 只允许 info/success/warning/danger/neutral）；分栏 <columns><column ratio="0.5"><p>左栏</p></column><column ratio="0.5"><p>右栏</p></column></columns>；块级公式 <math-block>E=mc^2</math-block>；图片 <img src="已有安全路径" alt="说明"/>；附件 <file id="已有ID" filename="文件名"/>；手写笔记 <pennote>…</pennote>。未列出的 div/span/section/figure 等标签一律不用；图片、附件的路径或 ID 只能取自素材，严禁编造。
 
 ### 文学排版约定

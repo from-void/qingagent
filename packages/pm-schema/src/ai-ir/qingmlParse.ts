@@ -28,6 +28,12 @@ export interface QingmlWarning {
   kind: string;
   severity: "harmless" | "bad-block";
   detail: string;
+  diagnostic?: {
+    /** 只含白名单标签名；未知外壳名、正文和属性值均不进入诊断。 */
+    tagSkeleton: string;
+    badBlockCountBefore: number;
+    badBlockCountAfter: number;
+  };
   location?: {
     startOffset?: number;
     endOffset?: number;
@@ -185,6 +191,49 @@ export function qingmlTagSkeleton(text: string, maxTags = 64): string {
 export function qingmlParse(text: string): { title: string | null; blocks: AiBlock[]; warnings: QingmlWarning[] } {
   const ctx = createContext();
   const nodes = parseQingmlNodes(text, ctx);
+  const preprocessingWarnings = [...ctx.warnings];
+  const original = parseQingmlDocumentNodes(nodes, ctx, text);
+  const wrapper = singleUnknownDocumentWrapper(nodes);
+  if (!wrapper) return original;
+
+  // 容错只尝试当前最外层一次；候选解析不会再次进入 qingmlParse，避免递归剥壳。
+  const strippedCtx = createContext();
+  strippedCtx.source = ctx.source;
+  for (const warning of preprocessingWarnings) {
+    warn(
+      strippedCtx,
+      warning.kind,
+      warning.severity,
+      warning.detail,
+      warning.location,
+      warning.diagnostic,
+    );
+  }
+  const stripped = parseQingmlDocumentNodes(wrapper.children, strippedCtx, ctx.source);
+  const badBlockCountBefore = countBadBlockWarnings(original.warnings);
+  const badBlockCountAfter = countBadBlockWarnings(stripped.warnings);
+  if (badBlockCountAfter >= badBlockCountBefore) return original;
+
+  warn(
+    strippedCtx,
+    "document-wrapper-stripped",
+    "harmless",
+    "检测到单个未知顶层容器；剥掉最外层后结构错误减少，已采用剥壳结果。",
+    domNodeLocation(wrapper),
+    {
+      tagSkeleton: qingmlTagSkeleton(ctx.source),
+      badBlockCountBefore,
+      badBlockCountAfter,
+    },
+  );
+  return stripped;
+}
+
+function parseQingmlDocumentNodes(
+  nodes: readonly DomNode[],
+  ctx: ParseContext,
+  sourceText: string,
+): { title: string | null; blocks: AiBlock[]; warnings: QingmlWarning[] } {
   let title: string | null = null;
   const contentNodes: DomNode[] = [];
   const hasTopLevelBlock = nodes.some((node) => isTag(node) && isBlockTagName(node.name));
@@ -203,10 +252,26 @@ export function qingmlParse(text: string): { title: string | null; blocks: AiBlo
 
   const blocks = parseNodesAsBlocks(contentNodes, ctx);
   validateFootnoteDefinitions(blocks, ctx);
-  if (!nodes.some(isTag) && hasMeaningfulText(text)) {
+  if (!nodes.some(isTag) && hasMeaningfulText(sourceText)) {
     warn(ctx, "plain-text-document", "harmless", "输入没有 QingML 标签，按纯文本段落解析。");
   }
   return { title, blocks, warnings: ctx.warnings };
+}
+
+function singleUnknownDocumentWrapper(nodes: readonly DomNode[]): DomElement | null {
+  const meaningfulNodes = nodes.filter((node) => !isIgnorable(node));
+  if (meaningfulNodes.length !== 1) return null;
+  const root = meaningfulNodes[0];
+  if (!root || !isTag(root) || isKnownQingmlTagName(root.name)) return null;
+  return containsStructuralTag(root.children) ? root : null;
+}
+
+function isKnownQingmlTagName(name: string): boolean {
+  return isHeadingTag(name) || STRUCTURAL_TAGS.has(name) || INLINE_TAGS.has(name);
+}
+
+function countBadBlockWarnings(warnings: readonly QingmlWarning[]): number {
+  return warnings.filter((warning) => warning.severity === "bad-block").length;
 }
 
 export function qingmlParseFragment(text: string, action: FragmentAction): QingmlFragmentResult {
@@ -248,11 +313,18 @@ function warn(
   severity: QingmlWarning["severity"],
   detail: string,
   location?: QingmlWarning["location"],
+  diagnostic?: QingmlWarning["diagnostic"],
 ): void {
   const key = `${kind}:${severity}:${detail}`;
   if (ctx.warningKeys.has(key)) return;
   ctx.warningKeys.add(key);
-  ctx.warnings.push({ kind, severity, detail, ...(location ? { location } : {}) });
+  ctx.warnings.push({
+    kind,
+    severity,
+    detail,
+    ...(diagnostic ? { diagnostic } : {}),
+    ...(location ? { location } : {}),
+  });
 }
 
 function parseQingmlNodes(text: string, ctx: ParseContext): DomNode[] {
@@ -308,7 +380,11 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
   const name = element.name;
   if (isHeadingTag(name)) {
     const level = Number(name.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6;
-    const block: AiBlock = { type: "heading", level, runs: parseInlineNodes(element.children, ctx) };
+    const block: AiBlock = {
+      type: "heading",
+      level,
+      runs: parseInlineNodes(element.children, ctx, { inlineOnlyTag: name }),
+    };
     const textAlign = oneOf(PM_TEXT_ALIGN_VALUES, element.attribs.align);
     const anchor = optionalString(element.attribs.anchor);
     if (textAlign) block.textAlign = textAlign;
@@ -318,7 +394,10 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
 
   switch (name) {
     case "p": {
-      const block: AiBlock = { type: "paragraph", runs: parseInlineNodes(element.children, ctx) };
+      const block: AiBlock = {
+        type: "paragraph",
+        runs: parseInlineNodes(element.children, ctx, { inlineOnlyTag: name }),
+      };
       const textAlign = oneOf(PM_TEXT_ALIGN_VALUES, element.attribs.align);
       if (textAlign) block.textAlign = textAlign;
       return block;
@@ -462,7 +541,9 @@ function parseListItemElement(element: DomElement, ctx: ParseContext): AiListIte
     inlineNodes.push(child);
   }
 
-  const item: AiListItem = { runs: parseInlineNodes(inlineNodes, ctx) };
+  const item: AiListItem = {
+    runs: parseInlineNodes(inlineNodes, ctx, { inlineOnlyTag: element.name }),
+  };
   if (children.length > 0) item.children = children;
   return item;
 }
@@ -590,7 +671,11 @@ function parseColumns(element: DomElement, ctx: ParseContext): AiColumn[] {
 function parseInlineNodes(nodes: readonly DomNode[], ctx: ParseContext, options: InlineOptions = {}): AiRun[] {
   const runs: AiRun[] = [];
 
-  const walk = (node: DomNode, marks: readonly AiRunMark[]): void => {
+  const walk = (
+    node: DomNode,
+    marks: readonly AiRunMark[],
+    contextTag: string | undefined,
+  ): void => {
     if (isText(node)) {
       appendText(runs, collapseInlineWhitespace(node.data ?? ""), marks);
       return;
@@ -610,7 +695,7 @@ function parseInlineNodes(nodes: readonly DomNode[], ctx: ParseContext, options:
     }
     if (name === "p" && options.paragraphBreaks) {
       appendNewlineIfNeeded(runs, marks);
-      walkChildren(node.children, marks);
+      walkChildren(node.children, marks, contextTag);
       return;
     }
     if (name === "math") {
@@ -634,31 +719,36 @@ function parseInlineNodes(nodes: readonly DomNode[], ctx: ParseContext, options:
       return;
     }
     if (isInlineMarkTag(name)) {
-      walkChildren(node.children, addInlineMark(node, marks));
+      walkChildren(node.children, addInlineMark(node, marks), contextTag);
       return;
     }
     if (isBlockTagName(name) || STRUCTURAL_TAGS.has(name)) {
-      warn(ctx, "inline-block-flattened", "bad-block", `<${options.inlineOnlyTag ?? "inline"}> 内出现块级/结构标签 <${name}>，已拍平成行内文本。`);
+      const context = contextTag ? `<${contextTag}> 内` : "顶层行内内容中";
+      warn(ctx, "inline-block-flattened", "bad-block", `${context}出现块级/结构标签 <${name}>，已拍平成行内文本。`);
       appendNewlineIfNeeded(runs, marks);
-      walkChildren(node.children, marks);
+      walkChildren(node.children, marks, name);
       appendNewlineIfNeeded(runs, marks);
       return;
     }
     if (containsStructuralTag(node.children)) {
       warn(ctx, "unknown-structural-tag", "bad-block", `非白名单标签 <${name}> 包含块级结构，剥壳会导致结构丢失。`);
       appendNewlineIfNeeded(runs, marks);
-      walkChildren(node.children, marks);
+      walkChildren(node.children, marks, name);
       appendNewlineIfNeeded(runs, marks);
       return;
     }
-    walkChildren(node.children, marks);
+    walkChildren(node.children, marks, contextTag);
   };
 
-  const walkChildren = (children: readonly DomNode[], marks: readonly AiRunMark[]): void => {
-    for (const child of children) walk(child, marks);
+  const walkChildren = (
+    children: readonly DomNode[],
+    marks: readonly AiRunMark[],
+    contextTag: string | undefined,
+  ): void => {
+    for (const child of children) walk(child, marks, contextTag);
   };
 
-  walkChildren(nodes, []);
+  walkChildren(nodes, [], options.inlineOnlyTag);
   return normalizeRuns(runs);
 }
 

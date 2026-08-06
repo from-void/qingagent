@@ -453,6 +453,7 @@ describe("ReviewLaunchModal", () => {
     expect(textarea.value).not.toContain("## 已确认忽略");
     expect(buildReviewActionCard("custom", "自定义审查", stored)).toEqual({
       title: "自定义审查",
+      status: "running",
       lines: [
         { label: "模板", value: "自定义审查" },
         { label: "补充", value: "用户原要求" },

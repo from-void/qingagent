@@ -1107,7 +1107,7 @@ function graphemeBoundaries(text: string): number[] {
   }
 
   let offset = 0;
-  for (const char of Array.from(text)) {
+  for (const char of text) {
     offset += char.length;
     boundaries.push(offset);
   }

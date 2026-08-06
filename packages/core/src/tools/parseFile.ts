@@ -11,6 +11,7 @@ import {
   PARSE_FILE_TRUNCATION_GUIDANCE,
 } from "./materialContextBudget.js";
 import { statOpenedFileIdentity, verifyOpenedFilePath } from "./openedFilePath.js";
+import { replacementCharRatio } from "./replacementCharRatio.js";
 import {
   inferMimeTypeFromFilename,
   resolveFileIds,
@@ -476,11 +477,6 @@ function assertEvenUtf16Payload(buffer: Buffer): void {
   if (buffer.length % 2 !== 0) {
     throw new Error("UTF-16 文本字节长度截断");
   }
-}
-
-function replacementCharRatio(text: string): number {
-  const replacementCount = [...text].filter((char) => char === "\uFFFD").length;
-  return replacementCount / Math.max(text.length, 1);
 }
 
 function hasBinaryControlText(text: string): boolean {

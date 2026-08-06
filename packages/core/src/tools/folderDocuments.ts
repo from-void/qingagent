@@ -546,14 +546,19 @@ function cjkSearchTokens(text: string, options: { includeUnigrams: boolean }): s
     `cjk_${Array.from(value).map((char) => char.codePointAt(0)!.toString(16)).join("_")}`;
 
   for (const match of text.matchAll(CJK_RUN_PATTERN)) {
-    const chars = Array.from(match[0]);
-    if (options.includeUnigrams || chars.length === 1) {
-      for (const char of chars) add(encode(char));
+    const run = match[0];
+    if (options.includeUnigrams) {
+      for (const char of run) add(encode(char));
+    } else {
+      const chars = run[Symbol.iterator]();
+      const first = chars.next();
+      if (!first.done && chars.next().done) add(encode(first.value));
     }
-    for (let index = 0; index < chars.length - 1; index += 1) {
-      const current = chars[index];
-      const next = chars[index + 1];
-      if (current && next) add(encode(current + next));
+
+    let previous: string | undefined;
+    for (const char of run) {
+      if (previous !== undefined) add(encode(previous + char));
+      previous = char;
     }
   }
   return tokens;

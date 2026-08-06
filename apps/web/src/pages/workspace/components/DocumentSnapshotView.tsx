@@ -672,7 +672,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       const ed = pasteImageEditorRef.current;
       if (!ed || ed.isDestroyed || !ed.isEditable) return;
       try {
-        const uploads = insertImageAssets(ed, files);
+        const uploads = insertImageAssets(ed, files, docId ?? undefined);
         void Promise.all(uploads.map((upload) =>
           upload.catch((error) => {
             console.error("[workspace] paste image upload failed", error);
@@ -684,7 +684,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     },
-    [onToast],
+    [docId, onToast],
   );
   const editor = useEditor({
     // immediatelyRender:false——TipTap v3 默认 true 会在 React render 阶段同步创建 EditorView
@@ -1515,7 +1515,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           onPatchVerdict={onPatchVerdict}
         />
       ) : null}
-      {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
+      {interactiveEditable && editor ? (
+        <BlockHandle editor={editor} onToast={onToast} sessionId={docId} />
+      ) : null}
       {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
       {interactiveEditable && editor && onAiModify ? (
         <TableControls editor={editor} onAiModify={onAiModify} onToast={onToast} />

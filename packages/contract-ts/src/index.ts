@@ -87,6 +87,7 @@ export * from "./SubmitReviewOutcome";
 export * from "./SessionMeta";
 export * from "./SessionMode";
 export * from "./SessionStatus";
+export * from "./SessionStorage";
 export * from "./SkillRef";
 export * from "./StartSession";
 export * from "./StreamFrame";

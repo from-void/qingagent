@@ -235,6 +235,10 @@ export const sessionManager = new SessionManager({
     list: listSessionDeletions,
     get: getSessionDeletion,
   },
+  deleteSessionThread: async (sessionId) => {
+    const { deleteSessionWithStoredResources } = await import("./sessionStoredResources");
+    return deleteSessionWithStoredResources(sessionId);
+  },
   afterRun: (sessionId) => {
     const session = sessions.get(sessionId);
     if (session) armSessionConfirmTimeouts(session);

@@ -67,6 +67,7 @@ const APP_TABLES = [
   "review_doc_supplements",
   "review_template_selections",
   "deleted_sessions",
+  "session_resources",
   "confirm_grants",
   "confirm_audit_events",
   "confirm_grant_events",

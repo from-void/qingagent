@@ -1,14 +1,70 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
+import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+
+const registerSessionResourceMock = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("@qingagent/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@qingagent/db")>()),
+  registerSessionResource: registerSessionResourceMock,
+}));
+
 import {
   buildSvgCodexCommand,
+  editSvgWithCodexFallbackTool,
   runSvgCodexEditWithFallback,
   writeSvgCodexInstructionFile,
 } from "../tools/editSvgWithCodexFallback.js";
 
 describe("runSvgCodexEditWithFallback", () => {
+  it("原生 SVG 回落导入也登记会话资源归属", async () => {
+    const sessionId = `svg-fallback-resource-${Date.now()}`;
+    const workspaceRoot = sessionWorkspaceDir(sessionId);
+    const pairId = "11111111-1111-4111-8111-111111111111";
+    const sourcePath = join(workspaceRoot, `codex-image-source-${pairId}.svg`);
+    const editablePath = join(workspaceRoot, `svg-edit-output-${pairId}.svg`);
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#000"/></svg>';
+    let generatedDir: string | null = null;
+    registerSessionResourceMock.mockClear();
+    try {
+      await mkdir(workspaceRoot, { recursive: true });
+      await Promise.all([
+        writeFile(sourcePath, source, "utf8"),
+        writeFile(editablePath, source, "utf8"),
+      ]);
+
+      const result = await editSvgWithCodexFallbackTool.execute!({
+        sourcePath,
+        editablePath,
+        changeRequest: "把矩形改成白色",
+        oldString: '#000',
+        newString: '#fff',
+      }, {
+        requestContext: { get: (key: string) => key === "sessionId" ? sessionId : undefined },
+      } as never);
+
+      expect(result).toMatchObject({ ok: true, via: "svg-fallback" });
+      const imageId = (result as { imageId?: string }).imageId;
+      expect(imageId).toBeTruthy();
+      generatedDir = join(uploadsBaseDir(), imageId!);
+      expect(registerSessionResourceMock).toHaveBeenCalledWith({
+        sessionId,
+        resourceId: imageId,
+        kind: "generated",
+      });
+    } finally {
+      await Promise.all([
+        rm(workspaceRoot, { recursive: true, force: true }),
+        generatedDir
+          ? rm(generatedDir, { recursive: true, force: true })
+          : Promise.resolve(),
+      ]);
+    }
+  });
+
   it("指令写入真实工作区根目录，Codex 命令只引用受控相对文件名", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "qingagent svg workspace "));
     try {

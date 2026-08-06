@@ -20,7 +20,7 @@ import {
 import { z } from "zod";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import {
-  importGeneratedImageFromPath,
+  importGeneratedImageForSession,
   type ImportGeneratedImageResult,
 } from "./importGeneratedImage.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
@@ -316,9 +316,9 @@ async function executeSvgCodexEdit(input: {
   ): Promise<SvgEditSuccessResult> => ({
     ok: true,
     via,
-    ...(await importGeneratedImageFromPath(
+    ...(await importGeneratedImageForSession(
       { path: prepared.editablePath, alt: input.alt },
-      { workspaceRoot },
+      { workspaceRoot, sessionId },
     )),
     message,
   });

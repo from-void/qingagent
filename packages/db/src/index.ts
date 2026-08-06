@@ -18,6 +18,7 @@ export * from "./db/quarantine0002Recovery.js";
 export * from "./db/quarantine0002Audit.js";
 export * from "./db/reviewTemplateRepo.js";
 export * from "./db/sessionDeletionRepo.js";
+export * from "./db/sessionResourceRepo.js";
 export * from "./db/styleTemplateRepo.js";
 export * from "./db/usageRepo.js";
 export * from "./seeds/dtypeTemplatePrompts.js";

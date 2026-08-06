@@ -78,12 +78,12 @@ export function toContractChip(spec: ChatChipSpec): ChatChip {
   return chip;
 }
 
-export async function uploadFiles(files: File[]): Promise<UploadedAsset[]> {
+export async function uploadFiles(files: File[], sessionId?: string): Promise<UploadedAsset[]> {
   if (files.length === 0) return [];
 
   const uploadedAssets: UploadedAsset[] = [];
   for (const file of files) {
-    const data = await uploadAssetFile(file, { purpose: "material" });
+    const data = await uploadAssetFile(file, { purpose: "material", sessionId });
     uploadedAssets.push({
       fileId: data.fileId,
       filename: file.name,

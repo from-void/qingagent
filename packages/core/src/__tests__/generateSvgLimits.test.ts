@@ -9,6 +9,7 @@ import {
 const streamInnerModelMock = vi.hoisted(() => vi.fn());
 const mkdirMock = vi.hoisted(() => vi.fn());
 const writeFileMock = vi.hoisted(() => vi.fn());
+const registerSessionResourceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../llm/innerModelStream.js")>();
@@ -19,6 +20,11 @@ vi.mock("node:fs/promises", () => ({
   mkdir: mkdirMock,
   writeFile: writeFileMock,
 }));
+
+vi.mock("@qingagent/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@qingagent/db")>();
+  return { ...actual, registerSessionResource: registerSessionResourceMock };
+});
 
 interface GenerateSvgResult {
   ok: boolean;
@@ -31,11 +37,21 @@ async function executeGenerateSvg(
   description: string,
   context?: Parameters<NonNullable<typeof generateSvgTool.execute>>[1],
 ): Promise<GenerateSvgResult> {
+  const originalRequestContext = (context as {
+    requestContext?: { get?: (key: string) => unknown };
+  } | undefined)?.requestContext;
   return await generateSvgTool.execute!({
     description,
     style: null,
     aspect: "16:9",
-  }, context as never) as GenerateSvgResult;
+  }, {
+    ...context,
+    requestContext: {
+      get: (key: string) => key === "sessionId"
+        ? "generate-svg-limits-test"
+        : originalRequestContext?.get?.(key),
+    },
+  } as never) as GenerateSvgResult;
 }
 
 function progressWriter() {
@@ -58,6 +74,8 @@ describe("generateSvg direct DeepSeek path", () => {
     streamInnerModelMock.mockReset();
     mkdirMock.mockReset();
     writeFileMock.mockReset();
+    registerSessionResourceMock.mockReset();
+    registerSessionResourceMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

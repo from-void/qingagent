@@ -1,6 +1,6 @@
 import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
 import crypto from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isSubstantiveContent } from "@qingagent/doc-render/browser";
 import { mastra } from "../mastra.js";
@@ -33,6 +33,7 @@ import { isExtractionFailureText } from "../session/sessionTools.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { UPLOADS_BASE } from "../session/uploadFileResolver.js";
 import { summarizeParseFileOutput } from "./parseFileTelemetry.js";
+import { registerSessionResource } from "@qingagent/db";
 
 const logger = mastra.getLogger();
 
@@ -48,6 +49,7 @@ export async function* handleMaterialToolResultSideEffects(
     if (scrapeText !== "" && !isExtractionFailureText(scrapeText)) {
       let imageSrc: string | null = null;
       let imageLabel = "";
+      let generatedImageDir: string | null = null;
       try {
         const screenshot =
           typeof toolResult.screenshotSrc === "string" && toolResult.screenshotSrc;
@@ -59,6 +61,7 @@ export async function* handleMaterialToolResultSideEffects(
         } else if (openGraphImage) {
           const imageId = crypto.randomUUID();
           const imageDir = join(UPLOADS_BASE, imageId);
+          generatedImageDir = imageDir;
           await mkdir(imageDir, { recursive: true });
           const image = {
             ...(await downloadRemoteImage(
@@ -68,10 +71,18 @@ export async function* handleMaterialToolResultSideEffects(
             label: "网页缩略图",
           };
           await writeFile(join(imageDir, image.filename), image.buffer);
+          await registerSessionResource({
+            sessionId: state.sessionId,
+            resourceId: imageId,
+            kind: "generated",
+          });
           imageSrc = `/api/v1/files/${imageId}/${image.filename}`;
           imageLabel = image.label;
         }
       } catch (error) {
+        if (generatedImageDir) {
+          await rm(generatedImageDir, { recursive: true, force: true }).catch(() => undefined);
+        }
         logger.error("Failed to persist article scrape image, falling back to text card", {
           toolName,
           error: String(error),

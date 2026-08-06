@@ -7,6 +7,7 @@ import { generateSvgTool } from "../tools/generateSvg.js";
 const streamInnerModelMock = vi.hoisted(() => vi.fn());
 const mkdirMock = vi.hoisted(() => vi.fn());
 const writeFileMock = vi.hoisted(() => vi.fn());
+const registerSessionResourceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../llm/innerModelStream.js")>();
@@ -16,6 +17,10 @@ vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
 vi.mock("node:fs/promises", () => ({
   mkdir: mkdirMock,
   writeFile: writeFileMock,
+}));
+
+vi.mock("@qingagent/db", () => ({
+  registerSessionResource: registerSessionResourceMock,
 }));
 
 const size = { width: 800, height: 450 };
@@ -50,6 +55,8 @@ describe("svgTemplates", () => {
     streamInnerModelMock.mockReset();
     mkdirMock.mockReset();
     writeFileMock.mockReset();
+    registerSessionResourceMock.mockReset();
+    registerSessionResourceMock.mockResolvedValue(undefined);
   });
 
   it("compare-card 典型参数产物可消毒、可见且 lint 零违规", () => {
@@ -139,7 +146,9 @@ describe("svgTemplates", () => {
         accent: "warm",
       },
       aspect: "16:9",
-    } as never, undefined as never) as {
+    } as never, {
+      requestContext: { get: (key: string) => key === "sessionId" ? "svg-template-test" : undefined },
+    } as never) as {
       ok: boolean;
       src: string;
       lintIssues: string[];
@@ -151,5 +160,9 @@ describe("svgTemplates", () => {
     expect(streamInnerModelMock).not.toHaveBeenCalled();
     expect(mkdirMock).toHaveBeenCalledTimes(1);
     expect(writeFileMock).toHaveBeenCalledTimes(1);
+    expect(registerSessionResourceMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "svg-template-test",
+      kind: "generated",
+    }));
   });
 });

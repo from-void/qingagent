@@ -59,7 +59,15 @@ const BLOCK_COMMAND_LABELS: Readonly<Record<string, string>> = {
   inlineMath: "行内公式",
 };
 
-export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (message: string) => void }) {
+export function BlockHandle({
+  editor,
+  onToast,
+  sessionId,
+}: {
+  editor: Editor;
+  onToast?: (message: string) => void;
+  sessionId?: string | null;
+}) {
   const [handle, setHandle] = useState<HandleState | null>(null);
   const [collapsedCarets, setCollapsedCarets] = useState<CollapsedCaret[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -853,13 +861,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         return;
       }
       try {
-        await insertImageAsset(editor, file);
+        await insertImageAsset(editor, file, sessionId ?? undefined);
       } catch (error) {
         console.error("[workspace] image upload failed", error);
         onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
-  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain]);
+  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain, sessionId]);
 
   const doInsertFile = useCallback(() => {
     if (handle?.kind !== "block") return;
@@ -881,13 +889,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         return;
       }
       try {
-        await insertFileAsset(editor, file);
+        await insertFileAsset(editor, file, sessionId ?? undefined);
       } catch (error) {
         console.error("[workspace] file upload failed", error);
         onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
-  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain]);
+  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain, sessionId]);
 
   const handleAlign = useCallback(
     (align: "left" | "center" | "right") => {

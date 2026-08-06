@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   beginSessionDeletion,
-  completeSessionDeletion,
+  backfillDeletingSessionResources,
+  deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
+  markSessionThreadsDeleted,
   memory,
   events,
   logger,
@@ -22,11 +24,16 @@ const {
       sessionId,
       phase: "draining" as const,
     })),
+    backfillDeletingSessionResources: vi.fn(async () => 0),
     deleteSessionDocumentsAndAdvance: vi.fn(async (sessionId: string) => {
       events.push(`documents:${sessionId}`);
       return "documents_deleted" as const;
     }),
-    completeSessionDeletion: vi.fn(async () => undefined),
+    markSessionThreadsDeleted: vi.fn(async () => "threads_deleted" as const),
+    deleteSessionDatabaseRowsAndAdvance: vi.fn(async (sessionId: string) => {
+      events.push(`database:${sessionId}`);
+      return "database_deleted" as const;
+    }),
     memory: {
       updateThread: vi.fn(async () => undefined),
       saveThread: vi.fn(async () => undefined),
@@ -41,8 +48,10 @@ vi.mock("@qingagent/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@qingagent/db")>()),
   resolveDbUrl: () => "file::memory:",
   beginSessionDeletion,
-  completeSessionDeletion,
+  backfillDeletingSessionResources,
+  deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
+  markSessionThreadsDeleted,
 }));
 
 vi.mock("../mastra.js", () => ({
@@ -67,12 +76,17 @@ describe("deleteSessionThread documents 级联顺序", () => {
     __resetSessionPersistenceForTest();
   });
 
-  it("先删除 documents 族,再删除 Mastra thread", async () => {
+  it("先删除 documents 族,再删除主线程与 om-sidecar 影子线程", async () => {
     const { deleteSessionThread } = await import("../session/threadPersistence.js");
 
     await deleteSessionThread("delete-order-session");
 
-    expect(events).toEqual(["documents:delete-order-session", "thread:delete-order-session"]);
+    expect(events).toEqual([
+      "documents:delete-order-session",
+      "thread:delete-order-session",
+      "thread:om-sidecar:delete-order-session",
+      "database:delete-order-session",
+    ]);
   });
 
   it("documents 族删除失败时抛错并阻断 Mastra thread 删除", async () => {
@@ -90,7 +104,9 @@ describe("deleteSessionThread documents 级联顺序", () => {
     await expect(deleteSessionThread("delete-thread-fail-session")).rejects.toMatchObject({
       phase: "documents_deleted",
     });
-    expect(events).toEqual(["documents:delete-thread-fail-session"]);
+    expect(events).toEqual([
+      "documents:delete-thread-fail-session",
+    ]);
   });
 
   it("墓碑在 updateThread 返回 not-found 后阻止 saveThread 复建", async () => {

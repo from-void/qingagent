@@ -43,6 +43,8 @@ function frameIsUserVisible(
       );
     case "chatMessageAppended":
       return messagePartIsUserVisible(context, frame.data.part);
+    case "actionCardUpdated":
+      return true;
     case "toolCallUpdated": {
       const message = context.state.chatHistory.find(
         (item) => item.id === frame.data.messageId,

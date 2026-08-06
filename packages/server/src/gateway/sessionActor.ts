@@ -65,7 +65,7 @@ export interface SessionActorOptions {
   afterRun?: (sessionId: string) => void;
   maxQueueSize?: number;
   /** 用户已确认且正在执行的命令等"不能被系统悄悄丢掉"的工作。 */
-  hasProtectedWork?: (sessionId: string) => boolean;
+  hasProtectedWork?: (sessionId: string, activeCommand?: Command) => boolean;
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
@@ -122,7 +122,7 @@ export class SessionActor {
       // 付出的确认动作白丢,卡片落成笼统"已中止"(0729 真机 P1)。
       // 用户显式点停止(cancelStream → globalStop)仍必须立刻生效。
       if (reason === "preemptedByNewMessage" && this.hasProtectedWork()) {
-        console.info("[confirm-lifecycle] preemption skipped: protected work in flight", {
+        console.info("[session-lifecycle] preemption skipped: protected work in flight", {
           sessionId: this.options.sessionId,
           command: input.command.kind,
         });
@@ -156,7 +156,10 @@ export class SessionActor {
 
   private hasProtectedWork(): boolean {
     try {
-      return this.options.hasProtectedWork?.(this.options.sessionId) === true;
+      return this.options.hasProtectedWork?.(
+        this.options.sessionId,
+        this.current?.input?.command,
+      ) === true;
     } catch {
       return false;
     }

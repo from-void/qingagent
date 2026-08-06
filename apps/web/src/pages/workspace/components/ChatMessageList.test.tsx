@@ -975,6 +975,30 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("补充语气更克制");
   });
 
+  it("审查中止卡显示中止终态且不再保留完成勾", async () => {
+    const messages: ChatMessage[] = [{
+      id: "m-review-aborted",
+      role: { kind: "user" },
+      ts: "2026-08-05T10:00:00.000Z",
+      parts: [{
+        kind: "actionCard",
+        data: {
+          title: "一致性审查",
+          lines: [{ label: "模板", value: "全面自洽核查" }],
+          status: "aborted",
+        },
+      }],
+      chips: null,
+    }];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    const card = host?.querySelector<HTMLElement>('[data-wf="ActionCard"]');
+    expect(card?.dataset.status).toBe("aborted");
+    expect(card?.textContent).toContain("审查已中止");
+    expect(card?.querySelector(".askuser-card-check svg")).toBeNull();
+  });
+
   it("用户回流的问卷答案卡复用已提交答案结构且不套用户气泡", async () => {
     const messages: ChatMessage[] = [
       {

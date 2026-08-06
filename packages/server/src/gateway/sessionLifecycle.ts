@@ -1,4 +1,4 @@
-import type { BridgeFrame } from "@qingagent/contract-ts";
+import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import {
   clearQuestionBranch,
   clearSessionSnapshot,
@@ -217,6 +217,28 @@ async function closeSessionRuntime(sessionId: string): Promise<void> {
 // confirmRuntime 不得反向依赖本模块(依赖环);它取会话统一走这里注册的解析器。
 registerConfirmSessionResolver(getOrRestoreSession);
 
+/**
+ * 新消息只可抢占可安全重来的普通轮次。审查轮与确认卡都承载了用户已明确发起的工作，
+ * 必须排队等其收口；显式 cancelStream 在 SessionActor 中走 globalStop，故不受本保护集阻挡。
+ */
+export function hasProtectedSessionWork(
+  session: SessionState | undefined,
+  activeCommand?: Command,
+): boolean {
+  if (
+    activeCommand?.kind === "sendMessage" &&
+    activeCommand.data.reviewContext !== undefined
+  ) {
+    return true;
+  }
+  if (!session) return false;
+  if (session._activeConfirmedToolCallId) return true;
+  for (const pending of session.pendingConfirms.values()) {
+    if (pending.status === "pending" || pending.status === "resuming") return true;
+  }
+  return false;
+}
+
 export const sessionManager = new SessionManager({
   handleCommand: dispatchBridgeCommand,
   abortSession: (sessionId, reason) => {
@@ -243,16 +265,9 @@ export const sessionManager = new SessionManager({
     const session = sessions.get(sessionId);
     if (session) armSessionConfirmTimeouts(session);
   },
-  hasProtectedWork: (sessionId) => {
+  hasProtectedWork: (sessionId, activeCommand) => {
     const session = sessions.get(sessionId);
-    if (!session) return false;
-    // 已确认、正在执行的命令 = 用户已经付出过动作,不能被系统悄悄丢掉。
-    if (session._activeConfirmedToolCallId) return true;
-    for (const pending of session.pendingConfirms.values()) {
-      // pending=还在等用户点；resuming=已点、正在恢复执行。两者都不许被顺手清理。
-      if (pending.status === "pending" || pending.status === "resuming") return true;
-    }
-    return false;
+    return hasProtectedSessionWork(session, activeCommand);
   },
 });
 

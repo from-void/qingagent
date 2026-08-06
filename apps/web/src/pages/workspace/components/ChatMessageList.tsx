@@ -1363,13 +1363,40 @@ function AskUserAnswerCard({ data }: { data: AskUserAnswerCardPart }) {
 }
 
 function ActionCard({ data }: { data: ActionCardData }) {
+  const status = data.status;
+  const statusLabel = status === "running"
+    ? "审查中"
+    : status === "done"
+      ? "审查已完成"
+      : status === "aborted"
+        ? "审查已中止"
+        : status === "failed"
+          ? "审查未完成"
+          : null;
+  const statusIcon = status === "done" || status === undefined
+    ? (data.icon ?? <CheckIcon size={13} />)
+    : status === "running"
+      ? "…"
+      : status === "aborted"
+        ? "—"
+        : "!";
   return (
-    <div className="askuser-card askuser-card--answers" data-wf="ActionCard" aria-label={data.title}>
+    <div
+      className="askuser-card askuser-card--answers"
+      data-wf="ActionCard"
+      data-status={status}
+      aria-label={statusLabel ? `${data.title} · ${statusLabel}` : data.title}
+    >
       <div className="askuser-card-header">
         <span className="askuser-card-check" aria-hidden="true">
-          {data.icon ?? <CheckIcon size={13} />}
+          {statusIcon}
         </span>
         <span>{data.title}</span>
+        {statusLabel ? (
+          <span style={{ marginLeft: "auto", color: "var(--ink-3)", fontWeight: 400 }}>
+            {statusLabel}
+          </span>
+        ) : null}
       </div>
       {data.lines.length > 0 ? <div className="askuser-card-body">
         {data.lines.map((line, index) => (

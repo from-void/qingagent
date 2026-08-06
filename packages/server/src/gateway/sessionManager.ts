@@ -36,10 +36,10 @@ export interface SessionManagerOptions {
   deletionStore?: SessionDeletionStore;
   /**
    * 会话是否正在做"用户已经付出过动作、不能被系统悄悄丢掉"的工作
-   * (当前=用户已确认且正在执行的命令,以及仍待用户决策的确认卡)。
+   * (当前=审查轮、用户已确认且正在执行的命令,以及仍待用户决策的确认卡)。
    * 返回 true 时,新消息抢占必须放行等它自己收口。
    */
-  hasProtectedWork?: (sessionId: string) => boolean;
+  hasProtectedWork?: (sessionId: string, activeCommand?: Command) => boolean;
 }
 
 export interface SessionDeletionStoreRecord {
@@ -305,9 +305,9 @@ export class SessionManager {
   }
 
   /** 受保护工作判定的唯一入口；未注入时按"没有受保护工作"处理。 */
-  private hasProtectedWork(sessionId: string): boolean {
+  private hasProtectedWork(sessionId: string, activeCommand?: Command): boolean {
     try {
-      return this.options.hasProtectedWork?.(sessionId) === true;
+      return this.options.hasProtectedWork?.(sessionId, activeCommand) === true;
     } catch {
       return false;
     }
@@ -437,7 +437,8 @@ export class SessionManager {
       handleCommand: this.options.handleCommand,
       abortSession: this.options.abortSession,
       afterRun: this.options.afterRun,
-      hasProtectedWork: (id) => this.hasProtectedWork(id),
+      hasProtectedWork: (id, activeCommand) =>
+        this.hasProtectedWork(id, activeCommand),
     });
     this.actors.set(sessionId, { actor, lastAccessAt: Date.now() });
     this.evictIdleActorsIfNeeded(sessionId);

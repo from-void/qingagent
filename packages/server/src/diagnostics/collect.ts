@@ -752,6 +752,10 @@ const L1_FRAME_RULES = {
     seq: "structural",
     part: "redactedDeep",
   },
+  actionCardUpdated: {
+    messageId: "structural",
+    card: "redactedDeep",
+  },
   confirmRequested: {},
   confirmResolved: {},
   toolCallUpdated: {

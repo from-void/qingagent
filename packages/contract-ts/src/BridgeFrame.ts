@@ -45,6 +45,7 @@ export type BridgeFrame =
   | { kind: "sessionMeta"; data: { title: string; sessionId: string } }
   | { kind: "chatMessageAdded"; data: { message: ChatMessage; appendSeq?: number } }
   | { kind: "chatMessageAppended"; data: { messageId: string; seq: number; part: MessagePart } }
+  | { kind: "actionCardUpdated"; data: { messageId: string; card: Extract<MessagePart, { kind: "actionCard" }>["data"] } }
   | { kind: "confirmRequested"; data: ConfirmRequested }
   | { kind: "confirmResolved"; data: ConfirmResolved }
   | { kind: "toolCallUpdated"; data: { messageId: string; toolCallId: string; spec: ToolCallSpec } }

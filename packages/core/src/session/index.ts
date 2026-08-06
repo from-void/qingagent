@@ -69,6 +69,8 @@ export {
   scheduleOmSidecarAfterTurn,
 } from "./omSidecar.js";
 
+export { omSidecarThreadId, sessionOwnedThreadIds } from "./sessionShadowThreads.js";
+
 export {
   buildMaterialFromParse,
   findMaterialByFileId,

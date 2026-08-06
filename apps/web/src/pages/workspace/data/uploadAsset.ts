@@ -6,6 +6,7 @@ import {
   removeUnpairedSurrogates,
   UPLOAD_FILENAME_HEADER,
   UPLOAD_PURPOSE_HEADER,
+  UPLOAD_SESSION_HEADER,
 } from "@qingagent/contract-ts";
 import { materialPreflightErrorMessage } from "./materialFilePreflight";
 
@@ -19,6 +20,7 @@ export interface UploadedAsset {
 export interface UploadAssetOptions {
   onProgress?: (progress: number | null) => void;
   purpose?: UploadPurpose;
+  sessionId?: string;
 }
 
 export const DEFAULT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
@@ -87,6 +89,9 @@ function uploadBinary(file: File, options: UploadAssetOptions): Promise<Uploaded
     );
     if (options.purpose) {
       xhr.setRequestHeader(UPLOAD_PURPOSE_HEADER, options.purpose);
+    }
+    if (options.sessionId) {
+      xhr.setRequestHeader(UPLOAD_SESSION_HEADER, options.sessionId);
     }
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) {

@@ -782,6 +782,7 @@ export function WorkspaceDocumentPane({
           containerSelector="#view-workspace .ws-right"
           onAiModify={handleAiModify}
           onToast={showToast}
+          sessionId={state.sessionId}
         />
         {previewExit.source && (
           <AssetPreview

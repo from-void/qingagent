@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   mkdir: vi.fn(),
   recordUsageEvent: vi.fn(),
+  registerSessionResource: vi.fn(),
   writeFile: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("@qingagent/db", () => ({
   resolveDbUrl: () => "file::memory:",
   recordUsageEvent: mocks.recordUsageEvent,
+  registerSessionResource: mocks.registerSessionResource,
 }));
 
 import {
@@ -89,6 +91,8 @@ describe("generateSvg BranchCall 流式 partialSvg", () => {
     process.env.DEEPSEEK_API_KEY = "sk-generate-svg-partial-test";
     mocks.mkdir.mockReset();
     mocks.recordUsageEvent.mockReset();
+    mocks.registerSessionResource.mockReset();
+    mocks.registerSessionResource.mockResolvedValue(undefined);
     mocks.writeFile.mockReset();
   });
 

@@ -347,3 +347,41 @@ export async function deleteUploadedFile(fileId: string): Promise<boolean> {
     }
   });
 }
+
+/**
+ * 归属清单已证明没有其它活跃会话引用时，物理删除完整目录并同步移除索引。
+ * 与 deleteUploadedFile 的历史 refCount 保守语义分开，调用方必须先做归属判定。
+ */
+export async function purgeStoredFile(fileId: string): Promise<boolean> {
+  if (!isValidUploadId(fileId)) return false;
+  const dir = path.resolve(UPLOAD_DIR, fileId);
+  if (dir === UPLOAD_DIR || !isWithinUploadDir(dir)) return false;
+
+  return withUploadIndexLock(async () => {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      let index = await readContentIndex();
+      if (!index.complete) index = await rebuildContentIndex();
+      for (const [key, candidate] of Object.entries(index.records)) {
+        if (candidate.fileId === fileId) delete index.records[key];
+      }
+      index.complete = true;
+      await writeContentIndex(index);
+      return true;
+    } catch (error) {
+      console.error("[uploadStorage] Failed to purge stored file", {
+        fileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  });
+}
+
+export async function listStoredFileIds(): Promise<string[]> {
+  const entries = await fs.readdir(UPLOAD_DIR).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  return entries.filter(isValidUploadId).sort();
+}

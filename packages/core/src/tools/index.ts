@@ -48,11 +48,13 @@ export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
 export {
   importGeneratedImageTool,
+  importGeneratedImageForSession,
   importGeneratedImageFromPath,
   IMPORT_GENERATED_IMAGE_MAX_BYTES,
 } from "./importGeneratedImage.js";
 export type {
   ImportGeneratedImageInput,
+  ImportGeneratedImageForSessionOptions,
   ImportGeneratedImageOptions,
   ImportGeneratedImageResult,
 } from "./importGeneratedImage.js";

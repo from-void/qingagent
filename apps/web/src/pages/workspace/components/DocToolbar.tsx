@@ -53,6 +53,7 @@ export interface DocToolbarProps {
   containerSelector: string;
   onAiModify: (target: AiModifyTarget) => Promise<boolean>;
   onToast?: (message: string) => void;
+  sessionId?: string | null;
 }
 
 export interface SavedAiSelection {
@@ -422,6 +423,7 @@ export function DocToolbar({
   containerSelector,
   onAiModify,
   onToast,
+  sessionId,
 }: DocToolbarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<ToolbarPos | null>(null);
@@ -948,13 +950,13 @@ export function DocToolbar({
       if (!editor.isEditable) return;
       if (!restoreSavedCommandSelection()) return;
       try {
-        await insertImageAsset(editor, file);
+        await insertImageAsset(editor, file, sessionId ?? undefined);
       } catch (error) {
         console.error("[workspace] image upload failed", error);
         onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
-  }, [editor, onToast, restoreSavedCommandSelection]);
+  }, [editor, onToast, restoreSavedCommandSelection, sessionId]);
 
   const handleInsertFile = useCallback(() => {
     if (!editor) return;
@@ -965,13 +967,13 @@ export function DocToolbar({
       if (!editor.isEditable) return;
       if (!restoreSavedCommandSelection()) return;
       try {
-        await insertFileAsset(editor, file);
+        await insertFileAsset(editor, file, sessionId ?? undefined);
       } catch (error) {
         console.error("[workspace] file upload failed", error);
         onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
-  }, [editor, onToast, restoreSavedCommandSelection]);
+  }, [editor, onToast, restoreSavedCommandSelection, sessionId]);
 
   const handleAiModify = useCallback(() => {
     if (!editor) return;

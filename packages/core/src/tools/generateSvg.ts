@@ -2,7 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "@qingagent/doc-render/browser";
 import { lintSvg, type SvgLintIssue } from "@qingagent/doc-render/browser";
@@ -13,6 +13,7 @@ import { streamInnerModel } from "../llm/innerModelStream.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 import { SVG_TEMPLATES } from "@qingagent/doc-render/svg-templates";
+import { registerSessionResource } from "@qingagent/db";
 
 // 空闲看门狗:连续无任何输出超过该时长才判定卡死掐断——只要还在流式吐字就不断重置,
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。
@@ -91,12 +92,21 @@ function rawKb(rawBytes: number): number {
   return Math.round((rawBytes / 1024) * 10) / 10;
 }
 
-async function persistSvg(svg: string): Promise<{ imageId: string; src: string }> {
+async function persistSvg(
+  svg: string,
+  sessionId: string,
+): Promise<{ imageId: string; src: string }> {
   const imageId = randomUUID();
   const filename = "illustration.svg";
   const dir = join(uploadsBaseDir(), imageId);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, filename), svg, "utf8");
+  try {
+    await registerSessionResource({ sessionId, resourceId: imageId, kind: "generated" });
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
   return {
     imageId,
     src: `/api/v1/files/${imageId}/${filename}`,
@@ -177,6 +187,10 @@ export const generateSvgTool = createTool({
   }),
   execute: async (input, context) => {
     const requestContext = context?.requestContext as RequestContext | undefined;
+    const sessionId = requestContext?.get("sessionId");
+    if (typeof sessionId !== "string" || sessionId.length === 0) {
+      throw new Error("缺少当前会话，无法登记 SVG 资源归属");
+    }
     const writer = (
       context as
         | { writer?: ProgressWriter }
@@ -261,7 +275,7 @@ export const generateSvgTool = createTool({
           return fail(error);
         }
         const issues = lintSvg(svg, { width, height });
-        const { imageId, src } = await persistSvg(svg);
+        const { imageId, src } = await persistSvg(svg, sessionId);
         await emitProgress("done", {
           message: "SVG 已生成",
           src,
@@ -453,7 +467,7 @@ export const generateSvgTool = createTool({
       }
 
       context?.abortSignal?.throwIfAborted();
-      const { imageId, src } = await persistSvg(selected.svg);
+      const { imageId, src } = await persistSvg(selected.svg, sessionId);
       await emitProgress("done", {
         message: "SVG 已生成",
         src,

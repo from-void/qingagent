@@ -29,8 +29,12 @@ export const UPLOAD_PLACEHOLDER_IMAGE_SRC = `data:image/svg+xml,${encodeURICompo
 )}`;
 export const UPLOAD_PLACEHOLDER_FILE_ID_PREFIX = "upload-pending:";
 
-export async function insertImageAsset(editor: AssetEditor, file: File): Promise<string> {
-  const [upload] = insertImageAssets(editor, [file]);
+export async function insertImageAsset(
+  editor: AssetEditor,
+  file: File,
+  sessionId?: string,
+): Promise<string> {
+  const [upload] = insertImageAssets(editor, [file], sessionId);
   if (!upload) throw new Error("Insert image placeholder failed");
   return upload;
 }
@@ -38,6 +42,7 @@ export async function insertImageAsset(editor: AssetEditor, file: File): Promise
 export function insertImageAssets(
   editor: AssetEditor,
   files: readonly File[],
+  sessionId?: string,
 ): Promise<string>[] {
   if (files.length === 0) return [];
   const targets = files.map((file) => ({
@@ -60,16 +65,19 @@ export function insertImageAssets(
   if (!inserted) throw new Error("Insert image placeholder failed");
   for (const { blockId } of targets) registerPendingUpload(editor, blockId);
 
-  return targets.map(({ blockId, file }) => uploadImageIntoPlaceholder(editor, blockId, file));
+  return targets.map(({ blockId, file }) =>
+    uploadImageIntoPlaceholder(editor, blockId, file, sessionId));
 }
 
 async function uploadImageIntoPlaceholder(
   editor: AssetEditor,
   blockId: string,
   file: File,
+  sessionId?: string,
 ): Promise<string> {
   try {
     const uploaded = await uploadAssetFile(file, {
+      sessionId,
       onProgress: (progress) => {
         updateImageAttrsByBlockId(editor, blockId, {
           uploading: true,
@@ -100,7 +108,11 @@ async function uploadImageIntoPlaceholder(
   }
 }
 
-export async function insertFileAsset(editor: AssetEditor, file: File): Promise<UploadedAsset> {
+export async function insertFileAsset(
+  editor: AssetEditor,
+  file: File,
+  sessionId?: string,
+): Promise<UploadedAsset> {
   const blockId = createUploadBlockId("file");
   const inserted = editor.chain().focus().insertContent({
       type: "fileAttachment",
@@ -117,7 +129,7 @@ export async function insertFileAsset(editor: AssetEditor, file: File): Promise<
   registerPendingUpload(editor, blockId);
 
   try {
-    const uploaded = await uploadAssetFile(file).catch((error) => {
+    const uploaded = await uploadAssetFile(file, { sessionId }).catch((error) => {
       deleteNodeByBlockId(editor, "fileAttachment", blockId);
       throw error;
     });

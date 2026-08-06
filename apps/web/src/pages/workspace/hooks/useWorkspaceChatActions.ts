@@ -335,8 +335,9 @@ export function useWorkspaceChatActions(input: {
               ) {
                 throw new Error("workspace turn dispatch cancelled");
               }
-              // 先上传文件，再把 fileIds 随消息发给后端解析。
-              const uploadedAssets = await uploadFiles(filesToUpload);
+              // 上传必须先绑定稳定会话归属；删除墓碑落下后服务端会拒绝继续接纳资源。
+              const sessionId = await ensureSessionId(stream);
+              const uploadedAssets = await uploadFiles(filesToUpload, sessionId);
               if (
                 !isWorkspaceTurnDispatchCurrent(
                   turnDispatchGateRef.current,
@@ -349,7 +350,6 @@ export function useWorkspaceChatActions(input: {
 
               const contractChips = snap.chips.map(toContractChip);
 
-              const sessionId = await ensureSessionId(stream);
               if (
                 !isWorkspaceTurnDispatchCurrent(
                   turnDispatchGateRef.current,

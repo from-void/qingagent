@@ -9,8 +9,14 @@ import {
   removeUnpairedSurrogates,
   UPLOAD_FILENAME_HEADER,
   UPLOAD_PURPOSE_HEADER,
+  UPLOAD_SESSION_HEADER,
   type UploadPurpose,
 } from "@qingagent/contract-ts";
+import {
+  backfillActiveSessionResources,
+  hasActiveSessionResource,
+  registerSessionResource,
+} from "@qingagent/db";
 import { preflightMaterialFileBuffer } from "@qingagent/core/material-preflight";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
@@ -19,12 +25,26 @@ import {
   findUploadedFileRecord,
   isValidUploadId,
   isWithinUploadDir,
+  deleteUploadedFile,
 } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { resolveUploadMaxBytes } from "../lib/uploadLimits";
 
 export const uploadRoutes = new Hono();
 const uploadMaxBytes = resolveUploadMaxBytes();
+let ownershipBackfill: Promise<void> | null = null;
+
+async function ensureOwnershipBackfill(): Promise<void> {
+  if (!ownershipBackfill) {
+    ownershipBackfill = backfillActiveSessionResources()
+      .then(() => undefined)
+      .catch((error) => {
+        ownershipBackfill = null;
+        throw error;
+      });
+  }
+  await ownershipBackfill;
+}
 
 /** Validate that a filename does not contain path separators or traversal sequences. */
 function isSafeFilename(filename: string): boolean {
@@ -142,6 +162,10 @@ uploadRoutes.post(
     const purpose: UploadPurpose | undefined = purposeHeader === "material"
       ? "material"
       : undefined;
+    const sessionId = c.req.header(UPLOAD_SESSION_HEADER)?.trim();
+    if (!sessionId) {
+      return c.json({ error: "session required" }, 400);
+    }
     const buffer = Buffer.from(await c.req.arrayBuffer());
     if (buffer.byteLength === 0) {
       return c.json({ error: "empty file" }, 400);
@@ -175,6 +199,16 @@ uploadRoutes.post(
       throw error;
     }
     const { record, deduped } = stored;
+    try {
+      await registerSessionResource({
+        sessionId,
+        resourceId: record.fileId,
+        kind: "upload",
+      });
+    } catch (error) {
+      await deleteUploadedFile(record.fileId);
+      throw error;
+    }
 
     console.info("[upload] file stored", {
       fileId: record.fileId,
@@ -204,6 +238,11 @@ async function handleFileRequest(c: Context) {
   }
   if (requestedFilename && !isSafeFilename(requestedFilename)) {
     return c.json({ error: "invalid filename" }, 400);
+  }
+
+  await ensureOwnershipBackfill();
+  if (!(await hasActiveSessionResource(fileId))) {
+    return c.json({ error: "not found" }, 404);
   }
 
   const dir = path.resolve(UPLOAD_DIR, fileId);

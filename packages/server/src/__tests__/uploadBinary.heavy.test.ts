@@ -3,7 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { UPLOAD_FILENAME_HEADER } from "@qingagent/contract-ts";
+import {
+  UPLOAD_FILENAME_HEADER,
+  UPLOAD_SESSION_HEADER,
+} from "@qingagent/contract-ts";
+import { __resetDocumentsClientForTest } from "@qingagent/db/client";
+import { __resetMigrationsForTest } from "@qingagent/db/migrations";
 
 const originalCwd = process.cwd();
 const FILE_BYTES = 100 * 1024 * 1024;
@@ -13,10 +18,16 @@ describe("100 MiB 二进制上传回归", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-binary-heavy-"));
     process.chdir(tmpDir);
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, "qingagent.db")}`;
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
     process.env.QINGAGENT_UPLOAD_MAX_BYTES = String(128 * 1024 * 1024);
   });
 
   afterEach(async () => {
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
+    delete process.env.DATABASE_URL;
     delete process.env.QINGAGENT_UPLOAD_MAX_BYTES;
     process.chdir(originalCwd);
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -38,6 +49,7 @@ describe("100 MiB 二进制上传回归", () => {
       headers: {
         "Content-Type": "application/octet-stream",
         [UPLOAD_FILENAME_HEADER]: "memory-100m.bin",
+        [UPLOAD_SESSION_HEADER]: "upload-binary-heavy-session",
       },
       body: content,
     });

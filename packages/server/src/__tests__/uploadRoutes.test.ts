@@ -8,7 +8,12 @@ import {
   removeUnpairedSurrogates,
   UPLOAD_FILENAME_HEADER,
   UPLOAD_PURPOSE_HEADER,
+  UPLOAD_SESSION_HEADER,
 } from "@qingagent/contract-ts";
+import {
+  __resetDocumentsClientForTest,
+} from "@qingagent/db/client";
+import { __resetMigrationsForTest } from "@qingagent/db/migrations";
 
 const originalCwd = process.cwd();
 let tmpDir: string;
@@ -29,6 +34,12 @@ async function seedUploadedFile(uploadDir: string, filename: string, content = "
   const dir = path.join(uploadDir, fileId);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, filename), content);
+  const { ensureSessionResource } = await import("@qingagent/db");
+  await ensureSessionResource({
+    sessionId: "seeded-download-session",
+    resourceId: fileId,
+    kind: "discovered",
+  });
   return fileId;
 }
 
@@ -39,6 +50,7 @@ async function postUpload(
     content: string | Buffer;
     mimeType?: string;
     purpose?: "material";
+    sessionId?: string;
   },
 ) {
   const content = Buffer.from(input.content);
@@ -48,6 +60,7 @@ async function postUpload(
       "Content-Type": input.mimeType ?? "application/octet-stream",
       [UPLOAD_FILENAME_HEADER]: encodeURIComponent(removeUnpairedSurrogates(input.filename)),
       ...(input.purpose ? { [UPLOAD_PURPOSE_HEADER]: input.purpose } : {}),
+      [UPLOAD_SESSION_HEADER]: input.sessionId ?? "upload-route-session",
     },
     body: content,
   });
@@ -71,13 +84,36 @@ async function uploadEntries(uploadDir: string): Promise<string[]> {
   return fs.readdir(uploadDir).catch(() => []);
 }
 
+async function deleteOwnedSessionAssets(sessionId: string): Promise<void> {
+  const {
+    beginSessionDeletion,
+    deleteSessionDatabaseRowsAndAdvance,
+    deleteSessionDocumentsAndAdvance,
+    markSessionThreadsDeleted,
+  } = await import("@qingagent/db");
+  await beginSessionDeletion(sessionId);
+  await deleteSessionDocumentsAndAdvance(sessionId);
+  await markSessionThreadsDeleted(sessionId);
+  await deleteSessionDatabaseRowsAndAdvance(sessionId, [`om-sidecar:${sessionId}`]);
+  const { deleteSessionStoredResources } = await import(
+    "../gateway/sessionStoredResources"
+  );
+  await deleteSessionStoredResources(sessionId);
+}
+
 describe("uploadRoutes 下载响应头", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-route-"));
     process.chdir(tmpDir);
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, "qingagent.db")}`;
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
   });
 
   afterEach(async () => {
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
+    delete process.env.DATABASE_URL;
     process.chdir(originalCwd);
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -157,6 +193,24 @@ describe("uploadRoutes 下载响应头", () => {
     expect(second.body.fileId).toBe(first.body.fileId);
     expect(second.body.filename).toBe("逐宁简历.pdf");
     expect(await uploadDirs(uploadDir)).toEqual([first.body.fileId]);
+  });
+
+  it("会话进入删除态后，即使物理文件尚在，直接下载路由也拒绝访问", async () => {
+    const { app } = await createUploadApp();
+    const sessionId = "download-owner-delete";
+    const uploaded = await postUpload(app, {
+      filename: "删除后不可下载.txt",
+      mimeType: "text/plain",
+      content: "sensitive bytes",
+      sessionId,
+    });
+    expect(uploaded.res.status).toBe(200);
+    expect((await app.request(`/api/v1/files/${uploaded.body.fileId}`)).status).toBe(200);
+
+    const { beginSessionDeletion } = await import("@qingagent/db");
+    await beginSessionDeletion(sessionId);
+
+    expect((await app.request(`/api/v1/files/${uploaded.body.fileId}`)).status).toBe(404);
   });
 
   it("素材 POST 确实发出后在返回 fileId 前拒绝 PNG 改名 DOCX，且不影响未声明用途的上传", async () => {
@@ -297,32 +351,30 @@ describe("uploadRoutes 下载响应头", () => {
   });
 
   it("两个会话共享同一 fileId 时，首个会话删除后另一个仍可下载，最后删除才移除文件", async () => {
-    const { app, storage } = await createUploadApp();
+    const { app } = await createUploadApp();
     const firstSessionUpload = await postUpload(app, {
       filename: "共享报告.pdf",
       mimeType: "application/pdf",
       content: "shared session bytes",
+      sessionId: "shared-first-session",
     });
     const secondSessionUpload = await postUpload(app, {
       filename: "共享报告.pdf",
       mimeType: "application/pdf",
       content: "shared session bytes",
+      sessionId: "shared-second-session",
     });
 
     expect(secondSessionUpload.body.fileId).toBe(firstSessionUpload.body.fileId);
 
-    await expect(
-      storage.deleteUploadedFile(firstSessionUpload.body.fileId),
-    ).resolves.toBe(true);
+    await deleteOwnedSessionAssets("shared-first-session");
     const stillDownloadable = await app.request(
       `/api/v1/files/${secondSessionUpload.body.fileId}`,
     );
     expect(stillDownloadable.status).toBe(200);
     await expect(stillDownloadable.text()).resolves.toBe("shared session bytes");
 
-    await expect(
-      storage.deleteUploadedFile(secondSessionUpload.body.fileId),
-    ).resolves.toBe(true);
+    await deleteOwnedSessionAssets("shared-second-session");
     const deleted = await app.request(`/api/v1/files/${secondSessionUpload.body.fileId}`);
     expect(deleted.status).toBe(404);
   });
@@ -402,10 +454,16 @@ describe("uploadRoutes 二进制上传上限与元数据校验", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-limit-"));
     process.chdir(tmpDir);
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, "qingagent.db")}`;
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
     process.env.QINGAGENT_UPLOAD_MAX_BYTES = "8";
   });
 
   afterEach(async () => {
+    __resetDocumentsClientForTest();
+    __resetMigrationsForTest();
+    delete process.env.DATABASE_URL;
     delete process.env.QINGAGENT_UPLOAD_MAX_BYTES;
     process.chdir(originalCwd);
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -419,6 +477,7 @@ describe("uploadRoutes 二进制上传上限与元数据校验", () => {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(80 * 1024),
         [UPLOAD_FILENAME_HEADER]: "big.bin",
+        [UPLOAD_SESSION_HEADER]: "upload-limit-session",
       },
       body: Buffer.alloc(1),
     });
@@ -435,6 +494,7 @@ describe("uploadRoutes 二进制上传上限与元数据校验", () => {
       headers: {
         "Content-Type": "application/octet-stream",
         [UPLOAD_FILENAME_HEADER]: "big.bin",
+        [UPLOAD_SESSION_HEADER]: "upload-limit-session",
       },
       body: Buffer.alloc(9),
     });
@@ -454,6 +514,7 @@ describe("uploadRoutes 二进制上传上限与元数据校验", () => {
       headers: {
         "Content-Type": "application/octet-stream",
         [UPLOAD_FILENAME_HEADER]: "empty.bin",
+        [UPLOAD_SESSION_HEADER]: "upload-limit-session",
       },
       body: new Uint8Array(),
     });
@@ -477,6 +538,7 @@ describe("uploadRoutes 二进制上传上限与元数据校验", () => {
       headers: {
         "Content-Type": "application/octet-stream",
         [UPLOAD_FILENAME_HEADER]: "nine.bin",
+        [UPLOAD_SESSION_HEADER]: "upload-limit-session",
       },
       body: Buffer.alloc(9, 1),
     });

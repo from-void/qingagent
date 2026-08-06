@@ -39,9 +39,11 @@ import {
 } from "@qingagent/db/write-guard";
 import {
   beginSessionDeletion,
-  completeSessionDeletion,
+  backfillDeletingSessionResources,
+  deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
   getTombstonedSessionIds,
+  markSessionThreadsDeleted,
   type SessionDeletionPhase,
 } from "@qingagent/db";
 import {
@@ -78,6 +80,7 @@ import {
 import { isPersistentBackgroundCommand } from "./backgroundCommand.js";
 import { clearSessionSnapshot } from "../llm/modelConfig.js";
 import { clearQuestionBranch } from "../services/genService.js";
+import { sessionOwnedThreadIds } from "./sessionShadowThreads.js";
 
 const logger = mastra.getLogger();
 export const QINGAGENT_RESOURCE_ID = "qingagent-user";
@@ -2374,25 +2377,41 @@ export async function deleteSessionThread(
   await beginSessionDeletion(sessionId);
   let phase: SessionDeletionPhase;
   try {
+    await backfillDeletingSessionResources(sessionId);
     phase = await deleteSessionDocumentsAndAdvance(sessionId);
   } catch (error) {
     throw new SessionDeletionError(sessionId, "draining", error);
   }
   if (phase === "completed") return phase;
 
-  const memory = mastra.getMemory("default");
-  if (!memory) {
-    throw new SessionDeletionError(
-      sessionId,
-      "documents_deleted",
-      new Error("Mastra memory is unavailable"),
-    );
+  if (phase === "documents_deleted") {
+    const memory = mastra.getMemory("default");
+    if (!memory) {
+      throw new SessionDeletionError(
+        sessionId,
+        "documents_deleted",
+        new Error("Mastra memory is unavailable"),
+      );
+    }
+    try {
+      for (const threadId of sessionOwnedThreadIds(sessionId)) {
+        await memory.deleteThread(threadId);
+      }
+      phase = await markSessionThreadsDeleted(sessionId);
+    } catch (error) {
+      throw new SessionDeletionError(sessionId, "documents_deleted", error);
+    }
   }
-  try {
-    await memory.deleteThread(sessionId);
-    await completeSessionDeletion(sessionId);
-  } catch (error) {
-    throw new SessionDeletionError(sessionId, "documents_deleted", error);
+
+  if (phase === "threads_deleted") {
+    try {
+      phase = await deleteSessionDatabaseRowsAndAdvance(
+        sessionId,
+        sessionOwnedThreadIds(sessionId).slice(1),
+      );
+    } catch (error) {
+      throw new SessionDeletionError(sessionId, "threads_deleted", error);
+    }
   }
-  return "completed";
+  return phase;
 }

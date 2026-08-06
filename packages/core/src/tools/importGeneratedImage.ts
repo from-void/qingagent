@@ -3,11 +3,12 @@ import { hardenInlineSvg } from "@qingagent/doc-render/browser";
 import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 import { decode as decodeJpeg } from "jpeg-js";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { registerSessionResource } from "@qingagent/db";
 
 export const IMPORT_GENERATED_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -30,6 +31,10 @@ export interface ImportGeneratedImageOptions {
   workspaceRoot: string;
   uploadsRoot?: string;
   maxBytes?: number;
+}
+
+export interface ImportGeneratedImageForSessionOptions extends ImportGeneratedImageOptions {
+  sessionId: string;
 }
 
 function normalizedPath(path: string): string {
@@ -542,6 +547,32 @@ export async function importGeneratedImageFromPath(
   };
 }
 
+/**
+ * 公开 uploads 的会话级写入口：落盘与归属登记必须成对成功，登记失败立即回滚目录。
+ * 底层纯导入函数保留给安全校验测试；生产工具与旁路调用统一走这里。
+ */
+export async function importGeneratedImageForSession(
+  input: ImportGeneratedImageInput,
+  options: ImportGeneratedImageForSessionOptions,
+): Promise<ImportGeneratedImageResult> {
+  const imported = await importGeneratedImageFromPath(input, options);
+  try {
+    await registerSessionResource({
+      sessionId: options.sessionId,
+      resourceId: imported.imageId,
+      kind: "generated",
+    });
+  } catch (error) {
+    const uploadsRoot = resolve(options.uploadsRoot ?? uploadsBaseDir());
+    await rm(join(uploadsRoot, imported.imageId), {
+      recursive: true,
+      force: true,
+    }).catch(() => undefined);
+    throw error;
+  }
+  return imported;
+}
+
 export const importGeneratedImageTool = createTool({
   id: "importGeneratedImage",
   description:
@@ -570,8 +601,9 @@ export const importGeneratedImageTool = createTool({
       if (typeof sessionId !== "string" || sessionId.length === 0) {
         throw new Error("缺少当前会话，无法校验沙箱图片路径");
       }
-      return await importGeneratedImageFromPath(input, {
+      return await importGeneratedImageForSession(input, {
         workspaceRoot: sessionWorkspaceDir(sessionId),
+        sessionId,
       });
     } finally {
       stopHeartbeat();

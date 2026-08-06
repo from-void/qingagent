@@ -13,7 +13,7 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
 async function loadBridge() {
   vi.resetModules();
   const schedulePersist = vi.fn(async () => undefined);
-  const deleteUploadedFile = vi.fn(async () => true);
+  const deleteStoredResourceForSession = vi.fn(async () => true);
 
   vi.doMock("@qingagent/core", async () => {
     const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
@@ -27,12 +27,15 @@ async function loadBridge() {
     UPLOAD_DIR: "/tmp/qingagent-test-uploads",
     isValidUploadId: vi.fn(() => true),
     isWithinUploadDir: vi.fn(() => true),
-    deleteUploadedFile,
+    deleteUploadedFile: vi.fn(async () => true),
+  }));
+  vi.doMock("../gateway/sessionStoredResources", () => ({
+    deleteStoredResourceForSession,
   }));
 
   const bridge = await import("../gateway/bridgeHandler");
   const core = await import("@qingagent/core");
-  return { bridge, schedulePersist, deleteUploadedFile, core };
+  return { bridge, schedulePersist, deleteStoredResourceForSession, core };
 }
 
 async function createSession(
@@ -174,7 +177,7 @@ describe("handleCommand material commands", () => {
   });
 
   it("素材已不存在时摘要更新先发权威删除再明确失败，删除仍幂等", async () => {
-    const { bridge, schedulePersist, deleteUploadedFile } = await loadBridge();
+    const { bridge, schedulePersist, deleteStoredResourceForSession } = await loadBridge();
     const session = await createSession(bridge);
     const missingMaterialId = "missing-material";
 
@@ -211,11 +214,11 @@ describe("handleCommand material commands", () => {
       },
     ]);
     expect(schedulePersist).not.toHaveBeenCalled();
-    expect(deleteUploadedFile).not.toHaveBeenCalled();
+    expect(deleteStoredResourceForSession).not.toHaveBeenCalled();
   });
 
   it("removes a material, clears extraction cache, deletes the unshared upload, and emits resourceRemoved", async () => {
-    const { bridge, schedulePersist, deleteUploadedFile } = await loadBridge();
+    const { bridge, schedulePersist, deleteStoredResourceForSession } = await loadBridge();
     const session = await createSession(bridge);
     const mat = makeMaterial();
     session.materials.set(mat.id, mat);
@@ -235,7 +238,10 @@ describe("handleCommand material commands", () => {
     expect(session._extractedTexts.has(mat.metadata.title!)).toBe(false);
     expect(session._extractedTexts.has(mat.metadata.sourceUrl!)).toBe(false);
     expect(session._extractedTexts.has("keep")).toBe(true);
-    expect(deleteUploadedFile).toHaveBeenCalledWith(mat.fileId);
+    expect(deleteStoredResourceForSession).toHaveBeenCalledWith(
+      session.sessionId,
+      mat.fileId,
+    );
     expect(frames).toEqual([
       {
         kind: "resourceRemoved",
@@ -248,7 +254,7 @@ describe("handleCommand material commands", () => {
   });
 
   it("同一会话内两个素材共享 fileId 时，删一个不释放会话级引用也不删物理文件", async () => {
-    const { bridge, deleteUploadedFile } = await loadBridge();
+    const { bridge, deleteStoredResourceForSession } = await loadBridge();
     const session = await createSession(bridge);
     const sharedFileId = "22222222-2222-2222-2222-222222222222";
     const first = makeMaterial({ id: "mat-1", fileId: sharedFileId });
@@ -267,7 +273,7 @@ describe("handleCommand material commands", () => {
 
     expect(session.materials.has(first.id)).toBe(false);
     expect(session.materials.get(second.id)).toBe(second);
-    expect(deleteUploadedFile).not.toHaveBeenCalled();
+    expect(deleteStoredResourceForSession).not.toHaveBeenCalled();
     expect(frames).toEqual([
       {
         kind: "resourceRemoved",
@@ -279,7 +285,7 @@ describe("handleCommand material commands", () => {
   });
 
   it("rejects update and remove material commands while the session is busy", async () => {
-    const { bridge, schedulePersist, deleteUploadedFile } = await loadBridge();
+    const { bridge, schedulePersist, deleteStoredResourceForSession } = await loadBridge();
     const session = await createSession(bridge);
     const mat = makeMaterial();
     session.materials.set(mat.id, mat);
@@ -300,7 +306,7 @@ describe("handleCommand material commands", () => {
     expect(mat.summary).toBe("旧摘要");
     expect(session.materials.get(mat.id)).toBe(mat);
     expect(schedulePersist).not.toHaveBeenCalled();
-    expect(deleteUploadedFile).not.toHaveBeenCalled();
+    expect(deleteStoredResourceForSession).not.toHaveBeenCalled();
   });
 
   it("rejects reparseMaterial while the session is busy without mutating materials", async () => {

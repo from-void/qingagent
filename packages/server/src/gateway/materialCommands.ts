@@ -9,7 +9,7 @@ import {
   type Material,
   type SessionState,
 } from "./bridgeCore";
-import { deleteUploadedFile } from "../lib/uploadStorage";
+import { deleteStoredResourceForSession } from "./sessionStoredResources";
 import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { getOrRestoreSession } from "./sessionLifecycle";
@@ -152,7 +152,7 @@ export async function* handleMaterialCommand(
           (candidate) => candidate.fileId === fileId,
         );
         if (!stillShared) {
-          await deleteUploadedFile(fileId);
+          await deleteStoredResourceForSession(command.data.sessionId, fileId);
         }
       }
 

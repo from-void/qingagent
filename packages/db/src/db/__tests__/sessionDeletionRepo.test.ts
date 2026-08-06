@@ -8,9 +8,13 @@ import { __resetMigrationsForTest, ensureMigrated } from "../migrations.js";
 import {
   beginSessionDeletion,
   completeSessionDeletion,
+  deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
+  findSessionDataReferences,
   getSessionDeletion,
   listSessionDeletions,
+  markSessionAssetsDeleted,
+  markSessionThreadsDeleted,
 } from "../sessionDeletionRepo.js";
 import { prepareTempDocumentsDb, pmDocFromText, type TempDocumentsDb } from "./dbTestUtils.js";
 
@@ -53,6 +57,9 @@ describe("deleted_sessions 持久化删除阶段", () => {
       }),
     ]);
     await deleteSessionDocumentsAndAdvance("persisted-delete");
+    await markSessionThreadsDeleted("persisted-delete");
+    await deleteSessionDatabaseRowsAndAdvance("persisted-delete");
+    await markSessionAssetsDeleted("persisted-delete");
     await completeSessionDeletion("persisted-delete");
     expect(await getSessionDeletion("persisted-delete")).toMatchObject({
       phase: "completed",
@@ -81,5 +88,43 @@ describe("deleted_sessions 持久化删除阶段", () => {
     expect(await getSessionDeletion("atomic-delete")).toMatchObject({
       phase: "draining",
     });
+  });
+
+  it("按表结构穷举清零任意 session/thread/resource 载体，且保留删除墓碑", async () => {
+    const sessionId = "exhaustive-delete";
+    await ensureMigrated();
+    await seedDocument(sessionId);
+    await getDocumentsClient().execute(`CREATE TABLE future_session_carrier (
+      id TEXT PRIMARY KEY,
+      related_session_id TEXT NOT NULL,
+      payload TEXT NOT NULL
+    )`);
+    await getDocumentsClient().execute({
+      sql: "INSERT INTO future_session_carrier (id, related_session_id, payload) VALUES (?, ?, ?)",
+      args: ["future-row", sessionId, "未来新载体"],
+    });
+    await getDocumentsClient().execute({
+      sql: `INSERT INTO llm_usage_events (
+        id, session_id, call_site, model_id, key_origin,
+        input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens,
+        created_at
+      ) VALUES ('usage-delete', ?, 'agent', 'test-model', 'none', 1, 1, 0, 0, ?)`,
+      args: [sessionId, "2026-08-06T00:00:00.000Z"],
+    });
+
+    await beginSessionDeletion(sessionId);
+    await deleteSessionDocumentsAndAdvance(sessionId);
+    await markSessionThreadsDeleted(sessionId);
+    await deleteSessionDatabaseRowsAndAdvance(sessionId, [`om-sidecar:${sessionId}`]);
+    await markSessionAssetsDeleted(sessionId);
+    await completeSessionDeletion(sessionId);
+
+    await expect(findSessionDataReferences(sessionId, [`om-sidecar:${sessionId}`]))
+      .resolves.toEqual([]);
+    await expect(getSessionDeletion(sessionId)).resolves.toMatchObject({ phase: "completed" });
+    const futureRows = await getDocumentsClient().execute(
+      "SELECT COUNT(*) AS n FROM future_session_carrier",
+    );
+    expect(Number(futureRows.rows[0]?.n ?? 0)).toBe(0);
   });
 });

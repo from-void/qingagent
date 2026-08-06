@@ -41,6 +41,7 @@ import {
   QINGAGENT_RESOURCE_ID,
   schedulePersist,
 } from "./threadPersistence.js";
+import { omSidecarThreadId } from "./sessionShadowThreads.js";
 
 const logger = mastra.getLogger();
 
@@ -60,7 +61,6 @@ type RepairingAgentAnthropicModel = AgentAnthropicModel & RepairableLanguageMode
 
 const observerModelCache = new Map<string, RepairableLanguageModel>();
 const OBSERVER_MODEL_CACHE_LIMIT = 16;
-const OM_STORAGE_THREAD_PREFIX = "om-sidecar";
 const OM_STORAGE_RESOURCE_SUFFIX = "om-sidecar";
 const OM_BRANCH_CALL_SITE_KEY = "omBranchCallSite";
 const OM_BRANCH_SNAPSHOT_KEY = "omBranchSnapshot";
@@ -193,12 +193,6 @@ export function makeOmMessageId(
   seqInTurn: number,
 ): string {
   return `${sessionId}-${turnIndex}-${seqInTurn}`;
-}
-
-export function omSidecarThreadId(threadId: string): string {
-  return threadId.startsWith(`${OM_STORAGE_THREAD_PREFIX}:`)
-    ? threadId
-    : `${OM_STORAGE_THREAD_PREFIX}:${threadId}`;
 }
 
 export function omSidecarResourceId(resourceId: string): string {

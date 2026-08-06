@@ -121,6 +121,8 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           settleTerminal("connected");
         } else if (payload.status?.state === "pending" && payload.status.reasonCode === "WECHAT_SCANNED") {
           setScanned(true);
+        } else if (payload.status?.state === "checking") {
+          // CLI 冷启动尚未确认状态，保持授权卡轮询，不把瞬时状态定格成失败。
         } else if (payload.status?.state && payload.status.state !== "pending") {
           const interrupted =
             payload.status.reasonCode === "PENDING_LOST" ||

@@ -657,6 +657,10 @@ export function UCommand({
           ? "需要重新授权"
         : terminalKind === "timedOut"
           ? "已超时"
+          : terminalKind === "resourceExceeded"
+            ? "资源超限"
+            : terminalKind === "codeError"
+              ? "代码出错"
           : terminalKind === "failed"
             ? "未完成"
             : terminalKind === "succeeded" || done
@@ -674,7 +678,8 @@ export function UCommand({
       ? ICO.cancel
       : terminalKind === "killed" || terminalKind === "aborted"
         ? ICO.stop
-        : terminalKind === "failed" || terminalKind === "timedOut" ||
+        : terminalKind === "failed" || terminalKind === "codeError" ||
+            terminalKind === "resourceExceeded" || terminalKind === "timedOut" ||
             terminalKind === "authRequired"
           ? ICO.stop
           : ICO.cmd;

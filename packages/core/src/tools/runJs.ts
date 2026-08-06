@@ -1,6 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { Worker } from "node:worker_threads";
 import { z } from "zod";
+import {
+  failureKindFromWorkerError,
+  isRunScriptFailureKind,
+  RUN_SCRIPT_FAILURE_KINDS,
+} from "../runtime/scriptFailure.js";
 
 const MAX_CODE_CHARS = 20_000;
 const MAX_INPUT_JSON_CHARS = 64_000;
@@ -31,6 +36,7 @@ const runJsOutputSchema = z.object({
   stdout: z.string(),
   error: z.string().nullable().optional(),
   stdout_truncated: z.boolean().optional(),
+  failureKind: z.enum(RUN_SCRIPT_FAILURE_KINDS).optional(),
 });
 
 export type RunJsInput = z.infer<typeof runJsInputSchema>;
@@ -409,6 +415,7 @@ class __URLSearchParams {
         error: errorMessage(error),
         stdout: stdout.stdout,
         stdout_truncated: stdout.stdout_truncated,
+        failureKind: "codeError",
       });
     }
   })();
@@ -442,15 +449,26 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
       ok: false,
       stdout: "",
       error: parsed.error.issues.map((issue) => issue.message).join("; "),
+      failureKind: "codeError",
     });
   }
 
   const inputText = jsonStringifyInput(parsed.data.input_json);
   if (!inputText.ok) {
-    return Promise.resolve({ ok: false, stdout: "", error: inputText.error });
+    return Promise.resolve({
+      ok: false,
+      stdout: "",
+      error: inputText.error,
+      failureKind: "codeError",
+    });
   }
   if (abortSignal?.aborted) {
-    return Promise.resolve({ ok: false, stdout: "", error: "aborted" });
+    return Promise.resolve({
+      ok: false,
+      stdout: "",
+      error: "aborted",
+      failureKind: "aborted",
+    });
   }
 
   const timeoutMs = parsed.data.timeout_ms ?? DEFAULT_TIMEOUT_MS;
@@ -489,9 +507,19 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
       cleanup();
       void worker.terminate().finally(() => resolve(result));
     };
-    const onAbort = () => terminateWith({ ok: false, stdout: "", error: "aborted" });
+    const onAbort = () => terminateWith({
+      ok: false,
+      stdout: "",
+      error: "aborted",
+      failureKind: "aborted",
+    });
     const timer = setTimeout(() => {
-      terminateWith({ ok: false, stdout: "", error: "timeout" });
+      terminateWith({
+        ok: false,
+        stdout: "",
+        error: "timeout",
+        failureKind: "timedOut",
+      });
     }, timeoutMs);
 
     abortSignal?.addEventListener("abort", onAbort, { once: true });
@@ -502,14 +530,29 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
         stdout: typeof message.stdout === "string" ? message.stdout : "",
         error: message.error ?? null,
         stdout_truncated: Boolean(message.stdout_truncated),
+        failureKind: isRunScriptFailureKind(message.failureKind)
+          ? message.failureKind
+          : message.ok
+            ? undefined
+            : "codeError",
       });
     });
     worker.once("error", (error) => {
-      finish({ ok: false, stdout: "", error: error.message });
+      finish({
+        ok: false,
+        stdout: "",
+        error: error.message,
+        failureKind: failureKindFromWorkerError(error),
+      });
     });
     worker.once("exit", (code) => {
       if (!settled && code !== 0) {
-        finish({ ok: false, stdout: "", error: `worker exited with code ${code}` });
+        finish({
+          ok: false,
+          stdout: "",
+          error: `worker exited with code ${code}`,
+          failureKind: "codeError",
+        });
       }
     });
   });

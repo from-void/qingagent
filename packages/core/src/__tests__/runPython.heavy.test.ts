@@ -8,12 +8,14 @@ import {
   PYODIDE_DANGEROUS_AFTER_LOAD,
 } from "../runtime/pyodideRunner.js";
 
-const toolInvocationOptions = { toolCallId: "run-python-test", messages: [] } as never;
-
-async function run(input: RunPythonInput): Promise<RunPythonResult> {
+async function run(input: RunPythonInput, abortSignal?: AbortSignal): Promise<RunPythonResult> {
   process.env.QINGAGENT_PYODIDE_ENABLED = "1";
   if (!runPythonTool.execute) throw new Error("run_python execute missing");
-  return await runPythonTool.execute(input, toolInvocationOptions) as RunPythonResult;
+  return await runPythonTool.execute(input, {
+    toolCallId: "run-python-test",
+    messages: [],
+    abortSignal,
+  } as never) as RunPythonResult;
 }
 
 describe("run_python capability tool", () => {
@@ -145,6 +147,17 @@ js.fetch("https://example.com")
     expect(result.error).toMatch(/AttributeError: fetch|fetch/i);
   }, 15_000);
 
+  it.each([
+    'raise TimeoutError("time limit exceeded")',
+    'raise MemoryError("out of memory")',
+    'raise RuntimeError("aborted by user")',
+  ])("用户异常只标记为代码错误，不伪造平台归因: %s", async (code) => {
+    const result = await run({ code });
+
+    expect(result.ok).toBe(false);
+    expect(result.failureKind).toBe("codeError");
+  }, 15_000);
+
   it("文件读取、pyodide_js 和 require/node builtins 都不可达", async () => {
     const cases = [
       `open("/etc/passwd").read()`,
@@ -206,10 +219,26 @@ out
     const startedAt = Date.now();
     const result = await run({ code: "while True:\n    pass", timeout_ms: 1_800 });
 
-    expect(result).toMatchObject({ ok: false, error: "timeout" });
+    expect(result).toMatchObject({
+      ok: false,
+      error: "timeout",
+      failureKind: "timedOut",
+    });
     // 墙钟 = pyodide 冷启动(不确定,满负载并发下可达数秒) + timeout_ms + worker 回收。
     // 这里只需证明死循环被"有界"杀掉(非无限),放宽到 10s 容忍满负载/冷启动抖动。
     expect(Date.now() - startedAt).toBeLessThan(10_000);
+  }, 15_000);
+
+  it("AbortSignal 会以平台结构化中止信号结束 Worker", async () => {
+    const controller = new AbortController();
+    const pending = run({ code: "while True:\n    pass", timeout_ms: 15_000 }, controller.signal);
+    controller.abort(new DOMException("用户已停止", "AbortError"));
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: "aborted",
+      failureKind: "aborted",
+    });
   }, 15_000);
 
   it("超大 stdout 会被截断且不拖垮主进程", async () => {
@@ -251,5 +280,6 @@ len(chunks)
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/memory/i);
+    expect(result.failureKind).toBe("resourceExceeded");
   }, 30_000);
 });

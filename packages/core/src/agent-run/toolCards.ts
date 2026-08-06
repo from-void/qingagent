@@ -23,6 +23,7 @@ import {
 import type { SessionState } from "../session/sessionState.js";
 import type { PendingConfirm } from "../session/sessionState.js";
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
+import { isRunScriptFailureKind } from "../runtime/scriptFailure.js";
 
 function commandPolicyBlockFromOutput(output: string): { title: string; icon: string; reason: string } | null {
   const trimmed = output.trimStart();
@@ -99,20 +100,18 @@ export function commandCardFromResult(
   const outRaw = redactedJsonText(
     typeof structured?.output === "string" ? structured.output : toolResult ?? "",
   );
-  const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
-  const outputForDisplay = outRaw.replace(/\n?Exit code:?\s*\d+\s*$/i, "").trimEnd();
+  const exitMatch = outRaw.match(/(?:^|\n)Exit code:?\s*(-?\d+)\s*$/i);
+  const outputForDisplay = outRaw
+    .replace(/(?:^|\n)Exit code:?\s*-?\d+\s*$/i, "")
+    .trimEnd();
   const hasStructuredStatus =
     typeof structured?.success === "boolean" ||
     typeof structured?.exitCode === "number";
-  const looksLikeError =
-    !hasStructuredStatus &&
-    !exitMatch &&
-    /^Error:/.test(outRaw.trimStart());
   const structuredExitCode = typeof structured?.exitCode === "number"
     ? structured.exitCode
     : null;
   const exitCode = structuredExitCode ?? (
-    exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1
+    exitMatch ? Number(exitMatch[1]) : ok ? 0 : 1
   );
   const cancelled = structured?.cancelled === true;
   const timedOut = structured?.timedOut === true;
@@ -151,7 +150,7 @@ export function commandCardFromResult(
       ? "运行命令"
       : verdict.title.replace(/^AI 想/, "");
   const failed =
-    structuredFailed || legacyNonZeroExit || looksLikeError || (!hasStructuredStatus && !ok);
+    structuredFailed || legacyNonZeroExit || (!hasStructuredStatus && !ok);
   const terminalKind: CommandTerminalKind | undefined = background
     ? undefined
     : timedOut
@@ -238,6 +237,12 @@ export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
   );
 }
 
+function scriptFailureTerminalKind(result: Record<string, unknown>): CommandTerminalKind {
+  // failureKind 只由宿主计时器、AbortSignal、RSS 护栏或受控 Worker 外壳写入。
+  // 旧快照/旧 provider 没有该字段时，错误文本可能来自用户代码，必须保守归入代码错误。
+  return isRunScriptFailureKind(result.failureKind) ? result.failureKind : "codeError";
+}
+
 /** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,
  *  复用 CommandCard 的可展开样式,让用户能看到并展开运行的脚本与输出(与沙箱命令卡样式统一)。 */
 export function scriptCardFromResult(
@@ -261,7 +266,10 @@ export function scriptCardFromResult(
       .filter(Boolean)
       .join("\n"),
   );
-  const failed = !ok || Boolean(error);
+  const failed = !ok || r.ok === false || Boolean(error);
+  const terminalKind: CommandTerminalKind = failed
+    ? scriptFailureTerminalKind(r)
+    : "succeeded";
   const isPython = toolName === "run_python";
   return {
     // 统一显示名:运行时 bar 与完成时 card 都叫「运行代码」,不暴露 JS/Python 实现细节。
@@ -271,7 +279,7 @@ export function scriptCardFromResult(
     exitCode: failed ? 1 : 0,
     outputTail: output.slice(-600),
     phase: failed ? "failed" : "done",
-    terminalKind: failed ? "failed" : "succeeded",
+    terminalKind,
   };
 }
 

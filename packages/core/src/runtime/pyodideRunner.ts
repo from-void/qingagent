@@ -4,6 +4,11 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 import { RunPythonMemoryBudgetCoordinator } from "./pythonMemoryBudget.js";
+import {
+  failureKindFromWorkerError,
+  isRunScriptFailureKind,
+  type RunScriptFailureKind,
+} from "./scriptFailure.js";
 
 const require = createRequire(import.meta.url);
 
@@ -40,6 +45,7 @@ export interface RunPythonResult {
   stderr_truncated?: boolean;
   result_truncated?: boolean;
   load_ms?: number;
+  failureKind?: RunScriptFailureKind;
 }
 
 const MAX_CODE_CHARS = 20_000;
@@ -156,12 +162,27 @@ export function isPyodideRuntimeAvailable(): boolean {
 
 function validateRunPythonInput(input: RunPythonWorkerInput): { ok: true; inputText: string } | { ok: false; result: RunPythonResult } {
   if (typeof input.code !== "string" || input.code.length < 1) {
-    return { ok: false, result: { ok: false, stdout: "", stderr: "", error: "code 必须是非空字符串" } };
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: "code 必须是非空字符串",
+        failureKind: "codeError",
+      },
+    };
   }
   if (input.code.length > MAX_CODE_CHARS) {
     return {
       ok: false,
-      result: { ok: false, stdout: "", stderr: "", error: `code 过大,最多 ${MAX_CODE_CHARS} 字符` },
+      result: {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: `code 过大,最多 ${MAX_CODE_CHARS} 字符`,
+        failureKind: "codeError",
+      },
     };
   }
   const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS;
@@ -173,6 +194,7 @@ function validateRunPythonInput(input: RunPythonWorkerInput): { ok: true; inputT
         stdout: "",
         stderr: "",
         error: `timeout_ms 必须是 1 到 ${MAX_TIMEOUT_MS} 之间的整数`,
+        failureKind: "codeError",
       },
     };
   }
@@ -181,7 +203,13 @@ function validateRunPythonInput(input: RunPythonWorkerInput): { ok: true; inputT
     if (inputText.length > MAX_INPUT_JSON_CHARS) {
       return {
         ok: false,
-        result: { ok: false, stdout: "", stderr: "", error: `input_json 过大,最多 ${MAX_INPUT_JSON_CHARS} 字符` },
+        result: {
+          ok: false,
+          stdout: "",
+          stderr: "",
+          error: `input_json 过大,最多 ${MAX_INPUT_JSON_CHARS} 字符`,
+          failureKind: "codeError",
+        },
       };
     }
     return { ok: true, inputText };
@@ -193,6 +221,7 @@ function validateRunPythonInput(input: RunPythonWorkerInput): { ok: true; inputT
         stdout: "",
         stderr: "",
         error: `input_json 不能序列化为 JSON:${error instanceof Error ? error.message : String(error)}`,
+        failureKind: "codeError",
       },
     };
   }
@@ -359,6 +388,7 @@ async def __qingagent_run_user(code, input_json_text, stdout_limit, stderr_limit
             "stdout": "",
             "stderr": "",
             "error": f"input_json JSON parse failed: {exc}",
+            "failureKind": "codeError",
             "stdout_truncated": False,
             "stderr_truncated": False,
             "result_truncated": False,
@@ -399,6 +429,7 @@ async def __qingagent_run_user(code, input_json_text, stdout_limit, stderr_limit
             "stdout": stdout.getvalue(),
             "stderr": stderr.getvalue(),
             "error": err,
+            "failureKind": "codeError",
             "stdout_truncated": stdout.truncated,
             "stderr_truncated": stderr.truncated,
             "result_truncated": err_truncated,
@@ -460,6 +491,7 @@ function toMessage(raw, loadMs) {
     stderr_truncated: Boolean(parsed.stderr_truncated),
     result_truncated: Boolean(parsed.result_truncated),
     load_ms: loadMs,
+    failureKind: parsed.ok ? undefined : "codeError",
   };
 }
 
@@ -510,6 +542,7 @@ function toMessage(raw, loadMs) {
       stdout: "",
       stderr: "",
       error: error instanceof Error ? error.message : String(error),
+      failureKind: "codeError",
       stdout_truncated: false,
       stderr_truncated: false,
       result_truncated: false,
@@ -531,11 +564,18 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
       stdout: "",
       stderr: "",
       error: `pyodide runtime unavailable: ${availability.reason}`,
+      failureKind: "codeError",
     });
   }
 
   if (abortSignal?.aborted) {
-    return Promise.resolve({ ok: false, stdout: "", stderr: "", error: "aborted" });
+    return Promise.resolve({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "aborted",
+      failureKind: "aborted",
+    });
   }
 
   const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS;
@@ -590,11 +630,24 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
         stdout: "",
         stderr: "",
         error: "global run_python memory total budget exceeded",
+        failureKind: "resourceExceeded",
       });
     });
-    const onAbort = () => terminateWith({ ok: false, stdout: "", stderr: "", error: "aborted" });
+    const onAbort = () => terminateWith({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "aborted",
+      failureKind: "aborted",
+    });
     const timer = setTimeout(() => {
-      terminateWith({ ok: false, stdout: "", stderr: "", error: "timeout" });
+      terminateWith({
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: "timeout",
+        failureKind: "timedOut",
+      });
     }, timeoutMs);
     // Pyodide 的 WASM 堆不受 V8 worker resourceLimits 约束；模块级协调器按所有活跃
     // run_python Worker 的进程 RSS 增量总额兜底，避免并发调用互相算进各自基线。
@@ -611,14 +664,31 @@ export function runPythonInWorker(input: RunPythonWorkerInput, abortSignal?: Abo
         stderr_truncated: Boolean(message.stderr_truncated),
         result_truncated: Boolean(message.result_truncated),
         load_ms: typeof message.load_ms === "number" ? message.load_ms : undefined,
+        failureKind: isRunScriptFailureKind(message.failureKind)
+          ? message.failureKind
+          : message.ok
+            ? undefined
+            : "codeError",
       });
     });
     worker.once("error", (error) => {
-      finish({ ok: false, stdout: "", stderr: "", error: error.message });
+      finish({
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: error.message,
+        failureKind: failureKindFromWorkerError(error),
+      });
     });
     worker.once("exit", (code) => {
       if (!settled && code !== 0) {
-        finish({ ok: false, stdout: "", stderr: "", error: `worker exited with code ${code}` });
+        finish({
+          ok: false,
+          stdout: "",
+          stderr: "",
+          error: `worker exited with code ${code}`,
+          failureKind: "codeError",
+        });
       }
     });
   });

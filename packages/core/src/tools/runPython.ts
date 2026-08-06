@@ -6,6 +6,7 @@ import {
   type RunPythonResult,
   type RunPythonWorkerInput,
 } from "../runtime/pyodideRunner.js";
+import { RUN_SCRIPT_FAILURE_KINDS } from "../runtime/scriptFailure.js";
 
 const MAX_CODE_CHARS = 20_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -37,6 +38,7 @@ const runPythonOutputSchema = z.object({
   stderr_truncated: z.boolean().optional(),
   result_truncated: z.boolean().optional(),
   load_ms: z.number().optional(),
+  failureKind: z.enum(RUN_SCRIPT_FAILURE_KINDS).optional(),
 });
 
 export type RunPythonInput = z.infer<typeof runPythonInputSchema>;
@@ -65,6 +67,7 @@ export const runPythonTool = createTool({
         stdout: "",
         stderr: "",
         error: parsed.error.issues.map((issue) => issue.message).join("; "),
+        failureKind: "codeError",
       } satisfies RunPythonResult;
     }
     return runPythonInWorker(parsed.data as RunPythonWorkerInput, context?.abortSignal);

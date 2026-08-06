@@ -3,6 +3,7 @@ export type ConnectorAuthPresentation = "device-code" | "scan";
 
 export type ConnectorState =
   | "unavailable"
+  | "checking"
   | "unconfigured"
   | "disconnected"
   | "pending"

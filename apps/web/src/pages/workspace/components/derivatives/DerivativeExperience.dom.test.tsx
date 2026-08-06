@@ -114,6 +114,7 @@ describe("公众号稿生成体验", () => {
     act(() => root.unmount());
     host.remove();
     resetOverlayDismissStackForTest();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -1738,10 +1739,17 @@ describe("公众号稿生成体验", () => {
   });
 
   it("公众号清单复制 HTML 与预览保持同一组列表项且不重复", async () => {
+    class MockClipboardItem {
+      constructor(readonly data: Record<string, Blob>) {}
+      get types() { return Object.keys(this.data); }
+      async getType(type: string) { return this.data[type]!; }
+    }
+    const write = vi.fn(async (_items: ClipboardItem[]) => {});
     const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("ClipboardItem", MockClipboardItem);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText },
+      value: { write, writeText },
     });
     const gzhItem: DerivativeItem = {
       ...item,
@@ -1809,7 +1817,20 @@ describe("公众号稿生成体验", () => {
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "复制文案")!.click());
 
-    const copiedHtml = writeText.mock.calls[0]?.[0] ?? "";
+    expect(writeText).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledTimes(1);
+    const clipboardItem = write.mock.calls[0]?.[0]?.[0];
+    expect(clipboardItem?.types).toEqual(["text/plain", "text/html"]);
+    const blobText = (blob: Blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(blob);
+    });
+    const copiedText = await blobText(await clipboardItem!.getType("text/plain"));
+    const copiedHtml = await blobText(await clipboardItem!.getType("text/html"));
+    expect(copiedText).toContain("行动清单");
+    expect(copiedText).not.toContain("<ol");
     const copiedDocument = new DOMParser().parseFromString(copiedHtml, "text/html");
     expect(Array.from(copiedDocument.querySelectorAll("#js_content li"), (node) => node.textContent))
       .toEqual(previewItems);

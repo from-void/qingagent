@@ -107,10 +107,10 @@ afterEach(() => {
 
 describe("ConnectionsPanel", () => {
   it.each([
-    ["unavailable", "此环境不可用"], ["unconfigured", "未配置"],
+    ["unavailable", "此环境不可用"], ["checking", "检查中"], ["unconfigured", "未配置"],
     ["disconnected", "未连接"], ["pending", "等待授权"],
     ["connected", "已连接"], ["needs_reauth", "需重新授权"],
-  ] as const)("列表渲染六态 %s", (state, label) => {
+  ] as const)("列表渲染七态 %s", (state, label) => {
     h.connectors = [connector(state)];
     act(() => root.render(<ConnectionsPanel />));
     expect(host.textContent).toContain(label);
@@ -137,13 +137,25 @@ describe("ConnectionsPanel", () => {
   it.each([
     ["LARK_CLI_MISSING", "未找到飞书连接组件"],
     ["LARK_CLI_SPAWN_FAILED", "飞书连接组件未能启动"],
-    ["LARK_CLI_VERSION_TIMEOUT", "飞书连接组件版本检查超时"],
   ])("飞书不可用详情按 reasonCode=%s 展示中性说明", (reasonCode, copy) => {
     h.connectors = [connector("unavailable", reasonCode)];
     act(() => root.render(<ConnectionsPanel selectedId="feishu" />));
     expect(host.textContent).toContain(copy);
     expect(host.textContent).not.toContain(reasonCode);
     expect(host.textContent).not.toContain("EINVAL");
+  });
+
+  it("旧服务端把版本超时标 unavailable 时，列表与详情统一显示检查中", () => {
+    h.connectors = [connector("unavailable", "LARK_CLI_VERSION_TIMEOUT")];
+    act(() => root.render(<ConnectionsPanel />));
+    expect(host.querySelector(".cn-badge")?.textContent).toContain("检查中");
+    expect(host.querySelector(".cn-sub")?.textContent).toContain("正在检查飞书连接");
+    expect(host.textContent).not.toContain("此环境不可用");
+
+    act(() => host.querySelector<HTMLButtonElement>(".cn-row")!.click());
+    expect(host.querySelector(".cn-badge")?.textContent).toContain("检查中");
+    expect(host.querySelector(".cnd-status")?.textContent).toContain("正在检查飞书连接");
+    expect(host.textContent).not.toContain("此环境不可用");
   });
 
   it("飞书 start 传完整非空授权域，返回列表后仍显示等待授权", async () => {

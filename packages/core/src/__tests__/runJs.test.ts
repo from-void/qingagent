@@ -260,11 +260,25 @@ return {
     expect(short.error).toBe("short error");
   });
 
+  it("用户异常文本不伪造平台超时归因", async () => {
+    const result = await run({ code: 'throw new Error("time limit exceeded");' });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "time limit exceeded",
+      failureKind: "codeError",
+    });
+  });
+
   it("死循环会被 worker terminate 硬超时杀掉", async () => {
     const startedAt = Date.now();
     const result = await run({ code: "while (true) {}", timeout_ms: 100 });
 
-    expect(result).toMatchObject({ ok: false, error: "timeout" });
+    expect(result).toMatchObject({
+      ok: false,
+      error: "timeout",
+      failureKind: "timedOut",
+    });
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 

@@ -215,6 +215,8 @@ export class LarkCliRunner {
   private readonly configInitUrlTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly invocation: LarkCliInvocation;
+  /** 成功验证后在 runner 生命周期内复用；失败不缓存，让冷启动超时可在下次检查自愈。 */
+  private verifiedCliVersion: string | null = null;
 
   constructor(options: LarkCliRunnerOptions = {}) {
     this.execFile = options.execFile ?? defaultExecFile;
@@ -242,19 +244,22 @@ export class LarkCliRunner {
     }
 
     const { file: executable, argsPrefix, source, env } = this.invocation;
-    let cliVersion: string | null = null;
-    let probingVersion = true;
+    let cliVersion: string | null = this.verifiedCliVersion;
+    let probingVersion = cliVersion === null;
     try {
-      const versionResult = await this.execFile(executable, [...argsPrefix, "--version"], this.options({}, env));
-      cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
-      if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
-        return {
-          ok: false,
-          reasonCode: "LARK_CLI_VERSION_UNSUPPORTED",
-          message: "lark-cli 版本无法确认或暂未验证",
-          cliVersion,
-          source,
-        };
+      if (cliVersion === null) {
+        const versionResult = await this.execFile(executable, [...argsPrefix, "--version"], this.options({}, env));
+        cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
+        if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
+          return {
+            ok: false,
+            reasonCode: "LARK_CLI_VERSION_UNSUPPORTED",
+            message: "lark-cli 版本无法确认或暂未验证",
+            cliVersion,
+            source,
+          };
+        }
+        this.verifiedCliVersion = cliVersion;
       }
       probingVersion = false;
       const result = await this.execFile(executable, [...argsPrefix, ...command], this.options(runOptions, env));
@@ -296,17 +301,20 @@ export class LarkCliRunner {
   async startConfigInit(signal: AbortSignal): Promise<LarkCliBackgroundRun> {
     const command = ["config", "init", "--new", "--brand", "feishu", "--lang", "zh"] as const;
     const { file: executable, argsPrefix, source, env } = this.invocation;
-    let cliVersion: string | null = null;
+    let cliVersion: string | null = this.verifiedCliVersion;
     try {
-      const versionResult = await this.execFile(
-        executable,
-        [...argsPrefix, "--version"],
-        this.options({ signal }, env),
-      );
-      cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
-      if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
-        const failed: LarkCliRunResult = { ok: false, reasonCode: "LARK_CLI_VERSION_UNSUPPORTED", message: "lark-cli 版本无法确认或暂未验证", cliVersion, source };
-        return { initial: Promise.resolve(failed), completion: Promise.resolve(failed) };
+      if (cliVersion === null) {
+        const versionResult = await this.execFile(
+          executable,
+          [...argsPrefix, "--version"],
+          this.options({ signal }, env),
+        );
+        cliVersion = parseLarkCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
+        if (!cliVersion || !/^1\.0\./.test(cliVersion)) {
+          const failed: LarkCliRunResult = { ok: false, reasonCode: "LARK_CLI_VERSION_UNSUPPORTED", message: "lark-cli 版本无法确认或暂未验证", cliVersion, source };
+          return { initial: Promise.resolve(failed), completion: Promise.resolve(failed) };
+        }
+        this.verifiedCliVersion = cliVersion;
       }
     } catch (error) {
       const failed = this.failure(error, cliVersion, source, true);

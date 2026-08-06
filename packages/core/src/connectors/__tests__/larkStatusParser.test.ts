@@ -137,8 +137,45 @@ describe("FeishuConnector", () => {
   it("config 核心字段脏时短路，不调用 auth status", async () => {
     const run = vi.fn().mockResolvedValue({ ok: true, stdout: "garbage", stderr: "", cliVersion: "1.0.65", source: "path" });
     const status = await new FeishuConnector({ run }).status();
-    expect(status).toMatchObject({ state: "unavailable", reasonCode: "LARK_CLI_DIRTY_OUTPUT" });
+    expect(status).toMatchObject({ state: "checking", reasonCode: "LARK_CLI_DIRTY_OUTPUT" });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("冷启动版本超时先返回检查中，延后重试后自愈为真实 needs_reauth", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        reasonCode: "LARK_CLI_VERSION_TIMEOUT",
+        message: "cold start timeout",
+        cliVersion: null,
+        source: "path",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: fixture("lark-cli-1.0.65-config-show.txt"),
+        stderr: "",
+        cliVersion: "1.0.65",
+        source: "path",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: fixture("lark-cli-1.0.65-auth-status-user-expired.json"),
+        stderr: "",
+        cliVersion: "1.0.65",
+        source: "path",
+      });
+    const connector = new FeishuConnector({ run });
+
+    await expect(connector.status()).resolves.toMatchObject({
+      state: "checking",
+      reasonCode: "LARK_CLI_VERSION_TIMEOUT",
+      statusFreshness: "unknown",
+    });
+    await expect(connector.status()).resolves.toMatchObject({
+      state: "needs_reauth",
+      reasonCode: "LARK_AUTH_EXPIRED",
+      statusFreshness: "fresh",
+    });
   });
 });
 

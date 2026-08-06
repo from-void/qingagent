@@ -47,6 +47,25 @@ export async function exportDerivativeImage(
   }
 }
 
+export async function writeDerivativeClipboard(copy: {
+  text: string;
+  html?: string;
+}): Promise<void> {
+  if (copy.html !== undefined) {
+    if (typeof ClipboardItem !== "function" || typeof navigator.clipboard.write !== "function") {
+      throw new Error("当前环境不支持复制富文本");
+    }
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([copy.text], { type: "text/plain" }),
+        "text/html": new Blob([copy.html], { type: "text/html" }),
+      }),
+    ]);
+    return;
+  }
+  await navigator.clipboard.writeText(copy.text);
+}
+
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
   currentStreamRef?: { readonly current: ServerStream | null };
@@ -234,7 +253,7 @@ export function DerivativeView(props: {
   const copyDraft = () => {
     setExportOpen(false);
     const copy = descriptor.copyText(articleRef.current);
-    void navigator.clipboard.writeText(copy.text).then(() => props.onToast(copy.toast)).catch(() => props.onToast("复制失败，请重试"));
+    void writeDerivativeClipboard(copy).then(() => props.onToast(copy.toast)).catch(() => props.onToast("复制失败，请重试"));
   };
   const exportImage = () => {
     setExportOpen(false);

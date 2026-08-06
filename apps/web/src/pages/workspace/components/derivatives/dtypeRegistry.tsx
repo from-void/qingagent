@@ -22,7 +22,7 @@ export interface DtypeDescriptor {
   queryText: (docId: string, targetLang?: string | null) => string;
   cardTitle: (regenerate: boolean) => string;
   deleteConfirm: { title: string; message: string };
-  copyText: (article: HTMLElement | null) => { text: string; toast: string };
+  copyText: (article: HTMLElement | null) => { text: string; html?: string; toast: string };
   exportImageTarget?: (view: HTMLElement | null) => HTMLElement | null;
   PhonePreview?: FC<PreviewProps>;
   DesktopPreview?: FC<PreviewProps>;
@@ -145,7 +145,11 @@ export const DTYPE_REGISTRY = {
     queryText: (docId) => `为衍生稿(doc_id: ${docId})生成公众号稿:${routeSuffix}`,
     cardTitle: (regenerate) => `${regenerate ? "重新" : ""}生成公众号稿`,
     deleteConfirm: { title: "删除这篇公众号稿？", message: "删除后不可恢复" },
-    copyText: (article) => ({ text: article?.outerHTML ?? "", toast: "已复制公众号 HTML" }),
+    copyText: (article) => ({
+      text: article?.innerText?.trim() ?? article?.textContent?.trim() ?? "",
+      html: article?.outerHTML ?? "",
+      toast: "已复制公众号排版",
+    }),
     exportImageTarget: (view) => view?.querySelector<HTMLElement>(".wx-article") ?? null,
     PhonePreview: WechatPhonePreview, DesktopPreview: WechatDesktopPreview,
   },

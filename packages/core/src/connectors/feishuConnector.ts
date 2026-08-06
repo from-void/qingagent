@@ -71,14 +71,11 @@ export interface FeishuConnectorOptions {
   now?: () => number;
 }
 
-function unavailable(result: Extract<LarkCliRunResult, { ok: false }>): ConnectorStatusDto {
-  return createConnectorStatus("unavailable", {
-    reasonCode: result.reasonCode,
-    statusFreshness: "fresh",
-    canProbe: false,
-    cliVersion: result.cliVersion,
-  });
-}
+const DEFINITIVE_UNAVAILABLE_REASONS = new Set([
+  "LARK_CLI_MISSING",
+  "LARK_CLI_SPAWN_FAILED",
+  "LARK_CLI_VERSION_UNSUPPORTED",
+]);
 
 function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, status });
@@ -94,6 +91,7 @@ export class FeishuConnector implements ConnectorAdapter {
   private startSequence: Promise<void> = Promise.resolve();
   private generation = 0;
   private readonly terminalByPending = new Map<string, { status: ConnectorStatusDto; expiresAt: number }>();
+  private lastKnownStatus: ConnectorStatusDto | null = null;
 
   constructor(options: FeishuConnectorOptions | Runner = {}) {
     const normalized: FeishuConnectorOptions = "run" in options ? { runner: options } : options;
@@ -165,6 +163,9 @@ export class FeishuConnector implements ConnectorAdapter {
     if (!config.value.configured) return this.startConfiguration(domains);
 
     const currentAuth = await this.readAuthStatus();
+    if (currentAuth.state === "checking" || currentAuth.state === "unavailable") {
+      fail(currentAuth.reasonCode ?? "LARK_CLI_FAILED", "飞书连接状态暂时无法确认", 502);
+    }
     if (currentAuth.state === "connected" && this.domainsCovered(domains, currentAuth.scopes)) {
       fail("FEISHU_ALREADY_AUTHORIZED", "飞书已具备本次操作所需授权", 409);
     }
@@ -348,30 +349,74 @@ export class FeishuConnector implements ConnectorAdapter {
     this.currentScope = null;
     this.terminalByPending.clear();
     const result = await this.runner.run(["auth", "logout"]);
-    if (!result.ok) return unavailable(result);
-    return createConnectorStatus("disconnected", {
+    if (!result.ok) return this.statusForFailure(result, new Date(this.now()).toISOString());
+    return this.rememberStatus(createConnectorStatus("disconnected", {
       reasonCode: "USER_DISCONNECTED", lastCheckedAt: new Date(this.now()).toISOString(),
       statusFreshness: "fresh", canProbe: true, cliVersion: result.cliVersion,
-    });
+    }));
   }
 
   private async readStatus(signal?: AbortSignal): Promise<ConnectorStatusDto> {
     const checkedAt = new Date(this.now()).toISOString();
     const configResult = await this.runner.run(["config", "show"], { signal });
-    if (!configResult.ok) return unavailable(configResult);
+    if (!configResult.ok) return this.statusForFailure(configResult, checkedAt);
     const config = parseLarkConfigOutput(configResult.stdout);
-    if (!config.ok) return createConnectorStatus("unavailable", { reasonCode: config.reasonCode, lastCheckedAt: checkedAt, statusFreshness: "fresh", cliVersion: configResult.cliVersion });
-    if (!config.value.configured) return createConnectorStatus("unconfigured", { reasonCode: "LARK_APP_UNCONFIGURED", lastCheckedAt: checkedAt, statusFreshness: "fresh", cliVersion: configResult.cliVersion });
+    if (!config.ok) return this.uncertainStatus(config.reasonCode, configResult.cliVersion, checkedAt);
+    if (!config.value.configured) return this.rememberStatus(createConnectorStatus("unconfigured", { reasonCode: "LARK_APP_UNCONFIGURED", lastCheckedAt: checkedAt, statusFreshness: "fresh", cliVersion: configResult.cliVersion }));
     return this.readAuthStatus(signal, checkedAt);
   }
 
   private async readAuthStatus(signal?: AbortSignal, checkedAt = new Date(this.now()).toISOString()): Promise<ConnectorStatusDto> {
     const authResult = await this.runner.run(["auth", "status", "--json"], { signal });
-    if (!authResult.ok) return unavailable(authResult);
+    if (!authResult.ok) return this.statusForFailure(authResult, checkedAt);
     const auth = parseLarkAuthStatusOutput(authResult.stdout);
-    if (!auth.ok) return createConnectorStatus("unavailable", { reasonCode: auth.reasonCode, lastCheckedAt: checkedAt, statusFreshness: "fresh", cliVersion: authResult.cliVersion });
-    if (auth.value.connected) return createConnectorStatus("connected", { reasonCode: auth.value.scopes === null ? "LARK_SCOPES_UNKNOWN" : null, account: auth.value.account, scopes: auth.value.scopes ?? [], lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true, cliVersion: authResult.cliVersion });
-    return createConnectorStatus(auth.value.needsReauth ? "needs_reauth" : "disconnected", { reasonCode: auth.value.needsReauth ? "LARK_AUTH_EXPIRED" : "LARK_AUTH_MISSING", lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true, cliVersion: authResult.cliVersion });
+    if (!auth.ok) return this.uncertainStatus(auth.reasonCode, authResult.cliVersion, checkedAt);
+    if (auth.value.connected) return this.rememberStatus(createConnectorStatus("connected", { reasonCode: auth.value.scopes === null ? "LARK_SCOPES_UNKNOWN" : null, account: auth.value.account, scopes: auth.value.scopes ?? [], lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true, cliVersion: authResult.cliVersion }));
+    return this.rememberStatus(createConnectorStatus(auth.value.needsReauth ? "needs_reauth" : "disconnected", { reasonCode: auth.value.needsReauth ? "LARK_AUTH_EXPIRED" : "LARK_AUTH_MISSING", lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true, cliVersion: authResult.cliVersion }));
+  }
+
+  private rememberStatus(status: ConnectorStatusDto): ConnectorStatusDto {
+    this.lastKnownStatus = status;
+    return status;
+  }
+
+  private statusForFailure(
+    result: Extract<LarkCliRunResult, { ok: false }>,
+    checkedAt: string,
+  ): ConnectorStatusDto {
+    if (DEFINITIVE_UNAVAILABLE_REASONS.has(result.reasonCode)) {
+      this.lastKnownStatus = null;
+      return createConnectorStatus("unavailable", {
+        reasonCode: result.reasonCode,
+        lastCheckedAt: checkedAt,
+        statusFreshness: "fresh",
+        canProbe: false,
+        cliVersion: result.cliVersion,
+      });
+    }
+    return this.uncertainStatus(result.reasonCode, result.cliVersion, checkedAt);
+  }
+
+  private uncertainStatus(
+    reasonCode: string,
+    cliVersion: string | null,
+    checkedAt: string,
+  ): ConnectorStatusDto {
+    if (this.lastKnownStatus) {
+      return {
+        ...this.lastKnownStatus,
+        reasonCode,
+        statusFreshness: "stale",
+        cliVersion: cliVersion ?? this.lastKnownStatus.cliVersion,
+      };
+    }
+    return createConnectorStatus("checking", {
+      reasonCode,
+      lastCheckedAt: checkedAt,
+      statusFreshness: "unknown",
+      canProbe: false,
+      cliVersion,
+    });
   }
 
   private domainsCovered(domains: LarkAuthDomain[], scopes: string[]): boolean {

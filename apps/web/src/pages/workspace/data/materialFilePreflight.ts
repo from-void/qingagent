@@ -96,7 +96,10 @@ function hasPdfEof(bytes: Uint8Array): boolean {
   return includesAscii(bytes.subarray(Math.max(0, bytes.length - 2048)), "%%EOF");
 }
 
-function decodeReadableText(bytes: Uint8Array): boolean {
+function decodeReadableText(
+  bytes: Uint8Array,
+  { allowTrailingIncomplete = false }: { allowTrailingIncomplete?: boolean } = {},
+): boolean {
   if (bytes.length === 0) return false;
   const utf16Encoding = startsWithBytes(bytes, new Uint8Array([0xff, 0xfe]))
     ? "utf-16le"
@@ -104,9 +107,12 @@ function decodeReadableText(bytes: Uint8Array): boolean {
       ? "utf-16be"
       : null;
   if (utf16Encoding) {
-    if ((bytes.length - 2) % 2 !== 0) return false;
+    if (!allowTrailingIncomplete && (bytes.length - 2) % 2 !== 0) return false;
     try {
-      const text = new TextDecoder(utf16Encoding, { fatal: true }).decode(bytes.subarray(2));
+      const text = new TextDecoder(utf16Encoding, { fatal: true }).decode(
+        bytes.subarray(2),
+        { stream: allowTrailingIncomplete },
+      );
       return !/[\u0000-\u0008\u000B\u000E-\u001F\u007F]/.test(text);
     } catch {
       return false;
@@ -115,7 +121,10 @@ function decodeReadableText(bytes: Uint8Array): boolean {
   if (bytes.includes(0)) return false;
   for (const encoding of ["utf-8", "gb18030"] as const) {
     try {
-      const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+      const text = new TextDecoder(encoding, { fatal: true }).decode(
+        bytes,
+        { stream: allowTrailingIncomplete },
+      );
       if (!/[\u0000-\u0008\u000B\u000E-\u001F\u007F]/.test(text)) return true;
     } catch {
       // 尝试下一种项目解析器支持的编码。
@@ -224,7 +233,12 @@ export async function preflightBrowserMaterialFile(
 
     if (TEXT_EXTENSIONS.has(ext)) {
       const bytes = await fileRangeBytes(file, 0, TEXT_SAMPLE_BYTES);
-      return decodeReadableText(bytes) ? { ok: true } : failure("material_unreadable");
+      return decodeReadableText(bytes, {
+        // stream 只挂起有界样本末尾未完成的字符；完整文件仍严格 flush 并拒绝真实截断。
+        allowTrailingIncomplete: file.size > TEXT_SAMPLE_BYTES,
+      })
+        ? { ok: true }
+        : failure("material_unreadable");
     }
   } catch {
     return failure("material_unreadable");

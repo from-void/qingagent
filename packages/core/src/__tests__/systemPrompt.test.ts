@@ -20,6 +20,13 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("你要读企业微信文档，需要先装它的命令行工具");
   });
 
+  it("Windows 文件边界明确为执行层直拒，不能用确认或换写法绕过", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("文件边界不走确认卡");
+    expect(prompt).toContain("当前会话工作目录外的写入会被执行层直接拒绝");
+    expect(prompt).toContain("不得换编码、变量、脚本或子进程绕过");
+  });
+
   it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 

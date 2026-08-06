@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import {
+  commandPolicyRequiresApproval,
   commandPolicyDenyMessage,
   evaluateCommandPolicy,
   runWithCommandPolicy,
@@ -21,7 +22,150 @@ function decisionBg(command: string) {
   return evaluateCommandPolicy(command, { workspaceCwd, background: true });
 }
 
+const windowsWorkspace = "C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\data\\sessions\\current";
+const windowsDataDir = "C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\data";
+const windowsEnv = {
+  SystemRoot: "C:\\Windows",
+  windir: "C:\\Windows",
+  SystemDrive: "C:",
+  USERPROFILE: "C:\\Users\\alice",
+  APPDATA: "C:\\Users\\alice\\AppData\\Roaming",
+  LOCALAPPDATA: "C:\\Users\\alice\\AppData\\Local",
+  ProgramFiles: "C:\\Program Files",
+  "ProgramFiles(x86)": "C:\\Program Files (x86)",
+  ProgramData: "C:\\ProgramData",
+};
+
+function windowsDecision(command: string) {
+  return evaluateCommandPolicy(command, {
+    workspaceCwd: windowsWorkspace,
+    platform: "win32",
+    env: windowsEnv,
+    dataDir: windowsDataDir,
+  });
+}
+
 describe("commandPolicy P0 gate", () => {
+  it("Windows read-wall:系统路径读取在执行前硬拒绝", () => {
+    const denied = [
+      "type C:\\Windows\\win.ini",
+      "type c:/WINDOWS/win.ini",
+      "powershell -NoProfile -Command \"Get-Content $env:SystemRoot\\win.ini\"",
+      "type %SystemRoot:~0,3%Windows\\win.ini",
+      "type C:\\Win^dows\\win.ini",
+      "type C:\\Windows.\\win.ini",
+      "powershell -NoProfile -Command \"Get-Content ('C:' + '\\Windows\\win.ini')\"",
+      "cmd /c type \\\\localhost\\c$\\Windows\\win.ini",
+      "type \\\\?\\C:\\Windows\\win.ini",
+    ];
+    for (const command of denied) {
+      expect(windowsDecision(command), command).toMatchObject({
+        action: "deny",
+        reason: expect.stringContaining("系统路径"),
+      });
+    }
+  });
+
+  it("Windows read-wall:.qingagent 与 userData 凭据/配置读取在执行前硬拒绝", () => {
+    const denied = [
+      "type %USERPROFILE%\\.qingagent\\instance.json",
+      "powershell -NoProfile -Command \"Get-Content C:\\Users\\alice\\.qingagent\\instance.json\"",
+      "type %APPDATA%\\QingAgent\\.env",
+      "type C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\.env",
+      "type C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\qingagent.db",
+      "type C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\qingagent.db-wal",
+      "type C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\settings\\secret.db",
+      "type \"C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\Local Storage\\leveldb\\000003.log\"",
+      "type C:\\Users\\alice\\AppData\\Roaming\\QingAgent\\data\\.cred-key",
+      "type ..\\..\\instance.json",
+      "powershell -NoProfile -Command \"Get-Content ..\\..\\..\\qingagent.db\"",
+    ];
+    for (const command of denied) {
+      expect(windowsDecision(command), command).toMatchObject({
+        action: "deny",
+        reason: expect.stringContaining("凭据或配置"),
+      });
+    }
+  });
+
+  it("Windows read allow-list:个人目录枚举与用户凭据目录默认硬拒绝", () => {
+    const denied = [
+      "dir C:\\Users\\alice\\Documents",
+      "dir \\Users\\alice\\Documents",
+      "powershell -NoProfile -Command \"Get-ChildItem ~\\Documents\"",
+      "dir %USERPROFILE:~0,3%Users\\alice\\Documents",
+      "type ~\\.ssh\\id_ed25519",
+      "type ~/.ssh/id_ed25519",
+      "type %USERPROFILE%\\.aws\\credentials",
+      "type \"%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Login Data\"",
+      "type %UNTRUSTED_READ_TARGET%",
+    ];
+    for (const command of denied) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "deny" });
+    }
+  });
+
+  it("Windows read allow-list:工作目录内读取直通，工作目录外单文件只可按次确认放行", () => {
+    const inside = [
+      "type report.docx",
+      `type "${windowsWorkspace}\\sources\\report.docx"`,
+    ];
+    for (const command of inside) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "allow" });
+    }
+
+    const explicitFile = windowsDecision("type D:\\report.docx");
+    expect(explicitFile).toMatchObject({
+      action: "confirm",
+      requiresExplicitApproval: true,
+      reason: expect.stringContaining("工作目录之外"),
+    });
+    expect(commandPolicyRequiresApproval(explicitFile, false)).toBe(true);
+    expect(commandPolicyRequiresApproval(explicitFile, true)).toBe(true);
+
+    const ordinaryConfirm = windowsDecision("del result.txt");
+    expect(ordinaryConfirm.action).toBe("confirm");
+    expect(commandPolicyRequiresApproval(ordinaryConfirm, false)).toBe(true);
+    expect(commandPolicyRequiresApproval(ordinaryConfirm, true)).toBe(false);
+  });
+
+  it("Windows read allow-list:按次读取例外不能降级 lark-cli 的本地文件硬边界", () => {
+    expect(windowsDecision("lark-cli drive +upload --file D:\\report.docx")).toMatchObject({
+      action: "deny",
+      reason: expect.stringContaining("lark-cli --file"),
+    });
+  });
+
+  it("Windows write-wall:工作目录外写入与不透明编码命令硬拒绝", () => {
+    const denied = [
+      "echo owned>C:\\Windows\\Temp\\qingagent.txt",
+      "powershell -NoProfile -Command \"Set-Content -Path C:\\Users\\alice\\Documents\\escape.txt -Value owned\"",
+      "powershell -NoProfile -Command \"'owned' > 'C:\\Users\\alice\\Documents\\quoted escape.txt'\"",
+      "copy result.txt ..\\..\\escape.txt",
+      "node -e \"require('node:fs').writeFileSync('C:\\Users\\alice\\Documents\\escape.txt','x')\"",
+      "python -c \"open(r'C:\\Users\\alice\\Documents\\escape.txt','w').write('x')\"",
+      "powershell -NoProfile -Command \"[IO.File]::WriteAllText('C:\\Users\\alice\\Documents\\escape.txt','x')\"",
+      "cmd /v:on /c \"set OUTSIDE=..\\..\\escape.txt&echo owned>!OUTSIDE!\"",
+      "powershell -EncodedCommand VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAnAHgAJwA=",
+    ];
+    for (const command of denied) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "deny" });
+    }
+  });
+
+  it("Windows write-wall:工作目录内正常命令、解释器和 PATH CLI 仍通", () => {
+    const allowed = [
+      "echo ok>result.txt && type result.txt",
+      "echo ok>\"nested result.txt\" && type \"nested result.txt\"",
+      "node script.mjs",
+      "python script.py --output result.json",
+      "lark-cli skills read lark-doc",
+    ];
+    for (const command of allowed) {
+      expect(windowsDecision(command), command).toMatchObject({ action: "allow" });
+    }
+  });
+
   it("旧实名白名单迁移：存在性/执行位/路径限定/解释器不再决定策略，均默认 allow", () => {
     const dir = mkdtempSync(join(tmpdir(), "command-policy-bin-cli-"));
     const binDir = join(dir, "bin");

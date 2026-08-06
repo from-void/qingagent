@@ -294,10 +294,10 @@ if (!process.env.DATABASE_URL) {
 
 // 沙箱凭据密钥(.cred-key)与会话工作目录的根:落在 userData,避免打包后写到
 // 安装目录/cwd(Windows 下常不可写,会导致凭据/沙箱创建失败)。
-// TODO(windows 写墙):Windows 目前没有 seatbelt/bubblewrap 对应的文件隔离层
-// (resolveIsolation 在 win32 落到 "none"、命令靠 QINGAGENT_ALLOW_UNISOLATED_COMMANDS 放开),
-// 因此凭证共享在 Windows 上是"本来就通"——声明与授权照常记录、安全页照常可收回,
-// 但没有一层墙可以据此收紧。补上 Windows 文件隔离层时,再把 credential 例外接进去。
+// Windows 仍没有 seatbelt/bubblewrap 对应的 OS 文件隔离层(resolveIsolation 落到 none),
+// 但 execute_command 已在 subprocess 创建前硬拒系统/青简凭据路径与工作区外写入。
+// 后续若接入 Windows 原生隔离层，
+// credential 例外仍需按声明+授权精确开口，不能回退成宿主 HOME 全通。
 // TODO(P2 feishu-byo-app):决定桌面端 lark-cli 配置目录策略。当前沙箱透传宿主 HOME,
 // lark-cli 会写用户真实 ~/.lark-cli;单机交付前需决定保持真实 HOME,还是隔离到 userData 下。
 if (!process.env.QINGAGENT_DATA_DIR) {
@@ -492,8 +492,9 @@ if (!process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION) {
   process.env.QINGAGENT_ALLOW_TEMPLATE_MUTATION = "1";
 }
 
-// 桌面端是单用户本地环境,agent 执行命令 = 用户自己在本机跑,凭据注入 = 用本机自己的登录态。
-// 安全默认翻转后(决策 4.5),这两项默认关闭;桌面显式补回以维持现状能力。必须在 import server/core 之前设。
+// 桌面端需要本地命令与受信技能凭据能力；这两项默认关闭，桌面显式补回。
+// Windows 即使是 none 隔离也仍受 execute_command 硬路径 gate 约束。
+// 必须在 import server/core 之前设。
 if (!process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS) {
   process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS = "1";
 }

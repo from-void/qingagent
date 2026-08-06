@@ -1,6 +1,7 @@
 import DiffMatchPatch from "diff-match-patch";
 import type { DiffHunk, PmNode as ContractPmNode } from "@qingagent/contract-ts";
 import {
+  carryOverMovedBlockUserAttrs,
   getDeterministicId,
   getStablePmJson,
   normalizePmDoc,
@@ -198,7 +199,35 @@ export function applyDiffHunks(
     hunk,
     reason: skippedReasonById.get(hunk.hunkId) ?? `failed to apply ${hunk.hunkId}`,
   }));
-  return { doc: normalizePmDoc(doc), applied, skipped, skippedDetails };
+  // delete/insert 是独立 hunk，单个 insert 分支看不到已删除块；整批回放完成后按
+  // 唯一语义身份跨 hunk 承接，才能同时覆盖移动到前方/后方的两种应用顺序。
+  const withMovedBlockAttrs = carryOverMovedBlockUserAttrs(baseDoc, doc);
+  const appliedWithMovedBlockAttrs = applied.map((hunk) =>
+    hunk.op === "insert"
+      ? carryAppliedInsertHunkAttrs(hunk, withMovedBlockAttrs.doc)
+      : hunk
+  );
+  return {
+    doc: normalizePmDoc(withMovedBlockAttrs.doc),
+    applied: appliedWithMovedBlockAttrs,
+    skipped,
+    skippedDetails,
+  };
+}
+
+function carryAppliedInsertHunkAttrs(hunk: DiffHunk, appliedDoc: PmDoc): DiffHunk {
+  const inserted = nodesToBlocks(hunk.after);
+  if (inserted.length === 0) return hunk;
+  const byBlockId = new Map(appliedDoc.content.map((block) => [block.attrs.blockId, block]));
+  const carried = inserted.map((block) => byBlockId.get(block.attrs.blockId) ?? block);
+  if (getStablePmJson(inserted) === getStablePmJson(carried)) return hunk;
+  return {
+    ...hunk,
+    after: cloneValue(carried) as unknown as ContractPmNode[],
+    ...(carried.length === 1
+      ? { afterBlock: cloneValue(carried[0]) as DiffHunk["afterBlock"] }
+      : { afterBlock: undefined }),
+  };
 }
 
 export type ApplyDiffHunkToDocResult =

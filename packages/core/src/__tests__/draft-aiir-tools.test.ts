@@ -338,6 +338,51 @@ describe("QingML draft tools", () => {
     expect(serializedDiff).not.toContain("<svg");
   });
 
+  it("editDraft 顺序执行 deleteBlock + insertBlock 移图时保留四项用户布局", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("s-move-diagram-layout");
+    bindDoc(state, doc([
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-old",
+          lang: "mermaid",
+          source,
+          svg: null,
+          overlay: { positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } } },
+          width: 654,
+          height: 645,
+          align: "left",
+        },
+      },
+      paragraph("block-after", "图后正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "deleteBlock", ref: "diagram-old" },
+        {
+          action: "insertBlock",
+          position: "end",
+          blocks: qingmlBlock({ type: "diagram", lang: "mermaid", source }),
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const moved = state.docDraftCandidateDoc!.content.at(-1);
+    expect(moved?.type).toBe("diagram");
+    if (moved?.type !== "diagram") throw new Error("expected moved diagram");
+    expect(moved.attrs.blockId).not.toBe("diagram-old");
+    expect(moved.attrs.overlay).toEqual({
+      positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } },
+    });
+    expect(moved.attrs.width).toBe(654);
+    expect(moved.attrs.height).toBe(645);
+    expect(moved.attrs.align).toBe("left");
+  });
+
   it("readDraft 实际读到 diagram 后标记语言，下一次 provider 调用在尾部注入对应编辑规范", async () => {
     const state = createSession("s-diagram-read-processor");
     bindDoc(state, doc([{

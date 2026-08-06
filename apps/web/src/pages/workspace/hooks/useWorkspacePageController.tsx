@@ -1898,6 +1898,13 @@ export function useWorkspacePageController() {
               ? Math.max(previousReceipt.version, frame.data.version)
               : frame.data.version,
         };
+        if (frame.data.notice) {
+          toast.show({
+            message: frame.data.notice,
+            tone: "warn",
+            dedupeKey: `doc-commit-notice:${frame.data.sessionId}:${frame.data.version}`,
+          });
+        }
       }
       // 本地发起的审阅请求若返回 no-op，说明服务端目标已被其它请求结算；
       // 不能让这个“成功响应”清掉本地仍可见的候选，交由请求完成回调明确提示。

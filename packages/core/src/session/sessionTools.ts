@@ -125,6 +125,7 @@ import {
   analyzeAiIrEditability,
   blockToAi,
   countDocVisibleChars,
+  carryOverMovedBlockUserAttrs,
   qingmlParseFragment,
   safeParsePmDoc,
   type AiRunMark,
@@ -1388,6 +1389,11 @@ export function createSessionScopedTools(
           }, "operation_exception");
         }
       }
+
+      // 生产路径逐 op 调 applyBlockEdits；delete 与后续 insert 之间 blockId 已断链，
+      // 因此在整批 ops 完成后再以本次输入候选为基线做一次唯一精确配对承接。
+      workingDoc = carryOverMovedBlockUserAttrs(candidateDoc, workingDoc).doc;
+      workingDocForResult = workingDoc;
 
       if (skippedDuplicateInserts > 0) {
         logger.warn("[editDraft.execute] skipped duplicate insertBlock op(s)", {

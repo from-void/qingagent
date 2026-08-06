@@ -61,6 +61,42 @@ function heading(blockId: string, value: string): PmBlockNode {
   };
 }
 
+function diagram(
+  blockId: string,
+  source: string,
+  withUserLayout = false,
+): PmBlockNode {
+  return {
+    type: "diagram",
+    attrs: {
+      blockId,
+      lang: "mermaid",
+      source,
+      svg: null,
+      ...(withUserLayout
+        ? {
+            overlay: { positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } } },
+            width: 654,
+            height: 645,
+            align: "left" as const,
+          }
+        : {}),
+    },
+  };
+}
+
+function expectMovedDiagramLayout(pmDoc: PmDoc | null | undefined): void {
+  const moved = pmDoc?.content.find((block) => block.type === "diagram");
+  expect(moved?.type).toBe("diagram");
+  if (moved?.type !== "diagram") throw new Error("expected moved diagram");
+  expect(moved.attrs.overlay).toEqual({
+    positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } },
+  });
+  expect(moved.attrs.width).toBe(654);
+  expect(moved.attrs.height).toBe(645);
+  expect(moved.attrs.align).toBe("left");
+}
+
 function doc(content: PmBlockNode[]): PmDoc {
   return {
     type: "doc",
@@ -299,6 +335,118 @@ afterEach(() => {
 });
 
 describe("commitReviewGroups", () => {
+  it("全采纳快路径承接移动图布局并以复数 suggestionIds 拍权威候选", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("diagram-move-whole-candidate");
+    const base = doc([
+      diagram("diagram-old", source, true),
+      paragraph("paragraph-keep", "保留正文"),
+    ]);
+    const draftWithoutLayout = doc([
+      paragraph("paragraph-keep", "保留正文"),
+      diagram("diagram-new", source),
+    ]);
+    const hunks = await seedReviewRound(state, base, draftWithoutLayout);
+    await seedDocumentRow(state);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: hunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId),
+    }));
+
+    expect(hunks.map((hunk) => hunk.op).sort()).toEqual(["delete", "insert"]);
+    expectMovedDiagramLayout(state.doc);
+    const op = await findOpByDocumentVersion(state.docId, state.docVersion);
+    expect(op?.steps).toHaveLength(1);
+    expect(op?.steps?.[0]?.suggestionIds).toHaveLength(2);
+    expect(op?.steps?.[0]?.suggestionId).toBeUndefined();
+    expect((op?.steps?.[0]?.slice as { content?: PmBlockNode[] } | undefined)?.content
+      ?.find((block) => block.type === "diagram")).toMatchObject({
+        attrs: {
+          overlay: { positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } } },
+          width: 654,
+          height: 645,
+          align: "left",
+        },
+      });
+    expect(frames.find((frame) => frame.kind === "docCommitted")).toMatchObject({
+      kind: "docCommitted",
+      data: { conflictCount: 0 },
+    });
+  });
+
+  it("部分采纳 hunk 路径承接移动图布局并为每步记录单数 suggestionId", async () => {
+    const source = "flowchart TD\n  A[开始] --> B[结束]";
+    const state = createSession("diagram-move-partial-hunks");
+    const base = doc([
+      diagram("diagram-old", source, true),
+      paragraph("paragraph-edit", "保留旧文"),
+    ]);
+    const draftWithoutLayout = doc([
+      paragraph("paragraph-edit", "保留新文"),
+      diagram("diagram-new", source),
+    ]);
+    const hunks = await seedReviewRound(state, base, draftWithoutLayout);
+    await seedDocumentRow(state);
+    const moveHunks = hunks.filter((hunk) => hunk.op === "delete" || hunk.op === "insert");
+    const pendingHunk = hunks.find((hunk) => hunk.op === "replace");
+    if (moveHunks.length !== 2 || !pendingHunk) throw new Error("fixture missing move hunks");
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: moveHunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId),
+      keepPendingReviewBatchIds: [pendingHunk.reviewBatchId ?? pendingHunk.hunkId],
+    }));
+
+    expectMovedDiagramLayout(state.doc);
+    const op = await findOpByDocumentVersion(state.docId, state.docVersion);
+    expect(op?.steps).toHaveLength(2);
+    expect(op?.steps?.every((step) => typeof step.suggestionId === "string")).toBe(true);
+    expect(op?.steps?.every((step) => step.suggestionIds === undefined)).toBe(true);
+    const insertStep = op?.steps?.find((step) =>
+      (step.slice as { content?: PmBlockNode[] } | undefined)?.content?.some(
+        (block) => block.type === "diagram",
+      )
+    );
+    expect((insertStep?.slice as { content?: PmBlockNode[] } | undefined)?.content?.[0])
+      .toMatchObject({
+        attrs: {
+          overlay: { positions: { A: { x: 110, y: 160 }, B: { x: 361, y: 100 } } },
+          width: 654,
+          height: 645,
+          align: "left",
+        },
+      });
+  });
+
+  it("内容不同的图不误配布局，并在属性确实丢失时返回非阻断告知", async () => {
+    const state = createSession("diagram-move-no-false-match");
+    const base = doc([
+      diagram("diagram-old", "flowchart TD\n  A[旧图] --> B[结束]", true),
+      paragraph("paragraph-keep", "保留正文"),
+    ]);
+    const draft = doc([
+      paragraph("paragraph-keep", "保留正文"),
+      diagram("diagram-new", "flowchart TD\n  X[新图] --> Y[结束]"),
+    ]);
+    const hunks = await seedReviewRound(state, base, draft);
+    await seedDocumentRow(state);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: hunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId),
+    }));
+
+    const inserted = state.doc?.content.find((block) => block.type === "diagram");
+    expect(inserted?.type).toBe("diagram");
+    if (inserted?.type !== "diagram") throw new Error("expected inserted diagram");
+    expect(inserted.attrs.overlay).toBeUndefined();
+    expect(inserted.attrs.width).toBeUndefined();
+    expect(inserted.attrs.height).toBeUndefined();
+    expect(inserted.attrs.align).toBeUndefined();
+    const committed = frames.find((frame) => frame.kind === "docCommitted");
+    expect(committed?.kind === "docCommitted"
+      ? (committed.data as { notice?: string }).notice
+      : undefined).toContain("手工布局");
+  });
+
   it("提交单处 H1 标题候选会写入正文，titlePinned 元标题保持不变且不报伪缺失", async () => {
     const state = createSession("commit-pinned-h1-title");
     const base = doc([

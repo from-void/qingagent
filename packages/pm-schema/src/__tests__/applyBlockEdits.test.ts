@@ -696,6 +696,56 @@ describe("applyBlockEdits 表格列宽 carry-over", () => {
     expect(widths(reordered.doc!)).toEqual([[[100], [200]], [[100], [200]]]);
   });
 
+  it("deleteBlock + insertBlock 移表时跨 op 承接表头与列宽", () => {
+    const source = aiIrToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [tableCell([{ text: "A" }], { header: true }), tableCell([{ text: "B" }], { header: true })] },
+          { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }])] },
+        ],
+      }],
+    });
+    const table = source.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    const withWidths: PmDoc = {
+      ...source,
+      content: [{
+        ...table,
+        content: table.content.map((row) => ({
+          ...row,
+          content: row.content.map((cell, columnIndex) => ({
+            ...cell,
+            attrs: { ...cell.attrs, colwidth: [columnIndex === 0 ? 120 : 240] },
+          })),
+        })),
+      }],
+    };
+
+    const result = applyBlockEdits(withWidths, [
+      { action: "deleteBlock", ref: table.attrs.blockId },
+      {
+        action: "insertBlock",
+        position: "end",
+        blocks: [{
+          type: "table",
+          rows: [
+            { cells: [tableCell([{ text: "A" }]), tableCell([{ text: "B" }])] },
+            { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }])] },
+          ],
+        }],
+      },
+    ]);
+
+    expect(result.ok, result.error).toBe(true);
+    const moved = result.doc!.content[0];
+    if (moved?.type !== "table") throw new Error("missing moved table");
+    expect(moved.content[0]!.content.map((cell) => cell.type))
+      .toEqual(["tableHeader", "tableHeader"]);
+    expect(moved.content.map((row) => row.content.map((cell) => cell.attrs?.colwidth)))
+      .toEqual([[[120], [240]], [[120], [240]]]);
+  });
+
   it("含 span+colwidth 按逻辑列保留；含 span 无 colwidth 也放行", () => {
     const merged = aiIrToPm({
       blocks: [{ type: "table", rows: [{ cells: [{ ...tableCell([{ text: "合并" }]), colspan: 2 }] }] }],

@@ -8,6 +8,8 @@ import type {
   ToolCallStatus,
 } from "@qingagent/contract-ts";
 import {
+  carryOverMovedBlockUserAttrs,
+  detectMovedBlockUserAttrLosses,
   getDeterministicId,
   getPmContentHash,
   isAbnormalDocumentCollapse,
@@ -68,6 +70,17 @@ import {
 } from "./annotationMapping.js";
 
 const logger = mastra.getLogger();
+
+function movedBlockUserAttrLossNotice(oldDoc: PmDoc, newDoc: PmDoc): string | undefined {
+  const losses = detectMovedBlockUserAttrLosses(oldDoc, newDoc);
+  if (losses.length === 0) return undefined;
+  if (losses.length > 1) {
+    return "部分图表或表格的手工布局未能完整保留，请检查版式。";
+  }
+  return losses[0] === "diagram"
+    ? "图表内容变化较大，原有手工布局未能完整保留，请检查新图布局。"
+    : "表格结构变化较大，原有表头或列宽未能完整保留，请检查表格布局。";
+}
 
 // ---------------------------------------------------------------------------
 // updatePatchVerdict — accept or reject a single patch
@@ -953,7 +966,12 @@ export async function* commitPatches(
           // 已共同证明 currentDoc 仍是候选生成时的基线，因此直接整体落库；
           // 逐 hunk 回放仅用于部分采纳，避免大批次因一条内部定位偏差整批回滚。
           if (wholeCandidateAccepted && wholeCandidateDoc) {
-            if (isAbnormalDocumentCollapse(currentDoc, wholeCandidateDoc)) {
+            // 兼容修复前已生成、仍在待审的候选：快路径拍快照前再做一次同批移动承接。
+            const candidateWithMovedBlockAttrs = carryOverMovedBlockUserAttrs(
+              currentDoc,
+              wholeCandidateDoc,
+            ).doc;
+            if (isAbnormalDocumentCollapse(currentDoc, candidateWithMovedBlockAttrs)) {
               return {
                 nextDoc: currentDoc,
                 conflicts: acceptedRecords.map((record): PatchConflict => ({
@@ -966,7 +984,7 @@ export async function* commitPatches(
               };
             }
             if (
-              getPmContentHash(wholeCandidateDoc) ===
+              getPmContentHash(candidateWithMovedBlockAttrs) ===
               getPmContentHash(currentDoc)
             ) {
               return {
@@ -983,13 +1001,13 @@ export async function* commitPatches(
             appliedHunkCount = acceptedDiffHunks.length;
             skippedHunks = [];
             return {
-              nextDoc: clonePmDoc(wholeCandidateDoc),
+              nextDoc: clonePmDoc(candidateWithMovedBlockAttrs),
               steps: [{
                 stepType: "replace",
                 from: 0,
                 to: pmDocContentSize(currentDoc),
                 slice: {
-                  content: clonePmDoc(wholeCandidateDoc).content,
+                  content: clonePmDoc(candidateWithMovedBlockAttrs).content,
                   openStart: 0,
                   openEnd: 0,
                 },
@@ -1350,11 +1368,13 @@ export async function* commitPatches(
     );
   }
 
+  const commitNotice = movedBlockUserAttrLossNotice(oldBaseDoc, result.doc);
   yield {
     kind: "docCommitted",
     data: {
       sessionId: state.sessionId,
       version: state.docVersion,
+      ...(commitNotice ? { notice: commitNotice } : {}),
       ...(commitResultCountsKnown
         ? {
             appliedCount: shouldCommitDiffHunks ? appliedHunkCount : accepted.length,

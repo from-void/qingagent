@@ -449,7 +449,7 @@ const FLOW_SUBGRAPH_RE = new RegExp(
   "u",
 );
 const FLOW_EDGE_RE = new RegExp(
-  String.raw`^(${MERMAID_STABLE_ID_SOURCE})(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})?\s+(-->|-.->|==>)(?:\|([^|]*)\|)?\s+(${MERMAID_STABLE_ID_SOURCE})`,
+  String.raw`^(${MERMAID_STABLE_ID_SOURCE})(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})?\s*(-->|-\.->|==>)(?:\|([^|]*)\|)?\s*(${MERMAID_STABLE_ID_SOURCE})`,
   "u",
 );
 const FLOW_NODE_RE = new RegExp(String.raw`^(${MERMAID_STABLE_ID_SOURCE})`, "u");
@@ -485,33 +485,43 @@ export function carryOverBlockUserAttrs(oldNode: PmBlockNode, newNode: PmBlockNo
 }
 
 /**
- * 保守识别顶层块移动：旧块必须从结果消失、新块必须是本批新增，且仅处理确有用户布局域的
- * diagram/table。配对身份必须在旧、新两侧各自唯一；重复图、一对多、多对一全部放弃承接。
- * blockId 只用于确认“消失/新增”，绝不作为移动配对依据。
+ * 保守识别顶层块移动：除 blockId 消失/新增外，也覆盖同一 blockId 换位后用户布局域丢失。
+ * 配对身份必须在旧、新两侧各自唯一；重复图、一对多、多对一全部放弃承接。
+ * blockId 只用于确认候选是否消失/新增/换位，绝不作为移动配对身份。
  */
 export function carryOverMovedBlockUserAttrs(
   oldDoc: PmDoc,
   newDoc: PmDoc,
 ): CarryOverMovedBlockUserAttrsResult {
-  const oldIds = new Set(oldDoc.content.map((block) => block.attrs.blockId));
-  const newIds = new Set(newDoc.content.map((block) => block.attrs.blockId));
-  const removed = oldDoc.content.filter((block) =>
-    !newIds.has(block.attrs.blockId) && hasCarryOverUserAttrs(block)
+  const { oldCandidates, newCandidates } = movedBlockCandidates(oldDoc, newDoc);
+  const oldByIdentity = groupByMoveIdentity(oldCandidates);
+  const newByIdentity = groupByMoveIdentity(newCandidates);
+  const allOldByIdentity = groupByMoveIdentity(
+    oldDoc.content.map((block, index) => ({ block, index })),
   );
-  const inserted = newDoc.content.flatMap((block, index) =>
-    !oldIds.has(block.attrs.blockId) && moveIdentity(block) !== null
-      ? [{ block, index }]
-      : []
+  const allNewByIdentity = groupByMoveIdentity(
+    newDoc.content.map((block, index) => ({ block, index })),
   );
-  const removedByIdentity = groupByMoveIdentity(removed.map((block) => ({ block })));
-  const insertedByIdentity = groupByMoveIdentity(inserted);
   const replacements = new Map<number, PmBlockNode>();
 
-  for (const [identity, oldMatches] of removedByIdentity) {
-    const newMatches = insertedByIdentity.get(identity) ?? [];
+  for (const [identity, oldMatches] of oldByIdentity) {
+    const newMatches = newByIdentity.get(identity) ?? [];
     if (oldMatches.length !== 1 || newMatches.length !== 1) continue;
+    if (
+      allOldByIdentity.get(identity)?.length !== 1 ||
+      allNewByIdentity.get(identity)?.length !== 1
+    ) {
+      continue;
+    }
     const oldBlock = oldMatches[0]!.block;
     const newMatch = newMatches[0]!;
+    if (!hasCarryOverUserAttrs(oldBlock)) continue;
+    if (
+      oldBlock.attrs.blockId === newMatch.block.attrs.blockId &&
+      !hasMovedBlockUserAttrLoss(oldBlock, newMatch.block)
+    ) {
+      continue;
+    }
     replacements.set(
       newMatch.index!,
       carryOverBlockUserAttrs(oldBlock, newMatch.block),
@@ -528,36 +538,57 @@ export function carryOverMovedBlockUserAttrs(
   };
 }
 
-/** 提交成功后判断是否有已消失块的用户布局未能落到本批新增的同类块上。 */
+/**
+ * 提交成功后判断移动块的用户布局事实是否仍存在于结果块。
+ * 本检测只读取 old/new 文档事实，不调用承接函数作为成功 oracle，避免承接实现失效时自证成功。
+ */
 export function detectMovedBlockUserAttrLosses(
   oldDoc: PmDoc,
   newDoc: PmDoc,
 ): MovedBlockUserAttrKind[] {
-  const oldIds = new Set(oldDoc.content.map((block) => block.attrs.blockId));
-  const newIds = new Set(newDoc.content.map((block) => block.attrs.blockId));
-  const removed = oldDoc.content.filter((block) =>
-    !newIds.has(block.attrs.blockId) && hasCarryOverUserAttrs(block)
-  );
-  const inserted = newDoc.content.filter((block) =>
-    !oldIds.has(block.attrs.blockId) && moveIdentity(block) !== null
-  );
+  const { oldCandidates, newCandidates } = movedBlockCandidates(oldDoc, newDoc);
   const losses = new Set<MovedBlockUserAttrKind>();
 
-  for (const oldBlock of removed) {
+  for (const { block: oldBlock } of oldCandidates) {
+    if (!hasCarryOverUserAttrs(oldBlock)) continue;
     const kind = oldBlock.type === "diagram" ? "diagram" : "table";
-    const sameType = inserted.filter((block) => block.type === oldBlock.type);
+    const sameType = newCandidates.filter(({ block }) => block.type === oldBlock.type);
     if (sameType.length === 0) continue;
     const identity = moveIdentity(oldBlock);
-    const exactMatches = sameType.filter((block) => moveIdentity(block) === identity);
-    const preserved = exactMatches.some((block) =>
-      getStablePmJson(carryOverBlockUserAttrs(oldBlock, block)) === getStablePmJson(block)
+    const exactMatches = sameType.filter(({ block }) => moveIdentity(block) === identity);
+    const preserved = exactMatches.some(({ block }) =>
+      !hasMovedBlockUserAttrLoss(oldBlock, block)
     );
     if (!preserved) losses.add(kind);
   }
   return [...losses];
 }
 
-type MoveIdentityEntry = { block: PmBlockNode; index?: number };
+type MoveIdentityEntry = { block: PmBlockNode; index: number };
+
+function movedBlockCandidates(
+  oldDoc: PmDoc,
+  newDoc: PmDoc,
+): { oldCandidates: MoveIdentityEntry[]; newCandidates: MoveIdentityEntry[] } {
+  const oldIndexById = new Map(
+    oldDoc.content.map((block, index) => [block.attrs.blockId, index] as const),
+  );
+  const newIndexById = new Map(
+    newDoc.content.map((block, index) => [block.attrs.blockId, index] as const),
+  );
+  const collect = (
+    blocks: readonly PmBlockNode[],
+    otherIndexById: ReadonlyMap<string, number>,
+  ): MoveIdentityEntry[] => blocks.flatMap((block, index) => {
+    if (moveIdentity(block) === null) return [];
+    const otherIndex = otherIndexById.get(block.attrs.blockId);
+    return otherIndex === undefined || otherIndex !== index ? [{ block, index }] : [];
+  });
+  return {
+    oldCandidates: collect(oldDoc.content, newIndexById),
+    newCandidates: collect(newDoc.content, oldIndexById),
+  };
+}
 
 function groupByMoveIdentity(entries: readonly MoveIdentityEntry[]): Map<string, MoveIdentityEntry[]> {
   const groups = new Map<string, MoveIdentityEntry[]>();
@@ -619,6 +650,47 @@ function hasCarryOverUserAttrs(block: PmBlockNode): boolean {
   return block.content.some((row) => row.content.some((cell) =>
     cell.type === "tableHeader" || cell.attrs?.colwidth !== undefined
   ));
+}
+
+function hasMovedBlockUserAttrLoss(oldBlock: PmBlockNode, newBlock: PmBlockNode): boolean {
+  if (oldBlock.type === "diagram") {
+    if (newBlock.type !== "diagram") return true;
+    if (oldBlock.attrs.overlay != null) {
+      const oldOverlay = oldBlock.attrs.overlay;
+      const newOverlay = newBlock.attrs.overlay;
+      const recordKeys: Array<keyof PmDiagramOverlay> = [
+        "positions",
+        "styles",
+        "zOrders",
+        "edgeStyles",
+        "edgeHandles",
+      ];
+      for (const key of recordKeys) {
+        const oldRecord = oldOverlay[key];
+        if (oldRecord && Object.keys(oldRecord).length > 0) {
+          const newRecord = newOverlay?.[key];
+          if (!newRecord || Object.keys(newRecord).length === 0) return true;
+        }
+      }
+    }
+    return (
+      (oldBlock.attrs.height !== undefined && oldBlock.attrs.height !== newBlock.attrs.height) ||
+      (oldBlock.attrs.width !== undefined && oldBlock.attrs.width !== newBlock.attrs.width) ||
+      (oldBlock.attrs.align !== undefined && oldBlock.attrs.align !== newBlock.attrs.align)
+    );
+  }
+  if (oldBlock.type !== "table") return false;
+  if (newBlock.type !== "table") return true;
+  return oldBlock.content.some((oldRow, rowIndex) =>
+    oldRow.content.some((oldCell, cellIndex) => {
+      const newCell = newBlock.content[rowIndex]?.content[cellIndex];
+      if (!newCell) return true;
+      if (oldCell.type === "tableHeader" && newCell.type !== "tableHeader") return true;
+      const oldColwidth = oldCell.attrs?.colwidth;
+      return oldColwidth !== undefined &&
+        getStablePmJson(oldColwidth) !== getStablePmJson(newCell.attrs?.colwidth);
+    })
+  );
 }
 
 function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: Set<string> } {

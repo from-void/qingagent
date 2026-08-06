@@ -116,6 +116,10 @@ function structurallyValidThreeLevelQingml(): string {
   return "<ul><li>达标一级<ul><li>达标二级<ul><li>达标三级</li></ul></li></ul></li></ul>";
 }
 
+function namedThreeLevelQingml(prefix: string): string {
+  return `<ul><li>${prefix}一级<ul><li>${prefix}二级<ul><li>${prefix}三级</li></ul></li></ul></li></ul>`;
+}
+
 function bindDoc(state: { doc?: PmDoc | null; legacySections: unknown; docVersion: number }, value: PmDoc): void {
   state.doc = value;
   state.legacySections = pmToLegacySections(value);
@@ -496,6 +500,150 @@ describe("writeDraft intent 调度", () => {
     expect(pmToPlainText(state.docDraftCandidateDoc!)).not.toContain("字".repeat(20));
   });
 
+  it("reason 已有兜底候选时仍等满 T_think 争取精修，随后立即收摊而不等 hardTimer", async () => {
+    vi.useFakeTimers();
+    const { tool } = await makeTool();
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
+      calls.push(input);
+      const index = calls.length - 1;
+      if (index === 0) {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            const raw = qingmlParagraph("保".repeat(80));
+            input.onContentStart?.();
+            input.onContentDelta?.(raw, raw);
+            resolve({ raw, contentStartMs: 1_000, finishReason: "stop" });
+          }, 1_000);
+        });
+      }
+
+      input.onContentStart?.();
+      return new Promise((_resolve, reject) => {
+        input.abortSignal?.addEventListener("abort", () => reject(abortError()), { once: true });
+      });
+    });
+
+    let settled = false;
+    const pending = run(tool, {
+      title: "t",
+      outline: "o",
+      intent: "reason",
+      lengthTarget: 100,
+      lengthBound: "exact",
+    }).finally(() => {
+      settled = true;
+    });
+    await waitForCalls(calls, 4);
+    expect(calls).toHaveLength(4);
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushPromises();
+    const settledAtThink = settled;
+
+    // 旧实现要到 25s hardTimer 才收口；先把它清掉再断言红测，避免留下悬空 Promise。
+    if (!settledAtThink) await vi.advanceTimersByTimeAsync(10_000);
+    const out = await pending;
+
+    expect(settledAtThink).toBe(true);
+    expect(out).toMatchObject({ ok: true, wordCount: 80, lengthStatus: "below_min" });
+    expect(calls[0]!.abortSignal?.aborted).toBe(false);
+    expect(calls.slice(1).every((call) => call.abortSignal?.aborted)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reason 严格提前终止仍同时要求 refinement、嵌套深度与字数达标", async () => {
+    vi.useFakeTimers();
+    const { tool, state } = await makeTool();
+    const calls: InnerModelCall[] = [];
+    const raws = [
+      namedThreeLevelQingml("保底"), // fallback：结构和字数达标，但类型不够格
+      qingmlParagraph("平铺内容".repeat(3)), // refinement：字数达标，但没有嵌套
+      namedThreeLevelQingml("超长内容"), // refinement：结构达标，但字数超限
+      namedThreeLevelQingml("精修"), // refinement：三条全部达标
+    ];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
+      calls.push(input);
+      const index = calls.length - 1;
+      const raw = raws[index]!;
+      input.onContentStart?.();
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          input.onContentDelta?.(raw, raw);
+          resolve({ raw, contentStartMs: (index + 1) * 1_000, finishReason: "stop" });
+        }, (index + 1) * 1_000);
+        input.abortSignal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(abortError());
+        }, { once: true });
+      });
+    });
+
+    let settled = false;
+    const pending = run(
+      tool,
+      {
+        title: "层级计划",
+        outline: "请生成三级嵌套列表",
+        intent: "reason",
+        lengthTarget: 12,
+        lengthBound: "exact",
+      },
+      { requestContext: new RequestContext([["userText", "请生成三级嵌套列表"]]) },
+    ).finally(() => {
+      settled = true;
+    });
+    await waitForCalls(calls, 4);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const out = await pending;
+
+    expect(out).toMatchObject({
+      ok: true,
+      wordCount: 12,
+      lengthStatus: "accepted_first_pass",
+      nestedListReachedDepth: true,
+    });
+    expect(pmToPlainText(state.docDraftCandidateDoc!)).toContain("精修三级");
+    expect(calls.slice(0, 3).every((call) => call.abortSignal?.aborted)).toBe(true);
+    expect(calls[3]!.abortSignal?.aborted).toBe(false);
+  });
+
+  it("reason 全部 lane 编译失败时随最后一路 settle 立即失败，不把无效输出当兜底候选", async () => {
+    vi.useFakeTimers();
+    const { tool, state } = await makeTool();
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
+      calls.push(input);
+      return new Promise((resolve) => {
+        setTimeout(() => resolve({
+          raw: "<pre>text<p>block</p></pre>",
+          contentStartMs: 1_000,
+          finishReason: "stop",
+        }), 1_000);
+      });
+    });
+
+    let settled = false;
+    const pending = run(tool, { title: "t", outline: "o", intent: "reason" }).finally(() => {
+      settled = true;
+    });
+    await waitForCalls(calls, 4);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const out = await pending;
+
+    expect(settled).toBe(true);
+    expect(out.ok).toBe(false);
+    expect((out as { error?: string }).error).toContain("重新调用 writeDraft");
+    expect(state.docDraftCandidateDoc).toBeNull();
+    expect(calls.every((call) => call.abortSignal?.aborted === false)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reason:1 保底 + 3 精修,未出正文精修路到 T_think 被 abort 且不入候选,心跳清 timer", async () => {
     vi.useFakeTimers();
     const { tool } = await makeTool();
@@ -548,7 +696,7 @@ describe("writeDraft intent 调度", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("reason 精修路原始流已见首字但尚未收完时，T_think 不会将其 abort", async () => {
+  it("reason 尚无兜底候选时，T_think 保留已见首字的精修路继续争取", async () => {
     vi.useFakeTimers();
     const { tool } = await makeTool();
     const calls: InnerModelCall[] = [];
@@ -556,10 +704,9 @@ describe("writeDraft intent 调度", () => {
       calls.push(input);
       const index = calls.length - 1;
       if (index === 0) {
-        const raw = qingmlParagraph("a".repeat(80));
-        input.onContentStart?.();
-        input.onContentDelta?.(raw, raw);
-        return Promise.resolve({ raw, contentStartMs: 1, finishReason: "stop" });
+        return new Promise((_resolve, reject) => {
+          input.abortSignal?.addEventListener("abort", () => reject(abortError()), { once: true });
+        });
       }
       if (index === 1) {
         return new Promise((resolve, reject) => {

@@ -10,6 +10,7 @@ import type {
   ToolCallSpec,
   ToolCallStatus,
   WriteDraftCardBody,
+  WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import { hardenInlineSvg } from "@qingagent/doc-render";
 import { Buffer } from "node:buffer";
@@ -282,18 +283,35 @@ export function writeDraftCardFromResult(
   ok: boolean,
 ): WriteDraftCardBody {
   const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+  const diagnostic = writeDraftFailureDiagnostic(toolResult.diagnostic);
   return {
     title: typeof args.title === "string" ? args.title : "",
     phase: ok ? "done" : "failed",
     charCount: num(toolResult.visibleCharCount) ?? num(toolResult.wordCount) ?? 0,
     // 完成卡保留开头预览(直播/历史重开都有内容);拿不到则 null。
     excerpt: typeof toolResult.previewExcerpt === "string" ? toolResult.previewExcerpt : null,
+    diagnostic,
     targetLength: num(toolResult.targetLength),
     minLength: num(toolResult.minLength),
     maxLength: num(toolResult.maxLength),
     revisionCount: num(toolResult.revisionCount) ?? 0,
     lengthStatus: typeof toolResult.lengthStatus === "string" ? toolResult.lengthStatus : null,
   };
+}
+
+function writeDraftFailureDiagnostic(value: unknown): WriteDraftFailureDiagnostic | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.failureKind !== "string"
+    || typeof record.tagSkeleton !== "string"
+    || !Array.isArray(record.warningKinds)
+    || record.warningKinds.some((kind) => typeof kind !== "string")
+    || !Array.isArray(record.errorLocations)
+  ) {
+    return null;
+  }
+  return value as WriteDraftFailureDiagnostic;
 }
 
 type GenerateSvgCardBody = Extract<ToolCallSpec["body"], { kind: "generateSvg" }>["data"];

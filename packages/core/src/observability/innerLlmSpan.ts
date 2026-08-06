@@ -63,6 +63,8 @@ export interface InnerLlmSpanController {
     ok: boolean;
     outputText?: string;
     error?: unknown;
+    /** 仅允许传入已脱敏的结构化诊断，不得传原始模型输出。 */
+    diagnostic?: Record<string, unknown>;
   }) => void;
 }
 
@@ -105,7 +107,7 @@ export function startInnerLlmSpan(opts: InnerLlmSpanStartOptions): InnerLlmSpanC
   }
 
   return {
-    end: ({ ok, outputText = "", error }) => {
+    end: ({ ok, outputText = "", error, diagnostic }) => {
       const endedAt = new Date().toISOString();
       if (!span) return;
       try {
@@ -122,6 +124,7 @@ export function startInnerLlmSpan(opts: InnerLlmSpanStartOptions): InnerLlmSpanC
             attempt: opts.attempt,
             maxAttempts: opts.maxAttempts,
             error: error ? (error instanceof Error ? error.message : String(error)) : null,
+            diagnostic: diagnostic ?? null,
           },
         });
       } catch (err) {

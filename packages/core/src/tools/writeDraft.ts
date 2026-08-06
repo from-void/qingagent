@@ -6,7 +6,7 @@ import {
   type PmDoc,
 } from "@qingagent/pm-schema";
 import { z } from "zod";
-import type { LegacySection } from "@qingagent/contract-ts";
+import type { LegacySection, WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
 import type { SessionState } from "../session/sessionState.js";
 import {
   assertTurnWriteAllowed,
@@ -57,6 +57,18 @@ export { writeDraftInputSchema };
 // deepseek-v4-flash 实测上限为 393216，无需把单路预算直接吃满。
 const WRITE_DRAFT_MAX_TOKENS = 65_536;
 
+const writeDraftFailureDiagnosticSchema = z.object({
+  failureKind: z.string(),
+  warningKinds: z.array(z.string()),
+  tagSkeleton: z.string(),
+  errorLocations: z.array(z.object({
+    kind: z.string(),
+    startOffset: z.number().int().nonnegative().optional(),
+    endOffset: z.number().int().nonnegative().optional(),
+    path: z.array(z.union([z.string(), z.number()])).optional(),
+  })),
+});
+
 export const writeDraftOutputSchema = z.object({
   ok: z.boolean(),
   blockCount: z.number().optional(),
@@ -87,6 +99,7 @@ export const writeDraftOutputSchema = z.object({
   warning: z.string().optional(),
   nestedListReachedDepth: z.boolean().optional(),
   structuralFailures: z.array(z.string()).optional(),
+  diagnostic: writeDraftFailureDiagnosticSchema.optional(),
   error: z.string().optional(),
 });
 
@@ -293,6 +306,12 @@ function failureKindFromError(error: unknown, finishReason: string | null | unde
   return "unknown";
 }
 
+function failureDiagnosticFromError(error: unknown): WriteDraftFailureDiagnostic | undefined {
+  if (!error || typeof error !== "object" || !("diagnostics" in error)) return undefined;
+  return (error as { diagnostics?: { failureDiagnostic?: WriteDraftFailureDiagnostic } })
+    .diagnostics?.failureDiagnostic;
+}
+
 function tallyFailureKinds(kinds: readonly string[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const kind of kinds) out[kind] = (out[kind] ?? 0) + 1;
@@ -445,6 +464,7 @@ export function createWriteDraftTool(opts: {
         force = false,
         fullExcerpt = false,
         resetExcerpt = false,
+        diagnostic: WriteDraftFailureDiagnostic | null = null,
       ) => {
         const text = aiIrStreamPreviewFromMarkup(rawSoFar);
         const charCount = countVisibleChars(text);
@@ -461,6 +481,7 @@ export function createWriteDraftTool(opts: {
           phase,
           charCount,
           excerpt: phase === "failed" ? null : fullExcerpt ? text : tailExcerpt(text, 220),
+          diagnostic: phase === "failed" ? diagnostic : null,
           resetExcerpt,
           targetLength: lengthSpec?.target ?? null,
           minLength: lengthSpec?.min ?? null,
@@ -503,9 +524,9 @@ export function createWriteDraftTool(opts: {
         displayLaneKey = winnerLaneKey;
         return emitProgress("finalizing", raw, revisionCount, previousDisplay !== winnerLaneKey, true, true);
       };
-      const emitFailureFrame = () => {
+      const emitFailureFrame = (diagnostic: WriteDraftFailureDiagnostic | null) => {
         const displayLane = currentDisplayLane();
-        return emitProgress("failed", displayLane?.raw ?? "", 0, true);
+        return emitProgress("failed", displayLane?.raw ?? "", 0, true, false, false, diagnostic);
       };
       // 赛道流结束(候选已产出)后交出展示权:该赛道字数若脱靶,赛马还要等其余路,
       // 展示若继续钉在它身上,前端会呈现"打完了却卡住不动"的缺漏观感(260726 用户报障)。
@@ -544,6 +565,7 @@ export function createWriteDraftTool(opts: {
       };
       const candidates: DraftCandidate[] = [];
       const failureKinds: string[] = [];
+      const failureDiagnostics: WriteDraftFailureDiagnostic[] = [];
       const activeModelTier = resolveModelTier(context?.requestContext);
       const activeModelId = resolveModelId(context?.requestContext, "flash");
       const countOf = (doc: PmDoc) =>
@@ -647,8 +669,15 @@ export function createWriteDraftTool(opts: {
           return candidate;
         } catch (error) {
           const failureKind = failureKindFromError(error, finishReason);
+          const failureDiagnostic = failureDiagnosticFromError(error);
           failureKinds.push(failureKind);
-          innerSpan.end({ ok: false, outputText: raw, error: `${failureKind}: ${error instanceof Error ? error.message : String(error)}` });
+          if (failureDiagnostic) failureDiagnostics.push(failureDiagnostic);
+          innerSpan.end({
+            ok: false,
+            outputText: raw,
+            error: failureKind,
+            ...(failureDiagnostic ? { diagnostic: { ...failureDiagnostic } } : {}),
+          });
           markLaneDead(laneKey);
           return null;
         }
@@ -782,15 +811,21 @@ export function createWriteDraftTool(opts: {
 
       if (candidates.length === 0) {
         const failureSummary = failureKinds.length > 0 ? tallyFailureKinds(failureKinds) : {};
-        await emitFailureFrame();
+        const failureDiagnostic = failureDiagnostics.find(
+          (diagnostic) => diagnostic.failureKind === "unsupported-nested-table",
+        ) ?? failureDiagnostics[0] ?? null;
+        await emitFailureFrame(failureDiagnostic);
         await progressWriteChain;
         return {
           ok: false,
+          ...(failureDiagnostic ? { diagnostic: failureDiagnostic } : {}),
           error: (() => {
             // 按主导失败分型条件化文案:超时/被掐 ≠ QingML 结构错,别再无脑甩锅"校验失败"(否则 debug 走沟里)。
             const totalFails = failureKinds.length || 1;
             const budgetFails = failureSummary["reason_budget_exceeded"] ?? 0;
             const lengthFails = failureSummary["length_truncated"] ?? 0;
+            const nestedTableFails = failureSummary["unsupported-nested-table"] ?? 0;
+            const truncatedTableFails = failureSummary["truncated-table-structure"] ?? 0;
             const detail = `失败分型: ${JSON.stringify(failureSummary)}。`;
             if (lengthFails === totalFails) {
               return (
@@ -798,6 +833,20 @@ export function createWriteDraftTool(opts: {
                 `截断稿未进入候选池。${detail}` +
                 `重新调用时必须压缩生成规模：减少图表节点数、精简样式并压缩正文篇幅；` +
                 `如果已连续两次因超长失败，请按更小规模出稿，并在正文中向用户说明。`
+              );
+            }
+            if (nestedTableFails > 0) {
+              return (
+                `writeDraft 失败: ${nestedTableFails}/${totalFails} 路包含不支持的表中表结构。${detail}` +
+                `<td>/<th> 单元格内不能再包含 <table>。重新调用时必须保留原篇幅和原有内容，` +
+                `把内层表移到外层表之后拆成独立表格并标明关联，或改用单元格内嵌套 <ul>/<ol>；` +
+                `压缩正文篇幅不能修复此错误。`
+              );
+            }
+            if (truncatedTableFails === totalFails) {
+              return (
+                `writeDraft 失败: ${truncatedTableFails}/${totalFails} 路的表内标签缺少显式闭合，疑似输出截断。${detail}` +
+                `请保持内容与目标篇幅重试，逐一闭合表格内的 table/tr/td/th/p/ul/ol/li/tasks/task/callout 等非空标签。`
               );
             }
             if (budgetFails > totalFails / 2) {

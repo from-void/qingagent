@@ -245,12 +245,11 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
     const withTables = applyTableEdits(withListItems.doc, tableOps);
     applied.push(...withTables.applied);
 
-    const withMovedBlockAttrs = carryOverMovedBlockUserAttrs(originalDoc, withTables.doc);
-    const parsed = safeParsePmDoc(withMovedBlockAttrs.doc);
+    const parsed = safeParsePmDoc(withTables.doc);
     if (!parsed.success) throw new Error(`结果未过 pmDocSchema: ${parsed.error.message}`);
-    assertUniqueBlockIds(withMovedBlockAttrs.doc);
+    assertUniqueBlockIds(withTables.doc);
 
-    return { ok: true, doc: withMovedBlockAttrs.doc, applied, skippedDuplicateInserts };
+    return { ok: true, doc: withTables.doc, applied, skippedDuplicateInserts };
   } catch (err) {
     if (err instanceof OpError) {
       return {
@@ -547,6 +546,8 @@ function stripTableMoveUserAttrs(value: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(record)) {
     if (key === "blockId" || key === "colwidth") continue;
+    // ProseMirror 表格把缺省 span 解释为 1；显式 1 与缺省在用户可见结构上是同一身份。
+    if ((key === "colspan" || key === "rowspan") && child === 1) continue;
     const stripped = key === "type" && child === "tableHeader"
       ? "tableCell"
       : stripTableMoveUserAttrs(child);

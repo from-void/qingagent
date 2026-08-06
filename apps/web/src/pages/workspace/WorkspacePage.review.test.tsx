@@ -4328,13 +4328,14 @@ describe("WorkspacePage review controls", () => {
       data: {
         sessionId: "s-1",
         version: 2,
-        notice: "图表内容变化较大，原有手工布局未能完整保留，请检查新图布局。",
+        notice: "图表移动后，原有手工布局未能完整承接，请检查新图布局。",
       },
     } as BridgeFrame]);
     await flushMicrotasks(3);
 
     const toast = host?.querySelector<HTMLElement>(".qa-toast");
-    expect(toast?.textContent).toContain("手工布局未能完整保留");
+    expect(toast?.textContent).toContain("移动后");
+    expect(toast?.textContent).not.toContain("内容变化较大");
     expect(toast?.className).toContain("warn");
     expect(toast?.className).not.toContain("sticky");
   });

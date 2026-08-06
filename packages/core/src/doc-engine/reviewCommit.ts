@@ -75,11 +75,11 @@ function movedBlockUserAttrLossNotice(oldDoc: PmDoc, newDoc: PmDoc): string | un
   const losses = detectMovedBlockUserAttrLosses(oldDoc, newDoc);
   if (losses.length === 0) return undefined;
   if (losses.length > 1) {
-    return "部分图表或表格的手工布局未能完整保留，请检查版式。";
+    return "部分图表或表格移动后，原有手工布局未能完整承接，请检查版式。";
   }
   return losses[0] === "diagram"
-    ? "图表内容变化较大，原有手工布局未能完整保留，请检查新图布局。"
-    : "表格结构变化较大，原有表头或列宽未能完整保留，请检查表格布局。";
+    ? "图表移动后，原有手工布局未能完整承接，请检查新图布局。"
+    : "表格移动后，原有表头或列宽未能完整承接，请检查表格布局。";
 }
 
 // ---------------------------------------------------------------------------

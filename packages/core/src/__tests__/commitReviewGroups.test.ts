@@ -368,10 +368,13 @@ describe("commitReviewGroups", () => {
           align: "left",
         },
       });
-    expect(frames.find((frame) => frame.kind === "docCommitted")).toMatchObject({
+    const committedFrame = frames.find((frame) => frame.kind === "docCommitted");
+    expect(committedFrame).toMatchObject({
       kind: "docCommitted",
       data: { conflictCount: 0 },
     });
+    expect((committedFrame as { data?: { notice?: string } } | undefined)?.data?.notice)
+      .toBeUndefined();
   });
 
   it("部分采纳 hunk 路径承接移动图布局并为每步记录单数 suggestionId", async () => {

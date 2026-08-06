@@ -325,9 +325,10 @@ export function createWriteDraftTool(opts: {
       try {
       const materials = context?.requestContext?.get("materials") as Map<string, Material> | undefined;
       const messages = context?.requestContext?.get("messages");
+      const userText = context?.requestContext?.get("userText");
       const selectedMaterials = pickMaterials(materials, input.basedOnMaterialIds);
       const materialRelevanceText = [
-        context?.requestContext?.get("userText"),
+        userText,
         input.title,
         input.outline,
         input.styleHint,
@@ -341,7 +342,7 @@ export function createWriteDraftTool(opts: {
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
       const diagramActivationHint = [
-        context?.requestContext?.get("userText"),
+        userText,
         input.title,
         input.outline,
       ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
@@ -366,7 +367,8 @@ export function createWriteDraftTool(opts: {
       );
       const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
       const runConfig = runConfigForIntent(input.intent ?? "express");
-      const nestedIntent = detectNestedListIntent(diagramHint);
+      // 结构验收意图只信请求级用户原话，避免模型自产 title/outline/styleHint 自激活。
+      const nestedIntent = detectNestedListIntent(typeof userText === "string" ? userText : "");
 
       // 写稿小卡片:生成期间只镜像一条展示 lane。首个吐正文的 lane 获得展示权,
       // 后续保持粘滞;展示 lane 死亡才切到存活 lane 里当前字数最多者。

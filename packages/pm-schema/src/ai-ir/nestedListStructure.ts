@@ -4,6 +4,22 @@ const LIST_WORD_RE = /(列表|清单|条目|list|bullet|ordered|有序|无序)|�
 const NESTED_WORD_RE =
   /(嵌套|多级|分级|层级|子列表|子清单|二级列表|二级清单|两级|2\s*级|二层|两层|三级|3\s*级|三层)|章\s*[>＞/]\s*条\s*[>＞/]\s*款|章条款/i;
 const THIRD_LEVEL_RE = /(三级|3\s*级|三层|三\s*层)|章\s*[>＞/]\s*条\s*[>＞/]\s*款|章条款/i;
+const NEGATION_RE =
+  /(?:不要|不用|无需|无须|不需|不必|不想要|不希望|不允许|不得|不可|不能|不(?:采用|使用|做|设|加|放|写|生成|创建|列|嵌套)|别(?:再)?|禁止|避免|勿|拒绝|杜绝)|\b(?:no|not|without|avoid|never)\b|\b(?:do|must)\s+not\b|\b(?:don't|mustn't)\b/i;
+const INTENT_CLAUSE_BOUNDARY_RE =
+  /[，,。.!！?？;；\n\r]+|(?:但(?:是)?|不过|然而|而(?:是|要)?|却(?:要)?|改(?:为|用|成)|转(?:为|成))/;
+
+function hasAffirmedNestedListClause(text: string): boolean {
+  return text
+    .split(INTENT_CLAUSE_BOUNDARY_RE)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+    .some((clause) =>
+      LIST_WORD_RE.test(clause) &&
+      NESTED_WORD_RE.test(clause) &&
+      !NEGATION_RE.test(clause)
+    );
+}
 
 export function detectNestedListIntent(text: string): {
   wantsNestedList: boolean;
@@ -11,7 +27,9 @@ export function detectNestedListIntent(text: string): {
   label: string;
 } {
   const normalized = text.trim();
-  const wantsNestedList = LIST_WORD_RE.test(normalized) && NESTED_WORD_RE.test(normalized);
+  // 否定按分句生效；列表和层级必须在同一个未否定分句中共同出现。
+  // 两类信号缺一、分属不同内容或语义拿不准时均保守返回 false，避免结构验收误报。
+  const wantsNestedList = hasAffirmedNestedListClause(normalized);
   const minDepth: 2 | 3 = THIRD_LEVEL_RE.test(normalized) ? 3 : 2;
   return {
     wantsNestedList,

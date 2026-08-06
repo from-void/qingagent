@@ -97,6 +97,31 @@ describe("嵌套列表格式与只读自检", () => {
     const plainIntent = detectNestedListIntent("请写一段普通说明");
     expect(plainIntent.wantsNestedList).toBe(false);
   });
+
+  it.each([
+    "不要清单或列表，也不要嵌套结构",
+    "不用二级列表",
+    "无需嵌套清单",
+    "别用多级列表",
+    "禁止嵌套列表",
+    "避免使用分级列表",
+    "不得使用嵌套列表",
+    "勿用三级清单",
+  ])("明确否定嵌套列表时保守判为不需要：%s", (text) => {
+    expect(detectNestedListIntent(text).wantsNestedList).toBe(false);
+  });
+
+  it("否定只作用于所在分句，后续明确改要嵌套列表时恢复正向意图", () => {
+    expect(detectNestedListIntent("不要嵌套列表，但要普通列表").wantsNestedList).toBe(false);
+    expect(detectNestedListIntent("不要普通列表，但要三级嵌套列表")).toMatchObject({
+      wantsNestedList: true,
+      minDepth: 3,
+    });
+  });
+
+  it("列表与层级分属不同内容时不跨分句拼接意图", () => {
+    expect(detectNestedListIntent("正文使用普通列表，标题采用三级层级").wantsNestedList).toBe(false);
+  });
 });
 
 function collectRunTexts(blocks: readonly AiBlock[]): string[] {

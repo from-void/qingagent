@@ -1,6 +1,7 @@
 import DiffMatchPatch from "diff-match-patch";
 import type { DiffHunk, PmNode as ContractPmNode } from "@qingagent/contract-ts";
 import {
+  carryOverDiagramUserAttrs,
   getDeterministicId,
   getStablePmJson,
   normalizePmDoc,
@@ -319,7 +320,7 @@ export function applyDiffHunkToDoc(
   ) {
     return { ok: false, reason: `target block changed for ${hunk.hunkId}` };
   }
-  content.splice(index, 1, cloneValue(replacement));
+  content.splice(index, 1, carryOverDiagramUserAttrs(currentBlock, cloneValue(replacement)));
   return { ok: true, doc: normalizePmDoc(doc) };
 }
 

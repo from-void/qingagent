@@ -35,4 +35,25 @@ describe("DiagramRenderer", () => {
     expect(host.querySelector('[data-renderer="preview"]')).not.toBeNull();
     expect(host.querySelector('[data-renderer="graph"]')).toBeNull();
   });
+
+  it("非 base 主题降级时保留预览并明确说明可视化编辑不可用原因", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(
+        <DiagramRenderer
+          source={'%%{init: {"theme":"dark"}}%%\nflowchart TD\n  A --> B\n'}
+          lang="mermaid"
+          readOnly={false}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-renderer="preview"]')).not.toBeNull();
+    expect(host.querySelector('[data-renderer="graph"]')).toBeNull();
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("主题 dark 暂不支持");
+  });
 });

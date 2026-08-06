@@ -136,6 +136,8 @@ export type PmDiagramEdgeHandleOverride = {
 export type PmDiagramOverlay = {
   positions?: Record<string, PmDiagramOverlayPosition> | null;
   styles?: Record<string, PmDiagramNodeStyleOverride> | null;
+  /** 元素层级（越大越靠上）；仅属于用户视觉布局，不进入 AI-IR。 */
+  zOrders?: Record<string, number> | null;
   edgeStyles?: Record<string, PmDiagramEdgeStyleOverride> | null;
   edgeHandles?: Record<string, PmDiagramEdgeHandleOverride> | null;
 };

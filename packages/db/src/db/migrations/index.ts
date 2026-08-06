@@ -36,6 +36,7 @@ import { migration0034CredentialGrants } from "./0034_credential_grants.js";
 import { migration0035ContextualSensitiveReplacement } from "./0035_contextual_sensitive_replacement.js";
 import { migration0036ReviewIgnoreSupplements } from "./0036_review_ignore_supplements.js";
 import { migration0037SessionResourceOwnership } from "./0037_session_resource_ownership.js";
+import { migration0038RepairStableStringifyUndefined } from "./0038_repair_stable_stringify_undefined.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -78,4 +79,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0035ContextualSensitiveReplacement,
   migration0036ReviewIgnoreSupplements,
   migration0037SessionResourceOwnership,
+  migration0038RepairStableStringifyUndefined,
 ];

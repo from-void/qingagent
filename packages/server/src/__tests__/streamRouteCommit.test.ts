@@ -429,11 +429,14 @@ describe("POST /api/v1/commit", () => {
     vi.spyOn(sessionManager, "submitQueued").mockResolvedValueOnce({
       completion: Promise.reject(new SessionActorCommandError(
         "Session actor command failed",
-        new DOMException("draftTemplate timed out after 85000ms", "TimeoutError"),
+        new DOMException(
+          "draftTemplate timed out after 85000ms Authorization: Bearer sk-log-secret",
+          "TimeoutError",
+        ),
         [failureFrame],
       )),
     });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const res = await request("POST", "/api/v1/commands", {
       kind: "draftTemplate",
@@ -453,5 +456,9 @@ describe("POST /api/v1/commit", () => {
       },
       requestId: "request-template-timeout",
     });
+    const logged = consoleError.mock.calls.flat().map(String).join("\n");
+    expect(logged).toContain("draftTemplate timed out after 85000ms");
+    expect(logged).not.toContain("sk-log-secret");
+    expect(logged).toContain("[REDACTED]");
   });
 });

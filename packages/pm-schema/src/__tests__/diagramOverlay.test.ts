@@ -27,6 +27,7 @@ function docWithOverlay(): PmDoc {
               A: { fill: "#fff3a3", fontSize: 16, width: 240, height: 112 },
               ORPHAN: { fill: "#000000" },
             },
+            zOrders: { A: 1, B: 0, ORPHAN: 9 },
             edgeHandles: {
               [stableEdgeId("flow", { source: "A", target: "B", syntaxKind: "-->" }, 0)]: { sourceHandle: "r", targetHandle: "l" },
               ORPHAN: { sourceHandle: "b" },
@@ -108,9 +109,116 @@ describe("diagram overlay 数据域", () => {
     expect(block.attrs.overlay?.positions?.ORPHAN).toBeUndefined();
     expect(block.attrs.overlay?.styles?.A).toEqual({ fill: "#fff3a3", fontSize: 16, width: 240, height: 112 });
     expect(block.attrs.overlay?.styles?.ORPHAN).toBeUndefined();
+    expect(block.attrs.overlay?.zOrders).toEqual({ A: 1, B: 0 });
     const edgeId = stableEdgeId("flow", { source: "A", target: "B", syntaxKind: "-->" }, 0);
     expect(block.attrs.overlay?.edgeHandles?.[edgeId]).toEqual({ sourceHandle: "r", targetHandle: "l" });
     expect(block.attrs.overlay?.edgeHandles?.ORPHAN).toBeUndefined();
+  });
+
+  it("replaceBlock 跳过单行、多行及连续 init 指令，并保留节点、分区与层级 overlay", () => {
+    const oldSource = [
+      "%%{init: {",
+      "  'theme': 'base',",
+      "  'themeVariables': {'clusterBkg':'#EFE7D6','clusterBorder':'#2F2A22'}",
+      "}}%%",
+      "%%{wrap: true}%%",
+      "flowchart LR",
+      '  subgraph Front["前端"]',
+      "    Web[Web]",
+      "  end",
+      "  Web --> Api[API]",
+      "",
+    ].join("\n");
+    const nextSource = oldSource.replace("Web[Web]", "Web[Web 应用]");
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-init",
+          lang: "mermaid",
+          source: oldSource,
+          svg: null,
+          overlay: {
+            positions: {
+              Front: { x: 417, y: 11 },
+              Web: { x: 447, y: 77 },
+              Api: { x: 680, y: 77 },
+            },
+            zOrders: { Web: 1, Api: 0 },
+          },
+        },
+      }],
+    };
+
+    const result = applyBlockEdits(source, [{
+      action: "replaceBlock",
+      ref: "diagram-init",
+      block: { type: "diagram", lang: "mermaid", source: nextSource },
+    }]);
+
+    expect(result.ok).toBe(true);
+    const overlay = firstDiagram(result.doc!).attrs.overlay;
+    expect(overlay?.positions).toEqual({
+      Front: { x: 417, y: 11 },
+      Web: { x: 447, y: 77 },
+      Api: { x: 680, y: 77 },
+    });
+    expect(overlay?.zOrders).toEqual({ Web: 1, Api: 0 });
+    expect(overlay).toStrictEqual({
+      positions: {
+        Front: { x: 417, y: 11 },
+        Web: { x: 447, y: 77 },
+        Api: { x: 680, y: 77 },
+      },
+      zOrders: { Web: 1, Api: 0 },
+    });
+    expect(safeParsePmDoc(result.doc).success).toBe(true);
+  });
+
+  it("replaceBlock 保留产品生成及存量中文 Mermaid id 的 overlay", () => {
+    const oldSource = [
+      "flowchart TD",
+      '  A[开始] --> n_新节点_1["新节点"]',
+      '  n_新节点_1 --> 存量节点["存量节点"]',
+      "",
+    ].join("\n");
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-unicode-id",
+          lang: "mermaid",
+          source: oldSource,
+          svg: null,
+          overlay: {
+            positions: {
+              n_新节点_1: { x: 220, y: 80 },
+              存量节点: { x: 440, y: 80 },
+            },
+          },
+        },
+      }],
+    };
+
+    const result = applyBlockEdits(source, [{
+      action: "replaceBlock",
+      ref: "diagram-unicode-id",
+      block: {
+        type: "diagram",
+        lang: "mermaid",
+        source: oldSource.replace('["新节点"]', '["新节点（已更新）"]'),
+      },
+    }]);
+
+    expect(result.ok).toBe(true);
+    expect(firstDiagram(result.doc!).attrs.overlay?.positions).toEqual({
+      n_新节点_1: { x: 220, y: 80 },
+      存量节点: { x: 440, y: 80 },
+    });
   });
 
   it.each([false, true])("replaceBlock 在 overlay=%s 时均继承图表持久化布局", (withOverlay) => {

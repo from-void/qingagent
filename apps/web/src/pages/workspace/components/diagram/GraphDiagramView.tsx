@@ -2869,6 +2869,12 @@ export function GraphDiagramView({
           ...(parsed.model.type === "flowchart" && parsed.model.perSubgraphStyles?.[cluster.id]?.stroke
             ? { "--graph-cluster-stroke": parsed.model.perSubgraphStyles[cluster.id]!.stroke! }
             : {}),
+          ...(parsed.model.type === "flowchart" && parsed.model.perSubgraphStyles?.[cluster.id]?.textColor
+            ? { "--graph-cluster-text": parsed.model.perSubgraphStyles[cluster.id]!.textColor! }
+            : {}),
+          ...(parsed.model.type === "flowchart" && parsed.model.perSubgraphStyles?.[cluster.id]?.strokeWidth
+            ? { "--graph-cluster-stroke-width": `${parsed.model.perSubgraphStyles[cluster.id]!.strokeWidth!}px` }
+            : {}),
         },
       }));
     // 层级序:overlay 里排过的按 overlay,没排过的按声明次序;分区一律垫底(负 zIndex)。

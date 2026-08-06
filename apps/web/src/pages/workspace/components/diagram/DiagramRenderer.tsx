@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { DiagramOverlay } from "@qingagent/diagram-engine";
-import { canUseGraphVisualEditor, parseDiagram } from "@qingagent/diagram-engine";
+import { canUseGraphVisualEditor, getGraphVisualEditorUnavailableReason, parseDiagram } from "@qingagent/diagram-engine";
 import { MermaidPreview } from "../MermaidPreview";
 import type { DiagramVisualChange } from "./diagramTypes";
 
@@ -73,6 +73,9 @@ export function DiagramRenderer({
   canRedo,
 }: DiagramRendererProps) {
   const parsed = lang === "mermaid" ? parseDiagram(source) : null;
+  const unavailableReason = lang === "mermaid"
+    ? getGraphVisualEditorUnavailableReason(source, parsed)
+    : null;
   const normalizedOverlay = normalizeOverlay(overlay);
   if (canUseGraphVisualEditor(parsed)) {
     return (
@@ -114,15 +117,22 @@ export function DiagramRenderer({
     );
   }
   return (
-    <MermaidPreview
-      source={source}
-      cachedSvg={cachedSvg}
-      lang={lang}
-      readOnly={readOnly}
-      align={align}
-      onAlignChange={onAlignChange}
-      onFullscreen={onFullscreen}
-    />
+    <div className="pm-diagram-renderer-fallback">
+      <MermaidPreview
+        source={source}
+        cachedSvg={cachedSvg}
+        lang={lang}
+        readOnly={readOnly}
+        align={align}
+        onAlignChange={onAlignChange}
+        onFullscreen={onFullscreen}
+      />
+      {!readOnly && unavailableReason && (
+        <div className="pm-diagram-visual-notice" role="status">
+          {unavailableReason}
+        </div>
+      )}
+    </div>
   );
 }
 

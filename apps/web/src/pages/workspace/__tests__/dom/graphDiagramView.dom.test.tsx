@@ -1327,7 +1327,7 @@ flowchart LR
   subgraph Outer["业务区"]
     A[甲]
   end
-  style Outer fill:#efe3cc,stroke:#8f6d30
+  style Outer fill:#efe3cc,stroke:#8f6d30,stroke-width:3px,color:#332211
 `}
         onSourceChange={onSourceChange}
       />,
@@ -1341,6 +1341,9 @@ flowchart LR
     expect(fillButton.querySelector("circle")?.getAttribute("fill")).toBe("#efe3cc");
     expect(borderButton.dataset.swatchColor).toBe("#8f6d30");
     expect(borderButton.querySelector("circle")?.getAttribute("stroke")).toBe("#8f6d30");
+    const initialClusterNode = editor.querySelector<HTMLElement>('.react-flow__node[data-id="Outer"]')!;
+    expect(initialClusterNode.style.getPropertyValue("--graph-cluster-stroke-width")).toBe("3px");
+    expect(initialClusterNode.style.getPropertyValue("--graph-cluster-text")).toBe("#332211");
 
     await openToolbarMenu("填充", toolbar);
     await click(await waitForSelector("button[aria-label='分区填充色 #f8e7a1']", editor));
@@ -1348,7 +1351,7 @@ flowchart LR
     await click(await waitForSelector("button[aria-label='分区边框色 #6a6256']", editor));
 
     const rewritten = onSourceChange.mock.calls.at(-1)?.[0] as string;
-    expect(rewritten).toContain("style Outer fill:#f8e7a1,stroke:#6a6256");
+    expect(rewritten).toContain("style Outer stroke-width:3px,color:#332211,fill:#f8e7a1,stroke:#6a6256");
     expect((parseDiagram(rewritten).model as FlowGraph).perSubgraphStyles?.Outer).toMatchObject({
       fill: "#f8e7a1",
       stroke: "#6a6256",
@@ -1359,6 +1362,7 @@ flowchart LR
     const exportedRect = container?.querySelector<SVGRectElement>('.graph-diagram-export [data-cluster-id="Outer"] rect');
     expect(exportedRect?.getAttribute("fill")).toBe("#f8e7a1");
     expect(exportedRect?.getAttribute("stroke")).toBe("#6a6256");
+    expect(exportedRect?.getAttribute("stroke-width")).toBe("3");
   });
 
   it("选中分区按 Delete 解散；拖标题整体移动时内部相对位置不变且不改 source", async () => {

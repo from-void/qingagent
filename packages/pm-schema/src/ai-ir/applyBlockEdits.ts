@@ -135,12 +135,9 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
           });
           replaceAt.set(
             idx,
-            carryOverDiagramLayout(
+            carryOverDiagramUserAttrs(
               nodes[idx]!,
-              carryOverDiagramOverlay(
-                nodes[idx]!,
-                carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
-              ),
+              carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
             ),
           );
           applied.push(op.ref);
@@ -400,6 +397,15 @@ function carryOverDiagramLayout(oldNode: PmBlockNode, newNode: PmBlockNode): PmB
   };
 }
 
+/**
+ * 模型 / AI-IR 不拥有图表的像素布局与 overlay。整块替换图表时，必须从当前
+ * canonical 块回灌这些用户域属性；overlay 只保留新旧源码仍共有的稳定元素。
+ * 直接 editDraft 与审阅 hunk 提交共用本函数，避免后者绕过继承逻辑整块覆盖。
+ */
+export function carryOverDiagramUserAttrs(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlockNode {
+  return carryOverDiagramLayout(oldNode, carryOverDiagramOverlay(oldNode, newNode));
+}
+
 function carryOverDiagramOverlay(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlockNode {
   if (oldNode.type !== "diagram" || newNode.type !== "diagram") return newNode;
   const overlay = oldNode.attrs.overlay;
@@ -408,28 +414,75 @@ function carryOverDiagramOverlay(oldNode: PmBlockNode, newNode: PmBlockNode): Pm
   const newIds = extractDiagramStableIds(newNode.attrs.source);
   const nodeIds = intersect(oldIds.nodes, newIds.nodes);
   const edgeIds = intersect(oldIds.edges, newIds.edges);
-  const nextOverlay: PmDiagramOverlay = {
-    positions: filterRecord(overlay.positions ?? undefined, nodeIds),
-    styles: filterRecord(overlay.styles ?? undefined, nodeIds),
-    edgeStyles: filterRecord(overlay.edgeStyles ?? undefined, edgeIds),
-    edgeHandles: filterRecord(overlay.edgeHandles ?? undefined, edgeIds),
-  };
-  if (!nextOverlay.positions && !nextOverlay.styles && !nextOverlay.edgeStyles && !nextOverlay.edgeHandles) {
+  const positions = filterRecord(overlay.positions ?? undefined, nodeIds);
+  const styles = filterRecord(overlay.styles ?? undefined, nodeIds);
+  const zOrders = filterRecord(overlay.zOrders ?? undefined, nodeIds);
+  const edgeStyles = filterRecord(overlay.edgeStyles ?? undefined, edgeIds);
+  const edgeHandles = filterRecord(overlay.edgeHandles ?? undefined, edgeIds);
+  if (!positions && !styles && !zOrders && !edgeStyles && !edgeHandles) {
     return { ...newNode, attrs: { ...newNode.attrs, overlay: null } };
   }
+  const nextOverlay: PmDiagramOverlay = {
+    ...(positions ? { positions } : {}),
+    ...(styles ? { styles } : {}),
+    ...(zOrders ? { zOrders } : {}),
+    ...(edgeStyles ? { edgeStyles } : {}),
+    ...(edgeHandles ? { edgeHandles } : {}),
+  };
   return { ...newNode, attrs: { ...newNode.attrs, overlay: nextOverlay } };
 }
 
+// 与 diagram-engine 的 MERMAID_ID_SOURCE 对齐。Mermaid 11 的 flowchart 标识符
+// 支持 Unicode 字母 / 数字；产品可视化编辑器也会生成 `n_新节点_N`，因此这里不能
+// 再用 JS 的 ASCII-only `\w`，否则自家生成节点和存量中文 id 都会被当作孤儿清掉。
+const MERMAID_STABLE_ID_SOURCE = String.raw`[\p{L}\p{N}_][\p{L}\p{N}_-]*`;
+const MERMAID_STABLE_ID_RE = new RegExp(String.raw`^${MERMAID_STABLE_ID_SOURCE}$`, "u");
+const FLOW_SUBGRAPH_RE = new RegExp(
+  String.raw`^subgraph\s+(${MERMAID_STABLE_ID_SOURCE})(?=\s|\[|\(|\{|$)`,
+  "u",
+);
+const FLOW_EDGE_RE = new RegExp(
+  String.raw`^(${MERMAID_STABLE_ID_SOURCE})(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})?\s+(-->|-.->|==>)(?:\|([^|]*)\|)?\s+(${MERMAID_STABLE_ID_SOURCE})`,
+  "u",
+);
+const FLOW_NODE_RE = new RegExp(String.raw`^(${MERMAID_STABLE_ID_SOURCE})`, "u");
+const STATE_ALIAS_RE = new RegExp(
+  String.raw`^state\s+"[^"]+"\s+as\s+(${MERMAID_STABLE_ID_SOURCE})$`,
+  "u",
+);
+const STATE_EDGE_RE = new RegExp(
+  String.raw`^(${MERMAID_STABLE_ID_SOURCE})\s*-->\s*(${MERMAID_STABLE_ID_SOURCE})(?:\s*:\s*(.*?))?\s*$`,
+  "u",
+);
+const ER_EDGE_RE = new RegExp(
+  String.raw`^(${MERMAID_STABLE_ID_SOURCE})\s+([|o}{][|o}{]--[|o}{][|o}{])\s+(${MERMAID_STABLE_ID_SOURCE})(?:\s*:\s*(.*?))?\s*$`,
+  "u",
+);
+const CLASS_EDGE_RE = new RegExp(
+  String.raw`^(${MERMAID_STABLE_ID_SOURCE})\s+([<|*o.]{0,2}--[>|*o.]{0,2}|<\|--|\*--|o--|\.\.>|-->)\s+(${MERMAID_STABLE_ID_SOURCE})(?:\s*:\s*(.*?))?\s*$`,
+  "u",
+);
+const CLASS_NODE_RE = new RegExp(
+  String.raw`^class\s+(${MERMAID_STABLE_ID_SOURCE})|^(${MERMAID_STABLE_ID_SOURCE})$`,
+  "u",
+);
+
 function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: Set<string> } {
-  const lines = source.split(/\r?\n/);
-  const header = lines.find((line) => line.trim());
-  const first = header?.trim() ?? "";
-  if (/^mindmap\b/.test(first)) return extractMindmapIds(lines);
+  // Mermaid 指令既可以在图型声明前出现，也可以跨多行、连续出现。先整段剔除
+  // `%%...` 指令/注释，再定位真正的图型声明，不能把 init 正文误当成节点。
+  const lines = mermaidLinesWithoutDirectives(source);
+  const headerIndex = lines.findIndex((line) =>
+    /^(?:flowchart|graph)\s+\S+|^stateDiagram(?:-v2)?\b|^erDiagram\b|^classDiagram\b|^mindmap\b/.test(line.trim())
+  );
+  if (headerIndex < 0) return { nodes: new Set(), edges: new Set() };
+  const first = lines[headerIndex]!.trim();
+  const bodyLines = lines.slice(headerIndex + 1);
+  if (/^mindmap\b/.test(first)) return extractMindmapIds(bodyLines);
   const nodes = new Set<string>();
   const edges = new Set<string>();
   const edgeFactories = new Map<string, EdgeIdFactory>();
   const addNode = (id: string) => {
-    if (/^[A-Za-z_][\w-]*$/.test(id)) nodes.add(id);
+    if (MERMAID_STABLE_ID_RE.test(id)) nodes.add(id);
   };
   const addEdge = (prefix: string, sourceId: string, targetId: string, syntaxKind: string, label?: string) => {
     addNode(sourceId);
@@ -441,40 +494,46 @@ function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: S
     }
     edges.add(nextEdgeId({ source: sourceId, target: targetId, syntaxKind, label: label || undefined }));
   };
-  for (const line of lines) {
+  for (const line of bodyLines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("%%")) continue;
+    if (!trimmed) continue;
     if (/^(flowchart|graph)\b/.test(first)) {
-      const edge = trimmed.match(/^([A-Za-z_][\w-]*)(?:\[[^\]]*]|\([^)]*\)|\{[^}]*})?\s+(-->|-.->|==>)(?:\|([^|]*)\|)?\s+([A-Za-z_][\w-]*)/);
+      const subgraph = trimmed.match(FLOW_SUBGRAPH_RE);
+      if (subgraph) {
+        addNode(subgraph[1]!);
+        continue;
+      }
+      if (/^(?:end|direction|style|classDef|class|linkStyle|click)\b/.test(trimmed)) continue;
+      const edge = trimmed.match(FLOW_EDGE_RE);
       if (edge) {
         addEdge("flow", edge[1]!, edge[4]!, edge[2]!, edge[3]);
         continue;
       }
-      const node = trimmed.match(/^([A-Za-z_][\w-]*)/);
+      const node = trimmed.match(FLOW_NODE_RE);
       if (node) addNode(node[1]!);
       continue;
     }
     if (/^stateDiagram/.test(first)) {
-      const alias = trimmed.match(/^state\s+"[^"]+"\s+as\s+([A-Za-z_][\w-]*)$/);
+      const alias = trimmed.match(STATE_ALIAS_RE);
       if (alias) addNode(alias[1]!);
-      const edge = trimmed.match(/^([A-Za-z_][\w-]*)\s*-->\s*([A-Za-z_][\w-]*)(?:\s*:\s*(.*?))?\s*$/);
+      const edge = trimmed.match(STATE_EDGE_RE);
       if (edge) addEdge("state", edge[1]!, edge[2]!, "-->", edge[3]?.trim());
       continue;
     }
     if (/^erDiagram/.test(first)) {
-      const edge = trimmed.match(/^([A-Za-z_][\w-]*)\s+([|o}{][|o}{]--[|o}{][|o}{])\s+([A-Za-z_][\w-]*)(?:\s*:\s*(.*?))?\s*$/);
+      const edge = trimmed.match(ER_EDGE_RE);
       if (edge) addEdge("er", edge[1]!, edge[3]!, edge[2]!, edge[4]?.trim());
       else {
-        const entity = trimmed.match(/^([A-Za-z_][\w-]*)/);
+        const entity = trimmed.match(FLOW_NODE_RE);
         if (entity) addNode(entity[1]!);
       }
       continue;
     }
     if (/^classDiagram/.test(first)) {
-      const edge = trimmed.match(/^([A-Za-z_][\w-]*)\s+([<|*o.]{0,2}--[>|*o.]{0,2}|<\|--|\*--|o--|\.\.>|-->)\s+([A-Za-z_][\w-]*)(?:\s*:\s*(.*?))?\s*$/);
+      const edge = trimmed.match(CLASS_EDGE_RE);
       if (edge) addEdge("class", edge[1]!, edge[3]!, edge[2]!, edge[4]?.trim());
       else {
-        const cls = trimmed.match(/^class\s+([A-Za-z_][\w-]*)|^([A-Za-z_][\w-]*)$/);
+        const cls = trimmed.match(CLASS_NODE_RE);
         const id = cls?.[1] ?? cls?.[2];
         if (id) addNode(id);
       }
@@ -483,15 +542,35 @@ function extractDiagramStableIds(source: string): { nodes: Set<string>; edges: S
   return { nodes, edges };
 }
 
+function mermaidLinesWithoutDirectives(source: string): string[] {
+  const out: string[] = [];
+  let inDirective = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (inDirective) {
+      if (/%%\s*$/.test(trimmed)) inDirective = false;
+      continue;
+    }
+    if (trimmed.startsWith("%%")) {
+      if (trimmed.startsWith("%%{") && !/%%\s*$/.test(trimmed.slice(3))) {
+        inDirective = true;
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 function extractMindmapIds(lines: string[]): { nodes: Set<string>; edges: Set<string> } {
   const nodes = new Set<string>();
   const edges = new Set<string>();
   const stack: Array<{ id: string; indent: number; path: string[] }> = [];
   const siblingCounters = new Map<string, Map<string, number>>();
   const nextEdgeId = createEdgeIdFactory("mind");
-  for (const line of lines.slice(1)) {
+  for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("%%")) continue;
+    if (!trimmed) continue;
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     while (stack.length > 0 && stack[stack.length - 1]!.indent >= indent) stack.pop();
     const parent = stack[stack.length - 1] ?? null;

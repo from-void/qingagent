@@ -11,6 +11,7 @@ import {
   DocumentSnapshotView,
   type DocumentSnapshotViewHandle,
 } from "../../components/DocumentSnapshotView";
+import { DIAGRAM_VISUAL_WRITE_META } from "../../components/DiagramView";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 
 vi.mock("mermaid", () => ({
@@ -538,6 +539,90 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(JSON.stringify(onEditorChange.mock.calls[0]?.[0])).not.toContain(
       "第一项",
     );
+  });
+
+  it("图表视觉编辑保存失败时保留本地修改并立即给出可见反馈", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async () => {
+      throw new Error("HTTP 422");
+    });
+    const onToast = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(paragraphDoc("初始正文"), 1)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+          onToast={onToast}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+
+    act(() => {
+      const end = editor!.state.doc.content.size;
+      editor!.view.dispatch(
+        editor!.state.tr
+          .insertText("（拖拽后）", end - 1)
+          .setMeta(DIAGRAM_VISUAL_WRITE_META, true),
+      );
+    });
+    await flush();
+
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(editor!.state.doc.textContent).toContain("拖拽后");
+    expect(onToast).toHaveBeenCalledWith("图表修改未保存，请重试");
+    expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("普通防抖编辑保存失败时保留本地修改并给出可见反馈", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async () => {
+      throw new Error("HTTP 422");
+    });
+    const onToast = vi.fn();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(paragraphDoc("初始正文"), 1)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+          onToast={onToast}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+    vi.useFakeTimers();
+
+    act(() => {
+      const end = editor!.state.doc.content.size;
+      editor!.view.dispatch(editor!.state.tr.insertText("（继续编辑）", end - 1));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(401);
+    });
+
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(editor!.state.doc.textContent).toContain("继续编辑");
+    expect(onToast).toHaveBeenCalledWith("文档修改未保存，请重试");
   });
 
   it("400ms 防抖未到时卸载会补发当前编辑内容", async () => {

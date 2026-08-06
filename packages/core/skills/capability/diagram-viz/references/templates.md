@@ -9,7 +9,7 @@
 图标题应放在图前的 heading 块，例如 `<h2>版本发布流程</h2>`。图表块 source：
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#FAF6EC','primaryColor':'#FFFFFF','primaryBorderColor':'#2F2A22','primaryTextColor':'#2F2A22','lineColor':'#B3A791','edgeLabelBackground':'#FFFFFF','textColor':'#2F2A22','fontSize':'14px'}}}%%
+%%{init: {'theme':'base','themeVariables':{'background':'#FAF6EC','primaryColor':'#FFFFFF','primaryBorderColor':'#2F2A22','primaryTextColor':'#2F2A22','mainBkg':'#FFFFFF','nodeBorder':'#2F2A22','clusterBkg':'#EFE7D6','clusterBorder':'#2F2A22','lineColor':'#B3A791','edgeLabelBackground':'#FFFFFF','textColor':'#2F2A22','fontSize':'14px'}}}%%
 flowchart LR
   subgraph planGroup["规划阶段"]
     direction TB
@@ -31,9 +31,9 @@ flowchart LR
   class requirement,design planNode
   class develop,test buildNode
   class approve,deploy releaseNode
-  style planGroup fill:#FAF6EC,stroke:#2F2A22,stroke-width:2px,stroke-dasharray:6 4,color:#2F2A22
-  style buildGroup fill:#EFE7D6,stroke:#A8823F,stroke-width:2px,stroke-dasharray:6 4,color:#2F2A22
-  style releaseGroup fill:#FAF6EC,stroke:#8A7F6E,stroke-width:2px,stroke-dasharray:6 4,color:#2F2A22
+  style planGroup fill:#FAF6EC,stroke:#2F2A22,stroke-width:2px,color:#2F2A22
+  style buildGroup fill:#EFE7D6,stroke:#A8823F,stroke-width:2px,color:#2F2A22
+  style releaseGroup fill:#FAF6EC,stroke:#8A7F6E,stroke-width:2px,color:#2F2A22
 ```
 
 写入 QingML 时只包裹 source，并把其中裸 `&` / `<` 转义：

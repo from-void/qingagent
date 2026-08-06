@@ -22,7 +22,7 @@ describe("图表技能静态提示词契约", () => {
     expect(AIIR_SYSTEM_PROMPT).toContain('skill({name:"diagram-viz"})');
     for (const movedDetail of [
       "Mermaid 语法只认半角",
-      "source **首行必须是合法图型声明**",
+      "首个有效非指令行必须是合法图型声明",
       "工程图/架构图 diagram(drawio)",
       "必须是**未压缩明文** mxGraph XML",
       "<drawio>&lt;mxGraphModel",
@@ -31,11 +31,29 @@ describe("图表技能静态提示词契约", () => {
     }
   });
 
+  it("diagram-viz 允许稳定 subgraph 按分区着色，且内置范本补齐可视化主题键", () => {
+    const skill = readSkillFile("diagram-viz/SKILL.md");
+    const mermaid = readSkillFile("diagram-viz/mermaid/SKILL.md");
+    const palettes = readSkillFile("diagram-viz/references/palettes.md");
+    const templates = readSkillFile("diagram-viz/references/templates.md");
+
+    for (const source of [skill, mermaid, palettes]) {
+      expect(source).toContain("稳定 ASCII id");
+      expect(source).toContain("style 分区id fill:#浅色,stroke:#深色");
+    }
+    expect(skill).not.toContain("不要给 `subgraph` 写 `style` 行");
+    expect(palettes).not.toContain("不要给 `subgraph` 写 `style` 行");
+    const mermaidTemplate = templates.match(/diagram-viz:template:mermaid:start([\s\S]*?)diagram-viz:template:mermaid:end/)?.[1] ?? "";
+    expect(mermaidTemplate).toContain("'clusterBkg':'#EFE7D6'");
+    expect(mermaidTemplate).toContain("'clusterBorder':'#2F2A22'");
+    expect(mermaidTemplate).toContain("style planGroup fill:#FAF6EC,stroke:#2F2A22");
+  });
+
   it("diagram-viz 子技能承接两段原语法纪律及可解析 draw.io 范本", () => {
     const mermaid = readSkillFile("diagram-viz/mermaid/SKILL.md");
     const drawio = readSkillFile("diagram-viz/drawio/SKILL.md");
     expect(migratedDisciplineHash(mermaid, "- 图表块 diagram：")).toBe(
-      "ffdab917b253716e439803cb6222aa379c933557edd7161ba2b5622aa5dffd42",
+      "1e641b7ce299c011808bb99e3e60971c3d8f4705f3bb3b1d0c332309d812a8a5",
     );
     expect(migratedDisciplineHash(drawio, "- 工程图/架构图 diagram(drawio)：")).toBe(
       "29ecb9206cf347e4fa7e46516d01b465541b7a19c948ac01a769d3f382369055",
@@ -43,7 +61,7 @@ describe("图表技能静态提示词契约", () => {
 
     for (const keyword of [
       "Mermaid 语法只认半角",
-      "source **首行必须是合法图型声明**",
+      "首个有效非指令行必须是合法图型声明",
       "Mermaid 关键字必须保持英文原样",
     ]) {
       expect(mermaid).toContain(keyword);

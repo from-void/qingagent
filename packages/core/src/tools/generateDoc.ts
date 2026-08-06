@@ -1,11 +1,13 @@
-import type { LegacySection } from "@qingagent/contract-ts";
+import type { LegacySection, WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
 import {
   compileAiDocumentToPm,
   countDocVisibleChars,
   pmToLegacySections,
   qingmlParse,
+  qingmlTagSkeleton,
   type AiIrBlockError,
   type PmDoc,
+  type QingmlWarning,
 } from "@qingagent/pm-schema";
 import type { Material } from "../types/material.js";
 
@@ -55,6 +57,8 @@ export interface MaterialContextOptions {
 
 export type AiDocumentParseFailureKind =
   | "length_truncated"
+  | "unsupported-nested-table"
+  | "truncated-table-structure"
   | "qingml_bad_block"
   | "qingml_empty";
 
@@ -63,6 +67,7 @@ export interface AiDocumentParseDiagnostics {
   repaired: boolean;
   repairKinds: string[];
   failureKind?: AiDocumentParseFailureKind;
+  failureDiagnostic?: WriteDraftFailureDiagnostic;
 }
 
 export class AiDocumentParseError extends Error {
@@ -89,9 +94,22 @@ export function parseAiDocumentFromQingml(
   const badBlocks = result.warnings.filter((warning) => warning.severity === "bad-block");
   if (badBlocks.length > 0) {
     const details = badBlocks.map((warning) => `${warning.kind}: ${warning.detail}`).join("; ");
+    const failureKind: AiDocumentParseFailureKind = badBlocks.some(
+      (warning) => warning.kind === "unsupported-nested-table",
+    )
+      ? "unsupported-nested-table"
+      : badBlocks.some((warning) => warning.kind === "truncated-table-structure")
+        ? "truncated-table-structure"
+        : "qingml_bad_block";
     throw new AiDocumentParseError(
       `QingML bad-block: ${details}`,
-      { extracted: rawText, repaired: false, repairKinds: [], failureKind: "qingml_bad_block" },
+      {
+        extracted: rawText,
+        repaired: false,
+        repairKinds: [],
+        failureKind,
+        failureDiagnostic: buildQingmlFailureDiagnostic(rawText, badBlocks, failureKind),
+      },
     );
   }
   if (result.blocks.length === 0) {
@@ -103,6 +121,23 @@ export function parseAiDocumentFromQingml(
   return {
     document: { title: result.title ?? title ?? null, blocks: result.blocks },
     diagnostics: { extracted: rawText, repaired: false, repairKinds: [] },
+  };
+}
+
+function buildQingmlFailureDiagnostic(
+  rawText: string,
+  warnings: readonly QingmlWarning[],
+  failureKind: AiDocumentParseFailureKind,
+): WriteDraftFailureDiagnostic {
+  const badWarnings = warnings.filter((warning) => warning.severity === "bad-block").slice(0, 12);
+  return {
+    failureKind,
+    warningKinds: [...new Set(badWarnings.map((warning) => warning.kind))],
+    tagSkeleton: qingmlTagSkeleton(rawText),
+    errorLocations: badWarnings.flatMap((warning) => {
+      if (!warning.location) return [];
+      return [{ kind: warning.kind, ...warning.location }];
+    }),
   };
 }
 

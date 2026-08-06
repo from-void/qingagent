@@ -399,6 +399,21 @@ function checkToolBody(b: ToolCallBody): void {
         }
       }
       if (!nullableString(data.excerpt)) fail("WriteDraftCard.excerpt must be string|null");
+      if (data.diagnostic !== undefined && data.diagnostic !== null) {
+        const diagnostic = data.diagnostic;
+        if (typeof diagnostic.failureKind !== "string") {
+          fail("WriteDraftCard.diagnostic.failureKind must be a string");
+        }
+        if (!Array.isArray(diagnostic.warningKinds) || diagnostic.warningKinds.some((kind) => typeof kind !== "string")) {
+          fail("WriteDraftCard.diagnostic.warningKinds must be a string array");
+        }
+        if (typeof diagnostic.tagSkeleton !== "string") {
+          fail("WriteDraftCard.diagnostic.tagSkeleton must be a string");
+        }
+        if (!Array.isArray(diagnostic.errorLocations)) {
+          fail("WriteDraftCard.diagnostic.errorLocations must be an array");
+        }
+      }
       if (data.resetExcerpt !== undefined && typeof data.resetExcerpt !== "boolean") {
         fail("WriteDraftCard.resetExcerpt must be a boolean");
       }

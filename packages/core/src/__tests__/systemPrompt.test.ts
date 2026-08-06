@@ -164,6 +164,11 @@ describe("system prompt S3", () => {
       "colspan/rowspan 属性必须照抄",
       "列宽由系统自动保留",
       "table ref + 当前 0-based 索引",
+      "表中表完全不支持",
+      "把内层表移到外层表之后拆成独立表格",
+      "不要删减或压缩正文",
+      "表格内所有非空标签必须显式闭合",
+      "不能依赖 HTML 解析器自动补闭合",
       // 脚注格式范本必须位于 agent 主循环真实 system 上下文，生成与编辑共用。
       '<footnote id="fn-1">注释正文</footnote>',
       "footnote 是不可拆分的行内引用原子",

@@ -152,7 +152,16 @@ describe("写稿小卡片帧协议", () => {
               toolName: "writeDraft",
               toolCallId: "w2",
               args: { title: "失败文档", outline: "o" },
-              result: { ok: false, error: "writeDraft 失败: x" },
+              result: {
+                ok: false,
+                error: "writeDraft 失败: x",
+                diagnostic: {
+                  failureKind: "unsupported-nested-table",
+                  warningKinds: ["unsupported-nested-table"],
+                  tagSkeleton: "<table><tr><td><table></table></td></tr></table>",
+                  errorLocations: [{ kind: "unsupported-nested-table", startOffset: 15 }],
+                },
+              },
             },
           },
         ),
@@ -164,7 +173,14 @@ describe("写稿小卡片帧协议", () => {
     expect(cards.length).toBeGreaterThanOrEqual(1);
     const final = cards[cards.length - 1]!;
     expect(final.status.kind).toBe("failed");
-    expect((final.body as { data: WriteDraftCardBody }).data.phase).toBe("failed");
+    expect((final.body as { data: WriteDraftCardBody }).data).toMatchObject({
+      phase: "failed",
+      excerpt: null,
+      diagnostic: {
+        failureKind: "unsupported-nested-table",
+        tagSkeleton: expect.stringContaining("<table>"),
+      },
+    });
   });
 
   it("writeDraft failed 进度帧直接收口为 failed 卡", async () => {

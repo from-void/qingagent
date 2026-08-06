@@ -124,6 +124,40 @@ describe("generateDoc QingML helpers", () => {
     }
   });
 
+  it("parseAiDocumentFromQingml:表中表与真漏闭合分类，诊断不保留正文", () => {
+    const nestedRaw =
+      '<table data-note="秘密属性"><tr><td><table><tr><td><p>敏感正文</p></td></tr></table></td></tr></table>';
+    try {
+      parseAiDocumentFromQingml(nestedRaw, "表中表");
+      throw new Error("expected nested-table failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiDocumentParseError);
+      const diagnostics = (error as AiDocumentParseError).diagnostics;
+      expect(diagnostics.failureKind).toBe("unsupported-nested-table");
+      expect(diagnostics.failureDiagnostic).toMatchObject({
+        failureKind: "unsupported-nested-table",
+        warningKinds: expect.arrayContaining(["unsupported-nested-table"]),
+        tagSkeleton: expect.stringContaining("<table><tr><td><table>"),
+        errorLocations: [expect.objectContaining({
+          kind: "unsupported-nested-table",
+          startOffset: expect.any(Number),
+        })],
+      });
+      expect(JSON.stringify(diagnostics.failureDiagnostic)).not.toMatch(/秘密属性|敏感正文/);
+    }
+
+    try {
+      parseAiDocumentFromQingml("<table><tr><td><p>未闭合", "截断");
+      throw new Error("expected truncated-table failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiDocumentParseError);
+      const diagnostics = (error as AiDocumentParseError).diagnostics;
+      expect(diagnostics.failureKind).toBe("truncated-table-structure");
+      expect(diagnostics.failureDiagnostic?.warningKinds).toContain("truncated-table-structure");
+      expect((error as Error).message).toContain("疑似输出截断");
+    }
+  });
+
   it("普通正文比较符与 & 经实体转义后可逆解析", () => {
     const parsed = parseAiDocumentFromQingml("<p>1 &lt; 2 &amp; 甲乙</p>", "转义");
     expect(parsed.document.blocks[0]).toEqual({

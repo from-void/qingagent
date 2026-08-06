@@ -1,4 +1,5 @@
 import { parseDocument } from "htmlparser2";
+import type { ZodError } from "zod";
 import {
   PM_CALLOUT_TONES,
   PM_HIGHLIGHT_COLORS,
@@ -27,6 +28,11 @@ export interface QingmlWarning {
   kind: string;
   severity: "harmless" | "bad-block";
   detail: string;
+  location?: {
+    startOffset?: number;
+    endOffset?: number;
+    path?: Array<string | number>;
+  };
 }
 
 export type FragmentAction =
@@ -118,6 +124,64 @@ const STRUCTURAL_TAGS = new Set([
   ...BLOCK_TAGS,
 ]);
 
+const SAFE_QINGML_SKELETON_TAGS = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "task",
+  "tr",
+  "td",
+  "th",
+  "column",
+  ...STRUCTURAL_TAGS,
+  ...INLINE_TAGS,
+]);
+
+const UNSUPPORTED_NESTED_TABLE_DETAIL =
+  "表中表是不被支持的结构：<td>/<th> 单元格内不能包含 <table>。" +
+  "请保留原有内容，把内层表移到外层表之后拆成独立表格，并在原单元格标明关联；" +
+  "若只需表达层级，则改用单元格内的嵌套 <ul>/<ol>。压缩正文篇幅不能修复此错误。";
+
+/**
+ * 只保留 QingML 标签骨架：正文、属性值和非白名单标签名均不进诊断帧。
+ * 输出按节点数封顶，避免超长/恶意输入把失败帧撑大。
+ */
+export function qingmlTagSkeleton(text: string, maxTags = 64): string {
+  const document = parseDocument(text, {
+    decodeEntities: false,
+    lowerCaseAttributeNames: true,
+    lowerCaseTags: true,
+    recognizeSelfClosing: true,
+  }) as unknown as DomNode;
+  const limit = Math.max(1, Math.floor(maxTags));
+  const tokens: string[] = [];
+  let seen = 0;
+  let truncated = false;
+
+  const visit = (node: DomNode): void => {
+    if (truncated) return;
+    if (!isTag(node)) {
+      node.children?.forEach(visit);
+      return;
+    }
+    if (seen >= limit) {
+      truncated = true;
+      return;
+    }
+    seen += 1;
+    const name = SAFE_QINGML_SKELETON_TAGS.has(node.name) ? node.name : "unknown";
+    tokens.push(`<${name}>`);
+    node.children.forEach(visit);
+    if (!QINGML_VOID_TAGS.has(name)) tokens.push(`</${name}>`);
+  };
+
+  document.children?.forEach(visit);
+  return `${tokens.join("")}${truncated ? "…" : ""}`;
+}
+
 export function qingmlParse(text: string): { title: string | null; blocks: AiBlock[]; warnings: QingmlWarning[] } {
   const ctx = createContext();
   const nodes = parseQingmlNodes(text, ctx);
@@ -178,11 +242,17 @@ function createContext(): ParseContext {
   return { warnings: [], warningKeys: new Set(), source: "" };
 }
 
-function warn(ctx: ParseContext, kind: string, severity: QingmlWarning["severity"], detail: string): void {
+function warn(
+  ctx: ParseContext,
+  kind: string,
+  severity: QingmlWarning["severity"],
+  detail: string,
+  location?: QingmlWarning["location"],
+): void {
   const key = `${kind}:${severity}:${detail}`;
   if (ctx.warningKeys.has(key)) return;
   ctx.warningKeys.add(key);
-  ctx.warnings.push({ kind, severity, detail });
+  ctx.warnings.push({ kind, severity, detail, ...(location ? { location } : {}) });
 }
 
 function parseQingmlNodes(text: string, ctx: ParseContext): DomNode[] {
@@ -272,7 +342,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "pre":
       return { type: "codeBlock", language: optionalString(element.attribs.lang), text: rawTextElementText(element, ctx) };
     case "table":
-      warnIfTruncatedTableStructure(element, ctx);
+      warnIfInvalidTableStructure(element, ctx);
       return { type: "table", rows: parseTableRows(element, ctx) };
     case "callout": {
       const block = parseContainerBlock(element, ctx, "callout");
@@ -412,7 +482,7 @@ function parseTableRows(element: DomElement, ctx: ParseContext) {
 }
 
 function parseTableCell(element: DomElement, ctx: ParseContext): AiTableCell {
-  warnIfTruncatedTableStructure(element, ctx);
+  warnIfInvalidTableStructure(element, ctx);
   const parsedBlocks = parseNodesAsBlocks(element.children, ctx);
   const cell: AiTableCell = {
     // PM tableCell/tableHeader 要求 block+；旧式裸文本由 parseNodesAsBlocks 合成 paragraph，
@@ -450,14 +520,39 @@ function tableSpanAttr(
 
 const QINGML_VOID_TAGS = new Set(["br", "hr", "img", "file"]);
 
-function warnIfTruncatedTableStructure(element: DomElement, ctx: ParseContext): void {
-  const visit = (node: DomElement): void => {
-    if (!QINGML_VOID_TAGS.has(node.name) && !hasExplicitClosingTag(node, ctx.source)) {
-      warn(ctx, "truncated-table-structure", "bad-block", `表格内 <${node.name}> 缺少显式闭合标签，疑似输出截断。`);
+function warnIfInvalidTableStructure(element: DomElement, ctx: ParseContext): void {
+  const visit = (node: DomElement, root: boolean): void => {
+    if (!root && node.name === "table") {
+      warn(
+        ctx,
+        "unsupported-nested-table",
+        "bad-block",
+        UNSUPPORTED_NESTED_TABLE_DETAIL,
+        domNodeLocation(node),
+      );
     }
-    node.children.filter(isTag).forEach(visit);
+    if (!QINGML_VOID_TAGS.has(node.name) && !hasExplicitClosingTag(node, ctx.source)) {
+      warn(
+        ctx,
+        "truncated-table-structure",
+        "bad-block",
+        `表格内 <${node.name}> 缺少显式闭合标签，疑似输出截断。`,
+        domNodeLocation(node),
+      );
+    }
+    node.children.filter(isTag).forEach((child) => visit(child, false));
   };
-  visit(element);
+  visit(element, true);
+}
+
+function domNodeLocation(node: DomNode): QingmlWarning["location"] | undefined {
+  const startOffset = typeof node.startIndex === "number" ? node.startIndex : undefined;
+  const endOffset = typeof node.endIndex === "number" ? node.endIndex : undefined;
+  if (startOffset === undefined && endOffset === undefined) return undefined;
+  return {
+    ...(startOffset !== undefined ? { startOffset } : {}),
+    ...(endOffset !== undefined ? { endOffset } : {}),
+  };
 }
 
 function hasExplicitClosingTag(element: DomElement, source: string): boolean {
@@ -704,20 +799,20 @@ function acceptBlock(blocks: AiBlock[], block: AiBlock, ctx: ParseContext): void
     blocks.push(parsed.data);
     return;
   }
-  warn(ctx, "invalid-ai-block", "bad-block", parsed.error.message);
+  warnSchemaError(ctx, parsed.error, "invalid-ai-block");
 }
 
 function validateListItem(item: AiListItem, ctx: ParseContext): AiListItem | null {
   const parsed = aiListItemSchema.safeParse(item);
   if (parsed.success) return parsed.data;
-  warn(ctx, "invalid-list-item", "bad-block", parsed.error.message);
+  warnSchemaError(ctx, parsed.error, "invalid-list-item");
   return null;
 }
 
 function validateTaskItem(item: AiTaskListItem, ctx: ParseContext): AiTaskListItem | null {
   const parsed = aiTaskListItemSchema.safeParse(item);
   if (parsed.success) return parsed.data;
-  warn(ctx, "invalid-task-list-item", "bad-block", parsed.error.message);
+  warnSchemaError(ctx, parsed.error, "invalid-task-list-item");
   return null;
 }
 
@@ -726,12 +821,25 @@ function validateCells(cells: readonly AiTableCell[], ctx: ParseContext): { ok: 
   for (const cell of cells) {
     const parsed = aiTableCellSchema.safeParse(cell);
     if (!parsed.success) {
-      warn(ctx, "invalid-table-cell", "bad-block", parsed.error.message);
+      warnSchemaError(ctx, parsed.error, "invalid-table-cell");
       return { ok: false, error: "表格单元格不符合 AiTableCell schema。" };
     }
     out.push(parsed.data);
   }
   return { ok: true, cells: out };
+}
+
+function warnSchemaError(ctx: ParseContext, error: ZodError, fallbackKind: string): void {
+  const nestedTableIssue = error.issues.find(
+    (issue) => issue.code === "custom" && issue.message === "table cell blocks must not contain table",
+  );
+  if (nestedTableIssue) {
+    warn(ctx, "unsupported-nested-table", "bad-block", UNSUPPORTED_NESTED_TABLE_DETAIL, {
+      path: nestedTableIssue.path.map((part) => typeof part === "number" ? part : String(part)),
+    });
+    return;
+  }
+  warn(ctx, fallbackKind, "bad-block", error.message);
 }
 
 function extractBlockFragmentRoots(nodes: readonly DomNode[], ctx: ParseContext): { ok: true; nodes: DomNode[] } | { ok: false; error: string } {

@@ -102,6 +102,12 @@ function progressEvents(writes: Array<Record<string, unknown>>) {
       phase: string;
       charCount: number;
       excerpt?: string | null;
+      diagnostic?: {
+        failureKind: string;
+        warningKinds: string[];
+        tagSkeleton: string;
+        errorLocations: Array<Record<string, unknown>>;
+      } | null;
       resetExcerpt?: boolean;
     });
 }
@@ -292,6 +298,38 @@ describe("writeDraft 赛马式字数控制", () => {
     expect((out as { error?: string }).error).toContain("重新调用 writeDraft");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(progressEvents(writes).at(-1)).toMatchObject({ phase: "failed" });
+  });
+
+  it("表中表全路失败:明确报不支持并给出替代方案，failed 帧只带脱敏骨架", async () => {
+    const { tool } = await makeTool();
+    const raw =
+      '<table data-note="客户秘密"><tr><td><p>外层敏感正文</p><table><tr><td><p>内层敏感正文</p></td></tr></table></td></tr></table>';
+    mockGenerateReturning(...Array.from({ length: 4 }, () => raw));
+    const writes: Array<Record<string, unknown>> = [];
+    const ctx = { writer: { write: (chunk: Record<string, unknown>) => void writes.push(chunk) } };
+
+    const out = await runWithContext(tool, { title: "t", outline: "o", lengthTarget: 4200 }, ctx);
+
+    expect(out.ok).toBe(false);
+    const error = (out as { error?: string }).error ?? "";
+    expect(error).toContain("不支持的表中表结构");
+    expect(error).toContain("把内层表移到外层表之后拆成独立表格");
+    expect(error).toContain("改用单元格内嵌套 <ul>/<ol>");
+    expect(error).toContain("压缩正文篇幅不能修复此错误");
+    expect(error).not.toContain("疑似输出截断");
+
+    const failed = progressEvents(writes).at(-1);
+    expect(failed).toMatchObject({
+      phase: "failed",
+      excerpt: null,
+      diagnostic: {
+        failureKind: "unsupported-nested-table",
+        warningKinds: expect.arrayContaining(["unsupported-nested-table"]),
+        tagSkeleton: expect.stringContaining("<table><tr><td><p>"),
+        errorLocations: [expect.objectContaining({ startOffset: expect.any(Number) })],
+      },
+    });
+    expect(JSON.stringify(failed?.diagnostic)).not.toMatch(/客户秘密|外层敏感正文|内层敏感正文/);
   });
 
   it("流式展示:写作中粘滞不被反超,展示 lane 完稿未达标则移交仍在写的 lane", async () => {

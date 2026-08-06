@@ -6,7 +6,7 @@ import {
   aiTaskListItemSchema,
   type AiBlock,
 } from "../aiIrSchema";
-import { qingmlParse, qingmlParseFragment } from "../qingmlParse";
+import { qingmlParse, qingmlParseFragment, qingmlTagSkeleton } from "../qingmlParse";
 
 describe("qingmlParse", () => {
   it("解析 title、三级嵌套列表和 taskList checked", () => {
@@ -106,24 +106,56 @@ describe("qingmlParse", () => {
     }));
   });
 
-  it("cell 深嵌套列表在 fence 中闭合可解析，截断结构 fail-closed", () => {
-    const closed = qingmlParse("```qingml\n<table><tr><td><ul><li>一<ul><li>二<ul><li>三</li></ul></li></ul></li></ul></td></tr></table>\n```");
-    expect(closed.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
-    const table = closed.blocks[0];
-    expect(table?.type === "table" ? maxListDepth(table.rows[0]!.cells[0]!.blocks[0]) : 0).toBe(3);
+  it("完整闭合的表中表报不支持的结构，不误报为截断", () => {
+    const nested = qingmlParse(
+      "<table><tr><td><table><tr><td><p>内层</p></td></tr></table></td></tr></table>",
+    );
 
+    expect(nested.warnings).toContainEqual(expect.objectContaining({
+      kind: "unsupported-nested-table",
+      severity: "bad-block",
+    }));
+    const structuralWarnings = nested.warnings.filter((warning) => warning.kind === "unsupported-nested-table");
+    expect(structuralWarnings.length).toBeGreaterThan(0);
+    expect(structuralWarnings.every((warning) => !warning.detail.includes("截断"))).toBe(true);
+    expect(nested.warnings.some((warning) => warning.kind === "truncated-table-structure")).toBe(false);
+  });
+
+  it("表内真正漏闭合仍报疑似输出截断", () => {
     const truncated = qingmlParse(`<table><tr><td><p>未闭合`);
+
     expect(truncated.warnings).toContainEqual(expect.objectContaining({
       kind: "truncated-table-structure",
       severity: "bad-block",
+      detail: expect.stringContaining("疑似输出截断"),
     }));
+    expect(truncated.warnings.some((warning) => warning.kind === "unsupported-nested-table")).toBe(false);
+  });
 
-    const nestedSameTag = qingmlParse("<table><tr><td><table><tr><td>x</td></tr></table>");
-    expect(nestedSameTag.warnings).toContainEqual(expect.objectContaining({
-      kind: "truncated-table-structure",
-      severity: "bad-block",
-      detail: expect.stringContaining("<table>"),
-    }));
+  it("深度 40 的合法嵌套列表在表内外都保真", () => {
+    const list = nestedListQingml(40);
+    const outside = qingmlParse(list);
+    const inside = qingmlParse(`<table><tr><td>${list}</td></tr></table>`);
+
+    expect(outside.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
+    expect(inside.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
+    expect(maxListDepth(outside.blocks[0])).toBe(40);
+    const table = inside.blocks[0];
+    expect(table?.type === "table" ? maxListDepth(table.rows[0]!.cells[0]!.blocks[0]) : 0).toBe(40);
+  });
+
+  it("诊断骨架只保留有界标签形状，不泄露正文、属性或未知标签名", () => {
+    const skeleton = qingmlTagSkeleton([
+      "前导话\n```qingml",
+      '<table data-note="客户秘密 > 不得外传"><tr><td><p title="内部标题">敏感正文',
+      "<secret-project>不可恢复的内容</secret-project>",
+      "</td></tr></table>\n```\n收尾散文",
+    ].join(""));
+
+    expect(skeleton).toContain("<table><tr><td><p>");
+    expect(skeleton).toContain("<unknown></unknown>");
+    expect(skeleton).not.toMatch(/客户秘密|内部标题|敏感正文|secret-project|不可恢复|收尾散文/);
+    expect(qingmlTagSkeleton("<ul><li>a</li><li>b</li><li>c</li></ul>", 2).endsWith("…")).toBe(true);
   });
 
   it("解析 columns + callout", () => {
@@ -384,6 +416,14 @@ describe("qingmlParseFragment", () => {
     expect(badColumn).toMatchObject({ ok: false });
   });
 });
+
+function nestedListQingml(depth: number): string {
+  let item = `<li>第 ${depth} 层</li>`;
+  for (let level = depth - 1; level >= 1; level -= 1) {
+    item = `<li>第 ${level} 层<ul>${item}</ul></li>`;
+  }
+  return `<ul>${item}</ul>`;
+}
 
 function expectValidBlocks(blocks: readonly AiBlock[]): void {
   for (const block of blocks) {

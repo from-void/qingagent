@@ -1,18 +1,23 @@
 import { createTool } from "@mastra/core/tools";
-import { Worker } from "node:worker_threads";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import {
-  failureKindFromWorkerError,
-  isRunScriptFailureKind,
   RUN_SCRIPT_FAILURE_KINDS,
+  type RunScriptFailureKind,
 } from "../runtime/scriptFailure.js";
 
 const MAX_CODE_CHARS = 20_000;
 const MAX_INPUT_JSON_CHARS = 64_000;
-const DEFAULT_TIMEOUT_MS = 1_000;
+const DEFAULT_TIMEOUT_MS = 2_500;
 const MAX_TIMEOUT_MS = 5_000;
+const SUPERVISOR_READY_TIMEOUT_MS = 2_000;
 const MAX_STDOUT_CHARS = 16_384;
 const MAX_RESULT_STRING_CHARS = 16_384;
+const MAX_SUPERVISOR_OUTPUT_CHARS = 2 * 1024 * 1024;
+
+const RUN_JS_FAILURE_KINDS = RUN_SCRIPT_FAILURE_KINDS;
+
+export type RunJsFailureKind = RunScriptFailureKind;
 
 const runJsInputSchema = z.object({
   code: z
@@ -27,7 +32,9 @@ const runJsInputSchema = z.object({
     .min(1)
     .max(MAX_TIMEOUT_MS)
     .optional()
-    .describe(`硬超时毫秒数，默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}。`),
+    .describe(
+      `用户代码执行硬超时毫秒数（不含隔离子进程启动时间），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}。`,
+    ),
 });
 
 const runJsOutputSchema = z.object({
@@ -36,7 +43,7 @@ const runJsOutputSchema = z.object({
   stdout: z.string(),
   error: z.string().nullable().optional(),
   stdout_truncated: z.boolean().optional(),
-  failureKind: z.enum(RUN_SCRIPT_FAILURE_KINDS).optional(),
+  failureKind: z.enum(RUN_JS_FAILURE_KINDS).optional(),
 });
 
 export type RunJsInput = z.infer<typeof runJsInputSchema>;
@@ -45,8 +52,9 @@ export type RunJsResult = z.infer<typeof runJsOutputSchema>;
 type WorkerMessage = RunJsResult;
 
 function runJsWorkerMain() {
-  const { parentPort, workerData } = require("node:worker_threads");
-  const vm = require("node:vm");
+  const { parentPort, workerData } = process.getBuiltinModule("worker_threads");
+  const vm = process.getBuiltinModule("vm");
+  if (!parentPort) throw new Error("run_js worker bootstrap failed");
 
   function buildPreludeScript() {
     const inputText = String(workerData.inputText);
@@ -360,6 +368,7 @@ class __URLSearchParams {
       sanitize: (value: unknown) => unknown;
       getStdout: () => { stdout: string; stdout_truncated: boolean };
     } | null = null;
+    let userCodePhase = false;
     const stdoutState = () => {
       try {
         return controls && typeof controls.getStdout === "function"
@@ -393,14 +402,13 @@ class __URLSearchParams {
       });
       controls = new vm.Script(buildPreludeScript(), {
         filename: "run_js_prelude.js",
-        displayErrors: true,
       }).runInContext(context, { displayErrors: true });
+      if (!controls) throw new Error("run_js prelude failed");
+      userCodePhase = true;
       const script = new vm.Script(buildUserScript(), {
         filename: "run_js_user_code.js",
-        displayErrors: true,
       });
       const value = await script.runInContext(context, { displayErrors: true });
-      if (!controls) throw new Error("run_js prelude failed");
       const stdout = stdoutState();
       parentPort.postMessage({
         ok: true,
@@ -412,20 +420,145 @@ class __URLSearchParams {
       const stdout = stdoutState();
       parentPort.postMessage({
         ok: false,
-        error: errorMessage(error),
+        error: userCodePhase ? errorMessage(error) : "代码执行器不可用",
         stdout: stdout.stdout,
         stdout_truncated: stdout.stdout_truncated,
-        failureKind: "codeError",
+        failureKind: userCodePhase ? "codeError" : "platformError",
       });
     }
   })();
 }
 
-// worker 源码由 runJsWorkerMain.toString() 拼成,在 worker 里 eval 执行。若打包器开启
-// keepNames(如 tsx 默认),esbuild 会给嵌套函数注入 __name(fn,"name") 调用——worker eval
-// 作用域里没有这个 helper 会直接抛 "__name is not defined"。预置一个 no-op shim 兜底,
-// 让 worker 不受打包器 keepNames 设置影响(生产 esbuild 默认 keepNames=false,此处仅防御)。
+// worker 源码由 runJsWorkerMain.toString() 拼成,所以函数体必须同时耐受 esbuild 的两类改写:
+// keepNames 可能注入 __name helper；ESM bundle 还会无条件把 require 改成 bundle 顶层的
+// __require helper。eval worker 看不到任何 bundle 顶层 helper，因此内置模块必须像 safeRegex
+// 一样走 process.getBuiltinModule，__name 则在源码前缀中提供 no-op shim。
 const RUN_JS_WORKER_SOURCE = `globalThis.__name ??= (fn) => fn;\n(${runJsWorkerMain.toString()})();`;
+
+function runJsSupervisorMain() {
+  const { Worker } = process.getBuiltinModule("worker_threads");
+
+  let sent = false;
+  const send = (message: unknown) => {
+    if (sent) return;
+    sent = true;
+    process.stdout.write(JSON.stringify(message), () => process.exit(0));
+  };
+  const platformFailure = () => send({
+    ok: false,
+    stdout: "",
+    error: "代码执行器不可用",
+    failureKind: "platformError",
+  });
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    input += chunk;
+  });
+  process.stdin.once("error", platformFailure);
+  process.stdin.once("end", () => {
+    let request;
+    try {
+      request = JSON.parse(input);
+    } catch {
+      platformFailure();
+      return;
+    }
+
+    let settled = false;
+    let worker: any;
+    const finish = (message: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (worker) void worker.terminate().catch(() => {});
+      send(message);
+    };
+    try {
+      worker = new Worker(request.workerSource, {
+        eval: true,
+        workerData: request.workerData,
+        resourceLimits: {
+          maxOldGenerationSizeMb: 64,
+          maxYoungGenerationSizeMb: 16,
+          codeRangeSizeMb: 16,
+          stackSizeMb: 4,
+        },
+      });
+    } catch {
+      platformFailure();
+      return;
+    }
+
+    worker.once("online", () => {
+      try {
+        if (typeof process.send !== "function") throw new Error("run_js supervisor IPC unavailable");
+        process.send("ready");
+      } catch {
+        platformFailure();
+      }
+    });
+    worker.once("message", (message: unknown) => finish(message));
+    worker.once("error", (error: unknown) => {
+      const code = error && typeof error === "object" && "code" in error
+        ? error.code
+        : null;
+      if (code === "ERR_WORKER_OUT_OF_MEMORY") {
+        finish({
+          ok: false,
+          stdout: "",
+          error: "资源超限",
+          failureKind: "resourceExceeded",
+        });
+        return;
+      }
+      finish({
+        ok: false,
+        stdout: "",
+        error: "代码执行器不可用",
+        failureKind: "platformError",
+      });
+    });
+    worker.once("exit", (code: number) => {
+      if (!settled) {
+        finish({
+          ok: false,
+          stdout: "",
+          error: "代码执行器不可用",
+          failureKind: "platformError",
+        });
+      }
+      void code;
+    });
+  });
+}
+
+// resourceLimits 只能约束 Worker isolate；Node 官方明确说明全局 OOM 仍可能 abort 进程。
+// 因此让受限 Worker 再运行于独立 Node 子进程：正常超限由 ERR_WORKER_OUT_OF_MEMORY 回传，
+// 单次大分配若触发 V8 fatal OOM，也只会 SIGABRT 子进程，不会带崩桌面/服务宿主。
+const RUN_JS_SUPERVISOR_SOURCE =
+  `globalThis.__name ??= (fn) => fn;\n(${runJsSupervisorMain.toString()})();`;
+
+function isRunJsFailureKind(value: unknown): value is RunJsFailureKind {
+  return RUN_JS_FAILURE_KINDS.some((kind) => kind === value);
+}
+
+function platformErrorResult(): RunJsResult {
+  return {
+    ok: false,
+    stdout: "",
+    error: "代码执行器不可用",
+    failureKind: "platformError",
+  };
+}
+
+function resourceExceededResult(): RunJsResult {
+  return {
+    ok: false,
+    stdout: "",
+    error: "资源超限",
+    failureKind: "resourceExceeded",
+  };
+}
 
 function jsonStringifyInput(value: unknown): { ok: true; text: string } | { ok: false; error: string } {
   try {
@@ -474,95 +607,166 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
   const timeoutMs = parsed.data.timeout_ms ?? DEFAULT_TIMEOUT_MS;
   return new Promise<RunJsResult>((resolve) => {
     let settled = false;
-    const worker = new Worker(RUN_JS_WORKER_SOURCE, {
-      eval: true,
-      workerData: {
-        code: parsed.data.code,
-        inputText: inputText.text,
-        stdoutLimit: MAX_STDOUT_CHARS,
-        resultStringLimit: MAX_RESULT_STRING_CHARS,
-      },
-      resourceLimits: {
-        maxOldGenerationSizeMb: 64,
-        maxYoungGenerationSizeMb: 16,
-        codeRangeSizeMb: 16,
-        stackSizeMb: 4,
-      },
-    });
+    let stdout = "";
+    let stderrTail = "";
+    let outputExceeded = false;
+    let child;
+    try {
+      child = spawn(
+        process.execPath,
+        [
+          "--eval",
+          RUN_JS_SUPERVISOR_SOURCE,
+        ],
+        {
+          // env 仍故意完全替换；Windows libuv 会通过 required_vars 白名单回填启动必需变量。
+          env: { ELECTRON_RUN_AS_NODE: "1" },
+          // ready 走独立 Node IPC：stdout 只承载单次结果协议，stderr 只承载 V8 OOM 证据。
+          stdio: ["pipe", "pipe", "pipe", "ipc"],
+          windowsHide: true,
+        },
+      );
+    } catch {
+      resolve(platformErrorResult());
+      return;
+    }
+    const childStdin = child.stdin;
+    const childStdout = child.stdout;
+    const childStderr = child.stderr;
+    if (!childStdin || !childStdout || !childStderr) {
+      child.kill();
+      resolve(platformErrorResult());
+      return;
+    }
 
+    let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    let executionTimer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => {
-      clearTimeout(timer);
+      if (readyTimer) clearTimeout(readyTimer);
+      if (executionTimer) clearTimeout(executionTimer);
       abortSignal?.removeEventListener("abort", onAbort);
+      child.removeListener("message", onSupervisorMessage);
     };
-    const finish = (result: RunJsResult) => {
+    const settle = (result: RunJsResult, killChild: boolean) => {
       if (settled) return;
       settled = true;
       cleanup();
-      void worker.terminate().catch(() => {});
+      if (killChild) child.kill();
       resolve(result);
     };
-    const terminateWith = (result: RunJsResult) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      void worker.terminate().finally(() => resolve(result));
-    };
+    const finish = (result: RunJsResult) => settle(result, false);
+    const terminateWith = (result: RunJsResult) => settle(result, true);
     const onAbort = () => terminateWith({
       ok: false,
       stdout: "",
       error: "aborted",
       failureKind: "aborted",
     });
-    const timer = setTimeout(() => {
+    const onSupervisorMessage = (message: unknown) => {
+      if (settled || message !== "ready" || executionTimer) return;
+      if (readyTimer) clearTimeout(readyTimer);
+      readyTimer = undefined;
+      executionTimer = setTimeout(() => {
+        terminateWith({
+          ok: false,
+          stdout: "",
+          error: "timeout",
+          failureKind: "timedOut",
+        });
+      }, timeoutMs);
+    };
+    readyTimer = setTimeout(() => {
       terminateWith({
         ok: false,
         stdout: "",
-        error: "timeout",
-        failureKind: "timedOut",
+        error: "代码执行器不可用",
+        failureKind: "platformError",
       });
-    }, timeoutMs);
+    }, SUPERVISOR_READY_TIMEOUT_MS);
 
+    child.on("message", onSupervisorMessage);
     abortSignal?.addEventListener("abort", onAbort, { once: true });
-    worker.once("message", (message: WorkerMessage) => {
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    childStdout.setEncoding("utf8");
+    childStdout.on("data", (chunk: string) => {
+      if (outputExceeded) return;
+      stdout += chunk;
+      if (stdout.length > MAX_SUPERVISOR_OUTPUT_CHARS) {
+        outputExceeded = true;
+        child.kill();
+      }
+    });
+    // 该 stderr 只来自隔离层 Node/V8；用户 vm 没有 process，console 也只写受控 stdout。
+    // 单次大分配会先打印 V8 fatal OOM，再耗时生成/收口 core dump；看到可信运行时信号后
+    // 立即杀隔离进程并结构化归因，避免用户代码计时器抢先误报 timedOut。
+    childStderr.setEncoding("utf8");
+    childStderr.on("data", (chunk: string) => {
+      if (settled) return;
+      stderrTail = `${stderrTail}${chunk}`.slice(-4_096);
+      if (
+        stderrTail.includes("FATAL ERROR:") &&
+        (stderrTail.includes("heap out of memory") || stderrTail.includes("Reached heap limit"))
+      ) {
+        terminateWith(resourceExceededResult());
+      }
+    });
+    childStdin.on("error", () => {
+      // bootstrap/早退由 child 的 error/close 统一归到 platformError。
+    });
+    child.once("error", () => {
+      finish(platformErrorResult());
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      if (code === 134) {
+        finish(resourceExceededResult());
+        return;
+      }
+      if (code !== 0 || outputExceeded) {
+        finish(platformErrorResult());
+        return;
+      }
+      let message: WorkerMessage;
+      try {
+        message = JSON.parse(stdout) as WorkerMessage;
+      } catch {
+        finish(platformErrorResult());
+        return;
+      }
+      const ok = message.ok === true;
       finish({
-        ok: Boolean(message.ok),
+        ok,
         result: message.result,
         stdout: typeof message.stdout === "string" ? message.stdout : "",
         error: message.error ?? null,
         stdout_truncated: Boolean(message.stdout_truncated),
-        failureKind: isRunScriptFailureKind(message.failureKind)
-          ? message.failureKind
-          : message.ok
-            ? undefined
-            : "codeError",
+        failureKind: ok
+          ? undefined
+          : isRunJsFailureKind(message.failureKind)
+            ? message.failureKind
+            : "platformError",
       });
     });
-    worker.once("error", (error) => {
-      finish({
-        ok: false,
-        stdout: "",
-        error: error.message,
-        failureKind: failureKindFromWorkerError(error),
-      });
-    });
-    worker.once("exit", (code) => {
-      if (!settled && code !== 0) {
-        finish({
-          ok: false,
-          stdout: "",
-          error: `worker exited with code ${code}`,
-          failureKind: "codeError",
-        });
-      }
-    });
+    childStdin.end(JSON.stringify({
+      workerSource: RUN_JS_WORKER_SOURCE,
+      workerData: {
+        code: parsed.data.code,
+        inputText: inputText.text,
+        stdoutLimit: MAX_STDOUT_CHARS,
+        resultStringLimit: MAX_RESULT_STRING_CHARS,
+      },
+    }));
   });
 }
 
 export const runJsTool = createTool({
   id: "run_js",
   description:
-    "进程内执行受限 JS 片段,用于确定性计算、JSON/文本转换和轻量数据处理。代码在 worker_thread + vm 干净 context 中运行," +
-    "没有 require/module/process/fetch/fs/net/定时器等 Node 能力;超时会硬 terminate worker。代码可通过 input/input_json 读取结构化输入," +
+    "在隔离子进程内执行受限 JS 片段,用于确定性计算、JSON/文本转换和轻量数据处理。代码在 worker_thread + vm 干净 context 中运行," +
+    "没有 require/module/process/fetch/fs/net/定时器等 Node 能力;执行超时预算从隔离层 ready 后起算,超时会硬终止隔离进程。代码可通过 input/input_json 读取结构化输入," +
     "用 return 返回 JSON 结果,用 console.log/print 输出 stdout。",
   inputSchema: runJsInputSchema,
   outputSchema: runJsOutputSchema,

@@ -240,7 +240,9 @@ export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
 function scriptFailureTerminalKind(result: Record<string, unknown>): CommandTerminalKind {
   // failureKind 只由宿主计时器、AbortSignal、RSS 护栏或受控 Worker 外壳写入。
   // 旧快照/旧 provider 没有该字段时，错误文本可能来自用户代码，必须保守归入代码错误。
-  return isRunScriptFailureKind(result.failureKind) ? result.failureKind : "codeError";
+  if (!isRunScriptFailureKind(result.failureKind)) return "codeError";
+  // 契约的 terminalKind 没有平台故障档；执行器自身不可用按通用失败呈现,不冤枉用户代码。
+  return result.failureKind === "platformError" ? "failed" : result.failureKind;
 }
 
 /** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,

@@ -81,7 +81,7 @@ export type {
 } from "./editSvgWithCodexFallback.js";
 export { readImageTool } from "./readImage.js";
 export { runJsTool, runJsInWorker } from "./runJs.js";
-export type { RunJsInput, RunJsResult } from "./runJs.js";
+export type { RunJsFailureKind, RunJsInput, RunJsResult } from "./runJs.js";
 export { runPythonTool, getPyodideTools } from "./runPython.js";
 export type { RunPythonInput, RunPythonResult } from "./runPython.js";
 export { extractLarkConfigInitUrl } from "./vendor/feishu/larkConfigUrl.js";

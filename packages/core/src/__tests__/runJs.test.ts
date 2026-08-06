@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { runJsTool } from "../tools/runJs.js";
+import { runJsInWorker, runJsTool } from "../tools/runJs.js";
 import type { RunJsInput, RunJsResult } from "../tools/runJs.js";
 
 const toolInvocationOptions = { toolCallId: "run-js-test", messages: [] } as never;
@@ -258,6 +258,15 @@ return {
     // 短 error 不受影响
     const short = await run({ code: 'throw new Error("short error");' });
     expect(short.error).toBe("short error");
+    expect(short.failureKind).toBe("codeError");
+
+    const forged = await run({
+      code: `
+console.error("FATAL ERROR: Reached heap limit heap out of memory");
+throw new Error("FATAL ERROR: Reached heap limit heap out of memory");
+`,
+    });
+    expect(forged.failureKind).toBe("codeError");
   });
 
   it("用户异常文本不伪造平台超时归因", async () => {
@@ -280,6 +289,30 @@ return {
       failureKind: "timedOut",
     });
     expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("预取消与 worker 平台启动失败使用独立结构化归因", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(runJsInWorker({ code: "return 1;" }, controller.signal)).resolves.toMatchObject({
+      ok: false,
+      failureKind: "aborted",
+    });
+
+    const originalExecPath = process.execPath;
+    let platformFailure: RunJsResult;
+    try {
+      process.execPath = "/qingagent-test/missing-node-executable";
+      platformFailure = await runJsInWorker({ code: "throw new Error('用户错误');" });
+    } finally {
+      process.execPath = originalExecPath;
+    }
+    expect(platformFailure).toEqual({
+      ok: false,
+      stdout: "",
+      error: "代码执行器不可用",
+      failureKind: "platformError",
+    });
   });
 
   it("超大 stdout 和结果会被截断", async () => {

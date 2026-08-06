@@ -3,6 +3,8 @@ export const RUN_SCRIPT_FAILURE_KINDS = [
   "resourceExceeded",
   "timedOut",
   "aborted",
+  /** 隔离执行器自身不可用(启动失败/IPC 断链等),与用户代码无关。 */
+  "platformError",
 ] as const;
 
 export type RunScriptFailureKind = (typeof RUN_SCRIPT_FAILURE_KINDS)[number];

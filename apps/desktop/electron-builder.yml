@@ -27,6 +27,8 @@ asarUnpack:
   - "**/node_modules/@libsql/**"
 files:
   - dist/**/*
+  # 仅供 CI 在打包后执行，不进入安装包。
+  - "!dist/main/packaged-worker-smoke.js"
   - package.json
   - "!src"
   # 排除独立 agent-browser CLI 的平台二进制(产品运行时不用它;它的 .exe 会触发

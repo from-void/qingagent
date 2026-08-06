@@ -189,6 +189,41 @@ describe("create_annotation_groups 来源引句校验", () => {
     expect(JSON.stringify(runtimeGroup)).not.toContain("zhangwei@example.com");
   });
 
+  it("15 字摘要先脱敏再截断，不把完整手机号切成 8 位残片写入运行态或持久化", async () => {
+    const { state, tool } = setup();
+    const phone = "13912345678";
+    state.doc!.content = [{
+      type: "paragraph",
+      attrs: { blockId: "p-truncated-phone" },
+      content: [{ type: "text", text: `联系电话 ${phone}` }],
+    }];
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "模型错填",
+        // 「摘要含手机号：」恰好 7 字；旧链路先截 15 字，留下前 8 位 13912345。
+        summary: `摘要含手机号：${phone}`,
+        note: "完整号码不得进入批注摘要。",
+        anchors: [{ find: phone }],
+      })],
+    }, reviewCtx({
+      type: "privacy",
+      templateId: "review-privacy-default",
+      templateName: "对外发布",
+    }));
+
+    expect(result).toMatchObject({ ok: true, groupCount: 1, anchorCount: 1, errors: [] });
+    const runtimeGroup = state.annotationGroups[0]!;
+    expect(runtimeGroup.summary).toBe("摘要含手机号：139****5");
+    expect(runtimeGroup.summary).not.toMatch(/1[3-9]\d{3,}/u);
+    expect(JSON.stringify(runtimeGroup)).not.toContain("13912345");
+    expect(replaceAnnotationGroupsByOrigin).toHaveBeenCalledWith(
+      state.docId,
+      state.docVersion,
+      [runtimeGroup],
+    );
+  });
+
   it("全角引号锚句在精确失败后经归一化二次匹配命中", async () => {
     const { state, tool } = setup();
     state.doc!.content = [{
@@ -319,6 +354,7 @@ describe("create_annotation_groups 来源引句校验", () => {
 
       expect(result).toMatchObject({ ok: true, errors: [] });
       expect(state.annotationGroups[0]?.origin).toBe(item.expected);
+      expect(state.annotationGroups[0]?.reviewTemplateId).toBe(item.context.templateId);
       matrix[item.context.type] = state.annotationGroups[0]!.origin;
     }
 

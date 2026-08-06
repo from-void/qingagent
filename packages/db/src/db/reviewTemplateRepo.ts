@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
-import type { ReviewTemplateItem, ReviewType } from "@qingagent/contract-ts";
+import {
+  appendReviewIgnoreLines,
+  splitReviewSupplement,
+  type ReviewTemplateItem,
+  type ReviewType,
+} from "@qingagent/contract-ts";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
@@ -159,28 +164,55 @@ export async function deleteReviewTemplate(id: string, client?: Client): Promise
   return true;
 }
 
-export async function getReviewDocSupplement(docId: string, type: ReviewType, client?: Client): Promise<string> {
-  const db = await dbClient(client);
+export async function getReviewDocSupplement(
+  docId: string,
+  type: ReviewType,
+  templateScopeOrClient: string | Client = "",
+  client?: Client,
+): Promise<string> {
+  const templateScope = typeof templateScopeOrClient === "string"
+    ? templateScopeOrClient.trim()
+    : "";
+  const db = await dbClient(
+    typeof templateScopeOrClient === "string" ? client : templateScopeOrClient,
+  );
   const result = await db.execute({
-    sql: "SELECT supplement FROM review_doc_supplements WHERE doc_id=? AND type=?",
-    args: [docId, type],
+    sql: `SELECT template_scope,supplement FROM review_doc_supplements
+      WHERE doc_id=? AND type=? AND template_scope IN (?, '')
+      ORDER BY CASE WHEN template_scope=? THEN 0 ELSE 1 END`,
+    args: [docId, type, templateScope, templateScope],
   });
-  return String(result.rows[0]?.supplement ?? "");
+  const exact = result.rows.find((row) => String(row.template_scope) === templateScope);
+  const legacy = result.rows.find((row) => String(row.template_scope) === "");
+  if (!exact) return String(legacy?.supplement ?? "");
+  const exactSupplement = String(exact.supplement);
+  if (!templateScope || !legacy || legacy === exact) return exactSupplement;
+  const legacyLines = splitReviewSupplement(String(legacy.supplement)).ignoreLines;
+  return legacyLines.length > 0
+    ? appendReviewIgnoreLines(exactSupplement, legacyLines)
+    : exactSupplement;
 }
 
 export async function upsertReviewDocSupplement(
   docId: string,
   type: ReviewType,
   supplement: string,
+  templateScopeOrClient: string | Client = "",
   client?: Client,
 ): Promise<string> {
-  const db = await dbClient(client);
+  const templateScope = typeof templateScopeOrClient === "string"
+    ? templateScopeOrClient.trim()
+    : "";
+  const db = await dbClient(
+    typeof templateScopeOrClient === "string" ? client : templateScopeOrClient,
+  );
   const now = new Date().toISOString();
   await withWriteRetry(() => db.execute({
-    sql: `INSERT INTO review_doc_supplements(doc_id,type,supplement,created_at,updated_at)
-      VALUES(?,?,?,?,?) ON CONFLICT(doc_id,type) DO UPDATE SET
+    sql: `INSERT INTO review_doc_supplements(
+        doc_id,type,template_scope,supplement,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?) ON CONFLICT(doc_id,type,template_scope) DO UPDATE SET
       supplement=excluded.supplement,updated_at=excluded.updated_at`,
-    args: [docId, type, supplement, now, now],
+    args: [docId, type, templateScope, supplement, now, now],
   }));
   return supplement;
 }

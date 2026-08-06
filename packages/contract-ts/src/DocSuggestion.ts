@@ -68,6 +68,8 @@ export type AnnotationGroup = {
   summary: string;
   note: string;
   origin: string;
+  /** 菜单审查产生的稳定模板身份；老批注缺省时由 origin 生成不含明文的兼容作用域。 */
+  reviewTemplateId?: string;
   suggestion?: string;
   /** 缺省时按 warn 的现有样式渲染，但不展示分级统计。 */
   severity?: AnnotationSeverity;

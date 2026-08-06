@@ -356,10 +356,10 @@ export function validateCommand(cmd: Command): void {
       if (!cmd.data.sessionId || !cmd.data.type || !cmd.data.templateId) fail(`SelectReviewTemplate.data is invalid`);
       return;
     case "getReviewSupplement":
-      if (!cmd.data.sessionId || !cmd.data.type) fail(`GetReviewSupplement.data is invalid`);
+      if (!cmd.data.sessionId || !cmd.data.type || (cmd.data.templateId !== undefined && !cmd.data.templateId)) fail(`GetReviewSupplement.data is invalid`);
       return;
     case "upsertReviewSupplement":
-      if (!cmd.data.sessionId || !cmd.data.type || typeof cmd.data.supplement !== "string") fail(`UpsertReviewSupplement.data is invalid`);
+      if (!cmd.data.sessionId || !cmd.data.type || (cmd.data.templateId !== undefined && !cmd.data.templateId) || typeof cmd.data.supplement !== "string") fail(`UpsertReviewSupplement.data is invalid`);
       return;
     case "draftTemplate":
       if (!cmd.data.sessionId || !cmd.data.scene.label.trim() || typeof cmd.data.intent.name !== "string" || typeof cmd.data.intent.prompt !== "string") fail(`DraftTemplate.data is invalid`);

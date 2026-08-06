@@ -1538,19 +1538,19 @@ export function useWorkspacePageController() {
     [],
   );
 
-  const loadReviewSupplement = useCallback(async (type: ReviewType) => {
+  const loadReviewSupplement = useCallback(async (type: ReviewType, templateId?: string) => {
     const sessionId = stateRef.current.sessionId;
     const stream = streamRef.current;
     if (!sessionId || !stream) throw new Error("会话未就绪");
-    return stream.getReviewSupplement(sessionId, type);
+    return stream.getReviewSupplement(sessionId, type, templateId);
   }, []);
 
   const saveReviewSupplement = useCallback(
-    async (type: ReviewType, supplement: string) => {
+    async (type: ReviewType, supplement: string, templateId?: string) => {
       const sessionId = stateRef.current.sessionId;
       const stream = streamRef.current;
       if (!sessionId || !stream) throw new Error("会话未就绪");
-      return stream.upsertReviewSupplement(sessionId, type, supplement);
+      return stream.upsertReviewSupplement(sessionId, type, supplement, templateId);
     },
     [],
   );

@@ -343,7 +343,7 @@ describe("processAgentStream tool-call 参数流式占位", () => {
     expect(clearIndex).toBeGreaterThan(previewIndex);
   });
 
-  it("隐私审查的参数流式预览不展示原始敏感值", async () => {
+  it("隐私审查的参数流式预览先脱敏再做 15 字截断", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const { legacySectionsToPm } = await import("@qingagent/pm-schema");
     const state = createSession("privacy-annotation-preview");
@@ -354,7 +354,7 @@ describe("processAgentStream tool-call 参数流式占位", () => {
     ]]);
     const args = {
       groups: [{
-        summary: "手机号 13912345678",
+        summary: "摘要含手机号：13912345678",
         note: "完整值不应显示",
         origin: "privacy",
         anchors: [{ find: "13912345678" }],
@@ -385,7 +385,7 @@ describe("processAgentStream tool-call 参数流式占位", () => {
     expect(frames).toContainEqual({
       kind: "annotationPreview",
       data: expect.objectContaining({
-        summary: "手机号 139****5678",
+        summary: "摘要含手机号：139****5",
         anchors: [expect.objectContaining({
           quote: "139****5678",
           textHash: expect.stringMatching(/^span:/u),
@@ -393,5 +393,6 @@ describe("processAgentStream tool-call 参数流式占位", () => {
       }),
     });
     expect(visibleFrames).not.toContain("13912345678");
+    expect(visibleFrames).not.toContain("13912345");
   });
 });

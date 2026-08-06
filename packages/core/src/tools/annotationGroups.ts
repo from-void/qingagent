@@ -1,4 +1,8 @@
-import type { ReviewContext, ReviewType } from "@qingagent/contract-ts";
+import {
+  maskSensitiveValues,
+  type ReviewContext,
+  type ReviewType,
+} from "@qingagent/contract-ts";
 import { z } from "zod";
 
 export const REVIEW_ORIGIN_MATRIX: Record<Exclude<ReviewType, "custom">, string> = {
@@ -21,7 +25,8 @@ export function reviewOrigin(context: ReviewContext | null | undefined): string 
 export const ANNOTATION_SUMMARY_MAX_CHARS = 15;
 
 export function truncateAnnotationSummary(summary: string): string {
-  return Array.from(summary.trim()).slice(0, ANNOTATION_SUMMARY_MAX_CHARS).join("");
+  const masked = maskSensitiveValues(summary.trim());
+  return Array.from(masked).slice(0, ANNOTATION_SUMMARY_MAX_CHARS).join("");
 }
 
 export const annotationGroupInputSchema = z.object({

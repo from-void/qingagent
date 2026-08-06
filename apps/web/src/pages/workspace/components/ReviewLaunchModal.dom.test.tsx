@@ -426,8 +426,106 @@ describe("ReviewLaunchModal", () => {
       currentTextarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
-    expect(modalProps.saveSupplement).toHaveBeenCalledWith("sensitive", "这次只看引述");
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "sensitive",
+      "这次只看引述",
+      "sensitive-default",
+    );
     expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
+  });
+
+  it("机器维护的忽略区不进入补充要求文本框，编辑用户正文时仍原样保存并用于审查", async () => {
+    const ignoreLine = "- 已确认无需处理，不再标记：「139****5678」；问题：「已获授权」(2026-08-06) <!-- qingagent-review-ignore-key:v1:custom:span%3Acontact%3A1%3A12:%E5%B7%B2%E8%8E%B7%E6%8E%88%E6%9D%83 -->";
+    const stored = `用户原要求\n\n## 已确认忽略\n${ignoreLine}`;
+    const modalProps = props({
+      type: "custom" as const,
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [{ ...builtins[0]!, id: "custom-default", type: "custom", name: "自定义审查" }],
+        selectedTemplateId: "custom-default",
+      }),
+      loadSupplement: vi.fn().mockResolvedValue(stored),
+    });
+
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    const textarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    expect(textarea.value).toBe("用户原要求\n\n");
+    expect(textarea.value).not.toContain("qingagent-review-ignore-key");
+    expect(textarea.value).not.toContain("## 已确认忽略");
+    expect(buildReviewActionCard("custom", "自定义审查", stored)).toEqual({
+      title: "自定义审查",
+      lines: [
+        { label: "模板", value: "自定义审查" },
+        { label: "补充", value: "用户原要求" },
+      ],
+    });
+
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "更新后的用户要求");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
+
+    const expected = `更新后的用户要求\n\n## 已确认忽略\n${ignoreLine}`;
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "custom",
+      expected,
+      "custom-default",
+    );
+    expect(modalProps.onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "custom-default" }),
+      expected,
+      [],
+    );
+  });
+
+  it("切换自定义模板时按模板加载和保存补充要求，不把另一模板正文带入", async () => {
+    const templateX = {
+      ...builtins[0]!,
+      id: "review-custom-x",
+      type: "custom" as const,
+      name: "模板 X",
+    };
+    const templateY = {
+      ...builtins[1]!,
+      id: "review-custom-y",
+      type: "custom" as const,
+      name: "模板 Y",
+    };
+    const supplements = new Map([
+      [templateX.id, "只属于模板 X 的补充要求"],
+      [templateY.id, "只属于模板 Y 的补充要求"],
+    ]);
+    const modalProps = props({
+      type: "custom" as const,
+      loadTemplates: vi.fn().mockResolvedValue({
+        items: [templateX, templateY],
+        selectedTemplateId: templateX.id,
+      }),
+      loadSupplement: vi.fn().mockImplementation(
+        async (_type: string, templateId?: string) => supplements.get(templateId ?? "") ?? "",
+      ),
+    });
+
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.value)
+      .toBe("只属于模板 X 的补充要求");
+
+    const yCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes("模板 Y"));
+    await act(async () => {
+      yCard?.click();
+      await Promise.resolve();
+    });
+
+    const textarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    expect(textarea.value).toBe("只属于模板 Y 的补充要求");
+    expect(textarea.value).not.toContain("模板 X");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith(
+      "custom",
+      "只属于模板 Y 的补充要求",
+      templateY.id,
+    );
   });
 
   it("词库开关完成即持久化，重进后显示与审查请求集合一致", async () => {

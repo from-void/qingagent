@@ -682,13 +682,13 @@ export class ServerStream {
     await this.derivativeFrame({ kind: "selectReviewTemplate", data: { sessionId, requestId: crypto.randomUUID(), type, templateId } }, "reviewTemplateSelected");
   }
 
-  async getReviewSupplement(sessionId: string, type: ReviewType) {
-    const frame = await this.derivativeFrame({ kind: "getReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type } }, "reviewSupplementLoaded");
+  async getReviewSupplement(sessionId: string, type: ReviewType, templateId?: string) {
+    const frame = await this.derivativeFrame({ kind: "getReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type, ...(templateId ? { templateId } : {}) } }, "reviewSupplementLoaded");
     return frame.data.supplement;
   }
 
-  async upsertReviewSupplement(sessionId: string, type: ReviewType, supplement: string) {
-    const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type, supplement } }, "reviewSupplementSaved");
+  async upsertReviewSupplement(sessionId: string, type: ReviewType, supplement: string, templateId?: string) {
+    const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type, supplement, ...(templateId ? { templateId } : {}) } }, "reviewSupplementSaved");
     return frame.data.supplement;
   }
 

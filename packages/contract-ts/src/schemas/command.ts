@@ -502,8 +502,8 @@ export const commandSchema = z.discriminatedUnion("kind", [
   z.object({kind:z.literal("saveReviewTemplate"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),id:z.string().min(1).optional(),type:reviewTypeSchema,name:z.string().trim().min(1),prompt:z.string().trim().min(1)})}),
   z.object({kind:z.literal("deleteReviewTemplate"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),id:z.string().min(1)})}),
   z.object({kind:z.literal("selectReviewTemplate"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),type:reviewTypeSchema,templateId:z.string().min(1)})}),
-  z.object({kind:z.literal("getReviewSupplement"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),type:reviewTypeSchema})}),
-  z.object({kind:z.literal("upsertReviewSupplement"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),type:reviewTypeSchema,supplement:z.string()})}),
+  z.object({kind:z.literal("getReviewSupplement"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),type:reviewTypeSchema,templateId:z.string().min(1).optional()})}),
+  z.object({kind:z.literal("upsertReviewSupplement"),data:z.object({sessionId:z.string().min(1),requestId:z.string().min(1),type:reviewTypeSchema,templateId:z.string().min(1).optional(),supplement:z.string()})}),
   z.object({kind:z.literal("draftTemplate"),data:z.object({
     sessionId:z.string().min(1), requestId:z.string().min(1),
     scene:z.discriminatedUnion("kind",[

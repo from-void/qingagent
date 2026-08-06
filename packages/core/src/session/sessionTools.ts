@@ -846,6 +846,9 @@ export function createSessionScopedTools(
           summary: source.summary,
           note: evidence ? `${source.note}\n${evidence}` : source.note,
           origin: source.origin,
+          ...(currentReviewContext?.templateId
+            ? { reviewTemplateId: currentReviewContext.templateId }
+            : {}),
           ...(suggestion ? { suggestion } : {}),
           severity: source.severity,
           status: "reviewing" as const,

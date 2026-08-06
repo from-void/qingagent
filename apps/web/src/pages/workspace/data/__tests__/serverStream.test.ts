@@ -1378,9 +1378,18 @@ describe("ServerStream", () => {
         } satisfies BridgeFrame];
       }
       if (command.kind === "getReviewSupplement") {
+        expect(command.data.templateId).toBe("source-default");
         return [{
           kind: "reviewSupplementLoaded",
-          data: { requestId, type: "source", supplement: "只看金额" },
+          data: { requestId, type: "source", templateId: "source-default", supplement: "只看金额" },
+        } satisfies BridgeFrame];
+      }
+      if (command.kind === "upsertReviewSupplement") {
+        expect(command.data.templateId).toBe("source-default");
+        expect(command.data.supplement).toBe("只看引述");
+        return [{
+          kind: "reviewSupplementSaved",
+          data: { requestId, type: "source", templateId: "source-default", supplement: "只看引述" },
         } satisfies BridgeFrame];
       }
       if (command.kind === "deleteReviewTemplate") {
@@ -1399,7 +1408,14 @@ describe("ServerStream", () => {
     await expect(stream.listReviewTemplates("s-1", "source")).resolves.toMatchObject({
       selectedTemplateId: "source-default",
     });
-    await expect(stream.getReviewSupplement("s-1", "source")).resolves.toBe("只看金额");
+    await expect(stream.getReviewSupplement("s-1", "source", "source-default"))
+      .resolves.toBe("只看金额");
+    await expect(stream.upsertReviewSupplement(
+      "s-1",
+      "source",
+      "只看引述",
+      "source-default",
+    )).resolves.toBe("只看引述");
     await expect(stream.deleteReviewTemplate("s-1", "source-default"))
       .rejects.toThrow("每类至少保留一个模板");
     await expect(stream.deleteStyleTemplate("s-1", "gzh-layout-classic"))

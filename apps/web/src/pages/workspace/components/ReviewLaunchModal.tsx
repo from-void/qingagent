@@ -1,5 +1,5 @@
 import { Button } from "@qingagent/ui-kit";
-import { assembleReviewQuery } from "@qingagent/contract-ts";
+import { appendReviewIgnoreLines, assembleReviewQuery, splitReviewSupplement } from "@qingagent/contract-ts";
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "../../../system";
@@ -90,8 +90,8 @@ interface ReviewLaunchModalProps {
   saveTemplate: (input: { id?: string; type: ReviewType; name: string; prompt: string }) => Promise<ReviewTemplateItem>;
   deleteTemplate: (id: string) => Promise<string | null>;
   selectTemplate: (type: ReviewType, templateId: string) => Promise<void>;
-  loadSupplement: (type: ReviewType) => Promise<string>;
-  saveSupplement: (type: ReviewType, supplement: string) => Promise<string>;
+  loadSupplement: (type: ReviewType, templateId?: string) => Promise<string>;
+  saveSupplement: (type: ReviewType, supplement: string, templateId?: string) => Promise<string>;
   loadLexicons?: () => Promise<LexiconResourceSummary[]>;
   saveLexiconSelection?: (enabledLexiconIds: string[]) => Promise<LexiconResourceSummary[]>;
   loadLexiconEntries?: (resourceId: string) => Promise<LexiconEntrySummary[]>;
@@ -121,11 +121,17 @@ export function buildReviewActionCard(
   templateName: string,
   supplement: string,
 ): ActionCardData {
+  const supplementParts = splitReviewSupplement(supplement);
+  const visibleSupplement = supplementParts.hasManagedSection
+    ? supplementParts.userText
+    : supplement;
   return {
     title: REVIEW_META[type].title,
     lines: [
       { label: "模板", value: templateName },
-      ...(supplement.trim() ? [{ label: "补充", value: oneLine(supplement) }] : []),
+      ...(visibleSupplement.trim()
+        ? [{ label: "补充", value: oneLine(visibleSupplement) }]
+        : []),
     ],
   };
 }
@@ -146,31 +152,47 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const [activeLexicon, setActiveLexicon] = useState<LexiconResourceSummary | null>(null);
   const [entries, setEntries] = useState<LexiconEntrySummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [supplementLoading, setSupplementLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const templateSelectionEpochRef = useRef(0);
   const confirmedTemplateIdRef = useRef("");
+  const loadedSupplementRef = useRef("");
 
   useEffect(() => {
     if (!props.open) return;
     const requestId = ++requestRef.current;
     templateSelectionEpochRef.current += 1;
     setLoading(true);
+    setSupplementLoading(false);
     setError(null);
+    loadedSupplementRef.current = "";
+    setSupplement("");
     setPage("launch");
     setEditor(null);
     const lexiconTask = props.type === "sensitive" && props.loadLexicons ? props.loadLexicons() : Promise.resolve([]);
-    void Promise.all([props.loadTemplates(props.type), props.loadSupplement(props.type), lexiconTask])
-      .then(([config, savedSupplement, availableLexicons]) => {
-        if (requestRef.current !== requestId) return;
-        setTemplates(config.items);
+    void props.loadTemplates(props.type)
+      .then(async (config) => {
         const selected = config.items.some((item) => item.id === config.selectedTemplateId)
           ? config.selectedTemplateId!
           : config.items[0]?.id ?? "";
+        const [savedSupplement, availableLexicons] = await Promise.all([
+          props.loadSupplement(props.type, selected || undefined),
+          lexiconTask,
+        ]);
+        return { config, selected, savedSupplement, availableLexicons };
+      })
+      .then(({ config, selected, savedSupplement, availableLexicons }) => {
+        if (requestRef.current !== requestId) return;
+        setTemplates(config.items);
         confirmedTemplateIdRef.current = selected;
         setSelectedId(selected);
-        setSupplement(savedSupplement);
+        loadedSupplementRef.current = savedSupplement;
+        const supplementParts = splitReviewSupplement(savedSupplement);
+        setSupplement(supplementParts.hasManagedSection
+          ? supplementParts.userText
+          : savedSupplement);
         setLexicons(availableLexicons);
         setSelectedLexicons(new Set(
           availableLexicons.filter((item) => item.enabled !== false).map((item) => item.id),
@@ -204,16 +226,34 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   };
   const chooseTemplate = (id: string) => {
     const selectionEpoch = ++templateSelectionEpochRef.current;
+    const previousId = confirmedTemplateIdRef.current;
+    const previousSupplement = supplement;
+    const previousLoadedSupplement = loadedSupplementRef.current;
     setSelectedId(id);
     setError(null);
-    void props.selectTemplate(props.type, id)
-      .then(() => {
+    setSupplementLoading(true);
+    void Promise.all([
+      props.selectTemplate(props.type, id),
+      props.loadSupplement(props.type, id),
+    ])
+      .then(([, savedSupplement]) => {
+        if (templateSelectionEpochRef.current !== selectionEpoch) return;
         confirmedTemplateIdRef.current = id;
+        loadedSupplementRef.current = savedSupplement;
+        const supplementParts = splitReviewSupplement(savedSupplement);
+        setSupplement(supplementParts.hasManagedSection
+          ? supplementParts.userText
+          : savedSupplement);
       })
       .catch(() => {
         if (templateSelectionEpochRef.current !== selectionEpoch) return;
-        setSelectedId(confirmedTemplateIdRef.current);
+        setSelectedId(previousId);
+        setSupplement(previousSupplement);
+        loadedSupplementRef.current = previousLoadedSupplement;
         setError("模板选择保存失败，请重试");
+      })
+      .finally(() => {
+        if (templateSelectionEpochRef.current === selectionEpoch) setSupplementLoading(false);
       });
   };
   const storeTemplate = (id?: string) => {
@@ -228,7 +268,13 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
         const selectionEpoch = ++templateSelectionEpochRef.current;
         try {
           await props.selectTemplate(props.type, saved.id);
+          const savedSupplement = await props.loadSupplement(props.type, saved.id);
           confirmedTemplateIdRef.current = saved.id;
+          loadedSupplementRef.current = savedSupplement;
+          const supplementParts = splitReviewSupplement(savedSupplement);
+          setSupplement(supplementParts.hasManagedSection
+            ? supplementParts.userText
+            : savedSupplement);
         } catch {
           setEditor(null);
           setPage("launch");
@@ -256,13 +302,22 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     if (!confirmed) return;
     setSaving(true);
     setError(null);
-    void props.deleteTemplate(template.id).then((nextSelectedId) => {
+    void props.deleteTemplate(template.id).then(async (nextSelectedId) => {
       const remaining = templates.filter((item) => item.id !== template.id);
       const selectedAfterDelete =
         nextSelectedId ?? remaining.find((item) => item.builtin)?.id ?? remaining[0]?.id ?? "";
+      const savedSupplement = await props.loadSupplement(
+        props.type,
+        selectedAfterDelete || undefined,
+      );
       setTemplates(remaining);
       confirmedTemplateIdRef.current = selectedAfterDelete;
       setSelectedId(selectedAfterDelete);
+      loadedSupplementRef.current = savedSupplement;
+      const supplementParts = splitReviewSupplement(savedSupplement);
+      setSupplement(supplementParts.hasManagedSection
+        ? supplementParts.userText
+        : savedSupplement);
       setEditor(null);
       setPage("launch");
     }).catch((deleteError) => setError(deleteErrorMessage(deleteError))).finally(() => setSaving(false));
@@ -366,17 +421,25 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
               <button type="button" className="ws-launch-link" onClick={props.onAddMaterial}>添加素材<CaretIcon size={12} direction="right" /></button>
             </div>
           ) : null}
-          <SupplementField value={supplement} placeholder={meta.supplementPlaceholder} disabled={loading} onChange={setSupplement} />
+          <SupplementField value={supplement} placeholder={meta.supplementPlaceholder} disabled={loading || supplementLoading} onChange={setSupplement} />
           <div className="ws-launch-actions">
             <Button type="button" variant="ghost" disabled={saving} onClick={props.onClose}>取消</Button>
-            <Button type="button" variant="primary" disabled={loading || saving || !selected || sourceBlocked || (props.type === "sensitive" && selectedLexicons.size === 0)} onClick={() => {
+            <Button type="button" variant="primary" disabled={loading || supplementLoading || saving || !selected || sourceBlocked || (props.type === "sensitive" && selectedLexicons.size === 0)} onClick={() => {
               if (!selected) return;
+              const loadedParts = splitReviewSupplement(loadedSupplementRef.current);
+              const fullSupplement = loadedParts.hasManagedSection
+                ? appendReviewIgnoreLines(supplement, loadedParts.ignoreLines)
+                : supplement;
               setSaving(true);
               setError(null);
               void Promise.all([
                 props.selectTemplate(props.type, selected.id),
-                props.saveSupplement(props.type, supplement),
-              ]).then(() => props.onConfirm(selected, supplement, lexicons.filter((item) => selectedLexicons.has(item.id))))
+                props.saveSupplement(props.type, fullSupplement, selected.id),
+              ]).then(([, savedSupplement]) => props.onConfirm(
+                selected,
+                savedSupplement,
+                lexicons.filter((item) => selectedLexicons.has(item.id)),
+              ))
                 .catch(() => setError("审查设置保存失败，请重试"))
                 .finally(() => setSaving(false));
             }}>{saving ? "正在保存…" : meta.action}</Button>

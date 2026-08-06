@@ -1,15 +1,16 @@
 import type { AnnotationGroup, SuggestionAnchor } from "./DocSuggestion";
 
 const MOBILE_RE = /(?<!\d)1[3-9]\d(?:[ -]?\d){8}(?!\d)/g;
+const TRUNCATED_MOBILE_RE = /(?<!\d)1[3-9]\d{7,8}(?!\d)/g;
 const ID_CARD_18_RE = /(?<![\dA-Za-z])[1-8]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![\dA-Za-z])/g;
 const ID_CARD_15_RE = /(?<!\d)[1-8]\d{5}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}(?!\d)/g;
 const LONG_NUMBER_RE = /(?<!\d)\d{13,19}(?!\d)/g;
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}\b/gi;
 
 const NUMERIC_NEGATIVE_CONTEXT_RE =
-  /(?:订单(?:号|编号)?|项目(?:号|编号)?|合同(?:号|编号)?|快递单号|运单号|流水号|序列号|编号|年份|金额|价格)\s*[：:]?\s*$/;
-const ID_CARD_CONTEXT_RE = /(?:身份证(?:号|号码|编号)?|公民身份号码|证件号)\s*[：:]?\s*$/;
-const CARD_CONTEXT_RE = /(?:银行卡(?:号|号码|编号)?|信用卡(?:号|号码|编号)?|借记卡(?:号|号码|编号)?|储蓄卡(?:号|号码|编号)?|银联卡?(?:号|号码|编号)?|会员卡(?:号|号码|编号)?|卡号|银行账号)\s*[：:]?\s*$/;
+  /(?:订单(?:号|编号)?|项目(?:号|编号)?|合同(?:号|编号)?|快递单号|运单号|流水号|序列号|编号|年份|金额|价格)[ \t]*[：:]?[ \t]*$/;
+const ID_CARD_CONTEXT_RE = /(?:身份证(?:号|号码|编号)?|公民身份号码|证件号)[ \t]*[：:]?[ \t]*$/;
+const CARD_CONTEXT_RE = /(?:银行卡(?:号|号码|编号)?|信用卡(?:号|号码|编号)?|借记卡(?:号|号码|编号)?|储蓄卡(?:号|号码|编号)?|银联卡?(?:号|号码|编号)?|会员卡(?:号|号码|编号)?|卡号|银行账号)[ \t]*[：:]?[ \t]*$/;
 
 function leftContext(text: string, offset: number): string {
   return text.slice(Math.max(0, offset - 24), offset);
@@ -58,7 +59,8 @@ function passesLuhn(value: string): boolean {
 }
 
 function maskDigits(value: string, head: number, tail: number): string {
-  return `${value.slice(0, head)}${"*".repeat(value.length - head - tail)}${value.slice(-tail)}`;
+  const visibleTail = tail === 0 ? "" : value.slice(-tail);
+  return `${value.slice(0, head)}${"*".repeat(value.length - head - tail)}${visibleTail}`;
 }
 
 function maskEmail(value: string): string {
@@ -83,14 +85,14 @@ export function buildSensitiveAnchorSpanKey(
 /**
  * 审查展示与审计副本使用的保守打码器。
  *
- * 长数字只有在校验通过、命中银行卡号段或紧邻明确类型标签时才处理；订单号、编号、
- * 年份和金额标签拥有更高优先级，避免破坏普通引用型批注。
+ * 严格命中大陆手机号形态时一律处理；业务数字标签只能豁免身份证候选、长数字候选等
+ * 低置信形态，不能反压完整手机号。长数字只有在校验通过、命中银行卡号段或紧邻明确
+ * 类型标签时才处理，避免破坏普通引用型批注。
  */
 export function maskSensitiveValues(input: string): string {
   let output = input.replace(EMAIL_RE, (value) => maskEmail(value));
 
-  output = output.replace(MOBILE_RE, (value, offset: number) => {
-    if (hasNumericNegativeContext(output, offset)) return value;
+  output = output.replace(MOBILE_RE, (value) => {
     const digits = value.replace(/[^\d]/g, "");
     return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
   });
@@ -121,6 +123,89 @@ export function maskSensitiveValues(input: string): string {
   });
 
   return output;
+}
+
+/**
+ * 持久化审查决定专用的二次脱敏。
+ *
+ * 普通展示链路只识别完整手机号；忽略决定会长期入库并反复进入模型上下文，因此还要兜住
+ * 9/10 位、以大陆手机号号段开头的截断片段。完整 11 位形态已无条件处理；截断片段仍允许
+ * 同一行紧邻的订单号、项目编号、金额等标签豁免，避免把低置信的正常数字误当成 PII。
+ * 其余命中只保留前三位，不保留可与别处拼接的尾数。
+ */
+export function maskPersistedReviewIgnoreValue(input: string): string {
+  const output = maskSensitiveValues(input);
+  return output.replace(TRUNCATED_MOBILE_RE, (value, offset: number) => {
+    if (hasNumericNegativeContext(output, offset)) return value;
+    return maskDigits(value, 3, 0);
+  });
+}
+
+function isAsciiDigit(value: string | undefined): boolean {
+  return value !== undefined && value >= "0" && value <= "9";
+}
+
+/** 从标准手机号打码值中提取已公开的前三位；不用新的残片长度正则猜测原值。 */
+function maskedMobileHeads(value: string): Set<string> {
+  const heads = new Set<string>();
+  for (let index = 0; index + 11 <= value.length; index += 1) {
+    const candidate = value.slice(index, index + 11);
+    if (
+      candidate[0] === "1"
+      && candidate[1] !== undefined
+      && candidate[1] >= "3"
+      && candidate[1] <= "9"
+      && isAsciiDigit(candidate[2])
+      && candidate.slice(3, 7) === "****"
+      && [...candidate.slice(7)].every((char) => isAsciiDigit(char))
+      && !isAsciiDigit(value[index - 1])
+      && !isAsciiDigit(value[index + 11])
+    ) {
+      heads.add(candidate.slice(0, 3));
+    }
+  }
+  return heads;
+}
+
+/**
+ * 同一记录内，摘要对某个已打码引文只能重复其公开位，不能贡献额外连续数字。
+ * 这条约束按引文的标准打码指纹关联字段，不扩大全局手机号残片正则的误伤面。
+ */
+function constrainSummaryToQuoteDisclosure(summary: string, quote: string): string {
+  const heads = maskedMobileHeads(quote);
+  if (heads.size === 0) return summary;
+
+  let output = "";
+  let index = 0;
+  while (index < summary.length) {
+    if (!isAsciiDigit(summary[index])) {
+      output += summary[index];
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (isAsciiDigit(summary[end])) end += 1;
+    const digits = summary.slice(index, end);
+    const head = digits.slice(0, 3);
+    output += digits.length > 3 && heads.has(head)
+      ? `${head}${"*".repeat(digits.length - 3)}`
+      : digits;
+    index = end;
+  }
+  return output;
+}
+
+/** 忽略记录的跨字段脱敏：先逐字段处理，再限制摘要不能补齐引文隐藏位。 */
+export function maskPersistedReviewIgnoreRecord(input: {
+  summary: string;
+  quote: string;
+}): { summary: string; quote: string } {
+  const quote = maskPersistedReviewIgnoreValue(input.quote);
+  const summary = constrainSummaryToQuoteDisclosure(
+    maskPersistedReviewIgnoreValue(input.summary),
+    quote,
+  );
+  return { summary, quote };
 }
 
 export function maskSensitiveAnnotationGroup(group: AnnotationGroup): AnnotationGroup {

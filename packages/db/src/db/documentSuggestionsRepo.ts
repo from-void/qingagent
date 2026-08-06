@@ -43,6 +43,7 @@ function annotationGroupMeta(group: AnnotationGroup): AnnotationGroupMeta {
     ...(suggestion ? { suggestion } : {}),
     hitCount: group.anchors.length,
     ...(group.severity ? { severity: group.severity } : {}),
+    ...(group.reviewTemplateId ? { reviewTemplateId: group.reviewTemplateId } : {}),
   };
 }
 
@@ -165,6 +166,9 @@ function parseAnnotationGroupMeta(value: unknown): AnnotationGroupMeta | null {
       ...(meta.severity === "error" || meta.severity === "warn" || meta.severity === "info"
         ? { severity: meta.severity }
         : {}),
+      ...(typeof meta.reviewTemplateId === "string" && meta.reviewTemplateId
+        ? { reviewTemplateId: meta.reviewTemplateId }
+        : {}),
     };
   } catch {
     return null;
@@ -211,6 +215,7 @@ export async function listActiveAnnotationGroups(
       summary: typeof row.summary === "string" ? row.summary : meta?.summary ?? "",
       note,
       origin,
+      ...(meta?.reviewTemplateId ? { reviewTemplateId: meta.reviewTemplateId } : {}),
       ...(suggestion ? { suggestion } : {}),
       ...(severity ? { severity } : {}),
       status: row.status === "accepted" ? "accepted" : "reviewing",

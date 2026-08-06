@@ -836,13 +836,27 @@ async function seedRestoredSession(title: string, pmDoc: PmDoc): Promise<string>
   return sessionId;
 }
 
+const TEST_COMMAND_TOKEN = "rich-formats-bridge-test-token";
+
 async function request(method: string, path: string, body?: unknown): Promise<Response> {
+  // commands/stream mutation 已要求可信 Origin + 确定性 token;测试显式模拟已鉴权请求。
+  const previousToken = process.env.QINGAGENT_AUTH_TOKEN;
+  process.env.QINGAGENT_AUTH_TOKEN = TEST_COMMAND_TOKEN;
   const init: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "http://127.0.0.1:5173",
+      Authorization: `Bearer ${TEST_COMMAND_TOKEN}`,
+    },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
-  return app.request(path, init);
+  try {
+    return await app.request(path, init);
+  } finally {
+    if (previousToken === undefined) delete process.env.QINGAGENT_AUTH_TOKEN;
+    else process.env.QINGAGENT_AUTH_TOKEN = previousToken;
+  }
 }
 
 async function postStream(command: Command): Promise<{

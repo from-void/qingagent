@@ -20,6 +20,8 @@ export type AnnotationGroupMeta = {
   suggestion?: string;
   hitCount: number;
   severity?: AnnotationSeverity;
+  /** 忽略决定 decisionKey 的组成部分；缺失会让冷恢复后的忽略身份与在线期不一致。 */
+  reviewTemplateId?: string;
 };
 
 export type SuggestionAnchor = {

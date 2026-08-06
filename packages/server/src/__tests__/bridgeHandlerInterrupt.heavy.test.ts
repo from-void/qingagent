@@ -289,6 +289,7 @@ describe("handleCommand interrupt-and-resteer", () => {
     }));
     expect(mockState.controls.at(-1)).toEqual({
       preemptedByNewMessage: true,
+      reuseExistingUserMessage: false,
     });
     expect(
       mockState.events.filter((event) => event.includes("get_process_output")),
@@ -322,6 +323,7 @@ describe("handleCommand interrupt-and-resteer", () => {
     ).toBe(true);
     expect(mockState.controls.at(-1)).toEqual({
       preemptedByNewMessage: true,
+      reuseExistingUserMessage: false,
     });
   });
 

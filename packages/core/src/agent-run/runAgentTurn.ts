@@ -307,7 +307,8 @@ export async function* runAgentTurn(
   logger.info("runAgentTurn started", {
     sessionId: state.sessionId,
     streamId,
-    messagePreview: userText.slice(0, 120),
+    // 用户消息预览对故障定位价值有限，却会进入桌面滚动日志；只记录长度结构信号。
+    messageChars: userText.length,
     fileCount: fileIds.length,
     chipCount: chips.length,
     selectedSkills: selectedSkillNames,

@@ -19,6 +19,30 @@ import { redactDiagnosticText, redactValueDeep } from "./redact.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOG_FILE_RE = /^(server|main|renderer)-\d{4}-\d{2}-\d{2}\.log$/;
 const SPAN_FILE_RE = /^spans-\d{4}-\d{2}-\d{2}\.jsonl$/;
+const CONSOLE_LOG_RECORD_RE = /^\[\d{4}-\d{2}-\d{2}T[^\]]+] \[[A-Z]+] /;
+const LOG_BODY_FIELD_NAME = "(?:content|text|qingml|reasoning_content)";
+const LOG_CONTENT_FIELD_NAME =
+  `(?:[A-Za-z0-9_]*(?:Preview|Excerpt|Snippet|Tail)|${LOG_BODY_FIELD_NAME})`;
+const LOG_CONTENT_FIELD_RE = new RegExp(`^(?:${LOG_CONTENT_FIELD_NAME})$`, "i");
+const LOG_FIELD_MARKER_START = String.raw`(?:^|[\s{,])(?:\\?["']?)`;
+const LOG_BODY_FIELD_MARKER_RE = new RegExp(
+  String.raw`${LOG_FIELD_MARKER_START}(?:${LOG_BODY_FIELD_NAME})(?:\\?["']?)\s*:\s*`,
+  "i",
+);
+const LOG_CONTENT_FIELD_MARKER_RE = new RegExp(
+  String.raw`${LOG_FIELD_MARKER_START}(?:${LOG_CONTENT_FIELD_NAME})(?:\\?["']?)\s*:\s*`,
+  "i",
+);
+const QUOTED_LOG_VALUE = String.raw`(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\`(?:\\.|[^\`\\])*\`)`;
+const LOG_CONTENT_EXPRESSION_RE = new RegExp(
+  `(^|[\\s{,])((?:["']?)(?:${LOG_CONTENT_FIELD_NAME})(?:["']?)\\s*:\\s*)` +
+    `${QUOTED_LOG_VALUE}(?:\\s*\\+\\s*(?:\\r?\\n\\s*)?${QUOTED_LOG_VALUE})*`,
+  "gim",
+);
+const LOG_CONTENT_LINE_RE = new RegExp(
+  `^(\\s*(?:["']?)(?:${LOG_CONTENT_FIELD_NAME})(?:["']?)\\s*:\\s*).*$`,
+  "i",
+);
 
 export interface CollectedTextFile {
   path: string;
@@ -32,6 +56,17 @@ export interface CollectedFrameLogFile {
   sessionId: string;
   frameCount: number;
   mtime: number;
+}
+
+export interface CollectLogsOptions {
+  days?: number;
+  privacyLevel?: "L1" | "L2";
+  sessionIds?: string[];
+}
+
+interface SessionScope {
+  sessionIds: ReadonlySet<string>;
+  includeUnscoped: boolean;
 }
 
 interface DuckDbStoreLike extends ObservabilityDuckDbStore {
@@ -55,8 +90,14 @@ interface DuckSpanRow {
   error: unknown;
 }
 
-export async function collectLogs(logsDir: string | null | undefined, days = 7): Promise<CollectedTextFile[]> {
+export async function collectLogs(
+  logsDir: string | null | undefined,
+  options: CollectLogsOptions = {},
+): Promise<CollectedTextFile[]> {
   if (!logsDir) return [];
+  const days = options.days ?? 7;
+  const privacyLevel = options.privacyLevel ?? "L1";
+  const sessionIds = new Set(normalizeSessionIds(options.sessionIds));
   const cutoff = Date.now() - Math.max(0, days) * DAY_MS;
   const files = await listMatchingFiles(logsDir, LOG_FILE_RE, cutoff);
   const out: CollectedTextFile[] = [];
@@ -65,7 +106,7 @@ export async function collectLogs(logsDir: string | null | undefined, days = 7):
       const raw = await readFile(file.absPath, "utf8");
       out.push({
         path: `logs/${file.name}`,
-        content: redactLines(raw),
+        content: collectLogRecords(raw, privacyLevel, sessionIds),
         mtime: file.mtime,
       });
     } catch {
@@ -80,11 +121,21 @@ export async function collectSpans(options: {
   spanDays?: number;
   duckdbPath?: string;
   privacyLevel?: "L1" | "L2";
+  sessionIds?: string[];
 } = {}): Promise<DiagSpan[]> {
   const logsDir = options.logsDir ?? process.env.QINGAGENT_LOG_DIR;
   const spanDays = options.spanDays ?? 7;
   const privacyLevel = options.privacyLevel ?? "L1";
-  const spans = await collectSpansRaw(logsDir, spanDays, options.duckdbPath);
+  const pickedSessionIds = normalizeSessionIds(options.sessionIds);
+  // L2 的正文授权范围只能来自用户明确勾选；空范围绝不能解释成全量会话。
+  if (privacyLevel === "L2" && pickedSessionIds.length === 0) return [];
+  // 用户删除会话后，历史 span 仍可能留在滚动日志。L1 也按本次勾选范围收敛，
+  // 但保留无 sessionId 的全局结构 span，避免把系统级诊断价值一并削掉。
+  const scope: SessionScope = {
+    sessionIds: new Set(pickedSessionIds),
+    includeUnscoped: privacyLevel === "L1",
+  };
+  const spans = await collectSpansRaw(logsDir, spanDays, options.duckdbPath, scope);
   // PRD F1 验收铁律:L1 包不得含文档正文/对话内容。span 的 input/output summary
   // 本地就是截断原文(最多 4KB),L1 时必须整体置换为占位,只保留长度与结构信号。
   return privacyLevel === "L1" ? spans.map(applyL1SpanPrivacy) : spans;
@@ -94,9 +145,10 @@ async function collectSpansRaw(
   logsDir: string | null | undefined,
   spanDays: number,
   duckdbPathOverride?: string,
+  scope?: SessionScope,
 ): Promise<DiagSpan[]> {
   if (logsDir) {
-    const jsonlSpans = await collectSpansFromJsonl(logsDir, spanDays);
+    const jsonlSpans = await collectSpansFromJsonl(logsDir, spanDays, scope);
     if (jsonlSpans.length > 0) return jsonlSpans;
   }
   if (process.env.QINGAGENT_RUNTIME === "desktop") return [];
@@ -104,10 +156,10 @@ async function collectSpansRaw(
   const duckdbPath = duckdbPathOverride ?? process.env.OBSERVABILITY_DUCKDB_PATH ?? "./observability.duckdb";
   const runtimeStore = getObservabilityStore(duckdbPath);
   if (runtimeStore) {
-    return collectSpansFromDuckDb(duckdbPath, spanDays, runtimeStore);
+    return collectSpansFromDuckDb(duckdbPath, spanDays, runtimeStore, scope);
   }
   if (!(await fileExists(duckdbPath))) return [];
-  return collectSpansFromDuckDb(duckdbPath, spanDays);
+  return collectSpansFromDuckDb(duckdbPath, spanDays, undefined, scope);
 }
 
 /** L1 隐私:input/output 的截断原文替换为 [redacted:len=N],保留 bytes/truncated/usage。 */
@@ -211,7 +263,11 @@ async function collectRestoreFrameLogEntries(
   }
 }
 
-async function collectSpansFromJsonl(logsDir: string, spanDays: number): Promise<DiagSpan[]> {
+async function collectSpansFromJsonl(
+  logsDir: string,
+  spanDays: number,
+  scope?: SessionScope,
+): Promise<DiagSpan[]> {
   const cutoff = Date.now() - Math.max(0, spanDays) * DAY_MS;
   const files = await listMatchingFiles(logsDir, SPAN_FILE_RE, cutoff);
   const spans: DiagSpan[] = [];
@@ -222,7 +278,7 @@ async function collectSpansFromJsonl(logsDir: string, spanDays: number): Promise
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line) as unknown;
-          if (isDiagSpanLike(parsed)) {
+          if (isDiagSpanLike(parsed) && spanMatchesScope(parsed, scope)) {
             spans.push(redactValueDeep(parsed) as DiagSpan);
           }
         } catch {
@@ -240,6 +296,7 @@ async function collectSpansFromDuckDb(
   duckdbPath: string,
   spanDays: number,
   runtimeStore?: ObservabilityDuckDbStore,
+  scope?: SessionScope,
 ): Promise<DiagSpan[]> {
   let store: DuckDbStoreLike | null = runtimeStore ?? null;
   let connection: ObservabilityDuckDbConnection | null = null;
@@ -257,6 +314,7 @@ async function collectSpansFromDuckDb(
     return rows.getRowObjects()
       .map(rowToDuckSpanRow)
       .filter((row): row is DuckSpanRow => row !== null)
+      .filter((row) => duckSpanMatchesScope(row, scope))
       .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
       .map(duckSpanMapper());
   } catch (error) {
@@ -446,8 +504,199 @@ async function listMatchingFiles(
   return files.sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
 }
 
-function redactLines(raw: string): string {
-  return raw.split(/\r?\n/).map((line) => redactDiagnosticText(line)).join("\n");
+/**
+ * main/renderer 滚动日志以一次 console 调用为一条记录，但 util.inspect 会把对象
+ * 展成多行；所以范围过滤必须先按时间戳边界还原整条记录，不能逐行猜 sessionId。
+ * server durable log 是单行 JSON，同样作为一条完整记录处理。
+ */
+function collectLogRecords(
+  raw: string,
+  privacyLevel: "L1" | "L2",
+  pickedSessionIds: ReadonlySet<string>,
+): string {
+  const hadTrailingNewline = /\r?\n$/.test(raw);
+  const records = splitLogRecords(raw);
+  const kept: string[] = [];
+  for (const record of records) {
+    const recordSessionIds = extractLogSessionIds(record);
+    if (
+      recordSessionIds.size > 0 &&
+      Array.from(recordSessionIds).some((sessionId) => !pickedSessionIds.has(sessionId))
+    ) {
+      continue;
+    }
+
+    // L1 永不携带预览/摘录/尾部原文。L2 仅在整条记录明确归属于勾选会话时
+    // 保留这类字段；无法归属的全局日志仍投影，避免混合流越过会话授权。
+    const mayKeepContent = privacyLevel === "L2" && recordSessionIds.size > 0;
+    // APICallError 的 util.inspect 会把整个 requestBodyValues 展开，且该对象可能混入
+    // 超出当前勾选会话授权范围的历史消息；因此即便 L2 也不能原样保留这类不透明转储。
+    const projected = isUpstreamLlmApiErrorDump(record)
+      ? summarizeUnstructuredContentRecord(record)
+      : mayKeepContent
+        ? record
+        : redactLogContentFields(record, { failClosed: true });
+    kept.push(projected.split(/\r?\n/).map(redactDiagnosticText).join("\n"));
+  }
+  const content = kept.join("\n");
+  return hadTrailingNewline && content.length > 0 ? `${content}\n` : content;
+}
+
+function splitLogRecords(raw: string): string[] {
+  const lines = raw.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  const records: string[] = [];
+  let current: string[] = [];
+  let currentHasKnownBoundary = false;
+
+  const flush = () => {
+    if (current.length > 0) records.push(current.join("\n"));
+    current = [];
+  };
+
+  for (const line of lines) {
+    const startsKnownRecord = CONSOLE_LOG_RECORD_RE.test(line) || isSingleLineJsonObject(line);
+    if (startsKnownRecord) {
+      flush();
+      current = [line];
+      currentHasKnownBoundary = true;
+      continue;
+    }
+    if (currentHasKnownBoundary) {
+      current.push(line);
+      continue;
+    }
+    // 未知旧格式没有可靠的续行边界；逐行作为全局记录保留并做内容投影。
+    flush();
+    current = [line];
+    currentHasKnownBoundary = false;
+  }
+  flush();
+  return records;
+}
+
+function isSingleLineJsonObject(line: string): boolean {
+  if (!line.startsWith("{")) return false;
+  try {
+    const value = JSON.parse(line) as unknown;
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function extractLogSessionIds(record: string): Set<string> {
+  const out = new Set<string>();
+  const payload = stripConsoleLogPrefix(record);
+  let parsedJson = false;
+  try {
+    collectSessionIdsFromValue(JSON.parse(payload) as unknown, out);
+    parsedJson = true;
+  } catch {
+    // main/renderer 是 util.inspect 文本，不是 JSON；继续走明确键名的文本提取。
+  }
+
+  if (!parsedJson) {
+    // 先投影用户可控的正文/preview/snippet/tail，避免正文恰好写出
+    // `sessionId: '...'` 时被误当成这条日志自身的归属键。
+    const structuralRecord = redactLogContentFields(record);
+    const quoted = /(?:["']?(?:sessionId|session)["']?)\s*:\s*(["'])([^\r\n]*?)\1/gi;
+    for (const match of structuralRecord.matchAll(quoted)) addLogSessionId(out, match[2]);
+    const assigned = /\b(?:sessionId|session)=([^\s,}\]]+)/gi;
+    for (const match of structuralRecord.matchAll(assigned)) addLogSessionId(out, match[1]);
+    const bare = /\b(?:sessionId|session)\s*:\s*([A-Za-z0-9._:-]+)/gi;
+    for (const match of structuralRecord.matchAll(bare)) addLogSessionId(out, match[1]);
+    const sessionPath = /(?:\/api\/v1\/(?:external\/)?sessions\/|\/api\/v1\/export\/|\/#\/workspace\/)([^/?#\s]+)/gi;
+    for (const match of structuralRecord.matchAll(sessionPath)) addLogSessionId(out, match[1]);
+  }
+  return out;
+}
+
+function stripConsoleLogPrefix(record: string): string {
+  return record.replace(CONSOLE_LOG_RECORD_RE, "");
+}
+
+function collectSessionIdsFromValue(value: unknown, out: Set<string>): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectSessionIdsFromValue(item, out);
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (LOG_CONTENT_FIELD_RE.test(key)) continue;
+    if ((key === "sessionId" || key === "session") && typeof child === "string") {
+      addLogSessionId(out, child);
+    } else {
+      collectSessionIdsFromValue(child, out);
+    }
+  }
+}
+
+function addLogSessionId(out: Set<string>, value: string | undefined): void {
+  const normalized = value?.trim();
+  if (!normalized || normalized === "null" || normalized === "undefined" || normalized === "unknown") return;
+  out.add(normalized);
+}
+
+function redactLogContentFields(
+  record: string,
+  options: { failClosed?: boolean } = {},
+): string {
+  const prefix = CONSOLE_LOG_RECORD_RE.exec(record)?.[0] ?? "";
+  const payload = prefix ? record.slice(prefix.length) : record;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    return `${prefix}${JSON.stringify(redactLogContentValue(parsed))}`;
+  } catch {
+    // main/renderer 的 util.inspect 文本走下面的引号表达式与截断兜底。
+  }
+
+  if (options.failClosed && hasUnstructuredContentPayload(record)) {
+    return summarizeUnstructuredContentRecord(record);
+  }
+
+  const replaced = record.replace(LOG_CONTENT_EXPRESSION_RE, "$1$2'[redacted]'");
+  return replaced.split(/\r?\n/).map((line) => {
+    // 截断/损坏的日志可能缺少字符串收尾；命中内容字段名后宁可丢掉该行余部。
+    const match = LOG_CONTENT_LINE_RE.exec(line);
+    return match ? `${match[1]}'[redacted]'` : line;
+  }).join("\n");
+}
+
+function hasUnstructuredContentPayload(record: string): boolean {
+  if (LOG_BODY_FIELD_MARKER_RE.test(record)) return true;
+  return record.split(/\r?\n/).some((line) =>
+    LOG_CONTENT_FIELD_MARKER_RE.test(line) && !LOG_CONTENT_LINE_RE.test(line)
+  );
+}
+
+function isUpstreamLlmApiErrorDump(record: string): boolean {
+  return stripConsoleLogPrefix(record).startsWith("Upstream LLM API error");
+}
+
+function summarizeUnstructuredContentRecord(record: string): string {
+  const prefix = CONSOLE_LOG_RECORD_RE.exec(record)?.[0] ?? "";
+  const firstLine = record.split(/\r?\n/, 1)[0] ?? "";
+  const firstPayloadLine = prefix ? firstLine.slice(prefix.length) : firstLine;
+  const contentMarker = LOG_CONTENT_FIELD_MARKER_RE.exec(firstPayloadLine);
+  const braceIndex = firstPayloadLine.indexOf("{");
+  const cutCandidates = [
+    contentMarker?.index,
+    braceIndex >= 0 ? braceIndex : undefined,
+  ].filter((value): value is number => value !== undefined && value >= 0);
+  const headerEnd = cutCandidates.length > 0 ? Math.min(...cutCandidates) : firstPayloadLine.length;
+  const header = redactDiagnosticText(firstPayloadLine.slice(0, headerEnd)).trim().slice(0, 200) || "log record";
+  return `${prefix}${header} [content redacted:chars=${record.length}]`;
+}
+
+function redactLogContentValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(redactLogContentValue);
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = LOG_CONTENT_FIELD_RE.test(key) ? "[redacted]" : redactLogContentValue(child);
+  }
+  return out;
 }
 
 function redactFrameEntry(entry: unknown, privacyLevel: "L1" | "L2"): unknown {
@@ -736,6 +985,30 @@ function isDiagSpanLike(value: unknown): value is DiagSpan {
     typeof record.traceId === "string" &&
     typeof record.name === "string" &&
     typeof record.layer === "string";
+}
+
+function normalizeSessionIds(sessionIds: string[] | undefined): string[] {
+  return Array.from(new Set(
+    (sessionIds ?? []).filter((id) => typeof id === "string" && id.length > 0),
+  ));
+}
+
+function spanMatchesScope(span: DiagSpan, scope: SessionScope | undefined): boolean {
+  if (!scope) return true;
+  return typeof span.sessionId === "string"
+    ? scope.sessionIds.has(span.sessionId)
+    : scope.includeUnscoped;
+}
+
+function duckSpanMatchesScope(
+  row: DuckSpanRow,
+  scope: SessionScope | undefined,
+): boolean {
+  if (!scope) return true;
+  const sessionId = row.sessionId ?? stringValue(recordValue(jsonValue(row.requestContext))?.sessionId);
+  return typeof sessionId === "string"
+    ? scope.sessionIds.has(sessionId)
+    : scope.includeUnscoped;
 }
 
 async function fileExists(filePath: string): Promise<boolean> {

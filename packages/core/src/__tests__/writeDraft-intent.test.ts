@@ -448,6 +448,29 @@ describe("writeDraft intent 调度", () => {
     expect(pmToPlainText(state.docDraftCandidateDoc!)).toContain("苹果");
   });
 
+  it("嵌套列表意图只读取用户原话，不受模型自产写稿参数影响", async () => {
+    const { tool } = await makeTool();
+    streamInnerModelMock.mockResolvedValue({
+      raw: qingmlParagraph("普通说明正文"),
+      contentStartMs: 0,
+      finishReason: "stop",
+    });
+
+    const out = await run(
+      tool,
+      {
+        title: "三级嵌套列表说明",
+        outline: "请用三级嵌套列表组织内容",
+        styleHint: "使用多级清单",
+      },
+      { requestContext: new RequestContext([["userText", "请写一段普通说明"]]) },
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.nestedListReachedDepth).toBeUndefined();
+    expect(out.structuralFailures).toBeUndefined();
+  });
+
   it("三级嵌套诉求下 children 递归直接编译到三级，不继续 LLM 重构", async () => {
     const { tool, state } = await makeTool();
     streamInnerModelMock.mockResolvedValue({ raw: threeLevelListQingml(), contentStartMs: 0, finishReason: "stop" });

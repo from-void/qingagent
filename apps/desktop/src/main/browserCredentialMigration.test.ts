@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   existsSync,
   mkdirSync,
@@ -7,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -33,13 +35,52 @@ test("旧 cwd 登录态与完整 profile 迁入 userData 后不留敏感副本",
       "sensitive-profile",
     );
 
-    const result = migrateLegacyAgentBrowserData({
-      legacyDirectories: [legacyDir],
-      storageStatePath: targetState,
-      profileDir: targetProfile,
-    });
+    const chmodCalls: Array<readonly unknown[]> = [];
+    const mkdirCalls: Array<readonly unknown[]> = [];
+    const originalChmodSync = fs.chmodSync;
+    const originalMkdirSync = fs.mkdirSync;
+    fs.chmodSync = ((...args: Parameters<typeof fs.chmodSync>) => {
+      chmodCalls.push(args);
+      return originalChmodSync(...args);
+    }) as typeof fs.chmodSync;
+    fs.mkdirSync = ((...args: Parameters<typeof fs.mkdirSync>) => {
+      mkdirCalls.push(args);
+      return originalMkdirSync(...args);
+    }) as typeof fs.mkdirSync;
+    syncBuiltinESMExports();
+
+    let result;
+    try {
+      result = migrateLegacyAgentBrowserData({
+        legacyDirectories: [legacyDir],
+        storageStatePath: targetState,
+        profileDir: targetProfile,
+      });
+    } finally {
+      fs.chmodSync = originalChmodSync;
+      fs.mkdirSync = originalMkdirSync;
+      syncBuiltinESMExports();
+    }
 
     assert.deepEqual(result.failures, []);
+    assert.ok(
+      mkdirCalls.some(
+        ([target, options]) =>
+          target === userDataDir &&
+          typeof options === "object" &&
+          options !== null &&
+          (options as { mode?: number }).mode === 0o700,
+      ),
+      "迁移目标父目录必须以 0700 创建",
+    );
+    assert.ok(
+      chmodCalls.some(([target, mode]) => target === targetState && mode === 0o600),
+      "迁入的登录态文件必须收紧为 0600",
+    );
+    assert.ok(
+      chmodCalls.some(([target, mode]) => target === targetProfile && mode === 0o700),
+      "迁入的浏览器 profile 必须收紧为 0700",
+    );
     assert.equal(readFileSync(targetState, "utf8"), '{"cookies":[{"name":"sid"}]}');
     assert.equal(
       readFileSync(
@@ -51,6 +92,53 @@ test("旧 cwd 登录态与完整 profile 迁入 userData 后不留敏感副本",
     assert.equal(existsSync(oldState), false);
     assert.equal(existsSync(oldProfile), false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("跨卷迁移成功但旧登录态清理失败时记录可告知的 failure", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "qingagent-browser-cleanup-failure-"));
+  const legacyDir = path.join(root, "legacy-system-dir");
+  const userDataDir = path.join(root, "user-data");
+  const oldState = path.join(legacyDir, ".qingagent-browser-state.json");
+  const targetState = path.join(userDataDir, ".qingagent-browser-state.json");
+  const targetProfile = path.join(userDataDir, ".qingagent-browser-profile");
+  const originalRenameSync = fs.renameSync;
+  const originalUnlinkSync = fs.unlinkSync;
+  try {
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(oldState, "legacy-state");
+
+    fs.renameSync = ((source, target) => {
+      if (source === oldState && target === targetState) {
+        throw Object.assign(new Error("fixture cross-device rename"), {
+          code: "EXDEV",
+        });
+      }
+      return originalRenameSync(source, target);
+    }) as typeof fs.renameSync;
+    fs.unlinkSync = ((target) => {
+      if (target === oldState) throw new Error("fixture unlink denied");
+      return originalUnlinkSync(target);
+    }) as typeof fs.unlinkSync;
+    syncBuiltinESMExports();
+
+    const result = migrateLegacyAgentBrowserData({
+      legacyDirectories: [legacyDir],
+      storageStatePath: targetState,
+      profileDir: targetProfile,
+    });
+
+    assert.deepEqual(result.migrated, [oldState]);
+    assert.deepEqual(result.failures, [
+      { path: oldState, reason: "fixture unlink denied" },
+    ]);
+    assert.equal(readFileSync(targetState, "utf8"), "legacy-state");
+    assert.equal(readFileSync(oldState, "utf8"), "legacy-state");
+  } finally {
+    fs.renameSync = originalRenameSync;
+    fs.unlinkSync = originalUnlinkSync;
+    syncBuiltinESMExports();
     rmSync(root, { recursive: true, force: true });
   }
 });

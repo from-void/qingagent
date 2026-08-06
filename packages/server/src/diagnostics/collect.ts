@@ -20,13 +20,24 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const LOG_FILE_RE = /^(server|main|renderer)-\d{4}-\d{2}-\d{2}\.log$/;
 const SPAN_FILE_RE = /^spans-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const CONSOLE_LOG_RECORD_RE = /^\[\d{4}-\d{2}-\d{2}T[^\]]+] \[[A-Z]+] /;
-const LOG_CONTENT_FIELD_NAME = "[A-Za-z0-9_]*(?:Preview|Excerpt|Snippet|Tail)";
+const LOG_BODY_FIELD_NAME = "(?:content|text|qingml|reasoning_content)";
+const LOG_CONTENT_FIELD_NAME =
+  `(?:[A-Za-z0-9_]*(?:Preview|Excerpt|Snippet|Tail)|${LOG_BODY_FIELD_NAME})`;
 const LOG_CONTENT_FIELD_RE = new RegExp(`^(?:${LOG_CONTENT_FIELD_NAME})$`, "i");
+const LOG_FIELD_MARKER_START = String.raw`(?:^|[\s{,])(?:\\?["']?)`;
+const LOG_BODY_FIELD_MARKER_RE = new RegExp(
+  String.raw`${LOG_FIELD_MARKER_START}(?:${LOG_BODY_FIELD_NAME})(?:\\?["']?)\s*:\s*`,
+  "i",
+);
+const LOG_CONTENT_FIELD_MARKER_RE = new RegExp(
+  String.raw`${LOG_FIELD_MARKER_START}(?:${LOG_CONTENT_FIELD_NAME})(?:\\?["']?)\s*:\s*`,
+  "i",
+);
 const QUOTED_LOG_VALUE = String.raw`(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\`(?:\\.|[^\`\\])*\`)`;
 const LOG_CONTENT_EXPRESSION_RE = new RegExp(
-  `((?:["']?)(?:${LOG_CONTENT_FIELD_NAME})(?:["']?)\\s*:\\s*)` +
+  `(^|[\\s{,])((?:["']?)(?:${LOG_CONTENT_FIELD_NAME})(?:["']?)\\s*:\\s*)` +
     `${QUOTED_LOG_VALUE}(?:\\s*\\+\\s*(?:\\r?\\n\\s*)?${QUOTED_LOG_VALUE})*`,
-  "gi",
+  "gim",
 );
 const LOG_CONTENT_LINE_RE = new RegExp(
   `^(\\s*(?:["']?)(?:${LOG_CONTENT_FIELD_NAME})(?:["']?)\\s*:\\s*).*$`,
@@ -518,7 +529,13 @@ function collectLogRecords(
     // L1 永不携带预览/摘录/尾部原文。L2 仅在整条记录明确归属于勾选会话时
     // 保留这类字段；无法归属的全局日志仍投影，避免混合流越过会话授权。
     const mayKeepContent = privacyLevel === "L2" && recordSessionIds.size > 0;
-    const projected = mayKeepContent ? record : redactLogContentFields(record);
+    // APICallError 的 util.inspect 会把整个 requestBodyValues 展开，且该对象可能混入
+    // 超出当前勾选会话授权范围的历史消息；因此即便 L2 也不能原样保留这类不透明转储。
+    const projected = isUpstreamLlmApiErrorDump(record)
+      ? summarizeUnstructuredContentRecord(record)
+      : mayKeepContent
+        ? record
+        : redactLogContentFields(record, { failClosed: true });
     kept.push(projected.split(/\r?\n/).map(redactDiagnosticText).join("\n"));
   }
   const content = kept.join("\n");
@@ -580,7 +597,7 @@ function extractLogSessionIds(record: string): Set<string> {
   }
 
   if (!parsedJson) {
-    // 先投影用户可控的 preview/snippet/tail，避免正文恰好写出
+    // 先投影用户可控的正文/preview/snippet/tail，避免正文恰好写出
     // `sessionId: '...'` 时被误当成这条日志自身的归属键。
     const structuralRecord = redactLogContentFields(record);
     const quoted = /(?:["']?(?:sessionId|session)["']?)\s*:\s*(["'])([^\r\n]*?)\1/gi;
@@ -621,7 +638,10 @@ function addLogSessionId(out: Set<string>, value: string | undefined): void {
   out.add(normalized);
 }
 
-function redactLogContentFields(record: string): string {
+function redactLogContentFields(
+  record: string,
+  options: { failClosed?: boolean } = {},
+): string {
   const prefix = CONSOLE_LOG_RECORD_RE.exec(record)?.[0] ?? "";
   const payload = prefix ? record.slice(prefix.length) : record;
   try {
@@ -630,12 +650,43 @@ function redactLogContentFields(record: string): string {
   } catch {
     // main/renderer 的 util.inspect 文本走下面的引号表达式与截断兜底。
   }
-  const replaced = record.replace(LOG_CONTENT_EXPRESSION_RE, "$1'[redacted]'");
+
+  if (options.failClosed && hasUnstructuredContentPayload(record)) {
+    return summarizeUnstructuredContentRecord(record);
+  }
+
+  const replaced = record.replace(LOG_CONTENT_EXPRESSION_RE, "$1$2'[redacted]'");
   return replaced.split(/\r?\n/).map((line) => {
     // 截断/损坏的日志可能缺少字符串收尾；命中内容字段名后宁可丢掉该行余部。
     const match = LOG_CONTENT_LINE_RE.exec(line);
     return match ? `${match[1]}'[redacted]'` : line;
   }).join("\n");
+}
+
+function hasUnstructuredContentPayload(record: string): boolean {
+  if (LOG_BODY_FIELD_MARKER_RE.test(record)) return true;
+  return record.split(/\r?\n/).some((line) =>
+    LOG_CONTENT_FIELD_MARKER_RE.test(line) && !LOG_CONTENT_LINE_RE.test(line)
+  );
+}
+
+function isUpstreamLlmApiErrorDump(record: string): boolean {
+  return stripConsoleLogPrefix(record).startsWith("Upstream LLM API error");
+}
+
+function summarizeUnstructuredContentRecord(record: string): string {
+  const prefix = CONSOLE_LOG_RECORD_RE.exec(record)?.[0] ?? "";
+  const firstLine = record.split(/\r?\n/, 1)[0] ?? "";
+  const firstPayloadLine = prefix ? firstLine.slice(prefix.length) : firstLine;
+  const contentMarker = LOG_CONTENT_FIELD_MARKER_RE.exec(firstPayloadLine);
+  const braceIndex = firstPayloadLine.indexOf("{");
+  const cutCandidates = [
+    contentMarker?.index,
+    braceIndex >= 0 ? braceIndex : undefined,
+  ].filter((value): value is number => value !== undefined && value >= 0);
+  const headerEnd = cutCandidates.length > 0 ? Math.min(...cutCandidates) : firstPayloadLine.length;
+  const header = redactDiagnosticText(firstPayloadLine.slice(0, headerEnd)).trim().slice(0, 200) || "log record";
+  return `${prefix}${header} [content redacted:chars=${record.length}]`;
 }
 
 function redactLogContentValue(value: unknown): unknown {

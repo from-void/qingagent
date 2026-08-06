@@ -176,9 +176,12 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
       lastTouched: number;
       completedAt: number | null;
     }>();
+    const recordKey = (sessionId: string, id: string): string =>
+      JSON.stringify([sessionId, id]);
     const store: ClientMessageIdempotencyStore = {
       async claim(input) {
-        const current = records.get(input.id);
+        const key = recordKey(input.sessionId, input.id);
+        const current = records.get(key);
         if (current) return { claimed: false, record: current };
         const record = {
           id: input.id,
@@ -188,11 +191,11 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
           lastTouched: input.now,
           completedAt: null,
         };
-        records.set(input.id, record);
+        records.set(key, record);
         return { claimed: true, record };
       },
       async touch(input) {
-        const current = records.get(input.id);
+        const current = records.get(recordKey(input.sessionId, input.id));
         if (
           current?.sessionId !== input.sessionId ||
           current.messageId !== input.messageId ||
@@ -205,7 +208,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         return true;
       },
       async complete(input) {
-        const current = records.get(input.id);
+        const current = records.get(recordKey(input.sessionId, input.id));
         if (
           current?.sessionId !== input.sessionId ||
           current.messageId !== input.messageId ||
@@ -219,7 +222,8 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         return true;
       },
       async release(input) {
-        const current = records.get(input.id);
+        const key = recordKey(input.sessionId, input.id);
+        const current = records.get(key);
         if (
           current?.sessionId !== input.sessionId ||
           current.messageId !== input.messageId ||
@@ -227,7 +231,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         ) {
           return false;
         }
-        records.delete(input.id);
+        records.delete(key);
         return true;
       },
     };
@@ -240,7 +244,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     vi.restoreAllMocks();
   });
 
-  it("两个会话并发提交同一 clientMessageId 时只入队一次", async () => {
+  it("两个会话先后提交同一 clientMessageId 时分别入队且互不判 duplicate", async () => {
     let finishCompletion!: () => void;
     const completion = new Promise<never>((_resolve) => {
       finishCompletion = () => {
@@ -265,10 +269,10 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         },
       });
 
-    const responses = await Promise.all([
-      send("cloned-session-a"),
-      send("cloned-session-b"),
-    ]);
+    const responses = [
+      await send("cloned-session-a"),
+      await send("cloned-session-b"),
+    ];
     const bodies = await Promise.all(
       responses.map((response) => response.json()) as Array<Promise<{
         accepted: boolean;
@@ -279,16 +283,20 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     );
 
     expect(responses.map((response) => response.status)).toEqual([200, 200]);
-    expect(submitQueued).toHaveBeenCalledTimes(1);
-    expect(bodies.filter((body) => body.duplicate === true)).toHaveLength(1);
-    expect(
-      bodies.find((body) => body.duplicate === true)?.sessionId,
-    ).toBe(
-      submitQueued.mock.calls[0]?.[0],
-    );
-    expect(
-      bodies.find((body) => body.duplicate === true)?.messageId,
-    ).toBe("cloned-first-message");
+    expect(submitQueued).toHaveBeenCalledTimes(2);
+    expect(submitQueued.mock.calls.map((call) => call[0]).sort()).toEqual([
+      "cloned-session-a",
+      "cloned-session-b",
+    ]);
+    expect(bodies).toEqual([
+      expect.objectContaining({
+        accepted: true,
+      }),
+      expect.objectContaining({
+        accepted: true,
+      }),
+    ]);
+    expect(bodies.every((body) => body.duplicate !== true)).toBe(true);
     finishCompletion();
     await Promise.resolve();
   });
@@ -311,6 +319,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     });
     const maintainedFailedTurn = clientMessageIdempotency.maintain(
       clientMessageId,
+      sessionId,
       firstClaim.token,
       failedTurnCompletion,
     );
@@ -375,6 +384,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     expect(releaseClaim).toHaveBeenCalledOnce();
     expect(releaseClaim).toHaveBeenCalledWith(
       clientMessageId,
+      sessionId,
       firstClaim.token,
     );
 

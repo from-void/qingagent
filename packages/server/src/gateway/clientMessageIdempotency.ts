@@ -86,6 +86,10 @@ function clientMessageTurnCompleted(frames: readonly LoggedFrame[]): boolean {
   return terminalKind === "done";
 }
 
+function claimKey(sessionId: string, clientMessageId: string): string {
+  return JSON.stringify([sessionId, clientMessageId]);
+}
+
 export class ClientMessageIdempotencyRegistry {
   private readonly claims = new Map<string, ClientMessageClaim>();
   private tokenSequence = 0;
@@ -105,7 +109,8 @@ export class ClientMessageIdempotencyRegistry {
   ): Promise<ClientMessageClaimResult> {
     this.prune();
     const claimedAt = this.now();
-    const current = this.claims.get(clientMessageId);
+    const key = claimKey(sessionId, clientMessageId);
+    const current = this.claims.get(key);
     if (current && current.expiresAt > claimedAt) {
       return {
         kind: "duplicate",
@@ -119,7 +124,7 @@ export class ClientMessageIdempotencyRegistry {
       messageId,
       now: claimedAt,
     });
-    const raced = this.claims.get(clientMessageId);
+    const raced = this.claims.get(key);
     if (!claim.claimed && raced && raced.expiresAt > this.now()) {
       return {
         kind: "duplicate",
@@ -130,7 +135,7 @@ export class ClientMessageIdempotencyRegistry {
     const token = claim.claimed
       ? `${claim.record.createdAt}:${this.tokenSequence += 1}`
       : null;
-    this.claims.set(clientMessageId, {
+    this.claims.set(key, {
       sessionId: claim.record.sessionId,
       messageId: claim.record.messageId,
       token,
@@ -157,11 +162,12 @@ export class ClientMessageIdempotencyRegistry {
 
   maintain(
     clientMessageId: string,
+    sessionId: string,
     token: string,
     completion: Promise<LoggedFrame[]>,
   ): Promise<LoggedFrame[]> {
     const heartbeat = setInterval(() => {
-      void this.touch(clientMessageId, token).catch(() => {
+      void this.touch(clientMessageId, sessionId, token).catch(() => {
         // 在途 touch 是防误清理的附加保护；单次失败交给后续周期重试。
       });
     }, CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS);
@@ -171,9 +177,9 @@ export class ClientMessageIdempotencyRegistry {
       clearInterval(heartbeat);
       try {
         if (completed) {
-          await this.complete(clientMessageId, token);
+          await this.complete(clientMessageId, sessionId, token);
         } else {
-          await this.release(clientMessageId, token);
+          await this.release(clientMessageId, sessionId, token);
         }
       } catch {
         // 命令已经入队，幂等状态收尾失败不能覆盖真实执行结果。
@@ -193,11 +199,13 @@ export class ClientMessageIdempotencyRegistry {
 
   async release(
     clientMessageId: string,
+    sessionId: string,
     token: string,
   ): Promise<void> {
-    const current = this.claims.get(clientMessageId);
+    const key = claimKey(sessionId, clientMessageId);
+    const current = this.claims.get(key);
     if (current?.token === token) {
-      this.claims.delete(clientMessageId);
+      this.claims.delete(key);
       await this.store.release({
         id: clientMessageId,
         sessionId: current.sessionId,
@@ -209,9 +217,11 @@ export class ClientMessageIdempotencyRegistry {
 
   private async touch(
     clientMessageId: string,
+    sessionId: string,
     token: string,
   ): Promise<void> {
-    const current = this.claims.get(clientMessageId);
+    const key = claimKey(sessionId, clientMessageId);
+    const current = this.claims.get(key);
     if (current?.token !== token || current.completedAt !== null) return;
     const touchedAt = this.now();
     const touched = await this.store.touch({
@@ -221,7 +231,7 @@ export class ClientMessageIdempotencyRegistry {
       createdAt: current.createdAt,
       now: touchedAt,
     });
-    const latest = this.claims.get(clientMessageId);
+    const latest = this.claims.get(key);
     if (touched && latest?.token === token && latest.completedAt === null) {
       latest.lastTouched = Math.max(latest.lastTouched, touchedAt);
       latest.expiresAt = recordExpiresAt(latest);
@@ -230,9 +240,11 @@ export class ClientMessageIdempotencyRegistry {
 
   private async complete(
     clientMessageId: string,
+    sessionId: string,
     token: string,
   ): Promise<void> {
-    const current = this.claims.get(clientMessageId);
+    const key = claimKey(sessionId, clientMessageId);
+    const current = this.claims.get(key);
     if (current?.token !== token || current.completedAt !== null) return;
     const completedAt = this.now();
     const completed = await this.store.complete({
@@ -242,7 +254,7 @@ export class ClientMessageIdempotencyRegistry {
       createdAt: current.createdAt,
       now: completedAt,
     });
-    const latest = this.claims.get(clientMessageId);
+    const latest = this.claims.get(key);
     if (completed && latest?.token === token && latest.completedAt === null) {
       latest.token = null;
       latest.lastTouched = Math.max(latest.lastTouched, completedAt);
@@ -268,19 +280,19 @@ export class ClientMessageIdempotencyRegistry {
 
   private prune(): void {
     const currentTime = this.now();
-    for (const [clientMessageId, claim] of this.claims) {
+    for (const [key, claim] of this.claims) {
       if (claim.expiresAt <= currentTime) {
-        this.claims.delete(clientMessageId);
+        this.claims.delete(key);
       }
     }
   }
 
   private trim(): void {
     if (this.claims.size <= CLIENT_MESSAGE_ID_MAX_ENTRIES) return;
-    for (const [clientMessageId, claim] of this.claims) {
+    for (const [key, claim] of this.claims) {
       if (this.claims.size <= CLIENT_MESSAGE_ID_MAX_ENTRIES) return;
       // 活跃项维系 SQLite touch，不能为满足内存上限而驱逐；完成项可安全按需重读。
-      if (claim.completedAt !== null) this.claims.delete(clientMessageId);
+      if (claim.completedAt !== null) this.claims.delete(key);
     }
   }
 }

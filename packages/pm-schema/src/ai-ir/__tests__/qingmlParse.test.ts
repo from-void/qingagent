@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   aiBlockSchema,
@@ -7,6 +8,15 @@ import {
   type AiBlock,
 } from "../aiIrSchema";
 import { qingmlParse, qingmlParseFragment, qingmlTagSkeleton } from "../qingmlParse";
+
+const realDocumentWrapperOutput = readFileSync(
+  new URL("./fixtures/document-wrapper.qingml", import.meta.url),
+  "utf8",
+);
+
+function badBlockWarnings(result: ReturnType<typeof qingmlParse>) {
+  return result.warnings.filter((warning) => warning.severity === "bad-block");
+}
 
 describe("qingmlParse", () => {
   it("解析 title、三级嵌套列表和 taskList checked", () => {
@@ -322,6 +332,73 @@ describe("qingmlParse", () => {
     });
   });
 
+  it("真实模型输出仅有 document 未知外壳时剥掉一层并恢复全部块", () => {
+    const result = qingmlParse(realDocumentWrapperOutput);
+
+    expectValidBlocks(result.blocks);
+    expect(result.blocks.length).toBeGreaterThanOrEqual(50);
+    expect(badBlockWarnings(result)).toEqual([]);
+    const recovery = result.warnings.find((warning) => warning.kind === "document-wrapper-stripped");
+    expect(recovery).toMatchObject({
+      severity: "harmless",
+      location: {
+        startOffset: expect.any(Number),
+        endOffset: expect.any(Number),
+      },
+      diagnostic: {
+        tagSkeleton: expect.stringContaining("<unknown><h1>"),
+        badBlockCountBefore: expect.any(Number),
+        badBlockCountAfter: 0,
+      },
+    });
+    expect(JSON.stringify(recovery)).not.toMatch(/明清徽州|土地流转|宗族治理/);
+  });
+
+  it("未知外壳名换成 article 仍按形态剥壳，不依赖 document 标签名", () => {
+    const articleWrapped = realDocumentWrapperOutput
+      .replace(/^<document>/, "<article>")
+      .replace(/<\/document>\s*$/, "</article>");
+    const result = qingmlParse(articleWrapped);
+
+    expectValidBlocks(result.blocks);
+    expect(result.blocks.length).toBeGreaterThanOrEqual(50);
+    expect(badBlockWarnings(result)).toEqual([]);
+    expect(result.warnings).toContainEqual(expect.objectContaining({
+      kind: "document-wrapper-stripped",
+      severity: "harmless",
+    }));
+  });
+
+  it("剥掉未知外壳后 bad-block 反而增加时保留原解析结果", () => {
+    const wrapped = '<article><table><tr><td colspan="0" rowspan="0"><p>正文';
+    const stripped = wrapped.replace("<article>", "");
+    const strippedResult = qingmlParse(stripped);
+    const result = qingmlParse(wrapped);
+
+    expect(badBlockWarnings(strippedResult).length).toBeGreaterThan(badBlockWarnings(result).length);
+    expect(result.blocks).toEqual([{ type: "paragraph", runs: [{ text: "正文" }] }]);
+    expect(result.warnings.some((warning) => warning.kind === "unknown-structural-tag")).toBe(true);
+    expect(result.warnings.some((warning) => warning.kind === "document-wrapper-stripped")).toBe(false);
+
+    const inlineDetails = result.warnings
+      .filter((warning) => warning.kind === "inline-block-flattened")
+      .map((warning) => warning.detail)
+      .join("\n");
+    expect(inlineDetails).toContain("<article> 内");
+    expect(inlineDetails).not.toContain("<inline>");
+  });
+
+  it("无真实容器标签可报时，行内块级错误使用不指名描述而非虚构 inline 标签", () => {
+    const result = qingmlParse("<li><p>越界结构</p></li>");
+    const details = result.warnings
+      .filter((warning) => warning.kind === "inline-block-flattened")
+      .map((warning) => warning.detail)
+      .join("\n");
+
+    expect(details).toContain("顶层行内内容中出现块级/结构标签 <li>");
+    expect(details).not.toContain("<inline>");
+  });
+
   it("区分 fence/前导话无害剥壳、结构化 callout 和 CJK 空白折叠", () => {
     const fenced = qingmlParse("前导\n```qingml\n<p>正文</p>\n```\n收尾");
     expectValidBlocks(fenced.blocks);
@@ -343,7 +420,15 @@ describe("qingmlParse", () => {
 
     const structuralUnknown = qingmlParse(`<foo><ul><li>结构</li></ul></foo>`);
     expectValidBlocks(structuralUnknown.blocks);
-    expect(structuralUnknown.warnings.some((warning) => warning.kind === "unknown-structural-tag" && warning.severity === "bad-block")).toBe(true);
+    expect(structuralUnknown.blocks).toEqual([{
+      type: "bulletList",
+      items: [{ runs: [{ text: "结构" }] }],
+    }]);
+    expect(badBlockWarnings(structuralUnknown)).toEqual([]);
+    expect(structuralUnknown.warnings).toContainEqual(expect.objectContaining({
+      kind: "document-wrapper-stripped",
+      severity: "harmless",
+    }));
 
     const cjk = qingmlParse(`<p>中文　全角  连续\t空白</p>`);
     expectValidBlocks(cjk.blocks);

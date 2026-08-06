@@ -200,6 +200,19 @@ describe("system prompt S3", () => {
     }
   });
 
+  it("writeDraft 输出契约明确禁止整篇 QingML 外壳并给出正反例", () => {
+    const start = AIIR_SYSTEM_PROMPT.indexOf("## writeDraft QingML 生成总规");
+    const end = AIIR_SYSTEM_PROMPT.indexOf("### 文学排版约定", start);
+    const writeDraftContract = AIIR_SYSTEM_PROMPT.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(writeDraftContract).toContain("整篇输出直接以块级标签开始");
+    expect(writeDraftContract).toContain("<h1>标题</h1><p>正文</p>");
+    expect(writeDraftContract).toContain("<document><h1>标题</h1><p>正文</p></document>");
+    expect(writeDraftContract).toContain("不要在最外层再包任何容器标签");
+  });
+
   it("主 system 的审查段只保留总技能路由和纯批注兜底", () => {
     const prompt = AIIR_SYSTEM_PROMPT;
     const start = prompt.indexOf("**审查统一路由**");

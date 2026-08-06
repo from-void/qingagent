@@ -5,7 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const vendorRoot = path.resolve(scriptDir, "..", "public", "drawio");
+const testVendorRoot =
+  process.env.NODE_ENV === "test" && process.env.VITEST === "true"
+    ? process.env.QINGAGENT_DRAWIO_VENDOR_ROOT_TEST?.trim()
+    : undefined;
+const vendorRoot = testVendorRoot
+  ? path.resolve(testVendorRoot)
+  : path.resolve(scriptDir, "..", "public", "drawio");
 const maxVendorBytes = 25 * 1024 * 1024;
 const requiredFiles = [
   "LICENSE",

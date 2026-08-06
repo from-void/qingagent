@@ -7,7 +7,8 @@ import type { AskUserSpec } from "../data/protocol";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { renderMermaid } from "./mermaidRender";
 
-vi.mock("./mermaidRender", () => ({
+vi.mock("./mermaidRender", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./mermaidRender")>(),
   renderMermaid: vi.fn(async (source: string) => `<svg data-source="${source}"></svg>`),
 }));
 

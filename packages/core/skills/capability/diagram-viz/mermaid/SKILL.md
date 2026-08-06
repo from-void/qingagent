@@ -40,9 +40,20 @@ summary: 用自动布局生成易维护的 Mermaid 图表。
     class 未激活,激活 ink
   ```
 
+## 着色 / 主题配方适用矩阵
+
+| 配方 | flowchart | stateDiagram-v2 | classDiagram | sequenceDiagram / erDiagram / gantt / pie / mindmap |
+|---|---|---|---|---|
+| `%%{init: ... themeVariables ...}%%` | 适用 | 适用 | 适用 | 适用；只使用该图型实际支持的主题变量 |
+| `classDef` + `class <id> <style>` | 适用 | 适用，但状态 id 与样式名必须是 ASCII | **禁止** | 禁止套用 |
+| `subgraph` + `clusterBkg/clusterBorder` | 适用 | 不适用 | 不适用 | 不适用 |
+
+- `palettes.md` 中带 `flowchart LR` 的 `classDef` 配方只适用于 flowchart；用于 stateDiagram-v2 时必须遵守上面的 ASCII 状态 ID 规则，不能机械复制到其他图型。
+- **classDiagram 铁则**：`class User` 是声明类的语法关键字，不是给 `User` 套样式；classDiagram 中禁止追加 `classDef ink ...` 或 `class Document,User ink` 一类 flowchart 着色语句。类图只用 `%%{init: ... themeVariables ...}%%` 与 classDiagram 支持的主题变量统一设色；需要超出主题能力的逐类配色时，明确保持默认主题，不编造语法。
+
 ## 基础风格映射
 
-每张图最多定义四个语义类，不逐节点写内联 `style`。完整色板值见 `palettes.md`，结构如下：
+flowchart / stateDiagram-v2 每张图最多定义四个语义类，不逐节点写内联 `style`。完整色板值见 `palettes.md`，结构如下（此范本是 flowchart，不得套到 classDiagram）：
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'background':'#FAF6EC','primaryColor':'#FFFFFF','primaryBorderColor':'#2F2A22','primaryTextColor':'#2F2A22','mainBkg':'#FFFFFF','nodeBorder':'#2F2A22','clusterBkg':'#EFE7D6','clusterBorder':'#2F2A22','lineColor':'#B3A791','edgeLabelBackground':'#FFFFFF','textColor':'#2F2A22','fontSize':'14px'}}}%%

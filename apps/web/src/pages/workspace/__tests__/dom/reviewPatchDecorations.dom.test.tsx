@@ -495,6 +495,48 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector(".wf-blockmark-del")).toBeNull();
   });
 
+  it("审阅态块级替换沿用文档顺序脚注编号，不退化为 ※", async () => {
+    const baselineDoc = footnoteDoc();
+    const afterSecond = {
+      type: "paragraph",
+      attrs: { blockId: "p-2" },
+      content: [
+        { type: "text", text: "第二处已修改" },
+        { type: "footnoteReference", attrs: { id: "fn-b", note: "来源乙（更新）" } },
+      ],
+    } as import("@qingagent/pm-schema").PmBlockNode;
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)}
+          editable
+          interactiveEditable={false}
+          showPatches
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          reviewBlockPatches={[blockPatch("footnote-rep", "replace", {
+            anchorBlockId: "p-2",
+            pmNodes: [afterSecond],
+          })]}
+          reviewAppliedPatches={[appliedPatch("footnote-rep", 5, "replace", "第二处", "第二处已修改")]}
+          patchMeta={new Map([
+            ["footnote-rep", { before: "第二处", after: "第二处已修改", kind: "replace", index: 5 }],
+          ])}
+        />,
+      );
+    });
+
+    await flush();
+
+    const marker = host.querySelector(
+      '[data-patch-id="footnote-rep"].wf-blockmark.insert [data-footnote-id="fn-b"]',
+    );
+    expect(marker?.getAttribute("data-footnote-number")).toBe("2");
+    expect(marker?.getAttribute("aria-label")).toBe("脚注 2：来源乙（更新）");
+    expect(marker?.getAttribute("data-footnote-number")).not.toBe("※");
+  });
+
   it("块级新增图表走 PmBlockView 渲染出图表节点(而非 raw innerHTML 空 div/源码)", async () => {
     const baselineDoc = paragraphDoc("正文");
     const applied = appliedPatch("block-diag", 5, "insert", "", "流程图");
@@ -1719,6 +1761,31 @@ function headingDoc(text: string): PmDoc {
       attrs: { blockId: "heading-1", level: 2 },
       content: [{ type: "text", text }],
     }],
+  } as PmDoc;
+}
+
+function footnoteDoc(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-1" },
+        content: [
+          { type: "text", text: "第一处" },
+          { type: "footnoteReference", attrs: { id: "fn-a", note: "来源甲" } },
+        ],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-2" },
+        content: [
+          { type: "text", text: "第二处" },
+          { type: "footnoteReference", attrs: { id: "fn-b", note: "来源乙" } },
+        ],
+      },
+    ],
   } as PmDoc;
 }
 

@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   refresh: vi.fn(),
   toast: vi.fn(),
   confirm: vi.fn(),
+  scrollIntoView: vi.fn(),
 }));
 
 vi.mock("../../system", () => ({
@@ -96,6 +97,11 @@ beforeEach(() => {
   h.cancel.mockReset();
   h.disconnect.mockReset();
   h.confirm.mockReset();
+  h.scrollIntoView.mockReset();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: h.scrollIntoView,
+  });
 });
 
 afterEach(() => {
@@ -103,6 +109,7 @@ afterEach(() => {
   host.remove();
   vi.clearAllMocks();
   vi.useRealTimers();
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
 });
 
 describe("ConnectionsPanel", () => {
@@ -196,6 +203,7 @@ describe("ConnectionsPanel", () => {
     expect(host.querySelector('[data-component="AuthCard"]')).toBeTruthy();
     expect(host.textContent).toContain("ABCD-EFGH");
     expect(host.textContent).toContain("等待授权");
+    expect(h.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "nearest" });
   });
 
   it("start 失败沿用 toast 错误通道", async () => {

@@ -13,7 +13,7 @@ import {
   type PmDiagramLang,
 } from "@qingagent/pm-schema";
 import { useToast } from "../../../system";
-import { renderMermaid } from "./mermaidRender";
+import { diagramErrorMessage, renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import { DiagramSvgView } from "./MermaidPreview";
@@ -29,21 +29,11 @@ import "./DiagramView.css";
 // - 渲染失败显示错误 + 源码,绝不让坏图表把编辑器搞崩。
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
-const DIAGRAM_ERROR_SUMMARY_MAX_CHARS = 180;
 export const DIAGRAM_VISUAL_WRITE_META = "qingagent:diagram-visual-write";
 
 export interface DiagramInteractionBridge {
   canRequestDiagramInteraction: () => boolean;
   requestDiagramInteraction: () => Promise<boolean>;
-}
-
-function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
-  const title = lang === "drawio" ? "draw.io 图表无法解析" : "Mermaid 语法错误";
-  const oneLine = error.replace(/\s+/g, " ").trim();
-  const summary = oneLine.length > DIAGRAM_ERROR_SUMMARY_MAX_CHARS
-    ? `${oneLine.slice(0, DIAGRAM_ERROR_SUMMARY_MAX_CHARS - 1)}…`
-    : oneLine;
-  return `${title}${summary ? `：${summary}` : ""}。双击进入编辑器修正`;
 }
 
 function DiagramComponent({
@@ -589,7 +579,7 @@ function DiagramComponent({
       ) : (
         <div
           ref={viewRef}
-          className="pm-diagram-view"
+          className={`pm-diagram-view${error ? " pm-diagram-view--error" : ""}`}
           style={
             storedHeight || storedWidth
               ? { ...(storedHeight ? { height: storedHeight } : {}), ...(storedWidth ? { width: storedWidth } : {}) }
@@ -656,7 +646,7 @@ function DiagramComponent({
           {emptyDrawio ? (
             <div className="pm-diagram-empty">空图表（还没有内容，双击编辑）</div>
           ) : error ? (
-            <pre className="pm-diagram-error">{diagramErrorMessage(lang, error)}{"\n\n"}{source}</pre>
+            <pre className="pm-diagram-error">{diagramErrorMessage(lang, error, true)}{"\n\n"}{source}</pre>
           ) : (
             <DiagramRenderer
               source={source}

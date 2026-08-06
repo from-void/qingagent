@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CaretIcon } from "../../system/icons";
 import type {
   ConnectorAuthPresentation,
@@ -300,11 +300,20 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   // 未提供回调时把 selectedId 当作初始值，避免半受控调用导致返回按钮失效。
   const [localId, setLocalId] = useState<ConnectorId | null>(controlledId ?? null);
   const [busy, setBusy] = useState(false);
+  const authCancelRef = useRef<HTMLDivElement>(null);
   const selectedId = onSelectedIdChange ? controlledId ?? null : localId;
+  const selected = selectedId ? connectors.find((item) => item.id === selectedId) ?? null : null;
+  const selectedAuthSession = selected ? pendingSessions[selected.id] ?? null : null;
+  const selectedAuthCard = selectedAuthSession?.card ?? null;
   const select = (id: ConnectorId | null) => {
     setLocalId(id);
     onSelectedIdChange?.(id);
   };
+
+  useEffect(() => {
+    if (!selectedAuthSession?.pendingId) return;
+    authCancelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedAuthSession?.pendingId]);
 
   if (capabilities?.connectors?.mutationEnabled === false) {
     return (
@@ -330,7 +339,6 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
     }
   };
 
-  const selected = selectedId ? connectors.find((item) => item.id === selectedId) ?? null : null;
   if (selectedId && selected) {
     const guide = selected.id === "feishu"
       ? "也可以在对话里说「连飞书」发起。"
@@ -343,8 +351,6 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       : ["disconnected", "needs_reauth"]).includes(selected.status.state);
     const canProbe = selected.status.canProbe && !canStart;
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
-    const selectedAuthSession = pendingSessions[selected.id] ?? null;
-    const selectedAuthCard = selectedAuthSession?.card ?? null;
     const visibleState: ConnectorState = selectedAuthCard ? "pending" : presentationState(selected);
     const initiate = async () => {
       setBusy(true);
@@ -418,7 +424,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
                 void refresh().catch(() => undefined);
               }}
             /></div>
-            <div className="cnd-cancel">
+            <div ref={authCancelRef} className="cnd-cancel">
               <button
                 type="button"
                 className="sm-btn"

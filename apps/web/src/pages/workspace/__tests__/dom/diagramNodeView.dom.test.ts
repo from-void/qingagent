@@ -2021,12 +2021,12 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const err = editor.view.dom.querySelector(".pm-diagram-error");
       expect(err).not.toBeNull();
       const [message] = err!.textContent!.split("\n\n");
-      expect(message).toContain("Mermaid 语法错误");
-      expect(message).toContain("line 1");
-      expect(message).toContain("Expecting 'graph'");
-      expect(message).toContain("双击进入编辑器修正");
+      expect(message).toBe("Mermaid 语法错误（第 1 行）。双击进入编辑器修正");
+      expect(message?.match(/Mermaid 语法错误/g)).toHaveLength(1);
       expect(message).not.toContain("\n");
       expect(err!.textContent).toContain("flowchar TD");
+      expect(editor.view.dom.querySelector(".pm-diagram-view")?.classList.contains("pm-diagram-view--error")).toBe(true);
+      expect(diagramViewCss).toMatch(/\.pm-diagram-view--error\s*\{[^}]*height:\s*auto\s*!important;[^}]*min-height:\s*0;/s);
     } finally {
       await unmount(editor);
     }

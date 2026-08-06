@@ -1,9 +1,11 @@
 import type { MaterialUploadErrorCode } from "@qingagent/contract-ts";
 import { acceptedDocumentExtension } from "../../../system/acceptedDocumentFiles";
 
+export type BrowserMaterialFilePreflightErrorCode = MaterialUploadErrorCode | "material_empty";
+
 export type BrowserMaterialFilePreflightResult =
   | { ok: true }
-  | { ok: false; error: MaterialUploadErrorCode };
+  | { ok: false; error: BrowserMaterialFilePreflightErrorCode };
 
 const OFFICE_REQUIRED_PARTS: Record<string, readonly string[]> = {
   ".docx": ["[Content_Types].xml", "word/document.xml"],
@@ -171,7 +173,7 @@ async function fileHeadAndTail(
   return [head, await fileRangeBytes(file, tailStart, file.size)];
 }
 
-function failure(error: MaterialUploadErrorCode): BrowserMaterialFilePreflightResult {
+function failure(error: BrowserMaterialFilePreflightErrorCode): BrowserMaterialFilePreflightResult {
   return { ok: false, error };
 }
 
@@ -185,7 +187,7 @@ export async function preflightBrowserMaterialFile(
     return failure("material_format_mismatch");
   }
 
-  if (file.size === 0) return failure("material_unreadable");
+  if (file.size === 0) return failure("material_empty");
 
   try {
     if (IMAGE_EXTENSIONS.has(ext)) {
@@ -246,8 +248,10 @@ export async function preflightBrowserMaterialFile(
   return failure("material_unsupported");
 }
 
-export function materialPreflightErrorMessage(error: MaterialUploadErrorCode): string {
+export function materialPreflightErrorMessage(error: BrowserMaterialFilePreflightErrorCode): string {
   switch (error) {
+    case "material_empty":
+      return "文件内容为空";
     case "material_format_mismatch":
       return "文件格式与内容不一致";
     case "material_unreadable":

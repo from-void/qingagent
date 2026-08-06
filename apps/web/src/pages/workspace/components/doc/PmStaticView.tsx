@@ -8,6 +8,22 @@ import { ReadonlyImageFigure } from "../ImageView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
 
 const PmTextRendererContext = createContext<((text: string) => ReactNode) | null>(null);
+const PmFootnoteNumbersContext = createContext<ReadonlyMap<string, number> | null>(null);
+
+export function PmFootnoteNumbersProvider({
+  children,
+  numbers,
+}: {
+  children?: ReactNode;
+  numbers: ReadonlyMap<string, number>;
+}) {
+  return <PmFootnoteNumbersContext.Provider value={numbers}>{children}</PmFootnoteNumbersContext.Provider>;
+}
+
+export function usePmFootnoteNumber(id: string): string {
+  const numbers = useContext(PmFootnoteNumbersContext);
+  return String(numbers?.get(id) ?? "※");
+}
 
 export function PmTextRendererProvider({
   children,
@@ -370,6 +386,7 @@ function staticStickyHeaderCellIndexes(
 
 function PmInlineView({ node }: { node: PmInlineNode }) {
   const renderText = useContext(PmTextRendererContext);
+  const footnoteNumber = usePmFootnoteNumber(node.type === "footnoteReference" ? node.attrs.id : "");
   if (node.type === "hardBreak") return <br />;
   if (node.type === "inlineMath") return <MathView latex={node.attrs.latex} />;
   if (node.type === "footnoteReference") {
@@ -379,7 +396,8 @@ function PmInlineView({ node }: { node: PmInlineNode }) {
         data-pm-node="footnoteReference"
         data-footnote-id={node.attrs.id}
         data-footnote-note={node.attrs.note}
-        data-footnote-number="※"
+        data-footnote-number={footnoteNumber}
+        aria-label={`脚注 ${footnoteNumber}：${node.attrs.note}`}
         title={node.attrs.note}
         tabIndex={0}
       />

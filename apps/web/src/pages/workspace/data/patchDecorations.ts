@@ -32,6 +32,7 @@ export type MountBlockView = (
   activeTargetId?: string | null,
   inputIndex?: number,
   tableTypedCounts?: ReviewTableCellTypedCounts,
+  footnoteNumbers?: ReadonlyMap<string, number>,
 ) => Root;
 
 type PatchDecorationMeta =
@@ -146,6 +147,10 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   const decorations: Decoration[] = [];
   const dropped: string[] = [];
   const blockRanges = topLevelBlockRanges(args.baselineDoc);
+  const footnoteNumbers = collectReviewFootnoteNumbers(
+    args.baselineDoc,
+    args.blockPatches ?? [],
+  );
 
   for (const source of collectSources(args)) {
     const applied = appliedById.get(source.id);
@@ -386,6 +391,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             args.activeReviewTargetId,
             inputIndex,
             args.tableTypedByPatch?.get(input.patchId),
+            footnoteNumbers,
           ),
           {
             ...spec,
@@ -470,6 +476,7 @@ function renderBlockInsertDOM(
   activeTargetId?: string | null,
   inputIndex = 0,
   tableTypedCounts?: ReviewTableCellTypedCounts,
+  footnoteNumbers?: ReadonlyMap<string, number>,
 ): HTMLElement {
   const outer = document.createElement("div");
   outer.className = `wf-blockmark insert${currentClass}${statusClass}`;
@@ -493,12 +500,47 @@ function renderBlockInsertDOM(
       activeTargetId,
       inputIndex,
       tableTypedCounts,
+      footnoteNumbers,
     );
   } else {
     // 降级(node 单元测试等无 React 注入时):静态 HTML,图表/公式退化但结构完整。
     inner.innerHTML = viewSectionsToHtml(input.blocks);
   }
   return outer;
+}
+
+function collectReviewFootnoteNumbers(
+  baselineDoc: PmDoc,
+  blockPatches: readonly BlockPatchInput[],
+): ReadonlyMap<string, number> {
+  const numbers = new Map<string, number>();
+  const visited = new WeakSet<object>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
+    const record = value as {
+      type?: unknown;
+      kind?: unknown;
+      id?: unknown;
+      attrs?: { id?: unknown };
+    };
+    const id = record.type === "footnoteReference"
+      ? record.attrs?.id
+      : record.kind === "footnote" || record.kind === "patchInsFootnote"
+        ? record.id
+        : null;
+    if (typeof id === "string" && id.length > 0 && !numbers.has(id)) {
+      numbers.set(id, numbers.size + 1);
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(baselineDoc);
+  for (const patch of blockPatches) {
+    visit(patch.pmNodes);
+    visit(patch.blocks);
+  }
+  return numbers;
 }
 
 /** widget 卸载时 unmount React root。延后一拍避免在 ProseMirror update 同步栈里 unmount 的告警。 */

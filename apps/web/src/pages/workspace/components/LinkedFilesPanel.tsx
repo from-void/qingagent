@@ -10,6 +10,7 @@ const PANEL_CLOSE_MS = 180;
 const FOLDER_ENTRY_TIMEOUT_MS = 15_000;
 const FOLDER_ENTRY_TIMEOUT_MESSAGE = "读取超时，请点击重试";
 const FOLDER_BRIDGE_UNAVAILABLE_MESSAGE = "此浏览器会话未连接到该文件夹，请断开后重新连接";
+const HIDDEN_FOLDER_FILE_EXTENSIONS = new Set(["tmp", "html"]);
 
 function buildFolderIdentity(sessionId: string, folderId: string): string {
   return `${sessionId}\u0000${folderId}`;
@@ -718,6 +719,7 @@ function DirChildren({
             </div>
           );
         }
+        if (HIDDEN_FOLDER_FILE_EXTENSIONS.has(fileExtension(entry.name))) return null;
         const previewSource = onPreviewFolderFile
           ? buildFolderFileAssetSource(folderSource, childRelPath, entry)
           : null;

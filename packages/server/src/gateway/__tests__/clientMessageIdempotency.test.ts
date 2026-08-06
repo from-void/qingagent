@@ -4,6 +4,7 @@ import {
   CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS,
   type ClientMessageIdempotencyStore,
 } from "../clientMessageIdempotency";
+import type { LoggedFrame } from "../frameLog";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -45,8 +46,8 @@ describe("clientMessageId 在途心跳", () => {
     expect(claim.kind).toBe("claimed");
     if (claim.kind !== "claimed") return;
 
-    let finish!: (value: string) => void;
-    const completion = new Promise<string>((resolve) => {
+    let finish!: (value: LoggedFrame[]) => void;
+    const completion = new Promise<LoggedFrame[]>((resolve) => {
       finish = resolve;
     });
     const maintained = registry.maintain(
@@ -64,9 +65,28 @@ describe("clientMessageId 在途心跳", () => {
       now: 1_000 + CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS,
     }));
 
-    finish("done");
-    await expect(maintained).resolves.toBe("done");
+    const successFrames: LoggedFrame[] = [{
+      seq: 1,
+      epoch: 0,
+      generation: 1,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: { streamId: "successful-stream", reason: { kind: "done" } },
+        },
+      },
+    }];
+    finish(successFrames);
+    await expect(maintained).resolves.toEqual(successFrames);
     expect(complete).toHaveBeenCalledOnce();
+    await expect(registry.claim(
+      "client-message-active",
+      "session-active",
+    )).resolves.toMatchObject({
+      kind: "duplicate",
+      sessionId: "session-active",
+    });
     await vi.advanceTimersByTimeAsync(
       CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS * 2,
     );
@@ -113,5 +133,101 @@ describe("clientMessageId 在途心跳", () => {
       kind: "claimed",
       sessionId: "session-owner",
     });
+  });
+
+  it("轮次正常返回 draftingFailed 帧时释放 claim，而不是误标 completed", async () => {
+    const complete = vi.fn<ClientMessageIdempotencyStore["complete"]>(
+      async () => true,
+    );
+    const release = vi.fn<ClientMessageIdempotencyStore["release"]>(
+      async () => true,
+    );
+    const store: ClientMessageIdempotencyStore = {
+      async claim(input) {
+        return {
+          claimed: true,
+          record: {
+            id: input.id,
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            createdAt: input.now,
+            lastTouched: input.now,
+            completedAt: null,
+          },
+        };
+      },
+      touch: async () => true,
+      complete,
+      release,
+    };
+    const registry = new ClientMessageIdempotencyRegistry(() => 1_000, store);
+    const claim = await registry.claim("retry-after-failure", "session-retry");
+    expect(claim.kind).toBe("claimed");
+    if (claim.kind !== "claimed") return;
+    const failureFrames: LoggedFrame[] = [{
+      seq: 1,
+      epoch: 0,
+      generation: 1,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "failed-stream",
+            reason: "模型服务暂时不可用，请稍后重试",
+            retriable: true,
+          },
+        },
+      },
+    }];
+
+    await expect(registry.maintain(
+      "retry-after-failure",
+      claim.token,
+      Promise.resolve(failureFrames),
+    )).resolves.toEqual(failureFrames);
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("轮次 promise rejected 时同样释放 claim", async () => {
+    const complete = vi.fn<ClientMessageIdempotencyStore["complete"]>(
+      async () => true,
+    );
+    const release = vi.fn<ClientMessageIdempotencyStore["release"]>(
+      async () => true,
+    );
+    const store: ClientMessageIdempotencyStore = {
+      async claim(input) {
+        return {
+          claimed: true,
+          record: {
+            id: input.id,
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            createdAt: input.now,
+            lastTouched: input.now,
+            completedAt: null,
+          },
+        };
+      },
+      touch: async () => true,
+      complete,
+      release,
+    };
+    const registry = new ClientMessageIdempotencyRegistry(() => 1_000, store);
+    const claim = await registry.claim("retry-after-rejection", "session-retry");
+    expect(claim.kind).toBe("claimed");
+    if (claim.kind !== "claimed") return;
+
+    await expect(registry.maintain(
+      "retry-after-rejection",
+      claim.token,
+      Promise.reject(new Error("actor failed")),
+    )).rejects.toThrow("actor failed");
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
   });
 });

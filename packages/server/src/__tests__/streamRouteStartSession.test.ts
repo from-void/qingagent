@@ -19,6 +19,7 @@ import {
   type ClientMessageIdempotencyStore,
 } from "../gateway/clientMessageIdempotency";
 import { authenticatedCommandRequest } from "./commandTestRequest";
+import type { LoggedFrame } from "../gateway/frameLog";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);
@@ -290,5 +291,107 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
     ).toBe("cloned-first-message");
     finishCompletion();
     await Promise.resolve();
+  });
+
+  it("未 release 的 claim 在 HTTP 层短路，失败释放后同一重试才进入编排队列", async () => {
+    const sessionId = "retry-claim-boundary-session";
+    const clientMessageId = "retry-claim-boundary-message";
+    const firstClaim = await clientMessageIdempotency.claim(
+      clientMessageId,
+      sessionId,
+    );
+    expect(firstClaim.kind).toBe("claimed");
+    if (firstClaim.kind !== "claimed") {
+      throw new Error("首轮必须取得 clientMessageId claim");
+    }
+
+    let finishFailedTurn!: (frames: LoggedFrame[]) => void;
+    const failedTurnCompletion = new Promise<LoggedFrame[]>((resolve) => {
+      finishFailedTurn = resolve;
+    });
+    const maintainedFailedTurn = clientMessageIdempotency.maintain(
+      clientMessageId,
+      firstClaim.token,
+      failedTurnCompletion,
+    );
+    const releaseClaim = vi.spyOn(clientMessageIdempotency, "release");
+    const submitQueued = vi.spyOn(sessionManager, "submitQueued").mockResolvedValue({
+      completion: Promise.resolve([{
+        seq: 1,
+        epoch: 0,
+        generation: 1,
+        frame: {
+          kind: "stream",
+          data: {
+            kind: "end",
+            data: {
+              streamId: "retry-success-stream",
+              reason: { kind: "done" },
+            },
+          },
+        },
+      }]),
+    });
+    const send = () => request({
+      kind: "sendMessage",
+      data: {
+        sessionId,
+        text: "重新生成这条失败消息",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+        clientMessageId,
+      },
+    });
+
+    const duplicateResponse = await send();
+    expect(duplicateResponse.status).toBe(200);
+    expect(await duplicateResponse.json()).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      sessionId,
+      messageId: clientMessageId,
+    });
+    expect(submitQueued).not.toHaveBeenCalled();
+
+    finishFailedTurn([{
+      seq: 1,
+      epoch: 0,
+      generation: 1,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "failed-stream",
+            reason: "模型服务暂时不可用，请稍后重试",
+            retriable: true,
+          },
+        },
+      },
+    }]);
+    await maintainedFailedTurn;
+    expect(releaseClaim).toHaveBeenCalledOnce();
+    expect(releaseClaim).toHaveBeenCalledWith(
+      clientMessageId,
+      firstClaim.token,
+    );
+
+    const retryResponse = await send();
+    expect(retryResponse.status).toBe(200);
+    const retryBody = await retryResponse.json() as Record<string, unknown>;
+    expect(retryBody).toMatchObject({ accepted: true });
+    expect(retryBody).not.toHaveProperty("duplicate");
+    expect(submitQueued).toHaveBeenCalledOnce();
+    expect(submitQueued).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({
+        command: expect.objectContaining({
+          kind: "sendMessage",
+          data: expect.objectContaining({ clientMessageId }),
+        }),
+      }),
+    );
   });
 });

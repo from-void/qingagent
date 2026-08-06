@@ -188,6 +188,8 @@ export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
   turnKind?: AgentTurnKind;
   /** 发送瞬间界面激活的文档；服务端据此生成仅本轮有效的可信路由提示。 */
   activeDocument?: ActiveDocumentTarget;
+  /** 重试已有 clientMessageId 时复用已持久化的用户气泡，只重新执行模型轮次。 */
+  reuseExistingUserMessage?: boolean;
   /** idle-timeout 自动重试上限；只供已消费一次额度的恢复链路收紧为 0。 */
   idleTimeoutRetryLimit?: number;
   /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
@@ -535,28 +537,37 @@ export async function* runAgentTurn(
   const safeClientMessageId = normalizeClientMessageId(clientMessageId);
   // 气泡体优先级:userDisplayParts(审核结果缩略卡等展示覆盖)> richText({{chip:N}} 原位,
   // 直播/重放/冷还原全 WYSIWYG)> 纯文本。模型侧 state.messages 已收 fullUserText 全文,展示与模型上下文解耦。
-  const userChatMessage: ChatMessage = {
-    id: safeClientMessageId ?? newId(),
-    role: { kind: "user" },
-    ts: nowIso(),
-    parts:
-      userDisplayParts && userDisplayParts.length > 0
-        ? userDisplayParts
-        : [
-            {
-              kind: "text",
-              data: {
-                body:
-                  richText && richText.trim().length > 0 && chips.length > 0
-                    ? richText
-                    : userText,
+  const reuseExistingUserMessage =
+    runtimeOptions.reuseExistingUserMessage === true &&
+    safeClientMessageId !== null &&
+    state.chatHistory.some(
+      (message) =>
+        message.role.kind === "user" && message.id === safeClientMessageId,
+    );
+  if (!reuseExistingUserMessage) {
+    const userChatMessage: ChatMessage = {
+      id: safeClientMessageId ?? newId(),
+      role: { kind: "user" },
+      ts: nowIso(),
+      parts:
+        userDisplayParts && userDisplayParts.length > 0
+          ? userDisplayParts
+          : [
+              {
+                kind: "text",
+                data: {
+                  body:
+                    richText && richText.trim().length > 0 && chips.length > 0
+                      ? richText
+                      : userText,
+                },
               },
-            },
-          ],
-    chips: chips.length > 0 ? chips : null,
-  };
-  state.chatHistory.push(userChatMessage);
-  yield chatMessageAdded(userChatMessage);
+            ],
+      chips: chips.length > 0 ? chips : null,
+    };
+    state.chatHistory.push(userChatMessage);
+    yield chatMessageAdded(userChatMessage);
+  }
 
   const agentMessage: ChatMessage = {
     id: agentMessageId,

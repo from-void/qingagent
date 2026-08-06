@@ -130,6 +130,8 @@ export interface WorkspaceState {
   /** 内部跟踪 active streamId,避免多个流交错时提前清空。 */
   activeStreamIds: string[];
   streamError: StreamError | null;
+  /** 仅用于阻止同一流的低信息 end:error 覆盖 draftingFailed。 */
+  streamErrorStreamId: string | null;
 }
 
 type PatchSummaryPart = Extract<ChatMessage["parts"][number], { kind: "patchSummary" }>;
@@ -188,6 +190,7 @@ export const initialWorkspaceState: WorkspaceState = {
   streamActive: false,
   activeStreamIds: [],
   streamError: null,
+  streamErrorStreamId: null,
 };
 
 function pmDocHasContent(pmDoc: PmDoc): boolean {
@@ -370,6 +373,7 @@ function workspaceReducerMut(
       draft.version = action.data.doc.version;
       draft.progressPct = 1;
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       return;
     case "viewingVersionSet":
       draft.viewingVersion = action.version;
@@ -451,6 +455,7 @@ function workspaceReducerMut(
       if (action.data.ok) {
         draft.version = action.data.docVersion;
         draft.streamError = null;
+        draft.streamErrorStreamId = null;
         return;
       }
       if ("conflict" in action.data) {
@@ -469,6 +474,7 @@ function workspaceReducerMut(
           retriable: true,
           actualDocumentSnapshot: action.data.conflict.actualDocumentSnapshot,
         };
+        draft.streamErrorStreamId = null;
         return;
       }
       draft.streamError = {
@@ -483,6 +489,7 @@ function workspaceReducerMut(
                 : "文档不存在，请刷新后重试。",
         retriable: action.data.reason === "not_found",
       };
+      draft.streamErrorStreamId = null;
       return;
     case "resourceUpserted": {
       // Side-effect: update the external resource registry (outside immer)
@@ -534,9 +541,11 @@ function workspaceReducerMut(
       return;
     case "streamErrorCleared":
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       return;
     case "streamErrorSet":
       draft.streamError = action.error;
+      draft.streamErrorStreamId = null;
       draft.streamActive = false;
       draft.activeStreamIds = [];
       terminalizeInFlightToolCallsMut(draft, "failed");
@@ -550,9 +559,11 @@ function workspaceReducerMut(
         action: "reload",
         actualDocumentSnapshot: action.actualDocumentSnapshot,
       };
+      draft.streamErrorStreamId = null;
       return;
     case "retryDrafting":
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       return;
     case "streamTerminated":
       reduceStreamTerminatedMut(draft, action.streamIds, action.reason);
@@ -806,6 +817,7 @@ function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.streamActive = false;
   draft.activeStreamIds = [];
   draft.streamError = null;
+  draft.streamErrorStreamId = null;
 }
 
 function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
@@ -831,9 +843,16 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
       if (s.data.reason.kind === "cancelled") {
         terminalizeInFlightToolCallsMut(draft, "aborted");
         draft.streamError = { kind: "cancelled", reason: "" };
+        draft.streamErrorStreamId = s.data.streamId;
       } else if (s.data.reason.kind === "error") {
         terminalizeInFlightToolCallsMut(draft, "failed");
-        draft.streamError = { kind: "failed", reason: s.data.reason.data };
+        const hasSpecificFailureForThisStream =
+          draft.streamError?.kind === "draftingFailed" &&
+          draft.streamErrorStreamId === s.data.streamId;
+        if (!hasSpecificFailureForThisStream) {
+          draft.streamError = { kind: "failed", reason: s.data.reason.data };
+          draft.streamErrorStreamId = s.data.streamId;
+        }
       }
       return;
     case "draftingFailed":
@@ -850,6 +869,7 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
         userMessage: s.data.userMessage,
         action: s.data.action,
       };
+      draft.streamErrorStreamId = s.data.streamId;
       return;
   }
 }
@@ -947,6 +967,7 @@ function reduceDocGenerationEventMut(
       );
       draft.progressPct = Math.max(draft.progressPct, 0.02);
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       return;
     }
     case "generation_finished":
@@ -962,6 +983,7 @@ function reduceDocGenerationEventMut(
       draft.version = event.data.finalVersion;
       draft.progressPct = 1;
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       // terminal-* 是服务端 stream terminal 携带的 canonical finalDocument 标识。
       // 生命周期帧正常会先清 busy；这里再按同一服务端终态事实收敛一次，吸收
       // 两帧之间迟到的 running tool 快照，避免挂尾。
@@ -980,6 +1002,7 @@ function reduceDocGenerationEventMut(
           reason: event.data.reason,
           retriable: true,
         };
+        draft.streamErrorStreamId = null;
       }
       return;
     case "candidate_snapshot":
@@ -1018,6 +1041,7 @@ function reduceDocGenerationEventMut(
       );
       draft.progressPct = Math.max(draft.progressPct, 0.95);
       draft.streamError = null;
+      draft.streamErrorStreamId = null;
       return;
     case "block_started":
       generationDraft.openBlocks[event.data.blockId] = {

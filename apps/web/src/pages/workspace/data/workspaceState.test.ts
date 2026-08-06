@@ -2033,6 +2033,82 @@ describe("annotationGroupsReady 来源增量", () => {
       });
     });
 
+    it("同流 draftingFailed 后到达 stream end:error 时保留可重试结构化终态", () => {
+      const started = workspaceReducer(initialWorkspaceState, {
+        kind: "stream",
+        data: {
+          kind: "start",
+          data: { streamId: "retry-stream" },
+        },
+      });
+      const draftingFailed = workspaceReducer(started, {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "retry-stream",
+            reason: "upstream timeout",
+            retriable: true,
+            statusCode: 504,
+            category: "timeout",
+            userMessage: "生成长时间无响应，请重试。",
+            action: "retry",
+          },
+        },
+      });
+
+      const ended = workspaceReducer(draftingFailed, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "retry-stream",
+            reason: { kind: "error", data: "本轮处理失败" },
+          },
+        },
+      });
+
+      expect(ended.streamError).toEqual({
+        kind: "draftingFailed",
+        reason: "生成长时间无响应，请重试。",
+        retriable: true,
+        statusCode: 504,
+        category: "timeout",
+        userMessage: "生成长时间无响应，请重试。",
+        action: "retry",
+      });
+    });
+
+    it("其他流的 end:error 不复用旧 draftingFailed 终态", () => {
+      const draftingFailed = workspaceReducer(initialWorkspaceState, {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "old-stream",
+            reason: "旧轮失败",
+            retriable: true,
+          },
+        },
+      });
+
+      const ended = workspaceReducer(draftingFailed, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: {
+            streamId: "new-stream",
+            reason: { kind: "error", data: "新轮连接失败" },
+          },
+        },
+      });
+
+      expect(ended.streamError).toEqual({
+        kind: "failed",
+        reason: "新轮连接失败",
+      });
+    });
+
     it("draftingFailed 保留 402 结构化错误字段并使用 userMessage", () => {
       const next = workspaceReducer(initialWorkspaceState, {
         kind: "stream",

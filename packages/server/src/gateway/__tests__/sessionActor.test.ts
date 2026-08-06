@@ -259,9 +259,10 @@ describe("SessionActor", () => {
     const first = actor.enqueue({ command: sendMessage("first") });
     await firstStartedPromise;
     const queuedQuestionnaire = actor.enqueue({ command: sendMessage("questionnaire") });
+    const queuedSettlement = expect(queuedQuestionnaire).rejects.toThrow(/stop barrier/);
     const cancel = actor.enqueue({ command: cancelStream() });
 
-    await Promise.all([first, queuedQuestionnaire, cancel]);
+    await Promise.all([first, queuedSettlement, cancel]);
     expect(order).toEqual(["first:start", "first:end", "cancel"]);
     expect(
       log.readFrom("s1", 0).frames.some(
@@ -305,10 +306,18 @@ describe("SessionActor", () => {
     await firstStartedPromise;
     const queuedSecond = actor.enqueue({ command: sendMessage("queued-second") });
     const queuedThird = actor.enqueue({ command: sendMessage("queued-third") });
+    const queuedSecondSettlement = expect(queuedSecond).rejects.toThrow(/stop barrier/);
+    const queuedThirdSettlement = expect(queuedThird).rejects.toThrow(/stop barrier/);
     const cancel = actor.enqueue({ command: cancelStream() });
     const nextTurn = actor.enqueue({ command: sendMessage("new-user-turn") });
 
-    await Promise.all([first, queuedSecond, queuedThird, cancel, nextTurn]);
+    await Promise.all([
+      first,
+      queuedSecondSettlement,
+      queuedThirdSettlement,
+      cancel,
+      nextTurn,
+    ]);
     expect(order).toEqual(["first", "cancel", "new-user-turn"]);
   });
 

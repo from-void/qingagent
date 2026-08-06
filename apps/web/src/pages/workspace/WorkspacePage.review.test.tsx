@@ -5952,6 +5952,92 @@ describe("WorkspacePage review controls", () => {
     expect(host!.querySelector(".stream-error-banner")).toBeNull();
   });
 
+  it("模型失败后点击重试会重新发送原 sendMessage，而不是恢复会话", async () => {
+    window.location.hash = "#/workspace?session=s-retry";
+    serverStreamMock.startSessionImpl = async (stream, data) => {
+      expect(data).toEqual({
+        mode: { kind: "existing", data: { id: "s-retry" } },
+      });
+      for (const frame of [
+        { kind: "sessionMeta", data: { sessionId: "s-retry", title: "重试回归" } },
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "empty" },
+            activeOverlay: null,
+            agentBusy: false,
+          },
+        },
+        { kind: "sessionRestoreCompleted", data: { sessionId: "s-retry" } },
+      ] satisfies BridgeFrame[]) {
+        stream.emit(frame);
+      }
+      return "s-retry";
+    };
+
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      await flushMicrotasks(5);
+      const stream = latestServerStream();
+      const editor = getChatEditor();
+      expect(editor.getAttribute("contenteditable")).toBe("true");
+      bindInnerText(editor);
+      await act(async () => {
+        editor.innerText = "请生成一份重试测试稿";
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await clickButton("发送");
+      await flushMicrotasks(5);
+      const firstSend = sendMessageCommands(stream)[0];
+      expect(firstSend?.kind).toBe("sendMessage");
+
+      await emitFrames(stream, [
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "retry-stream" } },
+        },
+        {
+          kind: "stream",
+          data: {
+            kind: "draftingFailed",
+            data: {
+              streamId: "retry-stream",
+              reason: "模型连接超时",
+              retriable: true,
+              category: "timeout",
+              action: "retry",
+            },
+          },
+        },
+        {
+          kind: "stream",
+          data: {
+            kind: "end",
+            data: {
+              streamId: "retry-stream",
+              reason: { kind: "error", data: "本轮处理失败" },
+            },
+          },
+        },
+      ]);
+
+      const retryButton = host!.querySelector<HTMLButtonElement>(
+        '[data-toast-key="workspace-stream-error"] .qa-toast-act',
+      );
+      expect(retryButton?.textContent).toBe("重试");
+      await clickElement(retryButton!);
+      await flushMicrotasks(5);
+
+      const sends = sendMessageCommands(stream);
+      expect(sends).toHaveLength(2);
+      expect(sends[1]).toEqual(firstSend);
+      expect(stream.startSession).toHaveBeenCalledTimes(1);
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  }, 60_000);
+
   it("重复流错误帧不刷屏,关闭后清理当前错误且不重现旧 banner", async () => {
     const { WorkspacePage } = await import("./WorkspacePage");
     await render(<WorkspacePage />);

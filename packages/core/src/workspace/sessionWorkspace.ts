@@ -213,6 +213,7 @@ const SYSTEM_ENV_KEYS_WIN = [
 // 代理变量透传:lark-cli 是 Go net/http 二进制,认 HTTP(S)_PROXY、尊重 NO_PROXY、不读 ALL_PROXY
 // (实测:只设 ALL_PROXY=死端口仍直连成功=没走它,只设 HTTPS_PROXY=死端口才失败;旧注释"只认 ALL_PROXY"是反的)。
 // ALL_PROXY 仍透传以兼容其它工具/老版本。需代理的网络环境靠这些变量出网。
+// 有意设计:主动透传代理变量就是为了让沙箱命令更容易出网;命令层可联网是产品能力边界。
 const PROXY_ENV_KEYS = [
   "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
   "https_proxy", "http_proxy", "all_proxy", "no_proxy",

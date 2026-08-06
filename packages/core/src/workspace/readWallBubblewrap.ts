@@ -479,5 +479,6 @@ export function validateBubblewrapArgsContract(args: string[], requireUserNamesp
     if (!args.includes(flag)) throw new Error(`bubblewrap args are missing ${flag}`);
   }
   if (args.includes("--")) throw new Error("bubblewrap args must not include Mastra's command terminator");
+  // 有意设计:读写墙是文件边界不是网络边界,沙箱命令保持可出网(装依赖/抓资料)。
   if (args.includes("--unshare-net")) throw new Error("bubblewrap read wall must preserve network access");
 }

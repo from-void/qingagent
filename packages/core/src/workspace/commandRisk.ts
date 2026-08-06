@@ -1178,6 +1178,10 @@ function isDynamicLocalOutputWord(
  * 网络 sink 的静态命令名一旦已识别，运行时才能确定的 URL/header/远端目标/主机
  * 必须 fail-closed 升级为 send。curl/wget 的本地输出文件名是唯一豁免；它不会进入
  * 请求，且短参允许 `-oFILE`/`-cFILE`/`-DFILE` 这类附着值。
+ *
+ * 有意设计：命令层保持可出网(装依赖/抓资料是核心能力)，纯读方向(GET)不弹确认卡、
+ * 不校验目标；只有写方向(上传/POST 等外发)升级确认。「停用联网搜索」关闭的是搜索
+ * 技能而非整个出网面。这是产品拍板的能力边界，调整须走产品决策，不按漏洞处理。
  */
 function hasDynamicExternalLocation(command: AnalyzedSimpleCommand): boolean {
   const name = commandName(command.argv[0] ?? "");

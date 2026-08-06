@@ -235,12 +235,12 @@ describe("AnnotationCarousel hover card", () => {
         id: "g1",
         anchors: [expect.objectContaining({ quote: "乙组", pmFrom: 4, pmTo: 6 })],
       }),
-    ], 0);
+    ], 1);
     expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.textContent).toBe("乙组");
     uninstall();
   });
 
-  it("锚内删字使整组静默消失", async () => {
+  it("锚内删字使整组失效并上报隐藏数量", async () => {
     createEditor();
     const onGroupsChange = vi.fn();
     const exactGroup: AnnotationGroup = {

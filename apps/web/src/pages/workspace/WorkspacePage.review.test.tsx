@@ -4310,6 +4310,21 @@ describe("WorkspacePage review controls", () => {
     vi.useRealTimers();
   });
 
+  it("权威重定位失败帧隐藏失效高亮并给出可见提示", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+
+    await emitFrames(stream, [{
+      kind: "annotationGroupsReady",
+      data: { groups: [], invalidatedAnchorCount: 1 },
+    }]);
+    await flushMicrotasks(3);
+
+    expect(host?.querySelector("[data-annotation-group]")).toBeNull();
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "有 1 处批注原文已变化，失效高亮已隐藏",
+    );
+  });
+
   it("docCommitted 不再整体清空批注", async () => {
     const stream = await renderWorkspaceWithAnnotations();
 

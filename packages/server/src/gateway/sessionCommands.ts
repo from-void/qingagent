@@ -16,7 +16,11 @@ import {
   sessionManager,
   sessions,
 } from "./sessionLifecycle";
-import { emitRestoreFrames, reconcileCachedSessionDocFromDb } from "./restoreFrames";
+import {
+  emitRestoreFrames,
+  reconcileCachedSessionDocFromDb,
+  reconcileSessionAnnotationAnchors,
+} from "./restoreFrames";
 
 /**
  * startSession(existing) 重进会话的还原:必须先发 restoreReset 让前端清空 session 级状态,
@@ -81,6 +85,7 @@ export async function* handleSessionCommand(
           bindClientTraceId(cached, resolvedClientTraceId, origin, modelOverrides);
           // 重连前对齐 DB 权威版本,修复"内存陈旧 docVersion 导致刷新后必现文档冲突"。
           const cachedReconciledFromDb = await reconcileCachedSessionDocFromDb(cached);
+          await reconcileSessionAnnotationAnchors(cached);
           const wmSnapshot = await ensureWorkingMemorySnapshotWithStatus(cached);
           if (cachedReconciledFromDb || (wmSnapshot.loadedNow && wmSnapshot.persistable)) {
             await schedulePersist(
@@ -101,6 +106,7 @@ export async function* handleSessionCommand(
           throw new Error(`Session not found: ${sessionId}`);
         }
         bindClientTraceId(restored, resolvedClientTraceId, origin, modelOverrides);
+        await reconcileSessionAnnotationAnchors(restored);
         const wmSnapshot = await ensureWorkingMemorySnapshotWithStatus(restored);
         if (wmSnapshot.loadedNow && wmSnapshot.persistable) {
           await schedulePersist(restored, "restore:working_memory_snapshot");

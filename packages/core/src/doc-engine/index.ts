@@ -47,6 +47,12 @@ export {
 } from "./draftFeatureFlags.js";
 
 export {
+  buildAnnotationMappingSteps,
+  mapAnnotationGroupsThroughSteps,
+} from "./annotationMapping.js";
+export type { MappedAnnotationGroups } from "./annotationMapping.js";
+
+export {
   coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,

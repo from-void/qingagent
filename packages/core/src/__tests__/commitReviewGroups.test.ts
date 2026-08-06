@@ -1267,10 +1267,134 @@ describe("commitReviewGroups", () => {
           })),
         })],
         replacedOrigins: ["deai"],
+        invalidatedAnchorCount: 1,
       },
     });
     expect(state.annotationGroups.map((group) => group.id)).toEqual(["g-three-anchors"]);
     expect(state.annotationGroups[0]?.anchors).toHaveLength(3);
+  });
+
+  it("提交前部净增 N 字后，后方批注先重定位再正常结算，不会悬空", async () => {
+    const state = createSession("commit-reanchors-later-annotations-after-prefix-insert");
+    const insertedPrefix = "ABCDE";
+    const base = doc([
+      paragraph("before-block", "前文"),
+      paragraph("annotated-block", "超过 3 秒后仍有 YYMARK"),
+      paragraph("pending-block", "另一处待审原文"),
+    ]);
+    const draft = doc([
+      paragraph("before-block", `${insertedPrefix}前文`),
+      paragraph("annotated-block", "超过 4 秒后仍有 DONE"),
+      paragraph("pending-block", "另一处待审改文"),
+    ]);
+    const secondBlockTextStart = "前文".length + 3;
+    const yymarkOffset = "超过 3 秒后仍有 ".length;
+    const annotationGroups: AnnotationGroup[] = [
+      {
+        id: "g-later-quote",
+        summary: "后方原句",
+        note: "hover 应与高亮一致",
+        origin: "consistency",
+        status: "reviewing",
+        anchors: [{
+          blockId: "annotated-block",
+          pmFrom: secondBlockTextStart,
+          pmTo: secondBlockTextStart + "超过 3 秒".length,
+          quote: "超过 3 秒",
+          textHash: "later-quote",
+        }],
+      },
+      {
+        id: "g-tail-marker",
+        summary: "尾部标记",
+        note: "尾部锚点不能消失",
+        origin: "consistency",
+        status: "reviewing",
+        anchors: [{
+          blockId: "annotated-block",
+          pmFrom: secondBlockTextStart + yymarkOffset,
+          pmTo: secondBlockTextStart + yymarkOffset + "YYMARK".length,
+          quote: "YYMARK",
+          textHash: "tail-marker",
+        }],
+      },
+    ];
+    const hunks = await seedDiffState(state, base, draft);
+    state.annotationGroups = annotationGroups;
+    await seedDocumentRow(state);
+    await insertAnnotationGroups(state.docId, state.docVersion, annotationGroups);
+
+    const prefixHunk = hunks.find((hunk) => hunk.anchor.blockId === "before-block");
+    const pendingHunks = hunks.filter((hunk) => hunk !== prefixHunk);
+    if (!prefixHunk || pendingHunks.length === 0) throw new Error("fixture missing partial hunks");
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [prefixHunk.reviewBatchId ?? prefixHunk.hunkId],
+      keepPendingReviewBatchIds: pendingHunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId),
+    }));
+
+    expect(state.annotationGroups.map((group) => group.anchors[0])).toEqual([
+      expect.objectContaining({
+        quote: "超过 3 秒",
+        pmFrom: secondBlockTextStart + insertedPrefix.length,
+        pmTo: secondBlockTextStart + insertedPrefix.length + "超过 3 秒".length,
+      }),
+      expect.objectContaining({
+        quote: "YYMARK",
+        pmFrom: secondBlockTextStart + insertedPrefix.length + yymarkOffset,
+        pmTo: secondBlockTextStart + insertedPrefix.length + yymarkOffset + "YYMARK".length,
+      }),
+    ]);
+    const persisted = await getDocumentsClient().execute({
+      sql: `SELECT anchor_json FROM document_suggestions
+        WHERE doc_id = ? AND kind = 'annotation' AND status = 'reviewing'
+        ORDER BY id`,
+      args: [state.docId],
+    });
+    expect(persisted.rows.map((row) => JSON.parse(String(row.anchor_json)))).toEqual([
+      expect.objectContaining({
+        quote: "超过 3 秒",
+        pmFrom: secondBlockTextStart + insertedPrefix.length,
+        pmTo: secondBlockTextStart + insertedPrefix.length + "超过 3 秒".length,
+      }),
+      expect.objectContaining({
+        quote: "YYMARK",
+        pmFrom: secondBlockTextStart + insertedPrefix.length + yymarkOffset,
+        pmTo: secondBlockTextStart + insertedPrefix.length + yymarkOffset + "YYMARK".length,
+      }),
+    ]);
+
+    const reanchoredRecords = [...state.suggestions.values()];
+    const annotationRecords = reanchoredRecords.filter((record) =>
+      record.diffHunk?.anchor.blockId === "annotated-block"
+    );
+    const annotationRecordSet = new Set(annotationRecords);
+    const stillPendingRecords = reanchoredRecords.filter((record) =>
+      !annotationRecordSet.has(record)
+    );
+    if (annotationRecords.some((record) => !record.diffHunk) ||
+      annotationRecords.length === 0 || stillPendingRecords.length === 0) {
+      throw new Error("fixture missing reanchored annotation hunk");
+    }
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: annotationRecords.map((record) =>
+        record.diffHunk?.reviewBatchId ?? record.diffHunk?.hunkId ?? record.suggestion.id
+      ),
+      keepPendingReviewBatchIds: stillPendingRecords.map((record) =>
+        record.diffHunk?.reviewBatchId ?? record.diffHunk?.hunkId ?? record.suggestion.id
+      ),
+    }));
+
+    expect(state.annotationGroups).toEqual([]);
+    const annotationStatuses = await getDocumentsClient().execute({
+      sql: `SELECT status FROM document_suggestions
+        WHERE doc_id = ? AND kind = 'annotation'
+        ORDER BY id`,
+      args: [state.docId],
+    });
+    expect(annotationStatuses.rows.map((row) => String(row.status))).toEqual([
+      "ignored",
+      "ignored",
+    ]);
   });
 
   it("只拒绝部分 review group 后重发 docDiffReady 带 rebase 后 editedDoc", async () => {

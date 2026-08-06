@@ -429,7 +429,13 @@ export async function* settleDraftCandidate(opts: {
       state.annotationGroups = mapped.groups;
       yield {
         kind: "annotationGroupsReady",
-        data: { groups: mapped.groups, replacedOrigins },
+        data: {
+          groups: mapped.groups,
+          replacedOrigins,
+          ...(mapped.invalidatedAnchorCount > 0
+            ? { invalidatedAnchorCount: mapped.invalidatedAnchorCount }
+            : {}),
+        },
       };
     }
     const versionDoc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);

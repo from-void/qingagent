@@ -56,7 +56,12 @@ export type BridgeFrame =
   | {
       kind: "annotationGroupsReady";
       /** 仅替换这些来源的批注；未列出的来源继续共存。空数组兼容旧的全量清空帧。 */
-      data: { groups: AnnotationGroup[]; replacedOrigins?: string[] };
+      data: {
+        groups: AnnotationGroup[];
+        replacedOrigins?: string[];
+        /** 无法在新正文中可靠重定位、已停止展示的锚点数。 */
+        invalidatedAnchorCount?: number;
+      };
     }
   | {
       kind: "annotationPreview";

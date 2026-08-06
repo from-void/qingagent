@@ -186,6 +186,7 @@ export type MappedAnnotationGroups = {
   groups: AnnotationGroup[];
   survivingAnchorIndexes: Map<string, number[]>;
   invalidatedAnchorIndexes: Map<string, number[]>;
+  invalidatedAnchorCount: number;
   unlocatedGroupCount: number;
 };
 
@@ -341,6 +342,8 @@ export function mapAnnotationGroupsThroughSteps(
     groups: mapped,
     survivingAnchorIndexes,
     invalidatedAnchorIndexes,
+    invalidatedAnchorCount: [...invalidatedAnchorIndexes.values()]
+      .reduce((count, indexes) => count + indexes.length, 0),
     unlocatedGroupCount,
   };
 }

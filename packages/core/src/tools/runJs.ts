@@ -4,8 +4,9 @@ import { z } from "zod";
 
 const MAX_CODE_CHARS = 20_000;
 const MAX_INPUT_JSON_CHARS = 64_000;
-const DEFAULT_TIMEOUT_MS = 1_000;
+const DEFAULT_TIMEOUT_MS = 2_500;
 const MAX_TIMEOUT_MS = 5_000;
+const SUPERVISOR_READY_TIMEOUT_MS = 2_000;
 const MAX_STDOUT_CHARS = 16_384;
 const MAX_RESULT_STRING_CHARS = 16_384;
 const MAX_SUPERVISOR_OUTPUT_CHARS = 2 * 1024 * 1024;
@@ -33,7 +34,9 @@ const runJsInputSchema = z.object({
     .min(1)
     .max(MAX_TIMEOUT_MS)
     .optional()
-    .describe(`硬超时毫秒数，默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}。`),
+    .describe(
+      `用户代码执行硬超时毫秒数（不含隔离子进程启动时间），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}。`,
+    ),
 });
 
 const runJsOutputSchema = z.object({
@@ -488,6 +491,14 @@ function runJsSupervisorMain() {
       return;
     }
 
+    worker.once("online", () => {
+      try {
+        if (typeof process.send !== "function") throw new Error("run_js supervisor IPC unavailable");
+        process.send("ready");
+      } catch {
+        platformFailure();
+      }
+    });
     worker.once("message", (message: unknown) => finish(message));
     worker.once("error", (error: unknown) => {
       const code = error && typeof error === "object" && "code" in error
@@ -601,8 +612,6 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
     let stdout = "";
     let stderrTail = "";
     let outputExceeded = false;
-    let killRequested = false;
-    let timeoutRequested = false;
     let child;
     try {
       child = spawn(
@@ -614,7 +623,8 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
         {
           // env 仍故意完全替换；Windows libuv 会通过 required_vars 白名单回填启动必需变量。
           env: { ELECTRON_RUN_AS_NODE: "1" },
-          stdio: ["pipe", "pipe", "pipe"],
+          // ready 走独立 Node IPC：stdout 只承载单次结果协议，stderr 只承载 V8 OOM 证据。
+          stdio: ["pipe", "pipe", "pipe", "ipc"],
           windowsHide: true,
         },
       );
@@ -622,45 +632,68 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
       resolve(platformErrorResult());
       return;
     }
+    const childStdin = child.stdin;
+    const childStdout = child.stdout;
+    const childStderr = child.stderr;
+    if (!childStdin || !childStdout || !childStderr) {
+      child.kill();
+      resolve(platformErrorResult());
+      return;
+    }
 
+    let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    let executionTimer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => {
-      clearTimeout(timer);
+      if (readyTimer) clearTimeout(readyTimer);
+      if (executionTimer) clearTimeout(executionTimer);
       abortSignal?.removeEventListener("abort", onAbort);
+      child.removeListener("message", onSupervisorMessage);
     };
-    const finish = (result: RunJsResult) => {
+    const settle = (result: RunJsResult, killChild: boolean) => {
       if (settled) return;
       settled = true;
       cleanup();
+      if (killChild) child.kill();
       resolve(result);
     };
-    const requestKill = () => {
-      if (killRequested) return;
-      killRequested = true;
-      child.kill();
+    const finish = (result: RunJsResult) => settle(result, false);
+    const terminateWith = (result: RunJsResult) => settle(result, true);
+    const onAbort = () => terminateWith({
+      ok: false,
+      stdout: "",
+      error: "aborted",
+      failureKind: "aborted",
+    });
+    const onSupervisorMessage = (message: unknown) => {
+      if (settled || message !== "ready" || executionTimer) return;
+      if (readyTimer) clearTimeout(readyTimer);
+      readyTimer = undefined;
+      executionTimer = setTimeout(() => {
+        terminateWith({
+          ok: false,
+          stdout: "",
+          error: "timeout",
+          failureKind: "timedOut",
+        });
+      }, timeoutMs);
     };
-    const terminateWith = (result: RunJsResult) => {
-      if (settled) return;
-      requestKill();
-      finish(result);
-    };
-    const onAbort = () => {
-      if (timeoutRequested) return;
+    readyTimer = setTimeout(() => {
       terminateWith({
         ok: false,
         stdout: "",
-        error: "aborted",
-        failureKind: "aborted",
+        error: "代码执行器不可用",
+        failureKind: "platformError",
       });
-    };
-    const timer = setTimeout(() => {
-      timeoutRequested = true;
-      // 先硬杀隔离进程，但等 close/管道收尾后定档，避免丢掉已在途的 OOM 证据。
-      requestKill();
-    }, timeoutMs);
+    }, SUPERVISOR_READY_TIMEOUT_MS);
 
+    child.on("message", onSupervisorMessage);
     abortSignal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    childStdout.setEncoding("utf8");
+    childStdout.on("data", (chunk: string) => {
       if (outputExceeded) return;
       stdout += chunk;
       if (stdout.length > MAX_SUPERVISOR_OUTPUT_CHARS) {
@@ -670,9 +703,9 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
     });
     // 该 stderr 只来自隔离层 Node/V8；用户 vm 没有 process，console 也只写受控 stdout。
     // 单次大分配会先打印 V8 fatal OOM，再耗时生成/收口 core dump；看到可信运行时信号后
-    // 立即杀隔离进程并结构化归因，避免 5s 工具计时器抢先误报 timedOut。
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
+    // 立即杀隔离进程并结构化归因，避免用户代码计时器抢先误报 timedOut。
+    childStderr.setEncoding("utf8");
+    childStderr.on("data", (chunk: string) => {
       if (settled) return;
       stderrTail = `${stderrTail}${chunk}`.slice(-4_096);
       if (
@@ -682,26 +715,16 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
         terminateWith(resourceExceededResult());
       }
     });
-    child.stdin.on("error", () => {
+    childStdin.on("error", () => {
       // bootstrap/早退由 child 的 error/close 统一归到 platformError。
     });
     child.once("error", () => {
-      if (timeoutRequested) return;
       finish(platformErrorResult());
     });
-    child.once("close", (code, signal) => {
+    child.once("close", (code) => {
       if (settled) return;
-      if (signal === "SIGABRT" || code === 134) {
+      if (code === 134) {
         finish(resourceExceededResult());
-        return;
-      }
-      if (timeoutRequested) {
-        finish({
-          ok: false,
-          stdout: "",
-          error: "timeout",
-          failureKind: "timedOut",
-        });
         return;
       }
       if (code !== 0 || outputExceeded) {
@@ -729,7 +752,7 @@ export function runJsInWorker(input: RunJsInput, abortSignal?: AbortSignal): Pro
             : "platformError",
       });
     });
-    child.stdin.end(JSON.stringify({
+    childStdin.end(JSON.stringify({
       workerSource: RUN_JS_WORKER_SOURCE,
       workerData: {
         code: parsed.data.code,
@@ -745,7 +768,7 @@ export const runJsTool = createTool({
   id: "run_js",
   description:
     "在隔离子进程内执行受限 JS 片段,用于确定性计算、JSON/文本转换和轻量数据处理。代码在 worker_thread + vm 干净 context 中运行," +
-    "没有 require/module/process/fetch/fs/net/定时器等 Node 能力;超时会硬 terminate worker。代码可通过 input/input_json 读取结构化输入," +
+    "没有 require/module/process/fetch/fs/net/定时器等 Node 能力;执行超时预算从隔离层 ready 后起算,超时会硬终止隔离进程。代码可通过 input/input_json 读取结构化输入," +
     "用 return 返回 JSON 结果,用 console.log/print 输出 stdout。",
   inputSchema: runJsInputSchema,
   outputSchema: runJsOutputSchema,

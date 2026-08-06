@@ -1,3 +1,7 @@
+import {
+  isDesktopCommandMutationPath,
+} from "./desktopCommandAuth.js";
+
 export const DESKTOP_APP_SCHEME = "qingagent";
 export const DESKTOP_APP_HOST = "app";
 export const DESKTOP_APP_URL = `${DESKTOP_APP_SCHEME}://${DESKTOP_APP_HOST}/`;
@@ -98,6 +102,7 @@ export type DesktopAppProxyFetch = (request: Request) => Promise<Response>;
 export function createDesktopAppProxyHandler(
   port: number,
   fetchRequest: DesktopAppProxyFetch,
+  commandAuthToken: string,
 ): (request: Request) => Promise<Response> {
   const serverOrigin = `http://127.0.0.1:${port}`;
 
@@ -117,6 +122,10 @@ export function createDesktopAppProxyHandler(
     headers.delete("host");
     // 服务端继续按实际回环 Host 执行 CSRF 校验，不把自定义 scheme 扩入公网 Origin 白名单。
     headers.set("origin", serverOrigin);
+    if (request.method === "POST" && isDesktopCommandMutationPath(sourceUrl.pathname)) {
+      // Headers.set 大小写不敏感，会覆盖 renderer 伪造的 Authorization。
+      headers.set("authorization", `Bearer ${commandAuthToken}`);
+    }
     const init: RequestInit & { duplex?: "half" } = {
       method: request.method,
       headers,

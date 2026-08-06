@@ -13,7 +13,7 @@ export function tokensMatch(provided: string, expected: string): boolean {
 }
 
 // 凭据三来源优先级:Authorization: Bearer <token> -> cookie qa_auth -> query ?auth=<token>(逃生舱)。
-function extractToken(c: Context): string | null {
+export function extractAuthToken(c: Context): string | null {
   const auth = c.req.header("Authorization");
   if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
   const cookie = getCookie(c, AUTH_COOKIE_NAME);
@@ -33,7 +33,7 @@ export const authTokenMiddleware: MiddlewareHandler = async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (path.startsWith("/api/v1/external/")) return next();
   if (path === "/api/v1/auth/session") return next();
-  const provided = extractToken(c);
+  const provided = extractAuthToken(c);
   if (provided && tokensMatch(provided, expected)) return next();
   return c.json({ error: "unauthorized" }, 401);
 };

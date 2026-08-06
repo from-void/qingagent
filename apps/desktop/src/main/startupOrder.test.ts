@@ -13,7 +13,7 @@ test("desktop main only touches @qingagent/core barrel after server startup", ()
 
   const firstCoreBarrelLine = findLine(lines, 'import("@qingagent/core")');
   const startServerLine = findLine(lines, "const serverReady = embeddedServerReady ??= startServer(");
-  const serverReadyLine = findLine(lines, "({ port } = await serverReady)");
+  const serverReadyLine = findLine(lines, "({ port, commandAuthToken } = await serverReady)");
 
   assert.notEqual(firstCoreBarrelLine, -1, "需要保留一个迁移后的 @qingagent/core barrel 导入作为回归哨兵");
   assert.notEqual(startServerLine, -1, "未找到 server 启动调用");
@@ -30,7 +30,7 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   const shellLoadLine = source.indexOf("contentWindow.loadURL(STARTUP_SHELL_URL)", browserWindowLine);
   const shellShowLine = source.indexOf("contentWindow.show();", shellLoadLine);
   const startServerLine = source.indexOf("const serverReady = embeddedServerReady ??= startServer(", shellShowLine);
-  const serverReadyLine = source.indexOf("({ port } = await serverReady)", startServerLine);
+  const serverReadyLine = source.indexOf("({ port, commandAuthToken } = await serverReady)", startServerLine);
   const seedLine = source.indexOf("await maybeSeedInitialContent();", serverReadyLine);
   const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", seedLine);
   const finishLoadLine = source.indexOf('contentWebContents.on("did-finish-load"', telemetryLine);
@@ -95,8 +95,11 @@ test("硬件加速配置在 app ready 前读取并应用", () => {
 
 test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并由恢复流程保留目标 URL", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const serverReadyLine = source.indexOf("({ port } = await serverReady)");
-  const protocolReadyLine = source.indexOf("installPackagedRendererProtocol(port)", serverReadyLine);
+  const serverReadyLine = source.indexOf("({ port, commandAuthToken } = await serverReady)");
+  const protocolReadyLine = source.indexOf(
+    "installPackagedRendererProtocol(port, commandAuthToken)",
+    serverReadyLine,
+  );
   const navigatorReadyLine = source.indexOf("desktopDeepLinks.setNavigator", protocolReadyLine);
   const initialLoadLine = source.indexOf("loadDesiredContent()", navigatorReadyLine);
   const recoveryStart = source.indexOf("const recoverContentLoad = async");
@@ -169,7 +172,7 @@ test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () =
 
 test("非迁移类 startServer 失败会弹框并退出，不会停在启动壳", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const awaitLine = source.indexOf("({ port } = await serverReady)");
+  const awaitLine = source.indexOf("({ port, commandAuthToken } = await serverReady)");
   const catchLine = source.indexOf("} catch (error) {", awaitLine);
   const exitLine = source.indexOf("app.exit(1);", catchLine);
   const successLine = source.indexOf("embeddedServerPort = port;", exitLine);

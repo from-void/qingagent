@@ -19,6 +19,7 @@ import {
   SessionDeletedError,
   SessionDeletionInProgressError,
 } from "../gateway/sessionErrors";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -36,6 +37,9 @@ async function request(
     headers: { "Content-Type": "application/json" },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
+  if (path === "/api/v1/commands") {
+    return authenticatedCommandRequest(path, init);
+  }
   return app.request(path, init);
 }
 

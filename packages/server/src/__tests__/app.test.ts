@@ -18,6 +18,7 @@ import {
   publicAskMoreErrorMessage,
   redactAskMoreErrorForLog,
 } from "../routes/askMore";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 // Helper: perform a request against the Hono app without starting a real server.
 async function request(
@@ -31,6 +32,9 @@ async function request(
   };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
+  }
+  if (path === "/api/v1/commands" || path === "/api/v1/stream") {
+    return authenticatedCommandRequest(path, init);
   }
   return app.request(path, init);
 }

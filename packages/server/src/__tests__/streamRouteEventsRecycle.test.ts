@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { app } from "../app";
 import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import { DEFAULT_SSE_ADMISSION_LIMITS } from "../lib/sseAdmission";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -36,7 +37,7 @@ describe("GET /api/v1/events 断连资源回收", () => {
   });
 
   it("同一会话达到连接上限后返回 429，断开后释放准入名额", async () => {
-    const started = await app.request("/api/v1/commands", {
+    const started = await authenticatedCommandRequest("/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -90,7 +91,7 @@ describe("GET /api/v1/events 断连资源回收", () => {
   });
 
   it("两个客户端并发 epoch 不匹配时只追加一份恢复快照", async () => {
-    const started = await app.request("/api/v1/commands", {
+    const started = await authenticatedCommandRequest("/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -140,7 +141,7 @@ describe("GET /api/v1/events 断连资源回收", () => {
 
   it("多订阅者全部断开后 frameLog listener 与心跳定时器全量回收", async () => {
     // 用真实命令创建会话,拿到合法 epoch
-    const started = await app.request("/api/v1/commands", {
+    const started = await authenticatedCommandRequest("/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

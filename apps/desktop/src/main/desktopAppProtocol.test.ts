@@ -10,6 +10,10 @@ import {
   DESKTOP_APP_URL,
   resolveDesktopContentUrl,
 } from "./desktopAppProtocol.js";
+import {
+  authorizeDesktopDevCommandRequest,
+  desktopDevCommandUrlPatterns,
+} from "./desktopCommandAuth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,12 +84,13 @@ test("固定 origin 请求按路径、方法和请求体流式转发到实际随
   const handler = createDesktopAppProxyHandler(43127, async (request) => {
     forwarded.push(request);
     return new Response("ok");
-  });
+  }, "desktop-command-token");
   const request = new Request("qingagent://app/api/v1/commands?source=desktop", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Origin: DESKTOP_APP_ORIGIN,
+      Authorization: "Bearer renderer-forged-token",
     },
     body: JSON.stringify({ command: "write" }),
     duplex: "half",
@@ -98,7 +103,21 @@ test("固定 origin 请求按路径、方法和请求体流式转发到实际随
   assert.equal(forwarded[0]?.url, "http://127.0.0.1:43127/api/v1/commands?source=desktop");
   assert.equal(forwarded[0]?.method, "POST");
   assert.equal(forwarded[0]?.headers.get("origin"), "http://127.0.0.1:43127");
+  assert.equal(forwarded[0]?.headers.get("authorization"), "Bearer desktop-command-token");
+  assert.equal(request.headers.get("authorization"), "Bearer renderer-forged-token");
   assert.deepEqual(await forwarded[0]?.json(), { command: "write" });
+});
+
+test("固定协议不会把 command 凭据带给其他 API", async () => {
+  let forwarded: Request | undefined;
+  const handler = createDesktopAppProxyHandler(43127, async (request) => {
+    forwarded = request;
+    return new Response("ok");
+  }, "desktop-command-token");
+
+  await handler(new Request("qingagent://app/api/v1/home"));
+
+  assert.equal(forwarded?.headers.get("authorization"), null);
 });
 
 test("固定协议拒绝其他 host，避免变成任意本机代理", async () => {
@@ -106,7 +125,7 @@ test("固定协议拒绝其他 host，避免变成任意本机代理", async () 
   const handler = createDesktopAppProxyHandler(43127, async () => {
     fetchCalls += 1;
     return new Response("unexpected");
-  });
+  }, "desktop-command-token");
 
   const response = await handler(new Request("qingagent://other/api/v1/home"));
 
@@ -119,7 +138,7 @@ test("正确 host 的双斜杠路径仍只能转发到实际回环端口", async
   const handler = createDesktopAppProxyHandler(43127, async (request) => {
     forwarded.push(request);
     return new Response("ok");
-  });
+  }, "desktop-command-token");
 
   const response = await handler(
     new Request("qingagent://app//example.invalid/steal?x=1"),
@@ -132,4 +151,43 @@ test("正确 host 的双斜杠路径仍只能转发到实际回环端口", async
     "http://127.0.0.1:43127//example.invalid/steal?x=1",
   );
   assert.equal(new URL(forwarded[0]!.url).origin, "http://127.0.0.1:43127");
+});
+
+test("desktop dev 只给主窗口同源 command mutation 补凭据", () => {
+  const options = {
+    rendererId: 17,
+    rendererOrigin: "http://localhost:6173",
+    token: "desktop-dev-token",
+  };
+  const requestHeaders = {
+    "Content-Type": "application/json",
+    authorization: "Bearer renderer-forged-token",
+  };
+
+  const authorized = authorizeDesktopDevCommandRequest({
+    url: "http://localhost:6173/api/v1/commands?source=desktop-dev",
+    method: "POST",
+    webContentsId: 17,
+    requestHeaders,
+  }, options);
+
+  assert.equal(authorized.Authorization, "Bearer desktop-dev-token");
+  assert.equal(authorized.authorization, undefined);
+  assert.equal(requestHeaders.authorization, "Bearer renderer-forged-token");
+  assert.strictEqual(authorizeDesktopDevCommandRequest({
+    url: "http://localhost:6173/api/v1/commands",
+    method: "POST",
+    webContentsId: 18,
+    requestHeaders,
+  }, options), requestHeaders);
+  assert.strictEqual(authorizeDesktopDevCommandRequest({
+    url: "http://localhost:6173/api/v1/home",
+    method: "POST",
+    webContentsId: 17,
+    requestHeaders,
+  }, options), requestHeaders);
+  assert.deepEqual(desktopDevCommandUrlPatterns(options.rendererOrigin), [
+    "http://localhost:6173/api/v1/commands*",
+    "http://localhost:6173/api/v1/stream*",
+  ]);
 });

@@ -43,6 +43,10 @@ import {
 } from "./desktopAppProtocol.js";
 import { createNodeHttpProxyFetch } from "./desktopAppProxyFetch.js";
 import {
+  authorizeDesktopDevCommandRequest,
+  desktopDevCommandUrlPatterns,
+} from "./desktopCommandAuth.js";
+import {
   readPrivateStringMap,
   writePrivateStringMap,
 } from "./privateJsonStore.js";
@@ -539,7 +543,7 @@ const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js"
 let appOpenedCaptured = false;
 const appStartedAt = Date.now();
 let embeddedServerPort: number | null = null;
-let embeddedServerReady: Promise<{ port: number }> | null = null;
+let embeddedServerReady: ReturnType<typeof startServer> | null = null;
 let windowStartupInProgress = false;
 
 // data: 启动壳不能依赖 Web CSS chunk；下列色值逐字镜像 UIKit tokens.css 的暖纸/金/墨，
@@ -1149,15 +1153,35 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
   }
 }
 
-function installPackagedRendererProtocol(port: number): void {
+function installPackagedRendererProtocol(port: number, commandAuthToken: string): void {
   if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
   // 这一跳必须走 Node http 直连而非 net.fetch:后者取消不传播(SSE 连接永久泄漏)且受
   // Chromium 单主机 6 连接上限约束,叠加后会让事件流和随后的所有 API 请求集体静默挂起。
   // 详见 desktopAppProxyFetch.ts 头部注释。
   protocol.handle(
     DESKTOP_APP_SCHEME,
-    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch()),
+    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch(), commandAuthToken),
   );
+}
+
+function installDevRendererCommandAuth(
+  contents: WebContents,
+  devContentUrl: string,
+  commandAuthToken: string,
+): () => void {
+  const rendererOrigin = new URL(devContentUrl).origin;
+  const webRequest = contents.session.webRequest;
+  const filter = { urls: desktopDevCommandUrlPatterns(rendererOrigin) };
+  webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+    callback({
+      requestHeaders: authorizeDesktopDevCommandRequest(details, {
+        rendererId: contents.id,
+        rendererOrigin,
+        token: commandAuthToken,
+      }),
+    });
+  });
+  return () => webRequest.onBeforeSendHeaders(filter, null);
 }
 
 async function createWindow() {
@@ -1359,8 +1383,9 @@ async function createWindowOnce() {
 
   // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
   let port: number;
+  let commandAuthToken: string;
   try {
-    ({ port } = await serverReady);
+    ({ port, commandAuthToken } = await serverReady);
   } catch (error) {
     if (!isReportedServerStartupError(error)) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -1377,8 +1402,15 @@ async function createWindowOnce() {
   addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
   addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
   if (!isDev) {
-    installPackagedRendererProtocol(port);
+    installPackagedRendererProtocol(port, commandAuthToken);
     allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
+  } else {
+    const removeDevCommandAuth = installDevRendererCommandAuth(
+      contentWebContents,
+      devContentUrl,
+      commandAuthToken,
+    );
+    contentWindow.once("closed", removeDevCommandAuth);
   }
   installNetProbe();
   // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。

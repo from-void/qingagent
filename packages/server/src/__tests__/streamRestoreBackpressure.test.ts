@@ -6,6 +6,7 @@ import {
 } from "../gateway/bridgeHandler";
 import { sessions } from "../gateway/sessionRegistry";
 import { app } from "../app";
+import { authenticatedCommandRequest } from "./commandTestRequest";
 
 const sessionIds: string[] = [];
 
@@ -55,7 +56,7 @@ describe("GET /api/v1/events 恢复快照背压", () => {
       `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}&after=0&epoch=${epoch}`,
       { signal: controller.signal },
     );
-    const command = await app.request("/api/v1/commands", {
+    const command = await authenticatedCommandRequest("/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -73,7 +73,7 @@ export async function claimClientMessageIdempotency(input: {
       sql: `INSERT INTO client_message_idempotency (
           id, session_id, message_id, created_at, last_touched, completed_at
         ) VALUES (?, ?, ?, ?, ?, NULL)
-        ON CONFLICT(id) DO NOTHING
+        ON CONFLICT(session_id, id) DO NOTHING
         RETURNING
           id, session_id, message_id, created_at, last_touched, completed_at`,
       args: [
@@ -94,9 +94,10 @@ export async function claimClientMessageIdempotency(input: {
     sql: `SELECT
         id, session_id, message_id, created_at, last_touched, completed_at
       FROM client_message_idempotency
-      WHERE id = ?
+      WHERE session_id = ?
+        AND id = ?
       LIMIT 1`,
-    args: [input.id],
+    args: [input.sessionId, input.id],
   });
   const row = existing.rows[0];
   if (!row) {
@@ -124,15 +125,15 @@ export async function touchClientMessageIdempotency(
     client.execute({
       sql: `UPDATE client_message_idempotency
         SET last_touched = MAX(last_touched, ?)
-        WHERE id = ?
-          AND session_id = ?
+        WHERE session_id = ?
+          AND id = ?
           AND message_id = ?
           AND created_at = ?
           AND completed_at IS NULL`,
       args: [
         touchedAt,
-        input.id,
         input.sessionId,
+        input.id,
         input.messageId,
         input.createdAt,
       ],
@@ -151,16 +152,16 @@ export async function completeClientMessageIdempotency(
       sql: `UPDATE client_message_idempotency
         SET last_touched = MAX(last_touched, ?),
             completed_at = ?
-        WHERE id = ?
-          AND session_id = ?
+        WHERE session_id = ?
+          AND id = ?
           AND message_id = ?
           AND created_at = ?
           AND completed_at IS NULL`,
       args: [
         completedAt,
         completedAt,
-        input.id,
         input.sessionId,
+        input.id,
         input.messageId,
         input.createdAt,
       ],
@@ -180,13 +181,13 @@ export async function releaseClientMessageIdempotency(input: {
   const result = await withWriteRetry(() =>
     client.execute({
       sql: `DELETE FROM client_message_idempotency
-        WHERE id = ?
-          AND session_id = ?
+        WHERE session_id = ?
+          AND id = ?
           AND message_id = ?
           AND created_at = ?`,
       args: [
-        input.id,
         input.sessionId,
+        input.id,
         input.messageId,
         input.createdAt,
       ],

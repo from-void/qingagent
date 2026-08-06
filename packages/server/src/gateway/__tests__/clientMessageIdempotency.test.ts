@@ -10,6 +10,101 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function createSessionScopedStore(): ClientMessageIdempotencyStore {
+  const records = new Map<
+    string,
+    Parameters<ClientMessageIdempotencyStore["claim"]>[0]
+  >();
+  return {
+    async claim(input) {
+      const key = JSON.stringify([input.sessionId, input.id]);
+      const current = records.get(key);
+      if (current) {
+        return {
+          claimed: false,
+          record: {
+            id: current.id,
+            sessionId: current.sessionId,
+            messageId: current.messageId,
+            createdAt: current.now,
+            lastTouched: current.now,
+            completedAt: null,
+          },
+        };
+      }
+      records.set(key, input);
+      return {
+        claimed: true,
+        record: {
+          id: input.id,
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          createdAt: input.now,
+          lastTouched: input.now,
+          completedAt: null,
+        },
+      };
+    },
+    touch: async () => true,
+    complete: async () => true,
+    release: async () => true,
+  };
+}
+
+describe("clientMessageId 会话作用域", () => {
+  it("不同会话的同一 clientMessageId 都返回 claimed 与各自 sessionId", async () => {
+    const registry = new ClientMessageIdempotencyRegistry(
+      () => 1_000,
+      createSessionScopedStore(),
+    );
+
+    await expect(registry.claim(
+      "shared-client-message",
+      "session-a",
+      "message-a",
+    )).resolves.toMatchObject({
+      kind: "claimed",
+      sessionId: "session-a",
+      messageId: "message-a",
+    });
+    await expect(registry.claim(
+      "shared-client-message",
+      "session-b",
+      "message-b",
+    )).resolves.toMatchObject({
+      kind: "claimed",
+      sessionId: "session-b",
+      messageId: "message-b",
+    });
+  });
+
+  it("同一会话重复 claim 时返回第一次的 messageId", async () => {
+    const registry = new ClientMessageIdempotencyRegistry(
+      () => 1_000,
+      createSessionScopedStore(),
+    );
+
+    await expect(registry.claim(
+      "same-client-message",
+      "same-session",
+      "original-message",
+    )).resolves.toMatchObject({
+      kind: "claimed",
+      sessionId: "same-session",
+      messageId: "original-message",
+    });
+    await expect(registry.claim(
+      "same-client-message",
+      "same-session",
+      "replacement-message",
+    )).resolves.toEqual({
+      kind: "duplicate",
+      sessionId: "same-session",
+      messageId: "original-message",
+    });
+  });
+});
+
 describe("clientMessageId 在途心跳", () => {
   it("命令执行期间周期性 touch，完成后停止并标记 completed", async () => {
     vi.useFakeTimers();
@@ -52,6 +147,7 @@ describe("clientMessageId 在途心跳", () => {
     });
     const maintained = registry.maintain(
       "client-message-active",
+      "session-active",
       claim.token,
       completion,
     );
@@ -125,7 +221,7 @@ describe("clientMessageId 在途心跳", () => {
     const owner = registry.claim("client-message-race", "session-owner");
     const duplicate = registry.claim(
       "client-message-race",
-      "session-duplicate",
+      "session-owner",
     );
     await expect(duplicate).resolves.toMatchObject({ kind: "duplicate" });
     releaseFirst();
@@ -183,6 +279,7 @@ describe("clientMessageId 在途心跳", () => {
 
     await expect(registry.maintain(
       "retry-after-failure",
+      "session-retry",
       claim.token,
       Promise.resolve(failureFrames),
     )).resolves.toEqual(failureFrames);
@@ -223,6 +320,7 @@ describe("clientMessageId 在途心跳", () => {
 
     await expect(registry.maintain(
       "retry-after-rejection",
+      "session-retry",
       claim.token,
       Promise.reject(new Error("actor failed")),
     )).rejects.toThrow("actor failed");

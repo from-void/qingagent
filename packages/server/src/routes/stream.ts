@@ -356,6 +356,7 @@ async function handleCommandPost(c: Context) {
     if (clientMessageClaim) {
       await clientMessageIdempotency.release(
         clientMessageClaim.clientMessageId,
+        clientMessageClaim.sessionId,
         clientMessageClaim.token,
       );
     }
@@ -369,6 +370,7 @@ async function handleCommandPost(c: Context) {
   if (clientMessageClaim) {
     promise = clientMessageIdempotency.maintain(
       clientMessageClaim.clientMessageId,
+      clientMessageClaim.sessionId,
       clientMessageClaim.token,
       promise,
     );

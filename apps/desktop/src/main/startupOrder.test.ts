@@ -216,6 +216,38 @@ test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key pro
   assert.ok(probeLine > providerLine && createWindowLine > probeLine, "沙箱探针必须继续在 createWindow 前短路");
 });
 
+test("旧浏览器凭据清理失败只发布设置页状态，不弹窗、不阻断启动", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
+  const readyLine = source.indexOf("app.whenReady().then(async () => {");
+  const createWindowLine = source.indexOf("await createWindow();", readyLine);
+  const readySource = source.slice(readyLine, createWindowLine);
+
+  assert.match(source, /BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL/);
+  assert.match(source, /ipcMain\.handle\(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL/);
+  assert.match(source, /browserCredentialMigration\.failures\.map/);
+  assert.match(preload, /getBrowserCredentialCleanupNotice/);
+  assert.doesNotMatch(readySource, /browserCredentialMigration\.failures/);
+  assert.doesNotMatch(readySource, /showNativeBrowserCredentialCleanupFailure/);
+});
+
+test("第二实例虽跳过迁移，也先把浏览器写入路径固定到 userData 且不启动 server", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const storagePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(");
+  const profilePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(");
+  const migrationGateLine = source.indexOf("const browserCredentialMigration = hasSingleInstanceLock");
+  const readyGateLine = source.indexOf("if (hasSingleInstanceLock) app.whenReady().then(async () => {");
+
+  assert.ok(storagePathLine >= 0 && profilePathLine >= 0, "必须注入两类浏览器凭据的新写入位置");
+  assert.ok(
+    storagePathLine < migrationGateLine && profilePathLine < migrationGateLine,
+    "即使锁失败跳过迁移，浏览器凭据路径也必须先脱离 cwd",
+  );
+  assert.ok(readyGateLine > migrationGateLine, "第二实例不得进入 ready/startServer 链");
+  assert.match(source.slice(storagePathLine, migrationGateLine), /userDataDir/);
+  assert.doesNotMatch(source.slice(storagePathLine, migrationGateLine), /process\.cwd\(\)/);
+});
+
 test("QINGAGENT_DEVTOOLS=1 在打包态也以独立窗口打开主窗口 DevTools", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   assert.match(source, /isDev \|\| process\.env\.QINGAGENT_DEVTOOLS === "1"/);

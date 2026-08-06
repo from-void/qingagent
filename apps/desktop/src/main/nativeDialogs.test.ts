@@ -48,9 +48,15 @@ test("desktop 原生消息框只存在于 renderer 不可用的集中兜底", ()
   assert.match(indexSource, /rendererDialogBroker\.request/);
   assert.match(indexSource, /showNativeQuitFallback/);
   assert.match(indexSource, /showNativeContentRecoveryFallback/);
+  assert.doesNotMatch(
+    indexSource,
+    /showNativeBrowserCredentialCleanupFailure|浏览器登录数据清理失败[\s\S]{0,240}?app\.exit\(1\)/,
+    "旧浏览器凭据清理失败不得用启动弹窗阻断应用",
+  );
   assert.match(fallbackSource, /buttons:\s*\["退出应用", "继续生成"\]/);
   assert.match(fallbackSource, /defaultId:\s*1/);
   assert.match(fallbackSource, /buttons:\s*\["重试", "退出"\]/);
+  assert.doesNotMatch(fallbackSource, /浏览器登录数据清理失败/);
   assert.doesNotMatch(indexSource, /showErrorBox\([\s\S]{0,240}?\+\s*detail/);
   assert.doesNotMatch(serverSource, /showErrorBox\([\s\S]{0,320}?\+\s*detail/);
 });

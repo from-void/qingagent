@@ -192,6 +192,12 @@
 .security-head{padding:0 0 14px;border-bottom:1px solid var(--qj-switch-border)}
 .security-head h2{margin:0 0 6px;color:var(--qj-ink);font:700 16px/1.4 var(--font-zh-serif)}
 .security-head p{margin:0;color:var(--ink-desc);font-size:13px;line-height:1.7}
+.security-browser-cleanup-notice{margin:14px 0 2px;padding:12px 14px;border-left:2px solid var(--qj-cinnabar);background:var(--qj-switch-bg);color:var(--qj-ink)}
+.security-browser-cleanup-notice h3{margin:0 0 6px;font:700 13px/1.5 var(--font-zh-serif)}
+.security-browser-cleanup-notice p{margin:0;color:var(--ink-desc);font-size:12px;line-height:1.7}
+.security-browser-cleanup-notice ul{margin:8px 0 0;padding-left:18px}
+.security-browser-cleanup-notice li{margin-top:4px;color:var(--qj-switch-text);line-height:1.5;overflow-wrap:anywhere}
+.security-browser-cleanup-notice code{font-family:var(--font-mono);font-size:11px}
 .security-list{display:flex;flex-direction:column}
 /* 分类小节:视觉上从属于上方总开关;总开关关掉询问时整块淡出表示暂不生效 */
 .security-subhead{margin:18px 0 2px;color:var(--ink-desc);font:700 12px/1.5 var(--font-zh-serif);letter-spacing:.04em}

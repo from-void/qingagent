@@ -20,6 +20,7 @@ import {
 } from "../../system/confirmGrantState";
 
 type UpdatePhase = "idle" | "updating" | "uncertain" | "settled";
+type BrowserCredentialCleanupNotice = { paths: string[] };
 
 const POST_TIMEOUT_MS = 8_000;
 const RECONCILE_INTERVAL_MS = 750;
@@ -195,6 +196,8 @@ function mergeSettings(
 export function SecurityPanel() {
   const toast = useToast();
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
+  const [browserCredentialCleanupNotice, setBrowserCredentialCleanupNotice] =
+    useState<BrowserCredentialCleanupNotice | null>(null);
   // 加载占位延迟 250ms 才显形,快请求不闪
   const showLoading = useDelayedVisible(settings === null);
   const [updatePhases, setUpdatePhases] = useState<
@@ -206,6 +209,28 @@ export function SecurityPanel() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const readNotice = window.electron?.getBrowserCredentialCleanupNotice;
+    if (!readNotice) return;
+    let active = true;
+    void readNotice()
+      .then((notice) => {
+        if (!active || !notice || !Array.isArray(notice.paths)) return;
+        const paths = [
+          ...new Set(
+            notice.paths.filter(
+              (item): item is string => typeof item === "string" && item.trim().length > 0,
+            ),
+          ),
+        ];
+        if (paths.length > 0) setBrowserCredentialCleanupNotice({ paths });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
     };
   }, []);
 
@@ -419,6 +444,23 @@ export function SecurityPanel() {
         <h2>操作确认</h2>
         <p>按操作类别选择确认方式。授权会立即生效，也可以随时改回。</p>
       </header>
+      {browserCredentialCleanupNotice && (
+        <section
+          className="security-browser-cleanup-notice"
+          data-wf="BrowserCredentialCleanupNotice"
+          role="status"
+        >
+          <h3>旧浏览器登录数据需要手工清理</h3>
+          <p>
+            青简没能自动删除下面的旧登录数据。请先退出青简，再在系统文件管理器中逐一删除这些文件或文件夹，然后重新打开青简；完成前，旧登录凭据仍留在原位置。
+          </p>
+          <ul>
+            {browserCredentialCleanupNotice.paths.map((legacyPath) => (
+              <li key={legacyPath}><code>{legacyPath}</code></li>
+            ))}
+          </ul>
+        </section>
+      )}
       {settings && (
         <div className="security-list">
           <div

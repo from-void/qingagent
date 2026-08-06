@@ -24,6 +24,7 @@ export interface UploadAssetOptions {
 }
 
 export const DEFAULT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+const LARGE_MATERIAL_NOTICE_BYTES = 1024 * 1024;
 
 export type UploadAssetErrorCode =
   | MaterialUploadErrorCode
@@ -46,14 +47,25 @@ export class UploadAssetError extends Error {
 
 function formatUploadLimit(maxBytes: number): string {
   const mib = maxBytes / (1024 * 1024);
-  if (mib >= 1) return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MB`;
+  if (mib >= 1) return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`;
   const kib = maxBytes / 1024;
-  if (kib >= 1) return `${Number.isInteger(kib) ? kib : kib.toFixed(1)} KB`;
+  if (kib >= 1) return `${Number.isInteger(kib) ? kib : kib.toFixed(1)} KiB`;
   return `${maxBytes} 字节`;
 }
 
 function fileTooLargeMessage(maxBytes: number): string {
-  return `文件过大（上限 ${formatUploadLimit(maxBytes)}）`;
+  return `文件过大（上传上限 ${formatUploadLimit(maxBytes)}）`;
+}
+
+export function largeMaterialUploadNotice(
+  assets: readonly Pick<UploadedAsset, "filename" | "size">[],
+): string | null {
+  const largeAssets = assets.filter((asset) => asset.size > LARGE_MATERIAL_NOTICE_BYTES);
+  if (largeAssets.length === 0) return null;
+  const subject = largeAssets.length === 1
+    ? `素材“${largeAssets[0]!.filename}”`
+    : `${largeAssets.length} 个素材`;
+  return `${subject}较大；对话中会按相关片段参考。如需逐字处理，请拆分素材后分段发送。`;
 }
 
 export function uploadFileSizeError(file: Pick<File, "size">): Error | null {
@@ -65,7 +77,7 @@ export function uploadFileSizeError(file: Pick<File, "size">): Error | null {
 export function uploadFailureMessage(error: unknown, fallback: string): string {
   if (error instanceof UploadAssetError) return error.message;
   const message = error instanceof Error ? error.message : "";
-  return message.startsWith("文件过大（上限 ") ? message : fallback;
+  return message.startsWith("文件过大（上传上限 ") ? message : fallback;
 }
 
 export async function uploadAssetFile(file: File, options: UploadAssetOptions = {}): Promise<UploadedAsset> {

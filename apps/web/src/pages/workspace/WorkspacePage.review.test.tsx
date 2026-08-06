@@ -7458,6 +7458,7 @@ describe("WorkspacePage existing session restore retry", () => {
         <RightPane
           {...rightPaneProps({
             doc: null,
+            sessionRestoreBlocked: true,
             streamError: { kind: "failed", reason: "恢复会话失败，请重试", retriable: true },
           })}
         />
@@ -7466,6 +7467,24 @@ describe("WorkspacePage existing session restore retry", () => {
 
     expect(host?.textContent).toContain("恢复失败");
     expect(host?.querySelector(".doc-empty-loader")).toBeNull();
+  });
+
+  it("普通生成轮次失败且无文档时 RightPane 显示生成失败而非恢复失败", async () => {
+    const { RightPane } = await import("./WorkspacePage");
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            doc: null,
+            sessionRestoreBlocked: false,
+            streamError: { kind: "failed", reason: "请求中的素材体量过大", retriable: false },
+          })}
+        />
+      </section>,
+    );
+
+    expect(host?.textContent).toContain("生成失败");
+    expect(host?.textContent).not.toContain("恢复失败");
   });
 });
 

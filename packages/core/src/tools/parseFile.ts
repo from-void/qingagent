@@ -5,6 +5,11 @@ import { open, readFile, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { jsonToolModelOutput } from "./toolModelOutput.js";
+import {
+  applyMaterialContextBudget,
+  PARSE_FILE_TRUNCATION_GUIDANCE,
+} from "./materialContextBudget.js";
 import { statOpenedFileIdentity, verifyOpenedFilePath } from "./openedFilePath.js";
 import {
   inferMimeTypeFromFilename,
@@ -104,7 +109,7 @@ const MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
 // 64MiB 足以覆盖常见桌面文档素材，同时限制分块汇总缓冲区和后续解析的堆内存占用。
 const MAX_DESKTOP_FILE_BYTES = 64 * 1024 * 1024;
-const MAX_DESKTOP_FILE_LABEL = "64MiB";
+const MAX_DESKTOP_FILE_LABEL = "64 MiB";
 // 防止极端超长 PDF 占满主进程；截断必须写进返回正文，不能只藏在 metadata/日志里。
 export const PDF_TEXT_PAGE_LIMIT = 500;
 
@@ -123,7 +128,7 @@ const FILE_NOT_REGULAR_RESULT = parseFileToolFailure("不是常规文件", {
 });
 
 const FILE_TOO_LARGE_RESULT = parseFileToolFailure(
-  `文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
+  `文件过大（桌面本地读取上限 ${MAX_DESKTOP_FILE_LABEL}）`,
   { errorCode: "FILE_TOO_LARGE" },
 );
 
@@ -1943,6 +1948,14 @@ export const parseFileTool = createTool({
       pages: z.number().nullable(),
       wordCount: z.number(),
       title: z.string().nullable(),
+    }),
+  }),
+  // Mastra 会把 execute 的原始全文保留给应用侧素材缓存，只把这里的预算结果送回模型。
+  // 这样默认首轮不会用全文炸穿上下文，storeMaterial/readMaterial 又仍可读取完整原文。
+  toModelOutput: (output) => jsonToolModelOutput({
+    ...output,
+    ...applyMaterialContextBudget(output.text, {
+      guidance: output.ok ? PARSE_FILE_TRUNCATION_GUIDANCE : undefined,
     }),
   }),
   execute: async (input, context) => {

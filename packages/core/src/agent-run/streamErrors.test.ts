@@ -72,7 +72,7 @@ describe("withIdleTimeout 迭代器收尾", () => {
 });
 
 describe("stream error 分类", () => {
-  it.each([400, 404, 413, 422])(
+  it.each([404, 422])(
     "非白名单 HTTP %s 归为不可重试的请求错误",
     (statusCode) => {
       expect(streamErrorDetails(errorChunk("request rejected", statusCode))).toEqual({
@@ -85,6 +85,28 @@ describe("stream error 分类", () => {
       });
     },
   );
+
+  it("400 maximum context length 明确说明素材超出上下文并给出处理办法", () => {
+    expect(streamErrorDetails(errorChunk("maximum context length exceeded", 400))).toEqual({
+      reason: "素材或对话内容超出模型上下文长度。请删除部分素材、改用摘要，或拆分后分段处理。",
+      retriable: false,
+      statusCode: 400,
+      category: "request",
+      userMessage: "素材或对话内容超出模型上下文长度。请删除部分素材、改用摘要，或拆分后分段处理。",
+      action: "none",
+    });
+  });
+
+  it("413 明确说明请求中的素材体量过大且与 400 文案不同", () => {
+    expect(streamErrorDetails(errorChunk("payload too large", 413))).toEqual({
+      reason: "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。",
+      retriable: false,
+      statusCode: 413,
+      category: "request",
+      userMessage: "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。",
+      action: "none",
+    });
+  });
 
   it("业务错误中的 terminated 不触发自动瞬态重试", () => {
     expect(

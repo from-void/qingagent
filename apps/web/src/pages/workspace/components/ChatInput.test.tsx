@@ -691,10 +691,38 @@ describe("ChatInput", () => {
     clickElement(getChooseFileRow());
     await selectFile(oversized);
 
-    expect(onToast).toHaveBeenCalledWith("文件过大（上限 50 MB）");
+    expect(onToast).toHaveBeenCalledWith("文件过大（上传上限 50 MiB）");
     expect(ref.current?.snapshot().files).toEqual([]);
     expect(attachChipLabels()).toEqual([]);
     expect(host?.querySelector('[data-wf="WsFileMenu"]')).toBeNull();
+  });
+
+  it("大素材预检成功并进入 ready 时立即提示，不等发送或失败", async () => {
+    const onToast = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+        onToast={onToast}
+      />,
+    );
+    const largeText = new File(
+      ["甲".repeat(1024 * 1024 + 1)],
+      "large-material.txt",
+      { type: "text/plain" },
+    );
+
+    await selectFile(largeText);
+
+    expect(getEditor().querySelector('[data-attachment-state="ready"]')).not.toBeNull();
+    expect(onToast).toHaveBeenCalledWith({
+      message: "素材“large-material.txt”较大；对话中会按相关片段参考。如需逐字处理，请拆分素材后分段发送。",
+      tone: "warn",
+      sticky: true,
+      role: "status",
+      dedupeKey: "large-material-reference-notice",
+    });
   });
 
   it("工具栏只保留 技能 / 文件 两个动作入口", async () => {

@@ -59,6 +59,7 @@ describe("ToolSearch bridge", () => {
     ]));
     expect(Object.keys(bridge.searchableTools)).not.toContain("show_qr");
     expect(Object.keys(bridge.searchableTools)).not.toContain("updateTodos");
+    expect(bridge.searchableTools.parseFile?.toModelOutput).toBeTypeOf("function");
     expect(bridge.preloadToolNames.sort()).toEqual([
       "editSvgWithCodexFallback",
       "generateSvg",

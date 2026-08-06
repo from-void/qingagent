@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 const nonRegularFsMock = vi.hoisted(() => ({
   path: "/__parse-file-mocked-device__",
@@ -28,9 +29,14 @@ import {
   exceedsBase64DecodedByteLimit,
   parseFileTool,
 } from "../tools/parseFile.js";
+import { MATERIAL_CONTEXT_MAX_CHARS } from "../tools/generateDoc.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
 import type { Material } from "../types/material.js";
+import {
+  guardToolModelOutputMapper,
+  validateToolModelOutput,
+} from "../tools/toolModelOutput.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: extract the Zod schema from the Mastra tool and validate.
@@ -89,10 +95,10 @@ const FILE_NOT_REGULAR_RESULT = {
 
 const FILE_TOO_LARGE_RESULT = {
   ok: false,
-  error: "文件过大（上限 64MiB）",
+  error: "文件过大（桌面本地读取上限 64 MiB）",
   errorCode: "FILE_TOO_LARGE",
   failureKind: "error",
-  text: "[Error] 文件过大（上限 64MiB）",
+  text: "[Error] 文件过大（桌面本地读取上限 64 MiB）",
   metadata: { pages: null, wordCount: 0, title: null },
 };
 
@@ -106,6 +112,49 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+async function serializeToolOutputToProviderMessage(output: unknown): Promise<Record<string, unknown>> {
+  let requestBody: { messages?: Array<Record<string, unknown>> } | undefined;
+  const provider = createOpenAICompatible({
+    name: "material-tools-test",
+    baseURL: "https://provider.invalid/v1",
+    apiKey: "test-key",
+    fetch: async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body)) as typeof requestBody;
+      return new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+
+  await provider.chatModel("test-model").doStream({
+    prompt: [
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "parse-file-call",
+          toolName: "parseFile",
+          input: { fileId: "small.csv" },
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "parse-file-call",
+          toolName: "parseFile",
+          output,
+        }],
+      },
+    ],
+  } as never);
+
+  const message = requestBody?.messages?.at(-1);
+  if (!message) throw new Error("provider request did not contain a tool message");
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +415,21 @@ describe("readMaterial tool schema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("validates range mode with a non-negative half-open character interval", () => {
+    expect(validateToolInput(readMaterialTool, {
+      materialId: "mat-123-abcd",
+      mode: "range",
+      start: 120_000,
+      end: 240_000,
+    }).success).toBe(true);
+    expect(validateToolInput(readMaterialTool, {
+      materialId: "mat-123-abcd",
+      mode: "range",
+      start: -1,
+      end: 10,
+    }).success).toBe(false);
+  });
+
   it("rejects invalid mode", () => {
     const input = {
       materialId: "mat-123-abcd",
@@ -562,6 +626,21 @@ describe("readMaterial execute — session-scoped closure", () => {
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
   });
+  materials.set("mat-read-large", {
+    id: "mat-read-large",
+    filename: "large-report.txt",
+    mimeType: "text/plain",
+    text: `${"甲".repeat(MATERIAL_CONTEXT_MAX_CHARS)}尾部暗号`,
+    summary: "大型报告摘要",
+    fileId: null,
+    metadata: {
+      pages: null,
+      wordCount: MATERIAL_CONTEXT_MAX_CHARS + 4,
+      title: "大型报告",
+    },
+    createdAt: "2026-05-23T10:00:00Z",
+    updatedAt: "2026-05-23T10:00:00Z",
+  });
 
   const { readMaterial } = createSessionScopedTools(materials);
 
@@ -576,6 +655,66 @@ describe("readMaterial execute — session-scoped closure", () => {
     expect(result.text).toBe("这是文章全文内容，包含很多段落。");
     expect(result.filename).toBe("article.pdf");
     expect(result.wordCount).toBe(5000);
+  });
+
+  it("全文超预算时截断并把截断量与后续读取方式显式告知模型", async () => {
+    const raw = await readMaterial.execute!(
+      { materialId: "mat-read-large", mode: "full" },
+      ctx,
+    );
+    const result = raw as {
+      ok: boolean;
+      text: string;
+      truncated: boolean;
+      originalChars: number;
+      returnedChars: number;
+      omittedChars: number;
+      rangeStart: number;
+      rangeEnd: number;
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.text.length).toBe(MATERIAL_CONTEXT_MAX_CHARS);
+    expect(result.text).toContain("素材截断提示");
+    expect(result.text).toContain("summary 模式");
+    expect(result.text).toContain("range 模式");
+    expect(result.text).not.toContain("尾部暗号");
+    expect(result.truncated).toBe(true);
+    expect(result.originalChars).toBe(MATERIAL_CONTEXT_MAX_CHARS + 4);
+    expect(result.returnedChars).toBeGreaterThan(0);
+    expect(result.omittedChars).toBe(result.originalChars - result.returnedChars);
+    expect(result.rangeStart).toBe(0);
+    expect(result.rangeEnd).toBe(result.returnedChars);
+    expect(result.text.slice(result.text.indexOf("\n\n") + 2)).toHaveLength(
+      result.returnedChars,
+    );
+  });
+
+  it("range 模式可按字符区间继续读取超预算素材", async () => {
+    const raw = await readMaterial.execute!(
+      {
+        materialId: "mat-read-large",
+        mode: "range",
+        start: MATERIAL_CONTEXT_MAX_CHARS,
+        end: MATERIAL_CONTEXT_MAX_CHARS + 4,
+      },
+      ctx,
+    );
+    const result = raw as {
+      ok: boolean;
+      text: string;
+      truncated: boolean;
+      rangeStart: number;
+      rangeEnd: number;
+    };
+
+    expect(result).toMatchObject({
+      ok: true,
+      text: "尾部暗号",
+      truncated: false,
+      rangeStart: MATERIAL_CONTEXT_MAX_CHARS,
+      rangeEnd: MATERIAL_CONTEXT_MAX_CHARS + 4,
+    });
   });
 
   it("returns summary for existing material with summary", async () => {
@@ -778,6 +917,105 @@ describe("parseFile execute — TXT", () => {
     const r = result as { text: string; metadata: { pages: number | null } };
     expect(r.text).toBe(md);
     expect(r.metadata.pages).toBeNull();
+  });
+
+  it("模型侧默认结果超预算时自动截断并告知全量分段读取路径", async () => {
+    const sourceText = `${"甲".repeat(MATERIAL_CONTEXT_MAX_CHARS + 321)}尾部暗号`;
+    const rawOutput = await executeParseFileOnDesktop({
+      content: Buffer.from(sourceText).toString("base64"),
+      filename: "large-material.txt",
+      mimeType: "text/plain",
+    });
+    expect(rawOutput).toMatchObject({ ok: true, text: sourceText });
+
+    const modelOutput = await parseFileTool.toModelOutput?.(rawOutput as never);
+    const result = (modelOutput as { type: "json"; value: {
+      ok: boolean;
+      text: string;
+      metadata: { pages: number | null; wordCount: number; title: string | null };
+      truncated: boolean;
+      originalChars: number;
+      returnedChars: number;
+      omittedChars: number;
+      rangeStart: number;
+      rangeEnd: number;
+    } }).value;
+
+    expect(result.ok).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(MATERIAL_CONTEXT_MAX_CHARS);
+    expect(result.text.startsWith("【素材截断提示】")).toBe(true);
+    expect(result.text).toContain("storeMaterial");
+    expect(result.text).toContain("readMaterial");
+    expect(result.text).toContain("range");
+    expect(result).toMatchObject({
+      metadata: { pages: null, wordCount: sourceText.length, title: null },
+      truncated: true,
+      originalChars: sourceText.length,
+      rangeStart: 0,
+    });
+    expect(result.returnedChars).toBe(result.rangeEnd);
+    expect(result.omittedChars).toBe(sourceText.length - result.returnedChars);
+    expect(result.text.endsWith(sourceText.slice(0, result.returnedChars))).toBe(true);
+  });
+
+  it("模型侧默认结果未超预算时保留全文并携带未截断元数据", async () => {
+    const sourceText = "短素材正文";
+    const modelOutput = await parseFileTool.toModelOutput?.({
+      ok: true,
+      text: sourceText,
+      metadata: { pages: 1, wordCount: 5, title: null },
+    });
+
+    expect(modelOutput).toEqual({
+      type: "json",
+      value: {
+        ok: true,
+        text: sourceText,
+        metadata: { pages: 1, wordCount: 5, title: null },
+        truncated: false,
+        originalChars: sourceText.length,
+        returnedChars: sourceText.length,
+        omittedChars: 0,
+        rangeStart: 0,
+        rangeEnd: sourceText.length,
+      },
+    });
+  });
+
+  it("小素材结果序列化到 provider 工具消息后保留 content", async () => {
+    const sourceText = "name,score\n" + "示例,100\n".repeat(150);
+    const rawOutput = await executeParseFileOnDesktop({
+      content: Buffer.from(sourceText).toString("base64"),
+      filename: "small.csv",
+      mimeType: "text/csv",
+    });
+    expect(rawOutput).toMatchObject({ ok: true, text: sourceText });
+    const modelOutput = await parseFileTool.toModelOutput?.(rawOutput as never);
+
+    const providerMessage = await serializeToolOutputToProviderMessage(modelOutput);
+
+    expect(providerMessage).toEqual({
+      role: "tool",
+      tool_call_id: "parse-file-call",
+      content: JSON.stringify((modelOutput as { value: unknown }).value),
+    });
+  });
+});
+
+describe("tool model output 统一形状守卫", () => {
+  it.each([
+    { ok: true, text: "缺少 type/value 的历史非法形状" },
+    { type: "json" },
+    { type: "text", value: { nested: true } },
+    { type: "json", value: undefined },
+    { type: "content", value: "not-an-array" },
+  ])("拒绝无法序列化为 provider tool content 的输出 %#", (output) => {
+    expect(() => validateToolModelOutput(output)).toThrow(TypeError);
+  });
+
+  it("透传钩子在运行时同样拦截非法形状", async () => {
+    const guarded = guardToolModelOutputMapper(() => ({ ok: true }));
+    await expect(guarded?.("raw output")).rejects.toThrow(TypeError);
   });
 });
 

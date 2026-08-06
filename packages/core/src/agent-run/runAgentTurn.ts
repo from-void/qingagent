@@ -493,7 +493,8 @@ export async function* runAgentTurn(
       .map((m) => `  - ${m.id}  "${m.filename}"  ${m.metadata.wordCount}字${m.summary ? `  摘要：${m.summary.slice(0, 80)}` : ""}`)
       .join("\n");
     fullUserText +=
-      `\n\n[系统：当前会话已存储的素材]\n${matList}\n使用 readMaterial 工具可读取素材全文。`;
+      `\n\n[系统：当前会话已存储的素材]\n${matList}\n` +
+      `使用 readMaterial 读取素材：大素材先读 summary，必要时用 range 分段；full 模式受素材预算限制，截断时会显式返回范围与省略量。`;
   }
 
   // 注入已连接的文件夹资料库清单 + 先读再动作的铁律。用户可能在任意一轮连接文件夹,

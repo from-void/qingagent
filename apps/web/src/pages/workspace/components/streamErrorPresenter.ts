@@ -14,6 +14,10 @@ export function streamErrorLabel(error: StreamError): string {
   if (error.category === "quota" || error.statusCode === 402) return "余额/配额不足";
   if (error.category === "auth" || error.statusCode === 401 || error.statusCode === 403) return "模型配置不可用";
   if (error.category === "blocked_address") return "模型地址被安全策略拦截";
+  if (
+    error.statusCode === 413 ||
+    /素材或内容体量过大|素材或对话内容超出模型上下文长度/.test(error.reason)
+  ) return "素材过大";
   if (error.kind === "draftingFailed") {
     if (/没有返回任何内容|空响应|empty/i.test(error.reason)) return "没有生成内容";
     if (/tool-only|工具调用|步数|未完成/i.test(error.reason)) return "生成未完成";

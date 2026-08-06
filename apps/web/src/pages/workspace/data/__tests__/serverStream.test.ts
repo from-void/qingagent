@@ -1660,6 +1660,49 @@ describe("ServerStream", () => {
     ).rejects.toThrow("Stream request failed: 500");
   });
 
+  it.each([
+    [
+      400,
+      "maximum context length exceeded",
+      "素材或对话内容超出模型上下文长度。请删除部分素材、改用摘要，或拆分后分段处理。",
+    ],
+    [
+      413,
+      "payload too large",
+      "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。",
+    ],
+  ])("commands HTTP %s 使用素材体量专用文案", async (status, rawError, userMessage) => {
+    globalThis.fetch = commandResponse({ error: rawError }, status);
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await expect(
+      stream.sendCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s-1",
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      }),
+    ).rejects.toThrow(rawError);
+    expect(localActions).toContainEqual({
+      kind: "streamErrorSet",
+      error: {
+        kind: "draftingFailed",
+        reason: userMessage,
+        retriable: false,
+        statusCode: status,
+        category: "request",
+        userMessage,
+        action: "none",
+      },
+    });
+  });
+
   it("commands 的删除领域错误直接透传服务端 message", async () => {
     globalThis.fetch = commandResponse({
       error: {

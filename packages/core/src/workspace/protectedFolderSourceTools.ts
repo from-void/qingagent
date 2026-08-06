@@ -11,6 +11,7 @@ import {
 import { posix as posixPath } from "node:path";
 import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
+import { guardToolModelOutputMapper } from "../tools/toolModelOutput.js";
 
 type ToolLike = {
   id: string;
@@ -185,7 +186,7 @@ export function createProtectedFolderSourceReadFileTool(
       `${readFileTool.description}\n\n` +
       "安全限制：本工具不能读取 /sources 资料库正文；资料库文件请改用 readDocument，资料库检索请改用 searchDocuments。",
     inputSchema: readFileTool.inputSchema,
-    toModelOutput: readFileTool.toModelOutput,
+    toModelOutput: guardToolModelOutputMapper(readFileTool.toModelOutput),
     execute: async (input, context) => {
       if (isFolderSourceVirtualPath(input.path)) {
         return denied(FOLDER_SOURCE_DENY_ERROR);
@@ -241,7 +242,7 @@ export function createProtectedFolderSourceEditFileTool(
       `${editFileTool.description}\n\n` +
       "安全限制：本工具不能编辑 /sources 资料库文件；资料库是只读的，读取请改用 readDocument，检索请改用 searchDocuments。",
     inputSchema: editFileTool.inputSchema,
-    toModelOutput: editFileTool.toModelOutput,
+    toModelOutput: guardToolModelOutputMapper(editFileTool.toModelOutput),
     execute: async (input, context) => {
       if (isFolderSourceVirtualPath(input.path)) {
         return denied(FOLDER_SOURCE_DENY_ERROR);
@@ -299,7 +300,7 @@ export function createProtectedFolderSourceSearchTool(
       `${searchTool.description}\n\n` +
       "安全限制：本工具不会返回 /sources 资料库正文或路径命中；资料库检索请改用 searchDocuments。",
     inputSchema: workspaceSearchInputSchema,
-    toModelOutput: searchTool.toModelOutput,
+    toModelOutput: guardToolModelOutputMapper(searchTool.toModelOutput),
     execute: async (input, context) => {
       const stop = startToolHeartbeat(context, { tool: WORKSPACE_TOOLS.SEARCH.SEARCH });
       try {

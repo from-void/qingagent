@@ -39,6 +39,7 @@ import {
   type ModelKeyGateSnapshot,
 } from "../../../system/modelKeyGate";
 import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
+import type { ToastShow } from "../../../system/ToastProvider";
 import {
   buildLongTextChip,
   collectClipboardImageFiles,
@@ -48,7 +49,11 @@ import {
 } from "../../../system/longText";
 import { FileActionMenu } from "./FileActionMenu";
 import { LinkedFilesPanel, type LinkedFileReference } from "./LinkedFilesPanel";
-import { uploadFailureMessage, uploadFileSizeError } from "../data/uploadAsset";
+import {
+  largeMaterialUploadNotice,
+  uploadFailureMessage,
+  uploadFileSizeError,
+} from "../data/uploadAsset";
 import {
   materialPreflightErrorMessage,
   preflightBrowserMaterialFile,
@@ -80,7 +85,7 @@ export interface ChatInputProps {
   /** 删除已解析素材 → 父级二次确认并发 removeMaterial 命令。 */
   onRemoveMaterial?: (source: AssetSource) => void;
   /** 复用页面级全局 toast。 */
-  onToast?: (message: string) => void;
+  onToast?: ToastShow;
   /** 收起素材区时通知父级(关掉右侧预览)。 */
   onPanelClose?: () => void;
   /** 当前会话已连接的文件夹资料库；P0 每会话至多一个。 */
@@ -919,6 +924,19 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 : [...prev, file],
             );
             setLocalAttachmentChipState(chip, "ready");
+            const notice = largeMaterialUploadNotice([{
+              filename: file.name,
+              size: file.size,
+            }]);
+            if (notice) {
+              onToast?.({
+                message: notice,
+                tone: "warn",
+                sticky: true,
+                role: "status",
+                dedupeKey: "large-material-reference-notice",
+              });
+            }
           } else {
             setLocalAttachmentChipState(
               chip,
@@ -930,7 +948,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         });
       }
     },
-    [disabled, reportChange, restoreOrEndRange],
+    [disabled, onToast, reportChange, restoreOrEndRange],
   );
 
   // 粘贴图片 → 走上传文件链路:重命名唯一名、落入 attachedFiles、插一个引用 chip,

@@ -106,6 +106,10 @@ import {
   replaceTextRuns,
 } from "../doc-engine/textEditOps.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
+import {
+  applyMaterialContextBudget,
+  MATERIAL_CONTEXT_MAX_CHARS,
+} from "../tools/materialContextBudget.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import {
   createAnnotationGroupsInputSchema,
@@ -723,18 +727,28 @@ export function createSessionScopedTools(
   const readMaterial = createTool({
     id: "readMaterial",
     description:
-      "读取已存储的素材内容。可以读取全文或摘要。",
+      "读取已存储的素材内容。full 读取预算内全文，summary 读取摘要，range 按字符区间分段读取。",
     inputSchema: z.object({
       materialId: z.string().describe("素材 ID"),
       mode: z
-        .enum(["full", "summary"])
-        .describe("读取模式：full=全文, summary=摘要"),
+        .enum(["full", "summary", "range"])
+        .describe("读取模式：full=预算内全文, summary=摘要, range=按字符区间分段"),
+      start: z.number().int().nonnegative().optional()
+        .describe("range 模式的起始字符位置（从 0 开始，包含）"),
+      end: z.number().int().positive().optional()
+        .describe("range 模式的结束字符位置（不包含；单次最多返回素材预算长度）"),
     }),
     outputSchema: z.object({
       ok: z.boolean(),
       text: z.string().describe("素材文本内容或摘要"),
       filename: z.string().describe("原始文件名"),
       wordCount: z.number().describe("字数"),
+      truncated: z.boolean().describe("本次请求是否因素材预算而截断"),
+      originalChars: z.number().describe("该读取模式下素材原文的字符总数"),
+      returnedChars: z.number().describe("本次实际返回的素材正文字符数（不含截断提示）"),
+      omittedChars: z.number().describe("本次因素材预算省略的字符数"),
+      rangeStart: z.number().describe("本次返回正文的起始字符位置（包含）"),
+      rangeEnd: z.number().describe("本次返回正文的结束字符位置（不包含）"),
       error: z.string().optional(),
     }),
     execute: async (input) => {
@@ -745,15 +759,54 @@ export function createSessionScopedTools(
           text: `[Error] Material not found: ${input.materialId}`,
           filename: "",
           wordCount: 0,
+          truncated: false,
+          originalChars: 0,
+          returnedChars: 0,
+          omittedChars: 0,
+          rangeStart: 0,
+          rangeEnd: 0,
           error: `素材不存在：${input.materialId}`,
         };
       }
-      const text = input.mode === "summary"
+      const sourceText = input.mode === "summary"
         ? (mat.summary ?? "(No summary)")
         : mat.visionSummary
           ? `【图像识别摘要】${mat.visionSummary}\n\n${mat.text}`
           : mat.text;
-      return { ok: true, text, filename: mat.filename, wordCount: mat.metadata.wordCount };
+      if (input.mode === "summary") {
+        return {
+          ok: true,
+          text: sourceText,
+          filename: mat.filename,
+          wordCount: mat.metadata.wordCount,
+          truncated: false,
+          originalChars: sourceText.length,
+          returnedChars: sourceText.length,
+          omittedChars: 0,
+          rangeStart: 0,
+          rangeEnd: sourceText.length,
+        };
+      }
+
+      const rangeStart = input.mode === "range"
+        ? Math.min(input.start ?? 0, sourceText.length)
+        : 0;
+      const requestedEnd = input.mode === "range"
+        ? Math.min(
+            Math.max(input.end ?? rangeStart + MATERIAL_CONTEXT_MAX_CHARS, rangeStart),
+            sourceText.length,
+          )
+        : sourceText.length;
+      const budgeted = applyMaterialContextBudget(sourceText, {
+        rangeStart,
+        requestedEnd,
+      });
+      return {
+        ok: true,
+        filename: mat.filename,
+        wordCount: mat.metadata.wordCount,
+        ...budgeted,
+      };
     },
   });
   const createAnnotationGroups = createTool({

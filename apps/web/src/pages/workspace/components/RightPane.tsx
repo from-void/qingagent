@@ -46,6 +46,8 @@ interface RightPaneProps {
   onCreateBlank: (target: StarterBlankTarget) => void;
   doc: ViewDocumentSnapshot | null;
   streamError: StreamError | null;
+  /** 当前失败是否发生在既有会话恢复阶段。 */
+  sessionRestoreBlocked?: boolean;
   generationDraftDoc: ViewDocumentSnapshot | null;
   viewingSnapshotDoc: ViewDocumentSnapshot | null;
   /** 大改(≥70%)走整篇新旧版审,而非内联逐处。 */
@@ -140,6 +142,7 @@ export function RightPane({
   onCreateBlank,
   doc,
   streamError,
+  sessionRestoreBlocked = false,
   generationDraftDoc,
   viewingSnapshotDoc,
   wholeDocReview,
@@ -203,8 +206,8 @@ export function RightPane({
     return (
       <DocInit
         mode="error"
-        title="恢复失败"
-        onRetry={onRetryRestore}
+        title={sessionRestoreBlocked ? "恢复失败" : "生成失败"}
+        onRetry={sessionRestoreBlocked ? onRetryRestore : undefined}
       />
     );
   }

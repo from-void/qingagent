@@ -10,6 +10,9 @@ import {
   type QingmlWarning,
 } from "@qingagent/pm-schema";
 import type { Material } from "../types/material.js";
+import { MATERIAL_CONTEXT_MAX_CHARS } from "./materialContextBudget.js";
+
+export { MATERIAL_CONTEXT_MAX_CHARS } from "./materialContextBudget.js";
 
 export interface GenerateAiDocumentResult {
   success: true;
@@ -42,9 +45,6 @@ export interface RetryAiBlockContext {
 
 export type RetryAiBlock = (context: RetryAiBlockContext) => Promise<unknown>;
 
-// deepseek-v4-flash 上下文虽为 393216 tokens，写稿还需给 65k 输出、主 system、
-// 对话历史与技能注入留余量。素材单独封顶，避免大文件把每条赛道一起顶出窗口。
-export const MATERIAL_CONTEXT_MAX_CHARS = 120_000;
 const MATERIAL_CONTEXT_CHUNK_CHARS = 4_000;
 
 export interface MaterialContextOptions {

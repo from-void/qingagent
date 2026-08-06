@@ -145,6 +145,21 @@ describe("folder source generic workspace tool gate", () => {
     const workspaceGrep = createProtectedFolderSourceGrepTool({ getWorkspace });
     const workspaceSearchTool = createProtectedFolderSourceSearchTool({ getWorkspace });
 
+    expect(workspaceEditFile.toModelOutput).toBeUndefined();
+    expect(workspaceSearchTool.toModelOutput).toBeUndefined();
+    await expect(workspaceReadFile.toModelOutput?.({
+      __workspaceMedia: true,
+      text: "preview.png (3 bytes, image/png)",
+      mediaType: "image/png",
+      data: "YWJj",
+    } as never)).resolves.toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "preview.png (3 bytes, image/png)" },
+        { type: "media", data: "YWJj", mediaType: "image/png" },
+      ],
+    });
+
     const tools = await qingagentAgent.getToolsForExecution({
       requestContext: new RequestContext([["sessionId", sessionId]]),
       toolsets: {

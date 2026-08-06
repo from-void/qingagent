@@ -822,16 +822,14 @@ export async function* handleTurnCommand(
       const clientMessageId = normalizeIdempotencyClientMessageId(
         command.data.clientMessageId,
       );
-      if (
+      const reuseExistingUserMessage = Boolean(
         clientMessageId &&
-        session.chatHistory.some(
-          (message) =>
-            message.role.kind === "user" &&
-            message.id === clientMessageId,
-        )
-      ) {
-        return;
-      }
+          session.chatHistory.some(
+            (message) =>
+              message.role.kind === "user" &&
+              message.id === clientMessageId,
+          ),
+      );
       const preemptedByNewMessage =
         context.preemptionReason === "preemptedByNewMessage";
       if (preemptedByNewMessage) {
@@ -904,6 +902,7 @@ export async function* handleTurnCommand(
         command.data.reviewContext,
         {
           preemptedByNewMessage,
+          reuseExistingUserMessage,
           ...(command.data.activeDocument
             ? { activeDocument: command.data.activeDocument }
             : {}),

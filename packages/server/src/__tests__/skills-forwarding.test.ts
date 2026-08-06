@@ -55,7 +55,14 @@ describe("bridge skill forwarding", () => {
     expect(runAgentTurnMock.mock.calls[0]?.[4]).toEqual(skills);
   });
 
-  it("会话恢复后按 chatHistory 的 clientMessageId 跳过重复 turn", async () => {
+  it("会话恢复后复用 chatHistory 的用户消息，但继续执行重试 turn", async () => {
+    let restoredChatHistory: Array<{
+      id: string;
+      role: { kind: "user" };
+      ts: string;
+      parts: [];
+      chips: null;
+    }> | null = null;
     runAgentTurnMock.mockImplementation(async function* (
       session: {
         chatHistory: Array<{
@@ -72,14 +79,20 @@ describe("bridge skill forwarding", () => {
       _skills: unknown[],
       _parts: unknown,
       clientMessageId: string,
+      _richText: unknown,
+      _reviewContext: unknown,
+      runtimeOptions: { reuseExistingUserMessage?: boolean },
     ) {
-      session.chatHistory.push({
-        id: clientMessageId,
-        role: { kind: "user" },
-        ts: new Date().toISOString(),
-        parts: [],
-        chips: null,
-      });
+      restoredChatHistory = session.chatHistory;
+      if (!runtimeOptions.reuseExistingUserMessage) {
+        session.chatHistory.push({
+          id: clientMessageId,
+          role: { kind: "user" },
+          ts: new Date().toISOString(),
+          parts: [],
+          chips: null,
+        });
+      }
     });
     const startFrames = await collectFrames(handleCommand({
       kind: "startSession",
@@ -106,6 +119,13 @@ describe("bridge skill forwarding", () => {
     await collectFrames(handleCommand(send));
     await collectFrames(handleCommand(send));
 
-    expect(runAgentTurnMock).toHaveBeenCalledTimes(1);
+    expect(runAgentTurnMock).toHaveBeenCalledTimes(2);
+    expect(runAgentTurnMock.mock.calls[0]?.[9]).toMatchObject({
+      reuseExistingUserMessage: false,
+    });
+    expect(runAgentTurnMock.mock.calls[1]?.[9]).toMatchObject({
+      reuseExistingUserMessage: true,
+    });
+    expect(restoredChatHistory).toHaveLength(1);
   });
 });

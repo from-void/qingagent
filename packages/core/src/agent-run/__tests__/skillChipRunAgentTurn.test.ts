@@ -149,6 +149,37 @@ describe("runAgentTurn skill chip context injection", () => {
     });
   }, 15_000);
 
+  it("重试复用已有 clientMessageId 时不重复追加用户气泡，但仍重新调用模型", async () => {
+    const { runAgentTurn } = await import("../runAgentTurn.js");
+    const state = createSession("sess-retry-existing-user");
+    state.chatHistory.push({
+      id: "m-user-retry",
+      role: { kind: "user" },
+      ts: "2026-08-06T00:00:00.000Z",
+      parts: [{ kind: "text", data: { body: "请重新生成" } }],
+      chips: null,
+    });
+
+    await collectFrames(runAgentTurn(
+      state,
+      "请重新生成",
+      [],
+      [],
+      [],
+      null,
+      "m-user-retry",
+      undefined,
+      undefined,
+      { reuseExistingUserMessage: true },
+    ));
+
+    expect(state.chatHistory.filter((message) =>
+      message.role.kind === "user" && message.id === "m-user-retry"
+    )).toHaveLength(1);
+    expect(state.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(agentStreamCalls).toHaveLength(1);
+  }, 15_000);
+
   it("结构化自定义审查回合只暴露正式批注入口，不暴露正文写稿工具", async () => {
     const { runAgentTurn } = await import("../runAgentTurn.js");
     const state = createSession("sess-custom-review-tools");

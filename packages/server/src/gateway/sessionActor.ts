@@ -69,6 +69,9 @@ export interface SessionActorOptions {
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
+const STOP_BARRIER_ERROR = new Error(
+  "Session actor command cancelled by stop barrier",
+);
 
 function commandFrameDelivery(command: Command | null): FrameDelivery | undefined {
   // startSession(existing) 产出的是一整批权威恢复快照，不是实时增量。
@@ -177,9 +180,10 @@ export class SessionActor {
       const item = this.queue[index];
       if (!item?.input || !isAgentTurnDispatchCommand(item.input.command)) continue;
       this.queue.splice(index, 1);
-      // /commands 对模型命令本就是 accepted 后台语义；被同 turn 的停止屏障消费是
-      // 正常取消，不制造伪错误帧，也不影响排在 cancel 之后的新用户 turn。
-      item.resolve([]);
+      // /commands 对模型命令本就是 accepted 后台语义；被同 turn 的停止屏障消费时
+      // 不制造伪错误帧，但内部 completion 必须失败，幂等层才能释放本次 claim。
+      // 排在 cancel 之后的新用户 turn 不受影响。
+      item.reject(STOP_BARRIER_ERROR);
     }
   }
 

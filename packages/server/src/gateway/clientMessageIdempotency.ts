@@ -7,6 +7,7 @@ import {
   CLIENT_MESSAGE_IDEMPOTENCY_TTL_MS,
   type ClientMessageIdempotencyClaim as PersistentClaim,
 } from "@qingagent/db";
+import type { LoggedFrame } from "./frameLog";
 
 const CLIENT_MESSAGE_ID_MAX_ENTRIES = 4_096;
 export const CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS = 30_000;
@@ -73,6 +74,16 @@ function recordExpiresAt(record: {
   return record.completedAt === null
     ? record.lastTouched + CLIENT_MESSAGE_IDEMPOTENCY_INFLIGHT_STALE_MS
     : record.completedAt + CLIENT_MESSAGE_IDEMPOTENCY_TTL_MS;
+}
+
+function clientMessageTurnCompleted(frames: readonly LoggedFrame[]): boolean {
+  let terminalKind: "done" | "cancelled" | "error" | null = null;
+  for (const { frame } of frames) {
+    if (frame.kind !== "stream") continue;
+    if (frame.data.kind === "draftingFailed") return false;
+    if (frame.data.kind === "end") terminalKind = frame.data.data.reason.kind;
+  }
+  return terminalKind === "done";
 }
 
 export class ClientMessageIdempotencyRegistry {
@@ -144,11 +155,11 @@ export class ClientMessageIdempotencyRegistry {
         };
   }
 
-  maintain<T>(
+  maintain(
     clientMessageId: string,
     token: string,
-    completion: Promise<T>,
-  ): Promise<T> {
+    completion: Promise<LoggedFrame[]>,
+  ): Promise<LoggedFrame[]> {
     const heartbeat = setInterval(() => {
       void this.touch(clientMessageId, token).catch(() => {
         // 在途 touch 是防误清理的附加保护；单次失败交给后续周期重试。
@@ -156,21 +167,25 @@ export class ClientMessageIdempotencyRegistry {
     }, CLIENT_MESSAGE_IDEMPOTENCY_TOUCH_INTERVAL_MS);
     heartbeat.unref();
 
-    const finish = async (): Promise<void> => {
+    const finish = async (completed: boolean): Promise<void> => {
       clearInterval(heartbeat);
       try {
-        await this.complete(clientMessageId, token);
+        if (completed) {
+          await this.complete(clientMessageId, token);
+        } else {
+          await this.release(clientMessageId, token);
+        }
       } catch {
         // 命令已经入队，幂等状态收尾失败不能覆盖真实执行结果。
       }
     };
     return completion.then(
       async (value) => {
-        await finish();
+        await finish(clientMessageTurnCompleted(value));
         return value;
       },
       async (error) => {
-        await finish();
+        await finish(false);
         throw error;
       },
     );

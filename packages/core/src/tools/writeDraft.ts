@@ -704,6 +704,14 @@ export function createWriteDraftTool(opts: {
         if (runConfig.schedule === "budgeted" && candidate.kind !== "refinement") return false;
         return lengthSpec ? withinSpec(candidate.count, lengthSpec) : true;
       };
+      const selectChampion = (pool: readonly DraftCandidate[]): DraftCandidate | null => {
+        if (pool.length === 0) return null;
+        if (nestedIntent.wantsNestedList) return bestStructurallyAware(pool);
+        if (runConfig.schedule === "budgeted" && !lengthSpec) {
+          return [...pool].reverse().find((candidate) => candidate.kind === "refinement") ?? pool[0]!;
+        }
+        return bestStructurallyAware(pool);
+      };
 
       let firstRoundBestCount: number | null = null;
       const extraRoundsUsed = 0;
@@ -720,6 +728,7 @@ export function createWriteDraftTool(opts: {
       });
       let finished = 0;
       let resolved = false;
+      let fallbackAcceptanceOpen = false;
       let acceptedLane: number | null = null;
       let acceptedCandidate: DraftCandidate | null = null;
       let resolveRace!: () => void;
@@ -745,6 +754,13 @@ export function createWriteDraftTool(opts: {
         await emitWinnerFrame(candidate.laneKey, candidate.raw, candidate.kind === "refinement" ? 1 : 0);
         finishRace();
       };
+      const acceptBestAvailableCandidate = async (): Promise<boolean> => {
+        if (resolved || acceptedCandidate || !fallbackAcceptanceOpen) return false;
+        const candidate = selectChampion(candidates);
+        if (!candidate) return false;
+        await acceptCandidate(candidate);
+        return true;
+      };
 
       const budget = runConfig.schedule === "budgeted"
         ? makeReasonBudget(lengthSpec?.target ?? 1000, activeModelTier)
@@ -756,6 +772,15 @@ export function createWriteDraftTool(opts: {
         : null;
       const thinkTimer = budget
         ? setTimeout(() => {
+            // 严格 stop-worthy 闸保留不动；T_think 前完整等待精修争取质量。
+            // 到质量等待窗口末尾若已有可编译候选，就按最终 champion 的同一规则兜底收摊，
+            // 只砍掉 T_think→hardTimer 的空等。尚无候选时仍保留已吐正文的 lane 继续争取。
+            fallbackAcceptanceOpen = true;
+            if (acceptedCandidate) return;
+            if (selectChampion(candidates)) {
+              void acceptBestAvailableCandidate();
+              return;
+            }
             for (const lane of laneStates.slice(1)) {
               if (!lane.contentStarted && !lane.controller.signal.aborted) {
                 lane.controller.abort(new Error("reason thinking budget exceeded"));
@@ -794,7 +819,11 @@ export function createWriteDraftTool(opts: {
             if (result) {
               candidates.push(result);
               if (result.kind === "refinement") reasonRefinementCount += 1;
-              if (isStopWorthyCandidate(result)) await acceptCandidate(result);
+              if (isStopWorthyCandidate(result)) {
+                await acceptCandidate(result);
+              } else if (fallbackAcceptanceOpen) {
+                await acceptBestAvailableCandidate();
+              }
             }
           } finally {
             lane.cleanup();
@@ -871,13 +900,7 @@ export function createWriteDraftTool(opts: {
       // 注:不再因"想要嵌套但没达深度"额外补一路 LLM 重试(那是正则判意图驱动的强制重跑,
       // 易拖慢首稿且命中率提升有限)。嵌套结构仍由候选优选(bestStructurallyAware)挑达标的那版 +
       // 下面的 structuralFailures 诊断兜底;层级格式由 system.ts / writeDraft 输出契约里的 children 范本约束。
-      const champion = acceptedCandidate ?? (
-        nestedIntent.wantsNestedList
-          ? bestStructurallyAware(candidates)!
-          : runConfig.schedule === "budgeted" && !lengthSpec
-            ? [...candidates].reverse().find((candidate) => candidate.kind === "refinement") ?? candidates[0]!
-            : bestStructurallyAware(candidates)!
-      );
+      const champion = acceptedCandidate ?? selectChampion(candidates)!;
       await emitWinnerFrame(champion.laneKey, champion.raw, champion.kind === "refinement" ? 1 : 0);
       await progressWriteChain;
       const firstCount = firstRoundBestCount ?? champion.count;

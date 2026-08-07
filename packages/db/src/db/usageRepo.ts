@@ -20,8 +20,8 @@ export interface UsageEventInput {
   cacheCreationTokens?: number;
   /** known 仅在 hit/miss 都由 provider 给出或可可靠推导时使用。 */
   cacheAccountingState?: "known" | "unknown";
-  /** recorded=provider 实测；estimated=按 prompt/delta 本地估算；missing=无法取得或估算。 */
-  usageState?: "recorded" | "estimated" | "missing";
+  /** recorded=provider 实测；estimated=本地估算；missing=未接 wire；billing_unknown=收费结果未知。 */
+  usageState?: "recorded" | "estimated" | "missing" | "billing_unknown";
   reason?: string | null;
   /** 并发赛马 lane；非赛马调用可为空。 */
   lane?: number | null;
@@ -142,6 +142,7 @@ export interface UsageAggRow {
   recordedCalls: number;
   estimatedCalls?: number;
   missingCalls: number;
+  billingUnknownCalls?: number;
   /** provider 实测请求占全部真实请求比例；estimated/missing 都不进入精确覆盖率。 */
   coverageRate: number;
   /** 调用发生时已固化的金额，recorded 与 estimated 始终分开。 */
@@ -203,6 +204,9 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
     calls: Number(row.calls ?? 0),
     recordedCalls: Number(row.recorded_calls ?? 0),
     missingCalls: Number(row.missing_calls ?? 0),
+    ...(Number(row.billing_unknown_calls ?? 0) > 0
+      ? { billingUnknownCalls: Number(row.billing_unknown_calls) }
+      : {}),
     coverageRate: Number(row.calls ?? 0) > 0
       ? Number(row.recorded_calls ?? 0) / Number(row.calls)
       : 0,
@@ -352,6 +356,7 @@ export async function aggregateUsageByDay(
       estimated_cache_miss_tokens: 0,
       estimated_calls: 0,
       missing_calls: 0,
+      billing_unknown_calls: 0,
       cost_cny: 0,
       estimated_cost_cny: 0,
       priced_recorded_calls: 0,
@@ -454,6 +459,8 @@ export async function aggregateUsageByDay(
       }
     } else if (row.usage_state === "missing") {
       aggregate.missing_calls = Number(aggregate.missing_calls) + 1;
+    } else if (row.usage_state === "billing_unknown") {
+      aggregate.billing_unknown_calls = Number(aggregate.billing_unknown_calls) + 1;
     }
     grouped.set(key, aggregate);
   }
@@ -528,6 +535,7 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
         SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
         SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
+        SUM(CASE WHEN usage.usage_state = 'billing_unknown' THEN 1 ELSE 0 END) AS billing_unknown_calls,
         MAX(usage.created_at) AS last_at
       FROM llm_usage_events usage
       INNER JOIN recent_sessions recent ON recent.session_id = usage.session_id
@@ -588,7 +596,8 @@ export async function aggregateUsageTotal(): Promise<UsageAggRow[]> {
         COUNT(*) AS calls,
         SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
         SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
-        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
+        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
+        SUM(CASE WHEN usage.usage_state = 'billing_unknown' THEN 1 ELSE 0 END) AS billing_unknown_calls
       FROM llm_usage_events usage
       INNER JOIN first_cache_requests first_cache
         ON first_cache.session_id = usage.session_id

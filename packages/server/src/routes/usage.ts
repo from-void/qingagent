@@ -9,6 +9,10 @@ import {
   hasModelPricing,
 } from "@qingagent/core";
 import type { UsageSummaryResponse } from "@qingagent/contract-ts";
+import {
+  getEnvDeepseekBalanceComparison,
+  refreshDeepseekBalanceSnapshot,
+} from "../providerBalanceProbe.js";
 
 export const usageRoutes = new Hono();
 
@@ -26,6 +30,12 @@ usageRoutes.get("/usage/summary", async (c) => {
   } catch {
     return c.json({ error: "timeZone must be a valid IANA time zone" }, 400);
   }
+
+  const providerBalance = view === "day"
+    ? await refreshDeepseekBalanceSnapshot({ force: true })
+      .then(() => getEnvDeepseekBalanceComparison())
+      .catch(() => null)
+    : null;
 
   const rows =
     view === "day"
@@ -106,6 +116,21 @@ usageRoutes.get("/usage/summary", async (c) => {
           : {}),
       };
     }),
+    ...(providerBalance
+      ? {
+          providerBalance: {
+            provider: "deepseek" as const,
+            latestBalanceCny: providerBalance.latestBalanceCny,
+            latestAt: providerBalance.latestAt,
+            ...(providerBalance.previousBalanceCny === undefined
+              ? {}
+              : { previousBalanceCny: providerBalance.previousBalanceCny }),
+            ...(providerBalance.changeCny === undefined
+              ? {}
+              : { changeCny: providerBalance.changeCny }),
+          },
+        }
+      : {}),
   } satisfies UsageSummaryResponse;
   return c.json(response);
 });

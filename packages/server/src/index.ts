@@ -53,6 +53,7 @@ await import("./observability.js");
 const { app } = await import("./app");
 const { sessionManager } = await import("./gateway/bridgeHandler");
 const { startExternalInstance, stopExternalInstance } = await import("./lib/externalInstance.js");
+const { startProviderBalanceSnapshotScheduler } = await import("./providerBalanceProbe.js");
 const {
   installNetProbe,
   loadBypassMode,
@@ -122,6 +123,8 @@ void repairStoredDocumentRows()
   .then((stats) => console.log("[migrations] documents 巡检完成", stats))
   .catch((e) => console.error("[migrations] documents 巡检失败(non-fatal)", e instanceof Error ? e.message : String(e)));
 
+const stopProviderBalanceSnapshots = startProviderBalanceSnapshotScheduler();
+
 serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`Qingagent server listening on http://${hostname}:${info.port}`);
   void startExternalInstance({
@@ -135,5 +138,6 @@ serve({ fetch: app.fetch, port, hostname }, (info) => {
 });
 
 process.once("beforeExit", () => {
+  stopProviderBalanceSnapshots();
   void stopExternalInstance(externalInstanceFile);
 });

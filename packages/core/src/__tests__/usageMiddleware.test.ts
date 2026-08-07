@@ -9,10 +9,36 @@ vi.mock("@qingagent/db", () => ({
 
 const {
   createUsageMiddleware,
+  isCompleteUsage,
   modelCallOutputDelta,
+  observeModelUsageConsistency,
   recordModelCallOutcome,
   serializeModelCallPrompt,
 } = await import("../llm/usageMiddleware.js");
+interface TestWireAttempt {
+  wireAttemptSeq: number;
+  startedAt: number;
+  requestEstimate: { uncachedInputText?: string };
+  responseStatus: number | null;
+  responseReceivedAt: number | null;
+  endedAt: number | null;
+  usage: {
+    completeness: "complete" | "partial-input";
+    usage: Record<string, unknown>;
+  } | null;
+  outputText: string;
+  parseStoppedReason: "frame_limit" | "total_limit" | "parse_error" | null;
+  transportError: string | null;
+}
+
+interface TestWireScope {
+  wireAttemptSeq: number;
+  attempts: TestWireAttempt[];
+  finalized: boolean;
+  idleTimeoutMs: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  onFinalizeTimeout: (scope: TestWireScope) => void;
+}
 
 function context(): RequestContext {
   return new RequestContext([
@@ -47,6 +73,33 @@ async function drain(stream: ReadableStream<unknown>): Promise<unknown[]> {
     if (done) return out;
     out.push(value);
   }
+}
+
+function observedAttempt(overrides: Partial<TestWireAttempt> = {}): TestWireAttempt {
+  return {
+    wireAttemptSeq: 1,
+    startedAt: Date.now(),
+    requestEstimate: { uncachedInputText: JSON.stringify({ messages: [{ content: "真实请求" }] }) },
+    responseStatus: 200,
+    responseReceivedAt: Date.now(),
+    endedAt: Date.now(),
+    usage: null,
+    outputText: "半截输出",
+    parseStoppedReason: null,
+    transportError: null,
+    ...overrides,
+  };
+}
+
+function observedScope(attempts: TestWireAttempt[]): TestWireScope {
+  return {
+    wireAttemptSeq: attempts.length,
+    attempts,
+    finalized: false,
+    idleTimeoutMs: 5 * 60_000,
+    idleTimer: null,
+    onFinalizeTimeout: () => {},
+  };
 }
 
 describe("usage middleware", () => {
@@ -115,6 +168,259 @@ describe("usage middleware", () => {
     } finally {
       if (previous === undefined) delete process.env.DEEPSEEK_PEAK_PRICING_JSON;
       else process.env.DEEPSEEK_PEAK_PRICING_JSON = previous;
+    }
+  });
+
+  it("recorded 统一要求输入与输出计数完整，单边 SDK usage 只能降为 estimated", async () => {
+    expect(isCompleteUsage({ inputTokens: 12 })).toBe(false);
+    expect(isCompleteUsage({ outputTokens: 3 })).toBe(false);
+    expect(isCompleteUsage({ inputTokens: 0, outputTokens: 0 })).toBe(true);
+
+    await recordModelCallOutcome({
+      sessionId: "partial-sdk",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "mastra-v2-v3",
+      startedAt: Date.now(),
+      usage: { inputTokens: 12 },
+      usageEstimate: { outputText: "补估输出" },
+    });
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "estimated",
+      inputTokens: 12,
+      outputTokens: expect.any(Number),
+    }));
+  });
+
+  it.each([
+    "provider_stream_error",
+    "provider_stream_error_part",
+    "provider_stream_without_finish",
+    "provider_stream_cancelled",
+    "provider_request_error",
+    "provider_stream_invalid",
+    "provider_request_aborted",
+  ])("响应 2xx 且无完整 usage 的 %s 按 wire 请求/输出素材记 estimated", async (reason) => {
+    await recordModelCallOutcome({
+      sessionId: `wire-${reason}`,
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "mastra-v2-v3",
+      startedAt: Date.now(),
+      usage: null,
+      usageEstimate: { uncachedInputText: "" },
+      reason,
+      wireScope: observedScope([observedAttempt()]),
+    });
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "estimated",
+      reason,
+      inputTokens: expect.any(Number),
+      outputTokens: expect.any(Number),
+    }));
+    const calls = recordUsageEventMock.mock.calls as unknown as Array<[Record<string, number>]>;
+    const event = calls.at(-1)![0];
+    expect(event.inputTokens).toBeGreaterThan(0);
+    expect(event.outputTokens).toBeGreaterThan(0);
+  });
+
+  it("异常终态但 wire 已捕获完整 usage 时仍 recorded", async () => {
+    await recordModelCallOutcome({
+      sessionId: "wire-complete-error",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "mastra-v2-v3",
+      startedAt: Date.now(),
+      usage: null,
+      reason: "provider_stream_error",
+      wireScope: observedScope([observedAttempt({
+        usage: {
+          completeness: "complete",
+          usage: { prompt_tokens: 41, completion_tokens: 9 },
+        },
+      })]),
+    });
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "recorded",
+      inputTokens: 41,
+      outputTokens: 9,
+      reason: "provider_stream_error",
+    }));
+  });
+
+  it("SDK 与 wire 完整 usage 做双解析一致性检查", async () => {
+    const observations: Array<{ consistent: boolean }> = [];
+    const stop = observeModelUsageConsistency((observation) => observations.push(observation));
+    try {
+      await recordModelCallOutcome({
+        sessionId: "wire-sdk-consistency",
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "env",
+        attempt: 1,
+        transport: "mastra-v2-v3",
+        startedAt: Date.now(),
+        usage: { inputTokens: 41, outputTokens: 9 },
+        wireScope: observedScope([observedAttempt({
+          usage: {
+            completeness: "complete",
+            usage: { prompt_tokens: 41, completion_tokens: 9 },
+          },
+        })]),
+      });
+      expect(observations).toHaveLength(1);
+      expect(observations[0]).toMatchObject({ consistent: true });
+    } finally {
+      stop();
+    }
+  });
+
+  it("无响应单独落 billing_unknown，绝不落 estimated/missing", async () => {
+    await recordModelCallOutcome({
+      sessionId: "wire-no-response",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "mastra-v2-v3",
+      startedAt: Date.now(),
+      usage: null,
+      reason: "provider_request_error",
+      wireScope: observedScope([observedAttempt({
+        responseStatus: null,
+        responseReceivedAt: null,
+        outputText: "",
+        transportError: "TypeError",
+      })]),
+    });
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "billing_unknown",
+      reason: "no_response",
+    }));
+  });
+
+  it("Anthropic message_start 部分 usage 只记 estimated 且保留真实 input", async () => {
+    await recordModelCallOutcome({
+      sessionId: "wire-anthropic-partial",
+      callSite: "webSearch",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "manual-api",
+      startedAt: Date.now(),
+      usage: null,
+      reason: "search_links_early_abort",
+      wireScope: observedScope([observedAttempt({
+        usage: {
+          completeness: "partial-input",
+          usage: { input_tokens: 37, cache_read_input_tokens: 11 },
+        },
+      })]),
+    });
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "estimated",
+      reason: "wire-partial:search_links_early_abort",
+      inputTokens: 37,
+      cacheHitTokens: 11,
+      cacheAccountingState: "unknown",
+    }));
+  });
+
+  it("非终态物理尝试按行内容定档，complete/可估算照常计入，只有 no_response 为零值 unknown", async () => {
+    await recordModelCallOutcome({
+      sessionId: "wire-multi-attempt",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      attempt: 1,
+      transport: "mastra-v2-v3",
+      startedAt: Date.now(),
+      usage: { inputTokens: 13, outputTokens: 5 },
+      wireScope: observedScope([
+        observedAttempt({
+          wireAttemptSeq: 1,
+          usage: { completeness: "complete", usage: { prompt_tokens: 7, completion_tokens: 2 } },
+        }),
+        observedAttempt({
+          wireAttemptSeq: 2,
+          responseStatus: null,
+          responseReceivedAt: null,
+          outputText: "",
+        }),
+        observedAttempt({ wireAttemptSeq: 3 }),
+      ]),
+    });
+    const calls = recordUsageEventMock.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls.map(([event]) => ({
+      state: event.usageState,
+      input: event.inputTokens,
+      output: event.outputTokens,
+    }))).toEqual([
+      { state: "recorded", input: 7, output: 2 },
+      { state: "billing_unknown", input: undefined, output: undefined },
+      { state: "recorded", input: 13, output: 5 },
+    ]);
+  });
+
+  it("H9 不读不 cancel 时响应头计时直接落一条 finalize_timeout，迟到终态不双写", async () => {
+    vi.useFakeTimers();
+    try {
+      const {
+        beginWireAttempt,
+        createWireScope,
+        observeWireResponse,
+      } = await import("../llm/wireUsage.js");
+      let scope!: TestWireScope;
+      const base = {
+        sessionId: "wire-h9",
+        callSite: "agentChat" as const,
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "env" as const,
+        attempt: 1,
+        transport: "mastra-v2-v3" as const,
+        startedAt: Date.now(),
+        usage: null,
+      };
+      scope = createWireScope({
+        idleTimeoutMs: 25,
+        onFinalizeTimeout: () => {
+          void recordModelCallOutcome({
+            ...base,
+            reason: "finalize_timeout",
+            wireScope: scope as never,
+          });
+        },
+      });
+      const attempt = beginWireAttempt(scope, "https://example.com/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ messages: [{ role: "user", content: "不能等 chunk" }] }),
+      });
+      observeWireResponse(scope, attempt, new Response(new ReadableStream<Uint8Array>({
+        pull() {
+          // 永远无 chunk。
+        },
+      }), { headers: { "content-type": "text/event-stream" } }));
+
+      await vi.advanceTimersByTimeAsync(25);
+      await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledOnce());
+      expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        usageState: "estimated",
+        reason: "finalize_timeout",
+      }));
+      await recordModelCallOutcome({
+        ...base,
+        usage: { inputTokens: 9, outputTokens: 1 },
+        wireScope: scope as never,
+      });
+      expect(recordUsageEventMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

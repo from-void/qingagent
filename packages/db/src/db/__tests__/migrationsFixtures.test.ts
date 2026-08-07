@@ -74,6 +74,7 @@ const APP_TABLES = [
   "confirm_grant_states",
   "client_message_idempotency",
   "credential_grants",
+  "provider_balance_snapshots",
 ];
 
 interface ColumnInfo {
@@ -224,10 +225,18 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     const client = getDocumentsClient();
 
     const r = await runMigrations();
+    expect(allMigrationIds.at(-1)).toBe(42);
     expect(r.appliedIds).toEqual(allMigrationIds);
     expect(r.backupPath).toBeNull(); // 全新库不备份
     expect(await captureSchema(client)).toEqual(golden);
     expect(await ledgerIds(client)).toEqual(allMigrationIds);
+    const balanceColumns = await client.execute("PRAGMA table_info(provider_balance_snapshots)");
+    expect(balanceColumns.rows.map((row) => String(row.name))).toEqual([
+      "ts",
+      "provider",
+      "credential_fingerprint",
+      "balance_cny",
+    ]);
   });
 
   it("v-oldest:缺列/含 doc_sections/含 feishu → 收敛到黄金 schema,探针无损,feishu 清除,已备份", async () => {

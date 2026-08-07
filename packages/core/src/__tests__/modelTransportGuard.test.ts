@@ -7,9 +7,7 @@ const scanRoots = ["packages/core/src", "packages/server/src"];
 const branchReplayAllowlist = new Set([
   "packages/core/src/llm/modelConfig.ts",
 ]);
-const specializedTransportAllowlist = new Set([
-  "packages/core/src/search/deepseekWebSearch.ts",
-]);
+const specializedTransportAllowlist = new Set<string>();
 const allowlist = new Set([...branchReplayAllowlist, ...specializedTransportAllowlist]);
 
 export function findRawModelTransport(source: string): string[] {
@@ -54,12 +52,9 @@ describe("模型传输静态守护", () => {
     expect([...branchReplayAllowlist]).toEqual([
       "packages/core/src/llm/modelConfig.ts",
     ]);
-    expect([...specializedTransportAllowlist]).toEqual([
-      "packages/core/src/search/deepseekWebSearch.ts",
-    ]);
+    expect([...specializedTransportAllowlist]).toEqual([]);
     expect([...allowlist].sort()).toEqual([
       "packages/core/src/llm/modelConfig.ts",
-      "packages/core/src/search/deepseekWebSearch.ts",
     ]);
   });
   it("modelConfig 内 raw endpoint 仅由 branchCall 使用且每条网络终态都接入记账", () => {
@@ -74,11 +69,11 @@ describe("模型传输静态守护", () => {
     expect(rawFetchIndex).toBeLessThan(branchEnd);
     expect(source.match(/modelFetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
     const branchSource = source.slice(branchStart, branchEnd);
-    // 4 = provider-reject/流错误/成功/异常兜底。preflight 没有发出真实请求，不进入请求账本。
-    expect(branchSource.match(/recordBranchUsage\(\s*input/g)).toHaveLength(4);
+    // 5 = finalize_timeout/provider-reject/流错误/成功/异常兜底。preflight 未发请求，不入账。
+    expect(branchSource.match(/recordBranchUsage\(\s*input/g)).toHaveLength(5);
     expect(branchSource).not.toMatch(/preflight[\s\S]{0,300}recordBranchUsage/);
     expect(branchSource).toContain("providerErrorSummary(response)");
-    expect(branchSource).toContain("recordBranchUsage(input, null, attempt, error, t0)");
+    expect(branchSource).toContain("recordBranchUsage(input, null, attempt, error, t0, null, null, wireScope)");
     expect(branchSource).toContain("provider_request_aborted");
     expect(branchSource).toContain("provider_request_error");
   });

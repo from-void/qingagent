@@ -9,6 +9,12 @@ import {
   type ModelCallUsageEstimate,
 } from "./usageMiddleware.js";
 import type { ModelCallSite } from "./modelCallSites.js";
+import {
+  armWireScopeForStreamDelivery,
+  createWireScope,
+  wireUsageStorage,
+  type WireScope,
+} from "./wireUsage.js";
 
 export interface ModernUsageModelOptions {
   requestContext?: RequestContext;
@@ -51,6 +57,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
     startedAt: number,
     finishReason?: string | null,
     usageEstimate?: ModelCallUsageEstimate | null,
+    wireScope?: WireScope,
   ): Promise<void> => {
     await recordModelCallOutcome({
       ...baseEvent,
@@ -61,6 +68,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
       attempt,
       startedAt,
       finishReason,
+      wireScope,
     });
   };
 
@@ -80,8 +88,26 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
           const abortUsageEstimate = (): ModelCallUsageEstimate => ({
             uncachedInputText: serializeModelCallPrompt(args[0]),
           });
+          let wireScope!: WireScope;
+          wireScope = createWireScope({
+            onFinalizeTimeout: () => {
+              void record(
+                null,
+                null,
+                "finalize_timeout",
+                attempt,
+                startedAt,
+                null,
+                abortUsageEstimate(),
+                wireScope,
+              );
+            },
+          });
           try {
-            const result = await Reflect.apply(original, target, args) as unknown;
+            const result = await wireUsageStorage.run(
+              wireScope,
+              () => Reflect.apply(original, target, args) as Promise<unknown>,
+            );
             const resultRecord = asRecord(result);
             void record(
               resultRecord?.usage,
@@ -92,6 +118,8 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
               typeof resultRecord?.finishReason === "string"
                 ? resultRecord.finishReason
                 : null,
+              null,
+              wireScope,
             );
             return result;
           } catch (error) {
@@ -104,6 +132,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
               startedAt,
               null,
               reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+              wireScope,
             );
             throw error;
           }
@@ -119,9 +148,27 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
           uncachedInputText: serializeModelCallPrompt(args[0]),
           outputText: estimatedOutputText,
         });
+        let wireScope!: WireScope;
+        wireScope = createWireScope({
+          onFinalizeTimeout: () => {
+            void record(
+              null,
+              null,
+              "finalize_timeout",
+              attempt,
+              startedAt,
+              null,
+              abortUsageEstimate(),
+              wireScope,
+            );
+          },
+        });
         let result: unknown;
         try {
-          result = await Reflect.apply(original, target, args);
+          result = await wireUsageStorage.run(
+            wireScope,
+            () => Reflect.apply(original, target, args) as Promise<unknown>,
+          );
         } catch (error) {
           const reason = missingReason(error, signal);
           void record(
@@ -132,13 +179,15 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
             startedAt,
             null,
             reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+            wireScope,
           );
           throw error;
         }
         const resultRecord = asRecord(result);
+        armWireScopeForStreamDelivery(wireScope);
         const source = resultRecord?.stream;
         if (!(source instanceof ReadableStream)) {
-          void record(null, null, "provider_stream_invalid", attempt, startedAt);
+          void record(null, null, "provider_stream_invalid", attempt, startedAt, null, null, wireScope);
           return result;
         }
         let reader: ReadableStreamDefaultReader<unknown>;
@@ -154,6 +203,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
             startedAt,
             null,
             reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+            wireScope,
           );
           throw error;
         }
@@ -178,6 +228,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
             startedAt,
             finishReason,
             usageEstimate,
+            wireScope,
           );
         };
         abortHandler = () => recordOnce(

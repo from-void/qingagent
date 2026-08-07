@@ -13,6 +13,10 @@ import { getDocumentsClient, __resetDocumentsClientForTest } from "../src/db/doc
 import { __resetMigrationsForTest } from "../src/db/migrations.js";
 import { streamInnerModel } from "../src/llm/innerModelStream.js";
 import { MODEL_OVERRIDES_CONTEXT_KEY } from "../src/llm/modelConfig.js";
+import {
+  observeModelUsageConsistency,
+  type ModelUsageConsistencyObservation,
+} from "../src/llm/usageMiddleware.js";
 
 const protocol = process.argv[2] === "anthropic" ? "anthropic" : "openai";
 const apiKey = protocol === "anthropic"
@@ -41,6 +45,10 @@ const requestContext = new RequestContext([
   ["sessionId", sessionId],
   ["runId", `${sessionId}-run`],
 ] as never);
+let consistency: ModelUsageConsistencyObservation | null = null;
+const stopObservingConsistency = observeModelUsageConsistency((observation) => {
+  if (observation.sessionId === sessionId) consistency = observation;
+});
 
 try {
   await streamInnerModel({
@@ -67,9 +75,18 @@ try {
     if (!row) await new Promise((resolvePoll) => setTimeout(resolvePoll, 50));
   }
   if (!row) throw new Error("模型请求完成，但账本 2s 内未出现事件");
-  console.log(JSON.stringify({ protocol, ...row }, null, 2));
-  if (row.usage_state !== "recorded") process.exitCode = 1;
+  console.log(JSON.stringify({
+    protocol,
+    ledger: row,
+    consistency: consistency && {
+      sdk: consistency.sdk,
+      wire: consistency.wire,
+      consistent: consistency.consistent,
+    },
+  }, null, 2));
+  if (row.usage_state !== "recorded" || !consistency?.consistent) process.exitCode = 1;
 } finally {
+  stopObservingConsistency();
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
   if (ownsDb) delete process.env.DATABASE_URL;

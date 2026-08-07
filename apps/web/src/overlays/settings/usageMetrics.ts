@@ -24,6 +24,7 @@ export function aggregateUsageRows(
   const calls = sum((row) => row.calls);
   const recordedCalls = sum((row) => row.recordedCalls);
   const estimatedCalls = sum((row) => row.estimatedCalls ?? 0);
+  const billingUnknownCalls = sum((row) => row.billingUnknownCalls ?? 0);
   const models = new Set(rows.map((row) => row.modelId));
   const pricedRows = rows.filter((row) => row.costCny !== undefined);
   const estimatedPricedRows = rows.filter((row) => row.estimatedCostCny !== undefined);
@@ -49,6 +50,7 @@ export function aggregateUsageRows(
     recordedCalls,
     estimatedCalls,
     missingCalls: sum((row) => row.missingCalls),
+    billingUnknownCalls,
     coverageRate: calls > 0 ? recordedCalls / calls : 0,
     ...(pricedRows.length > 0
       ? {

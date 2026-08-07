@@ -86,6 +86,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     usageSettled, setUsageSettled, usageStatus, setUsageStatus,
     usageDate, setUsageDate, excludedModels, setExcludedModels,
     dayUsage, setDayUsage, totalUsage, setTotalUsage, docStats, setDocStats,
+    providerBalance, setProviderBalance,
     dashboardSettled, setDashboardSettled,
   } = useModelUsageState();
   const mountedRef = useRef(true);
@@ -272,9 +273,13 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         `/api/v1/usage/summary?view=${view}&timeZone=${encodeURIComponent(usageTimeZone)}`,
         { signal },
       );
-      const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
+      const body = res.ok ? ((await res.json()) as Partial<UsageSummaryResponse>) : null;
+      const rows = body?.rows ?? [];
       if (mountedRef.current && !signal?.aborted) {
-        if (view === "day") setDayUsage(rows);
+        if (view === "day") {
+          setDayUsage(rows);
+          setProviderBalance(body?.providerBalance);
+        }
         else setTotalUsage(rows);
       }
     } catch {
@@ -989,6 +994,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     handleModelTierChange,
     handleSaveCustom,
     recent,
+    providerBalance,
     usageTimeZone,
     docStats,
     modelDist,

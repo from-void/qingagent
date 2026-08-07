@@ -27,6 +27,7 @@ export function ModelSettingsPanel({
     usageDate, setUsageDate, handleProviderChange, openConfig,
     vendorConfigured, vendorStateKnown, anyConfigured, effectiveProvider,
     handleModelTierChange, recent, usageTimeZone, docStats, modelDist, trend,
+    providerBalance,
     dashboardReady, showDashboardLoading, showUsageLoading, todayYmd, usageDates,
     usageDateUnsupported, usageModelIds, selectedModelIds, allModelsSelected,
     filteredUsage, usageGroups, toggleUsageModel, selectAllUsageModels,
@@ -72,6 +73,7 @@ export function ModelSettingsPanel({
           </div>
           <ModelUsageDashboard
             recent={recent}
+            providerBalance={providerBalance}
             usageTimeZone={usageTimeZone}
             docStats={docStats}
             docs7={docs7}

@@ -15,12 +15,30 @@ const {
   recordModelCallOutcome,
   serializeModelCallPrompt,
 } = await import("../llm/usageMiddleware.js");
-const {
-  beginWireAttempt,
-  createWireScope,
-  observeWireResponse,
-} = await import("../llm/wireUsage.js");
-import type { WireAttempt, WireScope } from "../llm/wireUsage.js";
+interface TestWireAttempt {
+  wireAttemptSeq: number;
+  startedAt: number;
+  requestEstimate: { uncachedInputText?: string };
+  responseStatus: number | null;
+  responseReceivedAt: number | null;
+  endedAt: number | null;
+  usage: {
+    completeness: "complete" | "partial-input";
+    usage: Record<string, unknown>;
+  } | null;
+  outputText: string;
+  parseStoppedReason: "frame_limit" | "total_limit" | "parse_error" | null;
+  transportError: string | null;
+}
+
+interface TestWireScope {
+  wireAttemptSeq: number;
+  attempts: TestWireAttempt[];
+  finalized: boolean;
+  idleTimeoutMs: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  onFinalizeTimeout: (scope: TestWireScope) => void;
+}
 
 function context(): RequestContext {
   return new RequestContext([
@@ -57,7 +75,7 @@ async function drain(stream: ReadableStream<unknown>): Promise<unknown[]> {
   }
 }
 
-function observedAttempt(overrides: Partial<WireAttempt> = {}): WireAttempt {
+function observedAttempt(overrides: Partial<TestWireAttempt> = {}): TestWireAttempt {
   return {
     wireAttemptSeq: 1,
     startedAt: Date.now(),
@@ -73,11 +91,15 @@ function observedAttempt(overrides: Partial<WireAttempt> = {}): WireAttempt {
   };
 }
 
-function observedScope(attempts: WireAttempt[]): WireScope {
-  const scope = createWireScope({ onFinalizeTimeout: () => {} });
-  scope.attempts.push(...attempts);
-  scope.wireAttemptSeq = attempts.length;
-  return scope;
+function observedScope(attempts: TestWireAttempt[]): TestWireScope {
+  return {
+    wireAttemptSeq: attempts.length,
+    attempts,
+    finalized: false,
+    idleTimeoutMs: 5 * 60_000,
+    idleTimer: null,
+    onFinalizeTimeout: () => {},
+  };
 }
 
 describe("usage middleware", () => {
@@ -349,7 +371,12 @@ describe("usage middleware", () => {
   it("H9 不读不 cancel 时响应头计时直接落一条 finalize_timeout，迟到终态不双写", async () => {
     vi.useFakeTimers();
     try {
-      let scope!: WireScope;
+      const {
+        beginWireAttempt,
+        createWireScope,
+        observeWireResponse,
+      } = await import("../llm/wireUsage.js");
+      let scope!: TestWireScope;
       const base = {
         sessionId: "wire-h9",
         callSite: "agentChat" as const,
@@ -363,7 +390,11 @@ describe("usage middleware", () => {
       scope = createWireScope({
         idleTimeoutMs: 25,
         onFinalizeTimeout: () => {
-          void recordModelCallOutcome({ ...base, reason: "finalize_timeout", wireScope: scope });
+          void recordModelCallOutcome({
+            ...base,
+            reason: "finalize_timeout",
+            wireScope: scope as never,
+          });
         },
       });
       const attempt = beginWireAttempt(scope, "https://example.com/v1/chat/completions", {
@@ -385,7 +416,7 @@ describe("usage middleware", () => {
       await recordModelCallOutcome({
         ...base,
         usage: { inputTokens: 9, outputTokens: 1 },
-        wireScope: scope,
+        wireScope: scope as never,
       });
       expect(recordUsageEventMock).toHaveBeenCalledOnce();
     } finally {

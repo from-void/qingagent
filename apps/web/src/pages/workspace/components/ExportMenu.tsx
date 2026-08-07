@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { PmDoc, PmNode } from "@qingagent/pm-schema";
 import { chatInputBus } from "../../../system/chatInputBus";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useSessionStore } from "../../../stores/sessionStore";
@@ -55,6 +54,12 @@ const FORMATS: Fmt[] = [
   },
 ];
 const SPECIALIZED_DIAGRAM_OVERLAY_NOTICE = "specialized-diagram-overlay";
+const EXPORT_DEGRADATIONS_HEADER = "X-Qingagent-Export-Degradations";
+
+type ExportDegradation = {
+  kind: string;
+  description: string;
+};
 
 // 平台技能 → 导出项;skill 名对应 useSkills 返回的 name,启用了才出现。
 const PLATFORM_TARGETS: Array<{ skill: string; label: string; query: string }> = [
@@ -73,7 +78,6 @@ export interface ExportMenuProps {
     onProgress: (current: number, total: number) => void,
   ) => Promise<void>;
   flushPendingDocSave?: () => Promise<void>;
-  getLatestPmDoc?: () => PmDoc | null;
 }
 
 export function ExportMenu({
@@ -82,7 +86,6 @@ export function ExportMenu({
   onAction,
   prepareDrawioForExport,
   flushPendingDocSave,
-  getLatestPmDoc,
 }: ExportMenuProps) {
   const sessionId = useSessionStore((s) => s.currentSessionId);
   const sessionTitle = useSessionStore((s) => s.currentSessionTitle);
@@ -127,10 +130,6 @@ export function ExportMenu({
         setBusyText("生成中…");
       }
       await flushPendingDocSave?.();
-      // 分栏只在 markdown 拍平:把"有损"提示并进导出成功 toast(而非单独先弹一条——
-      // 那条会被随后的 doneToast 立即覆盖、用户根本看不到,e2e V1/V2 三次确认)。
-      const lossyColumns =
-        f.id === "markdown" && docHasNodeType(getLatestPmDoc?.() ?? null, "columnList");
       const res = await fetch(`/api/v1/export/${encodeURIComponent(sessionId)}?format=${f.id}`);
       if (!res.ok) {
         // 文档为空时后端回 409;给个明确文案,别再笼统报"导出失败"。
@@ -140,8 +139,7 @@ export function ExportMenu({
         }
         throw new Error(`Export failed: ${res.status}`);
       }
-      const specializedDiagramOverlayFallback =
-        res.headers.get("X-Qingagent-Export-Notice") === SPECIALIZED_DIAGRAM_OVERLAY_NOTICE;
+      const degradations = responseExportDegradations(res);
       const filename = `${safeFilename(sessionTitle || "qingagent-export")}_${dateStamp()}.${f.ext}`;
       if (window.electron?.isDesktop) {
         if (!window.electron.saveExportDownload) {
@@ -166,12 +164,11 @@ export function ExportMenu({
         }
         const message = exportResultMessage(
           f.savedToast,
-          lossyColumns,
-          specializedDiagramOverlayFallback,
+          degradations,
         );
         onAction({
           message,
-          durationMs: lossyColumns || specializedDiagramOverlayFallback ? 7000 : 5000,
+          durationMs: degradations.length > 0 ? 7000 : 5000,
           action: window.electron.revealExportDownload
             ? {
                 label: "打开所在文件夹",
@@ -192,10 +189,9 @@ export function ExportMenu({
           onAction(
             exportResultMessage(
               f.startedToast,
-              lossyColumns,
-              specializedDiagramOverlayFallback,
+              degradations,
             ),
-            lossyColumns || specializedDiagramOverlayFallback ? 7000 : 3200,
+            degradations.length > 0 ? 7000 : 3200,
           );
         } finally {
           const revokeObjectURL = URL.revokeObjectURL.bind(URL);
@@ -256,16 +252,50 @@ export function ExportMenu({
 
 function exportResultMessage(
   base: string,
-  lossyColumns: boolean,
-  specializedDiagramOverlayFallback: boolean,
+  degradations: readonly ExportDegradation[],
 ): string {
-  if (lossyColumns) {
-    return `${base} · 分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF。`;
+  if (degradations.length === 0) return base;
+  const descriptions = degradations.map(({ description }) =>
+    description.trim().replace(/[。；;]+$/u, "")
+  );
+  return `${base} · ${descriptions.join("；")}。`;
+}
+
+function responseExportDegradations(response: Response): ExportDegradation[] {
+  const byKind = new Map<string, ExportDegradation>();
+  const encoded = response.headers.get(EXPORT_DEGRADATIONS_HEADER);
+  if (encoded) {
+    try {
+      const parsed: unknown = JSON.parse(decodeURIComponent(encoded));
+      if (Array.isArray(parsed)) {
+        for (const value of parsed.slice(0, 8)) {
+          if (!value || typeof value !== "object") continue;
+          const kind = (value as { kind?: unknown }).kind;
+          const description = (value as { description?: unknown }).description;
+          if (
+            typeof kind === "string" && kind.length > 0 && kind.length <= 80 &&
+            typeof description === "string" && description.trim().length > 0 && description.length <= 300
+          ) {
+            byKind.set(kind, { kind, description });
+          }
+        }
+      }
+    } catch {
+      // 响应头损坏时只忽略告警元数据，不影响已经成功生成的导出件。
+    }
   }
-  if (specializedDiagramOverlayFallback) {
-    return `${base} · 专有图表已保留完整语义，画布布局未应用。`;
+
+  // 兼容尚未升级结构化响应头的服务端。
+  if (
+    response.headers.get("X-Qingagent-Export-Notice") === SPECIALIZED_DIAGRAM_OVERLAY_NOTICE &&
+    !byKind.has(SPECIALIZED_DIAGRAM_OVERLAY_NOTICE)
+  ) {
+    byKind.set(SPECIALIZED_DIAGRAM_OVERLAY_NOTICE, {
+      kind: SPECIALIZED_DIAGRAM_OVERLAY_NOTICE,
+      description: "专有图表已保留完整语义，画布布局未应用",
+    });
   }
-  return base;
+  return [...byKind.values()];
 }
 
 function revealSavedExport(revealToken: string, onAction: ToastShow): void {
@@ -281,17 +311,6 @@ function revealSavedExport(revealToken: string, onAction: ToastShow): void {
     .catch(() => {
       onAction("无法定位导出文件");
     });
-}
-
-export function docHasNodeType(doc: PmDoc | null, type: PmNode["type"]): boolean {
-  if (!doc) return false;
-  return doc.content.some((node) => nodeHasType(node, type));
-}
-
-function nodeHasType(node: PmNode, type: PmNode["type"]): boolean {
-  if (node.type === type) return true;
-  const content = (node as { content?: readonly PmNode[] }).content;
-  return Array.isArray(content) && content.some((child) => nodeHasType(child, type));
 }
 
 function dateStamp(): string {

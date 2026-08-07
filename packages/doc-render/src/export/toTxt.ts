@@ -1,21 +1,43 @@
 import type { PmDoc } from "@qingagent/pm-schema";
-import { isPmDocDocument, pmDocToPlainExportText, sectionText, type ExportDocument } from "./shared.js";
+import {
+  createExportDegradationReporter,
+  isPmDocDocument,
+  pmDocToPlainExportText,
+  sectionText,
+  type ExportDocument,
+  type ExportOptions,
+} from "./shared.js";
 import { collectExportFootnotes } from "./footnotes.js";
 
-export function toTxt(document: ExportDocument): string {
+export function toTxt(document: ExportDocument, options: ExportOptions = {}): string {
+  const reportDegradation = createExportDegradationReporter(options.onDegradation);
   if (isPmDocDocument(document)) {
     const footnotes = collectExportFootnotes(document);
     const body = pmDocToPlainExportText(replaceFootnotesWithTextRefs(document, footnotes.numberById));
+    if (nodeHasType(document, "horizontalRule")) {
+      reportDegradation("horizontal-rule-text-fallback");
+    }
     if (footnotes.definitions.length === 0) return body;
     const definitions = footnotes.definitions
       .map(({ number, note }) => `[${number}] ${note}`)
       .join("\n");
     return `${body}\n\n脚注\n${definitions}`;
   }
+  if (document.some((section) => section.kind === "hr")) {
+    reportDegradation("horizontal-rule-text-fallback");
+  }
   return document
     .map(sectionText)
     .filter((text) => text.length > 0)
     .join("\n\n");
+}
+
+type NodeLike = { type: string; content?: readonly NodeLike[] };
+
+function nodeHasType(node: NodeLike, type: string): boolean {
+  if (node.type === type) return true;
+  const content = node.content;
+  return Array.isArray(content) && content.some((child) => nodeHasType(child, type));
 }
 
 function replaceFootnotesWithTextRefs(

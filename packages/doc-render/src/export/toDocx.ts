@@ -33,7 +33,20 @@ import {
   decodeSvgDataUrl,
   isAllowedThemeColor,
 } from "@qingagent/pm-schema";
-import { documentLeadsWithTitle, drawioFallbackMessage, isDrawioExportSourceNormalized, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
+import {
+  createExportDegradationReporter,
+  documentLeadsWithTitle,
+  drawioFallbackMessage,
+  isDrawioExportSourceNormalized,
+  isPmDocDocument,
+  isRenderableSvg,
+  readLocalUploadBuffer,
+  readLocalUploadText,
+  sectionText,
+  svgExceedsExportByteLimit,
+  type ExportDocument,
+  type ExportOptions,
+} from "./shared.js";
 import { withRenderedDiagrams } from "./mermaidServer.js";
 import { rasterizeMathBatch, rasterizeSvgToPng, type MathRasterResult } from "./rasterize.js";
 import { collectExportFootnotes } from "./footnotes.js";
@@ -42,6 +55,7 @@ import { collectExportFootnotes } from "./footnotes.js";
 
 /** 用于在 toDocx 内传递预渲染好的公式位图；ImageRun 要等拿到当前栏宽后再创建。 */
 type MathImages = ReadonlyMap<string, MathRasterResult | null>;
+type ReportExportDegradation = ReturnType<typeof createExportDegradationReporter>;
 const INLINE_MATH_MIN_READABLE_HEIGHT_PX = 16;
 const BLOCK_MATH_MIN_READABLE_HEIGHT_PX = 32;
 
@@ -187,6 +201,7 @@ export async function toDocx(
   document: ExportDocument,
   options: ExportOptions = {},
 ): Promise<Buffer> {
+  const reportDegradation = createExportDegradationReporter(options.onDegradation);
   // 先补渲染缺缓存的 Mermaid；drawio 只消费客户端持久化的安全 SVG 缓存。
   // DOCX 再把可用 SVG 栅格成 PNG 嵌入，缺失/失败则按 W4 设计回退源码。
   const prepared = await withRenderedDiagrams(document);
@@ -217,6 +232,7 @@ export async function toDocx(
         mathImages,
         numbering,
         footnotes.numberById,
+        reportDegradation,
       )
     : [{
         children: [
@@ -226,6 +242,8 @@ export async function toDocx(
               section,
               numbering,
               section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
+              DOCX_CONTENT_WIDTH_TWIPS,
+              reportDegradation,
             ),
           ))).flat(),
         ],
@@ -279,6 +297,7 @@ async function pmDocToDocxSections(
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
+  reportDegradation: ReportExportDegradation,
 ): Promise<ISectionOptions[]> {
   const hasColumns = doc.content.some((node) => node.type === "columnList");
   if (!hasColumns) {
@@ -293,6 +312,7 @@ async function pmDocToDocxSections(
             mathImages,
             numbering,
             footnoteNumbers,
+            reportDegradation,
           ),
         ))).flat(),
       ],
@@ -322,10 +342,12 @@ async function pmDocToDocxSections(
         mathImages,
         numbering,
         footnoteNumbers,
+        reportDegradation,
       ));
       continue;
     }
 
+    reportDegradation("docx-columns-flattened");
     flushSingleColumn();
     const columnLayout = docxColumns(node.content.map((column) => column.attrs.widthRatio));
     const columnChildren: Array<Paragraph | Table> = [];
@@ -341,6 +363,7 @@ async function pmDocToDocxSections(
           mathImages,
           numbering,
           footnoteNumbers,
+          reportDegradation,
         ));
       }
     }
@@ -439,10 +462,12 @@ async function pmBlockToDocx(
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
+  reportDegradation: ReportExportDegradation,
 ): Promise<Array<Paragraph | Table>> {
   const quoteDeco = opts.inQuote ? QUOTE_PARAGRAPH_DECORATION : {};
   switch (node.type) {
     case "columnList":
+      reportDegradation("docx-columns-flattened");
       // 顶层 columnList 在 pmDocToDocxSections 中转换为 w:cols。若合法 PM 把分栏
       // 嵌进表格单元格等容器，sectPr 不能位于容器内部；改用无边框 Word 表格保持
       // 真正并排且让每栏继续容纳列表/表格/图片，绝不退回纵向拍平。
@@ -453,6 +478,7 @@ async function pmBlockToDocx(
         mathImages,
         numbering,
         footnoteNumbers,
+        reportDegradation,
       )];
     case "diagram":
       // 图表块:有渲染好的 svg 就当图片嵌入(走 image 的 svg→png 路径),否则源码降级为 code 块。
@@ -461,6 +487,7 @@ async function pmBlockToDocx(
         numbering,
         isDrawioExportSourceNormalized(node.attrs),
         opts.availableWidthTwips,
+        reportDegradation,
       );
     case "heading":
       return [
@@ -502,16 +529,16 @@ async function pmBlockToDocx(
     case "blockquote":
       // 把 inQuote 透传给子块,使引用内的段落/标题带上引用视觉装饰。
       return (await Promise.all(node.content.map((child) =>
-        pmBlockToDocx(child, depth, { ...opts, inQuote: true }, mathImages, numbering, footnoteNumbers),
+        pmBlockToDocx(child, depth, { ...opts, inQuote: true }, mathImages, numbering, footnoteNumbers, reportDegradation),
       ))).flat();
     case "bulletList":
       return (await Promise.all(node.content.map((item) =>
-        pmListItemToDocx(item.content, BULLET_NUMBERING, depth, opts, mathImages, numbering, footnoteNumbers),
+        pmListItemToDocx(item.content, BULLET_NUMBERING, depth, opts, mathImages, numbering, footnoteNumbers, reportDegradation),
       ))).flat();
     case "orderedList": {
       const reference = numbering.referenceFor(node, node.attrs.listStyle, node.attrs.start);
       return (await Promise.all(node.content.map((item) =>
-        pmListItemToDocx(item.content, reference, depth, opts, mathImages, numbering, footnoteNumbers),
+        pmListItemToDocx(item.content, reference, depth, opts, mathImages, numbering, footnoteNumbers, reportDegradation),
       ))).flat();
     }
     case "horizontalRule":
@@ -534,7 +561,7 @@ async function pmBlockToDocx(
               // 又是可选提示。这里只能把当前栏宽作为单元格内容的可靠上界，不能先猜
               // 等分宽度去缩图片，否则图片预算会与 Word 最终算出的单元格宽度脱节。
               children: await Promise.all(row.content.map((cell) =>
-                pmTableCellToDocx(cell, opts, mathImages, numbering, footnoteNumbers),
+                pmTableCellToDocx(cell, opts, mathImages, numbering, footnoteNumbers, reportDegradation),
               )),
             }),
           )),
@@ -555,6 +582,7 @@ async function pmBlockToDocx(
         numbering,
         false,
         opts.availableWidthTwips,
+        reportDegradation,
       );
     case "fileAttachment":
       return [
@@ -583,9 +611,9 @@ async function pmBlockToDocx(
               spacing: { after: 120 },
             }));
           } else if (child.type === "taskList") {
-            children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
+            children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers, reportDegradation));
           } else {
-            children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers));
+            children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers, reportDegradation));
           }
         }
       }
@@ -624,13 +652,22 @@ async function nestedColumnListToDocx(
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
+  reportDegradation: ReportExportDegradation,
 ): Promise<Table> {
   const weights = normalizedColumnWeights(node.content.map((column) => column.attrs.widthRatio));
   const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || Math.max(1, weights.length);
   const cells = await Promise.all(node.content.map(async (column, index) => {
     const availableWidthTwips = Math.max(1, opts.availableWidthTwips * weights[index]! / weightTotal);
     const children = (await Promise.all(column.content.map((child) =>
-      pmBlockToDocx(child, depth, { ...opts, availableWidthTwips }, mathImages, numbering, footnoteNumbers),
+      pmBlockToDocx(
+        child,
+        depth,
+        { ...opts, availableWidthTwips },
+        mathImages,
+        numbering,
+        footnoteNumbers,
+        reportDegradation,
+      ),
     ))).flat();
     return new TableCell({
       width: { size: weights[index]! / weightTotal * 100, type: WidthType.PERCENTAGE },
@@ -653,6 +690,7 @@ async function pmListItemToDocx(
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
+  reportDegradation: ReportExportDegradation,
 ): Promise<Array<Paragraph | Table>> {
   const children: Array<Paragraph | Table> = [];
   for (const child of content) {
@@ -671,14 +709,14 @@ async function pmListItemToDocx(
       continue;
     }
     if (child.type === "bulletList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
+      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers, reportDegradation));
       continue;
     }
     if (child.type === "orderedList") {
-      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers));
+      children.push(...await pmBlockToDocx(child, depth + 1, opts, mathImages, numbering, footnoteNumbers, reportDegradation));
       continue;
     }
-    children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers));
+    children.push(...await pmBlockToDocx(child, depth, opts, mathImages, numbering, footnoteNumbers, reportDegradation));
   }
   return children;
 }
@@ -689,9 +727,10 @@ async function pmTableCellToDocx(
   mathImages: MathImages,
   numbering: DocxNumberingRegistry,
   footnoteNumbers: ReadonlyMap<string, number>,
+  reportDegradation: ReportExportDegradation,
 ): Promise<TableCell> {
   const children = (await Promise.all(cell.content.map((child) =>
-    pmBlockToDocx(child, 0, opts, mathImages, numbering, footnoteNumbers),
+    pmBlockToDocx(child, 0, opts, mathImages, numbering, footnoteNumbers, reportDegradation),
   ))).flat();
   const colspan = normalizeTableSpan(cell.attrs?.colspan);
   const rowspan = normalizeTableSpan(cell.attrs?.rowspan);
@@ -947,6 +986,7 @@ function dataImage(section: Extract<LegacySection, { kind: "image" }>): { buffer
 async function imageRun(
   section: Extract<LegacySection, { kind: "image" }>,
   availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
+  reportDegradation?: ReportExportDegradation,
 ): Promise<ImageRun | null> {
   const size = imageSize(section, availableWidthTwips);
   const data = dataImage(section);
@@ -970,6 +1010,7 @@ async function imageRun(
     if (!svg) return null;
     const raster = await rasterizeSvgToPng(svg);
     if (!raster) return null;
+    reportDegradation?.("svg-rasterized");
     // 等比缩放到整页上限或当前栏宽,保留 SVG 栅格后的真实像素比例。
     const width = Math.min(480, twipsToPixels(availableWidthTwips), raster.width);
     const height = Math.max(1, Math.round((raster.height * width) / raster.width));
@@ -1000,6 +1041,7 @@ async function sectionToDocx(
   numbering: DocxNumberingRegistry,
   sourceNormalized = false,
   availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
+  reportDegradation?: ReportExportDegradation,
 ): Promise<Array<Paragraph | Table>> {
   switch (section.kind) {
     case "diagram": {
@@ -1029,6 +1071,7 @@ async function sectionToDocx(
             numbering,
             false,
             availableWidthTwips,
+            reportDegradation,
           ),
         ];
       }
@@ -1039,6 +1082,7 @@ async function sectionToDocx(
             data: { src: `data:image/svg+xml,${encodeURIComponent(section.data.svg)}`, alt: "图表", caption: null, width: null, height: null },
           },
           availableWidthTwips,
+          reportDegradation,
         );
         if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
       }
@@ -1049,6 +1093,7 @@ async function sectionToDocx(
           numbering,
           false,
           availableWidthTwips,
+          reportDegradation,
         ),
       ];
     }
@@ -1159,7 +1204,7 @@ async function sectionToDocx(
           }),
         ];
       }
-      const run = await imageRun(section, availableWidthTwips);
+      const run = await imageRun(section, availableWidthTwips, reportDegradation);
       const caption = section.data.caption ?? section.data.alt;
       if (!run) {
         return [

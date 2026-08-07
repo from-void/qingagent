@@ -1,5 +1,6 @@
 import { legacySectionsToPm, pmToMarkdown } from "@qingagent/pm-schema";
 import {
+  createExportDegradationReporter,
   documentLeadsWithTitle,
   isPmDocDocument,
   type ExportDocument,
@@ -14,6 +15,9 @@ export function toMarkdown(
     ? document
     : legacySectionsToPm(document as never);
   const body = pmToMarkdown(doc, { baseUrl: options.baseUrl }).trim();
+  const reportDegradation = createExportDegradationReporter(options.onDegradation);
+  if (nodeHasType(doc, "columnList")) reportDegradation("markdown-columns-flattened");
+  if (nodeHasType(doc, "horizontalRule")) reportDegradation("horizontal-rule-text-fallback");
   const title = normalizeMarkdownTitle(options.title);
   if (!title) return body;
   // 正文开头已是同名 H1 就不再加一遍。用结构层 documentLeadsWithTitle(忽略 bold/italic
@@ -22,6 +26,14 @@ export function toMarkdown(
   return documentLeadsWithTitle(document, title, { requireLevel1: true })
     ? body
     : `# ${escapeCommonMarkText(title)}\n\n${body}`.trim();
+}
+
+type NodeLike = { type: string; content?: readonly NodeLike[] };
+
+function nodeHasType(node: NodeLike, type: string): boolean {
+  if (node.type === type) return true;
+  const content = node.content;
+  return Array.isArray(content) && content.some((child) => nodeHasType(child, type));
 }
 
 function normalizeMarkdownTitle(title: string | undefined): string {

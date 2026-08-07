@@ -23,7 +23,12 @@ export {
   hasHtmlToPdfRenderer,
 } from "./pdfRenderer.js";
 export type { HtmlToPdfRenderer } from "./pdfRenderer.js";
-export type { ExportOptions } from "./shared.js";
+export { exportDegradation } from "./shared.js";
+export type {
+  ExportDegradation,
+  ExportDegradationKind,
+  ExportOptions,
+} from "./shared.js";
 export {
   isRenderableSvg,
   localUploadPath,

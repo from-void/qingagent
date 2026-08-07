@@ -9,9 +9,56 @@ export interface ExportOptions {
   title?: string;
   /** Markdown 导出时用于绝对化 `/api/` 图片与附件链接的服务 origin/base URL。 */
   baseUrl?: string;
+  /** 由实际执行降级的导出器上报；调用方负责聚合并传给客户端。 */
+  onDegradation?: (degradation: ExportDegradation) => void;
 }
 
 export type ExportDocument = LegacySection[] | PmDoc;
+
+export type ExportDegradationKind =
+  | "markdown-columns-flattened"
+  | "docx-columns-flattened"
+  | "svg-rasterized"
+  | "specialized-diagram-overlay";
+
+export interface ExportDegradation {
+  kind: ExportDegradationKind;
+  description: string;
+}
+
+const EXPORT_DEGRADATIONS: Record<ExportDegradationKind, ExportDegradation> = {
+  "markdown-columns-flattened": {
+    kind: "markdown-columns-flattened",
+    description: "分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF",
+  },
+  "docx-columns-flattened": {
+    kind: "docx-columns-flattened",
+    description: "分栏已拍平为纵向，原并排版式无法保留",
+  },
+  "svg-rasterized": {
+    kind: "svg-rasterized",
+    description: "SVG 已转为位图，放大会模糊",
+  },
+  "specialized-diagram-overlay": {
+    kind: "specialized-diagram-overlay",
+    description: "专有图表已保留完整语义，画布布局未应用",
+  },
+};
+
+export function exportDegradation(kind: ExportDegradationKind): ExportDegradation {
+  return EXPORT_DEGRADATIONS[kind];
+}
+
+export function createExportDegradationReporter(
+  onDegradation: ExportOptions["onDegradation"],
+): (kind: ExportDegradationKind) => void {
+  const reported = new Set<ExportDegradationKind>();
+  return (kind) => {
+    if (!onDegradation || reported.has(kind)) return;
+    reported.add(kind);
+    onDegradation(exportDegradation(kind));
+  };
+}
 
 // 仅写入导出克隆，用于区分 draw.io 回退源码是否真的经过归一化。
 // 扫描导出文档时会先清除输入中可能存在的同名字段，避免污染或误信持久化数据。

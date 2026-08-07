@@ -1,8 +1,14 @@
 import type { PmDoc } from "@qingagent/pm-schema";
-import { isPmDocDocument, pmDocToPlainExportText, sectionText, type ExportDocument } from "./shared.js";
+import {
+  isPmDocDocument,
+  pmDocToPlainExportText,
+  sectionText,
+  type ExportDocument,
+  type ExportOptions,
+} from "./shared.js";
 import { collectExportFootnotes } from "./footnotes.js";
 
-export function toTxt(document: ExportDocument): string {
+export function toTxt(document: ExportDocument, _options: ExportOptions = {}): string {
   if (isPmDocDocument(document)) {
     const footnotes = collectExportFootnotes(document);
     const body = pmDocToPlainExportText(replaceFootnotesWithTextRefs(document, footnotes.numberById));

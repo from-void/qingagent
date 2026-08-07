@@ -163,7 +163,6 @@ export function WorkspaceDocumentPane({
     reviewLaunchType,
     setReviewLaunchType,
     flushPendingDocSave,
-    getLatestExportPmDoc,
     loadReviewTemplates,
     saveReviewTemplate,
     deleteReviewTemplate,
@@ -517,7 +516,6 @@ export function WorkspaceDocumentPane({
                   onAction={showToast}
                   prepareDrawioForExport={prepareDrawioForExport}
                   flushPendingDocSave={flushPendingDocSave}
-                  getLatestPmDoc={getLatestExportPmDoc}
                 />
               ) : null}
             </div>

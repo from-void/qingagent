@@ -12,12 +12,19 @@ import {
   toPdf,
   toTxt,
   withRenderedDiagrams,
+  type ExportDegradation,
+  type ExportOptions,
 } from "@qingagent/doc-render";
 import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";
 const warnedInvalidPublicOrigins = new Set<string>();
+const EXPORT_DEGRADATIONS_HEADER = "X-Qingagent-Export-Degradations";
+const SPECIALIZED_DIAGRAM_OVERLAY_DEGRADATION: ExportDegradation = {
+  kind: "specialized-diagram-overlay",
+  description: "专有图表已保留完整语义，画布布局未应用",
+};
 
 const CONTENT_TYPES: Record<ExportFormat, string> = {
   pdf: "application/pdf",
@@ -77,8 +84,14 @@ exportRoutes.get("/export/:sessionId", async (c) => {
     (format === "pdf" || format === "docx" || format === "html") &&
     hasSpecializedDiagramOverlayFallback(document);
   try {
-    const body = await renderExport(format, document, title, baseUrl);
-    return new Response(body, {
+    const rendered = await renderExport(format, document, title, baseUrl);
+    const degradations = mergeExportDegradations(
+      rendered.degradations,
+      specializedOverlayFallback
+        ? [SPECIALIZED_DIAGRAM_OVERLAY_DEGRADATION]
+        : [],
+    );
+    return new Response(rendered.body, {
       status: 200,
       headers: {
         "Content-Type": CONTENT_TYPES[format],
@@ -86,6 +99,9 @@ exportRoutes.get("/export/:sessionId", async (c) => {
         "Cache-Control": "no-store",
         ...(specializedOverlayFallback
           ? { "X-Qingagent-Export-Notice": SPECIALIZED_DIAGRAM_OVERLAY_NOTICE }
+          : {}),
+        ...(degradations.length > 0
+          ? { [EXPORT_DEGRADATIONS_HEADER]: encodeURIComponent(JSON.stringify(degradations)) }
           : {}),
       },
     });
@@ -167,20 +183,41 @@ async function renderExport(
   document: Parameters<typeof toTxt>[0],
   title: string,
   baseUrl: string,
-): Promise<BodyInit> {
+): Promise<{ body: BodyInit; degradations: ExportDegradation[] }> {
+  const degradations = new Map<ExportDegradation["kind"], ExportDegradation>();
+  const options: ExportOptions = {
+    title,
+    baseUrl,
+    onDegradation: (degradation) => degradations.set(degradation.kind, degradation),
+  };
+  let body: BodyInit;
   switch (format) {
     case "pdf":
-      return toUint8Array(await toPdf(document, { title }));
+      body = toUint8Array(await toPdf(document, options));
+      break;
     case "docx":
-      return toUint8Array(await toDocx(document, { title }));
+      body = toUint8Array(await toDocx(document, options));
+      break;
     case "txt":
-      return toTxt(document);
+      body = toTxt(document, options);
+      break;
     case "markdown":
-      return toMarkdown(document, { title, baseUrl });
+      body = toMarkdown(document, options);
+      break;
     case "html":
       // HTML 导出也先服务端渲染图表(否则图表会回退成源码)。
-      return toHtml(await withRenderedDiagrams(document), { title });
+      body = toHtml(await withRenderedDiagrams(document), options);
+      break;
   }
+  return { body, degradations: [...degradations.values()] };
+}
+
+function mergeExportDegradations(
+  ...groups: readonly ExportDegradation[][]
+): ExportDegradation[] {
+  const merged = new Map<ExportDegradation["kind"], ExportDegradation>();
+  for (const degradation of groups.flat()) merged.set(degradation.kind, degradation);
+  return [...merged.values()];
 }
 
 function requestOrigin(

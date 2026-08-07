@@ -2,8 +2,7 @@
 import { act, type ReactNode, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PmDoc } from "@qingagent/pm-schema";
-import { ExportMenu, docHasNodeType } from "./ExportMenu";
+import { ExportMenu } from "./ExportMenu";
 import { DerivTabBar } from "./derivatives/DerivTabBar";
 import type { ToastShow, ToastShowOptions } from "../../../system/ToastProvider";
 import { resetOverlayDismissStackForTest } from "../../../system/overlayDismissStack";
@@ -169,6 +168,40 @@ describe("ExportMenu", () => {
     );
   });
 
+  it("三种有损降级同时发生时只合并进一条成功 toast", async () => {
+    const degradations = [
+      { kind: "docx-columns-flattened", description: "分栏已拍平为纵向，原并排版式无法保留" },
+      { kind: "svg-rasterized", description: "SVG 已转为位图，放大会模糊" },
+      { kind: "specialized-diagram-overlay", description: "专有图表已保留完整语义，画布布局未应用" },
+    ];
+    const fetchMock = vi.fn(async () => new Response(
+      "PK",
+      {
+        headers: {
+          "X-Qingagent-Export-Degradations": encodeURIComponent(JSON.stringify(degradations)),
+        },
+      },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const onAction = vi.fn();
+    await render(<ExportMenuHarness onClose={() => undefined} onAction={onAction} />);
+
+    const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-docx"]');
+    if (!item) throw new Error("Word export item not found");
+    await act(async () => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith(
+      "Word 已开始下载 · 分栏已拍平为纵向，原并排版式无法保留；SVG 已转为位图，放大会模糊；专有图表已保留完整语义，画布布局未应用。",
+      7000,
+    );
+  });
+
   it("HTML 导出先等待 drawio 补缓存并显示逐块进度，再保存和请求导出", async () => {
     const events: string[] = [];
     let finishPreparation: (() => void) | undefined;
@@ -221,16 +254,19 @@ describe("ExportMenu", () => {
     expect(events).toEqual(["prepare", "flush", "fetch"]);
   });
 
-  it("递归识别 column/table/list/callout 内的节点类型", () => {
-    expect(docHasNodeType(columnDoc(), "columnList")).toBe(true);
-    expect(docHasNodeType(columnDoc(), "orderedList")).toBe(true);
-    expect(docHasNodeType(columnDoc(), "tableCell")).toBe(true);
-    expect(docHasNodeType(columnDoc(), "callout")).toBe(true);
-    expect(docHasNodeType(columnDoc(), "paragraph")).toBe(true);
-  });
-
-  it("Markdown 导出遇到分栏时只推荐 HTML/PDF 并传 toast 时长", async () => {
-    const fetchMock = vi.fn(async () => new Response(new Blob(["# md"])));
+  it("Markdown 分栏告警只读取导出响应，不在 UI 层检查文档结构", async () => {
+    const degradations = [{
+      kind: "markdown-columns-flattened",
+      description: "分栏已拍平为纵向；需保留并排版式请导出 HTML 或 PDF",
+    }];
+    const fetchMock = vi.fn(async () => new Response(
+      new Blob(["# md"]),
+      {
+        headers: {
+          "X-Qingagent-Export-Degradations": encodeURIComponent(JSON.stringify(degradations)),
+        },
+      },
+    ));
     vi.stubGlobal("fetch", fetchMock);
     Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
     Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
@@ -242,7 +278,6 @@ describe("ExportMenu", () => {
         onClose={() => undefined}
         onAction={onAction}
         flushPendingDocSave={flushPendingDocSave}
-        getLatestPmDoc={columnDoc}
       />,
     );
 
@@ -384,7 +419,6 @@ function ExportMenuHarness({
   onAction = (() => "test-toast") as ToastShow,
   prepareDrawioForExport,
   flushPendingDocSave,
-  getLatestPmDoc,
 }: {
   onClose: () => void;
   onAction?: ToastShow;
@@ -392,7 +426,6 @@ function ExportMenuHarness({
     onProgress: (current: number, total: number) => void,
   ) => Promise<void>;
   flushPendingDocSave?: () => Promise<void>;
-  getLatestPmDoc?: () => PmDoc | null;
 }) {
   const [open, setOpen] = useState(true);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -413,7 +446,6 @@ function ExportMenuHarness({
           onAction={onAction}
           prepareDrawioForExport={prepareDrawioForExport}
           flushPendingDocSave={flushPendingDocSave}
-          getLatestPmDoc={getLatestPmDoc}
         />
       )}
     </div>
@@ -451,65 +483,6 @@ function AlternatingMenusHarness() {
       />
     </>
   );
-}
-
-function columnDoc(): PmDoc {
-  return {
-    type: "doc",
-    attrs: { schemaVersion: 1 },
-    content: [
-      {
-        type: "columnList",
-        attrs: { blockId: "cols" },
-        content: [
-          {
-            type: "column",
-            attrs: { blockId: "col-1", widthRatio: 0.5 },
-            content: [
-              {
-                type: "orderedList",
-                attrs: { blockId: "ol", start: 1 },
-                content: [
-                  {
-                    type: "listItem",
-                    attrs: { blockId: "li" },
-                    content: [{ type: "paragraph", attrs: { blockId: "li-p" }, content: [{ type: "text", text: "甲" }] }],
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            type: "column",
-            attrs: { blockId: "col-2", widthRatio: 0.5 },
-            content: [
-              { type: "paragraph", attrs: { blockId: "p" }, content: [{ type: "text", text: "乙" }] },
-              {
-                type: "table",
-                attrs: { blockId: "table" },
-                content: [
-                  {
-                    type: "tableRow",
-                    content: [
-                      {
-                        type: "tableCell",
-                        content: [{ type: "paragraph", attrs: { blockId: "cell-p" }, content: [{ type: "text", text: "格" }] }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      {
-        type: "callout",
-        attrs: { blockId: "callout", tone: "info", emoji: "i" },
-        content: [{ type: "paragraph", attrs: { blockId: "callout-p" }, content: [{ type: "text", text: "提示" }] }],
-      },
-    ],
-  };
 }
 
 async function render(element: ReactNode): Promise<void> {

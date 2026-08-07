@@ -16,6 +16,14 @@ import {
   allowsPrivateModelHost,
   validateModelFetchUrl,
 } from "./modelFetchUrl.js";
+import {
+  beginWireAttempt,
+  markWireAttemptError,
+  observeWireResponse,
+  wireUsageStorage,
+  type WireAttempt,
+  type WireScope,
+} from "./wireUsage.js";
 
 export const DEFAULT_MODEL_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -470,29 +478,44 @@ export function resetModelPreflightCacheForTests(): void {
  * fetch 的 undici.globalDispatcher.1 与 npm undici@8 的 .2 符号/handler 协议不兼容。
  */
 export const modelFetch: typeof globalThis.fetch = async (input, init) => {
+  // 身份不变式：入口、首次 await 前恰好读一次；其后只传这个闭包引用。
+  const wireScope = wireUsageStorage.getStore();
+  if (!wireScope) console.info("[wireUsage] modelFetch 未挂载计量 scope");
   // 既有 provider/BranchCall 单测通过 vi.stubGlobal 拦截 wire body；测试替身不是生产
   // 传输路径，显式保留这个观测缝，黑洞集成测试不 stub global fetch，仍走真实 dispatcher。
   if (process.env.VITEST && globalThis.fetch !== nativeGlobalFetch) {
-    return globalThis.fetch(input, init);
+    return fetchObservedAttempt(wireScope, input, init, () => globalThis.fetch(input, init));
   }
   const rawUrl = typeof input === "string" || input instanceof URL
     ? input.toString()
     : input.url;
   const requestSignal = init?.signal ??
     (typeof input === "string" || input instanceof URL ? undefined : input.signal);
-  await runModelFetchPreflight(rawUrl, process.env, requestSignal);
-  requestSignal?.throwIfAborted();
+  // 首次物理尝试在预检前建档：预检/主动中止若提前失败，同一行仍能如实归为 no_response；
+  // 预检通过后复用该 attempt，不额外制造一条“预检行”。
+  let firstWireAttempt = wireScope ? beginWireAttempt(wireScope, input, init) : undefined;
+  try {
+    await runModelFetchPreflight(rawUrl, process.env, requestSignal);
+    requestSignal?.throwIfAborted();
+  } catch (error) {
+    if (firstWireAttempt) markWireAttemptError(firstWireAttempt, error);
+    throw error;
+  }
   const dispatcher = getModelDispatcher();
   const replayable = isReplayableModelRequest(input, init);
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await undiciFetch(
-        input as Parameters<typeof undiciFetch>[0],
-        {
-          ...(init as Parameters<typeof undiciFetch>[1]),
-          dispatcher,
-        },
-      ) as unknown as Response;
+      const currentWireAttempt = firstWireAttempt;
+      firstWireAttempt = undefined;
+      return await fetchObservedAttempt(wireScope, input, init, () => (
+        undiciFetch(
+          input as Parameters<typeof undiciFetch>[0],
+          {
+            ...(init as Parameters<typeof undiciFetch>[1]),
+            dispatcher,
+          },
+        ) as unknown as Promise<Response>
+      ), currentWireAttempt);
     } catch (error) {
       // fetch 只要 reject 就说明连响应头都没拿到（响应体中途出错是 resolve 之后在流上
       // 报），所以这里重发不会产生重复的可见内容，也不会重复触发已生效的服务端副作用。
@@ -508,6 +531,23 @@ export const modelFetch: typeof globalThis.fetch = async (input, init) => {
     }
   }
 };
+
+async function fetchObservedAttempt(
+  scope: WireScope | undefined,
+  input: Parameters<typeof globalThis.fetch>[0],
+  init: Parameters<typeof globalThis.fetch>[1],
+  fetcher: () => Promise<Response>,
+  existingAttempt?: WireAttempt,
+): Promise<Response> {
+  if (!scope) return fetcher();
+  const attempt = existingAttempt ?? beginWireAttempt(scope, input, init);
+  try {
+    return observeWireResponse(scope, attempt, await fetcher());
+  } catch (error) {
+    markWireAttemptError(attempt, error);
+    throw error;
+  }
+}
 
 /** 仅供测试隔离 process.env 与连接池；生产代码不需要主动重置。 */
 export async function resetModelTransportForTests(): Promise<void> {

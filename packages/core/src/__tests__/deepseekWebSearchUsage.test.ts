@@ -50,15 +50,15 @@ describe("DeepSeek webSearch usage 留痕", () => {
     expect(event.cacheMissTokens).toBe(event.inputTokens);
   });
 
-  it("provider 请求异常同样留 missing", async () => {
+  it("provider 请求无响应时留 billing_unknown", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
     await expect(fetchDeepseekSearchLinks("查询", "key", 3, "deepseek-v4-flash", {
       sessionId: "session-search",
       keyOrigin: "env",
     })).resolves.toEqual([]);
     expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
-      reason: "provider_request_error",
+      usageState: "billing_unknown",
+      reason: "no_response",
     }));
   });
 
@@ -91,7 +91,8 @@ describe("DeepSeek webSearch usage 留痕", () => {
     expect(requestSignal?.aborted).toBe(true);
     expect(requestSignal?.reason).toBe(reason);
     expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
-      reason: "provider_request_aborted",
+      usageState: "billing_unknown",
+      reason: "no_response",
     }));
   });
 });

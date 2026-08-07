@@ -10,6 +10,12 @@ import {
   recordModelCallOutcome,
 } from "../llm/usageMiddleware.js";
 import { MODEL_CALL_SITES } from "../llm/modelCallSites.js";
+import { modelFetch } from "../llm/modelTransport.js";
+import {
+  createWireScope,
+  wireUsageStorage,
+  type WireScope,
+} from "../llm/wireUsage.js";
 
 const DEEPSEEK_ANTHROPIC_MESSAGES_URL = "https://api.deepseek.com/anthropic/v1/messages";
 
@@ -61,6 +67,7 @@ export async function fetchDeepseekSearchLinks(
   if (signal?.aborted) abortFromSignal();
   else signal?.addEventListener("abort", abortFromSignal, { once: true });
   const removeAbortListener = () => signal?.removeEventListener("abort", abortFromSignal);
+  let wireScope: WireScope | undefined;
   const recordUnavailable = (
     reason: string,
     usageEstimate?: { uncachedInputText: string; outputText: string },
@@ -80,6 +87,7 @@ export async function fetchDeepseekSearchLinks(
       usage: null,
       usageEstimate,
       reason,
+      wireScope,
     });
   };
   const requestPayload = {
@@ -97,9 +105,18 @@ export async function fetchDeepseekSearchLinks(
     messages: requestPayload.messages,
     tools: requestPayload.tools,
   });
+  let receivedDeltaText = "";
+  if (usageContext) {
+    wireScope = createWireScope({
+      onFinalizeTimeout: () => recordUnavailable("finalize_timeout", {
+        uncachedInputText: requestPromptText,
+        outputText: receivedDeltaText,
+      }),
+    });
+  }
   let response: Response;
   try {
-    response = await fetch(DEEPSEEK_ANTHROPIC_MESSAGES_URL, {
+    const invoke = () => modelFetch(DEEPSEEK_ANTHROPIC_MESSAGES_URL, {
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -109,6 +126,9 @@ export async function fetchDeepseekSearchLinks(
       body: requestBodyText,
       signal: controller.signal,
     });
+    response = wireScope
+      ? await wireUsageStorage.run(wireScope, invoke)
+      : await invoke();
   } catch (error) {
     removeAbortListener();
     const requestAborted =
@@ -129,7 +149,6 @@ export async function fetchDeepseekSearchLinks(
   let buffer = "";
   let wsIndex: number | null = null;
   let partialJson = "";
-  let receivedDeltaText = "";
   const pushResult = (r: unknown): void => {
     if (!r || typeof r !== "object") return;
     const rec = r as Record<string, unknown>;

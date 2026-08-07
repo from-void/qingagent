@@ -74,9 +74,8 @@ describe("LLM usage provider 边界覆盖", () => {
       "utf8",
     );
 
-    expect(middleware).toMatch(
-      /usageState\s*=\s*recorded\s*\?\s*"recorded"\s*:\s*estimated\s*\?\s*"estimated"/,
-    );
+    expect(middleware).toContain('type FinalUsageState = "recorded" | "estimated" | "missing" | "billing_unknown"');
+    expect(middleware).toContain("isCompleteUsage(");
     expect(middleware).toContain("usageEstimate,");
     expect(modern).toContain("usageEstimate,");
     expect(branch).toContain("usageEstimate,");
@@ -84,6 +83,26 @@ describe("LLM usage provider 边界覆盖", () => {
     expect(modern).not.toContain("recordUsageEvent");
     expect(branch).not.toContain("recordUsageEvent");
     expect(manual).not.toContain("recordUsageEvent");
+  });
+
+  it("wire scope 在四个调用层挂载，modelFetch 只在首次 await 前读取一次 ALS", () => {
+    const transport = readFileSync(
+      resolve(root, "packages/core/src/llm/modelTransport.ts"),
+      "utf8",
+    );
+    const middleware = readFileSync(resolve(root, "packages/core/src/llm/usageMiddleware.ts"), "utf8");
+    const modern = readFileSync(resolve(root, "packages/core/src/llm/modernUsageModel.ts"), "utf8");
+    const branch = readFileSync(resolve(root, "packages/core/src/llm/modelConfig.ts"), "utf8");
+    const manual = readFileSync(resolve(root, "packages/core/src/search/deepseekWebSearch.ts"), "utf8");
+
+    expect(transport.match(/wireUsageStorage\.getStore\(\)/g)).toHaveLength(1);
+    const modelFetchStart = transport.indexOf("export const modelFetch");
+    const firstAwait = transport.indexOf("await runModelFetchPreflight", modelFetchStart);
+    expect(transport.indexOf("wireUsageStorage.getStore()", modelFetchStart)).toBeLessThan(firstAwait);
+    for (const source of [middleware, modern, branch, manual]) {
+      expect(source).toContain("createWireScope({");
+      expect(source).toContain("wireUsageStorage.run(");
+    }
   });
 
   it("主 Agent 的 OpenAI/Anthropic 两条模型路径都始终套 provider wrapper", () => {

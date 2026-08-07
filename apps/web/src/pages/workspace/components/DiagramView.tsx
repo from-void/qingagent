@@ -61,6 +61,10 @@ function DiagramComponent({
   const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
   const [svg, setSvg] = useState<string | null>(usableCachedSvg);
   const [error, setError] = useState<string | null>(null);
+  const [mermaidDraftValidation, setMermaidDraftValidation] = useState<{
+    source: string;
+    error: string | null;
+  } | null>(null);
   const [editable, setEditable] = useState(editor?.isEditable ?? false);
   const [canRequestInteraction, setCanRequestInteraction] = useState(
     () => !editor?.isEditable && diagramInteraction.canRequestDiagramInteraction(),
@@ -218,6 +222,9 @@ function DiagramComponent({
         renderedSourceRef.current = null;
         setSvg(null);
         setError(null);
+        if (!persist && lang === "mermaid") {
+          setMermaidDraftValidation({ source: "", error: null });
+        }
         return;
       }
       if (lang === "drawio" && isEmptyDrawioSource(trimmed)) {
@@ -232,6 +239,9 @@ function DiagramComponent({
         renderedSourceRef.current = trimmed;
         setSvg(out);
         setError(null);
+        if (!persist && lang === "mermaid") {
+          setMermaidDraftValidation({ source: trimmed, error: null });
+        }
         // 持久化 svg 到 node(导出 PDF/Word 用);仅在内容真变化且可编辑时写,避免循环。
         if (persist && editable && !editingRef.current && out !== node.attrs.svg) {
           updateDiagramAttributes(
@@ -241,7 +251,11 @@ function DiagramComponent({
         }
       } catch (e) {
         if (!mountedRef.current || token !== renderTokenRef.current) return;
-        setError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        if (!persist && lang === "mermaid") {
+          setMermaidDraftValidation({ source: trimmed, error: message });
+        }
       }
     },
     [editable, lang, node.attrs.svg, updateDiagramAttributes],
@@ -275,13 +289,29 @@ function DiagramComponent({
   // edit 态:draft 变化防抖实时预览(不持久化,完成时才写)。
   useEffect(() => {
     if (!editing) return;
+    const trimmed = draft.trim();
+    if (lang === "mermaid") {
+      setMermaidDraftValidation((current) => (
+        current?.source === trimmed
+          ? current
+          : trimmed
+            ? null
+            : { source: "", error: null }
+      ));
+    }
     const t = setTimeout(() => void renderInto(draft, false), 250);
     return () => clearTimeout(t);
-  }, [draft, editing, renderInto]);
+  }, [draft, editing, lang, renderInto]);
 
   const beginSourceEdit = () => {
     if (!editableRef.current) return;
+    const trimmed = source.trim();
     setDraft(source);
+    setMermaidDraftValidation(
+      lang === "mermaid" && (!trimmed || (renderedSourceRef.current === trimmed && !error))
+        ? { source: trimmed, error: null }
+        : null,
+    );
     setEditing(true);
   };
 
@@ -356,6 +386,16 @@ function DiagramComponent({
       });
   };
 
+  const trimmedDraft = draft.trim();
+  const currentMermaidDraftValidation =
+    lang === "mermaid" && mermaidDraftValidation?.source === trimmedDraft
+      ? mermaidDraftValidation
+      : null;
+  const mermaidCommitDisabled =
+    lang === "mermaid" && Boolean(trimmedDraft) &&
+    (!currentMermaidDraftValidation || Boolean(currentMermaidDraftValidation.error));
+  const editingError = lang === "mermaid" ? currentMermaidDraftValidation?.error ?? null : error;
+
   const commit = () => {
     // 空源码不能留:PM 校验要求 diagram.source 非空,留空会让随后的 normalizePmDoc 抛错、
     // 阻断保存流。源码被清空 = 用户想删掉这个图表,直接删节点。
@@ -364,6 +404,7 @@ function DiagramComponent({
       deleteNode?.();
       return;
     }
+    if (mermaidCommitDisabled) return;
     let nextSource = draft;
     if (lang === "drawio") {
       try {
@@ -517,8 +558,8 @@ function DiagramComponent({
       {editing ? (
         <div className="pm-diagram-edit">
           <div className="pm-diagram-preview">
-            {error ? (
-              <pre className="pm-diagram-error">{error}</pre>
+            {editingError ? (
+              <pre className="pm-diagram-error">{editingError}</pre>
             ) : svg ? (
               <DiagramSvgView svg={svg} />
             ) : (
@@ -553,6 +594,7 @@ function DiagramComponent({
             <button
               type="button"
               className="pm-diagram-btn"
+              disabled={mermaidCommitDisabled}
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.preventDefault();

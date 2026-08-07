@@ -366,6 +366,12 @@
   color: #fff;
   cursor: pointer;
 }
+.pm-diagram-btn:disabled {
+  border-color: var(--line-2, rgba(47, 42, 34, 0.18));
+  background: var(--bg-paper-deep, #efe7d6);
+  color: var(--ink-3, #8c857a);
+  cursor: not-allowed;
+}
 .pm-diagram-btn--ghost {
   background: transparent;
   color: var(--ink-2, #444);

@@ -1,4 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { once } from "node:events";
 import { RequestContext } from "@mastra/core/request-context";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,14 @@ import {
   modelFetch,
   resetModelTransportForTests,
 } from "./modelTransport.js";
+import {
+  claimWireScopeFinalization,
+  createWireScope,
+  wireUsageStorage,
+} from "./wireUsage.js";
+import { recordModelCallOutcome } from "./usageMiddleware.js";
+import { getDocumentsClient } from "@qingagent/db";
+import { prepareTempDocumentsDb } from "@qingagent/db/testing";
 
 // 真实监听本机 TCP 并模拟 CONNECT 黑洞，按仓库约定归入 heavy 层。
 
@@ -16,6 +25,8 @@ const PROXY_ENV_KEYS = [
   "HTTP_PROXY",
   "https_proxy",
   "HTTPS_PROXY",
+  "all_proxy",
+  "ALL_PROXY",
   "no_proxy",
   "NO_PROXY",
   "QINGAGENT_MODEL_CONNECT_TIMEOUT_MS",
@@ -229,18 +240,166 @@ describe.sequential("modelTransport 集成", () => {
     // 模拟工具执行的空闲间隔：连接归池、下一次续写必然复用它。
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const second = await modelFetch(`${serverUrl(origin)}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: [] }),
-    });
+    const scope = createWireScope({ onFinalizeTimeout: () => {} });
+    const second = await wireUsageStorage.run(scope, () =>
+      modelFetch(`${serverUrl(origin)}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "user", content: "重试" }] }),
+      })
+    );
     expect(second.status).toBe(200);
     // 换新连接后又是这条连接上的第一次请求，服务端正常应答。
     await expect(second.text()).resolves.toBe("第 2 次响应");
     // 服务端一共看到 3 个请求：首次 + 撞死连接的那次 + 重试；但只回了 2 份内容。
     expect(requestsSeen).toBe(3);
     expect(responsesSent).toBe(2);
+    expect(scope.attempts.map((attempt) => attempt.responseStatus)).toEqual([null, 200]);
+
+    const tempDb = prepareTempDocumentsDb("qingagent-wire-retry-");
+    try {
+      await recordModelCallOutcome({
+        sessionId: "wire-retry",
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "env",
+        attempt: 1,
+        transport: "mastra-v2-v3",
+        startedAt: Date.now(),
+        usage: { inputTokens: 4, outputTokens: 2 },
+        wireScope: scope,
+      });
+      const stored = await getDocumentsClient().execute(
+        "SELECT usage_state, reason, input_tokens, output_tokens FROM llm_usage_events ORDER BY created_at, rowid",
+      );
+      expect(stored.rows).toEqual([
+        expect.objectContaining({
+          usage_state: "billing_unknown",
+          reason: "no_response",
+          input_tokens: 0,
+          output_tokens: 0,
+        }),
+        expect.objectContaining({
+          usage_state: "recorded",
+          input_tokens: 4,
+          output_tokens: 2,
+        }),
+      ]);
+    } finally {
+      tempDb.cleanup();
+    }
   }, 10_000);
+
+  it("H5b 真实连接拒绝单独落 billing_unknown，不退回 estimated 或 missing", async () => {
+    const closedOrigin = createHttpServer();
+    await listen(closedOrigin);
+    const url = serverUrl(closedOrigin);
+    await new Promise<void>((resolve, reject) => {
+      closedOrigin.close((error) => error ? reject(error) : resolve());
+    });
+    process.env.no_proxy = "*";
+
+    const scope = createWireScope({ onFinalizeTimeout: () => {} });
+    await expect(wireUsageStorage.run(scope, () => modelFetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "拒绝连接" }] }),
+    }))).rejects.toThrow();
+    expect(scope.attempts).toHaveLength(1);
+    expect(scope.attempts[0]).toMatchObject({ responseStatus: null });
+
+    const tempDb = prepareTempDocumentsDb("qingagent-wire-refused-");
+    try {
+      await recordModelCallOutcome({
+        sessionId: "wire-refused",
+        callSite: "agentChat",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "env",
+        attempt: 1,
+        transport: "mastra-v2-v3",
+        startedAt: Date.now(),
+        usage: null,
+        reason: "provider_request_error",
+        wireScope: scope,
+      });
+      const stored = await getDocumentsClient().execute(
+        "SELECT usage_state, reason, input_tokens, output_tokens FROM llm_usage_events",
+      );
+      expect(stored.rows).toEqual([expect.objectContaining({
+        usage_state: "billing_unknown",
+        reason: "no_response",
+        input_tokens: 0,
+        output_tokens: 0,
+      })]);
+    } finally {
+      tempDb.cleanup();
+    }
+  }, 10_000);
+
+  it("单流 tap 的主流 cancel 会真实关闭服务端连接", async () => {
+    let closedResolve!: () => void;
+    const closed = new Promise<void>((resolve) => { closedResolve = resolve; });
+    const origin = createHttpServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"content":"首块"}}]}\n\n');
+      const timer = setInterval(() => {
+        response.write('data: {"choices":[{"delta":{"content":"续"}}]}\n\n');
+      }, 10);
+      response.once("close", () => {
+        clearInterval(timer);
+        closedResolve();
+      });
+    });
+    await listen(origin);
+    cleanups.push(() => closeServer(origin, new Set()));
+    process.env.no_proxy = "*";
+
+    const scope = createWireScope({ onFinalizeTimeout: () => {} });
+    const response = await wireUsageStorage.run(scope, () => modelFetch(serverUrl(origin)));
+    const reader = response.body!.getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel("consumer_cancelled");
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("服务端未观察到连接关闭")), 1_000)),
+    ]);
+    expect(claimWireScopeFinalization(scope)).toBe(true);
+  }, 4_000);
+
+  it("慢消费大响应时 tap 沿同一背压链，不建立抢跑积压分支", async () => {
+    const totalChunks = 128;
+    const payload = Buffer.alloc(256 * 1024, 0x20);
+    let sentChunks = 0;
+    let maxWritableBytes = 0;
+    const origin = createHttpServer(async (_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (let index = 0; index < totalChunks; index += 1) {
+        sentChunks += 1;
+        const writable = response.write(payload);
+        maxWritableBytes = Math.max(maxWritableBytes, response.writableLength);
+        if (!writable) await once(response, "drain");
+      }
+      response.end();
+    });
+    await listen(origin);
+    cleanups.push(() => closeServer(origin, new Set()));
+    process.env.no_proxy = "*";
+
+    const scope = createWireScope({ onFinalizeTimeout: () => {} });
+    const response = await wireUsageStorage.run(scope, () => modelFetch(serverUrl(origin)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sentChunks).toBeLessThan(totalChunks);
+    const reader = response.body!.getReader();
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(sentChunks).toBe(totalChunks);
+    expect(maxWritableBytes).toBeLessThan(2 * 1024 * 1024);
+    expect(["frame_limit", "total_limit"]).toContain(scope.attempts[0]?.parseStoppedReason);
+    claimWireScopeFinalization(scope);
+  }, 15_000);
 
   it("请求体不可原样重放时不做连接重试，错误如实抛出", async () => {
     const sockets = new Set<Socket>();

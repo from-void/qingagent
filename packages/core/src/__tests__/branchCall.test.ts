@@ -529,7 +529,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(mocks.recordUsageEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("可解析跨 chunk SSE，并在无 usage 时写 missing 事件", async () => {
+  it("可解析跨 chunk SSE，并在无 usage 时按 wire 素材写 estimated", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-sse", "stream-main");
@@ -565,7 +565,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(deltas).toEqual(["甲乙"]);
     expect(activities).toBeGreaterThanOrEqual(3);
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
+      usageState: "estimated",
       reason: "provider_usage_missing",
     }));
   });
@@ -628,7 +628,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       error: "HTTP 200 SSE: rate limited Bearer ***",
     });
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
+      usageState: "estimated",
       reason: "HTTP 200 SSE: rate limited Bearer ***",
     }));
   });
@@ -684,7 +684,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(delivered).toMatchObject({ ok: true, text: "不等账本" });
   });
 
-  it("raw HTTP 错误写入一笔 missing usage", async () => {
+  it("raw HTTP 错误写入一笔 billing_unknown usage", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-http-error", "stream-main");
@@ -702,13 +702,13 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext,
     })).resolves.toMatchObject({ reason: "provider_error", attempts: 1 });
     await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
-      reason: "HTTP 502: upstream unavailable Authorization: Bearer ***",
+      usageState: "billing_unknown",
+      reason: "http_502",
       attempt: 1,
     })));
   });
 
-  it("raw 流解析错误写入一笔 missing usage", async () => {
+  it("raw 流解析错误按请求素材写 estimated usage", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-parse-error", "stream-main");
@@ -726,7 +726,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext,
     })).resolves.toMatchObject({ reason: "provider_error", attempts: 1 });
     await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
-      usageState: "missing",
+      usageState: "estimated",
       reason: "provider_request_error",
     })));
   });
@@ -786,7 +786,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     };
     expect(event.inputTokens).toBeGreaterThan(0);
     expect(event.outputTokens).toBeGreaterThan(0);
-    expect(event.cacheHitTokens).toBeGreaterThan(0);
+    expect(event.cacheHitTokens).toBe(0);
     expect(event.cacheMissTokens).toBeGreaterThan(0);
   });
 

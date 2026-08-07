@@ -22,4 +22,19 @@ describe("AI SDK 4/5 usage 归一化对照", () => {
     });
     expect(v5).toEqual(v4);
   });
+
+  it("保留 Anthropic wire 原始 input_tokens/output_tokens 与缓存字段", () => {
+    expect(normalizeLlmUsageCounts({
+      input_tokens: 37,
+      output_tokens: 8,
+      cache_read_input_tokens: 11,
+      cache_creation_input_tokens: 4,
+      providerMetadata: { anthropic: {} },
+    })).toEqual({
+      inputTokens: 37,
+      outputTokens: 8,
+      promptCacheHitTokens: 11,
+      promptCacheCreationTokens: 4,
+    });
+  });
 });

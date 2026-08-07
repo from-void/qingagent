@@ -47,6 +47,11 @@ import {
   type ModelCallUsageEstimate,
 } from "./usageMiddleware.js";
 import { modelFetch } from "./modelTransport.js";
+import {
+  createWireScope,
+  wireUsageStorage,
+  type WireScope,
+} from "./wireUsage.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import {
   MODEL_CALL_SITES,
@@ -477,6 +482,7 @@ async function recordBranchUsage(
   startedAt: number,
   finishReason?: string | null,
   usageEstimate?: ModelCallUsageEstimate | null,
+  wireScope?: WireScope,
 ): Promise<void> {
   const { origin } = resolveModelAuth(input.requestContext);
   await recordModelCallOutcome({
@@ -493,6 +499,7 @@ async function recordBranchUsage(
     usageEstimate,
     reason,
     finishReason,
+    wireScope,
   });
 }
 
@@ -585,6 +592,21 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       uncachedInputText: JSON.stringify(tail),
       outputText: estimatedOutputText,
     });
+    let wireScope!: WireScope;
+    wireScope = createWireScope({
+      onFinalizeTimeout: () => {
+        void recordBranchUsage(
+          input,
+          null,
+          attempt,
+          "finalize_timeout",
+          t0,
+          null,
+          abortUsageEstimate(),
+          wireScope,
+        );
+      },
+    });
     logModelCallStart({
       requestContext: input.requestContext,
       sessionId: input.sessionSnapshot.sessionId,
@@ -600,20 +622,22 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       ` replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=${attempt}`,
     );
     try {
-      const response = await modelFetch(input.sessionSnapshot.endpoint, {
-        method: "POST",
-        headers: {
-          ...input.sessionSnapshot.safeHeaders,
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: input.abortSignal,
-      });
+      const response = await wireUsageStorage.run(wireScope, () =>
+        modelFetch(input.sessionSnapshot.endpoint, {
+          method: "POST",
+          headers: {
+            ...input.sessionSnapshot.safeHeaders,
+            authorization: `Bearer ${apiKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: input.abortSignal,
+        })
+      );
       if (!response.ok) {
         const error = await providerErrorSummary(response);
         console.warn(`[branchCall] site=${input.callSite} provider-reject status=${response.status} latency=${Date.now() - t0}ms err=${error.slice(0, 120)}`);
-        void recordBranchUsage(input, null, attempt, error, t0);
+        void recordBranchUsage(input, null, attempt, error, t0, null, null, wireScope);
         return {
           ok: false,
           reason: "provider_error",
@@ -657,6 +681,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           t0,
           raw.finishReason,
           input.abortSignal?.aborted ? abortUsageEstimate() : null,
+          wireScope,
         );
         return { ok: false, reason: "provider_error", attempts: 1, toolCallRetries: 0, error };
       }
@@ -669,6 +694,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         t0,
         raw.finishReason,
         terminalReason ? abortUsageEstimate() : null,
+        wireScope,
       );
       {
         const u = asRecord(raw.usage);
@@ -766,6 +792,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         t0,
         null,
         reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+        wireScope,
       );
       return {
         ok: false,

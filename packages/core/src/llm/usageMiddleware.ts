@@ -8,6 +8,14 @@ import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
 import type { ModelCallSite, ModelCallTransport } from "./modelCallSites.js";
+import {
+  armWireScopeForStreamDelivery,
+  claimWireScopeFinalization,
+  createWireScope,
+  wireUsageStorage,
+  type WireAttempt,
+  type WireScope,
+} from "./wireUsage.js";
 
 type UsageMiddlewareStreamResult = Awaited<ReturnType<NonNullable<LanguageModelMiddleware["wrapStream"]>>>;
 type ModelStreamPart = UsageMiddlewareStreamResult["stream"] extends ReadableStream<infer Part> ? Part : never;
@@ -71,6 +79,12 @@ function hasUsageCounts(counts: ReturnType<typeof normalizeLlmUsageCounts>): boo
   return !!counts && Object.values(counts).some((value) => typeof value === "number");
 }
 
+/** recorded 的统一门槛：输入与输出都必须是 provider 给出的有限计数（0 也有效）。 */
+export function isCompleteUsage(usage: unknown): boolean {
+  const counts = normalizeLlmUsageCounts(usage);
+  return typeof counts?.inputTokens === "number" && typeof counts.outputTokens === "number";
+}
+
 function missingReason(error: unknown, abortSignal?: AbortSignal): string {
   if (abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")) {
     return "provider_request_aborted";
@@ -95,6 +109,10 @@ export interface ModelCallOutcomeOptions {
   providerMetadata?: unknown;
   reason?: string | null;
   finishReason?: string | null;
+  /** 调用层在首次 provider await 前创建并持有；记录器不得自行从 ALS 反查。 */
+  wireScope?: WireScope;
+  /** @internal finalizeOnce 已由本函数认领。 */
+  wireFinalizationClaimed?: true;
 }
 
 function estimateUsageCounts(
@@ -111,6 +129,202 @@ function estimateUsageCounts(
     outputTokens,
     promptCacheHitTokens,
     promptCacheMissTokens,
+  };
+}
+
+type NormalizedCounts = NonNullable<ReturnType<typeof normalizeLlmUsageCounts>>;
+type FinalUsageState = "recorded" | "estimated" | "missing" | "billing_unknown";
+
+export interface ModelUsageConsistencyObservation {
+  sessionId: string;
+  callSite: ModelCallSite;
+  sdk: NormalizedCounts;
+  wire: NormalizedCounts;
+  consistent: boolean;
+}
+
+const modelUsageConsistencyObservers = new Set<
+  (observation: ModelUsageConsistencyObservation) => void
+>();
+
+/** 仅供真网对账探针订阅；回调异常不得进入模型或账本主链。 */
+export function observeModelUsageConsistency(
+  observer: (observation: ModelUsageConsistencyObservation) => void,
+): () => void {
+  modelUsageConsistencyObservers.add(observer);
+  return () => modelUsageConsistencyObservers.delete(observer);
+}
+
+interface ClassifiedUsage {
+  usageState: FinalUsageState;
+  counts: NormalizedCounts | null;
+  reason: string | null;
+  cacheAccountingState?: "known" | "unknown";
+}
+
+function wireUsageCounts(attempt: WireAttempt): NormalizedCounts | null {
+  const usage = attempt.usage?.usage;
+  if (!usage) return null;
+  const anthropic = "cache_read_input_tokens" in usage || "cache_creation_input_tokens" in usage;
+  return normalizeLlmUsageCounts(anthropic
+    ? { ...usage, providerMetadata: { anthropic: {} } }
+    : usage);
+}
+
+function upperUsageCounts(options: ModelCallOutcomeOptions): NormalizedCounts | null {
+  return normalizeLlmUsageCounts(
+    options.usage !== null && typeof options.usage === "object" && options.providerMetadata
+      ? { ...(options.usage as Record<string, unknown>), providerMetadata: options.providerMetadata }
+      : options.usage,
+  );
+}
+
+function usageCountsAgree(sdk: NormalizedCounts, wire: NormalizedCounts): boolean {
+  if (sdk.inputTokens !== wire.inputTokens || sdk.outputTokens !== wire.outputTokens) return false;
+  for (const field of [
+    "promptCacheHitTokens",
+    "promptCacheMissTokens",
+    "promptCacheCreationTokens",
+  ] as const) {
+    if (sdk[field] !== undefined && wire[field] !== undefined && sdk[field] !== wire[field]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function conservativeAttemptEstimate(
+  attempt: WireAttempt,
+  upperEstimate?: ModelCallUsageEstimate | null,
+): NormalizedCounts {
+  // wire 路径不使用缓存先验：所有序列化 prompt 都按 miss 估算。
+  const inputText = [
+    attempt.requestEstimate.uncachedInputText,
+    upperEstimate?.uncachedInputText,
+    upperEstimate?.cachedInputText,
+  ].filter((value): value is string => Boolean(value)).join("\n");
+  const outputText = attempt.outputText || upperEstimate?.outputText || "";
+  const inputTokens = usageTokenCounter.countString(inputText);
+  const outputTokens = usageTokenCounter.countString(outputText);
+  return {
+    inputTokens,
+    outputTokens,
+    promptCacheHitTokens: 0,
+    promptCacheMissTokens: inputTokens,
+  };
+}
+
+function partialWireEstimate(
+  attempt: WireAttempt,
+  upperEstimate?: ModelCallUsageEstimate | null,
+): NormalizedCounts {
+  const measured = wireUsageCounts(attempt);
+  const estimated = conservativeAttemptEstimate(attempt, upperEstimate);
+  return {
+    inputTokens: measured?.inputTokens ?? estimated.inputTokens,
+    outputTokens: estimated.outputTokens,
+    ...(measured?.promptCacheHitTokens === undefined
+      ? { promptCacheHitTokens: estimated.promptCacheHitTokens }
+      : { promptCacheHitTokens: measured.promptCacheHitTokens }),
+    ...(measured?.promptCacheMissTokens === undefined
+      ? { promptCacheMissTokens: estimated.promptCacheMissTokens }
+      : { promptCacheMissTokens: measured.promptCacheMissTokens }),
+    ...(measured?.promptCacheCreationTokens === undefined
+      ? {}
+      : { promptCacheCreationTokens: measured.promptCacheCreationTokens }),
+  };
+}
+
+function classifyWireAttempt(
+  options: ModelCallOutcomeOptions,
+  attempt: WireAttempt,
+  terminal: boolean,
+): ClassifiedUsage {
+  const upper = terminal ? upperUsageCounts(options) : null;
+  if (terminal && isCompleteUsage(
+    options.usage !== null && typeof options.usage === "object" && options.providerMetadata
+      ? { ...(options.usage as Record<string, unknown>), providerMetadata: options.providerMetadata }
+      : options.usage,
+  )) {
+    return { usageState: "recorded", counts: upper, reason: options.reason ?? null };
+  }
+  const wireCounts = wireUsageCounts(attempt);
+  if (attempt.usage?.completeness === "complete" && isCompleteUsage(
+    "cache_read_input_tokens" in attempt.usage.usage ||
+      "cache_creation_input_tokens" in attempt.usage.usage
+      ? { ...attempt.usage.usage, providerMetadata: { anthropic: {} } }
+      : attempt.usage.usage,
+  )) {
+    return { usageState: "recorded", counts: wireCounts, reason: terminal ? options.reason ?? null : null };
+  }
+  if (attempt.usage?.completeness === "partial-input") {
+    return {
+      usageState: "estimated",
+      counts: partialWireEstimate(attempt, terminal ? options.usageEstimate : null),
+      reason: options.reason ? `wire-partial:${options.reason}` : "wire-partial",
+      cacheAccountingState: "unknown",
+    };
+  }
+  if (attempt.responseStatus !== null && attempt.responseStatus >= 200 && attempt.responseStatus < 300) {
+    const estimate = conservativeAttemptEstimate(attempt, terminal ? options.usageEstimate : null);
+    // SDK 偶发只保留一侧 usage 时，该侧仍优先于字符估算，但绝不升 recorded。
+    const counts = terminal && upper
+      ? {
+          ...estimate,
+          ...(typeof upper.inputTokens === "number" ? { inputTokens: upper.inputTokens } : {}),
+          ...(typeof upper.outputTokens === "number" ? { outputTokens: upper.outputTokens } : {}),
+          ...(typeof upper.promptCacheHitTokens === "number"
+            ? { promptCacheHitTokens: upper.promptCacheHitTokens }
+            : {}),
+          ...(typeof upper.promptCacheMissTokens === "number"
+            ? { promptCacheMissTokens: upper.promptCacheMissTokens }
+            : {}),
+          ...(typeof upper.promptCacheCreationTokens === "number"
+            ? { promptCacheCreationTokens: upper.promptCacheCreationTokens }
+            : {}),
+        }
+      : estimate;
+    return {
+      usageState: "estimated",
+      counts,
+      reason: options.reason ?? (terminal ? "provider_usage_missing" : "wire_attempt_incomplete"),
+    };
+  }
+  return {
+    usageState: "billing_unknown",
+    counts: null,
+    reason: attempt.responseStatus === null ? "no_response" : `http_${attempt.responseStatus}`,
+  };
+}
+
+function classifyWithoutWire(options: ModelCallOutcomeOptions): ClassifiedUsage {
+  const usageRecord = options.usage !== null && typeof options.usage === "object"
+    ? options.usage as Record<string, unknown>
+    : null;
+  const normalized = normalizeLlmUsageCounts(
+    usageRecord && options.providerMetadata
+      ? { ...usageRecord, providerMetadata: options.providerMetadata }
+      : options.usage,
+  );
+  if (isCompleteUsage(
+    usageRecord && options.providerMetadata
+      ? { ...usageRecord, providerMetadata: options.providerMetadata }
+      : options.usage,
+  )) {
+    return { usageState: "recorded", counts: normalized, reason: options.reason ?? null };
+  }
+  const estimated = estimateUsageCounts(options.usageEstimate);
+  if (estimated || hasUsageCounts(normalized)) {
+    return {
+      usageState: "estimated",
+      counts: { ...(estimated ?? {}), ...(normalized ?? {}) },
+      reason: options.reason ?? "provider_usage_incomplete",
+    };
+  }
+  return {
+    usageState: "missing",
+    counts: null,
+    reason: options.reason ?? "provider_usage_missing",
   };
 }
 
@@ -174,25 +388,71 @@ export function logModelCallStart(
   console.info(`${modelCallLogPrefix(options)} start`);
 }
 
+function observeSdkWireConsistency(
+  options: ModelCallOutcomeOptions,
+  context: ModelCallContext,
+  attempts: WireAttempt[],
+): void {
+  const terminal = attempts.at(-1);
+  if (!terminal || terminal.usage?.completeness !== "complete") return;
+  const sdk = upperUsageCounts(options);
+  const wire = wireUsageCounts(terminal);
+  if (!sdk || !wire || !isCompleteUsage(options.usage) || !isCompleteUsage(terminal.usage.usage)) return;
+  const observation: ModelUsageConsistencyObservation = {
+    sessionId: context.sessionId,
+    callSite: options.callSite,
+    sdk,
+    wire,
+    consistent: usageCountsAgree(sdk, wire),
+  };
+  console.info(
+    `${modelCallLogPrefix(options)} wire/sdk consistency=${observation.consistent ? "match" : "mismatch"}`,
+  );
+  for (const observer of modelUsageConsistencyObservers) {
+    try {
+      observer(observation);
+    } catch {
+      // 探针旁路不能改变模型调用与入账。
+    }
+  }
+}
+
 /** 将一次真实 provider 请求的唯一终态规范化、记录缓存哨兵并旁路写入账本。 */
 export async function recordModelCallOutcome(
   options: ModelCallOutcomeOptions,
 ): Promise<void> {
+  if (options.wireScope && !options.wireFinalizationClaimed) {
+    if (!claimWireScopeFinalization(options.wireScope)) return;
+    return recordModelCallOutcome({ ...options, wireFinalizationClaimed: true });
+  }
   const context = resolveModelCallContext(options);
-  const usageRecord = options.usage !== null && typeof options.usage === "object"
-    ? options.usage as Record<string, unknown>
-    : null;
-  const normalized = normalizeLlmUsageCounts(
-    usageRecord && options.providerMetadata
-      ? { ...usageRecord, providerMetadata: options.providerMetadata }
-      : options.usage,
-  );
-  const recorded = hasUsageCounts(normalized);
-  const estimated = recorded ? null : estimateUsageCounts(options.usageEstimate);
-  const missing = !recorded && !hasUsageCounts(estimated);
-  const usageState = recorded ? "recorded" : estimated ? "estimated" : "missing";
-  const reason = options.reason ?? (missing ? "provider_usage_missing" : null);
-  const counts = recorded ? normalized : estimated;
+  const attempts = options.wireScope?.attempts ?? [];
+  if (options.wireScope && attempts.length === 0) {
+    console.info(`${modelCallLogPrefix(options)} wire coverage=scope_without_attempt`);
+  }
+  observeSdkWireConsistency(options, context, attempts);
+  const rows = attempts.length > 0
+    ? attempts.map((attempt, index) => ({
+        attempt,
+        classified: classifyWireAttempt(options, attempt, index === attempts.length - 1),
+      }))
+    : [{ attempt: null, classified: classifyWithoutWire(options) }];
+
+  for (const row of rows) {
+    await recordClassifiedModelCall(options, context, row.classified, row.attempt);
+  }
+}
+
+async function recordClassifiedModelCall(
+  options: ModelCallOutcomeOptions,
+  context: ModelCallContext,
+  classified: ClassifiedUsage,
+  wireAttempt: WireAttempt | null,
+): Promise<void> {
+  const { usageState, counts, reason } = classified;
+  const occurredAt = wireAttempt?.startedAt ?? options.startedAt;
+  const recorded = usageState === "recorded";
+  const missing = usageState === "missing";
   const hitTokens = counts?.promptCacheHitTokens;
   const missTokens = counts?.promptCacheMissTokens;
   const cacheSummary =
@@ -204,6 +464,7 @@ export async function recordModelCallOutcome(
   console.info(
     `${modelCallLogPrefix(options)} done${cacheSummary}` +
       ` latency=${Math.max(0, Date.now() - options.startedAt)}ms` +
+      `${wireAttempt ? ` wireAttempt=${wireAttempt.wireAttemptSeq}` : ""}` +
       ` finish=${options.finishReason ?? "?"}`,
   );
 
@@ -213,7 +474,7 @@ export async function recordModelCallOutcome(
         output: counts.outputTokens,
         cacheHit: counts.promptCacheHitTokens,
         cacheMiss: counts.promptCacheMissTokens,
-      }, options.startedAt)
+      }, occurredAt)
     : null;
   const pricingFields = costSnapshot
     ? {
@@ -224,7 +485,13 @@ export async function recordModelCallOutcome(
     : { pricingTier: "unpriced" as const };
 
   try {
-    if (recorded && typeof hitTokens === "number" && typeof missTokens === "number") {
+    const cacheAccountingState = classified.cacheAccountingState ?? (
+      typeof hitTokens === "number" && typeof missTokens === "number" ? "known" : "unknown"
+    );
+    if (
+      recorded && cacheAccountingState === "known" &&
+      typeof hitTokens === "number" && typeof missTokens === "number"
+    ) {
       void observeCacheOutcome({
         sessionId: context.sessionId,
         callSite: options.callSite,
@@ -232,7 +499,7 @@ export async function recordModelCallOutcome(
         missTokens,
       });
     }
-    if (missing) {
+    if (missing || usageState === "billing_unknown") {
       await recordUsageEvent({
         sessionId: context.sessionId,
         runId: context.runId,
@@ -241,9 +508,9 @@ export async function recordModelCallOutcome(
         keyOrigin: options.keyOrigin,
         lane: options.lane ?? null,
         attempt: options.attempt,
-        usageState: "missing",
+        usageState,
         reason,
-        occurredAt: options.startedAt,
+        occurredAt,
         pricingTier: "unpriced",
       });
       return;
@@ -261,12 +528,10 @@ export async function recordModelCallOutcome(
       cacheHitTokens: hitTokens,
       cacheMissTokens: missTokens,
       cacheCreationTokens: counts?.promptCacheCreationTokens,
-      cacheAccountingState: typeof hitTokens === "number" && typeof missTokens === "number"
-        ? "known"
-        : "unknown",
+      cacheAccountingState,
       usageState,
       reason,
-      occurredAt: options.startedAt,
+      occurredAt,
       ...pricingFields,
     });
   } catch (error) {
@@ -300,6 +565,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     startedAt: number,
     finishReason?: string | null,
     usageEstimate?: ModelCallUsageEstimate | null,
+    wireScope?: WireScope,
   ): Promise<void> => {
     await recordModelCallOutcome({
       ...baseEvent,
@@ -310,6 +576,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       providerMetadata,
       reason: missing,
       finishReason,
+      wireScope,
     });
   };
 
@@ -321,9 +588,24 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       const abortUsageEstimate = (): ModelCallUsageEstimate => ({
         uncachedInputText: serializeModelCallPrompt(params),
       });
+      let wireScope!: WireScope;
+      wireScope = createWireScope({
+        onFinalizeTimeout: () => {
+          void recordSafely(
+            null,
+            null,
+            "finalize_timeout",
+            attempt,
+            startedAt,
+            null,
+            abortUsageEstimate(),
+            wireScope,
+          );
+        },
+      });
       logModelCallStart({ ...baseEvent, attempt });
       try {
-        const result = await doGenerate();
+        const result = await wireUsageStorage.run(wireScope, () => doGenerate());
         void recordSafely(
           result.usage,
           result.providerMetadata,
@@ -331,6 +613,8 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           attempt,
           startedAt,
           result.finishReason,
+          null,
+          wireScope,
         );
         return result;
       } catch (error) {
@@ -343,6 +627,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           startedAt,
           null,
           reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+          wireScope,
         );
         throw error;
       }
@@ -355,10 +640,25 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
         uncachedInputText: serializeModelCallPrompt(params),
         outputText: estimatedOutputText,
       });
+      let wireScope!: WireScope;
+      wireScope = createWireScope({
+        onFinalizeTimeout: () => {
+          void recordSafely(
+            null,
+            null,
+            "finalize_timeout",
+            attempt,
+            startedAt,
+            null,
+            abortUsageEstimate(),
+            wireScope,
+          );
+        },
+      });
       logModelCallStart({ ...baseEvent, attempt });
       let result: UsageMiddlewareStreamResult;
       try {
-        result = await doStream();
+        result = await wireUsageStorage.run(wireScope, () => doStream());
       } catch (error) {
         const reason = missingReason(error, params.abortSignal);
         void recordSafely(
@@ -369,9 +669,11 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           startedAt,
           null,
           reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+          wireScope,
         );
         throw error;
       }
+      armWireScopeForStreamDelivery(wireScope);
 
       let reader: ReadableStreamDefaultReader<ModelStreamPart>;
       try {
@@ -386,6 +688,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           startedAt,
           null,
           reason === "provider_request_aborted" ? abortUsageEstimate() : null,
+          wireScope,
         );
         throw error;
       }
@@ -411,6 +714,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           startedAt,
           finishReason,
           usageEstimate,
+          wireScope,
         );
       };
       abortHandler = () => {

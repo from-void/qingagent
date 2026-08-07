@@ -71,8 +71,8 @@ export function normalizeLlmUsageCounts(usage: unknown): NormalizedLlmUsageCount
   const records = collectUsageRecords(usageRecord);
   const providerMetadata = asRecord(usageRecord.providerMetadata) ?? asRecord(usageRecord.experimental_providerMetadata);
   const hasAnthropicMetadata = !!asRecord(providerMetadata?.anthropic);
-  const inputTokens = readFirstUsageNumber(records, ["inputTokens", "promptTokens", "prompt_tokens"]);
-  const outputTokens = readFirstUsageNumber(records, ["outputTokens", "completionTokens", "completion_tokens"]);
+  const inputTokens = readFirstUsageNumber(records, ["inputTokens", "promptTokens", "prompt_tokens", "input_tokens"]);
+  const outputTokens = readFirstUsageNumber(records, ["outputTokens", "completionTokens", "completion_tokens", "output_tokens"]);
   const promptCacheHitTokens = readFirstUsageNumber(records, [
     "promptCacheHitTokens",
     "prompt_cache_hit_tokens",

@@ -24,6 +24,52 @@ afterEach(() => {
 });
 
 describe("usageRepo", () => {
+  it("billing_unknown 单列计数且零值不进入 token/金额汇总", async () => {
+    await recordUsageEvent({
+      sessionId: "session-unknown",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      usageState: "billing_unknown",
+      reason: "no_response",
+      occurredAt: "2026-08-08T00:00:00.000Z",
+    });
+    await recordUsageEvent({
+      sessionId: "session-unknown",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "env",
+      inputTokens: 12,
+      outputTokens: 3,
+      usageState: "recorded",
+      costCny: 0.01,
+      pricingTier: "standard",
+      occurredAt: "2026-08-08T00:00:01.000Z",
+    });
+
+    expect(await aggregateUsageTotal()).toEqual([
+      expect.objectContaining({
+        calls: 2,
+        recordedCalls: 1,
+        billingUnknownCalls: 1,
+        missingCalls: 0,
+        inputTokens: 12,
+        outputTokens: 3,
+        costCny: 0.01,
+      }),
+    ]);
+    const stored = await getDocumentsClient().execute(
+      "SELECT usage_state, reason, input_tokens, output_tokens, cost_cny FROM llm_usage_events WHERE usage_state = 'billing_unknown'",
+    );
+    expect(stored.rows).toEqual([expect.objectContaining({
+      usage_state: "billing_unknown",
+      reason: "no_response",
+      input_tokens: 0,
+      output_tokens: 0,
+      cost_cny: null,
+    })]);
+  });
+
   it("金额快照与高峰档位随事件落库并分别聚合 recorded/estimated", async () => {
     await recordUsageEvent({
       sessionId: "session-priced",

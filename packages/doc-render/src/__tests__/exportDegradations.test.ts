@@ -36,10 +36,18 @@ function captureDegradations(): {
 }
 
 describe("导出有损降级上报", () => {
-  it("DOCX 分栏拍平时上报稳定 kind", async () => {
+  it("DOCX 顶层真分栏不作任何降级上报", async () => {
     const capture = captureDegradations();
 
     await toDocx(columnDoc(), capture.options);
+
+    expect(capture.degradations).toEqual([]);
+  });
+
+  it("DOCX 嵌套分栏拍平时上报稳定 kind", async () => {
+    const capture = captureDegradations();
+
+    await toDocx(nestedColumnDoc(), capture.options);
 
     expect(capture.degradations.map(({ kind }) => kind)).toContain("docx-columns-flattened");
   });
@@ -52,15 +60,21 @@ describe("导出有损降级上报", () => {
     expect(capture.degradations.map(({ kind }) => kind)).toContain("svg-rasterized");
   });
 
-  it("Markdown 与 TXT 把水平线转成文本表示时上报稳定 kind", () => {
+  it("Markdown 原生水平线不作任何降级上报", () => {
     const markdownCapture = captureDegradations();
-    const txtCapture = captureDegradations();
 
-    toMarkdown(horizontalRuleDoc(), markdownCapture.options);
-    toTxt(horizontalRuleDoc(), txtCapture.options);
+    const markdown = toMarkdown(horizontalRuleDoc(), markdownCapture.options);
 
-    expect(markdownCapture.degradations.map(({ kind }) => kind)).toContain("horizontal-rule-text-fallback");
-    expect(txtCapture.degradations.map(({ kind }) => kind)).toContain("horizontal-rule-text-fallback");
+    expect(markdown).toBe("---");
+    expect(markdownCapture.degradations).toEqual([]);
+  });
+
+  it("TXT 水平线不单独作降级上报", () => {
+    const capture = captureDegradations();
+
+    toTxt(horizontalRuleDoc(), capture.options);
+
+    expect(capture.degradations).toEqual([]);
   });
 
   it("Markdown 分栏拍平由导出发生点上报，而非交给 UI 猜测", () => {
@@ -135,30 +149,44 @@ function columnDoc(): PmDoc {
   return {
     type: "doc",
     attrs: { schemaVersion: 1 },
+    content: [columnList()],
+  };
+}
+
+function nestedColumnDoc(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "blockquote",
+      attrs: { blockId: "quote" },
+      content: [columnList()],
+    }],
+  };
+}
+
+function columnList(): Extract<PmDoc["content"][number], { type: "columnList" }> {
+  return {
+    type: "columnList",
+    attrs: { blockId: "columns" },
     content: [
       {
-        type: "columnList",
-        attrs: { blockId: "columns" },
-        content: [
-          {
-            type: "column",
-            attrs: { blockId: "left", widthRatio: 0.5 },
-            content: [{
-              type: "paragraph",
-              attrs: { blockId: "left-p" },
-              content: [{ type: "text", text: "左栏" }],
-            }],
-          },
-          {
-            type: "column",
-            attrs: { blockId: "right", widthRatio: 0.5 },
-            content: [{
-              type: "paragraph",
-              attrs: { blockId: "right-p" },
-              content: [{ type: "text", text: "右栏" }],
-            }],
-          },
-        ],
+        type: "column",
+        attrs: { blockId: "left", widthRatio: 0.5 },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "left-p" },
+          content: [{ type: "text", text: "左栏" }],
+        }],
+      },
+      {
+        type: "column",
+        attrs: { blockId: "right", widthRatio: 0.5 },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "right-p" },
+          content: [{ type: "text", text: "右栏" }],
+        }],
       },
     ],
   };

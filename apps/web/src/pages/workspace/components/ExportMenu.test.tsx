@@ -172,7 +172,7 @@ describe("ExportMenu", () => {
     const degradations = [
       { kind: "docx-columns-flattened", description: "分栏已拍平为纵向，原并排版式无法保留" },
       { kind: "svg-rasterized", description: "SVG 已转为位图，放大会模糊" },
-      { kind: "horizontal-rule-text-fallback", description: "水平线已转为破折号，外观可能有差异" },
+      { kind: "specialized-diagram-overlay", description: "专有图表已保留完整语义，画布布局未应用" },
     ];
     const fetchMock = vi.fn(async () => new Response(
       "PK",
@@ -197,7 +197,7 @@ describe("ExportMenu", () => {
 
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onAction).toHaveBeenCalledWith(
-      "Word 已开始下载 · 分栏已拍平为纵向，原并排版式无法保留；SVG 已转为位图，放大会模糊；水平线已转为破折号，外观可能有差异。",
+      "Word 已开始下载 · 分栏已拍平为纵向，原并排版式无法保留；SVG 已转为位图，放大会模糊；专有图表已保留完整语义，画布布局未应用。",
       7000,
     );
   });

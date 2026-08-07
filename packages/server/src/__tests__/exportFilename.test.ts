@@ -10,6 +10,12 @@ const mocks = vi.hoisted(() => ({
     if (mocks.degradation) options?.onDegradation?.(mocks.degradation);
     return "正文";
   }),
+  toDocx: vi.fn(async (_document: unknown, options?: {
+    onDegradation?: (degradation: { kind: string; description: string }) => void;
+  }) => {
+    if (mocks.degradation) options?.onDegradation?.(mocks.degradation);
+    return Buffer.from("PK");
+  }),
 }));
 
 vi.mock("@qingagent/core", () => ({
@@ -22,7 +28,7 @@ vi.mock("@qingagent/doc-render", () => ({
   hasSpecializedDiagramOverlayFallback: vi.fn(() => false),
   hasHtmlToPdfRenderer: vi.fn(),
   SPECIALIZED_DIAGRAM_OVERLAY_NOTICE: "图表提示",
-  toDocx: vi.fn(),
+  toDocx: mocks.toDocx,
   toHtml: vi.fn(),
   toMarkdown: vi.fn(),
   toPdf: vi.fn(),
@@ -61,8 +67,8 @@ describe("导出文件名 Unicode 边界", () => {
 
   it("把导出发生点上报的结构化降级项写入响应头", async () => {
     mocks.degradation = {
-      kind: "horizontal-rule-text-fallback",
-      description: "水平线已转为破折号，外观可能有差异",
+      kind: "docx-columns-flattened",
+      description: "分栏已拍平为纵向，原并排版式无法保留",
     };
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "degraded-export",
@@ -73,7 +79,7 @@ describe("导出文件名 Unicode 边界", () => {
     const { exportRoutes } = await import("../routes/export");
     const app = new Hono().route("/api/v1", exportRoutes);
 
-    const response = await app.request("/api/v1/export/degraded-export?format=txt");
+    const response = await app.request("/api/v1/export/degraded-export?format=docx");
 
     expect(response.status).toBe(200);
     const encoded = response.headers.get("X-Qingagent-Export-Degradations");

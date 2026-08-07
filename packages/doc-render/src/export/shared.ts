@@ -19,7 +19,6 @@ export type ExportDegradationKind =
   | "markdown-columns-flattened"
   | "docx-columns-flattened"
   | "svg-rasterized"
-  | "horizontal-rule-text-fallback"
   | "specialized-diagram-overlay";
 
 export interface ExportDegradation {
@@ -39,10 +38,6 @@ const EXPORT_DEGRADATIONS: Record<ExportDegradationKind, ExportDegradation> = {
   "svg-rasterized": {
     kind: "svg-rasterized",
     description: "SVG 已转为位图，放大会模糊",
-  },
-  "horizontal-rule-text-fallback": {
-    kind: "horizontal-rule-text-fallback",
-    description: "水平线已转为破折号，外观可能有差异",
   },
   "specialized-diagram-overlay": {
     kind: "specialized-diagram-overlay",

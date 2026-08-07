@@ -347,7 +347,6 @@ async function pmDocToDocxSections(
       continue;
     }
 
-    reportDegradation("docx-columns-flattened");
     flushSingleColumn();
     const columnLayout = docxColumns(node.content.map((column) => column.attrs.widthRatio));
     const columnChildren: Array<Paragraph | Table> = [];

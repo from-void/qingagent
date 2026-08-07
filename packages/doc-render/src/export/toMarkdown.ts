@@ -17,7 +17,6 @@ export function toMarkdown(
   const body = pmToMarkdown(doc, { baseUrl: options.baseUrl }).trim();
   const reportDegradation = createExportDegradationReporter(options.onDegradation);
   if (nodeHasType(doc, "columnList")) reportDegradation("markdown-columns-flattened");
-  if (nodeHasType(doc, "horizontalRule")) reportDegradation("horizontal-rule-text-fallback");
   const title = normalizeMarkdownTitle(options.title);
   if (!title) return body;
   // 正文开头已是同名 H1 就不再加一遍。用结构层 documentLeadsWithTitle(忽略 bold/italic

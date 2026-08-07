@@ -1,5 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ModelCallUsageEstimate } from "./usageMiddleware.js";
+
+/** provider 未返回 usage 时，仅用实际发送/收到的文本做本地估算。 */
+export interface ModelCallUsageEstimate {
+  /** 可复用的快照前缀；仅表示估算缓存命中，不冒充 provider 实测。 */
+  cachedInputText?: string;
+  /** 本次新增 prompt；按估算缓存未命中计。 */
+  uncachedInputText?: string;
+  /** 中止前已收到的正文、思考或工具结果 delta。 */
+  outputText?: string;
+}
 
 export const WIRE_USAGE_IDLE_TIMEOUT_MS = 5 * 60_000;
 export const WIRE_USAGE_MAX_FRAME_BYTES = 256 * 1024;

@@ -27,6 +27,11 @@ import { ToastProvider } from "../../../../system";
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
+    parse: vi.fn(async (source: string, options?: { suppressErrors?: boolean }) => {
+      if (source.trim() !== "sequenceDiagram\n  A->>") return true;
+      if (options?.suppressErrors) return false;
+      throw new Error("Parse error on line 2: Expecting an actor after the arrow");
+    }),
     render: vi.fn(async (_id: string, source: string) => ({
       svg: `<svg data-mmd="1" data-src="${encodeURIComponent(source)}"><text>标签</text></svg>`,
     })),
@@ -1916,10 +1921,66 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await flush(4);
       expect(editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source")?.value).toBe(pasted);
 
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      });
+      await flush();
+
       const doneBtn = editor.view.dom.querySelector<HTMLButtonElement>(".pm-diagram-btn");
+      expect(doneBtn?.disabled).toBe(false);
       await pressDiagramActionButton(doneBtn!);
       await flush(4);
       expect(firstDiagramAttrs(editor)?.source).toBe(pasted);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("Mermaid 源码必须解析成功才能完成，修正或清空后恢复可用", async () => {
+    const original = "sequenceDiagram\n  A->>B: hi";
+    const invalid = "sequenceDiagram\n  A->>";
+    const valid = "sequenceDiagram\n  A->>B: fixed";
+    const parserError = "Parse error on line 2: Expecting an actor after the arrow";
+    const editor = await mountEditor(diagramDoc(original));
+    try {
+      const editButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "编辑 Mermaid");
+      await act(async () => editButton?.click());
+      await flush();
+
+      const textarea = editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source")!;
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      const actionButton = (label: string) => Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-actions button"),
+      ).find((button) => button.textContent?.trim() === label)!;
+      const changeSource = async (source: string, waitForPreview = true) => {
+        await act(async () => {
+          setValue.call(textarea, source);
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        if (waitForPreview) {
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          });
+        }
+        await flush();
+      };
+
+      await changeSource(invalid);
+      expect(actionButton("完成").disabled).toBe(true);
+      expect(actionButton("取消").disabled).toBe(false);
+      expect(editor.view.dom.querySelector(".pm-diagram-error")?.textContent).toBe(parserError);
+      expect(firstDiagramAttrs(editor)?.source).toBe(original);
+
+      await changeSource(valid);
+      expect(actionButton("完成").disabled).toBe(false);
+      expect(editor.view.dom.querySelector(".pm-diagram-error")).toBeNull();
+
+      await changeSource("", false);
+      expect(actionButton("完成").disabled).toBe(false);
+      await pressDiagramActionButton(actionButton("完成"));
+      expect(firstDiagramAttrs(editor)).toBeNull();
     } finally {
       await unmount(editor);
     }

@@ -213,6 +213,35 @@ describe("system prompt S3", () => {
     expect(writeDraftContract).toContain("不要在最外层再包任何容器标签");
   });
 
+  it("写作方向确认按文档阶段递减且定位歧义仍走通用问卷", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const start = prompt.indexOf("## 问卷工具触发裁决");
+    const end = prompt.indexOf("**审查统一路由**", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const questionnaireRouting = prompt.slice(start, end);
+    for (const stageRule of [
+      "阶段只按当前文档是否已有正文、以及本轮是否基于该正文编辑来判定",
+      "不要用对话轮次或消息数量判断",
+      "已有正文 + 基于该文档的局部修改/续写/润色/调整",
+      "跳过方向确认,直接走 readDraft → editDraft",
+      "目标块定位不唯一或指令有多种合理解读",
+      "仍按第 3 条单独调用 askUserQuestion",
+    ]) {
+      expect(questionnaireRouting).toContain(stageRule);
+    }
+
+    for (const example of [
+      '(空文档,信息已给全) "帮我写篇讲 X 的文章"',
+      '(已有正文) "把第三段改得口语一点"',
+      '(已有正文) "整篇重写成另一个主题"',
+      '(已有正文且有两个表格) "把那个表格删了"',
+    ]) {
+      expect(questionnaireRouting).toContain(example);
+    }
+  });
+
   it("主 system 的审查段只保留总技能路由和纯批注兜底", () => {
     const prompt = AIIR_SYSTEM_PROMPT;
     const start = prompt.indexOf("**审查统一路由**");

@@ -27,6 +27,28 @@ function usageRow(
 }
 
 describe("aggregateUsageRows", () => {
+  it("billing_unknown 只累计调用数，不混入 token 与金额", () => {
+    const recorded = usageRow(8, 2);
+    const unknown = {
+      ...usageRow(0, 0),
+      calls: 1,
+      recordedCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      billingUnknownCalls: 1,
+      coverageRate: 0,
+      costCny: undefined,
+    };
+    const summary = aggregateUsageRows("S1", [recorded, unknown]);
+    expect(summary).toMatchObject({
+      calls: 2,
+      recordedCalls: 1,
+      billingUnknownCalls: 1,
+      inputTokens: 10,
+      outputTokens: 1,
+    });
+  });
+
   it("按验收样例汇总总账与冷启动，并可推导 95.3% 有效命中率", () => {
     const summary = aggregateUsageRows("S1", [
       usageRow(0, 25_000, 25_000),

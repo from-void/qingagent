@@ -74,6 +74,7 @@ const APP_TABLES = [
   "confirm_grant_states",
   "client_message_idempotency",
   "credential_grants",
+  "provider_balance_snapshots",
 ];
 
 interface ColumnInfo {

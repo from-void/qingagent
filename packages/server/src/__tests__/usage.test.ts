@@ -9,8 +9,16 @@ const mockCore = vi.hoisted(() => ({
   getSessionThreadTitles: vi.fn(),
   hasModelPricing: vi.fn(() => true),
 }));
+const mockBalance = vi.hoisted(() => ({
+  refresh: vi.fn(async () => undefined),
+  get: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+}));
 
 vi.mock("@qingagent/core", () => mockCore);
+vi.mock("../providerBalanceProbe", () => ({
+  refreshDeepseekBalanceSnapshot: mockBalance.refresh,
+  getEnvDeepseekBalanceComparison: mockBalance.get,
+}));
 
 async function loadApp() {
   const { Hono } = await import("hono");
@@ -52,6 +60,32 @@ describe("usageRoutes", () => {
       ["thread-a", "元数据标题"],
     ]));
     mockCore.getSessionDocumentStatsSince.mockResolvedValue({ docs: 0, words: 0 });
+    mockBalance.get.mockResolvedValue(null);
+  });
+
+  it("按天看板返回环境 key 的账户余额变动提示，总计视图不重复探测", async () => {
+    mockBalance.get.mockResolvedValue({
+      provider: "deepseek",
+      credentialFingerprint: "not-exposed",
+      latestBalanceCny: 18,
+      latestAt: "2026-08-08T00:00:00.000Z",
+      previousBalanceCny: 20,
+      changeCny: -2,
+    });
+    const app = await loadApp();
+    const day = await app.request("/api/v1/usage/summary?view=day&timeZone=UTC");
+    expect((await day.json()).providerBalance).toEqual({
+      provider: "deepseek",
+      latestBalanceCny: 18,
+      latestAt: "2026-08-08T00:00:00.000Z",
+      previousBalanceCny: 20,
+      changeCny: -2,
+    });
+    expect(mockBalance.refresh).toHaveBeenCalledOnce();
+    expect(mockBalance.refresh).toHaveBeenCalledWith({ force: true });
+
+    await app.request("/api/v1/usage/summary?view=total&timeZone=UTC");
+    expect(mockBalance.refresh).toHaveBeenCalledOnce();
   });
 
   it("按天响应新增真实文档 ID/标题且不泄露内部 sessionId", async () => {

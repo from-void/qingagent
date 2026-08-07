@@ -288,7 +288,7 @@ export function ModelUsageDetails({
                       </table>
                     </div>
                   )}
-                <p className="md-foot-note">费用按各厂商已核实的公开单价估算；未收录价目的自定义模型只记录 token，不估算金额。</p>
+                <p className="md-foot-note">范围仅含本机本实例账本；结果未知的失败调用单列且不计 token/金额。费用按各厂商已核实的公开单价估算；未收录价目的自定义模型只记录 token，不估算金额。</p>
               </div>
   );
 }

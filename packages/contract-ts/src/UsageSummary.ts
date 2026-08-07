@@ -27,6 +27,8 @@ export interface UsageSummaryRow {
   recordedCalls: number;
   estimatedCalls?: number;
   missingCalls: number;
+  /** 已发出物理请求但 provider 是否计费不可知的失败调用。 */
+  billingUnknownCalls?: number;
   coverageRate: number;
   costCny?: number;
   estimatedCostCny?: number;
@@ -39,4 +41,12 @@ export interface UsageSummaryRow {
 export interface UsageSummaryResponse {
   view: UsageSummaryView;
   rows: UsageSummaryRow[];
+  /** 整把环境 key 的账户余额；含其他设备调用且充值会扰动，仅供对照。 */
+  providerBalance?: {
+    provider: "deepseek";
+    latestBalanceCny: number;
+    latestAt: string;
+    previousBalanceCny?: number;
+    changeCny?: number;
+  };
 }

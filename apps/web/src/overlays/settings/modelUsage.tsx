@@ -142,7 +142,7 @@ export function UsageTableRow({
       {mode === "expert" && (
         <td
           className="font-mono"
-          title={`共 ${row.calls} 次，精确 ${row.recordedCalls} 次，估算 ${row.estimatedCalls ?? 0} 次，未计价 ${row.missingCalls} 次`}
+          title={`共 ${row.calls} 次，精确 ${row.recordedCalls} 次，估算 ${row.estimatedCalls ?? 0} 次，结果未知 ${row.billingUnknownCalls ?? 0} 次，未接 wire ${row.missingCalls} 次`}
         >
           {`${Math.round(row.coverageRate * 100)}% · ${row.recordedCalls}/${row.calls}`}
         </td>
@@ -320,6 +320,7 @@ export function summarizeRecentDays(
   recordedCalls: number;
   estimatedCalls: number;
   missingCalls: number;
+  billingUnknownCalls: number;
   coverageRate: number;
   hasPriced: boolean;
 } | null {
@@ -334,6 +335,7 @@ export function summarizeRecentDays(
       recordedCalls: 0,
       estimatedCalls: 0,
       missingCalls: 0,
+      billingUnknownCalls: 0,
       coverageRate: 0,
       hasPriced: false,
     };
@@ -352,6 +354,7 @@ export function summarizeRecentDays(
   let recordedCalls = 0;
   let estimatedCalls = 0;
   let missingCalls = 0;
+  let billingUnknownCalls = 0;
   let hasPriced = false;
   for (const r of rows) {
     if (r.bucket < startYmd || r.bucket > endYmd) continue;
@@ -364,6 +367,7 @@ export function summarizeRecentDays(
     recordedCalls += r.recordedCalls;
     estimatedCalls += r.estimatedCalls ?? 0;
     missingCalls += r.missingCalls;
+    billingUnknownCalls += r.billingUnknownCalls ?? 0;
   }
   return {
     cost,
@@ -374,6 +378,7 @@ export function summarizeRecentDays(
     recordedCalls,
     estimatedCalls,
     missingCalls,
+    billingUnknownCalls,
     coverageRate: calls > 0 ? recordedCalls / calls : 0,
     hasPriced,
   };

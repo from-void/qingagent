@@ -366,13 +366,20 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
-  it("看板花费卡直显本机范围、精确覆盖率、估算额与未计价调用", async () => {
+  it("看板花费卡直显本机范围、精确覆盖率、未知调用与账户余额对照", async () => {
     await setVisitorDeepseekKey("deepseek-local-key");
     const today = localYmd(new Date());
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
         return json({
+          providerBalance: {
+            provider: "deepseek",
+            latestBalanceCny: 18,
+            latestAt: "2026-08-08T00:00:00.000Z",
+            previousBalanceCny: 20,
+            changeCny: -2,
+          },
           rows: [{
             ...usageRow(today, "deepseek-v4-flash", 100, 20, 0.01),
             estimatedInputTokens: 40,
@@ -383,6 +390,7 @@ describe("Settings Track B", () => {
             recordedCalls: 7,
             estimatedCalls: 1,
             missingCalls: 2,
+            billingUnknownCalls: 1,
             coverageRate: 0.7,
             estimatedCostCny: 0.004,
           }],
@@ -399,7 +407,10 @@ describe("Settings Track B", () => {
     expect(text).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(text).toContain("精确覆盖 70%");
     expect(text).toContain("估算 ¥0.004");
-    expect(text).toContain("另有 2 次调用未计价");
+    expect(text).toContain("另有 2 次旧链路调用未计价");
+    expect(text).toContain("结果未知的失败调用 1 次");
+    expect(text).toContain("账户余额 ¥18.00");
+    expect(text).toContain("充值会使变动失真，仅供对照");
   });
 
   it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {

@@ -9,9 +9,11 @@ import {
   type buildModelDistribution,
   type summarizeRecentDays,
 } from "./modelUsage";
+import type { UsageSummaryResponse } from "@qingagent/contract-ts";
 
 interface ModelUsageDashboardProps {
   recent: ReturnType<typeof summarizeRecentDays>;
+  providerBalance: UsageSummaryResponse["providerBalance"];
   usageTimeZone: string;
   docStats: { docs: number; words: number } | null;
   docs7: number;
@@ -27,6 +29,7 @@ interface ModelUsageDashboardProps {
 
 export function ModelUsageDashboard({
   recent,
+  providerBalance,
   usageTimeZone,
   docStats,
   docs7,
@@ -71,7 +74,21 @@ export function ModelUsageDashboard({
                     ) : null}
                     {dashboardReady && coverageNeedsAttention && recent.missingCalls > 0 ? (
                       <div className="md-metric-coverage-note" data-wf="UsageCoverageWarning">
-                        另有 {recent.missingCalls} 次调用未计价，实际消费高于此数
+                        另有 {recent.missingCalls} 次旧链路调用未计价，实际消费可能高于此数
+                      </div>
+                    ) : null}
+                    {dashboardReady && recent && recent.billingUnknownCalls > 0 ? (
+                      <div className="md-metric-coverage-note" data-wf="UsageBillingUnknown">
+                        结果未知的失败调用 {recent.billingUnknownCalls} 次
+                      </div>
+                    ) : null}
+                    {dashboardReady && providerBalance ? (
+                      <div className="md-metric-sub" data-wf="UsageProviderBalanceChange">
+                        账户余额 {fmtMoney(providerBalance.latestBalanceCny)}
+                        {providerBalance.changeCny === undefined
+                          ? " · 等待下一次快照形成变动"
+                          : ` · 变动 ${providerBalance.changeCny >= 0 ? "+" : ""}${fmtMoney(providerBalance.changeCny)}`}
+                        <br />整把环境 key，含其他设备；充值会使变动失真，仅供对照
                       </div>
                     ) : null}
                   </div>

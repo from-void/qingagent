@@ -106,14 +106,10 @@ export function buildReviewIgnoreLine(input: {
   quote: string;
   summary: string;
   date: string;
-  decisionKey?: string;
+  decisionKey: string;
 }): string {
   const record = maskPersistedReviewIgnoreRecord(input);
   const quote = summarizeReviewIgnoreQuote(record.quote, record.summary);
-  if (!input.decisionKey) {
-    // 兼容没有结构锚点的历史迁移数据；新写入必须携带 decisionKey。
-    return `${REVIEW_IGNORE_LINE_PREFIX}「${quote}」(${input.date})`;
-  }
   const summary = summarizeReviewIgnoreQuote(record.summary, record.quote);
   return `${REVIEW_IGNORE_LINE_PREFIX}「${quote}」；问题：「${summary}」(${input.date}) ${REVIEW_IGNORE_DECISION_KEY_PREFIX}${input.decisionKey} -->`;
 }
@@ -167,10 +163,11 @@ export function splitReviewSupplement(supplement: string): ReviewSupplementParts
 
 function reviewIgnoreLineIdentity(line: string): string {
   const key = reviewIgnoreDecisionKeyFromLine(line);
-  return key === null ? `legacy-line:${line}` : `decision-key:${key}`;
+  if (key === null) throw new TypeError("review ignore line is missing decision key");
+  return `decision-key:${key}`;
 }
 
-/** 机械降级与迁移共用：逐字保留用户区；新行按决定身份、历史行按全等去重。 */
+/** 逐字保留用户区，新行按决定身份去重。 */
 export function appendReviewIgnoreLines(
   supplement: string,
   lines: readonly string[],

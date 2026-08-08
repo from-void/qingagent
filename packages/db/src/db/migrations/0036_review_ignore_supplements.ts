@@ -39,6 +39,7 @@ async function up(client: Parameters<Migration["up"]>[0]): Promise<void> {
       quote: String(row.quote),
       summary: String(row.summary),
       date: dateFromTimestamp(timestamp),
+      decisionKey: `migration-0036:${encodeURIComponent(String(row.id))}`,
     }));
     if (timestamp > group.updatedAt) group.updatedAt = timestamp;
     groups.set(key, group);

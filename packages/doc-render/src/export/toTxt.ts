@@ -1,27 +1,19 @@
 import type { PmDoc } from "@qingagent/pm-schema";
 import {
-  isPmDocDocument,
   pmDocToPlainExportText,
-  sectionText,
   type ExportDocument,
   type ExportOptions,
 } from "./shared.js";
 import { collectExportFootnotes } from "./footnotes.js";
 
 export function toTxt(document: ExportDocument, _options: ExportOptions = {}): string {
-  if (isPmDocDocument(document)) {
-    const footnotes = collectExportFootnotes(document);
-    const body = pmDocToPlainExportText(replaceFootnotesWithTextRefs(document, footnotes.numberById));
-    if (footnotes.definitions.length === 0) return body;
-    const definitions = footnotes.definitions
-      .map(({ number, note }) => `[${number}] ${note}`)
-      .join("\n");
-    return `${body}\n\n脚注\n${definitions}`;
-  }
-  return document
-    .map(sectionText)
-    .filter((text) => text.length > 0)
-    .join("\n\n");
+  const footnotes = collectExportFootnotes(document);
+  const body = pmDocToPlainExportText(replaceFootnotesWithTextRefs(document, footnotes.numberById));
+  if (footnotes.definitions.length === 0) return body;
+  const definitions = footnotes.definitions
+    .map(({ number, note }) => `[${number}] ${note}`)
+    .join("\n");
+  return `${body}\n\n脚注\n${definitions}`;
 }
 
 function replaceFootnotesWithTextRefs(

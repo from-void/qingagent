@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { toHtml } from "../export/toHtml.js";
 
@@ -476,51 +475,5 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain('class="doc-image-media has-custom-width has-custom-height" style="width:100%;height:180px"');
     expect(html).toContain('alt="布局图" width="320" height="180"');
     expect(html).toContain(".wf-doc .doc-image-media.has-custom-height");
-  });
-});
-
-describe("toHtml legacy 段", () => {
-  it("legacy 段映射为对应 HTML", () => {
-    const sections: LegacySection[] = [
-      { kind: "h1", data: { text: "大标题" } },
-      { kind: "p", data: { text: "段落" } },
-      { kind: "quote", data: { text: "引用" } },
-      { kind: "code", data: { body: "const a=1;", language: "ts" } },
-      { kind: "list", data: { ordered: false, items: ["一", "二"] } },
-      { kind: "hr", data: {} },
-    ];
-    const html = toHtml(sections);
-    expect(html).toContain("<h1>大标题</h1>");
-    expect(html).toContain("<p>段落</p>");
-    expect(html).toContain("<blockquote><p>引用</p></blockquote>");
-    expect(html).toContain('<pre class="code-block"><code>const a=1;</code></pre>');
-    expect(html).toContain("<ul><li>一</li><li>二</li></ul>");
-    expect(html).toContain("<hr>");
-  });
-
-  it("legacy h2 保留标题锚点", () => {
-    const html = toHtml([
-      { kind: "h2", data: { text: "带锚点的小节", anchor: "legacy-section" } },
-    ]);
-
-    expect(html).toContain('<h2 id="legacy-section">带锚点的小节</h2>');
-  });
-
-  it("legacy 图片保留宽高与对齐", () => {
-    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
-    const html = toHtml([{
-      kind: "image",
-      data: {
-        src: `data:image/png;base64,${png}`,
-        alt: "旧图片",
-        caption: null,
-        width: 240,
-        height: 120,
-        align: "left",
-      },
-    }]);
-
-    expect(html).toContain('class="doc-image align-left" style="width:240px;max-width:100%;margin-left:0;margin-right:auto"');
-    expect(html).toContain('alt="旧图片" width="240" height="120"');
   });
 });

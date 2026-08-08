@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { toHtml, toMarkdown, toTxt } from "../export/index.js";
 
@@ -53,17 +52,6 @@ describe("R20门 TXT 字面尖括号正确性", () => {
     ]);
 
     expect(toTxt(source)).toBe("请填写 <name>、<你的名字> 与 <占位符>。");
-  });
-
-  it("legacy 富文本剥离已知 HTML 标签但保留字面 <xxx>", () => {
-    const sections: LegacySection[] = [
-      {
-        kind: "p",
-        data: { text: '正文 <span data-note="1 > 0"><strong>加粗</strong></span><br>下一行 <name> <你的名字> 1 < 2' },
-      },
-    ];
-
-    expect(toTxt(sections)).toBe("正文 加粗下一行 <name> <你的名字> 1 < 2");
   });
 });
 

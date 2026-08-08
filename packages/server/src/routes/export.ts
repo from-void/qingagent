@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { truncateGraphemes } from "@qingagent/contract-ts";
 import { hasCanonicalDoc, loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
+import type { PmDoc } from "@qingagent/pm-schema";
 import {
   getBrowserCapabilityState,
   hasSpecializedDiagramOverlayFallback,
@@ -177,7 +178,7 @@ function normalizeExportFormat(value: string | undefined): ExportFormat | null {
 
 async function renderExport(
   format: ExportFormat,
-  document: Parameters<typeof toTxt>[0],
+  document: PmDoc,
   title: string,
   baseUrl: string,
 ): Promise<{ body: BodyInit; degradations: ExportDegradation[] }> {

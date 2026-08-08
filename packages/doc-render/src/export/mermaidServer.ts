@@ -341,7 +341,7 @@ interface CollectDiagramOptions {
   includeCached?: boolean;
 }
 
-/** 递归收集文档里的图表节点(PmDoc 节点 + Legacy 段都覆盖)，渲染路径默认只取缺可用 SVG 的节点。 */
+/** 递归收集 PmDoc 里的图表节点，渲染路径默认只取缺可用 SVG 的节点。 */
 function collectDiagrams(
   value: unknown,
   acc: DiagramRef[],
@@ -350,7 +350,6 @@ function collectDiagrams(
   if (!value || typeof value !== "object") return;
   const obj = value as Record<string, unknown>;
 
-  // PmDoc 图表节点:{ type: "diagram", attrs: { source, svg } }
   if (obj.type === "diagram" && obj.attrs && typeof obj.attrs === "object") {
     const attrs = obj.attrs as Record<string, unknown>;
     // 状态只能来自本轮导出预处理，不能沿用输入文档里可能残留的同名字段。
@@ -372,28 +371,6 @@ function collectDiagrams(
       });
     }
   }
-  // Legacy 段:{ kind: "diagram", data: { source, svg } }
-  if (obj.kind === "diagram" && obj.data && typeof obj.data === "object") {
-    const data = obj.data as Record<string, unknown>;
-    // Legacy 段同样只在导出克隆上记录本轮结果。
-    delete data[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR];
-    const source = typeof data.source === "string" ? data.source : "";
-    const lang = data.lang === "drawio" ? "drawio" : "mermaid";
-    const svg = data.svg as string | null;
-    const hasUsableCache = isRenderableSvg(svg)
-      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
-    if (source.trim() && (options.includeCached || !hasUsableCache)) {
-      acc.push({
-        lang,
-        blockId: typeof data.blockId === "string" ? data.blockId : null,
-        source,
-        assign: (svg) => { data.svg = svg; },
-        assignSource: (source) => { data.source = source; },
-        markSourceNormalized: () => { data[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR] = true; },
-      });
-    }
-  }
-
   for (const v of Object.values(obj)) {
     if (Array.isArray(v)) {
       for (const item of v) collectDiagrams(item, acc, options);

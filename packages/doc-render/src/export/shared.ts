@@ -1,4 +1,3 @@
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { existsSync, readFileSync } from "node:fs";
@@ -13,7 +12,7 @@ export interface ExportOptions {
   onDegradation?: (degradation: ExportDegradation) => void;
 }
 
-export type ExportDocument = LegacySection[] | PmDoc;
+export type ExportDocument = PmDoc;
 
 export type ExportDegradationKind =
   | "markdown-columns-flattened"
@@ -80,10 +79,6 @@ export function drawioFallbackMessage(oversized: boolean, sourceNormalized: bool
     : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）";
 }
 
-export function isPmDocDocument(value: ExportDocument): value is PmDoc {
-  return !Array.isArray(value) && value.type === "doc";
-}
-
 /**
  * 文档正文首块是否已是与导出标题同文的标题块。
  * 用于去重:导出时若正文开头就是该标题(agent 通常把标题写成首个 H1),就不再额外加一遍
@@ -99,86 +94,14 @@ export function documentLeadsWithTitle(
 ): boolean {
   const target = title?.trim();
   if (!target) return false;
-  if (isPmDocDocument(document)) {
-    const first = document.content[0];
-    if (first?.type !== "heading") return false;
-    if (options.requireLevel1 && first.attrs?.level !== 1) return false;
-    const text = (first.content ?? [])
-      .map((node) => ("text" in node && typeof node.text === "string" ? node.text : ""))
-      .join("")
-      .trim();
-    return text === target;
-  }
-  const first = document[0];
-  if (first && (first.kind === "h1" || (!options.requireLevel1 && first.kind === "h2"))) {
-    return stripFormatting(first.data.text).trim() === target;
-  }
-  return false;
-}
-
-export function stripFormatting(value: string): string {
-  return value
-    .replace(/\r\n/g, "\n")
-    .replace(HTML_TAG, (source, tagName: string) =>
-      KNOWN_HTML_TAGS.has(tagName.toLowerCase()) ? "" : source,
-    )
-    .replace(/!\[[^\]]*]\([^)]*\)/g, "")
-    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^(?:---+|___+|\*\*\*+)$/gm, "")
-    .replace(/^[-*+]\s+/gm, "")
-    .replace(/^>\s?/gm, "")
-    .replace(/`+/g, "")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/(^|[^\w])\*([^*\n]+)\*(?=[^\w]|$)/g, "$1$2")
-    .replace(/(^|[^\w])_([^_\n]+)_(?=[^\w]|$)/g, "$1$2")
-    .replace(/[ \t]+\n/g, "\n")
+  const first = document.content[0];
+  if (first?.type !== "heading") return false;
+  if (options.requireLevel1 && first.attrs?.level !== 1) return false;
+  const text = (first.content ?? [])
+    .map((node) => ("text" in node && typeof node.text === "string" ? node.text : ""))
+    .join("")
     .trim();
-}
-
-// LegacySection 的 text 是历史富文本字符串，可能混有这些标准 HTML 标签；`<name>`、
-// `<你的名字>` 等用户占位符不是已知标签，必须原样保留。标签属性允许引号内出现 `>`，
-// 避免退回会误截断属性值的 `<[^>]*>` 一类粗正则。
-const KNOWN_HTML_TAGS = new Set(
-  (
-    "a abbr address area article aside audio b base bdi bdo big blockquote body br button canvas " +
-    "caption center cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed " +
-    "fieldset figcaption figure font footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup " +
-    "hr html i iframe img input ins kbd label legend li link main map mark marquee menu meta meter nav " +
-    "nobr noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script " +
-    "search section select slot small source span strike strong style sub summary sup table tbody td " +
-    "template textarea tfoot th thead time title tr track tt u ul var video wbr"
-  ).split(" "),
-);
-const HTML_TAG = /<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?\s*\/?>/g;
-
-export function sectionText(section: LegacySection): string {
-  switch (section.kind) {
-    case "quote":
-      return stripFormatting(section.data.text);
-    case "hr":
-      return "";
-    case "list":
-      return section.data.items.map(stripFormatting).join("\n");
-    case "h1":
-    case "p":
-    case "penNote":
-      return stripFormatting(section.data.text);
-    case "h2":
-      return stripFormatting(section.data.text);
-    case "code":
-      return section.data.body.trim();
-    case "table":
-      return [
-        section.data.head.map(stripFormatting).join("\t"),
-        ...section.data.rows.map((row) => row.map(stripFormatting).join("\t")),
-      ].join("\n");
-    case "image":
-      return stripFormatting(section.data.caption ?? section.data.alt);
-    case "diagram":
-      return section.data.source.trim();
-  }
+  return text === target;
 }
 
 export function pmDocToPlainExportText(doc: PmDoc): string {

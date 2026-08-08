@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { toDocx, toPdf, toTxt } from "../export/index.js";
 import { ensureSvgDimensions, prepareSvgForRasterization } from "../export/rasterize.js";
@@ -9,34 +8,38 @@ import { pmInlineToHtml } from "../export/toHtml.js";
 import { hasChromium } from "./browserTestGate.js";
 
 const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
-const sections: LegacySection[] = [
-  {
-    kind: "image",
-    data: {
+const imageDocument: PmDoc = {
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content: [{
+    type: "image",
+    attrs: {
+      blockId: "image",
       src: `data:image/png;base64,${png1x1}`,
       alt: "一只猫",
+      title: null,
       caption: "图1",
       width: null,
       height: null,
     },
-  },
-];
+  }],
+};
 
-describe("LegacySection.image export", () => {
+describe("PmDoc image export", () => {
   it("renders text fallback without embedding base64", () => {
-    const txt = toTxt(sections);
+    const txt = toTxt(imageDocument);
     expect(txt).toContain("图1");
     expect(txt).not.toContain("iVBOR");
   });
 
   it("exports DOCX", async () => {
-    const docx = await toDocx(sections);
+    const docx = await toDocx(imageDocument);
     expect(docx.subarray(0, 2).toString("utf8")).toBe("PK");
     expect(docx.length).toBeGreaterThan(1000);
   });
 
   it.skipIf(!hasChromium)("exports PDF", async () => {
-    const pdf = await toPdf(sections);
+    const pdf = await toPdf(imageDocument);
     expect(pdf.subarray(0, 4).toString("utf8")).toBe("%PDF");
   });
 });
@@ -97,16 +100,22 @@ describe("SVG rasterization input hardening", () => {
 describe("DOCX SVG data URL", () => {
   it.skipIf(!hasChromium)("支持 base64 SVG 并导出为 PNG 图片", async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><text x="1" y="15">中文</text></svg>';
-    const docx = await toDocx([{
-      kind: "image",
-      data: {
-        src: `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`,
-        alt: "base64 svg",
-        caption: null,
-        width: 40,
-        height: 20,
-      },
-    }]);
+    const docx = await toDocx({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "image",
+        attrs: {
+          blockId: "base64-svg",
+          src: `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`,
+          alt: "base64 svg",
+          title: null,
+          caption: null,
+          width: 40,
+          height: 20,
+        },
+      }],
+    });
     expect(docx.subarray(0, 2).toString("utf8")).toBe("PK");
     expect(docx.length).toBeGreaterThan(1_000);
   });

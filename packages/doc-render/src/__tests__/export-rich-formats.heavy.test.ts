@@ -1,6 +1,5 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmCalloutTone, PmDoc } from "@qingagent/pm-schema";
 import { PM_CALLOUT_TONES } from "@qingagent/pm-schema";
 import { toDocx, toHtml, toMarkdown, toPdf } from "../export/index.js";
@@ -393,7 +392,7 @@ describe("rich PM export formats", () => {
     expect(drawingWidths[1]).toBeLessThanOrEqual(equalColumnWidthTwips * DOCX_EMUS_PER_TWIP);
   });
 
-  it("用段落底边框原生导出 PM 与 legacy 水平线，不写入可编辑的线条字符", async () => {
+  it("用段落底边框原生导出 PM 水平线，不写入可编辑的线条字符", async () => {
     const pmHorizontalRule: PmDoc = {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -403,14 +402,10 @@ describe("rich PM export formats", () => {
         { type: "paragraph", attrs: { blockId: "after-hr" }, content: [{ type: "text", text: "线下" }] },
       ],
     };
-    const legacyHorizontalRule: LegacySection[] = [{ kind: "hr", data: {} }];
-
-    for (const source of [pmHorizontalRule, legacyHorizontalRule]) {
-      const documentXml = await docxXml(await toDocx(source), "word/document.xml");
-      expect(documentXml).toContain("<w:pBdr>");
-      expect(documentXml).toContain("<w:bottom");
-      expect(documentXml).not.toMatch(/<w:t(?:\s[^>]*)?>[—─]+<\/w:t>/);
-    }
+    const documentXml = await docxXml(await toDocx(pmHorizontalRule), "word/document.xml");
+    expect(documentXml).toContain("<w:pBdr>");
+    expect(documentXml).toContain("<w:bottom");
+    expect(documentXml).not.toMatch(/<w:t(?:\s[^>]*)?>[—─]+<\/w:t>/);
   });
 
   it("R3-04 exports structured Markdown", () => {

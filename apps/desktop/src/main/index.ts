@@ -439,17 +439,9 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   const {
     ensureNodeRuntimeShim,
     isElectronRuntime,
-    pruneLegacyNodeRuntimeShims,
     renderWindowsNodeOptions,
   } = await import("@qingagent/core/workspace/runtime-shims");
   const { ensureLarkCliShim } = await import("@qingagent/core/workspace/runtime-shims");
-  // 升级迁移(必须无条件执行,且必须早于任何沙箱 env 装配):老版本把 Electron-as-Node 的
-  // `node` shim 直接写进常驻 PATH 最前的产品 CLI 目录,残留文件会继续劫持用户自己的
-  // Node CLI——光靠"这次不生成"治不好,得把老文件删掉。
-  const prunedLegacyShims = pruneLegacyNodeRuntimeShims();
-  if (prunedLegacyShims.length > 0) {
-    console.info("[sandbox] 已清除遗留在 PATH 目录里的 node shim", { prunedLegacyShims });
-  }
   const electronRuntime = isElectronRuntime();
   // 产品自带运行时只写进独立的 node-runtime 目录:产品 CLI 按绝对路径显式引用它,
   // 宿主 CLI 走宿主 PATH 与宿主 Node(站位见 core 的 resolveNodeRuntimePathPlacement)。

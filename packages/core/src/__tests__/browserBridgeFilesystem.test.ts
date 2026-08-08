@@ -40,14 +40,11 @@ async function flushPromises(): Promise<void> {
 }
 
 const savedAttachGrace = process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
-const savedFirstConnectionGrace = process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
 
 describe("BrowserBridgeFilesystem", () => {
   afterEach(() => {
     if (savedAttachGrace === undefined) delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
     else process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS = savedAttachGrace;
-    if (savedFirstConnectionGrace === undefined) delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
-    else process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS = savedFirstConnectionGrace;
     vi.useRealTimers();
     __resetBrowserFolderBridgeForTest();
   });
@@ -345,7 +342,6 @@ describe("BrowserBridgeFilesystem", () => {
 
   it("未显式传第三参时默认首连宽限为 3 秒", async () => {
     delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
-    delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
     vi.useFakeTimers();
     registerBrowserFolderSource("sess_default_grace", "fld_default_grace", "client_default_grace");
 

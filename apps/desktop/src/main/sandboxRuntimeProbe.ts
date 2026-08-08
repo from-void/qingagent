@@ -127,10 +127,6 @@ export async function runSandboxRuntimeProbe() {
       nodeRuntimePlacement: resolveNodeRuntimePathPlacement(),
       nodeRuntimeDir: SANDBOX_NODE_RUNTIME_DIR,
       nodeRuntimeEntries: await listDir(SANDBOX_NODE_RUNTIME_DIR),
-      // 迁移自查:产品 CLI 目录里绝不该再有通用名 node/node.cmd(那是老版本的劫持源)。
-      legacyNodeShimInBinDir: (await listDir(SANDBOX_BIN_DIR)).some(
-        (entry) => entry === "node" || entry === "node.cmd",
-      ),
       // 只报站位不报原文:PATH 里含宿主用户名与个人目录,探针文件可能被外发。
       nodeRuntimeDirPathIndex: pathEntries.indexOf(SANDBOX_NODE_RUNTIME_DIR),
       pathEntryCount: pathEntries.length,
@@ -143,7 +139,6 @@ export async function runSandboxRuntimeProbe() {
 
   raw.ok = electronAsNode.status === 0 &&
     raw.core.sandboxEnvPathStartsWithBin &&
-    !raw.core.legacyNodeShimInBinDir &&
     raw.core.calcScriptExists &&
     "nodeCommand" in workspaceFacts &&
     workspaceFacts.nodeCommand?.exitCode === 0 &&

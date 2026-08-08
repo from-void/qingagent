@@ -1,6 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, win32 } from "node:path";
-import { SANDBOX_BIN_DIR, SANDBOX_NODE_RUNTIME_DIR } from "./sandboxPaths.js";
+import { SANDBOX_NODE_RUNTIME_DIR } from "./sandboxPaths.js";
 
 /**
  * 产品自带 Node 运行时 shim。
@@ -114,39 +114,6 @@ export function writeIfChanged(path: string, content: string): boolean {
   }
   writeFileSync(path, content);
   return true;
-}
-
-/**
- * 历史上被写进 PATH 目录(SANDBOX_BIN_DIR)的 Node 运行时残留文件名。
- * 这些文件一旦留在 PATH 最前的目录里,就会继续劫持宿主的 `node`——**换成新版程序、
- * 甚至改配置跳过 shim 生成都治不好**,必须当作升级迁移的一部分主动删掉。
- */
-export const LEGACY_PATH_NODE_SHIM_FILENAMES = [
-  "node",
-  "node.cmd",
-  WINDOWS_HIDE_PRELOAD_FILENAME,
-] as const;
-
-/**
- * 清除遗留在 PATH 目录里的 Node shim。返回真正删掉的文件名。
- *
- * 只删我们自己生成的这三个固定文件名,且只在**产品 CLI 目录**里删——绝不碰
- * node-runtime 子目录(那是新家),更不碰宿主任何位置。删除失败静默跳过:
- * 迁移动作不该让客户端启动失败。
- */
-export function pruneLegacyNodeRuntimeShims(binDir: string = SANDBOX_BIN_DIR): string[] {
-  const removed: string[] = [];
-  for (const filename of LEGACY_PATH_NODE_SHIM_FILENAMES) {
-    const target = join(binDir, filename);
-    try {
-      if (!existsSync(target)) continue;
-      rmSync(target, { force: true });
-      removed.push(filename);
-    } catch {
-      // 删不掉(权限/占用)不该拖垮启动;PATH 策略侧仍会把宿主 Node 排在前面兜住。
-    }
-  }
-  return removed;
 }
 
 export function ensureNodeRuntimeShim(options: NodeRuntimeShimOptions): string {

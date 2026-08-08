@@ -262,26 +262,13 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse(makeCommand(overLimit)).success).toBe(false);
   });
 
-  it("updateDoc.legacySections 在 1000 项边界通过，加一拒绝", () => {
-    const makeCommand = (length: number) => ({
-      kind: "updateDoc",
-      data: {
-        sessionId: "s",
-        expectedDocumentSnapshot: 1,
-        legacySections: Array.from({ length }, () => ({ kind: "p", data: { text: "x" } })),
-        clientMutationId: "m",
-      },
-    });
-    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH)).success).toBe(true);
-    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH + 1)).success).toBe(false);
-  });
-
   it("updateDoc.doc.content 在 1000 个顶层块边界通过，加一拒绝", () => {
     const makeCommand = (length: number) => ({
       kind: "updateDoc",
       data: {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
+        baseContentHash: "pmv1-base",
         doc: {
           type: "doc",
           attrs: { schemaVersion: 1 },
@@ -301,7 +288,11 @@ describe("commandSchema", () => {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
         baseContentHash,
-        legacySections: [],
+        doc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [],
+        },
         clientMutationId: "m",
       },
     });

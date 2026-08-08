@@ -220,58 +220,6 @@ describe("external events", () => {
     expect(events.map((event) => event.event)).toEqual(["meta", "frame"]);
   });
 
-  it("documentSnapshotWritten 按真实 sections 形状深度净化 SVG", async () => {
-    const sessionId = "events-snapshot-sections-svg";
-    const svg = "<svg>真实 sections 缓存</svg>";
-    sessionManager.frameLog.append(sessionId, {
-      kind: "documentSnapshotWritten",
-      data: {
-        doc: {
-          version: 3,
-          ts: "2026-07-25T00:00:00.000Z",
-          doc: {
-            type: "doc",
-            attrs: { schemaVersion: 1 },
-            content: [],
-          },
-          sections: [{
-            kind: "diagram",
-            data: {
-              lang: "mermaid",
-              source: "flowchart TD\nA-->B",
-              svg,
-            },
-          }],
-        },
-      },
-    });
-
-    const frame = await readSingleExternalFrame(sessionId);
-    expect(frame).toMatchObject({
-      data: {
-        doc: {
-          sections: [{
-            data: {
-              svg: null,
-              svgBytes: Buffer.byteLength(svg, "utf8"),
-            },
-          }],
-        },
-      },
-    });
-    expect(JSON.stringify(frame)).not.toContain("<svg");
-
-    const logged = sessionManager.frameLog.readFrom(sessionId, 0).frames[0]?.frame;
-    expect(logged).toMatchObject({
-      kind: "documentSnapshotWritten",
-      data: {
-        doc: {
-          sections: [{ data: { svg } }],
-        },
-      },
-    });
-  });
-
   it("docDiffReady 任意嵌套位置的 SVG 均不外发", async () => {
     const sessionId = "events-doc-diff-svg";
     sessionManager.frameLog.append(sessionId, {

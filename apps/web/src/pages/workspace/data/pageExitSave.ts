@@ -738,7 +738,7 @@ export function flushDocSaveOnPageExit(input: {
     sessionId: command.data.sessionId,
     fallbackBase: {
       expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
-      baseContentHash: command.data.baseContentHash ?? input.baseContentHash,
+      baseContentHash: command.data.baseContentHash,
     },
     pmDoc: command.data.doc as PmDoc,
     id: command.data.clientMutationId,

@@ -59,7 +59,7 @@ function commitInput(
     clientMutationId: "client-commit",
     apply: () => ({ nextDoc: pmDocFromText("after commit") }),
     ...overrides,
-  };
+  } as CommitDocumentOpInput;
 }
 
 async function seedDocument(

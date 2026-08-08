@@ -8,12 +8,10 @@ import {
   type BridgeFrame,
   type ChatChip,
   type Command,
-  type LegacySection,
 } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   pmTableSelectionCellTexts,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -144,14 +142,19 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
 }
 
 async function updateDoc(sessionId: string, version: number, doc: PmDoc, mutation: string): Promise<void> {
+  const currentDoc = bridge.getSession(sessionId)?.doc ?? {
+    type: "doc" as const,
+    attrs: { schemaVersion: 1 as const },
+    content: [],
+  };
   const command: Command = {
     kind: "updateDoc",
     data: {
       sessionId,
       expectedDocumentSnapshot: version,
+      baseContentHash: getPmContentHash(currentDoc),
       clientMutationId: mutation,
       doc,
-      legacySections: pmToLegacySections(doc) as unknown as LegacySection[],
     },
   };
   const frames = await collectFrames(bridge.handleCommand(command));

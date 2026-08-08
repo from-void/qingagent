@@ -438,7 +438,7 @@ export async function* settleDraftCandidate(opts: {
         },
       };
     }
-    const versionDoc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
+    const versionDoc = buildDocumentSnapshot(state.docVersion, result.doc);
     const committedDoc = result.doc;
     if (emitGenerationEvent && generationId) {
       const event = nextDocGenerationEvent(generationId, generationLastSeq, {

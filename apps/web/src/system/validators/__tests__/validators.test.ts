@@ -9,6 +9,16 @@ import { validateAskUserSpec, AskUserSpecValidationError } from "../askUserSpec"
 import { validateCommand, CommandValidationError } from "../command";
 import { validateBridgeFrame, BridgeFrameValidationError } from "../wireFrame";
 
+const validPmDoc = {
+  type: "doc" as const,
+  attrs: { schemaVersion: 1 as const },
+  content: [{
+    type: "paragraph" as const,
+    attrs: { blockId: "p-1" },
+    content: [{ type: "text" as const, text: "正文" }],
+  }],
+};
+
 function validAskUserSpec(): AskUserSpec {
   return {
     id: "a",
@@ -358,7 +368,7 @@ describe("validateCommand", () => {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: validPmDoc,
         clientMutationId: "mutation-1",
       },
     };
@@ -411,7 +421,8 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: validPmDoc,
         clientMutationId: "",
       },
     };
@@ -425,7 +436,7 @@ describe("validateCommand", () => {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
         baseContentHash: "",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: validPmDoc,
         clientMutationId: "mutation-1",
       },
     };

@@ -11,7 +11,11 @@ import {
 } from "../bridge/index.js";
 import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
+import {
+  getPmContentHash,
+  legacySectionsToPm,
+  pmToLegacySections,
+} from "@qingagent/pm-schema";
 import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
 import {
   collectTopLevelTextBlocks,
@@ -332,7 +336,7 @@ describe("commitPatches", () => {
     expect(docFrame).toBeDefined();
     if (docFrame?.kind === "documentSnapshotWritten") {
       expect(docFrame.data.doc.version).toBe(2); // bumped from 1
-      const snapshotSections = docFrame.data.doc.sections ?? [];
+      const snapshotSections = pmToLegacySections(docFrame.data.doc.doc);
       expect(snapshotSections).toHaveLength(4);
       // The patch should have been applied: "三月的阳光" → "四月的暖阳"
       const pSection = snapshotSections[1];
@@ -474,7 +478,7 @@ describe("commitPatches", () => {
 
     const docFrame = frames.find((f) => f.kind === "documentSnapshotWritten");
     if (docFrame?.kind === "documentSnapshotWritten") {
-      const sections = docFrame.data.doc.sections ?? [];
+      const sections = pmToLegacySections(docFrame.data.doc.doc);
       // Section 0: h1 should now be "秋天的校园"
       if (sections[0]?.kind === "h1") {
         expect(sections[0].data.text).toBe("秋天的校园");
@@ -536,7 +540,7 @@ describe("commitPatches", () => {
     const docFrame = frames.find((f) => f.kind === "documentSnapshotWritten");
     expect(docFrame).toBeDefined();
     if (docFrame?.kind === "documentSnapshotWritten") {
-      const sections = docFrame.data.doc.sections ?? [];
+      const sections = pmToLegacySections(docFrame.data.doc.doc);
       // Accepted patch: section 0 should be changed
       if (sections[0]?.kind === "h1") {
         expect(sections[0].data.text).toBe("秋天的校园");
@@ -726,16 +730,11 @@ describe("BridgeFrame format compliance", () => {
       const doc = docFrame.data.doc;
       expect(doc).toHaveProperty("version");
       expect(doc).toHaveProperty("ts");
-      expect(doc).toHaveProperty("sections");
+      expect(doc).toHaveProperty("doc");
       expect(typeof doc.version).toBe("number");
       expect(typeof doc.ts).toBe("string");
-      expect(Array.isArray(doc.sections)).toBe(true);
-
-      // Each section should have kind and data
-      for (const section of doc.sections ?? []) {
-        expect(section).toHaveProperty("kind");
-        expect(section).toHaveProperty("data");
-      }
+      expect(doc.doc.type).toBe("doc");
+      expect(Array.isArray(doc.doc.content)).toBe(true);
     }
   });
 

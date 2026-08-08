@@ -155,23 +155,6 @@ function checkSendMessage(m: SendMessage): void {
   }
 }
 
-function checkLegacySections(value: unknown): void {
-  if (!Array.isArray(value)) fail(`UpdateDoc.legacySections must be an array`);
-  for (const [index, section] of value.entries()) {
-    if (section === null || typeof section !== "object") {
-      fail(`UpdateDoc.legacySections[${index}] must be an object`);
-    }
-    const item = section as Record<string, unknown>;
-    const data = item.data as Record<string, unknown> | null | undefined;
-    if (typeof item.kind !== "string") {
-      fail(`UpdateDoc.legacySections[${index}].kind must be a string`);
-    }
-    if (!data || typeof data !== "object") {
-      fail(`UpdateDoc.legacySections[${index}].data must be an object`);
-    }
-  }
-}
-
 function checkPmDoc(value: unknown): void {
   const parsed = safeParsePmDoc(value);
   if (!parsed.success) fail(`UpdateDoc.doc must be a valid PM doc: ${parsed.error.message}`);
@@ -245,16 +228,12 @@ export function validateCommand(cmd: Command): void {
       if (!cmd.data.sessionId) fail(`UpdateDoc.sessionId must be non-empty`);
       if (!Number.isInteger(cmd.data.expectedDocumentSnapshot))
         fail(`UpdateDoc.expectedDocumentSnapshot must be an integer`);
-      if (
-        cmd.data.baseContentHash !== undefined &&
-        !nonEmptyString(cmd.data.baseContentHash)
-      ) {
+      if (!nonEmptyString(cmd.data.baseContentHash)) {
         fail(`UpdateDoc.baseContentHash must be non-empty`);
       }
       if (!cmd.data.clientMutationId)
         fail(`UpdateDoc.clientMutationId must be non-empty`);
-      if (cmd.data.doc) checkPmDoc(cmd.data.doc);
-      else checkLegacySections(cmd.data.legacySections);
+      checkPmDoc(cmd.data.doc);
       return;
     case "updateMaterialSummary":
       if (!cmd.data.sessionId) fail(`UpdateMaterialSummary.sessionId must be non-empty`);

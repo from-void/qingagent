@@ -227,69 +227,7 @@ export interface ViewDocumentSnapshot {
 
 /** Convert a wire DocumentSnapshot into the view shape (P sections wrapped in a single text span). */
 export function wireDocToView(doc: WireDocumentSnapshot): ViewDocumentSnapshot {
-  // doc(PmDoc)现在是 contract 必填字段且优先消费;运行时仍保留 fallback,
-  // 兼容旧客户端缓存里只有 sections 的历史快照(@deprecated 过渡窗口)。
-  if (doc.doc) {
-    return pmDocToViewDocumentSnapshot(doc.doc, doc.version, doc.ts);
-  }
-  return {
-    version: doc.version,
-    ts: doc.ts,
-    sections: (doc.sections ?? []).map((s): ViewBlock => {
-      const meta = wireSectionViewMeta(s);
-      switch (s.kind) {
-        case "quote":
-          return { ...meta, kind: "quote", text: s.data.text };
-        case "list":
-          return { ...meta, kind: "list", ordered: s.data.ordered, items: s.data.items };
-        case "hr":
-          return { ...meta, kind: "hr" };
-        case "h1":
-          return { ...meta, kind: "h1", text: s.data.text };
-        case "h2":
-          return {
-            ...meta,
-            kind: "h2",
-            text: s.data.text,
-            anchor: s.data.anchor ?? undefined,
-          };
-        case "p":
-          return { ...meta, kind: "p", spans: [{ kind: "text", text: s.data.text }] };
-        case "table":
-          return { ...meta, kind: "table", head: s.data.head, rows: s.data.rows };
-        case "code":
-          return { ...meta, kind: "code", body: s.data.body, language: s.data.language ?? null };
-        case "penNote":
-          return { ...meta, kind: "penNote", text: s.data.text };
-        case "image":
-          return {
-            ...meta,
-            kind: "image",
-            src: s.data.src,
-            alt: s.data.alt,
-	            caption: s.data.caption,
-	            width: s.data.width,
-	            height: s.data.height,
-	            align: s.data.align ?? "center",
-	          };
-        case "diagram":
-          // 保留 diagram 语义(不再降级成 code):编辑器经 viewSectionsToHtml 重建 diagram 节点
-          // 原生渲染;只读聊天视图在渲染处自行降级为源码展示。
-          return { ...meta, kind: "diagram", source: s.data.source, lang: s.data.lang, svg: s.data.svg ?? null };
-      }
-    }),
-  };
-}
-
-function wireSectionViewMeta(section: NonNullable<WireDocumentSnapshot["sections"]>[number]): ViewBlockMeta {
-  const raw = section as {
-    id?: unknown;
-    blockId?: unknown;
-    data?: { id?: unknown; blockId?: unknown };
-  };
-  const blockId = [raw.blockId, raw.id, raw.data?.blockId, raw.data?.id]
-    .find((value): value is string => typeof value === "string" && value.length > 0);
-  return blockId ? { blockId } : {};
+  return pmDocToViewDocumentSnapshot(doc.doc, doc.version, doc.ts);
 }
 
 export function pmDocToViewDocumentSnapshot(doc: PmDoc, version: number, ts = ""): ViewDocumentSnapshot {

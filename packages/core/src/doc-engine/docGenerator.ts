@@ -152,15 +152,13 @@ export function parseLegacySections(rawText: string): LegacySection[] {
  * Build a DocumentSnapshot from sections and version number.
  */
 export function buildDocumentSnapshot(
-  sections: LegacySection[],
   version: number,
-  doc?: PmDoc,
+  doc: PmDoc,
 ): DocumentSnapshot {
   return {
     version,
     ts: new Date().toISOString(),
-    sections,
-    doc: doc ?? legacySectionsToPm(sections as never),
+    doc,
   };
 }
 
@@ -175,7 +173,10 @@ export function* emitDocumentSnapshotFrames(
   const batchSize = 3;
   for (let i = 0; i < sections.length; i += batchSize) {
     const partialSections = sections.slice(0, i + batchSize);
-    const doc = buildDocumentSnapshot(partialSections, version);
+    const doc = buildDocumentSnapshot(
+      version,
+      legacySectionsToPm(partialSections as never),
+    );
     yield { kind: "documentSnapshotWritten", data: { doc } };
   }
 

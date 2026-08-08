@@ -9,6 +9,7 @@ import type {
   LegacySection,
 } from "@qingagent/contract-ts";
 import {
+  getPmContentHash,
   getDeterministicId,
   materializeDraftBlockIds,
   normalizePmDoc,
@@ -212,6 +213,11 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       expectedDocumentSnapshot: 0,
+      baseContentHash: getPmContentHash({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [],
+      }),
       clientMutationId: "typed-block-write-1",
       opKind: "replace_doc",
       actorType: "user",

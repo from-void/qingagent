@@ -19,17 +19,27 @@ import {
   resourceMutationKey,
   workspaceMutations,
 } from "./revisionedMutation";
-import type { AnnotationGroup, DocumentSnapshot, FolderSource } from "@qingagent/contract-ts";
+import type {
+  AnnotationGroup,
+  DocumentSnapshot,
+  FolderSource,
+  LegacySection,
+} from "@qingagent/contract-ts";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { reconcileAssetPreview, toAssetSource } from "./sources";
 
 function reduce(...frames: WorkspaceAction[]) {
   return frames.reduce(workspaceReducer, initialWorkspaceState);
 }
 
-/** 旧客户端缓存形态:只有 sections、无 doc。contract 已把 doc 转必填,
- * 这里显式 cast 模拟兼容窗口内的历史快照,验证 sections fallback 路径。 */
-function legacyWireSnapshot(snap: Omit<DocumentSnapshot, "doc">): DocumentSnapshot {
-  return snap as DocumentSnapshot;
+function wireSnapshot(snap: Pick<DocumentSnapshot, "version" | "ts"> & {
+  sections: LegacySection[];
+}): DocumentSnapshot {
+  return {
+    version: snap.version,
+    ts: snap.ts,
+    doc: legacySectionsToPm(snap.sections as never),
+  };
 }
 
 const baseMessage: ChatMessage = {
@@ -715,7 +725,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const next = workspaceReducer(initialWorkspaceState, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 13,
             ts: "2026-05-08T00:00:00Z",
             sections: [
@@ -726,7 +736,7 @@ describe("annotationGroupsReady 来源增量", () => {
         },
       });
       expect(next.doc?.version).toBe(13);
-      expect(next.doc?.sections[0]).toEqual({ kind: "h1", text: "Title" });
+      expect(next.doc?.sections[0]).toMatchObject({ kind: "h1", text: "Title" });
       const para = next.doc?.sections[1];
       expect(para?.kind === "p" && para.spans).toEqual([
         { kind: "text", text: "Body." },
@@ -737,7 +747,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const next = workspaceReducer(initialWorkspaceState, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 14,
             ts: "2026-07-30T00:00:00Z",
             sections: [{ kind: "p", data: { text: "已恢复正文" } }],
@@ -787,7 +797,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 15,
               ts: "2026-08-01T00:00:00Z",
               sections: [{ kind: "p", data: { text: "重开后的正文" } }],
@@ -1115,7 +1125,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const next = workspaceReducer(withDiff, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 2,
             ts: "2026-05-08T00:00:00Z",
             sections: [{ kind: "p", data: { text: "正文" } }],
@@ -1162,7 +1172,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 1,
               ts: "2026-05-08T00:00:00Z",
               sections: [{ kind: "p", data: { text: "正文" } }],
@@ -1302,7 +1312,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const next = workspaceReducer(failed, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 1,
             ts: "2026-05-08T00:00:00Z",
             sections: [{ kind: "p", data: { text: "生成成功正文" } }],
@@ -1320,7 +1330,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const seeded = workspaceReducer(initialWorkspaceState, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 1,
             ts: "2026-05-08T00:00:00Z",
             sections: [{ kind: "p", data: { text: "本地正文" } }],
@@ -1365,7 +1375,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 3,
               ts: "2026-05-08T00:00:00Z",
               sections: [{ kind: "p", data: { text: "审阅基线" } }],
@@ -1397,7 +1407,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 3,
               ts: "2026-05-08T00:00:00Z",
               sections: [{ kind: "p", data: { text: "审阅基线" } }],
@@ -1431,7 +1441,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const seeded = workspaceReducer(initialWorkspaceState, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 3,
             ts: "2026-05-08T00:00:00Z",
             sections: [{ kind: "p", data: { text: "当前正文" } }],
@@ -1862,7 +1872,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 9,
               ts: "2026-08-01T16:54:05.775Z",
               sections: [{ kind: "p", data: { text: "已落库终稿" } }],
@@ -2211,7 +2221,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "documentSnapshotWritten",
           data: {
-            doc: legacyWireSnapshot({
+            doc: wireSnapshot({
               version: 13,
               ts: "2026-05-08T00:00:00Z",
               sections: [{ kind: "p", data: { text: "Body." } }],
@@ -2708,7 +2718,7 @@ describe("selectors", () => {
       const seeded = workspaceReducer(initialWorkspaceState, {
         kind: "documentSnapshotWritten",
         data: {
-          doc: legacyWireSnapshot({
+          doc: wireSnapshot({
             version: 1,
             ts: "2026-05-08T00:00:00Z",
             sections: [{ kind: "p", data: { text: "陈旧基线" } }],

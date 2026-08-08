@@ -1392,6 +1392,7 @@ describe("candidate-diff backend flow", () => {
       threadId: state.sessionId,
       resourceId: state.resourceId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(generatedDoc),
       clientMutationId: "manual-edit-1",
       opKind: "replace_doc",
       actorType: "user",

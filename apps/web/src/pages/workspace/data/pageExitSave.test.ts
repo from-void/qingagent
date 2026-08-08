@@ -108,7 +108,6 @@ describe("pageExitSave 图片上传占位", () => {
 
     expect(command).not.toBeNull();
     expect(command?.data.doc?.content).toEqual([paragraph]);
-    expect(command?.data.legacySections).toBeUndefined();
   });
 });
 
@@ -184,7 +183,6 @@ describe("pageExitSave 持久 outbox", () => {
     const fetchRequest = vi.fn(async (_url: string, init: RequestInit) => {
       expect(init.keepalive).toBeUndefined();
       const command = JSON.parse(String(init.body));
-      expect(command.data.legacySections).toBeUndefined();
       return {
         ok: true,
         status: 200,

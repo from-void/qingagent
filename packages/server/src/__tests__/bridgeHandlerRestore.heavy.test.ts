@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LegacySection, DocState, ToolCallSpec, BridgeFrame, DocSuggestion } from "@qingagent/contract-ts";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
 // resetModules 只用于重置 bridge 的进程内 session；真实 core 模块体积大且会注册
 // 进程监听器，重复 importActual 会把模块初始化时间计入每个用例并泄漏 listeners。
@@ -545,6 +545,7 @@ describe("handleCommand existing-session restore", () => {
       threadId: session.threadId ?? session.sessionId,
       resourceId: session.resourceId,
       expectedDocumentSnapshot: 7,
+      baseContentHash: getPmContentHash(base),
       opId: `cached-crash-v8:${session.sessionId}`,
       opKind: "replace_doc",
       actorType: "user",

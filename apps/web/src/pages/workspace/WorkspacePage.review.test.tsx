@@ -7727,7 +7727,6 @@ describe("WorkspacePage page-exit doc save", () => {
         clientMutationId: "exit-1",
       },
     });
-    expect(command?.data.legacySections).toBeUndefined();
   });
 
   it("page-exit flush 优先 sendBeacon,失败时回退 keepalive fetch", async () => {

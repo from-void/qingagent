@@ -53,8 +53,6 @@ function summarizeCommandForLog(command: Command): Record<string, unknown> {
       return { count: command.data.ids?.length ?? 0 };
     case "updateDoc":
       return {
-        sectionsCount: command.data.legacySections?.length ?? null,
-        hasPmDoc: command.data.doc !== undefined,
         expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
       };
     case "startSession":

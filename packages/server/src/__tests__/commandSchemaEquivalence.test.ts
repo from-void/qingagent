@@ -18,6 +18,11 @@ import { legacyValidateCommandKind } from "./legacyCommandValidator.oracle";
  */
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
+const VALID_PM_DOC = {
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }],
+};
 
 interface CommandFixture {
   name: string;
@@ -70,8 +75,7 @@ const sharedAccept: CommandFixture[] = [
   { name: "resumeAskUser", body: { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: { q1: { chosen: ["a"], freeText: null } } } } },
   { name: "resumeAskUser/numeric", body: { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: { q1: { chosen: [], freeText: null, numericValue: 3 } } } } },
   { name: "cancelAskUser", body: { kind: "cancelAskUser", data: { sessionId: "s", toolCallId: "t" } } },
-  { name: "updateDoc/legacySections", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m", legacySections: [{ kind: "p", data: { text: "正文" } }] } } },
-  { name: "updateDoc/baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m", legacySections: [] } } },
+  { name: "updateDoc", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m", doc: VALID_PM_DOC } } },
   { name: "updateMaterialSummary/empty-summary", body: { kind: "updateMaterialSummary", data: { sessionId: "s", materialId: "m", summary: "" } } },
   { name: "removeMaterial", body: { kind: "removeMaterial", data: { sessionId: "s", materialId: "m" } } },
   { name: "attachFolder/desktop", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-desktop", source: { provider: "desktop-local", selectionToken: "tok" } } } },
@@ -107,11 +111,10 @@ const sharedReject: CommandFixture[] = [
   { name: "resumeAskUser/missing-toolCallId", body: { kind: "resumeAskUser", data: { sessionId: "s", answers: { q1: { chosen: [], freeText: "x" } } } } },
   { name: "resumeAskUser/empty-answers", body: { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: {} } } },
   { name: "cancelAskUser/missing-toolCallId", body: { kind: "cancelAskUser", data: { sessionId: "s" } } },
-  { name: "updateDoc/missing-sessionId", body: { kind: "updateDoc", data: { sessionId: "", expectedDocumentSnapshot: 1, clientMutationId: "m", legacySections: [] } } },
-  { name: "updateDoc/non-integer-snapshot", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1.5, clientMutationId: "m", legacySections: [] } } },
-  { name: "updateDoc/missing-clientMutationId", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, legacySections: [] } } },
-  { name: "updateDoc/no-doc-no-sections", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m" } } },
-  { name: "updateDoc/legacySections-not-array", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m", legacySections: "bad" } } },
+  { name: "updateDoc/missing-sessionId", body: { kind: "updateDoc", data: { sessionId: "", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m", doc: VALID_PM_DOC } } },
+  { name: "updateDoc/non-integer-snapshot", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1.5, baseContentHash: "pmv1-base", clientMutationId: "m", doc: VALID_PM_DOC } } },
+  { name: "updateDoc/missing-clientMutationId", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", doc: VALID_PM_DOC } } },
+  { name: "updateDoc/missing-doc", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m" } } },
   { name: "updateMaterialSummary/summary-not-string", body: { kind: "updateMaterialSummary", data: { sessionId: "s", materialId: "m", summary: 1 } } },
   { name: "removeMaterial/missing-materialId", body: { kind: "removeMaterial", data: { sessionId: "s" } } },
   { name: "attachFolder/unknown-provider", body: { kind: "attachFolder", data: { sessionId: "s", requestId: "attach-invalid", source: { provider: "ftp" } } } },
@@ -132,7 +135,8 @@ const newStricter: CommandFixture[] = [
   { name: "acceptPatch/garbage-reviewBatchId", body: { kind: "acceptPatch", data: { id: "p1", reviewBatchId: 42 } } },
   { name: "commitPatches/reviewBatchIds-only", body: { kind: "commitPatches", data: { reviewBatchIds: ["b1"] } } },
   { name: "resumeAskUser/garbage-answer-value", body: { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: { q1: "garbage" } } } },
-  { name: "updateDoc/empty-baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "", clientMutationId: "m", legacySections: [] } } },
+  { name: "updateDoc/missing-baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m", doc: VALID_PM_DOC } } },
+  { name: "updateDoc/empty-baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "", clientMutationId: "m", doc: VALID_PM_DOC } } },
 ];
 
 describe("D6 命令校验等价回归矩阵", () => {

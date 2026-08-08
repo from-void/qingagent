@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { Command } from "../Command";
-import type { LegacySection } from "../LegacySection";
 import type { PmDoc } from "../PmDoc";
 import type { SessionMode } from "../SessionMode";
 import type { StartSession } from "../StartSession";
@@ -43,11 +42,9 @@ const MAX_NAME_LENGTH = 256;
 const MAX_HANDLE_LENGTH = 1024;
 
 /**
- * updateDoc 的 doc / legacySections 为**运行期直通**(z.unknown()),类型层声明为
- * PmDoc / LegacySection[]。这是设计决策 1 的刻意取舍:contract-ts 不引入对 pm-schema
- * 的生产依赖(避免 contract-ts → pm-schema 依赖环),legacySections 在此只加顶层数组
- * 长度护栏；PM 文档与 section 元素的深层结构仍由 server 侧现有
- * `safeParsePmDoc` / `validateLegacySections` 承担。
+ * updateDoc 的 doc 为**运行期直通**(z.unknown()),类型层声明为 PmDoc。这是设计决策 1
+ * 的刻意取舍:contract-ts 不引入对 pm-schema 的生产依赖(避免依赖环)。PM 文档深层
+ * 结构仍由 server 侧 `safeParsePmDoc` 承担。
  * 因此这里用受控 cast 把"运行期 unknown、类型层精确"两者兜住,既不拉依赖、又保住
  * `commandSchema satisfies z.ZodType<Command>` 与等价断言。
  */
@@ -68,11 +65,6 @@ const pmDocPassthroughSchema = z.unknown().superRefine((value, context) => {
     addArrayLengthIssue(context);
   }
 }) as unknown as z.ZodType<PmDoc>;
-const legacySectionsPassthroughSchema = z.unknown().superRefine((value, context) => {
-  if (Array.isArray(value) && value.length > MAX_COMMAND_ARRAY_LENGTH) {
-    addArrayLengthIssue(context);
-  }
-}) as unknown as z.ZodType<Array<LegacySection>>;
 const ignoreAnnotationGroupsDataSchema = z.object({
   sessionId: z.string().min(1),
   reason: z.enum(["tab_changed", "message_sent", "doc_committed", "discard_all", "item_ignored"]),
@@ -323,9 +315,8 @@ type _CancelAskUserExact = Expect<Equal<z.infer<typeof cancelAskUserDataSchema>,
 const updateDocDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   expectedDocumentSnapshot: z.number().int(),
-  baseContentHash: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH).optional(),
-  legacySections: legacySectionsPassthroughSchema.optional(),
-  doc: pmDocPassthroughSchema.optional(),
+  baseContentHash: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  doc: pmDocPassthroughSchema,
   clientMutationId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
 }) satisfies z.ZodType<UpdateDoc>;
 type _UpdateDocExact = Expect<Equal<z.infer<typeof updateDocDataSchema>, UpdateDoc>>;

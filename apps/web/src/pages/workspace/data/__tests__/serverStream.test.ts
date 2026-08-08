@@ -1297,7 +1297,16 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "p-1" },
+            content: [{ type: "text", text: "正文" }],
+          }],
+        },
         clientMutationId: "mutation-1",
       },
     });

@@ -6,7 +6,7 @@ import type {
   ToolCallSpec,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { getDeterministicId } from "@qingagent/pm-schema";
+import { getDeterministicId, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
   buildDocumentSnapshot,
@@ -280,7 +280,10 @@ export function* emitRestoreFrames(
     yield {
       kind: "documentSnapshotWritten",
       data: {
-        doc: buildDocumentSnapshot(session.legacySections, session.docVersion, session.doc),
+        doc: buildDocumentSnapshot(
+          session.docVersion,
+          session.doc ?? legacySectionsToPm(session.legacySections as never),
+        ),
       },
     };
   }

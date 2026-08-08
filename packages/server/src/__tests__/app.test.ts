@@ -898,7 +898,7 @@ describe("POST /api/v1/stream", () => {
         sessionId: "nonexistent",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
@@ -916,7 +916,8 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
@@ -933,7 +934,7 @@ describe("POST /api/v1/stream", () => {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
         baseContentHash: "",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
@@ -949,7 +950,8 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1.5,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
@@ -959,29 +961,14 @@ describe("POST /api/v1/stream", () => {
     expect(json.error).toContain("expectedDocumentSnapshot");
   });
 
-  it("rejects updateDoc with non-array legacySections", async () => {
-    const command = {
-      kind: "updateDoc",
-      data: {
-        sessionId: "s-1",
-        expectedDocumentSnapshot: 1,
-        legacySections: "bad",
-        clientMutationId: "mutation-1",
-      },
-    };
-    const res = await request("POST", "/api/v1/stream", command);
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain("legacySections must be an array");
-  });
-
   it("rejects updateDoc with missing clientMutationId", async () => {
     const command = {
       kind: "updateDoc",
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "",
       },
     };

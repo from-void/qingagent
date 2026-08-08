@@ -86,63 +86,6 @@ function sessionDeletionErrorResponse(c: Context, error: unknown): Response | nu
   return null;
 }
 
-function validateLegacySections(value: unknown, field: string): string | null {
-  if (!Array.isArray(value)) {
-    return `${field} must be an array`;
-  }
-  for (const [index, section] of value.entries()) {
-    if (section === null || typeof section !== "object") {
-      return `${field}[${index}] must be an object`;
-    }
-    const item = section as Record<string, unknown>;
-    if (typeof item.kind !== "string") {
-      return `${field}[${index}].kind must be a string`;
-    }
-    const data = item.data;
-    if (data === null || typeof data !== "object") {
-      return `${field}[${index}].data must be an object`;
-    }
-    const d = data as Record<string, unknown>;
-    switch (item.kind) {
-      case "h1":
-      case "p":
-      case "penNote":
-        if (typeof d.text !== "string") return `${field}[${index}].data.text must be a string`;
-        break;
-      case "h2":
-        if (typeof d.text !== "string") return `${field}[${index}].data.text must be a string`;
-        if (d.anchor !== null && typeof d.anchor !== "string") {
-          return `${field}[${index}].data.anchor must be null or string`;
-        }
-        break;
-      case "code":
-        if (typeof d.body !== "string") return `${field}[${index}].data.body must be a string`;
-        break;
-      case "table":
-        if (!Array.isArray(d.head) || !Array.isArray(d.rows)) {
-          return `${field}[${index}].data.head and rows must be arrays`;
-        }
-        break;
-      case "image":
-        if (typeof d.src !== "string") return `${field}[${index}].data.src must be a string`;
-        if (typeof d.alt !== "string") return `${field}[${index}].data.alt must be a string`;
-        if (d.caption !== null && typeof d.caption !== "string") {
-          return `${field}[${index}].data.caption must be null or string`;
-        }
-        if (d.width !== null && typeof d.width !== "number") {
-          return `${field}[${index}].data.width must be null or number`;
-        }
-        if (d.height !== null && typeof d.height !== "number") {
-          return `${field}[${index}].data.height must be null or number`;
-        }
-        break;
-      default:
-        return `${field}[${index}].kind is not supported`;
-    }
-  }
-  return null;
-}
-
 function validatePmDoc(value: unknown, field: string): string | null {
   const parsed = safeParsePmDoc(value);
   if (!parsed.success) return `${field} must be a valid PM doc: ${parsed.error.message}`;
@@ -151,8 +94,8 @@ function validatePmDoc(value: unknown, field: string): string | null {
 
 /**
  * 入站命令校验。基建改造(D6):委托 contract-ts 的 `commandSchema`(zod
- * discriminatedUnion)做结构 + 语义校验;PM 文档 / legacySections 的深层结构仍由
- * 本文件的 `validatePmDoc` / `validateLegacySections` 承担(见 updateDocDeepError),
+ * discriminatedUnion)做结构 + 语义校验;PM 文档的深层结构仍由
+ * 本文件的 `validatePmDoc` 承担(见 updateDocDeepError),
  * 避免 contract-ts 反向依赖 pm-schema。返回 null 表示通过,否则返回错误文案(含字段路径)。
  *
  * 仍以 `validateCommandKind` 之名导出,供既有单测直接调用(薄 wrapper,内部走 zod)。
@@ -164,15 +107,11 @@ export function validateCommandKind(body: unknown): string | null {
 }
 
 /**
- * updateDoc 的深层文档校验(zod 层对 doc/legacySections 只做直通)。与旧行为逐字一致:
- * 有 doc → safeParsePmDoc;否则校验 legacySections。其它 kind 一律通过。
+ * updateDoc 的深层文档校验(zod 层对 doc 只做直通)。其它 kind 一律通过。
  */
 export function updateDocDeepError(command: Command): string | null {
   if (command.kind !== "updateDoc") return null;
-  if (command.data.doc !== undefined) {
-    return validatePmDoc(command.data.doc, "updateDoc.data.doc");
-  }
-  return validateLegacySections(command.data.legacySections, "updateDoc.data.legacySections");
+  return validatePmDoc(command.data.doc, "updateDoc.data.doc");
 }
 
 export const streamRoutes = new Hono();
@@ -288,7 +227,7 @@ async function handleCommandPost(c: Context) {
   if (!parsed.ok) return parsed.response;
   const command = parsed.data;
 
-  // updateDoc 的 doc/legacySections 深层结构校验(zod 层只做直通),与旧行为一致。
+  // updateDoc 的 doc 深层结构校验(zod 层只做直通)。
   const deepError = updateDocDeepError(command);
   if (deepError) {
     return c.json({ error: deepError, issues: [{ path: "data", message: deepError, code: "custom" }] }, 400);

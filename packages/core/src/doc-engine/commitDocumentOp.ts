@@ -65,9 +65,7 @@ export interface CommitDocumentOpBaseInput {
     docState: string;
     lastSyncedVersion: number;
   };
-  baseContentHash?: string;
   opKind: DocumentOpKind;
-  actorType: DocumentVersionActorType;
   coalesce?: {
     windowMs: number;
   };
@@ -83,7 +81,16 @@ export interface CommitDocumentOpBaseInput {
   summary?: string | (() => string);
 }
 
-export type CommitDocumentOpInput = CommitDocumentOpBaseInput & CommitIdempotencyKey;
+type CommitDocumentActorInput =
+  | { actorType: "user"; baseContentHash: string }
+  | {
+      actorType: Exclude<DocumentVersionActorType, "user">;
+      baseContentHash?: string;
+    };
+
+export type CommitDocumentOpInput = CommitDocumentOpBaseInput
+  & CommitDocumentActorInput
+  & CommitIdempotencyKey;
 
 export type CommitDocumentOpResult =
   | {
@@ -411,7 +418,7 @@ export async function commitDocumentOp(
 
     if (
       current.docVersion !== input.expectedDocumentSnapshot ||
-      (input.baseContentHash && current.contentHash !== input.baseContentHash)
+      (input.baseContentHash !== undefined && current.contentHash !== input.baseContentHash)
     ) {
       if (!providedOpId && !providedClientMutationId) {
         const idempotent = await maybeReturnDerivedIdempotentResult({

@@ -114,8 +114,8 @@ function updateCommand(sessionId: string, overrides: Partial<Extract<Command, { 
     data: {
       sessionId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(legacySectionsToPm([section("old")])),
       doc: legacySectionsToPm([section("new")]) as never,
-      legacySections: [section("new")],
       clientMutationId: "mutation-1",
       ...overrides,
     },
@@ -313,7 +313,6 @@ describe("handleCommand updateDoc", () => {
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
       baseContentHash: getPmContentHash(originalDoc),
       doc: originalDoc as never,
-      legacySections: [section("old")],
       clientMutationId: "mutation-noop",
     })));
 
@@ -342,7 +341,6 @@ describe("handleCommand updateDoc", () => {
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
       doc: pmDoc as never,
-      legacySections: [section("derived mirror")],
     })));
 
     expect(commitDocumentOp).toHaveBeenCalledWith(expect.objectContaining({
@@ -393,7 +391,6 @@ describe("handleCommand updateDoc", () => {
 
     await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
       doc: evilDoc as never,
-      legacySections: [{ kind: "diagram", data: { lang: "mermaid", source: "flowchart TD\n A-->B" } } as never],
     })));
 
     const committed = commitDocumentOp.mock.calls[0]?.[0].apply().nextDoc as PmDoc;
@@ -573,8 +570,12 @@ describe("handleCommand updateDoc", () => {
       bridge.handleCommand(
         updateCommand(session.sessionId, {
           doc: submittedDoc as never,
-          legacySections: [h1("产品需求文档"), section("")],
           expectedDocumentSnapshot: 0,
+          baseContentHash: getPmContentHash({
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [],
+          }),
         }),
       ),
     );

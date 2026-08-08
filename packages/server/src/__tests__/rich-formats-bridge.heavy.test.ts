@@ -958,7 +958,7 @@ function updateDocCommand(input: {
     data: {
       sessionId: input.sessionId,
       expectedDocumentSnapshot: input.expectedDocumentSnapshot,
-      baseContentHash: input.baseContentHash,
+      baseContentHash: input.baseContentHash ?? "pmv1-base",
       clientMutationId: input.clientMutationId,
       doc: input.doc,
     },

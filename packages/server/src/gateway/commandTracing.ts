@@ -156,8 +156,6 @@ export function summarizeCommandInput(command: Command): Record<string, unknown>
       };
     case "updateDoc":
       return {
-        sectionsCount: command.data.legacySections?.length ?? null,
-        hasPmDoc: Boolean(command.data.doc),
         expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
       };
     case "externalPropose":

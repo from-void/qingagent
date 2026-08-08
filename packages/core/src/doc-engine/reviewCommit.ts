@@ -831,7 +831,6 @@ export async function* commitPatches(
         kind: "documentSnapshotWritten",
         data: {
           doc: buildDocumentSnapshot(
-            state.legacySections,
             state.docVersion,
             currentPmDoc(state),
           ),
@@ -1252,7 +1251,7 @@ export async function* commitPatches(
   // 沿既有 settleUnappliedReviewRecords 冲突帧通路把失效原因带给前端(不新造帧类型)。
   const { settledRecords, skippedRecords } = partitionReviewRecords();
 
-  const doc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
+  const doc = buildDocumentSnapshot(state.docVersion, result.doc);
   yield { kind: "documentSnapshotWritten", data: { doc } };
 
   const settledPersisted = yield* settleResolvedReviewRecords(

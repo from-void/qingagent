@@ -607,6 +607,7 @@ describe("thread persistence", () => {
       threadId: sessionId,
       resourceId: "qingagent-user",
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(pmDoc("version one")),
       opId: "crash-window-v2",
       opKind: "replace_doc",
       actorType: "user",

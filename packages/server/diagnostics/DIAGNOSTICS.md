@@ -9,7 +9,7 @@
 
 ## 3 行速查
 
-1. **Dump 一个会话的完整状态**（docState / legacySections 全文 / 每个候选建议的完整 before·after，复用 app 自带 `loadSessionFromThread` 解码 msgpackr，绝不手解二进制）：
+1. **Dump 一个会话的完整状态**（docState / PM 文档全文 / 每个候选建议的完整 before·after，复用 app 自带 `loadSessionFromThread` 解码 msgpackr，绝不手解二进制）：
    `cd packages/server && npx tsx diagnostics/dump-session.mts <sessionId>`  ·  也支持 `--latest` / `--title "<子串>"`  ·  输出同时落到 `/tmp/session-dump-<id>.txt`
 2. **抓取/过滤日志诊断行**（validatePatch SUCCESS/FAIL/RECOVERED、PATCH REGISTERED/REJECTED、ENTERING REVIEW、generateDoc、draftingFailed、请先完成、docStateChanged、ECONNRESET、tool_choice）：
    `cd packages/server && diagnostics/tail-logs.sh [sessionId] [-f]`  （`-f` 实时跟随，`sessionId` 只看该会话）
@@ -22,10 +22,10 @@
 
 - thread id / title / docState / docVersion / runId / toolCallId
 - suggestions (ids、blockIndex、blockId、summary) / patchVerdicts（review 周期结束并提交后这两个 Map 通常为空，before/after 可从 chatHistory body 或 suggestions preview 取）
-- legacySections：index、kind、**完整文本**
+- doc：PM block index、type、**完整文本**
 - chatHistory 每个 toolCall：name、status（committed/done/…）；对 `docSuggestion` 额外打印 blockIndex、blockId、summary、**完整 before / 完整 after**、result，并标注 source（`chatHistory.body` 或 `suggestions`）
 - 末尾再单列 suggestions 的完整 before/after（即便未出现在 chatHistory 也能看到）
-- 健壮性：候选建议的历史 body 可能多层嵌套，脚本沿 `.data` 下钻直到找到 before/after；段落文本兼容 `data.text` / `data.body` / image `data.caption|alt` / table `data.head|rows`。
+- 健壮性：候选建议的历史 body 可能多层嵌套，脚本沿 `.data` 下钻直到找到 before/after；文档正文统一通过 PM 纯文本投影打印。
 
 ## 为什么需要这套工具
 

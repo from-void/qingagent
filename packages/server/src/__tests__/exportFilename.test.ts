@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@qingagent/core", () => ({
+  hasCanonicalDoc: (value: { doc?: { content?: unknown[] } }) => Boolean(value.doc?.content?.length),
   loadSessionFromThread: mocks.loadSessionFromThread,
   redactSensitiveText: (value: string) => value,
 }));
@@ -50,8 +51,7 @@ describe("导出文件名 Unicode 边界", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "unicode-export",
       title: `${"甲".repeat(79)}😀𠮷尾`,
-      doc: null,
-      legacySections: [{ kind: "p", data: { text: "正文" } }],
+      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
     });
     const { exportRoutes } = await import("../routes/export");
     const app = new Hono().route("/api/v1", exportRoutes);
@@ -73,8 +73,7 @@ describe("导出文件名 Unicode 边界", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "degraded-export",
       title: "降级导出",
-      doc: null,
-      legacySections: [{ kind: "hr", data: {} }],
+      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "horizontalRule" }] },
     });
     const { exportRoutes } = await import("../routes/export");
     const app = new Hono().route("/api/v1", exportRoutes);

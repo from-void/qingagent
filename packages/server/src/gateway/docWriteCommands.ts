@@ -3,13 +3,10 @@ import type {
   ChatMessage,
   Command,
   ExternalProposeOp,
-  LegacySection,
 } from "@qingagent/contract-ts";
 import {
-  legacySectionsToPm,
   markdownToPm,
   normalizePmDoc,
-  pmToLegacySections,
   pmToMarkdown,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -20,14 +17,16 @@ import {
   clonePmDoc,
   collectTopLevelTextBlocks,
   commitDocumentOp,
+  currentPmDoc,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
   deriveEditorState,
-  deriveTitleFromSections,
+  deriveTitleFromDoc,
   emitProjectedDocState,
   ensureDraftCandidateDoc,
   findLiteralMatches,
+  hasCanonicalDoc,
   invalidateDraftStateAfterCanonicalWrite,
   mapAnnotationGroupsThroughSteps,
   persistSessionMetadata,
@@ -99,7 +98,7 @@ function applyExternalProposalOps(
 }
 
 function blockIndexForMarkdownLine(doc: PmDoc, line: number): number {
-  if (doc.content.length === 0) return -1;
+  if (!hasCanonicalDoc({ doc })) return -1;
   let consumedLines = 0;
   for (let index = 0; index < doc.content.length; index += 1) {
     const blockDoc = normalizePmDoc({ ...doc, content: [doc.content[index]!] });
@@ -159,7 +158,7 @@ export async function* handleDocWriteCommand(
       }
 
       const previousDocVersion = session.docVersion;
-      const previousDoc = session.doc ?? legacySectionsToPm(session.legacySections as never);
+      const previousDoc = currentPmDoc(session);
       type PendingAnnotationMapping = {
         mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
         replacedOrigins: string[];
@@ -245,12 +244,10 @@ export async function* handleDocWriteCommand(
       }
 
       advanceLastContentEditedAt(session, result, previousDocVersion);
-      const legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
       // 单调防回退:并发/乱序写入下不让 session.docVersion 退到更低版本——否则重连会重放陈旧版本、
       // 客户端发过期 expectedDocumentSnapshot 触发必现文档冲突(配合重连时的 DB reconcile 兜底)。
       if (result.docVersion >= session.docVersion) {
         session.doc = result.doc;
-        session.legacySections = legacySections;
         session.docVersion = result.docVersion;
         if (transactionAnnotationMapping.current) {
           session.annotationGroups = transactionAnnotationMapping.current.mapped.groups;
@@ -262,7 +259,7 @@ export async function* handleDocWriteCommand(
         });
         const nextTitle = session.titlePinned
           ? null
-          : deriveTitleFromSections(session.legacySections);
+          : deriveTitleFromDoc(session.doc);
         if (nextTitle && nextTitle !== session.title) {
           session.title = nextTitle;
           yield {
@@ -384,13 +381,12 @@ export async function* handleDocWriteCommand(
         }
         advanceLastContentEditedAt(session, result, previousDocVersion);
         session.doc = result.doc;
-        session.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
         session.docVersion = result.docVersion;
         session._directionChangeAskedSinceLastWrite = false;
         transitionDocState(session, deriveContentState(session), "user_doc_write", { mode: "normalize" });
         const nextTitle = session.titlePinned
           ? null
-          : deriveTitleFromSections(session.legacySections);
+          : deriveTitleFromDoc(session.doc);
         if (nextTitle && nextTitle !== session.title) {
           session.title = nextTitle;
           yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };

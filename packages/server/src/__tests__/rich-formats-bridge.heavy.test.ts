@@ -817,7 +817,6 @@ async function seedRestoredSession(title: string, pmDoc: PmDoc): Promise<string>
         docState: { kind: "editing" },
         docVersion: 1,
         lastSyncedDocumentSnapshot: 1,
-        legacySections: [],
         doc: pmDoc,
         materials: [],
         title,

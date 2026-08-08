@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { HomeFeed, SessionMeta, LegacySection } from "@qingagent/contract-ts";
-import { listHomeSessionThreads, pmToHomeArticleMeta } from "@qingagent/core";
+import type { HomeFeed, SessionMeta } from "@qingagent/contract-ts";
+import { hasCanonicalDoc, listHomeSessionThreads, pmToHomeArticleMeta } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { sessionManager } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
@@ -21,7 +21,7 @@ homeRoutes.get("/home", async (c) => {
     const articleMeta = doc
       ? pmToHomeArticleMeta(doc, { fallbackTitle: meta.title || t.title })
       : null;
-    const summary = articleMeta?.description ?? buildDocPreview(meta.legacySections) ?? "未开始";
+    const summary = articleMeta?.description ?? buildDocPreview(doc) ?? "未开始";
 
     return {
       id: t.id,
@@ -61,37 +61,14 @@ homeRoutes.delete("/sessions/:id", async (c) => {
 });
 
 function resolveHomePmDoc(meta: QingagentThreadMetadata): PmDoc | null {
-  if (meta.doc) return meta.doc;
-  if (!meta.legacySections || meta.legacySections.length === 0) return null;
-  try {
-    return legacySectionsToPm(meta.legacySections as never);
-  } catch {
-    return null;
-  }
+  return hasCanonicalDoc(meta) ? meta.doc ?? null : null;
 }
 
-function buildDocPreview(sections: LegacySection[] | undefined): string | null {
-  const text = (sections ?? [])
-    .map(sectionText)
-    .join(" ")
+function buildDocPreview(doc: PmDoc | null): string | null {
+  if (!doc) return null;
+  const text = pmToPlainText(doc)
     .replace(/\s+/g, " ")
     .trim();
   if (!text) return null;
   return text.length > 42 ? `${text.slice(0, 42)}...` : text;
-}
-
-function sectionText(section: LegacySection): string {
-  if (section.kind === "image") {
-    return section.data.caption ?? section.data.alt;
-  }
-  if ("text" in section.data && typeof section.data.text === "string") {
-    return section.data.text;
-  }
-  if ("body" in section.data && typeof section.data.body === "string") {
-    return section.data.body;
-  }
-  if (section.kind === "table") {
-    return [section.data.head.join(" "), ...section.data.rows.map((row) => row.join(" "))].join(" ");
-  }
-  return "";
 }

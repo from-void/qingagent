@@ -39,7 +39,6 @@ describe("GET /home content edit time", () => {
           docState: { kind: "editing" },
           docVersion: 1,
           lastSyncedDocumentSnapshot: 1,
-          legacySections: [],
           materials: [],
           title: "内容时间",
           runId: null,

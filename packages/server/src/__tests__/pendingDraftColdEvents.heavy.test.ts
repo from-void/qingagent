@@ -127,7 +127,6 @@ describe("GET /api/v1/events 冷恢复待审冲突", () => {
         docVersion: 5,
         lastContentEditedAt: "2026-01-01T00:00:00.000Z",
         doc: current,
-        legacySections: pmToLegacySections(current),
         messages: [],
       },
     });

@@ -6,10 +6,14 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getAppSetting, SETTING_DEEPSEEK_GLOBAL_KEY } from "../src/db/appSettingsRepo.js";
-import { getDocumentsClient } from "../src/db/documentsClient.js";
-import { ensureMigrated } from "../src/db/migrations.js";
-import { estimateCostCny } from "../src/llm/modelPricing.js";
+import {
+  SETTING_DEEPSEEK_GLOBAL_KEY,
+  ensureMigrated,
+  getAppSetting,
+  getDocumentsClient,
+} from "@qingagent/db";
+import { PRICING_SCHEDULE } from "../src/llm/modelPricing.js";
+import { priceUsageBalanceLedger } from "../src/llm/usageBalancePricing.js";
 
 interface Baseline {
   capturedAt: string;
@@ -70,36 +74,34 @@ if (baseline.keySource !== keySource) {
 
 await ensureMigrated();
 const rows = await getDocumentsClient().execute({
-  sql: `SELECT model_id,
-      SUM(input_tokens) AS input_tokens,
-      SUM(output_tokens) AS output_tokens,
-      SUM(cache_hit_tokens) AS cache_hit_tokens,
-      SUM(cache_miss_tokens) AS cache_miss_tokens,
-      SUM(CASE WHEN usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
-      COUNT(*) AS calls
+  sql: `SELECT created_at, model_id, usage_state,
+      input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens,
+      cache_creation_tokens
     FROM llm_usage_events
     WHERE created_at >= ?
       AND key_origin IN ('env', 'global-db')
       AND model_id IN ('deepseek-v4-flash', 'deepseek-v4-pro')
-    GROUP BY model_id`,
+    ORDER BY created_at`,
   args: [baseline.capturedAt],
 });
-let ledgerCostCny = 0;
-let calls = 0;
-let missingCalls = 0;
-for (const raw of rows.rows) {
+const ledger = priceUsageBalanceLedger(PRICING_SCHEDULE, rows.rows.map((raw) => {
   const row = raw as unknown as Record<string, unknown>;
-  ledgerCostCny += estimateCostCny(String(row.model_id), {
-    input: Number(row.input_tokens ?? 0),
-    output: Number(row.output_tokens ?? 0),
-    cacheHit: Number(row.cache_hit_tokens ?? 0),
-    cacheMiss: Number(row.cache_miss_tokens ?? 0),
-  });
-  calls += Number(row.calls ?? 0);
-  missingCalls += Number(row.missing_calls ?? 0);
-}
+  const rawState = String(row.usage_state ?? "missing");
+  const usageState = rawState === "recorded" || rawState === "estimated" ||
+    rawState === "billing_unknown" ? rawState : "missing";
+  return {
+    occurredAt: String(row.created_at ?? ""),
+    modelId: String(row.model_id ?? ""),
+    usageState,
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
+    cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
+    cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
+    cacheCreationTokens: Number(row.cache_creation_tokens ?? 0),
+  };
+}));
 const observedSpendCny = baseline.totalBalance - currentBalance;
-const differenceCny = observedSpendCny - ledgerCostCny;
+const differenceCny = observedSpendCny - ledger.ledgerCostCny;
 const alertThresholdCny = Number(process.env.QINGAGENT_USAGE_BALANCE_ALERT_CNY ?? "0.1");
 const alert = Math.abs(differenceCny) > alertThresholdCny;
 console.log(JSON.stringify({
@@ -113,11 +115,19 @@ console.log(JSON.stringify({
   baselineBalance: baseline.totalBalance,
   currentBalance,
   observedSpendCny,
-  ledgerCostCny,
+  ledgerCostCny: ledger.ledgerCostCny,
+  estimatedCostCny: ledger.estimatedCostCny,
   differenceCny,
   alertThresholdCny,
-  calls,
-  missingCalls,
-  coverageRate: calls > 0 ? (calls - missingCalls) / calls : null,
+  calls: ledger.calls,
+  recordedCalls: ledger.recordedCalls,
+  estimatedCalls: ledger.estimatedCalls,
+  missingCalls: ledger.missingCalls,
+  billingUnknownCalls: ledger.billingUnknownCalls,
+  pricedCalls: ledger.pricedCalls,
+  unpricedCalls: ledger.unpricedCalls,
+  estimatedPricedCalls: ledger.estimatedPricedCalls,
+  estimatedUnpricedCalls: ledger.estimatedUnpricedCalls,
+  coverageRate: ledger.coverageRate,
 }, null, 2));
 if (alert) process.exitCode = 2;

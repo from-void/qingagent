@@ -1,0 +1,21 @@
+Golden Export
+
+Alpha link
+Beta
+
+Quoted evidence
+Nested left
+Nested right
+
+First item
+Nested item
+
+Metric	Value
+Coverage	100%
+
+const stable = true;
+
+Left column
+Right column
+
+Local media caption

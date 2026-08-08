@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import type { LegacySection } from "@qingagent/contract-ts";
+import type { PmDoc } from "@qingagent/pm-schema";
 import { toDocx } from "../export/toDocx.js";
 import { toHtml } from "../export/toHtml.js";
 import { toPdf } from "../export/toPdf.js";
@@ -23,11 +23,15 @@ const filenames = [
   { encoded: "my%20photo.png", decoded: "my photo.png" },
 ];
 
-function imageDoc(src: string): LegacySection[] {
-  return [
-    { kind: "p", data: { text: "前言" } },
-    { kind: "image", data: { src, alt: "图", caption: null, width: null, height: null } },
-  ] as unknown as LegacySection[];
+function imageDoc(src: string): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      { type: "paragraph", attrs: { blockId: "intro" }, content: [{ type: "text", text: "前言" }] },
+      { type: "image", attrs: { blockId: "image", src, alt: "图", title: null, caption: null, width: null, height: null } },
+    ],
+  };
 }
 
 describe("本地栅格图上传导出", () => {

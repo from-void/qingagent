@@ -25,7 +25,6 @@ import {
   type ISectionOptions,
   type ParagraphChild,
 } from "docx";
-import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmOrderedListStyle, PmTableCellNode, PmThemeColor } from "@qingagent/pm-schema";
 import {
   PM_THEME_HIGHLIGHT_COLOR_VALUES,
@@ -38,11 +37,9 @@ import {
   documentLeadsWithTitle,
   drawioFallbackMessage,
   isDrawioExportSourceNormalized,
-  isPmDocDocument,
   isRenderableSvg,
   readLocalUploadBuffer,
   readLocalUploadText,
-  sectionText,
   svgExceedsExportByteLimit,
   type ExportDocument,
   type ExportOptions,
@@ -205,13 +202,9 @@ export async function toDocx(
   // 先补渲染缺缓存的 Mermaid；drawio 只消费客户端持久化的安全 SVG 缓存。
   // DOCX 再把可用 SVG 栅格成 PNG 嵌入，缺失/失败则按 W4 设计回退源码。
   const prepared = await withRenderedDiagrams(document);
-  const footnotes = isPmDocDocument(prepared)
-    ? collectExportFootnotes(prepared)
-    : { definitions: [], numberById: new Map<string, number>() };
+  const footnotes = collectExportFootnotes(prepared);
   // 批量预渲染文档中所有数学公式(单个 Chromium 上下文,避免逐公式开关上下文)。
-  const mathImages = isPmDocDocument(prepared)
-    ? await buildMathImages(collectMathFormulas(prepared))
-    : new Map<string, MathRasterResult | null>();
+  const mathImages = await buildMathImages(collectMathFormulas(prepared));
   const numbering = createDocxNumberingRegistry();
   const title = options.title?.trim();
   const titleChildren = [
@@ -225,29 +218,14 @@ export async function toDocx(
         ]
       : []),
   ];
-  const sections: readonly ISectionOptions[] = isPmDocDocument(prepared)
-    ? await pmDocToDocxSections(
-        prepared,
-        titleChildren,
-        mathImages,
-        numbering,
-        footnotes.numberById,
-        reportDegradation,
-      )
-    : [{
-        children: [
-          ...titleChildren,
-          ...(await Promise.all(prepared.map((section) =>
-            sectionToDocx(
-              section,
-              numbering,
-              section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
-              DOCX_CONTENT_WIDTH_TWIPS,
-              reportDegradation,
-            ),
-          ))).flat(),
-        ],
-      }];
+  const sections: readonly ISectionOptions[] = await pmDocToDocxSections(
+    prepared,
+    titleChildren,
+    mathImages,
+    numbering,
+    footnotes.numberById,
+    reportDegradation,
+  );
 
   const doc = new Document({
     styles: {
@@ -481,9 +459,8 @@ async function pmBlockToDocx(
       )];
     case "diagram":
       // 图表块:有渲染好的 svg 就当图片嵌入(走 image 的 svg→png 路径),否则源码降级为 code 块。
-      return sectionToDocx(
-        { kind: "diagram", data: { lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg } },
-        numbering,
+      return diagramToDocx(
+        node.attrs,
         isDrawioExportSourceNormalized(node.attrs),
         opts.availableWidthTwips,
         reportDegradation,
@@ -567,19 +544,14 @@ async function pmBlockToDocx(
         }),
       ];
     case "image":
-      return sectionToDocx(
+      return imageToDocx(
         {
-          kind: "image",
-          data: {
-            src: node.attrs.src,
-            alt: node.attrs.alt ?? "",
-            caption: node.attrs.caption ?? null,
-            width: node.attrs.width ?? null,
-            height: node.attrs.height ?? null,
-          },
+          src: node.attrs.src,
+          alt: node.attrs.alt ?? "",
+          caption: node.attrs.caption ?? null,
+          width: node.attrs.width ?? null,
+          height: node.attrs.height ?? null,
         },
-        numbering,
-        false,
         opts.availableWidthTwips,
         reportDegradation,
       );
@@ -964,41 +936,55 @@ function twipsToPixels(twips: number): number {
   return Math.max(1, twips / DOCX_TWIPS_PER_PIXEL);
 }
 
+type DocxImageInput = {
+  src: string;
+  alt: string;
+  caption: string | null;
+  width: number | null;
+  height: number | null;
+};
+
+type DocxDiagramInput = {
+  lang: "mermaid" | "drawio";
+  source: string;
+  svg?: string | null;
+};
+
 function imageSize(
-  section: Extract<LegacySection, { kind: "image" }>,
+  image: DocxImageInput,
   availableWidthTwips: number,
 ): { width: number; height: number } {
-  const naturalWidth = section.data.width ?? 800;
-  const naturalHeight = section.data.height ?? 450;
+  const naturalWidth = image.width ?? 800;
+  const naturalHeight = image.height ?? 450;
   const width = Math.min(480, twipsToPixels(availableWidthTwips), naturalWidth);
   const height = Math.max(1, Math.round((width * naturalHeight) / naturalWidth));
   return { width, height };
 }
 
-function dataImage(section: Extract<LegacySection, { kind: "image" }>): { buffer: Buffer; type: "png" | "jpg" | "gif" | "bmp" } | null {
-  const match = section.data.src.match(/^data:image\/(png|jpe?g|gif|bmp);base64,([A-Za-z0-9+/=]+)$/i);
+function dataImage(image: DocxImageInput): { buffer: Buffer; type: "png" | "jpg" | "gif" | "bmp" } | null {
+  const match = image.src.match(/^data:image\/(png|jpe?g|gif|bmp);base64,([A-Za-z0-9+/=]+)$/i);
   if (!match) return null;
   const type = match[1]!.toLowerCase() === "jpeg" ? "jpg" : match[1]!.toLowerCase();
   return { buffer: Buffer.from(match[2]!, "base64"), type: type as "png" | "jpg" | "gif" | "bmp" };
 }
 
 async function imageRun(
-  section: Extract<LegacySection, { kind: "image" }>,
+  image: DocxImageInput,
   availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
   reportDegradation?: ReportExportDegradation,
 ): Promise<ImageRun | null> {
-  const size = imageSize(section, availableWidthTwips);
-  const data = dataImage(section);
+  const size = imageSize(image, availableWidthTwips);
+  const data = dataImage(image);
   if (data) {
     return new ImageRun({
       type: data.type,
       data: data.buffer,
       transformation: size,
-      altText: { name: section.data.alt, title: section.data.alt, description: section.data.caption ?? section.data.alt },
+      altText: { name: image.alt, title: image.alt, description: image.caption ?? image.alt },
     });
   }
 
-  const src = section.data.src;
+  const src = image.src;
   // svg 只从 data:image/svg+xml 或本地 .svg 取;绝不把栅格图当文本读成 svg。
   // DOCX 不能可靠渲染 SVG,用 headless Chromium 把 SVG 栅格成 PNG 再嵌入(比 sharp 更稳、字体一致)。
   const isSvgSrc = /^data:image\/svg\+xml/i.test(src) || /\.svg(?:[?#].*)?$/i.test(src);
@@ -1017,7 +1003,7 @@ async function imageRun(
       type: "png",
       data: raster.data,
       transformation: { width, height },
-      altText: { name: section.data.alt, title: section.data.alt, description: section.data.caption ?? section.data.alt },
+      altText: { name: image.alt, title: image.alt, description: image.caption ?? image.alt },
     });
   }
 
@@ -1029,201 +1015,99 @@ async function imageRun(
       type: (ext === "jpeg" ? "jpg" : ext) as "png" | "jpg" | "gif" | "bmp",
       data: buffer,
       transformation: size,
-      altText: { name: section.data.alt, title: section.data.alt, description: section.data.caption ?? section.data.alt },
+      altText: { name: image.alt, title: image.alt, description: image.caption ?? image.alt },
     });
   }
   return null;
 }
 
-async function sectionToDocx(
-  section: LegacySection,
-  numbering: DocxNumberingRegistry,
-  sourceNormalized = false,
-  availableWidthTwips = DOCX_CONTENT_WIDTH_TWIPS,
+async function diagramToDocx(
+  diagram: DocxDiagramInput,
+  sourceNormalized: boolean,
+  availableWidthTwips: number,
   reportDegradation?: ReportExportDegradation,
 ): Promise<Array<Paragraph | Table>> {
-  switch (section.kind) {
-    case "diagram": {
-      const typeLabel = section.data.lang === "drawio" ? "draw.io" : "Mermaid";
-      const viewerAction = section.data.lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
-      const fallbackNotice = (oversized: boolean) => new Paragraph({
-        children: [new TextRun({
-          text: section.data.lang === "drawio"
-            ? drawioFallbackMessage(oversized, sourceNormalized)
-            : oversized
-              ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
-              : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,
-          font: FONT,
-          size: 18,
-          color: "666666",
-        })],
-        shading: { type: ShadingType.CLEAR, fill: "F2F0EB" },
-        spacing: { after: 80 },
-      });
-      // svg 看起来合法且不超大才走图片(sharp svg→png);失败/无 svg 一律回退源码代码块,
-      // 绝不丢 Mermaid 源码(原先 sharp 失败会落到 [图: 图表] 占位,源码尽失)。
-      if (section.data.svg && svgExceedsExportByteLimit(section.data.svg)) {
-        return [
-          fallbackNotice(true),
-          ...await sectionToDocx(
-            { kind: "code", data: { body: section.data.source, language: section.data.lang } },
-            numbering,
-            false,
-            availableWidthTwips,
-            reportDegradation,
-          ),
-        ];
-      }
-      if (isRenderableSvg(section.data.svg)) {
-        const run = await imageRun(
-          {
-            kind: "image",
-            data: { src: `data:image/svg+xml,${encodeURIComponent(section.data.svg)}`, alt: "图表", caption: null, width: null, height: null },
-          },
-          availableWidthTwips,
-          reportDegradation,
-        );
-        if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
-      }
-      return [
-        fallbackNotice(false),
-        ...await sectionToDocx(
-          { kind: "code", data: { body: section.data.source, language: section.data.lang } },
-          numbering,
-          false,
-          availableWidthTwips,
-          reportDegradation,
-        ),
-      ];
-    }
-    case "quote":
-      return [
-        new Paragraph({
-          text: section.data.text,
-          indent: { left: 360 },
-          spacing: { before: 80, after: 80 },
-        }),
-      ];
-    case "hr":
-      return [horizontalRuleParagraph()];
-    case "list": {
-      const reference = section.data.ordered
-        ? numbering.referenceFor(section, "decimal", 1)
-        : BULLET_NUMBERING;
-      return section.data.items.map(
-        (it) =>
-          new Paragraph({
-            children: [new TextRun({ text: it, font: FONT })],
-            numbering: {
-              reference,
-              level: 0,
-            },
-          }),
-      );
-    }
-    case "h1":
-      return [
-        new Paragraph({
-          text: sectionText(section),
-          heading: HeadingLevel.HEADING_1,
-        }),
-      ];
-    case "h2":
-      return [
-        new Paragraph({
-          text: sectionText(section),
-          heading: HeadingLevel.HEADING_2,
-        }),
-      ];
-    case "p":
-    case "penNote":
-      return sectionText(section)
-        .split(/\n{2,}/)
-        .filter(Boolean)
-        .map(
-          (text) =>
-            new Paragraph({
-              children: [new TextRun({ text, font: FONT })],
-              spacing: { after: 180 },
-            }),
-        );
-    case "code":
-      return [
-        new Paragraph({
-          children: [new TextRun({ text: section.data.body.trim(), font: FONT })],
-          spacing: { after: 180 },
-        }),
-      ];
-    case "table":
-      return [
-        new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          rows: [
-            new TableRow({
-              children: section.data.head.map(
-                (cell) =>
-                  new TableCell({
-                    children: [
-                      new Paragraph({
-                        children: [new TextRun({ text: cell, bold: true, font: FONT })],
-                      }),
-                    ],
-                  }),
-              ),
-            }),
-            ...section.data.rows.map(
-              (row) =>
-                new TableRow({
-                  children: row.map(
-                    (cell) =>
-                      new TableCell({
-                        children: [
-                          new Paragraph({
-                            children: [new TextRun({ text: cell, font: FONT })],
-                          }),
-                        ],
-                      }),
-                  ),
-                }),
-            ),
-          ],
-        }),
-      ];
-    case "image": {
-      const rawSvg = /^data:image\/svg\+xml/i.test(section.data.src)
-        ? decodeSvgDataUrl(section.data.src)
-        : /\.svg(?:[?#].*)?$/i.test(section.data.src)
-          ? readLocalUploadText(section.data.src)
-          : null;
-      if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
-        return [
-          new Paragraph({
-            children: [new TextRun({ text: `[图过大未导出：${section.data.alt}]`, font: FONT })],
-            spacing: { after: 180 },
-          }),
-        ];
-      }
-      const run = await imageRun(section, availableWidthTwips, reportDegradation);
-      const caption = section.data.caption ?? section.data.alt;
-      if (!run) {
-        return [
-          new Paragraph({
-            children: [new TextRun({ text: `[图片：${section.data.alt}]`, font: FONT })],
-            spacing: { after: 180 },
-          }),
-        ];
-      }
-      return [
-        new Paragraph({ children: [run], spacing: { after: caption ? 60 : 180 } }),
-        ...(caption
-          ? [
-              new Paragraph({
-                children: [new TextRun({ text: caption, font: FONT, italics: true })],
-                spacing: { after: 180 },
-              }),
-            ]
-          : []),
-      ];
-    }
+  const typeLabel = diagram.lang === "drawio" ? "draw.io" : "Mermaid";
+  const viewerAction = diagram.lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
+  const fallbackNotice = (oversized: boolean) => new Paragraph({
+    children: [new TextRun({
+      text: diagram.lang === "drawio"
+        ? drawioFallbackMessage(oversized, sourceNormalized)
+        : oversized
+          ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
+          : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,
+      font: FONT,
+      size: 18,
+      color: "666666",
+    })],
+    shading: { type: ShadingType.CLEAR, fill: "F2F0EB" },
+    spacing: { after: 80 },
+  });
+
+  if (diagram.svg && svgExceedsExportByteLimit(diagram.svg)) {
+    return [fallbackNotice(true), diagramSourceParagraph(diagram.source)];
   }
+  if (isRenderableSvg(diagram.svg)) {
+    const run = await imageRun(
+      {
+        src: `data:image/svg+xml,${encodeURIComponent(diagram.svg)}`,
+        alt: "图表",
+        caption: null,
+        width: null,
+        height: null,
+      },
+      availableWidthTwips,
+      reportDegradation,
+    );
+    if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
+  }
+  return [fallbackNotice(false), diagramSourceParagraph(diagram.source)];
+}
+
+function diagramSourceParagraph(source: string): Paragraph {
+  return new Paragraph({
+    children: [new TextRun({ text: source.trim(), font: FONT })],
+    spacing: { after: 180 },
+  });
+}
+
+async function imageToDocx(
+  image: DocxImageInput,
+  availableWidthTwips: number,
+  reportDegradation?: ReportExportDegradation,
+): Promise<Array<Paragraph | Table>> {
+  const rawSvg = /^data:image\/svg\+xml/i.test(image.src)
+    ? decodeSvgDataUrl(image.src)
+    : /\.svg(?:[?#].*)?$/i.test(image.src)
+      ? readLocalUploadText(image.src)
+      : null;
+  if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
+    return [
+      new Paragraph({
+        children: [new TextRun({ text: `[图过大未导出：${image.alt}]`, font: FONT })],
+        spacing: { after: 180 },
+      }),
+    ];
+  }
+  const run = await imageRun(image, availableWidthTwips, reportDegradation);
+  const caption = image.caption ?? image.alt;
+  if (!run) {
+    return [
+      new Paragraph({
+        children: [new TextRun({ text: `[图片：${image.alt}]`, font: FONT })],
+        spacing: { after: 180 },
+      }),
+    ];
+  }
+  return [
+    new Paragraph({ children: [run], spacing: { after: caption ? 60 : 180 } }),
+    ...(caption
+      ? [
+          new Paragraph({
+            children: [new TextRun({ text: caption, font: FONT, italics: true })],
+            spacing: { after: 180 },
+          }),
+        ]
+      : []),
+  ];
 }

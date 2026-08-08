@@ -1,8 +1,7 @@
-import { legacySectionsToPm, pmToMarkdown } from "@qingagent/pm-schema";
+import { pmToMarkdown } from "@qingagent/pm-schema";
 import {
   createExportDegradationReporter,
   documentLeadsWithTitle,
-  isPmDocDocument,
   type ExportDocument,
   type ExportOptions,
 } from "./shared.js";
@@ -11,12 +10,9 @@ export function toMarkdown(
   document: ExportDocument,
   options: ExportOptions = {},
 ): string {
-  const doc = isPmDocDocument(document)
-    ? document
-    : legacySectionsToPm(document as never);
-  const body = pmToMarkdown(doc, { baseUrl: options.baseUrl }).trim();
+  const body = pmToMarkdown(document, { baseUrl: options.baseUrl }).trim();
   const reportDegradation = createExportDegradationReporter(options.onDegradation);
-  if (nodeHasType(doc, "columnList")) reportDegradation("markdown-columns-flattened");
+  if (nodeHasType(document, "columnList")) reportDegradation("markdown-columns-flattened");
   const title = normalizeMarkdownTitle(options.title);
   if (!title) return body;
   // 正文开头已是同名 H1 就不再加一遍。用结构层 documentLeadsWithTitle(忽略 bold/italic

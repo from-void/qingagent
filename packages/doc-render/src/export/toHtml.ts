@@ -1,4 +1,4 @@
-import { isAllowedLinkHref, type LegacySection } from "@qingagent/contract-ts";
+import { isAllowedLinkHref } from "@qingagent/contract-ts";
 import type {
   PmBlockNode,
   PmDoc,
@@ -26,20 +26,17 @@ import {
   documentLeadsWithTitle,
   drawioFallbackMessage,
   isDrawioExportSourceNormalized,
-  isPmDocDocument,
   isRenderableSvg,
   MAX_EXPORT_SVG_BYTES,
   readLocalUploadBuffer,
   readLocalUploadText,
-  sectionText,
-  stripFormatting,
   svgExceedsExportByteLimit,
   type ExportDocument,
   type ExportOptions,
 } from "./shared.js";
 
 /**
- * 把文档(PmDoc 或 Legacy 段)序列化成一份「自包含的独立 HTML 文档」,内嵌导出打印样式
+ * 把 PmDoc 序列化成一份「自包含的独立 HTML 文档」,内嵌导出打印样式
  * (documentStyles.ts)。HTML 结构镜像前端 .wf-doc 文档纸,配套 CSS 复刻奶白纸暖墨观感,
  * 供 htmlToPdf.ts 用 headless Chromium 打印成高保真 PDF。
  *
@@ -56,13 +53,9 @@ let activeFootnoteRefIds = new Map<string, string[]>();
 
 export function toHtml(document: ExportDocument, options: ExportOptions = {}): string {
   mathUsedInRender = false;
-  activeFootnotes = isPmDocDocument(document)
-    ? collectExportFootnotes(document)
-    : { definitions: [], numberById: new Map() };
+  activeFootnotes = collectExportFootnotes(document);
   activeFootnoteRefIds = new Map();
-  const body = isPmDocDocument(document)
-    ? document.content.map(pmBlockToHtml).join("\n")
-    : document.map(legacySectionToHtml).join("\n");
+  const body = document.content.map(pmBlockToHtml).join("\n");
   const title = options.title?.trim();
   // 正文开头已是同名标题就不再加一遍(去重),否则补一个文档标题
   const titleHtml = title && !documentLeadsWithTitle(document, title)
@@ -468,53 +461,6 @@ function imageToHtml(opts: {
     return wrapImage(`<img src="${escapeAttr(dataImage)}" alt="${escapeAttr(alt)}"${imageSizeAttrs}>`);
   }
   return wrapImage(`<div class="doc-file-attach">[图片：${escapeHtml(alt)}]</div>`);
-}
-
-// ============ Legacy 段序列化 ============
-
-function legacySectionToHtml(section: LegacySection): string {
-  switch (section.kind) {
-    case "h1":
-      return `<h1>${escapeHtml(sectionText(section))}</h1>`;
-    case "h2":
-      return `<h2${headingIdAttr(section.data.anchor)}>${escapeHtml(sectionText(section))}</h2>`;
-    case "p":
-      return `<p>${escapeHtml(stripFormatting(section.data.text))}</p>`;
-    case "penNote":
-      return `<aside class="pm-pen-note">${escapeHtml(stripFormatting(section.data.text))}</aside>`;
-    case "quote":
-      return `<blockquote><p>${escapeHtml(stripFormatting(section.data.text))}</p></blockquote>`;
-    case "hr":
-      return "<hr>";
-    case "code":
-      return `<pre class="code-block"><code>${escapeHtml(section.data.body.trim())}</code></pre>`;
-    case "list":
-      return section.data.ordered
-        ? `<ol>${section.data.items.map((i) => `<li>${escapeHtml(stripFormatting(i))}</li>`).join("")}</ol>`
-        : `<ul>${section.data.items.map((i) => `<li>${escapeHtml(stripFormatting(i))}</li>`).join("")}</ul>`;
-    case "table":
-      return `<table><tbody><tr>${section.data.head
-        .map((cell) => `<th>${escapeHtml(stripFormatting(cell))}</th>`)
-        .join("")}</tr>${section.data.rows
-        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(stripFormatting(cell))}</td>`).join("")}</tr>`)
-        .join("")}</tbody></table>`;
-    case "diagram":
-      return diagramToHtml(
-        section.data.lang,
-        section.data.source,
-        section.data.svg,
-        isDrawioExportSourceNormalized(section.data),
-      );
-    case "image":
-      return imageToHtml({
-        src: section.data.src,
-        alt: section.data.alt,
-        caption: section.data.caption,
-        width: section.data.width,
-        height: section.data.height,
-        align: section.data.align ?? null,
-      });
-  }
 }
 
 // ============ 工具 ============

@@ -40,10 +40,9 @@ function summarizeCommandForLog(command: Command): Record<string, unknown> {
       const d = command.data;
       return {
         textLength: d.text?.length ?? 0,
-        mentions: d.mentions?.length ?? 0,
         skills: d.skills?.length ?? 0,
         chips: d.chips?.length ?? 0,
-        fileIds: d.fileIds?.length ?? 0,
+        fileIds: d.fileIds.length,
       };
     }
     case "acceptPatch":

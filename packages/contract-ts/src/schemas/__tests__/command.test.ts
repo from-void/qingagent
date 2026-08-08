@@ -9,7 +9,6 @@ function sendMessageWithChip(chip: unknown): unknown {
     data: {
       sessionId: "s",
       text: "修改",
-      mentions: [],
       skills: [],
       chips: [chip],
       fileIds: [],
@@ -126,56 +125,14 @@ describe("commandSchema", () => {
   it("接受合法 sendMessage", () => {
     const r = commandSchema.safeParse({
       kind: "sendMessage",
-      data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [], fileIds: [] },
+      data: { sessionId: "s", text: "hi", skills: [], chips: [], fileIds: [] },
     });
     expect(r.success).toBe(true);
-  });
-
-  it("拒绝已弃用的非空 mentions 并指引改用 chips", () => {
-    const result = commandSchema.safeParse({
-      kind: "sendMessage",
-      data: {
-        sessionId: "s",
-        text: "hi",
-        mentions: [{ id: "mention-1", domain: { kind: "mention" } }],
-        skills: [],
-        chips: [],
-        fileIds: [],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        path: ["data", "mentions"],
-        message: "mentions is deprecated; use chips instead",
-      }),
-    ]));
-  });
-
-  it("mentions 缺省时补为空数组", () => {
-    const result = commandSchema.safeParse({
-      kind: "sendMessage",
-      data: {
-        sessionId: "s",
-        text: "hi",
-        skills: [],
-        chips: [],
-        fileIds: [],
-      },
-    });
-
-    expect(result.success).toBe(true);
-    if (result.success && result.data.kind === "sendMessage") {
-      expect(result.data.data.mentions).toEqual([]);
-    }
   });
 
   it("sendMessage 文本与资源字符串在 64 KiB 边界通过，加一拒绝", () => {
     const baseData = {
       sessionId: "s",
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],
@@ -225,7 +182,6 @@ describe("commandSchema", () => {
       data: {
         sessionId: "s",
         text: "x",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -401,23 +357,21 @@ describe("commandSchema", () => {
       data: {
         sessionId: "s",
         text: "模型载荷",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
-        turnContext: "[系统:用户当前正查看衍生稿(doc_id: d-1)]",
         turnKind: "generateDerivative",
         displayCard: {
           icon: "✦",
           title: "生成公众号稿",
           lines: [{ label: "模板", value: "深度长文" }],
+          status: "done",
         },
       },
     });
     expect(r.success).toBe(true);
     if (r.success && r.data.kind === "sendMessage") {
       expect(r.data.data.displayCard?.title).toBe("生成公众号稿");
-      expect(r.data.data.turnContext).toContain("doc_id: d-1");
       expect(r.data.data.turnKind).toBe("generateDerivative");
     }
   });
@@ -428,7 +382,6 @@ describe("commandSchema", () => {
       data: {
         sessionId: "s",
         text: "生成衍生稿",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -441,7 +394,6 @@ describe("commandSchema", () => {
     const base = {
       sessionId: "s",
       text: "把第二段改短一点",
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],
@@ -476,7 +428,7 @@ describe("commandSchema", () => {
       data: {
         sessionId: "s",
         text: "对当前文档做去AI味审查",
-        mentions: [], skills: [], chips: [], fileIds: [],
+    skills: [], chips: [], fileIds: [],
         reviewContext: { type: "deai", templateId: "review-deai-deep", templateName: "深度重写" },
       },
     });
@@ -491,7 +443,7 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse({
       kind: "sendMessage",
       data: {
-        sessionId: "s", text: "审查", mentions: [], skills: [], chips: [], fileIds: [],
+        sessionId: "s", text: "审查", skills: [], chips: [], fileIds: [],
         reviewContext: { type: "unknown", templateId: "x", templateName: "x" },
       },
     }).success).toBe(false);
@@ -501,22 +453,11 @@ describe("commandSchema", () => {
     const result = commandSchema.safeParse({
       kind: "sendMessage",
       data: {
-        sessionId: "s", text: "角色审查", mentions: [], skills: [], chips: [], fileIds: [],
+        sessionId: "s", text: "角色审查", skills: [], chips: [], fileIds: [],
         reviewContext: { type: "role", templateId: "review-role-engineer", templateName: "研发工程师" },
       },
     });
     expect(result.success).toBe(true);
-  });
-
-  it("fileIds 缺省时补为空数组", () => {
-    const r = commandSchema.safeParse({
-      kind: "sendMessage",
-      data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [] },
-    });
-    expect(r.success).toBe(true);
-    if (r.success && r.data.kind === "sendMessage") {
-      expect(r.data.data.fileIds).toEqual([]);
-    }
   });
 
   it("接受合法 reparseMaterial", () => {
@@ -576,9 +517,9 @@ describe("commandSchema", () => {
     ["数组 body", []],
     ["kind 非字符串", { kind: 1, data: {} }],
     ["sendMessage 缺 data", { kind: "sendMessage" }],
-    ["sendMessage sessionId 空", { kind: "sendMessage", data: { sessionId: "", text: "x", mentions: [], skills: [], chips: [], fileIds: [] } }],
-    ["fileIds 含非 UUID", { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: ["nope"] } }],
-    ["fileIds 含非字符串", { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: [1] } }],
+    ["sendMessage sessionId 空", { kind: "sendMessage", data: { sessionId: "", text: "x", skills: [], chips: [], fileIds: [] } }],
+    ["fileIds 含非 UUID", { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [], fileIds: ["nope"] } }],
+    ["fileIds 含非字符串", { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [], fileIds: [1] } }],
     ["cancelStream 缺 sessionId/streamId", { kind: "cancelStream", data: {} }],
     ["cancelStream sessionId 空", { kind: "cancelStream", data: { sessionId: "" } }],
     ["acceptPatch 两者皆空", { kind: "acceptPatch", data: {} }],

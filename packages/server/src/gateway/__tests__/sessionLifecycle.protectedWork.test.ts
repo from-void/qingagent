@@ -9,7 +9,6 @@ function message(review = false): Command {
     data: {
       sessionId: "protected-work",
       text: review ? "开始审查" : "普通消息",
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],

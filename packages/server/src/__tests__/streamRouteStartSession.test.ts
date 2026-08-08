@@ -261,7 +261,6 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
         data: {
           sessionId,
           text: "克隆标签的同一首提",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -346,7 +345,6 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
       data: {
         sessionId,
         text: "重新生成这条失败消息",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],

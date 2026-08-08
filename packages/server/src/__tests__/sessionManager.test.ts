@@ -37,7 +37,6 @@ describe("handleCommand", () => {
       data: {
         sessionId: "does-not-exist",
         text: "test",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -55,7 +54,6 @@ describe("handleCommand", () => {
       data: {
         sessionId: "no-such-session",
         text: "here are files",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["some-file-id"],
@@ -67,24 +65,4 @@ describe("handleCommand", () => {
     ).rejects.toThrow("Session not found");
   });
 
-  it("normalizes missing fileIds field to empty array", async () => {
-    // When fileIds field is absent (old client), bridgeHandler
-    // normalizes it to []. This should not cause an error beyond
-    // the expected "Session not found".
-    const command: Command = {
-      kind: "sendMessage",
-      data: {
-        sessionId: "missing-session",
-        text: "old client format",
-        mentions: [],
-        skills: [],
-        chips: [],
-        fileIds: [],
-      },
-    };
-
-    await expect(
-      collectFrames(handleCommand(command)),
-    ).rejects.toThrow("Session not found");
-  });
 });

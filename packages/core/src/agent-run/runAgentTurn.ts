@@ -184,7 +184,6 @@ export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
    * @deprecated 旧客户端兼容。仅追加到本次模型调用的末条 user message，
    * 不进入持久消息、可见气泡或 system prompt 前缀。
   */
-  turnContext?: string;
   /** 受控的用户动作分类，仅用于 provider 遥测归属。 */
   turnKind?: AgentTurnKind;
   /** 发送瞬间界面激活的文档；服务端据此生成仅本轮有效的可信路由提示。 */
@@ -643,7 +642,7 @@ export async function* runAgentTurn(
 
     const activeDocumentTurnContext = runtimeOptions.activeDocument
       ? buildActiveDocumentTurnContext(runtimeOptions.activeDocument)
-      : runtimeOptions.turnContext;
+      : undefined;
     const messagesForModel = appendTurnContextToLatestUserMessage(
       omContextForTurn.messagesForModel,
       activeDocumentTurnContext,

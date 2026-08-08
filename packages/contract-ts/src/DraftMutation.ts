@@ -6,13 +6,12 @@ export const DRAFT_MARK_COLORS = [
 
 export type DraftMarkColor = (typeof DRAFT_MARK_COLORS)[number];
 
-/** editDraft markText 实际支持的 AI-IR mark；strikeThrough 为历史兼容别名。 */
+/** editDraft markText 实际支持的 AI-IR mark。 */
 export type DraftTextMark =
   | { type: "bold" }
   | { type: "italic" }
   | { type: "underline" }
   | { type: "strike" }
-  | { type: "strikeThrough" }
   | { type: "code" }
   | { type: "link"; href: string; title?: string | null | undefined }
   | { type: "textColor" | "highlight"; color: DraftMarkColor };

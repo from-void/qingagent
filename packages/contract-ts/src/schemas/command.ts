@@ -104,7 +104,7 @@ const actionCardDataSchema = z.object({
     label: z.string().max(MAX_COMMAND_STRING_LENGTH),
     value: z.string().max(MAX_COMMAND_STRING_LENGTH),
   })).max(MAX_COMMAND_ARRAY_LENGTH),
-  status: z.enum(["running", "done", "aborted", "failed"]).optional(),
+  status: z.enum(["running", "done", "aborted", "failed"]),
 }) satisfies z.ZodType<ActionCardData>;
 
 const reviewTypeSchema = z.enum([
@@ -128,19 +128,11 @@ const activeDocumentTargetSchema = z.discriminatedUnion("kind", [
 const sendMessageDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   text: z.string().max(MAX_COMMAND_STRING_LENGTH),
-  mentions: z
-    .array(resourceRefSchema)
-    .max(0, "mentions is deprecated; use chips instead")
-    .default([]),
   skills: z.array(skillRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   chips: z.array(chatChipSchema).max(MAX_COMMAND_ARRAY_LENGTH),
-  // fileIds 缺省即 []:契约类型要求 fileIds 存在,但旧手写校验容忍其缺省(视作无文件)。
-  // .default([]) 让"输入可省=与旧行为等价、输出恒为 string[]=与契约类型精确等价"两者兼得;
-  // 下游 bridgeHandler 亦以 `fileIds ?? []` 消费,[] 与 undefined 行为一致。
-  fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH).default([]),
+  fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   clientMessageId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
-  turnContext: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   turnKind: z.literal("generateDerivative").optional(),
   activeDocument: activeDocumentTargetSchema.optional(),
   displayCard: actionCardDataSchema.optional(),

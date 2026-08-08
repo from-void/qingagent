@@ -7,7 +7,6 @@
  */
 
 export type {
-  AgentMessage,
   ActionCardData,
   AskUserAnswer,
   AskUserAnswerCardPart,

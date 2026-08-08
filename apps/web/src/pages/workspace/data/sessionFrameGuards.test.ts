@@ -156,7 +156,6 @@ describe("uploadFiles", () => {
       data: {
         sessionId: "session-multifile",
         text: "请分别读取两个文件",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: uploadedAssets.map((asset) => asset.fileId),

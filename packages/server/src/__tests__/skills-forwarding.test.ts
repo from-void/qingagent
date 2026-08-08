@@ -43,8 +43,7 @@ describe("bridge skill forwarding", () => {
       data: {
         sessionId: sessionMeta.data.sessionId,
         text: "抓取这个链接",
-        mentions: [],
-        skills,
+                skills,
         chips: [],
         fileIds: [],
       },
@@ -108,7 +107,6 @@ describe("bridge skill forwarding", () => {
       data: {
         sessionId: sessionMeta.data.sessionId,
         text: "同一条消息",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],

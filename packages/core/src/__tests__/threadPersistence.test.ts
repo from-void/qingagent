@@ -532,6 +532,7 @@ describe("thread persistence", () => {
         data: {
           title: "重新生成公众号稿",
           lines: [{ label: "模板", value: "产品发布" }],
+          status: "running",
         },
       }],
       chips: null,

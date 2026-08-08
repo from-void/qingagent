@@ -643,7 +643,6 @@ describe("handleCommand updateDoc", () => {
         data: {
           sessionId: session.sessionId,
           text: "继续修改",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

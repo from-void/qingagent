@@ -47,7 +47,6 @@ describe("external chat", () => {
           data: expect.objectContaining({
             sessionId,
             text: "请继续写",
-            mentions: [],
             skills: [],
             chips: [],
             fileIds: [],

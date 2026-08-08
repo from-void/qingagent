@@ -97,9 +97,6 @@ function checkChip(c: ChatChip): void {
 
 function checkSendMessage(m: SendMessage): void {
   if (!m.sessionId) fail(`SendMessage.sessionId must be non-empty`);
-  if (m.turnContext !== undefined && typeof m.turnContext !== "string") {
-    fail(`SendMessage.turnContext must be a string`);
-  }
   if (m.turnKind !== undefined && m.turnKind !== "generateDerivative") {
     fail(`SendMessage.turnKind is invalid`);
   }
@@ -123,13 +120,9 @@ function checkSendMessage(m: SendMessage): void {
       fail(`SendMessage.activeDocument.docId must be non-empty`);
     }
   }
-  for (const r of m.mentions) checkRefAny("SendMessage.mentions[]", r);
   for (const c of m.chips) checkChip(c);
-  // fileIds is optional; when present each entry must be a non-empty string
-  if (m.fileIds) {
-    for (const id of m.fileIds) {
-      if (!id) fail(`SendMessage.fileIds[] must be non-empty`);
-    }
+  for (const id of m.fileIds) {
+    if (!id) fail(`SendMessage.fileIds[] must be non-empty`);
   }
   if (m.displayCard) {
     if (typeof m.displayCard.title !== "string") {
@@ -137,6 +130,9 @@ function checkSendMessage(m: SendMessage): void {
     }
     if (!Array.isArray(m.displayCard.lines)) {
       fail(`SendMessage.displayCard.lines must be an array`);
+    }
+    if (!["running", "done", "aborted", "failed"].includes(m.displayCard.status)) {
+      fail(`SendMessage.displayCard.status is invalid`);
     }
     for (const line of m.displayCard.lines) {
       if (typeof line.label !== "string" || typeof line.value !== "string") {

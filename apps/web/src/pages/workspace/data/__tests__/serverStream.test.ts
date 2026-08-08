@@ -322,7 +322,6 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         text: "hello",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -862,7 +861,6 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         text: "check this",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["file-abc-123"],
@@ -1355,7 +1353,6 @@ describe("ServerStream", () => {
       data: {
         sessionId,
         text: "analyze this",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["file-def-456"],
@@ -1660,7 +1657,6 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "bad",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -1691,7 +1687,6 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -1728,7 +1723,6 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

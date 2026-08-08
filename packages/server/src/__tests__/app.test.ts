@@ -724,9 +724,9 @@ describe("POST /api/v1/stream", () => {
         data: {
           sessionId: "sk-live-session-secret",
           text: "hello",
-          mentions: [],
           skills: [],
           chips: [],
+          fileIds: [],
         },
       };
       const res = await request("POST", "/api/v1/commands", command);
@@ -759,7 +759,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         text: "check this file",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["11111111-1111-4111-8111-111111111111"],
@@ -776,7 +775,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         text: "no files",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -786,29 +784,12 @@ describe("POST /api/v1/stream", () => {
     expect(res.status).toBe(200);
   });
 
-  it("accepts sendMessage without fileIds field (backward compat)", async () => {
-    const command = {
-      kind: "sendMessage",
-      data: {
-        sessionId: "nonexistent",
-        text: "old client",
-        mentions: [],
-        skills: [],
-        chips: [],
-      },
-    };
-    const res = await request("POST", "/api/v1/stream", command);
-    // Should not return 400 — fileIds is optional
-    expect(res.status).toBe(200);
-  });
-
   it("accepts sendMessage with a valid skills array", async () => {
     const command = {
       kind: "sendMessage",
       data: {
         sessionId: "nonexistent",
         text: "use a skill",
-        mentions: [],
         skills: [{ id: "browser-ops", version: null }],
         chips: [],
         fileIds: [],
@@ -824,7 +805,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: "browser-ops",
         chips: [],
         fileIds: [],
@@ -842,7 +822,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: "not-an-array",
@@ -860,7 +839,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [123],
@@ -878,7 +856,6 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["../secret"],

@@ -116,10 +116,9 @@ export function summarizeCommandInput(command: Command): Record<string, unknown>
       return {
         textPreview: command.data.text?.slice(0, 100) ?? "",
         textLength: command.data.text?.length ?? 0,
-        mentionCount: command.data.mentions?.length ?? 0,
         skillCount: command.data.skills?.length ?? 0,
         chipCount: command.data.chips?.length ?? 0,
-        fileCount: command.data.fileIds?.length ?? 0,
+        fileCount: command.data.fileIds.length,
       };
     case "resumeAskUser":
       return {

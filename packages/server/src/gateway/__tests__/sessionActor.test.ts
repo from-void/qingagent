@@ -14,7 +14,6 @@ function sendMessage(text: string): Extract<Command, { kind: "sendMessage" }> {
     data: {
       sessionId: "s1",
       text,
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],

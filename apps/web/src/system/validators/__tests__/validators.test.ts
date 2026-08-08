@@ -139,7 +139,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "",
-        mentions: [],
         skills: [],
         chips: [
           {
@@ -203,21 +202,6 @@ describe("validateCommand", () => {
     })).not.toThrow();
   });
 
-  it("accepts valid sendMessage", () => {
-    const cmd: Command = {
-      kind: "sendMessage",
-      data: {
-        sessionId: "s",
-        text: "hi",
-        mentions: [{ id: "f", domain: { kind: "file" } }],
-        skills: [],
-        chips: [],
-        fileIds: [],
-      },
-    };
-    expect(() => validateCommand(cmd)).not.toThrow();
-  });
-
   it("accepts current main/derivative targets", () => {
     for (const activeDocument of [
       { kind: "main" as const },
@@ -228,7 +212,6 @@ describe("validateCommand", () => {
         data: {
           sessionId: "s",
           text: "把第二段改短一点",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -246,7 +229,6 @@ describe("validateCommand", () => {
         data: {
           sessionId: "s",
           text: "改短一点",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -262,7 +244,7 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "角色审查",
-        mentions: [], skills: [], chips: [], fileIds: [],
+    skills: [], chips: [], fileIds: [],
         reviewContext: { type: "role", templateId: "review-role-engineer", templateName: "研发工程师" },
       },
     };
@@ -275,7 +257,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "生成衍生稿",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -297,7 +278,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "selection" },
@@ -323,7 +303,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "selection" },
@@ -345,7 +324,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "text" },
@@ -549,6 +527,8 @@ describe("validateBridgeFrame", () => {
         body: {
           kind: "qrCard",
           data: {
+            presentation: "scan",
+            imageDataUri: null,
             content: data.content,
             title: "扫码授权飞书",
             code: "ABCD-1234",
@@ -1153,7 +1133,7 @@ describe("validateBridgeFrame", () => {
   it("rejects docCommitted without sessionId", () => {
     const frame: BridgeFrame = {
       kind: "docCommitted",
-      data: { sessionId: "", version: 2 },
+      data: { sessionId: "", version: 2, appliedCount: 0, conflictCount: 0 },
     };
     expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
   });
@@ -1192,7 +1172,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "hello",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -1207,7 +1186,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "check this file",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["abc-123", "def-456"],
@@ -1222,7 +1200,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "hi",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [""],

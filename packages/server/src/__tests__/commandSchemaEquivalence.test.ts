@@ -34,8 +34,7 @@ const sharedAccept: CommandFixture[] = [
   { name: "startSession/new", body: { kind: "startSession", data: { mode: { kind: "new", data: { template: null } } } } },
   { name: "startSession/new+sessionId", body: { kind: "startSession", data: { mode: { kind: "new", data: { template: "blank", sessionId: "sess-1" } } } } },
   { name: "startSession/existing", body: { kind: "startSession", data: { mode: { kind: "existing", data: { id: "sess-2" } } } } },
-  { name: "sendMessage/minimal", body: { kind: "sendMessage", data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/no-fileIds", body: { kind: "sendMessage", data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [] } } },
+  { name: "sendMessage/minimal", body: { kind: "sendMessage", data: { sessionId: "s", text: "hi", skills: [], chips: [], fileIds: [] } } },
   {
     name: "sendMessage/rich-elements",
     body: {
@@ -43,7 +42,6 @@ const sharedAccept: CommandFixture[] = [
       data: {
         sessionId: "s",
         text: "hi @x",
-        mentions: [],
         skills: [{ id: "browser-ops", version: null }],
         chips: [{ kind: { kind: "text" }, resourceRef: null, prefix: null, label: "L", suffix: null }],
         fileIds: [VALID_UUID],
@@ -93,13 +91,13 @@ const sharedReject: CommandFixture[] = [
   { name: "kind-not-string", body: { kind: 1, data: {} } },
   { name: "unknown-kind", body: { kind: "bogus", data: {} } },
   { name: "sendMessage/no-data", body: { kind: "sendMessage" } },
-  { name: "sendMessage/missing-sessionId", body: { kind: "sendMessage", data: { text: "x", mentions: [], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/empty-sessionId", body: { kind: "sendMessage", data: { sessionId: "", text: "x", mentions: [], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/text-not-string", body: { kind: "sendMessage", data: { sessionId: "s", text: 1, mentions: [], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/skills-not-array", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: "no", chips: [], fileIds: [] } } },
-  { name: "sendMessage/fileIds-not-array", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: "no" } } },
-  { name: "sendMessage/fileIds-non-string", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: [123] } } },
-  { name: "sendMessage/fileIds-non-uuid", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: ["../secret"] } } },
+  { name: "sendMessage/missing-sessionId", body: { kind: "sendMessage", data: { text: "x", skills: [], chips: [], fileIds: [] } } },
+  { name: "sendMessage/empty-sessionId", body: { kind: "sendMessage", data: { sessionId: "", text: "x", skills: [], chips: [], fileIds: [] } } },
+  { name: "sendMessage/text-not-string", body: { kind: "sendMessage", data: { sessionId: "s", text: 1, skills: [], chips: [], fileIds: [] } } },
+  { name: "sendMessage/skills-not-array", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: "no", chips: [], fileIds: [] } } },
+  { name: "sendMessage/fileIds-not-array", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [], fileIds: "no" } } },
+  { name: "sendMessage/fileIds-non-string", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [], fileIds: [123] } } },
+  { name: "sendMessage/fileIds-non-uuid", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [], fileIds: ["../secret"] } } },
   { name: "cancelStream/missing", body: { kind: "cancelStream", data: {} } },
   { name: "acceptPatch/empty", body: { kind: "acceptPatch", data: {} } },
   { name: "rejectPatch/empty", body: { kind: "rejectPatch", data: {} } },
@@ -128,10 +126,8 @@ const sharedReject: CommandFixture[] = [
 // ——— 分区三:旧误收、新按契约收紧拒绝(有意的安全增益) ———
 const newStricter: CommandFixture[] = [
   { name: "startSession/new-without-template", body: { kind: "startSession", data: { mode: { kind: "new", data: { sessionId: "sess-x" } } } } },
-  { name: "sendMessage/deprecated-mentions", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [{ id: "r1", domain: { kind: "mention" } }], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/mentions-non-object", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [123], skills: [], chips: [], fileIds: [] } } },
-  { name: "sendMessage/skill-missing-fields", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [{}], chips: [], fileIds: [] } } },
-  { name: "sendMessage/chip-malformed", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [{ label: "L" }], fileIds: [] } } },
+  { name: "sendMessage/skill-missing-fields", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [{}], chips: [], fileIds: [] } } },
+  { name: "sendMessage/chip-malformed", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [{ label: "L" }], fileIds: [] } } },
   { name: "acceptPatch/garbage-reviewBatchId", body: { kind: "acceptPatch", data: { id: "p1", reviewBatchId: 42 } } },
   { name: "commitPatches/reviewBatchIds-only", body: { kind: "commitPatches", data: { reviewBatchIds: ["b1"] } } },
   { name: "resumeAskUser/garbage-answer-value", body: { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "t", answers: { q1: "garbage" } } } },
@@ -160,20 +156,6 @@ describe("D6 命令校验等价回归矩阵", () => {
   });
 });
 
-it("非空 mentions 返回明确的 chips 迁移指引", () => {
-  expect(validateCommandKind({
-    kind: "sendMessage",
-    data: {
-      sessionId: "s",
-      text: "x",
-      mentions: [{ id: "r1", domain: { kind: "mention" } }],
-      skills: [],
-      chips: [],
-      fileIds: [],
-    },
-  })).toBe("sendMessage.data.mentions: mentions is deprecated; use chips instead");
-});
-
 describe("D6 未知字段消毒(strip)", () => {
   it("sendMessage parse 后保留 tableSelection，避免旧 schema 静默剥离", () => {
     const parsed = commandSchema.parse({
@@ -181,7 +163,6 @@ describe("D6 未知字段消毒(strip)", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "selection" },
@@ -214,7 +195,7 @@ describe("D6 未知字段消毒(strip)", () => {
     const body = {
       kind: "sendMessage",
       evilTop: "x",
-      data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [], fileIds: [], evilNested: "y" },
+      data: { sessionId: "s", text: "hi", skills: [], chips: [], fileIds: [], evilNested: "y" },
     };
     expect(validateCommandKind(body)).toBeNull();
     const parsed = commandSchema.parse(body);
@@ -226,7 +207,7 @@ describe("D6 未知字段消毒(strip)", () => {
     // JSON.parse 会把 "__proto__" 变成真正的 own 属性(与对象字面量的原型赋值不同),
     // 这才是攻击者从 wire 发来的形态。strip 后不得残留、不得污染原型链。
     const wire = JSON.parse(
-      '{"kind":"sendMessage","data":{"sessionId":"s","text":"hi","mentions":[],"skills":[],"chips":[],"fileIds":[],"__proto__":{"polluted":true}}}',
+      '{"kind":"sendMessage","data":{"sessionId":"s","text":"hi","skills":[],"chips":[],"fileIds":[],"__proto__":{"polluted":true}}}',
     );
     const parsed = commandSchema.parse(wire) as Record<string, unknown> & { data: Record<string, unknown> };
     expect(Object.prototype.hasOwnProperty.call(parsed.data, "__proto__")).toBe(false);

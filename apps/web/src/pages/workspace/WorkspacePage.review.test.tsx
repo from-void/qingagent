@@ -4328,7 +4328,7 @@ describe("WorkspacePage review controls", () => {
   it("docCommitted 不再整体清空批注", async () => {
     const stream = await renderWorkspaceWithAnnotations();
 
-    await emitFrames(stream, [{ kind: "docCommitted", data: { sessionId: "s-1", version: 2 } }]);
+    await emitFrames(stream, [{ kind: "docCommitted", data: { sessionId: "s-1", version: 2, appliedCount: 0, conflictCount: 0 } }]);
     await flushMicrotasks(3);
 
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();

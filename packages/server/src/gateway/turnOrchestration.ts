@@ -883,7 +883,7 @@ export async function* handleTurnCommand(
         yield* abortAndCleanupTurn(session);
       }
 
-      const fileIds = command.data.fileIds ?? [];
+      const fileIds = command.data.fileIds;
       const chips = command.data.chips ?? [];
       const skills = command.data.skills ?? [];
       yield* runAgentTurn(
@@ -903,9 +903,6 @@ export async function* handleTurnCommand(
           reuseExistingUserMessage,
           ...(command.data.activeDocument
             ? { activeDocument: command.data.activeDocument }
-            : {}),
-          ...(command.data.turnContext
-            ? { turnContext: command.data.turnContext }
             : {}),
           ...(command.data.turnKind
             ? { turnKind: command.data.turnKind }

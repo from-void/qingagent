@@ -1373,7 +1373,7 @@ function ActionCard({ data }: { data: ActionCardData }) {
         : status === "failed"
           ? "审查未完成"
           : null;
-  const statusIcon = status === "done" || status === undefined
+  const statusIcon = status === "done"
     ? (data.icon ?? <CheckIcon size={13} />)
     : status === "running"
       ? "…"

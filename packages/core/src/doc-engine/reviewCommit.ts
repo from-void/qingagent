@@ -849,8 +849,6 @@ export async function* commitPatches(
   // document_ops.steps 恢复 suggestionId，保证 DB 已提交后的幂等重放不丢失部分 conflict。
   let skippedHunks: DiffHunk[] = [];
   let appliedHunkCount = 0;
-  let commitResultCountsKnown = true;
-  let legacyReplayUnknown = false;
   let transactionSettlementPersisted = false;
   type PendingAnnotationMapping = {
     mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
@@ -880,19 +878,6 @@ export async function* commitPatches(
       );
       return;
     }
-    if (!committed.createdNewVersion && acceptedDiffHunks.length > 0) {
-      // 升级前 op 没有 suggestionId，无法诚实恢复部分成功计数；必须把全部项按未知冲突
-      // 结算并省略计数，不能猜测某项已提交或伪报精确 0/0。
-      commitResultCountsKnown = false;
-      legacyReplayUnknown = true;
-      skippedHunks = acceptedDiffHunks;
-      appliedHunkCount = 0;
-      logger.warn("Idempotent patch replay lacks persisted suggestion ids", {
-        sessionId: state.sessionId,
-        docId: state.docId,
-        docVersion: committed.docVersion,
-      });
-    }
   };
   const partitionReviewRecords = (): {
     settledRecords: SuggestionRecord[];
@@ -913,9 +898,7 @@ export async function* commitPatches(
     };
   };
   const skippedSettlementMessage = (skippedCount: number): string =>
-    legacyReplayUnknown
-      ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
-      : `${appliedHunkCount} 处已写入，${skippedCount} 处因文档变化失效。`;
+    `${appliedHunkCount} 处已写入，${skippedCount} 处因文档变化失效。`;
   try {
     result = await commitDocumentOp({
       docId: state.docId,
@@ -1131,7 +1114,7 @@ export async function* commitPatches(
         const message = skippedSettlementMessage(skippedRecords.length);
         for (const record of skippedRecords) {
           const conflict: PatchConflict = {
-            kind: legacyReplayUnknown ? "version_conflict" : "block_removed",
+            kind: "block_removed",
             message,
             suggestionId: record.suggestion.id,
             blockId: record.suggestion.anchor.blockId,
@@ -1264,7 +1247,7 @@ export async function* commitPatches(
       state,
       skippedRecords,
       skippedRecords.map((record): PatchConflict => ({
-        kind: legacyReplayUnknown ? "version_conflict" : "block_removed",
+        kind: "block_removed",
         message,
         suggestionId: record.suggestion.id,
         blockId: record.suggestion.anchor.blockId,
@@ -1355,7 +1338,7 @@ export async function* commitPatches(
     clearReviewDiffState(state);
   }
 
-  if (skippedRecords.length > 0 && (legacyReplayUnknown || appliedHunkCount === 0)) {
+  if (skippedRecords.length > 0 && appliedHunkCount === 0) {
     updatePatchSummaryOutcomeInChatHistory(
       state,
       records.map((record) => record.suggestion.id),
@@ -1378,12 +1361,8 @@ export async function* commitPatches(
       sessionId: state.sessionId,
       version: state.docVersion,
       ...(commitNotice ? { notice: commitNotice } : {}),
-      ...(commitResultCountsKnown
-        ? {
-            appliedCount: shouldCommitDiffHunks ? appliedHunkCount : accepted.length,
-            conflictCount: shouldCommitDiffHunks ? skippedHunks.length : 0,
-          }
-        : {}),
+      appliedCount: shouldCommitDiffHunks ? appliedHunkCount : accepted.length,
+      conflictCount: shouldCommitDiffHunks ? skippedHunks.length : 0,
     },
   };
   if (state.suggestions.size === 0) {

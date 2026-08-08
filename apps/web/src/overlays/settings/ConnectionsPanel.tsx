@@ -48,7 +48,7 @@ export function mapConnectorStart(
 ): QrCardBody & { connectorId: ConnectorId; pendingId: string } {
   if (id === "github") {
     const result = value as Partial<GithubStartResult>;
-    return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
+    return { presentation, imageDataUri: null, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
       code: requireString(result.user_code, "user_code"), note: "在浏览器打开授权页面，输入上方代码并确认授权。", expiresAt: absoluteExpiry(result.expiresAt),
       refreshQuery: "重新连接 GitHub", confirmQuery: null };
   }
@@ -57,13 +57,13 @@ export function mapConnectorStart(
     if (result.mode !== "authorization" && result.mode !== "configuration") throw new Error("授权响应 mode 非法");
     if (result.mode === "configuration") {
       const url = requireString(result.configuration_url, "configuration_url");
-      return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "配置飞书应用", content: url,
+      return { presentation, imageDataUri: null, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "配置飞书应用", content: url,
         code: null, note: `这是飞书应用配置步骤，请[点此打开创建向导](${url})并按指引完成配置。`, expiresAt: absoluteExpiry(result.expiresAt),
         refreshQuery: "重新配置飞书应用", confirmQuery: null };
     }
     const authorization = result as Partial<Extract<FeishuStartResult, { mode: "authorization" }>>;
     const url = requireString(authorization.verification_url, "verification_url");
-    return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码授权飞书", content: url,
+    return { presentation, imageDataUri: null, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码授权飞书", content: url,
       code: requireString(authorization.user_code, "user_code"), note: `用飞书 App 扫码，或[点此在浏览器授权](${url})并输入配对码。`, expiresAt: absoluteExpiry(result.expiresAt),
       refreshQuery: "重新授权飞书", confirmQuery: null };
   }

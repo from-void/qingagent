@@ -363,7 +363,6 @@ export function useWorkspaceChatActions(input: {
                 data: {
                   sessionId,
                   text: snap.text,
-                  mentions: [],
                   skills: snap.skills,
                   chips: contractChips,
                   fileIds,

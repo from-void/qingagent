@@ -173,9 +173,6 @@ export function legacyValidateCommandKind(body: unknown): string | null {
       if (typeof data.text !== "string") {
         return "sendMessage.data.text must be a string";
       }
-      if (!Array.isArray(data.mentions)) {
-        return "sendMessage.data.mentions must be an array";
-      }
       if (!Array.isArray(data.skills)) {
         return "sendMessage.data.skills must be an array";
       }
@@ -186,8 +183,7 @@ export function legacyValidateCommandKind(body: unknown): string | null {
       if (data.richText !== undefined && typeof data.richText !== "string") {
         return "sendMessage.data.richText must be a string";
       }
-      // fileIds is optional but must be an array of strings when present
-      if (data.fileIds !== undefined && !Array.isArray(data.fileIds)) {
+      if (!Array.isArray(data.fileIds)) {
         return "sendMessage.data.fileIds must be an array";
       }
       if (Array.isArray(data.fileIds)) {

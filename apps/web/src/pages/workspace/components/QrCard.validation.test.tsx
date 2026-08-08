@@ -65,6 +65,8 @@ describe("QrCard — validation loop 3", () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-07-12T09:00:00.000Z"));
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "飞书授权",
         content: "https://test.qr",
         expiresAt: Date.now() + 795 * 1000,
@@ -82,6 +84,8 @@ describe("QrCard — validation loop 3", () => {
     it("unmounts and clears interval when component is destroyed mid-countdown", () => {
       // 安排:卡片距过期还有 30 秒,已在倒计时
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 30 * 1000,
@@ -110,6 +114,8 @@ describe("QrCard — validation loop 3", () => {
 
     it("does not show refresh button until card expires", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000, // 60 秒后过期
@@ -128,6 +134,8 @@ describe("QrCard — validation loop 3", () => {
 
     it("shows refresh button after card expires", async () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() - 5 * 1000, // 已经过期 5 秒
@@ -151,6 +159,8 @@ describe("QrCard — validation loop 3", () => {
 
   describe("(d) URL angle-bracket boundaries — stripMarkdownAngleHref", () => {
     const baseData: Omit<QrCardBody, "note"> = {
+      presentation: "scan",
+      imageDataUri: null,
       title: "测试",
       content: "https://test.qr",
       expiresAt: Date.now() + 60 * 1000,
@@ -362,6 +372,8 @@ describe("QrCard — validation loop 3", () => {
   describe("(a) Expiry countdown stops at zero", () => {
     it("does not count below 0 seconds", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "测试",
         content: "https://test.qr",
         expiresAt: Date.now() - 5 * 1000, // 已过期
@@ -408,6 +420,8 @@ describe("QrCard — validation loop 3", () => {
   describe("(a) Confirm button appears after 10 seconds", () => {
     it("does not show confirm button immediately", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000,
@@ -425,6 +439,8 @@ describe("QrCard — validation loop 3", () => {
 
     it("hides confirm button after expiry", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() - 10 * 1000, // 已过期
@@ -443,6 +459,8 @@ describe("QrCard — validation loop 3", () => {
 
     it("shows code when provided", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000,
@@ -461,6 +479,8 @@ describe("QrCard — validation loop 3", () => {
 
     it("hides code when not provided", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000,
@@ -482,6 +502,8 @@ describe("QrCard — validation loop 3", () => {
       vi.useFakeTimers();
       const sendSpy = vi.spyOn(chatInputBus, "send").mockImplementation(() => undefined);
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000,
@@ -514,6 +536,8 @@ describe("QrCard — validation loop 3", () => {
     it("disables refresh immediately and sends refreshQuery only once on repeated clicks", () => {
       const sendSpy = vi.spyOn(chatInputBus, "send").mockImplementation(() => undefined);
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() - 1_000,
@@ -544,6 +568,8 @@ describe("QrCard — validation loop 3", () => {
       const sendSpy = vi.spyOn(chatInputBus, "send").mockImplementation(() => undefined);
       const onRefresh = vi.fn();
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试", content: "https://test.qr", expiresAt: Date.now() - 1_000,
         code: null, refreshQuery: "refresh", confirmQuery: null, note: null,
       };
@@ -559,6 +585,8 @@ describe("QrCard — validation loop 3", () => {
   describe("(f) QR action accessibility", () => {
     it("adds an accessible label to the expired refresh button", () => {
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() - 1_000,
@@ -577,6 +605,8 @@ describe("QrCard — validation loop 3", () => {
     it("adds an accessible label to the confirm button", async () => {
       vi.useFakeTimers();
       const data: QrCardBody = {
+        presentation: "scan",
+        imageDataUri: null,
         title: "授权测试",
         content: "https://test.qr",
         expiresAt: Date.now() + 60 * 1000,
@@ -758,6 +788,7 @@ describe("QrCard — validation loop 3", () => {
 
   describe("(h) explicit completion state", () => {
     const completedCard = (message: string): QrCardBody => ({
+      presentation: "scan",
       title: "扫码授权",
       content: "https://test.qr",
       imageDataUri: "data:image/png;base64,AA",
@@ -836,6 +867,7 @@ describe("QrCard — validation loop 3", () => {
 
     it("GitHub 输码流完成后保留并弱化配对码骨架，不恢复二维码或操作按钮", () => {
       render(<QrCard data={{
+        presentation: "device-code",
         title: "连接 GitHub",
         content: "https://example.test/device",
         imageDataUri: null,

@@ -234,7 +234,7 @@ export function DerivativeView(props: {
     const templateName = descriptor.templates.find((template) => template.id === params.templateId)?.name ?? params.templateId;
     const lines = item.dtype === "translate" ? [{ label: "语言", value: item.targetLang ?? "目标语言" }, { label: "风格", value: templateName }] : [{ label: "写作风格", value: templateName }];
     if (params.privatePrompt.trim()) lines.push({ label: "补充", value: params.privatePrompt.trim() });
-    props.onSendQuery(descriptor.queryText(item.docId, item.targetLang), { title: descriptor.cardTitle(before != null), lines });
+    props.onSendQuery(descriptor.queryText(item.docId, item.targetLang), { title: descriptor.cardTitle(before != null), lines, status: "done" });
   };
   const deleteDraft = async () => {
     setMoreOpen(false);

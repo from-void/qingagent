@@ -148,7 +148,6 @@ describe("POST /api/v1/commit", () => {
         data: {
           sessionId: "route-serial",
           text: "running",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

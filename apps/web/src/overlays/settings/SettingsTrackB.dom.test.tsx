@@ -535,7 +535,7 @@ describe("Settings Track B", () => {
   });
 
   it("Model 自定义配置变更后丢弃旧测试成功响应且不清现有 key", async () => {
-    setVisitorModelKey("deepseek", "sk-current");
+    await setVisitorModelKey("deepseek", "sk-current");
     let resolveTest!: (response: Response) => void;
     const deferredTest = new Promise<Response>((resolve) => {
       resolveTest = resolve;
@@ -661,7 +661,7 @@ describe("Settings Track B", () => {
 
   it("Model 档位 chip 默认 Flash,选 Pro 后持久化并随请求 header 透传", async () => {
     await setSelectedModelProvider("deepseek");
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -691,7 +691,7 @@ describe("Settings Track B", () => {
   });
 
   it("档位浮层点外关闭、Esc 关闭,Enter 可选中", async () => {
-    setVisitorModelKey("deepseek", "deepseek-tier-key");
+    await setVisitorModelKey("deepseek", "deepseek-tier-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -742,7 +742,7 @@ describe("Settings Track B", () => {
   it("「启 用」切换保留 DeepSeek/Kimi 各自 key，并透传 Kimi 双档 header", async () => {
     await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
-    setSelectedModelProvider("deepseek");
+    await setSelectedModelProvider("deepseek");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -805,6 +805,7 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        isClientConfigReady: () => true,
         getModelProvider: () => "deepseek",
         setModelProvider: vi.fn(async () => true),
         getDeepseekApiKey: () => null,
@@ -852,6 +853,7 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        isClientConfigReady: () => true,
         getDeepseekApiKey: () => null,
         setDeepseekApiKey,
         getCustomProvider: () => previousCustom,
@@ -905,6 +907,7 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        isClientConfigReady: () => true,
         getModelProvider: () => "deepseek",
         setModelProvider: vi.fn(async () => true),
         getDeepseekApiKey: () => null,
@@ -957,6 +960,7 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        isClientConfigReady: () => true,
         getDeepseekApiKey,
         setDeepseekApiKey,
         getCustomProvider: () => null,
@@ -1013,7 +1017,7 @@ describe("Settings Track B", () => {
       modelPro: "proxy-k3",
     }, "kimi");
 
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     expect(readCustomProvider("kimi")).toMatchObject({
       protocol: "openai",
       baseUrl: "https://kimi-proxy.example/v1",
@@ -1027,7 +1031,7 @@ describe("Settings Track B", () => {
       "x-model-pro": "proxy-k3",
     });
 
-    setSelectedModelProvider("deepseek");
+    await setSelectedModelProvider("deepseek");
     expect(readCustomProvider("deepseek")).toMatchObject({
       protocol: "anthropic",
       baseUrl: "https://deepseek-proxy.example/v1",
@@ -1037,7 +1041,7 @@ describe("Settings Track B", () => {
   });
 
   it("Kimi key 不做输入自动调用，只在用户显式点测试连接时发一条请求", async () => {
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
     await render(
@@ -1105,7 +1109,7 @@ describe("Settings Track B", () => {
   it("DeepSeek 余额检测不跟随使用中厂商:用着 Kimi 也照发 DeepSeek 自己的 key", async () => {
     await setVisitorModelKey("deepseek", "deepseek-balance-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1130,7 +1134,7 @@ describe("Settings Track B", () => {
   it("Kimi 测试连接在途启用 DeepSeek 时作废旧请求并丢弃迟到成功", async () => {
     await setVisitorModelKey("kimi", "kimi-local-key");
     await setVisitorModelKey("deepseek", "deepseek-local-key");
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
       resolveVerify = resolve;
@@ -1163,7 +1167,7 @@ describe("Settings Track B", () => {
   });
 
   it("Kimi 测试连接在途修改 key 时作废旧请求并丢弃迟到成功", async () => {
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     await setVisitorModelKey("kimi", "kimi-local-key");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
@@ -1197,7 +1201,7 @@ describe("Settings Track B", () => {
   });
 
   it("Kimi 测试连接在途返回主视图切档位时作废旧请求并丢弃迟到成功", async () => {
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     await setVisitorModelKey("kimi", "kimi-local-key");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
@@ -1234,7 +1238,7 @@ describe("Settings Track B", () => {
     [false, "未配置"],
     [true, "自动启用"],
   ])("Kimi 原生识图按 key 配置状态显示徽标：configured=%s", async (configured, badge) => {
-    setSelectedModelProvider("kimi");
+    await setSelectedModelProvider("kimi");
     if (configured) await setVisitorModelKey("kimi", "kimi-vision-key");
 
     await render(<VisionPanel />);
@@ -1404,7 +1408,12 @@ describe("Settings Track B", () => {
     }));
     Object.defineProperty(window, "electron", {
       configurable: true,
-      value: { isDesktop: true, getVisionProvider: () => null, setVisionProvider },
+      value: {
+        isDesktop: true,
+        isClientConfigReady: () => true,
+        getVisionProvider: () => null,
+        setVisionProvider,
+      },
     });
     __resetClientPersistCacheForTests();
 
@@ -1437,7 +1446,12 @@ describe("Settings Track B", () => {
     }));
     Object.defineProperty(window, "electron", {
       configurable: true,
-      value: { isDesktop: true, getCustomProvider: () => null, setCustomProvider },
+      value: {
+        isDesktop: true,
+        isClientConfigReady: () => true,
+        getCustomProvider: () => null,
+        setCustomProvider,
+      },
     });
     __resetClientPersistCacheForTests();
 
@@ -1466,7 +1480,7 @@ describe("Settings Track B", () => {
   });
 
   it("Vision 测试期间停用后丢弃旧成功响应且不重新启用", async () => {
-    writeVisionProvider({
+    await writeVisionProvider({
       enabled: true,
       protocol: "openai",
       baseUrl: "https://vision.example/v1",
@@ -1506,7 +1520,7 @@ describe("Settings Track B", () => {
   });
 
   it("Vision 测试期间清除后丢弃旧成功响应且不写回配置", async () => {
-    writeVisionProvider({
+    await writeVisionProvider({
       enabled: true,
       protocol: "openai",
       baseUrl: "https://vision.example/v1",
@@ -1563,7 +1577,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细头部:日期控件只在按天视图出现,模型多选三视图常驻", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1590,7 +1604,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模型多选:默认全部,取消一档后聚合口径变局部,重新全选复原", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1613,7 +1627,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模型多选:切到按文档视图后筛选仍生效", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/usage/summary?view=session")) {
@@ -1641,7 +1655,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细日期选择器只客户端过滤 day rows,不向服务端追加 date 参数", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
     await render(<ModelSettingsPanel />);
@@ -1673,7 +1687,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量视图切换立即清除旧行，非 2xx 后显示中性失败态", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     let resolveSession!: (response: Response) => void;
     const sessionRequest = new Promise<Response>((resolve) => {
       resolveSession = resolve;
@@ -1704,7 +1718,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细默认小白模式只展示聚合列", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1720,7 +1734,7 @@ describe("Settings Track B", () => {
   });
 
   it("费用单元格标注北京时间高峰倍率与调用次数", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
@@ -1743,7 +1757,7 @@ describe("Settings Track B", () => {
   });
 
   it("点击用量明细标题切换专家模式并披露完整列", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1771,7 +1785,7 @@ describe("Settings Track B", () => {
   });
 
   it("普通模式展示有效命中率，专家模式可用总命中率和建缓存数对账", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
@@ -1823,7 +1837,7 @@ describe("Settings Track B", () => {
   });
 
   it("专家模式按文档分组，默认收起且可展开收起调用点", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=session")) {
@@ -1861,7 +1875,7 @@ describe("Settings Track B", () => {
   });
 
   it("专家按天视图按天→文档→调用点三层展开，且各层默认收起", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByWf("UsageModeToggle"));
     await flush();
@@ -1894,7 +1908,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模式持久化到本地并在重新挂载后恢复", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByWf("UsageModeToggle"));
     expect(window.localStorage.getItem("qingagent:model-usage-mode")).toBe("expert");
@@ -1912,7 +1926,7 @@ describe("Settings Track B", () => {
   });
 
   it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {
-    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
+    await setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByText("总计"));
     await click(getButtonByWf("UsageModeToggle"));
@@ -2131,6 +2145,7 @@ function installAboutElectron(overrides: Record<string, unknown>): void {
   const electron = {
     platform: "win32",
     isDesktop: true,
+    isClientConfigReady: () => true,
     appVersion: "1.2.0",
     versions: { electron: "33.4.11", chrome: "130.0.0", node: "20.18.0" },
     onUpdateStatus: (cb: (payload: AboutUpdateStatus) => void) => {

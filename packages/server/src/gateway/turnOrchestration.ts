@@ -13,7 +13,6 @@ import {
   abortAndCleanupTurn,
   AGENT_MAX_STEPS,
   appendAskUserAnswerMessageIfMissing,
-  askUserTool,
   beginSessionSnapshotTurn,
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
@@ -531,15 +530,6 @@ async function* handleResume(
                   capabilityTools,
                   abortController.signal,
                 ),
-                // askUser 仅为老会话快照恢复注入；老会话数据迁移或过期后删除。
-                ...(askUserSpecForResume?.name === "askUser"
-                  ? {
-                      legacyQuestionnaire: bindToolsToAbortSignal(
-                        { askUser: askUserTool },
-                        abortController.signal,
-                      ),
-                    }
-                  : {}),
               },
               // Keep resumed-run spans on the same session trace as the initial
               // turn and carry the raw ids in span metadata for cross-layer joins.

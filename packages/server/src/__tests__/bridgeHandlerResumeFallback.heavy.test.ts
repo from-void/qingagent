@@ -333,7 +333,6 @@ describe("handleResume askUser fresh-turn fallback", () => {
         maxSteps: AGENT_MAX_STEPS,
         modelSettings: { maxRetries: 4 },
       });
-      expect(resumeOptions?.toolsets?.legacyQuestionnaire?.askUser).toBeTruthy();
       expect(session.runId).toBeNull();
       expect(session.toolCallId).toBeNull();
       expect(session._suspensionOwner).toBeNull();
@@ -1094,7 +1093,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
     });
   });
 
-  it("askUserQuestion resume 不写 _askUserCompleted 且不注入 legacy askUser", async () => {
+  it("askUserQuestion resume 不写 _askUserCompleted", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     seedSuspendedAskUserSession(
@@ -1103,8 +1102,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
       "restored:run-direct-resume",
       "askUserQuestion",
     );
-    mockState.resumeStream.mockImplementation(async (_resumeData: unknown, options: any) => {
-      expect(options?.toolsets?.legacyQuestionnaire).toBeUndefined();
+    mockState.resumeStream.mockImplementation(async () => {
       return {
         runId: "run-direct-resumed",
         fullStream: streamOf({ type: "finish", payload: {} }),

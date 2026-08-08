@@ -293,7 +293,6 @@ export type {
   UserSkillSource,
 } from "./skills/index.js";
 export {
-  askUserTool,
   parseFileBuffer,
   readDocumentForSession,
   streamMoreQuestions,

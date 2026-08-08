@@ -75,8 +75,8 @@ describe("POST /api/v1/commands startSession 校验", () => {
       data: { mode: { kind: "existing" } },
     });
     expect(res.status).toBe(400);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toContain("startSession.data.mode.data");
+    const json = (await res.json()) as { issues: Array<{ path: string }> };
+    expect(json.issues[0]!.path).toContain("startSession.data.mode.data");
   });
 
   it("existing 缺 id → 400", async () => {
@@ -85,8 +85,8 @@ describe("POST /api/v1/commands startSession 校验", () => {
       data: { mode: { kind: "existing", data: {} } },
     });
     expect(res.status).toBe(400);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toContain("mode.data.id");
+    const json = (await res.json()) as { issues: Array<{ path: string }> };
+    expect(json.issues[0]!.path).toContain("mode.data.id");
   });
 
   it("未知 mode.kind → 400(而非静默按 new 创建会话)", async () => {
@@ -95,8 +95,8 @@ describe("POST /api/v1/commands startSession 校验", () => {
       data: { mode: { kind: "nonsense", data: {} } },
     });
     expect(res.status).toBe(400);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toContain("mode.kind");
+    const json = (await res.json()) as { issues: Array<{ path: string }> };
+    expect(json.issues[0]!.path).toContain("mode.kind");
   });
 
   it("new 带非法 sessionId(非字符串/空) → 400", async () => {

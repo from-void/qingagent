@@ -40,7 +40,7 @@ describe("D6-P1 parseBody 边界", () => {
     });
     expect(textPlain.status).toBe(400);
     expect(await textPlain.json()).toMatchObject({
-      error: "Content-Type must be application/json",
+      issues: [{ path: "", message: "Content-Type must be application/json", code: "invalid_type" }],
     });
 
     const withCharset = await app.request("/api/v1/clientlog", {
@@ -70,8 +70,9 @@ describe("D6-P1 parseBody 边界", () => {
   it("parseBody:深嵌套超限 → 400 统一错误契约", async () => {
     const res = await post("/api/v1/clientlog", JSON.stringify({ events: [JSON.parse(nestedJson(70))] }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({
-      error: expect.stringContaining("maximum nesting depth"),
+    const body = await res.json();
+    expect(body).not.toHaveProperty("error");
+    expect(body).toMatchObject({
       issues: expect.arrayContaining([expect.objectContaining({ code: "too_big" })]),
     });
   });
@@ -79,7 +80,7 @@ describe("D6-P1 parseBody 边界", () => {
   it("credentials:非法 JSON 保留中文文案 / 未知平台 → 400", async () => {
     const badJson = await post("/api/v1/credentials", "{bad");
     expect(badJson.status).toBe(400);
-    expect((await badJson.json()).error).toContain("请求内容格式不正确");
+    expect((await badJson.json()).issues[0].message).toContain("请求内容格式不正确");
     const unknown = await post("/api/v1/credentials", '{"platform":"evil","values":{}}');
     expect(unknown.status).toBe(400);
     expect((await unknown.json()).error).toContain("未知平台");

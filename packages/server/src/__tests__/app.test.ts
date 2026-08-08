@@ -33,10 +33,18 @@ async function request(
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
-  if (path === "/api/v1/commands" || path === "/api/v1/stream") {
+  if (path === "/api/v1/commands") {
     return authenticatedCommandRequest(path, init);
   }
   return app.request(path, init);
+}
+
+function firstValidationMessage(body: {
+  issues: Array<{ path: string; message: string }>;
+}): string {
+  const first = body.issues[0];
+  if (!first) throw new Error("missing validation issue");
+  return first.path ? `${first.path}: ${first.message}` : first.message;
 }
 
 async function readSseUntil(
@@ -690,7 +698,7 @@ describe("GET /api/v1/history", () => {
 // -----------------------------------------------------------------------
 // Command submit + events
 // -----------------------------------------------------------------------
-describe("POST /api/v1/stream", () => {
+describe("POST /api/v1/commands", () => {
   it("accepts startSession command and exposes frames from /events", async () => {
     const command = {
       kind: "startSession",
@@ -764,7 +772,7 @@ describe("POST /api/v1/stream", () => {
         fileIds: ["11111111-1111-4111-8111-111111111111"],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     // Should not return 400 — fileIds are valid
     expect(res.status).toBe(200);
   });
@@ -780,7 +788,7 @@ describe("POST /api/v1/stream", () => {
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(200);
   });
 
@@ -795,7 +803,7 @@ describe("POST /api/v1/stream", () => {
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(200);
   });
 
@@ -810,10 +818,10 @@ describe("POST /api/v1/stream", () => {
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("skills");
+    expect(firstValidationMessage(json)).toContain("skills");
   });
 
   it("rejects sendMessage with non-array fileIds", async () => {
@@ -827,10 +835,10 @@ describe("POST /api/v1/stream", () => {
         fileIds: "not-an-array",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds");
+    expect(firstValidationMessage(json)).toContain("fileIds");
   });
 
   it("rejects sendMessage with non-string fileIds element", async () => {
@@ -844,10 +852,10 @@ describe("POST /api/v1/stream", () => {
         fileIds: [123],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds[0]");
+    expect(firstValidationMessage(json)).toContain("fileIds[0]");
   });
 
   it("rejects sendMessage with non-UUID fileIds element", async () => {
@@ -861,11 +869,11 @@ describe("POST /api/v1/stream", () => {
         fileIds: ["../secret"],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds[0]");
-    expect(json.error).toContain("valid UUID");
+    expect(firstValidationMessage(json)).toContain("fileIds[0]");
+    expect(firstValidationMessage(json)).toContain("valid UUID");
   });
 
   it("accepts a structurally valid updateDoc command", async () => {
@@ -879,7 +887,7 @@ describe("POST /api/v1/stream", () => {
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     // 结构校验已通过；不存在的会话进入 Actor 后按统一业务失败协议返回 422。
     expect(res.status).toBe(422);
     await expect(res.json()).resolves.toMatchObject({
@@ -898,10 +906,10 @@ describe("POST /api/v1/stream", () => {
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("sessionId");
+    expect(firstValidationMessage(json)).toContain("sessionId");
   });
 
   it("rejects updateDoc with empty baseContentHash", async () => {
@@ -915,10 +923,10 @@ describe("POST /api/v1/stream", () => {
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("baseContentHash");
+    expect(firstValidationMessage(json)).toContain("baseContentHash");
   });
 
   it("rejects updateDoc with non-integer expectedDocumentSnapshot", async () => {
@@ -932,10 +940,10 @@ describe("POST /api/v1/stream", () => {
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("expectedDocumentSnapshot");
+    expect(firstValidationMessage(json)).toContain("expectedDocumentSnapshot");
   });
 
   it("rejects updateDoc with missing clientMutationId", async () => {
@@ -949,9 +957,9 @@ describe("POST /api/v1/stream", () => {
         clientMutationId: "",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("clientMutationId");
+    expect(firstValidationMessage(json)).toContain("clientMutationId");
   });
 });

@@ -25,7 +25,7 @@ import {
 import { z } from "zod";
 import { invalidateModelOverridesCache, resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { parseBody } from "../lib/validation";
+import { firstValidationIssueMessage, parseBody } from "../lib/validation";
 
 export const modelSettingsRoutes = new Hono();
 
@@ -284,7 +284,11 @@ modelSettingsRoutes.put("/settings/model", async (c) => {
 
   const parsed = await parseBody(c, modelSettingsBodySchema, {
     makeErrorResponse: (ctx, b) =>
-      ctx.json({ error: b.error === "Invalid JSON body" ? "Invalid JSON body" : "Body must be an object" }, 400),
+      ctx.json({
+        error: firstValidationIssueMessage(b) === "Invalid JSON body"
+          ? "Invalid JSON body"
+          : "Body must be an object",
+      }, 400),
   });
   if (!parsed.ok) return parsed.response;
   const record = parsed.data;
@@ -442,7 +446,12 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
 
   const parsedBody = await parseBody(c, testCustomBodySchema, {
     makeErrorResponse: (ctx, b) =>
-      ctx.json({ ok: false, error: b.error === "Invalid JSON body" ? "请求格式错误" : b.error }, 400),
+      ctx.json({
+        ok: false,
+        error: firstValidationIssueMessage(b) === "请求格式错误"
+          ? "请求格式错误"
+          : firstValidationIssueMessage(b),
+      }, 400),
     invalidJsonMessage: "请求格式错误",
   });
   if (!parsedBody.ok) return parsedBody.response;

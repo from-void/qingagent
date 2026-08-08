@@ -25,7 +25,7 @@ import {
 } from "@qingagent/core";
 import { z } from "zod";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { parseBody } from "../lib/validation";
+import { firstValidationIssueMessage, parseBody } from "../lib/validation";
 
 export const searchSettingsRoutes = new Hono();
 
@@ -134,7 +134,11 @@ async function parseObjectBody(c: Context) {
   const parsed = await parseBody(c, objectBodySchema, {
     // 保留旧文案:JSON 失败 → "Invalid JSON body";非对象 body → "Body must be an object"。
     makeErrorResponse: (ctx, body) =>
-      ctx.json({ error: body.error === "Invalid JSON body" ? "Invalid JSON body" : "Body must be an object" }, 400),
+      ctx.json({
+        error: firstValidationIssueMessage(body) === "Invalid JSON body"
+          ? "Invalid JSON body"
+          : "Body must be an object",
+      }, 400),
   });
   if (!parsed.ok) return { ok: false as const, response: parsed.response };
   return { ok: true as const, body: parsed.data };

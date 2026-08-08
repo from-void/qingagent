@@ -7745,10 +7745,10 @@ describe("WorkspacePage page-exit doc save", () => {
       hasPendingDocSave: false,
       createMutationId: () => "exit-beacon",
       sendBeacon,
-      url: "/api/v1/stream",
+      url: "/api/v1/commands",
     })).toBe("beacon");
 
-    expect(sendBeacon).toHaveBeenCalledWith("/api/v1/stream", expect.any(Blob));
+    expect(sendBeacon).toHaveBeenCalledWith("/api/v1/commands", expect.any(Blob));
     const beaconBody = JSON.parse(await blobText(sendBeacon.mock.calls[0]?.[1] as Blob));
     expect(beaconBody).toMatchObject({
       kind: "updateDoc",
@@ -7773,7 +7773,7 @@ describe("WorkspacePage page-exit doc save", () => {
       fetchKeepalive,
     })).toBe("keepalive");
 
-    expect(fetchKeepalive).toHaveBeenCalledWith("/api/v1/stream", expect.objectContaining({
+    expect(fetchKeepalive).toHaveBeenCalledWith("/api/v1/commands", expect.objectContaining({
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },

@@ -57,13 +57,15 @@ afterAll(async () => {
 });
 
 describe("rich formats HTTP bridge E2E", () => {
-  it("POST /api/v1/stream updateDoc accepts a legal PM doc with all new rich blocks", async () => {
-    const sessionId = await seedRestoredSession("合法富格式桥接", baseDoc("bridge-legal-base"));
+  it("POST /api/v1/commands updateDoc accepts a legal PM doc with all new rich blocks", async () => {
+    const baselineDoc = baseDoc("bridge-legal-base");
+    const sessionId = await seedRestoredSession("合法富格式桥接", baselineDoc);
 
     const mutationId = `mutation-${randomUUID()}`;
     const { res, frames } = await postStream(updateDocCommand({
       sessionId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(baselineDoc),
       clientMutationId: mutationId,
       doc: richPmDoc("legal"),
     }));
@@ -126,24 +128,29 @@ describe("rich formats HTTP bridge E2E", () => {
       ]),
       pathHints: ["content", "attrs"],
     },
-  ])("POST /api/v1/stream updateDoc rejects illegal rich PM variant: $name", async ({ doc: invalidDoc, pathHints }) => {
-    const res = await request("POST", "/api/v1/stream", updateDocCommand({
+  ])("POST /api/v1/commands updateDoc rejects illegal rich PM variant: $name", async ({ doc: invalidDoc, pathHints }) => {
+    const res = await request("POST", "/api/v1/commands", updateDocCommand({
       sessionId: "session-for-request-validation",
       expectedDocumentSnapshot: 1,
+      baseContentHash: "pmv1-validation",
       clientMutationId: `mutation-${randomUUID()}`,
       doc: invalidDoc,
     }));
 
     expect(res.status).toBe(400);
-    const json = await res.json() as { error: string };
-    expect(json.error).toContain("updateDoc.data.doc");
+    const json = await res.json() as { issues: Array<{ path: string; message: string }> };
+    const firstIssue = json.issues[0];
+    expect(firstIssue).toBeDefined();
+    if (!firstIssue) throw new Error("missing validation issue");
+    expect(firstIssue.path).toContain("updateDoc.data.doc");
     for (const hint of pathHints) {
-      expect(json.error).toContain(hint);
+      expect(`${firstIssue.path}: ${firstIssue.message}`).toContain(hint);
     }
   });
 
   it("双标签 coalesce 窗口内整篇写入走 conflict 提示且不覆盖先写内容", async () => {
-    const sessionId = await seedRestoredSession("版本冲突桥接", baseDoc("bridge-conflict-base"));
+    const baselineDoc = baseDoc("bridge-conflict-base");
+    const sessionId = await seedRestoredSession("版本冲突桥接", baselineDoc);
     const firstDoc = richPmDoc("conflict-first");
     const staleDoc = richPmDoc("conflict-stale");
 
@@ -151,6 +158,7 @@ describe("rich formats HTTP bridge E2E", () => {
     const first = await postStream(updateDocCommand({
       sessionId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(baselineDoc),
       clientMutationId: firstMutationId,
       doc: firstDoc,
     }));
@@ -165,6 +173,7 @@ describe("rich formats HTTP bridge E2E", () => {
     const stale = await postStream(updateDocCommand({
       sessionId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(baselineDoc),
       clientMutationId: staleMutationId,
       doc: staleDoc,
     }));
@@ -226,6 +235,7 @@ describe("rich formats HTTP bridge E2E", () => {
     const stale = await postStream(updateDocCommand({
       sessionId,
       expectedDocumentSnapshot: 0,
+      baseContentHash: getPmContentHash(emptyClientDoc),
       clientMutationId: mutationId,
       doc: emptyClientDoc,
     }));
@@ -289,14 +299,30 @@ describe("rich formats HTTP bridge E2E", () => {
     });
   });
 
-  it("POST /api/v1/stream persists A→B→A undo with distinct mutation ids", async () => {
-    const sessionId = await seedRestoredSession("撤销持久化桥接", baseDoc("undo-base"));
+  it("POST /api/v1/commands persists A→B→A undo with distinct mutation ids", async () => {
+    const baselineDoc = baseDoc("undo-base");
+    const sessionId = await seedRestoredSession("撤销持久化桥接", baselineDoc);
     const aDoc = doc([paragraph("undo-paragraph", [text("A")])]);
     const bDoc = doc([paragraph("undo-paragraph", [text("B")])]);
     const writes = [
-      { expectedDocumentSnapshot: 1, clientMutationId: `mutation-${randomUUID()}`, doc: aDoc },
-      { expectedDocumentSnapshot: 2, clientMutationId: `mutation-${randomUUID()}`, doc: bDoc },
-      { expectedDocumentSnapshot: 3, clientMutationId: `mutation-${randomUUID()}`, doc: aDoc },
+      {
+        expectedDocumentSnapshot: 1,
+        baseContentHash: getPmContentHash(baselineDoc),
+        clientMutationId: `mutation-${randomUUID()}`,
+        doc: aDoc,
+      },
+      {
+        expectedDocumentSnapshot: 2,
+        baseContentHash: getPmContentHash(aDoc),
+        clientMutationId: `mutation-${randomUUID()}`,
+        doc: bDoc,
+      },
+      {
+        expectedDocumentSnapshot: 3,
+        baseContentHash: getPmContentHash(bDoc),
+        clientMutationId: `mutation-${randomUUID()}`,
+        doc: aDoc,
+      },
     ];
 
     for (const [index, write] of writes.entries()) {
@@ -737,27 +763,19 @@ describe("rich formats HTTP bridge E2E", () => {
     }
   });
 
-  it("validateCommandKind covers updateDoc doc and legacySections validation branches", () => {
+  it("validateCommandKind covers updateDoc doc validation branches", () => {
     expect(validateCommandKind(updateDocCommand({
       sessionId: "validate-doc-ok",
       expectedDocumentSnapshot: 1,
+      baseContentHash: "pmv1-validate",
       clientMutationId: "validate-mutation-doc-ok",
       doc: richPmDoc("validate"),
     }))).toBeNull();
 
-    expect(validateCommandKind({
-      kind: "updateDoc",
-      data: {
-        sessionId: "validate-legacy-ok",
-        expectedDocumentSnapshot: 1,
-        clientMutationId: "validate-mutation-legacy-ok",
-        legacySections: [{ kind: "p", data: { text: "legacy 正文" } }],
-      },
-    })).toBeNull();
-
     const invalidDocError = validateCommandKind(updateDocCommand({
       sessionId: "validate-doc-bad",
       expectedDocumentSnapshot: 1,
+      baseContentHash: "pmv1-validate",
       clientMutationId: "validate-mutation-doc-bad",
       doc: doc([
         paragraph("validate-invalid-inline-math", [
@@ -774,10 +792,11 @@ describe("rich formats HTTP bridge E2E", () => {
       data: {
         sessionId: "validate-missing-doc",
         expectedDocumentSnapshot: 1,
+        baseContentHash: "pmv1-validate",
         clientMutationId: "validate-mutation-missing-doc",
       },
     });
-    expect(missingDocumentError).toContain("updateDoc.data.legacySections must be an array");
+    expect(missingDocumentError).toContain("updateDoc.data.doc");
   });
 });
 
@@ -864,7 +883,7 @@ async function postStream(command: Command): Promise<{
   frames: BridgeFrame[];
   body: string;
 }> {
-  const res = await request("POST", "/api/v1/stream", command);
+  const res = await request("POST", "/api/v1/commands", command);
   const body = await res.text();
   if (!res.ok) return { res, body, frames: [] };
   const parsed = JSON.parse(body) as unknown;
@@ -949,7 +968,7 @@ function findDocWriteFrame(frames: BridgeFrame[], clientMutationId: string): Doc
 function updateDocCommand(input: {
   sessionId: string;
   expectedDocumentSnapshot: number;
-  baseContentHash?: string;
+  baseContentHash: string;
   clientMutationId: string;
   doc: PmDoc;
 }): Command {
@@ -958,7 +977,7 @@ function updateDocCommand(input: {
     data: {
       sessionId: input.sessionId,
       expectedDocumentSnapshot: input.expectedDocumentSnapshot,
-      baseContentHash: input.baseContentHash ?? "pmv1-base",
+      baseContentHash: input.baseContentHash,
       clientMutationId: input.clientMutationId,
       doc: input.doc,
     },

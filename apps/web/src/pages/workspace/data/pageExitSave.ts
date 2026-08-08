@@ -604,7 +604,7 @@ export async function flushDocSaveInBackground(input: {
     command,
     fetchKeepalive,
     keepalive: input.keepalive ?? true,
-    url: input.url ?? "/api/v1/stream",
+    url: input.url ?? "/api/v1/commands",
   });
   if (first.ok) return "saved";
   if (!("conflict" in first)) {
@@ -637,7 +637,7 @@ export async function flushDocSaveInBackground(input: {
     command: retryCommand,
     fetchKeepalive,
     keepalive: input.keepalive ?? true,
-    url: input.url ?? "/api/v1/stream",
+    url: input.url ?? "/api/v1/commands",
   });
   if (retried.ok) return "saved";
   throw new PageExitDocSaveError(
@@ -744,7 +744,7 @@ export function flushDocSaveOnPageExit(input: {
     id: command.data.clientMutationId,
     storage: input.outboxStorage,
   });
-  const url = input.url ?? "/api/v1/stream";
+  const url = input.url ?? "/api/v1/commands";
   const body = JSON.stringify(command);
   const beaconBody: BodyInit =
     typeof Blob !== "undefined"

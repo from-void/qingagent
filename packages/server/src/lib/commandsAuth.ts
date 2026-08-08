@@ -2,10 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { extractAuthToken, tokensMatch } from "./authToken";
 import { getExternalToken } from "./externalInstance";
 
-const COMMAND_MUTATION_PATHS = new Set([
-  "/api/v1/commands",
-  "/api/v1/stream",
-]);
+const COMMAND_MUTATION_PATHS = new Set(["/api/v1/commands"]);
 
 export function isCommandMutationPath(pathname: string): boolean {
   return COMMAND_MUTATION_PATHS.has(pathname);

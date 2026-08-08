@@ -27,7 +27,11 @@ import {
 } from "@qingagent/contract-ts/schemas";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { formatCommandError, parseBody } from "../lib/validation";
+import {
+  firstValidationIssueMessage,
+  formatCommandError,
+  parseBody,
+} from "../lib/validation";
 import { BoundedSsePump } from "../lib/boundedSsePump";
 import {
   allowOversizedSseFrame,
@@ -102,7 +106,9 @@ function validatePmDoc(value: unknown, field: string): string | null {
  */
 export function validateCommandKind(body: unknown): string | null {
   const result = commandSchema.safeParse(body);
-  if (!result.success) return formatCommandError(result.error, body).error;
+  if (!result.success) {
+    return firstValidationIssueMessage(formatCommandError(result.error, body));
+  }
   return updateDocDeepError(result.data);
 }
 
@@ -230,7 +236,11 @@ async function handleCommandPost(c: Context) {
   // updateDoc 的 doc 深层结构校验(zod 层只做直通)。
   const deepError = updateDocDeepError(command);
   if (deepError) {
-    return c.json({ error: deepError, issues: [{ path: "data", message: deepError, code: "custom" }] }, 400);
+    const path = "updateDoc.data.doc";
+    const message = deepError.startsWith(path)
+      ? deepError.slice(path.length).trim()
+      : deepError;
+    return c.json({ issues: [{ path, message, code: "custom" }] }, 400);
   }
 
   // 覆写防护(0702 review):startSession(new) 带客户端指定 sessionId 且该会话已存在
@@ -341,7 +351,6 @@ async function handleCommandPost(c: Context) {
 }
 
 streamRoutes.post("/commands", handleCommandPost);
-streamRoutes.post("/stream", handleCommandPost);
 
 streamRoutes.get("/events", async (c) => {
   const originError = requireTrustedOrigin(c);

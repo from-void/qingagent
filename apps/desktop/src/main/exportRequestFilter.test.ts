@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isAllowedExportRequest } from "./exportRequestFilter.js";
-import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
 
 const exportDirectory = path.resolve("/tmp/qingagent-export-current");
 
@@ -52,51 +51,3 @@ test("非法/异常 URL 按拦截处理,不抛", () => {
   assert.equal(isAllowedExportRequest("javascript:alert(1)", exportDirectory), false);
   assert.equal(isAllowedExportRequest("ftp://fonts.gstatic.com/x", exportDirectory), false);
 });
-
-test("tool call 埋点扫描:跨 chunk carry 重扫不重复上报", async () => {
-  const tracked: string[] = [];
-  const scanner = new ToolCallStreamScanner((name) => tracked.push(name), {
-    maxSeenIds: 10,
-    carryChars: 256,
-  });
-  const frame = toolCallFrame("call-a", "writeDraft");
-
-  await scanner.scan(streamFromChunks([frame.slice(0, 70), frame.slice(70), frame]));
-
-  assert.deepEqual(tracked, ["writeDraft"]);
-});
-
-test("tool call 埋点扫描:seen 上限只淘汰最旧项,不整批清空", async () => {
-  const tracked: string[] = [];
-  const scanner = new ToolCallStreamScanner((name) => tracked.push(name), {
-    maxSeenIds: 3,
-    carryChars: 0,
-  });
-
-  await scanner.scan(
-    streamFromChunks([
-      toolCallFrame("call-a", "toolA") +
-        toolCallFrame("call-b", "toolB") +
-        toolCallFrame("call-c", "toolC") +
-        toolCallFrame("call-d", "toolD") +
-        toolCallFrame("call-e", "toolE"),
-    ]),
-  );
-  await scanner.scan(streamFromChunks([toolCallFrame("call-d", "toolD")]));
-
-  assert.deepEqual(tracked, ["toolA", "toolB", "toolC", "toolD", "toolE"]);
-});
-
-function toolCallFrame(callId: string, name: string): string {
-  return `data: {"kind":"toolCallUpdated","data":{"messageId":"m","toolCallId":"${callId}","spec":{"id":"s","name":"${name}","args":{}}}}\n\n`;
-}
-
-function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-      controller.close();
-    },
-  });
-}

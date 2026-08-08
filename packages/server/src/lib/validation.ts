@@ -3,11 +3,8 @@ import type { z } from "zod";
 import { COMMAND_KIND_SET } from "@qingagent/contract-ts/schemas";
 
 /**
- * 统一的入站校验工具:zod safeParse 失败 → 400,错误契约 `{ error, issues[] }`。
- *
- * - `error`(string):向后兼容——web 现有错误处理只读顶层 `error` 字段;取首条 issue
- *   拼成 `"<path>: <message>"`,含字段路径,便于定位。
- * - `issues`(数组):新增的结构化明细,每条 `{ path, message, code }`。
+ * 统一的入站校验工具:zod safeParse 失败 → 400,错误契约 `{ issues[] }`。
+ * 每条明细形如 `{ path, message, code }`,调用方按需展示首条。
  *
  * 覆盖 13 处路由的 `c.req.json()` + 逐字段手写校验,消灭复制粘贴的 try/catch。
  */
@@ -21,7 +18,6 @@ export interface ValidationIssue {
 
 /** 400 错误响应体契约。 */
 export interface ValidationErrorBody {
-  error: string;
   issues: ValidationIssue[];
 }
 
@@ -42,20 +38,14 @@ export function formatIssuePath(path: ReadonlyArray<PropertyKey>): string {
   return out;
 }
 
-/** 通用 zod 错误 → `{ error, issues }`(P1 各路由私有形状用)。 */
+/** 通用 zod 错误 → `{ issues }`(P1 各路由私有形状用)。 */
 export function formatZodError(error: z.ZodError): ValidationErrorBody {
   const issues: ValidationIssue[] = error.issues.map((issue) => ({
     path: formatIssuePath(issue.path),
     message: issue.message,
     code: issue.code,
   }));
-  const first = issues[0];
-  const message = first
-    ? first.path.length > 0
-      ? `${first.path}: ${first.message}`
-      : first.message
-    : "Invalid request body";
-  return { error: message, issues };
+  return { issues };
 }
 
 /**
@@ -65,23 +55,37 @@ export function formatZodError(error: z.ZodError): ValidationErrorBody {
 export function formatCommandError(error: z.ZodError, body: unknown): ValidationErrorBody {
   // 非对象 body:与旧 `validateCommandKind` 首个分支同义。
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    return { error: "Command must be a non-null object", issues: [] };
+    return {
+      issues: [{ path: "", message: "Command must be a non-null object", code: "invalid_type" }],
+    };
   }
   const base = formatZodError(error);
   const kind = (body as Record<string, unknown>).kind;
   // 未知 kind:discriminatedUnion 会报 discriminator 错;这里给旧同款文案。
   if (typeof kind === "string" && !COMMAND_KIND_SET.has(kind)) {
-    return { error: `Unknown command kind: ${kind}`, issues: base.issues };
+    return {
+      issues: [{ path: "kind", message: `Unknown command kind: ${kind}`, code: "invalid_union" }],
+    };
   }
   if (typeof kind !== "string") {
     // kind 缺失/非字符串:discriminator 报错,补前缀无意义,直接用通用文案。
     return base;
   }
-  // 合法 kind:给首条 issue 补 `<kind>.` 前缀,便于人读定位。
+  // 合法 kind:给首条 issue 的结构化路径补 `<kind>.` 前缀。
   const first = base.issues[0];
   if (!first) return base;
   const label = first.path.length > 0 ? `${kind}.${first.path}` : kind;
-  return { error: `${label}: ${first.message}`, issues: base.issues };
+  return { issues: [{ ...first, path: label }, ...base.issues.slice(1)] };
+}
+
+/** 将首条结构化 issue 转成人可读文案。 */
+export function firstValidationIssueMessage(
+  body: ValidationErrorBody,
+  fallback = "Invalid request body",
+): string {
+  const first = body.issues[0];
+  if (!first) return fallback;
+  return first.path.length > 0 ? `${first.path}: ${first.message}` : first.message;
 }
 
 function findPathBeyondDepth(value: unknown, maxDepth: number): string | null {
@@ -116,7 +120,6 @@ function findPathBeyondDepth(value: unknown, maxDepth: number): string | null {
 function formatDepthError(path: string, maxDepth: number): ValidationErrorBody {
   const message = `Request body exceeds maximum nesting depth ${maxDepth}`;
   return {
-    error: path ? `${path}: ${message}` : message,
     issues: [{ path, message, code: "too_big" }],
   };
 }
@@ -139,7 +142,7 @@ export interface ParseBodyOptions {
 }
 
 /**
- * 读取并校验请求体:JSON 解析失败 → 400;schema 校验失败 → 400 `{ error, issues }`;
+ * 读取并校验请求体:JSON 解析失败 → 400;schema 校验失败 → 400 `{ issues }`;
  * 成功 → 返回**消毒后**的 parse 输出(未知字段已 strip)。消灭各路由复制粘贴的 try/catch。
  */
 export async function parseBody<T>(
@@ -156,8 +159,11 @@ export async function parseBody<T>(
       return {
         ok: false,
         response: makeResponse(c, {
-          error: options.invalidJsonMessage ?? "Content-Type must be application/json",
-          issues: [],
+          issues: [{
+            path: "",
+            message: options.invalidJsonMessage ?? "Content-Type must be application/json",
+            code: "invalid_type",
+          }],
         }),
       };
     }
@@ -167,7 +173,12 @@ export async function parseBody<T>(
     body = await c.req.json();
   } catch {
     const message = options.invalidJsonMessage ?? "Invalid JSON body";
-    return { ok: false, response: makeResponse(c, { error: message, issues: [] }) };
+    return {
+      ok: false,
+      response: makeResponse(c, {
+        issues: [{ path: "", message, code: "invalid_json" }],
+      }),
+    };
   }
   const maxDepth = options.maxDepth === undefined ? DEFAULT_MAX_BODY_DEPTH : options.maxDepth;
   if (maxDepth !== null) {

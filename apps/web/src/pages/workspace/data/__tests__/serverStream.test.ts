@@ -1665,6 +1665,26 @@ describe("ServerStream", () => {
     ).rejects.toThrow("Stream request failed: 500");
   });
 
+  it("commands 校验失败展示首个结构化 issue", async () => {
+    globalThis.fetch = commandResponse({
+      issues: [{ path: "sendMessage.data.fileIds", message: "Expected array", code: "invalid_type" }],
+    }, 400);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.sendCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s-1",
+          text: "bad",
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      }),
+    ).rejects.toThrow("sendMessage.data.fileIds: Expected array");
+  });
+
   it.each([
     [
       400,

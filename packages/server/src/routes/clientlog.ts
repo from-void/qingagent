@@ -29,7 +29,7 @@ const MAX_META_BYTES = 2048;
 const MAX_STR_LEN = 200;
 
 /**
- * 归一化 clientTraceId 到 32hex（与 /stream 入口同协议）。非法/缺失返回 undefined。
+ * 归一化 clientTraceId 到 32hex（与 commands 入口同协议）。非法/缺失返回 undefined。
  * 信任边界：前端任意串都先清洗去 dash/小写，恰好 32hex 才接受。
  */
 function normalizeClientTraceId(raw: unknown): string | undefined {
@@ -96,7 +96,7 @@ clientLogRoutes.post("/clientlog", async (c) => {
           typeof ev.sessionId === "string" && ev.sessionId
             ? ev.sessionId.slice(0, MAX_STR_LEN)
             : undefined;
-        // 信任边界：clientTraceId 必须是 32hex（与 /stream 同协议），否则丢弃。
+        // 信任边界：clientTraceId 必须是 32hex（与 commands 同协议），否则丢弃。
         const clientTraceId = normalizeClientTraceId(ev.clientTraceId);
         const target =
           typeof ev.target === "string"

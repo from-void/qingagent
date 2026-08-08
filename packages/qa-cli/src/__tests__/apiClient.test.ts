@@ -68,6 +68,21 @@ describe("ApiClient", () => {
     } satisfies Partial<QaCliError>);
   });
 
+  it("校验失败优先展示首个结构化 issue", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        issues: [{ path: "sendMessage.data.fileIds", message: "Expected array", code: "invalid_type" }],
+      }), { status: 400 }),
+    ) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/commands")).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "VALIDATION",
+      message: "sendMessage.data.fileIds: Expected array",
+    } satisfies Partial<QaCliError>);
+  });
+
   it("普通 API 网络异常归类为实例不可达", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("fetch failed");

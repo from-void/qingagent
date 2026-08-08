@@ -60,8 +60,6 @@ app.use("/api/*", csrfMutationGuard);
 app.use("/api/*", authTokenMiddleware);
 app.use("/api/v1/external/*", externalTokenMiddleware);
 app.use("/api/v1/commands", commandsTokenMiddleware);
-// /stream 是历史 mutation 别名，与 /commands 共用同一个 handler，不能成为鉴权绕过。
-app.use("/api/v1/stream", commandsTokenMiddleware);
 
 // Routes
 app.route("/", healthRoutes);

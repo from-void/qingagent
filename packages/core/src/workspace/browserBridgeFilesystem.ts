@@ -62,8 +62,6 @@ export type BrowserFolderBridgeResponse =
   | {
       ok: false;
       reasonCode?: BrowserFolderBridgeFailureReasonCode;
-      /** 兼容旧客户端；核心层始终丢弃该字段，不得向上透传。 */
-      error?: string;
     };
 
 export interface BrowserFolderBridgeBoundResponse {

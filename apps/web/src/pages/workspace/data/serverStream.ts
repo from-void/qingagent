@@ -239,14 +239,24 @@ async function responseErrorMessage(
 ): Promise<string> {
   const body = await response.json().catch(() => null) as {
     error?: string | { message?: unknown };
+    issues?: Array<{ path?: unknown; message?: unknown }>;
   } | null;
   return responseErrorBodyMessage(body, fallback);
 }
 
 function responseErrorBodyMessage(
-  body: { error?: string | { message?: unknown } } | null,
+  body: {
+    error?: string | { message?: unknown };
+    issues?: Array<{ path?: unknown; message?: unknown }>;
+  } | null,
   fallback: string,
 ): string {
+  const firstIssue = body?.issues?.[0];
+  if (firstIssue && typeof firstIssue.message === "string" && firstIssue.message.trim()) {
+    return typeof firstIssue.path === "string" && firstIssue.path.trim()
+      ? `${firstIssue.path}: ${firstIssue.message}`
+      : firstIssue.message;
+  }
   if (typeof body?.error === "string") return body.error;
   if (
     body?.error &&
@@ -339,9 +349,8 @@ function frameWaiterAbortError(signal?: AbortSignal): Error {
 }
 
 /**
- * Real server stream — sends `Command` objects to `POST /api/v1/stream`
- * and parses the SSE response, validating each frame with the wire
- * contract before emitting to subscribers.
+ * Real server transport — sends `Command` objects to `POST /api/v1/commands`
+ * and consumes authoritative frames from the events channel.
  *
  * Replaces the Stage B mock `WorkspaceDocStream`. The subscriber
  * signature matches so the page's `useReducer(workspaceReducer, ...)`

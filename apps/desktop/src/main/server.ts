@@ -5,9 +5,6 @@ import path from "node:path";
 import { listenWithDesktopPortFallback, resolveDesktopPort } from "./desktopPort.js";
 import { telemetry } from "./telemetry/index.js";
 import { createSingleFlightStarter } from "./serverSingleton.js";
-import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
-
-const toolCallStreamScanner = new ToolCallStreamScanner((name) => telemetry.trackToolUsed(name));
 const reportedServerStartupErrors = new WeakSet<object>();
 
 export function isReportedServerStartupError(error: unknown): boolean {
@@ -106,7 +103,7 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
     try {
       // body 必须在被处理器消费之前 clone;只对需要看 body 的两条路径 clone。
       const p = new URL(req.url).pathname;
-      if ((req.method === "POST" && p === "/api/v1/stream") || (req.method === "PUT" && p === "/api/v1/settings/model")) {
+      if ((req.method === "POST" && p === "/api/v1/commands") || (req.method === "PUT" && p === "/api/v1/settings/model")) {
         bodyClone = req.clone();
       }
     } catch {
@@ -117,23 +114,6 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
       observeApiForTelemetry(req, res.status, bodyClone);
     } catch {
       /* 观察失败不影响请求 */
-    }
-    // agent 生成流:tee 一份 SSE 响应,后台扫 toolCallUpdated 帧提工具名(tool_used)。
-    try {
-      const p = new URL(req.url).pathname;
-      if (
-        req.method === "POST" &&
-        p === "/api/v1/stream" &&
-        res.status < 400 &&
-        res.body &&
-        (res.headers.get("content-type") || "").includes("event-stream")
-      ) {
-        const [pass, tap] = res.body.tee();
-        void toolCallStreamScanner.scan(tap);
-        return new Response(pass, res);
-      }
-    } catch {
-      /* tee 失败原样返回 */
     }
     return res;
   };
@@ -177,7 +157,7 @@ function observeApiForTelemetry(req: Request, status: number, bodyClone: Request
   const url = new URL(req.url);
   const p = url.pathname;
 
-  if (req.method === "POST" && p === "/api/v1/stream" && bodyClone) {
+  if (req.method === "POST" && p === "/api/v1/commands" && bodyClone) {
     void bodyClone
       .json()
       .then((cmd: { kind?: string } | null) => {

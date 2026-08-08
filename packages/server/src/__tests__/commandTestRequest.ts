@@ -5,7 +5,7 @@ const TEST_COMMAND_ORIGIN = "http://127.0.0.1:5173";
 
 /** 让既有业务路由测试显式模拟已通过桌面/网页鉴权的 command 请求。 */
 export async function authenticatedCommandRequest(
-  path: "/api/v1/commands" | "/api/v1/stream",
+  path: "/api/v1/commands",
   init: RequestInit,
 ): Promise<Response> {
   const previous = process.env.QINGAGENT_AUTH_TOKEN;

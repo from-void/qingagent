@@ -35,6 +35,7 @@ import {
   openBrowserFolderBridgeConnection,
   resolveBrowserFolderBridgeResponse,
   type BrowserFolderBridgeRequest,
+  type BrowserFolderBridgeFailureReasonCode,
   type BrowserFolderBridgeResponse,
 } from "../workspace/browserBridgeFilesystem.js";
 
@@ -126,8 +127,8 @@ function installBrowserBridgeFixture(
   source: FolderSourceRecord,
   files: Map<string, string>,
   options: {
-    statFailure?: string | ((relPath: string) => string | null | undefined);
-    readFailure?: string | ((relPath: string) => string | null | undefined);
+    statFailure?: BrowserFolderBridgeFailureReasonCode | ((relPath: string) => BrowserFolderBridgeFailureReasonCode | null | undefined);
+    readFailure?: BrowserFolderBridgeFailureReasonCode | ((relPath: string) => BrowserFolderBridgeFailureReasonCode | null | undefined);
     delayMs?: number;
   } = {},
 ): {
@@ -171,7 +172,7 @@ function installBrowserBridgeFixture(
       const statFailure = typeof options.statFailure === "function"
         ? options.statFailure(request.relPath)
         : options.statFailure;
-      if (statFailure) return { ok: false, error: statFailure };
+      if (statFailure) return { ok: false, reasonCode: statFailure };
       if (dirs.has(request.relPath)) {
         return {
           ok: true,
@@ -186,7 +187,7 @@ function installBrowserBridgeFixture(
         };
       }
       const text = files.get(request.relPath);
-      if (text === undefined) return { ok: false, error: "not found" };
+      if (text === undefined) return { ok: false, reasonCode: "not_found" };
       return {
         ok: true,
         op: "stat",
@@ -201,15 +202,15 @@ function installBrowserBridgeFixture(
       };
     }
     if (request.op === "readdir") {
-      if (!dirs.has(request.relPath)) return { ok: false, error: "not a directory" };
+      if (!dirs.has(request.relPath)) return { ok: false, reasonCode: "not_found" };
       return { ok: true, op: "readdir", entries: immediateEntries(request.relPath) };
     }
     const text = files.get(request.relPath);
-    if (text === undefined) return { ok: false, error: "not found" };
+    if (text === undefined) return { ok: false, reasonCode: "not_found" };
     const readFailure = typeof options.readFailure === "function"
       ? options.readFailure(request.relPath)
       : options.readFailure;
-    if (readFailure) return { ok: false, error: readFailure };
+    if (readFailure) return { ok: false, reasonCode: readFailure };
     return { ok: true, op: "readFile", bytes: new TextEncoder().encode(text) };
   };
   const close = openBrowserFolderBridgeConnection({
@@ -693,7 +694,7 @@ describe("folder document tools", () => {
       ["alpha.md", "alpha keyword in denied document"],
       ["beta.md", "alpha keyword in another denied document"],
     ]), {
-      readFailure: "NotAllowedError: permission denied by browser",
+      readFailure: "permission_denied",
     });
 
     try {
@@ -717,83 +718,6 @@ describe("folder document tools", () => {
       expect(result.scannedCount).toBe(2);
       expect(result.fileCountCapped).toBe(false);
       expect(fixture.requests.filter((request) => request.op === "readFile")).toHaveLength(2);
-    } finally {
-      fixture.close();
-      await clearFolderSourceCache(sessionId, source.id);
-    }
-  });
-
-  it("web bridge readFile ok:false 不把客户端错误透传到 readDocument 或 span summary", async () => {
-    process.env.QINGAGENT_SANDBOX_ISOLATION = "none";
-    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
-    const sessionId = "sess-folder-browser-error-redaction";
-    const source = makeBrowserSource(sessionId);
-    const forbiddenPath = "/Users/alice/PrivateRound14/leak.md";
-    const forbiddenMarker = "ROUND14_BROWSER_FILE_BODY_SHOULD_NOT_LEAK";
-    const fixture = installBrowserBridgeFixture(source, new Map([
-      ["leak.md", `${forbiddenMarker}\nvisible document body`],
-    ]), {
-      readFailure: `NotAllowedError: denied reading ${forbiddenPath}; preview=${forbiddenMarker}`,
-    });
-
-    try {
-      const workspace = await getSessionWorkspace(sessionId, {
-        resolveSkillDirs: () => [],
-        resolveFolderSources: () => [source],
-      });
-      const result = await readDocumentForSession({
-        sessionId,
-        sources: [source],
-        workspace,
-        path: "/sources/source_browser_docs/leak.md",
-      });
-      const serializedResult = JSON.stringify(result);
-      const spanSummary = summarizeToolOutputForSpan("readDocument", result);
-      const serializedSpan = JSON.stringify(spanSummary);
-
-      expect(result.ok).toBe(false);
-      expect(result.error).toBe("browser folder request failed");
-      expect(serializedResult).not.toContain(forbiddenPath);
-      expect(serializedResult).not.toContain(forbiddenMarker);
-      expect(serializedSpan).not.toContain(forbiddenPath);
-      expect(serializedSpan).not.toContain(forbiddenMarker);
-    } finally {
-      fixture.close();
-      await clearFolderSourceCache(sessionId, source.id);
-    }
-  });
-
-  it("web bridge stat ok:false 同样不透传客户端错误", async () => {
-    process.env.QINGAGENT_SANDBOX_ISOLATION = "none";
-    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
-    const sessionId = "sess-folder-browser-stat-error-redaction";
-    const source = makeBrowserSource(sessionId);
-    const forbiddenPath = "/Users/alice/PrivateRound14/stat-leak.md";
-    const forbiddenMarker = "ROUND14_BROWSER_STAT_ERROR_SHOULD_NOT_LEAK";
-    const fixture = installBrowserBridgeFixture(source, new Map([
-      ["stat-leak.md", "visible body"],
-    ]), {
-      statFailure: `NotFoundError: ${forbiddenPath}; marker=${forbiddenMarker}`,
-    });
-
-    try {
-      const workspace = await getSessionWorkspace(sessionId, {
-        resolveSkillDirs: () => [],
-        resolveFolderSources: () => [source],
-      });
-      const result = await readDocumentForSession({
-        sessionId,
-        sources: [source],
-        workspace,
-        path: "/sources/source_browser_docs/stat-leak.md",
-      });
-      const spanSummary = summarizeToolOutputForSpan("readDocument", result);
-      const serialized = JSON.stringify({ result, spanSummary });
-
-      expect(result.ok).toBe(false);
-      expect(result.error).toBe("browser folder request failed");
-      expect(serialized).not.toContain(forbiddenPath);
-      expect(serialized).not.toContain(forbiddenMarker);
     } finally {
       fixture.close();
       await clearFolderSourceCache(sessionId, source.id);
@@ -847,7 +771,7 @@ describe("folder document tools", () => {
       ["bad.md", "needle denied text should not be indexed"],
       ["good.md", "needle retained searchable text"],
     ]), {
-      readFailure: (relPath) => relPath === "bad.md" ? "NotAllowedError: denied bad.md" : null,
+      readFailure: (relPath) => relPath === "bad.md" ? "permission_denied" : null,
     });
 
     try {

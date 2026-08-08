@@ -214,15 +214,12 @@ async function render(tab: SettingsSheetTab): Promise<void> {
         <HomeSettingsSheet
           initialTab={tab}
           inkVariant="paper"
-          themeMode="paper"
-          themeModeOptions={[{ id: "paper", label: "宣纸" }]}
           anim="none"
           animOptions={[{ id: "none", label: "无" }]}
           reduceMotion={false}
           primaryFont="song"
           secondaryFont="song"
           fontOptions={[{ id: "song", label: "宋体" }]}
-          onThemeModeChange={vi.fn()}
           onAnimChange={vi.fn()}
           onReduceMotionToggle={vi.fn()}
           onPrimaryFontChange={vi.fn()}

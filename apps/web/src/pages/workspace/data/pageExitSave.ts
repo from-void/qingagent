@@ -88,10 +88,8 @@ export interface PageExitDocSaveOutboxEntry {
   pmDoc: PmDoc;
 }
 
-export const PAGE_EXIT_DOC_SAVE_OUTBOX_KEY =
-  "qingagent.page_exit_doc_save_outbox.v1";
 const PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX =
-  `${PAGE_EXIT_DOC_SAVE_OUTBOX_KEY}:entry:`;
+  "qingagent.page_exit_doc_save_outbox.v1:entry:";
 export const PAGE_EXIT_DOC_SAVE_OUTBOX_DRAIN_LOCK =
   "qingagent:page-exit-doc-save-outbox-drain";
 const PAGE_EXIT_DOC_SAVE_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -181,29 +179,6 @@ function pageExitOutboxEntryStorageKey(id: string): string {
   return `${PAGE_EXIT_DOC_SAVE_OUTBOX_ENTRY_PREFIX}${encodeURIComponent(id)}`;
 }
 
-function readLegacyPageExitDocSaveOutbox(
-  storage: PageExitOutboxStorage,
-): unknown[] {
-  let raw: string | null;
-  try {
-    raw = storage.getItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-  } catch {
-    return [];
-  }
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    try {
-      storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-    } catch {
-      // 受限 storage 中清理失败不影响当前页面继续保存。
-    }
-    return [];
-  }
-}
-
 function readPageExitDocSaveOutboxEntries(input: {
   storage?: PageExitOutboxStorage;
   now?: number;
@@ -211,7 +186,7 @@ function readPageExitDocSaveOutboxEntries(input: {
 }): PageExitDocSaveOutboxEntry[] {
   const storage = input.storage ?? pageExitOutboxStorage();
   if (!storage) return [];
-  const candidates = readLegacyPageExitDocSaveOutbox(storage);
+  const candidates: unknown[] = [];
   if (
     typeof storage.length === "number" &&
     typeof storage.key === "function"
@@ -324,12 +299,6 @@ export function enqueuePageExitDocSave(input: {
       }
     }
   }
-  try {
-    // 已迁移为独立 key；旧数组只作一次性兼容读取。
-    storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-  } catch {
-    // 迁移清理失败时 read() 会按 id 去重。
-  }
   return entry;
 }
 
@@ -342,20 +311,7 @@ export function removePageExitDocSaveOutboxEntry(input: {
   try {
     storage.removeItem(pageExitOutboxEntryStorageKey(input.id));
   } catch {
-    // 下方继续尝试兼容旧数组。
-  }
-  const legacy = sanitizePageExitDocSaveOutbox(
-    readLegacyPageExitDocSaveOutbox(storage),
-    Date.now(),
-  ).filter((entry) => entry.id !== input.id);
-  try {
-    if (legacy.length === 0) {
-      storage.removeItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY);
-    } else {
-      storage.setItem(PAGE_EXIT_DOC_SAVE_OUTBOX_KEY, JSON.stringify(legacy));
-    }
-  } catch {
-    // 受限 storage 中移除失败会留下 TTL 有界的旧兼容项。
+    // 受限 storage 中移除失败不阻断页面继续工作。
   }
 }
 

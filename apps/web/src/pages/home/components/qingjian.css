@@ -6,7 +6,7 @@
    首页整页使用该布局;dock / 设置 / 新建浮钮均定位到 .qj-root 容器内。
    ========================================================================== */
 
-/* ============ 配色变量(由 .qj-root[data-theme] 切换) ============ */
+/* ============ 首页配色变量 ============ */
 .qj-root {
   /* —— 默认:浅色宣纸 paper —— */
   --qj-ink: #1a1a18;
@@ -68,150 +68,6 @@
   --qj-font-secondary: var(--font-zh-serif);
   --cm-font-title: var(--qj-font-primary);
   font-family: var(--qj-font-secondary);
-}
-/* —— 深墨玄青 —— */
-.qj-root[data-theme="dark"] {
-  --qj-ink: var(--ink-on-dark);
-  --qj-ink-soft: #b9ad94;
-  --qj-cinnabar: #cf5a4f;
-  --qj-bg-grad:
-    radial-gradient(120% 90% at 50% -10%, rgba(207, 90, 79, 0.1), transparent 55%),
-    linear-gradient(180deg, #14171a, #0e1114 45%, #0a0c0e);
-  --qj-bg-weave:
-    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 9px),
-    repeating-linear-gradient(94deg, rgba(160, 200, 200, 0.05) 0 1px, transparent 1px 13px);
-  --qj-bg-weave-opacity: 0.5;
-  --qj-core-grad:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px) 0 0 / 42px 42px,
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.18)),
-    radial-gradient(120% 90% at 50% 18%, #232c32 0%, #1a2127 58%, #121820 100%);
-  --qj-core-shadow: inset 0 0 70px rgba(0, 0, 0, 0.5);
-  --qj-mat-bg: linear-gradient(135deg, #2a363c, #222d33 60%, #1a242a);
-  --qj-mat-line: rgba(160, 200, 200, 0.22);
-  --qj-mat-shadow: inset 0 0 0 1px rgba(160, 200, 200, 0.18), inset 0 0 46px rgba(0, 0, 0, 0.4);
-  --qj-roller-grad:
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.4) 0 2px, rgba(255, 255, 255, 0.04) 2px 5px),
-    linear-gradient(90deg, #20292c, #2f3e40 30%, #46595a 50%, #2f3e40 70%, #20292c);
-  --qj-roller-cap: radial-gradient(50% 100% at 50% 50%, #8aa3a0, #46595a 60%, #20292c);
-  --qj-silk-grad: linear-gradient(90deg, #1f2c2a, #33514c 50%, #1f2c2a);
-  --qj-silk-thread: linear-gradient(180deg, #b8954a, #6e561f);
-  --qj-tag-grad: linear-gradient(180deg, #1c2329, #12171b);
-  --qj-tag-shadow: inset 0 0 46px rgba(0, 0, 0, 0.5);
-  --qj-tag-border: rgba(150, 170, 165, 0.22);
-  --qj-tag-title: var(--ink-on-dark);
-  --qj-tag-title-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-  --qj-tag-wash: radial-gradient(80% 60% at 50% 40%, rgba(80, 120, 120, 0.1), transparent 60%);
-  --qj-tag-outline: 3px double rgba(207, 90, 79, 0.25);
-  --qj-seal-shadow: 0 0 0 2px rgba(207, 90, 79, 0.16) inset;
-  --qj-header-sub: #9aa8a2;
-  --qj-hint-text: rgba(236, 227, 208, 0.9);
-  --qj-card-glow: rgba(0, 0, 0, 0.55);
-  --qj-prog-track: rgba(0, 0, 0, 0.55);
-  --qj-prog-fill: linear-gradient(90deg, var(--qj-cinnabar), #e08a80);
-  --qj-prog-ring: rgba(150, 170, 165, 0.2);
-  --qj-switch-bg: rgba(6, 8, 10, 0.72);
-  --qj-switch-border: rgba(236, 227, 208, 0.18);
-  --qj-switch-active-bg: rgba(207, 90, 79, 0.22);
-  --qj-switch-text: var(--ink-on-dark);
-  --qj-card-hover-shadow: 0 22px 48px rgba(0, 0, 0, 0.58), 0 6px 18px rgba(0, 0, 0, 0.42);
-  --qj-card-border-col: rgba(228, 237, 233, 0.7);
-  --qj-card-border-glow: rgba(196, 214, 208, 0.22);
-}
-/* —— 深栗暖褐 —— */
-.qj-root[data-theme="chestnut"] {
-  --qj-ink: #f0e4d2;
-  --qj-ink-soft: #cbb89c;
-  --qj-cinnabar: #e07a4f;
-  --qj-bg-grad:
-    radial-gradient(120% 90% at 50% -10%, rgba(224, 122, 79, 0.12), transparent 55%),
-    linear-gradient(180deg, #2a1c14, #21150f 45%, #1a100b);
-  --qj-bg-weave:
-    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 9px),
-    repeating-linear-gradient(94deg, rgba(220, 170, 110, 0.07) 0 1px, transparent 1px 13px);
-  --qj-bg-weave-opacity: 0.5;
-  --qj-core-grad:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 42px 42px,
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.2)),
-    radial-gradient(120% 90% at 50% 18%, #3a2519 0%, #301e13 58%, #24160d 100%);
-  --qj-core-shadow: inset 0 0 70px rgba(0, 0, 0, 0.45);
-  --qj-mat-bg: linear-gradient(135deg, #46301e, #3a2618 60%, #2e1d10);
-  --qj-mat-line: rgba(220, 170, 110, 0.24);
-  --qj-mat-shadow: inset 0 0 0 1px rgba(220, 170, 110, 0.2), inset 0 0 46px rgba(0, 0, 0, 0.38);
-  --qj-roller-grad:
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.35) 0 2px, rgba(255, 255, 255, 0.05) 2px 5px),
-    linear-gradient(90deg, #3a2618, #5a3c22 30%, #7a542e 50%, #5a3c22 70%, #3a2618);
-  --qj-roller-cap: radial-gradient(50% 100% at 50% 50%, #c9a060, #7a542e 60%, #3a2618);
-  --qj-silk-grad: linear-gradient(90deg, #3a2a18, #5a4226 50%, #3a2a18);
-  --qj-silk-thread: linear-gradient(180deg, #d4a44a, #8a6c2a);
-  --qj-tag-grad: linear-gradient(180deg, #332116, #271912);
-  --qj-tag-shadow: inset 0 0 46px rgba(0, 0, 0, 0.45);
-  --qj-tag-border: rgba(180, 140, 90, 0.28);
-  --qj-tag-title: #f0e4d2;
-  --qj-tag-title-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  --qj-tag-wash: radial-gradient(80% 60% at 50% 40%, rgba(224, 122, 79, 0.11), transparent 60%);
-  --qj-tag-outline: 3px double rgba(224, 122, 79, 0.24);
-  --qj-seal-shadow: 0 0 0 2px rgba(224, 122, 79, 0.16) inset;
-  --qj-header-sub: #c3a682;
-  --qj-hint-text: rgba(240, 228, 210, 0.9);
-  --qj-card-glow: rgba(0, 0, 0, 0.5);
-  --qj-prog-track: rgba(0, 0, 0, 0.5);
-  --qj-prog-fill: linear-gradient(90deg, var(--qj-cinnabar), #f0a07a);
-  --qj-prog-ring: rgba(224, 122, 79, 0.23);
-  --qj-switch-bg: rgba(20, 12, 8, 0.72);
-  --qj-switch-border: rgba(240, 228, 210, 0.18);
-  --qj-switch-active-bg: rgba(224, 122, 79, 0.22);
-  --qj-switch-text: #f0e4d2;
-  --qj-card-hover-shadow: 0 22px 48px rgba(0, 0, 0, 0.52), 0 6px 18px rgba(0, 0, 0, 0.38);
-  --qj-card-border-col: rgba(242, 230, 206, 0.7);
-  --qj-card-border-glow: rgba(222, 196, 156, 0.22);
-}
-/* —— 黛青中调 —— */
-.qj-root[data-theme="celadon"] {
-  --qj-ink: #e6ede9;
-  --qj-ink-soft: #b6c4bd;
-  --qj-cinnabar: #d96a5c;
-  --qj-bg-grad:
-    radial-gradient(120% 90% at 50% -10%, rgba(120, 150, 140, 0.1), transparent 55%),
-    linear-gradient(180deg, #3a4744, #2e3a37 45%, #26302e);
-  --qj-bg-weave:
-    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.13) 0 1px, transparent 1px 9px),
-    repeating-linear-gradient(94deg, rgba(210, 230, 222, 0.07) 0 1px, transparent 1px 13px);
-  --qj-bg-weave-opacity: 0.5;
-  --qj-core-grad:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 42px 42px,
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.16)),
-    radial-gradient(120% 90% at 50% 18%, #51625c 0%, #44544e 58%, #36433e 100%);
-  --qj-core-shadow: inset 0 0 70px rgba(0, 0, 0, 0.35);
-  --qj-mat-bg: linear-gradient(135deg, #56685f, #48584f 60%, #3a4842);
-  --qj-mat-line: rgba(210, 230, 222, 0.26);
-  --qj-mat-shadow: inset 0 0 0 1px rgba(210, 230, 222, 0.2), inset 0 0 46px rgba(0, 0, 0, 0.3);
-  --qj-roller-grad:
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 2px, rgba(255, 255, 255, 0.06) 2px 5px),
-    linear-gradient(90deg, #2e3c39, #44605a 30%, #5e807a 50%, #44605a 70%, #2e3c39);
-  --qj-roller-cap: radial-gradient(50% 100% at 50% 50%, #a9c4bc, #5e807a 60%, #2e3c39);
-  --qj-silk-grad: linear-gradient(90deg, #2c3a37, #44605a 50%, #2c3a37);
-  --qj-silk-thread: linear-gradient(180deg, #c9b25a, #8a7430);
-  --qj-tag-grad: linear-gradient(180deg, #3c4a46, #2e3a37);
-  --qj-tag-shadow: inset 0 0 46px rgba(0, 0, 0, 0.4);
-  --qj-tag-border: rgba(170, 195, 185, 0.26);
-  --qj-tag-title: #e6ede9;
-  --qj-tag-title-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --qj-tag-wash: radial-gradient(80% 60% at 50% 40%, rgba(170, 200, 190, 0.12), transparent 60%);
-  --qj-tag-outline: 3px double rgba(217, 106, 92, 0.22);
-  --qj-seal-shadow: 0 0 0 2px rgba(217, 106, 92, 0.15) inset;
-  --qj-header-sub: #a7bab2;
-  --qj-hint-text: rgba(230, 237, 233, 0.9);
-  --qj-card-glow: rgba(0, 0, 0, 0.42);
-  --qj-prog-track: rgba(0, 0, 0, 0.45);
-  --qj-prog-fill: linear-gradient(90deg, var(--qj-cinnabar), #ec9388);
-  --qj-prog-ring: rgba(170, 195, 185, 0.22);
-  --qj-switch-bg: rgba(18, 26, 24, 0.68);
-  --qj-switch-border: rgba(230, 237, 233, 0.18);
-  --qj-switch-active-bg: rgba(217, 106, 92, 0.2);
-  --qj-switch-text: #e6ede9;
-  --qj-card-hover-shadow: 0 22px 46px rgba(0, 0, 0, 0.46), 0 6px 17px rgba(0, 0, 0, 0.32);
-  --qj-card-border-col: rgba(231, 240, 233, 0.7);
-  --qj-card-border-glow: rgba(194, 216, 202, 0.22);
 }
 /* ============ 首页整页接管 ============ */
 .web-page-frame--qingjian-home {
@@ -1155,7 +1011,6 @@ transform 平移内层) */
 .qj-root[data-reduce-motion="true"] .qj-stage-moment,
 .qj-root[data-reduce-motion="true"] .qj-stage-moment *,
 .qj-root[data-reduce-motion="true"] .qj-settings-btn,
-.qj-root[data-reduce-motion="true"] .qj-swatch,
 .qj-root[data-reduce-motion="true"] .qj-bt-knob,
 .qj-root[data-reduce-motion="true"] .qj-dock,
 .qj-root[data-reduce-motion="true"] .qj-dock-preview,
@@ -1351,64 +1206,10 @@ transform 平移内层) */
   color: var(--qj-header-sub);
   margin: 9px 0 5px;
 }
-.qj-swatch-row,
 .qj-anim-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-.qj-swatch {
-  min-width: 0;
-  flex: 1 1 46%;
-  height: 28px;
-  font-size: 11px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 8px;
-  border-radius:0;
-  position: relative;
-  border: 1px solid var(--qj-switch-border);
-  background: rgba(127, 127, 127, 0.06);
-  color: var(--qj-switch-text);
-  font-family: var(--font-zh-serif);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s, background 0.25s;
-  outline: none;
-}
-.qj-swatch::before {
-  content: "";
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  border-radius:0;
-  background: var(--qj-swatch-bg);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.38) inset, 0 1px 4px rgba(0, 0, 0, 0.3);
-}
-.qj-swatch:hover,
-.qj-swatch:focus-visible {
-  transform: translateY(-1px);
-  border-color: var(--qj-cinnabar);
-}
-.qj-swatch.qj-active {
-  border-color: var(--qj-cinnabar);
-  background: var(--qj-switch-active-bg);
-  box-shadow: 0 0 0 1px var(--qj-cinnabar);
-}
-.qj-swatch[data-set="paper"] {
-  --qj-swatch-bg: linear-gradient(135deg, #f4eedd, #d8c39a);
-}
-.qj-swatch[data-set="dark"] {
-  --qj-swatch-bg: linear-gradient(135deg, #243036, #0e1114);
-}
-.qj-swatch[data-set="chestnut"] {
-  --qj-swatch-bg: linear-gradient(135deg, #5a3c22, #1a100b);
-}
-.qj-swatch[data-set="celadon"] {
-  --qj-swatch-bg: linear-gradient(135deg, #5e807a, #2e3a37);
 }
 .qj-ap-mode {
   min-width: 0;
@@ -2008,7 +1809,6 @@ transform 平移内层) */
 .qj-root .qj-stage-moment,
 .qj-root .qj-stage-moment *,
 .qj-root .qj-settings-btn,
-.qj-root .qj-swatch,
 .qj-root .qj-bt-knob,
 .qj-root .qj-dock,
 .qj-root .qj-dock-preview,

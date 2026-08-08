@@ -1,0 +1,4 @@
+Cached diagram follows
+
+flowchart LR
+  Start --> Finish

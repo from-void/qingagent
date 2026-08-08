@@ -101,8 +101,7 @@ export async function claimClientMessageIdempotency(input: {
   });
   const row = existing.rows[0];
   if (!row) {
-    // 唯一键竞争后记录只可能存在；若外部进程恰好删除，重试整次 claim。
-    return claimClientMessageIdempotency(input);
+    throw new Error("client message idempotency claim invariant violated");
   }
   return { claimed: false, record: mapRecord(row) };
 }

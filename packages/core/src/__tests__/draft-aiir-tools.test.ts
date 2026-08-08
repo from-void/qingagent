@@ -6,7 +6,6 @@ import {
   compileAiDocumentToPm,
   getStablePmJson,
   materializeDraftBlockIds,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";

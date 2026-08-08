@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocState, ToolCallSpec } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromBlocks, pmDocFromText } from "./pmTestUtils.js";
 import type { SessionState } from "../session/sessionState.js";
 import { createSession, recordSuspension } from "../session/sessionState.js";
 import {
@@ -15,15 +15,15 @@ import {
 import { deriveContentState } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
-  state.doc = legacySectionsToPm([
-    { kind: "h1", data: { text: "标题" } },
-    { kind: "p", data: { text: "原始正文" } },
-  ] as never);
+  state.doc = pmDocFromBlocks([
+    { type: "heading", level: 1, text: "标题" },
+    { type: "paragraph", text: "原始正文" },
+  ]);
   state.docVersion = 1;
 }
 
 function addPatch(state: SessionState, id = "patch-1"): void {
-  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc ??= pmDocFromText("正文");
   state.suggestions.set(id, {
     messageId: "agent-msg",
     toolCallId: id,

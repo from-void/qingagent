@@ -23,9 +23,7 @@ import type {
   AnnotationGroup,
   DocumentSnapshot,
   FolderSource,
-  LegacySection,
 } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { reconcileAssetPreview, toAssetSource } from "./sources";
 
 function reduce(...frames: WorkspaceAction[]) {
@@ -33,12 +31,29 @@ function reduce(...frames: WorkspaceAction[]) {
 }
 
 function wireSnapshot(snap: Pick<DocumentSnapshot, "version" | "ts"> & {
-  sections: LegacySection[];
+  sections: Array<
+    | { kind: "h1"; data: { text: string } }
+    | { kind: "p"; data: { text: string } }
+  >;
 }): DocumentSnapshot {
   return {
     version: snap.version,
     ts: snap.ts,
-    doc: legacySectionsToPm(snap.sections as never),
+    doc: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: snap.sections.map((section, index) => section.kind === "h1"
+        ? {
+            type: "heading",
+            attrs: { blockId: `fixture-${index + 1}`, level: 1 },
+            content: [{ type: "text", text: section.data.text }],
+          }
+        : {
+            type: "paragraph",
+            attrs: { blockId: `fixture-${index + 1}` },
+            content: [{ type: "text", text: section.data.text }],
+          }),
+    },
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallSpec } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import {
   clearSuspension,
   createSession,
@@ -15,11 +15,11 @@ import {
 } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
-  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc = pmDocFromText("正文");
 }
 
 function seedReviewPatch(state: SessionState): void {
-  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc ??= pmDocFromText("正文");
   state.suggestions.set("patch-1", {
     messageId: "msg-patch-1",
     toolCallId: "patch-1",

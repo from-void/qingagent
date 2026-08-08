@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
-import type { BridgeFrame, LegacySection, ToolCallSpec } from "@qingagent/contract-ts";
+import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
 import {
   deleteDocumentFamily,
   documentDraftRepo,
   documentRepo,
 } from "@qingagent/db";
-import { legacySectionsToPm, pmToLegacySections } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 // 回归:上游 LLM 调用最终失败(网络/超时/服务异常,重试耗尽)时,Mastra 把错误作为
 // type:"error" 的 chunk(deferredErrorChunk)推上来。零产出瞬态错误由 runAgentTurn
@@ -328,11 +328,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const sessionId = "terminal-error-settles-draft";
     const state = createSession(sessionId);
-    const generatedSections: LegacySection[] = [{
-      kind: "p",
-      data: { text: "错误前已经完成的候选正文" },
-    }];
-    const generatedDoc = legacySectionsToPm(generatedSections as never);
+    const generatedDoc = pmDocFromText("错误前已经完成的候选正文");
     state.docDraftCandidateDoc = generatedDoc;
 
     try {
@@ -1284,8 +1280,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const requestContext = new RequestContext([
       ["abortSignal", abortController.signal],
     ] as never);
-    const sections: LegacySection[] = [{ kind: "p", data: { text: "已生成的候选正文" } }];
-    const candidate = legacySectionsToPm(sections as never);
+    const candidate = pmDocFromText("已生成的候选正文");
     state.docDraftCandidateDoc = candidate;
     const clearSpy = vi.spyOn(documentDraftRepo, "clear");
 
@@ -1337,8 +1332,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
       expect(bodies.some((body) => body.includes("已保留本轮生成的部分草稿"))).toBe(true);
       expect(bodies.some((body) => body.includes("未产出可用草稿"))).toBe(false);
 
-      const continuedSections: LegacySection[] = [{ kind: "p", data: { text: "继续后生成的新正文" } }];
-      const continuedCandidate = legacySectionsToPm(continuedSections as never);
+      const continuedCandidate = pmDocFromText("继续后生成的新正文");
       replaceDraftCandidateDoc(state, continuedCandidate);
       expect(state.docDraftBaseVersion).toBe(1);
 
@@ -1370,11 +1364,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     await deleteDocumentFamily(sessionId);
     const state = createSession(sessionId);
     const abortController = new AbortController();
-    const candidateSections: LegacySection[] = [{
-      kind: "p",
-      data: { text: "这段旧轮候选不应在新消息到达后落地" },
-    }];
-    const candidate = legacySectionsToPm(candidateSections as never);
+    const candidate = pmDocFromText("这段旧轮候选不应在新消息到达后落地");
     state.docDraftCandidateDoc = candidate;
 
     async function* editDraftThenPreempt(): AsyncGenerator<unknown> {
@@ -1433,11 +1423,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const requestContext = new RequestContext([
       ["abortSignal", abortController.signal],
     ] as never);
-    const candidateSections: LegacySection[] = [{
-      kind: "p",
-      data: { text: "这是停止前已经完整显示的九百九十八字正文" },
-    }];
-    const candidate = legacySectionsToPm(candidateSections as never);
+    const candidate = pmDocFromText("这是停止前已经完整显示的九百九十八字正文");
     state.docDraftCandidateDoc = candidate;
 
     async function* writeDraftThenUserStop(): AsyncGenerator<unknown> {
@@ -1513,11 +1499,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const requestContext = new RequestContext([
       ["abortSignal", abortController.signal],
     ] as never);
-    const candidateSections: LegacySection[] = [{
-      kind: "p",
-      data: { text: "这是已经完整显示、等待自动精简的九百九十八字正文" },
-    }];
-    const candidate = legacySectionsToPm(candidateSections as never);
+    const candidate = pmDocFromText("这是已经完整显示、等待自动精简的九百九十八字正文");
     state.docDraftCandidateDoc = candidate;
 
     async function* writeDraftThenReasonForever(): AsyncGenerator<unknown> {

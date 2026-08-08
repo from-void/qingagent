@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import { createSession } from "../session/sessionState.js";
+import { pmDocFromBlocks } from "./pmTestUtils.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -11,11 +11,11 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   return frames;
 }
 
-function legacySections(): LegacySection[] {
-  return [
-    { kind: "h1", data: { text: "春天的校园" } },
-    { kind: "p", data: { text: "三月的阳光透过教学楼的玻璃窗。" } },
-  ];
+function fixtureDoc() {
+  return pmDocFromBlocks([
+    { type: "heading", level: 1, text: "春天的校园" },
+    { type: "paragraph", text: "三月的阳光透过教学楼的玻璃窗。" },
+  ]);
 }
 
 vi.mock("node:fs/promises", () => ({
@@ -72,7 +72,7 @@ describe("AI-IR prompt injection L2", () => {
   it("末条 user message 不含整篇快照和行号,但包含前置时间锚", async () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("aiir-injection-on");
-    state.doc = legacySectionsToPm(legacySections() as never);
+    state.doc = fixtureDoc();
     state.docVersion = 3;
     state.lastSyncedDocumentSnapshot = 0;
     state.docState = { kind: "editing" };
@@ -115,10 +115,10 @@ describe("AI-IR prompt injection L2", () => {
     expect(providerPrompt).not.toContain("[1] # 春天的校园");
   });
 
-  it("legacy 文档同步不改写既有历史消息字节", async () => {
+  it("文档同步不改写既有历史消息字节", async () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("aiir-history-byte-guard");
-    state.doc = legacySectionsToPm(legacySections() as never);
+    state.doc = fixtureDoc();
     state.docVersion = 5;
     state.lastSyncedDocumentSnapshot = 0;
     state.docState = { kind: "editing" };

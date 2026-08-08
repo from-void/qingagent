@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import { qingagentAgent } from "../agents/qingagent.js";
 import { ConfirmService } from "../confirm/confirmService.js";
 
@@ -41,7 +41,7 @@ function flushMicrotasks(): Promise<void> {
 }
 
 function seedDoc(state: import("../bridge/index.js").SessionState): void {
-  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc = pmDocFromText("正文");
 }
 
 function writeDraftToolCall(
@@ -291,9 +291,9 @@ describe("abortAndCleanupTurn", () => {
         resolve();
       };
     });
-    state.docDraftBaseDoc = legacySectionsToPm([{ kind: "p", data: { text: "base" } }] as never);
+    state.docDraftBaseDoc = pmDocFromText("base");
     state.docDraftBaseVersion = 3;
-    state.docDraftCandidateDoc = legacySectionsToPm([{ kind: "p", data: { text: "partial" } }] as never);
+    state.docDraftCandidateDoc = pmDocFromText("partial");
     state._lastEmittedWireKind = "drafting";
     state.chatHistory = [
       {
@@ -490,8 +490,8 @@ describe("abortAndCleanupTurn", () => {
     state.streamId = "hung-stream";
     state._abortController = controller;
     state._activeTurnPromise = new Promise<void>(() => undefined);
-    state.docDraftBaseDoc = legacySectionsToPm([{ kind: "p", data: { text: "base" } }] as never);
-    state.docDraftCandidateDoc = legacySectionsToPm([{ kind: "p", data: { text: "partial" } }] as never);
+    state.docDraftBaseDoc = pmDocFromText("base");
+    state.docDraftCandidateDoc = pmDocFromText("partial");
 
     const frames = await collectFrames(abortAndCleanupTurn(state, { activeTurnTimeoutMs: 1 }));
 

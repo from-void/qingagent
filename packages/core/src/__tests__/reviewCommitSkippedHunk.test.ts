@@ -2,12 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, ChatMessage, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
 } from "@qingagent/pm-schema";
-import type { LegacySection } from "@qingagent/contract-ts";
 import {
   commitPatches,
   createSession,
@@ -154,7 +152,6 @@ async function seedCanonical(state: SessionState, canonical: PmDoc): Promise<voi
     documentInput(state.docId, {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
-      legacySections: pmToLegacySections(canonical) as unknown as LegacySection[],
       pmDoc: canonical,
     }),
   );

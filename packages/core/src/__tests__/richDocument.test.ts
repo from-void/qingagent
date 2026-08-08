@@ -61,7 +61,7 @@ const RICH_BLOCKS: unknown[] = [
 ];
 
 describe("富样式文档全覆盖(最难任务)", () => {
-  it("AI-IR → PM → legacySections 整条管线都能保留所有 block/mark", async () => {
+  it("AI-IR → PM 整条管线都能保留所有 block/mark", async () => {
     const result = await compileAiDocumentWithBlockRetry({
       title: "AI 产业全景报道",
       blocks: RICH_BLOCKS,

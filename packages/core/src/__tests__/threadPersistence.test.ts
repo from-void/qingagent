@@ -3,7 +3,6 @@ import type { CoreMessage } from "ai";
 import type {
   AnnotationGroup,
   ChatMessage,
-  LegacySection,
   DocState,
   FolderSourceRecord,
   ToolCallSpec,
@@ -23,10 +22,11 @@ import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
-import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
+import { getPmContentHash } from "@qingagent/pm-schema";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 const { memory, threads, spans, observability, logger } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();
@@ -131,10 +131,6 @@ vi.mock("../mastra.js", () => ({
 vi.mock("../agent-run/agentSpans.js", () => ({
   sessionIdToTraceId: (sessionId: string) => `trace-${sessionId}`,
 }));
-
-function textSection(text: string): LegacySection {
-  return { kind: "p", data: { text } };
-}
 
 function chatMessage(id: string): ChatMessage {
   return {
@@ -271,7 +267,7 @@ function metadata(overrides: Partial<QingagentThreadMetadata> = {}): QingagentTh
 }
 
 function pmDoc(text: string) {
-  return legacySectionsToPm([textSection(text)] as never);
+  return pmDocFromText(text);
 }
 
 async function saveDocumentRow(input: {
@@ -419,7 +415,7 @@ describe("thread persistence", () => {
     const persisted = threads.get(state.sessionId)?.metadata as Record<string, unknown>;
 
     expect(restored?.docId).toBe("doc-explicit");
-    expect(Object.hasOwn(persisted, "legacySections")).toBe(false);
+    expect(persisted.doc).toEqual(pmDoc("正文"));
   });
 
   it("进程重启后从批注表恢复活动组及全部结构锚点", async () => {
@@ -1041,25 +1037,39 @@ describe("thread persistence", () => {
     }
   });
 
-  it("summarizes documents with the legacy word-count semantics", async () => {
+  it("summarizes documents with the established word-count semantics", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const { summarizeDoc } = await import("../session/threadPersistence.js");
     const state = createSession("session-summary");
     state.docState = { kind: "editing" };
-    state.doc = legacySectionsToPm([
-      textSection("abcd"),
-      { kind: "code", data: { body: "123456" } },
-      {
-        kind: "image",
-        data: {
-          src: "/api/v1/files/22222222-2222-4222-8222-222222222222/a.png",
-          alt: "alt text",
-          caption: "caption",
-          width: null,
-          height: null,
+    state.doc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "summary-paragraph" },
+          content: [{ type: "text", text: "abcd" }],
         },
-      },
-    ] as never);
+        {
+          type: "codeBlock",
+          attrs: { blockId: "summary-code", language: "plaintext" },
+          content: [{ type: "text", text: "123456" }],
+        },
+        {
+          type: "image",
+          attrs: {
+            blockId: "summary-image",
+            src: "/api/v1/files/22222222-2222-4222-8222-222222222222/a.png",
+            alt: "alt text",
+            caption: "caption",
+            width: null,
+            height: null,
+            align: "center",
+          },
+        },
+      ],
+    };
     state.materials.set("material-1", {
       id: "material-1",
       filename: "source.txt",
@@ -1110,7 +1120,7 @@ describe("thread persistence", () => {
     state.title = "完整状态";
     state.docState = { kind: "pendingReview" };
     state.messages = [message];
-    state.doc = legacySectionsToPm([textSection("第一段"), textSection("第二段")] as never);
+    state.doc = pmDocFromText("第一段", "第二段");
     state.docVersion = 3;
     state.modelKnownDocVersion = 3;
     addSuggestion(state);
@@ -2069,7 +2079,7 @@ describe("thread persistence", () => {
     const state = createSession("session-home-summary");
     state.title = "首页摘要";
     state.docState = { kind: "editing" };
-    state.doc = legacySectionsToPm([textSection("第一段"), textSection("第二段")] as never);
+    state.doc = pmDocFromText("第一段", "第二段");
     state.materials.set("material-1", {
       id: "material-1",
       filename: "source.txt",
@@ -2239,7 +2249,6 @@ describe("thread persistence", () => {
       docState: "locked",
       docVersion: 9,
       lastSyncedVersion: 1,
-      legacySections: [textSection("table body")],
       pmDoc: pmDoc("table body"),
       version: 5,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -2350,7 +2359,7 @@ describe("thread persistence", () => {
     expect(restored?.doc).toEqual(pmDoc("metadata survives error"));
   });
 
-  it("uses sessionId as legacy docId fallback for document table reads", async () => {
+  it("uses sessionId as old docId fallback for document table reads", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-doc-table";
     const oldMeta = metadata({ docId: undefined, doc: pmDoc("old meta") });
@@ -2364,7 +2373,6 @@ describe("thread persistence", () => {
       docState: "draft",
       docVersion: 8,
       lastSyncedVersion: 1,
-      legacySections: [textSection("legacy table body")],
       pmDoc: pmDoc("legacy table body"),
       version: 1,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -2385,9 +2393,8 @@ describe("thread persistence", () => {
       loadSessionFromThread,
     } = await import("../session/threadPersistence.js");
     const sessionId = "h1-documents-wins";
-    const oldDoc = legacySectionsToPm([textSection("metadata old")] as never);
-    const latestSections = [textSection("documents latest")];
-    const latestDoc = legacySectionsToPm(latestSections as never);
+    const oldDoc = pmDoc("metadata old");
+    const latestDoc = pmDoc("documents latest");
     const staleSuggestion = suggestionRecord("stale-patch");
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-h1",
@@ -2406,7 +2413,6 @@ describe("thread persistence", () => {
       docState: "editing",
       docVersion: 4,
       lastSyncedVersion: 4,
-      legacySections: latestSections,
       pmDoc: latestDoc,
       version: 2,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -2431,7 +2437,7 @@ describe("thread persistence", () => {
     const persisted = threads.get(sessionId)?.metadata as QingagentThreadMetadata | undefined;
     expect(persisted?.docVersion).toBe(4);
     expect(persisted?.doc).toEqual(latestDoc);
-    expect(Object.hasOwn(persisted ?? {}, "legacySections")).toBe(false);
+    expect(persisted?.doc).toEqual(latestDoc);
     expect(persisted?.docState).toEqual({ kind: "editing" });
     expect(persisted?.suggestions).toEqual([]);
     expect(persisted?.patchVerdicts).toEqual({});
@@ -2443,9 +2449,8 @@ describe("thread persistence", () => {
       loadSessionFromThread,
     } = await import("../session/threadPersistence.js");
     const sessionId = "h1-preserve-matching-draft";
-    const latestSections = [textSection("documents base")];
-    const latestDoc = legacySectionsToPm(latestSections as never);
-    const draftDoc = legacySectionsToPm([textSection("documents draft")] as never);
+    const latestDoc = pmDoc("documents base");
+    const draftDoc = pmDoc("documents draft");
     const reviewSuggestion = suggestionRecord("kept-patch");
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-h1-match",
@@ -2462,7 +2467,6 @@ describe("thread persistence", () => {
       docState: "editing",
       docVersion: 4,
       lastSyncedVersion: 4,
-      legacySections: latestSections,
       pmDoc: latestDoc,
       version: 2,
       createdAt: "2026-01-01T00:00:00.000Z",

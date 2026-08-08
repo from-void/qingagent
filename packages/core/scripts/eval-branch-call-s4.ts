@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { RequestContext } from "@mastra/core/request-context";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { markdownToPm } from "@qingagent/pm-schema";
 import { resolveEvalOutputDir } from "./evalOutputDir.js";
 
 const outputDir = resolveEvalOutputDir({ envName: "QINGAGENT_EVAL_OUT_DIR", scriptName: "eval-branch-call-s4" });
@@ -65,12 +65,13 @@ for (let attempt = 1; attempt <= 4 && !primed; attempt += 1) {
 if (!primed) throw primeError;
 
 const state = createSession(sessionId);
-state.legacySections = [
-  { id: "h1", kind: "h1", data: { text: "城市更新观察" } },
-  { id: "p1", kind: "p", data: { text: "城市更新不只是空间改造，更是公共空间治理与社区协商机制的重建。" } },
-  { id: "p2", kind: "p", data: { text: "规划从业者需要把居民参与纳入项目全周期，并建立可持续的共治框架。" } },
-] as never;
-state.doc = legacySectionsToPm(state.legacySections as never);
+state.doc = markdownToPm([
+  "# 城市更新观察",
+  "",
+  "城市更新不只是空间改造，更是公共空间治理与社区协商机制的重建。",
+  "",
+  "规划从业者需要把居民参与纳入项目全周期，并建立可持续的共治框架。",
+].join("\n"));
 const title = await generateTitleAfterFirstDraft(state, requestContext);
 
 await new Promise((resolveWait) => setTimeout(resolveWait, 1000));

@@ -1,19 +1,19 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import { createSession } from "../session/sessionState.js";
 import type { SessionState } from "../session/sessionState.js";
 import { emitProjectedDocState } from "../doc-engine/docStateMachine.js";
 import { transitionDocState } from "../doc-engine/docStateTransitions.js";
 
 function seedDoc(state: SessionState): void {
-  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc = pmDocFromText("正文");
   state.docState = { kind: "editing" };
 }
 
 function addSuggestion(state: SessionState, id = "p1"): void {
-  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
+  state.doc ??= pmDocFromText("正文");
   state.suggestions.set(id, {
     messageId: "m",
     toolCallId: id,

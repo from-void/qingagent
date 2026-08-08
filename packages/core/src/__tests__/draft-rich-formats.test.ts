@@ -7,7 +7,6 @@ import {
   compileAiDocumentToPm,
   getStablePmJson,
   pmToAiIr,
-  pmToLegacySections,
   type AiBlock,
   type PmBlockNode,
   type PmDoc,

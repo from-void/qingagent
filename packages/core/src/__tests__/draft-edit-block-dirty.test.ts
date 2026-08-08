@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   aiRunMarkToPmMark,
   applyBlockEdits,
-  legacySectionsToPm,
   pmToAiIr,
   pmToPlainText,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
   collectTopLevelTextBlocks,
@@ -16,12 +16,8 @@ import {
   replaceTextRuns,
 } from "../doc-engine/textEditOps.js";
 
-function p(text: string) {
-  return { kind: "p", data: { text } } as const;
-}
-
 function makeBaseDoc(): PmDoc {
-  return legacySectionsToPm([p("A段旧句。"), p("B段保持不变。"), p("C段保持不变。")]);
+  return pmDocFromText("A段旧句。", "B段保持不变。", "C段保持不变。");
 }
 
 function block(text: string): Record<string, unknown> {

@@ -5,7 +5,6 @@ import {
   aiBlockToQingml,
   compileAiDocumentToPm,
   countDocVisibleChars,
-  pmToLegacySections,
   pmToPlainText,
   safeParsePmDoc,
   type PmBlockNode,

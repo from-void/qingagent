@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromBlocks } from "./pmTestUtils.js";
 import { RequestContext } from "@mastra/core/request-context";
 import { createSession } from "../session/sessionState.js";
 
@@ -21,10 +21,10 @@ import {
 
 function draftedState(id: string) {
   const state = createSession(id);
-  state.doc = legacySectionsToPm([
-    { id: "h1", kind: "h1", data: { text: "旧 H1 标题" } },
-    { id: "p1", kind: "p", data: { text: "正文讨论城市更新中的公共空间与社区参与。" } },
-  ] as never);
+  state.doc = pmDocFromBlocks([
+    { type: "heading", level: 1, text: "旧 H1 标题" },
+    { type: "paragraph", text: "正文讨论城市更新中的公共空间与社区参与。" },
+  ]);
   return state;
 }
 

@@ -3,20 +3,18 @@ import {
   tableSelectionTextSignature,
   type BridgeFrame,
   type ChatChip,
-  type LegacySection,
 } from "@qingagent/contract-ts";
 import {
   applyBlockEdits,
   getPmContentHash,
-  legacySectionsToPm,
   materializeDraftBlockIds,
-  pmToLegacySections,
   pmTableSelectionCellTexts,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
   type PmMark,
 } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import { documentRepo } from "@qingagent/db";
 import { findOpByDocumentVersion } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
@@ -135,10 +133,6 @@ function doneToolCallIds(frames: BridgeFrame[], toolName: string): string[] {
       ? [frame.data.toolCallId]
       : [],
   );
-}
-
-function p(text: string): LegacySection {
-  return { kind: "p", data: { text } };
 }
 
 function text(value: string, marks?: PmMark[]): PmInlineNode {
@@ -301,7 +295,6 @@ describe("candidate-diff backend flow", () => {
       documentInput(state.docId, {
         threadId: state.threadId ?? state.sessionId,
         docVersion: state.docVersion,
-        legacySections: pmToLegacySections(state.doc) as unknown as LegacySection[],
         pmDoc: state.doc,
       }),
     );
@@ -313,7 +306,7 @@ describe("candidate-diff backend flow", () => {
     // 修复:writeDraft 赋 generation id,使 settle 发 generation_finished。
     const { createSession, drainSessionPersistence, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-writedraft-first");
-    const generatedDoc = legacySectionsToPm([p("第一版正文")] as never);
+    const generatedDoc = pmDocFromText("第一版正文");
     // 模拟 writeDraft.execute 已把候选文档落进 state(真实 execute 在 mock 流里不会跑)。
     state.docDraftCandidateDoc = generatedDoc;
 
@@ -413,8 +406,8 @@ describe("candidate-diff backend flow", () => {
   it("writeDraft 后连续 editDraft 每次更新候选投影，canonical 仍只在回合末提交一次", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-write-edit-projection");
-    const initialCandidate = legacySectionsToPm([p("胜出首稿")] as never);
-    const editedCandidate = legacySectionsToPm([p("胜出首稿，已补充细节")] as never);
+    const initialCandidate = pmDocFromText("胜出首稿");
+    const editedCandidate = pmDocFromText("胜出首稿，已补充细节");
     state.docDraftCandidateDoc = initialCandidate;
 
     async function* streamWithEdit(): AsyncGenerator<StreamChunk> {
@@ -475,13 +468,13 @@ describe("candidate-diff backend flow", () => {
     } = await import("../bridge/index.js");
     const sessionId = "candidate-noop-clears-checkpoint";
     const state = createSession(sessionId);
-    const candidate = legacySectionsToPm([p("应被丢弃的候选正文")] as never);
+    const candidate = pmDocFromText("应被丢弃的候选正文");
     state.docDraftCandidateDoc = candidate;
     await documentDraftRepo.saveCandidate({
       docId: state.docId,
       threadId: state.sessionId,
       baseVersion: 0,
-      baseHash: getPmContentHash(legacySectionsToPm([] as never)),
+      baseHash: getPmContentHash(pmDocFromText()),
       draftPmDoc: candidate,
       sourceStreamId: "stream-noop",
       sourceToolCallId: "ed-noop",
@@ -523,7 +516,7 @@ describe("candidate-diff backend flow", () => {
   ])("%s 不进 review、直接落地首稿", async (_label, baseDoc) => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession(`candidate-empty-media-${baseDoc.content[0]?.type}`);
-    const generatedDoc = legacySectionsToPm([p("直接落地的首稿正文")] as never);
+    const generatedDoc = pmDocFromText("直接落地的首稿正文");
     state.doc = baseDoc;
     state.docVersion = 1;
     state.docState = { kind: "editing" };
@@ -558,7 +551,7 @@ describe("candidate-diff backend flow", () => {
       processAgentStream,
     } = await import("../bridge/index.js");
     const state = createSession("candidate-write-then-suspend");
-    const generatedDoc = legacySectionsToPm([p("挂起后仍可读取的首稿正文")] as never);
+    const generatedDoc = pmDocFromText("挂起后仍可读取的首稿正文");
     state.docDraftCandidateDoc = generatedDoc;
 
     const askUserCall = {
@@ -657,8 +650,8 @@ describe("candidate-diff backend flow", () => {
       processAgentStream,
     } = await import("../bridge/index.js");
     const state = createSession("candidate-rewrite-then-suspend");
-    const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
-    const generatedDoc = legacySectionsToPm([p("待确认的新版正文")] as never);
+    const baseDoc = pmDocFromText("旧版正文");
+    const generatedDoc = pmDocFromText("待确认的新版正文");
     state.doc = baseDoc;
     state.docVersion = 1;
     state.docState = { kind: "editing" };
@@ -735,7 +728,7 @@ describe("candidate-diff backend flow", () => {
   it("writeDraft 成功后即使 settle 前中断也已写入 draft_candidate row", async () => {
     const { createSession, drainSessionPersistence, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-writedraft-checkpoint");
-    const generatedDoc = legacySectionsToPm([p("checkpoint 首稿")] as never);
+    const generatedDoc = pmDocFromText("checkpoint 首稿");
     state.docDraftCandidateDoc = generatedDoc;
 
     await collectUntil(
@@ -781,7 +774,7 @@ describe("candidate-diff backend flow", () => {
       processAgentStream,
     } = await import("../bridge/index.js");
     const state = createSession("candidate-readDraft-restore");
-    const generatedDoc = legacySectionsToPm([p("readDraft 后恢复的首稿")] as never);
+    const generatedDoc = pmDocFromText("readDraft 后恢复的首稿");
     state.docDraftCandidateDoc = generatedDoc;
 
     await collectUntil(
@@ -826,9 +819,9 @@ describe("candidate-diff backend flow", () => {
     const { createSession, drainSessionPersistence, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-three-writedraft");
     const candidates = [
-      legacySectionsToPm([p("第一轮正文")] as never),
-      legacySectionsToPm([p("第二轮正文")] as never),
-      legacySectionsToPm([p("第三轮正文 1303")] as never),
+      pmDocFromText("第一轮正文"),
+      pmDocFromText("第二轮正文"),
+      pmDocFromText("第三轮正文 1303"),
     ];
 
     async function* threeWriteDrafts(): AsyncGenerator<StreamChunk> {
@@ -874,8 +867,8 @@ describe("candidate-diff backend flow", () => {
   it("writeDraft over an existing canonical doc writes the candidate draft, submit builds hunks, and commit creates a new version", async () => {
     const { createSession, commitPatches, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-write");
-    const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
-    const generatedDoc = legacySectionsToPm([p("第一版正文")] as never);
+    const baseDoc = pmDocFromText("旧版正文");
+    const generatedDoc = pmDocFromText("第一版正文");
     state.doc = baseDoc;
     state.docVersion = 1;
     state.docState = { kind: "editing" };
@@ -1514,8 +1507,8 @@ describe("candidate-diff backend flow", () => {
   it("R3-10 abort before settle discards completed draft candidate instead of entering pendingReview", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-abort-before-settle");
-    const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
-    const generatedDoc = legacySectionsToPm([p("停止后不应落地")] as never);
+    const baseDoc = pmDocFromText("旧版正文");
+    const generatedDoc = pmDocFromText("停止后不应落地");
     state.doc = baseDoc;
     state.docVersion = 1;
     state.docState = { kind: "editing" };

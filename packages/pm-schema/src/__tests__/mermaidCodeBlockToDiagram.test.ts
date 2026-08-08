@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { compileAiDocumentToPm, detectMermaidSource, upgradeMermaidCodeBlocksToDiagram } from "../ai-ir/aiIrToPm";
-import { legacySectionsToPm } from "../legacy/legacySectionsToPm";
 import type { AiDocument } from "../ai-ir/aiIrSchema";
 
 // round-1 端到端实测发现:writeDraft 走 flash 档模型,常无视"严禁用 codeBlock 写 mermaid",
@@ -26,7 +25,7 @@ describe("detectMermaidSource", () => {
   });
 });
 
-describe("AI-IR / legacy 把 mermaid 代码块转成 diagram", () => {
+describe("AI-IR 把 mermaid 代码块转成 diagram", () => {
   it("AI-IR codeBlock(language=mermaid)→ diagram", () => {
     const ir: AiDocument = {
       title: "t",
@@ -56,12 +55,6 @@ describe("AI-IR / legacy 把 mermaid 代码块转成 diagram", () => {
     expect(r.doc!.content[0]?.type).toBe("codeBlock");
   });
 
-  it("legacy code section(mermaid)→ diagram", () => {
-    const doc = legacySectionsToPm([
-      { kind: "code", data: { body: "flowchart TD\n A-->B", language: "mermaid" } },
-    ] as never);
-    expect(doc.content[0]?.type).toBe("diagram");
-  });
 });
 
 // 装载侧安全网:已落盘文档里"伪装成 codeBlock 的 mermaid"装载到编辑器前要升级回 diagram,

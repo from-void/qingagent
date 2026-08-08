@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   normalizePmDoc,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
@@ -141,7 +140,6 @@ async function seedDocument(sessionId: string, pmDoc: PmDoc, version = 1): Promi
       threadId: sessionId,
       docVersion: version,
       lastSyncedVersion: version,
-      legacySections: pmToLegacySections(pmDoc) as unknown as LegacySection[],
       pmDoc,
     }),
   );
@@ -180,7 +178,6 @@ describe("pending draft rehydrate", () => {
         docId: sessionId,
         docState: { kind: "editing" },
         docVersion: 4,
-        legacySections: [],
         messages: [],
       },
     });
@@ -239,7 +236,6 @@ describe("pending draft rehydrate", () => {
         docState: { kind: "pendingReview" },
         docVersion: 1,
         doc: base,
-        legacySections: pmToLegacySections(base),
         messages: [],
       },
     });
@@ -284,7 +280,6 @@ describe("pending draft rehydrate", () => {
         docState: { kind: "pendingReview" },
         docVersion: 5,
         doc: current,
-        legacySections: pmToLegacySections(current),
         messages: [],
       },
     });
@@ -939,7 +934,6 @@ describe("pending draft rehydrate", () => {
         docVersion: 0,
         lastContentEditedAt: frozenThreadTime,
         lastSyncedDocumentSnapshot: 0,
-        legacySections: [],
         materials: [],
         title: "冷恢复",
         runId: null,
@@ -1037,7 +1031,6 @@ describe("pending draft rehydrate", () => {
         docVersion: 0,
         lastContentEditedAt: frozenThreadTime,
         lastSyncedDocumentSnapshot: 0,
-        legacySections: [],
         materials: [],
         title: "只读恢复",
         runId: null,

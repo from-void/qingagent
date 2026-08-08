@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
-import { legacySectionsToPm } from "../legacy/legacySectionsToPm";
 import { pmToClipboardHtml } from "../clipboard/pmToClipboardHtml";
 import { normalizePmDoc } from "../validators";
 import type { AiDocument } from "../ai-ir/aiIrSchema";
 import type { PmDoc } from "../types";
 
-// 安全回归:diagram.svg 绝不能信任模型/legacy 来源(会被 dangerouslySetInnerHTML 注入 +
+// 安全回归:diagram.svg 绝不能信任模型来源(会被 dangerouslySetInnerHTML 注入 +
 // 内嵌导出 → 存储型 XSS)。模型入口一律置 null；PM 客户端缓存必须先过统一 SVG 加固。
 const EVIL_SVG = '<svg onload="alert(1)"><script>alert(2)</script></svg>';
 
@@ -25,14 +24,6 @@ describe("diagram svg 入口剥离(防存储型 XSS)", () => {
     // svg 必须不是模型给的恶意串(null/undefined 都算已剥离)
     expect((block?.type === "diagram" ? block.attrs.svg : "x") ?? null).toBeNull();
     expect(block?.type === "diagram" ? block.attrs.source : "").toContain("flowchart TD");
-  });
-
-  it("legacy section → PM:section.data.svg 被丢弃,置 null", () => {
-    const doc = legacySectionsToPm([
-      { kind: "diagram", data: { lang: "mermaid", source: "pie\n \"A\": 1", svg: EVIL_SVG } },
-    ] as never);
-    const block = doc.content.find((b) => b.type === "diagram");
-    expect((block?.type === "diagram" ? block.attrs.svg : "x") ?? null).toBeNull();
   });
 
   it("PM 直写归一化:updateDoc 入口传入的 diagram.svg 先剥离恶意内容", () => {

@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
-import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
+import { getPmContentHash } from "@qingagent/pm-schema";
 import {
   __resetDocumentsClientForTest,
   getDocumentsClient,
@@ -17,15 +16,11 @@ import {
   type DocumentSaveInput,
 } from "../documentRepo.js";
 import { insertVersion } from "../documentVersionRepo.js";
+import { pmDocFromText } from "./dbTestUtils.js";
 
 let tempDir: string;
 
-function section(text: string): LegacySection {
-  return { kind: "p", data: { text } };
-}
-
 function input(id: string, overrides: Partial<DocumentSaveInput> = {}): DocumentSaveInput {
-  const legacySections = overrides.legacySections ?? [section(`body-${id}`)];
   return {
     id,
     threadId: id,
@@ -34,8 +29,7 @@ function input(id: string, overrides: Partial<DocumentSaveInput> = {}): Document
     docState: "draft",
     docVersion: 1,
     lastSyncedVersion: 1,
-    legacySections,
-    pmDoc: overrides.pmDoc ?? legacySectionsToPm(legacySections as never),
+    pmDoc: overrides.pmDoc ?? pmDocFromText(`body-${id}`),
     createdAt: `2026-01-01T00:00:0${id.length}.000Z`,
     updatedAt: `2026-01-01T00:00:0${id.length}.000Z`,
     ...overrides,
@@ -73,7 +67,7 @@ describe("documentRepo", () => {
     const first = await documentRepo.load("doc-1");
 
     expect(first?.title).toBe("title-doc-1");
-    expect(first?.legacySections).toEqual([section("body-doc-1")]);
+    expect(first?.pmDoc).toEqual(pmDocFromText("body-doc-1"));
     expect(first?.version).toBe(1);
 
     await documentRepo.save(
@@ -81,14 +75,14 @@ describe("documentRepo", () => {
         title: "updated",
         docVersion: 2,
         updatedAt: "2026-01-02T00:00:00.000Z",
-        legacySections: [section("updated body")],
+        pmDoc: pmDocFromText("updated body"),
       }),
     );
 
     const updated = await documentRepo.load("doc-1");
     expect(updated?.title).toBe("updated");
     expect(updated?.docVersion).toBe(2);
-    expect(updated?.legacySections).toEqual([section("updated body")]);
+    expect(updated?.pmDoc).toEqual(pmDocFromText("updated body"));
     expect(updated?.version).toBe(2);
     expect(updated?.createdAt).toBe(first?.createdAt);
     expect(updated?.updatedAt).toBe("2026-01-02T00:00:00.000Z");
@@ -99,7 +93,7 @@ describe("documentRepo", () => {
       input("doc-monotonic", {
         docVersion: 4,
         title: "latest",
-        legacySections: [section("latest body")],
+        pmDoc: pmDocFromText("latest body"),
       }),
     );
 
@@ -107,14 +101,14 @@ describe("documentRepo", () => {
       input("doc-monotonic", {
         docVersion: 2,
         title: "stale",
-        legacySections: [section("stale body")],
+        pmDoc: pmDocFromText("stale body"),
       }),
     );
 
     const loaded = await documentRepo.load("doc-monotonic");
     expect(loaded?.docVersion).toBe(4);
     expect(loaded?.title).toBe("latest");
-    expect(loaded?.legacySections).toEqual([section("latest body")]);
+    expect(loaded?.pmDoc).toEqual(pmDocFromText("latest body"));
   });
 
   it("does not bump row version for a same-version no-op shadow save", async () => {
@@ -122,7 +116,7 @@ describe("documentRepo", () => {
       input("doc-same-version", {
         docVersion: 4,
         title: "authoritative",
-        legacySections: [section("authoritative body")],
+        pmDoc: pmDocFromText("authoritative body"),
       }),
     );
 
@@ -130,14 +124,14 @@ describe("documentRepo", () => {
       input("doc-same-version", {
         docVersion: 4,
         title: "authoritative",
-        legacySections: [section("authoritative body")],
+        pmDoc: pmDocFromText("authoritative body"),
       }),
     );
 
     const loaded = await documentRepo.load("doc-same-version");
     expect(loaded?.docVersion).toBe(4);
     expect(loaded?.title).toBe("authoritative");
-    expect(loaded?.legacySections).toEqual([section("authoritative body")]);
+    expect(loaded?.pmDoc).toEqual(pmDocFromText("authoritative body"));
     expect(loaded?.version).toBe(1);
   });
 
@@ -146,7 +140,7 @@ describe("documentRepo", () => {
       input("doc-rename", {
         title: "旧标题",
         docVersion: 4,
-        legacySections: [section("保持不变的正文")],
+        pmDoc: pmDocFromText("保持不变的正文"),
       }),
     );
 
@@ -154,7 +148,7 @@ describe("documentRepo", () => {
       input("doc-rename", {
         title: "新标题",
         docVersion: 4,
-        legacySections: [section("保持不变的正文")],
+        pmDoc: pmDocFromText("保持不变的正文"),
       }),
     );
 
@@ -162,20 +156,19 @@ describe("documentRepo", () => {
     expect(loaded).toMatchObject({
       title: "新标题",
       docVersion: 4,
-      legacySections: [section("保持不变的正文")],
+      pmDoc: pmDocFromText("保持不变的正文"),
       version: 1,
     });
   });
 
   it("已有同版本快照后仍保存同正文的标题、状态和同步指针", async () => {
-    const pmDoc = legacySectionsToPm([section("已提交正文")] as never);
+    const pmDoc = pmDocFromText("已提交正文");
     await documentRepo.save(
       input("doc-metadata-after-snapshot", {
         title: "提交时标题",
         docState: "editing",
         docVersion: 4,
         lastSyncedVersion: 2,
-        legacySections: [section("已提交正文")],
         pmDoc,
       }),
     );
@@ -198,7 +191,6 @@ describe("documentRepo", () => {
         docState: "reviewing",
         docVersion: 4,
         lastSyncedVersion: 4,
-        legacySections: [section("已提交正文")],
         pmDoc,
         updatedAt: "2026-01-03T00:00:00.000Z",
       }),
@@ -209,7 +201,7 @@ describe("documentRepo", () => {
       docState: "reviewing",
       docVersion: 4,
       lastSyncedVersion: 4,
-      legacySections: [section("已提交正文")],
+      pmDoc,
       version: 1,
       updatedAt: "2026-01-03T00:00:00.000Z",
     });
@@ -220,7 +212,7 @@ describe("documentRepo", () => {
       input("doc-same-version-content-change", {
         docVersion: 4,
         title: "before",
-        legacySections: [section("before body")],
+        pmDoc: pmDocFromText("before body"),
       }),
     );
 
@@ -228,14 +220,14 @@ describe("documentRepo", () => {
       input("doc-same-version-content-change", {
         docVersion: 4,
         title: "after",
-        legacySections: [section("after body")],
+        pmDoc: pmDocFromText("after body"),
       }),
     );
 
     const loaded = await documentRepo.load("doc-same-version-content-change");
     expect(loaded?.docVersion).toBe(4);
     expect(loaded?.title).toBe("after");
-    expect(loaded?.legacySections).toEqual([section("after body")]);
+    expect(loaded?.pmDoc).toEqual(pmDocFromText("after body"));
     expect(loaded?.version).toBe(2);
   });
 

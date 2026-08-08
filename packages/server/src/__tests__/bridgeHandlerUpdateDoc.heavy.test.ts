@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Command, LegacySection, BridgeFrame } from "@qingagent/contract-ts";
-import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import type { Command, BridgeFrame } from "@qingagent/contract-ts";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
+import { pmDocFromBlocks, pmDocFromText } from "./pmTestUtils.js";
 
 const originalUserVersionWindowMs = process.env.QINGAGENT_USER_VERSION_WINDOW_MS;
 
@@ -8,14 +9,6 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   const frames: BridgeFrame[] = [];
   for await (const frame of gen) frames.push(frame);
   return frames;
-}
-
-function section(text: string): LegacySection {
-  return { kind: "p", data: { text } };
-}
-
-function h1(text: string): LegacySection {
-  return { kind: "h1", data: { text } };
 }
 
 async function loadBridge() {
@@ -71,7 +64,7 @@ async function createDraftSession(
   session.docState = { kind: "editing" };
   session.docVersion = 1;
   session.lastSyncedDocumentSnapshot = 1;
-  session.doc = legacySectionsToPm([section("old")] as never);
+  session.doc = pmDocFromText("old");
   session._lastEmittedWireKind = "editing:none:idle";
   return session;
 }
@@ -80,7 +73,7 @@ function addSuggestion(
   session: Awaited<ReturnType<typeof createDraftSession>>,
   id = "patch-1",
 ): void {
-  session.doc ??= legacySectionsToPm([section("old")] as never);
+  session.doc ??= pmDocFromText("old");
   session.suggestions.set(id, {
     messageId: "msg",
     toolCallId: id,
@@ -113,8 +106,8 @@ function updateCommand(sessionId: string, overrides: Partial<Extract<Command, { 
     data: {
       sessionId,
       expectedDocumentSnapshot: 1,
-      baseContentHash: getPmContentHash(legacySectionsToPm([section("old")])),
-      doc: legacySectionsToPm([section("new")]) as never,
+      baseContentHash: getPmContentHash(pmDocFromText("old")),
+      doc: pmDocFromText("new") as never,
       clientMutationId: "mutation-1",
       ...overrides,
     },
@@ -143,7 +136,7 @@ describe("handleCommand updateDoc", () => {
       invalidateDraftStateAfterCanonicalWrite,
     } = await loadBridge();
     const session = await createDraftSession(bridge);
-    const submittedDoc = legacySectionsToPm([section("new")]);
+    const submittedDoc = pmDocFromText("new");
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,
@@ -274,7 +267,7 @@ describe("handleCommand updateDoc", () => {
     const session = await createDraftSession(bridge);
     const originalContentTime = "2025-01-02T03:04:05.000Z";
     session.lastContentEditedAt = originalContentTime;
-    const submittedDoc = legacySectionsToPm([section("replayed")]);
+    const submittedDoc = pmDocFromText("replayed");
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,
@@ -328,7 +321,7 @@ describe("handleCommand updateDoc", () => {
   it("commits PM updateDoc through commitDocumentOp and keeps canonical state in sync", async () => {
     const { bridge, commitDocumentOp, persistSessionMetadata } = await loadBridge();
     const session = await createDraftSession(bridge);
-    const pmDoc = legacySectionsToPm([section("PM 正文")]);
+    const pmDoc = pmDocFromText("PM 正文");
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,
@@ -404,7 +397,10 @@ describe("handleCommand updateDoc", () => {
     const { bridge, commitDocumentOp, persistSessionMetadata } = await loadBridge();
     const session = await createDraftSession(bridge);
     session.title = "旧标题";
-    const pmDoc = legacySectionsToPm([h1("新标题"), section("正文")] as never);
+    const pmDoc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "新标题" },
+      { type: "paragraph", text: "正文" },
+    ]);
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,
@@ -441,7 +437,10 @@ describe("handleCommand updateDoc", () => {
     ]);
     expect(session).toMatchObject({ title: "我的标题", titlePinned: true });
 
-    const pmDoc = legacySectionsToPm([h1("新的 H1"), section("正文")] as never);
+    const pmDoc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "新的 H1" },
+      { type: "paragraph", text: "正文" },
+    ]);
     commitDocumentOp.mockResolvedValue({
       status: "committed", docVersion: 2, contentHash: "hash-pinned", doc: pmDoc, versionId: "version-pinned",
     });
@@ -455,7 +454,7 @@ describe("handleCommand updateDoc", () => {
     process.env.QINGAGENT_USER_VERSION_WINDOW_MS = "invalid";
     const { bridge, commitDocumentOp } = await loadBridge();
     const session = await createDraftSession(bridge);
-    const submittedDoc = legacySectionsToPm([section("new")]);
+    const submittedDoc = pmDocFromText("new");
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,
@@ -554,7 +553,10 @@ describe("handleCommand updateDoc", () => {
     const session = bridge.getSession(meta.data.sessionId);
     if (!session) throw new Error("missing session");
 
-    const submittedDoc = legacySectionsToPm([h1("产品需求文档"), section("")]);
+    const submittedDoc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "产品需求文档" },
+      { type: "paragraph", text: "" },
+    ]);
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 1,
@@ -622,7 +624,7 @@ describe("handleCommand updateDoc", () => {
   it("injects the edited document into the next agent turn", async () => {
     const { bridge, commitDocumentOp, runAgentTurn } = await loadBridge();
     const session = await createDraftSession(bridge);
-    const submittedDoc = legacySectionsToPm([section("new")]);
+    const submittedDoc = pmDocFromText("new");
     commitDocumentOp.mockResolvedValue({
       status: "committed",
       docVersion: 2,

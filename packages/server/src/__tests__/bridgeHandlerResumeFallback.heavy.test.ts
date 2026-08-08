@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 // resetModules 只重置 bridge 会话状态；真实 core 保持文件级单例，避免每个用例
 // 重跑整套模块初始化并重复注册进程 listeners。
@@ -766,7 +766,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     seedSuspendedAskUserSession(session, "run-resume-busy");
-    session.doc = legacySectionsToPm([{ kind: "p", data: { text: "已有正文" } }] as never);
+    session.doc = pmDocFromText("已有正文");
     session.docState = { kind: "editing" };
 
     mockState.resumeStream.mockResolvedValue({

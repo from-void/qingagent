@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legacySectionsToPm, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDoc, PmInlineNode } from "@qingagent/pm-schema";
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/doc-engine/proposalDiff.js";
 import {
@@ -32,7 +32,15 @@ function suggestionFromText(
   replacement: string,
   status: DocSuggestion["status"] = "reviewing",
 ): { doc: ViewDocumentSnapshot; suggestion: DocSuggestion } {
-  const pmDoc = legacySectionsToPm([{ kind: "p", data: { text } }]);
+  const pmDoc: PmDoc = {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "paragraph",
+      attrs: { blockId: `fixture-${id}` },
+      content: [{ type: "text", text }],
+    }],
+  };
   const block = pmDoc.content[0]!;
   const quoteStart = text.indexOf(quote);
   if (quoteStart < 0) throw new Error("quote missing in fixture");

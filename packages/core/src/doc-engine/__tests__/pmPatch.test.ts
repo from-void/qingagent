@@ -1,7 +1,7 @@
 import type { DocSuggestion } from "@qingagent/contract-ts";
-import { legacySectionsToPm, pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
-import type { LegacySection } from "@qingagent/contract-ts";
+import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { describe, expect, it } from "vitest";
+import { pmDocFromText } from "../../__tests__/pmTestUtils.js";
 import { createSuggestionFromDiffHunk } from "../draftReviewSuggestions.js";
 import {
   collectTopLevelTextBlocks,
@@ -9,18 +9,12 @@ import {
 } from "../textEditOps.js";
 import { applySuggestionToDoc, applySuggestionsToDoc } from "../pmPatch.js";
 
-function p(text: string): LegacySection {
-  return { kind: "p", data: { text } };
-}
-
 function doc(text: string): PmDoc {
-  return legacySectionsToPm([p(text)]);
+  return pmDocFromText(text);
 }
 
 function plainText(pmDoc: PmDoc): string {
-  const [section] = pmToLegacySections(pmDoc) as LegacySection[];
-  if (section?.kind === "p") return section.data.text;
-  return "";
+  return pmToPlainText(pmDoc);
 }
 
 function suggestionFor(
@@ -114,10 +108,7 @@ describe("pmPatch", () => {
       "蓝毛巾",
       "黄毛巾",
     );
-    const drifted = legacySectionsToPm([
-      p("第一处蓝毛巾"),
-      p("第二处蓝毛巾"),
-    ]);
+    const drifted = pmDocFromText("第一处蓝毛巾", "第二处蓝毛巾");
 
     const result = applySuggestionsToDoc(drifted, [suggestion], 2);
 

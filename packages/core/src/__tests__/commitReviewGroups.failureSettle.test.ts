@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, DiffHunk, DocSuggestion, PatchConflict } from "@qingagent/contract-ts";
-import { pmToLegacySections, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDoc, PmInlineNode } from "@qingagent/pm-schema";
 import { commitDocumentOp, type CommitDocumentOpResult } from "../doc-engine/commitDocumentOp.js";
 import {
   commitReviewGroups,

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DocGenerationEvent, LegacySection, BridgeFrame } from "@qingagent/contract-ts";
+import type { DocGenerationEvent, BridgeFrame } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { buildDocVersionAwarenessContent } from "../llm/docVersionAwarenessPrompt.js";
 

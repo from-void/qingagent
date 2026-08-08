@@ -6,7 +6,6 @@ import {
 } from "../session/turnOwnership.js";
 import {
   pmDocHasNestedList,
-  pmToLegacySections,
   pmToPlainText,
   type PmDoc,
 } from "@qingagent/pm-schema";

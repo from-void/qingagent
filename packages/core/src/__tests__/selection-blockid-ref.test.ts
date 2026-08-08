@@ -3,7 +3,7 @@ import { createSession } from "../session/sessionState.js";
 import { tableSelectionTextSignature, type BridgeFrame, type PmDoc } from "@qingagent/contract-ts";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { CoreMessage } from "ai";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromBlocks } from "./pmTestUtils.js";
 import {
   appendDiagramVizEditingToPromptOptions,
   diagramVizEditingSourceFromRequestContext,
@@ -357,10 +357,10 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-blockid-fallback");
-    state.doc = legacySectionsToPm([
-      { kind: "h1", data: { text: "标题" } },
-      { kind: "p", data: { text: "三月的阳光透过窗子洒在地上。" } },
-    ] as never);
+    state.doc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "标题" },
+      { type: "paragraph", text: "三月的阳光透过窗子洒在地上。" },
+    ]);
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 

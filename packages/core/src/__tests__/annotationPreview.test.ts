@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import {
   AnnotationPreviewAccumulator,
   IncrementalAnnotationGroupScanner,
@@ -76,10 +76,7 @@ describe("批注参数增量组扫描器", () => {
   });
 
   it("预览锚点复用正式工具的 literal/all 语义", () => {
-    const doc = legacySectionsToPm([
-      { kind: "p", data: { text: "重复原句" } },
-      { kind: "p", data: { text: "重复原句" } },
-    ] as never);
+    const doc = pmDocFromText("重复原句", "重复原句");
     expect(buildAnnotationPreviewData(doc, "p-single", {
       summary: "歧义",
       anchors: [{ find: "重复原句" }],
@@ -92,9 +89,7 @@ describe("批注参数增量组扫描器", () => {
 
   it("流式预览摘要先脱敏再截断，不展示 15 字边界切出的 8 位手机号残片", () => {
     const phone = "13912345678";
-    const doc = legacySectionsToPm([
-      { kind: "p", data: { text: `联系电话 ${phone}` } },
-    ] as never);
+    const doc = pmDocFromText(`联系电话 ${phone}`);
 
     const preview = buildAnnotationPreviewData(doc, "p-private", {
       summary: `摘要含手机号：${phone}`,

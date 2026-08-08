@@ -7,8 +7,6 @@ import type {
 } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
-  legacySectionsToPm,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
@@ -310,7 +308,6 @@ async function seedDocumentRow(state: SessionState): Promise<void> {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       docVersion: state.docVersion,
-      legacySections: pmToLegacySections(state.doc!) as never,
       pmDoc: state.doc!,
     }),
   );

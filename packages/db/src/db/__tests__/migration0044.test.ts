@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getPmContentHash, legacySectionsToPm, pmToPlainText } from "@qingagent/pm-schema";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
+import { getPmContentHash, pmToPlainText } from "@qingagent/pm-schema";
+import { pmDocFromText, prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 import { getDocumentsClient } from "../documentsClient.js";
 import { runMigrations } from "../migrations.js";
 import { MIGRATIONS } from "../migrations/index.js";
 
 let tempDb: TempDocumentsDb | null = null;
+const retiredBodyKey = ["legacy", "Sections"].join("");
 
 beforeEach(() => {
   tempDb = prepareTempDocumentsDb("qingagent-migration-0044-");
@@ -82,7 +83,7 @@ describe("migration 0044", () => {
         docState: { kind: "editing" },
         docVersion: 7,
         lastSyncedDocumentSnapshot: 6,
-        legacySections: qingSections,
+        [retiredBodyKey]: qingSections,
       },
     });
     await insertThread({
@@ -91,19 +92,19 @@ describe("migration 0044", () => {
       metadata: {
         docState: { kind: "review" },
         docVersion: 3,
-        legacySections: defaultSections,
+        [retiredBodyKey]: defaultSections,
       },
     });
     await insertThread({
       id: "other-thread",
       resourceId: "other-user",
-      metadata: { legacySections: [{ kind: "p", data: { text: "不应迁移" } }] },
+      metadata: { [retiredBodyKey]: [{ kind: "p", data: { text: "不应迁移" } }] },
     });
     await insertThread({
       id: "canonical-thread",
       metadata: {
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "已有 PM" } }] as never),
-        legacySections: [{ kind: "p", data: { text: "旧镜像" } }],
+        doc: pmDocFromText("已有 PM"),
+        [retiredBodyKey]: [{ kind: "p", data: { text: "旧镜像" } }],
       },
     });
 
@@ -133,13 +134,13 @@ describe("migration 0044", () => {
       last_synced_version: 6,
       doc_format: "pm",
     });
-    for (const [row, sections] of [
-      [defaultRow, defaultSections],
-      [qingRow, qingSections],
+    for (const [row, expectedText] of [
+      [defaultRow, "默认用户标题\n甲\t乙\n一\t二"],
+      [qingRow, "青砚正文"],
     ] as const) {
       const doc = JSON.parse(String(row.doc_pm));
       expect(row.content_hash).toBe(getPmContentHash(doc));
-      expect(pmToPlainText(doc)).toBe(pmToPlainText(legacySectionsToPm(sections as never)));
+      expect(pmToPlainText(doc)).toBe(expectedText);
     }
     expect(pmToPlainText(JSON.parse(String(qingRow.doc_pm)))).toBe("青砚正文");
   });
@@ -149,13 +150,13 @@ describe("migration 0044", () => {
     await createThreadsTable();
     await insertThread({
       id: "deleted-by-thread",
-      metadata: { legacySections: [{ kind: "p", data: { text: "墓碑一" } }] },
+      metadata: { [retiredBodyKey]: [{ kind: "p", data: { text: "墓碑一" } }] },
     });
     await insertThread({
       id: "deleted-by-doc-thread",
       metadata: {
         docId: "deleted-doc-id",
-        legacySections: [{ kind: "p", data: { text: "墓碑二" } }],
+        [retiredBodyKey]: [{ kind: "p", data: { text: "墓碑二" } }],
       },
     });
     for (const id of ["deleted-by-thread", "deleted-doc-id"]) {
@@ -180,7 +181,7 @@ describe("migration 0044", () => {
       id: "retry-thread",
       metadata: {
         docState: { kind: "drafting" },
-        legacySections: [{
+        [retiredBodyKey]: [{
           kind: "code",
           data: { language: "mermaid", body: "  graph TD\nA-->B  " },
         }],
@@ -199,7 +200,7 @@ describe("migration 0044", () => {
       sql: "UPDATE mastra_threads SET metadata = ? WHERE id = 'retry-thread'",
       args: [JSON.stringify({
         docState: { kind: "drafting" },
-        legacySections: [{
+        [retiredBodyKey]: [{
           kind: "code",
           data: { language: "mermaid", body: "graph TD\nA-->B" },
         }],

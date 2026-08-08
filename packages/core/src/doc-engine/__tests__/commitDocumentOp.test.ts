@@ -23,7 +23,6 @@ import {
   documentInput,
   pmDocFromText,
   prepareTempDocumentsDb,
-  section,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
 import {
@@ -70,7 +69,6 @@ async function seedDocument(
     documentInput(id, {
       threadId: `thread-${id}`,
       docVersion,
-      legacySections: [section(text)],
       pmDoc: pmDocFromText(text),
     }),
   );
@@ -345,7 +343,6 @@ describe("commitDocumentOp", () => {
     const loaded = await documentRepo.load("doc-commit");
     expect(loaded?.docVersion).toBe(2);
     expect(loaded?.pmDoc).toEqual(pmDocFromText("after commit"));
-    expect(loaded?.legacySections).toEqual([section("after commit")]);
 
     const versions = await listVersions("doc-commit");
     expect(versions).toHaveLength(1);
@@ -614,7 +611,6 @@ describe("commitDocumentOp", () => {
     await documentRepo.save(documentInput("doc-coalesce-empty", {
       threadId: "thread-doc-coalesce-empty",
       docVersion: 1,
-      legacySections: [],
       pmDoc: emptyDoc,
     }));
     await commitDocumentOp(commitInput({

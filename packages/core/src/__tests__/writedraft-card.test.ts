@@ -104,7 +104,6 @@ describe("写稿小卡片帧协议", () => {
               args: { title: "测试文档", outline: "o", lengthTarget: 100 },
               result: {
                 ok: true,
-                wordCount: 100,
                 visibleCharCount: 100,
                 targetLength: 100,
                 minLength: 90,
@@ -233,7 +232,6 @@ describe("写稿小卡片帧协议", () => {
               args: { title: "测试文档", outline: "o", lengthTarget: 100 },
               result: {
                 ok: true,
-                wordCount: 100,
                 visibleCharCount: 100,
                 targetLength: 100,
                 minLength: 90,
@@ -273,7 +271,6 @@ describe("写稿小卡片帧协议", () => {
             args: { title: "测试文档", outline: "o", lengthTarget: 100 },
             result: {
               ok: true,
-              wordCount: 100,
               visibleCharCount: 100,
               targetLength: 100,
               minLength: 90,

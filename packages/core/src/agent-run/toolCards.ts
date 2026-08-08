@@ -297,7 +297,7 @@ export function writeDraftCardFromResult(
   return {
     title: typeof args.title === "string" ? args.title : "",
     phase: ok ? "done" : "failed",
-    charCount: num(toolResult.visibleCharCount) ?? num(toolResult.wordCount) ?? 0,
+    charCount: num(toolResult.visibleCharCount) ?? 0,
     // 完成卡保留开头预览(直播/历史重开都有内容);拿不到则 null。
     excerpt: typeof toolResult.previewExcerpt === "string" ? toolResult.previewExcerpt : null,
     diagnostic,

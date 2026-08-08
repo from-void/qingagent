@@ -79,7 +79,7 @@ async function makeTool() {
 
 type ExecuteResult = {
   ok: boolean;
-  wordCount?: number;
+  visibleCharCount?: number;
   firstVisibleCharCount?: number;
   revisionCount?: number;
   lengthStatus?: string;
@@ -136,7 +136,7 @@ describe("writeDraft 赛马式字数控制", () => {
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
     expect(out.ok).toBe(true);
-    expect(out.wordCount).toBe(95);
+    expect(out.visibleCharCount).toBe(95);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
@@ -159,7 +159,7 @@ describe("writeDraft 赛马式字数控制", () => {
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
     expect(out.ok).toBe(true);
-    expect(out.wordCount).toBe(100);
+    expect(out.visibleCharCount).toBe(100);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   }, 10_000);
@@ -176,7 +176,7 @@ describe("writeDraft 赛马式字数控制", () => {
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100, lengthBound: "min" });
 
     expect(out.ok).toBe(true);
-    expect(out.wordCount).toBeGreaterThanOrEqual(100);
+    expect(out.visibleCharCount).toBeGreaterThanOrEqual(100);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
@@ -193,7 +193,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
-    expect(out.wordCount).toBe(100);
+    expect(out.visibleCharCount).toBe(100);
     expect(out.firstVisibleCharCount).toBe(100);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
@@ -210,7 +210,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
-    expect(out.wordCount).toBe(150); // best-of:未达标但最逼近
+    expect(out.visibleCharCount).toBe(150); // best-of:未达标但最逼近
     expect(out.lengthStatus).toBe("above_hard_max");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
@@ -242,7 +242,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
-    expect(out).toMatchObject({ ok: true, wordCount: 95, lengthStatus: "accepted_first_pass" });
+    expect(out).toMatchObject({ ok: true, visibleCharCount: 95, lengthStatus: "accepted_first_pass" });
     const { pmToPlainText } = await import("@qingagent/pm-schema");
     expect(pmToPlainText(state.docDraftCandidateDoc!).startsWith("正")).toBe(true);
   });
@@ -279,7 +279,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
-    expect(out.wordCount).toBe(95);
+    expect(out.visibleCharCount).toBe(95);
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 

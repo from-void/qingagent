@@ -230,7 +230,7 @@ function writeDraftResult(toolCallId: string): StreamChunk {
       toolName: "writeDraft",
       toolCallId,
       args: { title: "测试", outline: "大纲" },
-      result: { ok: true, blockCount: 1, wordCount: 10 },
+      result: { ok: true, blockCount: 1, visibleCharCount: 10 },
     },
   };
 }

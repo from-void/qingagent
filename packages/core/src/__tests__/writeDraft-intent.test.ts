@@ -179,7 +179,7 @@ async function makeTool() {
 
 type ExecuteResult = {
   ok: boolean;
-  wordCount?: number;
+  visibleCharCount?: number;
   targetLength?: number;
   revisionCount?: number;
   lengthStatus?: string;
@@ -571,7 +571,7 @@ describe("writeDraft intent 调度", () => {
     const out = await pending;
 
     expect(settledAtThink).toBe(true);
-    expect(out).toMatchObject({ ok: true, wordCount: 80, lengthStatus: "below_min" });
+    expect(out).toMatchObject({ ok: true, visibleCharCount: 80, lengthStatus: "below_min" });
     expect(calls[0]!.abortSignal?.aborted).toBe(false);
     expect(calls.slice(1).every((call) => call.abortSignal?.aborted)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
@@ -627,7 +627,7 @@ describe("writeDraft intent 调度", () => {
 
     expect(out).toMatchObject({
       ok: true,
-      wordCount: 12,
+      visibleCharCount: 12,
       lengthStatus: "accepted_first_pass",
       nestedListReachedDepth: true,
     });
@@ -707,7 +707,7 @@ describe("writeDraft intent 调度", () => {
     const out = await pending;
 
     expect(out.ok).toBe(true);
-    expect(out.wordCount).toBe(100);
+    expect(out.visibleCharCount).toBe(100);
     expect(out.revisionCount).toBe(1);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(calls.map((call) => call.thinking)).toEqual([false, true, true, true]);
@@ -768,7 +768,7 @@ describe("writeDraft intent 调度", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     const out = await pending;
     expect(out.ok).toBe(true);
-    expect(out.wordCount).toBe(100);
+    expect(out.visibleCharCount).toBe(100);
     expect(out.revisionCount).toBe(1);
     expect(calls[1]!.abortSignal?.aborted).toBe(false);
     expect(vi.getTimerCount()).toBe(0);

@@ -27,7 +27,7 @@ export function mountBlockPatchView(
 ): Root {
   const root = createRoot(container);
   if (pmNodes && pmNodes.length > 0) {
-    // upgrade:legacySectionsToPm 会把 mermaid 当代码块,需升级回 diagram 节点。
+    // 安全网:上游若把 Mermaid/drawio 伪装成代码块,这里仍升级回 diagram 节点。
     const pmDoc = upgradeMermaidCodeBlocksToDiagram({
       type: "doc",
       attrs: { schemaVersion: 1 },

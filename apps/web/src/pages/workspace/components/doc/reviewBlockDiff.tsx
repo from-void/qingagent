@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { legacySectionsToPm, upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
+import { upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
 import type { PmBlockNode, PmDoc, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
 import type {
   ViewBlock,
@@ -24,7 +24,7 @@ import {
   textAlignStyle,
 } from "./PmStaticView";
 import { placePatchPopupByAnchorRect } from "./patchHover";
-import { viewSectionToLegacy } from "../../data/viewDocHtml";
+import { viewBlockToPmNode } from "../../data/viewDocHtml";
 
 const ROW_POPUP_HIDE_DELAY_MS = 160;
 const ReviewLocalPopupSuppressedContext = createContext(false);
@@ -1157,11 +1157,11 @@ function renderPmNodes(nodes: readonly PmBlockNode[]): React.ReactNode {
   return (pmDoc.content as PmBlockNode[]).map((node, i) => <PmBlockView key={i} node={node} />);
 }
 
-/** ViewBlock → PmBlockNode[]:优先原始 node,兜底走 legacy 回转 + mermaid 升级。 */
+/** ViewBlock → PmBlockNode[]:优先原始 node,其余直接构造 PM 块并做图表升级。 */
 function viewBlockToPmNodes(block: ViewBlock): PmBlockNode[] {
   const original = (block as { node?: PmBlockNode }).node;
   if (original) return [original];
-  const content = legacySectionsToPm([viewSectionToLegacy(block)] as never).content as PmBlockNode[];
+  const content = [viewBlockToPmNode(block)];
   const doc = upgradeMermaidCodeBlocksToDiagram({
     type: "doc",
     attrs: { schemaVersion: 1 },

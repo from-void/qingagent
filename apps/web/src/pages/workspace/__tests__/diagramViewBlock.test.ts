@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../data/protocol";
-import { viewSectionsToHtml } from "../data/viewDocHtml";
+import { viewBlockToPmNode, viewSectionsToHtml } from "../data/viewDocHtml";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 
 // round-1 真机端到端发现的根因回归:生成的图表在编辑器里显示成代码块。
@@ -28,6 +28,50 @@ describe("ViewBlock 保留 diagram(不降级为 code)", () => {
     expect(dg && dg.kind === "diagram" ? dg.source : "").toContain("flowchart TD");
     // pmDoc 原样(编辑器优先用 pmDoc)
     expect(snap.pmDoc?.content.some((b) => b.type === "diagram")).toBe(true);
+  });
+});
+
+describe("ViewBlock 原生 PM 兜底", () => {
+  it("有序列表直接保留起始序号、样式与既有 blockId", () => {
+    const node = viewBlockToPmNode({
+      kind: "list",
+      blockId: "ordered-fallback",
+      ordered: true,
+      start: 5,
+      listStyle: "upper-roman",
+      items: ["甲", "乙"],
+    });
+
+    expect(node).toMatchObject({
+      type: "orderedList",
+      attrs: { blockId: "ordered-fallback", start: 5, listStyle: "upper-roman" },
+      content: [
+        { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "甲" }] }] },
+        { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "乙" }] }] },
+      ],
+    });
+  });
+
+  it("附件直接构造成 fileAttachment，不再拍平成提示段落", () => {
+    const node = viewBlockToPmNode({
+      kind: "fileAttachment",
+      blockId: "attachment-fallback",
+      fileId: "file-1",
+      filename: "规范.pdf",
+      mimeType: "application/pdf",
+      size: 2048,
+    });
+
+    expect(node).toEqual({
+      type: "fileAttachment",
+      attrs: {
+        blockId: "attachment-fallback",
+        fileId: "file-1",
+        filename: "规范.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    });
   });
 });
 

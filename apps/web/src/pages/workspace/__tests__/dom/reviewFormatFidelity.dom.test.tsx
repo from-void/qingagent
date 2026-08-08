@@ -9,8 +9,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
-import { pmDocToViewDocumentSnapshot, type ViewDocumentSnapshot } from "../../data/protocol";
+import { pmDocToViewDocumentSnapshot, type ViewBlock, type ViewDocumentSnapshot } from "../../data/protocol";
 import { DocumentSnapshotView, type PatchMeta } from "../../components/DocumentSnapshotView";
+import { ReviewBlockView } from "../../components/doc/reviewBlockDiff";
 
 let host: HTMLElement;
 let root: Root;
@@ -66,6 +67,43 @@ function textOutsideKatex(root: HTMLElement): string {
 }
 
 describe("审核态格式保真(showPatches)", () => {
+  it("无原始 node 时原生 PM 兜底保留列表属性与附件语义", () => {
+    const blocks: ViewBlock[] = [
+      {
+        kind: "list",
+        blockId: "review-list-fallback",
+        ordered: true,
+        start: 5,
+        listStyle: "upper-roman",
+        items: ["第五项", "第六项"],
+      },
+      {
+        kind: "fileAttachment",
+        blockId: "review-file-fallback",
+        fileId: "file-review",
+        filename: "审阅附件.pdf",
+        mimeType: "application/pdf",
+        size: 4096,
+      },
+    ];
+
+    act(() => {
+      root.render(
+        <>
+          {blocks.map((block, index) => (
+            <ReviewBlockView key={block.blockId} block={block} targetPrefix={`fallback:${index}`} />
+          ))}
+        </>,
+      );
+    });
+
+    const list = host.querySelector("ol");
+    expect(list?.getAttribute("start")).toBe("5");
+    expect(Array.from(list?.querySelectorAll("li") ?? [], (item) => item.textContent)).toEqual(["第五项", "第六项"]);
+    const attachment = host.querySelector<HTMLAnchorElement>('a[href*="/api/v1/files/file-review/"]');
+    expect(attachment?.textContent).toBe("审阅附件.pdf");
+  });
+
   it("taskList 渲染真实复选框,不再是 [ ]/[x] 字面文本", () => {
     renderReview([
       {

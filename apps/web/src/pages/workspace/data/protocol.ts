@@ -2,7 +2,7 @@
  * Wire 类型手维护于 `@qingagent/contract-ts`。
  *
  * 本模块只提供 view 层 facade：re-export 契约类型，并补充渲染辅助类型
- * （带 patch overlay 的 DocSpan / LegacySection、DOC_EDITABLE 策略，以及
+ * （带 patch overlay 的文档块、DOC_EDITABLE 策略，以及
  * 包含本地 UI action 的 WorkspaceFrame envelope）。
  */
 
@@ -87,8 +87,8 @@ export const DOC_EDITABLE: Record<EditorState, boolean> = {
 
 /* ───────────── View-only doc rendering types ─────────────
  *
- * Wire `LegacySection` / `DocumentSnapshot` carry plain text. The view extends
- * `P` sections with a span array so patch overlays from open
+ * Wire `DocumentSnapshot` carries canonical PM blocks. The view extends
+ * text spans so patch overlays from open
  * `docSuggestion` tool-calls can render inline.
  */
 

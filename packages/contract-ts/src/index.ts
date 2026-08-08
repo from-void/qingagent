@@ -28,7 +28,6 @@ export * from "./CommitReviewGroups";
 export * from "./Confirm";
 export * from "./DocGenerationEvent";
 export * from "./Derivatives";
-export * from "./LegacySection";
 export * from "./ListLexicons";
 export * from "./RenameSession";
 export * from "./DraftMutation";

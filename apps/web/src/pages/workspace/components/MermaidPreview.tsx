@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
 import { diagramErrorMessage, renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
@@ -198,8 +197,7 @@ export function MermaidPreview({
   onFullscreen?: () => void;
 }) {
   const emptyDrawio = lang === "drawio" && isEmptyDrawioSource((source ?? "").trim());
-  const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, source);
-  const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
+  const usableCachedSvg = cachedSvg;
   const [svg, setSvg] = useState<string | null>(usableCachedSvg ?? null);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);

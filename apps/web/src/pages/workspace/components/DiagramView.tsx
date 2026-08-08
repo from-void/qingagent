@@ -8,7 +8,6 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { canUseGraphVisualEditor, detectType, getGraphVisualEditorUnavailableReason, parseDiagram } from "@qingagent/diagram-engine";
 import {
   DEFAULT_DRAWIO_SOURCE,
-  isPoisonedMermaidSvg,
   normalizeDrawioSource,
   type PmDiagramLang,
 } from "@qingagent/pm-schema";
@@ -48,8 +47,7 @@ function DiagramComponent({
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
-  const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, attrSource);
-  const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
+  const usableCachedSvg = cachedSvg;
   const overlay = (node.attrs.overlay as Parameters<typeof DiagramRenderer>[0]["overlay"]) ?? null;
   const align: "left" | "center" | "right" =
     node.attrs.align === "left" || node.attrs.align === "right" ? node.attrs.align : "center";
@@ -273,7 +271,7 @@ function DiagramComponent({
     }
     // 只读态已经为同一份源码渲染成功时直接复用内存中的安全 SVG；切回可编辑的
     // 当拍就写 attrs，避免为了持久化再跑一遍 maxGraph，也消除用户立即导出时的竞态。
-    if (!cachedSvgIsPoisoned && editable && svg && renderedSourceRef.current === source.trim()) {
+    if (editable && svg && renderedSourceRef.current === source.trim()) {
       if (svg !== node.attrs.svg) {
         updateDiagramAttributes(
           { svg },

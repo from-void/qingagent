@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeStoredPmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
 import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
@@ -211,7 +211,7 @@ export function DerivativeView(props: {
     try {
       return {
         damaged: false,
-        pmDoc: normalizeStoredPmDoc(JSON.parse(document.docPm)),
+        pmDoc: normalizePmDoc(JSON.parse(document.docPm)),
       };
     } catch (error) {
       console.error("[workspace] parse derivative document failed", error);

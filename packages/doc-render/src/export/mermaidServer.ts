@@ -2,7 +2,6 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { detectType, graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import {
-  isPoisonedMermaidSvg,
   normalizeMermaidQuotes,
   prepareDrawioModelXmlForRender,
 } from "@qingagent/pm-schema";
@@ -358,8 +357,7 @@ function collectDiagrams(
     const source = typeof attrs.source === "string" ? attrs.source : "";
     const lang = attrs.lang === "drawio" ? "drawio" : "mermaid";
     const svg = attrs.svg as string | null;
-    const hasUsableCache = isRenderableSvg(svg)
-      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    const hasUsableCache = isRenderableSvg(svg);
     if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,
@@ -380,8 +378,7 @@ function collectDiagrams(
     const source = typeof data.source === "string" ? data.source : "";
     const lang = data.lang === "drawio" ? "drawio" : "mermaid";
     const svg = data.svg as string | null;
-    const hasUsableCache = isRenderableSvg(svg)
-      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    const hasUsableCache = isRenderableSvg(svg);
     if (source.trim() && (options.includeCached || !hasUsableCache)) {
       acc.push({
         lang,

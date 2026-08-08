@@ -1,7 +1,6 @@
 import { getSchema } from "@tiptap/core";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { describe, expect, it } from "vitest";
-import { migratePmDoc } from "../migrations";
 import { createQingagentExtensions } from "../tiptap/createQingagentExtensions";
 import {
   normalizeStoredPmDoc,
@@ -52,7 +51,6 @@ describe("codeBlock marks", () => {
     };
 
     expect(normalizeStoredPmDoc(markedCodeDoc)).toEqual(expected);
-    expect(migratePmDoc(markedCodeDoc, 1, 1)).toEqual(expected);
 
     const schema = getSchema(createQingagentExtensions());
     expect(() => ProseMirrorNode.fromJSON(schema, expected).check()).not.toThrow();

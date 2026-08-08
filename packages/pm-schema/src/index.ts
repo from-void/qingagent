@@ -23,6 +23,5 @@ export * from "./ai-ir/aiIrEditability";
 export * from "./ai-ir/nestedListStructure";
 export * from "./ai-ir/qingmlParse";
 export * from "./mermaid/normalizeMermaidQuotes";
-export * from "./mermaid/poisonedMermaidSvg";
 export * from "./drawio/drawioXml";
 export * from "./svg/hardenInlineSvg";

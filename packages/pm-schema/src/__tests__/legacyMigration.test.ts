@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { assertPmMigrationRegistryContinuous, migratePmDoc } from "../migrations";
 import { legacySectionsToPm, type LegacyLegacySection } from "../legacy/legacySectionsToPm";
 import { pmToLegacySections } from "../legacy/pmToLegacySections";
 import { pmToPlainText } from "../pmToPlainText";
@@ -152,10 +151,4 @@ describe("legacyMigration", () => {
     expect(pmToLegacySections(legacySectionsToPm(sections))).toEqual(sections);
   });
 
-  it("has a continuous migration registry and v1 idempotent migration", () => {
-    const pm = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]);
-
-    expect(() => assertPmMigrationRegistryContinuous()).not.toThrow();
-    expect(migratePmDoc(pm, 1, 1)).toEqual(pm);
-  });
 });

@@ -4,7 +4,6 @@ import {
   getPmContentHash,
   getStablePmJson,
   normalizePmDoc,
-  normalizeStoredPmDoc,
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -127,7 +126,7 @@ export function parsePmDoc(value: unknown): PmDoc {
     throw new Error("Invalid documents.doc_pm: expected JSON string");
   }
   const parsed = JSON.parse(value) as unknown;
-  return normalizeStoredPmDoc(parsed);
+  return normalizePmDoc(parsed);
 }
 
 export function projectPmDocToSections(pmDoc: PmDoc): LegacySection[] {

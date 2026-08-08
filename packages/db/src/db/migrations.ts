@@ -27,7 +27,7 @@ export interface MigrationResult {
 
 const LEDGER_TABLE = "schema_migrations";
 
-/** 注册表连续性断言:id 必须 1..N 连续(仿 pm-schema assertPmMigrationRegistryContinuous)。 */
+/** 注册表连续性断言:id 必须 1..N 连续。 */
 export function assertMigrationsContinuous(migrations: readonly Migration[]): void {
   for (let i = 0; i < migrations.length; i += 1) {
     const expected = i + 1;

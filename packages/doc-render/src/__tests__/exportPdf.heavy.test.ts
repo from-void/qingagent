@@ -61,8 +61,9 @@ describe("PDF 导出固定 Playwright Chromium", () => {
     }, { title: "中文导出冒烟" }));
 
     // PDF 文字层码位随字体 cmap 变化，NFKC 归一后断言与字体解耦。
+    // CJK 部首补充区(U+2E80-2EFF)无 NFKC 分解，期望串须避开青/简等易被字体映射到该区的字。
     expect(result.text.normalize("NFKC")).toContain("中文导出冒烟".normalize("NFKC"));
-    expect(result.text.normalize("NFKC")).toContain("青简保留中文文字层".normalize("NFKC"));
+    expect(result.text.normalize("NFKC")).toContain("保留中文文字层".normalize("NFKC"));
   });
 });
 

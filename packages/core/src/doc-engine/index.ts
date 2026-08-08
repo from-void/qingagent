@@ -23,12 +23,8 @@ export {
 } from "./reviewCommit.js";
 
 export {
-  parseLegacySections,
-  extractJson,
   buildDocumentSnapshot,
   emitDocumentSnapshotFrames,
-  docSectionSchema,
-  legacySectionsSchema,
 } from "./docGenerator.js";
 
 export {

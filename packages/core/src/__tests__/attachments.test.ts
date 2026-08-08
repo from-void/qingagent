@@ -84,7 +84,6 @@ vi.mock("../agents/qingagent.js", () => ({
 }));
 
 vi.mock("./docGenerator.js", () => ({
-  parseLegacySections: vi.fn(() => []),
   buildDocumentSnapshot: vi.fn(),
   emitDocumentSnapshotFrames: vi.fn(() => []),
 }));

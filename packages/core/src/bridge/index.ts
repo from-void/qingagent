@@ -141,12 +141,8 @@ export {
 } from "../doc-engine/reviewCommit.js";
 
 export {
-  parseLegacySections,
-  extractJson,
   buildDocumentSnapshot,
   emitDocumentSnapshotFrames,
-  docSectionSchema,
-  legacySectionsSchema,
 } from "../doc-engine/docGenerator.js";
 
 export {

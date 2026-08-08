@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractJson } from "../doc-engine/docGenerator.js";
+import { extractJson } from "../utils/extractJson.js";
 
 // extractJson 的职责:从 LLM 的"脏输出"里抠出第一个完整 JSON 值。
 // 它的全部价值就是对付脏输入,所以这里用 LLM 真实会吐的各种脏形态逐条测(对抗性输入测试)。

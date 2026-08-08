@@ -127,7 +127,7 @@ vi.mock("./data/serverStream", () => {
           data: {
             resourceRef: { id: materialId, domain: { kind: "file" } },
             summary,
-            metadata: { fileId: `file-${materialId}` },
+            metadata: { fileId: `file-${materialId}`, parseState: "ready" },
           },
         });
       },
@@ -8249,7 +8249,7 @@ function uploadedMaterialResource(): Resource {
     mime: "application/pdf",
     byteLen: 2048,
     createdAt: "2026-07-04T00:00:00.000Z",
-    metadata: { fileId: "file-mat-1" },
+    metadata: { fileId: "file-mat-1", parseState: "ready" },
   };
 }
 

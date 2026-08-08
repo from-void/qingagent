@@ -15,7 +15,7 @@ vi.mock("../llm/modelConfig.js", () => ({
   getDeepseekModel: mocks.getDeepseekModel,
   resolveModelParams: mocks.resolveModelParams,
 }));
-vi.mock("ai", () => ({ streamText: mocks.streamText }));
+vi.mock("ai-v5", () => ({ streamText: mocks.streamText }));
 
 import {
   clearQuestionBranch,

@@ -9,7 +9,7 @@ const streamTextMock = vi.hoisted(() => vi.fn());
 const getVisionModelMock = vi.hoisted(() => vi.fn());
 const resolveImageInputMock = vi.hoisted(() => vi.fn());
 
-vi.mock("ai", () => ({ streamText: streamTextMock }));
+vi.mock("ai-v5", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", () => ({ getVisionModel: getVisionModelMock }));
 // 注意:mock 路径必须是 readImage.ts 实际 import 的模块(src/tools/imageInput.js),
 // 即从本测试文件(src/__tests__/)算的 ../tools/imageInput.js,不能写成 ./imageInput.js。
@@ -21,7 +21,7 @@ vi.mock("../tools/imageInput.js", async (importActual) => {
 const { readImageTool } = await import("../tools/readImage.js");
 
 type Part =
-  | { type: "text-delta"; textDelta: string }
+  | { type: "text-delta"; text: string }
   | { type: "finish"; finishReason: string }
   | { type: "error"; error: unknown };
 
@@ -34,7 +34,7 @@ function fullStream(parts: Part[]): AsyncIterable<Part> {
 function visionText(text: string): { fullStream: AsyncIterable<Part> } {
   return {
     fullStream: fullStream([
-      { type: "text-delta", textDelta: text },
+      { type: "text-delta", text },
       { type: "finish", finishReason: "stop" },
     ]),
   };
@@ -86,8 +86,8 @@ describe("readImage stream error handling", () => {
   it("有文本时返回 ok:true 与识别结果", async () => {
     streamTextMock.mockReturnValue({
       fullStream: fullStream([
-        { type: "text-delta", textDelta: "这是一张" },
-        { type: "text-delta", textDelta: "测试图片。" },
+        { type: "text-delta", text: "这是一张" },
+        { type: "text-delta", text: "测试图片。" },
         { type: "finish", finishReason: "stop" },
       ]),
     });
@@ -120,7 +120,7 @@ describe("readImage stream error handling", () => {
   it("素材区图片(materialId)→ 折算成该素材的 fileId 再解析", async () => {
     streamTextMock.mockReturnValue({
       fullStream: fullStream([
-        { type: "text-delta", textDelta: "素材里的图" },
+        { type: "text-delta", text: "素材里的图" },
         { type: "finish", finishReason: "stop" },
       ]),
     });
@@ -149,8 +149,8 @@ describe("readImage stream error handling", () => {
     const writer = { write: (c: Record<string, unknown>) => void writes.push(c) };
     streamTextMock.mockReturnValue({
       fullStream: fullStream([
-        { type: "text-delta", textDelta: "这是" },
-        { type: "text-delta", textDelta: "一幅古建筑图。" },
+        { type: "text-delta", text: "这是" },
+        { type: "text-delta", text: "一幅古建筑图。" },
         { type: "finish", finishReason: "stop" },
       ]),
     });

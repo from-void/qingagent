@@ -23,13 +23,6 @@ import {
   terminateSafeRegexWorkersForTest,
 } from "../agent-run/safeRegex.js";
 
-const streamTextMock = vi.hoisted(() => vi.fn());
-
-vi.mock("ai", async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, streamText: (...args: unknown[]) => streamTextMock(...args) };
-});
-
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => () => ({ modelId: "mock-rich-format-tools" }),
 }));
@@ -139,7 +132,6 @@ function acceptCandidateAsCanonical(state: ReturnType<typeof createSession>): vo
 
 describe("draft rich formats session-scoped tools", () => {
   beforeEach(() => {
-    streamTextMock.mockReset();
     streamInnerModelMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;

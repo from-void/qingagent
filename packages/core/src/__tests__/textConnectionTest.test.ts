@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const streamTextMock = vi.hoisted(() => vi.fn());
 const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({})));
 
-vi.mock("ai", () => ({ streamText: streamTextMock }));
+vi.mock("ai-v5", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", async (importActual) => {
   const actual = await importActual<typeof import("../llm/modelConfig.js")>();
   return { ...actual, getDeepseekModel: getDeepseekModelMock };

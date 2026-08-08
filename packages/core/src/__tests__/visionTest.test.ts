@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const streamTextMock = vi.hoisted(() => vi.fn());
 const getVisionModelMock = vi.hoisted(() => vi.fn());
 
-vi.mock("ai", () => ({ streamText: streamTextMock }));
+vi.mock("ai-v5", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", async (importActual) => {
   const actual = await importActual<typeof import("../llm/modelConfig.js")>();
   return { ...actual, getVisionModel: getVisionModelMock };
@@ -17,7 +17,7 @@ const { testVisionConnection, VISION_TEST_TIMEOUT_MS } =
   await import("../llm/visionTest.js");
 
 type Part =
-  | { type: "text-delta"; textDelta: string }
+  | { type: "text-delta"; text: string }
   | { type: "finish"; finishReason: string }
   | { type: "error"; error: unknown }
   | { type: "abort" };
@@ -52,7 +52,7 @@ describe("testVisionConnection", () => {
 
   it("有文本输出 → 不抛", async () => {
     streamTextMock.mockReturnValue({
-      fullStream: fullStream([{ type: "text-delta", textDelta: "ok" }, { type: "finish", finishReason: "stop" }]),
+      fullStream: fullStream([{ type: "text-delta", text: "ok" }, { type: "finish", finishReason: "stop" }]),
     });
     await expect(testVisionConnection(VISION)).resolves.toBeUndefined();
   });

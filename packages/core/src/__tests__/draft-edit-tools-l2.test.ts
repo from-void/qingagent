@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { streamText, tool } from "ai";
+import { stepCountIs, streamText, tool } from "ai-v5";
 import { z } from "zod";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
@@ -74,11 +74,10 @@ function streamParts(parts: unknown[]): ReadableStream<unknown> {
 function fakeEditDraftLoopModel(observedPrompts: unknown[][]) {
   let step = 0;
   return {
-    specificationVersion: "v1",
+    specificationVersion: "v2",
     provider: "qingagent-l2",
     modelId: "fake-editDraft-loop",
-    defaultObjectGenerationMode: "json",
-    supportsStructuredOutputs: false,
+    supportedUrls: {},
     async doStream(options: { prompt: unknown[] }) {
       observedPrompts.push(options.prompt);
       step += 1;
@@ -89,17 +88,16 @@ function fakeEditDraftLoopModel(observedPrompts: unknown[][]) {
           stream: streamParts([
             {
               type: "tool-call",
-              toolCallType: "function",
               toolCallId: "edit-1",
               toolName: "editDraft",
-              args: JSON.stringify({
+              input: JSON.stringify({
                 ops: [{ action: "replaceText", find: "旧文", replace: "新文" }],
               }),
             },
             {
               type: "finish",
               finishReason: "tool-calls",
-              usage: { promptTokens: 1, completionTokens: 1 },
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             },
           ]),
         };
@@ -107,17 +105,20 @@ function fakeEditDraftLoopModel(observedPrompts: unknown[][]) {
 
       const toolMessages = options.prompt.filter((message: any) => message?.role === "tool");
       const latestToolResult = toolMessages.at(-1) as any;
-      const result = latestToolResult?.content?.[0]?.result ?? latestToolResult?.content?.[0];
+      const output = latestToolResult?.content?.[0]?.output;
+      const result = output?.type === "json" ? output.value : output;
       const located = result?.ok === true && Array.isArray(result?.applied) && result.applied.includes("block-a");
       return {
         rawCall: { rawPrompt: options.prompt, rawSettings: {} },
         rawResponse: { headers: {} },
         stream: streamParts([
-          { type: "text-delta", textDelta: located ? "L2_EDITDRAFT_RESULT_VISIBLE" : "L2_EDITDRAFT_RESULT_MISSING" },
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", delta: located ? "L2_EDITDRAFT_RESULT_VISIBLE" : "L2_EDITDRAFT_RESULT_MISSING" },
+          { type: "text-end", id: "text-1" },
           {
             type: "finish",
             finishReason: "stop",
-            usage: { promptTokens: 1, completionTokens: 1 },
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           },
         ]),
       };
@@ -130,11 +131,11 @@ describe("draft edit tools L2 carrier", () => {
     const observedPrompts: unknown[][] = [];
     const result = streamText({
       model: fakeEditDraftLoopModel(observedPrompts) as any,
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
       tools: {
         editDraft: tool({
           description: "fake editDraft for carrier verification",
-          parameters: z.object({
+          inputSchema: z.object({
             ops: z.array(z.unknown()),
           }),
           execute: async () => ({
@@ -156,13 +157,14 @@ describe("draft edit tools L2 carrier", () => {
     }
     const text = chunks
       .filter((chunk) => chunk.type === "text-delta")
-      .map((chunk) => chunk.textDelta)
+      .map((chunk) => chunk.text)
       .join("");
     expect(text).toContain("L2_EDITDRAFT_RESULT_VISIBLE");
     expect(observedPrompts.length).toBeGreaterThanOrEqual(2);
     const toolMessages = observedPrompts[1]!.filter((message: any) => message?.role === "tool");
     expect(toolMessages.length).toBeGreaterThan(0);
-    const resultPayload = (toolMessages.at(-1) as any)?.content?.[0]?.result;
+    const output = (toolMessages.at(-1) as any)?.content?.[0]?.output;
+    const resultPayload = output?.type === "json" ? output.value : output;
     expect(resultPayload).toMatchObject({ ok: true, applied: ["block-a"] });
   });
 

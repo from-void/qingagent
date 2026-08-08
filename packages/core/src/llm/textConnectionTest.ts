@@ -1,5 +1,5 @@
 import { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "./streamTextCompat.js";
+import { streamText } from "ai-v5";
 import {
   getDeepseekModel,
   MODEL_OVERRIDES_CONTEXT_KEY,

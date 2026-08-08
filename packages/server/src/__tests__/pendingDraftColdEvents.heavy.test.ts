@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { getPmContentHash, pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   documentInput,
   prepareTempDocumentsDb,
@@ -105,7 +105,6 @@ describe("GET /api/v1/events 冷恢复待审冲突", () => {
       threadId: sessionId,
       docVersion: 5,
       lastSyncedVersion: 5,
-      legacySections: pmToLegacySections(current) as never,
       pmDoc: current,
     }));
     await core.documentDraftRepo.savePending({

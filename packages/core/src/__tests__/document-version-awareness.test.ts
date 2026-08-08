@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
-  pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import type { CoreMessage } from "ai";

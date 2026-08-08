@@ -1,20 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import { validateCommandKind } from "../routes/stream";
-import { legacyValidateCommandKind } from "./legacyCommandValidator.oracle";
 
 /**
- * D6 等价回归矩阵(合并门槛)。
+ * 命令 schema 契约回归矩阵。
  *
- * 用**冻结的旧手写校验**(`legacyValidateCommandKind`,git 原样抽取)当黄金判定,
- * 逐条 fixture 比对新的 zod `commandSchema`:
- *  - sharedAccept:合法(契约有效)输入,新旧都必须**接受**——证明真实流量零回归;
- *  - sharedReject:畸形输入,新旧都必须**拒绝**;
- *  - newStricter:旧手写因只做浅校验而**误收**、新 schema 按契约类型**收紧拒绝**的输入
- *    ——刻意的安全增益,断言"旧收、新拒"。
- *
- * 拒绝的错误文案不逐字兼容(设计 §1.3/§1.4),只断言:是非空字符串且(对有字段的用例)
- * 含字段路径。
+ * 逐条 fixture 验证 zod `commandSchema` 对合法输入放行、对畸形输入拒绝；
+ * 错误文案不逐字锁定，只断言非空字符串。
  */
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
@@ -29,7 +21,7 @@ interface CommandFixture {
   body: unknown;
 }
 
-// ——— 分区一:新旧都应接受(契约有效的真实输入) ———
+// ——— 分区一:应接受的契约有效输入 ———
 const sharedAccept: CommandFixture[] = [
   { name: "startSession/new", body: { kind: "startSession", data: { mode: { kind: "new", data: { template: null } } } } },
   { name: "startSession/new+sessionId", body: { kind: "startSession", data: { mode: { kind: "new", data: { template: "blank", sessionId: "sess-1" } } } } },
@@ -81,7 +73,7 @@ const sharedAccept: CommandFixture[] = [
   { name: "detachFolder", body: { kind: "detachFolder", data: { sessionId: "s", folderId: "f" } } },
 ];
 
-// ——— 分区二:新旧都应拒绝 ———
+// ——— 分区二:应拒绝的畸形输入 ———
 const sharedReject: CommandFixture[] = [
   { name: "null", body: null },
   { name: "number", body: 42 },
@@ -123,8 +115,8 @@ const sharedReject: CommandFixture[] = [
   { name: "detachFolder/overlong-folderId", body: { kind: "detachFolder", data: { sessionId: "s", folderId: "x".repeat(257) } } },
 ];
 
-// ——— 分区三:旧误收、新按契约收紧拒绝(有意的安全增益) ———
-const newStricter: CommandFixture[] = [
+// ——— 分区三:契约严格约束的边界输入 ———
+const contractReject: CommandFixture[] = [
   { name: "startSession/new-without-template", body: { kind: "startSession", data: { mode: { kind: "new", data: { sessionId: "sess-x" } } } } },
   { name: "sendMessage/skill-missing-fields", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [{}], chips: [], fileIds: [] } } },
   { name: "sendMessage/chip-malformed", body: { kind: "sendMessage", data: { sessionId: "s", text: "x", skills: [], chips: [{ label: "L" }], fileIds: [] } } },
@@ -135,23 +127,19 @@ const newStricter: CommandFixture[] = [
   { name: "updateDoc/empty-baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "", clientMutationId: "m", doc: VALID_PM_DOC } } },
 ];
 
-describe("D6 命令校验等价回归矩阵", () => {
-  it.each(sharedAccept)("接受(新旧一致):$name", ({ body }) => {
-    expect(legacyValidateCommandKind(body)).toBeNull();
+describe("命令校验契约回归矩阵", () => {
+  it.each(sharedAccept)("接受:$name", ({ body }) => {
     expect(validateCommandKind(body)).toBeNull();
   });
 
-  it.each(sharedReject)("拒绝(新旧一致):$name", ({ body }) => {
-    expect(legacyValidateCommandKind(body)).not.toBeNull();
+  it.each(sharedReject)("拒绝:$name", ({ body }) => {
     const newError = validateCommandKind(body);
     expect(newError).not.toBeNull();
     expect(typeof newError).toBe("string");
     expect((newError as string).length).toBeGreaterThan(0);
   });
 
-  it.each(newStricter)("旧误收 / 新收紧拒绝:$name", ({ body }) => {
-    // 旧手写只做浅校验,误收这些畸形输入;新 schema 按契约类型收紧。
-    expect(legacyValidateCommandKind(body)).toBeNull();
+  it.each(contractReject)("严格拒绝:$name", ({ body }) => {
     expect(validateCommandKind(body)).not.toBeNull();
   });
 });

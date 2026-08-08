@@ -6,14 +6,12 @@ import type {
   AnnotationGroup,
   BridgeFrame,
   DiffHunk,
-  LegacySection,
 } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   getDeterministicId,
   materializeDraftBlockIds,
   normalizePmDoc,
-  pmToLegacySections,
   pmToPlainText,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -174,7 +172,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.sessionId,
       docVersion: 1,
       pmDoc: base,
-      legacySections: pmToLegacySections(base) as never,
     }));
     await getDocumentsClient().execute("DROP TABLE document_suggestions");
 
@@ -348,7 +345,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
       pmDoc: base,
-      legacySections: [],
     }));
     state.doc = base;
     state.docVersion = 1;
@@ -422,7 +418,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
       pmDoc: base,
-      legacySections: pmToLegacySections(base) as unknown as LegacySection[],
     }));
     await insertAnnotationGroups(state.docId, 1, [annotationGroup]);
     // 期 1 后内存与落库正文都只使用 canonical PM。
@@ -478,7 +473,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
       pmDoc: canonical,
-      legacySections: pmToLegacySections(canonical) as unknown as LegacySection[],
     }));
 
     const tools = createSessionScopedTools(state);
@@ -526,7 +520,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
       pmDoc: canonical,
-      legacySections: pmToLegacySections(canonical) as unknown as LegacySection[],
     }));
 
     const tools = createSessionScopedTools(state);
@@ -609,7 +602,6 @@ describe("用户手打块的候选审阅提交", () => {
       threadId: state.threadId ?? state.sessionId,
       docVersion: 1,
       pmDoc: canonical,
-      legacySections: pmToLegacySections(canonical) as unknown as LegacySection[],
     }));
 
     const tools = createSessionScopedTools(state);

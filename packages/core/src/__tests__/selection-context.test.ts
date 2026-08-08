@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../session/sessionState.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromBlocks } from "./pmTestUtils.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -181,10 +181,10 @@ describe("selection chip edit context", () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-selection-ctx");
-    state.doc = legacySectionsToPm([
-      { kind: "h1", data: { text: "春天的校园" } },
-      { kind: "p", data: { text: "三月的阳光透过教学楼的玻璃窗，洒在走廊的地砖上。" } },
-    ] as never);
+    state.doc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "春天的校园" },
+      { type: "paragraph", text: "三月的阳光透过教学楼的玻璃窗，洒在走廊的地砖上。" },
+    ]);
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 

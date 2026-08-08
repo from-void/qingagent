@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import type { BridgeFrame } from "@qingagent/contract-ts";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -79,10 +79,7 @@ describe("draft tool JSON failure UX", () => {
   it("editDraft 空参数失败且 0 patch 无正文时给出可操作可重试提示", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("draft-tool-json-failure");
-    const originalSections: LegacySection[] = [
-      { kind: "p", data: { text: "原文保持不变" } },
-    ];
-    const originalDoc = legacySectionsToPm(originalSections as never);
+    const originalDoc = pmDocFromText("原文保持不变");
     state.doc = originalDoc;
 
     const frames = await collectFrames(
@@ -129,10 +126,7 @@ describe("draft tool JSON failure UX", () => {
   it("editDraft 破损参数失败但模型已写正文(谎称已改)时仍强制发 draftingFailed", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("draft-tool-json-failure-with-text");
-    const originalSections: LegacySection[] = [
-      { kind: "p", data: { text: "原文保持不变" } },
-    ];
-    const originalDoc = legacySectionsToPm(originalSections as never);
+    const originalDoc = pmDocFromText("原文保持不变");
     state.doc = originalDoc;
 
     const frames = await collectFrames(

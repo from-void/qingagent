@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   sanitizeMarkdownInline,
-  sanitizeSectionMarkdown,
 } from "../utils/sanitizeMarkdown.js";
-import type { LegacySection } from "@qingagent/contract-ts";
 
 describe("sanitizeMarkdownInline", () => {
   it("strips conservative Markdown markers from plain prose", () => {
@@ -74,34 +72,5 @@ describe("sanitizeMarkdownInline", () => {
     expect(sanitizeMarkdownInline(text)).toBe(
       "```md\n## code heading\n````\n· 尾注",
     );
-  });
-});
-
-describe("sanitizeSectionMarkdown", () => {
-  it("sanitizes table head and cells", () => {
-    const section: LegacySection = {
-      kind: "table",
-      data: {
-        head: ["**列**"],
-        rows: [["## 单元格", "- 条目"]],
-      },
-    };
-
-    expect(sanitizeSectionMarkdown(section)).toEqual({
-      kind: "table",
-      data: {
-        head: ["列"],
-        rows: [["单元格", "· 条目"]],
-      },
-    });
-  });
-
-  it("leaves code sections unchanged", () => {
-    const section: LegacySection = {
-      kind: "code",
-      data: { body: "## x\nconst value = '**x**';\n- item" },
-    };
-
-    expect(sanitizeSectionMarkdown(section)).toEqual(section);
   });
 });

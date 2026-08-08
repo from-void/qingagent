@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LegacySection, DocState, ToolCallSpec, BridgeFrame, DocSuggestion } from "@qingagent/contract-ts";
-import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import type { DocState, ToolCallSpec, BridgeFrame, DocSuggestion } from "@qingagent/contract-ts";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 // resetModules 只用于重置 bridge 的进程内 session；真实 core 模块体积大且会注册
 // 进程监听器，重复 importActual 会把模块初始化时间计入每个用例并泄漏 listeners。
@@ -16,10 +17,6 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   const frames: BridgeFrame[] = [];
   for await (const frame of gen) frames.push(frame);
   return frames;
-}
-
-function section(text: string): LegacySection {
-  return { kind: "p", data: { text } };
 }
 
 function markedPmDoc(text: string): PmDoc {
@@ -400,7 +397,7 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     session.docState = legacyDocState("review");
-    session.doc = legacySectionsToPm([section("正文")] as never);
+    session.doc = pmDocFromText("正文");
 
     const frames = await collectFrames(
       bridge.handleCommand({
@@ -503,7 +500,7 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const { documentRepo } = await import("@qingagent/core");
     const session = await createCachedSession(bridge);
-    const pm = legacySectionsToPm([section("正文内容")] as never);
+    const pm = pmDocFromText("正文内容");
     const now = new Date().toISOString();
     // DB(权威)已在版本 8;内存 session 因竞态停在陈旧的 3。
     await documentRepo.save({
@@ -542,7 +539,7 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const core = await import("@qingagent/core");
     const session = await createCachedSession(bridge);
-    const base = legacySectionsToPm([section("v7")] as never);
+    const base = pmDocFromText("v7");
     await core.documentRepo.save({
       id: session.docId,
       threadId: session.threadId ?? session.sessionId,
@@ -555,7 +552,7 @@ describe("handleCommand existing-session restore", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    const latest = legacySectionsToPm([section("v8")] as never);
+    const latest = pmDocFromText("v8");
     const commit = await core.commitDocumentOp({
       docId: session.docId,
       threadId: session.threadId ?? session.sessionId,
@@ -593,7 +590,7 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const { documentRepo } = await import("@qingagent/core");
     const session = await createCachedSession(bridge);
-    const pm = legacySectionsToPm([section("正文内容")] as never);
+    const pm = pmDocFromText("正文内容");
     const now = new Date().toISOString();
     await documentRepo.save({
       id: session.docId,
@@ -675,7 +672,7 @@ describe("handleCommand existing-session restore", () => {
   it("恢复整稿 pendingReview 时补发 docDiffReady 保留整稿语义与 editedDoc", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
-    const baseDoc = legacySectionsToPm([section("旧正文")] as never);
+    const baseDoc = pmDocFromText("旧正文");
     const editedDoc = markedPmDoc("新正文");
     const suggestion = reviewSuggestion("restore-h1");
     suggestion.batchId = "review:whole:4:restore";

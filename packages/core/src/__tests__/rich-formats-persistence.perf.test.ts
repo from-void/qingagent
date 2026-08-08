@@ -1,14 +1,12 @@
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CoreMessage } from "ai";
-import type { ChatMessage, LegacySection } from "@qingagent/contract-ts";
+import type { ChatMessage } from "@qingagent/contract-ts";
 import {
   aiIrToPm,
   getStablePmJson,
-  legacySectionsToPm,
   markdownToPm,
   pmToAiIr,
-  pmToLegacySections,
   pmToMarkdown,
   pmToPlainText,
   safeParsePmDoc,
@@ -188,17 +186,6 @@ function richPersistenceDoc(): PmDoc {
   ]);
 }
 
-function legacyDowngradeDoc(): PmDoc {
-  return doc([
-    taskList("legacy-tasks", [
-      { checked: true, content: "已确认 checklist" },
-      { checked: false, content: "待确认 checklist" },
-    ]),
-    callout("legacy-callout", "这是需要降级为引用的提示", { emoji: FAMILY_EMOJI, tone: "neutral" }),
-    blockMath("legacy-math", String.raw`\int_0^1 x^2 dx = \frac{1}{3}`),
-  ]);
-}
-
 function largeRichDoc(): PmDoc {
   const blocks: PmBlockNode[] = [];
   for (let group = 0; group < 50; group += 1) {
@@ -279,37 +266,6 @@ describe("rich formats persistence and scale pressure", () => {
     expect(restored?.messages).toEqual([message]);
     expect(getStablePmJson(restored?.doc)).toBe(expectedBytes);
     expect(safeParsePmDoc(restored?.doc).success).toBe(true);
-  });
-
-  it("legacy 降级链完整走通:taskList/callout/blockMath 语义降级后仍是合法 PM doc", () => {
-    const richDoc = legacyDowngradeDoc();
-    const legacySections = pmToLegacySections(richDoc);
-
-    expect(legacySections).toEqual([
-      {
-        kind: "list",
-        data: {
-          ordered: false,
-          items: ["[x] 已确认 checklist", "[ ] 待确认 checklist"],
-        },
-      },
-      { kind: "quote", data: { text: "这是需要降级为引用的提示" } },
-      {
-        kind: "code",
-        data: { body: String.raw`\int_0^1 x^2 dx = \frac{1}{3}`, language: "latex" },
-      },
-    ]);
-
-    const roundTrip = legacySectionsToPm(legacySections as never);
-    expect(roundTrip.content.map((block) => block.type)).toEqual(["bulletList", "blockquote", "codeBlock"]);
-    expect(pmToPlainText(roundTrip)).toContain("[x] 已确认 checklist");
-    expect(pmToPlainText(roundTrip)).toContain("这是需要降级为引用的提示");
-    expect(roundTrip.content[2]).toMatchObject({
-      type: "codeBlock",
-      attrs: { language: "latex" },
-      content: [{ type: "text", text: String.raw`\int_0^1 x^2 dx = \frac{1}{3}` }],
-    });
-    expect(safeParsePmDoc(roundTrip).success).toBe(true);
   });
 
   // DOCX 导出含 50+ blockMath + 150+ inlineMath,需要 Chromium 批量截图渲染公式图片,给足时间。

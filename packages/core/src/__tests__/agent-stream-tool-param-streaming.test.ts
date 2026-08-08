@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import { pmDocFromText } from "./pmTestUtils.js";
 
 const schedulePersistMock = vi.hoisted(() => vi.fn(
   async (_state: unknown, _reason?: string): Promise<void> => undefined,
@@ -305,9 +306,8 @@ describe("processAgentStream tool-call 参数流式占位", () => {
 
   it("create_annotation_groups 参数闭合一组即发预览，终局 tool-call 清空", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
-    const { legacySectionsToPm } = await import("@qingagent/pm-schema");
     const state = createSession("annotation-preview-stream");
-    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "需要检查的原句" } }] as never);
+    state.doc = pmDocFromText("需要检查的原句");
 
     const { frames } = await collectFramesAndReturn(
       processAgentStream(streamOf(
@@ -345,9 +345,8 @@ describe("processAgentStream tool-call 参数流式占位", () => {
 
   it("隐私审查的参数流式预览先脱敏再做 15 字截断", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
-    const { legacySectionsToPm } = await import("@qingagent/pm-schema");
     const state = createSession("privacy-annotation-preview");
-    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "联系电话 13912345678" } }] as never);
+    state.doc = pmDocFromText("联系电话 13912345678");
     const requestContext = new Map<string, unknown>([[
       "reviewContext",
       { type: "privacy", templateName: "对外发布", prompt: "检查隐私" },

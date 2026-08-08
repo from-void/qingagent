@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as core from "@qingagent/core";
 import { getMemory, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromBlocks, pmDocFromText } from "./pmTestUtils.js";
 import { app } from "../app";
 import {
   forgetSession,
@@ -237,9 +237,7 @@ describe("GET /api/v1/home", () => {
         updatedAt: new Date(),
         metadata: {
           title: "测试草稿",
-          doc: legacySectionsToPm([
-            { kind: "p", data: { text: "这是正文开头，用来确认首页卡片副标题优先显示文档内容。" } },
-          ]),
+          doc: pmDocFromText("这是正文开头，用来确认首页卡片副标题优先显示文档内容。"),
           threadSummary: {
             sectionCount: 1,
             wordCount: 20,
@@ -308,9 +306,9 @@ describe("GET /api/v1/home", () => {
       if (!session) throw new Error("测试会话创建失败");
       await session.threadCreatePromise;
       session.title = "自动元数据标题";
-      session.doc = legacySectionsToPm([
-        { kind: "h1", data: { text: "社区旧物交换日" } },
-        { kind: "p", data: { text: "这是正文。" } },
+      session.doc = pmDocFromBlocks([
+        { type: "heading", level: 1, text: "社区旧物交换日" },
+        { type: "paragraph", text: "这是正文。" },
       ]);
       session.docVersion = 1;
       await core.persistSessionMetadata(session, "test:home_title_before_rename");
@@ -882,7 +880,7 @@ describe("POST /api/v1/commands", () => {
         sessionId: "nonexistent",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
+        doc: pmDocFromText("正文"),
         clientMutationId: "mutation-1",
       },
     };
@@ -901,7 +899,7 @@ describe("POST /api/v1/commands", () => {
         sessionId: "",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
+        doc: pmDocFromText("正文"),
         clientMutationId: "mutation-1",
       },
     };
@@ -918,7 +916,7 @@ describe("POST /api/v1/commands", () => {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
         baseContentHash: "",
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
+        doc: pmDocFromText("正文"),
         clientMutationId: "mutation-1",
       },
     };
@@ -935,7 +933,7 @@ describe("POST /api/v1/commands", () => {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1.5,
         baseContentHash: "pmv1-base",
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
+        doc: pmDocFromText("正文"),
         clientMutationId: "mutation-1",
       },
     };
@@ -952,7 +950,7 @@ describe("POST /api/v1/commands", () => {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
+        doc: pmDocFromText("正文"),
         clientMutationId: "",
       },
     };

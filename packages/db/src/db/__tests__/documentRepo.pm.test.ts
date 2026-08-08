@@ -49,7 +49,7 @@ async function createOldDocumentsTable(): Promise<void> {
   );
 }
 
-async function insertOldDocument(id: string, legacySectionsJson: string): Promise<void> {
+async function insertOldDocument(id: string, sectionsJson: string): Promise<void> {
   const client = getDocumentsClient();
   await client.execute({
     sql: `INSERT INTO documents (
@@ -64,7 +64,7 @@ async function insertOldDocument(id: string, legacySectionsJson: string): Promis
       "editing",
       3,
       2,
-      legacySectionsJson,
+      sectionsJson,
       1,
       "2026-01-01T00:00:00.000Z",
       "2026-01-01T00:00:00.000Z",
@@ -105,10 +105,7 @@ describe("documentRepo PM canonical shadow", () => {
   it("writes PM as source (doc_sections column retired)", async () => {
     const pmDoc = pmDocFromText("PM 正文");
     await documentRepo.save(
-      documentInput("pm-doc", {
-        legacySections: [section("旧镜像不应成为源")],
-        pmDoc,
-      }),
+      documentInput("pm-doc", { pmDoc }),
     );
 
     const client = getDocumentsClient();
@@ -125,7 +122,7 @@ describe("documentRepo PM canonical shadow", () => {
     expect(row?.doc_format).toBe("pm");
 
     const loaded = await documentRepo.load("pm-doc");
-    expect(loaded?.legacySections).toEqual([section("PM 正文")]);
+    expect(loaded?.pmDoc).toEqual(pmDoc);
     expect(loaded?.contentHash).toBe(getPmContentHash(pmDoc));
   });
 

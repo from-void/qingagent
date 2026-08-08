@@ -131,9 +131,9 @@ await primeSnapshot(newContext);
 const state = createSession("s2-write-new-long");
 const tool = createWriteDraftTool({
   state,
-  replaceDraftCandidateDoc: (sessionState, doc, legacySections) => {
+  replaceDraftCandidateDoc: (sessionState, doc) => {
     sessionState.docDraftCandidateDoc = doc;
-    return legacySections ?? [];
+    return doc;
   },
 });
 const newRuns: Array<Record<string, unknown>> = [];

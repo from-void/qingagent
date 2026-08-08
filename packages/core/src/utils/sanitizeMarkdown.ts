@@ -1,5 +1,3 @@
-import type { LegacySection } from "@qingagent/contract-ts";
-
 const MAX_INLINE_MARKER_SPAN = 200;
 
 function stripPairedInlineMarkers(segment: string): string {
@@ -81,50 +79,4 @@ export function sanitizeMarkdownInline(text: string): string {
       return sanitizeMarkdownLine(part);
     })
     .join("");
-}
-
-export function sanitizeSectionMarkdown(section: LegacySection): LegacySection {
-  switch (section.kind) {
-    case "quote":
-      return { kind: "quote", data: { text: sanitizeMarkdownInline(section.data.text) } };
-    case "hr":
-      return section;
-    case "list":
-      return {
-        kind: "list",
-        data: {
-          ordered: section.data.ordered,
-          items: section.data.items.map(sanitizeMarkdownInline),
-        },
-      };
-    case "h1":
-      return { kind: "h1", data: { text: sanitizeMarkdownInline(section.data.text) } };
-    case "h2":
-      return {
-        kind: "h2",
-        data: {
-          text: sanitizeMarkdownInline(section.data.text),
-          anchor: section.data.anchor,
-        },
-      };
-    case "p":
-      return { kind: "p", data: { text: sanitizeMarkdownInline(section.data.text) } };
-    case "penNote":
-      return {
-        kind: "penNote",
-        data: { text: sanitizeMarkdownInline(section.data.text) },
-      };
-    case "table":
-      return {
-        kind: "table",
-        data: {
-          head: section.data.head.map(sanitizeMarkdownInline),
-          rows: section.data.rows.map((row) => row.map(sanitizeMarkdownInline)),
-        },
-      };
-    case "code":
-    case "image":
-    case "diagram":
-      return section;
-  }
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, ChatMessage, ToolCallSpec } from "@qingagent/contract-ts";
-import { pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
+import type { PmDoc } from "@qingagent/pm-schema";
 
 const { logger, memory, threads } = vi.hoisted(() => {
   const logger = {

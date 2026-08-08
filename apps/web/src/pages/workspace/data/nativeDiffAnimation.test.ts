@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { legacySectionsToPm, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import {
   advanceNativeConcurrentState,
   buildNativeDiffInstructions,
@@ -64,10 +64,22 @@ describe("native PM presentation animation", () => {
 
   it("attaches PM block ids and positions when a final PM doc is available", () => {
     const finalSections: ViewBlock[] = [{ kind: "h1", text: "标题" }, p("正文")];
-    const finalDoc = legacySectionsToPm([
-      { kind: "h1", data: { text: "标题" } },
-      { kind: "p", data: { text: "正文" } },
-    ]);
+    const finalDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "heading",
+          attrs: { blockId: "fixture-title", level: 1 },
+          content: [{ type: "text", text: "标题" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "fixture-body" },
+          content: [{ type: "text", text: "正文" }],
+        },
+      ],
+    };
 
     const instructions = buildNativeDiffInstructions({ finalSections, finalDoc });
 

@@ -308,9 +308,8 @@ describe("generateDoc QingML helpers", () => {
     expect(tail.length).toBeLessThan(500);
   });
 
-  it("含 blockquote/list/hr 的文档:legacySections 通过 output 校验(真 bug 回归)", async () => {
-    // 长新闻稿会用引用块/列表/分隔线 → pmToLegacySections 转出 quote/list/hr,
-    // 此前 LegacySection 漏了这些 kind → output validation 失败、generateDoc 挂。
+  it("含 blockquote/list/hr 的文档通过 output 校验(真 bug 回归)", async () => {
+    // 长新闻稿会用引用块/列表/分隔线，output schema 必须完整接纳这些 PM 块。
     const result = await compileAiDocumentWithBlockRetry({
       title: "测试",
       blocks: [

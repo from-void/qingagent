@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { stepCountIs, streamText, tool } from "ai-v5";
 import { z } from "zod";
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import { pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
+import type { PmDoc } from "@qingagent/pm-schema";
 
 vi.mock("../mastra.js", () => ({
   mastra: {

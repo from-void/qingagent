@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pmTableSelectionCellTexts, pmToLegacySections, type PmDoc, type PmTableNode } from "@qingagent/pm-schema";
+import { pmTableSelectionCellTexts, type PmDoc, type PmTableNode } from "@qingagent/pm-schema";
 import { createSession } from "../session/sessionState.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
 import { clonePmDoc, validateCurrentTableSelectionScopes, validateTableSelectionScope } from "../doc-engine/draftScratch.js";

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PM_CALLOUT_TONES, PM_ORDERED_LIST_STYLES, type PmCalloutTone, type PmDoc } from "../index";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
-import { pmToLegacySections } from "../legacy/pmToLegacySections";
 import { pmToPlainText } from "../pmToPlainText";
 import { normalizePmDoc, safeParsePmDoc } from "../validators";
 
@@ -163,30 +162,13 @@ describe("rich format serialization", () => {
     ]);
   });
 
-  it("projects new blocks to plain text and legacy sections", () => {
+  it("projects new blocks to plain text", () => {
     const plainText = pmToPlainText(richPmDoc);
     expect(plainText).toContain("行内公式 E=mc^2 与普通文本混排");
     expect(plainText).toContain("[x] 已完成：发布导出方案");
     expect(plainText).toContain(String.raw`[ ] 待处理：校验 A | B、反斜杠 C:\drafts\alpha`);
     expect(plainText).toContain(BLOCK_LATEX);
 
-    const legacySections = pmToLegacySections(richPmDoc);
-    const taskList = legacySections.find((section) => section.kind === "list");
-    expect(taskList).toMatchObject({
-      kind: "list",
-      data: {
-        ordered: false,
-        items: [
-          "[x] 已完成：发布导出方案",
-          String.raw`[ ] 待处理：校验 A | B、反斜杠 C:\drafts\alpha
-换行后的任务说明`,
-        ],
-      },
-    });
-
-    const mathSection = legacySections.find((section) => section.kind === "code");
-    expect(mathSection).toEqual({ kind: "code", data: { body: BLOCK_LATEX, language: "latex" } });
-    expect(legacySections.filter((section) => section.kind === "quote")).toHaveLength(PM_CALLOUT_TONES.length);
   });
 
   it("uses the updateDoc PM schema to accept legal rich blocks and reject illegal variants with precise paths", () => {

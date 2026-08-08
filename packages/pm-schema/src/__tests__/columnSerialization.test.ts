@@ -4,7 +4,6 @@ import { safeParsePmDoc, normalizePmDoc } from "../validators";
 import { pmToPlainText } from "../pmToPlainText";
 import { pmToClipboardHtml } from "../clipboard/pmToClipboardHtml";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
-import { pmToLegacySections } from "../legacy/pmToLegacySections";
 import { pmToAiIr } from "../ai-ir/pmToAiIr";
 import { compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
 import { analyzeAiIrEditability } from "../ai-ir/aiIrEditability";
@@ -89,13 +88,6 @@ describe("内容分栏 columnList/column 序列化", () => {
     expect(md).toContain("左栏正文");
     expect(md).toContain("右栏正文");
     expect(md).not.toContain("data-pm-node");
-  });
-
-  it("legacy:拍平为独立 section(内容不丢)", () => {
-    const sections = pmToLegacySections(columnDoc());
-    const texts = JSON.stringify(sections);
-    expect(texts).toContain("左栏标题");
-    expect(texts).toContain("右栏正文");
   });
 
   it("AI-IR:分栏以真实 columns/blocks 暴露给 AI,不降级为文本预览", () => {

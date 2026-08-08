@@ -1,8 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LegacySection } from "@qingagent/contract-ts";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import type { PmDoc } from "@qingagent/pm-schema";
 import {
   __resetDocumentsClientForTest,
 } from "../documentsClient.js";
@@ -30,19 +29,26 @@ export function prepareTempDocumentsDb(prefix: string): TempDocumentsDb {
   };
 }
 
-export function section(text: string): LegacySection {
+export function section(text: string) {
   return { kind: "p", data: { text } };
 }
 
 export function pmDocFromText(text: string): PmDoc {
-  return legacySectionsToPm([section(text)]);
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "paragraph",
+      attrs: { blockId: "test-paragraph" },
+      content: text ? [{ type: "text", text }] : [],
+    }],
+  };
 }
 
 export function documentInput(
   id: string,
   overrides: Partial<DocumentSaveInput> = {},
 ): DocumentSaveInput {
-  const legacySections = overrides.legacySections ?? [section(`body-${id}`)];
   return {
     id,
     threadId: `thread-${id}`,
@@ -51,8 +57,7 @@ export function documentInput(
     docState: "editing",
     docVersion: 1,
     lastSyncedVersion: 1,
-    legacySections,
-    pmDoc: overrides.pmDoc ?? legacySectionsToPm(legacySections as never),
+    pmDoc: overrides.pmDoc ?? pmDocFromText(`body-${id}`),
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,

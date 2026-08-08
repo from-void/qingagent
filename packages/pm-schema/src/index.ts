@@ -9,8 +9,6 @@ export * from "./charCount";
 export * from "./documentIntegrity";
 export * from "./repairNestedTables";
 export * from "./clipboard/pmToClipboardHtml";
-export * from "./legacy/legacySectionsToPm";
-export * from "./legacy/pmToLegacySections";
 export * from "./markdown/markdownToPm";
 export * from "./markdown/pmToMarkdown";
 export * from "./ai-ir/aiIrSchema";

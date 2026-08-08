@@ -13,9 +13,9 @@ import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
-  legacySectionsToPm,
-  pmToLegacySections,
+  pmToPlainText,
 } from "@qingagent/pm-schema";
+import { pmDocFromBlocks } from "./pmTestUtils.js";
 import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
 import {
   collectTopLevelTextBlocks,
@@ -57,15 +57,12 @@ async function collectAsyncFrames(gen: AsyncIterable<BridgeFrame>): Promise<Brid
 }
 
 function seedStateWithDoc(state: SessionState): void {
-  state.doc = legacySectionsToPm([
-    { kind: "h1", data: { text: "春天的校园" } },
-    { kind: "p", data: { text: "三月的阳光透过教学楼的玻璃窗，洒在走廊的地砖上。" } },
-    { kind: "h2", data: { text: "花开时节", anchor: null } },
-    {
-      kind: "p",
-      data: { text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
-    },
-  ] as never);
+  state.doc = pmDocFromBlocks([
+    { type: "heading", level: 1, text: "春天的校园" },
+    { type: "paragraph", text: "三月的阳光透过教学楼的玻璃窗，洒在走廊的地砖上。" },
+    { type: "heading", level: 2, text: "花开时节" },
+    { type: "paragraph", text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
+  ]);
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
 }
@@ -146,7 +143,6 @@ async function seedDocumentRow(state: SessionState): Promise<void> {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       docVersion: state.docVersion,
-      legacySections: pmToLegacySections(state.doc!) as never,
       pmDoc: state.doc,
     }),
   );
@@ -334,14 +330,11 @@ describe("commitPatches", () => {
     expect(docFrame).toBeDefined();
     if (docFrame?.kind === "documentSnapshotWritten") {
       expect(docFrame.data.doc.version).toBe(2); // bumped from 1
-      const snapshotSections = pmToLegacySections(docFrame.data.doc.doc);
-      expect(snapshotSections).toHaveLength(4);
+      expect(docFrame.data.doc.doc.content).toHaveLength(4);
       // The patch should have been applied: "三月的阳光" → "四月的暖阳"
-      const pSection = snapshotSections[1];
-      if (pSection?.kind === "p") {
-        expect(pSection.data.text).toContain("四月的暖阳");
-        expect(pSection.data.text).not.toContain("三月的阳光");
-      }
+      const snapshotText = pmToPlainText(docFrame.data.doc.doc);
+      expect(snapshotText).toContain("四月的暖阳");
+      expect(snapshotText).not.toContain("三月的阳光");
     }
 
     expect(frames.find((f) => f.kind === "docCommitted")).toBeDefined();
@@ -473,15 +466,9 @@ describe("commitPatches", () => {
 
     const docFrame = frames.find((f) => f.kind === "documentSnapshotWritten");
     if (docFrame?.kind === "documentSnapshotWritten") {
-      const sections = pmToLegacySections(docFrame.data.doc.doc);
-      // Section 0: h1 should now be "秋天的校园"
-      if (sections[0]?.kind === "h1") {
-        expect(sections[0].data.text).toBe("秋天的校园");
-      }
-      // Section 2: h2 should now be "落叶时分"
-      if (sections[2]?.kind === "h2") {
-        expect(sections[2].data.text).toBe("落叶时分");
-      }
+      const snapshotText = pmToPlainText(docFrame.data.doc.doc);
+      expect(snapshotText).toContain("秋天的校园");
+      expect(snapshotText).toContain("落叶时分");
     }
   });
 
@@ -535,15 +522,9 @@ describe("commitPatches", () => {
     const docFrame = frames.find((f) => f.kind === "documentSnapshotWritten");
     expect(docFrame).toBeDefined();
     if (docFrame?.kind === "documentSnapshotWritten") {
-      const sections = pmToLegacySections(docFrame.data.doc.doc);
-      // Accepted patch: section 0 should be changed
-      if (sections[0]?.kind === "h1") {
-        expect(sections[0].data.text).toBe("秋天的校园");
-      }
-      // Rejected patch: section 2 should remain unchanged
-      if (sections[2]?.kind === "h2") {
-        expect(sections[2].data.text).toBe("花开时节");
-      }
+      const snapshotText = pmToPlainText(docFrame.data.doc.doc);
+      expect(snapshotText).toContain("秋天的校园");
+      expect(snapshotText).toContain("花开时节");
     }
   });
 
@@ -551,15 +532,12 @@ describe("commitPatches", () => {
     const state = createSession("rejected-draft-clear-retry");
     seedStateWithDoc(state);
     await addPatch(state, "patch-rejected");
-    const candidateDoc = legacySectionsToPm([
-      { kind: "h1", data: { text: "春天的校园" } },
-      { kind: "p", data: { text: "四月的暖阳透过教学楼的玻璃窗，洒在走廊的地砖上。" } },
-      { kind: "h2", data: { text: "花开时节", anchor: null } },
-      {
-        kind: "p",
-        data: { text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
-      },
-    ] as never);
+    const candidateDoc = pmDocFromBlocks([
+      { type: "heading", level: 1, text: "春天的校园" },
+      { type: "paragraph", text: "四月的暖阳透过教学楼的玻璃窗，洒在走廊的地砖上。" },
+      { type: "heading", level: 2, text: "花开时节" },
+      { type: "paragraph", text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
+    ]);
     state.docDraftBaseDoc = state.doc!;
     state.docDraftBaseVersion = state.docVersion;
     state.docDraftCandidateDoc = candidateDoc;

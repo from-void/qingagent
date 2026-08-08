@@ -82,7 +82,7 @@ export function detectDrawioSource(language: string | null | undefined, text: st
 /**
  * 把已经是 PM 文档(已落盘 / 待装载)里"伪装成代码块的 Mermaid/drawio 图"升级回 diagram 块。
  *
- * 背景:本项目铁律是「mermaid 永远是活图,绝不是死代码块」——aiIrToPm 与 legacySectionsToPm 都已
+ * 背景:本项目铁律是「mermaid 永远是活图,绝不是死代码块」——所有文档编译入口都已
  * 在各自入口做这个升级。但当一个 `codeBlock(language=mermaid)` 通过【其它路径】混进已存文档(例如
  * 历史脏数据 / 某次编辑把 diagram 退化成 codeBlock)时,装载到编辑器里就会渲染成一段死代码、没有
  * 可视化编辑入口(用户报的"Mermaid 退回代码格式")。本函数是装载侧的同一张安全网:任何 detectMermaidSource

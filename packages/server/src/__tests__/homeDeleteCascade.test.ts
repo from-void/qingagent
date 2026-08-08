@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getStablePmJson, legacySectionsToPm } from "@qingagent/pm-schema";
+import { getStablePmJson } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import {
   __resetDocumentsClientForTest,
   getDocumentsClient,
@@ -79,7 +80,7 @@ async function loadApp() {
 
 async function seedFamily(client: DocumentsClient, sessionId: string): Promise<void> {
   const now = "2026-07-10T00:00:00.000Z";
-  const pm = legacySectionsToPm([{ kind: "p", data: { text: "删除路由正文" } }] as never);
+  const pm = pmDocFromText("删除路由正文");
   const pmJson = getStablePmJson(pm);
   await client.execute({
     sql: `INSERT INTO documents (

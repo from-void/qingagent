@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskUserQuestion, BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
+import { pmDocFromText } from "./pmTestUtils.js";
 import { RequestContext } from "@mastra/core/request-context";
 
 vi.mock("../mastra.js", () => ({
@@ -241,7 +241,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     const { createSession, runAgentTurn } = await import("../bridge/index.js");
     const { qingagentAgent } = await import("../agents/qingagent.js");
     const state = createSession("turn-start-busy");
-    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "已有正文" } }] as never);
+    state.doc = pmDocFromText("已有正文");
     state.docState = { kind: "editing" };
 
     vi.mocked(qingagentAgent.stream).mockResolvedValueOnce({
@@ -306,9 +306,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     const state = createSession("duplicate-reask");
     state.runId = "r1";
     state.toolCallId = "tc1";
-    state.docDraftCandidateDoc = legacySectionsToPm([
-      { kind: "p", data: { text: "重复挂起不得清空的候选" } },
-    ] as never);
+    state.docDraftCandidateDoc = pmDocFromText("重复挂起不得清空的候选");
 
     await collectFrames(
       processAgentStream(streamOf(askUserSuspend("tc1")), {

@@ -470,6 +470,11 @@ describe("validateBridgeFrame", () => {
     ).toThrow(BridgeFrameValidationError);
   });
 
+  it("rejects contract-external frame kinds", () => {
+    expect(() => validateBridgeFrame({ kind: "futureFrame", data: {} } as never))
+      .toThrow(BridgeFrameValidationError);
+  });
+
   it("rejects citation with wrong domain", () => {
     const frame: BridgeFrame = {
       kind: "chatMessageAppended",

@@ -3381,7 +3381,6 @@ describe("WorkspacePage review controls", () => {
     const { buildPatchVerdictCommand } = await import("./WorkspacePage");
 
     expect(buildPatchVerdictCommand(
-      [reviewToolCall("p-1", "batch-a", "reviewing")],
       "p-1",
       "rejected",
     )).toEqual({

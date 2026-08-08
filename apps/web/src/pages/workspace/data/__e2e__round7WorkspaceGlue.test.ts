@@ -306,28 +306,17 @@ describe("D. folderSourceOperationResult 失败帧文案（folderAttach.folderSo
 // ───── E. deriveFolderCapability 三态 ─────
 
 describe("E. deriveFolderCapability 三态返回值", () => {
-  it("桌面端 + 有 selectFolderSource → enabled=true", () => {
+  it("桌面端 server 能力开启时 enabled=true", () => {
     const cap = deriveFolderCapabilityForTest({
       isDesktop: true,
-      hasSelectFolderSource: true,
     });
     expect(cap.enabled).toBe(true);
     expect(cap.reason).toBeNull();
   });
 
-  it("桌面端 + 无 selectFolderSource → enabled=false 含更新提示", () => {
-    const cap = deriveFolderCapabilityForTest({
-      isDesktop: true,
-      hasSelectFolderSource: false,
-    });
-    expect(cap.enabled).toBe(false);
-    expect(cap.reason).toContain("请更新应用");
-  });
-
   it("桌面端 = false + showDirectoryPicker 存在(PC 浏览器) → enabled=true", () => {
     const cap = deriveFolderCapabilityForTest({
       isDesktop: false,
-      hasSelectFolderSource: false,
       hasShowDirectoryPicker: true,
       isSecureContext: true,
       isMobile: false,
@@ -339,7 +328,6 @@ describe("E. deriveFolderCapability 三态返回值", () => {
   it("server 未通告浏览器 folder 能力时，即使浏览器 API 可用也 disabled", () => {
     const cap = deriveFolderCapabilityForTest({
       isDesktop: false,
-      hasSelectFolderSource: false,
       hasShowDirectoryPicker: true,
       isSecureContext: true,
       isMobile: false,
@@ -352,7 +340,6 @@ describe("E. deriveFolderCapability 三态返回值", () => {
   it("桌面端 = false + 无 showDirectoryPicker → enabled=false 含 '当前浏览器不支持'", () => {
     const cap = deriveFolderCapabilityForTest({
       isDesktop: false,
-      hasSelectFolderSource: false,
       hasShowDirectoryPicker: false,
       isSecureContext: true,
       isMobile: false,
@@ -365,7 +352,6 @@ describe("E. deriveFolderCapability 三态返回值", () => {
     // 移动端即便有 showDirectoryPicker 也不被视为 webCapable
     const cap = deriveFolderCapabilityForTest({
       isDesktop: false,
-      hasSelectFolderSource: false,
       hasShowDirectoryPicker: true,
       isSecureContext: true,
       isMobile: true, // 移动端
@@ -378,7 +364,6 @@ describe("E. deriveFolderCapability 三态返回值", () => {
   it("桌面端 = false + showDirectoryPicker 存在 + isSecureContext=false → 不是 webCapable", () => {
     const cap = deriveFolderCapabilityForTest({
       isDesktop: false,
-      hasSelectFolderSource: false,
       hasShowDirectoryPicker: true,
       isSecureContext: false, // 非 HTTPS
       isMobile: false,

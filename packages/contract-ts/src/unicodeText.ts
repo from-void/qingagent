@@ -1,10 +1,3 @@
-type SegmenterConstructor = new (
-  locales?: string | string[],
-  options?: { granularity: "grapheme" },
-) => {
-  segment(input: string): Iterable<{ segment: string }>;
-};
-
 /** 清除无法编码的孤立 UTF-16 代理项，同时保留合法代理对。 */
 export function removeUnpairedSurrogates(value: string): string {
   let result = "";
@@ -25,17 +18,12 @@ export function removeUnpairedSurrogates(value: string): string {
 }
 
 /**
- * 按用户感知字素拆分文本。现代运行时优先使用 Intl.Segmenter；
- * 旧运行时回退到 code point，至少不会拆断代理对。
+ * 按用户感知字素拆分文本。
  */
 export function splitGraphemes(value: string): string[] {
   const sanitized = removeUnpairedSurrogates(value);
-  const Segmenter = (
-    Intl as typeof Intl & { Segmenter?: SegmenterConstructor }
-  ).Segmenter;
-  if (!Segmenter) return Array.from(sanitized);
   return Array.from(
-    new Segmenter(undefined, { granularity: "grapheme" }).segment(sanitized),
+    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(sanitized),
     (item) => item.segment,
   );
 }

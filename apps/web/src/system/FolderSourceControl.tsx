@@ -196,7 +196,6 @@ export interface FolderSourceControlSource {
 export interface FolderCapabilityEnv {
   isServer?: boolean;
   isDesktop?: boolean;
-  hasDesktopPicker?: boolean;
   hasDirectoryPicker?: boolean;
   isSecureContext?: boolean;
   userAgent?: string;
@@ -578,7 +577,6 @@ export function deriveFolderCapability(capabilities: ClientCapabilities | null =
   }
   return deriveFolderCapabilityFromEnv({
     isDesktop: window.electron?.isDesktop === true,
-    hasDesktopPicker: typeof window.electron?.selectFolderSource === "function",
     hasDirectoryPicker: typeof window.showDirectoryPicker === "function",
     isSecureContext: window.isSecureContext === true,
     userAgent: navigator.userAgent,
@@ -596,9 +594,7 @@ export function deriveFolderCapabilityFromEnv(env: FolderCapabilityEnv): FolderC
     if (env.serverDesktopFolderSourcesEnabled !== true) {
       return { enabled: false, reason: "当前服务端未启用本地文件夹访问" };
     }
-    return env.hasDesktopPicker
-      ? { enabled: true, reason: null }
-      : { enabled: false, reason: "当前桌面端暂不支持连接文件夹，请更新应用" };
+    return { enabled: true, reason: null };
   }
 
   if (env.serverBrowserFolderSourcesEnabled !== true) {

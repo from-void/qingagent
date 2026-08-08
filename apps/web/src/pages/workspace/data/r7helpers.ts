@@ -11,7 +11,6 @@ export interface FolderCapabilityResult {
 
 interface DeriveFolderCapabilityInput {
   isDesktop: boolean;
-  hasSelectFolderSource: boolean;
   hasShowDirectoryPicker?: boolean;
   isSecureContext?: boolean;
   isMobile?: boolean;
@@ -24,7 +23,6 @@ export function deriveFolderCapabilityForTest(
 ): FolderCapabilityResult {
   return deriveFolderCapabilityFromEnv({
     isDesktop: input.isDesktop,
-    hasDesktopPicker: input.hasSelectFolderSource,
     hasDirectoryPicker: input.hasShowDirectoryPicker ?? false,
     isSecureContext: input.isSecureContext ?? true,
     userAgent: input.isMobile ? "iPhone Mobile" : "Desktop Browser",

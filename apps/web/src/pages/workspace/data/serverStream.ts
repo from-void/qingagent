@@ -620,41 +620,19 @@ export class ServerStream {
     command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" | "setEnabledLexicons" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
-    const framePromise = this.waitForFrame(
-      (frame) =>
-        frame.kind === kind
-        && (frame.data as { requestId?: unknown }).requestId === command.data.requestId,
-      `${kind} response missing`,
+    const result = await this.sendCommandInternal(command) as unknown[];
+    const frames = result.map((value) => {
+      const frame = value as BridgeFrame;
+      validateBridgeFrame(frame);
+      return frame;
+    });
+    const frame = frames.find(
+      (candidate) =>
+        candidate.kind === kind
+        && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
     );
-    // HTTP 是这类前台命令的权威响应；EventSource waiter 只兼容 accepted+SSE 旧路径。
-    // HTTP 若排队超过 30 秒，waiter 会先超时，必须从创建时就挂拒绝处理，避免调用方
-    // 已 catch derivativeFrame 仍被内部孤儿 Promise 上报 UNHANDLED_REJECTION。
-    void framePromise.catch(() => undefined);
-    try {
-      const result = await this.sendCommandInternal(command);
-      if (!Array.isArray(result)) {
-        return await framePromise as Extract<BridgeFrame, { kind: K }>;
-      }
-      const frames = result.map((value) => {
-        const frame = value as BridgeFrame;
-        validateBridgeFrame(frame);
-        return frame;
-      });
-      const frame = frames.find(
-        (candidate) =>
-          candidate.kind === kind
-          && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
-      );
-      if (!frame) throw new Error(`${kind} response missing`);
-      this.resolveWaiter(framePromise, frame);
-      return frame as Extract<BridgeFrame, { kind: K }>;
-    } catch (error) {
-      this.rejectWaiter(
-        framePromise,
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      throw error;
-    }
+    if (!frame) throw new Error(`${kind} response missing`);
+    return frame as Extract<BridgeFrame, { kind: K }>;
   }
 
   async listDerivatives(sessionId: string) {
@@ -1458,16 +1436,6 @@ export class ServerStream {
     }
     // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。
     promise.catch(() => undefined);
-  }
-
-  private resolveWaiter(
-    promise: Promise<unknown>,
-    frame: BridgeFrame,
-  ): void {
-    const waiter = this.waiterByPromise.get(promise);
-    if (!waiter) return;
-    this.removeWaiter(waiter);
-    waiter.resolve(frame);
   }
 
   private dispatchStreamTerminated(

@@ -217,7 +217,7 @@ export function useSkills() {
 function findSkill(skills: readonly SkillInfo[], name: string): SkillInfo | null {
   for (const skill of skills) {
     if (skill.name === name) return skill;
-    const child = findSkill(Array.isArray(skill.children) ? skill.children : [], name);
+    const child = findSkill(skill.children, name);
     if (child) return child;
   }
   return null;

@@ -1013,8 +1013,8 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       checkStream(frame.data);
       return;
     default:
-      // 未知 kind 有意放行:保持前端对未来协议帧的前向兼容,只校验当前认识的帧。
-      return;
+      if (requestCorrelatedKinds.has(frame.kind)) return;
+      fail(`BridgeFrame.kind is unsupported: ${String((frame as { kind?: unknown }).kind)}`);
   }
 }
 

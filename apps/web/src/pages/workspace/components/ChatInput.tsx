@@ -1296,7 +1296,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             // 快捷键提示改成 hover 文案(去掉常驻的 ⌘⏎ 按钮);未配置 key 时置灰 + 引导气泡
             <NoKeyTip
               gate={modelKeyGate}
-              active={noModelKey}
               forced={keyTipForced}
               onConfigure={(provider) => onConfigureModel?.(provider)}
             >

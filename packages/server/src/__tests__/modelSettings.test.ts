@@ -119,9 +119,9 @@ describe("modelSettingsRoutes", () => {
     const putJson = await put.json();
     expect(putJson).toMatchObject({
       provider: "deepseek",
-      apiKeyConfigured: true,
-      maskedTail: "3456",
-      source: "db",
+      providers: {
+        deepseek: { apiKeyConfigured: true, maskedTail: "3456", source: "db" },
+      },
       params: { temperature: 0.7, topP: 0.9, maxOutputTokens: 2048 },
     });
     expect(JSON.stringify(putJson)).not.toContain(apiKey);
@@ -129,8 +129,8 @@ describe("modelSettingsRoutes", () => {
     const get = await app.request("/api/v1/settings/model");
     expect(get.status).toBe(200);
     const getJson = await get.json();
-    expect(getJson.maskedTail).toBe("3456");
-    expect(getJson.source).toBe("db");
+    expect(getJson.providers.deepseek.maskedTail).toBe("3456");
+    expect(getJson.providers.deepseek.source).toBe("db");
     expect(JSON.stringify(getJson)).not.toContain(apiKey);
   });
 
@@ -141,7 +141,6 @@ describe("modelSettingsRoutes", () => {
     const legacy = await app.request("/api/v1/settings/model");
     await expect(legacy.json()).resolves.toMatchObject({
       provider: "deepseek",
-      maskedTail: "1111",
       providers: {
         deepseek: { apiKeyConfigured: true, maskedTail: "1111", source: "db" },
         kimi: { apiKeyConfigured: false, maskedTail: null, source: "none" },
@@ -156,7 +155,6 @@ describe("modelSettingsRoutes", () => {
     expect(kimiPut.status).toBe(200);
     await expect(kimiPut.json()).resolves.toMatchObject({
       provider: "kimi",
-      maskedTail: "2222",
       providers: {
         deepseek: { maskedTail: "1111" },
         kimi: { maskedTail: "2222" },
@@ -172,7 +170,6 @@ describe("modelSettingsRoutes", () => {
     });
     await expect(switchBack.json()).resolves.toMatchObject({
       provider: "deepseek",
-      maskedTail: "1111",
       providers: { kimi: { maskedTail: "2222" } },
     });
   });
@@ -191,8 +188,6 @@ describe("modelSettingsRoutes", () => {
     const settings = await app.request("/api/v1/settings/model");
     await expect(settings.json()).resolves.toMatchObject({
       provider: "deepseek",
-      apiKeyConfigured: false,
-      source: "none",
       providers: {
         deepseek: { apiKeyConfigured: false, source: "none" },
         kimi: { apiKeyConfigured: false, source: "none" },
@@ -260,9 +255,9 @@ describe("modelSettingsRoutes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toMatchObject({
-      apiKeyConfigured: false,
-      maskedTail: null,
-      source: "none",
+      providers: {
+        deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+      },
     });
     expect(JSON.stringify(json)).not.toContain("sk-old-secret-9999");
   });

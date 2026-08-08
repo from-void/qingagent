@@ -32,9 +32,8 @@ type VisionTestErrorKind =
   | "model_error";
 
 interface VisionModelSettingsResponse {
-  provider?: ModelProvider;
-  apiKeyConfigured?: boolean;
-  providers?: Partial<Record<ModelProvider, { apiKeyConfigured?: boolean }>>;
+  provider: ModelProvider;
+  providers: Record<ModelProvider, { apiKeyConfigured: boolean }>;
 }
 
 function testErrorLabel(kind: VisionTestErrorKind | undefined): string {
@@ -78,10 +77,7 @@ export function VisionPanel() {
   const modelProvider = resolveModelRequestProvider(serverModelSettings?.provider);
   const kimiNativeVision = modelProvider === "kimi";
   const serverKimiKeyConfigured =
-    serverModelSettings?.providers?.kimi?.apiKeyConfigured ??
-    (serverModelSettings?.provider === "kimi"
-      ? Boolean(serverModelSettings.apiKeyConfigured)
-      : false);
+    serverModelSettings?.providers.kimi.apiKeyConfigured ?? false;
   const kimiKeyConfigured =
     Boolean(getVisitorModelKey("kimi")) ||
     Boolean(readCustomProvider("kimi")) ||

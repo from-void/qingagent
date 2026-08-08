@@ -53,7 +53,6 @@ export interface LocalModelKeySnapshot {
   provider: ModelProvider | null;
   providers: Record<ModelProvider, {
     configured: boolean;
-    hasExplicitConfig: boolean;
   }>;
 }
 
@@ -77,28 +76,21 @@ export function getStoredModelProvider(): ModelProvider | null {
   return value === "deepseek" || value === "kimi" ? value : null;
 }
 
-/** UI 兼容旧数据：未存 provider 时仍以 DeepSeek 作为同步首屏默认值。 */
+/** UI 未选 provider 时以 DeepSeek 作为同步首屏默认值。 */
 export function getSelectedModelProvider(): ModelProvider {
   return getStoredModelProvider() ?? "deepseek";
 }
 
 /**
  * 解析本次请求实际选择的 provider。
- * 本地显式选择优先；旧版仅保存了 DeepSeek 配置时继续锁定 DeepSeek；
- * 都没有时跟随服务端活动 provider，与服务端请求解析的 DB/env/default 优先级一致。
+ * 本地显式选择优先；未选择时跟随服务端活动 provider，
+ * 与服务端请求解析的 DB/env/default 优先级一致。
  */
 export function resolveModelRequestProvider(
   serverProvider?: ModelProvider,
 ): ModelProvider {
   const storedProvider = getStoredModelProvider();
   if (storedProvider) return storedProvider;
-  if (
-    getVisitorModelKey("deepseek") ||
-    readCustomProvider("deepseek") ||
-    readOfficialModelOverride("deepseek")
-  ) {
-    return "deepseek";
-  }
   return serverProvider ?? "deepseek";
 }
 
@@ -111,25 +103,13 @@ export function getVisitorModelKey(provider: ModelProvider): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-export function getVisitorDeepseekKey(): string | null {
-  return getVisitorModelKey("deepseek");
-}
-
 export function setVisitorModelKey(provider: ModelProvider, key: string): Promise<boolean> {
   const trimmed = key.trim();
   return writePersistedAwaited(providerStorageKeys(provider).apiKey, trimmed ? trimmed : null);
 }
 
-export function setVisitorDeepseekKey(key: string): Promise<boolean> {
-  return setVisitorModelKey("deepseek", key);
-}
-
 export function clearVisitorModelKey(provider: ModelProvider): Promise<boolean> {
   return setVisitorModelKey(provider, "");
-}
-
-export function clearVisitorDeepseekKey(): Promise<boolean> {
-  return clearVisitorModelKey("deepseek");
 }
 
 // —— 其他云厂商(进阶):整体覆盖 baseURL + key + 模型别名 ——
@@ -207,30 +187,21 @@ export function readLocalModelKeySnapshot(): LocalModelKeySnapshot | null {
 
 function readCheckedProviderState(provider: ModelProvider): {
   configured: boolean;
-  hasExplicitConfig: boolean;
 } | null {
   const keys = providerStorageKeys(provider);
   const keyResult = readPersistedChecked(keys.apiKey);
   const customResult = readPersistedChecked(keys.customProvider);
-  const officialResult = readPersistedChecked(keys.officialModel);
-  if (!keyResult.ok || !customResult.ok || !officialResult.ok) return null;
+  if (!keyResult.ok || !customResult.ok) return null;
 
   const visitorKey = keyResult.value?.trim() || null;
   let customProvider: CustomProvider | null = null;
-  let officialModel: OfficialModelOverride | null = null;
   try {
     customProvider = parseCustomProvider(customResult.value, provider);
   } catch {
     customProvider = null;
   }
-  try {
-    officialModel = parseOfficialModelOverride(officialResult.value);
-  } catch {
-    officialModel = null;
-  }
   return {
     configured: Boolean(visitorKey || customProvider),
-    hasExplicitConfig: Boolean(visitorKey || customProvider || officialModel),
   };
 }
 
@@ -305,8 +276,9 @@ export function setSelectedModelTier(
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
   const storedProvider = getStoredModelProvider();
-  const provider = resolveModelRequestProvider();
   const vision = visionKeyHeaders();
+  if (!storedProvider) return vision;
+  const provider = storedProvider;
   const tier = getSelectedModelTier(provider);
   const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};
   // 其他云厂商:整体覆盖 baseURL + key + 模型别名
@@ -331,7 +303,6 @@ export function visitorKeyHeaders(): Record<string, string> {
   const key = getVisitorModelKey(provider);
   const official = readOfficialModelOverride(provider);
   // 没有任何访客 provider/主模型配置时不发 provider，让 server 按 DB > env > 默认解析。
-  // 老数据若已有 DeepSeek key/模型别名，则视为显式 DeepSeek，避免把该 key 发给 Kimi。
   if (storedProvider || key || official) headers["x-model-provider"] = provider;
   if (key) {
     headers["x-model-key"] = key;

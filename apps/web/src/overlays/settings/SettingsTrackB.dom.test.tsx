@@ -17,10 +17,8 @@ import {
   getStoredModelProvider,
   getSelectedModelTier,
   getVisitorModelKey,
-  getVisitorDeepseekKey,
   readCustomProvider,
   setSelectedModelProvider,
-  setVisitorDeepseekKey,
   setVisitorModelKey,
   visitorKeyHeaders,
   writeCustomProvider,
@@ -104,7 +102,7 @@ describe("Settings Track B", () => {
   });
 
   it("状态二 · 单家已配:DeepSeek 金描边使用中,Kimi 仍是介绍卡", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -131,7 +129,7 @@ describe("Settings Track B", () => {
   });
 
   it("状态三 · 两家都已配:非使用卡出「启 用」,两卡都有档位与配置入口", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     await render(
       <ToastProvider>
@@ -212,7 +210,7 @@ describe("Settings Track B", () => {
   // —— 「使用中」不变式:只要存在已配置的厂商,必须有且恰好一家在使用中 ——
 
   it("不变式 · 仅一家已配:那家必然使用中,不出现无处可切的「启 用」", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -228,7 +226,7 @@ describe("Settings Track B", () => {
   it("不变式 · 使用中指向未配置那家时自动回落到有配置的一家并落盘", async () => {
     // 非法态复现:modelProvider=kimi(如早前启用过后又清了 kimi key),但只有 DeepSeek 有配置
     await setSelectedModelProvider("kimi");
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -243,7 +241,7 @@ describe("Settings Track B", () => {
   });
 
   it("不变式 · 清掉使用中那家的 key 后,当场回落到另一家而不是无人使用", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     await setSelectedModelProvider("kimi");
     await render(
@@ -267,7 +265,7 @@ describe("Settings Track B", () => {
   });
 
   it("不变式 · 两家都已配时正常切换不受归一化干扰", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     await render(
       <ToastProvider>
@@ -317,7 +315,7 @@ describe("Settings Track B", () => {
   });
 
   it("已配厂商的二级页:清除 key 与模型名前缀都在,且不外露本机分层", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await render(
       <ConfirmProvider>
         <ToastProvider>
@@ -338,11 +336,11 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("ModelClearKey").textContent).toContain("清除密钥");
     await click(getButtonByWf("ModelClearKey"));
     await click(getButtonByText("清除 key"));
-    expect(getVisitorDeepseekKey()).toBeNull();
+    expect(getVisitorModelKey("deepseek")).toBeNull();
   });
 
   it("看板:三瓦片进看板卡,饼图按费用占比且 0 费用模型不进饼", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -368,7 +366,7 @@ describe("Settings Track B", () => {
   });
 
   it("看板花费卡直显本机范围、精确覆盖率、未知调用与账户余额对照", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     const today = localYmd(new Date());
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -419,7 +417,7 @@ describe("Settings Track B", () => {
   });
 
   it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     const today = new Date();
     const staleDay = new Date(today);
     staleDay.setDate(today.getDate() - 8);
@@ -452,7 +450,7 @@ describe("Settings Track B", () => {
   });
 
   it("模型分布按原始 modelId 聚合，未知模型保留原名且互不合并", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=total")) {
@@ -537,7 +535,7 @@ describe("Settings Track B", () => {
   });
 
   it("Model 自定义配置变更后丢弃旧测试成功响应且不清现有 key", async () => {
-    setVisitorDeepseekKey("sk-current");
+    setVisitorModelKey("deepseek", "sk-current");
     let resolveTest!: (response: Response) => void;
     const deferredTest = new Promise<Response>((resolve) => {
       resolveTest = resolve;
@@ -568,7 +566,7 @@ describe("Settings Track B", () => {
     await flush();
 
     expect(readCustomProvider()).toBeNull();
-    expect(getVisitorDeepseekKey()).toBe("sk-current");
+    expect(getVisitorModelKey("deepseek")).toBe("sk-current");
   });
 
   // 缺陷回归:填完整 endpoint 时"自动处理"要做到底——存的、显示的都必须是服务端归一化后的地址。
@@ -662,7 +660,8 @@ describe("Settings Track B", () => {
   });
 
   it("Model 档位 chip 默认 Flash,选 Pro 后持久化并随请求 header 透传", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await setSelectedModelProvider("deepseek");
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -692,7 +691,7 @@ describe("Settings Track B", () => {
   });
 
   it("档位浮层点外关闭、Esc 关闭,Enter 可选中", async () => {
-    setVisitorDeepseekKey("deepseek-tier-key");
+    setVisitorModelKey("deepseek", "deepseek-tier-key");
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -719,7 +718,7 @@ describe("Settings Track B", () => {
   });
 
   it("两家档位各记各的,互不串档", async () => {
-    await setVisitorDeepseekKey("deepseek-key");
+    await setVisitorModelKey("deepseek", "deepseek-key");
     await setVisitorModelKey("kimi", "kimi-key");
     await render(
       <ToastProvider>
@@ -741,7 +740,7 @@ describe("Settings Track B", () => {
   });
 
   it("「启 用」切换保留 DeepSeek/Kimi 各自 key，并透传 Kimi 双档 header", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     setSelectedModelProvider("deepseek");
     await render(
@@ -772,7 +771,7 @@ describe("Settings Track B", () => {
   });
 
   it("启用与档位落盘失败时保持原选择并通过全局 toast 告知未保存", async () => {
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     await render(
       <ToastProvider>
@@ -806,6 +805,8 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        getModelProvider: () => "deepseek",
+        setModelProvider: vi.fn(async () => true),
         getDeepseekApiKey: () => null,
         setDeepseekApiKey,
         getCustomProvider: () => null,
@@ -831,7 +832,7 @@ describe("Settings Track B", () => {
     expect(setDeepseekApiKey).toHaveBeenCalledWith("attempted-new-key");
     expect(setCustomProvider).not.toHaveBeenCalled();
     expect(setOfficialModel).not.toHaveBeenCalled();
-    expect(getVisitorDeepseekKey()).toBeNull();
+    expect(getVisitorModelKey("deepseek")).toBeNull();
     expect(getInputByWf("ModelKeyInput").value).toBe("");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("未保存");
   });
@@ -877,7 +878,7 @@ describe("Settings Track B", () => {
     expect(setDeepseekApiKey).toHaveBeenCalledWith("deepseek-official-new");
     expect(setCustomProvider).toHaveBeenCalledWith(null);
     expect(setOfficialModel).not.toHaveBeenCalled();
-    expect(getVisitorDeepseekKey()).toBe("deepseek-official-new");
+    expect(getVisitorModelKey("deepseek")).toBe("deepseek-official-new");
     expect(readCustomProvider()).toMatchObject({
       baseUrl: "https://old-proxy.example/v1",
       apiKey: "old-custom-key",
@@ -904,6 +905,8 @@ describe("Settings Track B", () => {
       configurable: true,
       value: {
         isDesktop: true,
+        getModelProvider: () => "deepseek",
+        setModelProvider: vi.fn(async () => true),
         getDeepseekApiKey: () => null,
         setDeepseekApiKey,
         getCustomProvider: () => previousCustom,
@@ -933,7 +936,7 @@ describe("Settings Track B", () => {
     expect(setDeepseekApiKey).toHaveBeenCalledWith("deepseek-official-new");
     expect(setCustomProvider).toHaveBeenCalledWith(null);
     expect(setOfficialModel).toHaveBeenCalledWith(JSON.stringify({ flash: "attempted-new-flash" }));
-    expect(getVisitorDeepseekKey()).toBe("deepseek-official-new");
+    expect(getVisitorModelKey("deepseek")).toBe("deepseek-official-new");
     expect(readCustomProvider()).toBeNull();
     expect(visitorKeyHeaders()).toMatchObject({
       "x-model-key": "deepseek-official-new",
@@ -984,16 +987,14 @@ describe("Settings Track B", () => {
     expect(toastText).not.toContain("desktop getter failed");
   });
 
-  it("未显式选择且无本地配置时保留 server 优先级；旧 DeepSeek key 仍锁定 DeepSeek", async () => {
+  it("未显式选择时不发送本地旧槽位配置，由 server 决定 provider", async () => {
     expect(getStoredModelProvider()).toBeNull();
     expect(getSelectedModelProvider()).toBe("deepseek");
     expect(visitorKeyHeaders()["x-model-provider"]).toBeUndefined();
 
-    await setVisitorDeepseekKey("legacy-deepseek-key");
-    expect(visitorKeyHeaders()).toMatchObject({
-      "x-model-provider": "deepseek",
-      "x-model-key": "legacy-deepseek-key",
-    });
+    await setVisitorModelKey("deepseek", "legacy-deepseek-key");
+    expect(visitorKeyHeaders()["x-model-provider"]).toBeUndefined();
+    expect(visitorKeyHeaders()["x-model-key"]).toBeUndefined();
   });
 
   it("DeepSeek/Kimi 各自记忆第三方 baseUrl、key 与模型别名", async () => {
@@ -1069,7 +1070,7 @@ describe("Settings Track B", () => {
   });
 
   it("DeepSeek 余额检测在途进二级页时中止并丢弃迟到结果", async () => {
-    await setVisitorDeepseekKey("deepseek-balance-key");
+    await setVisitorModelKey("deepseek", "deepseek-balance-key");
     let resolveBalance!: (response: Response) => void;
     const deferredBalance = new Promise<Response>((resolve) => {
       resolveBalance = resolve;
@@ -1102,7 +1103,7 @@ describe("Settings Track B", () => {
   });
 
   it("DeepSeek 余额检测不跟随使用中厂商:用着 Kimi 也照发 DeepSeek 自己的 key", async () => {
-    await setVisitorDeepseekKey("deepseek-balance-key");
+    await setVisitorModelKey("deepseek", "deepseek-balance-key");
     await setVisitorModelKey("kimi", "kimi-local-key");
     setSelectedModelProvider("kimi");
     const fetchMock = makeFetchMock();
@@ -1128,7 +1129,7 @@ describe("Settings Track B", () => {
 
   it("Kimi 测试连接在途启用 DeepSeek 时作废旧请求并丢弃迟到成功", async () => {
     await setVisitorModelKey("kimi", "kimi-local-key");
-    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
     setSelectedModelProvider("kimi");
     let resolveVerify!: (response: Response) => void;
     const deferredVerify = new Promise<Response>((resolve) => {
@@ -1247,9 +1248,6 @@ describe("Settings Track B", () => {
       if (String(input).includes("/api/v1/settings/model")) {
         return json({
           provider: "kimi",
-          apiKeyConfigured: true,
-          maskedTail: "7788",
-          source: "env",
           providers: {
             deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
             kimi: { apiKeyConfigured: true, maskedTail: "7788", source: "env" },
@@ -1288,7 +1286,7 @@ describe("Settings Track B", () => {
     );
     await click(getButtonByText("保存"));
 
-    expect(getVisitorDeepseekKey()).toBe(key);
+    expect(getVisitorModelKey("deepseek")).toBe(key);
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("已验证并保存");
   });
 
@@ -1318,7 +1316,7 @@ describe("Settings Track B", () => {
     expect(host?.querySelector('[data-wf="GlobalConfirm"]')?.textContent).toContain("仍要保存这个 key");
     await click(getButtonByText("仍要保存"));
 
-    expect(getVisitorDeepseekKey()).toBe(key);
+    expect(getVisitorModelKey("deepseek")).toBe(key);
   });
 
   it("Vision 测试保存成功走全局 toast,失败提示位置不被成功文案占用", async () => {
@@ -1479,7 +1477,12 @@ describe("Settings Track B", () => {
     const deferredTest = new Promise<Response>((resolve) => {
       resolveTest = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(() => deferredTest));
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/vision/test")
+        ? deferredTest
+        : fallbackFetch(input),
+    ));
 
     await render(
       <ToastProvider>
@@ -1514,7 +1517,12 @@ describe("Settings Track B", () => {
     const deferredTest = new Promise<Response>((resolve) => {
       resolveTest = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(() => deferredTest));
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/vision/test")
+        ? deferredTest
+        : fallbackFetch(input),
+    ));
 
     await render(
       <ConfirmProvider>
@@ -1555,7 +1563,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细头部:日期控件只在按天视图出现,模型多选三视图常驻", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1582,7 +1590,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模型多选:默认全部,取消一档后聚合口径变局部,重新全选复原", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1605,7 +1613,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模型多选:切到按文档视图后筛选仍生效", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/usage/summary?view=session")) {
@@ -1633,7 +1641,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细日期选择器只客户端过滤 day rows,不向服务端追加 date 参数", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
     await render(<ModelSettingsPanel />);
@@ -1665,7 +1673,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量视图切换立即清除旧行，非 2xx 后显示中性失败态", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     let resolveSession!: (response: Response) => void;
     const sessionRequest = new Promise<Response>((resolve) => {
       resolveSession = resolve;
@@ -1696,7 +1704,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细默认小白模式只展示聚合列", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1712,7 +1720,7 @@ describe("Settings Track B", () => {
   });
 
   it("费用单元格标注北京时间高峰倍率与调用次数", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
@@ -1735,7 +1743,7 @@ describe("Settings Track B", () => {
   });
 
   it("点击用量明细标题切换专家模式并披露完整列", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await flush();
 
@@ -1763,7 +1771,7 @@ describe("Settings Track B", () => {
   });
 
   it("普通模式展示有效命中率，专家模式可用总命中率和建缓存数对账", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=day")) {
@@ -1815,7 +1823,7 @@ describe("Settings Track B", () => {
   });
 
   it("专家模式按文档分组，默认收起且可展开收起调用点", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/api/v1/usage/summary?view=session")) {
@@ -1853,7 +1861,7 @@ describe("Settings Track B", () => {
   });
 
   it("专家按天视图按天→文档→调用点三层展开，且各层默认收起", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByWf("UsageModeToggle"));
     await flush();
@@ -1886,7 +1894,7 @@ describe("Settings Track B", () => {
   });
 
   it("用量明细模式持久化到本地并在重新挂载后恢复", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByWf("UsageModeToggle"));
     expect(window.localStorage.getItem("qingagent:model-usage-mode")).toBe("expert");
@@ -1904,7 +1912,7 @@ describe("Settings Track B", () => {
   });
 
   it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {
-    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    setVisitorModelKey("deepseek", `sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByText("总计"));
     await click(getButtonByWf("UsageModeToggle"));
@@ -2195,7 +2203,14 @@ function makeFetchMock() {
       });
     }
     if (url.includes("/api/v1/settings/model")) {
-      return json({ apiKeyConfigured: false, maskedTail: null, source: "none", params: null });
+      return json({
+        provider: "deepseek",
+        providers: {
+          deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+          kimi: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+        },
+        params: null,
+      });
     }
     if (url.includes("/api/v1/usage/summary?view=day")) {
       return json({ rows: dayRows, scheduleRevision: "c".repeat(64) });

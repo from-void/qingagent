@@ -60,7 +60,7 @@ describe("modelKeyGate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("ready 后 accessor 读到既有 DeepSeek key，无需 focus 自动 configured", async () => {
+  it("ready 后无显式 provider 的旧 DeepSeek key 不锁定厂商，跟随 server provider", async () => {
     let ready = false;
     let notifyReady: (() => void) | undefined;
     const store = { "qingagent.deepseek_api_key": "existing-deepseek-key" };
@@ -73,7 +73,11 @@ describe("modelKeyGate", () => {
       };
     };
     setElectron(bridge);
-    const fetchMock = vi.fn<typeof fetch>();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(modelSettings({
+      activeProvider: "kimi",
+      deepseek: false,
+      kimi: false,
+    })));
     vi.stubGlobal("fetch", fetchMock);
 
     await renderGate();
@@ -85,9 +89,10 @@ describe("modelKeyGate", () => {
       await Promise.resolve();
     });
 
-    expectGateSnapshot("configured");
-    expectGate(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitForGateSnapshot("unconfigured");
+    expect(host?.textContent).toContain("当前使用中的 Kimi 还没配置 key");
+    expect(visitorKeyHeaders()["x-model-key"]).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("当前 Kimi 无 key、DeepSeek 有本地 key：明确提示并一键持久化切换", async () => {
@@ -340,7 +345,6 @@ function modelSettings(input: {
 }) {
   return {
     provider: input.activeProvider,
-    apiKeyConfigured: input[input.activeProvider],
     providers: {
       deepseek: { apiKeyConfigured: input.deepseek },
       kimi: { apiKeyConfigured: input.kimi },

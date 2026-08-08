@@ -442,8 +442,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
 
   // —— 每厂商各自的配置状态(visitor / 站点全局 / env / 自定义模型 四源合一)——
   const serverStateOf = (provider: ModelProvider) =>
-    server?.providers?.[provider] ??
-    (server?.provider === undefined || server.provider === provider ? server : null);
+    server?.providers[provider];
   const vendorConfigured = (provider: ModelProvider) =>
     Boolean(visitorKeys[provider]) ||
     Boolean(serverStateOf(provider)?.apiKeyConfigured) ||

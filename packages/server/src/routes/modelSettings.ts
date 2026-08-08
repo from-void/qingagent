@@ -262,10 +262,8 @@ async function readModelSettingsResponse() {
       source: dbKey ? "db" as const : envKey ? "env" as const : "none" as const,
     };
   };
-  const active = providerState(provider);
   return {
     provider,
-    ...active,
     providers: {
       deepseek: providerState("deepseek"),
       kimi: providerState("kimi"),

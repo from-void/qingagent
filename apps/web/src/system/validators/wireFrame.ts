@@ -50,14 +50,6 @@ const ALLOWED_DOC_STATE_KINDS = new Set([
   "empty",
   "editing",
   "pendingReview",
-  "init",
-  "plan",
-  "drafting",
-  "draft",
-  "locked",
-  "review",
-  "committed",
-  "history",
 ]);
 
 const ALLOWED_ACTIVE_OVERLAYS = new Set([

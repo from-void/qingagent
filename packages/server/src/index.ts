@@ -57,7 +57,6 @@ const { startProviderBalanceSnapshotScheduler } = await import("./providerBalanc
 const {
   installNetProbe,
   loadBypassMode,
-  migrateThreadMetadataToDocuments,
   resolveBaseUrl,
   warmUpModelEndpoint,
 } = await import("@qingagent/core");
@@ -111,11 +110,6 @@ void (async () => {
   "[credential-share] 预置授权失败(non-fatal)",
   e instanceof Error ? e.message : String(e),
 ));
-
-// 迁移完成后,后台尽力而为回填 thread metadata → documents(失败不阻断启动)。
-void migrateThreadMetadataToDocuments()
-  .then((stats) => console.log("[migrations] thread metadata 回填完成", stats))
-  .catch((e) => console.error("[migrations] thread metadata 回填失败(non-fatal)", e instanceof Error ? e.message : String(e)));
 
 // 存量 documents 的版本指针/PM 镜像仅在启动后后台巡检修复；读取接口保持纯读，
 // 避免 list/load 与用户提交竞争写锁。

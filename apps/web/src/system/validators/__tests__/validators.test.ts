@@ -818,7 +818,7 @@ describe("validateBridgeFrame", () => {
   it("accepts a valid frame", () => {
     const frame: BridgeFrame = {
       kind: "docStateChanged",
-      data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
     };
     expect(() => validateBridgeFrame(frame)).not.toThrow();
   });

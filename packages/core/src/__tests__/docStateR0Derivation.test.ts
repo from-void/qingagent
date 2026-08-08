@@ -8,7 +8,6 @@ import {
 } from "../session/sessionState.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
-  coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -295,58 +294,6 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
       emptyQuestionnaireLocked: "locked",
       resumableAskUser: "locked",
       nonRestorableAskUserCleared: "editable",
-    });
-  });
-
-  it("BM-1/BM-2 coerces legacy wire kinds into the R5e 3-state content model", () => {
-    const actual = Object.fromEntries(
-      [
-        "init",
-        "plan",
-        "drafting",
-        "draft",
-        "locked",
-        "review",
-        "committed",
-        "history",
-        "future-kind",
-      ].map((kind) => [kind, coerceLegacyContentKind(kind).kind]),
-    );
-
-    expect(actual).toEqual({
-      init: "empty",
-      plan: "editing",
-      drafting: "editing",
-      draft: "editing",
-      locked: "editing",
-      review: "pendingReview",
-      committed: "editing",
-      history: "editing",
-      "future-kind": "empty",
-    });
-  });
-
-  it("BM-4 keeps committed/history restorable as editable content", () => {
-    const actual = {
-      init: coerceLegacyContentKind("init").kind,
-      plan: coerceLegacyContentKind("plan").kind,
-      drafting: coerceLegacyContentKind("drafting").kind,
-      locked: coerceLegacyContentKind("locked").kind,
-      draft: coerceLegacyContentKind("draft").kind,
-      review: coerceLegacyContentKind("review").kind,
-      committed: coerceLegacyContentKind("committed").kind,
-      history: coerceLegacyContentKind("history").kind,
-    };
-
-    expect(actual).toEqual({
-      init: "empty",
-      plan: "editing",
-      drafting: "editing",
-      locked: "editing",
-      draft: "editing",
-      review: "pendingReview",
-      committed: "editing",
-      history: "editing",
     });
   });
 

@@ -219,7 +219,7 @@ describe("R0 overlay lifecycle and cold restore red tests", () => {
   it("RT-1 normalizes stale askUser on cold restore", () => {
     const actual = {
       "RT-1 stale askUser with doc": normalizeRestoredDocStateKind({
-        persistedKind: "plan",
+        persistedKind: "editing",
         hasDoc: true,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,

@@ -6,7 +6,6 @@ import type {
   DocSuggestion,
   DocState,
   FolderSource,
-  IncomingDocState,
   ResourceRef,
   StreamFrame,
   ToolCallSpec,
@@ -141,26 +140,6 @@ type PatchSummaryDataWithReviewOutcome = PatchSummaryPart["data"] & {
   conflictCount?: number;
 };
 
-export function normalizeIncomingDocState(state: IncomingDocState): DocState {
-  switch (state.kind) {
-    case "empty":
-    case "editing":
-    case "pendingReview":
-      return state;
-    case "init":
-      return { kind: "empty" };
-    case "plan":
-    case "drafting":
-    case "draft":
-    case "locked":
-    case "committed":
-    case "history":
-      return { kind: "editing" };
-    case "review":
-      return { kind: "pendingReview" };
-  }
-}
-
 export const initialWorkspaceState: WorkspaceState = {
   title: "未命名草稿",
   sessionId: null,
@@ -255,7 +234,7 @@ function workspaceReducerMut(
       return;
     }
     case "docStateChanged": {
-      const nextDocState = normalizeIncomingDocState(action.data.state);
+      const nextDocState = action.data.state;
       if (nextDocState.kind !== "pendingReview") {
         markRejectedOnlyPatchSummariesAbandonedMut(draft);
         settleReviewToolCallsMut(draft);

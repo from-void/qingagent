@@ -52,7 +52,6 @@ export {
 export type { MappedAnnotationGroups } from "./annotationMapping.js";
 
 export {
-  coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -117,10 +116,3 @@ export type {
   RestoreDocStateFacts,
   TransitionDocStateOptions,
 } from "./docStateTransitions.js";
-
-export { migrateThreadMetadataToDocuments } from "./migrateThreadMetadataToDocuments.js";
-
-export type {
-  MigrationOptions,
-  MigrationStats,
-} from "./migrateThreadMetadataToDocuments.js";

@@ -5,7 +5,6 @@ import type {
   ChatMessage,
   LegacySection,
   DocState,
-  IncomingDocState,
   FolderSourceRecord,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
@@ -344,8 +343,8 @@ function browserFolderSourceRecord(sessionId: string): FolderSourceRecord {
   };
 }
 
-function legacyDocState(kind: IncomingDocState["kind"]): QingagentThreadMetadata["docState"] {
-  return { kind } as QingagentThreadMetadata["docState"];
+function storedDocState(kind: DocState["kind"]): QingagentThreadMetadata["docState"] {
+  return { kind };
 }
 
 function expectRestoredStableFields(restored: SessionState | null, original: SessionState): void {
@@ -1019,21 +1018,9 @@ describe("thread persistence", () => {
     __resetFolderSourceRuntimeForTest();
   });
 
-  it("normalizes every incoming doc state to content 3-state restore facts", async () => {
+  it("normalizes persisted doc state from content facts", async () => {
     const { normalizeRestoredDocStateKind } = await import("../doc-engine/docStateTransitions.js");
-    const kinds: IncomingDocState["kind"][] = [
-      "init",
-      "plan",
-      "drafting",
-      "locked",
-      "draft",
-      "review",
-      "committed",
-      "history",
-      "empty",
-      "editing",
-      "pendingReview",
-    ];
+    const kinds: DocState["kind"][] = ["empty", "editing", "pendingReview"];
 
     for (const kind of kinds) {
       expect(normalizeRestoredDocStateKind({
@@ -1735,49 +1722,20 @@ describe("thread persistence", () => {
     ]);
   });
 
-  it("normalizes legacy cold-restored docState from document presence", async () => {
-    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
-    const cases: Array<{
-      id: string;
-      kind: IncomingDocState["kind"];
-      sections: LegacySection[];
-      expected: DocState["kind"];
-    }> = [
-      { id: "legacy-init-body", kind: "init", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-draft-empty", kind: "draft", sections: [], expected: "empty" },
-      { id: "legacy-plan-body", kind: "plan", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-drafting-empty", kind: "drafting", sections: [], expected: "empty" },
-      { id: "legacy-locked-empty", kind: "locked", sections: [], expected: "empty" },
-      { id: "legacy-committed-body", kind: "committed", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-history-empty", kind: "history", sections: [], expected: "empty" },
-    ];
-
-    for (const testCase of cases) {
-      threads.set(testCase.id, storedThread(testCase.id, metadata({
-        docState: legacyDocState(testCase.kind),
-        legacySections: testCase.sections,
-      })));
-
-      const restored = await loadSessionFromThread(testCase.id);
-
-      expect(restored?.docState).toEqual({ kind: testCase.expected });
-    }
-  });
-
   it("restores review only when persisted review has document and suggestions", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     threads.set("review-good", storedThread("review-good", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
       legacySections: [textSection("正文")],
     })));
     threads.set("review-no-patch", storedThread("review-no-patch", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [],
       legacySections: [textSection("正文")],
     })));
     threads.set("review-no-doc", storedThread("review-no-doc", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
       legacySections: [],
     })));
@@ -1798,7 +1756,7 @@ describe("thread persistence", () => {
       "ask-1",
     );
     threads.set("askuser-durable", storedThread("askuser-durable", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       runId: "run-ask",
       toolCallId: "ask-1",
@@ -1873,7 +1831,7 @@ describe("thread persistence", () => {
     if (askUser.body.kind !== "askUser") throw new Error("expected askUser body");
     askUser.body.data.questions = [];
     threads.set("askuser-stale", storedThread("askuser-stale", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       chatHistory: [toolMessage(askUser)],
     })));
@@ -1982,7 +1940,7 @@ describe("thread persistence", () => {
       "ask-real",
     );
     threads.set("askuser-preferred", storedThread("askuser-preferred", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       runId: "run-ask",
       toolCallId: "ask-stale",

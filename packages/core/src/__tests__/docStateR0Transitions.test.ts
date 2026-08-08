@@ -237,7 +237,7 @@ describe("R0 docState 3-state transition and invariant red tests", () => {
   it("NT-1..NT-10 normalizes restore/resume facts into the 4-state model", () => {
     const actual = {
       "NT-2 suspension+askUser": normalizeRestoredDocStateKind({
-        persistedKind: "plan",
+        persistedKind: "empty",
         hasDoc: false,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
@@ -245,7 +245,7 @@ describe("R0 docState 3-state transition and invariant red tests", () => {
         hasRestorableSuspension: true,
       }),
       "NT-5 review applicable": normalizeRestoredDocStateKind({
-        persistedKind: "review",
+        persistedKind: "pendingReview",
         hasDoc: true,
         hasReviewPatch: true,
         hasApplicableReviewPatch: true,
@@ -253,7 +253,7 @@ describe("R0 docState 3-state transition and invariant red tests", () => {
         hasRestorableSuspension: false,
       }),
       "NT-4 stale askUser no suspension": normalizeRestoredDocStateKind({
-        persistedKind: "plan",
+        persistedKind: "empty",
         hasDoc: false,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
@@ -261,47 +261,31 @@ describe("R0 docState 3-state transition and invariant red tests", () => {
         hasRestorableSuspension: false,
       }),
       "NT-6 review missing patch": normalizeRestoredDocStateKind({
-        persistedKind: "review",
+        persistedKind: "editing",
         hasDoc: true,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
         hasOpenAskUserToolCall: false,
         hasRestorableSuspension: false,
       }),
-      "NT-7 init with doc": normalizeRestoredDocStateKind({
-        persistedKind: "init",
+      "NT-7 empty with doc": normalizeRestoredDocStateKind({
+        persistedKind: "empty",
         hasDoc: true,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
         hasOpenAskUserToolCall: false,
         hasRestorableSuspension: false,
       }),
-      "NT-8 old busy idle with doc": normalizeRestoredDocStateKind({
-        persistedKind: "locked",
+      "NT-8 editing with doc": normalizeRestoredDocStateKind({
+        persistedKind: "editing",
         hasDoc: true,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
         hasOpenAskUserToolCall: false,
         hasRestorableSuspension: false,
       }),
-      "NT-9 old plan without suspension": normalizeRestoredDocStateKind({
-        persistedKind: "plan",
-        hasDoc: true,
-        hasReviewPatch: false,
-        hasApplicableReviewPatch: false,
-        hasOpenAskUserToolCall: false,
-        hasRestorableSuspension: false,
-      }),
-      "NT-10 committed": normalizeRestoredDocStateKind({
-        persistedKind: "committed",
-        hasDoc: true,
-        hasReviewPatch: false,
-        hasApplicableReviewPatch: false,
-        hasOpenAskUserToolCall: false,
-        hasRestorableSuspension: false,
-      }),
-      "NT-10 history": normalizeRestoredDocStateKind({
-        persistedKind: "history",
+      "NT-9 pendingReview without patch": normalizeRestoredDocStateKind({
+        persistedKind: "pendingReview",
         hasDoc: true,
         hasReviewPatch: false,
         hasApplicableReviewPatch: false,
@@ -315,11 +299,9 @@ describe("R0 docState 3-state transition and invariant red tests", () => {
       "NT-4 stale askUser no suspension": "empty",
       "NT-5 review applicable": "pendingReview",
       "NT-6 review missing patch": "editing",
-      "NT-7 init with doc": "editing",
-      "NT-8 old busy idle with doc": "editing",
-      "NT-9 old plan without suspension": "editing",
-      "NT-10 committed": "editing",
-      "NT-10 history": "editing",
+      "NT-7 empty with doc": "editing",
+      "NT-8 editing with doc": "editing",
+      "NT-9 pendingReview without patch": "editing",
     });
   });
 

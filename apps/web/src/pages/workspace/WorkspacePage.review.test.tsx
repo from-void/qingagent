@@ -2194,7 +2194,7 @@ describe("WorkspacePage review controls", () => {
       { kind: "sessionMeta", data: { sessionId: "s-1", title: "动画看门狗" } },
       {
         kind: "docStateChanged",
-        data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
       },
       {
         kind: "stream",

@@ -94,11 +94,11 @@ describe("R0 frontend two-dimensional docState red tests", () => {
     });
   });
 
-  it("N2 consumes backend overlay facts while content frames normalize 8-state legacy input to 3-state content", () => {
+  it("N2 consumes backend overlay facts independently from content state", () => {
     const orphanGeneric = reduce(
       {
         kind: "docStateChanged",
-        data: { state: { kind: "plan" }, activeOverlay: null, agentBusy: false },
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
       },
       {
         kind: "toolCallUpdated",
@@ -119,7 +119,7 @@ describe("R0 frontend two-dimensional docState red tests", () => {
     const askUserState = reduce(
       {
         kind: "docStateChanged",
-        data: { state: { kind: "plan" }, activeOverlay: "askUser", agentBusy: false },
+        data: { state: { kind: "editing" }, activeOverlay: "askUser", agentBusy: false },
       },
       {
         kind: "toolCallUpdated",
@@ -146,7 +146,7 @@ describe("R0 frontend two-dimensional docState red tests", () => {
   it("history viewing is orthogonal to content and editor state", () => {
     const state = reduce({
       kind: "docStateChanged",
-      data: { state: { kind: "draft" }, activeOverlay: null, agentBusy: false },
+      data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
     });
     const viewState = workspaceReducer(state, {
       kind: "viewingVersionSet",

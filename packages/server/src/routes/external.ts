@@ -316,13 +316,13 @@ function compareExternalSessions(
 function normalizedExternalSessionState(docState: string): ContentDocState["kind"] {
   switch (docState) {
     case "empty":
-    case "init":
       return "empty";
     case "pendingReview":
-    case "review":
       return "pendingReview";
-    default:
+    case "editing":
       return "editing";
+    default:
+      throw new Error(`Invalid stored document state: ${docState}`);
   }
 }
 

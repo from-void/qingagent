@@ -170,7 +170,6 @@ export {
 export type { MappedAnnotationGroups } from "../doc-engine/annotationMapping.js";
 
 export {
-  coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -290,11 +289,6 @@ export {
   __resetSessionPersistenceForTest,
 } from "../session/threadPersistence.js";
 
-export { migrateThreadMetadataToDocuments } from "../doc-engine/migrateThreadMetadataToDocuments.js";
-export type {
-  MigrationOptions,
-  MigrationStats,
-} from "../doc-engine/migrateThreadMetadataToDocuments.js";
 export { isSensitiveField, redactSensitiveText } from "../agent-run/redaction.js";
 export { deriveTitleFromSections } from "../session/title.js";
 export {

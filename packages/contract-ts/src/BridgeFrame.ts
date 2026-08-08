@@ -3,7 +3,7 @@ import type { DerivativeItem, StyleTemplateItem } from "./Derivatives";
 import type { DocCommitted } from "./DocCommitted";
 import type { DocDiffReady } from "./DocDiffReady";
 import type { DocGenerationEvent } from "./DocGenerationEvent";
-import type { WireActiveOverlay, WireDocState } from "./DocState";
+import type { ContentDocState, WireActiveOverlay } from "./DocState";
 import type { DocumentSnapshot } from "./DocumentSnapshot";
 import type { FolderSourceOperationResult, FolderSourcesChanged } from "./FolderSource";
 import type { LexiconEntrySummary, LexiconResourceSummary } from "./ListLexicons";
@@ -75,7 +75,7 @@ export type BridgeFrame =
   | {
       kind: "docStateChanged";
       data: {
-        state: WireDocState;
+        state: ContentDocState;
         activeOverlay: WireActiveOverlay;
         agentBusy: boolean;
         /** 审阅目标已由其它请求结算；调用方不得把它当成本次写入成功。 */

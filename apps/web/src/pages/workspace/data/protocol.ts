@@ -29,7 +29,6 @@ export type {
   DocSuggestion,
   ContentDocState,
   DiffHunk,
-  IncomingDocState,
   DocumentSnapshot,
   EndReason,
   FolderSource,

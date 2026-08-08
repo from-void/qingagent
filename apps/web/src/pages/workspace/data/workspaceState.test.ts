@@ -1014,7 +1014,7 @@ describe("annotationGroupsReady 来源增量", () => {
       const busy = reduce(
         {
           kind: "docStateChanged",
-          data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+          data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
         },
         {
           kind: "stream",
@@ -1976,7 +1976,7 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "docStateChanged",
           data: {
-            state: { kind: "drafting" },
+            state: { kind: "empty" },
             activeOverlay: null,
             agentBusy: true,
           },
@@ -2204,11 +2204,11 @@ describe("annotationGroupsReady 来源增量", () => {
       const next = reduce(
         {
           kind: "docStateChanged",
-          data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+          data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
         },
         {
           kind: "docStateChanged",
-          data: { state: { kind: "draft" }, activeOverlay: null, agentBusy: false },
+          data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
         },
       );
       expect(next.docState).toEqual({ kind: "editing" });
@@ -2755,7 +2755,7 @@ describe("selectors", () => {
       const seeded = reduce(
         {
           kind: "docStateChanged",
-          data: { state: { kind: "drafting" }, activeOverlay: "askUser", agentBusy: true },
+          data: { state: { kind: "empty" }, activeOverlay: "askUser", agentBusy: true },
         },
         {
           kind: "toolCallUpdated",
@@ -2781,7 +2781,7 @@ describe("selectors", () => {
     it("askUser 仍 pending 时不动 overlay", () => {
       const seeded = reduce({
         kind: "docStateChanged",
-        data: { state: { kind: "drafting" }, activeOverlay: "askUser", agentBusy: true },
+        data: { state: { kind: "empty" }, activeOverlay: "askUser", agentBusy: true },
       });
       const next = workspaceReducer(seeded, {
         kind: "toolCallUpdated",
@@ -2803,7 +2803,7 @@ describe("selectors", () => {
       const seeded = reduce(
         {
           kind: "docStateChanged",
-          data: { state: { kind: "drafting" }, activeOverlay: "askUser", agentBusy: true },
+          data: { state: { kind: "empty" }, activeOverlay: "askUser", agentBusy: true },
         },
         { kind: "chatMessageAdded", data: { message } },
       );

@@ -103,7 +103,6 @@ export {
   mapAnnotationGroupsThroughSteps,
   resolveSessionDocumentId,
   unmarkSessionDeleted,
-  migrateThreadMetadataToDocuments,
   normalizeAskUserAnswers,
   normalizeQuestionnaireSpecForRestore,
   normalizeRestoredDocStateKind,

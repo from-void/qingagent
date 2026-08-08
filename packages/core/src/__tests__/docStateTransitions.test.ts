@@ -182,7 +182,7 @@ describe("docState transition helpers", () => {
 
     expect(
       normalizeRestoredDocStateKind({
-        persistedKind: "review",
+        persistedKind: "pendingReview",
         hasDoc: true,
         hasReviewPatch: true,
         hasApplicableReviewPatch: true,

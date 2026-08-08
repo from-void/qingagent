@@ -3,7 +3,6 @@ import type {
   CommitReviewGroups,
   DiffHunk,
   DocSuggestion,
-  LegacySection,
   PatchConflict,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
@@ -13,7 +12,6 @@ import {
   getDeterministicId,
   getPmContentHash,
   isAbnormalDocumentCollapse,
-  pmToLegacySections,
   type PmDoc,
   type PmStep,
 } from "@qingagent/pm-schema";
@@ -60,7 +58,7 @@ import {
 import { transitionAndProjectDocState } from "./docStateSync.js";
 import { docDiffReady, toolCallUpdated } from "../agent-run/frames.js";
 import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
-import { deriveTitleFromSections } from "../session/title.js";
+import { deriveTitleFromDoc } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   buildAnnotationMappingSteps,
@@ -634,9 +632,7 @@ async function rebuildPendingReviewAfterRebase(input: {
   state.suggestionBaseVersion = committedVersion;
   state.docDraftBaseDoc = clonePmDoc(committedDoc);
   state.docDraftBaseVersion = committedVersion;
-  state.docDraftBaseSections = pmToLegacySections(committedDoc) as unknown as LegacySection[];
   state.docDraftCandidateDoc = clonePmDoc(nextDraftDoc);
-  state.docDraftCandidateSections = pmToLegacySections(nextDraftDoc) as unknown as LegacySection[];
 
   suggestions.forEach((suggestion, index) => {
     const hunk = hunks[index]!;
@@ -1170,7 +1166,6 @@ export async function* commitPatches(
 
   advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
-  state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
   state.docVersion = result.docVersion;
   state._directionChangeAskedSinceLastWrite = false;
   let annotationMapping: PendingAnnotationMapping | null = transactionAnnotationMapping;
@@ -1217,7 +1212,7 @@ export async function* commitPatches(
     }
   }
   if (shouldCommitDiffHunks) {
-    const nextTitle = state.titlePinned ? null : deriveTitleFromSections(state.legacySections);
+    const nextTitle = state.titlePinned ? null : deriveTitleFromDoc(state.doc);
     if (nextTitle) {
       state.title = nextTitle;
       yield {

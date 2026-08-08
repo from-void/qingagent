@@ -6,7 +6,7 @@ import {
   type PmDoc,
 } from "@qingagent/pm-schema";
 import { z } from "zod";
-import type { LegacySection, WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
+import type { WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
 import type { SessionState } from "../session/sessionState.js";
 import {
   assertTurnWriteAllowed,
@@ -321,10 +321,9 @@ export function createWriteDraftTool(opts: {
   replaceDraftCandidateDoc: (
     state: SessionState,
     doc: PmDoc,
-    legacySections: LegacySection[] | undefined,
     writeGuard: TurnWriteGuard,
     expectedMutationRevision: number,
-  ) => LegacySection[];
+  ) => PmDoc;
 }) {
   return createTool({
     id: "writeDraft",
@@ -558,7 +557,6 @@ export function createWriteDraftTool(opts: {
         laneKey: number;
         document: ParsedAiDocument;
         doc: PmDoc;
-        legacySections: LegacySection[] | undefined;
         count: number;
         raw: string;
         kind: "express" | "fallback" | "refinement";
@@ -658,7 +656,6 @@ export function createWriteDraftTool(opts: {
             laneKey,
             document,
             doc: compiled.doc,
-            legacySections: compiled.legacySections,
             count: countOf(compiled.doc),
             raw,
             kind: params.kind,
@@ -904,7 +901,6 @@ export function createWriteDraftTool(opts: {
       const firstCount = firstRoundBestCount ?? champion.count;
       const finalDoc = champion.doc;
       const finalDocument = champion.document;
-      const finalLegacySections = champion.legacySections;
       const finalCount = countOf(finalDoc);
       const nestedListReachedDepth = nestedIntent.wantsNestedList
         ? pmDocHasNestedList(finalDoc, nestedIntent.minDepth)
@@ -913,13 +909,11 @@ export function createWriteDraftTool(opts: {
         ? ["nested-list"]
         : undefined;
 
-      let candidate: LegacySection[];
       try {
         assertTurnWriteAllowed(opts.state, writeGuard);
-        candidate = opts.replaceDraftCandidateDoc(
+        opts.replaceDraftCandidateDoc(
           opts.state,
           finalDoc,
-          finalLegacySections,
           writeGuard,
           expectedMutationRevision,
         );

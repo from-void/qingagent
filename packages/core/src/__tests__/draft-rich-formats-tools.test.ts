@@ -95,7 +95,6 @@ function doc(content: PmBlockNode[]): PmDoc {
 
 function bindDoc(state: ReturnType<typeof createSession>, value: PmDoc): void {
   state.doc = value;
-  state.legacySections = pmToLegacySections(value) as any;
   state.docVersion = 1;
 }
 
@@ -121,12 +120,9 @@ function mockWriteDraftQingml(raw: string): void {
 function acceptCandidateAsCanonical(state: ReturnType<typeof createSession>): void {
   assertSafeDoc(state.docDraftCandidateDoc, "candidate before accept");
   state.doc = state.docDraftCandidateDoc!;
-  state.legacySections = pmToLegacySections(state.doc) as any;
   state.docVersion += 1;
-  state.docDraftBaseSections = null;
   state.docDraftBaseVersion = null;
   state.docDraftBaseDoc = null;
-  state.docDraftCandidateSections = null;
   state.docDraftCandidateDoc = null;
 }
 

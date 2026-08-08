@@ -1482,12 +1482,10 @@ export function createSessionScopedTools(
         }, "selection_scope");
       }
       assertTurnWriteAllowed(state, writeGuard);
-      let candidate;
       try {
-        candidate = replaceDraftCandidateDoc(
+        replaceDraftCandidateDoc(
           state,
           workingDoc,
-          undefined,
           writeGuard,
           expectedMutationRevision,
         );

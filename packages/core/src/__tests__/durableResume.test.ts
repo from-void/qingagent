@@ -195,7 +195,6 @@ function metadata(runId: string, toolCallId: string): QingagentThreadMetadata {
     docState: { kind: "empty" },
     docVersion: 0,
     lastSyncedDocumentSnapshot: 0,
-    legacySections: [],
     materials: [],
     title: "Durable session",
     runId,

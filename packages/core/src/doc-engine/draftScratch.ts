@@ -1,15 +1,11 @@
-import type {
-  DiffHunk,
-  LegacySection,
-} from "@qingagent/contract-ts";
+import type { DiffHunk } from "@qingagent/contract-ts";
 import {
+  PM_SCHEMA_VERSION,
   findPmTableByBlockId,
   getPmContentHash,
   getStablePmJson,
   assertUniquePmBlockIds,
-  legacySectionsToPm,
   materializeDraftBlockIds,
-  pmToLegacySections,
   pmToPlainText,
   pmTableLogicalGrid,
   type PmDoc,
@@ -20,7 +16,6 @@ import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { hasCanonicalDoc } from "./docFacts.js";
 import { buildDraftDiff } from "./proposalDiff.js";
-import { cloneLegacySections } from "./docDiff.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
   assertTurnWriteAllowed,
@@ -51,7 +46,11 @@ export function clonePmDoc(doc: PmDoc): PmDoc {
 }
 
 export function currentPmDoc(state: SessionState): PmDoc {
-  return state.doc ?? legacySectionsToPm(state.legacySections as never);
+  return state.doc ?? {
+    type: "doc",
+    attrs: { schemaVersion: PM_SCHEMA_VERSION },
+    content: [],
+  };
 }
 
 export function hasNonEmptyCanonicalBase(state: SessionState, baseDoc: PmDoc): boolean {
@@ -67,35 +66,18 @@ export function ensureDraftCandidateDoc(state: SessionState): PmDoc {
     const baseDoc = currentPmDoc(state);
     assertUniquePmBlockIds(baseDoc);
     state.docDraftBaseDoc = clonePmDoc(baseDoc);
-    state.docDraftBaseSections = cloneLegacySections(state.legacySections);
     state.docDraftBaseVersion = state.docVersion;
   }
   if (!state.docDraftCandidateDoc) {
     state.docDraftCandidateDoc = clonePmDoc(state.docDraftBaseDoc);
-    state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as unknown as LegacySection[];
     advanceDraftMutationRevision(state);
   }
   return state.docDraftCandidateDoc;
 }
 
-export function getSectionText(section: LegacySection): string | null {
-  if (section.kind === "image") {
-    return section.data.caption ?? section.data.alt;
-  }
-  if ("text" in section.data && typeof section.data.text === "string") {
-    return section.data.text;
-  }
-  if ("body" in section.data && typeof section.data.body === "string") {
-    return section.data.body;
-  }
-  return null;
-}
-
 export function clearInMemoryDraftDocs(state: SessionState): void {
-  state.docDraftBaseSections = null;
   state.docDraftBaseVersion = null;
   state.docDraftBaseDoc = null;
-  state.docDraftCandidateSections = null;
   state.docDraftCandidateDoc = null;
   advanceDraftMutationRevision(state);
 }
@@ -123,12 +105,10 @@ export async function invalidateDraftStateAfterCanonicalWrite(state: SessionStat
 export function replaceDraftCandidateDoc(
   state: SessionState,
   doc: PmDoc,
-  legacySections?: LegacySection[],
   writeGuard?: TurnWriteGuard,
   expectedMutationRevision?: number,
-): LegacySection[] {
+): PmDoc {
   const materializedDoc = materializeDraftBlockIds(doc, { namespace: "draft.replace" });
-  const sections = legacySections ?? (pmToLegacySections(materializedDoc) as unknown as LegacySection[]);
   if (writeGuard) assertTurnWriteAllowed(state, writeGuard);
   if (
     expectedMutationRevision !== undefined &&
@@ -136,16 +116,14 @@ export function replaceDraftCandidateDoc(
   ) {
     throw new DraftMutationConflictError();
   }
-  if (!state.docDraftBaseSections) {
-    state.docDraftBaseSections = cloneLegacySections(state.legacySections);
+  if (!state.docDraftBaseDoc) {
     state.docDraftBaseVersion = state.docVersion;
     state.docDraftBaseDoc = clonePmDoc(currentPmDoc(state));
   }
   state.docDraftBaseDoc ??= clonePmDoc(currentPmDoc(state));
   state.docDraftCandidateDoc = materializedDoc;
-  state.docDraftCandidateSections = cloneLegacySections(sections);
   advanceDraftMutationRevision(state);
-  return state.docDraftCandidateSections;
+  return state.docDraftCandidateDoc;
 }
 
 export async function saveDraftCandidateCheckpoint(opts: {

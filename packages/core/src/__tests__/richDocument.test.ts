@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compileAiDocumentWithBlockRetry } from "../tools/generateDoc.js";
 
 // 「最难任务」覆盖:一篇用尽所有 block 类型 + 所有 inline marks 的富样式文档,
-// 跑完整管线(AI-IR → PM doc → legacySections),确保每一环都不挂。
+// 跑完整管线(AI-IR → PM doc),确保每一环都不挂。
 // 这是搜索链路那类"长文+复杂结构"bug 的根防线:任何 block/mark 在管线任一环掉链子都会被这条测出来。
 const RICH_BLOCKS: unknown[] = [
   { type: "heading", level: 1, runs: [{ text: "AI 产业全景报道" }] },
@@ -70,13 +70,7 @@ describe("富样式文档全覆盖(最难任务)", () => {
     // 1) 生成成功 + output 校验通过(quote/hr/list 那次 bug 的根回归)
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(result.error);
-    // 2) legacySections 覆盖所有 kind
-    const kinds = new Set<string>((result.legacySections ?? []).map((s) => s.kind));
-    for (const k of ["h1", "h2", "p", "quote", "list", "code", "table", "hr", "penNote"]) {
-      expect(kinds.has(k)).toBe(true);
-    }
-
-    // 3) PM doc 覆盖所有 block type
+    // 2) PM doc 覆盖所有 block type
     const pmTypes = new Set<string>(result.doc.content.map((n) => n.type));
     for (const t of [
       "heading",

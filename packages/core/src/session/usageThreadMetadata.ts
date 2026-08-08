@@ -1,7 +1,5 @@
-import type { LegacySection } from "@qingagent/contract-ts";
 import {
   countDocVisibleChars,
-  legacySectionsToPm,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import {
@@ -29,16 +27,10 @@ function parseJsonColumn(value: unknown): unknown {
   }
 }
 
-function resolveSelectedThreadDoc(docValue: unknown, legacyValue: unknown): PmDoc | null {
+function resolveSelectedThreadDoc(docValue: unknown): PmDoc | null {
   const doc = parseJsonColumn(docValue);
   if (doc && typeof doc === "object") return doc as PmDoc;
-  const legacySections = parseJsonColumn(legacyValue);
-  if (!Array.isArray(legacySections) || legacySections.length === 0) return null;
-  try {
-    return legacySectionsToPm(legacySections as LegacySection[]);
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /**
@@ -79,7 +71,7 @@ export async function getSessionThreadTitles(
 }
 
 /**
- * 文档统计只读取时间窗内 thread 的 doc / legacySections 两个 JSON 子字段。
+ * 文档统计只读取时间窗内 thread 的 PM doc JSON 子字段。
  * 返回值保持旧路由“近期 thread 数 + 可见字符数”的语义。
  */
 export async function getSessionDocumentStatsSince(
@@ -90,8 +82,7 @@ export async function getSessionDocumentStatsSince(
   try {
     const result = await client.execute({
       sql: `SELECT
-          json_extract(metadata, '$.doc') AS doc,
-          json_extract(metadata, '$.legacySections') AS legacy_sections
+          json_extract(metadata, '$.doc') AS doc
         FROM mastra_threads
         WHERE resourceId = ?
           AND createdAt >= ?`,
@@ -99,7 +90,7 @@ export async function getSessionDocumentStatsSince(
     });
     let words = 0;
     for (const row of result.rows) {
-      const doc = resolveSelectedThreadDoc(row.doc, row.legacy_sections);
+      const doc = resolveSelectedThreadDoc(row.doc);
       if (doc) words += countDocVisibleChars(doc);
     }
     return { docs: result.rows.length, words };

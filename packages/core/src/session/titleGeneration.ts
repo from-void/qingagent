@@ -2,7 +2,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { runSideChannel } from "../llm/sideChannel.js";
 import type { SessionState } from "./sessionState.js";
-import { deriveTitleFromSections } from "./title.js";
+import { deriveTitleFromDoc } from "./title.js";
 
 // 起标题的输入预算。正文全文从来不进主链上下文(writeDraft 只回统计 + 240 字摘录),
 // 所以这段是整个请求里唯一无法命中前缀缓存的部分 —— 喂多少就多付多少 miss。
@@ -61,7 +61,7 @@ export async function generateTitleAfterFirstDraft(
   if (state.branchTitleGenerated === true) return null;
   const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
   if (abortSignal?.aborted) return null;
-  const fallbackTitle = deriveTitleFromSections(state.legacySections);
+  const fallbackTitle = deriveTitleFromDoc(state.doc);
   if (!state.doc) {
     state.branchTitleGenerated = true;
     return fallbackTitle;

@@ -1,11 +1,10 @@
-import type { BridgeFrame, LegacySection, MessagePart } from "@qingagent/contract-ts";
+import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
 import type { RequestContext } from "@mastra/core/request-context";
 import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { persistMappedAnnotationGroups, saveInitialReviewBatch } from "@qingagent/db";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
-import { cloneLegacySections } from "./docDiff.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import {
   createSuggestionBatchId,
@@ -40,7 +39,7 @@ import {
   recordSettleResultSpan,
   recordStateChangeSpan,
 } from "../agent-run/agentSpans.js";
-import { deriveTitleFromSections } from "../session/title.js";
+import { deriveTitleFromDoc } from "../session/title.js";
 import { generateTitleAfterFirstDraft } from "../session/titleGeneration.js";
 import {
   buildAnnotationMappingSteps,
@@ -48,8 +47,6 @@ import {
 } from "./annotationMapping.js";
 import {
   getPmContentHash,
-  legacySectionsToPm,
-  pmToLegacySections,
 } from "@qingagent/pm-schema";
 import { Buffer } from "node:buffer";
 
@@ -77,10 +74,8 @@ export async function* settleDraftCandidate(opts: {
     generationLastSeq = 0,
     emitGenerationEvent = false,
   } = opts;
-  const candidate = state.docDraftCandidateSections;
-
   {
-    const draftDoc = state.docDraftCandidateDoc ?? (candidate ? legacySectionsToPm(candidate as never) : null);
+    const draftDoc = state.docDraftCandidateDoc;
     if (draftDoc) {
       const baseDoc = state.docDraftBaseDoc ?? currentPmDoc(state);
       const baseVersion = state.docDraftBaseVersion ?? state.docVersion;
@@ -210,7 +205,7 @@ export async function* settleDraftCandidate(opts: {
     }
   }
 
-  if (!candidate && state.suggestions.size > 0) {
+  if (!state.docDraftCandidateDoc && state.suggestions.size > 0) {
     const suggestions = Array.from(state.suggestions.values()).map((record) => record.suggestion);
     const baseVersion = state.suggestionBaseVersion ?? state.docVersion;
     yield docDiffReady(
@@ -254,7 +249,7 @@ export async function* settleDraftCandidate(opts: {
     return { hunkCount: suggestions.length, docWritten: false };
   }
 
-  if (!candidate) {
+  if (!state.docDraftCandidateDoc) {
     recordSettleResultSpan(state, {
       branch: "noop",
       hunkCount: 0,
@@ -266,11 +261,10 @@ export async function* settleDraftCandidate(opts: {
     return { hunkCount: 0, docWritten: false };
   }
 
-  const baseSections = state.docDraftBaseSections ?? cloneLegacySections(state.legacySections);
   const baseVersion = state.docDraftBaseVersion ?? state.docVersion;
 
   if (wholeDocument) {
-    const nextVersionDoc = state.docDraftCandidateDoc ?? legacySectionsToPm(candidate as never);
+    const nextVersionDoc = state.docDraftCandidateDoc;
     const previousDoc = currentPmDoc(state);
     const previousDocVersion = state.docVersion;
     let transactionEffectPersisted = false;
@@ -399,7 +393,6 @@ export async function* settleDraftCandidate(opts: {
 
     advanceLastContentEditedAt(state, result, previousDocVersion);
     state.doc = result.doc;
-    state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
     state.docVersion = result.docVersion;
     state.modelKnownDocVersion = result.docVersion;
     state._directionChangeAskedSinceLastWrite = false;
@@ -499,7 +492,7 @@ export async function* settleDraftCandidate(opts: {
       ? null
       : isFirstSuccessfulDraft
         ? await generateTitleAfterFirstDraft(state, requestContext)
-        : deriveTitleFromSections(state.legacySections);
+        : deriveTitleFromDoc(state.doc);
     if (nextTitle) {
       state.title = nextTitle;
       yield {
@@ -518,8 +511,6 @@ export async function* settleDraftCandidate(opts: {
     return { hunkCount: 0, docWritten: true };
   }
 
-  void baseSections;
-  void candidate;
   void baseVersion;
   await documentDraftRepo.clear(state.docId).catch((err) => {
     logger.warn("Failed to clear discarded pending draft row", {

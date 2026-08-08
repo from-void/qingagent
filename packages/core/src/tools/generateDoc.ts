@@ -1,8 +1,7 @@
-import type { LegacySection, WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
+import type { WriteDraftFailureDiagnostic } from "@qingagent/contract-ts";
 import {
   compileAiDocumentToPm,
   countDocVisibleChars,
-  pmToLegacySections,
   qingmlParse,
   qingmlTagSkeleton,
   type AiIrBlockError,
@@ -17,7 +16,6 @@ export { MATERIAL_CONTEXT_MAX_CHARS } from "./materialContextBudget.js";
 export interface GenerateAiDocumentResult {
   success: true;
   doc: PmDoc;
-  legacySections: LegacySection[];
   wordCount: number;
   generationMode: "streamObject" | "fallbackStreamText";
   blockErrors?: never;
@@ -29,7 +27,6 @@ export interface GenerateAiDocumentFailure {
   error: string;
   blockErrors?: AiIrBlockError[];
   doc?: never;
-  legacySections?: never;
   wordCount?: never;
   generationMode?: "streamObject" | "fallbackStreamText";
 }
@@ -177,11 +174,9 @@ export async function compileAiDocumentWithBlockRetry(
       wordCount: compiled.doc ? countDocVisibleChars(compiled.doc) : 0,
     });
     if (compiled.ok && compiled.doc) {
-      const legacySections = pmToLegacySections(compiled.doc) as unknown as LegacySection[];
       return {
         success: true,
         doc: compiled.doc,
-        legacySections,
         wordCount: countDocVisibleChars(compiled.doc),
         generationMode: "fallbackStreamText",
       };

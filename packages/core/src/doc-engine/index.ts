@@ -28,10 +28,6 @@ export {
 } from "./docGenerator.js";
 
 export {
-  cloneLegacySections,
-} from "./docDiff.js";
-
-export {
   hasApplicableSuggestion,
   hasCanonicalDoc,
 } from "./docFacts.js";

@@ -67,10 +67,11 @@ import {
 } from "./agentSpans.js";
 import {
   buildTableSelectionContext,
-  buildSectionToLineMap,
+  buildBlockToLineMap,
   resolveSelectionChipBlocks,
   validateTableSelectionFreshness,
 } from "../doc-engine/draftReadContext.js";
+import { hasCanonicalDoc } from "../doc-engine/docFacts.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
 import { emitProjectedDocState } from "../doc-engine/docStateMachine.js";
 import {
@@ -323,10 +324,9 @@ export async function* runAgentTurn(
 
   const savedFiles = await resolveFileIds(fileIds);
   const attachmentCtx = buildAttachmentContext(savedFiles, { toolSearchEnabled });
-  const sectionToLine =
-    state.legacySections.length > 0
-      ? buildSectionToLineMap(state.legacySections)
-      : null;
+  const sectionToLine = hasCanonicalDoc(state) && state.doc
+    ? buildBlockToLineMap(state.doc)
+    : null;
   if (sectionToLine) {
     state._sectionToLine = sectionToLine;
   }
@@ -466,7 +466,7 @@ export async function* runAgentTurn(
   // 当轮提醒只做状态提示,裁决标准统一留在 system prompt 的「问卷工具触发裁决」。
   // 不在这里重复写默认/例外规则,避免与唯一裁决段再次分叉。
   if (state._askUserCompleted !== true) {
-    if (state.legacySections.length === 0) {
+    if (!hasCanonicalDoc(state)) {
       fullUserText +=
         `\n\n[系统·写作流程提醒]右侧文档当前为空。请严格按 system prompt 中「问卷工具触发裁决」判断本轮是问卷、直接写还是正常对话。` +
         `"联网查/查一下/先搜一下/搜索"等搜索指令不是跳过问卷的信号:若本轮最终是新文档写作任务,先搜索拿到必要信息后,仍按「问卷工具触发裁决」决定是否单独调用 planDraft。`;
@@ -519,7 +519,7 @@ export async function* runAgentTurn(
   // 此处不再重复序列化未注入 prompt 的全文快照。
   if (
     state.docVersion > state.lastSyncedDocumentSnapshot &&
-    state.legacySections.length > 0
+    hasCanonicalDoc(state)
   ) {
     state.lastSyncedDocumentSnapshot = state.docVersion;
   }

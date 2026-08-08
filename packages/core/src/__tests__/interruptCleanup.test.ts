@@ -41,8 +41,7 @@ function flushMicrotasks(): Promise<void> {
 }
 
 function seedDoc(state: import("../bridge/index.js").SessionState): void {
-  state.legacySections = [{ kind: "p", data: { text: "正文" } }];
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
 }
 
 function writeDraftToolCall(
@@ -292,9 +291,9 @@ describe("abortAndCleanupTurn", () => {
         resolve();
       };
     });
-    state.docDraftBaseSections = [{ kind: "p", data: { text: "base" } }];
+    state.docDraftBaseDoc = legacySectionsToPm([{ kind: "p", data: { text: "base" } }] as never);
     state.docDraftBaseVersion = 3;
-    state.docDraftCandidateSections = [{ kind: "p", data: { text: "partial" } }];
+    state.docDraftCandidateDoc = legacySectionsToPm([{ kind: "p", data: { text: "partial" } }] as never);
     state._lastEmittedWireKind = "drafting";
     state.chatHistory = [
       {
@@ -315,7 +314,7 @@ describe("abortAndCleanupTurn", () => {
     expect(beforeResolve?.kind === "toolCall" ? beforeResolve.data.status.kind : null).toBe(
       "running",
     );
-    expect(state.docDraftCandidateSections).not.toBeNull();
+    expect(state.docDraftCandidateDoc).not.toBeNull();
 
     resolveTurn();
     const frames = await framesPromise;
@@ -324,9 +323,9 @@ describe("abortAndCleanupTurn", () => {
     expect(state.streamId).toBeNull();
     expect(state._abortController).toBeNull();
     expect(state._activeTurnPromise).toBeNull();
-    expect(state.docDraftBaseSections).toBeNull();
+    expect(state.docDraftBaseDoc).toBeNull();
     expect(state.docDraftBaseVersion).toBeNull();
-    expect(state.docDraftCandidateSections).toBeNull();
+    expect(state.docDraftCandidateDoc).toBeNull();
 
     const toolFrame = frames.find((frame) => frame.kind === "toolCallUpdated");
     expect(toolFrame).toMatchObject({
@@ -491,8 +490,8 @@ describe("abortAndCleanupTurn", () => {
     state.streamId = "hung-stream";
     state._abortController = controller;
     state._activeTurnPromise = new Promise<void>(() => undefined);
-    state.docDraftBaseSections = [{ kind: "p", data: { text: "base" } }];
-    state.docDraftCandidateSections = [{ kind: "p", data: { text: "partial" } }];
+    state.docDraftBaseDoc = legacySectionsToPm([{ kind: "p", data: { text: "base" } }] as never);
+    state.docDraftCandidateDoc = legacySectionsToPm([{ kind: "p", data: { text: "partial" } }] as never);
 
     const frames = await collectFrames(abortAndCleanupTurn(state, { activeTurnTimeoutMs: 1 }));
 

@@ -21,11 +21,10 @@ import {
 
 function draftedState(id: string) {
   const state = createSession(id);
-  state.legacySections = [
+  state.doc = legacySectionsToPm([
     { id: "h1", kind: "h1", data: { text: "旧 H1 标题" } },
     { id: "p1", kind: "p", data: { text: "正文讨论城市更新中的公共空间与社区参与。" } },
-  ] as never;
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  ] as never);
   return state;
 }
 

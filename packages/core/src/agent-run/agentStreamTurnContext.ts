@@ -33,6 +33,7 @@ import type {
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
 import { AnnotationPreviewState } from "./annotationPreview.js";
 import { currentPmDoc } from "../doc-engine/draftScratch.js";
+import { hasCanonicalDoc } from "../doc-engine/docFacts.js";
 import { confirmService, type ConfirmService } from "../confirm/confirmService.js";
 import type { TrustedAuthCardSignal } from "./authCardDedup.js";
 import type { StreamErrorDetails } from "./streamErrors.js";
@@ -277,7 +278,7 @@ export async function createAgentStreamTurnContext(
     activeDocGenerationFailedEventSeen: false,
     settledDocGenerationId: null,
     settledDocGenerationLastSeq: 0,
-    docExistedBeforeStream: state.legacySections.length > 0,
+    docExistedBeforeStream: hasCanonicalDoc(state),
     wasSuspended: false,
     seenAskUser: false,
     askUserProgressEmitted: false,

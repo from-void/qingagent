@@ -91,7 +91,6 @@ function doc(content: PmBlockNode[]): PmDoc {
 
 function bindDoc(state: ReturnType<typeof createSession>, value: PmDoc): void {
   state.doc = value;
-  state.legacySections = pmToLegacySections(value) as any;
   state.docVersion = 1;
 }
 

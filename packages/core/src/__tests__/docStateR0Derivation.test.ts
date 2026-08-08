@@ -15,12 +15,11 @@ import {
 } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
-  state.legacySections = [{ kind: "p", data: { text: "正文" } }];
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
 }
 
 function seedReviewPatch(state: SessionState): void {
-  state.doc ??= legacySectionsToPm(state.legacySections as never);
+  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
   state.suggestions.set("patch-1", {
     messageId: "msg-patch-1",
     toolCallId: "patch-1",
@@ -154,7 +153,7 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
     const before = structuredClone({
       docState: state.docState,
       chatHistory: state.chatHistory,
-      legacySections: state.legacySections,
+      doc: state.doc,
     });
 
     const actual = {
@@ -169,7 +168,7 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
     expect({
       docState: state.docState,
       chatHistory: state.chatHistory,
-      legacySections: state.legacySections,
+      doc: state.doc,
     }).toEqual(before);
   });
 

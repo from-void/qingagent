@@ -107,7 +107,6 @@ async function seedReviewState(
   draft: PmDoc,
 ): Promise<DiffHunk[]> {
   state.doc = base;
-  state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;
@@ -115,7 +114,6 @@ async function seedReviewState(
   state.docDraftBaseDoc = base;
   state.docDraftBaseVersion = state.docVersion;
   state.docDraftCandidateDoc = draft;
-  state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
 
   const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
   for (const hunk of hunks) {
@@ -254,7 +252,6 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
 
     const restarted = createSession(sessionId);
     restarted.doc = canonical!.pmDoc!;
-    restarted.legacySections = pmToLegacySections(canonical!.pmDoc!) as unknown as LegacySection[];
     restarted.docVersion = canonical!.docVersion;
     const restored = await rehydratePendingDraft(restarted);
 
@@ -276,7 +273,6 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
 
     const canonical = doc([paragraph("blk-a", "甲原文")]);
     state.doc = canonical;
-    state.legacySections = pmToLegacySections(canonical) as unknown as LegacySection[];
     await seedCanonical(state, canonical);
 
     const frames = await collectFrames(commitPatches(state, [rejectedHunk.hunkId]));
@@ -305,7 +301,6 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
     const [hunkA, hunkB] = await seedReviewState(state, base, draft);
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
     state.docDraftCandidateDoc = null;
-    state.docDraftCandidateSections = null;
     state.suggestions.get(hunkB.hunkId)!.diffHunk = undefined;
     expect(state.suggestions.get(hunkB.hunkId)?.suggestion.diffHunk).toEqual(hunkB);
 

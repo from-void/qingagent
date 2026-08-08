@@ -165,19 +165,16 @@ describe("用户手打块的候选审阅提交", () => {
     const base = doc(paragraph("block-a", "旧正文"));
     const draft = doc(paragraph("block-a", "新正文"));
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = base;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftBaseVersion = 1;
     state.docDraftCandidateDoc = draft;
-    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
     await documentRepo.save(documentInput(state.docId, {
       threadId: state.sessionId,
       docVersion: 1,
       pmDoc: base,
-      legacySections: state.legacySections,
+      legacySections: pmToLegacySections(base) as never,
     }));
     await getDocumentsClient().execute("DROP TABLE document_suggestions");
 
@@ -233,7 +230,6 @@ describe("用户手打块的候选审阅提交", () => {
     if (userWrite.status !== "committed") throw new Error(userWrite.status);
 
     state.doc = userWrite.doc;
-    state.legacySections = pmToLegacySections(userWrite.doc) as unknown as LegacySection[];
     state.docVersion = userWrite.docVersion;
     state.docState = { kind: "editing" };
 
@@ -295,7 +291,6 @@ describe("用户手打块的候选审阅提交", () => {
     expect(initial.status).toBe("committed");
     if (initial.status !== "committed") throw new Error(initial.status);
     state.doc = initial.doc;
-    state.legacySections = pmToLegacySections(initial.doc) as unknown as LegacySection[];
     state.docVersion = initial.docVersion;
     state.docState = { kind: "editing" };
 
@@ -356,14 +351,11 @@ describe("用户手打块的候选审阅提交", () => {
       legacySections: [],
     }));
     state.doc = base;
-    state.legacySections = [];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = base;
     state.docDraftBaseVersion = 1;
-    state.docDraftBaseSections = [];
     state.docDraftCandidateDoc = draft;
-    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
     state.annotationGroups = [{
       id: "annotation-whole-atomic",
       summary: "核对生成正文",
@@ -402,7 +394,7 @@ describe("用户手打块的候选审阅提交", () => {
     expect(state.docVersion).toBe(1);
   });
 
-  it("整篇候选落地时按真实差异保留未改正文上的批注", async () => {
+  it("canonical 全文候选经审阅提交后按真实差异保留未改正文上的批注", async () => {
     const state = createSession("whole-annotation-mapping");
     const base = doc(
       paragraph("whole-annotation-kept", "保留批注"),
@@ -433,16 +425,13 @@ describe("用户手打块的候选审阅提交", () => {
       legacySections: pmToLegacySections(base) as unknown as LegacySection[],
     }));
     await insertAnnotationGroups(state.docId, 1, [annotationGroup]);
-    // 复现 legacy-only 运行态：canonical 已落库，但内存仍由 legacySections 提供当前全文。
-    state.doc = undefined;
-    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
+    // 期 1 后内存与落库正文都只使用 canonical PM。
+    state.doc = base;
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = base;
     state.docDraftBaseVersion = 1;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftCandidateDoc = draft;
-    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
     state.annotationGroups = [annotationGroup];
 
     const frames = await collectFrames(settleDraftCandidate({
@@ -452,6 +441,7 @@ describe("用户手打块的候选审阅提交", () => {
       runId: "agent-run-whole-mapping",
       wholeDocument: true,
     }));
+    frames.push(...await collectFrames(commitPatches(state, [...state.suggestions.keys()])));
 
     expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("保留批注\n新尾段");
     expect(state.annotationGroups).toEqual([annotationGroup]);
@@ -479,7 +469,6 @@ describe("用户手打块的候选审阅提交", () => {
       paragraph("typed-removed", "乙原文"),
     );
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 
@@ -529,7 +518,6 @@ describe("用户手打块的候选审阅提交", () => {
       paragraph("typed-replay-removed", "乙原文"),
     );
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 
@@ -613,7 +601,6 @@ describe("用户手打块的候选审阅提交", () => {
       paragraph("typed-survivor", "无关正文"),
     );
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 
@@ -673,7 +660,6 @@ describe("用户手打块的候选审阅提交", () => {
     expect(initial.status).toBe("committed");
     if (initial.status !== "committed") throw new Error(initial.status);
     state.doc = initial.doc;
-    state.legacySections = pmToLegacySections(initial.doc) as unknown as LegacySection[];
     state.docVersion = initial.docVersion;
     state.docState = { kind: "editing" };
 

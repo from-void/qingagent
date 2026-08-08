@@ -146,10 +146,6 @@ export {
 } from "../doc-engine/docGenerator.js";
 
 export {
-  cloneLegacySections,
-} from "../doc-engine/docDiff.js";
-
-export {
   hasApplicableSuggestion,
   hasCanonicalDoc,
 } from "../doc-engine/docFacts.js";
@@ -281,7 +277,7 @@ export {
 } from "../session/threadPersistence.js";
 
 export { isSensitiveField, redactSensitiveText } from "../agent-run/redaction.js";
-export { deriveTitleFromSections } from "../session/title.js";
+export { deriveTitleFromDoc } from "../session/title.js";
 export {
   interruptQuestionnaireSpecForRestore,
   isDirectionReset,

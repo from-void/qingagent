@@ -32,7 +32,6 @@ describe("isDirectionReset", () => {
     expect(isDirectionReset({
       _askUserCompleted: true,
       doc: emptyDoc,
-      legacySections: [],
     })).toBe(true);
   });
 
@@ -48,7 +47,6 @@ describe("isDirectionReset", () => {
           content: [{ type: "text", text: "正文" }],
         }],
       },
-      legacySections: [],
     })).toBe(true);
   });
 
@@ -56,7 +54,6 @@ describe("isDirectionReset", () => {
     expect(isDirectionReset({
       _askUserCompleted: false,
       doc: emptyDoc,
-      legacySections: [],
     })).toBe(false);
   });
 });

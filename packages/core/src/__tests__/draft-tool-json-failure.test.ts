@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -81,7 +82,8 @@ describe("draft tool JSON failure UX", () => {
     const originalSections: LegacySection[] = [
       { kind: "p", data: { text: "原文保持不变" } },
     ];
-    state.legacySections = originalSections;
+    const originalDoc = legacySectionsToPm(originalSections as never);
+    state.doc = originalDoc;
 
     const frames = await collectFrames(
       processAgentStream(
@@ -113,7 +115,7 @@ describe("draft tool JSON failure UX", () => {
       ),
     );
 
-    expect(state.legacySections).toEqual(originalSections);
+    expect(state.doc).toEqual(originalDoc);
     expect(textBodies(frames).some((body) => body.includes("不是合法 JSON"))).toBe(true);
     expect(textBodies(frames).some((body) => body.includes("半角双引号必须写成"))).toBe(true);
     expect(draftingFailureReasons(frames)).toHaveLength(1);
@@ -130,7 +132,8 @@ describe("draft tool JSON failure UX", () => {
     const originalSections: LegacySection[] = [
       { kind: "p", data: { text: "原文保持不变" } },
     ];
-    state.legacySections = originalSections;
+    const originalDoc = legacySectionsToPm(originalSections as never);
+    state.doc = originalDoc;
 
     const frames = await collectFrames(
       processAgentStream(
@@ -161,7 +164,7 @@ describe("draft tool JSON failure UX", () => {
     );
 
     // 草稿没动
-    expect(state.legacySections).toEqual(originalSections);
+    expect(state.doc).toEqual(originalDoc);
     // 模型谎称已改的正文仍在(不删模型输出)
     expect(textBodies(frames).some((body) => body.includes("已为你加上小标题"))).toBe(true);
     // 关键:即便有正文,失败帧照样发出(堵住"谎称已改")

@@ -14,12 +14,11 @@ import {
 } from "../doc-engine/docStateTransitions.js";
 
 function seedDoc(state: SessionState): void {
-  state.legacySections = [{ kind: "p", data: { text: "正文" } }];
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  state.doc = legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
 }
 
 function addPatch(state: SessionState): void {
-  state.doc ??= legacySectionsToPm(state.legacySections as never);
+  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
   state.suggestions.set("patch-1", {
     messageId: "m",
     toolCallId: "patch-1",

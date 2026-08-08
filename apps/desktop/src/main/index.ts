@@ -95,10 +95,6 @@ import {
   showNativeRendererRecoveryStopped,
 } from "./nativeDialogFallback.js";
 import {
-  BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL,
-  type BrowserCredentialCleanupNotice,
-} from "../browserCredentialCleanupContract.js";
-import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_RESPONSE_CHANNEL,
   isDesktopDialogKind,
@@ -112,10 +108,6 @@ import {
 } from "./exportDownloadCoordinator.js";
 import { DIAGNOSTICS_EXPORT_CHANNEL } from "../diagnosticsExportContract.js";
 import { exportDiagnosticsToDownloads } from "./diagnosticsExport.js";
-import {
-  legacyAgentBrowserDirectories,
-  migrateLegacyAgentBrowserData,
-} from "./browserCredentialMigration.js";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -292,7 +284,6 @@ process.env.QINGAGENT_LOG_DIR = desktopLogDir;
 
 // agent browser 的 storageState(JSON cookie/localStorage)与完整 profile 都是敏感凭据。
 // desktop 只负责把 Electron userData 通过现有环境变量注入 doc-render，不让后者依赖 electron。
-// 同时迁移旧版曾按 cwd 写到安装目录/C:\Windows 的存量；目标已有时以目标为准并清理旧副本。
 if (!process.env.QINGAGENT_BROWSER_STORAGE_STATE?.trim()) {
   process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(
     userDataDir,
@@ -305,49 +296,6 @@ if (!process.env.QINGAGENT_BROWSER_PROFILE_DIR?.trim()) {
     ".qingagent-browser-profile",
   );
 }
-const browserCredentialMigration = hasSingleInstanceLock
-  ? migrateLegacyAgentBrowserData({
-      legacyDirectories: legacyAgentBrowserDirectories(),
-      storageStatePath: process.env.QINGAGENT_BROWSER_STORAGE_STATE!,
-      profileDir: process.env.QINGAGENT_BROWSER_PROFILE_DIR!,
-    })
-  : { migrated: [], cleaned: [], discarded: [], failures: [] };
-if (
-  browserCredentialMigration.migrated.length > 0 ||
-  browserCredentialMigration.cleaned.length > 0
-) {
-  console.info("[agentBrowser] 旧浏览器登录数据已迁移/清理", {
-    migrated: browserCredentialMigration.migrated,
-    cleaned: browserCredentialMigration.cleaned,
-  });
-}
-if (browserCredentialMigration.discarded.length > 0) {
-  console.warn("[agentBrowser] 旧浏览器登录数据无法迁移，已安全清理", {
-    discarded: browserCredentialMigration.discarded,
-  });
-}
-if (browserCredentialMigration.failures.length > 0) {
-  console.error("[agentBrowser] 旧浏览器登录数据无法清理", {
-    failures: browserCredentialMigration.failures,
-  });
-}
-const browserCredentialCleanupNotice: BrowserCredentialCleanupNotice | null =
-  browserCredentialMigration.failures.length > 0
-    ? {
-        paths: [
-          ...new Set(
-            browserCredentialMigration.failures.map((failure) => failure.path),
-          ),
-        ],
-      }
-    : null;
-
-ipcMain.handle(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL, (event) => {
-  assertTrustedRenderer(event);
-  // 只向设置页发布可操作路径；底层错误原因留在本地日志，不暴露内部错误详情。
-  return browserCredentialCleanupNotice;
-});
-
 // Set DATABASE_URL before importing server so that @qingagent/core's LibSQL
 // storage resolves to the user's app data directory instead of cwd.
 // 必须用 pathToFileURL 生成合法 file URL:Windows 路径含盘符+反斜杠
@@ -364,8 +312,6 @@ if (!process.env.DATABASE_URL) {
 // 但 execute_command 已在 subprocess 创建前硬拒系统/青简凭据路径与工作区外写入。
 // 后续若接入 Windows 原生隔离层，
 // credential 例外仍需按声明+授权精确开口，不能回退成宿主 HOME 全通。
-// TODO(P2 feishu-byo-app):决定桌面端 lark-cli 配置目录策略。当前沙箱透传宿主 HOME,
-// lark-cli 会写用户真实 ~/.lark-cli;单机交付前需决定保持真实 HOME,还是隔离到 userData 下。
 if (!process.env.QINGAGENT_DATA_DIR) {
   process.env.QINGAGENT_DATA_DIR = path.join(userDataDir, "data");
 }
@@ -428,28 +374,6 @@ if (app.isPackaged && !process.env.QINGAGENT_SKILLS_DIR) {
   process.env.QINGAGENT_SKILLS_DIR = path.join(process.resourcesPath, "skills");
 }
 
-// 用户技能目录不再改写到 userData:打包版曾指向
-// ~/Library/Application Support/@qingagent/desktop/skills,与用户/其它 CLI 实际的
-// 安装位置(~/.qingagent/skills、~/.agents/skills)全都对不上,于是明明装过却被
-// 告知"没安装"(0729 真机 P1)。这里保持 core 默认口径,由 core 统一多来源发现。
-// 需要自定义时仍可显式设 QINGAGENT_USER_SKILLS_DIR。
-//
-// 但历史 userData 目录必须继续被扫到:存量用户此前经打包版装的技能就落在那里,
-// 直接摘掉等于在他们身上复发同一个病。按"只增不搬"处理——追加成历史自有来源,
-// 发现与管理面视同已安装,但 agent 沙箱仍只读；新技能仍装到现装目录。
-// 追加而非覆盖,保留用户自设的值。
-if (app.isPackaged) {
-  const legacyUserSkillsDir = path.join(userDataDir, "skills");
-  const existing = (process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS ?? "")
-    .split(path.delimiter)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  if (!existing.includes(legacyUserSkillsDir)) {
-    process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = [...existing, legacyUserSkillsDir]
-      .join(path.delimiter);
-  }
-}
-
 if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS = [
     path.dirname(process.execPath),
@@ -461,17 +385,9 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   const {
     ensureNodeRuntimeShim,
     isElectronRuntime,
-    pruneLegacyNodeRuntimeShims,
     renderWindowsNodeOptions,
   } = await import("@qingagent/core/workspace/runtime-shims");
   const { ensureLarkCliShim } = await import("@qingagent/core/workspace/runtime-shims");
-  // 升级迁移(必须无条件执行,且必须早于任何沙箱 env 装配):老版本把 Electron-as-Node 的
-  // `node` shim 直接写进常驻 PATH 最前的产品 CLI 目录,残留文件会继续劫持用户自己的
-  // Node CLI——光靠"这次不生成"治不好,得把老文件删掉。
-  const prunedLegacyShims = pruneLegacyNodeRuntimeShims();
-  if (prunedLegacyShims.length > 0) {
-    console.info("[sandbox] 已清除遗留在 PATH 目录里的 node shim", { prunedLegacyShims });
-  }
   const electronRuntime = isElectronRuntime();
   // 产品自带运行时只写进独立的 node-runtime 目录:产品 CLI 按绝对路径显式引用它,
   // 宿主 CLI 走宿主 PATH 与宿主 Node(站位见 core 的 resolveNodeRuntimePathPlacement)。
@@ -576,7 +492,6 @@ if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
 }
 
 // Dynamic import after env is configured — server/core reads DATABASE_URL at module-evaluation time.
-// TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一串起迁移、Mastra 与 server app。
 const { isReportedServerStartupError, startServer } = await import("./server.js");
 // 长 keep-alive 必须经 server 包转导出取 undici(desktop 无直接依赖且 esbuild 整包
 // bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。

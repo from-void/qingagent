@@ -124,7 +124,7 @@ describe("忽略批注回填审查补充提示词", () => {
       "doc-review-supplement",
       "custom",
       userText,
-      group.reviewTemplateId,
+      group.reviewTemplateId!,
     );
     mocks.branchCall.mockResolvedValue({
       ok: true,
@@ -143,7 +143,7 @@ describe("忽略批注回填审查补充提示词", () => {
     expect(await getReviewDocSupplement(
       "doc-review-supplement",
       "custom",
-      group.reviewTemplateId,
+      group.reviewTemplateId!,
     )).toBe(expected);
     expect(mocks.branchCall).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "rewriteReviewSupplement",
@@ -158,7 +158,7 @@ describe("忽略批注回填审查补充提示词", () => {
       "doc-review-supplement",
       "custom",
       userText,
-      group.reviewTemplateId,
+      group.reviewTemplateId!,
     );
     mocks.branchCall.mockResolvedValue({
       ok: true,
@@ -182,7 +182,7 @@ describe("忽略批注回填审查补充提示词", () => {
     expect(await getReviewDocSupplement(
       "doc-review-supplement",
       "custom",
-      group.reviewTemplateId,
+      group.reviewTemplateId!,
     )).toBe([
       userText,
       "",
@@ -202,7 +202,7 @@ describe("忽略批注回填审查补充提示词", () => {
     });
 
     expect(mocks.branchCall).not.toHaveBeenCalled();
-    expect(await getReviewDocSupplement("doc-review-supplement", "source")).toBe(
+    expect(await getReviewDocSupplement("doc-review-supplement", "source", "")).toBe(
       `## 已确认忽略\n${ignoredDecision(sourceGroup, "2026-08-03").line}`,
     );
   });
@@ -230,6 +230,7 @@ describe("忽略批注回填审查补充提示词", () => {
     const afterFirst = await getReviewDocSupplement(
       "doc-review-supplement",
       "sensitive",
+      "",
     );
     mocks.getSessionSnapshot.mockReturnValue({ sessionId: "thread-review-supplement" });
     mocks.branchCall.mockResolvedValue({
@@ -246,7 +247,7 @@ describe("忽略批注回填审查补充提示词", () => {
       now: new Date("2026-08-05T12:01:00.000Z"),
     });
 
-    const supplement = await getReviewDocSupplement("doc-review-supplement", "sensitive");
+    const supplement = await getReviewDocSupplement("doc-review-supplement", "sensitive", "");
     const lines = splitReviewSupplement(supplement).ignoreLines;
     expect(lines).toHaveLength(2);
     expect(lines.every((line) => line.includes("139****5678"))).toBe(true);
@@ -295,7 +296,7 @@ describe("忽略批注回填审查补充提示词", () => {
     const supplement = await getReviewDocSupplement(
       "doc-review-supplement",
       "custom",
-      customGroup.reviewTemplateId,
+      customGroup.reviewTemplateId!,
     );
     const [line] = splitReviewSupplement(supplement).ignoreLines;
     expect(supplement).not.toContain(fragment);
@@ -323,7 +324,7 @@ describe("忽略批注回填审查补充提示词", () => {
       now: new Date("2026-08-06T12:00:00.000Z"),
     });
 
-    const supplement = await getReviewDocSupplement("doc-review-supplement", "sensitive");
+    const supplement = await getReviewDocSupplement("doc-review-supplement", "sensitive", "");
     expect(splitReviewSupplement(supplement).ignoreLines).toHaveLength(1);
   });
 
@@ -459,37 +460,4 @@ describe("忽略批注回填审查补充提示词", () => {
     expect(queryY).not.toContain(lineX!);
   });
 
-  it("升级前没有模板 id 的两个 custom origin 仍在兼容基线保留两条决定", async () => {
-    mocks.getSessionSnapshot.mockReturnValue(null);
-    const { reviewTemplateId: _templateId, ...legacyGroup } = group;
-    const first = {
-      ...legacyGroup,
-      id: "legacy-template-x",
-      origin: "自定义审查:旧模板 X",
-    };
-    const second = {
-      ...legacyGroup,
-      id: "legacy-template-y",
-      origin: "自定义审查:旧模板 Y",
-    };
-
-    await rewriteReviewSupplementsForIgnoredGroups({
-      docId: "doc-review-supplement",
-      groups: [first],
-      now: new Date("2026-08-06T12:00:00.000Z"),
-    });
-    await rewriteReviewSupplementsForIgnoredGroups({
-      docId: "doc-review-supplement",
-      groups: [second],
-      now: new Date("2026-08-06T12:01:00.000Z"),
-    });
-
-    const supplement = await getReviewDocSupplement(
-      "doc-review-supplement",
-      "custom",
-    );
-    const lines = splitReviewSupplement(supplement).ignoreLines;
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).not.toBe(lines[1]);
-  });
 });

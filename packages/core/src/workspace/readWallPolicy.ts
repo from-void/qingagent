@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { userInfo } from "node:os";
 import {
   basename,
@@ -689,8 +689,4 @@ export function readWallPathIsInside(child: string, parent: string): boolean {
 
 export function readWallPathsOverlap(left: ResolvedReadWallPath, right: ResolvedReadWallPath): boolean {
   return pathsOverlap(left, right);
-}
-
-export async function listDirectorySorted(path: string): Promise<string[]> {
-  return (await readdir(path)).sort((left, right) => left.localeCompare(right));
 }

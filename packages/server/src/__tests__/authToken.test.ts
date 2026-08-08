@@ -119,7 +119,9 @@ describe("authTokenMiddleware", () => {
 
     const session = await app.request("/api/v1/auth/session", { method: "POST" });
     expect(session.status).toBe(400);
-    await expect(session.json()).resolves.toMatchObject({ error: "invalid body", issues: [] });
+    await expect(session.json()).resolves.toEqual({
+      issues: [{ path: "", message: "invalid body", code: "invalid_type" }],
+    });
   });
 
   it("auth/session 用正确 token 换发 HttpOnly cookie", async () => {
@@ -159,7 +161,9 @@ describe("authTokenMiddleware", () => {
     });
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({ error: "invalid body", issues: [] });
+    await expect(res.json()).resolves.toEqual({
+      issues: [{ path: "", message: "invalid body", code: "invalid_json" }],
+    });
   });
 
   it("auth/session token 类型错误返回统一校验错误契约", async () => {
@@ -169,8 +173,7 @@ describe("authTokenMiddleware", () => {
     const res = await app.request("/api/v1/auth/session", jsonPost({ token: 1 }));
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining("token"),
+    await expect(res.json()).resolves.toEqual({
       issues: [expect.objectContaining({ path: "token" })],
     });
   });

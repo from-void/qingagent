@@ -216,36 +216,19 @@ test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key pro
   assert.ok(probeLine > providerLine && createWindowLine > probeLine, "沙箱探针必须继续在 createWindow 前短路");
 });
 
-test("旧浏览器凭据清理失败只发布设置页状态，不弹窗、不阻断启动", () => {
-  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
-  const readyLine = source.indexOf("app.whenReady().then(async () => {");
-  const createWindowLine = source.indexOf("await createWindow();", readyLine);
-  const readySource = source.slice(readyLine, createWindowLine);
-
-  assert.match(source, /BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL/);
-  assert.match(source, /ipcMain\.handle\(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL/);
-  assert.match(source, /browserCredentialMigration\.failures\.map/);
-  assert.match(preload, /getBrowserCredentialCleanupNotice/);
-  assert.doesNotMatch(readySource, /browserCredentialMigration\.failures/);
-  assert.doesNotMatch(readySource, /showNativeBrowserCredentialCleanupFailure/);
-});
-
-test("第二实例虽跳过迁移，也先把浏览器写入路径固定到 userData 且不启动 server", () => {
+test("第二实例也先把浏览器写入路径固定到 userData 且不启动 server", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const storagePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(");
   const profilePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(");
-  const migrationGateLine = source.indexOf("const browserCredentialMigration = hasSingleInstanceLock");
   const readyGateLine = source.indexOf("if (hasSingleInstanceLock) app.whenReady().then(async () => {");
 
   assert.ok(storagePathLine >= 0 && profilePathLine >= 0, "必须注入两类浏览器凭据的新写入位置");
   assert.ok(
-    storagePathLine < migrationGateLine && profilePathLine < migrationGateLine,
-    "即使锁失败跳过迁移，浏览器凭据路径也必须先脱离 cwd",
+    storagePathLine < readyGateLine && profilePathLine < readyGateLine,
+    "即使锁失败，浏览器凭据路径也必须先脱离 cwd",
   );
-  assert.ok(readyGateLine > migrationGateLine, "第二实例不得进入 ready/startServer 链");
-  assert.match(source.slice(storagePathLine, migrationGateLine), /userDataDir/);
-  assert.doesNotMatch(source.slice(storagePathLine, migrationGateLine), /process\.cwd\(\)/);
+  assert.match(source.slice(storagePathLine, readyGateLine), /userDataDir/);
+  assert.doesNotMatch(source.slice(storagePathLine, readyGateLine), /process\.cwd\(\)/);
 });
 
 test("QINGAGENT_DEVTOOLS=1 在打包态也以独立窗口打开主窗口 DevTools", () => {
@@ -347,7 +330,7 @@ test("desktop 配置读取保留 unknown 并在就绪后发无秘密信号", () 
   assert.match(source, /desktopClientConfigReady = true/);
   assert.match(source, /contents\.send\("qingagent:client-config-ready"\)/);
   assert.match(preload, /if \(!clientConfigReady\) throw new Error/);
-  assert.match(preload, /if \(!result \|\| result\.ok !== true\) throw new Error/);
+  assert.match(preload, /if \(result\.ok !== true\) throw new Error/);
   assert.match(preload, /onClientConfigReady:/);
 });
 
@@ -389,18 +372,6 @@ test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧
     else process.env.DATABASE_URL = previousDatabaseUrl;
     rmSync(tempDir, { recursive: true, force: true });
   }
-});
-
-test("desktop 在迁移及 server app 求值后非阻断挂载 documents 巡检", () => {
-  const source = readFileSync(path.join(__dirname, "server.ts"), "utf8");
-  const migrationsLine = source.indexOf("await runMigrations()");
-  const appImportLine = source.indexOf('await import("@qingagent/server/app")');
-  const repairImportLine = source.indexOf('void import("@qingagent/db")');
-  const repairCallLine = source.indexOf("repairStoredDocumentRows()", repairImportLine);
-
-  assert.ok(migrationsLine >= 0 && repairImportLine > migrationsLine, "documents 巡检必须晚于迁移启动");
-  assert.ok(appImportLine >= 0 && repairImportLine > appImportLine, "DB 聚合入口必须在 server app 求值后加载");
-  assert.ok(repairCallLine > repairImportLine, "documents 巡检必须由后台动态导入触发");
 });
 
 test("desktop 在 server app 求值后接管关闭信号并使用 Electron 退出动作", () => {

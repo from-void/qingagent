@@ -190,7 +190,6 @@ describe("llm step span helpers", () => {
       runId: "run-1",
       origin: "e2e",
       site: "agentChat",
-      serverReanchorEnabled: false,
     });
   });
 

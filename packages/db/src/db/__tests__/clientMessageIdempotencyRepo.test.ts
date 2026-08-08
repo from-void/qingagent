@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Client } from "@libsql/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimClientMessageIdempotency,
   completeClientMessageIdempotency,
@@ -27,6 +28,22 @@ describe("clientMessageId 首提持久幂等", () => {
 
   afterEach(() => {
     db.cleanup();
+  });
+
+  it("唯一键冲突后记录消失时立即暴露不变量失败", async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(claimClientMessageIdempotency({
+      id: "missing-after-conflict",
+      sessionId: "session-missing-after-conflict",
+      messageId: "message-missing-after-conflict",
+      now: 1_000,
+      client: { execute } as unknown as Client,
+    })).rejects.toThrow("client message idempotency claim invariant violated");
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it("模拟服务重启后不同会话的同一 clientMessageId 仍分别取得 claim", async () => {

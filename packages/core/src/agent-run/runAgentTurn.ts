@@ -44,7 +44,6 @@ import {
   clearSuspension,
   hasActiveSuspension,
 } from "../session/sessionState.js";
-import { isServerReanchorEnabled } from "../doc-engine/draftFeatureFlags.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { schedulePersist, QINGAGENT_RESOURCE_ID } from "../session/threadPersistence.js";
 import {
@@ -55,7 +54,6 @@ import {
 import {
   chatMessageAdded,
   newId,
-  normalizeLegacyToolTranscriptMessages,
   nowIso,
   streamEnd,
   streamStart,
@@ -184,7 +182,6 @@ export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
    * @deprecated 旧客户端兼容。仅追加到本次模型调用的末条 user message，
    * 不进入持久消息、可见气泡或 system prompt 前缀。
   */
-  turnContext?: string;
   /** 受控的用户动作分类，仅用于 provider 遥测归属。 */
   turnKind?: AgentTurnKind;
   /** 发送瞬间界面激活的文档；服务端据此生成仅本轮有效的可信路由提示。 */
@@ -271,9 +268,6 @@ export async function* runAgentTurn(
   state._abortController = abortController;
   state._activeTurnPromise = turnCompletion.promise;
   state._suspendedThisTurn = false;
-  // 老会话只在首次进入新版时做一次确定性角色迁移；随后持久化的历史继续 append-only，
-  // 不往 system 前缀塞逐轮变化内容，避免长期牺牲 DeepSeek 前缀缓存命中。
-  state.messages = normalizeLegacyToolTranscriptMessages(state.messages);
   let turnRequestContext: RequestContext | undefined;
   let sessionWorkspaceLease: SessionWorkspaceLease | null = null;
   let omTurnStartMessageIndex = state.messages.length;
@@ -317,7 +311,6 @@ export async function* runAgentTurn(
     chipCount: chips.length,
     selectedSkills: selectedSkillNames,
     toolSearchEnabled,
-    serverReanchorEnabled: isServerReanchorEnabled(),
   });
 
   console.info(formatTurnLog("streamStart", {
@@ -643,7 +636,7 @@ export async function* runAgentTurn(
 
     const activeDocumentTurnContext = runtimeOptions.activeDocument
       ? buildActiveDocumentTurnContext(runtimeOptions.activeDocument)
-      : runtimeOptions.turnContext;
+      : undefined;
     const messagesForModel = appendTurnContextToLatestUserMessage(
       omContextForTurn.messagesForModel,
       activeDocumentTurnContext,
@@ -684,8 +677,6 @@ export async function* runAgentTurn(
       ["origin", state.origin ?? "manual"],
       ["docVersion", state.docVersion],
       ["doc", state.doc],
-      ["legacySections", state.legacySections],
-      ["patchValidationResults", state.patchValidationResults],
       ["modelOverrides", state.modelOverrides],
       // 已完成过问卷 → askUser 默认抑制;directionChange 只有在上次完成后出现过有效写入才豁免。
       ["askUserAlreadyCompleted", state._askUserCompleted === true],

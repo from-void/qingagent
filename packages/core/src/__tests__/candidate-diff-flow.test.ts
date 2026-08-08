@@ -230,7 +230,7 @@ function writeDraftResult(toolCallId: string): StreamChunk {
       toolName: "writeDraft",
       toolCallId,
       args: { title: "测试", outline: "大纲" },
-      result: { ok: true, blockCount: 1, wordCount: 10 },
+      result: { ok: true, blockCount: 1, visibleCharCount: 10 },
     },
   };
 }
@@ -1392,6 +1392,7 @@ describe("candidate-diff backend flow", () => {
       threadId: state.sessionId,
       resourceId: state.resourceId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(generatedDoc),
       clientMutationId: "manual-edit-1",
       opKind: "replace_doc",
       actorType: "user",

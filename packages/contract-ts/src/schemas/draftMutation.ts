@@ -14,7 +14,6 @@ const draftTextMarkSchema: z.ZodType<DraftTextMark> = z.discriminatedUnion("type
   z.object({ type: z.literal("italic") }).strict(),
   z.object({ type: z.literal("underline") }).strict(),
   z.object({ type: z.literal("strike") }).strict(),
-  z.object({ type: z.literal("strikeThrough") }).strict(),
   z.object({ type: z.literal("code") }).strict(),
   z.object({
     type: z.literal("link"),

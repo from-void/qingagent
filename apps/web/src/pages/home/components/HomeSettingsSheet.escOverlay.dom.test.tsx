@@ -12,7 +12,7 @@ import {
   resetOverlayDismissStackForTest,
 } from "../../../system/overlayDismissStack";
 import { __resetClientPersistCacheForTests } from "../../../overlays/settings/clientPersist";
-import { setVisitorDeepseekKey } from "../../../overlays/settings/visitorKeyStore";
+import { setVisitorModelKey } from "../../../overlays/settings/visitorKeyStore";
 import { resetSettingsDialogA11yForTest } from "../../../overlays/settings/settingsDialogA11y";
 import { HomeSettingsSheet, type SettingsSheetTab } from "./HomeSettingsSheet";
 
@@ -55,7 +55,7 @@ describe("HomeSettingsSheet 浮层关闭栈", () => {
   });
 
   it("档位 chip 菜单开着且焦点在 body:第一次 Esc 只关菜单,第二次才关设置面板", async () => {
-    await setVisitorDeepseekKey("deepseek-esc-key");
+    await setVisitorModelKey("deepseek", "deepseek-esc-key");
     await render("model");
 
     await click(getChip());
@@ -76,7 +76,7 @@ describe("HomeSettingsSheet 浮层关闭栈", () => {
   });
 
   it("焦点仍在档位 chip 上按 Esc:菜单关、设置面板留(不回归)", async () => {
-    await setVisitorDeepseekKey("deepseek-esc-key");
+    await setVisitorModelKey("deepseek", "deepseek-esc-key");
     await render("model");
 
     await click(getChip());
@@ -214,15 +214,12 @@ async function render(tab: SettingsSheetTab): Promise<void> {
         <HomeSettingsSheet
           initialTab={tab}
           inkVariant="paper"
-          themeMode="paper"
-          themeModeOptions={[{ id: "paper", label: "宣纸" }]}
           anim="none"
           animOptions={[{ id: "none", label: "无" }]}
           reduceMotion={false}
           primaryFont="song"
           secondaryFont="song"
           fontOptions={[{ id: "song", label: "宋体" }]}
-          onThemeModeChange={vi.fn()}
           onAnimChange={vi.fn()}
           onReduceMotionToggle={vi.fn()}
           onPrimaryFontChange={vi.fn()}
@@ -333,7 +330,14 @@ function makeFetchMock() {
       });
     }
     if (url.includes("/api/v1/settings/model")) {
-      return json({ apiKeyConfigured: false, maskedTail: null, source: "none", params: null });
+      return json({
+        provider: "deepseek",
+        providers: {
+          deepseek: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+          kimi: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+        },
+        params: null,
+      });
     }
     if (url.includes("/api/v1/usage/summary")) return json({ rows: [] });
     if (url.includes("/api/v1/usage/docstats")) return json({ docs: 0, words: 0 });

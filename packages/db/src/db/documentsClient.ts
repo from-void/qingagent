@@ -11,16 +11,10 @@ let pragmaClients = new WeakSet<Client>();
 let txnChain: Promise<unknown> = Promise.resolve();
 const transactionContext = new AsyncLocalStorage<boolean>();
 
-let consecutiveFailures = 0;
-let circuitOpenUntil = 0;
-let lastWarnAt = Number.NEGATIVE_INFINITY;
 const defaultDbDir = join(homedir(), ".qingagent");
 const defaultDbPath = join(defaultDbDir, "qingagent.db");
 const defaultDbUrl = pathToFileURL(defaultDbPath).href;
 let defaultDbLocationLogged = false;
-
-export const SHADOW_CIRCUIT_FAIL_THRESHOLD = 5;
-export const SHADOW_CIRCUIT_COOLDOWN_MS = 30_000;
 
 export function resolveDbUrl(): string {
   const configured = process.env.DATABASE_URL;
@@ -144,41 +138,6 @@ export async function withTransaction<T>(
   return run;
 }
 
-export function shadowCircuitOpen(now: number): boolean {
-  return now < circuitOpenUntil;
-}
-
-export function recordShadowOutcome(ok: boolean, now: number): void {
-  if (ok) {
-    consecutiveFailures = 0;
-    circuitOpenUntil = 0;
-    return;
-  }
-  consecutiveFailures++;
-  if (consecutiveFailures >= SHADOW_CIRCUIT_FAIL_THRESHOLD) {
-    circuitOpenUntil = now + SHADOW_CIRCUIT_COOLDOWN_MS;
-  }
-}
-
-export function shouldWarn(now: number, minIntervalMs = 10_000): boolean {
-  if (now - lastWarnAt < minIntervalMs) return false;
-  lastWarnAt = now;
-  return true;
-}
-
-export function getShadowCircuitState(): {
-  consecutiveFailures: number;
-  circuitOpenUntil: number;
-} {
-  return { consecutiveFailures, circuitOpenUntil };
-}
-
-export function __resetShadowCircuitForTest(): void {
-  consecutiveFailures = 0;
-  circuitOpenUntil = 0;
-  lastWarnAt = Number.NEGATIVE_INFINITY;
-}
-
 export function __resetDocumentsClientForTest(): void {
   if (client && !client.closed) {
     client.close();
@@ -190,5 +149,4 @@ export function __resetDocumentsClientForTest(): void {
   txnClient = null;
   pragmaClients = new WeakSet<Client>();
   txnChain = Promise.resolve();
-  __resetShadowCircuitForTest();
 }

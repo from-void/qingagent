@@ -13,7 +13,6 @@ import {
   abortAndCleanupTurn,
   AGENT_MAX_STEPS,
   appendAskUserAnswerMessageIfMissing,
-  askUserTool,
   beginSessionSnapshotTurn,
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
@@ -462,8 +461,6 @@ async function* handleResume(
       ["origin", session.origin ?? "manual"],
       ["docVersion", session.docVersion],
       ["doc", session.doc],
-      ["legacySections", session.legacySections],
-      ["patchValidationResults", session.patchValidationResults],
       ["modelOverrides", session.modelOverrides],
       ["askUserAlreadyCompleted", session._askUserCompleted === true],
       ["isDirectionReset", resumeWasDirectionReset],
@@ -533,15 +530,6 @@ async function* handleResume(
                   capabilityTools,
                   abortController.signal,
                 ),
-                // askUser 仅为老会话快照恢复注入；老会话数据迁移或过期后删除。
-                ...(askUserSpecForResume?.name === "askUser"
-                  ? {
-                      legacyQuestionnaire: bindToolsToAbortSignal(
-                        { askUser: askUserTool },
-                        abortController.signal,
-                      ),
-                    }
-                  : {}),
               },
               // Keep resumed-run spans on the same session trace as the initial
               // turn and carry the raw ids in span metadata for cross-layer joins.
@@ -885,7 +873,7 @@ export async function* handleTurnCommand(
         yield* abortAndCleanupTurn(session);
       }
 
-      const fileIds = command.data.fileIds ?? [];
+      const fileIds = command.data.fileIds;
       const chips = command.data.chips ?? [];
       const skills = command.data.skills ?? [];
       yield* runAgentTurn(
@@ -905,9 +893,6 @@ export async function* handleTurnCommand(
           reuseExistingUserMessage,
           ...(command.data.activeDocument
             ? { activeDocument: command.data.activeDocument }
-            : {}),
-          ...(command.data.turnContext
-            ? { turnContext: command.data.turnContext }
             : {}),
           ...(command.data.turnKind
             ? { turnKind: command.data.turnKind }

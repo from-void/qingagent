@@ -25,7 +25,7 @@ import {
 import { z } from "zod";
 import { invalidateModelOverridesCache, resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { parseBody } from "../lib/validation";
+import { firstValidationIssueMessage, parseBody } from "../lib/validation";
 
 export const modelSettingsRoutes = new Hono();
 
@@ -262,10 +262,8 @@ async function readModelSettingsResponse() {
       source: dbKey ? "db" as const : envKey ? "env" as const : "none" as const,
     };
   };
-  const active = providerState(provider);
   return {
     provider,
-    ...active,
     providers: {
       deepseek: providerState("deepseek"),
       kimi: providerState("kimi"),
@@ -284,7 +282,11 @@ modelSettingsRoutes.put("/settings/model", async (c) => {
 
   const parsed = await parseBody(c, modelSettingsBodySchema, {
     makeErrorResponse: (ctx, b) =>
-      ctx.json({ error: b.error === "Invalid JSON body" ? "Invalid JSON body" : "Body must be an object" }, 400),
+      ctx.json({
+        error: firstValidationIssueMessage(b) === "Invalid JSON body"
+          ? "Invalid JSON body"
+          : "Body must be an object",
+      }, 400),
   });
   if (!parsed.ok) return parsed.response;
   const record = parsed.data;
@@ -335,7 +337,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
 
   const overrides = await resolveRequestModelOverrides({
     provider: c.req.header("x-model-provider"),
-    visitorKey: c.req.header("x-model-key") ?? c.req.header("x-deepseek-key"),
+    visitorKey: c.req.header("x-model-key"),
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),
@@ -442,7 +444,12 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
 
   const parsedBody = await parseBody(c, testCustomBodySchema, {
     makeErrorResponse: (ctx, b) =>
-      ctx.json({ ok: false, error: b.error === "Invalid JSON body" ? "请求格式错误" : b.error }, 400),
+      ctx.json({
+        ok: false,
+        error: firstValidationIssueMessage(b) === "请求格式错误"
+          ? "请求格式错误"
+          : firstValidationIssueMessage(b),
+      }, 400),
     invalidJsonMessage: "请求格式错误",
   });
   if (!parsedBody.ok) return parsedBody.response;

@@ -143,29 +143,6 @@ describe.skipIf(process.platform === "win32")("宿主 Node 不被产品运行时
     expect(runFauxCli(env.PATH!)).toBe("PRODUCT-RUNTIME");
   });
 
-  it("遗留在 PATH 目录里的 node shim 被删除,不再继续覆盖宿主 Node", async () => {
-    const fixture = await setupRuntimeFixture({
-      isolation: "none",
-      allowUnisolatedCommands: true,
-      // 关键:即使配置成"只用宿主 Node",老文件不删掉照样会劫持。
-      nodeRuntimeSetting: "system",
-    });
-    // 复刻老版本布局:通用名 node 直接躺在常驻 PATH 最前的产品 CLI 目录里。
-    const legacyShim = join(fixture.paths.SANDBOX_BIN_DIR, "node");
-    writeExecutable(legacyShim, "#!/bin/sh\necho LEGACY-PRODUCT-RUNTIME\n");
-    writeExecutable(join(fixture.paths.SANDBOX_BIN_DIR, "hide-console.cjs"), "//\n");
-    const beforePrune = fixture.workspace.buildSandboxEnv();
-    // 病症确认:不删就是会被劫持。
-    expect(runFauxCli(beforePrune.PATH!)).toBe("LEGACY-PRODUCT-RUNTIME");
-
-    const removed = fixture.shims.pruneLegacyNodeRuntimeShims();
-
-    expect(removed).toContain("node");
-    expect(removed).toContain("hide-console.cjs");
-    expect(existsSync(legacyShim)).toBe(false);
-    const afterPrune = fixture.workspace.buildSandboxEnv();
-    expect(runFauxCli(afterPrune.PATH!)).toBe("HOST-NODE");
-  });
 });
 
 describe("产品自带 CLI 的固定运行时", () => {

@@ -43,7 +43,15 @@ describe("API JSON 请求体上限", () => {
         data: {
           sessionId: "body-limit-large-doc",
           expectedDocumentSnapshot: 1,
-          legacySections: [{ kind: "p", data: { text: "x".repeat(2 * 1024 * 1024) } }],
+          baseContentHash: "pmv1-base",
+          doc: {
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [{
+              type: "paragraph",
+              content: [{ type: "text", text: "x".repeat(2 * 1024 * 1024) }],
+            }],
+          },
           clientMutationId: "body-limit-large-doc-1",
         },
       }),

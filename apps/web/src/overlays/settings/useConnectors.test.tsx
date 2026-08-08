@@ -131,6 +131,7 @@ describe("useConnectors", () => {
         startedAt: Date.now(),
         card: {
           presentation: "scan",
+          imageDataUri: null,
           connectorId: "feishu",
           pendingId: "fs-pending",
           title: "扫码授权飞书",
@@ -190,6 +191,7 @@ describe("useConnectors", () => {
         startedAt: 1234,
         card: {
           presentation: "device-code",
+          imageDataUri: null,
           connectorId: "github",
           pendingId: "gh-stable",
           title: "连接 GitHub",

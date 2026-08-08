@@ -2863,6 +2863,7 @@ export function useWorkspacePageController() {
             {
               title: descriptor.cardTitle(false),
               lines,
+              status: "done",
             },
             undefined,
             { kind: "derivative", docId: item.docId },
@@ -3469,7 +3470,6 @@ export function useWorkspacePageController() {
             data: {
               sessionId,
               text,
-              mentions: [],
               skills: [],
               chips: [],
               fileIds: [],

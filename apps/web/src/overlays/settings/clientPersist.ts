@@ -93,7 +93,7 @@ function isDesktopWindow(): boolean {
 function isDesktopConfigReady(): boolean {
   if (!isDesktopWindow()) return false;
   const ready = window.electron?.isClientConfigReady;
-  if (!ready) return true;
+  if (!ready) return false;
   try {
     return ready();
   } catch {

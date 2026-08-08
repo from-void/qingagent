@@ -50,14 +50,6 @@ const ALLOWED_DOC_STATE_KINDS = new Set([
   "empty",
   "editing",
   "pendingReview",
-  "init",
-  "plan",
-  "drafting",
-  "draft",
-  "locked",
-  "review",
-  "committed",
-  "history",
 ]);
 
 const ALLOWED_ACTIVE_OVERLAYS = new Set([
@@ -281,11 +273,13 @@ function checkToolBody(b: ToolCallBody): void {
       checkRef("BrowserOpen.urlRef", b.data.urlRef, ["url"]);
       return;
     case "qrCard":
-      if (b.data.presentation !== undefined &&
-          b.data.presentation !== "device-code" &&
+      if (b.data.presentation !== "device-code" &&
           b.data.presentation !== "scan" &&
           b.data.presentation !== "link") {
         fail(`QrCard.presentation must be device-code|scan|link`);
+      }
+      if (b.data.imageDataUri !== null && typeof b.data.imageDataUri !== "string") {
+        fail(`QrCard.imageDataUri must be string|null`);
       }
       // content(编码模式)或 imageDataUri(图片模式,如微信后台登录码是图片非 URL)至少一个非空。
       if (
@@ -562,10 +556,7 @@ function checkMessagePart(p: MessagePart): void {
     case "actionCard":
       if (typeof p.data.title !== "string") fail(`actionCard.title must be a string`);
       if (!Array.isArray(p.data.lines)) fail(`actionCard.lines must be an array`);
-      if (
-        p.data.status !== undefined &&
-        !["running", "done", "aborted", "failed"].includes(p.data.status)
-      ) {
+      if (!["running", "done", "aborted", "failed"].includes(p.data.status)) {
         fail(`actionCard.status is invalid`);
       }
       for (const line of p.data.lines) {
@@ -945,17 +936,11 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       if (frame.data.toolCallId !== undefined && !frame.data.toolCallId) {
         fail("DocCommitted.toolCallId must be non-empty when present");
       }
-      if (
-        frame.data.appliedCount !== undefined &&
-        (!Number.isInteger(frame.data.appliedCount) || frame.data.appliedCount < 0)
-      ) {
-        fail("DocCommitted.appliedCount must be a non-negative integer when present");
+      if (!Number.isInteger(frame.data.appliedCount) || frame.data.appliedCount < 0) {
+        fail("DocCommitted.appliedCount must be a non-negative integer");
       }
-      if (
-        frame.data.conflictCount !== undefined &&
-        (!Number.isInteger(frame.data.conflictCount) || frame.data.conflictCount < 0)
-      ) {
-        fail("DocCommitted.conflictCount must be a non-negative integer when present");
+      if (!Number.isInteger(frame.data.conflictCount) || frame.data.conflictCount < 0) {
+        fail("DocCommitted.conflictCount must be a non-negative integer");
       }
       return;
     case "docDiffReady":
@@ -1028,8 +1013,8 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       checkStream(frame.data);
       return;
     default:
-      // 未知 kind 有意放行:保持前端对未来协议帧的前向兼容,只校验当前认识的帧。
-      return;
+      if (requestCorrelatedKinds.has(frame.kind)) return;
+      fail(`BridgeFrame.kind is unsupported: ${String((frame as { kind?: unknown }).kind)}`);
   }
 }
 

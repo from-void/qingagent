@@ -62,8 +62,6 @@ export type BrowserFolderBridgeResponse =
   | {
       ok: false;
       reasonCode?: BrowserFolderBridgeFailureReasonCode;
-      /** 兼容旧客户端；核心层始终丢弃该字段，不得向上透传。 */
-      error?: string;
     };
 
 export interface BrowserFolderBridgeBoundResponse {
@@ -108,7 +106,7 @@ interface PendingRequest {
 }
 
 const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
-const DEFAULT_FIRST_CONNECTION_GRACE_MS = 3_000;
+const DEFAULT_ATTACH_GRACE_MS = 3_000;
 const DEFAULT_READ_MAX_BYTES = 50 * 1024 * 1024 + 1;
 const CLIENT_FAILURE_MESSAGE = "browser folder request failed";
 const CLIENT_FAILURES: Record<
@@ -271,12 +269,10 @@ function clientHadConnection(sessionId: string, clientId: string): boolean {
 }
 
 function readFirstConnectionGraceMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw =
-    env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS ??
-    env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
-  if (raw === undefined) return DEFAULT_FIRST_CONNECTION_GRACE_MS;
+  const raw = env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
+  if (raw === undefined) return DEFAULT_ATTACH_GRACE_MS;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_FIRST_CONNECTION_GRACE_MS;
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_ATTACH_GRACE_MS;
   return Math.floor(parsed);
 }
 

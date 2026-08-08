@@ -11,7 +11,6 @@ import {
   credentialKeyFilePath,
   decryptCredentialWithKey,
   encryptCredentialWithKey,
-  exportCredentialKeyForDowngrade,
   initializeEnvironmentCredentialKeyProvider,
   initializeSafeStorageCredentialKeyProvider,
   resolveCredentialKey,
@@ -52,13 +51,19 @@ afterEach(() => {
 });
 
 describe("credential key envelope", () => {
+  it("拒绝无版本前缀的旧密文", () => {
+    const key = randomBytes(32);
+    const ciphertext = encryptCredentialWithKey("legacy-secret", key);
+
+    expect(() => decryptCredentialWithKey(ciphertext.replace(/^qa-cred:v1:/, ""), key)).toThrow(
+      "凭据密文格式非法(版本不受支持)",
+    );
+  });
+
   it("旧库升级包装同一枚 .cred-key，验证旧密文后才切换并删除明文 key", async () => {
     const dataDir = tempDir();
     const oldKey = randomBytes(32);
-    const oldCiphertext = encryptCredentialWithKey("legacy-secret", oldKey).replace(
-      /^qa-cred:v1:/,
-      "",
-    );
+    const oldCiphertext = encryptCredentialWithKey("legacy-secret", oldKey);
     writeFileSync(credentialKeyFilePath(dataDir), oldKey.toString("base64"), { mode: 0o600 });
     let verified = false;
 
@@ -75,7 +80,6 @@ describe("credential key envelope", () => {
     expect(verified).toBe(true);
     expect(provider.info).toMatchObject({
       protectionLevel: "os_keychain",
-      downgradePolicy: "export_before_downgrade",
     });
     expect(provider.resolveKey().equals(oldKey)).toBe(true);
     expect(existsSync(credentialKeyEnvelopePath(dataDir))).toBe(true);
@@ -140,21 +144,6 @@ describe("credential key envelope", () => {
     expect(provider.info.protectionLevel).toBe("local_file");
     expect(provider.resolveKey()).toHaveLength(32);
     expect(existsSync(credentialKeyFilePath(dataDir))).toBe(true);
-  });
-
-  it("safeStorage provider 可显式原子恢复同一枚 .cred-key 供降级读取", async () => {
-    const dataDir = tempDir();
-    const oldKey = randomBytes(32);
-    writeFileSync(credentialKeyFilePath(dataDir), oldKey.toString("base64"), { mode: 0o600 });
-    const provider = await initializeSafeStorageCredentialKeyProvider({
-      dataDir,
-      safeStorage: new FakeSafeStorage(),
-    });
-
-    expect(existsSync(credentialKeyFilePath(dataDir))).toBe(false);
-    const restoredPath = exportCredentialKeyForDowngrade(provider, dataDir);
-    expect(restoredPath).toBe(credentialKeyFilePath(dataDir));
-    expect(readFileSync(restoredPath, "utf8").trim()).toBe(oldKey.toString("base64"));
   });
 
   it("env key 切换前全库校验失败则显式 unavailable，禁止混合密钥写入", async () => {

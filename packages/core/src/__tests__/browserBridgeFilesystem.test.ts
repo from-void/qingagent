@@ -40,14 +40,11 @@ async function flushPromises(): Promise<void> {
 }
 
 const savedAttachGrace = process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
-const savedFirstConnectionGrace = process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
 
 describe("BrowserBridgeFilesystem", () => {
   afterEach(() => {
     if (savedAttachGrace === undefined) delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
     else process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS = savedAttachGrace;
-    if (savedFirstConnectionGrace === undefined) delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
-    else process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS = savedFirstConnectionGrace;
     vi.useRealTimers();
     __resetBrowserFolderBridgeForTest();
   });
@@ -212,53 +209,6 @@ describe("BrowserBridgeFilesystem", () => {
     expect(text).not.toContain(source.browserClientSourceId);
   });
 
-  it("客户端 ok:false 错误不会把浏览器原文透传给上层", async () => {
-    const source = makeSource();
-    const filesystem = new BrowserBridgeFilesystem(source);
-    const requests: Array<{ requestId: string; op: "stat" | "readdir" | "readFile" }> = [];
-    const close = openBrowserFolderBridgeConnection({
-      sessionId: source.sessionId,
-      clientId: source.browserClientSourceId!,
-      send: async (request) => {
-        requests.push({ requestId: request.requestId, op: request.op });
-      },
-    });
-    const leak = "/Users/alice/Private/leak.md ROUND14_BROWSER_ERROR_BODY";
-
-    async function expectGenericBridgeFailure(promise: Promise<unknown>, requestIndex: number): Promise<void> {
-      expect(resolveBrowserFolderBridgeResponse(requests[requestIndex]!.requestId, {
-        sessionId: source.sessionId,
-        folderId: source.id,
-        clientId: source.browserClientSourceId!,
-        response: { ok: false, error: leak },
-      })).toBe(true);
-      const error = await promise.then(
-        () => null,
-        (caught: unknown) => caught,
-      );
-      expect(error).toBeInstanceOf(Error);
-      const message = error instanceof Error ? error.message : String(error);
-      expect(message).toBe("browser folder request failed");
-      expect(message).not.toContain(leak);
-    }
-
-    try {
-      const statPromise = filesystem.stat("/leak.md");
-      await flushPromises();
-      await expectGenericBridgeFailure(statPromise, 0);
-
-      const readdirPromise = filesystem.readdir("/");
-      await flushPromises();
-      await expectGenericBridgeFailure(readdirPromise, 1);
-
-      const readPromise = filesystem.readFile("/leak.md");
-      await flushPromises();
-      await expectGenericBridgeFailure(readPromise, 2);
-    } finally {
-      close();
-    }
-  });
-
   it.each([
     ["not_found", "not_found"],
     ["permission_denied", "permission_denied"],
@@ -275,8 +225,6 @@ describe("BrowserBridgeFilesystem", () => {
         requests.push({ requestId: request.requestId });
       },
     });
-    const leak = "/Users/alice/Private/leak.md CLIENT_ERROR_BODY";
-
     try {
       const statPromise = filesystem.stat("/missing.md");
       await flushPromises();
@@ -284,7 +232,7 @@ describe("BrowserBridgeFilesystem", () => {
         sessionId: source.sessionId,
         folderId: source.id,
         clientId: source.browserClientSourceId!,
-        response: { ok: false, reasonCode, error: leak },
+        response: { ok: false, reasonCode },
       })).toBe(true);
       const error = await statPromise.then(
         () => null,
@@ -294,7 +242,6 @@ describe("BrowserBridgeFilesystem", () => {
         name: "BrowserFolderBridgeError",
         code: expectedCode,
       });
-      expect(String(error)).not.toContain(leak);
     } finally {
       close();
     }
@@ -395,7 +342,6 @@ describe("BrowserBridgeFilesystem", () => {
 
   it("未显式传第三参时默认首连宽限为 3 秒", async () => {
     delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_ATTACH_GRACE_MS;
-    delete process.env.QINGAGENT_BROWSER_FOLDER_BRIDGE_FIRST_CONNECTION_GRACE_MS;
     vi.useFakeTimers();
     registerBrowserFolderSource("sess_default_grace", "fld_default_grace", "client_default_grace");
 

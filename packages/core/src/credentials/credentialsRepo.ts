@@ -289,90 +289,9 @@ export async function updateConnectorCredentialBundlePayload<T>(
   });
 }
 
-export interface ReadThroughBundleMigrationOptions<T> {
-  connectorId: string;
-  legacyPlatform: string;
-  legacyKeys: readonly string[];
-  scope?: string;
-  /** 在 BEGIN IMMEDIATE 内执行的同步纯转换；不得调用仓储、I/O 或返回 Promise。 */
-  migrate: (legacy: Readonly<Record<string, string>>) => T;
-}
-
-export interface ReadThroughBundleMigrationResult<T> {
-  bundle: ConnectorCredentialBundle<T> | null;
-  migrated: boolean;
-}
-
-/**
- * 并发安全 read-through 原语：事务内先查 bundle；无则完整读取 legacy key 集并 INSERT
- * DO NOTHING；提交后再读胜者。迁移路径永不 UPDATE bundle，也不删除 legacy key。
- */
-export async function readThroughMigrateConnectorBundle<T>(
-  options: ReadThroughBundleMigrationOptions<T>,
-): Promise<ReadThroughBundleMigrationResult<T>> {
-  await ensureMigrated();
-  const scope = options.scope ?? DEFAULT_SCOPE;
-  if (options.legacyKeys.length === 0 || new Set(options.legacyKeys).size !== options.legacyKeys.length) {
-    throw new Error("legacyKeys 必须是非空且不重复的 key 集");
-  }
-
-  const transactionResult = await withTransaction(async (client) => {
-    const existing = await readBundleRow<T>(client, options.connectorId, scope);
-    if (existing) return commitTransaction({ hadBundle: true, inserted: false });
-
-    const placeholders = options.legacyKeys.map(() => "?").join(", ");
-    const rows = await client.execute({
-      sql: `SELECT cred_key, value_enc FROM sandbox_credentials
-            WHERE scope = ? AND platform = ? AND cred_key IN (${placeholders})`,
-      args: [scope, options.legacyPlatform, ...options.legacyKeys],
-    });
-    const encryptedByKey = new Map(
-      rows.rows.map((row) => [String(row.cred_key), String(row.value_enc)]),
-    );
-    if (options.legacyKeys.some((key) => !encryptedByKey.has(key))) {
-      return commitTransaction({ hadBundle: false, inserted: false });
-    }
-
-    const legacy: Record<string, string> = {};
-    for (const key of options.legacyKeys) {
-      // 单 key 损坏直接抛错并回滚；禁止用残缺集合生成看似成功的 bundle。
-      legacy[key] = decryptCredential(encryptedByKey.get(key)!);
-    }
-    const payload = options.migrate(legacy);
-    const bundle: ConnectorCredentialBundle<T> = {
-      version: 1,
-      connectorId: options.connectorId,
-      revision: 1,
-      payload,
-    };
-    const now = new Date().toISOString();
-    const inserted = await client.execute({
-      sql: `INSERT INTO sandbox_credentials (scope, platform, cred_key, value_enc, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope, platform, cred_key) DO NOTHING`,
-      args: [
-        scope,
-        connectorBundlePlatform(options.connectorId),
-        CONNECTOR_BUNDLE_KEY,
-        encryptCredential(JSON.stringify(bundle)),
-        now,
-        now,
-      ],
-    });
-    return commitTransaction({ hadBundle: false, inserted: inserted.rowsAffected === 1 });
-  });
-
-  const winner = await getConnectorCredentialBundle<T>(options.connectorId, scope);
-  return {
-    bundle: winner,
-    migrated: !transactionResult.hadBundle && transactionResult.inserted,
-  };
-}
-
 export interface DeleteConnectorBundleOptions {
   expectedRevision: number | null;
   scope?: string;
-  legacy?: { platform: string; keys: readonly string[] };
 }
 
 /** disconnect 删除也必须 CAS，避免迟到请求删掉并发重连写入的新 revision。 */
@@ -394,14 +313,6 @@ export async function deleteConnectorCredentialBundle(
         sql: `DELETE FROM sandbox_credentials
               WHERE scope = ? AND platform = ? AND cred_key = ?`,
         args: [scope, connectorBundlePlatform(connectorId), CONNECTOR_BUNDLE_KEY],
-      });
-    }
-    if (options.legacy?.keys.length) {
-      const placeholders = options.legacy.keys.map(() => "?").join(", ");
-      await client.execute({
-        sql: `DELETE FROM sandbox_credentials
-              WHERE scope = ? AND platform = ? AND cred_key IN (${placeholders})`,
-        args: [scope, options.legacy.platform, ...options.legacy.keys],
       });
     }
     return commitTransaction(undefined);

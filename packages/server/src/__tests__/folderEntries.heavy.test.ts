@@ -535,7 +535,6 @@ describe("folderEntriesRoutes", () => {
       process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
       const source = makeBrowserSource(sessionId);
       registerSessionFolderSources(sessionId, [source]);
-      const leak = "/Users/alice/Private/leak.md CLIENT_ERROR_BODY";
       const close = openBrowserFolderBridgeConnection({
         sessionId,
         clientId: source.browserClientSourceId!,
@@ -544,7 +543,7 @@ describe("folderEntriesRoutes", () => {
             sessionId,
             folderId: source.id,
             clientId: source.browserClientSourceId!,
-            response: { ok: false, reasonCode, error: leak },
+            response: { ok: false, reasonCode },
           });
         },
       });
@@ -556,7 +555,6 @@ describe("folderEntriesRoutes", () => {
         );
         expect(res.status).toBe(expectedStatus);
         const body = await res.json() as { message: string };
-        expect(body.message).not.toContain(leak);
         expect(body.message).not.toContain("断开后重新连接");
       } finally {
         close();

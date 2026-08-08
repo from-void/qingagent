@@ -100,7 +100,6 @@ async function* settleWriteDraftBeforeSuspension(
     state.docDraftBaseSections = baseSections;
     state.docDraftBaseVersion = baseVersion;
     requestContext?.set("doc", candidateDoc);
-    requestContext?.set("legacySections", candidateSections ?? []);
   };
 
   try {
@@ -184,7 +183,6 @@ export async function* handleSuspensionEvent(
     });
     yield* settleWriteDraftBeforeSuspension(context);
     context.wasSuspended = true;
-    requestContext?.set("legacySections", state.legacySections);
     recordSuspension(state, {
       streamId,
       runId: state.runId,
@@ -276,7 +274,6 @@ export async function* handleSuspensionEvent(
   const draftSettledBeforeSuspension = yield* settleWriteDraftBeforeSuspension(context);
   context.wasSuspended = true;
   if (!draftSettledBeforeSuspension) clearDraftConfirmationState(state);
-  requestContext?.set("legacySections", state.legacySections);
   recordSuspension(state, {
     streamId,
     runId,

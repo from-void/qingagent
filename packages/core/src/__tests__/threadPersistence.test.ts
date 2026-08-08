@@ -5,7 +5,6 @@ import type {
   ChatMessage,
   LegacySection,
   DocState,
-  IncomingDocState,
   FolderSourceRecord,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
@@ -344,8 +343,8 @@ function browserFolderSourceRecord(sessionId: string): FolderSourceRecord {
   };
 }
 
-function legacyDocState(kind: IncomingDocState["kind"]): QingagentThreadMetadata["docState"] {
-  return { kind } as QingagentThreadMetadata["docState"];
+function storedDocState(kind: DocState["kind"]): QingagentThreadMetadata["docState"] {
+  return { kind };
 }
 
 function expectRestoredStableFields(restored: SessionState | null, original: SessionState): void {
@@ -532,6 +531,7 @@ describe("thread persistence", () => {
         data: {
           title: "重新生成公众号稿",
           lines: [{ label: "模板", value: "产品发布" }],
+          status: "running",
         },
       }],
       chips: null,
@@ -607,6 +607,7 @@ describe("thread persistence", () => {
       threadId: sessionId,
       resourceId: "qingagent-user",
       expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(pmDoc("version one")),
       opId: "crash-window-v2",
       opKind: "replace_doc",
       actorType: "user",
@@ -1017,21 +1018,9 @@ describe("thread persistence", () => {
     __resetFolderSourceRuntimeForTest();
   });
 
-  it("normalizes every incoming doc state to content 3-state restore facts", async () => {
+  it("normalizes persisted doc state from content facts", async () => {
     const { normalizeRestoredDocStateKind } = await import("../doc-engine/docStateTransitions.js");
-    const kinds: IncomingDocState["kind"][] = [
-      "init",
-      "plan",
-      "drafting",
-      "locked",
-      "draft",
-      "review",
-      "committed",
-      "history",
-      "empty",
-      "editing",
-      "pendingReview",
-    ];
+    const kinds: DocState["kind"][] = ["empty", "editing", "pendingReview"];
 
     for (const kind of kinds) {
       expect(normalizeRestoredDocStateKind({
@@ -1080,7 +1069,7 @@ describe("thread persistence", () => {
       text: "素材正文",
       summary: null,
       fileId: null,
-      metadata: { pages: null, wordCount: 4, title: null },
+      metadata: { pages: null, wordCount: 4, title: null, parseState: "ready" },
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
@@ -1572,28 +1561,6 @@ describe("thread persistence", () => {
     expect(persisted).not.toHaveProperty("branchTitleGenerated");
   });
 
-  it("restores old material metadata without parseState as ready", async () => {
-    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
-    const sessionId = "material-parse-state-default";
-    threads.set(sessionId, storedThread(sessionId, metadata({
-      materials: [{
-        id: "material-old",
-        filename: "old.pdf",
-        mimeType: "application/pdf",
-        text: "旧素材正文",
-        summary: null,
-        fileId: "file-old",
-        metadata: { pages: 1, wordCount: 5, title: null },
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }],
-    })));
-
-    const restored = await loadSessionFromThread(sessionId);
-
-    expect(restored?.materials.get("material-old")?.metadata.parseState).toBe("ready");
-  });
-
   it("restores material visionSummary and ignores invalid visionSummary", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "material-vision-summary";
@@ -1607,7 +1574,7 @@ describe("thread persistence", () => {
           summary: null,
           visionSummary: "图中是一张手写便签。",
           fileId: "file-image",
-          metadata: { pages: null, wordCount: 6, title: null },
+          metadata: { pages: null, wordCount: 6, title: null, parseState: "ready" },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -1619,7 +1586,7 @@ describe("thread persistence", () => {
           summary: null,
           visionSummary: 123,
           fileId: "file-bad",
-          metadata: { pages: null, wordCount: 6, title: null },
+          metadata: { pages: null, wordCount: 6, title: null, parseState: "ready" },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -1700,7 +1667,7 @@ describe("thread persistence", () => {
     expect(JSON.stringify(restored?.messages)).not.toContain("服务器系统时间");
   });
 
-  it("restore 遇到空 meta.messages 时按旧会话走 recall 兜底", async () => {
+  it("restore 遇到空 meta.messages 时从 recall V2 内容恢复", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-empty-meta-messages";
     memory.recall.mockResolvedValueOnce({
@@ -1708,7 +1675,10 @@ describe("thread persistence", () => {
         {
           id: "recall-user-1",
           role: "user",
-          content: "旧会话上下文",
+          content: {
+            format: 2,
+            parts: [{ type: "text", text: "会话上下文" }],
+          },
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
         },
       ],
@@ -1726,56 +1696,27 @@ describe("thread persistence", () => {
     expect(restored?.messages).toEqual([
       {
         role: "user",
-        content: "旧会话上下文",
+        content: "会话上下文",
         id: "recall-user-1",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
   });
 
-  it("normalizes legacy cold-restored docState from document presence", async () => {
-    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
-    const cases: Array<{
-      id: string;
-      kind: IncomingDocState["kind"];
-      sections: LegacySection[];
-      expected: DocState["kind"];
-    }> = [
-      { id: "legacy-init-body", kind: "init", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-draft-empty", kind: "draft", sections: [], expected: "empty" },
-      { id: "legacy-plan-body", kind: "plan", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-drafting-empty", kind: "drafting", sections: [], expected: "empty" },
-      { id: "legacy-locked-empty", kind: "locked", sections: [], expected: "empty" },
-      { id: "legacy-committed-body", kind: "committed", sections: [textSection("正文")], expected: "editing" },
-      { id: "legacy-history-empty", kind: "history", sections: [], expected: "empty" },
-    ];
-
-    for (const testCase of cases) {
-      threads.set(testCase.id, storedThread(testCase.id, metadata({
-        docState: legacyDocState(testCase.kind),
-        legacySections: testCase.sections,
-      })));
-
-      const restored = await loadSessionFromThread(testCase.id);
-
-      expect(restored?.docState).toEqual({ kind: testCase.expected });
-    }
-  });
-
   it("restores review only when persisted review has document and suggestions", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     threads.set("review-good", storedThread("review-good", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
       legacySections: [textSection("正文")],
     })));
     threads.set("review-no-patch", storedThread("review-no-patch", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [],
       legacySections: [textSection("正文")],
     })));
     threads.set("review-no-doc", storedThread("review-no-doc", metadata({
-      docState: legacyDocState("review"),
+      docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
       legacySections: [],
     })));
@@ -1796,7 +1737,7 @@ describe("thread persistence", () => {
       "ask-1",
     );
     threads.set("askuser-durable", storedThread("askuser-durable", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       runId: "run-ask",
       toolCallId: "ask-1",
@@ -1871,7 +1812,7 @@ describe("thread persistence", () => {
     if (askUser.body.kind !== "askUser") throw new Error("expected askUser body");
     askUser.body.data.questions = [];
     threads.set("askuser-stale", storedThread("askuser-stale", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       chatHistory: [toolMessage(askUser)],
     })));
@@ -1980,7 +1921,7 @@ describe("thread persistence", () => {
       "ask-real",
     );
     threads.set("askuser-preferred", storedThread("askuser-preferred", metadata({
-      docState: legacyDocState("plan"),
+      docState: storedDocState("empty"),
       legacySections: [],
       runId: "run-ask",
       toolCallId: "ask-stale",
@@ -2152,7 +2093,7 @@ describe("thread persistence", () => {
       text: "素材正文",
       summary: null,
       fileId: null,
-      metadata: { pages: null, wordCount: 4, title: null },
+      metadata: { pages: null, wordCount: 4, title: null, parseState: "ready" },
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
@@ -2197,9 +2138,11 @@ describe("thread persistence", () => {
           : "2025-01-01T00:00:00.000Z",
       },
     }));
-    memory.listThreads
-      .mockResolvedValueOnce({ threads: all, total: all.length, hasMore: false })
-      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: all,
+      total: all.length,
+      hasMore: false,
+    });
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 50 });
 
@@ -2230,9 +2173,11 @@ describe("thread persistence", () => {
       updatedAt: new Date("2026-07-20T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "2026-07-20T00:00:00.000Z" },
     };
-    memory.listThreads
-      .mockResolvedValueOnce({ threads: [tombstoned, visible], total: 2, hasMore: false })
-      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: [tombstoned, visible],
+      total: 2,
+      hasMore: false,
+    });
     await beginSessionDeletion(tombstoned.id);
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 1 });
@@ -2242,7 +2187,7 @@ describe("thread persistence", () => {
     expect(result.hasMore).toBe(false);
   });
 
-  it("首页查询 current 优先去重，并用统一有效时间与稳定 tie-break", async () => {
+  it("首页查询使用统一有效时间与稳定 tie-break", async () => {
     const { listHomeSessionThreads } = await import("../session/threadPersistence.js");
     const sharedCreatedAt = new Date("2026-01-01T00:00:00.000Z");
     const currentDuplicate = {
@@ -2252,13 +2197,6 @@ describe("thread persistence", () => {
       createdAt: sharedCreatedAt,
       updatedAt: new Date("2026-02-01T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "not-a-date", source: "current" },
-    };
-    const legacyDuplicate = {
-      ...currentDuplicate,
-      title: "legacy",
-      resourceId: "user-default",
-      updatedAt: new Date("2028-01-01T00:00:00.000Z"),
-      metadata: { lastContentEditedAt: "2029-01-01T00:00:00.000Z", source: "legacy" },
     };
     const tieB = {
       id: "b-id",
@@ -2276,13 +2214,11 @@ describe("thread persistence", () => {
       createdAt: new Date("2026-03-01T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "1970-01-01T00:00:00.000Z" },
     };
-    memory.listThreads
-      .mockResolvedValueOnce({
-        threads: [currentDuplicate, tieB, tieA, newerCreated],
-        total: 4,
-        hasMore: false,
-      })
-      .mockResolvedValueOnce({ threads: [legacyDuplicate], total: 1, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: [currentDuplicate, tieB, tieA, newerCreated],
+      total: 4,
+      hasMore: false,
+    });
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 10 });
 

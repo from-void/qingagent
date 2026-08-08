@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LegacySection, DocState, ToolCallSpec, BridgeFrame, DocSuggestion } from "@qingagent/contract-ts";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
 // resetModules 只用于重置 bridge 的进程内 session；真实 core 模块体积大且会注册
 // 进程监听器，重复 importActual 会把模块初始化时间计入每个用例并泄漏 listeners。
@@ -545,6 +545,7 @@ describe("handleCommand existing-session restore", () => {
       threadId: session.threadId ?? session.sessionId,
       resourceId: session.resourceId,
       expectedDocumentSnapshot: 7,
+      baseContentHash: getPmContentHash(base),
       opId: `cached-crash-v8:${session.sessionId}`,
       opKind: "replace_doc",
       actorType: "user",
@@ -810,75 +811,6 @@ describe("handleCommand existing-session restore", () => {
     if (resetFrame?.kind !== "restoreReset") throw new Error("missing restoreReset");
     expect(Number.isInteger(resetFrame.data.snapshotSeq)).toBe(true);
     expect(resetFrame.data.snapshotSeq).toBeGreaterThanOrEqual(0);
-  });
-
-  it("同一旧消息重复恢复时派生稳定且互不冲突的消息 ID", async () => {
-    const bridge = await loadBridge();
-    const session = await createCachedSession(bridge);
-    session.docState = { kind: "editing" };
-    session.chatHistory = [];
-    session.messages = [
-      { role: "user", content: "第一条旧消息" },
-      { role: "assistant", content: "第二条旧消息" },
-    ] as never;
-
-    const restore = async () => {
-      const frames = await collectFrames(
-        bridge.handleCommand({
-          kind: "startSession",
-          data: { mode: { kind: "existing", data: { id: session.sessionId } } },
-        }),
-      );
-      return frames
-        .filter((frame) => frame.kind === "chatMessageAdded")
-        .map((frame) => frame.kind === "chatMessageAdded" ? frame.data.message.id : "");
-    };
-
-    const firstIds = await restore();
-    const secondIds = await restore();
-
-    expect(firstIds).toHaveLength(2);
-    expect(new Set(firstIds).size).toBe(2);
-    expect(secondIds).toEqual(firstIds);
-  });
-
-  it("恢复时同 id 的 Mastra 裸文本不能覆盖 actionCard 展示消息", async () => {
-    const bridge = await loadBridge();
-    const session = await createCachedSession(bridge);
-    session.docState = { kind: "editing" };
-    session.chatHistory = [{
-      id: "m-user-action",
-      role: { kind: "user" },
-      ts: "2026-07-12T00:00:00.000Z",
-      parts: [{
-        kind: "actionCard",
-        data: {
-          title: "重新生成公众号稿",
-          lines: [{ label: "模板", value: "产品发布" }],
-        },
-      }],
-      chips: null,
-    }];
-    session.messages = [{
-      id: "m-user-action",
-      role: "user",
-      content: "机器 query: regenerate_derivative doc_id=internal",
-    } as never];
-    session.streamId = "stream-active";
-
-    const frames = await collectFrames(
-      bridge.handleCommand({
-        kind: "startSession",
-        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
-      }),
-    );
-
-    const restored = frames.filter(
-      (frame) => frame.kind === "chatMessageAdded" && frame.data.message.id === "m-user-action",
-    );
-    expect(restored).toHaveLength(1);
-    expect(restored[0]?.kind === "chatMessageAdded" && restored[0].data.message.parts)
-      .toEqual(session.chatHistory[0]?.parts);
   });
 
   // 回归(0702 review Lane A · P1「restore 后进行中消息冻结」):生成进行中触发 restore 快照

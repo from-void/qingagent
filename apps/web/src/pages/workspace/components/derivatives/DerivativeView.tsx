@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeStoredPmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
 import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
@@ -211,7 +211,7 @@ export function DerivativeView(props: {
     try {
       return {
         damaged: false,
-        pmDoc: normalizeStoredPmDoc(JSON.parse(document.docPm)),
+        pmDoc: normalizePmDoc(JSON.parse(document.docPm)),
       };
     } catch (error) {
       console.error("[workspace] parse derivative document failed", error);
@@ -234,7 +234,7 @@ export function DerivativeView(props: {
     const templateName = descriptor.templates.find((template) => template.id === params.templateId)?.name ?? params.templateId;
     const lines = item.dtype === "translate" ? [{ label: "语言", value: item.targetLang ?? "目标语言" }, { label: "风格", value: templateName }] : [{ label: "写作风格", value: templateName }];
     if (params.privatePrompt.trim()) lines.push({ label: "补充", value: params.privatePrompt.trim() });
-    props.onSendQuery(descriptor.queryText(item.docId, item.targetLang), { title: descriptor.cardTitle(before != null), lines });
+    props.onSendQuery(descriptor.queryText(item.docId, item.targetLang), { title: descriptor.cardTitle(before != null), lines, status: "done" });
   };
   const deleteDraft = async () => {
     setMoreOpen(false);

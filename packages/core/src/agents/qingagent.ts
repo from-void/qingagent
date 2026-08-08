@@ -14,7 +14,6 @@ import {
   USER_SKILL_SOURCE_DIRS,
   classifyUserSkillSource,
 } from "../skills/paths.js";
-import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import {
   acquireSessionWorkspace,
   getSessionWorkspace,
@@ -51,7 +50,7 @@ import {
   anthropicBaseUrl,
   createSnapshottingQingagentModel,
   resolveBaseUrl,
-  resolveDeepseekAuth,
+  resolveModelAuth,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -85,7 +84,7 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     docVersionAwarenessSourceFromRequestContext(requestContext);
   const diagramVizEditingSource =
     diagramVizEditingSourceFromRequestContext(requestContext);
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey } = resolveModelAuth(requestContext);
   const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
   const evict = () => {
@@ -152,7 +151,7 @@ function trackQingagentModel<T extends object>(model: T, requestContext?: Reques
     requestContext,
     callSite: isModelCallSite(callSite) ? callSite : MODEL_CALL_SITES.unknown,
     modelId: resolveModelId(requestContext, "flash"),
-    keyOrigin: resolveDeepseekAuth(requestContext).origin,
+    keyOrigin: resolveModelAuth(requestContext).origin,
   });
 }
 
@@ -215,7 +214,7 @@ export async function resolveEnabledSkillDirsFromRoots(
   const dirs: string[] = [];
   for (const { skill } of sources) {
     const name = skill.metadata.name;
-    if (isArchivedBuiltinSkillName(name) || disabled.has(name)) continue;
+    if (disabled.has(name)) continue;
     dirs.push(toPosixPath(skill.path));
   }
   return dirs;

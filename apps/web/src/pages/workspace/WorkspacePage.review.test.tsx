@@ -127,7 +127,7 @@ vi.mock("./data/serverStream", () => {
           data: {
             resourceRef: { id: materialId, domain: { kind: "file" } },
             summary,
-            metadata: { fileId: `file-${materialId}` },
+            metadata: { fileId: `file-${materialId}`, parseState: "ready" },
           },
         });
       },
@@ -2194,7 +2194,7 @@ describe("WorkspacePage review controls", () => {
       { kind: "sessionMeta", data: { sessionId: "s-1", title: "动画看门狗" } },
       {
         kind: "docStateChanged",
-        data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
       },
       {
         kind: "stream",
@@ -3381,7 +3381,6 @@ describe("WorkspacePage review controls", () => {
     const { buildPatchVerdictCommand } = await import("./WorkspacePage");
 
     expect(buildPatchVerdictCommand(
-      [reviewToolCall("p-1", "batch-a", "reviewing")],
       "p-1",
       "rejected",
     )).toEqual({
@@ -4328,7 +4327,7 @@ describe("WorkspacePage review controls", () => {
   it("docCommitted 不再整体清空批注", async () => {
     const stream = await renderWorkspaceWithAnnotations();
 
-    await emitFrames(stream, [{ kind: "docCommitted", data: { sessionId: "s-1", version: 2 } }]);
+    await emitFrames(stream, [{ kind: "docCommitted", data: { sessionId: "s-1", version: 2, appliedCount: 0, conflictCount: 0 } }]);
     await flushMicrotasks(3);
 
     expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
@@ -7727,7 +7726,6 @@ describe("WorkspacePage page-exit doc save", () => {
         clientMutationId: "exit-1",
       },
     });
-    expect(command?.data.legacySections).toBeUndefined();
   });
 
   it("page-exit flush 优先 sendBeacon,失败时回退 keepalive fetch", async () => {
@@ -7746,10 +7744,10 @@ describe("WorkspacePage page-exit doc save", () => {
       hasPendingDocSave: false,
       createMutationId: () => "exit-beacon",
       sendBeacon,
-      url: "/api/v1/stream",
+      url: "/api/v1/commands",
     })).toBe("beacon");
 
-    expect(sendBeacon).toHaveBeenCalledWith("/api/v1/stream", expect.any(Blob));
+    expect(sendBeacon).toHaveBeenCalledWith("/api/v1/commands", expect.any(Blob));
     const beaconBody = JSON.parse(await blobText(sendBeacon.mock.calls[0]?.[1] as Blob));
     expect(beaconBody).toMatchObject({
       kind: "updateDoc",
@@ -7774,7 +7772,7 @@ describe("WorkspacePage page-exit doc save", () => {
       fetchKeepalive,
     })).toBe("keepalive");
 
-    expect(fetchKeepalive).toHaveBeenCalledWith("/api/v1/stream", expect.objectContaining({
+    expect(fetchKeepalive).toHaveBeenCalledWith("/api/v1/commands", expect.objectContaining({
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
@@ -8251,7 +8249,7 @@ function uploadedMaterialResource(): Resource {
     mime: "application/pdf",
     byteLen: 2048,
     createdAt: "2026-07-04T00:00:00.000Z",
-    metadata: { fileId: "file-mat-1" },
+    metadata: { fileId: "file-mat-1", parseState: "ready" },
   };
 }
 

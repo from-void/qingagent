@@ -435,7 +435,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
 
   const selectedFromList = selectedName ? skills.find((skill) => skill.name === selectedName) ?? null : null;
   const selectedSkill = detail ?? selectedFromList;
-  const selectedChildren = selectedFromList ? childSkills(selectedFromList) : [];
+  const selectedChildren = selectedFromList?.children ?? [];
   const selectedParent = selectedFromList && selectedSkill
     ? { ...selectedFromList, enabled: selectedSkill.enabled }
     : selectedFromList;
@@ -738,15 +738,10 @@ function showSkillImportPartialReceipt({
 function findSkillInList(skills: readonly SkillInfo[], name: string): SkillInfo | null {
   for (const skill of skills) {
     if (skill.name === name) return skill;
-    const child = findSkillInList(Array.isArray(skill.children) ? skill.children : [], name);
+    const child = findSkillInList(skill.children, name);
     if (child) return child;
   }
   return null;
-}
-
-function childSkills(skill: SkillInfo): SkillInfo[] {
-  // 兼容升级期间旧服务响应，正式 API 始终返回 children 数组。
-  return Array.isArray(skill.children) ? skill.children : [];
 }
 
 function ChildSkillDetail({

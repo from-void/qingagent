@@ -7,7 +7,7 @@ vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: vi.fn(() => vi.fn(() => ({ modelId: "deepseek-v4-flash" }))),
 }));
 
-vi.mock("ai", () => ({
+vi.mock("ai-v5", () => ({
   wrapLanguageModel: vi.fn(({ model }) => model),
   streamText: vi.fn(() => ({
     textStream: (async function* () {

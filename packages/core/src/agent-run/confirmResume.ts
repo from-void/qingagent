@@ -211,8 +211,6 @@ function safeResumeRequestContext(
     ["origin", session.origin ?? "manual"],
     ["docVersion", session.docVersion],
     ["doc", session.doc],
-    ["legacySections", session.legacySections],
-    ["patchValidationResults", session.patchValidationResults],
     ["modelOverrides", session.modelOverrides],
   ]);
 }

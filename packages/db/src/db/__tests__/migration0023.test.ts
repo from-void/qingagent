@@ -3,12 +3,8 @@ import { getDocumentsClient } from "../documentsClient.js";
 import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
 import { MIGRATIONS } from "../migrations/index.js";
 import {
-  repairStoredDocumentRows,
-} from "../documentRepo.js";
-import {
   restoreQuarantinedDocumentFamilies0002,
 } from "../migrations/0023_restore_quarantine_0002.js";
-import { runQuarantine0002Recovery } from "../quarantine0002Recovery.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
 function expectMigration0023AppliedExactlyOnce(appliedIds: readonly number[]): void {
@@ -162,25 +158,12 @@ describe("0023 restore quarantine 0002", () => {
       "SELECT COUNT(*) AS n FROM documents WHERE thread_id = 'thread-missing'",
     )).rows[0]?.n)).toBe(0);
 
-    const second = await runQuarantine0002Recovery();
-    expect(second).toMatchObject({
-      eligibleDocuments: 2,
-      restoredDocuments: 0,
-      preservedCurrentDocuments: 2,
-      restoredDrafts: 1,
-      restoredSuggestions: 1,
-      restoredOps: 1,
-      restoredVersions: 1,
-    });
-    expect(Number((await client.execute(
-      "SELECT COUNT(*) AS n FROM document_versions WHERE doc_id = 'metadata-doc'",
-    )).rows[0]?.n)).toBe(0);
   });
 
   it.each([
     { label: "隔离版本高于当前版本", currentVersion: 1, quarantinedVersion: 5 },
     { label: "隔离版本低于当前版本", currentVersion: 5, quarantinedVersion: 1 },
-  ])("$label 时 0025 隔离异 docId 子表，巡检后当前正文不变", async ({
+  ])("$label 时 0025 隔离异 docId 子表，迁移后当前正文不变", async ({
     currentVersion,
     quarantinedVersion,
   }) => {
@@ -223,9 +206,6 @@ describe("0023 restore quarantine 0002", () => {
     __resetMigrationsForTest();
 
     await runMigrations();
-    const stats = await repairStoredDocumentRows();
-
-    expect(stats.versionPointersRepaired).toBe(0);
     const current = await client.execute(
       "SELECT doc_version, doc_pm FROM documents WHERE id = 'current-family'",
     );

@@ -101,28 +101,6 @@ export function deriveEditorState(
   }
 }
 
-export function coerceLegacyContentKind(kind: string): ContentDocState {
-  switch (kind) {
-    case "init":
-    case "empty":
-      return { kind: "empty" };
-    case "plan":
-    case "drafting":
-    case "draft":
-    case "locked":
-    case "editing":
-      return { kind: "editing" };
-    case "review":
-    case "pendingReview":
-      return { kind: "pendingReview" };
-    case "committed":
-    case "history":
-      return { kind: "editing" };
-    default:
-      return { kind: "empty" };
-  }
-}
-
 export function* emitProjectedDocState(
   state: SessionState,
   _reason: string,

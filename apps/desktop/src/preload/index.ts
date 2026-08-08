@@ -5,10 +5,6 @@ import {
 } from "./exportDownloadBridge.js";
 import { exportDiagnostics } from "./diagnosticsExportBridge.js";
 import {
-  BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL,
-  type BrowserCredentialCleanupNotice,
-} from "../browserCredentialCleanupContract.js";
-import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_REQUEST_CHANNEL,
   DESKTOP_DIALOG_RESPONSE_CHANNEL,
@@ -76,11 +72,8 @@ function readDesktopConfigValue(key: DesktopConfigKey): string | null {
   const result = ipcRenderer.sendSync(
     "qingagent:client-config-value-get",
     key,
-  ) as DesktopConfigReadResult | string | null;
-  // 兼容同版本滚动升级期间可能短暂连到旧 main 的值形状。
-  if (typeof result === "string") return result.length > 0 ? result : null;
-  if (result === null) return null;
-  if (!result || result.ok !== true) throw new Error("desktop client config read failed");
+  ) as DesktopConfigReadResult;
+  if (result.ok !== true) throw new Error("desktop client config read failed");
   return typeof result.value === "string" && result.value.length > 0 ? result.value : null;
 }
 
@@ -129,10 +122,6 @@ contextBridge.exposeInMainWorld("electron", {
   revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),
   exportDiagnostics,
-  getBrowserCredentialCleanupNotice: () =>
-    ipcRenderer.invoke(BROWSER_CREDENTIAL_CLEANUP_NOTICE_CHANNEL) as Promise<
-      BrowserCredentialCleanupNotice | null
-    >,
   getDeepseekApiKey: () => readDesktopConfigValue("qingagent.deepseek_api_key"),
   setDeepseekApiKey: (value: string | null) =>
     writeDesktopConfigValue("qingagent.deepseek_api_key", value),

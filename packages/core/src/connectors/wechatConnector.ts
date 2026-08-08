@@ -10,7 +10,6 @@ import { wechatAuthService } from "./wechatAuthService.js";
 import {
   markWechatSessionNeedsReauth,
   readWechatCredentialBundle,
-  WECHAT_LEGACY_CREDENTIAL_KEYS,
   type WechatCredentialPayload,
 } from "./wechatCredentials.js";
 
@@ -48,7 +47,6 @@ export class WechatConnector implements ConnectorAdapter {
       markSessionNeedsReauth: markWechatSessionNeedsReauth,
       deleteBundle: (revision) => deleteConnectorCredentialBundle("wechat-mp", {
         expectedRevision: revision,
-        legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS },
       }),
       now: () => new Date(),
       ...deps,

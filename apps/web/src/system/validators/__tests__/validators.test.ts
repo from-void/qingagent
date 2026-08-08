@@ -9,6 +9,16 @@ import { validateAskUserSpec, AskUserSpecValidationError } from "../askUserSpec"
 import { validateCommand, CommandValidationError } from "../command";
 import { validateBridgeFrame, BridgeFrameValidationError } from "../wireFrame";
 
+const validPmDoc = {
+  type: "doc" as const,
+  attrs: { schemaVersion: 1 as const },
+  content: [{
+    type: "paragraph" as const,
+    attrs: { blockId: "p-1" },
+    content: [{ type: "text" as const, text: "正文" }],
+  }],
+};
+
 function validAskUserSpec(): AskUserSpec {
   return {
     id: "a",
@@ -129,7 +139,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "",
-        mentions: [],
         skills: [],
         chips: [
           {
@@ -193,21 +202,6 @@ describe("validateCommand", () => {
     })).not.toThrow();
   });
 
-  it("accepts valid sendMessage", () => {
-    const cmd: Command = {
-      kind: "sendMessage",
-      data: {
-        sessionId: "s",
-        text: "hi",
-        mentions: [{ id: "f", domain: { kind: "file" } }],
-        skills: [],
-        chips: [],
-        fileIds: [],
-      },
-    };
-    expect(() => validateCommand(cmd)).not.toThrow();
-  });
-
   it("accepts current main/derivative targets", () => {
     for (const activeDocument of [
       { kind: "main" as const },
@@ -218,7 +212,6 @@ describe("validateCommand", () => {
         data: {
           sessionId: "s",
           text: "把第二段改短一点",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -236,7 +229,6 @@ describe("validateCommand", () => {
         data: {
           sessionId: "s",
           text: "改短一点",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -252,7 +244,7 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "角色审查",
-        mentions: [], skills: [], chips: [], fileIds: [],
+    skills: [], chips: [], fileIds: [],
         reviewContext: { type: "role", templateId: "review-role-engineer", templateName: "研发工程师" },
       },
     };
@@ -265,7 +257,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "生成衍生稿",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -287,7 +278,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "selection" },
@@ -313,7 +303,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "selection" },
@@ -335,7 +324,6 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         text: "修改",
-        mentions: [],
         skills: [],
         chips: [{
           kind: { kind: "text" },
@@ -358,7 +346,7 @@ describe("validateCommand", () => {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: validPmDoc,
         clientMutationId: "mutation-1",
       },
     };
@@ -411,7 +399,8 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: validPmDoc,
         clientMutationId: "",
       },
     };
@@ -425,7 +414,7 @@ describe("validateCommand", () => {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
         baseContentHash: "",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: validPmDoc,
         clientMutationId: "mutation-1",
       },
     };
@@ -479,6 +468,11 @@ describe("validateBridgeFrame", () => {
     expect(() =>
       validateBridgeFrame({ ...frame, data: { ...frame.data, appendSeq: 1.5 } }),
     ).toThrow(BridgeFrameValidationError);
+  });
+
+  it("rejects contract-external frame kinds", () => {
+    expect(() => validateBridgeFrame({ kind: "futureFrame", data: {} } as never))
+      .toThrow(BridgeFrameValidationError);
   });
 
   it("rejects citation with wrong domain", () => {
@@ -538,6 +532,8 @@ describe("validateBridgeFrame", () => {
         body: {
           kind: "qrCard",
           data: {
+            presentation: "scan",
+            imageDataUri: null,
             content: data.content,
             title: "扫码授权飞书",
             code: "ABCD-1234",
@@ -827,7 +823,7 @@ describe("validateBridgeFrame", () => {
   it("accepts a valid frame", () => {
     const frame: BridgeFrame = {
       kind: "docStateChanged",
-      data: { state: { kind: "drafting" }, activeOverlay: null, agentBusy: true },
+      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
     };
     expect(() => validateBridgeFrame(frame)).not.toThrow();
   });
@@ -1142,7 +1138,7 @@ describe("validateBridgeFrame", () => {
   it("rejects docCommitted without sessionId", () => {
     const frame: BridgeFrame = {
       kind: "docCommitted",
-      data: { sessionId: "", version: 2 },
+      data: { sessionId: "", version: 2, appliedCount: 0, conflictCount: 0 },
     };
     expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
   });
@@ -1181,7 +1177,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "hello",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -1196,7 +1191,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "check this file",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["abc-123", "def-456"],
@@ -1211,7 +1205,6 @@ describe("validateCommand — sendMessage fileIds", () => {
       data: {
         sessionId: "s",
         text: "hi",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [""],

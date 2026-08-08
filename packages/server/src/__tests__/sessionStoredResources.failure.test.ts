@@ -20,10 +20,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@qingagent/db", () => ({
-  backfillActiveSessionResources: vi.fn(),
   completeSessionDeletion: mocks.completeSessionDeletion,
   getSessionDeletion: mocks.getSessionDeletion,
-  hasActiveSessionResource: vi.fn(),
   listActiveSessionResourceOwners: mocks.listActiveSessionResourceOwners,
   listSessionResources: mocks.listSessionResources,
   markSessionAssetsDeleted: mocks.markSessionAssetsDeleted,
@@ -31,9 +29,7 @@ vi.mock("@qingagent/db", () => ({
 }));
 
 vi.mock("../lib/uploadStorage", () => ({
-  listStoredFileIds: vi.fn(),
   purgeStoredFile: mocks.purgeStoredFile,
-  UPLOAD_DIR: "/tmp/qingagent-session-assets-failure-test",
 }));
 
 import { deleteSessionStoredResources } from "../gateway/sessionStoredResources";

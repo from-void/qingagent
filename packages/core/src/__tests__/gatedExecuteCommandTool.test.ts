@@ -522,22 +522,17 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(executeCalls[0]?.timeout).toBe(SANDBOX_TIMEOUT_MS);
   });
 
-  it("Gap3 回归:显式 timeout 透传为毫秒且不被默认值覆盖", async () => {
+  it("Gap3 回归:显式 timeoutSeconds 透传为毫秒且不被默认值覆盖", async () => {
     const { tool, executeCalls } = createToolHarness("gated-explicit-timeout");
 
-    const result = await executeTool(tool, { command: allowedFileCommand, timeout: 7 });
+    const result = await executeTool(tool, { command: allowedFileCommand, timeoutSeconds: 7 });
 
     expect(result).toBe("ok");
     expect(executeCalls).toHaveLength(1);
     expect(executeCalls[0]?.timeout).toBe(7_000);
   });
 
-  it("超时协议回归:旧 timeout 与新 timeoutSeconds 都按秒解释，timeoutMs 按毫秒", async () => {
-    const legacy = createToolHarness("gated-timeout-legacy-15");
-    await expect(executeTool(legacy.tool, { command: allowedFileCommand, timeout: 15 }))
-      .resolves.toBe("ok");
-    expect(legacy.executeCalls[0]?.timeout).toBe(15_000);
-
+  it("超时协议回归:timeoutSeconds 按秒解释，timeoutMs 按毫秒", async () => {
     const named = createToolHarness("gated-timeout-seconds-15");
     await expect(executeTool(named.tool, { command: allowedFileCommand, timeoutSeconds: 15 }))
       .resolves.toBe("ok");
@@ -547,17 +542,6 @@ describe("gated execute_command tool cwd 约束", () => {
     await expect(executeTool(millis.tool, { command: allowedFileCommand, timeoutMs: 15_000 }))
       .resolves.toBe("ok");
     expect(millis.executeCalls[0]?.timeout).toBe(15_000);
-  });
-
-  it("超时协议回归:新旧字段并存时以 timeoutSeconds 为准", async () => {
-    const { tool, executeCalls } = createToolHarness("gated-timeout-precedence");
-
-    await expect(executeTool(tool, {
-      command: allowedFileCommand,
-      timeout: 30,
-      timeoutSeconds: 5,
-    })).resolves.toBe("ok");
-    expect(executeCalls[0]?.timeout).toBe(5_000);
   });
 
   it("超时协议回归:timeoutSeconds 与 timeoutMs 互斥，schema 直接拒绝", async () => {
@@ -578,13 +562,13 @@ describe("gated execute_command tool cwd 约束", () => {
   });
 
   it("P1 回归:毫秒当秒传的巨值不能绕过前台硬上限，且生效值回传给模型", async () => {
-    // 0729 真机:模型传 timeout:15000(毫秒风格),被按秒解释成 15000 秒,
+    // 0729 真机:模型向秒字段传 15000(毫秒风格),被按秒解释成 15000 秒,
     // 前台 120s 上限被显式入参直接绕过,命令跑满 130s 才由 CLI 自己退出。
     const { tool, executeCalls } = createToolHarness("gated-timeout-clamp");
 
     const result = await executeToolResult(tool, {
       command: allowedFileCommand,
-      timeout: 15_000,
+      timeoutSeconds: 15_000,
     });
 
     expect(executeCalls).toHaveLength(1);
@@ -691,7 +675,7 @@ describe("gated execute_command tool cwd 约束", () => {
     try {
       if (!tool.execute) throw new Error("execute missing");
       const execution = tool.execute(
-        { command: allowedFileCommand, timeout: 120 },
+        { command: allowedFileCommand, timeoutSeconds: 120 },
         {
           toolCallId: "gated-heartbeat-test",
           messages: [],
@@ -927,7 +911,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const result = await executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     });
 
     expect(result).toMatchObject({
@@ -1044,24 +1028,24 @@ describe("gated execute_command tool cwd 约束", () => {
     }
   });
 
-  it("P2-6 回归:上限内显式 timeout 后台命令直接执行", async () => {
+  it("P2-6 回归:上限内显式 timeoutSeconds 后台命令直接执行", async () => {
     const { tool, spawnCalls } = createToolHarness("gated-background-explicit-timeout");
 
     expect(await executeTool(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 7,
+      timeoutSeconds: 7,
     })).toContain("Started background process (PID: 12345");
     expect(spawnCalls[0]?.timeout).toBe(7_000);
   });
 
-  it("P2-6 回归:超大后台 timeout 被硬钳制到 TTL 上限并显示实际时长", async () => {
+  it("P2-6 回归:超大后台 timeoutSeconds 被硬钳制到 TTL 上限并显示实际时长", async () => {
     const { tool, spawnCalls } = createToolHarness("gated-background-timeout-clamped");
 
     const result = await executeTool(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 31_536_000,
+      timeoutSeconds: 31_536_000,
     });
 
     expect(spawnCalls[0]?.timeout).toBe(SANDBOX_BACKGROUND_TTL_MS);
@@ -1077,7 +1061,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const result = await executeTool(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     });
     expect(result).toContain(`后台进程已达上限 ${SANDBOX_MAX_BACKGROUND_PROCESSES}`);
     expect(spawnCalls).toHaveLength(0);
@@ -1090,7 +1074,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const input = {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     };
 
     const results = await Promise.all([
@@ -1114,7 +1098,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const input = {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     };
     const first = executeToolResult(tool, input);
     await vi.waitFor(() => expect(listCallCount()).toBe(1));
@@ -1152,7 +1136,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const command = executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     }, {
       toolCallId: "gated-execute-test",
       messages: [],
@@ -1186,7 +1170,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const command = executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     }, {
       toolCallId: "gated-execute-test",
       messages: [],
@@ -1219,7 +1203,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const command = executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     }, {
       toolCallId: "gated-execute-test",
       messages: [],
@@ -1248,7 +1232,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const command = executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     }, {
       toolCallId: "gated-execute-test",
       messages: [],
@@ -1277,7 +1261,7 @@ describe("gated execute_command tool cwd 约束", () => {
     const command = executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     }, {
       toolCallId: "gated-execute-test",
       messages: [],
@@ -1316,7 +1300,7 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
     expect(await executeTool(tool, {
       command: trustedNodeCommand,
       background: true,
-      timeout: 10,
+      timeoutSeconds: 10,
     })).toContain("Started background process");
     expect(resolveCount).toBe(2);
     expect(executeCalls[0]?.env).toEqual({

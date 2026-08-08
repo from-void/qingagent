@@ -8,8 +8,6 @@ import {
 import {
   documentDraftRepo,
   findOpByDocumentVersion,
-  getDocumentRecoveryWriteBlock,
-  getDocumentsClient,
   getVersionSnapshotByDocumentSnapshot,
   listDocumentSuggestionStatusesInBatch,
   replaceRebasedReview,
@@ -78,7 +76,6 @@ function conflictFrame(sessionId: string): BridgeFrame {
 function clearReviewDraftRuntime(state: SessionState): void {
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   state.suggestionBaseDoc = null;
   state.suggestionBaseVersion = null;
   state.docDraftBaseDoc = null;
@@ -303,20 +300,6 @@ export async function rehydratePendingDraft(
   if (!row || row.status === "conflict") {
     return { kind: "skipped" };
   }
-  const recoveryBlock = await getDocumentRecoveryWriteBlock(
-    getDocumentsClient(),
-    state.docId,
-  );
-  if (recoveryBlock) {
-    logger.warn("Skipped pending draft rehydrate for recovery-blocked document", {
-      sessionId: state.sessionId,
-      docId: state.docId,
-      sourceDocId: recoveryBlock.sourceDocId,
-      versionId: recoveryBlock.versionId,
-    });
-    return { kind: "skipped" };
-  }
-
   if (row.status === "draft_candidate" && row.baseVersion === 0) {
     // 首稿候选恢复会提交正文并清理草稿，只读快照不能把 GET 变成写请求。
     if (options.readOnly) return { kind: "skipped" };
@@ -406,7 +389,6 @@ export async function rehydratePendingDraft(
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   state.suggestionBaseDoc = clonePmDoc(currentDoc);
   state.suggestionBaseVersion = baseVersion;
   state.docDraftBaseDoc = clonePmDoc(currentDoc);

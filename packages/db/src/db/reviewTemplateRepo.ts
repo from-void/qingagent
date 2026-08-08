@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
 import {
-  appendReviewIgnoreLines,
-  splitReviewSupplement,
   type ReviewTemplateItem,
   type ReviewType,
 } from "@qingagent/contract-ts";
@@ -167,52 +165,35 @@ export async function deleteReviewTemplate(id: string, client?: Client): Promise
 export async function getReviewDocSupplement(
   docId: string,
   type: ReviewType,
-  templateScopeOrClient: string | Client = "",
+  templateScope: string,
   client?: Client,
 ): Promise<string> {
-  const templateScope = typeof templateScopeOrClient === "string"
-    ? templateScopeOrClient.trim()
-    : "";
-  const db = await dbClient(
-    typeof templateScopeOrClient === "string" ? client : templateScopeOrClient,
-  );
+  const scope = templateScope.trim();
+  const db = await dbClient(client);
   const result = await db.execute({
-    sql: `SELECT template_scope,supplement FROM review_doc_supplements
-      WHERE doc_id=? AND type=? AND template_scope IN (?, '')
-      ORDER BY CASE WHEN template_scope=? THEN 0 ELSE 1 END`,
-    args: [docId, type, templateScope, templateScope],
+    sql: `SELECT supplement FROM review_doc_supplements
+      WHERE doc_id=? AND type=? AND template_scope=?`,
+    args: [docId, type, scope],
   });
-  const exact = result.rows.find((row) => String(row.template_scope) === templateScope);
-  const legacy = result.rows.find((row) => String(row.template_scope) === "");
-  if (!exact) return String(legacy?.supplement ?? "");
-  const exactSupplement = String(exact.supplement);
-  if (!templateScope || !legacy || legacy === exact) return exactSupplement;
-  const legacyLines = splitReviewSupplement(String(legacy.supplement)).ignoreLines;
-  return legacyLines.length > 0
-    ? appendReviewIgnoreLines(exactSupplement, legacyLines)
-    : exactSupplement;
+  return String(result.rows[0]?.supplement ?? "");
 }
 
 export async function upsertReviewDocSupplement(
   docId: string,
   type: ReviewType,
   supplement: string,
-  templateScopeOrClient: string | Client = "",
+  templateScope: string,
   client?: Client,
 ): Promise<string> {
-  const templateScope = typeof templateScopeOrClient === "string"
-    ? templateScopeOrClient.trim()
-    : "";
-  const db = await dbClient(
-    typeof templateScopeOrClient === "string" ? client : templateScopeOrClient,
-  );
+  const scope = templateScope.trim();
+  const db = await dbClient(client);
   const now = new Date().toISOString();
   await withWriteRetry(() => db.execute({
     sql: `INSERT INTO review_doc_supplements(
         doc_id,type,template_scope,supplement,created_at,updated_at
       ) VALUES(?,?,?,?,?,?) ON CONFLICT(doc_id,type,template_scope) DO UPDATE SET
       supplement=excluded.supplement,updated_at=excluded.updated_at`,
-    args: [docId, type, templateScope, supplement, now, now],
+    args: [docId, type, scope, supplement, now, now],
   }));
   return supplement;
 }

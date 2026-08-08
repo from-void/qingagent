@@ -6,11 +6,10 @@ import type {
   ToolCallSpec,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { getDeterministicId } from "@qingagent/pm-schema";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
   buildDocumentSnapshot,
-  cleanRestoredText,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -140,7 +139,6 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
       // 前端拿旧锚点套新正文(冷恢复 threadPersistence 有此校验/清理,热恢复此前缺失 → 冷热不一致)。
       session.suggestions.clear();
       session.patchVerdicts.clear();
-      session.patchValidationResults.clear();
       session.suggestionBaseDoc = null;
       session.suggestionBaseVersion = null;
       // 清 draft scratch(等价 core 的 clearInMemoryDraftDocs,直接清字段免动 core 公共导出)
@@ -280,7 +278,10 @@ export function* emitRestoreFrames(
     yield {
       kind: "documentSnapshotWritten",
       data: {
-        doc: buildDocumentSnapshot(session.legacySections, session.docVersion, session.doc),
+        doc: buildDocumentSnapshot(
+          session.docVersion,
+          session.doc ?? legacySectionsToPm(session.legacySections as never),
+        ),
       },
     };
   }
@@ -317,107 +318,39 @@ export function* emitRestoreFrames(
     };
   }
 
-  // 4. Emit chat messages from the restored session.
-  // If chatHistory exists (rich format with tool bubbles, thinking parts),
-  // use it for full-fidelity restore. Otherwise fall back to plain text
-  // from session.messages for backward compatibility.
-  const restoredChatMessageIds = new Set(
-    session.chatHistory.map((message) => message.id),
-  );
-  if (session.chatHistory.length > 0) {
-    // Rich restore path: emit full ChatMessages with all parts
-    for (const msg of session.chatHistory) {
-      // appendSeq 基线(0702 review Lane A):生成进行中触发 restore 快照时,该消息
-      // 后续直播 chatMessageAppended 的 seq 延续 seqCounters 计数(而非从 1 重新数)。
-      // 前端 restoreReset 清空 appendCursor 后只应用严格连续 seq === cursor+1 的增量,
-      // 缺基线会把进行中消息永久冻结(且 restoreReset 广播会冻住同会话全部标签页)。
-      // 铁律:基线读取与消息深拷贝必须在同一同步 tick 内完成——emitRestoreFrames 到
-      // frameLog.append 之间存在微任务间隙(collectRestoreFrames 的 await / .then),
-      // 活跃轮次可能继续 push parts + 涨计数,若拷贝晚于基线读取,快照内容会多于基线,
-      // 增量被重复应用(正文重复);反之则内容缺失。原子捕获后两个方向都不会错位。
-      const appendSeq = session.seqCounters.get(msg.id) ?? 0;
-      const restoredMessage = structuredClone(msg);
-      restoredMessage.parts = restoredMessage.parts.map((part) => part.kind === "toolCall"
-        ? { kind: "toolCall", data: normalizeQuestionnaireSpecForRestore(part.data) }
-        : part);
-      yield {
-        kind: "chatMessageAdded",
-        data: { message: restoredMessage, appendSeq },
-      };
+  // 4. Emit the canonical rich chat history with tool bubbles and thinking parts.
+  for (const msg of session.chatHistory) {
+    // appendSeq 基线(0702 review Lane A):生成进行中触发 restore 快照时,该消息
+    // 后续直播 chatMessageAppended 的 seq 延续 seqCounters 计数(而非从 1 重新数)。
+    // 前端 restoreReset 清空 appendCursor 后只应用严格连续 seq === cursor+1 的增量,
+    // 缺基线会把进行中消息永久冻结(且 restoreReset 广播会冻住同会话全部标签页)。
+    // 铁律:基线读取与消息深拷贝必须在同一同步 tick 内完成——emitRestoreFrames 到
+    // frameLog.append 之间存在微任务间隙(collectRestoreFrames 的 await / .then),
+    // 活跃轮次可能继续 push parts + 涨计数,若拷贝晚于基线读取,快照内容会多于基线,
+    // 增量被重复应用(正文重复);反之则内容缺失。原子捕获后两个方向都不会错位。
+    const appendSeq = session.seqCounters.get(msg.id) ?? 0;
+    const restoredMessage = structuredClone(msg);
+    restoredMessage.parts = restoredMessage.parts.map((part) => part.kind === "toolCall"
+      ? { kind: "toolCall", data: normalizeQuestionnaireSpecForRestore(part.data) }
+      : part);
+    yield {
+      kind: "chatMessageAdded",
+      data: { message: restoredMessage, appendSeq },
+    };
 
-      // For toolCall parts with a terminal status, also emit toolCallUpdated
-      // so the frontend's toolCalls Map gets populated for badge rendering.
-      for (const part of msg.parts) {
-        if (part.kind === "toolCall") {
-          yield {
-            kind: "toolCallUpdated",
-            data: {
-              messageId: msg.id,
-              toolCallId: part.data.id,
-              spec: structuredClone(normalizeQuestionnaireSpecForRestore(part.data)),
-            },
-          };
-        }
-      }
-    }
-  }
-
-  // 部分 rich 历史只补其缺失的稳定 id 消息；同 id 时 rich 展示层是保形真相源。
-  if (
-    session.chatHistory.length === 0 ||
-    session.messages.some((message) => {
-      const id = (message as { id?: unknown }).id;
-      return typeof id === "string" && !restoredChatMessageIds.has(id);
-    })
-  ) {
-    for (const [messageIndex, msg] of session.messages.entries()) {
-      // Skip messages that are not user or assistant (pure tool results)
-      if (msg.role !== "user" && msg.role !== "assistant") continue;
-      const messageId = (msg as { id?: unknown }).id;
-      if (typeof messageId === "string" && restoredChatMessageIds.has(messageId)) continue;
-      if (session.chatHistory.length > 0 && typeof messageId !== "string") continue;
-
-      let rawContent =
-        typeof msg.content === "string"
-          ? msg.content
-          : Array.isArray(msg.content)
-            ? msg.content
-                .filter(
-                  (p): p is { type: "text"; text: string } =>
-                    typeof p === "object" && p !== null && "type" in p && p.type === "text",
-                )
-                .map((p) => p.text)
-                .join("")
-            : "";
-
-      // Clean injected metadata (doc snapshots, line numbers, system reminders)
-      const content = cleanRestoredText(rawContent);
-
-      // Skip messages with empty text after cleaning
-      if (!content || content.trim().length === 0) continue;
-
-      yield {
-        kind: "chatMessageAdded",
-        data: {
-          message: {
-            id: typeof messageId === "string"
-              ? messageId
-              : getDeterministicId("legacy-message", {
-                  sessionId: session.sessionId,
-                  messageIndex,
-                }),
-            role: { kind: msg.role === "user" ? "user" : "agent" },
-            ts:
-              (msg as { createdAt?: string }).createdAt ??
-              new Date().toISOString(),
-            parts: [{ kind: "text", data: { body: content } }],
-            chips: null,
+    // For toolCall parts with a terminal status, also emit toolCallUpdated
+    // so the frontend's toolCalls Map gets populated for badge rendering.
+    for (const part of msg.parts) {
+      if (part.kind === "toolCall") {
+        yield {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: msg.id,
+            toolCallId: part.data.id,
+            spec: structuredClone(normalizeQuestionnaireSpecForRestore(part.data)),
           },
-          // legacy 路径重放的都是已完结消息,不会再有直播增量,基线恒为 0。
-          appendSeq: 0,
-        },
-      };
-      if (typeof messageId === "string") restoredChatMessageIds.add(messageId);
+        };
+      }
     }
   }
 

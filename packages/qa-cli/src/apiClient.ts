@@ -155,14 +155,26 @@ export class ApiClient {
       throw new QaCliError("SERVICE_UNAVAILABLE", "青简服务暂时不可用");
     }
     const json = tryParseJsonResponse(text);
-    const body = json as Partial<ExternalErrorResponse> | null;
+    const body = json as (Partial<ExternalErrorResponse> & {
+      issues?: Array<{ path?: unknown; message?: unknown }>;
+    }) | null;
     const fallbackCode = response.status === 401
       ? "AUTH_FAILED"
       : response.status === 404
         ? "NOT_FOUND"
         : "VALIDATION";
     if (body && typeof body === "object") {
-      throw new QaCliError(body.code ?? fallbackCode, body.error ?? response.statusText, body);
+      const firstIssue = body.issues?.[0];
+      const issueMessage = firstIssue && typeof firstIssue.message === "string"
+        ? typeof firstIssue.path === "string" && firstIssue.path.length > 0
+          ? `${firstIssue.path}: ${firstIssue.message}`
+          : firstIssue.message
+        : null;
+      throw new QaCliError(
+        body.code ?? fallbackCode,
+        issueMessage ?? body.error ?? response.statusText,
+        body,
+      );
     }
     throw new QaCliError(fallbackCode, compactErrorText(text, response.statusText));
   }

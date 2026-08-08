@@ -71,6 +71,7 @@ const draftDone: WriteDraftCardBody = {
 };
 const cmdDone: CommandCardBody = { title: "计算字数", icon: "🧮", command: "wc -m draft.md", exitCode: 0, outputTail: "1180", phase: "done" };
 const qrData: QrCardBody = {
+  presentation: "link", imageDataUri: null,
   content: "https://example.com/auth?code=DEMO", title: "扫码授权飞书", code: "WXYZ-1234",
   note: "请用飞书 App 扫码，或 [点此授权](https://example.com/auth)", expiresAt: 0, refreshQuery: "刷新", confirmQuery: "我已完成授权",
 };

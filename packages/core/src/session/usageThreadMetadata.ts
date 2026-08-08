@@ -9,7 +9,7 @@ import {
   isMissingMastraThreadsTableError,
 } from "@qingagent/db";
 
-const USAGE_THREAD_RESOURCE_IDS = ["qingagent-user", "user-default"] as const;
+const QINGAGENT_RESOURCE_ID = "qingagent-user";
 const TITLE_QUERY_BATCH_SIZE = 200;
 
 function chunks<T>(values: readonly T[], size: number): T[][] {
@@ -59,9 +59,9 @@ export async function getSessionThreadTitles(
         sql: `SELECT id, title,
             json_extract(metadata, '$.title') AS metadata_title
           FROM mastra_threads
-          WHERE resourceId IN (?, ?)
+          WHERE resourceId = ?
             AND id IN (${placeholders})`,
-        args: [...USAGE_THREAD_RESOURCE_IDS, ...batch],
+        args: [QINGAGENT_RESOURCE_ID, ...batch],
       });
       for (const row of result.rows) {
         const id = String(row.id ?? "");
@@ -93,9 +93,9 @@ export async function getSessionDocumentStatsSince(
           json_extract(metadata, '$.doc') AS doc,
           json_extract(metadata, '$.legacySections') AS legacy_sections
         FROM mastra_threads
-        WHERE resourceId IN (?, ?)
+        WHERE resourceId = ?
           AND createdAt >= ?`,
-      args: [...USAGE_THREAD_RESOURCE_IDS, cutoff],
+      args: [QINGAGENT_RESOURCE_ID, cutoff],
     });
     let words = 0;
     for (const row of result.rows) {

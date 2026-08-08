@@ -12,7 +12,6 @@ import {
   pmToLegacySections,
   pmToPlainText,
   pmTableLogicalGrid,
-  type PmBlockNode,
   type PmDoc,
   type PmTableCellNode,
   type PmTableNode,
@@ -92,10 +91,6 @@ export function getSectionText(section: LegacySection): string | null {
   return null;
 }
 
-export function clearDraftMutationScratch(state: SessionState): void {
-  state.patchValidationResults.clear();
-}
-
 export function clearInMemoryDraftDocs(state: SessionState): void {
   state.docDraftBaseSections = null;
   state.docDraftBaseVersion = null;
@@ -107,7 +102,6 @@ export function clearInMemoryDraftDocs(state: SessionState): void {
 
 export function clearDraftConfirmationState(state: SessionState): void {
   clearInMemoryDraftDocs(state);
-  clearDraftMutationScratch(state);
 }
 
 /**
@@ -124,18 +118,6 @@ export async function invalidateDraftStateAfterCanonicalWrite(state: SessionStat
       error: error instanceof Error ? error.message : String(error),
     });
   });
-}
-
-export function ensureDraftCandidate(state: SessionState): LegacySection[] {
-  if (!state.docDraftBaseSections) {
-    state.docDraftBaseSections = cloneLegacySections(state.legacySections);
-    state.docDraftBaseVersion = state.docVersion;
-    state.docDraftBaseDoc = clonePmDoc(currentPmDoc(state));
-  }
-  if (!state.docDraftCandidateSections) {
-    state.docDraftCandidateSections = cloneLegacySections(state.docDraftBaseSections);
-  }
-  return state.docDraftCandidateSections;
 }
 
 export function replaceDraftCandidateDoc(
@@ -448,68 +430,6 @@ export function validateCurrentTableSelectionScopes(
   return { ok: true };
 }
 
-export function docHasBlockType(doc: PmDoc, type: PmBlockNode["type"]): boolean {
-  let found = false;
-  const visit = (block: PmBlockNode): void => {
-    if (block.type === type) {
-      found = true;
-      return;
-    }
-    visitChildBlocks(block, visit);
-  };
-  for (const block of doc.content) {
-    visit(block);
-    if (found) break;
-  }
-  return found;
-}
-
-export function docHasHighlightMark(doc: PmDoc): boolean {
-  let found = false;
-  const visitInline = (content: readonly { type: string; marks?: readonly { type: string }[] }[] | undefined): void => {
-    for (const node of content ?? []) {
-      if (node.type === "text" && node.marks?.some((mark) => mark.type === "highlight")) {
-        found = true;
-        return;
-      }
-    }
-  };
-  const visit = (block: PmBlockNode): void => {
-    if (found) return;
-    if ("content" in block && Array.isArray(block.content)) visitInline(block.content as never);
-    visitChildBlocks(block, visit);
-  };
-  for (const block of doc.content) {
-    visit(block);
-    if (found) break;
-  }
-  return found;
-}
-
-function visitChildBlocks(block: PmBlockNode, visit: (child: PmBlockNode) => void): void {
-  switch (block.type) {
-    case "blockquote":
-    case "callout":
-      block.content.forEach(visit);
-      break;
-    case "bulletList":
-    case "orderedList":
-      block.content.forEach((item) => item.content.forEach(visit));
-      break;
-    case "taskList":
-      block.content.forEach((item) => item.content.forEach(visit));
-      break;
-    case "table":
-      block.content.forEach((row) => row.content.forEach((cell) => cell.content.forEach(visit)));
-      break;
-    case "columnList":
-      block.content.forEach((column) => column.content.forEach(visit));
-      break;
-    default:
-      break;
-  }
-}
-
 export function clearReviewDiffState(state: SessionState): void {
   state.suggestionBaseDoc = null;
   state.suggestionBaseVersion = null;
@@ -518,7 +438,6 @@ export function clearReviewDiffState(state: SessionState): void {
 export function clearSuggestionReviewState(state: SessionState): void {
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   clearReviewDiffState(state);
 }
 

@@ -46,6 +46,7 @@ describe("审查忽略补充提示词纯函数", () => {
       quote: "尽快推动项目落地",
       summary: "行动建议空泛",
       date: "2026-08-03",
+      decisionKey: "v1:custom:span%3Ap-1%3A1%3A2:action",
     });
     const once = appendReviewIgnoreLines(userText, [line]);
     const twice = appendReviewIgnoreLines(once, [line]);
@@ -215,20 +216,6 @@ describe("审查忽略补充提示词纯函数", () => {
 
     expect(line).toContain(summary);
     expect(decodeURIComponent(key)).toContain(summary);
-  });
-
-  it("机器键被删坏后按 legacy 行全等去重并保留决定", () => {
-    const keyed = buildReviewIgnoreLine({
-      quote: "需要保留的决定",
-      summary: "无需修改",
-      date: "2026-08-06",
-      decisionKey: "v1:custom:span%3Ap-1%3A1%3A2:%E6%97%A0%E9%9C%80%E4%BF%AE%E6%94%B9",
-    });
-    const damaged = keyed.replace(/ <!-- qingagent-review-ignore-key:.* -->$/u, "");
-
-    expect(reviewIgnoreDecisionKeyFromLine(damaged)).toBeNull();
-    expect(splitReviewSupplement(appendReviewIgnoreLines("", [damaged, damaged])).ignoreLines)
-      .toEqual([damaged]);
   });
 
   it("同名标题后有手写正文时不误判为机器区块", () => {

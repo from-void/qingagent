@@ -320,7 +320,6 @@ describe("confirm runtime", () => {
         data: {
           sessionId: state.sessionId,
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -460,7 +459,6 @@ describe("confirm runtime", () => {
         data: {
           sessionId: state.sessionId,
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -607,7 +605,6 @@ describe("confirm runtime", () => {
         data: {
           sessionId: state.sessionId,
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

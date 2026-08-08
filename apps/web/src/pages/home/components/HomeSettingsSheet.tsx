@@ -24,19 +24,16 @@ interface SheetOption<T extends string> {
   label: string;
 }
 
-interface HomeSettingsSheetProps<Mode extends string, AnimId extends string, Font extends string> {
+interface HomeSettingsSheetProps<AnimId extends string, Font extends string> {
   initialTab?: SettingsSheetTab;
   initialModelProvider?: ModelProvider;
   inkVariant: SettingsInkVariantId;
-  themeMode: Mode;
-  themeModeOptions: Array<SheetOption<Mode>>;
   anim: AnimId;
   animOptions: Array<SheetOption<AnimId>>;
   reduceMotion: boolean;
   primaryFont: Font;
   secondaryFont: Font;
   fontOptions: Array<SheetOption<Font>>;
-  onThemeModeChange: (mode: Mode) => void;
   onAnimChange: (anim: AnimId) => void;
   onReduceMotionToggle: () => void;
   onPrimaryFontChange: (font: Font) => void;
@@ -57,26 +54,23 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   { id: "about", label: "关于" },
 ];
 
-export function HomeSettingsSheet<Mode extends string, AnimId extends string, Font extends string>({
+export function HomeSettingsSheet<AnimId extends string, Font extends string>({
   initialTab,
   initialModelProvider,
   inkVariant,
-  themeMode,
-  themeModeOptions,
   anim,
   animOptions,
   reduceMotion,
   primaryFont,
   secondaryFont,
   fontOptions,
-  onThemeModeChange,
   onAnimChange,
   onReduceMotionToggle,
   onPrimaryFontChange,
   onSecondaryFontChange,
   onOpenShelf,
   onClose,
-}: HomeSettingsSheetProps<Mode, AnimId, Font>) {
+}: HomeSettingsSheetProps<AnimId, Font>) {
   const [tab, setTab] = useState<SettingsSheetTab>(initialTab ?? "model");
   const [selectedConnectorId, setSelectedConnectorId] = useState<ConnectorId | null>(null);
   const [inkReady, setInkReady] = useState(false);
@@ -210,24 +204,6 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
             <div className="qj-sheet-panel" key={tab}>
             {tab === "appearance" && (
               <div className="qj-appear">
-                <section className="qj-appear-grp">
-                  <div className="qj-sp-glabel">明暗模式</div>
-                  <div className="qj-swatch-row" role="group" aria-label="明暗模式">
-                    {themeModeOptions.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        className={`qj-swatch${themeMode === m.id ? " qj-active" : ""}`}
-                        data-set={m.id}
-                        aria-pressed={themeMode === m.id}
-                        onClick={() => onThemeModeChange(m.id)}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
                 <section className="qj-appear-grp">
                   <div className="qj-sp-glabel">字体</div>
                   <div className="qj-font-row">

@@ -1,13 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getDocumentsClient } from "../documentsClient.js";
-import { repairStoredDocumentRows } from "../documentRepo.js";
 import {
   getMaxDocumentSnapshotVersion,
   listVersions,
 } from "../documentVersionRepo.js";
-import {
-  identifyQuarantine0002OverwriteCandidates,
-} from "../quarantine0002Audit.js";
 import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
 import { MIGRATIONS } from "../migrations/index.js";
 import {
@@ -23,7 +19,6 @@ describe("0024 document restore lineage and ops index", () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
     __resetMigrationsForTest();
     db.cleanup();
   });
@@ -65,10 +60,6 @@ describe("0024 document restore lineage and ops index", () => {
     await expect(getMaxDocumentSnapshotVersion("current-low")).resolves.toBeNull();
     await expect(listVersions("current-low")).resolves.toEqual([]);
 
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const stats = await repairStoredDocumentRows();
-    expect(stats.versionPointersRepaired).toBe(0);
-    expect(warn).not.toHaveBeenCalled();
     await expect(readCurrent("current-low")).resolves.toEqual({
       docVersion: 1,
       text: "CURRENT-LOW",
@@ -99,61 +90,6 @@ describe("0024 document restore lineage and ops index", () => {
     expect(plan.rows.map((row) => String(row.detail)).join("\n")).toContain(
       "idx_document_ops_doc_to_version",
     );
-  });
-
-  it("识别器只报告当前正文确已落在异源隔离快照的行", async () => {
-    await runMigrations(MIGRATIONS.slice(0, 23));
-    const client = getDocumentsClient();
-    await client.execute("CREATE TABLE documents_quarantine_0002 AS SELECT * FROM documents WHERE 0");
-    await client.execute("CREATE TABLE document_versions_quarantine_0002 AS SELECT * FROM document_versions WHERE 0");
-    await insertCurrentDocument("current-overwritten", "thread-overwritten", 1, "CURRENT");
-    await insertForeignVersion(
-      "current-overwritten",
-      "source-overwritten",
-      "thread-overwritten",
-      5,
-      "QUARANTINED",
-    );
-    __resetMigrationsForTest();
-    await runMigrations(MIGRATIONS.slice(0, 24));
-
-    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([]);
-    const quarantinedPm = pmJson("QUARANTINED", "source-overwritten-p");
-    await client.execute({
-      sql: `UPDATE documents
-        SET doc_version = 5, doc_pm = ?, content_hash = 'hash-source-overwritten-5'
-        WHERE id = 'current-overwritten'`,
-      args: [quarantinedPm],
-    });
-
-    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([
-      expect.objectContaining({
-        currentDocId: "current-overwritten",
-        currentThreadId: "thread-overwritten",
-        sourceDocId: "source-overwritten",
-        versionId: "version-current-overwritten-foreign-5",
-        docVersion: 5,
-        confidence: "exact_snapshot",
-      }),
-    ]);
-  });
-
-  it("识别器缺少 0024 时只报错，不隐式执行迁移或改动账本", async () => {
-    await runMigrations(MIGRATIONS.slice(0, 23));
-    const client = getDocumentsClient();
-
-    await expect(identifyQuarantine0002OverwriteCandidates()).rejects.toThrow(
-      "缺少 0024 恢复血缘表",
-    );
-    const ledger = await client.execute(
-      "SELECT MAX(id) AS max_id FROM schema_migrations",
-    );
-    expect(Number(ledger.rows[0]?.max_id)).toBe(23);
-    const lineageTable = await client.execute(`
-      SELECT 1 FROM sqlite_master
-      WHERE type = 'table' AND name = 'document_version_restore_origins'
-    `);
-    expect(lineageTable.rows).toHaveLength(0);
   });
 
   async function insertCurrentDocument(

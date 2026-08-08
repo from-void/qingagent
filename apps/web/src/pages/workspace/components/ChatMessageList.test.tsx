@@ -957,6 +957,7 @@ describe("ChatMessageList", () => {
                 { label: "模板", value: "深度长文" },
                 { label: "补充", value: "语气更克制" },
               ],
+              status: "done",
             },
           },
         ],

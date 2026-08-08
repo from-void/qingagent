@@ -25,7 +25,6 @@ import {
 import { nextDocGenerationEvent } from "./docGenerationEvents.js";
 import {
   clearDraftConfirmationState,
-  clearDraftMutationScratch,
   clearReviewDiffState,
   clearSuggestionReviewState,
   clonePmDoc,
@@ -189,7 +188,6 @@ export async function* settleDraftCandidate(opts: {
         yield chatMessageAppended(agentMessageId, summarySeq, summaryPart);
         appendPartToChatHistory(state, agentMessageId, summaryPart);
 
-        clearDraftMutationScratch(state);
         recordStateChangeSpan(state, {
           transition: "enter_review",
           hunkCount: suggestions.length,
@@ -236,7 +234,6 @@ export async function* settleDraftCandidate(opts: {
     yield chatMessageAppended(agentMessageId, summarySeq, summaryPart);
     appendPartToChatHistory(state, agentMessageId, summaryPart);
 
-    clearDraftMutationScratch(state);
     recordStateChangeSpan(state, {
       transition: "enter_review",
       hunkCount: suggestions.length,
@@ -406,7 +403,6 @@ export async function* settleDraftCandidate(opts: {
     state.docVersion = result.docVersion;
     state.modelKnownDocVersion = result.docVersion;
     state._directionChangeAskedSinceLastWrite = false;
-    requestContext?.set("legacySections", state.legacySections);
     requestContext?.set("doc", result.doc);
     requestContext?.set("directionChangeAskedSinceLastWrite", false);
     let annotationMapping: PendingAnnotationMapping | null = transactionAnnotationMapping;
@@ -438,7 +434,7 @@ export async function* settleDraftCandidate(opts: {
         },
       };
     }
-    const versionDoc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
+    const versionDoc = buildDocumentSnapshot(state.docVersion, result.doc);
     const committedDoc = result.doc;
     if (emitGenerationEvent && generationId) {
       const event = nextDocGenerationEvent(generationId, generationLastSeq, {

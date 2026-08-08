@@ -5,9 +5,6 @@ import path from "node:path";
 import { listenWithDesktopPortFallback, resolveDesktopPort } from "./desktopPort.js";
 import { telemetry } from "./telemetry/index.js";
 import { createSingleFlightStarter } from "./serverSingleton.js";
-import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
-
-const toolCallStreamScanner = new ToolCallStreamScanner((name) => telemetry.trackToolUsed(name));
 const reportedServerStartupErrors = new WeakSet<object>();
 
 export function isReportedServerStartupError(error: unknown): boolean {
@@ -33,7 +30,6 @@ export interface EmbeddedServerInfo {
 async function startServerOnce(options: StartServerOptions): Promise<EmbeddedServerInfo> {
   // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
   // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
-  // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一管理这段启动顺序。
   const { runMigrations } = await import("@qingagent/db/migrations");
   try {
     await runMigrations();
@@ -67,13 +63,6 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
   }
   const { serveStatic } = await import("@hono/node-server/serve-static");
 
-  // 存量 documents 的版本指针/PM 镜像仅在启动后后台巡检修复；读取接口保持纯读。
-  // 放在 app 完成求值后再动态加载 DB 聚合入口，维持上方“迁移先于 core/server barrel”的锁顺序。
-  void import("@qingagent/db")
-    .then(({ repairStoredDocumentRows }) => repairStoredDocumentRows())
-    .then((stats) => console.log("[migrations] documents 巡检完成", stats))
-    .catch((e) => console.error("[migrations] documents 巡检失败(non-fatal)", e instanceof Error ? e.message : String(e)));
-
   // 桌面端专有:渲染端埋点同源中继。渲染端 POST 到本 localhost 服务器(同源,无 CORS、
   // 不经系统代理),由主进程转发到 Umami。必须注册在静态服务之前。
   honoApp.post("/__telemetry/send", async (c) => {
@@ -106,7 +95,7 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
     try {
       // body 必须在被处理器消费之前 clone;只对需要看 body 的两条路径 clone。
       const p = new URL(req.url).pathname;
-      if ((req.method === "POST" && p === "/api/v1/stream") || (req.method === "PUT" && p === "/api/v1/settings/model")) {
+      if ((req.method === "POST" && p === "/api/v1/commands") || (req.method === "PUT" && p === "/api/v1/settings/model")) {
         bodyClone = req.clone();
       }
     } catch {
@@ -117,23 +106,6 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
       observeApiForTelemetry(req, res.status, bodyClone);
     } catch {
       /* 观察失败不影响请求 */
-    }
-    // agent 生成流:tee 一份 SSE 响应,后台扫 toolCallUpdated 帧提工具名(tool_used)。
-    try {
-      const p = new URL(req.url).pathname;
-      if (
-        req.method === "POST" &&
-        p === "/api/v1/stream" &&
-        res.status < 400 &&
-        res.body &&
-        (res.headers.get("content-type") || "").includes("event-stream")
-      ) {
-        const [pass, tap] = res.body.tee();
-        void toolCallStreamScanner.scan(tap);
-        return new Response(pass, res);
-      }
-    } catch {
-      /* tee 失败原样返回 */
     }
     return res;
   };
@@ -177,7 +149,7 @@ function observeApiForTelemetry(req: Request, status: number, bodyClone: Request
   const url = new URL(req.url);
   const p = url.pathname;
 
-  if (req.method === "POST" && p === "/api/v1/stream" && bodyClone) {
+  if (req.method === "POST" && p === "/api/v1/commands" && bodyClone) {
     void bodyClone
       .json()
       .then((cmd: { kind?: string } | null) => {

@@ -4,7 +4,7 @@ import {
   DEEPSEEK_MODEL_IDS,
   KIMI_BASE_URL,
   KIMI_MODEL_IDS,
-  resolveDeepseekAuth,
+  resolveModelAuth,
   resolveBaseUrl,
   resolveModelId,
   resolveModelProvider,
@@ -50,24 +50,24 @@ describe("modelConfig", () => {
     process.env.DEEPSEEK_API_KEY = "env-key";
 
     expect(
-      resolveDeepseekAuth(requestContext([
+      resolveModelAuth(requestContext([
         ["modelOverrides", { visitorApiKey: "visitor-key", globalApiKey: "global-key" }],
       ])),
     ).toEqual({ apiKey: "visitor-key", origin: "visitor" });
 
     expect(
-      resolveDeepseekAuth(requestContext([
+      resolveModelAuth(requestContext([
         ["modelOverrides", { globalApiKey: "global-key" }],
       ])),
     ).toEqual({ apiKey: "global-key", origin: "global-db" });
 
-    expect(resolveDeepseekAuth(requestContext())).toEqual({
+    expect(resolveModelAuth(requestContext())).toEqual({
       apiKey: "env-key",
       origin: "env",
     });
 
     delete process.env.DEEPSEEK_API_KEY;
-    expect(resolveDeepseekAuth(requestContext())).toEqual({
+    expect(resolveModelAuth(requestContext())).toEqual({
       apiKey: "",
       origin: "none",
     });
@@ -79,7 +79,7 @@ describe("modelConfig", () => {
     process.env.QINGAGENT_MODEL_PROTOCOL = "anthropic";
     process.env.QINGAGENT_MODEL_FLASH = "env-model";
     expect(resolveModelProvider(requestContext())).toBe("kimi");
-    expect(resolveDeepseekAuth(requestContext())).toEqual({
+    expect(resolveModelAuth(requestContext())).toEqual({
       apiKey: "kimi-env-key",
       origin: "env",
     });
@@ -87,7 +87,7 @@ describe("modelConfig", () => {
     const fromDb = requestContext([
       ["modelOverrides", { provider: "kimi", globalApiKey: "kimi-db-key" }],
     ]);
-    expect(resolveDeepseekAuth(fromDb)).toEqual({
+    expect(resolveModelAuth(fromDb)).toEqual({
       apiKey: "kimi-db-key",
       origin: "global-db",
     });
@@ -103,7 +103,7 @@ describe("modelConfig", () => {
       ],
     ]);
     expect(resolveModelProvider(fromVisitor)).toBe("deepseek");
-    expect(resolveDeepseekAuth(fromVisitor)).toEqual({
+    expect(resolveModelAuth(fromVisitor)).toEqual({
       apiKey: "deepseek-visitor-key",
       origin: "visitor",
     });
@@ -119,10 +119,10 @@ describe("modelConfig", () => {
     process.env.KIMI_API_KEY = "kimi-env-key";
 
     expect(resolveModelProvider(requestContext())).toBe("deepseek");
-    expect(resolveDeepseekAuth(requestContext([
+    expect(resolveModelAuth(requestContext([
       ["modelOverrides", { provider: "kimi", globalApiKey: "kimi-db-key" }],
     ]))).toEqual({ apiKey: "", origin: "none" });
-    expect(resolveDeepseekAuth(requestContext([
+    expect(resolveModelAuth(requestContext([
       ["modelOverrides", { provider: "kimi", visitorApiKey: "kimi-visitor-key" }],
     ]))).toEqual({ apiKey: "kimi-visitor-key", origin: "visitor" });
     expect(resolveProtocol(requestContext())).toBe("openai");

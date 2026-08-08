@@ -1,6 +1,6 @@
 import {
   ConnectorCredentialCasError,
-  readThroughMigrateConnectorBundle,
+  getConnectorCredentialBundle,
   type ConnectorCredentialBundle,
   updateConnectorCredentialBundlePayload,
 } from "../credentials/credentialsRepo.js";
@@ -20,23 +20,8 @@ export interface WechatCredentialPayload {
   sessionIssue?: WechatSessionIssue;
 }
 
-const LEGACY_KEYS = ["cookie", "expiry", "mp_name", "token"] as const;
-
 export async function readWechatCredentialBundle(): Promise<ConnectorCredentialBundle<WechatCredentialPayload> | null> {
-  const result = await readThroughMigrateConnectorBundle<WechatCredentialPayload>({
-    connectorId: "wechat-mp",
-    legacyPlatform: "wechat",
-    legacyKeys: LEGACY_KEYS,
-    migrate: (legacy) => ({
-      strategy: "qr-session",
-      version: 1,
-      account: legacy.mp_name ?? "",
-      cookie: legacy.cookie!,
-      token: legacy.token!,
-      expiry: legacy.expiry!,
-    }),
-  });
-  return result.bundle;
+  return getConnectorCredentialBundle<WechatCredentialPayload>("wechat-mp");
 }
 
 export async function markWechatSessionNeedsReauth(
@@ -62,5 +47,3 @@ export async function markWechatSessionNeedsReauth(
     throw error;
   }
 }
-
-export const WECHAT_LEGACY_CREDENTIAL_KEYS = LEGACY_KEYS;

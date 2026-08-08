@@ -1,8 +1,6 @@
 import {
-  backfillActiveSessionResources,
   completeSessionDeletion,
   getSessionDeletion,
-  hasActiveSessionResource,
   listActiveSessionResourceOwners,
   listSessionResources,
   markSessionAssetsDeleted,
@@ -10,13 +8,7 @@ import {
   type SessionDeletionPhase,
 } from "@qingagent/db";
 import { omSidecarThreadId } from "@qingagent/contract-ts";
-import {
-  listStoredFileIds,
-  purgeStoredFile,
-  UPLOAD_DIR,
-} from "../lib/uploadStorage";
-import fs from "node:fs/promises";
-import path from "node:path";
+import { purgeStoredFile } from "../lib/uploadStorage";
 
 export async function deleteSessionStoredResources(
   sessionId: string,
@@ -68,38 +60,4 @@ export async function deleteStoredResourceForSession(
   if (otherOwners.length === 0 && !(await purgeStoredFile(resourceId))) return false;
   await removeSessionResource(sessionId, resourceId);
   return true;
-}
-
-export interface OrphanStoredFileCleanupResult {
-  scanned: number;
-  deleted: number;
-  retained: number;
-}
-
-/**
- * 升级存量先从全部活跃 thread/doc 回填归属，再只清理超过宽限期且确无活跃归属的目录。
- * 删除路由即使清理失败也已由归属门禁 fail-closed；因此启动修复可安全重试而不阻断服务。
- */
-export async function cleanupOrphanedStoredFiles(
-  graceMs = 60 * 60 * 1_000,
-): Promise<OrphanStoredFileCleanupResult> {
-  await backfillActiveSessionResources();
-  const fileIds = await listStoredFileIds();
-  let deleted = 0;
-  let retained = 0;
-  const cutoff = Date.now() - Math.max(0, graceMs);
-  for (const fileId of fileIds) {
-    if (await hasActiveSessionResource(fileId)) {
-      retained++;
-      continue;
-    }
-    const stat = await fs.stat(path.join(UPLOAD_DIR, fileId)).catch(() => null);
-    if (stat && stat.mtimeMs > cutoff) {
-      retained++;
-      continue;
-    }
-    if (await purgeStoredFile(fileId)) deleted++;
-    else retained++;
-  }
-  return { scanned: fileIds.length, deleted, retained };
 }

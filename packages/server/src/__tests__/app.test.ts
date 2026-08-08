@@ -33,10 +33,18 @@ async function request(
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
-  if (path === "/api/v1/commands" || path === "/api/v1/stream") {
+  if (path === "/api/v1/commands") {
     return authenticatedCommandRequest(path, init);
   }
   return app.request(path, init);
+}
+
+function firstValidationMessage(body: {
+  issues: Array<{ path: string; message: string }>;
+}): string {
+  const first = body.issues[0];
+  if (!first) throw new Error("missing validation issue");
+  return first.path ? `${first.path}: ${first.message}` : first.message;
 }
 
 async function readSseUntil(
@@ -690,7 +698,7 @@ describe("GET /api/v1/history", () => {
 // -----------------------------------------------------------------------
 // Command submit + events
 // -----------------------------------------------------------------------
-describe("POST /api/v1/stream", () => {
+describe("POST /api/v1/commands", () => {
   it("accepts startSession command and exposes frames from /events", async () => {
     const command = {
       kind: "startSession",
@@ -724,9 +732,9 @@ describe("POST /api/v1/stream", () => {
         data: {
           sessionId: "sk-live-session-secret",
           text: "hello",
-          mentions: [],
           skills: [],
           chips: [],
+          fileIds: [],
         },
       };
       const res = await request("POST", "/api/v1/commands", command);
@@ -759,13 +767,12 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         text: "check this file",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["11111111-1111-4111-8111-111111111111"],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     // Should not return 400 — fileIds are valid
     expect(res.status).toBe(200);
   });
@@ -776,29 +783,12 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         text: "no files",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
-    expect(res.status).toBe(200);
-  });
-
-  it("accepts sendMessage without fileIds field (backward compat)", async () => {
-    const command = {
-      kind: "sendMessage",
-      data: {
-        sessionId: "nonexistent",
-        text: "old client",
-        mentions: [],
-        skills: [],
-        chips: [],
-      },
-    };
-    const res = await request("POST", "/api/v1/stream", command);
-    // Should not return 400 — fileIds is optional
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(200);
   });
 
@@ -808,13 +798,12 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         text: "use a skill",
-        mentions: [],
         skills: [{ id: "browser-ops", version: null }],
         chips: [],
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(200);
   });
 
@@ -824,16 +813,15 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: "browser-ops",
         chips: [],
         fileIds: [],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("skills");
+    expect(firstValidationMessage(json)).toContain("skills");
   });
 
   it("rejects sendMessage with non-array fileIds", async () => {
@@ -842,16 +830,15 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: "not-an-array",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds");
+    expect(firstValidationMessage(json)).toContain("fileIds");
   });
 
   it("rejects sendMessage with non-string fileIds element", async () => {
@@ -860,16 +847,15 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [123],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds[0]");
+    expect(firstValidationMessage(json)).toContain("fileIds[0]");
   });
 
   it("rejects sendMessage with non-UUID fileIds element", async () => {
@@ -878,17 +864,16 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         text: "bad",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["../secret"],
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("fileIds[0]");
-    expect(json.error).toContain("valid UUID");
+    expect(firstValidationMessage(json)).toContain("fileIds[0]");
+    expect(firstValidationMessage(json)).toContain("valid UUID");
   });
 
   it("accepts a structurally valid updateDoc command", async () => {
@@ -898,11 +883,11 @@ describe("POST /api/v1/stream", () => {
         sessionId: "nonexistent",
         expectedDocumentSnapshot: 1,
         baseContentHash: "pmv1-base",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     // 结构校验已通过；不存在的会话进入 Actor 后按统一业务失败协议返回 422。
     expect(res.status).toBe(422);
     await expect(res.json()).resolves.toMatchObject({
@@ -916,14 +901,15 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("sessionId");
+    expect(firstValidationMessage(json)).toContain("sessionId");
   });
 
   it("rejects updateDoc with empty baseContentHash", async () => {
@@ -933,14 +919,14 @@ describe("POST /api/v1/stream", () => {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
         baseContentHash: "",
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("baseContentHash");
+    expect(firstValidationMessage(json)).toContain("baseContentHash");
   });
 
   it("rejects updateDoc with non-integer expectedDocumentSnapshot", async () => {
@@ -949,30 +935,15 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1.5,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "mutation-1",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("expectedDocumentSnapshot");
-  });
-
-  it("rejects updateDoc with non-array legacySections", async () => {
-    const command = {
-      kind: "updateDoc",
-      data: {
-        sessionId: "s-1",
-        expectedDocumentSnapshot: 1,
-        legacySections: "bad",
-        clientMutationId: "mutation-1",
-      },
-    };
-    const res = await request("POST", "/api/v1/stream", command);
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain("legacySections must be an array");
+    expect(firstValidationMessage(json)).toContain("expectedDocumentSnapshot");
   });
 
   it("rejects updateDoc with missing clientMutationId", async () => {
@@ -981,13 +952,14 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: legacySectionsToPm([{ kind: "p", data: { text: "正文" } }]),
         clientMutationId: "",
       },
     };
-    const res = await request("POST", "/api/v1/stream", command);
+    const res = await request("POST", "/api/v1/commands", command);
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("clientMutationId");
+    expect(firstValidationMessage(json)).toContain("clientMutationId");
   });
 });

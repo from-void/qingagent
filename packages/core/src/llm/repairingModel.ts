@@ -8,8 +8,8 @@ import { guardBeforeProviderCall } from "./prefixCacheGuard.js";
 import { repairToolCallJson } from "./repairToolCallJson.js";
 import {
   resolveBaseUrl,
-  resolveDeepseekRouterModelId,
   resolveModelAuth,
+  resolveRouterModelId,
 } from "./modelConfig.js";
 
 type ModelCallOptions = Parameters<ModelRouterLanguageModel["doStream"]>[0];
@@ -78,7 +78,7 @@ export type RepairableLanguageModelV2 = {
 
 /** 默认(env 兜底)模型配置;访客/全局 key 覆盖见 createRepairingQingagentModel(auth)。 */
 export const qingagentModelConfig = {
-  id: resolveDeepseekRouterModelId(),
+  id: resolveRouterModelId(),
   url: resolveBaseUrl(),
   apiKey: resolveModelAuth().apiKey,
 } satisfies OpenAICompatibleConfig;

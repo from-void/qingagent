@@ -8,7 +8,6 @@ import { getDefaultStyleTemplate, getStyleTemplate } from "./styleTemplateRepo.j
 import type { PmDoc } from "@qingagent/pm-schema";
 import {
   assertDocumentWriteAllowed,
-  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
 } from "./documentWriteGuard.js";
 
@@ -98,11 +97,6 @@ export async function createDerivativeDoc(input: {
     if (!writing || writing.dtype !== input.dtype || writing.slot !== "writing") throw new Error("未知的写作风格模板");
     if (layout && (layout.dtype !== input.dtype || layout.slot !== "layout")) throw new Error("未知的排版风格模板");
     assertDocumentWriteAllowed({
-      docId: input.sourceDocId,
-      threadId: input.threadId,
-      operation: "document.derivative.create",
-    });
-    await assertDocumentWriteAllowedPersisted(client, {
       docId: input.sourceDocId,
       threadId: input.threadId,
       operation: "document.derivative.create",

@@ -100,9 +100,8 @@ function decisionLineMap(lines: readonly string[]): Map<string, string> | null {
   const result = new Map<string, string>();
   for (const line of lines) {
     const decisionKey = reviewIgnoreDecisionKeyFromLine(line);
-    const key = decisionKey === null
-      ? `legacy-line:${line}`
-      : `decision-key:${decisionKey}`;
+    if (decisionKey === null) return null;
+    const key = `decision-key:${decisionKey}`;
     if (result.has(key)) return null;
     result.set(key, line);
   }

@@ -33,9 +33,7 @@ const TERMINAL_STATE_COPY: Partial<Record<ConnectorCardState, string>> = {
 };
 
 export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
-  // v1 历史帧没有 presentation：GitHub 旧卡按纯配对码恢复，其余旧 qrCard 保持二维码形态。
-  const presentation = data.presentation ??
-    (data.connectorId === "github" && !data.imageDataUri ? "device-code" : "scan");
+  const presentation = data.presentation;
   // link 是 show_qr 的「二维码 + 可点击链接」形态；只有 device-code 明确不画二维码。
   const rendersQr = presentation === "scan" || presentation === "link";
   const [connectorState, setConnectorState] = useState<ConnectorCardState>(

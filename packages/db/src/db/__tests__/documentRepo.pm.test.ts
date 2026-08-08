@@ -160,37 +160,4 @@ describe("documentRepo PM canonical shadow", () => {
     await expect(documentRepo.load("bad-pm")).resolves.toBeNull();
   });
 
-  it("读取存量非矩形表时保持兼容，但新写入仍由严格 PM 校验拒绝", async () => {
-    await documentRepo.save(documentInput("legacy-broken-table"));
-    const legacyBrokenTable = {
-      type: "doc",
-      attrs: { schemaVersion: 1 },
-      content: [{
-        type: "table",
-        attrs: { blockId: "legacy-table" },
-        content: [
-          { type: "tableRow", content: [
-            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "a" } }] },
-            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "b" } }] },
-          ] },
-          { type: "tableRow", content: [
-            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "c" } }] },
-          ] },
-        ],
-      }],
-    };
-    const client = getDocumentsClient();
-    await client.execute({
-      sql: "UPDATE documents SET doc_pm = ? WHERE id = ?",
-      args: [JSON.stringify(legacyBrokenTable), "legacy-broken-table"],
-    });
-
-    await expect(documentRepo.load("legacy-broken-table")).resolves.toMatchObject({
-      id: "legacy-broken-table",
-      pmDoc: legacyBrokenTable,
-    });
-    await expect(documentRepo.save(documentInput("new-broken-table", {
-      pmDoc: legacyBrokenTable as ReturnType<typeof pmDocFromText>,
-    }))).rejects.toThrow("Invalid PM doc");
-  });
 });

@@ -97,9 +97,6 @@ function checkChip(c: ChatChip): void {
 
 function checkSendMessage(m: SendMessage): void {
   if (!m.sessionId) fail(`SendMessage.sessionId must be non-empty`);
-  if (m.turnContext !== undefined && typeof m.turnContext !== "string") {
-    fail(`SendMessage.turnContext must be a string`);
-  }
   if (m.turnKind !== undefined && m.turnKind !== "generateDerivative") {
     fail(`SendMessage.turnKind is invalid`);
   }
@@ -123,13 +120,9 @@ function checkSendMessage(m: SendMessage): void {
       fail(`SendMessage.activeDocument.docId must be non-empty`);
     }
   }
-  for (const r of m.mentions) checkRefAny("SendMessage.mentions[]", r);
   for (const c of m.chips) checkChip(c);
-  // fileIds is optional; when present each entry must be a non-empty string
-  if (m.fileIds) {
-    for (const id of m.fileIds) {
-      if (!id) fail(`SendMessage.fileIds[] must be non-empty`);
-    }
+  for (const id of m.fileIds) {
+    if (!id) fail(`SendMessage.fileIds[] must be non-empty`);
   }
   if (m.displayCard) {
     if (typeof m.displayCard.title !== "string") {
@@ -137,6 +130,9 @@ function checkSendMessage(m: SendMessage): void {
     }
     if (!Array.isArray(m.displayCard.lines)) {
       fail(`SendMessage.displayCard.lines must be an array`);
+    }
+    if (!["running", "done", "aborted", "failed"].includes(m.displayCard.status)) {
+      fail(`SendMessage.displayCard.status is invalid`);
     }
     for (const line of m.displayCard.lines) {
       if (typeof line.label !== "string" || typeof line.value !== "string") {
@@ -151,23 +147,6 @@ function checkSendMessage(m: SendMessage): void {
     }
     if (!m.reviewContext.templateId || !m.reviewContext.templateName) {
       fail(`SendMessage.reviewContext template fields must be non-empty`);
-    }
-  }
-}
-
-function checkLegacySections(value: unknown): void {
-  if (!Array.isArray(value)) fail(`UpdateDoc.legacySections must be an array`);
-  for (const [index, section] of value.entries()) {
-    if (section === null || typeof section !== "object") {
-      fail(`UpdateDoc.legacySections[${index}] must be an object`);
-    }
-    const item = section as Record<string, unknown>;
-    const data = item.data as Record<string, unknown> | null | undefined;
-    if (typeof item.kind !== "string") {
-      fail(`UpdateDoc.legacySections[${index}].kind must be a string`);
-    }
-    if (!data || typeof data !== "object") {
-      fail(`UpdateDoc.legacySections[${index}].data must be an object`);
     }
   }
 }
@@ -245,16 +224,12 @@ export function validateCommand(cmd: Command): void {
       if (!cmd.data.sessionId) fail(`UpdateDoc.sessionId must be non-empty`);
       if (!Number.isInteger(cmd.data.expectedDocumentSnapshot))
         fail(`UpdateDoc.expectedDocumentSnapshot must be an integer`);
-      if (
-        cmd.data.baseContentHash !== undefined &&
-        !nonEmptyString(cmd.data.baseContentHash)
-      ) {
+      if (!nonEmptyString(cmd.data.baseContentHash)) {
         fail(`UpdateDoc.baseContentHash must be non-empty`);
       }
       if (!cmd.data.clientMutationId)
         fail(`UpdateDoc.clientMutationId must be non-empty`);
-      if (cmd.data.doc) checkPmDoc(cmd.data.doc);
-      else checkLegacySections(cmd.data.legacySections);
+      checkPmDoc(cmd.data.doc);
       return;
     case "updateMaterialSummary":
       if (!cmd.data.sessionId) fail(`UpdateMaterialSummary.sessionId must be non-empty`);

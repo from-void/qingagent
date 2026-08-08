@@ -148,7 +148,6 @@ describe("POST /api/v1/commit", () => {
         data: {
           sessionId: "route-serial",
           text: "running",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -313,12 +312,14 @@ describe("POST /api/v1/commit", () => {
         rejectReviewBatchIds: ["batch-overlap"],
       },
     });
-    const body = await res.json() as { error: string };
+    const body = await res.json() as { issues: Array<{ path: string; message: string }> };
 
     expect(res.status).toBe(400);
-    expect(body.error).toBe(
-      "commitReviewGroups.data.rejectReviewBatchIds: must not overlap with acceptReviewBatchIds",
-    );
+    expect(body.issues[0]).toEqual({
+      path: "commitReviewGroups.data.rejectReviewBatchIds",
+      message: "must not overlap with acceptReviewBatchIds",
+      code: "custom",
+    });
     expect(submit).not.toHaveBeenCalled();
   });
 

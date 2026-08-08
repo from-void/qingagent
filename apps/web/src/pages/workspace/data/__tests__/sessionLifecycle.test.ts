@@ -25,7 +25,6 @@ describe("ensureSessionIdOnce", () => {
       data: {
         sessionId: firstSessionId,
         text: "first",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -43,7 +42,6 @@ describe("ensureSessionIdOnce", () => {
       data: {
         sessionId: secondSessionId,
         text: "second",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],

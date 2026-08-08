@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   beginSessionDeletion,
-  backfillDeletingSessionResources,
   deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
   markSessionThreadsDeleted,
@@ -24,7 +23,6 @@ const {
       sessionId,
       phase: "draining" as const,
     })),
-    backfillDeletingSessionResources: vi.fn(async () => 0),
     deleteSessionDocumentsAndAdvance: vi.fn(async (sessionId: string) => {
       events.push(`documents:${sessionId}`);
       return "documents_deleted" as const;
@@ -48,7 +46,6 @@ vi.mock("@qingagent/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@qingagent/db")>()),
   resolveDbUrl: () => "file::memory:",
   beginSessionDeletion,
-  backfillDeletingSessionResources,
   deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
   markSessionThreadsDeleted,

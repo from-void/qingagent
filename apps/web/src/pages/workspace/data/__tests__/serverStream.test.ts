@@ -322,7 +322,6 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         text: "hello",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -862,7 +861,6 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         text: "check this",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["file-abc-123"],
@@ -1064,44 +1062,6 @@ describe("ServerStream", () => {
     expect(MockEventSource.instances).toHaveLength(1);
   });
 
-  it("listDerivatives 的 HTTP 响应晚于 SSE waiter 超时时不产生未处理拒绝", async () => {
-    vi.useFakeTimers();
-    let resolveResponse!: () => void;
-    globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      const command = JSON.parse(String(init?.body)) as Extract<Command, { kind: "listDerivatives" }>;
-      return new Promise<Response>((resolve) => {
-        resolveResponse = () => resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve([{
-            kind: "derivativesListed",
-            data: { requestId: command.data.requestId, items: [] },
-          } satisfies BridgeFrame]),
-        } as unknown as Response);
-      });
-    });
-    const unhandled: unknown[] = [];
-    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on("unhandledRejection", recordUnhandled);
-    const stream = new ServerStream();
-
-    try {
-      const pending = stream.listDerivatives("slow-session");
-      await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(30_001);
-      await vi.runAllTicks();
-      expect(unhandled).toEqual([]);
-
-      resolveResponse();
-      await expect(pending).resolves.toEqual([]);
-      await vi.runAllTicks();
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("unhandledRejection", recordUnhandled);
-      stream.dispose();
-    }
-  });
-
   it("HTTP 成功帧的 requestId 不匹配时立即报协议错误", async () => {
     globalThis.fetch = commandResponse([{
       kind: "derivativesListed",
@@ -1159,63 +1119,6 @@ describe("ServerStream", () => {
     expect(MockEventSource.instances.at(-1)!.url).toContain("epoch=2");
     expect(consoleError).not.toHaveBeenCalled();
     stream.dispose();
-  });
-
-  it("旧流 waiter 被 dispose 后在新流上静默补发一次", async () => {
-    let requestCount = 0;
-    globalThis.fetch = commandResponseFrom((command) => {
-      if (command.kind !== "getDerivativeDoc") throw new Error("unexpected command");
-      requestCount += 1;
-      if (requestCount === 1) {
-        return { accepted: true, sessionId: command.data.sessionId, epoch: 1 };
-      }
-      return [{
-        kind: "derivativeDocLoaded",
-        data: {
-          requestId: command.data.requestId,
-          meta: {
-            docId: command.data.docId,
-            dtype: "translate",
-            templateId: "translate-default",
-            templateName: "翻译",
-            privatePrompt: "",
-            sourceVersion: 1,
-            currentSourceVersion: 1,
-            generatedAt: "2026-08-03T09:00:00.000Z",
-            stale: false,
-          },
-          docPm: "{}",
-          docVersion: 1,
-          title: "重开译稿",
-        },
-      } satisfies BridgeFrame];
-    });
-    const oldStream = new ServerStream();
-    let currentStream: ServerStream | null = oldStream;
-    const onToast = vi.fn();
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const request = retryDisposedServerStreamOnce(
-      oldStream,
-      () => currentStream,
-      (stream) => stream.getDerivativeDoc("session-1", "translate-1"),
-    ).catch((error) => {
-      console.error("[workspace] load derivative document failed", error);
-      onToast("稿件加载失败，请重试");
-      return null;
-    });
-
-    oldStream.dispose();
-    const reopenedStream = new ServerStream();
-    currentStream = reopenedStream;
-
-    await expect(request).resolves.toMatchObject({
-      meta: { docId: "translate-1" },
-      title: "重开译稿",
-    });
-    expect(requestCount).toBe(2);
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(onToast).not.toHaveBeenCalled();
-    reopenedStream.dispose();
   });
 
   it("dispose 近似错误不静默重试", async () => {
@@ -1297,7 +1200,16 @@ describe("ServerStream", () => {
       data: {
         sessionId: "s-1",
         expectedDocumentSnapshot: 1,
-        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        baseContentHash: "pmv1-base",
+        doc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "p-1" },
+            content: [{ type: "text", text: "正文" }],
+          }],
+        },
         clientMutationId: "mutation-1",
       },
     });
@@ -1346,7 +1258,6 @@ describe("ServerStream", () => {
       data: {
         sessionId,
         text: "analyze this",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: ["file-def-456"],
@@ -1651,13 +1562,32 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "bad",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
         },
       }),
     ).rejects.toThrow("Stream request failed: 500");
+  });
+
+  it("commands 校验失败展示首个结构化 issue", async () => {
+    globalThis.fetch = commandResponse({
+      issues: [{ path: "sendMessage.data.fileIds", message: "Expected array", code: "invalid_type" }],
+    }, 400);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.sendCommand({
+        kind: "sendMessage",
+        data: {
+          sessionId: "s-1",
+          text: "bad",
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      }),
+    ).rejects.toThrow("sendMessage.data.fileIds: Expected array");
   });
 
   it.each([
@@ -1682,7 +1612,6 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],
@@ -1719,7 +1648,6 @@ describe("ServerStream", () => {
         data: {
           sessionId: "s-1",
           text: "继续",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

@@ -194,19 +194,15 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     expect(seconds).toContain("不是毫秒");
     expect(seconds).toContain(`前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS} 秒`);
     expect(shape.timeoutMs?.description ?? "").toContain("单位=毫秒");
-    const legacy = shape.timeout?.description ?? "";
-    expect(legacy).toContain("单位=秒");
-    expect(legacy).toContain("timeoutSeconds");
+    expect(shape.timeout).toBeUndefined();
   });
 
-  it("P1 回归:超时摘要按归一后的毫秒计算，新旧写法等价且改值必变", () => {
-    const legacy = commandConfirmationDigest("session", { command: "ls", timeout: 15 });
+  it("P1 回归:超时摘要按归一后的毫秒计算，不同单位写法等价且改值必变", () => {
     const named = commandConfirmationDigest("session", { command: "ls", timeoutSeconds: 15 });
     const millis = commandConfirmationDigest("session", { command: "ls", timeoutMs: 15_000 });
-    expect(named).toBe(legacy);
-    expect(millis).toBe(legacy);
+    expect(millis).toBe(named);
     expect(commandConfirmationDigest("session", { command: "ls", timeoutSeconds: 16 }))
-      .not.toBe(legacy);
+      .not.toBe(named);
   });
 
   it("命令确认卡不设置脚注", () => {
@@ -217,7 +213,7 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
 
   it("P2-6 回归:后台卡片显示钳制后的实际最长运行时长", () => {
     const spec = buildCommandConfirmSpec(
-      { command: "rm old.txt", background: true, timeout: 31_536_000 },
+      { command: "rm old.txt", background: true, timeoutSeconds: 31_536_000 },
       "将删除文件",
       "background-ttl-id",
     );

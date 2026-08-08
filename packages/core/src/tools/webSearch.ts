@@ -10,7 +10,7 @@ import {
 } from "../search/managedSearch.js";
 import {
   DEEPSEEK_MODEL_IDS,
-  resolveDeepseekAuth,
+  resolveModelAuth,
   resolveModelId,
   resolveModelProvider,
 } from "../llm/modelConfig.js";
@@ -209,8 +209,8 @@ async function searchLinks(
 
   const primaryConfig = await getPrimarySearchConfig();
   // key 优先级:① 搜索专配 key(SETTING_SEARCH_PRIMARY.apiKey) ② 本请求 agent 正在用的 DeepSeek key
-  //(requestDeepseekKey = resolveDeepseekAuth: visitor > global-db > env)。
-  // 关键修复(0702 桌面验收):桌面端 key 是 **visitor 层**(x-deepseek-key header,服务端不落盘,
+  //(requestDeepseekKey = resolveModelAuth: visitor > global-db > env)。
+  // 桌面端 key 是 **visitor 层**(x-model-key header,服务端不落盘,
   // 见 visitorKeyStore),只读 DB 设置/env 一律取不到 → useDeepseek 恒为 false → **永远回退 Bing**。
   // 而 Bing 对中文实体/多词意图做浅层分词匹配(实测"特斯拉 Q4 财报"返回单字"特"的新华字典、
   // "2026世界杯 英格兰 刚果金"只匹配"2026"返回年份百科),质量极差;DeepSeek 官方 web_search 精准
@@ -489,7 +489,7 @@ export const webSearchTool = createTool({
       const activeProvider = resolveModelProvider(context?.requestContext);
       // Kimi 主 key 不能发往 DeepSeek 专属 web_search 端点；Kimi 下仅用搜索专配 key或多源兜底。
       const requestAuth = activeProvider === "deepseek"
-        ? resolveDeepseekAuth(context?.requestContext)
+        ? resolveModelAuth(context?.requestContext)
         : { apiKey: "", origin: "none" as const };
       const requestDeepseekKey = requestAuth.apiKey;
       const deepseekModel = activeProvider === "deepseek"

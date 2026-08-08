@@ -1,5 +1,5 @@
 import { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "./streamTextCompat.js";
+import { streamText } from "ai-v5";
 import { Buffer } from "node:buffer";
 import {
   getVisionModel,

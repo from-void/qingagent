@@ -164,11 +164,3 @@ export function extractJsonArray(
   }
   return null;
 }
-
-/** @deprecated 使用 extractJsonArray；保留此导出仅为兼容已有内部调用。 */
-export function extractFirstBalancedArray(
-  raw: string,
-  validate?: (arr: unknown[]) => boolean,
-): string | null {
-  return extractJsonArray(raw, validate);
-}

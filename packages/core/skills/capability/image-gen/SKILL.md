@@ -29,7 +29,7 @@ metadata:
    - 工具只接受用户明确指定的图片引用；不得改用 shell 探测 uploads 或任意宿主路径。
 2. 若 `mimeType` 是 `image/svg+xml`，原生 SVG 定点编辑始终可用：
    - 先结合 system prompt 判断运行形态。桌面环境按下述命令轻量探测本机 Codex；非桌面环境不探测，直接视为没有本机 Codex。
-   - POSIX：`command -v codex`；Windows：`where codex`。使用 `mastra_workspace_execute_command`，`timeout` 设为 5 秒。命令失败、超时、无输出或找不到可执行文件，都视为不可用；不重试，不展示内部错误。
+   - POSIX：`command -v codex`；Windows：`where codex`。使用 `mastra_workspace_execute_command`，`timeoutSeconds` 设为 5。命令失败、超时、无输出或找不到可执行文件，都视为不可用；不重试，不展示内部错误。
    - 未检测到 Codex 时不反问、不拒绝，立即用 `skill_read` 读取 `svg/SKILL.md`，自动回落到原生 SVG 定点编辑。
    - 检测到 Codex 后，按第 3 步取得用户确认，再读取 `codex-image/SKILL.md` 执行。问卷恢复后统一调用 `editSvgWithCodexFallback`：指令写入、Codex 启动/运行、产物核验或导入任一环节失败最多重试一次，仍失败立即自动执行原生 SVG 定点编辑；不得把换路责任交给用户，也不得整图重生。
 3. 检测到 Codex 后，必须确认用户是否同意把这次修改交给本机 Codex：
@@ -60,7 +60,7 @@ metadata:
 1. 先用 `mastra_workspace_execute_command` 做一次轻量、短超时探测：
    - POSIX：`command -v codex`；如需确认版本可改用 `codex --version`。
    - Windows：`where codex`。
-   - `timeout` 设为 5 秒。命令失败、超时、无输出或找不到可执行文件，都视为未安装；不重试，也不把探测错误拿来打扰用户。
+   - `timeoutSeconds` 设为 5。命令失败、超时、无输出或找不到可执行文件，都视为未安装；不重试，也不把探测错误拿来打扰用户。
 2. 未检测到 Codex 时只有一条可用路线：不反问，直接用 `skill_read` 读取 `svg/SKILL.md` 后执行。
 3. 检测到 Codex，且用户此前已经明确说过“别问”“直接画”或同义要求时，不做方式反问，也不设固定默认；由你综合上下文和本次画面诉求裁决路线：
    - 用户说“按上次的搞法”“像之前那样”或其他指向历史的话时，去会话历史里确认上次实际走的是 SVG 还是 Codex 生图，并原样沿用。

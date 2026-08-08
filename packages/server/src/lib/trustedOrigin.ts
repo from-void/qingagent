@@ -4,7 +4,7 @@ import { isCommandMutationPath } from "./commandsAuth";
 // CSRF 防护:敏感写操作挡掉跨站请求(恶意网页向本机后端发 POST/DELETE)。
 // 浏览器跨站请求一定带 Origin 头;受信来源=精确的本机 Web Origin+
 // QINGAGENT_TRUSTED_ORIGINS 配置的生产 Origin。其余路由为兼容旧同源/CLI 请求仍允许
-// 无 Origin；commands/stream mutation 必须显式带 Origin，并另有 token 主防线。
+// 无 Origin；commands mutation 必须显式带 Origin，并另有 token 主防线。
 const DEFAULT_LOCAL_WEB_PORTS = ["5173", "6173", "5191", "8090", "8091"];
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 

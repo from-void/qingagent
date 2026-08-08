@@ -316,13 +316,13 @@ function compareExternalSessions(
 function normalizedExternalSessionState(docState: string): ContentDocState["kind"] {
   switch (docState) {
     case "empty":
-    case "init":
       return "empty";
     case "pendingReview":
-    case "review":
       return "pendingReview";
-    default:
+    case "editing":
       return "editing";
+    default:
+      throw new Error(`Invalid stored document state: ${docState}`);
   }
 }
 
@@ -1616,7 +1616,7 @@ function materialForExternal(material: Material) {
     summary: material.summary ?? "",
     wordCount: material.metadata.wordCount,
     byteLen: Buffer.byteLength(material.text, "utf8"),
-    parseState: material.metadata.parseState ?? "ready",
+    parseState: material.metadata.parseState,
     sourceUrl: material.metadata.sourceUrl ?? null,
     createdAt: material.createdAt,
   };

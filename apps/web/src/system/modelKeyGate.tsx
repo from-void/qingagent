@@ -26,9 +26,8 @@ export type ModelKeyGateSnapshot =
     };
 
 interface ModelKeySettingsResponse {
-  provider?: ModelProvider;
-  apiKeyConfigured?: boolean;
-  providers?: Partial<Record<ModelProvider, { apiKeyConfigured?: boolean }>>;
+  provider: ModelProvider;
+  providers: Record<ModelProvider, { apiKeyConfigured: boolean }>;
 }
 
 function providerName(provider: ModelProvider): string {
@@ -44,8 +43,6 @@ function localRequestProvider(
   serverProvider?: ModelProvider,
 ): ModelProvider {
   if (local.provider) return local.provider;
-  // 兼容旧数据：只要已有任一 DeepSeek 显式配置，就继续锁定 DeepSeek。
-  if (local.providers.deepseek.hasExplicitConfig) return "deepseek";
   return serverProvider ?? "deepseek";
 }
 
@@ -53,22 +50,14 @@ function serverProviderConfigured(
   body: ModelKeySettingsResponse,
   provider: ModelProvider,
 ): boolean {
-  const configured = body.providers?.[provider]?.apiKeyConfigured;
-  if (typeof configured === "boolean") return configured;
-  if (body.provider === provider && typeof body.apiKeyConfigured === "boolean") {
-    return body.apiKeyConfigured;
-  }
-  throw new Error(`model settings response is missing ${provider} apiKeyConfigured`);
+  return body.providers[provider].apiKeyConfigured;
 }
 
 function configuredFromLocal(
   local: LocalModelKeySnapshot,
 ): ModelKeyGateSnapshot | null {
   const provider = localRequestProvider(local, undefined);
-  if (
-    (local.provider || local.providers.deepseek.hasExplicitConfig) &&
-    local.providers[provider].configured
-  ) {
+  if (local.provider && local.providers[provider].configured) {
     return { status: "configured", provider };
   }
   return null;
@@ -187,11 +176,6 @@ export function useModelKeyGate(): ModelKeyGateSnapshot {
   return snapshot;
 }
 
-/** 兼容只关心 boolean 的旧调用方；loading 保持 fail-open。 */
-export function useModelKeyConfigured(): boolean {
-  return useModelKeyGate().status !== "unconfigured";
-}
-
 // 「去配置」：携带目标厂商返回首页，设置弹框直接打开该厂商二级配置页。
 export function goConfigureModel(
   navigateHome: () => void,
@@ -244,25 +228,21 @@ export function consumeOpenSettingsFlag(): boolean {
 // 发送按钮上的门禁气泡：一键切换会等待 provider 真正落盘，再由同窗口配置事件触发门禁重算。
 export function NoKeyTip({
   gate,
-  active = false,
   forced = false,
   onConfigure,
   children,
 }: {
   gate?: ModelKeyGateSnapshot;
-  /** 仅保留给独立样式/demo 调用；产品路径应传 gate。 */
-  active?: boolean;
   forced?: boolean;
   onConfigure: (provider: ModelProvider) => void;
   children: ReactNode;
 }) {
   const toast = useToast();
   const [switching, setSwitching] = useState(false);
-  const effectiveGate: ModelKeyGateSnapshot = gate ?? (
-    active
-      ? { status: "unconfigured", provider: "deepseek", fallbackProvider: null }
-      : { status: "configured", provider: "deepseek" }
-  );
+  const effectiveGate: ModelKeyGateSnapshot = gate ?? {
+    status: "configured",
+    provider: "deepseek",
+  };
   if (effectiveGate.status !== "unconfigured") return <>{children}</>;
 
   const { provider, fallbackProvider } = effectiveGate;

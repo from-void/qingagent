@@ -243,7 +243,6 @@ describe("editDraftInputSchema", () => {
       { type: "italic" },
       { type: "underline" },
       { type: "strike" },
-      { type: "strikeThrough" },
       { type: "code" },
       { type: "link", href: "https://example.com", title: "示例" },
     ];

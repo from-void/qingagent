@@ -1,6 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import type { ModelMessage } from "ai-v5";
-import { streamText } from "./streamTextCompat.js";
+import { streamText, type ModelMessage } from "ai-v5";
 import {
   branchCall,
   DEFAULT_BRANCH_STREAM_BUFFER_BYTES,

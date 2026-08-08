@@ -9,11 +9,8 @@ export const MODEL_DEFAULTS: Record<ModelProvider, { flash: string; pro: string 
 export const PENDING_SUB = "\u00a0";
 
 export interface ServerModelSettings {
-  provider?: ModelProvider;
-  apiKeyConfigured: boolean;
-  maskedTail: string | null;
-  source: "db" | "env" | "none";
-  providers?: Record<ModelProvider, {
+  provider: ModelProvider;
+  providers: Record<ModelProvider, {
     apiKeyConfigured: boolean;
     maskedTail: string | null;
     source: "db" | "env" | "none";

@@ -39,7 +39,6 @@ import {
 } from "@qingagent/db/write-guard";
 import {
   beginSessionDeletion,
-  backfillDeletingSessionResources,
   deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
   getTombstonedSessionIds,
@@ -84,7 +83,6 @@ import { sessionOwnedThreadIds } from "./sessionShadowThreads.js";
 
 const logger = mastra.getLogger();
 export const QINGAGENT_RESOURCE_ID = "qingagent-user";
-const LEGACY_RESOURCE_ID = "user-default";
 const PRIMARY_METADATA_WRITE_MAX_ATTEMPTS = 5;
 const PRIMARY_METADATA_WRITE_INITIAL_BACKOFF_MS = 50;
 const SCHEDULE_PERSIST_MAX_ATTEMPTS = 3;
@@ -136,8 +134,7 @@ export interface MaterialRecord {
     title: string | null;
     /** 抓取类素材的来源 URL(上传类为 null/缺省),溯源用。 */
     sourceUrl?: string | null;
-    /** 缺省按 ready 处理，兼容旧会话数据。 */
-    parseState?: "ready" | "error";
+    parseState: "ready" | "error";
     /** 解析失败时的友好错误文案。 */
     parseError?: string | null;
   };
@@ -289,10 +286,6 @@ function deserializeConfirmAuditDegraded(value: unknown): ConfirmAuditDegradedMa
   };
 }
 
-function normalizeParseState(value: unknown): "ready" | "error" {
-  return value === "error" ? "error" : "ready";
-}
-
 function deserializeMaterials(records: unknown): Map<string, Material> {
   const map = new Map<string, Material>();
   if (!Array.isArray(records)) return map;
@@ -306,6 +299,7 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
       !isNullableString(r.summary) ||
       !isNullableString(r.fileId) ||
       !isRecord(r.metadata) ||
+      (r.metadata.parseState !== "ready" && r.metadata.parseState !== "error") ||
       !isNonEmptyString(r.createdAt) ||
       !isNonEmptyString(r.updatedAt)
     ) {
@@ -334,7 +328,7 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
         sourceUrl: typeof metadata.sourceUrl === "string" || metadata.sourceUrl === null
           ? metadata.sourceUrl
           : undefined,
-        parseState: normalizeParseState(metadata.parseState),
+        parseState: metadata.parseState as "ready" | "error",
         ...(parseError !== undefined ? { parseError } : {}),
       },
       createdAt: r.createdAt,
@@ -1374,44 +1368,6 @@ export async function persistSessionMetadata(
         });
       }
 
-      if (isSessionDeleted(sid)) {
-        logger.info("Skipping derived documents persist for deleted session", {
-          sessionId: sid,
-          reason,
-        });
-        return;
-      }
-
-      // 0702 review Lane A:影子写必须整体使用 serializeMetadata 时刻的快照(meta.doc),
-      // 不能晚读活引用 state.doc——updateThread await 期间若发生 updateDoc 提交,
-      // 会把「新内容 + 旧 docVersion」的错位对写进 documents(documentRepo.save 的
-      // 版本守卫能挡住版本回退,但等版本+内容变化分支仍可能放行错位内容)。
-      // 快照一致后,期间的新变更由 schedulePersist 的 dirty 循环下一轮补写。
-      // documents 只保存正文及其从 Mastra thread 派生出的缓存字段。即使其短暂不可用，
-      // 也不能让熔断器永久跳过后续同步；每次权威元数据落库后都尝试收敛一次。
-      if (meta.doc) {
-        try {
-          await documentRepo.save({
-            id: meta.docId ?? state.sessionId,
-            threadId: state.threadId ?? state.sessionId,
-            resourceId: state.resourceId,
-            title: meta.title,
-            docState: meta.docState.kind,
-            docVersion: meta.docVersion,
-            lastSyncedVersion: meta.lastSyncedDocumentSnapshot,
-            legacySections: meta.legacySections,
-            pmDoc: meta.doc,
-            createdAt: meta.lastPersistedAt,
-            updatedAt: meta.lastPersistedAt,
-          });
-        } catch (shadowErr) {
-          logger.warn("Derived documents write failed; it will be reconciled from Mastra metadata", {
-            sessionId: state.sessionId,
-            error: shadowErr instanceof Error ? shadowErr.message : String(shadowErr),
-          });
-        }
-      }
-
       // write 成功后再 diff + 记 span。基线只在确有变化时推进到「本次写入的」
       // 快照，避免 write 失败重试漏记。span 失败已在内部 try/catch 吞掉，绝不
       // 影响主链路。
@@ -1730,19 +1686,10 @@ export function cleanRestoredText(text: string): string {
  * `{ format: 2, parts: MastraMessagePart[] }` where text parts have `{ type: "text", text: string }`.
  */
 function extractTextFromDbContent(content: unknown): string {
-  if (typeof content === "string") return content;
   if (!content || typeof content !== "object") return "";
   const c = content as Record<string, unknown>;
-  // MastraMessageContentV2 format
   if (Array.isArray(c.parts)) {
     return (c.parts as Array<Record<string, unknown>>)
-      .filter((p) => p.type === "text" && typeof p.text === "string")
-      .map((p) => p.text as string)
-      .join("");
-  }
-  // Legacy array-of-content-parts format
-  if (Array.isArray(content)) {
-    return (content as Array<Record<string, unknown>>)
       .filter((p) => p.type === "text" && typeof p.text === "string")
       .map((p) => p.text as string)
       .join("");
@@ -2109,7 +2056,6 @@ export async function loadSessionFromThread(
     // 批注独立落在 document_suggestions；恢复时按活动状态重组，不写入 thread metadata 双份真相。
     annotationGroups,
     patchVerdicts,
-    patchValidationResults: new Map(),
     docDraftBaseSections: null,
     docDraftBaseVersion: null,
     docDraftBaseDoc: null,
@@ -2217,35 +2163,12 @@ export async function listSessionThreads(opts: {
   const memory = mastra.getMemory("default");
   if (!memory) return { threads: [], total: 0, hasMore: false };
 
-  const [current, legacy] = await Promise.all([
-    memory.listThreads({
-      filter: { resourceId: QINGAGENT_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: opts.page ?? 0,
-      perPage: opts.perPage ?? 50,
-    }),
-    memory.listThreads({
-      filter: { resourceId: LEGACY_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: opts.page ?? 0,
-      perPage: opts.perPage ?? 50,
-    }),
-  ]);
-
-  const threadsById = new Map<string, StorageThreadType>();
-  for (const thread of [...current.threads, ...legacy.threads]) {
-    threadsById.set(thread.id, thread);
-  }
-
-  const threads = Array.from(threadsById.values()).sort(
-    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-  );
-
-  return {
-    threads,
-    total: current.total + legacy.total,
-    hasMore: current.hasMore || legacy.hasMore,
-  };
+  return memory.listThreads({
+    filter: { resourceId: QINGAGENT_RESOURCE_ID },
+    orderBy: { field: "updatedAt", direction: "DESC" },
+    page: opts.page ?? 0,
+    perPage: opts.perPage ?? 50,
+  });
 }
 
 export type HomeSessionThread = StorageThreadType & {
@@ -2278,7 +2201,7 @@ function parsedHomeThread(thread: StorageThreadType): HomeSessionThread & {
 }
 
 /**
- * 首页专用查询：全量拉 current/legacy、current 优先去重、按内容编辑时间排序后分页。
+ * 首页专用查询：全量拉取当前 resource，按内容编辑时间排序后分页。
  * listSessionThreads 保持原有 updatedAt 语义，避免影响 usage/data-admin。
  */
 export async function listHomeSessionThreads(opts: {
@@ -2292,33 +2215,17 @@ export async function listHomeSessionThreads(opts: {
   const memory = mastra.getMemory("default");
   if (!memory) return { threads: [], total: 0, hasMore: false };
 
-  const [current, legacy] = await Promise.all([
-    memory.listThreads({
-      filter: { resourceId: QINGAGENT_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: false,
-    }),
-    memory.listThreads({
-      filter: { resourceId: LEGACY_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: false,
-    }),
-  ]);
+  const current = await memory.listThreads({
+    filter: { resourceId: QINGAGENT_RESOURCE_ID },
+    orderBy: { field: "updatedAt", direction: "DESC" },
+    page: 0,
+    perPage: false,
+  });
 
-  const threadsById = new Map<string, StorageThreadType>();
-  for (const thread of current.threads) {
-    threadsById.set(thread.id, thread);
-  }
-  for (const thread of legacy.threads) {
-    if (!threadsById.has(thread.id)) {
-      threadsById.set(thread.id, thread);
-    }
-  }
-
-  const tombstonedSessionIds = await getTombstonedSessionIds([...threadsById.keys()]);
-  const sorted = Array.from(threadsById.values())
+  const tombstonedSessionIds = await getTombstonedSessionIds(
+    current.threads.map((thread) => thread.id),
+  );
+  const sorted = current.threads
     .filter((thread) => !tombstonedSessionIds.has(thread.id))
     .map(parsedHomeThread)
     .sort((a, b) => {
@@ -2377,7 +2284,6 @@ export async function deleteSessionThread(
   await beginSessionDeletion(sessionId);
   let phase: SessionDeletionPhase;
   try {
-    await backfillDeletingSessionResources(sessionId);
     phase = await deleteSessionDocumentsAndAdvance(sessionId);
   } catch (error) {
     throw new SessionDeletionError(sessionId, "draining", error);

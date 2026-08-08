@@ -1,7 +1,6 @@
 import {
   getPmContentHash,
   getStablePmJson,
-  repairLegacyStableJsonUndefined,
   safeParsePmDoc,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -13,6 +12,114 @@ interface RecoveredPm {
   json: string;
   hash: string;
 }
+
+function replaceBareUndefinedTokens(
+  input: string,
+  replacement: string,
+): { json: string; replacements: number } | null {
+  let json = "";
+  let inString = false;
+  let replacements = 0;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    if (inString) {
+      json += char;
+      if (char === "\\") {
+        index += 1;
+        if (index < input.length) json += input[index]!;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      json += char;
+      continue;
+    }
+    if (!input.startsWith("undefined", index)) {
+      json += char;
+      continue;
+    }
+
+    let previousIndex = index - 1;
+    while (previousIndex >= 0 && /\s/.test(input[previousIndex]!)) previousIndex -= 1;
+    let nextIndex = index + "undefined".length;
+    while (nextIndex < input.length && /\s/.test(input[nextIndex]!)) nextIndex += 1;
+    const previous = input[previousIndex];
+    const next = input[nextIndex];
+    if (
+      previous !== ":"
+      && previous !== "["
+      && previous !== ","
+    ) {
+      json += char;
+      continue;
+    }
+    if (next !== "," && next !== "}" && next !== "]") {
+      json += char;
+      continue;
+    }
+
+    json += replacement;
+    replacements += 1;
+    index += "undefined".length - 1;
+  }
+
+  return replacements > 0 ? { json, replacements } : null;
+}
+
+function countSentinel(value: unknown, sentinel: string): number {
+  if (value === sentinel) return 1;
+  if (Array.isArray(value)) {
+    return value.reduce((count, item) => count + countSentinel(item, sentinel), 0);
+  }
+  if (value === null || typeof value !== "object") return 0;
+  return Object.values(value).reduce(
+    (count, item) => count + countSentinel(item, sentinel),
+    0,
+  );
+}
+
+function restoreUndefinedSemantics(value: unknown, sentinel: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      item === sentinel ? null : restoreUndefinedSemantics(item, sentinel)
+    );
+  }
+  if (value === null || typeof value !== "object") return value;
+  const restored: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item === sentinel) continue;
+    restored[key] = restoreUndefinedSemantics(item, sentinel);
+  }
+  return restored;
+}
+
+/**
+ * 修复旧 stableStringify 写出的裸 undefined。只接受“替换后整体可被 JSON.parse”
+ * 的输入；围栏、前后散文、截断或其他损坏一律返回 null，交由隔离机制保留。
+ */
+function repairLegacyStableJsonUndefined(input: string): unknown | null {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    // 候选哨兵若也存在于用户字符串中，计数会大于裸 token 数，换下一个即可；
+    // 因此不会误删正文里转义得到的同名字符串。
+    const sentinel = `\u0000qingagent-stable-undefined-${attempt}\u0000`;
+    const replaced = replaceBareUndefinedTokens(input, JSON.stringify(sentinel));
+    if (!replaced) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(replaced.json) as unknown;
+    } catch {
+      return null;
+    }
+    if (countSentinel(parsed, sentinel) !== replaced.replacements) continue;
+    return restoreUndefinedSemantics(parsed, sentinel);
+  }
+  return null;
+}
+
 
 function recoverPm(raw: unknown): RecoveredPm | null {
   if (typeof raw !== "string") return null;

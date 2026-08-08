@@ -1,9 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
-import {
-  extractFirstBalancedArray,
-  extractJsonArray,
-} from "../utils/extractJsonArray.js";
+import { extractJsonArray } from "../utils/extractJsonArray.js";
 
 describe("extractJsonArray 顶层数组候选边界", () => {
   it("顶层数组截断时不把完整 options 子数组冒充结果", () => {
@@ -11,7 +8,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
       '[{"id":"q1","label":"选择？","kind":"single","options":[{"value":"a","label":"甲"}]}';
 
     expect(extractJsonArray(truncated)).toBeNull();
-    expect(extractFirstBalancedArray(truncated)).toBeNull();
   });
 
   it("跳过前导散文方括号，并兼容 fence 与尾随文本", () => {
@@ -19,7 +15,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
     const raw = `说明[草稿]：\n\`\`\`json\n${expected}\n\`\`\`\n以上是结果。`;
 
     expect(extractJsonArray(raw)).toBe(expected);
-    expect(extractFirstBalancedArray(raw)).toBe(expected);
   });
 
   it.each([
@@ -31,7 +26,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
     const raw = `默认值为 ${decoy}，结果：${expected}`;
 
     expect(extractJsonArray(raw)).toBe(expected);
-    expect(extractFirstBalancedArray(raw)).toBe(expected);
   });
 
   it("前置示例对象数组不截胡后随终答对象数组", () => {
@@ -39,7 +33,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
     const expected = '[{"label":"终答","options":[]}]';
 
     expect(extractJsonArray(`格式示例：${example}\n最终答案：${expected}`)).toBe(expected);
-    expect(extractFirstBalancedArray(`格式示例：${example}\n最终答案：${expected}`)).toBe(expected);
   });
 
   it("对象数组后的散文小数组不改变对象候选", () => {
@@ -53,7 +46,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
       '默认值为 [true]。说明[草稿]：\n```json\n[{"id":"q1","options":[{"value":"a"}]}\n```';
 
     expect(extractJsonArray(raw)).toBeNull();
-    expect(extractFirstBalancedArray(raw)).toBeNull();
   });
 
   it("已平衡对象数组后出现未闭合末尾候选时仍失败", () => {
@@ -61,7 +53,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
       '[{"label":"旧答案","options":[]}]\n最终答案：[{"label":"被截断","options":[';
 
     expect(extractJsonArray(raw)).toBeNull();
-    expect(extractFirstBalancedArray(raw)).toBeNull();
   });
 
   it("validate 路径遇到末尾截断时不捞取外层内部的完整对象数组", () => {
@@ -78,7 +69,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
       );
 
     expect(extractJsonArray(raw, validate)).toBeNull();
-    expect(extractFirstBalancedArray(raw, validate)).toBeNull();
   });
 
   it("在耗时上限内线性处理四千个连续未闭合数组起始符", () => {
@@ -96,7 +86,6 @@ describe("extractJsonArray 顶层数组候选边界", () => {
       `说明[草稿]，默认值为 [true]。\n\`\`\`json\n${expected}\n\`\`\`\n以上是结果。`;
 
     expect(extractJsonArray(raw)).toBe(expected);
-    expect(extractFirstBalancedArray(raw)).toBe(expected);
   });
 
   it("多 fence 时只在最后一个 fence 内按嵌套边界取末候选", () => {

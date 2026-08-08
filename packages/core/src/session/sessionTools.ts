@@ -1505,7 +1505,6 @@ export function createSessionScopedTools(
         }, "commit_exception");
         throw error;
       }
-      context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", state.docDraftCandidateDoc ?? workingDoc);
       const stats = currentDraftMutationStats(state);
       const warning = skippedDuplicateInserts > 0

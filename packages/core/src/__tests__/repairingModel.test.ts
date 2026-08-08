@@ -165,7 +165,6 @@ describe("RepairingLanguageModelV2", () => {
     state.doc = pmDoc("旧文");
     const requestContext = new RequestContext([
       ["doc", state.doc],
-      ["legacySections", state.legacySections],
       ["sessionId", state.sessionId],
     ]);
     const editDraft = createSessionScopedTools(state).editDraft;

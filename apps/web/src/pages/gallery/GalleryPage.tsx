@@ -1021,6 +1021,8 @@ function qrBody(opts: { expiresAt: number }): ToolCallBody {
   return {
     kind: "qrCard",
     data: {
+      presentation: "link",
+      imageDataUri: null,
       content: "https://example.com/auth?code=DEMO-1234",
       title: "扫码授权飞书",
       code: "WXYZ-1234",

@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import {
   createPinnedLookup,
   hardenInlineSvg,
@@ -465,9 +465,4 @@ export async function thumbnailSrcForImageInput(rawImage: string): Promise<strin
     return filename ? `/api/v1/files/${image}/${filename}` : null;
   }
   return null;
-}
-
-export function looksLikeSupportedImageFilename(filename: string): boolean {
-  const ext = extname(filename).toLowerCase();
-  return ext === ".png" || ext === ".jpg" || ext === ".jpeg" || ext === ".webp" || ext === ".gif";
 }

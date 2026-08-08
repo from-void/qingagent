@@ -51,9 +51,9 @@ describe("usage thread metadata targeted reads", () => {
         metadata: { title: "元数据标题", doc: pmDoc },
       },
       {
-        id: "legacy-recent",
-        resourceId: "user-default",
-        title: "旧线程标题",
+        id: "legacy-sections-recent",
+        resourceId: "qingagent-user",
+        title: "旧正文格式线程标题",
         createdAt: "2026-07-30T00:00:00.000Z",
         metadata: {
           title: "",

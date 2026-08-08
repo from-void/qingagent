@@ -1,6 +1,5 @@
 export * from "./AcceptPatch";
 export * from "./ActionCard";
-export * from "./AgentMessage";
 export * from "./AiDocument";
 export * from "./AskUserAnswer";
 export * from "./AskUserAnswerCardPart";

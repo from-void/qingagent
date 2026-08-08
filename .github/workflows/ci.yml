@@ -47,14 +47,11 @@ jobs:
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
-      - name: 六项 PM 与依赖门禁
+      - name: PM 与依赖门禁
         run: |
-          node --test scripts/pm-ledger.test.mjs
           pnpm pm:image:check
           pnpm pm:history:check
-          pnpm pm:legacy-ban
           pnpm pm:css:check
-          pnpm pm:impact:check
           pnpm test:depcruise-guard
 
       - name: pnpm typecheck

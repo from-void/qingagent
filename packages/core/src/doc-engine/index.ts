@@ -1,5 +1,4 @@
 export {
-  clearDraftMutationScratch,
   invalidateDraftStateAfterCanonicalWrite,
   clearInMemoryDraftDocs,
   clonePmDoc,
@@ -24,12 +23,8 @@ export {
 } from "./reviewCommit.js";
 
 export {
-  parseLegacySections,
-  extractJson,
   buildDocumentSnapshot,
   emitDocumentSnapshotFrames,
-  docSectionSchema,
-  legacySectionsSchema,
 } from "./docGenerator.js";
 
 export {
@@ -42,18 +37,12 @@ export {
 } from "./docFacts.js";
 
 export {
-  isServerReanchorEnabled,
-  isTruthyFlag,
-} from "./draftFeatureFlags.js";
-
-export {
   buildAnnotationMappingSteps,
   mapAnnotationGroupsThroughSteps,
 } from "./annotationMapping.js";
 export type { MappedAnnotationGroups } from "./annotationMapping.js";
 
 export {
-  coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -118,10 +107,3 @@ export type {
   RestoreDocStateFacts,
   TransitionDocStateOptions,
 } from "./docStateTransitions.js";
-
-export { migrateThreadMetadataToDocuments } from "./migrateThreadMetadataToDocuments.js";
-
-export type {
-  MigrationOptions,
-  MigrationStats,
-} from "./migrateThreadMetadataToDocuments.js";

@@ -13,7 +13,6 @@ import {
   type UploadPurpose,
 } from "@qingagent/contract-ts";
 import {
-  backfillActiveSessionResources,
   hasActiveSessionResource,
   registerSessionResource,
 } from "@qingagent/db";
@@ -32,20 +31,6 @@ import { resolveUploadMaxBytes } from "../lib/uploadLimits";
 
 export const uploadRoutes = new Hono();
 const uploadMaxBytes = resolveUploadMaxBytes();
-let ownershipBackfill: Promise<void> | null = null;
-
-async function ensureOwnershipBackfill(): Promise<void> {
-  if (!ownershipBackfill) {
-    ownershipBackfill = backfillActiveSessionResources()
-      .then(() => undefined)
-      .catch((error) => {
-        ownershipBackfill = null;
-        throw error;
-      });
-  }
-  await ownershipBackfill;
-}
-
 /** Validate that a filename does not contain path separators or traversal sequences. */
 function isSafeFilename(filename: string): boolean {
   return !filename.includes("/") && !filename.includes("\\") && !filename.includes("..");
@@ -240,7 +225,6 @@ async function handleFileRequest(c: Context) {
     return c.json({ error: "invalid filename" }, 400);
   }
 
-  await ensureOwnershipBackfill();
   if (!(await hasActiveSessionResource(fileId))) {
     return c.json({ error: "not found" }, 404);
   }

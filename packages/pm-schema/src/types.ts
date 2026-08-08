@@ -379,9 +379,3 @@ export type PmStep = {
   /** 整批候选终稿整体替换时，一条真实 replace step 对应的全部审阅项。 */
   suggestionIds?: string[];
 };
-
-export type PmPatchConflict = {
-  kind: "anchor_not_found" | "schema_invalid" | "version_conflict";
-  message: string;
-  blockId?: string;
-};

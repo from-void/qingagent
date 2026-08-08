@@ -182,11 +182,7 @@ function assertAllowedSource(
 
   if (stalePendingReviewToEmpty) return;
 
-  // from 可能是旧快照遗留的 legacy 8 态字面量(经 restore 进入,尚未归一到 3 态),
-  // 此时 allowed[from] 为 undefined;统一抛 DocStateTransitionError(而非 .includes 的
-  // TypeError),让 normalize 模式按既有 try/catch 降级到 idleDocState。
-  const allowedTargets = allowed[from] as readonly DocState["kind"][] | undefined;
-  if (!allowedTargets || !allowedTargets.includes(target.kind)) {
+  if (!allowed[from].includes(target.kind)) {
     throw new DocStateTransitionError(
       `Illegal docState transition ${from} -> ${target.kind}`,
       from,

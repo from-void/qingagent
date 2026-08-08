@@ -1,5 +1,4 @@
 import type { ChatChip } from "./ChatChip";
-import type { ResourceRef } from "./ResourceRef";
 import type { SkillRef } from "./SkillRef";
 import type { ActionCardData } from "./ActionCard";
 import type { ReviewContext } from "./ReviewTemplates";
@@ -16,8 +15,7 @@ export type ActiveDocumentTarget =
   | { kind: "derivative"; docId: string };
 
 export type SendMessage = { sessionId: string, text: string,
-/** @deprecated 仅保留空数组线协议兼容；资源引用请使用 `chips`。 */
-mentions: Array<ResourceRef>, skills: Array<SkillRef>,
+skills: Array<SkillRef>,
 /**
  * User-side chip echoes (Selection, Insertion, Attach, Mention,
  * Skill, Text). Each chip carries an optional `ResourceRef` per
@@ -25,7 +23,7 @@ mentions: Array<ResourceRef>, skills: Array<SkillRef>,
  */
 chips: Array<ChatChip>,
 /**
- * Optional file IDs referencing previously uploaded files via
+ * File IDs referencing previously uploaded files via
  * POST /api/v1/upload. Each ID maps to a file stored on the server.
  * Empty array when no files.
  */
@@ -48,11 +46,6 @@ clientMessageId?: string,
  * Absent = plain-text message; behavior unchanged.
  */
 richText?: string,
-/**
- * 可选的当轮模型专用上下文。服务端只把它追加到模型侧 user message，
- * 不得渲染进用户气泡。
- */
-turnContext?: string,
 /** 受控的用户动作分类，只用于服务端模型调用归属，不接受任意 site。 */
 turnKind?: SendMessageTurnKind,
 /**

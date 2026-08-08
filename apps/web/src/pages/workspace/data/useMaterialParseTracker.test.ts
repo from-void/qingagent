@@ -49,7 +49,7 @@ function resource(input: {
       wordCount: 0,
       title: null,
       ...(input.updatedAt !== undefined ? { updatedAt: input.updatedAt } : {}),
-      ...(input.parseState ? { parseState: input.parseState } : {}),
+      parseState: input.parseState ?? "ready",
       ...(input.parseError !== undefined ? { parseError: input.parseError } : {}),
     },
   };
@@ -463,7 +463,7 @@ describe("useMaterialParseTracker state machine", () => {
 });
 
 describe("buildMaterialParseRows", () => {
-  it("按 fileId 去重且 resource 优先，metadata.parseState 缺省为 ready", () => {
+  it("按 fileId 去重且 ready resource 优先", () => {
     const readyWithoutState = resource({
       id: "mat-1",
       displayName: "server.pdf",

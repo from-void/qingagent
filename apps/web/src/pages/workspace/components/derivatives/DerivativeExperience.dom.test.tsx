@@ -365,32 +365,6 @@ describe("公众号稿生成体验", () => {
     consoleError.mockRestore();
   });
 
-  it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
-    const legacyBrokenTable = JSON.stringify({
-      type: "doc", attrs: { schemaVersion: 1 }, content: [{
-        type: "table", attrs: { blockId: "legacy-table" }, content: [
-          { type: "tableRow", content: [
-            { type: "tableCell", attrs: { rowspan: 3, backgroundColor: null }, content: [{ type: "paragraph", attrs: { blockId: "a" }, content: [{ type: "text", text: "旧表格仍可查看" }] }] },
-            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "b" } }] },
-          ] },
-          { type: "tableRow", content: [
-            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "c" } }] },
-          ] },
-        ],
-      }],
-    });
-    const generated = { ...item, generatedAt: "now" };
-    const stream = { getDerivativeDoc: vi.fn(async () => ({
-      meta: generated, docPm: legacyBrokenTable, docVersion: 1, title: "历史稿",
-    })) };
-
-    await act(async () => {
-      root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={generated} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>);
-    });
-    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
-    expect(host.textContent).toContain("旧表格仍可查看");
-  });
-
   it("单篇稿件 JSON 损坏时显示局部占位，不冒泡炸掉工作区", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const damaged = { ...item, sourceVersion: 1, generatedAt: "now" };
@@ -1007,7 +981,7 @@ describe("公众号稿生成体验", () => {
     expect(spanish.title).toBe("最多选择 5 种语言");
     await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ targetLanguages: ["英语", "日语", "韩语", "法语", "德语"], writingStyleId: "translate-faithful" }));
-    expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
+    expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", status: "done", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
     expect(buildTranslationAgentQuery([
       { docId: "translation-en", targetLang: "英语" },
       { docId: "translation-ja", targetLang: "日语" },

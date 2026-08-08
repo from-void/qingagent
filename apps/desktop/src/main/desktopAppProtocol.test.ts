@@ -188,6 +188,5 @@ test("desktop dev 只给主窗口同源 command mutation 补凭据", () => {
   }, options), requestHeaders);
   assert.deepEqual(desktopDevCommandUrlPatterns(options.rendererOrigin), [
     "http://localhost:6173/api/v1/commands*",
-    "http://localhost:6173/api/v1/stream*",
   ]);
 });

@@ -128,23 +128,6 @@ describe("commands mutation 确定性鉴权", () => {
     submit.mockRestore();
   });
 
-  it("旧 /stream mutation 别名不能绕过同一鉴权", async () => {
-    const submit = vi.spyOn(sessionManager, "submitQueued");
-
-    const response = await postCommand(
-      {
-        kind: "ignoreAnnotationGroups",
-        data: { sessionId: "victim-review", reason: "discard_all" },
-      },
-      { Origin: TRUSTED_DESKTOP_ORIGIN },
-      "/api/v1/stream",
-    );
-
-    expect(response.status).toBe(401);
-    expect(submit).not.toHaveBeenCalled();
-    submit.mockRestore();
-  });
-
   it("Web-only 用既有 QINGAGENT_AUTH_TOKEN 换 HttpOnly cookie 后可正常提交", async () => {
     process.env.QINGAGENT_RUNTIME = "server";
     process.env.QINGAGENT_AUTH_TOKEN = "web-only-command-token";

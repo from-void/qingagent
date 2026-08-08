@@ -129,7 +129,7 @@ packages/ui-kit 设计 token 与基础样式的唯一来源(附少量已消费�
 
 默认安全边界是本机回环:后端默认只监听 `127.0.0.1`,只允许本机访问;桌面端开箱即是这个形态。要让外部设备或公网访问,必须由部署者显式改配置并承担对应加固责任。
 
-`POST /api/v1/commands`（以及历史别名 `/api/v1/stream`）始终要求确定性凭据并要求
+`POST /api/v1/commands` 始终要求确定性凭据并要求
 浏览器提供可信 Origin。桌面端由 Electron 主进程代理补充当前 instance token，renderer
 页面拿不到 token；Web-only 形态必须显式设置 `QINGAGENT_AUTH_TOKEN`，浏览器通过现有
 `/api/v1/auth/session` 换取 HttpOnly cookie。桌面内部复用 `instance.json` token 给主进程

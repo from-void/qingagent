@@ -159,7 +159,6 @@ function sendMessage(sessionId: string, text = "改成 2000 字"): Command {
     data: {
       sessionId,
       text,
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],

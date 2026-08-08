@@ -14,7 +14,6 @@ import {
   documentRepo,
   isMissingMastraThreadsTableError,
   loadMainDocumentByThread,
-  repairStoredDocumentRows,
   type DocumentSaveInput,
 } from "../documentRepo.js";
 import { insertVersion } from "../documentVersionRepo.js";
@@ -238,47 +237,6 @@ describe("documentRepo", () => {
     expect(loaded?.title).toBe("after");
     expect(loaded?.legacySections).toEqual([section("after body")]);
     expect(loaded?.version).toBe(2);
-  });
-
-  it("在后台巡检中从最新 document_versions 快照修复过期版本指针", async () => {
-    const staleDoc = legacySectionsToPm([section("visible v2")] as never);
-    const latestDoc = legacySectionsToPm([section("snapshot v4")] as never);
-    await documentRepo.save(
-      input("doc-load-desync", {
-        docVersion: 2,
-        legacySections: [section("visible v2")],
-        pmDoc: staleDoc,
-      }),
-    );
-    await insertVersion({
-      versionId: "version-load-desync-4",
-      docId: "doc-load-desync",
-      docVersion: 4,
-      contentHash: getPmContentHash(latestDoc),
-      schemaVersion: latestDoc.attrs.schemaVersion,
-      actorType: "agent",
-      summary: "latest snapshot",
-      snapshotPm: latestDoc,
-      parentVersion: 3,
-      createdAt: "2026-01-03T00:00:00.000Z",
-    });
-
-    const stats = await repairStoredDocumentRows();
-    expect(stats.versionPointersRepaired).toBe(1);
-
-    const loaded = await documentRepo.load("doc-load-desync");
-    expect(loaded?.docVersion).toBe(4);
-    expect(loaded?.pmDoc).toEqual(latestDoc);
-    expect(loaded?.legacySections).toEqual([section("snapshot v4")]);
-    expect(loaded?.contentHash).toBe(getPmContentHash(latestDoc));
-
-    const raw = await getDocumentsClient().execute({
-      sql: "SELECT doc_version, content_hash, doc_pm FROM documents WHERE id = ?",
-      args: ["doc-load-desync"],
-    });
-    expect(raw.rows[0]?.doc_version).toBe(4);
-    expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(latestDoc));
-    expect(JSON.parse(String(raw.rows[0]?.doc_pm))).toEqual(latestDoc);
   });
 
   it("lists by resourceId with pagination and updated_at descending", async () => {
@@ -728,95 +686,6 @@ describe("documentRepo", () => {
     expect(first.rows.map((row) => row.id)).toEqual(["session-b"]);
     expect(second.total).toBe(2);
     expect(second.rows.map((row) => row.id)).toEqual(["session-a"]);
-  });
-
-  it("后台巡检修复过期 PM 镜像", async () => {
-    const pmDoc = legacySectionsToPm([section("镜像正文")] as never);
-    await documentRepo.save(input("pm-mirror", { pmDoc }));
-    await getDocumentsClient().execute({
-      sql: "UPDATE documents SET content_hash = ?, doc_schema_version = ?, doc_format = ? WHERE id = ?",
-      args: ["stale-hash", 0, "legacy", "pm-mirror"],
-    });
-
-    const stats = await repairStoredDocumentRows();
-    expect(stats.pmMirrorsRepaired).toBe(1);
-    const raw = await getDocumentsClient().execute({
-      sql: "SELECT content_hash, doc_schema_version, doc_format FROM documents WHERE id = ?",
-      args: ["pm-mirror"],
-    });
-    expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(pmDoc));
-    expect(raw.rows[0]?.doc_schema_version).toBe(pmDoc.attrs.schemaVersion);
-    expect(raw.rows[0]?.doc_format).toBe("pm");
-  });
-
-  it("后台巡检隔离坏 PM 后继续修复其余文档", async () => {
-    const validPm = legacySectionsToPm([section("继续修复")] as never);
-    await documentRepo.saveMany([
-      input("repair-valid", { pmDoc: validPm }),
-      input("repair-invalid"),
-    ]);
-    const client = getDocumentsClient();
-    await client.execute({
-      sql: `UPDATE documents
-        SET content_hash = 'stale-hash', doc_schema_version = 0, doc_format = 'legacy'
-        WHERE id = 'repair-valid'`,
-    });
-    await client.execute(
-      "UPDATE documents SET doc_pm = 'not-json' WHERE id = 'repair-invalid'",
-    );
-
-    await expect(repairStoredDocumentRows()).resolves.toMatchObject({
-      scanned: 2,
-      invalidRowsQuarantined: 1,
-      pmMirrorsRepaired: 1,
-    });
-    await expect(documentRepo.load("repair-valid")).resolves.toMatchObject({
-      contentHash: getPmContentHash(validPm),
-    });
-    expect(Number((await client.execute(
-      "SELECT COUNT(*) AS n FROM documents_quarantine_invalid_pm WHERE id = 'repair-invalid'",
-    )).rows[0]?.n)).toBe(1);
-  });
-
-  it("后台巡检回写前发生保存时不覆盖新正文与 hash", async () => {
-    const stalePm = legacySectionsToPm([section("巡检读取的旧正文")] as never);
-    const latestPm = legacySectionsToPm([section("并发保存的新正文")] as never);
-    await documentRepo.save(input("pm-mirror-cas", { pmDoc: stalePm }));
-    const client = getDocumentsClient();
-    await client.execute({
-      sql: "UPDATE documents SET content_hash = ?, doc_schema_version = ?, doc_format = ? WHERE id = ?",
-      args: ["stale-hash", 0, "legacy", "pm-mirror-cas"],
-    });
-
-    const originalExecute = client.execute.bind(client);
-    let savedConcurrently = false;
-    vi.spyOn(client, "execute").mockImplementation(async (statement) => {
-      const sql = typeof statement === "string"
-        ? statement
-        : (statement as unknown as { sql: string }).sql;
-      if (!savedConcurrently && /UPDATE documents SET\s+doc_pm = \?/i.test(sql)) {
-        savedConcurrently = true;
-        await documentRepo.save(input("pm-mirror-cas", {
-          docVersion: 2,
-          pmDoc: latestPm,
-          updatedAt: "2026-01-02T00:00:00.000Z",
-        }));
-      }
-      return originalExecute(statement);
-    });
-
-    const stats = await repairStoredDocumentRows();
-    expect(savedConcurrently).toBe(true);
-    expect(stats.pmMirrorsRepaired).toBe(0);
-
-    const raw = await originalExecute({
-      sql: "SELECT doc_version, version, content_hash, doc_pm FROM documents WHERE id = ?",
-      args: ["pm-mirror-cas"],
-    });
-    expect(raw.rows[0]?.doc_version).toBe(2);
-    expect(raw.rows[0]?.version).toBe(2);
-    expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(latestPm));
-    expect(JSON.parse(String(raw.rows[0]?.doc_pm))).toEqual(latestPm);
   });
 
   it("load/list 保持纯读，且 list 不为每行追加查询", async () => {

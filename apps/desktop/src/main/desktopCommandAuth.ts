@@ -1,6 +1,5 @@
 const DESKTOP_COMMAND_MUTATION_PATHS = new Set([
   "/api/v1/commands",
-  "/api/v1/stream",
 ]);
 
 export function isDesktopCommandMutationPath(pathname: string): boolean {

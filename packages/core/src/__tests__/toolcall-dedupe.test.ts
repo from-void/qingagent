@@ -165,7 +165,7 @@ function imageMaterial(id: string): Material {
     text: "图片素材正文",
     summary: null,
     fileId: `file-${id}`,
-    metadata: { pages: null, wordCount: 6, title: null },
+    metadata: { pages: null, wordCount: 6, title: null, parseState: "ready" },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };

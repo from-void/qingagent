@@ -1,10 +1,9 @@
 import { createTool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
 import { createHash } from "node:crypto";
-import type { ModelMessage } from "ai-v5";
+import { streamText, type ModelMessage } from "ai-v5";
 import { z } from "zod";
 import { getVisionModel } from "../llm/modelConfig.js";
-import { streamText } from "../llm/streamTextCompat.js";
 import { ImageInputError, resolveImageInput } from "./imageInput.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 

@@ -69,7 +69,6 @@ describe("command span lifecycle", () => {
       data: {
         sessionId: "does-not-exist",
         text: "test",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],
@@ -120,7 +119,6 @@ describe("command span lifecycle", () => {
         data: {
           sessionId: sessionMeta.data.sessionId,
           text: "test",
-          mentions: [],
           skills: [],
           chips: [],
           fileIds: [],

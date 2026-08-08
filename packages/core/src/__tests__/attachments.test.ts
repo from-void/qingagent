@@ -84,17 +84,12 @@ vi.mock("../agents/qingagent.js", () => ({
 }));
 
 vi.mock("./docGenerator.js", () => ({
-  parseLegacySections: vi.fn(() => []),
   buildDocumentSnapshot: vi.fn(),
   emitDocumentSnapshotFrames: vi.fn(() => []),
 }));
 
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: vi.fn(() => vi.fn()),
-}));
-
-vi.mock("ai", () => ({
-  generateText: vi.fn(async () => ({ text: "[]" })),
 }));
 
 // ---------------------------------------------------------------------------

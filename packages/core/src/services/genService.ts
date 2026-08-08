@@ -1,5 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "../llm/streamTextCompat.js";
+import { streamText } from "ai-v5";
 import { extractJsonArray } from "../utils/extractJsonArray.js";
 import {
   getDeepseekModel,

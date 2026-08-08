@@ -17,7 +17,6 @@ vi.mock("@qingagent/db", () => ({
   documentDraftRepo: {
     clear: vi.fn(async () => undefined),
   },
-  getConfirmGrant: vi.fn(async () => null),
   getConfirmGrantState: vi.fn(async (kind: "install" | "command") => ({
     kind,
     present: false,

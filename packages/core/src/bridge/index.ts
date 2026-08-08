@@ -52,7 +52,6 @@ export {
 } from "../agent-run/agentSpans.js";
 
 export {
-  clearDraftMutationScratch,
   invalidateDraftStateAfterCanonicalWrite,
   clearInMemoryDraftDocs,
   clonePmDoc,
@@ -142,12 +141,8 @@ export {
 } from "../doc-engine/reviewCommit.js";
 
 export {
-  parseLegacySections,
-  extractJson,
   buildDocumentSnapshot,
   emitDocumentSnapshotFrames,
-  docSectionSchema,
-  legacySectionsSchema,
 } from "../doc-engine/docGenerator.js";
 
 export {
@@ -160,18 +155,12 @@ export {
 } from "../doc-engine/docFacts.js";
 
 export {
-  isServerReanchorEnabled,
-  isTruthyFlag,
-} from "../doc-engine/draftFeatureFlags.js";
-
-export {
   buildAnnotationMappingSteps,
   mapAnnotationGroupsThroughSteps,
 } from "../doc-engine/annotationMapping.js";
 export type { MappedAnnotationGroups } from "../doc-engine/annotationMapping.js";
 
 export {
-  coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -291,11 +280,6 @@ export {
   __resetSessionPersistenceForTest,
 } from "../session/threadPersistence.js";
 
-export { migrateThreadMetadataToDocuments } from "../doc-engine/migrateThreadMetadataToDocuments.js";
-export type {
-  MigrationOptions,
-  MigrationStats,
-} from "../doc-engine/migrateThreadMetadataToDocuments.js";
 export { isSensitiveField, redactSensitiveText } from "../agent-run/redaction.js";
 export { deriveTitleFromSections } from "../session/title.js";
 export {

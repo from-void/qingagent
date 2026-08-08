@@ -34,7 +34,7 @@ describe("htmlToPdf deadline", () => {
     });
 
     await expect(
-      htmlToPdf("<html><body>deadline</body></html>", { timeoutMs: 20 }),
+      htmlToPdf("<html><body>deadline</body></html>", { executionTimeoutMs: 20 }),
     ).rejects.toBeInstanceOf(ExportDeadlineExceededError);
     expect(close).toHaveBeenCalled();
   });

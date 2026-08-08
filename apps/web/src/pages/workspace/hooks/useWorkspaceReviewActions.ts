@@ -502,7 +502,6 @@ export function useWorkspaceReviewActions(input: {
       }
       finalizeReviewTablePatch(patchId);
       const command = buildPatchVerdictCommand(
-        selectPatches(stateRef.current),
         patchId,
         verdict,
       );

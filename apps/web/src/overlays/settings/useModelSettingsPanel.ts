@@ -50,7 +50,7 @@ function deepseekBalanceHeaders(keyOverride?: string): Record<string, string> {
   const key = keyOverride?.trim() || getVisitorModelKey("deepseek");
   return {
     "x-model-provider": "deepseek",
-    ...(key ? { "x-model-key": key, "x-deepseek-key": key } : {}),
+    ...(key ? { "x-model-key": key } : {}),
   };
 }
 
@@ -408,7 +408,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
             headers: {
               "x-model-provider": configProvider,
               "x-model-key": trimmed,
-              ...(configProvider === "deepseek" ? { "x-deepseek-key": trimmed } : {}),
             },
             signal: ctrl.signal,
           });
@@ -443,8 +442,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
 
   // —— 每厂商各自的配置状态(visitor / 站点全局 / env / 自定义模型 四源合一)——
   const serverStateOf = (provider: ModelProvider) =>
-    server?.providers?.[provider] ??
-    (server?.provider === undefined || server.provider === provider ? server : null);
+    server?.providers[provider];
   const vendorConfigured = (provider: ModelProvider) =>
     Boolean(visitorKeys[provider]) ||
     Boolean(serverStateOf(provider)?.apiKeyConfigured) ||

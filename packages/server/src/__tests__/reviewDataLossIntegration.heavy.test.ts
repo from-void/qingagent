@@ -8,12 +8,10 @@ import {
   type BridgeFrame,
   type ChatChip,
   type Command,
-  type LegacySection,
 } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   pmTableSelectionCellTexts,
-  pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -144,14 +142,19 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
 }
 
 async function updateDoc(sessionId: string, version: number, doc: PmDoc, mutation: string): Promise<void> {
+  const currentDoc = bridge.getSession(sessionId)?.doc ?? {
+    type: "doc" as const,
+    attrs: { schemaVersion: 1 as const },
+    content: [],
+  };
   const command: Command = {
     kind: "updateDoc",
     data: {
       sessionId,
       expectedDocumentSnapshot: version,
+      baseContentHash: getPmContentHash(currentDoc),
       clientMutationId: mutation,
       doc,
-      legacySections: pmToLegacySections(doc) as unknown as LegacySection[],
     },
   };
   const frames = await collectFrames(bridge.handleCommand(command));
@@ -255,7 +258,7 @@ describe("审阅提交数据丢失 P0 真实命令链", () => {
 
     const turnFrames = await collectFrames(bridge.handleCommand({
       kind: "sendMessage",
-      data: { sessionId, text: "修改选中的第二列", mentions: [], skills: [], chips, fileIds: [] },
+      data: { sessionId, text: "修改选中的第二列", skills: [], chips, fileIds: [] },
     }));
     expect(agentStream).toHaveBeenCalledTimes(1);
     expect(turnFrames.some((frame) => frame.kind === "docDiffReady")).toBe(true);
@@ -339,7 +342,6 @@ describe("审阅提交数据丢失 P0 真实命令链", () => {
       data: {
         sessionId,
         text: "对当前文档做自定义审查。",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],

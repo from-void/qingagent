@@ -56,24 +56,6 @@ import {
 // 主题 / 进场动画常量
 // ---------------------------------------------------------------------------
 
-// 实际配色(data-theme 值):浅色宣纸 paper / 深色玄青 dark。深栗/黛青已下线。
-const THEMES = ["paper", "dark"] as const;
-type ThemeId = (typeof THEMES)[number];
-
-// 明暗模式:白天(浅)/深夜(深)/跟随系统,解析为实际配色 paper|dark
-const THEME_MODES = ["light", "dark", "system"] as const;
-type ThemeMode = (typeof THEME_MODES)[number];
-const THEME_MODE_LABEL: Record<ThemeMode, string> = {
-  light: "白天",
-  dark: "深夜",
-  system: "跟随系统",
-};
-const THEME_MODE_OPTIONS = THEME_MODES.map((id) => ({ id, label: THEME_MODE_LABEL[id] }));
-function resolveTheme(_mode: ThemeMode, _systemDark: boolean): ThemeId {
-  // 产品决定:只保留浅色宣纸,不再有深/浅模式(外观设置项已隐藏)。永远返回 paper。
-  return "paper";
-}
-
 const ANIMS = ["fly", "rise", "ink", "drift"] as const;
 type AnimId = (typeof ANIMS)[number];
 const ANIM_LABEL: Record<AnimId, string> = {
@@ -104,8 +86,6 @@ function readFontPref(key: string): FontId {
   return "serif";
 }
 
-const STORE_THEME_MODE = "qj-theme-mode";
-const STORE_THEME_LEGACY = "qj-theme"; // 旧版四色配色,仅用于迁移
 const STORE_ANIM = "qj-anim";
 const STORE_REDUCE = "qj-reduce";
 const STORE_FONT_PRIMARY = "qj-font-primary";
@@ -1052,30 +1032,7 @@ export function QingjianScroll({
   cleanMode = false,
   openApiRef,
 }: QingjianScrollProps) {
-  // —— 持久化设置(主题 / 进场 / 减少动效)——
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    try {
-      const v = localStorage.getItem(STORE_THEME_MODE);
-      if (v && (THEME_MODES as readonly string[]).includes(v)) return v as ThemeMode;
-      // 迁移旧版四色配色:宣纸→白天,其余暗色→深夜
-      const legacy = localStorage.getItem(STORE_THEME_LEGACY);
-      if (legacy === "paper") return "light";
-      if (legacy) return "dark";
-    } catch {
-      /* ignore */
-    }
-    // themeMode 已无实际作用:resolveTheme 恒返回 paper(产品只保留浅色宣纸、无深/浅模式)。
-    // 保留该状态仅为兼容旧存储,不影响渲染。
-    return "light";
-  });
-  const [systemDark, setSystemDark] = useState<boolean>(() => {
-    try {
-      return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
-    } catch {
-      return false;
-    }
-  });
-  const theme: ThemeId = resolveTheme(themeMode, systemDark);
+  // —— 持久化设置(进场 / 减少动效)——
   const [anim, setAnim] = useState<AnimId>(() => {
     try {
       const v = localStorage.getItem(STORE_ANIM);
@@ -1480,21 +1437,6 @@ export function QingjianScroll({
   }, [layout.coreWidth]);
 
   // —— 持久化 ——
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORE_THEME_MODE, themeMode);
-    } catch {
-      /* ignore */
-    }
-  }, [themeMode]);
-  // 跟随系统:监听操作系统明暗偏好变化(仅 themeMode==="system" 时影响实际配色)
-  useEffect(() => {
-    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!mq) return undefined;
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
-  }, []);
   useEffect(() => {
     try {
       localStorage.setItem(STORE_ANIM, anim);
@@ -2262,7 +2204,6 @@ export function QingjianScroll({
       // 「初次有问题、加载过一次就好了」(用户实证)。
       className={`qj-root ccx-stage-host${openingScroll ? " qj-opening" : ""}`}
       ref={rootRef}
-      data-theme={theme}
       data-anim={anim}
       data-wf="QingjianScroll"
       data-clean={cleanMode ? "true" : "false"}
@@ -2293,15 +2234,12 @@ export function QingjianScroll({
           initialTab={settingsInitialTab}
           initialModelProvider={settingsInitialModelProvider}
           inkVariant={settingsInkVariant}
-          themeMode={themeMode}
-          themeModeOptions={THEME_MODE_OPTIONS}
           anim={anim}
           animOptions={ANIM_OPTIONS}
           reduceMotion={reduceMotion}
           primaryFont={primaryFont}
           secondaryFont={secondaryFont}
           fontOptions={FONT_OPTIONS}
-          onThemeModeChange={setThemeMode}
           onAnimChange={(nextAnim) => {
             rootRef.current?.setAttribute("data-anim", nextAnim);
             setAnim(nextAnim);

@@ -10,11 +10,7 @@ import {
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import {
-  clearDraftMutationScratch,
-  createSession,
-  createSessionScopedTools,
-} from "../bridge/index.js";
+import { createSession, createSessionScopedTools } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
 import { RequestContext } from "@mastra/core/request-context";
@@ -1010,24 +1006,6 @@ describe("QingML draft tools", () => {
     expect(diff.stats.marksChanged).toBeGreaterThan(0);
     expect(diff.stats.blocksChanged).toBeGreaterThan(0);
     expect(diff.stats.totalWords).toBeGreaterThanOrEqual(4);
-  });
-
-  it("clearDraftMutationScratch 只清 scratch,保留 pending base/candidate 供下一轮读取", async () => {
-    const state = createSession("s-cross");
-    bindDoc(state, doc([paragraph("block-a", "原文")]));
-    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
-
-    await editDraft.execute!({
-      ops: [{ action: "replaceText", find: "原文", replace: "候选文" }],
-    }, ctx);
-    state.patchValidationResults.set("tc", { ok: true, applied: true });
-    clearDraftMutationScratch(state);
-    const nextRead = await readDraftAiIr.execute!({ includeText: true }, ctx) as any;
-
-    expect(state.patchValidationResults.size).toBe(0);
-    expect(state.docDraftBaseDoc).not.toBeNull();
-    expect(state.docDraftCandidateDoc).not.toBeNull();
-    expect(nextRead.blocks[0].text).toBe("候选文");
   });
 
   it("markText 继承 S1 mark 边界: remove 只去指定 mark,保留 link", async () => {

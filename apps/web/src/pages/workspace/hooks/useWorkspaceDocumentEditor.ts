@@ -10,10 +10,9 @@ import {
   aiIrToPm,
   getPmContentHash,
   normalizePmDoc,
-  pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import type { Command, LegacySection } from "@qingagent/contract-ts";
+import type { Command } from "@qingagent/contract-ts";
 import { validateCommand } from "../../../system/validators";
 import type { DocumentSnapshotViewHandle } from "../components/DocumentSnapshotView";
 import type { StarterBlankTarget } from "../components/StarterPanel";
@@ -195,9 +194,6 @@ export function useWorkspaceDocumentEditor(input: {
         return Promise.reject(error);
       }
 
-      const legacySections = pmToLegacySections(
-        pmDoc,
-      ) as unknown as LegacySection[];
       const clientMutationId = createClientMutationId();
       const baseline = explicitBaseline ?? {
         expectedDocumentSnapshot: docVersionRef.current,
@@ -218,7 +214,6 @@ export function useWorkspaceDocumentEditor(input: {
           expectedDocumentSnapshot,
           baseContentHash,
           doc: pmDoc,
-          legacySections,
           clientMutationId,
         },
       };

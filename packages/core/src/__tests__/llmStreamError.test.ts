@@ -356,7 +356,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
                 toolName: "writeDraft",
                 toolCallId: "wd-before-error",
                 args,
-                result: { ok: true, blockCount: 1, wordCount: 13 },
+                result: { ok: true, blockCount: 1, visibleCharCount: 13 },
               },
             },
             errorChunk("upstream failed", { statusCode: 500 }),
@@ -1304,7 +1304,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
           toolName: "writeDraft",
           toolCallId: "wd-timeout",
           args,
-          result: { ok: true, blockCount: 1, wordCount: 8 },
+          result: { ok: true, blockCount: 1, visibleCharCount: 8 },
         },
       };
       yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
@@ -1466,7 +1466,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
           result: {
             ok: true,
             blockCount: 1,
-            wordCount: 998,
+            visibleCharCount: 998,
             maxLength: 880,
             lengthStatus: "above_hard_max",
           },
@@ -1548,7 +1548,7 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
           result: {
             ok: true,
             blockCount: 1,
-            wordCount: 998,
+            visibleCharCount: 998,
             maxLength: 880,
             lengthStatus: "above_hard_max",
           },

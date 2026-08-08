@@ -8,7 +8,7 @@ import {
   type SuggestionAnchor,
 } from "@qingagent/contract-ts";
 import type { PmDoc, PmInlineNode, PmStep } from "@qingagent/pm-schema";
-import { Mapping, StepMap } from "@tiptap/pm/transform";
+import { StepMap } from "@tiptap/pm/transform";
 import {
   collectTopLevelTextBlocks,
   projectInlineNodeText,
@@ -72,18 +72,6 @@ function insertedSize(step: PmStep): number {
   if (step.stepType !== "replace" || !Array.isArray(slice?.content)) return 0;
   return Math.max(0, slice.content.reduce<number>((sum, node) => sum + nodeSize(node), 0)
     - (slice.openStart ?? 0) - (slice.openEnd ?? 0));
-}
-
-export function mappingFromPmSteps(steps: readonly PmStep[]): Mapping {
-  const mapping = new Mapping();
-  for (const step of steps) {
-    if (step.stepType === "replace" && typeof step.from === "number" && typeof step.to === "number") {
-      mapping.appendMap(new StepMap([step.from, step.to - step.from, insertedSize(step)]));
-    } else {
-      mapping.appendMap(StepMap.empty);
-    }
-  }
-  return mapping;
 }
 
 const INLINE_NODE_TYPES = new Set(["text", "hardBreak", "inlineMath", "footnoteReference"]);

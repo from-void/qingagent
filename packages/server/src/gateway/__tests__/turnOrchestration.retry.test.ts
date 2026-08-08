@@ -64,7 +64,6 @@ describe("handleTurnCommand sendMessage 重试", () => {
       data: {
         sessionId: "session-retry",
         text: "重新生成这条",
-        mentions: [],
         skills: [],
         chips: [],
         fileIds: [],

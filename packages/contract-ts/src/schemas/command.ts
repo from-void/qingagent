@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { Command } from "../Command";
-import type { LegacySection } from "../LegacySection";
 import type { PmDoc } from "../PmDoc";
 import type { SessionMode } from "../SessionMode";
 import type { StartSession } from "../StartSession";
@@ -43,11 +42,9 @@ const MAX_NAME_LENGTH = 256;
 const MAX_HANDLE_LENGTH = 1024;
 
 /**
- * updateDoc 的 doc / legacySections 为**运行期直通**(z.unknown()),类型层声明为
- * PmDoc / LegacySection[]。这是设计决策 1 的刻意取舍:contract-ts 不引入对 pm-schema
- * 的生产依赖(避免 contract-ts → pm-schema 依赖环),legacySections 在此只加顶层数组
- * 长度护栏；PM 文档与 section 元素的深层结构仍由 server 侧现有
- * `safeParsePmDoc` / `validateLegacySections` 承担。
+ * updateDoc 的 doc 为**运行期直通**(z.unknown()),类型层声明为 PmDoc。这是设计决策 1
+ * 的刻意取舍:contract-ts 不引入对 pm-schema 的生产依赖(避免依赖环)。PM 文档深层
+ * 结构仍由 server 侧 `safeParsePmDoc` 承担。
  * 因此这里用受控 cast 把"运行期 unknown、类型层精确"两者兜住,既不拉依赖、又保住
  * `commandSchema satisfies z.ZodType<Command>` 与等价断言。
  */
@@ -68,11 +65,6 @@ const pmDocPassthroughSchema = z.unknown().superRefine((value, context) => {
     addArrayLengthIssue(context);
   }
 }) as unknown as z.ZodType<PmDoc>;
-const legacySectionsPassthroughSchema = z.unknown().superRefine((value, context) => {
-  if (Array.isArray(value) && value.length > MAX_COMMAND_ARRAY_LENGTH) {
-    addArrayLengthIssue(context);
-  }
-}) as unknown as z.ZodType<Array<LegacySection>>;
 const ignoreAnnotationGroupsDataSchema = z.object({
   sessionId: z.string().min(1),
   reason: z.enum(["tab_changed", "message_sent", "doc_committed", "discard_all", "item_ignored"]),
@@ -112,7 +104,7 @@ const actionCardDataSchema = z.object({
     label: z.string().max(MAX_COMMAND_STRING_LENGTH),
     value: z.string().max(MAX_COMMAND_STRING_LENGTH),
   })).max(MAX_COMMAND_ARRAY_LENGTH),
-  status: z.enum(["running", "done", "aborted", "failed"]).optional(),
+  status: z.enum(["running", "done", "aborted", "failed"]),
 }) satisfies z.ZodType<ActionCardData>;
 
 const reviewTypeSchema = z.enum([
@@ -136,19 +128,11 @@ const activeDocumentTargetSchema = z.discriminatedUnion("kind", [
 const sendMessageDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   text: z.string().max(MAX_COMMAND_STRING_LENGTH),
-  mentions: z
-    .array(resourceRefSchema)
-    .max(0, "mentions is deprecated; use chips instead")
-    .default([]),
   skills: z.array(skillRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   chips: z.array(chatChipSchema).max(MAX_COMMAND_ARRAY_LENGTH),
-  // fileIds 缺省即 []:契约类型要求 fileIds 存在,但旧手写校验容忍其缺省(视作无文件)。
-  // .default([]) 让"输入可省=与旧行为等价、输出恒为 string[]=与契约类型精确等价"两者兼得;
-  // 下游 bridgeHandler 亦以 `fileIds ?? []` 消费,[] 与 undefined 行为一致。
-  fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH).default([]),
+  fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   clientMessageId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
-  turnContext: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   turnKind: z.literal("generateDerivative").optional(),
   activeDocument: activeDocumentTargetSchema.optional(),
   displayCard: actionCardDataSchema.optional(),
@@ -323,9 +307,8 @@ type _CancelAskUserExact = Expect<Equal<z.infer<typeof cancelAskUserDataSchema>,
 const updateDocDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   expectedDocumentSnapshot: z.number().int(),
-  baseContentHash: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH).optional(),
-  legacySections: legacySectionsPassthroughSchema.optional(),
-  doc: pmDocPassthroughSchema.optional(),
+  baseContentHash: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  doc: pmDocPassthroughSchema,
   clientMutationId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
 }) satisfies z.ZodType<UpdateDoc>;
 type _UpdateDocExact = Expect<Equal<z.infer<typeof updateDocDataSchema>, UpdateDoc>>;

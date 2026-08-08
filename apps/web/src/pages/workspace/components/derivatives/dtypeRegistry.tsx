@@ -114,7 +114,7 @@ const routeSuffix = "先调 derivative_brief,按返回的 skillGuidance 纪律�
 export function buildTranslationDisplayCard(languages: string[], style: string, privatePrompt: string): ActionCardData {
   const lines = [{ label: "语言", value: languages.join("、") }, { label: "风格", value: style }];
   if (privatePrompt.trim()) lines.push({ label: "补充", value: privatePrompt.trim() });
-  return { title: "翻译文档", lines };
+  return { title: "翻译文档", lines, status: "done" };
 }
 
 export interface TranslationQueryTarget {

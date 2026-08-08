@@ -871,9 +871,6 @@ export interface ResolvedModelAuth {
   origin: ApiKeyOrigin;
 }
 
-/** 兼容仓内旧命名；语义已提升为“当前 provider 的认证”。 */
-export type ResolvedDeepseekAuth = ResolvedModelAuth;
-
 function readOverrides(requestContext?: RequestContext): ModelOverrides | undefined {
   const value = requestContext?.get(MODEL_OVERRIDES_CONTEXT_KEY);
   if (value && typeof value === "object") return value as ModelOverrides;
@@ -897,9 +894,6 @@ export function resolveModelAuth(requestContext?: RequestContext): ResolvedModel
     : process.env.DEEPSEEK_API_KEY ?? "";
   return { apiKey: envKey, origin: envKey ? "env" : "none" };
 }
-
-/** @deprecated 新代码用 resolveModelAuth；保留旧出口避免破坏仓外消费者。 */
-export const resolveDeepseekAuth = resolveModelAuth;
 
 /** 本请求的采样参数覆盖;无覆盖时返回空对象,调用点用展开语法合并即可。 */
 export function resolveModelParams(requestContext?: RequestContext): ModelParamOverrides {
@@ -970,14 +964,6 @@ export function resolveRouterModelId(
   tier: DeepseekTier = "flash",
 ): `${string}/${string}` {
   return `${resolveModelProvider(requestContext)}/${resolveModelId(requestContext, tier)}`;
-}
-
-/** @deprecated 新代码用 resolveRouterModelId；保留旧出口避免破坏仓外消费者。 */
-export function resolveDeepseekRouterModelId(
-  requestContext?: RequestContext,
-  tier: DeepseekTier = "flash",
-): `${string}/${string}` {
-  return resolveRouterModelId(requestContext, tier);
 }
 
 /** 本请求 API 协议:访客覆盖 > env 默认(QINGAGENT_MODEL_PROTOCOL) > openai。

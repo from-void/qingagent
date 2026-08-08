@@ -377,11 +377,3 @@ export async function purgeStoredFile(fileId: string): Promise<boolean> {
     }
   });
 }
-
-export async function listStoredFileIds(): Promise<string[]> {
-  const entries = await fs.readdir(UPLOAD_DIR).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  });
-  return entries.filter(isValidUploadId).sort();
-}

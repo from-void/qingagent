@@ -97,6 +97,8 @@ export const cmdDone: CommandCardBody = {
   phase: "done",
 };
 export const qrData: QrCardBody = {
+  presentation: "link",
+  imageDataUri: null,
   content: "https://example.com/auth?code=DEMO",
   title: "扫码授权飞书",
   code: "WXYZ-1234",

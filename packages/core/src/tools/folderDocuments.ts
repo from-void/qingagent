@@ -42,7 +42,6 @@ const MAX_SEARCH_QUERY_CHARS = 1_000;
 const SEARCH_IO_CONCURRENCY = 8;
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const MAX_STABLE_READ_ATTEMPTS = 2;
-const LEGACY_CJK_SEARCH_TOKEN_MARKER = "\n\n__qingagent_cjk_search_tokens__ ";
 const CJK_RUN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 const DOCUMENT_TOO_LARGE_ERROR = "unsupported: file is too large for P0 folder parsing";
 
@@ -586,11 +585,6 @@ function matchesRequiredCjkRuns(text: string, runs: string[]): boolean {
   return runs.every((run) => text.includes(run));
 }
 
-function stripLegacyCjkSearchTokens(text: string): string {
-  const markerIndex = text.indexOf(LEGACY_CJK_SEARCH_TOKEN_MARKER);
-  return markerIndex >= 0 ? text.slice(0, markerIndex) : text;
-}
-
 async function indexDocument(workspace: Workspace, entry: FolderSourceCacheEntry, text: string): Promise<void> {
   if (entry.metadata.indexable === false) return;
   await workspace.index(entry.path, buildCjkSearchIndexText(text), {
@@ -1088,7 +1082,7 @@ function resultOriginalText(result: { content: string; metadata?: Record<string,
   if (typeof bodyLength === "number" && Number.isFinite(bodyLength) && bodyLength >= 0) {
     return result.content.slice(0, bodyLength);
   }
-  return stripLegacyCjkSearchTokens(result.content);
+  return result.content;
 }
 
 function searchSnippetNeedles(query: string): string[] {

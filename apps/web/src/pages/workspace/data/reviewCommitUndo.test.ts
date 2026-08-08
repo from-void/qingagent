@@ -43,7 +43,7 @@ describe("reviewCommitUndo", () => {
       },
       {
         kind: "docCommitted",
-        data: { sessionId: "snapshot-s-1", version: 2, appliedCount: 1 },
+        data: { sessionId: "snapshot-s-1", version: 2, appliedCount: 1, conflictCount: 0 },
       },
     ];
     const snapshot = buildReviewCommitUndoSnapshot({
@@ -84,7 +84,7 @@ describe("reviewCommitUndo", () => {
         },
       }, {
         kind: "docCommitted",
-        data: { sessionId: "persist-s-1", version: 5 },
+        data: { sessionId: "persist-s-1", version: 5, appliedCount: 0, conflictCount: 0 },
       }],
     })!;
     writeReviewCommitUndoSnapshot(snapshot, storage);

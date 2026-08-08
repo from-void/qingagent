@@ -1,7 +1,6 @@
 import { SpanType } from "@mastra/core/observability";
 import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
 import { mastra, getObservability } from "../mastra.js";
-import { isServerReanchorEnabled } from "../doc-engine/draftFeatureFlags.js";
 import type { SessionState } from "../session/sessionState.js";
 import type { ModelCallSite } from "../llm/modelCallSites.js";
 import { normalizeLlmUsageCounts } from "../llm/usageAccounting.js";
@@ -193,7 +192,6 @@ export function buildAgentTracingMetadata(
     clientTraceId: state.clientTraceId ?? null,
     origin: state.origin ?? "manual",
     site,
-    serverReanchorEnabled: isServerReanchorEnabled(),
   };
 }
 

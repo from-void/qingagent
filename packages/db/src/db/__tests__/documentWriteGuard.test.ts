@@ -10,17 +10,12 @@ import {
   deleteSessionDocumentsAndAdvance,
 } from "../sessionDeletionRepo.js";
 import {
-  ignoreAnnotationGroups,
-  ignoreRebasedDocumentSuggestions,
   insertAnnotationGroups,
   listDocumentSuggestionStatuses,
-  persistMappedAnnotationGroups,
   replaceAnnotationGroupsByOrigin,
-  updateDocumentSuggestionStatus,
   upsertDocumentSuggestion,
 } from "../documentSuggestionsRepo.js";
 import {
-  DocumentRecoveryRequiredError,
   DocumentWriteBlockedError,
   setDocumentWriteGuard,
 } from "../documentWriteGuard.js";
@@ -157,94 +152,6 @@ describe("document write guard", () => {
     });
     expect(annotationRows.rows).toMatchObject([
       { group_id: "old-group", status: "reviewing" },
-    ]);
-  });
-
-  it("0025 恢复阻断覆盖 draft 标记/删除与 suggestion 忽略/重映射/状态/清理", async () => {
-    const docId = "recovery-blocked-review";
-    const threadId = "recovery-blocked-review-thread";
-    const baseHash = getPmContentHash(pmDocFromText("基线"));
-    const annotationGroup = {
-      id: "blocked-annotation",
-      summary: "批注",
-      note: "批注",
-      origin: "test",
-      status: "reviewing" as const,
-      anchors: [{
-        blockId: "p",
-        pmFrom: 1,
-        pmTo: 2,
-        quote: "旧",
-        textHash: "hash",
-      }],
-    };
-    await documentRepo.save(documentInput(docId, { threadId }));
-    await documentDraftRepo.savePending({
-      docId,
-      threadId,
-      baseVersion: 1,
-      baseHash,
-      draftPmDoc: pmDocFromText("待审草稿"),
-    });
-    await insertAnnotationGroups(docId, 1, [annotationGroup]);
-    await upsertDocumentSuggestion(suggestion(docId));
-    await getDocumentsClient().execute({
-      sql: `INSERT INTO document_write_blocks (
-        doc_id, reason, source_doc_id, source_thread_id, version_id
-      ) VALUES (?, 'quarantine_0002_foreign_snapshot', ?, ?, ?)`,
-      args: [docId, "source-doc", threadId, "source-version"],
-    });
-    setDocumentWriteGuard(null);
-
-    const blockedWrites = [
-      () => documentDraftRepo.markConflict({
-        docId,
-        conflict: { kind: "must-not-persist" },
-      }),
-      () => documentDraftRepo.clear(docId),
-      () => ignoreAnnotationGroups(docId),
-      () => persistMappedAnnotationGroups(
-        docId,
-        [annotationGroup],
-        new Map([[annotationGroup.id, [0]]]),
-      ),
-      () => updateDocumentSuggestionStatus(
-        docId,
-        1,
-        `suggestion-${docId}`,
-        "accepted",
-      ),
-      () => ignoreRebasedDocumentSuggestions(
-        docId,
-        1,
-        [`suggestion-${docId}`],
-      ),
-    ];
-    for (const write of blockedWrites) {
-      await expect(write()).rejects.toBeInstanceOf(DocumentRecoveryRequiredError);
-    }
-
-    await expect(documentDraftRepo.load(docId)).resolves.toMatchObject({
-      status: "pending_review",
-      conflict: null,
-    });
-    const rows = await getDocumentsClient().execute({
-      sql: `SELECT id, status, anchor_json
-        FROM document_suggestions
-        WHERE doc_id = ?
-        ORDER BY id`,
-      args: [docId],
-    });
-    expect(rows.rows).toMatchObject([
-      {
-        id: "blocked-annotation:1",
-        status: "reviewing",
-        anchor_json: JSON.stringify(annotationGroup.anchors[0]),
-      },
-      {
-        id: `suggestion-${docId}`,
-        status: "reviewing",
-      },
     ]);
   });
 

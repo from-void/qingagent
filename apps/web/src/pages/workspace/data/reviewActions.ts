@@ -40,11 +40,9 @@ export function reviewBatchIdFromPatch(patch: ToolCallSpec): string {
 }
 
 export function buildPatchVerdictCommand(
-  patches: readonly ToolCallSpec[],
   patchId: string,
   verdict: "accepted" | "rejected",
 ): Extract<Command, { kind: "acceptPatch" }> | Extract<Command, { kind: "rejectPatch" }> {
-  void patches;
   return verdict === "accepted"
     ? { kind: "acceptPatch", data: { id: patchId } }
     : { kind: "rejectPatch", data: { id: patchId } };

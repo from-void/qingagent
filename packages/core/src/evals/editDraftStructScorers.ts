@@ -6,7 +6,7 @@ import {
   type AiBlock,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { extractJson } from "../doc-engine/docGenerator.js";
+import { extractJson } from "../utils/extractJson.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import type { ScorerCheck } from "./types.js";
 

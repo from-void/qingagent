@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   getPmContentHash,
   getStablePmJson,
-  repairLegacyStableJsonUndefined,
 } from "../hash";
 
 describe("稳定 PM JSON", () => {
@@ -53,25 +52,4 @@ describe("稳定 PM JSON", () => {
     );
   });
 
-  it("只修复 JSON 字符串之外的裸 undefined，字符串正文保持逐字不变", () => {
-    const repaired = repairLegacyStableJsonUndefined(
-      '{"array":[1,undefined,3],"escaped":"\\\"undefined\\\" ] }","nested":{"drop":undefined,"keep":"undefined"}}',
-    );
-
-    expect(repaired).toStrictEqual({
-      array: [1, null, 3],
-      escaped: '"undefined" ] }',
-      nested: { keep: "undefined" },
-    });
-  });
-
-  it.each([
-    ['{"value":"undefined"}', "合法 JSON 无需修复"],
-    ['前导话 {"drop":undefined}', "前导散文"],
-    ['```json\n{"drop":undefined}\n```', "代码围栏"],
-    ['{"drop":undefined} 收尾话', "尾随散文"],
-    ['{"drop":undefined', "截断 JSON"],
-  ])("拒绝不属于旧 stableStringify 缺陷的输入：%s（%s）", (raw) => {
-    expect(repairLegacyStableJsonUndefined(raw)).toBeNull();
-  });
 });

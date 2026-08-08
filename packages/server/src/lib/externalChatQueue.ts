@@ -31,7 +31,6 @@ export async function queueExternalChat(
     data: {
       sessionId: input.sessionId,
       text: input.text,
-      mentions: [],
       skills: [],
       chips: [],
       fileIds: [],

@@ -116,8 +116,7 @@ debugRoutes.get("/debug/context", async (c) => {
     }
     const contextWindow =
       DEEPSEEK_CONTEXT_WINDOWS[latest.modelId] ??
-      DEEPSEEK_CONTEXT_WINDOWS[DEEPSEEK_MODEL_IDS.flash] ??
-      1_000_000;
+      DEEPSEEK_CONTEXT_WINDOWS[DEEPSEEK_MODEL_IDS.flash]!;
     return c.json({
       sessionId,
       available: true,

@@ -40,10 +40,9 @@ function summarizeCommandForLog(command: Command): Record<string, unknown> {
       const d = command.data;
       return {
         textLength: d.text?.length ?? 0,
-        mentions: d.mentions?.length ?? 0,
         skills: d.skills?.length ?? 0,
         chips: d.chips?.length ?? 0,
-        fileIds: d.fileIds?.length ?? 0,
+        fileIds: d.fileIds.length,
       };
     }
     case "acceptPatch":
@@ -53,8 +52,6 @@ function summarizeCommandForLog(command: Command): Record<string, unknown> {
       return { count: command.data.ids?.length ?? 0 };
     case "updateDoc":
       return {
-        sectionsCount: command.data.legacySections?.length ?? null,
-        hasPmDoc: command.data.doc !== undefined,
         expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
       };
     case "startSession":
@@ -242,14 +239,24 @@ async function responseErrorMessage(
 ): Promise<string> {
   const body = await response.json().catch(() => null) as {
     error?: string | { message?: unknown };
+    issues?: Array<{ path?: unknown; message?: unknown }>;
   } | null;
   return responseErrorBodyMessage(body, fallback);
 }
 
 function responseErrorBodyMessage(
-  body: { error?: string | { message?: unknown } } | null,
+  body: {
+    error?: string | { message?: unknown };
+    issues?: Array<{ path?: unknown; message?: unknown }>;
+  } | null,
   fallback: string,
 ): string {
+  const firstIssue = body?.issues?.[0];
+  if (firstIssue && typeof firstIssue.message === "string" && firstIssue.message.trim()) {
+    return typeof firstIssue.path === "string" && firstIssue.path.trim()
+      ? `${firstIssue.path}: ${firstIssue.message}`
+      : firstIssue.message;
+  }
   if (typeof body?.error === "string") return body.error;
   if (
     body?.error &&
@@ -342,9 +349,8 @@ function frameWaiterAbortError(signal?: AbortSignal): Error {
 }
 
 /**
- * Real server stream — sends `Command` objects to `POST /api/v1/stream`
- * and parses the SSE response, validating each frame with the wire
- * contract before emitting to subscribers.
+ * Real server transport — sends `Command` objects to `POST /api/v1/commands`
+ * and consumes authoritative frames from the events channel.
  *
  * Replaces the Stage B mock `WorkspaceDocStream`. The subscriber
  * signature matches so the page's `useReducer(workspaceReducer, ...)`
@@ -614,41 +620,19 @@ export class ServerStream {
     command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" | "setEnabledLexicons" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
-    const framePromise = this.waitForFrame(
-      (frame) =>
-        frame.kind === kind
-        && (frame.data as { requestId?: unknown }).requestId === command.data.requestId,
-      `${kind} response missing`,
+    const result = await this.sendCommandInternal(command) as unknown[];
+    const frames = result.map((value) => {
+      const frame = value as BridgeFrame;
+      validateBridgeFrame(frame);
+      return frame;
+    });
+    const frame = frames.find(
+      (candidate) =>
+        candidate.kind === kind
+        && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
     );
-    // HTTP 是这类前台命令的权威响应；EventSource waiter 只兼容 accepted+SSE 旧路径。
-    // HTTP 若排队超过 30 秒，waiter 会先超时，必须从创建时就挂拒绝处理，避免调用方
-    // 已 catch derivativeFrame 仍被内部孤儿 Promise 上报 UNHANDLED_REJECTION。
-    void framePromise.catch(() => undefined);
-    try {
-      const result = await this.sendCommandInternal(command);
-      if (!Array.isArray(result)) {
-        return await framePromise as Extract<BridgeFrame, { kind: K }>;
-      }
-      const frames = result.map((value) => {
-        const frame = value as BridgeFrame;
-        validateBridgeFrame(frame);
-        return frame;
-      });
-      const frame = frames.find(
-        (candidate) =>
-          candidate.kind === kind
-          && (candidate.data as { requestId?: unknown }).requestId === command.data.requestId,
-      );
-      if (!frame) throw new Error(`${kind} response missing`);
-      this.resolveWaiter(framePromise, frame);
-      return frame as Extract<BridgeFrame, { kind: K }>;
-    } catch (error) {
-      this.rejectWaiter(
-        framePromise,
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      throw error;
-    }
+    if (!frame) throw new Error(`${kind} response missing`);
+    return frame as Extract<BridgeFrame, { kind: K }>;
   }
 
   async listDerivatives(sessionId: string) {
@@ -1452,16 +1436,6 @@ export class ServerStream {
     }
     // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。
     promise.catch(() => undefined);
-  }
-
-  private resolveWaiter(
-    promise: Promise<unknown>,
-    frame: BridgeFrame,
-  ): void {
-    const waiter = this.waiterByPromise.get(promise);
-    if (!waiter) return;
-    this.removeWaiter(waiter);
-    waiter.resolve(frame);
   }
 
   private dispatchStreamTerminated(

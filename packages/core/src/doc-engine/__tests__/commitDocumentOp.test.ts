@@ -3,7 +3,6 @@ import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   beginSessionDeletion,
   createDerivativeDoc,
-  DocumentRecoveryRequiredError,
   DocumentWriteBlockedError,
   findOpByIdempotencyKey,
   listDerivativesByThread,
@@ -59,7 +58,7 @@ function commitInput(
     clientMutationId: "client-commit",
     apply: () => ({ nextDoc: pmDocFromText("after commit") }),
     ...overrides,
-  };
+  } as CommitDocumentOpInput;
 }
 
 async function seedDocument(
@@ -116,27 +115,6 @@ async function expectCommittedVersion(
 }
 
 describe("commitDocumentOp", () => {
-  it("0025 检出的正文覆盖文档在主提交链 fail-closed，并明确要求从 pre-0023 备份恢复", async () => {
-    await seedDocument();
-    await getDocumentsClient().execute({
-      sql: `INSERT INTO document_write_blocks (
-        doc_id, reason, source_doc_id, source_thread_id, version_id
-      ) VALUES (
-        'doc-commit', 'quarantine_0002_foreign_snapshot',
-        'foreign-doc', 'thread-doc-commit', 'foreign-version'
-      )`,
-    });
-
-    await expect(commitDocumentOp(commitInput()))
-      .rejects.toBeInstanceOf(DocumentRecoveryRequiredError);
-    await expect(commitDocumentOp(commitInput()))
-      .rejects.toThrow("从运行 0023 前的数据库备份恢复并核验");
-    await expect(documentRepo.load("doc-commit")).resolves.toMatchObject({
-      docVersion: 1,
-      legacySections: [section("before commit")],
-    });
-  });
-
   it("serializes raw withTransaction calls without relying on the commit queue", async () => {
     await seedDocument("doc-raw-collision", "base", 1);
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   countGraphemes,
   removeUnpairedSurrogates,
@@ -19,13 +19,4 @@ describe("Unicode 字素工具", () => {
     expect(() => encodeURIComponent(truncateGraphemes(`前\uD83D后`, 10))).not.toThrow();
   });
 
-  it("Intl.Segmenter 不可用时回退到 code point 安全拆分", () => {
-    const originalIntl = globalThis.Intl;
-    vi.stubGlobal("Intl", { ...originalIntl, Segmenter: undefined });
-    try {
-      expect(splitGraphemes("甲𠮷😀乙")).toEqual(["甲", "𠮷", "😀", "乙"]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
 });

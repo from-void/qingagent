@@ -3,7 +3,7 @@ import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import { repairToolCallJson } from "../llm/repairToolCallJson.js";
 import { repairDraftToolCallInput } from "../llm/repairingModel.js";
 import { serverAiir3ToolCallInput } from "./fixtures/serverAiir3ToolCallInput.js";
-import { extractJson } from "../doc-engine/docGenerator.js";
+import { extractJson } from "../utils/extractJson.js";
 
 describe("repairToolCallJson", () => {
   it("纯字符串值裸双引号病可修复,且内容保真", () => {

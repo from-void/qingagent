@@ -72,8 +72,6 @@ const writeDraftFailureDiagnosticSchema = z.object({
 export const writeDraftOutputSchema = z.object({
   ok: z.boolean(),
   blockCount: z.number().optional(),
-  /** 最终正文可见字符数(兼容旧字段名)。 */
-  wordCount: z.number().optional(),
   visibleCharCount: z.number().optional(),
   targetLength: z.number().optional(),
   minLength: z.number().optional(),
@@ -931,12 +929,10 @@ export function createWriteDraftTool(opts: {
         }
         throw error;
       }
-      context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", opts.state.docDraftCandidateDoc ?? finalDoc);
       return {
         ok: true,
         blockCount: opts.state.docDraftCandidateDoc?.content.length ?? finalDoc.content.length,
-        wordCount: finalCount,
         visibleCharCount: finalCount,
         targetLength: lengthSpec?.target,
         minLength: lengthSpec?.min,

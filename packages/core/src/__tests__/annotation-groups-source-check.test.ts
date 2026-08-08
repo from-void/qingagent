@@ -60,7 +60,7 @@ function material(id: string, text: string, summary = "无关摘要"): Material 
     text,
     summary,
     fileId: null,
-    metadata: { pages: null, wordCount: text.length, title: null },
+    metadata: { pages: null, wordCount: text.length, title: null, parseState: "ready" },
     createdAt: "2026-07-14T00:00:00.000Z",
     updatedAt: "2026-07-14T00:00:00.000Z",
   };

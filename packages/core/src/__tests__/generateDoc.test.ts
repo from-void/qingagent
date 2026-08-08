@@ -186,7 +186,7 @@ describe("generateDoc QingML helpers", () => {
   // 回归 search-ref-not-citation-block(数据链路):抓取类素材的来源 URL 必须进生成 material
   // context,否则模型看不到 url 无法挂链接。上传类(sourceUrl=null)不加 URL 标注。
   it("materialContextFrom 把抓取素材的来源URL喂进生成上下文", () => {
-    const baseMeta = { pages: null, wordCount: 10, title: null };
+    const baseMeta = { pages: null, wordCount: 10, title: null, parseState: "ready" as const };
     const materials = new Map<string, Material>([
       ["m1", {
         id: "m1", filename: "中汽协报告", mimeType: "text/html", text: "正文A",
@@ -217,7 +217,7 @@ describe("generateDoc QingML helpers", () => {
         summary: null,
         visionSummary: "图中是一张活动签到表。",
         fileId: "file-img-1",
-        metadata: { pages: null, wordCount: 8, title: null },
+        metadata: { pages: null, wordCount: 8, title: null, parseState: "ready" },
         createdAt: "",
         updatedAt: "",
       }],
@@ -229,7 +229,7 @@ describe("generateDoc QingML helpers", () => {
   });
 
   it("materialContextFrom 超预算时优先注入任务相关分块且始终受硬上限约束", () => {
-    const baseMeta = { pages: null, wordCount: 1_000, title: null };
+    const baseMeta = { pages: null, wordCount: 1_000, title: null, parseState: "ready" as const };
     const materials = new Map<string, Material>([
       ["noise", {
         id: "noise",
@@ -282,7 +282,7 @@ describe("generateDoc QingML helpers", () => {
         text: "正文",
         summary: null,
         fileId: null,
-        metadata: { pages: null, wordCount: 2, title: null },
+        metadata: { pages: null, wordCount: 2, title: null, parseState: "ready" },
         createdAt: "",
         updatedAt: "",
       }],

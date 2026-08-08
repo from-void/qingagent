@@ -478,6 +478,7 @@ describe("Material type", () => {
         pages: 10,
         wordCount: 5000,
         title: "文章标题",
+        parseState: "ready",
       },
       createdAt: "2026-05-23T10:00:00Z",
       updatedAt: "2026-05-23T10:00:00Z",
@@ -502,6 +503,7 @@ describe("Material type", () => {
         pages: null,
         wordCount: 20,
         title: null,
+        parseState: "ready",
       },
       createdAt: "2026-05-23T10:00:00Z",
       updatedAt: "2026-05-23T10:00:00Z",
@@ -599,7 +601,7 @@ describe("readMaterial execute — session-scoped closure", () => {
     text: "这是文章全文内容，包含很多段落。",
     summary: "这是文章摘要",
     fileId: null,
-    metadata: { pages: 10, wordCount: 5000, title: "文章标题" },
+    metadata: { pages: 10, wordCount: 5000, title: "文章标题", parseState: "ready" },
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
   });
@@ -610,7 +612,7 @@ describe("readMaterial execute — session-scoped closure", () => {
     text: "一些笔记内容",
     summary: null,
     fileId: null,
-    metadata: { pages: null, wordCount: 20, title: null },
+    metadata: { pages: null, wordCount: 20, title: null, parseState: "ready" },
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
   });
@@ -622,7 +624,7 @@ describe("readMaterial execute — session-scoped closure", () => {
     summary: "图片摘要",
     visionSummary: "图片里有一张手写会议纪要。",
     fileId: "file-photo",
-    metadata: { pages: null, wordCount: 12, title: "图片素材" },
+    metadata: { pages: null, wordCount: 12, title: "图片素材", parseState: "ready" },
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
   });
@@ -637,6 +639,7 @@ describe("readMaterial execute — session-scoped closure", () => {
       pages: null,
       wordCount: MATERIAL_CONTEXT_MAX_CHARS + 4,
       title: "大型报告",
+      parseState: "ready",
     },
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
@@ -803,7 +806,7 @@ describe("summarizeMaterial execute — session-scoped closure", () => {
       text: "文章内容",
       summary: null,
       fileId: null,
-      metadata: { pages: null, wordCount: 100, title: null },
+      metadata: { pages: null, wordCount: 100, title: null, parseState: "ready" },
       createdAt: "2026-05-23T10:00:00Z",
       updatedAt: "2026-05-23T10:00:00Z",
     });
@@ -844,7 +847,7 @@ describe("summarizeMaterial execute — session-scoped closure", () => {
       text: "笔记内容",
       summary: "旧摘要",
       fileId: null,
-      metadata: { pages: null, wordCount: 20, title: null },
+      metadata: { pages: null, wordCount: 20, title: null, parseState: "ready" },
       createdAt: "2026-05-23T10:00:00Z",
       updatedAt: "2026-05-23T10:00:00Z",
     });

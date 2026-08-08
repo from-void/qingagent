@@ -43,7 +43,6 @@ function bindTableSelection(
 ) {
   const state = createSession(`scope-${axis}-${startIndex}-${endIndex}`);
   state.doc = tableDoc();
-  state.legacySections = pmToLegacySections(state.doc) as any;
   state.docVersion = 1;
   state._currentChips = [{
     kind: { kind: "selection" },
@@ -411,7 +410,6 @@ describe("table selection post-edit scope validator", () => {
       attrs: { blockId: "outside" },
       content: [{ type: "text", text: "原文" }],
     });
-    state.legacySections = pmToLegacySections(state.doc!) as any;
     const { editDraft } = createSessionScopedTools(state);
     const result = await editDraft.execute!({
       ops: [{ action: "replaceText", withinRef: "outside", find: "原文", replace: "越界" }],

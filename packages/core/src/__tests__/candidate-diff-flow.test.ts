@@ -316,7 +316,6 @@ describe("candidate-diff backend flow", () => {
     const generatedDoc = legacySectionsToPm([p("第一版正文")] as never);
     // 模拟 writeDraft.execute 已把候选文档落进 state(真实 execute 在 mock 流里不会跑)。
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
 
     const frames = await collectFrames(
       processAgentStream(
@@ -417,15 +416,11 @@ describe("candidate-diff backend flow", () => {
     const initialCandidate = legacySectionsToPm([p("胜出首稿")] as never);
     const editedCandidate = legacySectionsToPm([p("胜出首稿，已补充细节")] as never);
     state.docDraftCandidateDoc = initialCandidate;
-    state.docDraftCandidateSections =
-      pmToLegacySections(initialCandidate) as unknown as LegacySection[];
 
     async function* streamWithEdit(): AsyncGenerator<StreamChunk> {
       yield writeDraftCall("wd-project");
       yield writeDraftResult("wd-project");
       state.docDraftCandidateDoc = editedCandidate;
-      state.docDraftCandidateSections =
-        pmToLegacySections(editedCandidate) as unknown as LegacySection[];
       const args = {
         ops: [{
           action: "replaceBlock",
@@ -482,8 +477,6 @@ describe("candidate-diff backend flow", () => {
     const state = createSession(sessionId);
     const candidate = legacySectionsToPm([p("应被丢弃的候选正文")] as never);
     state.docDraftCandidateDoc = candidate;
-    state.docDraftCandidateSections =
-      pmToLegacySections(candidate) as unknown as LegacySection[];
     await documentDraftRepo.saveCandidate({
       docId: state.docId,
       threadId: state.sessionId,
@@ -532,11 +525,9 @@ describe("candidate-diff backend flow", () => {
     const state = createSession(`candidate-empty-media-${baseDoc.content[0]?.type}`);
     const generatedDoc = legacySectionsToPm([p("直接落地的首稿正文")] as never);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const frames = await collectFrames(
@@ -569,7 +560,6 @@ describe("candidate-diff backend flow", () => {
     const state = createSession("candidate-write-then-suspend");
     const generatedDoc = legacySectionsToPm([p("挂起后仍可读取的首稿正文")] as never);
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
 
     const askUserCall = {
       type: "tool-call",
@@ -670,14 +660,11 @@ describe("candidate-diff backend flow", () => {
     const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
     const generatedDoc = legacySectionsToPm([p("待确认的新版正文")] as never);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = baseDoc;
-    state.docDraftBaseSections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docDraftBaseVersion = 1;
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const frames = await collectFrames(
@@ -750,7 +737,6 @@ describe("candidate-diff backend flow", () => {
     const state = createSession("candidate-writedraft-checkpoint");
     const generatedDoc = legacySectionsToPm([p("checkpoint 首稿")] as never);
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
 
     await collectUntil(
       processAgentStream(
@@ -797,7 +783,6 @@ describe("candidate-diff backend flow", () => {
     const state = createSession("candidate-readDraft-restore");
     const generatedDoc = legacySectionsToPm([p("readDraft 后恢复的首稿")] as never);
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
 
     await collectUntil(
       processAgentStream(
@@ -851,7 +836,6 @@ describe("candidate-diff backend flow", () => {
         const toolCallId = `wd-${index + 1}`;
         yield writeDraftCall(toolCallId);
         state.docDraftCandidateDoc = doc;
-        state.docDraftCandidateSections = pmToLegacySections(doc) as unknown as LegacySection[];
         yield writeDraftResult(toolCallId);
       }
     }
@@ -893,11 +877,9 @@ describe("candidate-diff backend flow", () => {
     const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
     const generatedDoc = legacySectionsToPm([p("第一版正文")] as never);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const frames = await collectFrames(
@@ -996,12 +978,9 @@ describe("candidate-diff backend flow", () => {
       ),
     ]);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = candidateDoc;
-    state.docDraftCandidateSections =
-      pmToLegacySections(candidateDoc) as unknown as LegacySection[];
     await seedDocument({
       docId: state.docId,
       sessionId: state.sessionId,
@@ -1056,11 +1035,9 @@ describe("candidate-diff backend flow", () => {
       paragraph("block-b", "第二段新文"),
     ]);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = candidateDoc;
-    state.docDraftCandidateSections = pmToLegacySections(candidateDoc) as unknown as LegacySection[];
     await seedDocument({
       docId: state.docId,
       sessionId: state.sessionId,
@@ -1149,11 +1126,9 @@ describe("candidate-diff backend flow", () => {
     expect(applied.ok).toBe(true);
     const draftDoc = materializeDraftBlockIds(applied.doc!);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = draftDoc;
-    state.docDraftCandidateSections = pmToLegacySections(draftDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const args = {
@@ -1257,7 +1232,6 @@ describe("candidate-diff backend flow", () => {
       ],
     } as PmBlockNode]);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     await seedDocument({
@@ -1360,7 +1334,6 @@ describe("candidate-diff backend flow", () => {
       ],
     } as PmBlockNode]);
     state.doc = generatedDoc;
-    state.legacySections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: generatedDoc });
@@ -1401,7 +1374,6 @@ describe("candidate-diff backend flow", () => {
     });
     if (manualCommit.status !== "committed") throw new Error(`manual update failed: ${manualCommit.status}`);
     state.doc = manualCommit.doc;
-    state.legacySections = pmToLegacySections(manualCommit.doc) as unknown as LegacySection[];
     state.docVersion = manualCommit.docVersion;
     await invalidateDraftStateAfterCanonicalWrite(state);
     expect(state.docDraftBaseDoc).toBeNull();
@@ -1496,11 +1468,9 @@ describe("candidate-diff backend flow", () => {
     expect(applied.ok).toBe(true);
     const draftDoc = materializeDraftBlockIds(applied.doc!);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = draftDoc;
-    state.docDraftCandidateSections = pmToLegacySections(draftDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const args = {
@@ -1547,11 +1517,9 @@ describe("candidate-diff backend flow", () => {
     const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
     const generatedDoc = legacySectionsToPm([p("停止后不应落地")] as never);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     const abortController = new AbortController();
@@ -1588,11 +1556,9 @@ describe("candidate-diff backend flow", () => {
       paragraph("block-mark", [text("尖尖的顶子露在"), text("树", [bold]), text("梢上")]),
     ]);
     state.doc = baseDoc;
-    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
     state.docVersion = 1;
     state.docState = { kind: "editing" };
     state.docDraftCandidateDoc = draftDoc;
-    state.docDraftCandidateSections = pmToLegacySections(draftDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
     await collectFrames(

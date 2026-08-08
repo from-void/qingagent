@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@qingagent/core", () => ({
+  hasCanonicalDoc: (value: { doc?: { content?: unknown[] } }) => Boolean(value.doc?.content?.length),
   loadSessionFromThread: mocks.loadSessionFromThread,
   redactSensitiveText: (value: string) => value,
 }));
@@ -78,8 +79,7 @@ describe("PDF 导出浏览器能力门", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "session-1",
       title: "导出测试",
-      doc: null,
-      legacySections: [{ kind: "p", data: { text: "正文" } }],
+      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
     });
     mocks.toPdf.mockRejectedValue(Object.assign(new Error(code), { code }));
     const { exportRoutes } = await import("../routes/export.js");
@@ -102,8 +102,7 @@ describe("PDF 导出浏览器能力门", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "session-1",
       title: "导出测试",
-      doc: null,
-      legacySections: [{ kind: "p", data: { text: "正文" } }],
+      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
     });
     mocks.toPdf.mockResolvedValue(Buffer.from("pdf"));
     const { exportRoutes } = await import("../routes/export.js");

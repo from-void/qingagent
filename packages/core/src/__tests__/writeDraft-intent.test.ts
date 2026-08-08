@@ -120,9 +120,8 @@ function namedThreeLevelQingml(prefix: string): string {
   return `<ul><li>${prefix}一级<ul><li>${prefix}二级<ul><li>${prefix}三级</li></ul></li></ul></li></ul>`;
 }
 
-function bindDoc(state: { doc?: PmDoc | null; legacySections: unknown; docVersion: number }, value: PmDoc): void {
+function bindDoc(state: { doc?: PmDoc | null; docVersion: number }, value: PmDoc): void {
   state.doc = value;
-  state.legacySections = pmToLegacySections(value);
   state.docVersion = 1;
 }
 
@@ -169,9 +168,9 @@ async function makeTool() {
   const state = createSession("wd-intent");
   const tool = createWriteDraftTool({
     state,
-    replaceDraftCandidateDoc: (s, doc, legacySections) => {
+    replaceDraftCandidateDoc: (s, doc) => {
       s.docDraftCandidateDoc = doc;
-      return legacySections ?? [];
+      return doc;
     },
   });
   return { tool, state };
@@ -892,7 +891,7 @@ describe("writeDraft intent 调度", () => {
 
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
       expect(state.docDraftCandidateDoc).toBeNull();
-      expect(state.docDraftCandidateSections).toBeNull();
+      expect(state.docDraftCandidateDoc).toBeNull();
     };
 
     await runLateTool("abort");

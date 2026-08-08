@@ -323,10 +323,10 @@ describe("generateDoc QingML helpers", () => {
     });
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(result.error);
-    const kinds = (result.legacySections ?? []).map((s) => s.kind);
-    expect(kinds).toContain("quote");
-    expect(kinds).toContain("list");
-    expect(kinds).toContain("hr");
+    const types = result.doc.content.map((block) => block.type);
+    expect(types).toContain("blockquote");
+    expect(types).toContain("bulletList");
+    expect(types).toContain("horizontalRule");
   });
 
   it("QingML 嵌套列表会保留并编译成真实嵌套列表", () => {

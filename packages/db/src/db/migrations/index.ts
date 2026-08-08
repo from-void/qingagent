@@ -42,6 +42,7 @@ import { migration0040ReviewSupplementTemplateScope } from "./0040_review_supple
 import { migration0041ClientMessageIdempotencySessionScope } from "./0041_client_message_idempotency_session_scope.js";
 import { migration0042ProviderBalanceSnapshots } from "./0042_provider_balance_snapshots.js";
 import { migration0043UsagePriceLedgerSplit } from "./0043_usage_price_ledger_split.js";
+import { migration0044MaterializeLegacyThreadDocuments } from "./0044_materialize_legacy_thread_documents.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -90,4 +91,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0041ClientMessageIdempotencySessionScope,
   migration0042ProviderBalanceSnapshots,
   migration0043UsagePriceLedgerSplit,
+  migration0044MaterializeLegacyThreadDocuments,
 ];

@@ -69,9 +69,9 @@ async function makeTool() {
   const state = createSession("wd-length");
   const tool = createWriteDraftTool({
     state,
-    replaceDraftCandidateDoc: (s, doc, legacySections) => {
+    replaceDraftCandidateDoc: (s, doc) => {
       s.docDraftCandidateDoc = doc;
-      return legacySections ?? [];
+      return doc;
     },
   });
   return { tool, state };

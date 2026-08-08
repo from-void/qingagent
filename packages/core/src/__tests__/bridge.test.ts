@@ -57,7 +57,7 @@ async function collectAsyncFrames(gen: AsyncIterable<BridgeFrame>): Promise<Brid
 }
 
 function seedStateWithDoc(state: SessionState): void {
-  state.legacySections = [
+  state.doc = legacySectionsToPm([
     { kind: "h1", data: { text: "春天的校园" } },
     { kind: "p", data: { text: "三月的阳光透过教学楼的玻璃窗，洒在走廊的地砖上。" } },
     { kind: "h2", data: { text: "花开时节", anchor: null } },
@@ -65,8 +65,7 @@ function seedStateWithDoc(state: SessionState): void {
       kind: "p",
       data: { text: "校园里的樱花树在不知不觉间绽放了，粉白色的花瓣随风飘落。" },
     },
-  ];
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  ] as never);
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
 }
@@ -92,7 +91,7 @@ async function addPatch(
     summary: "将三月改为四月",
     ...overrides,
   };
-  state.doc ??= legacySectionsToPm(state.legacySections as never);
+  if (!state.doc) throw new Error("测试夹具缺少 PM 文档");
   const [match] = findLiteralMatches(
     collectTopLevelTextBlocks(state.doc),
     patch.before,
@@ -147,7 +146,7 @@ async function seedDocumentRow(state: SessionState): Promise<void> {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       docVersion: state.docVersion,
-      legacySections: state.legacySections,
+      legacySections: pmToLegacySections(state.doc!) as never,
       pmDoc: state.doc,
     }),
   );
@@ -174,7 +173,7 @@ describe("createSession", () => {
     expect(state.title).toBe("");
     expect(state.docState).toEqual({ kind: "empty" });
     expect(state.messages).toEqual([]);
-    expect(state.legacySections).toEqual([]);
+    expect(state.doc).toBeUndefined();
     expect(state.docVersion).toBe(0);
     expect(state.streamId).toBeNull();
     expect(state.runId).toBeNull();

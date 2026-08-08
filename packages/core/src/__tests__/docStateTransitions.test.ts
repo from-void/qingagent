@@ -15,16 +15,15 @@ import {
 import { deriveContentState } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
-  state.legacySections = [
+  state.doc = legacySectionsToPm([
     { kind: "h1", data: { text: "标题" } },
     { kind: "p", data: { text: "原始正文" } },
-  ];
-  state.doc = legacySectionsToPm(state.legacySections as never);
+  ] as never);
   state.docVersion = 1;
 }
 
 function addPatch(state: SessionState, id = "patch-1"): void {
-  state.doc ??= legacySectionsToPm(state.legacySections as never);
+  state.doc ??= legacySectionsToPm([{ kind: "p", data: { text: "正文" } }] as never);
   state.suggestions.set(id, {
     messageId: "agent-msg",
     toolCallId: id,
@@ -135,8 +134,6 @@ describe("docState transition helpers", () => {
         },
       ],
     };
-    state.legacySections = [];
-
     expect(deriveDocStateFacts(state).hasDoc).toBe(true);
     expect(idleDocState(state)).toEqual({ kind: "editing" });
     expect(deriveContentState(state)).toEqual({ kind: "editing" });

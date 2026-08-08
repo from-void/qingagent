@@ -400,8 +400,7 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     session.docState = legacyDocState("review");
-    session.legacySections = [section("正文")];
-    session.doc = legacySectionsToPm(session.legacySections as never);
+    session.doc = legacySectionsToPm([section("正文")] as never);
 
     const frames = await collectFrames(
       bridge.handleCommand({
@@ -422,7 +421,6 @@ describe("handleCommand existing-session restore", () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     session.docState = { kind: "editing" };
-    session.legacySections = [section("加粗正文")];
     session.doc = markedPmDoc("加粗正文");
     session.docVersion = 3;
 
@@ -455,6 +453,25 @@ describe("handleCommand existing-session restore", () => {
         },
       },
     });
+  });
+
+  it.each([
+    ["缺 doc", undefined],
+    ["空 doc", { type: "doc" as const, attrs: { schemaVersion: 1 as const }, content: [] }],
+  ])("%s 恢复时不发 documentSnapshotWritten", async (_label, doc) => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    session.docState = { kind: "empty" };
+    session.doc = doc;
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
   });
 
   it("restore 回放 AI 任务清单 todosChanged", async () => {
@@ -502,7 +519,6 @@ describe("handleCommand existing-session restore", () => {
       updatedAt: now,
     });
     session.docState = { kind: "editing" };
-    session.legacySections = [section("正文内容")];
     session.doc = pm;
     session.docVersion = 3; // 陈旧:低于 DB 的 8
 
@@ -554,7 +570,6 @@ describe("handleCommand existing-session restore", () => {
     expect(commit).toMatchObject({ status: "committed", docVersion: 8 });
     session.docVersion = 3;
     session.doc = base;
-    session.legacySections = [section("v7")];
     session.lastContentEditedAt = "2020-01-01T00:00:00.000Z";
 
     await collectFrames(
@@ -594,7 +609,6 @@ describe("handleCommand existing-session restore", () => {
     });
     // 内存 session 停在陈旧版本 3,且带着基于旧版本的 review/draft 态
     session.docState = { kind: "editing" };
-    session.legacySections = [section("正文内容")];
     session.doc = pm;
     session.docVersion = 3;
     session.suggestionBaseVersion = 3;
@@ -667,7 +681,6 @@ describe("handleCommand existing-session restore", () => {
     suggestion.batchId = "review:whole:4:restore";
     session.docState = { kind: "pendingReview" };
     session.doc = baseDoc;
-    session.legacySections = [section("旧正文")];
     session.docVersion = 4;
     session.suggestionBaseVersion = 4;
     session.suggestionBaseDoc = baseDoc;

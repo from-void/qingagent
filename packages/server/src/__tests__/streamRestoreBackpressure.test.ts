@@ -25,7 +25,6 @@ describe("GET /api/v1/events 恢复快照背压", () => {
     session.title = "深链冷启动会话";
     session.docState = { kind: "editing" };
     session.docVersion = 9;
-    session.legacySections = [{ kind: "p", data: { text: "深链恢复正文" } }];
     session.doc = {
       type: "doc",
       attrs: { schemaVersion: 1 },

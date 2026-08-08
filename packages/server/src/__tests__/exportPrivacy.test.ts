@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@qingagent/core", () => ({
+  hasCanonicalDoc: (value: { doc?: { content?: unknown[] } }) => Boolean(value.doc?.content?.length),
   loadSessionFromThread: mocks.loadSessionFromThread,
   redactSensitiveText: mocks.redactSensitiveText,
 }));
@@ -31,8 +32,7 @@ describe("export 错误信息边界", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "export-private-error",
       title: "导出测试",
-      doc: null,
-      legacySections: [{ kind: "p", data: { text: "正文" } }],
+      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
     });
     mocks.toTxt.mockImplementation(() => {
       throw new Error("api_key=private-export-key sk-live-export-secret");

@@ -41,7 +41,6 @@ export function isDirectionReset(
   state: {
     _askUserCompleted?: boolean;
     doc?: { content: readonly unknown[]; [key: string]: unknown };
-    legacySections: readonly unknown[];
   },
 ): boolean {
   return state._askUserCompleted === true || hasCanonicalDoc(state);

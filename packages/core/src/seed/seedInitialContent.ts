@@ -14,7 +14,6 @@
 
 import type {
   ChatMessage,
-  LegacySection,
   PmBlockNode,
   PmDoc,
   PmInlineNode,
@@ -23,7 +22,8 @@ import type {
 } from "@qingagent/contract-ts";
 
 import { mastra } from "../mastra.js";
-import { documentRepo, projectPmDocToSections } from "@qingagent/db";
+import { documentRepo } from "@qingagent/db";
+import { countDocVisibleChars } from "@qingagent/pm-schema";
 import {
   QINGAGENT_RESOURCE_ID,
   type QingagentThreadMetadata,
@@ -87,19 +87,6 @@ function docBuilder(prefix: string) {
   });
 
   return { h, p, ul, quote, code, table, make };
-}
-
-// 粗略字数(中文按字符计),用于 home 列表的 threadSummary。
-function countWords(sections: LegacySection[]): number {
-  let total = 0;
-  for (const s of sections) {
-    if ("text" in s.data && typeof s.data.text === "string") total += s.data.text.length;
-    if (s.kind === "list") total += s.data.items.join("").length;
-    if (s.kind === "table")
-      total += s.data.head.join("").length + s.data.rows.flat().join("").length;
-    if (s.kind === "code") total += s.data.body.length;
-  }
-  return total;
 }
 
 interface SeedSample {
@@ -293,8 +280,7 @@ async function writeSample(sample: SeedSample): Promise<void> {
   const createdAt = new Date(SEED_BASE_TS - sample.agoMs);
   const createdIso = createdAt.toISOString();
 
-  const legacySections = projectPmDocToSections(sample.pmDoc);
-  const wordCount = countWords(legacySections);
+  const wordCount = countDocVisibleChars(sample.pmDoc);
 
   // 1) 文档正文 → documents 表(工作区打开时从这里加载 PmDoc)
   await documentRepo.save({
@@ -305,7 +291,6 @@ async function writeSample(sample: SeedSample): Promise<void> {
     docState: "editing",
     docVersion: 1,
     lastSyncedVersion: 1,
-    legacySections,
     pmDoc: sample.pmDoc,
     createdAt: createdIso,
     updatedAt: createdIso,
@@ -319,7 +304,6 @@ async function writeSample(sample: SeedSample): Promise<void> {
     lastContentEditedAt: createdIso,
     lastSyncedDocumentSnapshot: 1,
     doc: sample.pmDoc,
-    legacySections,
     materials: [],
     folderSources: [],
     title: sample.title,
@@ -328,7 +312,7 @@ async function writeSample(sample: SeedSample): Promise<void> {
     askUserCompleted: true,
     chatHistory: sample.chatHistory,
     threadSummary: {
-      sectionCount: legacySections.length,
+      sectionCount: sample.pmDoc.content.length,
       wordCount,
       status: "editing",
       materialCount: 0,

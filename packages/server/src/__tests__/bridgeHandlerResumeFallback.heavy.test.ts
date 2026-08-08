@@ -766,8 +766,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
     seedSuspendedAskUserSession(session, "run-resume-busy");
-    session.legacySections = [{ kind: "p", data: { text: "已有正文" } }];
-    session.doc = legacySectionsToPm(session.legacySections as never);
+    session.doc = legacySectionsToPm([{ kind: "p", data: { text: "已有正文" } }] as never);
     session.docState = { kind: "editing" };
 
     mockState.resumeStream.mockResolvedValue({

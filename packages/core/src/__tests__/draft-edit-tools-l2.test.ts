@@ -172,14 +172,11 @@ describe("draft edit tools L2 carrier", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("l2-editDraft");
     state.doc = pmDoc("旧文");
-    state.legacySections = pmToLegacySections(state.doc) as any;
     state.docVersion = 3;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = state.doc;
     state.docDraftBaseVersion = state.docVersion;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftCandidateDoc = pmDoc("新文");
-    state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as any;
 
     const frames = await collectFrames(processAgentStream(
       streamOf({
@@ -208,14 +205,11 @@ describe("draft edit tools L2 carrier", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("l2-editDraft-summary");
     state.doc = pmDoc("旧文");
-    state.legacySections = pmToLegacySections(state.doc) as any;
     state.docVersion = 3;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = state.doc;
     state.docDraftBaseVersion = state.docVersion;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftCandidateDoc = pmDoc("新文");
-    state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as any;
 
     const frames = await collectFrames(processAgentStream(
       streamOf({
@@ -261,14 +255,11 @@ describe("draft edit tools L2 carrier", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("l2-editDraft-title");
     state.doc = pmHeadingDoc("旧标题");
-    state.legacySections = pmToLegacySections(state.doc) as any;
     state.docVersion = 5;
     state.docState = { kind: "editing" };
     state.docDraftBaseDoc = state.doc;
     state.docDraftBaseVersion = state.docVersion;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftCandidateDoc = pmHeadingDoc("新标题");
-    state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as any;
 
     const frames = await collectFrames(processAgentStream(
       streamOf({

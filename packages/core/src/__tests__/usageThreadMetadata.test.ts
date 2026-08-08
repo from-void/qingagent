@@ -1,21 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
-import { countDocVisibleChars, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { countDocVisibleChars } from "@qingagent/pm-schema";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
 import { getDocumentsClient } from "@qingagent/db";
-
-function legacyDoc(meta: QingagentThreadMetadata): PmDoc | null {
-  if (meta.doc) return meta.doc;
-  if (!meta.legacySections || meta.legacySections.length === 0) return null;
-  try {
-    return legacySectionsToPm(meta.legacySections as never);
-  } catch {
-    return null;
-  }
-}
 
 describe("usage thread metadata targeted reads", () => {
   let tempDb: TempDocumentsDb;
@@ -26,7 +16,7 @@ describe("usage thread metadata targeted reads", () => {
 
   afterAll(() => tempDb.cleanup());
 
-  it("同一批真实 thread 数据下与旧全量实现标题/docstats 完全一致", async () => {
+  it("同一批真实 thread 数据下与全量实现标题/docstats 完全一致", async () => {
     const { listSessionThreads } = await import("../session/threadPersistence.js");
     const {
       getSessionDocumentStatsSince,
@@ -51,13 +41,16 @@ describe("usage thread metadata targeted reads", () => {
         metadata: { title: "元数据标题", doc: pmDoc },
       },
       {
-        id: "legacy-sections-recent",
+        id: "canonical-doc-recent",
         resourceId: "qingagent-user",
         title: "旧正文格式线程标题",
         createdAt: "2026-07-30T00:00:00.000Z",
         metadata: {
           title: "",
-          legacySections: [{ id: "s1", title: "", content: "旧格式正文", level: 1 }],
+          doc: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: "另一篇正文" }] }],
+          },
         },
       },
       {
@@ -106,7 +99,7 @@ describe("usage thread metadata targeted reads", () => {
     for (const thread of threads) {
       if (thread.createdAt.getTime() < cutoff) continue;
       oldDocs += 1;
-      const doc = legacyDoc((thread.metadata ?? {}) as unknown as QingagentThreadMetadata);
+      const doc = ((thread.metadata ?? {}) as unknown as QingagentThreadMetadata).doc;
       if (doc) oldWords += countDocVisibleChars(doc);
     }
 

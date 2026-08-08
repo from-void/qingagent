@@ -109,7 +109,7 @@ export {
   __resetSessionPersistenceForTest,
 } from "./threadPersistence.js";
 
-export { deriveTitleFromSections } from "./title.js";
+export { deriveTitleFromDoc } from "./title.js";
 
 export { resolveFileIds, UPLOADS_BASE } from "./uploadFileResolver.js";
 

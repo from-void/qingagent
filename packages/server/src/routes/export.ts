@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { truncateGraphemes } from "@qingagent/contract-ts";
-import { loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
+import { hasCanonicalDoc, loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
 import {
   getBrowserCapabilityState,
   hasSpecializedDiagramOverlayFallback,
@@ -66,16 +66,13 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   if (!session) {
     return c.json({ error: `Session not found: ${sessionId}` }, 404);
   }
-  // 空文档判定:冷恢复时 threadPersistence 会把空 legacySections 合成一个 content 为空的 PmDoc,
-  // 仅判 `!session.doc` 会漏掉它 → 空会话导出回 200 空骨架。把"空 PmDoc"也算作没有可导出内容。
-  const hasDocContent = !!session.doc && session.doc.content.length > 0;
-  if (!hasDocContent && session.legacySections.length === 0) {
+  if (!hasCanonicalDoc(session) || !session.doc) {
     return c.json({ error: "当前会话没有可导出的文档" }, 409);
   }
 
   const title = session.title?.trim() || "青简导出";
   const filename = `${safeFilename(title)}.${FILE_EXTENSIONS[format]}`;
-  const document = session.doc ?? session.legacySections;
+  const document = session.doc;
   const baseUrl = requestOrigin(c.req.url, {
     forwardedHost: c.req.header("x-forwarded-host"),
     forwardedProto: c.req.header("x-forwarded-proto"),

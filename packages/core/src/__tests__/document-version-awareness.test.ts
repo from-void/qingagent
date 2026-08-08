@@ -82,7 +82,6 @@ function bindCurrentDoc(
   docVersion: number,
 ): void {
   state.doc = currentDoc;
-  state.legacySections = pmToLegacySections(currentDoc) as never;
   state.docVersion = docVersion;
 }
 

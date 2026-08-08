@@ -14,7 +14,7 @@
  * 打印内容：
  *   - thread id / title / docState / docVersion / runId / toolCallId
  *   - suggestions (ids) / patchVerdicts
- *   - legacySections（index, kind, 完整文本）
+ *   - doc（PM block index, type, 完整文本）
  *   - chatHistory 中每个 toolCall（name, status；候选建议额外打印
  *     blockIndex / summary / 完整 before / 完整 after / result）
  *
@@ -26,6 +26,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { loadSessionFromThread, getMemory } from "@qingagent/core";
+import { pmToPlainText } from "@qingagent/pm-schema";
 
 // ---- 输出收集：同时写 stdout 与文件 ----
 const lines: string[] = [];
@@ -93,48 +94,6 @@ function pickBeforeAfter(node: any): {
     };
   }
   return {};
-}
-
-/** 段落文本：LegacySection 形态为 { kind, data:{ text|body|caption|alt|... } }。 */
-function pickSectionText(section: any): string | undefined {
-  if (section == null) return undefined;
-  if (typeof section === "string") return section;
-  const d = section.data ?? section;
-  const candidates = [
-    d?.text,
-    d?.body,
-    d?.caption,
-    d?.alt,
-    section?.text,
-    section?.body,
-  ];
-  for (const c of candidates) {
-    if (typeof c === "string") return c;
-  }
-  // 表格特殊处理
-  if (Array.isArray(d?.rows)) {
-    const head = Array.isArray(d.head) ? d.head.join(" | ") : "";
-    const rows = d.rows.map((r: string[]) => r.join(" | ")).join("\n");
-    return [head, rows].filter(Boolean).join("\n");
-  }
-  // 兜底：再向下走找 text/body
-  const deep = walkUntil(
-    section,
-    (n) =>
-      n &&
-      typeof n === "object" &&
-      (typeof n.text === "string" || typeof n.body === "string"),
-  );
-  if (deep) {
-    if (typeof deep.text === "string") return deep.text;
-    if (typeof deep.body === "string") return deep.body;
-  }
-  return undefined;
-}
-
-function pickSectionKind(section: any): string | undefined {
-  if (section == null || typeof section !== "object") return undefined;
-  return section.kind ?? section.type;
 }
 
 // ---- 从 chatHistory 的 ChatMessage.parts 提取 toolCall 部分 ----
@@ -260,15 +219,15 @@ async function main() {
   }
   out("");
 
-  // legacySections (index, kind, FULL text)
-  out("---------------- legacySections -----------------");
-  const sections = s.legacySections ?? [];
-  out(`count        : ${sections.length}`);
-  for (const [i, sec] of sections.entries()) {
-    const kind = pickSectionKind(sec) ?? "<unknown>";
-    const text = pickSectionText(sec);
-    out(`  --- section[${i}] kind=${kind} ---`);
-    out(text === undefined ? "  <no text found>" : text);
+  // canonical PM blocks (index, type, FULL text)
+  out("---------------- doc (PM blocks) ----------------");
+  const doc = s.doc;
+  const blocks = Array.isArray(doc?.content) ? doc.content : [];
+  out(`count        : ${blocks.length}`);
+  for (const [i, block] of blocks.entries()) {
+    const text = pmToPlainText({ ...doc, content: [block] });
+    out(`  --- block[${i}] type=${block?.type ?? "<unknown>"} ---`);
+    out(text || "  <no text found>");
     out("");
   }
   out("");

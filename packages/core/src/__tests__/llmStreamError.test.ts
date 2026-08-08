@@ -334,8 +334,6 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }];
     const generatedDoc = legacySectionsToPm(generatedSections as never);
     state.docDraftCandidateDoc = generatedDoc;
-    state.docDraftCandidateSections =
-      pmToLegacySections(generatedDoc) as unknown as LegacySection[];
 
     try {
       const args = { title: "测试", outline: "大纲" };
@@ -1289,7 +1287,6 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const sections: LegacySection[] = [{ kind: "p", data: { text: "已生成的候选正文" } }];
     const candidate = legacySectionsToPm(sections as never);
     state.docDraftCandidateDoc = candidate;
-    state.docDraftCandidateSections = pmToLegacySections(candidate) as unknown as LegacySection[];
     const clearSpy = vi.spyOn(documentDraftRepo, "clear");
 
     async function* writeDraftThenTimeout(): AsyncGenerator<unknown> {
@@ -1379,8 +1376,6 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }];
     const candidate = legacySectionsToPm(candidateSections as never);
     state.docDraftCandidateDoc = candidate;
-    state.docDraftCandidateSections =
-      pmToLegacySections(candidate) as unknown as LegacySection[];
 
     async function* editDraftThenPreempt(): AsyncGenerator<unknown> {
       const args = {
@@ -1444,8 +1439,6 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }];
     const candidate = legacySectionsToPm(candidateSections as never);
     state.docDraftCandidateDoc = candidate;
-    state.docDraftCandidateSections =
-      pmToLegacySections(candidate) as unknown as LegacySection[];
 
     async function* writeDraftThenUserStop(): AsyncGenerator<unknown> {
       const args = {
@@ -1526,8 +1519,6 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }];
     const candidate = legacySectionsToPm(candidateSections as never);
     state.docDraftCandidateDoc = candidate;
-    state.docDraftCandidateSections =
-      pmToLegacySections(candidate) as unknown as LegacySection[];
 
     async function* writeDraftThenReasonForever(): AsyncGenerator<unknown> {
       const args = {

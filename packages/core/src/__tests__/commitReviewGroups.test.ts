@@ -164,16 +164,13 @@ function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion 
 
 async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Promise<DiffHunk[]> {
   state.doc = base;
-  state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;
   state.suggestionBaseVersion = state.docVersion;
   state.docDraftBaseDoc = base;
   state.docDraftBaseVersion = state.docVersion;
-  state.docDraftBaseSections = state.legacySections;
   state.docDraftCandidateDoc = draft;
-  state.docDraftCandidateSections = pmToLegacySections(draft) as never;
 
   const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
   for (const hunk of hunks) {
@@ -198,15 +195,12 @@ async function seedReviewRound(
   draft: PmDoc,
 ): Promise<DiffHunk[]> {
   state.doc = base;
-  state.legacySections = pmToLegacySections(base) as never;
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;
   state.suggestionBaseVersion = state.docVersion;
   state.docDraftBaseDoc = base;
   state.docDraftBaseVersion = state.docVersion;
-  state.docDraftBaseSections = state.legacySections;
   state.docDraftCandidateDoc = draft;
-  state.docDraftCandidateSections = pmToLegacySections(draft) as never;
 
   const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
   for (const hunk of hunks) {
@@ -231,16 +225,13 @@ async function seedHunksState(
   hunks: readonly DiffHunk[],
 ): Promise<void> {
   state.doc = base;
-  state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;
   state.suggestionBaseVersion = state.docVersion;
   state.docDraftBaseDoc = base;
   state.docDraftBaseVersion = state.docVersion;
-  state.docDraftBaseSections = state.legacySections;
   state.docDraftCandidateDoc = base;
-  state.docDraftCandidateSections = state.legacySections;
 
   for (const hunk of hunks) {
     const suggestion = suggestionFromHunk(state, hunk);
@@ -319,8 +310,8 @@ async function seedDocumentRow(state: SessionState): Promise<void> {
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       docVersion: state.docVersion,
-      legacySections: state.legacySections,
-      pmDoc: state.doc ?? legacySectionsToPm(state.legacySections as never),
+      legacySections: pmToLegacySections(state.doc!) as never,
+      pmDoc: state.doc!,
     }),
   );
 }
@@ -463,7 +454,6 @@ describe("commitReviewGroups", () => {
     state.title = "晚灯书屋速写—r81A席乙";
     state.titlePinned = true;
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     state.chatHistory.push({
       id: "msg-review-v1",
@@ -506,7 +496,6 @@ describe("commitReviewGroups", () => {
       ),
     );
     state.doc = initial;
-    state.legacySections = pmToLegacySections(initial) as never;
     state.docVersion = 1;
     await seedDocumentRow(state);
 
@@ -546,7 +535,6 @@ describe("commitReviewGroups", () => {
       paragraph("p-3", "第三段继续维持完整文章结构。"),
     ]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     await seedDocumentRow(state);
     const hunks = await seedReviewRound(state, base, doc([]));
@@ -570,7 +558,6 @@ describe("commitReviewGroups", () => {
     const state = createSession("noop-verdict");
     const base = doc([paragraph("block-a", "正文")]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     state.docState = { kind: "pendingReview" };
     const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
@@ -610,7 +597,6 @@ describe("commitReviewGroups", () => {
     const state = createSession("noop-commit");
     const base = doc([paragraph("block-a", "正文")]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     state.docState = { kind: "pendingReview" };
     const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
@@ -1545,7 +1531,6 @@ describe("commitReviewGroups", () => {
       ...base.content,
     ]);
     state.doc = shiftedCurrent;
-    state.legacySections = pmToLegacySections(shiftedCurrent) as never;
     state.docVersion = 2;
     state.docState = { kind: "pendingReview" };
     await seedDocumentRow(state);

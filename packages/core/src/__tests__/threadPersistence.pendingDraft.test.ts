@@ -328,7 +328,6 @@ describe("pending draft rehydrate", () => {
     const base = doc([paragraph("block-a", "旧正文")]);
     const draft = doc([paragraph("block-a", "新正文")]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     await documentDraftRepo.savePending({
       docId: state.docId,
@@ -372,7 +371,6 @@ describe("pending draft rehydrate", () => {
     }
     const state = createSession(sessionId);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
 
     const restored = await rehydratePendingDraft(state);
@@ -436,7 +434,6 @@ describe("pending draft rehydrate", () => {
     });
     const state = createSession(sessionId);
     state.doc = normalizedBase;
-    state.legacySections = pmToLegacySections(normalizedBase) as never;
     state.docVersion = 1;
 
     const result = await rehydratePendingDraft(state);
@@ -461,7 +458,6 @@ describe("pending draft rehydrate", () => {
       paragraph("block-b", "乙新"),
     ]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     await documentDraftRepo.savePending({
       docId: state.docId,
@@ -487,7 +483,7 @@ describe("pending draft rehydrate", () => {
     )).resolves.toHaveLength(hunks.length);
   });
 
-  it("拒绝后重启恢复裁决，再提交时不应用已拒绝修改", async () => {
+  it("pendingReview 崩溃恢复后重建候选，接受与拒绝共同提交", async () => {
     const sessionId = "rehy-rejected-verdict";
     const base = doc([
       paragraph("block-a", "甲旧"),
@@ -517,7 +513,6 @@ describe("pending draft rehydrate", () => {
 
     const beforeRestart = createSession(sessionId);
     beforeRestart.doc = base;
-    beforeRestart.legacySections = pmToLegacySections(base) as never;
     beforeRestart.docVersion = 1;
     await rehydratePendingDraft(beforeRestart);
     const rejectedHunk = originalHunks[0]!;
@@ -527,7 +522,6 @@ describe("pending draft rehydrate", () => {
 
     const afterRestart = createSession(sessionId);
     afterRestart.doc = base;
-    afterRestart.legacySections = pmToLegacySections(base) as never;
     afterRestart.docVersion = 1;
     const restored = await rehydratePendingDraft(afterRestart);
     const restoredIds = [...afterRestart.suggestions.keys()];
@@ -577,7 +571,6 @@ describe("pending draft rehydrate", () => {
 
     const beforeRestart = createSession(sessionId);
     beforeRestart.doc = base;
-    beforeRestart.legacySections = pmToLegacySections(base) as never;
     beforeRestart.docVersion = 1;
     await rehydratePendingDraft(beforeRestart);
     await getDocumentsClient().execute(`CREATE TRIGGER fail_rejected_review_delete
@@ -627,7 +620,6 @@ describe("pending draft rehydrate", () => {
 
     const afterRestart = createSession(sessionId);
     afterRestart.doc = base;
-    afterRestart.legacySections = pmToLegacySections(base) as never;
     afterRestart.docVersion = 1;
     const restored = await rehydratePendingDraft(afterRestart);
 
@@ -681,7 +673,6 @@ describe("pending draft rehydrate", () => {
 
     const beforeRestart = createSession(sessionId);
     beforeRestart.doc = base;
-    beforeRestart.legacySections = pmToLegacySections(base) as never;
     beforeRestart.docVersion = 1;
     await rehydratePendingDraft(beforeRestart);
     const [committedHunk, ...keptHunks] = originalHunks;
@@ -716,7 +707,6 @@ describe("pending draft rehydrate", () => {
 
     const afterRestart = createSession(sessionId);
     afterRestart.doc = beforeRestart.doc;
-    afterRestart.legacySections = pmToLegacySections(beforeRestart.doc!) as never;
     afterRestart.docVersion = beforeRestart.docVersion;
     const restored = await rehydratePendingDraft(afterRestart);
 
@@ -755,7 +745,6 @@ describe("pending draft rehydrate", () => {
 
     const beforeRestart = createSession(sessionId);
     beforeRestart.doc = base;
-    beforeRestart.legacySections = pmToLegacySections(base) as never;
     beforeRestart.docVersion = 1;
     await rehydratePendingDraft(beforeRestart);
     const hunkA = originalHunks.find((hunk) => hunk.anchor.blockId === "block-a");
@@ -785,7 +774,6 @@ describe("pending draft rehydrate", () => {
 
     const afterRestart = createSession(sessionId);
     afterRestart.doc = beforeRestart.doc;
-    afterRestart.legacySections = pmToLegacySections(beforeRestart.doc!) as never;
     afterRestart.docVersion = beforeRestart.docVersion;
     await rehydratePendingDraft(afterRestart);
 
@@ -800,7 +788,6 @@ describe("pending draft rehydrate", () => {
     const draft = doc([paragraph("block-a", [text("草稿正文")])]);
     const state = createSession("rehy-conflict");
     state.doc = changedMarksOnly;
-    state.legacySections = pmToLegacySections(changedMarksOnly) as never;
     state.docVersion = 2;
     await documentDraftRepo.savePending({
       docId: state.docId,
@@ -825,7 +812,6 @@ describe("pending draft rehydrate", () => {
     const state = createSession("rehy-empty");
     const base = doc([paragraph("block-a", "正文")]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 3;
     await documentDraftRepo.savePending({
       docId: state.docId,
@@ -847,7 +833,6 @@ describe("pending draft rehydrate", () => {
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 8;
     const expected = buildDraftDiff(base, draft, { baseVersion: 7 }).map((hunk) => hunk.reviewBatchId);
     await documentDraftRepo.savePending({
@@ -874,7 +859,6 @@ describe("pending draft rehydrate", () => {
     ]);
     const persistedIds = draft.content.map((block) => block.attrs.blockId);
     state.doc = base;
-    state.legacySections = pmToLegacySections(base) as never;
     state.docVersion = 1;
     await documentDraftRepo.savePending({
       docId: state.docId,

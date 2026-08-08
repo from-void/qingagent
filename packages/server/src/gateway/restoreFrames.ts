@@ -2,11 +2,9 @@ import type {
   BridgeFrame,
   DocState,
   DocSuggestion,
-  LegacySection,
   ToolCallSpec,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
   buildDocumentSnapshot,
@@ -18,6 +16,7 @@ import {
   emitProjectedDocState,
   getActiveSuspensionOwner,
   getDocumentVersionCommittedAt,
+  hasCanonicalDoc,
   interruptQuestionnaireSpecForRestore,
   isWholeDocumentSuggestionBatchId,
   isQuestionnaireTool,
@@ -124,7 +123,6 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
     if (docRow && docRow.docVersion > session.docVersion) {
       session.docVersion = docRow.docVersion;
       session.doc = docRow.pmDoc;
-      session.legacySections = docRow.legacySections as unknown as LegacySection[];
       try {
         const committedAt = await getDocumentVersionCommittedAt(session.docId, docRow.docVersion);
         const committedAtMs = committedAt ? Date.parse(committedAt) : Number.NaN;
@@ -142,10 +140,8 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
       session.suggestionBaseDoc = null;
       session.suggestionBaseVersion = null;
       // 清 draft scratch(等价 core 的 clearInMemoryDraftDocs,直接清字段免动 core 公共导出)
-      session.docDraftBaseSections = null;
       session.docDraftBaseVersion = null;
       session.docDraftBaseDoc = null;
-      session.docDraftCandidateSections = null;
       session.docDraftCandidateDoc = null;
       // 同时终止 chatHistory 里 reviewable 的 docSuggestion toolCall:否则 emitRestoreFrames 的
       // chatHistory 重放(step4)会把 status="reviewing" 的旧建议发给前端,显示成可操作 review,
@@ -274,14 +270,11 @@ export function* emitRestoreFrames(
   yield folderSourcesChangedFrame(session);
 
   // 2. Emit doc version if document exists
-  if (session.legacySections.length > 0) {
+  if (hasCanonicalDoc(session) && session.doc) {
     yield {
       kind: "documentSnapshotWritten",
       data: {
-        doc: buildDocumentSnapshot(
-          session.docVersion,
-          session.doc ?? legacySectionsToPm(session.legacySections as never),
-        ),
+        doc: buildDocumentSnapshot(session.docVersion, session.doc),
       },
     };
   }

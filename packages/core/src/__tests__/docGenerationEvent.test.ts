@@ -84,10 +84,6 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   return (await collectFramesWithReturn(gen)).frames;
 }
 
-const legacySections: LegacySection[] = [
-  { kind: "p", data: { text: "加粗正文" } },
-];
-
 const pmDoc: PmDoc = {
   type: "doc",
   attrs: { schemaVersion: 1 },
@@ -203,7 +199,6 @@ describe("docGenerationEvent stream protocol", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("d1-events");
     state.docDraftCandidateDoc = pmDoc;
-    state.docDraftCandidateSections = legacySections;
 
     const { frames, result } = await collectFramesWithReturn(
       processAgentStream(

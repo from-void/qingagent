@@ -1,7 +1,4 @@
-import type {
-  ChatChip,
-  LegacySection,
-} from "@qingagent/contract-ts";
+import type { ChatChip } from "@qingagent/contract-ts";
 import { tableSelectionTextSignature } from "@qingagent/contract-ts";
 import {
   pmTableSelectionCellTexts,
@@ -15,19 +12,19 @@ import {
   currentPmDoc,
 } from "./draftScratch.js";
 
-export function buildSectionToLineMap(sections: LegacySection[]): Map<number, number> {
-  const sectionToLine = new Map<number, number>();
+export function buildBlockToLineMap(doc: PmDoc): Map<number, number> {
+  const blockToLine = new Map<number, number>();
   let lineNum = 1;
 
-  for (let si = 0; si < sections.length; si++) {
-    if (si > 0) {
-      lineNum++;
-    }
-    sectionToLine.set(si, lineNum);
-    lineNum++;
+  for (let blockIndex = 0; blockIndex < doc.content.length; blockIndex++) {
+    if (blockIndex > 0) lineNum++;
+    blockToLine.set(blockIndex, lineNum);
+    const block = doc.content[blockIndex]!;
+    const blockText = pmToPlainText({ ...doc, content: [block] });
+    lineNum += Math.max(1, blockText.split("\n").length);
   }
 
-  return sectionToLine;
+  return blockToLine;
 }
 
 export type ReadableDraftNode = PmBlockNode | Extract<PmNode, { type: "listItem" | "taskItem" }>;

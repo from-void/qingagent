@@ -241,8 +241,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     const { createSession, runAgentTurn } = await import("../bridge/index.js");
     const { qingagentAgent } = await import("../agents/qingagent.js");
     const state = createSession("turn-start-busy");
-    state.legacySections = [{ kind: "p", data: { text: "已有正文" } }];
-    state.doc = legacySectionsToPm(state.legacySections as never);
+    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "已有正文" } }] as never);
     state.docState = { kind: "editing" };
 
     vi.mocked(qingagentAgent.stream).mockResolvedValueOnce({

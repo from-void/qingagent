@@ -2,7 +2,6 @@ import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-t
 import {
   getPmContentHash,
   materializeDraftBlockIds,
-  pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import {
@@ -79,10 +78,8 @@ function clearReviewDraftRuntime(state: SessionState): void {
   state.suggestionBaseDoc = null;
   state.suggestionBaseVersion = null;
   state.docDraftBaseDoc = null;
-  state.docDraftBaseSections = null;
   state.docDraftBaseVersion = null;
   state.docDraftCandidateDoc = null;
-  state.docDraftCandidateSections = null;
 }
 
 function hunkContentKey(hunk: DiffHunk): string {
@@ -284,7 +281,6 @@ async function rehydrateFirstDraftCandidate(
 
   advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
-  state.legacySections = pmToLegacySections(result.doc) as never;
   state.docVersion = result.docVersion;
   state.docState = { kind: "editing" };
   clearReviewDraftRuntime(state);
@@ -393,9 +389,7 @@ export async function rehydratePendingDraft(
   state.suggestionBaseVersion = baseVersion;
   state.docDraftBaseDoc = clonePmDoc(currentDoc);
   state.docDraftBaseVersion = baseVersion;
-  state.docDraftBaseSections = pmToLegacySections(currentDoc) as never;
   state.docDraftCandidateDoc = draftDoc;
-  state.docDraftCandidateSections = pmToLegacySections(draftDoc) as never;
   state.docState = { kind: "pendingReview" };
 
   const messageId = `restored-pending-review:${state.docId}:${baseVersion}`;

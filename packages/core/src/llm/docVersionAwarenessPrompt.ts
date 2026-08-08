@@ -1,4 +1,5 @@
 import type { CoreMessage } from "ai";
+import { hasCanonicalDoc } from "../utils/pmDocFacts.js";
 
 export const QINGAGENT_DOC_VERSION_AWARENESS_REQUEST_CONTEXT_KEY =
   "qingagentDocVersionAwarenessPrompt";
@@ -17,8 +18,7 @@ type DocVersionAwarenessContentSource =
 type DocumentVersionState = {
   docVersion: number;
   modelKnownDocVersion: number | null;
-  doc?: { content?: readonly unknown[] } | null;
-  legacySections?: readonly unknown[];
+  doc?: { content: readonly unknown[] } | null;
 };
 
 type PromptOptions = {
@@ -38,9 +38,7 @@ export function buildDocVersionAwarenessContent(
     );
   }
 
-  const hasDocumentBody =
-    (Array.isArray(state.doc?.content) && state.doc.content.length > 0) ||
-    (Array.isArray(state.legacySections) && state.legacySections.length > 0);
+  const hasDocumentBody = hasCanonicalDoc({ doc: state.doc ?? undefined });
   if (state.docVersion <= 0 || !hasDocumentBody) return null;
   return (
     `${DOC_VERSION_AWARENESS_MARKER} 本会话你尚未读取正文,涉及正文的任务先 readDraft;` +

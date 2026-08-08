@@ -665,7 +665,6 @@ describe("askUser answer user message", () => {
     const state = createSession("ask-direction-first");
     state.docState = { kind: "editing" };
     state.doc = pmDoc("已有正文");
-    state.legacySections = pmToLegacySections(state.doc) as never;
     state._askUserCompleted = true;
 
     const frames = await collectFrames(
@@ -696,7 +695,6 @@ describe("askUser answer user message", () => {
     const state = createSession("ask-direction-repeat");
     state.docState = { kind: "editing" };
     state.doc = pmDoc("已有正文");
-    state.legacySections = pmToLegacySections(state.doc) as never;
     state.chatHistory = [agentMessageWithTool(directionChangeSpec("ask-dir-done"))];
 
     await collectFrames(
@@ -748,15 +746,12 @@ describe("askUser answer user message", () => {
     const state = createSession("ask-direction-after-write");
     state.docState = { kind: "editing" };
     state.doc = pmDoc("旧文");
-    state.legacySections = pmToLegacySections(state.doc) as never;
     state.docVersion = 3;
     state._askUserCompleted = true;
     state._directionChangeAskedSinceLastWrite = true;
     state.docDraftBaseDoc = state.doc;
     state.docDraftBaseVersion = state.docVersion;
-    state.docDraftBaseSections = state.legacySections;
     state.docDraftCandidateDoc = pmDoc("新文");
-    state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as never;
 
     await collectFrames(
       processAgentStream(

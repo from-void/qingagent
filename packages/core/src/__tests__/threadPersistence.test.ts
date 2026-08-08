@@ -220,7 +220,7 @@ function suggestionRecord(id = "patch-1"): NonNullable<QingagentThreadMetadata["
 }
 
 function addSuggestion(state: SessionState, id = "patch-1"): void {
-  state.doc ??= legacySectionsToPm(state.legacySections as never);
+  state.doc ??= pmDoc("正文");
   const record = suggestionRecord(id);
   state.suggestions.set(id, {
     messageId: record.messageId,
@@ -259,7 +259,7 @@ function metadata(overrides: Partial<QingagentThreadMetadata> = {}): QingagentTh
     docVersion: 1,
     lastContentEditedAt: "2026-01-01T00:00:00.000Z",
     lastSyncedDocumentSnapshot: 1,
-    legacySections: [textSection("正文")],
+    doc: pmDoc("正文"),
     materials: [],
     title: "标题",
     runId: null,
@@ -297,7 +297,6 @@ async function saveDocumentRow(input: {
 
 function expectRestoredText(restored: SessionState | null, expected: string): void {
   expect(restored?.doc).toEqual(pmDoc(expected));
-  expect(restored?.legacySections).toEqual([textSection(expected)]);
 }
 
 function folderSourceRecord(sessionId: string, root: string): FolderSourceRecord {
@@ -364,7 +363,7 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.titlePinned).toBe(original.titlePinned);
   expect(restored?.docState).toEqual(original.docState);
   expect(restored?.messages).toEqual(original.messages);
-  expect(restored?.legacySections).toEqual(original.legacySections);
+  expect(restored?.doc).toEqual(original.doc);
   expect(restored?.docVersion).toBe(original.docVersion);
   expect(restored?.modelKnownDocVersion).toBeNull();
   expect(restored?.lastContentEditedAt).toBe(original.lastContentEditedAt);
@@ -412,13 +411,15 @@ describe("thread persistence", () => {
     const state = createSession("session-docid");
     state.docId = "doc-explicit";
     state.title = "含 docId";
-    state.legacySections = [textSection("正文")];
+    state.doc = pmDoc("正文");
     state.docState = { kind: "editing" };
 
     await persistSessionMetadata(state);
     const restored = await loadSessionFromThread(state.sessionId);
+    const persisted = threads.get(state.sessionId)?.metadata as Record<string, unknown>;
 
     expect(restored?.docId).toBe("doc-explicit");
+    expect(Object.hasOwn(persisted, "legacySections")).toBe(false);
   });
 
   it("进程重启后从批注表恢复活动组及全部结构锚点", async () => {
@@ -429,8 +430,7 @@ describe("thread persistence", () => {
     const state = createSession("session-annotation-rehydrate");
     state.docId = "doc-annotation-rehydrate";
     state.title = "批注恢复";
-    state.legacySections = [textSection("内部项目代号青鸟不宜公开，发布日期也需要复核。")];
-    state.doc = legacySectionsToPm(state.legacySections as never);
+    state.doc = pmDoc("内部项目代号青鸟不宜公开，发布日期也需要复核。");
     state.docState = { kind: "editing" };
     state.docVersion = 1;
     const groups: AnnotationGroup[] = [
@@ -622,7 +622,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 1,
       doc: pmDoc("version one"),
-      legacySections: [textSection("version one")],
       lastContentEditedAt: "2020-01-01T00:00:00.000Z",
     })));
 
@@ -1047,7 +1046,7 @@ describe("thread persistence", () => {
     const { summarizeDoc } = await import("../session/threadPersistence.js");
     const state = createSession("session-summary");
     state.docState = { kind: "editing" };
-    state.legacySections = [
+    state.doc = legacySectionsToPm([
       textSection("abcd"),
       { kind: "code", data: { body: "123456" } },
       {
@@ -1060,8 +1059,7 @@ describe("thread persistence", () => {
           height: null,
         },
       },
-    ];
-    state.doc = legacySectionsToPm(state.legacySections as never);
+    ] as never);
     state.materials.set("material-1", {
       id: "material-1",
       filename: "source.txt",
@@ -1090,15 +1088,13 @@ describe("thread persistence", () => {
 
     const review = createSession("session-review-summary");
     review.docState = { kind: "pendingReview" };
-    review.legacySections = [textSection("正文")];
-    review.doc = legacySectionsToPm(review.legacySections as never);
+    review.doc = pmDoc("正文");
     addSuggestion(review);
     expect(summarizeDoc(review).status).toBe("pendingReview");
 
     const staleReview = createSession("session-stale-review-summary");
     staleReview.docState = { kind: "pendingReview" };
-    staleReview.legacySections = [textSection("正文")];
-    staleReview.doc = legacySectionsToPm(staleReview.legacySections as never);
+    staleReview.doc = pmDoc("正文");
     expect(summarizeDoc(staleReview).status).toBe("editing");
   });
 
@@ -1114,8 +1110,7 @@ describe("thread persistence", () => {
     state.title = "完整状态";
     state.docState = { kind: "pendingReview" };
     state.messages = [message];
-    state.legacySections = [textSection("第一段"), textSection("第二段")];
-    state.doc = legacySectionsToPm(state.legacySections as never);
+    state.doc = legacySectionsToPm([textSection("第一段"), textSection("第二段")] as never);
     state.docVersion = 3;
     state.modelKnownDocVersion = 3;
     addSuggestion(state);
@@ -1298,7 +1293,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 2,
       doc: pmDoc("metadata only"),
-      legacySections: [textSection("metadata only")],
     })));
 
     const restored = await loadSessionFromThread(sessionId);
@@ -1318,7 +1312,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 1,
       doc: pmDoc("metadata old"),
-      legacySections: [textSection("metadata old")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents new", docVersion: 2 });
     vi.clearAllMocks();
@@ -1342,7 +1335,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 1,
       doc: pmDoc("metadata old"),
-      legacySections: [textSection("metadata old")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents new", docVersion: 2 });
     spans.length = 0;
@@ -1361,7 +1353,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 3,
       doc: undefined,
-      legacySections: [textSection("metadata legacy")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents authoritative", docVersion: 3 });
     vi.clearAllMocks();
@@ -1384,7 +1375,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 3,
       doc: pmDoc("metadata new"),
-      legacySections: [textSection("metadata new")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents old", docVersion: 2 });
     vi.clearAllMocks();
@@ -1411,7 +1401,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 4,
       doc: pmDoc("same body"),
-      legacySections: [textSection("same body")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "same body", docVersion: 4 });
     vi.clearAllMocks();
@@ -1436,7 +1425,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 5,
       doc: metadataDoc,
-      legacySections: [textSection("metadata loser")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents winner", docVersion: 5 });
     const winnerDoc = pmDoc("documents winner");
@@ -1493,7 +1481,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 6,
       doc: metadataDoc,
-      legacySections: [textSection("metadata loser twice")],
     })));
     await saveDocumentRow({ docId: sessionId, sessionId, text: "documents winner twice", docVersion: 6 });
     vi.clearAllMocks();
@@ -1504,7 +1491,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 6,
       doc: metadataDoc,
-      legacySections: [textSection("metadata loser twice")],
     })));
     const second = await loadSessionFromThread(sessionId);
     await drainSessionPersistence();
@@ -1524,7 +1510,6 @@ describe("thread persistence", () => {
       docId: sessionId,
       docVersion: 7,
       doc: pmDoc("metadata fallback"),
-      legacySections: [textSection("metadata fallback")],
     })));
     vi.spyOn(documentRepo, "load").mockRejectedValueOnce(new Error("documents unavailable"));
 
@@ -1708,17 +1693,17 @@ describe("thread persistence", () => {
     threads.set("review-good", storedThread("review-good", metadata({
       docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
-      legacySections: [textSection("正文")],
+      doc: pmDoc("正文"),
     })));
     threads.set("review-no-patch", storedThread("review-no-patch", metadata({
       docState: storedDocState("pendingReview"),
       suggestions: [],
-      legacySections: [textSection("正文")],
+      doc: pmDoc("正文"),
     })));
     threads.set("review-no-doc", storedThread("review-no-doc", metadata({
       docState: storedDocState("pendingReview"),
       suggestions: [suggestionRecord()],
-      legacySections: [],
+      doc: undefined,
     })));
 
     expect((await loadSessionFromThread("review-good"))?.docState).toEqual({ kind: "pendingReview" });
@@ -1738,7 +1723,7 @@ describe("thread persistence", () => {
     );
     threads.set("askuser-durable", storedThread("askuser-durable", metadata({
       docState: storedDocState("empty"),
-      legacySections: [],
+      doc: undefined,
       runId: "run-ask",
       toolCallId: "ask-1",
       chatHistory: [toolMessage(askUser)],
@@ -1813,7 +1798,7 @@ describe("thread persistence", () => {
     askUser.body.data.questions = [];
     threads.set("askuser-stale", storedThread("askuser-stale", metadata({
       docState: storedDocState("empty"),
-      legacySections: [],
+      doc: undefined,
       chatHistory: [toolMessage(askUser)],
     })));
 
@@ -1922,7 +1907,7 @@ describe("thread persistence", () => {
     );
     threads.set("askuser-preferred", storedThread("askuser-preferred", metadata({
       docState: storedDocState("empty"),
-      legacySections: [],
+      doc: undefined,
       runId: "run-ask",
       toolCallId: "ask-stale",
       chatHistory: [toolMessage(askUser)],
@@ -2084,8 +2069,7 @@ describe("thread persistence", () => {
     const state = createSession("session-home-summary");
     state.title = "首页摘要";
     state.docState = { kind: "editing" };
-    state.legacySections = [textSection("第一段"), textSection("第二段")];
-    state.doc = legacySectionsToPm(state.legacySections as never);
+    state.doc = legacySectionsToPm([textSection("第一段"), textSection("第二段")] as never);
     state.materials.set("material-1", {
       id: "material-1",
       filename: "source.txt",
@@ -2237,7 +2221,7 @@ describe("thread persistence", () => {
       .toBe(true);
   });
 
-  it("reads document body fields from documents without replacing authoritative metadata state", async () => {
+  it("四态冷恢复: documents hit 时 DB 正文胜出且 metadata 状态字段保持权威", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-table";
     threads.set(sessionId, storedThread(sessionId, metadata({
@@ -2245,7 +2229,7 @@ describe("thread persistence", () => {
       title: "thread title",
       docState: { kind: "editing" },
       docVersion: 1,
-      legacySections: [textSection("metadata body")],
+      doc: pmDoc("metadata body"),
     })));
     vi.spyOn(documentRepo, "load").mockResolvedValue({
       id: "doc-table",
@@ -2256,6 +2240,7 @@ describe("thread persistence", () => {
       docVersion: 9,
       lastSyncedVersion: 1,
       legacySections: [textSection("table body")],
+      pmDoc: pmDoc("table body"),
       version: 5,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -2264,27 +2249,88 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(sessionId);
 
     expect(documentRepo.load).toHaveBeenCalledWith("doc-table");
+    expect(restored?.sessionId).toBe(sessionId);
+    expect(restored?.docId).toBe("doc-table");
+    expect(restored?.resourceId).toBe("qingagent-user");
     expect(restored?.title).toBe("thread title");
     expect(restored?.docState).toEqual({ kind: "editing" });
     expect(restored?.docVersion).toBe(9);
-    expect(restored?.legacySections).toEqual([textSection("table body")]);
+    expect(restored?.lastSyncedDocumentSnapshot).toBe(1);
+    expect(restored?.doc).toEqual(pmDoc("table body"));
   });
 
-  it("falls back to metadata when the documents table misses", async () => {
+  it("四态冷恢复: documents miss 时回退 metadata.doc", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-miss";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-miss",
       docVersion: 2,
-      legacySections: [textSection("metadata survives")],
+      doc: pmDoc("metadata survives"),
     })));
     vi.spyOn(documentRepo, "load").mockResolvedValue(null);
 
     const restored = await loadSessionFromThread(sessionId);
 
     expect(documentRepo.load).toHaveBeenCalledWith("doc-miss");
+    expect(restored?.sessionId).toBe(sessionId);
+    expect(restored?.docId).toBe("doc-miss");
+    expect(restored?.resourceId).toBe("qingagent-user");
+    expect(restored?.title).toBe("标题");
+    expect(restored?.docState).toEqual({ kind: "editing" });
     expect(restored?.docVersion).toBe(2);
-    expect(restored?.legacySections).toEqual([textSection("metadata survives")]);
+    expect(restored?.lastSyncedDocumentSnapshot).toBe(1);
+    expect(restored?.doc).toEqual(pmDoc("metadata survives"));
+  });
+
+  it("四态冷恢复: documents miss 且 metadata 缺 doc 时恢复为空态", async () => {
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const sessionId = "session-read-missing-doc";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: "doc-missing",
+      docState: { kind: "editing" },
+      docVersion: 0,
+      lastSyncedDocumentSnapshot: 0,
+      doc: undefined,
+    })));
+    vi.spyOn(documentRepo, "load").mockResolvedValue(null);
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(documentRepo.load).toHaveBeenCalledWith("doc-missing");
+    expect(restored?.sessionId).toBe(sessionId);
+    expect(restored?.docId).toBe("doc-missing");
+    expect(restored?.resourceId).toBe("qingagent-user");
+    expect(restored?.title).toBe("标题");
+    expect(restored?.docState).toEqual({ kind: "empty" });
+    expect(restored?.docVersion).toBe(0);
+    expect(restored?.lastSyncedDocumentSnapshot).toBe(0);
+    expect(restored?.doc).toBeUndefined();
+  });
+
+  it("四态冷恢复: metadata 空 PM 文档不冒充已有正文", async () => {
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const sessionId = "session-read-empty-doc";
+    const emptyDoc = { type: "doc" as const, attrs: { schemaVersion: 1 as const }, content: [] };
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: "doc-empty",
+      docState: { kind: "editing" },
+      docVersion: 3,
+      lastSyncedDocumentSnapshot: 2,
+      doc: emptyDoc,
+    })));
+    vi.spyOn(documentRepo, "load").mockResolvedValue(null);
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(documentRepo.load).toHaveBeenCalledWith("doc-empty");
+    expect(restored?.sessionId).toBe(sessionId);
+    expect(restored?.docId).toBe("doc-empty");
+    expect(restored?.resourceId).toBe("qingagent-user");
+    expect(restored?.title).toBe("标题");
+    expect(restored?.docState).toEqual({ kind: "empty" });
+    expect(restored?.docVersion).toBe(3);
+    expect(restored?.lastSyncedDocumentSnapshot).toBe(2);
+    expect(restored?.doc).toEqual(emptyDoc);
   });
 
   it("falls back to metadata when the documents table read throws", async () => {
@@ -2293,7 +2339,7 @@ describe("thread persistence", () => {
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-error",
       docVersion: 4,
-      legacySections: [textSection("metadata survives error")],
+      doc: pmDoc("metadata survives error"),
     })));
     vi.spyOn(documentRepo, "load").mockRejectedValue(new Error("db unavailable"));
 
@@ -2301,13 +2347,13 @@ describe("thread persistence", () => {
 
     expect(documentRepo.load).toHaveBeenCalledWith("doc-error");
     expect(restored?.docVersion).toBe(4);
-    expect(restored?.legacySections).toEqual([textSection("metadata survives error")]);
+    expect(restored?.doc).toEqual(pmDoc("metadata survives error"));
   });
 
   it("uses sessionId as legacy docId fallback for document table reads", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-doc-table";
-    const oldMeta = metadata({ docId: undefined, legacySections: [textSection("old meta")] });
+    const oldMeta = metadata({ docId: undefined, doc: pmDoc("old meta") });
     delete oldMeta.docId;
     threads.set(sessionId, storedThread(sessionId, oldMeta));
     vi.spyOn(documentRepo, "load").mockResolvedValue({
@@ -2319,6 +2365,7 @@ describe("thread persistence", () => {
       docVersion: 8,
       lastSyncedVersion: 1,
       legacySections: [textSection("legacy table body")],
+      pmDoc: pmDoc("legacy table body"),
       version: 1,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -2329,7 +2376,7 @@ describe("thread persistence", () => {
     expect(documentRepo.load).toHaveBeenCalledWith(sessionId);
     expect(restored?.docId).toBe(sessionId);
     expect(restored?.docVersion).toBe(8);
-    expect(restored?.legacySections).toEqual([textSection("legacy table body")]);
+    expect(restored?.doc).toEqual(pmDoc("legacy table body"));
   });
 
   it("H1: documents wins 后清理 stale suggestions 并持久化自愈 metadata", async () => {
@@ -2347,7 +2394,6 @@ describe("thread persistence", () => {
       docState: { kind: "pendingReview" },
       docVersion: 2,
       doc: oldDoc,
-      legacySections: [textSection("metadata old")],
       suggestions: [staleSuggestion],
       patchVerdicts: { "stale-patch": "accepted" },
       chatHistory: [],
@@ -2372,7 +2418,6 @@ describe("thread persistence", () => {
 
     expect(restored?.docVersion).toBe(4);
     expect(restored?.doc).toEqual(latestDoc);
-    expect(restored?.legacySections).toEqual(latestSections);
     expect(restored?.docState).toEqual({ kind: "editing" });
     expect(restored?.suggestions.size).toBe(0);
     expect(restored?.patchVerdicts.size).toBe(0);
@@ -2386,7 +2431,7 @@ describe("thread persistence", () => {
     const persisted = threads.get(sessionId)?.metadata as QingagentThreadMetadata | undefined;
     expect(persisted?.docVersion).toBe(4);
     expect(persisted?.doc).toEqual(latestDoc);
-    expect(persisted?.legacySections).toEqual(latestSections);
+    expect(Object.hasOwn(persisted ?? {}, "legacySections")).toBe(false);
     expect(persisted?.docState).toEqual({ kind: "editing" });
     expect(persisted?.suggestions).toEqual([]);
     expect(persisted?.patchVerdicts).toEqual({});
@@ -2406,7 +2451,7 @@ describe("thread persistence", () => {
       docId: "doc-h1-match",
       docState: { kind: "pendingReview" },
       docVersion: 2,
-      legacySections: [textSection("metadata old")],
+      doc: pmDoc("metadata old"),
       suggestions: [reviewSuggestion],
     })));
     vi.spyOn(documentRepo, "load").mockResolvedValue({

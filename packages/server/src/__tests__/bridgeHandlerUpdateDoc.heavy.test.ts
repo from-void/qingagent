@@ -71,8 +71,7 @@ async function createDraftSession(
   session.docState = { kind: "editing" };
   session.docVersion = 1;
   session.lastSyncedDocumentSnapshot = 1;
-  session.legacySections = [section("old")];
-  session.doc = legacySectionsToPm(session.legacySections as never);
+  session.doc = legacySectionsToPm([section("old")] as never);
   session._lastEmittedWireKind = "editing:none:idle";
   return session;
 }
@@ -81,7 +80,7 @@ function addSuggestion(
   session: Awaited<ReturnType<typeof createDraftSession>>,
   id = "patch-1",
 ): void {
-  session.doc ??= legacySectionsToPm(session.legacySections as never);
+  session.doc ??= legacySectionsToPm([section("old")] as never);
   session.suggestions.set(id, {
     messageId: "msg",
     toolCallId: id,
@@ -175,7 +174,7 @@ describe("handleCommand updateDoc", () => {
         data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
       },
     ]);
-    expect(session.legacySections).toEqual([section("new")]);
+    expect(session.doc).toEqual(submittedDoc);
     expect(session.docVersion).toBe(2);
     expect(session.lastContentEditedAt).toBe("2026-03-04T05:06:07.000Z");
     expect(session.lastSyncedDocumentSnapshot).toBe(1);
@@ -221,7 +220,6 @@ describe("handleCommand updateDoc", () => {
       ],
     };
     session.doc = baseDoc;
-    session.legacySections = [section("前文"), section(`${quote}后仍有 YYMARK`)];
     session.annotationGroups = [{
       id: "annotation-after-prefix",
       summary: "后方原句",
@@ -327,7 +325,7 @@ describe("handleCommand updateDoc", () => {
     expect(session.lastContentEditedAt).toBe(originalContentTime);
   });
 
-  it("commits PM updateDoc through commitDocumentOp and keeps the legacy mirror derived", async () => {
+  it("commits PM updateDoc through commitDocumentOp and keeps canonical state in sync", async () => {
     const { bridge, commitDocumentOp, persistSessionMetadata } = await loadBridge();
     const session = await createDraftSession(bridge);
     const pmDoc = legacySectionsToPm([section("PM 正文")]);
@@ -358,7 +356,6 @@ describe("handleCommand updateDoc", () => {
       },
     ]);
     expect(session.doc).toEqual(pmDoc);
-    expect(session.legacySections).toEqual([section("PM 正文")]);
     expect(session.docVersion).toBe(2);
     expect(persistSessionMetadata).toHaveBeenCalledWith(session);
   });
@@ -651,8 +648,8 @@ describe("handleCommand updateDoc", () => {
     );
 
     expect(runAgentTurn).toHaveBeenCalled();
-    const agentSession = runAgentTurn.mock.calls[0]?.[0] as { legacySections?: LegacySection[] };
-    expect(agentSession.legacySections).toEqual([section("new")]);
+    const agentSession = runAgentTurn.mock.calls[0]?.[0] as { doc?: PmDoc };
+    expect(agentSession.doc).toEqual(session.doc);
   });
 
   it("throws when the session does not exist", async () => {

@@ -88,16 +88,12 @@ async function* settleWriteDraftBeforeSuspension(
   }
 
   const candidateDoc = state.docDraftCandidateDoc;
-  const candidateSections = state.docDraftCandidateSections;
   const baseDoc = state.docDraftBaseDoc;
-  const baseSections = state.docDraftBaseSections;
   const baseVersion = state.docDraftBaseVersion;
   const restoreCandidate = (): void => {
     if (state.docDraftCandidateDoc) return;
     state.docDraftCandidateDoc = candidateDoc;
-    state.docDraftCandidateSections = candidateSections;
     state.docDraftBaseDoc = baseDoc;
-    state.docDraftBaseSections = baseSections;
     state.docDraftBaseVersion = baseVersion;
     requestContext?.set("doc", candidateDoc);
   };

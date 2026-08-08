@@ -4,13 +4,12 @@ import type {
   ConfirmSpec,
   DocSuggestion,
   FolderSourceRecord,
-  LegacySection,
   DocState,
   MessagePart,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
 import { confirmSpecSchema } from "@qingagent/contract-ts/schemas";
-import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import type { StorageThreadType } from "@mastra/core/memory";
 import { SpanType } from "@mastra/core/observability";
 import { constants as fsConstants } from "node:fs";
@@ -52,6 +51,7 @@ import {
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
+import { hasCanonicalDoc } from "../utils/pmDocFacts.js";
 import { getDocumentVersionCommittedAt } from "../doc-engine/commitDocumentOp.js";
 import {
   normalizePersistedDocStateKind,
@@ -158,7 +158,6 @@ export interface QingagentThreadMetadata {
   lastContentEditedAt?: string | null;
   lastSyncedDocumentSnapshot: number;
   doc?: PmDoc;
-  legacySections: LegacySection[];
   materials: MaterialRecord[];
   folderSources?: FolderSourceRecord[];
   title: string;
@@ -217,7 +216,7 @@ export interface QingagentThreadMetadata {
   }>;
   /** confirm 审计写失败时的非敏感降级记账。 */
   confirmAuditDegraded?: ConfirmAuditDegradedMarker | null;
-  /** Lightweight summary for home page listing — avoids parsing full legacySections. */
+  /** Lightweight summary for home page listing — avoids parsing full PM content. */
   threadSummary?: {
     sectionCount: number;
     wordCount: number;
@@ -336,19 +335,6 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
     });
   }
   return map;
-}
-
-function getSectionText(section: LegacySection): string {
-  if (section.kind === "image") {
-    return section.data.caption ?? section.data.alt;
-  }
-  if ("text" in section.data && typeof section.data.text === "string") {
-    return section.data.text;
-  }
-  if ("body" in section.data && typeof section.data.body === "string") {
-    return section.data.body;
-  }
-  return "";
 }
 
 function serializeSuggestions(
@@ -615,14 +601,15 @@ function terminalizeStaleRestoreToolCalls(
 }
 
 export function summarizeDoc(state: SessionState): ThreadSummary {
-  const wordCount = state.legacySections.reduce((acc, s) => {
-    return acc + getSectionText(s).length;
-  }, 0);
+  const wordCount = state.doc?.content.reduce(
+    (total, block) => total + pmToPlainText({ ...state.doc!, content: [block] }).length,
+    0,
+  ) ?? 0;
 
   const docStateKind = normalizePersistedDocStateKind(state);
 
   return {
-    sectionCount: state.legacySections.length,
+    sectionCount: state.doc?.content.length ?? 0,
     wordCount: Math.round(wordCount / 1.5),
     status: docStateKind,
     materialCount: state.materials.size,
@@ -640,7 +627,6 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
     lastContentEditedAt: state.lastContentEditedAt,
     lastSyncedDocumentSnapshot: state.lastSyncedDocumentSnapshot,
     doc: state.doc,
-    legacySections: state.legacySections,
     materials: materialRecords,
     folderSources: Array.from(state.folderSources.values()),
     title: state.title,
@@ -911,7 +897,6 @@ function applyRestoredDocumentRow(
     ...meta,
     docVersion: docRow.docVersion,
     doc: docRow.pmDoc,
-    legacySections: docRow.legacySections,
   };
 }
 
@@ -1025,7 +1010,6 @@ export async function createSessionThread(
     docVersion: 0,
     lastContentEditedAt: createdAt,
     lastSyncedDocumentSnapshot: 0,
-    legacySections: [],
     materials: [],
     folderSources: [],
     title: title ?? "",
@@ -1889,9 +1873,7 @@ export async function loadSessionFromThread(
     }
   }
 
-  // PROTECTED fallback — 阶段4保留；停写 metadata.legacySections 前置条件见阶段4计划，勿删。
-  const legacySections = meta.legacySections ?? [];
-  const doc = meta.doc ?? legacySectionsToPm(legacySections as never);
+  const doc = meta.doc;
   // 这是批注唯一真相源，读取失败不能伪装成“当前没有批注”完成恢复；让上层重试整次冷加载。
   const annotationGroups = await listActiveAnnotationGroups(docId);
   let suggestions = deserializeSuggestions(meta.suggestions);
@@ -1956,7 +1938,7 @@ export async function loadSessionFromThread(
     meta.runId.length > 0;
   const normalizedDocStateKind = normalizeRestoredDocStateKind({
     persistedKind: meta.docState?.kind ?? "init",
-    hasDoc: legacySections.length > 0,
+    hasDoc: hasCanonicalDoc({ doc }),
     hasReviewPatch: suggestions.size > 0,
     hasApplicableReviewPatch: suggestions.size > 0,
     hasOpenAskUserToolCall: toolCallFacts.hasOpenAskUserToolCall,
@@ -2031,7 +2013,6 @@ export async function loadSessionFromThread(
     docState: meta.docState,
     messages,
     doc,
-    legacySections,
     docVersion: meta.docVersion ?? 0,
     // 仅表示当前进程内模型真正读过的版本；恢复时不从历史上下文推断。
     modelKnownDocVersion: null,
@@ -2056,10 +2037,8 @@ export async function loadSessionFromThread(
     // 批注独立落在 document_suggestions；恢复时按活动状态重组，不写入 thread metadata 双份真相。
     annotationGroups,
     patchVerdicts,
-    docDraftBaseSections: null,
     docDraftBaseVersion: null,
     docDraftBaseDoc: null,
-    docDraftCandidateSections: null,
     docDraftCandidateDoc: null,
     _draftMutationRevision: 0,
     suggestionBaseDoc: meta.doc ?? null,

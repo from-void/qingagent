@@ -73,7 +73,6 @@ function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion 
 
 async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Promise<DiffHunk[]> {
   state.doc = base;
-  state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;

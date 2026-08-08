@@ -7,7 +7,6 @@ import type {
   DiffHunk,
   DocSuggestion,
   AnnotationGroup,
-  LegacySection,
   MessagePart,
   DocState,
   ConfirmSpec,
@@ -115,9 +114,8 @@ export interface SessionState {
   titlePinned: boolean;
   docState: DocState;
   messages: CoreMessage[];
-  /** Canonical PM document. During transition, legacySections remains the legacy derived mirror. */
+  /** Canonical PM document. */
   doc?: PmDoc;
-  legacySections: LegacySection[];
   docVersion: number;
   /** 内存态：模型最后一次确知的正文版本；服务重启后重置为 null。 */
   modelKnownDocVersion: number | null;
@@ -162,12 +160,10 @@ export interface SessionState {
   /** Verdict per patch: "accepted" | "rejected". Set by updatePatchVerdict. */
   patchVerdicts: Map<string, "accepted" | "rejected">;
   /** Turn-scoped baseline for churn-governance confirmation. */
-  docDraftBaseSections: LegacySection[] | null;
   docDraftBaseVersion: number | null;
   /** PM snapshot captured when a candidate-diff draft sandbox starts. */
   docDraftBaseDoc: PmDoc | null;
   /** Turn-scoped candidate. Never canonical until natural settle/commit. */
-  docDraftCandidateSections: LegacySection[] | null;
   /** PM canonical for the turn-scoped whole-document candidate. */
   docDraftCandidateDoc: PmDoc | null;
   /** Runtime-only：候选草稿每次替换/清理都推进，用于并发写工具提交时 CAS。 */
@@ -320,7 +316,6 @@ export function createSession(
     docState: { kind: "empty" },
     messages: [],
     doc: undefined,
-    legacySections: [],
     docVersion: 0,
     modelKnownDocVersion: null,
     lastContentEditedAt: createdAt,
@@ -342,10 +337,8 @@ export function createSession(
     suggestions: new Map(),
     annotationGroups: [],
     patchVerdicts: new Map(),
-    docDraftBaseSections: null,
     docDraftBaseVersion: null,
     docDraftBaseDoc: null,
-    docDraftCandidateSections: null,
     docDraftCandidateDoc: null,
     _draftMutationRevision: 0,
     suggestionBaseDoc: null,

@@ -244,7 +244,6 @@ function replaceSingleTaskText(value: PmDoc): PmDoc {
 
 function bindRichDoc(state: SessionState, value: PmDoc): void {
   state.doc = value;
-  state.legacySections = pmToLegacySections(value) as unknown as LegacySection[];
   state.docState = { kind: "editing" };
 }
 

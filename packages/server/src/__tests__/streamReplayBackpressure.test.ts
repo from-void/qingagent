@@ -452,10 +452,6 @@ describe("GET /api/v1/events 回放背压", () => {
       }],
     };
     session.doc = latestDoc;
-    session.legacySections = [{
-      kind: "p",
-      data: { text: "超过两千帧后仍恢复的最新正文" },
-    }];
     session.docVersion = 23;
     session.docState = { kind: "editing" };
     session.streamId = null;

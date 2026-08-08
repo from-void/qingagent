@@ -89,7 +89,7 @@ export function deriveDocStateFacts(state: SessionState): DocStateFacts {
 }
 
 export function idleDocState(
-  state: Pick<SessionState, "doc" | "legacySections">,
+  state: Pick<SessionState, "doc">,
 ): DocState {
   return hasCanonicalDoc(state) ? { kind: "editing" } : { kind: "empty" };
 }

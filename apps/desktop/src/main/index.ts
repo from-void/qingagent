@@ -312,8 +312,6 @@ if (!process.env.DATABASE_URL) {
 // 但 execute_command 已在 subprocess 创建前硬拒系统/青简凭据路径与工作区外写入。
 // 后续若接入 Windows 原生隔离层，
 // credential 例外仍需按声明+授权精确开口，不能回退成宿主 HOME 全通。
-// TODO(P2 feishu-byo-app):决定桌面端 lark-cli 配置目录策略。当前沙箱透传宿主 HOME,
-// lark-cli 会写用户真实 ~/.lark-cli;单机交付前需决定保持真实 HOME,还是隔离到 userData 下。
 if (!process.env.QINGAGENT_DATA_DIR) {
   process.env.QINGAGENT_DATA_DIR = path.join(userDataDir, "data");
 }
@@ -494,7 +492,6 @@ if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
 }
 
 // Dynamic import after env is configured — server/core reads DATABASE_URL at module-evaluation time.
-// TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一串起迁移、Mastra 与 server app。
 const { isReportedServerStartupError, startServer } = await import("./server.js");
 // 长 keep-alive 必须经 server 包转导出取 undici(desktop 无直接依赖且 esbuild 整包
 // bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。

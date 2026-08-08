@@ -37,8 +37,6 @@ function detectNodeRuntime(): NodeRuntimeCapability {
 }
 
 function detectLarkCli(): LarkCliCapability {
-  // TODO(P2 feishu-byo-app):确定 lark-cli 分发策略(随包/首启下载/要求预装)后,
-  // 这里从单纯探测 SANDBOX_BIN_DIR 升级为可解释的安装/修复指引。
   const names = process.platform === "win32"
     ? ["lark-cli.cmd", "lark-cli.exe", "lark-cli"]
     : ["lark-cli"];

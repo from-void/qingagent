@@ -19,7 +19,6 @@ import {
   SKILLS_INSTALL_DIR,
   USER_SKILL_SOURCE_DIRS,
   USER_SKILLS_DIR,
-  ARCHIVED_BUILTIN_SKILLS,
   getQingagentSkills,
   listChildSkills,
   classifyUserSkillSource,
@@ -246,7 +245,6 @@ skillsRoutes.post("/skills/install", async (c) => {
     if (existsSync(dest)) return c.json({ error: "这个技能已存在" }, 409);
     // Archived built-ins are hidden from list/detail, but their names remain reserved
     // while the built-in directories still exist in the repo.
-    if (isReservedSkillName(name)) return c.json({ error: "这个技能已存在" }, 409);
     // Reject names that collide with any existing skill, including built-ins,
     // to avoid shadowing/duplicate-name ambiguity in skill resolution.
     if (await findSkillOnDisk(name)) return c.json({ error: "这个技能已存在" }, 409);
@@ -388,7 +386,6 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
   const dest = resolve(SKILLS_INSTALL_DIR, parsed.name);
   if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) throw new Error("invalid skill name");
   if (existsSync(dest)) throw new Error("skill already exists");
-  if (isReservedSkillName(parsed.name)) throw new Error("skill already exists");
   // Reject names that collide with any existing skill, including built-ins.
   if (await findSkillOnDisk(parsed.name)) throw new Error("skill already exists");
 
@@ -569,7 +566,7 @@ export async function installSkillFiles(
   const name = validated.root.name;
   const dest = resolve(SKILLS_INSTALL_DIR, name);
   if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) throw new Error("invalid skill name");
-  if (existsSync(dest) || isReservedSkillName(name) || await findSkillOnDisk(name)) {
+  if (existsSync(dest) || await findSkillOnDisk(name)) {
     throw new Error("skill already exists");
   }
   await writeSkillFilesToNewDestination(dest, validated.files);
@@ -745,10 +742,6 @@ export function isValidSkillName(name: string): boolean {
   return NAME_RE.test(name);
 }
 
-export function isReservedSkillName(name: string): boolean {
-  return ARCHIVED_BUILTIN_SKILLS.has(name);
-}
-
 export async function listAllSkillItems(disabled: Set<string>): Promise<SkillListItem[]> {
   const dirs = await collectAllSkillDirs();
   const items: SkillListItem[] = [];
@@ -814,7 +807,6 @@ export async function serializeSkillListItem(
 }
 
 export async function skillExists(name: string): Promise<boolean> {
-  if (ARCHIVED_BUILTIN_SKILLS.has(name)) return false;
   try {
     const skills = await getQingagentSkills();
     if (await skills.has(name).catch(() => false)) return true;
@@ -883,12 +875,7 @@ async function collectAllSkillDirs(): Promise<Array<{ path: string; source: Skil
       logger: console,
     },
   );
-  return sources
-    .filter(({ skill, rootIndex }) =>
-      roots[rootIndex]?.source !== "builtin"
-      || !ARCHIVED_BUILTIN_SKILLS.has(skill.metadata.name)
-    )
-    .map(({ skill, rootIndex }) => ({
+  return sources.map(({ skill, rootIndex }) => ({
       path: skill.path,
       source: roots[rootIndex]!.source,
       mtimeMs: skill.mtimeMs,

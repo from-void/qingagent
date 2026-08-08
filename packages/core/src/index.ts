@@ -262,7 +262,6 @@ export {
 } from "./session/reviewSupplement.js";
 export { clearQuestionBranch } from "./services/genService.js";
 export {
-  ARCHIVED_BUILTIN_SKILLS,
   BUILTIN_SKILLS_DIR,
   MAX_EXTERNAL_USER_SKILLS,
   SKILLS_INSTALL_DIR,

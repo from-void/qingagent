@@ -14,7 +14,6 @@ import {
   USER_SKILL_SOURCE_DIRS,
   classifyUserSkillSource,
 } from "../skills/paths.js";
-import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import {
   acquireSessionWorkspace,
   getSessionWorkspace,
@@ -215,7 +214,7 @@ export async function resolveEnabledSkillDirsFromRoots(
   const dirs: string[] = [];
   for (const { skill } of sources) {
     const name = skill.metadata.name;
-    if (isArchivedBuiltinSkillName(name) || disabled.has(name)) continue;
+    if (disabled.has(name)) continue;
     dirs.push(toPosixPath(skill.path));
   }
   return dirs;

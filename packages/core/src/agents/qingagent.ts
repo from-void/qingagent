@@ -51,7 +51,7 @@ import {
   anthropicBaseUrl,
   createSnapshottingQingagentModel,
   resolveBaseUrl,
-  resolveDeepseekAuth,
+  resolveModelAuth,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -85,7 +85,7 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     docVersionAwarenessSourceFromRequestContext(requestContext);
   const diagramVizEditingSource =
     diagramVizEditingSourceFromRequestContext(requestContext);
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey } = resolveModelAuth(requestContext);
   const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
   const evict = () => {
@@ -152,7 +152,7 @@ function trackQingagentModel<T extends object>(model: T, requestContext?: Reques
     requestContext,
     callSite: isModelCallSite(callSite) ? callSite : MODEL_CALL_SITES.unknown,
     modelId: resolveModelId(requestContext, "flash"),
-    keyOrigin: resolveDeepseekAuth(requestContext).origin,
+    keyOrigin: resolveModelAuth(requestContext).origin,
   });
 }
 

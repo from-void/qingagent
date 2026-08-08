@@ -50,7 +50,7 @@ function deepseekBalanceHeaders(keyOverride?: string): Record<string, string> {
   const key = keyOverride?.trim() || getVisitorModelKey("deepseek");
   return {
     "x-model-provider": "deepseek",
-    ...(key ? { "x-model-key": key, "x-deepseek-key": key } : {}),
+    ...(key ? { "x-model-key": key } : {}),
   };
 }
 
@@ -408,7 +408,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
             headers: {
               "x-model-provider": configProvider,
               "x-model-key": trimmed,
-              ...(configProvider === "deepseek" ? { "x-deepseek-key": trimmed } : {}),
             },
             signal: ctrl.signal,
           });

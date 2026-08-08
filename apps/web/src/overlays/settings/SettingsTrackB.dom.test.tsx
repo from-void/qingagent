@@ -760,7 +760,6 @@ describe("Settings Track B", () => {
       "x-model-provider": "kimi",
       "x-model-key": "kimi-local-key",
     });
-    expect(visitorKeyHeaders()["x-deepseek-key"]).toBeUndefined();
     expect(getButtonByWf("ModelUsingKimi").hasAttribute("disabled")).toBe(true);
     expect(getButtonByWf("ModelTierChipKimi").textContent).toBe("K2.7");
 
@@ -769,7 +768,6 @@ describe("Settings Track B", () => {
     expect(visitorKeyHeaders()).toMatchObject({
       "x-model-provider": "deepseek",
       "x-model-key": "deepseek-local-key",
-      "x-deepseek-key": "deepseek-local-key",
     });
   });
 
@@ -995,7 +993,6 @@ describe("Settings Track B", () => {
     expect(visitorKeyHeaders()).toMatchObject({
       "x-model-provider": "deepseek",
       "x-model-key": "legacy-deepseek-key",
-      "x-deepseek-key": "legacy-deepseek-key",
     });
   });
 
@@ -1124,7 +1121,7 @@ describe("Settings Track B", () => {
     const balanceCall = fetchMock.mock.calls.find((call) =>
       String(call[0]).includes("/api/v1/settings/model/balance"));
     expect(balanceCall?.[1]).toMatchObject({
-      headers: { "x-model-provider": "deepseek", "x-deepseek-key": "deepseek-balance-key" },
+      headers: { "x-model-provider": "deepseek", "x-model-key": "deepseek-balance-key" },
     });
     expect(host?.textContent).toContain("余额");
   });

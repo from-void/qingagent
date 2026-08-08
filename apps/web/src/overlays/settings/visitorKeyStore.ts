@@ -301,7 +301,7 @@ export function setSelectedModelTier(
 }
 
 /** 给请求层用:按当前配置返回要附加的 header(对话 / 余额等请求统一带上)。
- *  主模型(x-deepseek-key / x-model-*)与图像识别副基模(x-vision-*,见
+ *  主模型(x-model-*)与图像识别副基模(x-vision-*,见
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
   const storedProvider = getStoredModelProvider();
@@ -315,7 +315,6 @@ export function visitorKeyHeaders(): Record<string, string> {
     return {
       "x-model-provider": provider,
       "x-model-key": custom.apiKey,
-      ...(provider === "deepseek" ? { "x-deepseek-key": custom.apiKey } : {}),
       "x-model-base-url": custom.baseUrl,
       "x-model-flash": custom.modelFlash,
       "x-model-pro": custom.modelPro,
@@ -336,7 +335,6 @@ export function visitorKeyHeaders(): Record<string, string> {
   if (storedProvider || key || official) headers["x-model-provider"] = provider;
   if (key) {
     headers["x-model-key"] = key;
-    if (provider === "deepseek") headers["x-deepseek-key"] = key;
   }
   if (official?.flash) headers["x-model-flash"] = official.flash;
   if (official?.pro) headers["x-model-pro"] = official.pro;

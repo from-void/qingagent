@@ -17,8 +17,8 @@ import { createStep, createWorkflow } from "@mastra/core/workflows";
 import {
   getDeepseekModel,
   resolveBaseUrl,
-  resolveDeepseekAuth,
-  resolveDeepseekRouterModelId,
+  resolveModelAuth,
+  resolveRouterModelId,
 } from "../llm/modelConfig.js";
 import { toolSearchProcessorFromRequestContext } from "./toolSearch.js";
 import { TOOL_TRANSCRIPT_OUTPUT_GUARD } from "./toolTranscriptOutputGuard.js";
@@ -135,9 +135,9 @@ export function resolveQingagentProcessorFlags(
 export function resolveQingagentGuardrailModel(
   requestContext?: RequestContext,
 ): OpenAICompatibleConfig {
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey } = resolveModelAuth(requestContext);
   return {
-    id: resolveDeepseekRouterModelId(requestContext, "flash"),
+    id: resolveRouterModelId(requestContext, "flash"),
     url: resolveBaseUrl(requestContext),
     apiKey,
   };

@@ -339,7 +339,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
 
   const overrides = await resolveRequestModelOverrides({
     provider: c.req.header("x-model-provider"),
-    visitorKey: c.req.header("x-model-key") ?? c.req.header("x-deepseek-key"),
+    visitorKey: c.req.header("x-model-key"),
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),

@@ -23,7 +23,7 @@ import {
   getSessionSnapshot,
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
-  resolveDeepseekAuth,
+  resolveModelAuth,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -1170,7 +1170,7 @@ async function createOmSidecar(): Promise<ObservationalMemory | null> {
 function getObserverFlashModelFor(
   requestContext?: RequestContext,
 ): RepairableLanguageModel {
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey } = resolveModelAuth(requestContext);
   const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
   const callSite = requestContext?.get(OM_BRANCH_CALL_SITE_KEY) === "omReflect"
@@ -1204,7 +1204,7 @@ function getObserverFlashModelFor(
       requestContext,
       callSite,
       modelId: anthModel,
-      keyOrigin: resolveDeepseekAuth(requestContext).origin,
+      keyOrigin: resolveModelAuth(requestContext).origin,
     });
   }
 
@@ -1216,7 +1216,7 @@ function getObserverFlashModelFor(
     requestContext,
     callSite,
     modelId: resolveModelId(requestContext, "flash"),
-    keyOrigin: resolveDeepseekAuth(requestContext).origin,
+    keyOrigin: resolveModelAuth(requestContext).origin,
   });
   const snapshot = requestContext?.get(OM_BRANCH_SNAPSHOT_KEY) as SessionSnapshot | null | undefined;
   if (!snapshot) return fallback;

@@ -179,7 +179,7 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     );
   });
 
-  // 回归(0702 桌面验收根因):桌面端 DeepSeek key 是 visitor 层(x-deepseek-key header,服务端不落盘),
+  // 回归(0702 桌面验收根因):桌面端 DeepSeek key 是 visitor 层(x-model-key header,服务端不落盘),
   // 无搜索专配 key、无 env DEEPSEEK_API_KEY。修复前 deepseekKey 恒空 → 永远回退 Bing 垃圾;
   // 修复后应从 requestContext 的 modelOverrides.visitorApiKey 取到 key 并走 DeepSeek。
   it("桌面 visitor key:无专配 key/无 env 时,从 requestContext 取 visitor key 走 DeepSeek(不回退多源)", async () => {

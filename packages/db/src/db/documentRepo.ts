@@ -18,7 +18,6 @@ import {
 import { ensureMigrated } from "./migrations.js";
 import {
   assertDocumentWriteAllowed,
-  assertDocumentWriteAllowedPersisted,
 } from "./documentWriteGuard.js";
 
 export interface DocumentRow {
@@ -165,13 +164,6 @@ function projectNormalizedPmDoc(pmDoc: PmDoc): PmProjection {
 interface MappedDocumentRow {
   row: DocumentRow;
   needsPmRepair: boolean;
-}
-
-export interface DocumentRepairStats {
-  scanned: number;
-  versionPointersRepaired: number;
-  pmMirrorsRepaired: number;
-  invalidRowsQuarantined: number;
 }
 
 function mapRow(row: Row): MappedDocumentRow {
@@ -620,164 +612,6 @@ async function saveDocumentInputs(
   }
 }
 
-async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyClient>>, mapped: MappedDocumentRow): Promise<boolean> {
-  if (!mapped.needsPmRepair) return false;
-  if (!mapped.row.pmDoc) return false;
-  const projection = buildPmProjection({ pmDoc: mapped.row.pmDoc });
-  return withWriteRetry(async () => {
-    const result = await client.execute({
-      sql: `UPDATE documents SET
-          doc_pm = ?,
-          doc_schema_version = ?,
-          content_hash = ?,
-          doc_format = ?
-        WHERE id = ? AND version = ?`,
-      args: [
-        projection.pmJson,
-        projection.schemaVersion,
-        projection.contentHash,
-        projection.docFormat,
-        mapped.row.id,
-        mapped.row.version,
-      ],
-    });
-    return result.rowsAffected === 1;
-  });
-}
-
-/**
- * 在启动后的后台巡检中修复存量 documents 行。
- *
- * 读 API 必须保持纯读：不能为了偶发的旧数据修复，在每次 load/list 上抢写锁。
- * 此处一次查询带回每篇文档的最新版本快照，再按需写回，因此不把逐行 SELECT
- * 带回列表读取路径。
- */
-export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
-  const client = await readyClient();
-  const result = await client.execute(`SELECT
-      d.*,
-      dv.version_id AS latest_version_id,
-      dv.doc_version AS latest_doc_version,
-      dv.snapshot_pm AS latest_snapshot_pm,
-      origin.source_doc_id AS latest_source_doc_id,
-      origin.source_thread_id AS latest_source_thread_id,
-      EXISTS (
-        SELECT 1 FROM document_write_blocks write_block
-        WHERE write_block.doc_id = d.id
-          AND write_block.reason = 'quarantine_0002_foreign_snapshot'
-      ) AS recovery_write_blocked
-    FROM documents d
-    LEFT JOIN document_versions dv ON dv.doc_id = d.id
-      AND NOT EXISTS (
-        SELECT 1 FROM document_version_restore_origins foreign_origin
-        WHERE foreign_origin.version_id = dv.version_id
-          AND foreign_origin.restored_doc_id = dv.doc_id
-          AND foreign_origin.source_doc_id <> dv.doc_id
-      )
-      AND dv.doc_version = (
-        SELECT MAX(version.doc_version)
-        FROM document_versions version
-        WHERE version.doc_id = d.id
-          AND NOT EXISTS (
-            SELECT 1 FROM document_version_restore_origins foreign_origin
-            WHERE foreign_origin.version_id = version.version_id
-              AND foreign_origin.restored_doc_id = version.doc_id
-              AND foreign_origin.source_doc_id <> version.doc_id
-          )
-      )
-    LEFT JOIN document_version_restore_origins origin
-      ON origin.version_id = dv.version_id
-      AND origin.restored_doc_id = d.id`);
-
-  let versionPointersRepaired = 0;
-  let pmMirrorsRepaired = 0;
-  let invalidRowsQuarantined = 0;
-  for (const rawRow of result.rows) {
-    let mapped: MappedDocumentRow;
-    try {
-      mapped = mapRow(rawRow);
-    } catch {
-      if (await quarantineInvalidPmRow(rawRow)) invalidRowsQuarantined += 1;
-      continue;
-    }
-    const latestDocVersion = valueAsNumber(rawRow.latest_doc_version);
-    const latestSnapshotPm = rawRow.latest_snapshot_pm;
-    const sourceDocId = rawRow.latest_source_doc_id == null
-      ? null
-      : String(rawRow.latest_source_doc_id);
-    const sourceThreadId = rawRow.latest_source_thread_id == null
-      ? null
-      : String(rawRow.latest_source_thread_id);
-    const isForeignRestoredFamily = sourceDocId !== null
-      && sourceDocId !== mapped.row.id;
-    let current = mapped;
-
-    // 0025 已确认正文曾被异源快照覆盖时，巡检也必须遵守持久化写阻断。
-    // 读取仍可继续，直到运维从 pre-0023 备份核验恢复并显式解除阻断。
-    if (valueAsNumber(rawRow.recovery_write_blocked) === 1) continue;
-
-    if (latestSnapshotPm != null && latestDocVersion > mapped.row.docVersion) {
-      if (isForeignRestoredFamily) {
-        console.warn("[db:repair] 跳过异历史家族的高版本快照", {
-          docId: mapped.row.id,
-          threadId: mapped.row.threadId,
-          currentDocVersion: mapped.row.docVersion,
-          candidateVersionId: String(rawRow.latest_version_id ?? ""),
-          candidateDocVersion: latestDocVersion,
-          sourceDocId,
-          sourceThreadId,
-        });
-      } else {
-        const snapshotPm = parsePmDoc(latestSnapshotPm);
-        const projection = buildPmProjection({ pmDoc: snapshotPm });
-        await withWriteRetry(async () => {
-          await client.execute({
-            sql: `UPDATE documents SET
-                doc_version = ?, doc_pm = ?, doc_schema_version = ?, content_hash = ?,
-                doc_format = ?, version = version + 1
-              WHERE id = ? AND doc_version < ?`,
-            args: [
-              latestDocVersion,
-              projection.pmJson,
-              projection.schemaVersion,
-              projection.contentHash,
-              projection.docFormat,
-              mapped.row.id,
-              latestDocVersion,
-            ],
-          });
-        });
-        current = {
-          row: {
-            ...mapped.row,
-            docVersion: latestDocVersion,
-            legacySections: projection.legacySections,
-            pmDoc: projection.pmDoc,
-            schemaVersion: projection.schemaVersion,
-            contentHash: projection.contentHash,
-            docFormat: projection.docFormat,
-            version: mapped.row.version + 1,
-          },
-          needsPmRepair: false,
-        };
-        versionPointersRepaired += 1;
-      }
-    }
-
-    if (current.needsPmRepair) {
-      if (await repairPmMirrorIfNeeded(client, current)) {
-        pmMirrorsRepaired += 1;
-      }
-    }
-  }
-  return {
-    scanned: result.rows.length,
-    versionPointersRepaired,
-    pmMirrorsRepaired,
-    invalidRowsQuarantined,
-  };
-}
-
 export const documentRepo: DocumentRepo = {
   async load(id) {
     const client = await readyClient();
@@ -834,11 +668,6 @@ export const documentRepo: DocumentRepo = {
         threadId: input.threadId,
         operation: "document.save",
       });
-      await assertDocumentWriteAllowedPersisted(client, {
-        docId: input.id,
-        threadId: input.threadId,
-        operation: "document.save",
-      });
       await saveDocumentInputs(client, [input]);
     });
   },
@@ -849,11 +678,6 @@ export const documentRepo: DocumentRepo = {
     await withWriteRetry(async () => {
       for (const input of inputs) {
         assertDocumentWriteAllowed({
-          docId: input.id,
-          threadId: input.threadId,
-          operation: "document.saveMany",
-        });
-        await assertDocumentWriteAllowedPersisted(client, {
           docId: input.id,
           threadId: input.threadId,
           operation: "document.saveMany",

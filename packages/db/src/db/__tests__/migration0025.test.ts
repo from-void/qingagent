@@ -1,22 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getPmContentHash, safeParsePmDoc } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "../documentDraftRepo.js";
-import {
-  documentRepo,
-  repairStoredDocumentRows,
-} from "../documentRepo.js";
+import { documentRepo } from "../documentRepo.js";
 import {
   getMaxDocumentSnapshotVersion,
   getVersionSnapshot,
   listVersions,
 } from "../documentVersionRepo.js";
-import {
-  DocumentRecoveryRequiredError,
-} from "../documentWriteGuard.js";
 import { getDocumentsClient } from "../documentsClient.js";
-import {
-  identifyQuarantine0002OverwriteCandidates,
-} from "../quarantine0002Audit.js";
 import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
 import { MIGRATIONS } from "../migrations/index.js";
 import {
@@ -47,7 +38,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     db.cleanup();
   });
 
-  it("已跑 0023 的错误嫁接态升级后隔离四类异源行、排除高水位并阻断已覆盖正文写入", async () => {
+  it("已跑 0023 的错误嫁接态升级后隔离四类异源行并排除高水位", async () => {
     await runMigrations(MIGRATIONS.slice(0, 23));
     await prepareMappedFamilyFixture();
     const client = getDocumentsClient();
@@ -79,48 +70,6 @@ describe("0025 quarantine lineage and PM compatibility", () => {
       source_doc_id: "source-doc",
       version_id: "source-version",
     }]);
-    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([
-      expect.objectContaining({
-        currentDocId: "current-doc",
-        sourceDocId: "source-doc",
-        versionId: "source-version",
-        confidence: "exact_snapshot",
-      }),
-    ]);
-    await expect(documentRepo.save(documentInput("current-doc", {
-      threadId: "shared-thread",
-      docVersion: 10,
-    }))).rejects.toThrow(DocumentRecoveryRequiredError);
-    await expect(documentRepo.save(documentInput("current-doc", {
-      threadId: "shared-thread",
-      docVersion: 10,
-    }))).rejects.toThrow("从运行 0023 前的数据库备份恢复并核验");
-
-    const postBlockPm = pmJson("异源隔离正文", "post-block-p");
-    await client.execute({
-      sql: `UPDATE documents
-        SET doc_pm = ?, content_hash = 'post-block-stale-hash'
-        WHERE id = 'current-doc'`,
-      args: [postBlockPm],
-    });
-    await expect(repairStoredDocumentRows()).resolves.toMatchObject({
-      versionPointersRepaired: 0,
-      pmMirrorsRepaired: 0,
-    });
-    const postRepair = await client.execute(`
-      SELECT doc_pm, content_hash FROM documents WHERE id = 'current-doc'
-    `);
-    expect(postRepair.rows[0]).toMatchObject({
-      doc_pm: postBlockPm,
-      content_hash: "post-block-stale-hash",
-    });
-    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([
-      expect.objectContaining({
-        currentDocId: "current-doc",
-        versionId: "source-version",
-        confidence: "persisted_block",
-      }),
-    ]);
 
     const beforeRepeat = await quarantineCounts();
     await client.execute({
@@ -227,70 +176,10 @@ describe("0025 quarantine lineage and PM compatibility", () => {
       snapshot_content_hash: sharedHash,
       stored_version_hash: sharedHash,
     }]);
-    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([
-      expect.objectContaining({
-        currentDocId: "current-legitimate",
-        sourceDocId: "source-legitimate",
-        versionId: "coincidental-source-version",
-        confidence: "manual_confirmation_required",
-      }),
-    ]);
     await expect(documentRepo.save(documentInput("current-legitimate", {
       threadId: "coincidental-thread",
       docVersion: 8,
     }))).resolves.toBeUndefined();
-  });
-
-  it("同 docId、异 threadId 仍属同一家族，合法高版本可被巡检回写", async () => {
-    await runMigrations(MIGRATIONS.slice(0, 23));
-    const client = getDocumentsClient();
-    await client.execute(
-      "CREATE TABLE documents_quarantine_0002 AS SELECT * FROM documents WHERE 0",
-    );
-    await client.execute(
-      "CREATE TABLE document_versions_quarantine_0002 AS SELECT * FROM document_versions WHERE 0",
-    );
-    await insertDocument("same-doc", "thread-new", 1, pmJson("当前 v1", "same-current"));
-    await client.execute({
-      sql: `INSERT INTO documents_quarantine_0002 (
-        id, thread_id, resource_id, title, doc_state, doc_version,
-        last_synced_version, doc_pm, doc_schema_version, content_hash,
-        doc_format, version, created_at, updated_at, role
-      ) VALUES (
-        'same-doc', 'thread-old', 'qingagent-user', '旧 thread', 'editing', 4,
-        4, ?, 1, 'same-v4-hash', 'pm', 4, ?, ?, 'main'
-      )`,
-      args: [pmJson("合法 v4", "same-v4"), NOW, NOW],
-    });
-    await client.execute({
-      sql: `INSERT INTO document_versions_quarantine_0002 (
-        version_id, doc_id, doc_version, content_hash, schema_version,
-        actor_type, summary, snapshot_pm, parent_version, created_at
-      ) VALUES ('same-v4', 'same-doc', 4, 'same-v4-hash', 1, 'agent',
-        '同 docId 旧 thread', ?, 3, ?)`,
-      args: [pmJson("合法 v4", "same-v4"), NOW],
-    });
-    await client.execute({
-      sql: `INSERT INTO document_versions (
-        version_id, doc_id, doc_version, content_hash, schema_version,
-        actor_type, summary, snapshot_pm, parent_version, created_at
-      ) VALUES ('same-v4', 'same-doc', 4, 'same-v4-hash', 1, 'agent',
-        '同 docId 新 thread', ?, 3, ?)`,
-      args: [pmJson("合法 v4", "same-v4"), NOW],
-    });
-    __resetMigrationsForTest();
-    await runMigrations();
-
-    expect(await getMaxDocumentSnapshotVersion("same-doc")).toBe(4);
-    expect(Number((await client.execute(
-      "SELECT COUNT(*) AS n FROM document_versions_quarantine_0025 WHERE version_id = 'same-v4'",
-    )).rows[0]?.n)).toBe(0);
-    const stats = await repairStoredDocumentRows();
-    expect(stats.versionPointersRepaired).toBe(1);
-    await expect(documentRepo.load("same-doc")).resolves.toMatchObject({
-      threadId: "thread-new",
-      docVersion: 4,
-    });
   });
 
   it("迁移先规整 doc/version/draft 的非法 listItem 首子，严格合法且所有文本与 marks 零丢失", async () => {

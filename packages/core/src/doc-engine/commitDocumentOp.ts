@@ -13,7 +13,6 @@ import {
 } from "@qingagent/db";
 import {
   assertDocumentWriteAllowed,
-  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
 } from "@qingagent/db/write-guard";
 import {
@@ -516,12 +515,6 @@ export async function commitDocumentOp(
       threadId: input.threadId,
       operation: "document.commit",
     });
-    await assertDocumentWriteAllowedPersisted(client, {
-      docId: input.docId,
-      threadId: input.threadId,
-      operation: "document.commit",
-    });
-
     if (creating) {
       const insertResult = await client.execute({
         sql: `INSERT INTO documents (

@@ -17,7 +17,6 @@ import {
 import { ensureMigrated } from "./migrations.js";
 import {
   assertDocumentWriteAllowed,
-  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
   type DocumentWriteTarget,
 } from "./documentWriteGuard.js";
@@ -115,7 +114,6 @@ export async function insertAnnotationGroups(
   await withWriteRetry(async () => {
     const target = writeTarget(docId, "documentSuggestion.insertAnnotations");
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     const results = await c.batch(annotationInsertStatements(docId, baseVersion, groups, now));
     assertSuggestionWritesAffected(results, target);
   });
@@ -239,7 +237,6 @@ export async function replaceAnnotationGroupsByOrigin(
   const target = writeTarget(docId, "documentSuggestion.replaceAnnotations");
   assertDocumentWriteAllowed(target);
   if (client) {
-    await assertDocumentWriteAllowedPersisted(c, target);
     await assertSuggestionNotTombstoned(c, target);
     await c.execute({
         sql: `UPDATE document_suggestions SET status='ignored', updated_at=?
@@ -255,7 +252,6 @@ export async function replaceAnnotationGroupsByOrigin(
     return;
   }
   await withTransaction(async (transactionClient) => {
-    await assertDocumentWriteAllowedPersisted(transactionClient, target);
     await assertSuggestionNotTombstoned(transactionClient, target);
     await transactionClient.execute({
       sql: `UPDATE document_suggestions SET status='ignored', updated_at=?
@@ -284,7 +280,6 @@ export async function ignoreAnnotationGroups(
   await withWriteRetry(async () => {
     const target = writeTarget(docId, "documentSuggestion.ignoreAnnotations");
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     await c.execute({
       sql: `UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')${where}`,
       args: [now, docId, ...ids],
@@ -306,7 +301,6 @@ export async function persistMappedAnnotationGroups(
       "documentSuggestion.persistMappedAnnotations",
     );
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     await c.execute({
       sql: "UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')",
       args: [now, docId],
@@ -337,7 +331,6 @@ export async function upsertDocumentSuggestion(
   await withWriteRetry(async () => {
     const target = writeTarget(suggestion.docId, "documentSuggestion.upsert");
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `INSERT INTO document_suggestions (
           id, doc_id, base_version, batch_id, status, anchor_json, steps_json,
@@ -415,7 +408,6 @@ export async function updateDocumentSuggestionStatusInBatch(
   return withWriteRetry(async () => {
     const target = writeTarget(docId, "documentSuggestion.updateStatus");
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
@@ -466,7 +458,6 @@ export async function ignoreRebasedDocumentSuggestionsInBatch(
   return withWriteRetry(async () => {
     const target = writeTarget(docId, "documentSuggestion.ignoreRebased");
     assertDocumentWriteAllowed(target);
-    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = 'ignored', conflict_json = NULL, updated_at = ?

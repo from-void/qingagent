@@ -754,6 +754,13 @@
   color: var(--qj-cinnabar);
   font-weight: 700;
 }
+.qj-sheet-body .md-legend-num small {
+  display: block;
+  margin-top: 1px;
+  font-family: var(--font-zh-serif);
+  font-size: 9px;
+  color: var(--qj-header-sub);
+}
 
 /* 明细筛选器:小横排按钮,贴右 */
 .qj-sheet-body .md-views--right {

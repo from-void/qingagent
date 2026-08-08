@@ -21,6 +21,7 @@
     "start": "NODE_OPTIONS='--use-env-proxy' tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:heavy": "vitest run --config vitest.heavy.config.ts"
   },
   "dependencies": {

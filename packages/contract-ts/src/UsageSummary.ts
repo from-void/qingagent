@@ -32,6 +32,12 @@ export interface UsageSummaryRow {
   coverageRate: number;
   costCny?: number;
   estimatedCostCny?: number;
+  /** recorded 中已命中/未命中当前价目表的调用数。金额只覆盖已计价部分。 */
+  pricedCalls: number;
+  unpricedCalls: number;
+  /** estimated 始终单列，覆盖计数也不与 recorded 混合。 */
+  estimatedPricedCalls: number;
+  estimatedUnpricedCalls: number;
   /** 按北京时间高峰窗口计价的请求数及其实际倍率范围。 */
   peakPricedCalls?: number;
   peakPricingMultiplierMin?: number;
@@ -40,6 +46,8 @@ export interface UsageSummaryRow {
 
 export interface UsageSummaryResponse {
   view: UsageSummaryView;
+  /** sha256(canonicalJson({ epochs }))，API 始终返回完整 64hex。 */
+  scheduleRevision: string;
   rows: UsageSummaryRow[];
   /** 整把环境 key 的账户余额；含其他设备调用且充值会扰动，仅供对照。 */
   providerBalance?: {

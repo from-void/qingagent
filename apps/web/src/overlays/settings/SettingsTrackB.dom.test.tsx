@@ -100,6 +100,7 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("ModelConfigDeepseek").textContent).toContain("去配置");
     // 看板仍在,走既有空态文案
     expect(host?.textContent).toContain("用量看板");
+    expect(host?.textContent).toContain("价目版本 cccccccccccccccc");
   });
 
   it("状态二 · 单家已配:DeepSeek 金描边使用中,Kimi 仍是介绍卡", async () => {
@@ -393,6 +394,10 @@ describe("Settings Track B", () => {
             billingUnknownCalls: 1,
             coverageRate: 0.7,
             estimatedCostCny: 0.004,
+            pricedCalls: 7,
+            unpricedCalls: 0,
+            estimatedPricedCalls: 1,
+            estimatedUnpricedCalls: 0,
           }],
         });
       }
@@ -2195,9 +2200,12 @@ function makeFetchMock() {
     if (url.includes("/api/v1/settings/model")) {
       return json({ apiKeyConfigured: false, maskedTail: null, source: "none", params: null });
     }
-    if (url.includes("/api/v1/usage/summary?view=day")) return json({ rows: dayRows });
+    if (url.includes("/api/v1/usage/summary?view=day")) {
+      return json({ rows: dayRows, scheduleRevision: "c".repeat(64) });
+    }
     if (url.includes("/api/v1/usage/summary?view=total")) {
       return json({
+        scheduleRevision: "c".repeat(64),
         rows: [
           usageRow("total", "deepseek-v4-flash", 3000, 900, 0.003),
           usageRow("total", "deepseek-v4-pro", 2000, 800, 0.002, false),
@@ -2205,7 +2213,10 @@ function makeFetchMock() {
       });
     }
     if (url.includes("/api/v1/usage/summary?view=session")) {
-      return json({ rows: [{ ...usageRow("session-1", "deepseek-v4-flash", 1200, 500, 0.001), label: "测试文档" }] });
+      return json({
+        scheduleRevision: "c".repeat(64),
+        rows: [{ ...usageRow("session-1", "deepseek-v4-flash", 1200, 500, 0.001), label: "测试文档" }],
+      });
     }
     if (url.includes("/api/v1/usage/docstats")) return json({ docs: 2, words: 1200 });
     return json({});
@@ -2235,6 +2246,10 @@ function usageRow(
     missingCalls: 0,
     coverageRate: 1,
     costCny,
+    pricedCalls: 1,
+    unpricedCalls: 0,
+    estimatedPricedCalls: 0,
+    estimatedUnpricedCalls: 0,
   };
 }
 

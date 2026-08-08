@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 
-const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
+const recordUsageEventMock = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@qingagent/db", () => ({
   resolveDbUrl: () => "file::memory:",
   recordUsageEvent: recordUsageEventMock,
@@ -138,37 +138,35 @@ describe("usage middleware", () => {
     }));
   });
 
-  it("统一终态以调用开始时刻固化北京时间高峰金额", async () => {
-    const previous = process.env.DEEPSEEK_PEAK_PRICING_JSON;
-    process.env.DEEPSEEK_PEAK_PRICING_JSON = JSON.stringify({ enabled: true });
-    try {
-      const startedAt = Date.parse("2026-08-06T01:30:00.000Z");
-      await recordModelCallOutcome({
-        sessionId: "session-peak",
-        callSite: "agentChat",
-        modelId: "deepseek-v4-flash",
-        keyOrigin: "visitor",
-        attempt: 1,
-        transport: "manual-api",
-        startedAt,
-        usage: {
-          inputTokens: 120,
-          outputTokens: 30,
-          promptCacheHitTokens: 100,
-          promptCacheMissTokens: 20,
-        },
-      });
+  it("写端只落原始事实与调用开始时刻，不再固化任何价目字段", async () => {
+    const startedAt = Date.parse("2026-08-06T01:30:00.000Z");
+    await recordModelCallOutcome({
+      sessionId: "session-derived-pricing",
+      callSite: "agentChat",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      attempt: 1,
+      transport: "manual-api",
+      startedAt,
+      usage: {
+        inputTokens: 120,
+        outputTokens: 30,
+        promptCacheHitTokens: 100,
+        promptCacheMissTokens: 20,
+      },
+    });
 
-      expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
-        occurredAt: startedAt,
-        costCny: expect.closeTo(0.000164, 12),
-        pricingTier: "peak",
-        pricingMultiplier: 2,
-      }));
-    } finally {
-      if (previous === undefined) delete process.env.DEEPSEEK_PEAK_PRICING_JSON;
-      else process.env.DEEPSEEK_PEAK_PRICING_JSON = previous;
-    }
+    const stored = recordUsageEventMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      occurredAt: startedAt,
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheHitTokens: 100,
+      cacheMissTokens: 20,
+    });
+    expect(stored).not.toHaveProperty("costCny");
+    expect(stored).not.toHaveProperty("pricingTier");
+    expect(stored).not.toHaveProperty("pricingMultiplier");
   });
 
   it("recorded 统一要求输入与输出计数完整，单边 SDK usage 只能降为 estimated", async () => {

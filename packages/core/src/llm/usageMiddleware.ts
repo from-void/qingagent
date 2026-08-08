@@ -3,7 +3,6 @@ import { TokenCounter } from "@mastra/memory/processors";
 import type { LanguageModelMiddleware } from "ai-v5";
 import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelTypes.js";
-import { estimateCostCnyAt } from "./modelPricing.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
@@ -461,22 +460,6 @@ async function recordClassifiedModelCall(
       ` finish=${options.finishReason ?? "?"}`,
   );
 
-  const costSnapshot = counts
-    ? estimateCostCnyAt(options.modelId, {
-        input: counts.inputTokens,
-        output: counts.outputTokens,
-        cacheHit: counts.promptCacheHitTokens,
-        cacheMiss: counts.promptCacheMissTokens,
-      }, occurredAt)
-    : null;
-  const pricingFields = costSnapshot
-    ? {
-        costCny: costSnapshot.costCny,
-        pricingTier: costSnapshot.pricingTier,
-        pricingMultiplier: costSnapshot.pricingMultiplier,
-      }
-    : { pricingTier: "unpriced" as const };
-
   try {
     const cacheAccountingState = classified.cacheAccountingState ?? (
       typeof hitTokens === "number" && typeof missTokens === "number" ? "known" : "unknown"
@@ -504,7 +487,6 @@ async function recordClassifiedModelCall(
         usageState,
         reason,
         occurredAt,
-        pricingTier: "unpriced",
       });
       return;
     }
@@ -525,7 +507,6 @@ async function recordClassifiedModelCall(
       usageState,
       reason,
       occurredAt,
-      ...pricingFields,
     });
   } catch (error) {
     // 观测链路永远旁路，不得改变 provider 请求结果。

@@ -26,8 +26,10 @@ export function aggregateUsageRows(
   const estimatedCalls = sum((row) => row.estimatedCalls ?? 0);
   const billingUnknownCalls = sum((row) => row.billingUnknownCalls ?? 0);
   const models = new Set(rows.map((row) => row.modelId));
-  const pricedRows = rows.filter((row) => row.costCny !== undefined);
-  const estimatedPricedRows = rows.filter((row) => row.estimatedCostCny !== undefined);
+  const pricedCalls = sum((row) => row.pricedCalls);
+  const unpricedCalls = sum((row) => row.unpricedCalls);
+  const estimatedPricedCalls = sum((row) => row.estimatedPricedCalls);
+  const estimatedUnpricedCalls = sum((row) => row.estimatedUnpricedCalls);
   const peakRows = rows.filter((row) => (row.peakPricedCalls ?? 0) > 0);
 
   return {
@@ -52,14 +54,18 @@ export function aggregateUsageRows(
     missingCalls: sum((row) => row.missingCalls),
     billingUnknownCalls,
     coverageRate: calls > 0 ? recordedCalls / calls : 0,
-    ...(pricedRows.length > 0
+    pricedCalls,
+    unpricedCalls,
+    estimatedPricedCalls,
+    estimatedUnpricedCalls,
+    ...(pricedCalls > 0
       ? {
-          costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0),
+          costCny: rows.reduce((total, row) => total + (row.costCny ?? 0), 0),
         }
       : {}),
-    ...(estimatedPricedRows.length > 0
+    ...(estimatedPricedCalls > 0
       ? {
-          estimatedCostCny: estimatedPricedRows.reduce(
+          estimatedCostCny: rows.reduce(
             (total, row) => total + (row.estimatedCostCny ?? 0),
             0,
           ),

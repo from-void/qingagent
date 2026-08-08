@@ -19,6 +19,16 @@ export interface UsageGroup {
   children?: UsageGroup[];
 }
 
+export function pricingCoverageText(row: Pick<UsageRow,
+  "unpricedCalls" | "estimatedUnpricedCalls"
+>): string | null {
+  const parts = [
+    row.unpricedCalls > 0 ? `实测 ${row.unpricedCalls} 次未计价` : "",
+    row.estimatedUnpricedCalls > 0 ? `估算 ${row.estimatedUnpricedCalls} 次未计价` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? `部分计价 · ${parts.join("，")}` : null;
+}
+
 export function readUsageMode(): UsageMode {
   if (typeof window === "undefined") return "simple";
   try {
@@ -112,6 +122,7 @@ export function UsageTableRow({
   const peakMultiplier = row.peakPricingMultiplierMin === row.peakPricingMultiplierMax
     ? `${row.peakPricingMultiplierMin}×`
     : `${row.peakPricingMultiplierMin}～${row.peakPricingMultiplierMax}×`;
+  const pricingCoverage = pricingCoverageText(row);
 
   return (
     <tr
@@ -157,10 +168,13 @@ export function UsageTableRow({
       )}
       <td className="font-mono md-cost-cell">
         <span>{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</span>
-        {(row.estimatedCostCny ?? 0) > 0 ? (
+        {row.estimatedPricedCalls > 0 ? (
           <small title="按已发送 prompt 与中止前已收 delta 本地估算">
             估 {`¥${row.estimatedCostCny!.toFixed(3)}`}
           </small>
+        ) : null}
+        {pricingCoverage ? (
+          <small data-wf="UsagePricingCoverage">{pricingCoverage}</small>
         ) : null}
         {(row.peakPricedCalls ?? 0) > 0 ? (
           <small title="DeepSeek 按调用开始时的北京时间高峰窗口计价，倍率已计入上方金额">
@@ -321,8 +335,11 @@ export function summarizeRecentDays(
   estimatedCalls: number;
   missingCalls: number;
   billingUnknownCalls: number;
+  pricedCalls: number;
+  unpricedCalls: number;
+  estimatedPricedCalls: number;
+  estimatedUnpricedCalls: number;
   coverageRate: number;
-  hasPriced: boolean;
 } | null {
   if (rows === null) return null;
   if (rows.length === 0) {
@@ -336,8 +353,11 @@ export function summarizeRecentDays(
       estimatedCalls: 0,
       missingCalls: 0,
       billingUnknownCalls: 0,
+      pricedCalls: 0,
+      unpricedCalls: 0,
+      estimatedPricedCalls: 0,
+      estimatedUnpricedCalls: 0,
       coverageRate: 0,
-      hasPriced: false,
     };
   }
   // bucket 是本地日历日 YYYY-MM-DD；窗口固定为“今天及之前 N-1 天”，不按有数据日期倒推。
@@ -355,12 +375,18 @@ export function summarizeRecentDays(
   let estimatedCalls = 0;
   let missingCalls = 0;
   let billingUnknownCalls = 0;
-  let hasPriced = false;
+  let pricedCalls = 0;
+  let unpricedCalls = 0;
+  let estimatedPricedCalls = 0;
+  let estimatedUnpricedCalls = 0;
   for (const r of rows) {
     if (r.bucket < startYmd || r.bucket > endYmd) continue;
     cost += r.costCny ?? 0;
     estimatedCost += r.estimatedCostCny ?? 0;
-    if (r.costCny != null) hasPriced = true;
+    pricedCalls += r.pricedCalls;
+    unpricedCalls += r.unpricedCalls;
+    estimatedPricedCalls += r.estimatedPricedCalls;
+    estimatedUnpricedCalls += r.estimatedUnpricedCalls;
     tokens += r.inputTokens + r.outputTokens;
     estimatedTokens += (r.estimatedInputTokens ?? 0) + (r.estimatedOutputTokens ?? 0);
     calls += r.calls;
@@ -379,25 +405,55 @@ export function summarizeRecentDays(
     estimatedCalls,
     missingCalls,
     billingUnknownCalls,
+    pricedCalls,
+    unpricedCalls,
+    estimatedPricedCalls,
+    estimatedUnpricedCalls,
     coverageRate: calls > 0 ? recordedCalls / calls : 0,
-    hasPriced,
   };
 }
 
 // 按模型分布:total 数据按 modelId 聚合,算**费用**占比(降序)。
-// 钱是用户真正关心的口径;没有价目表(费用为 0)的模型不进饼,tokens 降级成注脚。
+// 钱是用户真正关心的口径；是否已计价只看 pricedCalls，合法零价模型仍保留。
 export function buildModelDistribution(
   rows: UsageRow[] | null,
-): Array<{ name: string; tokens: number; cost: number; pct: number }> | null {
+): Array<{
+  name: string;
+  tokens: number;
+  cost: number;
+  pct: number;
+  pricedCalls: number;
+  unpricedCalls: number;
+  estimatedPricedCalls: number;
+  estimatedUnpricedCalls: number;
+}> | null {
   if (rows === null) return null;
-  const map = new Map<string, { tokens: number; cost: number }>();
+  const map = new Map<string, {
+    tokens: number;
+    cost: number;
+    pricedCalls: number;
+    unpricedCalls: number;
+    estimatedPricedCalls: number;
+    estimatedUnpricedCalls: number;
+  }>();
   for (const r of rows) {
-    const prev = map.get(r.modelId) ?? { tokens: 0, cost: 0 };
+    const prev = map.get(r.modelId) ?? {
+      tokens: 0,
+      cost: 0,
+      pricedCalls: 0,
+      unpricedCalls: 0,
+      estimatedPricedCalls: 0,
+      estimatedUnpricedCalls: 0,
+    };
     prev.tokens += r.inputTokens + r.outputTokens;
     prev.cost += r.costCny ?? 0;
+    prev.pricedCalls += r.pricedCalls;
+    prev.unpricedCalls += r.unpricedCalls;
+    prev.estimatedPricedCalls += r.estimatedPricedCalls;
+    prev.estimatedUnpricedCalls += r.estimatedUnpricedCalls;
     map.set(r.modelId, prev);
   }
-  const priced = Array.from(map.entries()).filter(([, m]) => m.cost > 0);
+  const priced = Array.from(map.entries()).filter(([, m]) => m.pricedCalls > 0);
   const total = priced.reduce((sum, [, m]) => sum + m.cost, 0);
   return priced
     .map(([modelId, m]) => ({
@@ -405,6 +461,10 @@ export function buildModelDistribution(
       tokens: m.tokens,
       cost: m.cost,
       pct: total > 0 ? (m.cost / total) * 100 : 0,
+      pricedCalls: m.pricedCalls,
+      unpricedCalls: m.unpricedCalls,
+      estimatedPricedCalls: m.estimatedPricedCalls,
+      estimatedUnpricedCalls: m.estimatedUnpricedCalls,
     }))
     .sort((a, b) => b.cost - a.cost);
 }
@@ -413,25 +473,70 @@ export function buildModelDistribution(
 export function buildDailyTrend(
   rows: UsageRow[] | null,
   days: number,
-): { days: Array<{ date: string; label: string; cost: number; tokens: number }>; max: number } | null {
+): { days: Array<{
+  date: string;
+  label: string;
+  cost: number;
+  tokens: number;
+  pricedCalls: number;
+  unpricedCalls: number;
+  estimatedPricedCalls: number;
+  estimatedUnpricedCalls: number;
+}>; max: number } | null {
   if (rows === null) return null;
-  const map = new Map<string, { cost: number; tokens: number }>();
+  const map = new Map<string, {
+    cost: number;
+    tokens: number;
+    pricedCalls: number;
+    unpricedCalls: number;
+    estimatedPricedCalls: number;
+    estimatedUnpricedCalls: number;
+  }>();
   for (const r of rows) {
     if (r.bucket === "total" || !r.bucket) continue;
-    const prev = map.get(r.bucket) ?? { cost: 0, tokens: 0 };
+    const prev = map.get(r.bucket) ?? {
+      cost: 0,
+      tokens: 0,
+      pricedCalls: 0,
+      unpricedCalls: 0,
+      estimatedPricedCalls: 0,
+      estimatedUnpricedCalls: 0,
+    };
     prev.cost += r.costCny ?? 0;
     prev.tokens += r.inputTokens + r.outputTokens;
+    prev.pricedCalls += r.pricedCalls;
+    prev.unpricedCalls += r.unpricedCalls;
+    prev.estimatedPricedCalls += r.estimatedPricedCalls;
+    prev.estimatedUnpricedCalls += r.estimatedUnpricedCalls;
     map.set(r.bucket, prev);
   }
   // 固定生成"今天往前 days 天"的完整序列(升序),无数据的天补 0(空条占位)
   const today = new Date();
-  const series: Array<{ date: string; label: string; cost: number; tokens: number }> = [];
+  const series: Array<{
+    date: string;
+    label: string;
+    cost: number;
+    tokens: number;
+    pricedCalls: number;
+    unpricedCalls: number;
+    estimatedPricedCalls: number;
+    estimatedUnpricedCalls: number;
+  }> = [];
   for (let i = days - 1; i >= 0; i -= 1) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
     const date = toYMD(d);
     const m = map.get(date);
-    series.push({ date, label: date.slice(5), cost: m?.cost ?? 0, tokens: m?.tokens ?? 0 });
+    series.push({
+      date,
+      label: date.slice(5),
+      cost: m?.cost ?? 0,
+      tokens: m?.tokens ?? 0,
+      pricedCalls: m?.pricedCalls ?? 0,
+      unpricedCalls: m?.unpricedCalls ?? 0,
+      estimatedPricedCalls: m?.estimatedPricedCalls ?? 0,
+      estimatedUnpricedCalls: m?.estimatedUnpricedCalls ?? 0,
+    });
   }
   const max = series.reduce((mx, d) => Math.max(mx, d.cost), 0);
   return { days: series, max };

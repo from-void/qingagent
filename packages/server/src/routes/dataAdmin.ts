@@ -4,7 +4,12 @@
 import { Hono } from "hono";
 import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { getDocumentsClient, listSessionThreads } from "@qingagent/core";
+import {
+  PRICING_SCHEDULE,
+  computeCostCnyAt,
+  getDocumentsClient,
+  listSessionThreads,
+} from "@qingagent/core";
 import { resolveDbUrl } from "@qingagent/db";
 import { isDebugEndpointEnabled } from "../lib/debugGate";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
@@ -101,22 +106,42 @@ dataAdminRoutes.get("/data/usage/export", async (c) => {
   const client = getDocumentsClient();
   let result: Awaited<ReturnType<typeof client.execute>> | null = null;
   try {
-    result = await client.execute("SELECT created_at, session_id, run_id, call_site, model_id, key_origin, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens, cache_accounting_state, usage_state, reason, lane, attempt, cost_cny, pricing_tier, pricing_multiplier FROM llm_usage_events ORDER BY created_at");
+    result = await client.execute("SELECT created_at, session_id, run_id, call_site, model_id, key_origin, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens, cache_accounting_state, usage_state, reason, lane, attempt FROM llm_usage_events ORDER BY created_at");
   } catch (err) {
     if (!isMissingUsageTableError(err)) throw err;
   }
-  const header = "created_at,session_id,run_id,call_site,model_id,key_origin,input_tokens,output_tokens,cache_hit_tokens,cache_miss_tokens,cache_creation_tokens,cache_accounting_state,usage_state,reason,lane,attempt,cost_cny,pricing_tier,pricing_multiplier";
+  const header = "created_at,session_id,run_id,call_site,model_id,key_origin,input_tokens,output_tokens,cache_hit_tokens,cache_miss_tokens,cache_creation_tokens,cache_accounting_state,usage_state,reason,lane,attempt,derived_cost_cny,derived_pricing_tier,derived_pricing_multiplier";
   const lines = (result?.rows ?? []).map((r) => {
     const row = r as unknown as Record<string, unknown>;
+    const usageState = String(row.usage_state ?? "");
+    const derivable = usageState === "recorded" || usageState === "estimated";
+    const derived = derivable
+      ? computeCostCnyAt(PRICING_SCHEDULE, String(row.model_id ?? ""), {
+          input: Number(row.input_tokens ?? 0),
+          output: Number(row.output_tokens ?? 0),
+          cacheHit: Number(row.cache_hit_tokens ?? 0),
+          cacheMiss: Number(row.cache_miss_tokens ?? 0),
+          cacheCreation: Number(row.cache_creation_tokens ?? 0),
+        }, String(row.created_at ?? ""))
+      : null;
+    const derivedColumns = !derivable
+      ? [null, null, null]
+      : derived
+        ? [derived.costCny, derived.pricingTier, derived.pricingMultiplier]
+        : [null, "unpriced", null];
     // CSV 注入防护:统一包引号、转义内部引号,并中和电子表格公式前缀。
     return [
       row.created_at, row.session_id, row.run_id, row.call_site, row.model_id, row.key_origin,
       row.input_tokens, row.output_tokens, row.cache_hit_tokens, row.cache_miss_tokens,
       row.cache_creation_tokens, row.cache_accounting_state, row.usage_state, row.reason, row.lane, row.attempt,
-      row.cost_cny, row.pricing_tier, row.pricing_multiplier,
+      ...derivedColumns,
     ].map(csvCell).join(",");
   });
-  return c.body([header, ...lines].join("\n"), 200, {
+  return c.body([
+    `# schedule_revision=${PRICING_SCHEDULE.revision}`,
+    header,
+    ...lines,
+  ].join("\n"), 200, {
     "Content-Type": "text/csv; charset=utf-8",
     "Content-Disposition": `attachment; filename="qingagent-usage-${new Date().toISOString().slice(0, 10)}.csv"`,
   });

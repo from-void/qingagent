@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import {
-  aggregateUsageByDay,
   aggregateUsageBySession,
   aggregateUsageTotal,
-  estimateCostCny,
+  PRICING_SCHEDULE,
+  priceAggregatedSlices,
+  priceUsageByDay,
+  queryUsageByDay,
+  toPricingSliceSpec,
   getSessionDocumentStatsSince,
   getSessionThreadTitles,
-  hasModelPricing,
 } from "@qingagent/core";
 import type { UsageSummaryResponse } from "@qingagent/contract-ts";
 import {
@@ -32,17 +34,23 @@ usageRoutes.get("/usage/summary", async (c) => {
   }
 
   const providerBalance = view === "day"
-    ? await refreshDeepseekBalanceSnapshot({ force: true })
-      .then(() => getEnvDeepseekBalanceComparison())
-      .catch(() => null)
+    ? await getEnvDeepseekBalanceComparison()
     : null;
+  if (view === "day") {
+    // 看板请求只读本地缓存；网络探针在后台非 force 刷新，复用其 in-flight/时间去重。
+    void refreshDeepseekBalanceSnapshot().catch(() => undefined);
+  }
 
+  const sliceSpec = toPricingSliceSpec(PRICING_SCHEDULE);
   const rows =
     view === "day"
-      ? await aggregateUsageByDay(30, timeZone)
+      ? priceUsageByDay(PRICING_SCHEDULE, await queryUsageByDay(30, timeZone))
       : view === "session"
-        ? await aggregateUsageBySession()
-        : await aggregateUsageTotal();
+        ? priceAggregatedSlices(
+            PRICING_SCHEDULE,
+            await aggregateUsageBySession(sliceSpec),
+          )
+        : priceAggregatedSlices(PRICING_SCHEDULE, await aggregateUsageTotal(sliceSpec));
 
   // 会话视图沿用 bucket→标题；按天视图在 documents.title 为空时兼容旧线程 metadata 标题。
   let titleMap: Map<string, string> | null = null;
@@ -59,63 +67,19 @@ usageRoutes.get("/usage/summary", async (c) => {
     rows: rows.map((row) => {
       const {
         sessionId,
-        pricingSnapshotCalls,
-        legacyPricingCalls,
-        legacyInputTokens,
-        legacyOutputTokens,
-        legacyCacheHitTokens,
-        legacyCacheMissTokens,
-        legacyEstimatedInputTokens,
-        legacyEstimatedOutputTokens,
-        legacyEstimatedCacheHitTokens,
-        legacyEstimatedCacheMissTokens,
+        lastAt: _lastAt,
         ...publicRow
       } = row;
       const fallbackTitle = titleMap?.get(sessionId ?? row.bucket) || undefined;
-      // 旧 core 响应没有快照计数，等价视为迁移前数据；已有快照金额的行绝不再走现价重算。
-      const legacyWholeRow = pricingSnapshotCalls === undefined &&
-        legacyPricingCalls === undefined &&
-        row.costCny === undefined &&
-        row.estimatedCostCny === undefined;
-      const hasLegacyUsage = legacyWholeRow || (legacyPricingCalls ?? 0) > 0;
-      const legacyPriced = hasLegacyUsage && hasModelPricing(row.modelId);
-      const legacyCostCny = legacyPriced
-        ? estimateCostCny(row.modelId, {
-            input: legacyWholeRow ? row.inputTokens : legacyInputTokens,
-            output: legacyWholeRow ? row.outputTokens : legacyOutputTokens,
-            cacheHit: legacyWholeRow ? row.cacheHitTokens : legacyCacheHitTokens,
-            cacheMiss: legacyWholeRow ? row.cacheMissTokens : legacyCacheMissTokens,
-          })
-        : undefined;
-      const hasLegacyEstimated = hasLegacyUsage && (
-        legacyWholeRow
-          ? (row.estimatedCalls ?? 0) > 0
-          : (legacyEstimatedInputTokens ?? 0) > 0 || (legacyEstimatedOutputTokens ?? 0) > 0
-      );
-      const legacyEstimatedCostCny = legacyPriced && hasLegacyEstimated
-        ? estimateCostCny(row.modelId, {
-            input: legacyWholeRow ? row.estimatedInputTokens : legacyEstimatedInputTokens,
-            output: legacyWholeRow ? row.estimatedOutputTokens : legacyEstimatedOutputTokens,
-            cacheHit: legacyWholeRow ? row.estimatedCacheHitTokens : legacyEstimatedCacheHitTokens,
-            cacheMiss: legacyWholeRow ? row.estimatedCacheMissTokens : legacyEstimatedCacheMissTokens,
-          })
-        : undefined;
-      const hasRecordedCost = row.costCny !== undefined || legacyCostCny !== undefined;
-      const hasEstimatedCost = row.estimatedCostCny !== undefined || legacyEstimatedCostCny !== undefined;
       return {
         ...publicRow,
         ...(view === "session" ? { label: fallbackTitle } : {}),
         ...(view === "day"
           ? { documentTitle: row.documentTitle || fallbackTitle }
           : {}),
-        ...(hasRecordedCost
-          ? { costCny: (row.costCny ?? 0) + (legacyCostCny ?? 0) }
-          : {}),
-        ...(hasEstimatedCost
-          ? { estimatedCostCny: (row.estimatedCostCny ?? 0) + (legacyEstimatedCostCny ?? 0) }
-          : {}),
       };
     }),
+    scheduleRevision: PRICING_SCHEDULE.revision,
     ...(providerBalance
       ? {
           providerBalance: {

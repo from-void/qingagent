@@ -86,7 +86,6 @@ instance token，仍保持零配置。
 | `QINGAGENT_ALLOW_PRIVATE_MODEL_HOST` | Web/自部署关；桌面客户端默认 `1` | 仅 `=1` 放行主模型访问私网/链路本地（含云元数据）；loopback 无需开启。桌面端为支持公司内网/自建模型网关默认开启，显式设 `0` 可关；只影响主模型出站，不放宽网页/文档抓取的 SSRF 防线 |
 | `QINGAGENT_MODEL_FLASH` / `QINGAGENT_MODEL_PRO` | deepseek 系 | 快/强两档模型 id |
 | `QINGAGENT_MODEL_PROTOCOL` | `openai` | 模型协议(`openai`/`anthropic`) |
-| `DEEPSEEK_PEAK_PRICING_JSON` | `{"enabled":false,"multiplier":2,"windows":[{"start":"09:00","end":"12:00"},{"start":"14:00","end":"18:00"}]}` | DeepSeek 峰谷计价；窗口固定按北京时间解释且采用 `[start,end)`。官方正式生效前保持关闭；生效后可只把 `enabled` 改为 `true` |
 
 **功能开关**
 

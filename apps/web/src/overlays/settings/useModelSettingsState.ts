@@ -100,6 +100,7 @@ export function useModelUsageState() {
   const [totalUsage, setTotalUsage] = useState<UsageRow[] | null>(null);
   const [docStats, setDocStats] = useState<{ docs: number; words: number } | null>(null);
   const [providerBalance, setProviderBalance] = useState<UsageSummaryResponse["providerBalance"]>(undefined);
+  const [scheduleRevision, setScheduleRevision] = useState("");
   const [dashboardSettled, setDashboardSettled] = useState({
     day: false,
     total: false,
@@ -113,6 +114,7 @@ export function useModelUsageState() {
     usageDate, setUsageDate, excludedModels, setExcludedModels,
     dayUsage, setDayUsage, totalUsage, setTotalUsage, docStats, setDocStats,
     providerBalance, setProviderBalance,
+    scheduleRevision, setScheduleRevision,
     dashboardSettled, setDashboardSettled,
   };
 }

@@ -5,6 +5,7 @@ import {
   fmtWords,
   formatTokens,
   pieGradient,
+  pricingCoverageText,
   type buildDailyTrend,
   type buildModelDistribution,
   type summarizeRecentDays,
@@ -54,7 +55,7 @@ export function ModelUsageDashboard({
                     <div className="md-metric-scope">本机本实例 · {usageTimeZone}</div>
                     <div className="md-metric-value-row">
                       <div className="md-metric-value md-value-accent font-mono" title="provider 返回 usage 的精确金额">
-                        {recent?.hasPriced
+                        {recent && recent.pricedCalls > 0
                           ? <AnimatedNumber value={recent.cost} format={fmtMoney} />
                           : "—"}
                       </div>
@@ -67,9 +68,14 @@ export function ModelUsageDashboard({
                     <div className="md-metric-sub">
                       {!dashboardReady ? pendingSub : recent ? `${formatTokens(recent.tokens)} tokens` : "暂无记录"}
                     </div>
-                    {dashboardReady && recent && recent.estimatedCalls > 0 ? (
+                    {dashboardReady && recent && recent.estimatedPricedCalls > 0 ? (
                       <div className="md-metric-estimated" data-wf="UsageEstimatedCost">
                         另有 {recent.estimatedCalls} 次估算 · 估算 {fmtMoney(recent.estimatedCost)}
+                      </div>
+                    ) : null}
+                    {dashboardReady && recent && pricingCoverageText(recent) ? (
+                      <div className="md-metric-coverage-note" data-wf="UsagePricingCoverageRecent">
+                        {pricingCoverageText(recent)}
                       </div>
                     ) : null}
                     {dashboardReady && coverageNeedsAttention && recent.missingCalls > 0 ? (
@@ -144,6 +150,11 @@ export function ModelUsageDashboard({
                               <span className="md-legend-name">{m.name}</span>
                               <span className="md-legend-num">
                                 {m.pct.toFixed(0)}% · <span className="md-model-cost">{fmtMoney(m.cost)}</span>
+                                {pricingCoverageText(m) ? (
+                                  <small data-wf="UsagePricingCoverageDistribution">
+                                    {pricingCoverageText(m)}
+                                  </small>
+                                ) : null}
                               </span>
                             </li>
                           ))}
@@ -168,9 +179,17 @@ export function ModelUsageDashboard({
                         <div className="md-trend">
                           {trend.days.map((d, i) => {
                             const h = trend.max > 0 ? Math.round((d.cost / trend.max) * 100) : 0;
-                            const title = `${d.date} · ¥${d.cost.toFixed(3)} · ${formatTokens(d.tokens)} tokens`;
+                            const coverage = pricingCoverageText(d);
+                            const title = `${d.date} · ¥${d.cost.toFixed(3)} · ${formatTokens(d.tokens)} tokens${coverage ? ` · ${coverage}` : ""}`;
                             return (
-                              <div className="md-trend-col" key={d.date} title={title} aria-label={title}>
+                              <div
+                                className="md-trend-col"
+                                key={d.date}
+                                title={title}
+                                aria-label={title}
+                                data-pricing-coverage={coverage ?? undefined}
+                                data-wf={coverage ? "UsagePricingCoverageTrend" : undefined}
+                              >
                                 <div
                                   className={`md-trend-bar${d.cost > 0 ? "" : " md-trend-bar--empty"}`}
                                   style={{ height: d.cost > 0 ? `${Math.max(4, h)}%` : "2px", animationDelay: `${i * 25}ms` }}

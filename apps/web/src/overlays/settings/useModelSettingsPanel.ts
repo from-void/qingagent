@@ -87,6 +87,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     usageDate, setUsageDate, excludedModels, setExcludedModels,
     dayUsage, setDayUsage, totalUsage, setTotalUsage, docStats, setDocStats,
     providerBalance, setProviderBalance,
+    scheduleRevision, setScheduleRevision,
     dashboardSettled, setDashboardSettled,
   } = useModelUsageState();
   const mountedRef = useRef(true);
@@ -257,6 +258,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       const body = (await res.json()) as Partial<UsageSummaryResponse>;
       if (mountedRef.current && !signal?.aborted) {
         setUsage(body.rows ?? []);
+        if (typeof body.scheduleRevision === "string") setScheduleRevision(body.scheduleRevision);
         setUsageStatus("ready");
       }
     } catch {
@@ -281,6 +283,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
           setProviderBalance(body?.providerBalance);
         }
         else setTotalUsage(rows);
+        if (typeof body?.scheduleRevision === "string") setScheduleRevision(body.scheduleRevision);
       }
     } catch {
       if (mountedRef.current && !signal?.aborted) {
@@ -995,6 +998,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     handleSaveCustom,
     recent,
     providerBalance,
+    scheduleRevision,
     usageTimeZone,
     docStats,
     modelDist,

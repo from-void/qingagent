@@ -45,13 +45,13 @@ describe("0036 review ignore supplements", () => {
           "用户手写：保留英文 Product-X。",
           "",
           "## 已确认忽略",
-          "- 已确认无需处理，不再标记：「尽快推动项目落地」(2026-08-01)",
-          "- 已确认无需处理，不再标记：「无需补充负责人」(2026-08-03)",
+          "- 已确认无需处理，不再标记：「尽快推动项目落地」；问题：「行动建议空泛」(2026-08-01) <!-- qingagent-review-ignore-key:migration-0036:signal-1 -->",
+          "- 已确认无需处理，不再标记：「无需补充负责人」；问题：「历史决定」(2026-08-03) <!-- qingagent-review-ignore-key:migration-0036:signal-3 -->",
         ].join("\n"),
       }),
       expect.objectContaining({
         type: "source",
-        supplement: "## 已确认忽略\n- 已确认无需处理，不再标记：「收入为130亿元」(2026-08-02)",
+        supplement: "## 已确认忽略\n- 已确认无需处理，不再标记：「收入为130亿元」；问题：「数字失真」(2026-08-02) <!-- qingagent-review-ignore-key:migration-0036:signal-2 -->",
       }),
     ]);
     const table = await client.execute(

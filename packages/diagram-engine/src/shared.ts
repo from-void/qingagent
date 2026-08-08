@@ -51,12 +51,6 @@ export const FLOW_EDGE_ID_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})@`, 
 
 export const MERMAID_ID_PREFIX_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})`, "u");
 
-export const EDGE_OPS: EditOp["kind"][] = ["connectEdge", "deleteEdge", "reconnectEdge", "setEdgeLabel", "setEdgeArrow"];
-
-export const NODE_OPS: EditOp["kind"][] = ["addNode", "deleteNode", "relabelNode", "setNodeShape"];
-
-export const MINDMAP_OPS: EditOp["kind"][] = ["addNode", "deleteNode", "relabelNode", "moveNode", "setNodeShape", "setEdgeLabel"];
-
 export function isQuoted(value: string): boolean {
   const trimmed = value.trim();
   return (trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"));

@@ -1,5 +1,5 @@
 import type { BridgeFrame, Command } from "@qingagent/contract-ts";
-import { mastra, type ModelOverrides } from "./bridgeCore";
+import type { ModelOverrides } from "./bridgeCore";
 import { registerBridgeCommandHandler } from "./commandRuntime";
 import {
   getFailureFromFrame,
@@ -12,9 +12,6 @@ import type { CommandExecutionContext } from "./commandTypes";
 import type { TurnPreemptionReason } from "./sessionActor";
 import { getSession } from "./sessionRegistry";
 import { handleTurnCommand } from "./turnOrchestration";
-
-const _agent = mastra.getAgent("qingagent");
-void _agent;
 
 export async function* handleCommand(
   command: Command,

@@ -38,7 +38,3 @@ export interface ConnectorInfo {
   usedBySkills: string[];
   status: ConnectorStatus;
 }
-
-export interface ConnectorListResponse {
-  connectors: ConnectorInfo[];
-}

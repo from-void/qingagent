@@ -210,10 +210,6 @@ export function stylePropertiesFullyRepresented(
   });
 }
 
-export function initDirectiveFullyRepresented(source: string): boolean {
-  return initDirectiveUnavailableReason(source) === null;
-}
-
 export function initDirectiveUnavailableReason(source: string): string | null {
   const initMatches = [...source.matchAll(/%%\{\s*init\s*:/gi)];
   if (initMatches.length === 0) return null;

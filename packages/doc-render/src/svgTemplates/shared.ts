@@ -72,35 +72,6 @@ export function truncateByWidth(text: string, maxWidth: number, fontSize: number
   return out.length > 0 ? `${out}${ellipsis}` : ellipsis;
 }
 
-export function wrapText(text: string, maxWidth: number, fontSize: number, maxLines: number): string[] {
-  const lines: string[] = [];
-  let current = "";
-
-  for (const ch of text) {
-    if (estimateTextWidth(current + ch, fontSize) <= maxWidth) {
-      current += ch;
-      continue;
-    }
-    if (current.length > 0) {
-      lines.push(current);
-      current = ch;
-    } else {
-      lines.push(ch);
-    }
-    if (lines.length >= maxLines) break;
-  }
-  if (lines.length < maxLines && current.length > 0) lines.push(current);
-
-  if (lines.length > maxLines) lines.length = maxLines;
-  if (estimateTextWidth(lines.at(-1) ?? "", fontSize) > maxWidth) {
-    lines[lines.length - 1] = truncateByWidth(lines.at(-1) ?? "", maxWidth, fontSize);
-  }
-  if (text.length > lines.join("").length && lines.length > 0) {
-    lines[lines.length - 1] = truncateByWidth(lines.at(-1) ?? "", maxWidth, fontSize);
-  }
-  return lines.length > 0 ? lines : [""];
-}
-
 export function svgText(text: string, x: number, y: number, fontSize: number, fill: string, attrs = ""): string {
   const attrText = attrs ? ` ${attrs}` : "";
   return `<text x="${Math.round(x)}" y="${Math.round(y)}" font-size="${fontSize}" fill="${fill}" font-family="sans-serif"${attrText}>${escapeXmlText(text)}</text>`;

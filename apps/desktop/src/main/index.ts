@@ -428,28 +428,6 @@ if (app.isPackaged && !process.env.QINGAGENT_SKILLS_DIR) {
   process.env.QINGAGENT_SKILLS_DIR = path.join(process.resourcesPath, "skills");
 }
 
-// 用户技能目录不再改写到 userData:打包版曾指向
-// ~/Library/Application Support/@qingagent/desktop/skills,与用户/其它 CLI 实际的
-// 安装位置(~/.qingagent/skills、~/.agents/skills)全都对不上,于是明明装过却被
-// 告知"没安装"(0729 真机 P1)。这里保持 core 默认口径,由 core 统一多来源发现。
-// 需要自定义时仍可显式设 QINGAGENT_USER_SKILLS_DIR。
-//
-// 但历史 userData 目录必须继续被扫到:存量用户此前经打包版装的技能就落在那里,
-// 直接摘掉等于在他们身上复发同一个病。按"只增不搬"处理——追加成历史自有来源,
-// 发现与管理面视同已安装,但 agent 沙箱仍只读；新技能仍装到现装目录。
-// 追加而非覆盖,保留用户自设的值。
-if (app.isPackaged) {
-  const legacyUserSkillsDir = path.join(userDataDir, "skills");
-  const existing = (process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS ?? "")
-    .split(path.delimiter)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  if (!existing.includes(legacyUserSkillsDir)) {
-    process.env.QINGAGENT_LEGACY_USER_SKILLS_DIRS = [...existing, legacyUserSkillsDir]
-      .join(path.delimiter);
-  }
-}
-
 if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
   process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS = [
     path.dirname(process.execPath),

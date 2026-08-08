@@ -831,8 +831,7 @@ export async function findSkillOnDisk(name: string): Promise<SkillListItem | nul
 
 /**
  * 管理操作必须落到发现条目自己的真实路径，同时把目标约束在已知用户技能根内。
- * 不能用请求 name 重新拼 SKILLS_INSTALL_DIR：legacy 技能并不位于现装目录；
- * 也不能只信发现结果里的字符串路径，真实路径校验会拒绝符号链接逃逸。
+ * 不能只信发现结果里的字符串路径，真实路径校验会拒绝符号链接逃逸。
  */
 export async function resolveInstalledSkillMutationPath(
   skill: Pick<SkillListItem, "path" | "source">,

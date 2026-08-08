@@ -1369,44 +1369,6 @@ export async function persistSessionMetadata(
         });
       }
 
-      if (isSessionDeleted(sid)) {
-        logger.info("Skipping derived documents persist for deleted session", {
-          sessionId: sid,
-          reason,
-        });
-        return;
-      }
-
-      // 0702 review Lane A:影子写必须整体使用 serializeMetadata 时刻的快照(meta.doc),
-      // 不能晚读活引用 state.doc——updateThread await 期间若发生 updateDoc 提交,
-      // 会把「新内容 + 旧 docVersion」的错位对写进 documents(documentRepo.save 的
-      // 版本守卫能挡住版本回退,但等版本+内容变化分支仍可能放行错位内容)。
-      // 快照一致后,期间的新变更由 schedulePersist 的 dirty 循环下一轮补写。
-      // documents 只保存正文及其从 Mastra thread 派生出的缓存字段。即使其短暂不可用，
-      // 也不能让熔断器永久跳过后续同步；每次权威元数据落库后都尝试收敛一次。
-      if (meta.doc) {
-        try {
-          await documentRepo.save({
-            id: meta.docId ?? state.sessionId,
-            threadId: state.threadId ?? state.sessionId,
-            resourceId: state.resourceId,
-            title: meta.title,
-            docState: meta.docState.kind,
-            docVersion: meta.docVersion,
-            lastSyncedVersion: meta.lastSyncedDocumentSnapshot,
-            legacySections: meta.legacySections,
-            pmDoc: meta.doc,
-            createdAt: meta.lastPersistedAt,
-            updatedAt: meta.lastPersistedAt,
-          });
-        } catch (shadowErr) {
-          logger.warn("Derived documents write failed; it will be reconciled from Mastra metadata", {
-            sessionId: state.sessionId,
-            error: shadowErr instanceof Error ? shadowErr.message : String(shadowErr),
-          });
-        }
-      }
-
       // write 成功后再 diff + 记 span。基线只在确有变化时推进到「本次写入的」
       // 快照，避免 write 失败重试漏记。span 失败已在内部 try/catch 吞掉，绝不
       // 影响主链路。

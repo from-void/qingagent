@@ -63,16 +63,16 @@ describe("reviewTemplateRepo", () => {
           ('doc-b','thread-b','qingagent-user','B','editing',?,?,'main')`,
       args: [now, now, now, now],
     });
-    await upsertReviewDocSupplement("doc-a", "sensitive", "引用只标记");
-    await upsertReviewDocSupplement("doc-a", "source", "重点核对金额");
-    expect(await getReviewDocSupplement("doc-a", "sensitive")).toBe("引用只标记");
-    expect(await getReviewDocSupplement("doc-a", "source")).toBe("重点核对金额");
-    expect(await getReviewDocSupplement("doc-b", "sensitive")).toBe("");
-    await upsertReviewDocSupplement("doc-a", "sensitive", "");
-    expect(await getReviewDocSupplement("doc-a", "sensitive")).toBe("");
+    await upsertReviewDocSupplement("doc-a", "sensitive", "引用只标记", "");
+    await upsertReviewDocSupplement("doc-a", "source", "重点核对金额", "");
+    expect(await getReviewDocSupplement("doc-a", "sensitive", "")).toBe("引用只标记");
+    expect(await getReviewDocSupplement("doc-a", "source", "")).toBe("重点核对金额");
+    expect(await getReviewDocSupplement("doc-b", "sensitive", "")).toBe("");
+    await upsertReviewDocSupplement("doc-a", "sensitive", "", "");
+    expect(await getReviewDocSupplement("doc-a", "sensitive", "")).toBe("");
   });
 
-  it("同文档同类型按自定义模板隔离补充要求，且老记录可作为兼容基线读取", async () => {
+  it("同文档同类型按自定义模板隔离补充要求", async () => {
     await listReviewTemplates("custom");
     const client = getDocumentsClient();
     const now = "2026-08-06T00:00:00.000Z";
@@ -81,35 +81,12 @@ describe("reviewTemplateRepo", () => {
         VALUES('doc-custom-scopes','thread-custom-scopes','qingagent-user','模板隔离','editing',?,?,'main')`,
       args: [now, now],
     });
-    await upsertReviewDocSupplement("doc-custom-scopes", "custom", "老 custom 补充");
-    expect(await getReviewDocSupplement("doc-custom-scopes", "custom", "review-custom-x"))
-      .toBe("老 custom 补充");
-    expect(await getReviewDocSupplement("doc-custom-scopes", "custom", "review-custom-y"))
-      .toBe("老 custom 补充");
-
     await upsertReviewDocSupplement("doc-custom-scopes", "custom", "只属于模板 X", "review-custom-x");
     await upsertReviewDocSupplement("doc-custom-scopes", "custom", "只属于模板 Y", "review-custom-y");
     expect(await getReviewDocSupplement("doc-custom-scopes", "custom", "review-custom-x"))
       .toBe("只属于模板 X");
     expect(await getReviewDocSupplement("doc-custom-scopes", "custom", "review-custom-y"))
       .toBe("只属于模板 Y");
-    expect(await getReviewDocSupplement("doc-custom-scopes", "custom"))
-      .toBe("老 custom 补充");
-
-    const legacyLine = "- 已确认无需处理，不再标记：「老决定」(2026-08-01)";
-    await upsertReviewDocSupplement(
-      "doc-custom-scopes",
-      "custom",
-      `老 custom 补充\n\n## 已确认忽略\n${legacyLine}`,
-    );
-    const scopedWithLegacyDecision = await getReviewDocSupplement(
-      "doc-custom-scopes",
-      "custom",
-      "review-custom-x",
-    );
-    expect(scopedWithLegacyDecision).toContain("只属于模板 X");
-    expect(scopedWithLegacyDecision).toContain(legacyLine);
-    expect(scopedWithLegacyDecision).not.toContain("老 custom 补充");
   });
 
   it("并发删除同类最后两个模板时仍原子保底一个", async () => {

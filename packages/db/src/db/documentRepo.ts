@@ -1,10 +1,8 @@
 import type { InStatement, Row } from "@libsql/client";
-import type { LegacySection } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   getStablePmJson,
   normalizePmDoc,
-  pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import {
@@ -27,7 +25,6 @@ export interface DocumentRow {
   docState: string;
   docVersion: number;
   lastSyncedVersion: number;
-  legacySections: LegacySection[];
   pmDoc?: PmDoc;
   schemaVersion?: number;
   contentHash?: string;
@@ -45,7 +42,6 @@ export interface DocumentSaveInput {
   docState: string;
   docVersion: number;
   lastSyncedVersion: number;
-  legacySections?: LegacySection[];
   pmDoc: PmDoc;
   schemaVersion?: number;
   contentHash?: string;
@@ -129,14 +125,9 @@ export function parsePmDoc(value: unknown): PmDoc {
   return normalizePmDoc(parsed);
 }
 
-export function projectPmDocToSections(pmDoc: PmDoc): LegacySection[] {
-  return pmToLegacySections(pmDoc) as unknown as LegacySection[];
-}
-
 interface PmProjection {
   pmDoc: PmDoc;
   pmJson: string;
-  legacySections: LegacySection[];
   schemaVersion: number;
   contentHash: string;
   docFormat: string;
@@ -149,11 +140,9 @@ export function buildPmProjection(input: {
 }
 
 function projectNormalizedPmDoc(pmDoc: PmDoc): PmProjection {
-  const legacySections = projectPmDocToSections(pmDoc);
   return {
     pmDoc,
     pmJson: getStablePmJson(pmDoc),
-    legacySections,
     schemaVersion: pmDoc.attrs.schemaVersion,
     contentHash: getPmContentHash(pmDoc),
     docFormat: "pm",
@@ -182,7 +171,6 @@ function mapRow(row: Row): MappedDocumentRow {
       docState: valueAsString(row.doc_state),
       docVersion: valueAsNumber(row.doc_version),
       lastSyncedVersion: valueAsNumber(row.last_synced_version),
-      legacySections: projection.legacySections,
       pmDoc,
       schemaVersion: projection.schemaVersion,
       contentHash: projection.contentHash,

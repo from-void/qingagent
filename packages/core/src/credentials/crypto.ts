@@ -35,8 +35,6 @@ export type CredentialProtectionLevel =
 export interface CredentialKeyProviderInfo {
   id: string;
   protectionLevel: CredentialProtectionLevel;
-  /** wrapper-only 升级后旧版本不能直接读取；降级前必须由当前版本恢复文件 provider。 */
-  downgradePolicy: "not_applicable" | "export_before_downgrade";
   reasonCode?: "credential_key_unavailable";
 }
 
@@ -158,7 +156,6 @@ export function createFileCredentialKeyProvider(
     info: {
       id: "file-v1",
       protectionLevel: "local_file",
-      downgradePolicy: "not_applicable",
     },
     resolveKey(): Buffer {
       if (providerKey) return providerKey;
@@ -192,7 +189,6 @@ function unavailableProvider(
     info: {
       id,
       protectionLevel: "unavailable",
-      downgradePolicy: "not_applicable",
       reasonCode: "credential_key_unavailable",
     },
     resolveKey(): Buffer {
@@ -257,45 +253,12 @@ export async function initializeEnvironmentCredentialKeyProvider(
       info: {
         id: "env-v1",
         protectionLevel: "environment",
-        downgradePolicy: "not_applicable",
       },
       resolveKey: () => key,
     };
   } catch (cause) {
     return unavailableProvider("环境变量凭据密钥无法解开既有凭据", cause, "env-unavailable");
   }
-}
-
-/**
- * 降级恢复原语：用户明确确认降级后，把当前 provider 的同一枚 key 原子恢复为旧版本可读
- * 的 chmod600 `.cred-key`。既有不同 key 绝不覆盖。
- */
-export function exportCredentialKeyForDowngrade(
-  provider: CredentialKeyProvider,
-  dataDir = credentialDataDir(),
-): string {
-  const key = provider.resolveKey();
-  const keyPath = credentialKeyFilePath(dataDir);
-  if (existsSync(keyPath)) {
-    const existing = decodeKeyBase64(readFileSync(keyPath, "utf8"), `凭据密钥文件 ${keyPath}`);
-    if (!existing.equals(key)) {
-      throw new CredentialKeyUnavailableError("降级恢复文件已存在且密钥不一致，禁止覆盖");
-    }
-    hardenPermissions(keyPath);
-    return keyPath;
-  }
-  try {
-    writeNewFileDurably(keyPath, key.toString("base64"));
-  } catch (cause) {
-    const code = typeof cause === "object" && cause && "code" in cause ? String(cause.code) : "";
-    if (code !== "EEXIST") throw cause;
-  }
-  const winner = decodeKeyBase64(readFileSync(keyPath, "utf8"), `凭据密钥文件 ${keyPath}`);
-  if (!winner.equals(key)) {
-    throw new CredentialKeyUnavailableError("降级恢复文件并发胜者密钥不一致，禁止降级");
-  }
-  hardenPermissions(keyPath);
-  return keyPath;
 }
 
 /**
@@ -328,7 +291,6 @@ export async function initializeSafeStorageCredentialKeyProvider(
         info: {
           id: "electron-safe-storage-v1",
           protectionLevel: "os_keychain",
-          downgradePolicy: "export_before_downgrade",
         },
         resolveKey: () => key,
       };
@@ -365,7 +327,6 @@ export async function initializeSafeStorageCredentialKeyProvider(
       info: {
         id: "electron-safe-storage-v1",
         protectionLevel: "os_keychain",
-        downgradePolicy: "export_before_downgrade",
       },
       resolveKey: () => winnerKey,
     };
@@ -390,7 +351,6 @@ function envCredentialKeyProvider(): CredentialKeyProvider | null {
     info: {
       id: "env-v1",
       protectionLevel: "environment",
-      downgradePolicy: "not_applicable",
     },
     resolveKey: () => decodeKeyBase64(value, "QINGAGENT_CREDENTIAL_KEY"),
   };
@@ -459,9 +419,10 @@ export function encryptCredentialWithKey(plaintext: string, key: Buffer): string
 }
 
 export function decryptCredentialWithKey(stored: string, key: Buffer): string {
-  const encoded = stored.startsWith(CIPHERTEXT_PREFIX)
-    ? stored.slice(CIPHERTEXT_PREFIX.length)
-    : stored; // v0 兼容：历史库直接存 iv|tag|ciphertext 的 base64。
+  if (!stored.startsWith(CIPHERTEXT_PREFIX)) {
+    throw new Error("凭据密文格式非法(版本不受支持)");
+  }
+  const encoded = stored.slice(CIPHERTEXT_PREFIX.length);
   const buf = Buffer.from(encoded, "base64");
   if (buf.length < IV_BYTES + AUTH_TAG_BYTES) {
     throw new Error("凭据密文格式非法(长度不足)");

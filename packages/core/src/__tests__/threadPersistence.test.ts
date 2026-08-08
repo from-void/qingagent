@@ -1689,7 +1689,7 @@ describe("thread persistence", () => {
     expect(JSON.stringify(restored?.messages)).not.toContain("服务器系统时间");
   });
 
-  it("restore 遇到空 meta.messages 时按旧会话走 recall 兜底", async () => {
+  it("restore 遇到空 meta.messages 时从 recall V2 内容恢复", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-empty-meta-messages";
     memory.recall.mockResolvedValueOnce({
@@ -1697,7 +1697,10 @@ describe("thread persistence", () => {
         {
           id: "recall-user-1",
           role: "user",
-          content: "旧会话上下文",
+          content: {
+            format: 2,
+            parts: [{ type: "text", text: "会话上下文" }],
+          },
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
         },
       ],
@@ -1715,7 +1718,7 @@ describe("thread persistence", () => {
     expect(restored?.messages).toEqual([
       {
         role: "user",
-        content: "旧会话上下文",
+        content: "会话上下文",
         id: "recall-user-1",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
@@ -2157,9 +2160,11 @@ describe("thread persistence", () => {
           : "2025-01-01T00:00:00.000Z",
       },
     }));
-    memory.listThreads
-      .mockResolvedValueOnce({ threads: all, total: all.length, hasMore: false })
-      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: all,
+      total: all.length,
+      hasMore: false,
+    });
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 50 });
 
@@ -2190,9 +2195,11 @@ describe("thread persistence", () => {
       updatedAt: new Date("2026-07-20T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "2026-07-20T00:00:00.000Z" },
     };
-    memory.listThreads
-      .mockResolvedValueOnce({ threads: [tombstoned, visible], total: 2, hasMore: false })
-      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: [tombstoned, visible],
+      total: 2,
+      hasMore: false,
+    });
     await beginSessionDeletion(tombstoned.id);
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 1 });
@@ -2202,7 +2209,7 @@ describe("thread persistence", () => {
     expect(result.hasMore).toBe(false);
   });
 
-  it("首页查询 current 优先去重，并用统一有效时间与稳定 tie-break", async () => {
+  it("首页查询使用统一有效时间与稳定 tie-break", async () => {
     const { listHomeSessionThreads } = await import("../session/threadPersistence.js");
     const sharedCreatedAt = new Date("2026-01-01T00:00:00.000Z");
     const currentDuplicate = {
@@ -2212,13 +2219,6 @@ describe("thread persistence", () => {
       createdAt: sharedCreatedAt,
       updatedAt: new Date("2026-02-01T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "not-a-date", source: "current" },
-    };
-    const legacyDuplicate = {
-      ...currentDuplicate,
-      title: "legacy",
-      resourceId: "user-default",
-      updatedAt: new Date("2028-01-01T00:00:00.000Z"),
-      metadata: { lastContentEditedAt: "2029-01-01T00:00:00.000Z", source: "legacy" },
     };
     const tieB = {
       id: "b-id",
@@ -2236,13 +2236,11 @@ describe("thread persistence", () => {
       createdAt: new Date("2026-03-01T00:00:00.000Z"),
       metadata: { lastContentEditedAt: "1970-01-01T00:00:00.000Z" },
     };
-    memory.listThreads
-      .mockResolvedValueOnce({
-        threads: [currentDuplicate, tieB, tieA, newerCreated],
-        total: 4,
-        hasMore: false,
-      })
-      .mockResolvedValueOnce({ threads: [legacyDuplicate], total: 1, hasMore: false });
+    memory.listThreads.mockResolvedValueOnce({
+      threads: [currentDuplicate, tieB, tieA, newerCreated],
+      total: 4,
+      hasMore: false,
+    });
 
     const result = await listHomeSessionThreads({ page: 0, perPage: 10 });
 

@@ -189,25 +189,13 @@ async function resolveThreadId(argv: string[]): Promise<string> {
   // 复用 app 的 Memory；listThreads 会按 updatedAt 排序。
   const memory = getMemory();
   const QINGAGENT_RESOURCE_ID = "qingagent-user";
-  const LEGACY_RESOURCE_ID = "user-default";
-  const [current, legacy] = await Promise.all([
-    memory.listThreads({
-      filter: { resourceId: QINGAGENT_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: 200,
-    }),
-    memory.listThreads({
-      filter: { resourceId: LEGACY_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: 200,
-    }),
-  ]);
-  const all = [...current.threads, ...legacy.threads].sort(
-    (a: any, b: any) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
+  const current = await memory.listThreads({
+    filter: { resourceId: QINGAGENT_RESOURCE_ID },
+    orderBy: { field: "updatedAt", direction: "DESC" },
+    page: 0,
+    perPage: 200,
+  });
+  const all = current.threads;
   if (all.length === 0) throw new Error("数据库中没有任何 thread。");
 
   if (titleIdx !== -1) {

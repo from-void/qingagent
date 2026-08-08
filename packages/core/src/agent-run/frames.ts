@@ -13,17 +13,6 @@ import type { SessionState } from "../session/sessionState.js";
 import { LLM_IO_FIELD_LIMIT, summarizeToolValue } from "./redaction.js";
 import crypto from "node:crypto";
 
-const LEGACY_TOOL_TRANSCRIPT_RE = /^\[tool-result\]\r?\ntoolName: ([^\r\n]+)\r?\ntoolCallId: ([^\r\n]+)\r?\nargs: ([^\r\n]*)\r?\nresult: ([^\r\n]*)$/u;
-
-function parseLegacyTranscriptValue(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    // 历史超长字段可能被截断成非 JSON；保留已脱敏的旧文本，不能因迁移丢上下文。
-    return value;
-  }
-}
-
 function structuredToolTranscript(input: {
   toolName: string;
   toolCallId: string;
@@ -50,39 +39,6 @@ function structuredToolTranscript(input: {
       }],
     },
   ];
-}
-
-/**
- * 把旧版内部五行文本回放迁移为 provider 原生工具角色。
- *
- * 只认 appendToolTranscriptMessage 曾生成的完整固定形状，普通提及 `[tool-result]`
- * 的正文不改。转换不含时间戳、随机 ID 或轮次变量，同一历史的序列化字节恒定；老会话
- * 首次进入新版时会发生一次历史前缀失效，持久化后后续轮次仍保持 append-only 前缀。
- */
-export function normalizeLegacyToolTranscriptMessages(
-  messages: CoreMessage[],
-): CoreMessage[] {
-  let normalized: CoreMessage[] | null = null;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]!;
-    if (message.role !== "assistant" || typeof message.content !== "string") {
-      if (normalized) normalized.push(message);
-      continue;
-    }
-    const match = LEGACY_TOOL_TRANSCRIPT_RE.exec(message.content);
-    if (!match) {
-      if (normalized) normalized.push(message);
-      continue;
-    }
-    if (!normalized) normalized = messages.slice(0, index);
-    normalized.push(...structuredToolTranscript({
-      toolName: match[1]!,
-      toolCallId: match[2]!,
-      args: parseLegacyTranscriptValue(match[3]!),
-      result: parseLegacyTranscriptValue(match[4]!),
-    }));
-  }
-  return normalized ?? messages;
 }
 
 export function appendToolTranscriptMessage(

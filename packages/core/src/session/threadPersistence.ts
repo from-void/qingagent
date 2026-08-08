@@ -84,7 +84,6 @@ import { sessionOwnedThreadIds } from "./sessionShadowThreads.js";
 
 const logger = mastra.getLogger();
 export const QINGAGENT_RESOURCE_ID = "qingagent-user";
-const LEGACY_RESOURCE_ID = "user-default";
 const PRIMARY_METADATA_WRITE_MAX_ATTEMPTS = 5;
 const PRIMARY_METADATA_WRITE_INITIAL_BACKOFF_MS = 50;
 const SCHEDULE_PERSIST_MAX_ATTEMPTS = 3;
@@ -1730,19 +1729,10 @@ export function cleanRestoredText(text: string): string {
  * `{ format: 2, parts: MastraMessagePart[] }` where text parts have `{ type: "text", text: string }`.
  */
 function extractTextFromDbContent(content: unknown): string {
-  if (typeof content === "string") return content;
   if (!content || typeof content !== "object") return "";
   const c = content as Record<string, unknown>;
-  // MastraMessageContentV2 format
   if (Array.isArray(c.parts)) {
     return (c.parts as Array<Record<string, unknown>>)
-      .filter((p) => p.type === "text" && typeof p.text === "string")
-      .map((p) => p.text as string)
-      .join("");
-  }
-  // Legacy array-of-content-parts format
-  if (Array.isArray(content)) {
-    return (content as Array<Record<string, unknown>>)
       .filter((p) => p.type === "text" && typeof p.text === "string")
       .map((p) => p.text as string)
       .join("");
@@ -2216,35 +2206,12 @@ export async function listSessionThreads(opts: {
   const memory = mastra.getMemory("default");
   if (!memory) return { threads: [], total: 0, hasMore: false };
 
-  const [current, legacy] = await Promise.all([
-    memory.listThreads({
-      filter: { resourceId: QINGAGENT_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: opts.page ?? 0,
-      perPage: opts.perPage ?? 50,
-    }),
-    memory.listThreads({
-      filter: { resourceId: LEGACY_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: opts.page ?? 0,
-      perPage: opts.perPage ?? 50,
-    }),
-  ]);
-
-  const threadsById = new Map<string, StorageThreadType>();
-  for (const thread of [...current.threads, ...legacy.threads]) {
-    threadsById.set(thread.id, thread);
-  }
-
-  const threads = Array.from(threadsById.values()).sort(
-    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-  );
-
-  return {
-    threads,
-    total: current.total + legacy.total,
-    hasMore: current.hasMore || legacy.hasMore,
-  };
+  return memory.listThreads({
+    filter: { resourceId: QINGAGENT_RESOURCE_ID },
+    orderBy: { field: "updatedAt", direction: "DESC" },
+    page: opts.page ?? 0,
+    perPage: opts.perPage ?? 50,
+  });
 }
 
 export type HomeSessionThread = StorageThreadType & {
@@ -2277,7 +2244,7 @@ function parsedHomeThread(thread: StorageThreadType): HomeSessionThread & {
 }
 
 /**
- * 首页专用查询：全量拉 current/legacy、current 优先去重、按内容编辑时间排序后分页。
+ * 首页专用查询：全量拉取当前 resource，按内容编辑时间排序后分页。
  * listSessionThreads 保持原有 updatedAt 语义，避免影响 usage/data-admin。
  */
 export async function listHomeSessionThreads(opts: {
@@ -2291,33 +2258,17 @@ export async function listHomeSessionThreads(opts: {
   const memory = mastra.getMemory("default");
   if (!memory) return { threads: [], total: 0, hasMore: false };
 
-  const [current, legacy] = await Promise.all([
-    memory.listThreads({
-      filter: { resourceId: QINGAGENT_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: false,
-    }),
-    memory.listThreads({
-      filter: { resourceId: LEGACY_RESOURCE_ID },
-      orderBy: { field: "updatedAt", direction: "DESC" },
-      page: 0,
-      perPage: false,
-    }),
-  ]);
+  const current = await memory.listThreads({
+    filter: { resourceId: QINGAGENT_RESOURCE_ID },
+    orderBy: { field: "updatedAt", direction: "DESC" },
+    page: 0,
+    perPage: false,
+  });
 
-  const threadsById = new Map<string, StorageThreadType>();
-  for (const thread of current.threads) {
-    threadsById.set(thread.id, thread);
-  }
-  for (const thread of legacy.threads) {
-    if (!threadsById.has(thread.id)) {
-      threadsById.set(thread.id, thread);
-    }
-  }
-
-  const tombstonedSessionIds = await getTombstonedSessionIds([...threadsById.keys()]);
-  const sorted = Array.from(threadsById.values())
+  const tombstonedSessionIds = await getTombstonedSessionIds(
+    current.threads.map((thread) => thread.id),
+  );
+  const sorted = current.threads
     .filter((thread) => !tombstonedSessionIds.has(thread.id))
     .map(parsedHomeThread)
     .sort((a, b) => {

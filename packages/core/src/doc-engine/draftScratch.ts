@@ -92,10 +92,6 @@ export function getSectionText(section: LegacySection): string | null {
   return null;
 }
 
-export function clearDraftMutationScratch(state: SessionState): void {
-  state.patchValidationResults.clear();
-}
-
 export function clearInMemoryDraftDocs(state: SessionState): void {
   state.docDraftBaseSections = null;
   state.docDraftBaseVersion = null;
@@ -107,7 +103,6 @@ export function clearInMemoryDraftDocs(state: SessionState): void {
 
 export function clearDraftConfirmationState(state: SessionState): void {
   clearInMemoryDraftDocs(state);
-  clearDraftMutationScratch(state);
 }
 
 /**
@@ -518,7 +513,6 @@ export function clearReviewDiffState(state: SessionState): void {
 export function clearSuggestionReviewState(state: SessionState): void {
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   clearReviewDiffState(state);
 }
 

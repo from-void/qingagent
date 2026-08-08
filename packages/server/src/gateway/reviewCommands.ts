@@ -193,7 +193,6 @@ export async function* handleReviewCommand(
           ["origin", session.origin ?? "manual"],
           ["docVersion", session.docVersion],
           ["doc", session.doc],
-          ["legacySections", session.legacySections],
           ["modelOverrides", session.modelOverrides],
           ["abortSignal", abortSignal],
         ] as never);

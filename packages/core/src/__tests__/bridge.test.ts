@@ -314,7 +314,6 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
     await addPatch(state, "patch-1");
     state.patchVerdicts.set("patch-1", "accepted");
-    state.patchValidationResults.set("patch-1", { ok: true, applied: true });
     await seedDocumentRow(state);
 
     const frames = await collectAsyncFrames(commitPatches(state, ["patch-1"]));
@@ -357,7 +356,6 @@ describe("commitPatches", () => {
     expect(deriveDocStateFacts(state).hasApplicableReviewPatch).toBe(false);
     expect(state.suggestions.has("patch-1")).toBe(false);
     expect(state.patchVerdicts.has("patch-1")).toBe(false);
-    expect(state.patchValidationResults.size).toBe(0);
   });
 
   it("提交完全部审阅后释放残留 stream 锁,允许后续图编辑保存", async () => {
@@ -365,7 +363,6 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
     await addPatch(state, "patch-1");
     state.patchVerdicts.set("patch-1", "accepted");
-    state.patchValidationResults.set("patch-1", { ok: true, applied: true });
     state.streamId = "stale-review-stream";
     await seedDocumentRow(state);
 
@@ -391,7 +388,6 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
     await addPatch(state, "patch-1");
     state.patchVerdicts.set("patch-1", "accepted");
-    state.patchValidationResults.set("patch-1", { ok: true, applied: true });
     const [match] = findLiteralMatches(
       collectTopLevelTextBlocks(state.doc!),
       "三月的阳光",

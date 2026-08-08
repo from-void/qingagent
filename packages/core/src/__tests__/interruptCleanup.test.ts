@@ -295,7 +295,6 @@ describe("abortAndCleanupTurn", () => {
     state.docDraftBaseSections = [{ kind: "p", data: { text: "base" } }];
     state.docDraftBaseVersion = 3;
     state.docDraftCandidateSections = [{ kind: "p", data: { text: "partial" } }];
-    state.patchValidationResults.set("gen-1", { ok: false, applied: false });
     state._lastEmittedWireKind = "drafting";
     state.chatHistory = [
       {
@@ -328,7 +327,6 @@ describe("abortAndCleanupTurn", () => {
     expect(state.docDraftBaseSections).toBeNull();
     expect(state.docDraftBaseVersion).toBeNull();
     expect(state.docDraftCandidateSections).toBeNull();
-    expect(state.patchValidationResults.size).toBe(0);
 
     const toolFrame = frames.find((frame) => frame.kind === "toolCallUpdated");
     expect(toolFrame).toMatchObject({

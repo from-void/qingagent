@@ -78,7 +78,6 @@ function conflictFrame(sessionId: string): BridgeFrame {
 function clearReviewDraftRuntime(state: SessionState): void {
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   state.suggestionBaseDoc = null;
   state.suggestionBaseVersion = null;
   state.docDraftBaseDoc = null;
@@ -406,7 +405,6 @@ export async function rehydratePendingDraft(
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   state.suggestionBaseDoc = clonePmDoc(currentDoc);
   state.suggestionBaseVersion = baseVersion;
   state.docDraftBaseDoc = clonePmDoc(currentDoc);

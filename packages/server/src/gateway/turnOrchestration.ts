@@ -462,8 +462,6 @@ async function* handleResume(
       ["origin", session.origin ?? "manual"],
       ["docVersion", session.docVersion],
       ["doc", session.doc],
-      ["legacySections", session.legacySections],
-      ["patchValidationResults", session.patchValidationResults],
       ["modelOverrides", session.modelOverrides],
       ["askUserAlreadyCompleted", session._askUserCompleted === true],
       ["isDirectionReset", resumeWasDirectionReset],

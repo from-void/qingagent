@@ -684,8 +684,6 @@ export async function* runAgentTurn(
       ["origin", state.origin ?? "manual"],
       ["docVersion", state.docVersion],
       ["doc", state.doc],
-      ["legacySections", state.legacySections],
-      ["patchValidationResults", state.patchValidationResults],
       ["modelOverrides", state.modelOverrides],
       // 已完成过问卷 → askUser 默认抑制;directionChange 只有在上次完成后出现过有效写入才豁免。
       ["askUserAlreadyCompleted", state._askUserCompleted === true],

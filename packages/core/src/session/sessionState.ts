@@ -33,52 +33,6 @@ export interface BackgroundCommandTombstone {
   at: string;
 }
 
-export interface PatchValidationResult {
-  ok: boolean;
-  applied: boolean;
-  unconfirmed?: boolean;
-  error?: string;
-  blockIndex?: number;
-  suggestionId?: string;
-  conflictKind?: string;
-  hint?: string;
-  before_excerpt?: string;
-  serverReanchorEnabled?: boolean;
-  reanchorAttempted?: boolean;
-  reanchorApplied?: boolean;
-  confidence?: number;
-  matchCount?: number;
-  draftStatus?: DraftStatus;
-  retryPolicy?: DraftRetryPolicy;
-  draftApplied?: boolean;
-  canonicalApplied?: boolean;
-  draftViewHash?: string;
-  draftProtocolVersion?: 1;
-  changedRegion?: DraftChangedRegion;
-}
-
-export type DraftStatus =
-  | "draftUpdated"
-  | "pendingReview"
-  | "anchorNotFound"
-  | "invalidInput"
-  | "unsupported"
-  | "infraUnconfirmed";
-
-export type DraftRetryPolicy =
-  | "doNotRetry"
-  | "retryOnceWithLatestDraft"
-  | "askUser";
-
-export interface DraftChangedRegion {
-  blockIds: string[];
-  blockPath: number[];
-  order: number;
-  afterText: string;
-  quoteHash: string;
-  changedRegionTruncated: boolean;
-}
-
 /** Server-side suggestion record stored during a review cycle. */
 export interface SuggestionRecord {
   messageId: string;
@@ -207,8 +161,6 @@ export interface SessionState {
   _annotationOriginsReplacedThisTurn?: Set<string>;
   /** Verdict per patch: "accepted" | "rejected". Set by updatePatchVerdict. */
   patchVerdicts: Map<string, "accepted" | "rejected">;
-  /** Legacy draft mutation result cache. Kept for persisted-session compatibility. */
-  patchValidationResults: Map<string, PatchValidationResult>;
   /** Turn-scoped baseline for churn-governance confirmation. */
   docDraftBaseSections: LegacySection[] | null;
   docDraftBaseVersion: number | null;
@@ -390,7 +342,6 @@ export function createSession(
     suggestions: new Map(),
     annotationGroups: [],
     patchVerdicts: new Map(),
-    patchValidationResults: new Map(),
     docDraftBaseSections: null,
     docDraftBaseVersion: null,
     docDraftBaseDoc: null,

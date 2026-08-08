@@ -931,7 +931,6 @@ export function createWriteDraftTool(opts: {
         }
         throw error;
       }
-      context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", opts.state.docDraftCandidateDoc ?? finalDoc);
       return {
         ok: true,

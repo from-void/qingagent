@@ -140,7 +140,6 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
       // 前端拿旧锚点套新正文(冷恢复 threadPersistence 有此校验/清理,热恢复此前缺失 → 冷热不一致)。
       session.suggestions.clear();
       session.patchVerdicts.clear();
-      session.patchValidationResults.clear();
       session.suggestionBaseDoc = null;
       session.suggestionBaseVersion = null;
       // 清 draft scratch(等价 core 的 clearInMemoryDraftDocs,直接清字段免动 core 公共导出)

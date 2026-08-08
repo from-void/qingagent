@@ -169,7 +169,6 @@ export async function* handleDraftOrGenericToolResult(
       }
       if (state.docDraftCandidateDoc) {
         requestContext?.set("doc", state.docDraftCandidateDoc);
-        requestContext?.set("legacySections", state.docDraftCandidateSections ?? []);
       }
     } else if (!hasUsableArgs) {
       turn.sawFailedDraftMutationInput = true;

@@ -222,7 +222,6 @@ function deleteSettledRecord(state: SessionState, record: SuggestionRecord): voi
   const id = record.suggestion.id;
   state.suggestions.delete(id);
   state.patchVerdicts.delete(id);
-  state.patchValidationResults.delete(id);
 }
 
 async function persistSuggestionStatus(
@@ -631,7 +630,6 @@ async function rebuildPendingReviewAfterRebase(input: {
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
-  state.patchValidationResults.clear();
   state.suggestionBaseDoc = clonePmDoc(committedDoc);
   state.suggestionBaseVersion = committedVersion;
   state.docDraftBaseDoc = clonePmDoc(committedDoc);

@@ -1,5 +1,4 @@
 export {
-  clearDraftMutationScratch,
   invalidateDraftStateAfterCanonicalWrite,
   clearInMemoryDraftDocs,
   clonePmDoc,

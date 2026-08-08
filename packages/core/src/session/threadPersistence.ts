@@ -2109,7 +2109,6 @@ export async function loadSessionFromThread(
     // 批注独立落在 document_suggestions；恢复时按活动状态重组，不写入 thread metadata 双份真相。
     annotationGroups,
     patchVerdicts,
-    patchValidationResults: new Map(),
     docDraftBaseSections: null,
     docDraftBaseVersion: null,
     docDraftBaseDoc: null,

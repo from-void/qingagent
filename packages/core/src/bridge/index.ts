@@ -52,7 +52,6 @@ export {
 } from "../agent-run/agentSpans.js";
 
 export {
-  clearDraftMutationScratch,
   invalidateDraftStateAfterCanonicalWrite,
   clearInMemoryDraftDocs,
   clonePmDoc,

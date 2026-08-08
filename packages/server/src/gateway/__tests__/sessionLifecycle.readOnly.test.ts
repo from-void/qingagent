@@ -77,6 +77,7 @@ describe("只读会话恢复", () => {
         pages: null,
         wordCount: 1,
         title: "内存素材",
+        parseState: "ready",
       },
       createdAt: "2026-07-27T00:00:00.000Z",
       updatedAt: "2026-07-27T00:00:00.000Z",

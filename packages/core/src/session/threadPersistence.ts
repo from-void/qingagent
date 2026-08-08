@@ -135,8 +135,7 @@ export interface MaterialRecord {
     title: string | null;
     /** 抓取类素材的来源 URL(上传类为 null/缺省),溯源用。 */
     sourceUrl?: string | null;
-    /** 缺省按 ready 处理，兼容旧会话数据。 */
-    parseState?: "ready" | "error";
+    parseState: "ready" | "error";
     /** 解析失败时的友好错误文案。 */
     parseError?: string | null;
   };
@@ -288,10 +287,6 @@ function deserializeConfirmAuditDegraded(value: unknown): ConfirmAuditDegradedMa
   };
 }
 
-function normalizeParseState(value: unknown): "ready" | "error" {
-  return value === "error" ? "error" : "ready";
-}
-
 function deserializeMaterials(records: unknown): Map<string, Material> {
   const map = new Map<string, Material>();
   if (!Array.isArray(records)) return map;
@@ -305,6 +300,7 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
       !isNullableString(r.summary) ||
       !isNullableString(r.fileId) ||
       !isRecord(r.metadata) ||
+      (r.metadata.parseState !== "ready" && r.metadata.parseState !== "error") ||
       !isNonEmptyString(r.createdAt) ||
       !isNonEmptyString(r.updatedAt)
     ) {
@@ -333,7 +329,7 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
         sourceUrl: typeof metadata.sourceUrl === "string" || metadata.sourceUrl === null
           ? metadata.sourceUrl
           : undefined,
-        parseState: normalizeParseState(metadata.parseState),
+        parseState: metadata.parseState as "ready" | "error",
         ...(parseError !== undefined ? { parseError } : {}),
       },
       createdAt: r.createdAt,

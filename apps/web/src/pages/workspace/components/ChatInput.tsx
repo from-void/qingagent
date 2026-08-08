@@ -1339,7 +1339,10 @@ function resourceToReadyRow(resource: Resource): MaterialParseRow {
   const metadata = resource.metadata !== null && typeof resource.metadata === "object" && !Array.isArray(resource.metadata)
     ? resource.metadata as { fileId?: unknown; parseState?: unknown; parseError?: unknown }
     : {};
-  const state = metadata.parseState === "error" ? "error" : "ready";
+  if (metadata.parseState !== "ready" && metadata.parseState !== "error") {
+    throw new TypeError("material resource is missing parseState");
+  }
+  const state = metadata.parseState;
   return {
     id: resource.resourceRef.id,
     fileId: typeof metadata.fileId === "string" && metadata.fileId.length > 0 ? metadata.fileId : null,

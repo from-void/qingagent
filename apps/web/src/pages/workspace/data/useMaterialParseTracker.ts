@@ -118,7 +118,11 @@ function materialFileId(resource: Resource): string | null {
 }
 
 function materialParseState(resource: Resource): "ready" | "error" {
-  return materialMetadata(resource).parseState === "error" ? "error" : "ready";
+  const state = materialMetadata(resource).parseState;
+  if (state !== "ready" && state !== "error") {
+    throw new TypeError("material resource is missing parseState");
+  }
+  return state;
 }
 
 function materialParseError(resource: Resource): string | null {
@@ -139,7 +143,7 @@ function resourceVersionKey(resource: Resource): string {
     resource.resourceRef.id,
     resource.createdAt,
     materialFileId(resource) ?? "",
-    stringField(metadataRecord, "parseState") || "ready",
+    materialParseState(resource),
     stringField(metadataRecord, "parseError"),
     stringField(metadataRecord, "updatedAt"),
     stringField(resourceRecord, "updatedAt"),

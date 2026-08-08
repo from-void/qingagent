@@ -14,8 +14,7 @@ export interface Material {
     title: string | null;
     /** 抓取类素材的来源 URL(parseFile 上传类为 null),供溯源与按源去重。 */
     sourceUrl?: string | null;
-    /** 缺省按 ready 处理，失败素材由 parseError 给出原因。 */
-    parseState?: "ready" | "error";
+    parseState: "ready" | "error";
     /** 解析失败时的友好错误文案；正常素材可为空或缺省。 */
     parseError?: string | null;
   };

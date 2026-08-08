@@ -71,6 +71,7 @@ function makeMaterial(overrides: MaterialOverrides = {}): Material {
       wordCount: 9,
       title: "Report",
       sourceUrl: "https://example.com/report",
+      parseState: "ready",
     },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

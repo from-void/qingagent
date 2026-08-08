@@ -1069,7 +1069,7 @@ describe("thread persistence", () => {
       text: "素材正文",
       summary: null,
       fileId: null,
-      metadata: { pages: null, wordCount: 4, title: null },
+      metadata: { pages: null, wordCount: 4, title: null, parseState: "ready" },
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
@@ -1561,28 +1561,6 @@ describe("thread persistence", () => {
     expect(persisted).not.toHaveProperty("branchTitleGenerated");
   });
 
-  it("restores old material metadata without parseState as ready", async () => {
-    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
-    const sessionId = "material-parse-state-default";
-    threads.set(sessionId, storedThread(sessionId, metadata({
-      materials: [{
-        id: "material-old",
-        filename: "old.pdf",
-        mimeType: "application/pdf",
-        text: "旧素材正文",
-        summary: null,
-        fileId: "file-old",
-        metadata: { pages: 1, wordCount: 5, title: null },
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }],
-    })));
-
-    const restored = await loadSessionFromThread(sessionId);
-
-    expect(restored?.materials.get("material-old")?.metadata.parseState).toBe("ready");
-  });
-
   it("restores material visionSummary and ignores invalid visionSummary", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "material-vision-summary";
@@ -1596,7 +1574,7 @@ describe("thread persistence", () => {
           summary: null,
           visionSummary: "图中是一张手写便签。",
           fileId: "file-image",
-          metadata: { pages: null, wordCount: 6, title: null },
+          metadata: { pages: null, wordCount: 6, title: null, parseState: "ready" },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -1608,7 +1586,7 @@ describe("thread persistence", () => {
           summary: null,
           visionSummary: 123,
           fileId: "file-bad",
-          metadata: { pages: null, wordCount: 6, title: null },
+          metadata: { pages: null, wordCount: 6, title: null, parseState: "ready" },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -2115,7 +2093,7 @@ describe("thread persistence", () => {
       text: "素材正文",
       summary: null,
       fileId: null,
-      metadata: { pages: null, wordCount: 4, title: null },
+      metadata: { pages: null, wordCount: 4, title: null, parseState: "ready" },
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });

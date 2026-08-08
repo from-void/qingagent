@@ -1616,7 +1616,7 @@ function materialForExternal(material: Material) {
     summary: material.summary ?? "",
     wordCount: material.metadata.wordCount,
     byteLen: Buffer.byteLength(material.text, "utf8"),
-    parseState: material.metadata.parseState ?? "ready",
+    parseState: material.metadata.parseState,
     sourceUrl: material.metadata.sourceUrl ?? null,
     createdAt: material.createdAt,
   };

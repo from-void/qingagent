@@ -12,8 +12,7 @@ export interface MaterialResourceMetadata {
   pages: number | null;
   wordCount: number;
   title: string | null;
-  /** 缺省按 ready 处理，兼容旧会话数据。 */
-  parseState?: ParseState;
+  parseState: ParseState;
   /** parseState 为 error 时的友好错误文案。 */
   parseError?: string | null;
 }

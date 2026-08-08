@@ -1113,6 +1113,7 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
           wordCount: 2,
           title: "Summary",
           sourceUrl: null,
+          parseState: "ready",
           fileId: "33333333-3333-3333-3333-333333333333",
           updatedAt,
         },

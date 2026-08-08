@@ -24,8 +24,6 @@
     "pm:schema:check": "pnpm --filter @qingagent/pm-schema test -- schemaSync",
     "pm:roundtrip": "pnpm --filter @qingagent/pm-schema test -- pmMarkdownRoundTrip aiIrRoundTrip && pnpm --filter @qingagent/web test:dom -- pmRoundTrip",
     "pm:migrate:check": "pnpm --filter @qingagent/pm-schema test -- legacyMigration",
-    "pm:impact:check": "node scripts/pm-impact-check.mjs",
-    "pm:legacy-ban": "node scripts/pm-legacy-ban.mjs",
     "pm:image:check": "node scripts/pm-image-check.mjs",
     "pm:history:check": "node scripts/pm-history-check.mjs",
     "pm:commit:check": "pnpm --filter @qingagent/core test -- commitDocumentOp",

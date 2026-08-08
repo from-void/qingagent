@@ -76,16 +76,6 @@ await browserCapabilityProbe;
 // 先恢复并续跑持久化删除墓碑，再启动任何可能写 documents 的后台任务。
 await sessionManager.resumePendingDeletions();
 
-// 升级存量：先按全部活跃 thread/doc 回填归属，再清理超过宽限期的无主 uploads。
-// 失败不阻断启动，因为下载路由本身按活跃归属 fail-closed；下次启动会继续重试。
-void import("./gateway/sessionStoredResources.js")
-  .then(({ cleanupOrphanedStoredFiles }) => cleanupOrphanedStoredFiles())
-  .then((result) => console.log("[session-delete] 存量无主文件巡检完成", result))
-  .catch((error) => console.error(
-    "[session-delete] 存量无主文件巡检失败(non-fatal)",
-    error instanceof Error ? error.message : String(error),
-  ));
-
 const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE;
 
 // 随包命令行工具的预置授权:老用户升级后不该被一张新确认卡拦住。

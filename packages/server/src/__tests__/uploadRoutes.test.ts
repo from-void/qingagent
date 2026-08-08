@@ -34,11 +34,11 @@ async function seedUploadedFile(uploadDir: string, filename: string, content = "
   const dir = path.join(uploadDir, fileId);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, filename), content);
-  const { ensureSessionResource } = await import("@qingagent/db");
-  await ensureSessionResource({
+  const { registerSessionResource } = await import("@qingagent/db");
+  await registerSessionResource({
     sessionId: "seeded-download-session",
     resourceId: fileId,
-    kind: "discovered",
+    kind: "upload",
   });
   return fileId;
 }

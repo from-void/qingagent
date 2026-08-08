@@ -39,7 +39,6 @@ import {
 } from "@qingagent/db/write-guard";
 import {
   beginSessionDeletion,
-  backfillDeletingSessionResources,
   deleteSessionDatabaseRowsAndAdvance,
   deleteSessionDocumentsAndAdvance,
   getTombstonedSessionIds,
@@ -2285,7 +2284,6 @@ export async function deleteSessionThread(
   await beginSessionDeletion(sessionId);
   let phase: SessionDeletionPhase;
   try {
-    await backfillDeletingSessionResources(sessionId);
     phase = await deleteSessionDocumentsAndAdvance(sessionId);
   } catch (error) {
     throw new SessionDeletionError(sessionId, "draining", error);

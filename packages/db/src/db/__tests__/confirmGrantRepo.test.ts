@@ -1,16 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendConfirmAuditEvent,
-  createConfirmGrant,
   createConfirmGrantCanonical,
-  createConfirmGrantWithResult,
-  getConfirmGrant,
   getConfirmGrantState,
   listConfirmAuditEvents,
   listConfirmCancellationTombstones,
-  listConfirmGrantEvents,
-  listConfirmGrants,
-  revokeConfirmGrant,
   revokeConfirmGrantWithState,
 } from "../confirmGrantRepo.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
@@ -20,55 +14,6 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-confirm-grants-"); });
 afterEach(() => db.cleanup());
 
 describe("confirm grant 与不可变审计仓储", () => {
-  it("创建与撤销 grant 时在同一事务追加生命周期事件", async () => {
-    const created = await createConfirmGrant({
-      kind: "install",
-      source: "card",
-      grantId: "grant-install",
-      now: "2026-07-21T01:00:00.000Z",
-    });
-    expect(await getConfirmGrant("install")).toEqual(created);
-    expect(await listConfirmGrants()).toEqual([created]);
-
-    const duplicate = await createConfirmGrant({
-      kind: "install",
-      source: "settings",
-      grantId: "must-not-replace",
-    });
-    expect(duplicate).toEqual(created);
-
-    expect(await createConfirmGrantWithResult({
-      kind: "install",
-      source: "settings",
-      grantId: "still-must-not-replace",
-    })).toEqual({ grant: created, created: false });
-    expect(await listConfirmGrantEvents()).toMatchObject([
-      {
-        grantId: "grant-install",
-        kind: "install",
-        action: "created",
-        source: "card",
-        subjectId: "local-user",
-      },
-    ]);
-
-    expect(await revokeConfirmGrant(
-      "install",
-      "settings",
-      "2026-07-21T02:00:00.000Z",
-    )).toEqual(created);
-    expect(await getConfirmGrant("install")).toBeNull();
-    expect(await listConfirmGrantEvents()).toMatchObject([
-      { grantId: "grant-install", action: "created", source: "card" },
-      {
-        grantId: "grant-install",
-        action: "revoked",
-        source: "settings",
-        subjectId: "local-user",
-      },
-    ]);
-  });
-
   it("决策审计只追加脱敏预览与绑定字段", async () => {
     await appendConfirmAuditEvent({
       eventId: "audit-1",
@@ -154,13 +99,13 @@ describe("confirm grant 与不可变审计仓储", () => {
   });
 
   it("settings 创建与撤销 grant 会在同一事务写入统一审计账本", async () => {
-    await createConfirmGrant({
+    await createConfirmGrantCanonical({
       kind: "command",
       source: "settings",
       grantId: "grant-settings-command",
       now: "2026-07-21T04:00:00.000Z",
     });
-    await revokeConfirmGrant(
+    await revokeConfirmGrantWithState(
       "command",
       "settings",
       "2026-07-21T05:00:00.000Z",
@@ -245,7 +190,10 @@ describe("confirm grant 与不可变审计仓储", () => {
       stale: true,
       state: { present: false, grantId: null, version: 1, revocationEpoch: 1 },
     });
-    expect(await getConfirmGrant("command")).toBeNull();
+    expect(await getConfirmGrantState("command")).toMatchObject({
+      present: false,
+      grantId: null,
+    });
   });
 
   it("设置写入的 expectedVersion 在事务内拒绝旧版本撤销", async () => {
@@ -270,7 +218,8 @@ describe("confirm grant 与不可变审计仓储", () => {
       revokedGrant: null,
       state: { version: 1, present: true, grantId: "grant-current-send" },
     });
-    expect(await getConfirmGrant("send")).toMatchObject({
+    expect(await getConfirmGrantState("send")).toMatchObject({
+      present: true,
       grantId: "grant-current-send",
     });
   });

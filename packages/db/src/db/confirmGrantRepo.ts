@@ -29,11 +29,6 @@ export interface ConfirmGrant {
   source: ConfirmGrantSource;
 }
 
-export interface ConfirmGrantCreation {
-  grant: ConfirmGrant;
-  created: boolean;
-}
-
 export interface ConfirmGrantCanonical {
   present: boolean;
   grantId: string | null;
@@ -86,16 +81,6 @@ export interface ConfirmCancellationTombstone {
   confirmId: string;
 }
 
-export interface ConfirmGrantEvent {
-  eventId: string;
-  ts: string;
-  grantId: string;
-  kind: ConfirmGrantKind;
-  action: "created" | "revoked";
-  source: ConfirmGrantSource;
-  subjectId: string;
-}
-
 function mapGrant(row: Record<string, unknown>): ConfirmGrant {
   return {
     grantId: String(row.grant_id),
@@ -144,28 +129,6 @@ function mapAuditEvent(row: Record<string, unknown>): ConfirmAuditEvent {
   };
 }
 
-function mapGrantEvent(row: Record<string, unknown>): ConfirmGrantEvent {
-  return {
-    eventId: String(row.event_id),
-    ts: String(row.ts),
-    grantId: String(row.grant_id),
-    kind: String(row.kind) as ConfirmGrantKind,
-    action: String(row.action) as ConfirmGrantEvent["action"],
-    source: String(row.source) as ConfirmGrantSource,
-    subjectId: String(row.subject_id),
-  };
-}
-
-export async function getConfirmGrant(kind: ConfirmGrantKind): Promise<ConfirmGrant | null> {
-  await ensureMigrated();
-  const result = await getDocumentsClient().execute({
-    sql: `SELECT grant_id, kind, created_at, source FROM confirm_grants WHERE kind = ?`,
-    args: [kind],
-  });
-  const row = result.rows[0] as Record<string, unknown> | undefined;
-  return row ? mapGrant(row) : null;
-}
-
 export async function getConfirmGrantState(kind: ConfirmGrantKind): Promise<ConfirmGrantState> {
   await ensureMigrated();
   const result = await getDocumentsClient().execute({
@@ -192,14 +155,6 @@ export async function getConfirmGrantState(kind: ConfirmGrantKind): Promise<Conf
         source: row.source,
       });
   return mapGrantState(kind, Number(row.version), Number(row.revocation_epoch), grant);
-}
-
-export async function listConfirmGrants(): Promise<ConfirmGrant[]> {
-  await ensureMigrated();
-  const result = await getDocumentsClient().execute(
-    `SELECT grant_id, kind, created_at, source FROM confirm_grants ORDER BY kind`,
-  );
-  return result.rows.map((row) => mapGrant(row as Record<string, unknown>));
 }
 
 export async function listConfirmGrantStates(): Promise<ConfirmGrantState[]> {
@@ -229,34 +184,6 @@ export async function listConfirmGrantStates(): Promise<ConfirmGrantState[]> {
         });
     return mapGrantState(kind, Number(row.version), Number(row.revocation_epoch), grant);
   });
-}
-
-export async function createConfirmGrant(input: {
-  kind: ConfirmGrantKind;
-  source: ConfirmGrantSource;
-  grantId?: string;
-  now?: string;
-  subjectId?: string;
-}): Promise<ConfirmGrant> {
-  return (await createConfirmGrantWithResult(input)).grant;
-}
-
-/**
- * 原子地确保某类 grant 存在，并告诉调用方本次是否真的完成了首次创建。
- * UI 只可在 created=true 时提示“已记住”，不能把命中既有记录误报为新设置。
- */
-export async function createConfirmGrantWithResult(input: {
-  kind: ConfirmGrantKind;
-  source: ConfirmGrantSource;
-  grantId?: string;
-  now?: string;
-  subjectId?: string;
-}): Promise<ConfirmGrantCreation> {
-  const mutation = await createConfirmGrantCanonical(input);
-  if (!mutation.grant) {
-    throw new Error(`confirm grant creation unexpectedly rejected for ${input.kind}`);
-  }
-  return { grant: mutation.grant, created: mutation.created };
 }
 
 /**
@@ -365,15 +292,6 @@ export async function createConfirmGrantCanonical(input: {
       stale: false,
     });
   });
-}
-
-export async function revokeConfirmGrant(
-  kind: ConfirmGrantKind,
-  source: ConfirmGrantSource = "settings",
-  now = new Date().toISOString(),
-  subjectId = "local-user",
-): Promise<ConfirmGrant | null> {
-  return (await revokeConfirmGrantWithState(kind, source, now, subjectId)).revokedGrant;
 }
 
 /** 撤销意图即推进版本与撤销线；即使当前没有 grant，也能使更早生成的卡失效。 */
@@ -517,12 +435,4 @@ export async function listConfirmCancellationTombstones(
     toolCallId: String(row.tool_call_id),
     confirmId: String(row.confirm_id),
   }));
-}
-
-export async function listConfirmGrantEvents(): Promise<ConfirmGrantEvent[]> {
-  await ensureMigrated();
-  const result = await getDocumentsClient().execute(
-    `SELECT * FROM confirm_grant_events ORDER BY ts, event_id`,
-  );
-  return result.rows.map((row) => mapGrantEvent(row as Record<string, unknown>));
 }

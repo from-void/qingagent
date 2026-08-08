@@ -6,8 +6,6 @@ import { withBrowserContextSlot } from "../browser/pool.js";
 // 等槽时间不侵蚀自身执行预算；持续过载超过 120s 则明确返回可重试繁忙。
 export const EXPORT_QUEUE_TIMEOUT_MS = 120_000;
 export const EXPORT_EXECUTION_DEADLINE_MS = 300_000;
-/** @deprecated 请改用 EXPORT_EXECUTION_DEADLINE_MS。 */
-export const EXPORT_DEADLINE_MS = EXPORT_EXECUTION_DEADLINE_MS;
 
 export class ExportBusyError extends Error {
   readonly code = "EXPORT_BUSY";
@@ -38,8 +36,6 @@ export interface ExportSlotOptions {
   signal?: AbortSignal;
   queueTimeoutMs?: number;
   executionTimeoutMs?: number;
-  /** @deprecated 兼容旧调用；等同 executionTimeoutMs，不再包含排队时间。 */
-  timeoutMs?: number;
 }
 
 /**
@@ -53,8 +49,7 @@ export async function withExportSlot<T>(
   options: ExportSlotOptions = {},
 ): Promise<T> {
   const queueTimeoutMs = options.queueTimeoutMs ?? EXPORT_QUEUE_TIMEOUT_MS;
-  const executionTimeoutMs =
-    options.executionTimeoutMs ?? options.timeoutMs ?? EXPORT_EXECUTION_DEADLINE_MS;
+  const executionTimeoutMs = options.executionTimeoutMs ?? EXPORT_EXECUTION_DEADLINE_MS;
   if (!Number.isFinite(queueTimeoutMs) || queueTimeoutMs <= 0) {
     throw new TypeError("export queueTimeoutMs must be a positive finite number");
   }

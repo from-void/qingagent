@@ -9,7 +9,6 @@ export { toMarkdown } from "./toMarkdown.js";
 export { toPdf } from "./toPdf.js";
 export { toTxt } from "./toTxt.js";
 export {
-  EXPORT_DEADLINE_MS,
   EXPORT_EXECUTION_DEADLINE_MS,
   EXPORT_QUEUE_TIMEOUT_MS,
   ExportBusyError,

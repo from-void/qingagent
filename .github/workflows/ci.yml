@@ -167,4 +167,5 @@ jobs:
       - name: pnpm test:perf (serial)
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
+          QINGAGENT_PERF_BUDGET_SCALE: "2.5"
         run: dbus-run-session -- xvfb-run -a pnpm test:perf

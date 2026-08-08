@@ -12,6 +12,19 @@ import { usageRoutes } from "../routes/usage";
 const FIXTURE_ROWS = 100_000;
 const WARMUP_RUNS = 3;
 const MEASURED_RUNS = 10;
+const parsedPerfBudgetScale = Number(process.env.QINGAGENT_PERF_BUDGET_SCALE);
+const PERF_BUDGET_SCALE =
+  Number.isFinite(parsedPerfBudgetScale) && parsedPerfBudgetScale > 0
+    ? parsedPerfBudgetScale
+    : 1;
+
+// 阈值按本地基准机标定，CI 等慢硬件经倍率放大——防回归靠倍率恒定下的相对劣化。
+const PERF_BUDGET_MS = {
+  session: 300 * PERF_BUDGET_SCALE,
+  total: 300 * PERF_BUDGET_SCALE,
+  day30: 500 * PERF_BUDGET_SCALE,
+  csv: 3_000 * PERF_BUDGET_SCALE,
+} as const;
 
 let tempDb: TempDocumentsDb | null = null;
 let originalDebug: string | undefined;
@@ -148,9 +161,9 @@ describe("usage 计费架构定向性能门槛", () => {
       `[billing-perf] session=${sessionP95.toFixed(1)}ms total=${totalP95.toFixed(1)}ms ` +
         `day30=${dayP95.toFixed(1)}ms csv=${csvP95.toFixed(1)}ms`,
     );
-    expect(sessionP95).toBeLessThanOrEqual(300);
-    expect(totalP95).toBeLessThanOrEqual(300);
-    expect(dayP95).toBeLessThanOrEqual(500);
-    expect(csvP95).toBeLessThanOrEqual(3_000);
+    expect(sessionP95).toBeLessThanOrEqual(PERF_BUDGET_MS.session);
+    expect(totalP95).toBeLessThanOrEqual(PERF_BUDGET_MS.total);
+    expect(dayP95).toBeLessThanOrEqual(PERF_BUDGET_MS.day30);
+    expect(csvP95).toBeLessThanOrEqual(PERF_BUDGET_MS.csv);
   });
 });

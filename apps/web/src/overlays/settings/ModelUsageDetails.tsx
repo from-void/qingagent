@@ -33,6 +33,7 @@ interface ModelUsageDetailsProps {
   usageGroups: UsageGroup[] | null;
   expandedUsageGroups: Set<string>;
   toggleUsageGroup: (key: string) => void;
+  scheduleRevision: string;
 }
 export function ModelUsageDetails({
   usageMode,
@@ -56,6 +57,7 @@ export function ModelUsageDetails({
   usageGroups,
   expandedUsageGroups,
   toggleUsageGroup,
+  scheduleRevision,
 }: ModelUsageDetailsProps) {
   return (
               <div className="md-card md-detail-card">
@@ -288,7 +290,10 @@ export function ModelUsageDetails({
                       </table>
                     </div>
                   )}
-                <p className="md-foot-note">范围仅含本机本实例账本；结果未知的失败调用单列且不计 token/金额。费用按各厂商已核实的公开单价估算；未收录价目的自定义模型只记录 token，不估算金额。</p>
+                <p className="md-foot-note">
+                  范围仅含本机本实例账本；结果未知的失败调用单列且不计 token/金额。费用按各厂商已核实的公开单价估算；未收录价目的自定义模型只记录 token，不估算金额。
+                  {scheduleRevision ? ` 价目版本 ${scheduleRevision.slice(0, 16)}` : ""}
+                </p>
               </div>
   );
 }

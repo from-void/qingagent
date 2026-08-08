@@ -23,6 +23,10 @@ function usageRow(
     recordedCalls: 1,
     missingCalls: 0,
     coverageRate: 1,
+    pricedCalls: 1,
+    unpricedCalls: 0,
+    estimatedPricedCalls: 0,
+    estimatedUnpricedCalls: 0,
   };
 }
 
@@ -100,6 +104,7 @@ describe("aggregateUsageRows", () => {
         coverageRate: 1 / 3,
         costCny: 5.3297,
         estimatedCostCny: 2.545,
+        estimatedPricedCalls: 1,
       },
     ]);
 
@@ -123,15 +128,37 @@ describe("aggregateUsageRows", () => {
       {
         ...usageRow(0, 0),
         recordedCalls: 0,
+        pricedCalls: 0,
         estimatedCalls: 1,
         estimatedInputTokens: 800,
         estimatedOutputTokens: 90,
         estimatedCostCny: 0.2545,
+        estimatedPricedCalls: 1,
       },
     ]);
 
     expect(summary.costCny).toBeUndefined();
     expect(summary.estimatedCostCny).toBe(0.2545);
+  });
+
+  it("四个计价覆盖计数贯穿二次聚合，零价已计价不被隐藏", () => {
+    const summary = aggregateUsageRows("S1", [{
+      ...usageRow(10, 0),
+      costCny: 0,
+      pricedCalls: 1,
+      unpricedCalls: 2,
+      estimatedPricedCalls: 3,
+      estimatedUnpricedCalls: 4,
+      estimatedCostCny: 0,
+    }]);
+    expect(summary).toMatchObject({
+      costCny: 0,
+      estimatedCostCny: 0,
+      pricedCalls: 1,
+      unpricedCalls: 2,
+      estimatedPricedCalls: 3,
+      estimatedUnpricedCalls: 4,
+    });
   });
 
   it("汇总高峰计价次数并保留倍率范围供看板解释价差", () => {

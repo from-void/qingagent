@@ -27,7 +27,7 @@ export function ModelSettingsPanel({
     usageDate, setUsageDate, handleProviderChange, openConfig,
     vendorConfigured, vendorStateKnown, anyConfigured, effectiveProvider,
     handleModelTierChange, recent, usageTimeZone, docStats, modelDist, trend,
-    providerBalance,
+    providerBalance, scheduleRevision,
     dashboardReady, showDashboardLoading, showUsageLoading, todayYmd, usageDates,
     usageDateUnsupported, usageModelIds, selectedModelIds, allModelsSelected,
     filteredUsage, usageGroups, toggleUsageModel, selectAllUsageModels,
@@ -109,6 +109,7 @@ export function ModelSettingsPanel({
             usageGroups={usageGroups}
             expandedUsageGroups={expandedUsageGroups}
             toggleUsageGroup={toggleUsageGroup}
+            scheduleRevision={scheduleRevision}
           />
         </section>
       )}

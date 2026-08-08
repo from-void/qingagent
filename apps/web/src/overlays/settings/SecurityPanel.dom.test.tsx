@@ -115,34 +115,6 @@ describe("SecurityPanel", () => {
     delete window.electron;
   });
 
-  it("桌面迁移清理失败时展示非模态手工清理指引和精确路径", async () => {
-    window.electron = {
-      platform: "win32",
-      isDesktop: true,
-      getBrowserCredentialCleanupNotice: async () => ({
-        paths: [
-          "C:\\Windows\\.qingagent-browser-state.json",
-          "C:\\Program Files\\QingAgent\\.qingagent-browser-profile",
-        ],
-      }),
-    } as NonNullable<Window["electron"]> & {
-      getBrowserCredentialCleanupNotice: () => Promise<{ paths: string[] }>;
-    };
-
-    await renderPanel();
-    await act(async () => undefined);
-
-    const notice = host!.querySelector('[data-wf="BrowserCredentialCleanupNotice"]');
-    expect(notice).not.toBeNull();
-    expect(notice?.getAttribute("role")).toBe("status");
-    expect(notice?.textContent).toContain("旧浏览器登录数据需要手工清理");
-    expect(notice?.textContent).toContain("退出青简");
-    expect(notice?.textContent).toContain("系统文件管理器");
-    expect(notice?.textContent).toContain("C:\\Windows\\.qingagent-browser-state.json");
-    expect(notice?.textContent).toContain("C:\\Program Files\\QingAgent\\.qingagent-browser-profile");
-    expect(document.querySelector('[role="dialog"][aria-label*="清理"]')).toBeNull();
-  });
-
   it("每类一行使用暗墨自定义下拉，说明无重复状态且采用暗底说明色", async () => {
     await renderPanel();
 

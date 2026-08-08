@@ -997,7 +997,6 @@ export async function* commitPatches(
           }
           const applyResult = applyDiffHunks(currentDoc, acceptedDiffHunks, {
             oldBaseDoc,
-            anchorByBlockId: true,
           });
           skippedHunks = applyResult.skipped;
           appliedHunkCount = applyResult.applied.length;

@@ -155,7 +155,6 @@ export function annotateReviewGroups(
 
 export interface ApplyDiffHunksOptions {
   oldBaseDoc?: PmDoc;
-  anchorByBlockId?: boolean;
 }
 
 export interface ApplyDiffHunksResult {
@@ -242,7 +241,7 @@ export function applyDiffHunkToDoc(
 ): ApplyDiffHunkToDocResult {
   const doc = cloneValue(normalizePmDoc(baseDoc));
   const content = doc.content;
-  const index = resolveApplyBlockIndex(doc, hunk, options.anchorByBlockId === true);
+  const index = resolveApplyBlockIndex(doc, hunk);
   if (index === null || index < 0) {
     return { ok: false, reason: `missing target block for ${hunk.hunkId}` };
   }
@@ -252,9 +251,7 @@ export function applyDiffHunkToDoc(
     if (blocks.length === 0) {
       return { ok: false, reason: `missing inserted blocks for ${hunk.hunkId}` };
     }
-    const insertAt = options.anchorByBlockId === true
-      ? (hunk.anchor.gravity === "before" ? index : index + 1)
-      : index;
+    const insertAt = hunk.anchor.gravity === "before" ? index : index + 1;
     const currentBlocks = content.slice(insertAt, insertAt + blocks.length);
     if (
       getStablePmJson(currentBlocks.map(stripDiagramSvgForCompare)) ===
@@ -1266,15 +1263,12 @@ function applyOpRank(op: DiffHunk["op"]): number {
 function resolveApplyBlockIndex(
   doc: PmDoc,
   hunk: DiffHunk,
-  anchorByBlockId: boolean,
 ): number | null {
-  if (anchorByBlockId) {
-    const blockId = hunk.anchor.blockId;
-    if (blockId) {
-      const anchored = doc.content.findIndex((block) => block.attrs.blockId === blockId);
-      if (anchored >= 0) return anchored;
-      return null;
-    }
+  const blockId = hunk.anchor.blockId;
+  if (blockId) {
+    const anchored = doc.content.findIndex((block) => block.attrs.blockId === blockId);
+    if (anchored >= 0) return anchored;
+    return null;
   }
   const index = hunk.blockPath[0];
   return index === undefined || index < 0 || index > doc.content.length ? null : index;

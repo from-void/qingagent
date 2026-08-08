@@ -574,7 +574,6 @@ describe("用户手打块的候选审阅提交", () => {
       apply: (currentDoc) => {
         const applied = applyDiffHunks(currentDoc, hunks, {
           oldBaseDoc: base,
-          anchorByBlockId: true,
         });
         return {
           nextDoc: applied.doc,

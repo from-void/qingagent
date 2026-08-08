@@ -37,11 +37,6 @@ export {
 } from "./docFacts.js";
 
 export {
-  isServerReanchorEnabled,
-  isTruthyFlag,
-} from "./draftFeatureFlags.js";
-
-export {
   buildAnnotationMappingSteps,
   mapAnnotationGroupsThroughSteps,
 } from "./annotationMapping.js";

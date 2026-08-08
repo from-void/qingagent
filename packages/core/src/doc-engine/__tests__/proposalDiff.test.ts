@@ -162,7 +162,7 @@ describe("proposalDiff shadow engine", () => {
     const hunks = buildDraftDiff(base, edited.doc!);
     expect(hunks).toHaveLength(1);
 
-    const committed = applyDiffHunks(base, hunks, { anchorByBlockId: true }).doc;
+    const committed = applyDiffHunks(base, hunks).doc;
     const diagramBlock = committed.content[0] as PmDiagramNode;
     expect(diagramBlock.attrs.overlay?.positions).toEqual({
       A: { x: 40, y: 60 },
@@ -329,7 +329,6 @@ describe("proposalDiff shadow engine", () => {
 
     const replayed = applyDiffHunkToDoc(draft, insertHunk, {
       oldBaseDoc: base,
-      anchorByBlockId: true,
     });
 
     expect(replayed).toEqual({ ok: true, doc: draft });
@@ -349,7 +348,6 @@ describe("proposalDiff shadow engine", () => {
 
     const replayed = applyDiffHunkToDoc(draft, insertHunk, {
       oldBaseDoc: base,
-      anchorByBlockId: true,
     });
 
     expect(replayed).toEqual({ ok: true, doc: draft });
@@ -495,7 +493,6 @@ describe("proposalDiff shadow engine", () => {
     const committed = applyDiffHunks(base, hunks.filter((hunk) => hunk !== insert)).doc;
     const applied = applyDiffHunkToDoc(committed, insert, {
       oldBaseDoc: base,
-      anchorByBlockId: true,
     });
 
     expect(applied.ok).toBe(true);
@@ -517,7 +514,6 @@ describe("proposalDiff shadow engine", () => {
     const committed = applyDiffHunks(base, hunks.filter((hunk) => hunk !== insert)).doc;
     const applied = applyDiffHunkToDoc(committed, insert, {
       oldBaseDoc: base,
-      anchorByBlockId: true,
     });
 
     expect(applied.ok).toBe(true);
@@ -538,7 +534,6 @@ describe("proposalDiff shadow engine", () => {
     const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]).doc;
     const applied = applyDiffHunkToDoc(committed, hunks[1]!, {
       oldBaseDoc: base,
-      anchorByBlockId: true,
     });
 
     expect(applied.ok).toBe(true);
@@ -555,7 +550,7 @@ describe("proposalDiff shadow engine", () => {
 
     // 并发编辑把两块顺序调换(blockId 不变):blk-b 现在在 index 0,旧位置锚定会打到 blk-a。
     const reordered = doc([paragraph("blk-b", "beta 原文"), paragraph("blk-a", "alpha 原文")]);
-    const committed = applyDiffHunks(reordered, hunks, { anchorByBlockId: true }).doc;
+    const committed = applyDiffHunks(reordered, hunks).doc;
     const byId = (id: string) => committed.content.find((b) => b.attrs.blockId === id);
 
     expect(btext(byId("blk-b"))).toBe("beta 改后");
@@ -571,7 +566,7 @@ describe("proposalDiff shadow engine", () => {
 
     // 并发删除 blk-b → 剩 [blk-a, blk-c];blk-b 的 hunk 应失效跳过,不错位改到 blk-a/blk-c。
     const removed = doc([paragraph("blk-a", "alpha"), paragraph("blk-c", "gamma")]);
-    const committed = applyDiffHunks(removed, hunks, { anchorByBlockId: true }).doc;
+    const committed = applyDiffHunks(removed, hunks).doc;
     expect(committed.content.map(btext)).toEqual(["alpha", "gamma"]);
   });
 
@@ -585,7 +580,7 @@ describe("proposalDiff shadow engine", () => {
 
     // 并发删除 blk-b:该 hunk 进 skipped,blk-a 的 hunk 照常应用。
     const removed = doc([paragraph("blk-a", "alpha")]);
-    const result = applyDiffHunks(removed, hunks, { anchorByBlockId: true });
+    const result = applyDiffHunks(removed, hunks);
     expect(result.applied.length).toBe(1);
     expect(result.skipped.length).toBe(1);
     expect(result.applied[0]!.anchor.blockId).toBe("blk-a");

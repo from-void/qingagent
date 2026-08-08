@@ -44,7 +44,6 @@ import {
   clearSuspension,
   hasActiveSuspension,
 } from "../session/sessionState.js";
-import { isServerReanchorEnabled } from "../doc-engine/draftFeatureFlags.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { schedulePersist, QINGAGENT_RESOURCE_ID } from "../session/threadPersistence.js";
 import {
@@ -312,7 +311,6 @@ export async function* runAgentTurn(
     chipCount: chips.length,
     selectedSkills: selectedSkillNames,
     toolSearchEnabled,
-    serverReanchorEnabled: isServerReanchorEnabled(),
   });
 
   console.info(formatTurnLog("streamStart", {

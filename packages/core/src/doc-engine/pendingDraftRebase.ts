@@ -77,7 +77,6 @@ export async function rebaseRemainingPendingDraft(
     }
     const applied = applyDiffHunkToDoc(nextDraftDoc, hunk, {
       oldBaseDoc: input.oldBaseDoc,
-      anchorByBlockId: true,
     });
     if (!applied.ok) {
       dropped.push({ record, hunkId: hunk.hunkId, reason: applied.reason });

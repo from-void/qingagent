@@ -155,11 +155,6 @@ export {
 } from "../doc-engine/docFacts.js";
 
 export {
-  isServerReanchorEnabled,
-  isTruthyFlag,
-} from "../doc-engine/draftFeatureFlags.js";
-
-export {
   buildAnnotationMappingSteps,
   mapAnnotationGroupsThroughSteps,
 } from "../doc-engine/annotationMapping.js";

@@ -18,8 +18,8 @@ afterEach(() => {
 });
 
 describe("0041 clientMessageId 会话复合键", () => {
-  it("注册表在 0041 后严格连续接入 0042/0043", () => {
-    expect(MIGRATIONS.at(-1)?.id).toBe(43);
+  it("注册表在 0041 后严格连续接入 0042/0043/0044", () => {
+    expect(MIGRATIONS.at(-1)?.id).toBe(44);
     expect(() => assertMigrationsContinuous(MIGRATIONS)).not.toThrow();
   });
 
@@ -46,7 +46,7 @@ describe("0041 clientMessageId 会话复合键", () => {
       ],
     });
 
-    await expect(runMigrations()).resolves.toMatchObject({ appliedIds: [41, 42, 43] });
+    await expect(runMigrations()).resolves.toMatchObject({ appliedIds: [41, 42, 43, 44] });
 
     const rows = await client.execute(
       `SELECT id,session_id,message_id,created_at,last_touched,completed_at

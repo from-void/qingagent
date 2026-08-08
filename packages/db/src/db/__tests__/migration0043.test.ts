@@ -41,7 +41,7 @@ describe("migration 0043", () => {
     }
     expect(isCanonicalUsageTimestamp("2026-08-08T24:00:00.000Z")).toBe(false);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const result = await runMigrations();
+    const result = await runMigrations(MIGRATIONS.slice(0, 43));
     expect(result.appliedIds).toEqual([43]);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("无法解析"),

@@ -225,7 +225,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     const client = getDocumentsClient();
 
     const r = await runMigrations();
-    expect(allMigrationIds.at(-1)).toBe(43);
+    expect(allMigrationIds.at(-1)).toBe(44);
     expect(r.appliedIds).toEqual(allMigrationIds);
     expect(r.backupPath).toBeNull(); // 全新库不备份
     expect(await captureSchema(client)).toEqual(golden);

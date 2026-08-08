@@ -1,4 +1,18 @@
-import { flattenNestedTablesInCells, legacySectionsToPm, pmToClipboardHtml, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import {
+  flattenNestedTablesInCells,
+  getDeterministicId,
+  normalizePmDoc,
+  pmToClipboardHtml,
+  upgradeMermaidCodeBlocksToDiagram,
+  type PmBlockNode,
+  type PmDoc,
+  type PmInlineNode,
+  type PmParagraphNode,
+  type PmTableCellNode,
+  type PmTableNode,
+  type PmTableRowNode,
+  type PmTextAlign,
+} from "@qingagent/pm-schema";
 import { normalizeImageAlign } from "./imageAlign";
 import { viewDocSpanText } from "./protocol";
 import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "./protocol";
@@ -6,8 +20,12 @@ import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "./protocol";
 export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
   // 装载侧安全网:把任何"伪装成代码块的 Mermaid/drawio"升级回 diagram 块,避免图表退化为死代码。
   // (用户报的「Mermaid 退回代码格式」)。命中 0 处时为结构等价克隆,不影响正常文档。
-  if (doc.pmDoc) return flattenNestedTablesInCells(upgradeMermaidCodeBlocksToDiagram(doc.pmDoc));
-  return legacySectionsToPm(doc.sections.map(viewSectionToLegacy) as never);
+  const pmDoc = doc.pmDoc ?? normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: doc.sections.map((section, index) => viewBlockToPmNode(section, index)),
+  });
+  return flattenNestedTablesInCells(upgradeMermaidCodeBlocksToDiagram(pmDoc));
 }
 
 /** 标识同一 Editor 实例当前应承载的 canonical 正文，供异步 setContent 完成通知配对。 */
@@ -41,58 +59,248 @@ function readNonEmptyBlockId(attrs: unknown): string | null {
   return typeof blockId === "string" && blockId.length > 0 ? blockId : null;
 }
 
-export function viewSectionToLegacy(section: ViewBlock) {
+/** ViewBlock 的无 PM 文档兜底：直接构造规范块，不再经过第二套正文表示。 */
+export function viewBlockToPmNode(section: ViewBlock, index = 0): PmBlockNode {
   switch (section.kind) {
-    case "h1":
-      return { kind: "h1", data: { text: section.spans?.map(spanToTextRaw).join("") ?? section.text } };
-    case "h2":
-      return { kind: "h2", data: { text: section.spans?.map(spanToTextRaw).join("") ?? section.text, anchor: section.anchor ?? null } };
+    case "h1": {
+      const text = section.spans?.map(spanToTextRaw).join("") ?? section.text;
+      const blockId = viewBlockId(section, index, { kind: "h1", data: { text } });
+      return heading(blockId, 1, text, undefined, section.textAlign);
+    }
+    case "h2": {
+      const text = section.spans?.map(spanToTextRaw).join("") ?? section.text;
+      const anchor = section.anchor ?? null;
+      const blockId = viewBlockId(section, index, { kind: "h2", data: { text, anchor } });
+      return heading(blockId, 2, text, anchor, section.textAlign);
+    }
     case "h3":
     case "h4":
     case "h5":
-    case "h6":
-      return { kind: section.kind, data: { text: section.spans?.map(spanToTextRaw).join("") ?? section.text } };
-    case "p":
-      return { kind: "p", data: { text: section.spans.map(spanToTextRaw).join("") } };
-    case "quote":
-      return { kind: "quote", data: { text: section.text } };
-    case "list":
-      return { kind: "list", data: { ordered: section.ordered, items: section.items } };
-    case "hr":
-      return { kind: "hr", data: {} };
-    case "table":
-      return { kind: "table", data: { head: section.head, rows: section.rows } };
-    case "code":
-      return { kind: "code", data: { body: section.body, language: section.language ?? "plaintext" } };
-    case "diagram":
-      return { kind: "diagram", data: { lang: section.lang, source: section.source, svg: section.svg } };
-    case "penNote":
-      return { kind: "penNote", data: { text: section.text } };
-	    case "image":
+    case "h6": {
+      const text = section.spans?.map(spanToTextRaw).join("") ?? section.text;
+      const blockId = viewBlockId(section, index, { kind: section.kind, data: { text } });
+      return heading(
+        blockId,
+        Number(section.kind.slice(1)) as 3 | 4 | 5 | 6,
+        text,
+        undefined,
+        section.textAlign,
+      );
+    }
+    case "p": {
+      const text = section.spans.map(spanToTextRaw).join("");
+      const blockId = viewBlockId(section, index, { kind: "p", data: { text } });
+      return paragraph(blockId, text, section.textAlign);
+    }
+    case "quote": {
+      if (section.node) return section.node;
+      const blockId = viewBlockId(section, index, { kind: "quote", data: { text: section.text } });
+      return {
+        type: "blockquote",
+        attrs: { blockId },
+        content: [paragraph(`${blockId}-p`, section.text)],
+      };
+    }
+    case "list": {
+      if (section.node) return section.node;
+      const blockId = viewBlockId(section, index, {
+        kind: "list",
+        data: { ordered: section.ordered, items: section.items },
+      });
+      const content = section.items.map((text, itemIndex) => {
+        const itemBlockId = `${blockId}-item-${itemIndex + 1}`;
+        return {
+          type: "listItem" as const,
+          attrs: { blockId: itemBlockId },
+          content: [paragraph(`${itemBlockId}-p`, text)],
+        };
+      });
+      return section.ordered
+        ? {
+            type: "orderedList",
+            attrs: {
+              blockId,
+              start: section.start ?? 1,
+              ...(section.listStyle ? { listStyle: section.listStyle } : {}),
+            },
+            content,
+          }
+        : { type: "bulletList", attrs: { blockId }, content };
+    }
+    case "hr": {
+      const blockId = viewBlockId(section, index, { kind: "hr", data: {} });
+      return { type: "horizontalRule", attrs: { blockId } };
+    }
+    case "table": {
+      if (section.node) return section.node;
+      const blockId = viewBlockId(section, index, {
+        kind: "table",
+        data: { head: section.head, rows: section.rows },
+      });
+      return table(blockId, section.head, section.rows);
+    }
+    case "code": {
+      const language = section.language ?? "plaintext";
+      const blockId = viewBlockId(section, index, {
+        kind: "code",
+        data: { body: section.body, language },
+      });
+      return {
+        type: "codeBlock",
+        attrs: { blockId, language },
+        content: section.body ? [{ type: "text", text: section.body }] : [],
+      };
+    }
+    case "diagram": {
+      const blockId = viewBlockId(section, index, {
+        kind: "diagram",
+        data: { lang: section.lang, source: section.source, svg: section.svg },
+      });
+      return {
+        type: "diagram",
+        attrs: {
+          blockId,
+          lang: section.lang,
+          source: section.source,
+          svg: null,
+          ...(section.overlay ? { overlay: section.overlay } : {}),
+        },
+      };
+    }
+    case "penNote": {
+      const blockId = viewBlockId(section, index, { kind: "penNote", data: { text: section.text } });
+      return {
+        type: "penNote",
+        attrs: { blockId },
+        content: textContent(section.text),
+      };
+    }
+	    case "image": {
+        const align = section.align ?? "center";
+        const blockId = viewBlockId(section, index, {
+          kind: "image",
+          data: {
+            src: section.src,
+            alt: section.alt,
+            caption: section.caption,
+            width: section.width,
+            height: section.height,
+            align,
+          },
+        });
 	      return {
-	        kind: "image",
-	        data: {
-	          src: section.src,
-	          alt: section.alt,
-	          caption: section.caption,
-	          width: section.width,
-	          height: section.height,
-	          align: section.align ?? "center",
-	        },
+          type: "image",
+          attrs: {
+            blockId,
+            src: section.src,
+            alt: section.alt,
+            caption: section.caption,
+            width: section.width,
+            height: section.height,
+            align,
+          },
 	      };
-    case "fileAttachment":
-      return { kind: "p", data: { text: `附件：${section.filename}` } };
-    // 保真块仅出现在带 pmDoc 的快照里;getDocAsPm 在 pmDoc 存在时直接返回 pmDoc,
-    // 不会走到这里(legacySectionsToPm 仅旧无 pmDoc 文档的兜底)。这里给安全降级保证类型完备。
+    }
+    case "fileAttachment": {
+      const fallbackText = `附件：${section.filename}`;
+      const blockId = viewBlockId(section, index, { kind: "p", data: { text: fallbackText } });
+      return {
+        type: "fileAttachment",
+        attrs: {
+          blockId,
+          fileId: section.fileId,
+          filename: section.filename,
+          mimeType: section.mimeType,
+          size: section.size,
+        },
+      };
+    }
+    // 保真块始终携带原始 PM node，兜底也直接复用，不再拍平成文字。
     case "taskList":
-      return { kind: "list", data: { ordered: false, items: section.text.split("\n") } };
     case "callout":
-      return { kind: "quote", data: { text: section.text } };
     case "columnList":
-      return { kind: "p", data: { text: section.text } };
     case "math":
-      return { kind: "code", data: { body: section.latex, language: "latex" } };
+      return section.node;
   }
+}
+
+function viewBlockId(section: ViewBlock, index: number, stableSeed: unknown): string {
+  if (section.blockId?.trim()) return section.blockId;
+  return getDeterministicId("block", { index, section: stableSeed });
+}
+
+function heading(
+  blockId: string,
+  level: 1 | 2 | 3 | 4 | 5 | 6,
+  text: string,
+  anchor: string | null | undefined,
+  textAlign: string | undefined,
+): PmBlockNode {
+  const normalizedTextAlign = normalizeTextAlign(textAlign);
+  return {
+    type: "heading",
+    attrs: {
+      blockId,
+      level,
+      ...(anchor === undefined ? {} : { anchor }),
+      ...(normalizedTextAlign ? { textAlign: normalizedTextAlign } : {}),
+    },
+    content: textContent(text),
+  };
+}
+
+function paragraph(blockId: string, text: string, textAlign?: string): PmParagraphNode {
+  const normalizedTextAlign = normalizeTextAlign(textAlign);
+  return {
+    type: "paragraph",
+    attrs: { blockId, ...(normalizedTextAlign ? { textAlign: normalizedTextAlign } : {}) },
+    content: textContent(text),
+  };
+}
+
+function textContent(text: string): PmInlineNode[] {
+  return text ? [{ type: "text", text }] : [];
+}
+
+function normalizeTextAlign(value: string | undefined): PmTextAlign | undefined {
+  return value === "left" || value === "center" || value === "right" || value === "justify"
+    ? value
+    : undefined;
+}
+
+function table(blockId: string, head: string[], rows: string[][]): PmTableNode {
+  const columnCount = Math.max(head.length, ...rows.map((row) => row.length));
+  const padRow = (row: string[]) => [
+    ...row,
+    ...Array.from({ length: columnCount - row.length }, () => ""),
+  ];
+  const normalizedHead = head.length > 0 ? padRow(head) : head;
+  const normalizedRows = rows.map(padRow);
+  const headerRow: PmTableRowNode | null = normalizedHead.length
+    ? {
+        type: "tableRow",
+        content: normalizedHead.map((cell, cellIndex) =>
+          tableCell("tableHeader", `${blockId}-h-${cellIndex + 1}`, cell)),
+      }
+    : null;
+  const bodyRows: PmTableRowNode[] = normalizedRows.map((row, rowIndex) => ({
+    type: "tableRow",
+    content: row.map((cell, cellIndex) =>
+      tableCell("tableCell", `${blockId}-r-${rowIndex + 1}-${cellIndex + 1}`, cell)),
+  }));
+  return {
+    type: "table",
+    attrs: { blockId },
+    content: headerRow ? [headerRow, ...bodyRows] : bodyRows,
+  };
+}
+
+function tableCell(
+  type: "tableCell" | "tableHeader",
+  blockId: string,
+  text: string,
+): PmTableCellNode {
+  return { type, content: [paragraph(`${blockId}-p`, text)] };
 }
 
 export function viewSectionsToHtml(sections: readonly ViewBlock[]): string {

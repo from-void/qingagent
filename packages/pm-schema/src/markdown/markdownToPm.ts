@@ -1,15 +1,21 @@
-import {
-  legacySectionsToPm,
-  type LegacyLegacySection,
-  type LegacyListSectionLike,
-  type LegacyTaskItem,
-} from "../legacy/legacySectionsToPm";
-import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "../types";
+import type {
+  PmBlockNode,
+  PmDoc,
+  PmInlineNode,
+  PmMark,
+  PmParagraphNode,
+  PmTableCellNode,
+  PmTableNode,
+  PmTableRowNode,
+  PmTaskListNode,
+} from "../types";
 import { parseDocument } from "htmlparser2";
-import { compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
+import { compileAiDocumentToPm, detectDrawioSource, detectMermaidSource } from "../ai-ir/aiIrToPm";
 import { qingmlParse } from "../ai-ir/qingmlParse";
 import { materializeDraftBlockIds } from "../ai-ir/draftBlockIds";
-import { isAllowedLinkHref, isAllowedThemeColor } from "../validators";
+import { getDeterministicId } from "../hash";
+import { PM_SCHEMA_VERSION } from "../schemaVersion";
+import { isAllowedLinkHref, isAllowedThemeColor, normalizePmDoc } from "../validators";
 
 type ParsedMarkdownListKind = "bullet" | "ordered" | "task";
 
@@ -35,7 +41,7 @@ interface ParsedMarkdownListItem {
 
 export function markdownToPm(markdown: string): PmDoc {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  const sections: LegacyLegacySection[] = [];
+  const content: PmBlockNode[] = [];
   const htmlTables = new Map<string, PmBlockNode>();
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -52,9 +58,11 @@ export function markdownToPm(markdown: string): PmDoc {
       if (parsed) {
         const sentinel = `__QA_HTML_TABLE_${htmlTables.size}__`;
         htmlTables.set(sentinel, parsed);
-        sections.push({ kind: "p", data: { text: sentinel } });
+        appendMarkdownBlock(content, { kind: "p", data: { text: sentinel } }, (blockId) =>
+          paragraph(blockId, sentinel));
       } else {
-        sections.push({ kind: "p", data: { text: source } });
+        appendMarkdownBlock(content, { kind: "p", data: { text: source } }, (blockId) =>
+          paragraph(blockId, source));
       }
       continue;
     }
@@ -66,13 +74,15 @@ export function markdownToPm(markdown: string): PmDoc {
         body.push(lines[i] ?? "");
         i += 1;
       }
-      sections.push({ kind: "p", data: { text: `$$\n${body.join("\n")}\n$$` } });
+      const text = `$$\n${body.join("\n")}\n$$`;
+      appendMarkdownBlock(content, { kind: "p", data: { text } }, (blockId) => paragraph(blockId, text));
       continue;
     }
 
     const singleLineMath = line.match(/^\s*\$\$(.+)\$\$\s*$/);
     if (singleLineMath) {
-      sections.push({ kind: "p", data: { text: `$$\n${singleLineMath[1] ?? ""}\n$$` } });
+      const text = `$$\n${singleLineMath[1] ?? ""}\n$$`;
+      appendMarkdownBlock(content, { kind: "p", data: { text } }, (blockId) => paragraph(blockId, text));
       continue;
     }
 
@@ -85,7 +95,10 @@ export function markdownToPm(markdown: string): PmDoc {
         body.push(lines[i] ?? "");
         i += 1;
       }
-      sections.push({ kind: "code", data: { body: body.join("\n"), language: codeMatch[2] ?? "plaintext" } });
+      const source = body.join("\n");
+      const language = codeMatch[2] ?? "plaintext";
+      appendMarkdownBlock(content, { kind: "code", data: { body: source, language } }, (blockId) =>
+        codeBlock(blockId, source, language));
       continue;
     }
 
@@ -93,18 +106,36 @@ export function markdownToPm(markdown: string): PmDoc {
     if (headingMatch) {
       const level = headingMatch[1]?.length ?? 1;
       const text = headingMatch[2] ?? "";
-      sections.push({ kind: `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6", data: { text } });
+      const kind = `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+      appendMarkdownBlock(content, { kind, data: { text } }, (blockId) =>
+        heading(blockId, level as 1 | 2 | 3 | 4 | 5 | 6, text, level === 2 ? null : undefined));
       continue;
     }
 
     if (/^---+$/.test(line.trim())) {
-      sections.push({ kind: "hr", data: {} });
+      appendMarkdownBlock(content, { kind: "hr", data: {} }, (blockId) => ({
+        type: "horizontalRule",
+        attrs: { blockId },
+      }));
       continue;
     }
 
     const imageMatch = line.match(/^!\[(.*)]\((.+)\)$/);
     if (imageMatch) {
-      sections.push({ kind: "image", data: { alt: imageMatch[1] ?? "", src: imageMatch[2] ?? "", caption: null } });
+      const alt = imageMatch[1] ?? "";
+      const src = imageMatch[2] ?? "";
+      appendMarkdownBlock(content, { kind: "image", data: { alt, src, caption: null } }, (blockId) => ({
+        type: "image",
+        attrs: {
+          blockId,
+          src,
+          alt,
+          caption: null,
+          width: null,
+          height: null,
+          align: "center",
+        },
+      }));
       continue;
     }
 
@@ -115,7 +146,12 @@ export function markdownToPm(markdown: string): PmDoc {
         quoteLines.push((lines[cursor] ?? "").replace(/^\s*>\s?/, ""));
         cursor += 1;
       }
-      sections.push({ kind: "quote", data: { text: quoteLines.join("\n") } });
+      const text = quoteLines.join("\n");
+      appendMarkdownBlock(content, { kind: "quote", data: { text } }, (blockId) => ({
+        type: "blockquote",
+        attrs: { blockId },
+        content: [paragraph(`${blockId}-p`, text)],
+      }));
       i = cursor - 1;
       continue;
     }
@@ -130,7 +166,8 @@ export function markdownToPm(markdown: string): PmDoc {
         rows.push(splitPipeTableRow(lines[cursor] ?? ""));
         cursor += 1;
       }
-      sections.push({ kind: "table", data: { head, rows } });
+      appendMarkdownBlock(content, { kind: "table", data: { head, rows } }, (blockId) =>
+        table(blockId, head, rows));
       i = cursor - 1;
       continue;
     }
@@ -138,15 +175,21 @@ export function markdownToPm(markdown: string): PmDoc {
     const listLine = parseMarkdownListLine(line);
     if (listLine) {
       const parsed = parseMarkdownList(lines, i, listLine.level, listLine.kind);
-      sections.push(markdownListToLegacySection(parsed.list));
+      appendMarkdownBlock(content, markdownListStableSeed(parsed.list), (blockId) =>
+        markdownListBlock(blockId, parsed.list));
       i = parsed.next - 1;
       continue;
     }
 
-    sections.push({ kind: "p", data: { text: unescapeParagraphBlockSyntax(line) } });
+    const text = unescapeParagraphBlockSyntax(line);
+    appendMarkdownBlock(content, { kind: "p", data: { text } }, (blockId) => paragraph(blockId, text));
   }
 
-  const base = legacySectionsToPm(sections);
+  const base = normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: PM_SCHEMA_VERSION },
+    content,
+  });
   const replaced: PmDoc = {
     ...base,
     content: base.content.map((block) => {
@@ -155,6 +198,100 @@ export function markdownToPm(markdown: string): PmDoc {
     }),
   };
   return materializeDraftBlockIds(withParsedMarkdownInlines(replaced), { namespace: "markdown.html-table" });
+}
+
+/** 历史 blockId 是可观察数据；seed 形状冻结，仅参与哈希，不承载正文中间表示。 */
+function appendMarkdownBlock(
+  content: PmBlockNode[],
+  stableSeed: unknown,
+  build: (blockId: string) => PmBlockNode,
+): void {
+  const blockId = getDeterministicId("block", {
+    index: content.length,
+    section: stableSeed,
+  });
+  content.push(build(blockId));
+}
+
+function heading(
+  blockId: string,
+  level: 1 | 2 | 3 | 4 | 5 | 6,
+  text: string,
+  anchor?: string | null,
+): PmBlockNode {
+  return {
+    type: "heading",
+    attrs: anchor === undefined ? { blockId, level } : { blockId, level, anchor },
+    content: textContent(text),
+  };
+}
+
+function paragraph(blockId: string, text: string): PmParagraphNode {
+  return {
+    type: "paragraph",
+    attrs: { blockId },
+    content: textContent(text),
+  };
+}
+
+function textContent(text: string): PmInlineNode[] {
+  return text ? [{ type: "text", text }] : [];
+}
+
+function codeBlock(blockId: string, body: string, language: string): PmBlockNode {
+  const mermaidSource = detectMermaidSource(language, body);
+  if (mermaidSource) {
+    return { type: "diagram", attrs: { blockId, lang: "mermaid", source: mermaidSource, svg: null } };
+  }
+  const drawioSource = detectDrawioSource(language, body);
+  if (drawioSource) {
+    return { type: "diagram", attrs: { blockId, lang: "drawio", source: drawioSource, svg: null } };
+  }
+  return {
+    type: "codeBlock",
+    attrs: { blockId, language },
+    content: body ? [{ type: "text", text: body }] : [],
+  };
+}
+
+function table(blockId: string, head: string[], rows: string[][]): PmTableNode {
+  const columnCount = Math.max(head.length, ...rows.map((row) => row.length));
+  const padRow = (row: string[]) => [
+    ...row,
+    ...Array.from({ length: columnCount - row.length }, () => ""),
+  ];
+  const normalizedHead = head.length > 0 ? padRow(head) : head;
+  const normalizedRows = rows.map(padRow);
+  const headerRow: PmTableRowNode | null = normalizedHead.length
+    ? {
+        type: "tableRow",
+        content: normalizedHead.map((cell, cellIndex) =>
+          tableCell("tableHeader", `${blockId}-h-${cellIndex + 1}`, cell)),
+      }
+    : null;
+
+  const bodyRows: PmTableRowNode[] = normalizedRows.map((row, rowIndex) => ({
+    type: "tableRow",
+    content: row.map((cell, cellIndex) =>
+      tableCell("tableCell", `${blockId}-r-${rowIndex + 1}-${cellIndex + 1}`, cell)),
+  }));
+
+  return {
+    type: "table",
+    attrs: { blockId },
+    content: headerRow ? [headerRow, ...bodyRows] : bodyRows,
+  };
+}
+
+function tableCell(
+  type: "tableCell" | "tableHeader",
+  blockId: string,
+  text: string,
+): PmTableCellNode {
+  return {
+    type,
+    content: [paragraph(`${blockId}-p`, text)],
+  };
 }
 
 function unescapeParagraphBlockSyntax(line: string): string {
@@ -370,12 +507,29 @@ function indentLevel(prefix: string): number {
   return Math.floor(columns / 2);
 }
 
-function markdownListToLegacySection(list: ParsedMarkdownList): LegacyListSectionLike {
+type MarkdownListStableSeed =
+  | {
+      kind: "list";
+      data: {
+        ordered: boolean;
+        start?: number;
+        items: Array<{ text: string; children: MarkdownListStableSeed[] }>;
+      };
+    }
+  | { kind: "taskList"; data: { items: MarkdownTaskStableSeed[] } };
+
+type MarkdownTaskStableSeed = {
+  text: string;
+  checked: boolean;
+  children: Array<MarkdownTaskStableSeed | MarkdownListStableSeed>;
+};
+
+function markdownListStableSeed(list: ParsedMarkdownList): MarkdownListStableSeed {
   if (list.kind === "task") {
     return {
       kind: "taskList",
       data: {
-        items: list.items.map(markdownTaskItemToLegacy),
+        items: list.items.map(markdownTaskStableSeed),
       },
     };
   }
@@ -387,22 +541,107 @@ function markdownListToLegacySection(list: ParsedMarkdownList): LegacyListSectio
       ...(list.kind === "ordered" ? { start: list.start } : {}),
       items: list.items.map((item) => ({
         text: item.text,
-        children: item.children.map(markdownListToLegacySection),
+        children: item.children.map(markdownListStableSeed),
       })),
     },
   };
 }
 
-function markdownTaskItemToLegacy(item: ParsedMarkdownListItem): LegacyTaskItem {
+function markdownTaskStableSeed(item: ParsedMarkdownListItem): MarkdownTaskStableSeed {
   return {
     text: item.text,
     checked: item.checked === true,
-    children: item.children.flatMap<LegacyTaskItem | LegacyListSectionLike>((child) =>
+    children: item.children.flatMap<MarkdownTaskStableSeed | MarkdownListStableSeed>((child) =>
       child.kind === "task"
-        ? child.items.map(markdownTaskItemToLegacy)
-        : [markdownListToLegacySection(child)],
+        ? child.items.map(markdownTaskStableSeed)
+        : [markdownListStableSeed(child)],
     ),
   };
+}
+
+function markdownListBlock(blockId: string, list: ParsedMarkdownList): PmBlockNode {
+  if (list.kind === "task") return markdownTaskListBlock(blockId, list.items);
+
+  const content = list.items.map((item, itemIndex) => {
+    const itemBlockId = `${blockId}-item-${itemIndex + 1}`;
+    return {
+      type: "listItem" as const,
+      attrs: { blockId: itemBlockId },
+      content: [
+        paragraph(`${itemBlockId}-p`, item.text),
+        ...item.children.map((child, childIndex) =>
+          markdownListBlock(
+            `${itemBlockId}-${child.kind === "task" ? "task" : "list"}-${childIndex + 1}`,
+            child,
+          )),
+      ],
+    };
+  });
+
+  if (list.kind === "ordered") {
+    return {
+      type: "orderedList",
+      attrs: { blockId, start: list.start ?? 1 },
+      content,
+    };
+  }
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content,
+  };
+}
+
+function markdownTaskListBlock(blockId: string, items: ParsedMarkdownListItem[]): PmTaskListNode {
+  return {
+    type: "taskList",
+    attrs: { blockId },
+    content: items.map((item, itemIndex) => {
+      const itemBlockId = `${blockId}-item-${itemIndex + 1}`;
+      return {
+        type: "taskItem",
+        attrs: { blockId: itemBlockId, checked: item.checked === true },
+        content: [
+          paragraph(`${itemBlockId}-p`, item.text),
+          ...markdownTaskItemChildBlocks(itemBlockId, item.children),
+        ],
+      };
+    }),
+  };
+}
+
+type ParsedMarkdownTaskChild =
+  | { kind: "taskItem"; item: ParsedMarkdownListItem }
+  | { kind: "list"; list: ParsedMarkdownList };
+
+function markdownTaskItemChildBlocks(
+  itemBlockId: string,
+  childLists: readonly ParsedMarkdownList[],
+): PmBlockNode[] {
+  const children = childLists.flatMap<ParsedMarkdownTaskChild>((child) =>
+    child.kind === "task"
+      ? child.items.map((item) => ({ kind: "taskItem" as const, item }))
+      : [{ kind: "list" as const, list: child }],
+  );
+  const blocks: PmBlockNode[] = [];
+  let taskRun: ParsedMarkdownListItem[] = [];
+  const flushTasks = () => {
+    if (taskRun.length === 0) return;
+    const suffix = blocks.length === 0 ? "tasks" : `tasks-${blocks.length + 1}`;
+    blocks.push(markdownTaskListBlock(`${itemBlockId}-${suffix}`, taskRun));
+    taskRun = [];
+  };
+
+  children.forEach((child, childIndex) => {
+    if (child.kind === "taskItem") {
+      taskRun.push(child.item);
+      return;
+    }
+    flushTasks();
+    blocks.push(markdownListBlock(`${itemBlockId}-list-${childIndex + 1}`, child.list));
+  });
+  flushTasks();
+  return blocks;
 }
 
 function withParsedMarkdownInlines(doc: PmDoc): PmDoc {

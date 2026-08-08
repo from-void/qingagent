@@ -18,7 +18,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";

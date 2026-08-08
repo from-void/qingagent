@@ -1853,7 +1853,7 @@ export interface BlockPatchInput {
   replaceBeforeBlocks?: ViewBlock[];
   blockCount?: number;
   /** 原始 PM node(insert/replace 的 hunk.after):审阅态块级新增/替换直接用它渲染,一律不经
-   *  ViewBlock→legacy 降级,保全所有格式(对齐/marks/嵌套列表/合并单元格/代码高亮/inlineMath 等)。 */
+   *  ViewBlock 文本投影,保全所有格式(对齐/marks/嵌套列表/合并单元格/代码高亮/inlineMath 等)。 */
   pmNodes?: readonly PmBlockNode[];
   /** 原始 PM node(replace/delete 的 hunk.before):hover 卡片"原文"直接用它渲染,同样不降级,
    *  保全表格合并单元格/嵌套列表子项/单元格富文本/图表 overlay 等(替代早前拍平的 before 文本)。 */

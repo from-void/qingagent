@@ -60,8 +60,9 @@ describe("PDF 导出固定 Playwright Chromium", () => {
       ],
     }, { title: "中文导出冒烟" }));
 
-    expect(result.text).toContain("中文导出冒烟");
-    expect(result.text).toContain("青简保留中文文字层");
+    // PDF 文字层码位随字体 cmap 变化，NFKC 归一后断言与字体解耦。
+    expect(result.text.normalize("NFKC")).toContain("中文导出冒烟".normalize("NFKC"));
+    expect(result.text.normalize("NFKC")).toContain("青简保留中文文字层".normalize("NFKC"));
   });
 });
 

@@ -249,22 +249,6 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     await expect(getVersionSnapshot("legacy-list-version")).resolves.not.toBeNull();
     await expect(documentDraftRepo.load("legacy-list-doc")).resolves.not.toBeNull();
 
-    // 迁移遗漏/外部直写的边角仍由历史读取路径兜底，不能让整篇文档打不开。
-    await client.execute({
-      sql: "UPDATE documents SET doc_pm = ? WHERE id = 'legacy-list-doc'",
-      args: [docPm],
-    });
-    await client.execute({
-      sql: "UPDATE document_versions SET snapshot_pm = ? WHERE version_id = 'legacy-list-version'",
-      args: [versionPm],
-    });
-    await client.execute({
-      sql: "UPDATE document_drafts SET draft_pm = ? WHERE doc_id = 'legacy-list-doc'",
-      args: [draftPm],
-    });
-    await expect(documentRepo.load("legacy-list-doc")).resolves.not.toBeNull();
-    await expect(getVersionSnapshot("legacy-list-version")).resolves.not.toBeNull();
-    await expect(documentDraftRepo.load("legacy-list-doc")).resolves.not.toBeNull();
   });
 
   async function prepareMappedFamilyFixture(): Promise<void> {

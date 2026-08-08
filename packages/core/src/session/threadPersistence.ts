@@ -51,7 +51,7 @@ import {
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
-import { hasCanonicalDoc } from "../doc-engine/docFacts.js";
+import { hasCanonicalDoc } from "../utils/pmDocFacts.js";
 import { getDocumentVersionCommittedAt } from "../doc-engine/commitDocumentOp.js";
 import {
   normalizePersistedDocStateKind,

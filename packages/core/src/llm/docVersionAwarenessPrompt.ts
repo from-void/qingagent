@@ -1,5 +1,5 @@
 import type { CoreMessage } from "ai";
-import { hasCanonicalDoc } from "../doc-engine/docFacts.js";
+import { hasCanonicalDoc } from "../utils/pmDocFacts.js";
 
 export const QINGAGENT_DOC_VERSION_AWARENESS_REQUEST_CONTEXT_KEY =
   "qingagentDocVersionAwarenessPrompt";

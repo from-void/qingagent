@@ -21,6 +21,7 @@ export * from "./db/sessionDeletionRepo.js";
 export * from "./db/sessionResourceRepo.js";
 export * from "./db/styleTemplateRepo.js";
 export * from "./db/usageRepo.js";
+export * from "./db/usageTimestamp.js";
 export * from "./db/providerBalanceRepo.js";
 export * from "./seeds/dtypeTemplatePrompts.js";
 export * from "./seeds/reviewRoleTemplatePrompts.js";

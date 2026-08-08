@@ -1,10 +1,13 @@
-// F1 usage 账本读写。写入是 fire-and-forget(绝不影响生成主链),读取供设置页聚合展示。
+// F1 usage 事实账本。写端只记录原始量；金额由 core 按 schedule 在读端纯派生。
 
 import { randomUUID } from "node:crypto";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
+import { isCanonicalUsageTimestamp } from "./usageTimestamp.js";
 
 type ApiKeyOrigin = "visitor" | "global-db" | "env" | "vision" | "none";
+export type UsageState = "recorded" | "estimated" | "missing" | "billing_unknown";
+export type CacheAccountingState = "known" | "unknown";
 
 export interface UsageEventInput {
   sessionId: string;
@@ -19,20 +22,15 @@ export interface UsageEventInput {
   cacheMissTokens?: number;
   cacheCreationTokens?: number;
   /** known 仅在 hit/miss 都由 provider 给出或可可靠推导时使用。 */
-  cacheAccountingState?: "known" | "unknown";
+  cacheAccountingState?: CacheAccountingState;
   /** recorded=provider 实测；estimated=本地估算；missing=未接 wire；billing_unknown=收费结果未知。 */
-  usageState?: "recorded" | "estimated" | "missing" | "billing_unknown";
+  usageState?: UsageState;
   reason?: string | null;
   /** 并发赛马 lane；非赛马调用可为空。 */
   lane?: number | null;
   /** 同一 lane/call site 内的真实 provider 请求序号，从 1 开始。 */
   attempt?: number | null;
-  /** 调用开始时计算并固化的人民币金额；未收录价目的模型为空。 */
-  costCny?: number | null;
-  /** null 仅属于迁移前旧行；新事件必须明确标出是否可计价。 */
-  pricingTier?: "standard" | "peak" | "unpriced" | null;
-  pricingMultiplier?: number | null;
-  /** provider 请求实际开始时刻；计价与事件日历归属统一使用这一时刻。 */
+  /** provider 请求实际开始时刻；事件日历归属与读端计价统一使用这一时刻。 */
   occurredAt?: string | number | Date;
 }
 
@@ -40,21 +38,12 @@ function toCount(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-function toCost(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function toMultiplier(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-}
-
 function toOccurredAt(value: string | number | Date | undefined): string {
   const date = value instanceof Date ? value : value === undefined ? new Date() : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
 }
 
-/** 写一条 usage 事件;失败只 console.warn,绝不抛(主链优先)。
- *  recorded 的 input/output 全 0 时跳过；estimated/missing 仍保留终态事实。 */
+/** 写一条 usage 事件；失败只 console.warn，绝不抛（主链优先）。 */
 export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
   const usageState = input.usageState ?? "recorded";
   const cacheAccountingState = input.cacheAccountingState ?? (
@@ -65,11 +54,7 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
     toCount(input.inputTokens) === 0 &&
     toCount(input.outputTokens) === 0
   ) return;
-  const costCny = toCost(input.costCny);
-  const pricingTier = input.pricingTier ?? (costCny === null ? "unpriced" : "standard");
-  const pricingMultiplier = pricingTier === "unpriced"
-    ? null
-    : toMultiplier(input.pricingMultiplier) ?? 1;
+
   try {
     const client = getDocumentsClient();
     await ensureMigrated();
@@ -79,8 +64,8 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
           (id, session_id, run_id, call_site, model_id, key_origin,
            input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens,
            cache_creation_tokens, cache_accounting_state, usage_state, reason, lane, attempt,
-           cost_cny, pricing_tier, pricing_multiplier, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           randomUUID(),
           input.sessionId,
@@ -98,144 +83,234 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
           input.reason ?? null,
           input.lane ?? null,
           input.attempt ?? null,
-          costCny,
-          pricingTier,
-          pricingMultiplier,
           toOccurredAt(input.occurredAt),
         ],
       }),
     );
   } catch (err) {
-    console.warn("[usage] 记录 usage 事件失败(不影响主链)", {
+    console.warn("[usage] 记录 usage 事件失败（不影响主链）", {
       callSite: input.callSite,
       error: err instanceof Error ? err.message : String(err),
     });
   }
 }
 
-export interface UsageAggRow {
-  /** 聚合桶:day 模式为 YYYY-MM-DD,session 模式为 session_id。 */
+export interface PricingSliceWindowSpec {
+  start: string;
+  end: string;
+}
+
+export interface PricingSliceEpochSpec {
+  effectiveFrom: string;
+  peak?: {
+    windows: readonly PricingSliceWindowSpec[];
+    models: readonly string[];
+  };
+}
+
+/** db 只认识切片边界，不认识单价。 */
+export interface PricingSliceSpec {
+  epochs: readonly PricingSliceEpochSpec[];
+}
+
+export interface PricingSliceCase {
+  sql: string;
+  args: Array<string | number>;
+}
+
+const MAX_PRICING_EPOCHS = 64;
+const MAX_PEAK_WINDOWS_PER_EPOCH = 32;
+const MAX_PEAK_MODELS_PER_EPOCH = 128;
+const MAX_PRICING_SLICE_PARAMS = 900;
+const CLOCK_SQL = "strftime('%H:%M', usage.created_at, '+8 hours')";
+const CANONICAL_CREATED_AT_SQL = `(
+  usage.created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'
+  AND strftime('%Y-%m-%dT%H:%M:%fZ', usage.created_at) = usage.created_at
+  AND substr(usage.created_at, 12, 2) BETWEEN '00' AND '23'
+)`;
+const PRICING_SLICE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
+
+function clockMinute(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+    ? hour * 60 + minute
+    : null;
+}
+
+function validatePricingSliceSpec(spec: PricingSliceSpec): void {
+  if (!Array.isArray(spec.epochs) || spec.epochs.length === 0) {
+    throw new Error("pricing slice spec 必须至少包含一个 epoch");
+  }
+  if (spec.epochs.length > MAX_PRICING_EPOCHS) {
+    throw new Error(`pricing slice epoch 数量不得超过 ${MAX_PRICING_EPOCHS}`);
+  }
+  let previous = "";
+  let parameterCount = 0;
+  for (const [index, epoch] of spec.epochs.entries()) {
+    if (!isCanonicalUsageTimestamp(epoch.effectiveFrom)) {
+      throw new Error(`pricing slice epoch[${index}] effectiveFrom 非 canonical ISO`);
+    }
+    if (index === 0 && epoch.effectiveFrom !== "1970-01-01T00:00:00.000Z") {
+      throw new Error("pricing slice epoch[0] 必须从 1970-01-01T00:00:00.000Z 生效");
+    }
+    if (previous && epoch.effectiveFrom <= previous) {
+      throw new Error("pricing slice epochs 必须按 effectiveFrom 严格递增");
+    }
+    previous = epoch.effectiveFrom;
+    parameterCount += 1;
+    if (!epoch.peak) continue;
+    if (
+      !Array.isArray(epoch.peak.windows) ||
+      epoch.peak.windows.length === 0 ||
+      epoch.peak.windows.length > MAX_PEAK_WINDOWS_PER_EPOCH
+    ) {
+      throw new Error(`pricing slice peak windows 数量必须为 1..${MAX_PEAK_WINDOWS_PER_EPOCH}`);
+    }
+    if (
+      !Array.isArray(epoch.peak.models) ||
+      epoch.peak.models.length === 0 ||
+      epoch.peak.models.length > MAX_PEAK_MODELS_PER_EPOCH ||
+      epoch.peak.models.some((model: unknown) =>
+        typeof model !== "string" || !PRICING_SLICE_MODEL_ID.test(model))
+    ) {
+      throw new Error(`pricing slice peak models 数量必须为 1..${MAX_PEAK_MODELS_PER_EPOCH}`);
+    }
+    parameterCount += epoch.peak.models.length + epoch.peak.windows.length * 2;
+    for (const window of epoch.peak.windows) {
+      const start = clockMinute(window.start);
+      const end = clockMinute(window.end);
+      if (start === null || end === null || start === end) {
+        throw new Error("pricing slice peak window 必须是 start≠end 的 HH:mm");
+      }
+    }
+  }
+  if (parameterCount > MAX_PRICING_SLICE_PARAMS) {
+    throw new Error(`pricing slice SQL 参数不得超过 ${MAX_PRICING_SLICE_PARAMS}`);
+  }
+}
+
+/**
+ * 唯一切片 CASE builder。SQL 结构与 epoch 下标只来自代码常量；边界时间、模型 ID
+ * 全部通过参数绑定，非法 created_at 首分支固定落到 -1 哨兵。
+ */
+export function buildPricingSliceCase(spec: PricingSliceSpec): PricingSliceCase {
+  validatePricingSliceSpec(spec);
+  const args: Array<string | number> = [];
+  const branches: string[] = [];
+  for (let index = spec.epochs.length - 1; index >= 0; index -= 1) {
+    const epoch = spec.epochs[index]!;
+    args.push(epoch.effectiveFrom);
+    let peakSql = "0";
+    if (epoch.peak) {
+      const modelSql = epoch.peak.models.map(() => "?").join(", ");
+      args.push(...epoch.peak.models);
+      const windowParts: string[] = [];
+      for (const window of epoch.peak.windows) {
+        const start = clockMinute(window.start)!;
+        const end = clockMinute(window.end)!;
+        args.push(window.start, window.end);
+        windowParts.push(start < end
+          ? `(${CLOCK_SQL} >= ? AND ${CLOCK_SQL} < ?)`
+          : `(${CLOCK_SQL} >= ? OR ${CLOCK_SQL} < ?)`);
+      }
+      peakSql = `(usage.model_id IN (${modelSql}) AND (${windowParts.join(" OR ")}))`;
+    }
+    branches.push(
+      `WHEN usage.created_at >= ? THEN ${index * 2} + CASE WHEN ${peakSql} THEN 1 ELSE 0 END`,
+    );
+  }
+  return {
+    sql: `CASE WHEN NOT ${CANONICAL_CREATED_AT_SQL} THEN -1 ${branches.join(" ")} ELSE -1 END`,
+    args,
+  };
+}
+
+export interface UsagePricingSliceRow {
   bucket: string;
-  /** 按天聚合内部保留真实会话键，供上层兼容旧线程标题。 */
   sessionId?: string;
-  /** 按天聚合的文档主表 ID；旧数据无主表行时回退 session_id。 */
-  documentId?: string;
-  /** documents.title 为空时不返回，由上层尝试旧线程标题。 */
+  callSite: string;
+  modelId: string;
+  pricingSlice: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  billableMissTokens: number;
+  cacheCreationTokens: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  estimatedCacheHitTokens: number;
+  estimatedCacheMissTokens: number;
+  estimatedBillableMissTokens: number;
+  knownCacheHitTokens: number;
+  knownCacheTotalTokens: number;
+  coldStartMissTokens: number;
+  calls: number;
+  recordedCalls: number;
+  estimatedCalls: number;
+  missingCalls: number;
+  billingUnknownCalls: number;
+  lastAt: string;
+}
+
+export interface UsageDayRow {
+  bucket: string;
+  occurredAt: string;
+  sessionId: string;
+  documentId: string;
   documentTitle?: string;
   callSite: string;
   modelId: string;
   inputTokens: number;
   outputTokens: number;
-  /** estimated 永不混入上面的 provider 实测 token。 */
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  cacheCreationTokens: number;
+  cacheAccountingState: CacheAccountingState;
+  usageState: UsageState;
+  isColdStart: boolean;
+}
+
+/** core 计价后的内部公开聚合形状；server 再映射为 contract。 */
+export interface UsageAggRow {
+  bucket: string;
+  sessionId?: string;
+  documentId?: string;
+  documentTitle?: string;
+  callSite: string;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
   estimatedInputTokens?: number;
   estimatedOutputTokens?: number;
   estimatedCacheHitTokens?: number;
   estimatedCacheMissTokens?: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
-  /** 每个会话 × 调用点 × 并发 lane 首次请求中可确知用于建缓存的 miss token。 */
   coldStartMissTokens: number;
   cacheCreationTokens: number;
-  /** hit/(hit+miss)；provider 未给缓存拆分时为 null，而不是 0。 */
   cacheHitRate: number | null;
   calls: number;
   recordedCalls: number;
   estimatedCalls?: number;
   missingCalls: number;
   billingUnknownCalls?: number;
-  /** provider 实测请求占全部真实请求比例；estimated/missing 都不进入精确覆盖率。 */
   coverageRate: number;
-  /** 调用发生时已固化的金额，recorded 与 estimated 始终分开。 */
   costCny?: number;
   estimatedCostCny?: number;
-  /** 当前聚合中按北京时间高峰倍率计价的真实请求。 */
+  pricedCalls: number;
+  unpricedCalls: number;
+  estimatedPricedCalls: number;
+  estimatedUnpricedCalls: number;
   peakPricedCalls?: number;
   peakPricingMultiplierMin?: number;
   peakPricingMultiplierMax?: number;
-  /** 仅供 server 区分迁移前旧行与已明确 unpriced 的新行，不对外返回。 */
-  pricingSnapshotCalls?: number;
-  legacyPricingCalls?: number;
-  legacyInputTokens?: number;
-  legacyOutputTokens?: number;
-  legacyCacheHitTokens?: number;
-  legacyCacheMissTokens?: number;
-  legacyEstimatedInputTokens?: number;
-  legacyEstimatedOutputTokens?: number;
-  legacyEstimatedCacheHitTokens?: number;
-  legacyEstimatedCacheMissTokens?: number;
-}
-
-function rowToAgg(row: Record<string, unknown>): UsageAggRow {
-  const estimatedCalls = Number(row.estimated_calls ?? 0);
-  const estimatedInputTokens = Number(row.estimated_input_tokens ?? 0);
-  const estimatedOutputTokens = Number(row.estimated_output_tokens ?? 0);
-  const estimatedCacheHitTokens = Number(row.estimated_cache_hit_tokens ?? 0);
-  const estimatedCacheMissTokens = Number(row.estimated_cache_miss_tokens ?? 0);
-  const pricedRecordedCalls = Number(row.priced_recorded_calls ?? 0);
-  const pricedEstimatedCalls = Number(row.priced_estimated_calls ?? 0);
-  const peakPricedCalls = Number(row.peak_priced_calls ?? 0);
-  const pricingSnapshotCalls = Number(row.pricing_snapshot_calls ?? 0);
-  const legacyPricingCalls = Number(row.legacy_pricing_calls ?? 0);
-  return {
-    bucket: String(row.bucket ?? ""),
-    ...(row.session_id == null ? {} : { sessionId: String(row.session_id) }),
-    ...(row.document_id == null ? {} : { documentId: String(row.document_id) }),
-    ...(row.document_title == null || String(row.document_title) === ""
-      ? {}
-      : { documentTitle: String(row.document_title) }),
-    callSite: String(row.call_site ?? ""),
-    modelId: String(row.model_id ?? ""),
-    inputTokens: Number(row.input_tokens ?? 0),
-    outputTokens: Number(row.output_tokens ?? 0),
-    ...(estimatedCalls > 0 || estimatedInputTokens > 0 || estimatedOutputTokens > 0
-      ? {
-          estimatedInputTokens,
-          estimatedOutputTokens,
-          estimatedCacheHitTokens,
-          estimatedCacheMissTokens,
-          estimatedCalls,
-        }
-      : {}),
-    cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
-    cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
-    coldStartMissTokens: Number(row.cold_start_miss_tokens ?? 0),
-    cacheCreationTokens: Number(row.cache_creation_tokens ?? 0),
-    cacheHitRate: row.cache_hit_rate == null ? null : Number(row.cache_hit_rate),
-    calls: Number(row.calls ?? 0),
-    recordedCalls: Number(row.recorded_calls ?? 0),
-    missingCalls: Number(row.missing_calls ?? 0),
-    ...(Number(row.billing_unknown_calls ?? 0) > 0
-      ? { billingUnknownCalls: Number(row.billing_unknown_calls) }
-      : {}),
-    coverageRate: Number(row.calls ?? 0) > 0
-      ? Number(row.recorded_calls ?? 0) / Number(row.calls)
-      : 0,
-    ...(pricedRecordedCalls > 0 ? { costCny: Number(row.cost_cny ?? 0) } : {}),
-    ...(pricedEstimatedCalls > 0
-      ? { estimatedCostCny: Number(row.estimated_cost_cny ?? 0) }
-      : {}),
-    ...(peakPricedCalls > 0
-      ? {
-          peakPricedCalls,
-          peakPricingMultiplierMin: Number(row.peak_pricing_multiplier_min),
-          peakPricingMultiplierMax: Number(row.peak_pricing_multiplier_max),
-        }
-      : {}),
-    ...(pricingSnapshotCalls > 0 ? { pricingSnapshotCalls } : {}),
-    ...(legacyPricingCalls > 0
-      ? {
-          legacyPricingCalls,
-          legacyInputTokens: Number(row.legacy_input_tokens ?? 0),
-          legacyOutputTokens: Number(row.legacy_output_tokens ?? 0),
-          legacyCacheHitTokens: Number(row.legacy_cache_hit_tokens ?? 0),
-          legacyCacheMissTokens: Number(row.legacy_cache_miss_tokens ?? 0),
-          legacyEstimatedInputTokens: Number(row.legacy_estimated_input_tokens ?? 0),
-          legacyEstimatedOutputTokens: Number(row.legacy_estimated_output_tokens ?? 0),
-          legacyEstimatedCacheHitTokens: Number(row.legacy_estimated_cache_hit_tokens ?? 0),
-          legacyEstimatedCacheMissTokens: Number(row.legacy_estimated_cache_miss_tokens ?? 0),
-        }
-      : {}),
-  };
+  /** 仅供 core 恢复 SQL 聚合前既有排序，server 不向外暴露。 */
+  lastAt?: string;
 }
 
 function usageDayFormatter(timeZone: string): Intl.DateTimeFormat {
@@ -249,13 +324,9 @@ function usageDayFormatter(timeZone: string): Intl.DateTimeFormat {
   });
 }
 
-function usageDayBucket(
-  value: string | number | Date,
-  formatter: Intl.DateTimeFormat,
-): string | null {
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) return null;
-  const parts = formatter.formatToParts(date);
+function usageDayBucket(value: string, formatter: Intl.DateTimeFormat): string | null {
+  if (!isCanonicalUsageTimestamp(value)) return null;
+  const parts = formatter.formatToParts(new Date(value));
   const year = parts.find((part) => part.type === "year")?.value;
   const month = parts.find((part) => part.type === "month")?.value;
   const day = parts.find((part) => part.type === "day")?.value;
@@ -263,22 +334,25 @@ function usageDayBucket(
 }
 
 function usageDayWindowStart(days: number, formatter: Intl.DateTimeFormat): string {
-  const today = usageDayBucket(Date.now(), formatter);
+  const now = new Date().toISOString();
+  const today = usageDayBucket(now, formatter);
   if (!today) throw new Error("无法计算用量统计日历窗口");
   const [year, month, day] = today.split("-").map(Number);
-  const start = new Date(Date.UTC(
+  return new Date(Date.UTC(
     year!,
     month! - 1,
     day! - Math.max(0, Math.round(days) - 1),
-  ));
-  return start.toISOString().slice(0, 10);
+  )).toISOString().slice(0, 10);
 }
 
-/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 个客户端日历日)。 */
-export async function aggregateUsageByDay(
+/**
+ * 天视图保持窗口内原始行，由 core 逐行计价后在 JS 聚合。不可解析或非 canonical
+ * created_at 无法归入 IANA 日历桶，按既有日历语义跳过。
+ */
+export async function queryUsageByDay(
   days = 30,
   timeZone = "UTC",
-): Promise<UsageAggRow[]> {
+): Promise<UsageDayRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
   const normalizedDays = Math.max(1, Math.round(days));
@@ -305,9 +379,6 @@ export async function aggregateUsageByDay(
         usage.cache_creation_tokens,
         usage.cache_accounting_state,
         usage.usage_state,
-        usage.cost_cny,
-        usage.pricing_tier,
-        usage.pricing_multiplier,
         CASE WHEN usage.created_at = first_cache.first_created_at THEN 1 ELSE 0 END AS is_cold_start
       FROM llm_usage_events usage
       INNER JOIN first_cache_requests first_cache
@@ -320,172 +391,103 @@ export async function aggregateUsageByDay(
       ORDER BY usage.created_at DESC`,
     args: [since],
   });
-  const grouped = new Map<string, Record<string, unknown>>();
-  for (const raw of result.rows) {
+
+  return result.rows.flatMap((raw) => {
     const row = raw as unknown as Record<string, unknown>;
-    const bucket = usageDayBucket(String(row.created_at ?? ""), formatter);
-    if (!bucket || bucket < firstBucket) continue;
-    const key = JSON.stringify([
+    const occurredAt = String(row.created_at ?? "");
+    const bucket = usageDayBucket(occurredAt, formatter);
+    if (!bucket || bucket < firstBucket) return [];
+    return [{
       bucket,
-      row.session_id,
-      row.document_id,
-      row.document_title,
-      row.call_site,
-      row.model_id,
-    ]);
-    const aggregate = grouped.get(key) ?? {
-      bucket,
-      session_id: row.session_id,
-      document_id: row.document_id,
-      document_title: row.document_title,
-      call_site: row.call_site,
-      model_id: row.model_id,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_hit_tokens: 0,
-      cache_miss_tokens: 0,
-      cold_start_miss_tokens: 0,
-      cache_creation_tokens: 0,
-      known_cache_hit_tokens: 0,
-      known_cache_total_tokens: 0,
-      calls: 0,
-      recorded_calls: 0,
-      estimated_input_tokens: 0,
-      estimated_output_tokens: 0,
-      estimated_cache_hit_tokens: 0,
-      estimated_cache_miss_tokens: 0,
-      estimated_calls: 0,
-      missing_calls: 0,
-      billing_unknown_calls: 0,
-      cost_cny: 0,
-      estimated_cost_cny: 0,
-      priced_recorded_calls: 0,
-      priced_estimated_calls: 0,
-      peak_priced_calls: 0,
-      peak_pricing_multiplier_min: null,
-      peak_pricing_multiplier_max: null,
-      pricing_snapshot_calls: 0,
-      legacy_pricing_calls: 0,
-      legacy_input_tokens: 0,
-      legacy_output_tokens: 0,
-      legacy_cache_hit_tokens: 0,
-      legacy_cache_miss_tokens: 0,
-      legacy_estimated_input_tokens: 0,
-      legacy_estimated_output_tokens: 0,
-      legacy_estimated_cache_hit_tokens: 0,
-      legacy_estimated_cache_miss_tokens: 0,
-    };
-    aggregate.calls = Number(aggregate.calls) + 1;
-    if (row.pricing_tier == null) {
-      aggregate.legacy_pricing_calls = Number(aggregate.legacy_pricing_calls) + 1;
-    } else {
-      aggregate.pricing_snapshot_calls = Number(aggregate.pricing_snapshot_calls) + 1;
-    }
-    if (
-      row.pricing_tier === "peak" &&
-      (row.usage_state === "recorded" || row.usage_state === "estimated")
-    ) {
-      const multiplier = Number(row.pricing_multiplier);
-      aggregate.peak_priced_calls = Number(aggregate.peak_priced_calls) + 1;
-      aggregate.peak_pricing_multiplier_min = aggregate.peak_pricing_multiplier_min == null
-        ? multiplier
-        : Math.min(Number(aggregate.peak_pricing_multiplier_min), multiplier);
-      aggregate.peak_pricing_multiplier_max = aggregate.peak_pricing_multiplier_max == null
-        ? multiplier
-        : Math.max(Number(aggregate.peak_pricing_multiplier_max), multiplier);
-    }
-    if (row.usage_state === "recorded") {
-      aggregate.recorded_calls = Number(aggregate.recorded_calls) + 1;
-      aggregate.input_tokens = Number(aggregate.input_tokens) + Number(row.input_tokens ?? 0);
-      aggregate.output_tokens = Number(aggregate.output_tokens) + Number(row.output_tokens ?? 0);
-      aggregate.cache_hit_tokens =
-        Number(aggregate.cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
-      aggregate.cache_miss_tokens =
-        Number(aggregate.cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
-      aggregate.cache_creation_tokens =
-        Number(aggregate.cache_creation_tokens) + Number(row.cache_creation_tokens ?? 0);
-      if (row.cost_cny != null) {
-        aggregate.priced_recorded_calls = Number(aggregate.priced_recorded_calls) + 1;
-        aggregate.cost_cny = Number(aggregate.cost_cny) + Number(row.cost_cny);
-      }
-      if (row.pricing_tier == null) {
-        aggregate.legacy_input_tokens =
-          Number(aggregate.legacy_input_tokens) + Number(row.input_tokens ?? 0);
-        aggregate.legacy_output_tokens =
-          Number(aggregate.legacy_output_tokens) + Number(row.output_tokens ?? 0);
-        aggregate.legacy_cache_hit_tokens =
-          Number(aggregate.legacy_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
-        aggregate.legacy_cache_miss_tokens =
-          Number(aggregate.legacy_cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
-      }
-      if (row.cache_accounting_state === "known") {
-        aggregate.known_cache_hit_tokens =
-          Number(aggregate.known_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
-        aggregate.known_cache_total_tokens =
-          Number(aggregate.known_cache_total_tokens) +
-          Number(row.cache_hit_tokens ?? 0) +
-          Number(row.cache_miss_tokens ?? 0);
-        // attempt 随每轮 RequestContext 重置，不能识别会话冷启动。按 session/callSite/lane
-        // 的最早 created_at 判定；不同 lane 各自首发，完全同时间戳的并列首发也都计入。
-        if (Number(row.is_cold_start) === 1) {
-          aggregate.cold_start_miss_tokens =
-            Number(aggregate.cold_start_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
-        }
-      }
-    } else if (row.usage_state === "estimated") {
-      aggregate.estimated_calls = Number(aggregate.estimated_calls) + 1;
-      aggregate.estimated_input_tokens =
-        Number(aggregate.estimated_input_tokens) + Number(row.input_tokens ?? 0);
-      aggregate.estimated_output_tokens =
-        Number(aggregate.estimated_output_tokens) + Number(row.output_tokens ?? 0);
-      aggregate.estimated_cache_hit_tokens =
-        Number(aggregate.estimated_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
-      aggregate.estimated_cache_miss_tokens =
-        Number(aggregate.estimated_cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
-      if (row.cost_cny != null) {
-        aggregate.priced_estimated_calls = Number(aggregate.priced_estimated_calls) + 1;
-        aggregate.estimated_cost_cny =
-          Number(aggregate.estimated_cost_cny) + Number(row.cost_cny);
-      }
-      if (row.pricing_tier == null) {
-        aggregate.legacy_estimated_input_tokens =
-          Number(aggregate.legacy_estimated_input_tokens) + Number(row.input_tokens ?? 0);
-        aggregate.legacy_estimated_output_tokens =
-          Number(aggregate.legacy_estimated_output_tokens) + Number(row.output_tokens ?? 0);
-        aggregate.legacy_estimated_cache_hit_tokens =
-          Number(aggregate.legacy_estimated_cache_hit_tokens) + Number(row.cache_hit_tokens ?? 0);
-        aggregate.legacy_estimated_cache_miss_tokens =
-          Number(aggregate.legacy_estimated_cache_miss_tokens) + Number(row.cache_miss_tokens ?? 0);
-      }
-    } else if (row.usage_state === "missing") {
-      aggregate.missing_calls = Number(aggregate.missing_calls) + 1;
-    } else if (row.usage_state === "billing_unknown") {
-      aggregate.billing_unknown_calls = Number(aggregate.billing_unknown_calls) + 1;
-    }
-    grouped.set(key, aggregate);
-  }
-  return [...grouped.values()]
-    .map((row) => ({
-      ...rowToAgg({
-        ...row,
-        cache_hit_rate: Number(row.known_cache_total_tokens) > 0
-          ? Number(row.known_cache_hit_tokens) / Number(row.known_cache_total_tokens)
-          : null,
-      }),
-    }))
-    .sort((left, right) =>
-      right.bucket.localeCompare(left.bucket) ||
-      (left.documentTitle ?? "").localeCompare(right.documentTitle ?? "") ||
-      (left.documentId ?? "").localeCompare(right.documentId ?? "") ||
-      left.callSite.localeCompare(right.callSite) ||
-      left.modelId.localeCompare(right.modelId)
-    );
+      occurredAt,
+      sessionId: String(row.session_id ?? ""),
+      documentId: String(row.document_id ?? ""),
+      ...(row.document_title == null || String(row.document_title) === ""
+        ? {}
+        : { documentTitle: String(row.document_title) }),
+      callSite: String(row.call_site ?? ""),
+      modelId: String(row.model_id ?? ""),
+      inputTokens: Number(row.input_tokens ?? 0),
+      outputTokens: Number(row.output_tokens ?? 0),
+      cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
+      cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
+      cacheCreationTokens: Number(row.cache_creation_tokens ?? 0),
+      cacheAccountingState: row.cache_accounting_state === "known" ? "known" : "unknown",
+      usageState: row.usage_state === "estimated" || row.usage_state === "missing" ||
+        row.usage_state === "billing_unknown"
+        ? row.usage_state
+        : "recorded",
+      isColdStart: Number(row.is_cold_start) === 1,
+    } satisfies UsageDayRow];
+  });
 }
 
-/** 会话级 × 模型聚合(默认最近 200 个会话桶)。 */
-export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[]> {
+const SLICE_AGG_COLUMNS = `
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens +
+    MAX(0, usage.input_tokens - usage.cache_hit_tokens - usage.cache_miss_tokens) ELSE 0 END) AS billable_miss_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS estimated_input_tokens,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS estimated_output_tokens,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS estimated_cache_hit_tokens,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS estimated_cache_miss_tokens,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens +
+    MAX(0, usage.input_tokens - usage.cache_hit_tokens - usage.cache_miss_tokens) ELSE 0 END) AS estimated_billable_miss_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known'
+    THEN usage.cache_hit_tokens ELSE 0 END) AS known_cache_hit_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known'
+    THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END) AS known_cache_total_tokens,
+  SUM(CASE WHEN usage.usage_state = 'recorded'
+    AND usage.cache_accounting_state = 'known'
+    AND usage.created_at = first_cache.first_created_at
+    THEN usage.cache_miss_tokens ELSE 0 END) AS cold_start_miss_tokens,
+  COUNT(*) AS calls,
+  SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+  SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
+  SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
+  SUM(CASE WHEN usage.usage_state = 'billing_unknown' THEN 1 ELSE 0 END) AS billing_unknown_calls`;
+
+function rowToPricingSlice(row: Record<string, unknown>): UsagePricingSliceRow {
+  return {
+    bucket: String(row.bucket ?? ""),
+    ...(row.session_id == null ? {} : { sessionId: String(row.session_id) }),
+    callSite: String(row.call_site ?? ""),
+    modelId: String(row.model_id ?? ""),
+    pricingSlice: Number(row.pricing_slice ?? -1),
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
+    cacheHitTokens: Number(row.cache_hit_tokens ?? 0),
+    cacheMissTokens: Number(row.cache_miss_tokens ?? 0),
+    billableMissTokens: Number(row.billable_miss_tokens ?? 0),
+    cacheCreationTokens: Number(row.cache_creation_tokens ?? 0),
+    estimatedInputTokens: Number(row.estimated_input_tokens ?? 0),
+    estimatedOutputTokens: Number(row.estimated_output_tokens ?? 0),
+    estimatedCacheHitTokens: Number(row.estimated_cache_hit_tokens ?? 0),
+    estimatedCacheMissTokens: Number(row.estimated_cache_miss_tokens ?? 0),
+    estimatedBillableMissTokens: Number(row.estimated_billable_miss_tokens ?? 0),
+    knownCacheHitTokens: Number(row.known_cache_hit_tokens ?? 0),
+    knownCacheTotalTokens: Number(row.known_cache_total_tokens ?? 0),
+    coldStartMissTokens: Number(row.cold_start_miss_tokens ?? 0),
+    calls: Number(row.calls ?? 0),
+    recordedCalls: Number(row.recorded_calls ?? 0),
+    estimatedCalls: Number(row.estimated_calls ?? 0),
+    missingCalls: Number(row.missing_calls ?? 0),
+    billingUnknownCalls: Number(row.billing_unknown_calls ?? 0),
+    lastAt: String(row.last_at ?? ""),
+  };
+}
+
+/** 会话级 × 模型 × pricing slice 聚合（默认最近 200 个会话桶）。 */
+export async function aggregateUsageBySession(
+  spec: PricingSliceSpec,
+  limit = 200,
+): Promise<UsagePricingSliceRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
+  const slice = buildPricingSliceCase(spec);
   const result = await client.execute({
     sql: `WITH first_cache_requests AS (
         SELECT session_id, call_site, lane, MIN(created_at) AS first_created_at
@@ -498,118 +500,53 @@ export async function aggregateUsageBySession(limit = 200): Promise<UsageAggRow[
         ORDER BY last_at DESC, session_id
         LIMIT ?
       )
-      SELECT usage.session_id AS bucket, usage.call_site, usage.model_id,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS estimated_input_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS estimated_output_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS estimated_cache_hit_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS estimated_cache_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded'
-          AND usage.cache_accounting_state = 'known'
-          AND usage.created_at = first_cache.first_created_at
-          THEN usage.cache_miss_tokens ELSE 0 END) AS cold_start_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cost_cny IS NOT NULL THEN usage.cost_cny ELSE 0 END) AS cost_cny,
-        SUM(CASE WHEN usage.usage_state = 'estimated' AND usage.cost_cny IS NOT NULL THEN usage.cost_cny ELSE 0 END) AS estimated_cost_cny,
-        SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cost_cny IS NOT NULL THEN 1 ELSE 0 END) AS priced_recorded_calls,
-        SUM(CASE WHEN usage.usage_state = 'estimated' AND usage.cost_cny IS NOT NULL THEN 1 ELSE 0 END) AS priced_estimated_calls,
-        SUM(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN 1 ELSE 0 END) AS peak_priced_calls,
-        MIN(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN usage.pricing_multiplier END) AS peak_pricing_multiplier_min,
-        MAX(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN usage.pricing_multiplier END) AS peak_pricing_multiplier_max,
-        SUM(CASE WHEN usage.pricing_tier IS NOT NULL THEN 1 ELSE 0 END) AS pricing_snapshot_calls,
-        SUM(CASE WHEN usage.pricing_tier IS NULL THEN 1 ELSE 0 END) AS legacy_pricing_calls,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS legacy_input_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS legacy_output_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS legacy_cache_hit_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS legacy_cache_miss_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS legacy_estimated_input_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS legacy_estimated_output_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS legacy_estimated_cache_hit_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS legacy_estimated_cache_miss_tokens,
-        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
-        COUNT(*) AS calls,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
-        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
-        SUM(CASE WHEN usage.usage_state = 'billing_unknown' THEN 1 ELSE 0 END) AS billing_unknown_calls,
-        MAX(usage.created_at) AS last_at
+      SELECT usage.session_id AS bucket, usage.session_id, usage.call_site, usage.model_id,
+        ${slice.sql} AS pricing_slice,
+        ${SLICE_AGG_COLUMNS},
+        recent.last_at AS last_at
       FROM llm_usage_events usage
       INNER JOIN recent_sessions recent ON recent.session_id = usage.session_id
       INNER JOIN first_cache_requests first_cache
         ON first_cache.session_id = usage.session_id
         AND first_cache.call_site = usage.call_site
         AND first_cache.lane IS usage.lane
-      GROUP BY usage.session_id, usage.call_site, usage.model_id, recent.last_at
-      ORDER BY recent.last_at DESC, usage.session_id, usage.call_site, usage.model_id`,
-    args: [limit],
+      GROUP BY usage.session_id, usage.call_site, usage.model_id, pricing_slice, recent.last_at
+      ORDER BY recent.last_at DESC, usage.session_id, usage.call_site, usage.model_id, pricing_slice`,
+    args: [limit, ...slice.args],
   });
-  return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));
+  return result.rows.map((row) => rowToPricingSlice(row as unknown as Record<string, unknown>));
 }
 
-/** 全局总量 × 模型。 */
-export async function aggregateUsageTotal(): Promise<UsageAggRow[]> {
+/** 全局总量 × 模型 × pricing slice。 */
+export async function aggregateUsageTotal(
+  spec: PricingSliceSpec,
+): Promise<UsagePricingSliceRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
-  const result = await client.execute(
-    `WITH first_cache_requests AS (
+  const slice = buildPricingSliceCase(spec);
+  const result = await client.execute({
+    sql: `WITH first_cache_requests AS (
         SELECT session_id, call_site, lane, MIN(created_at) AS first_created_at
         FROM llm_usage_events
         GROUP BY session_id, call_site, lane
       )
       SELECT 'total' AS bucket, usage.call_site, usage.model_id,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS estimated_input_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS estimated_output_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS estimated_cache_hit_tokens,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS estimated_cache_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded'
-          AND usage.cache_accounting_state = 'known'
-          AND usage.created_at = first_cache.first_created_at
-          THEN usage.cache_miss_tokens ELSE 0 END) AS cold_start_miss_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cost_cny IS NOT NULL THEN usage.cost_cny ELSE 0 END) AS cost_cny,
-        SUM(CASE WHEN usage.usage_state = 'estimated' AND usage.cost_cny IS NOT NULL THEN usage.cost_cny ELSE 0 END) AS estimated_cost_cny,
-        SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cost_cny IS NOT NULL THEN 1 ELSE 0 END) AS priced_recorded_calls,
-        SUM(CASE WHEN usage.usage_state = 'estimated' AND usage.cost_cny IS NOT NULL THEN 1 ELSE 0 END) AS priced_estimated_calls,
-        SUM(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN 1 ELSE 0 END) AS peak_priced_calls,
-        MIN(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN usage.pricing_multiplier END) AS peak_pricing_multiplier_min,
-        MAX(CASE WHEN usage.pricing_tier = 'peak' AND usage.usage_state IN ('recorded', 'estimated') THEN usage.pricing_multiplier END) AS peak_pricing_multiplier_max,
-        SUM(CASE WHEN usage.pricing_tier IS NOT NULL THEN 1 ELSE 0 END) AS pricing_snapshot_calls,
-        SUM(CASE WHEN usage.pricing_tier IS NULL THEN 1 ELSE 0 END) AS legacy_pricing_calls,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS legacy_input_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS legacy_output_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS legacy_cache_hit_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS legacy_cache_miss_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.input_tokens ELSE 0 END) AS legacy_estimated_input_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.output_tokens ELSE 0 END) AS legacy_estimated_output_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.cache_hit_tokens ELSE 0 END) AS legacy_estimated_cache_hit_tokens,
-        SUM(CASE WHEN usage.pricing_tier IS NULL AND usage.usage_state = 'estimated' THEN usage.cache_miss_tokens ELSE 0 END) AS legacy_estimated_cache_miss_tokens,
-        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
-        COUNT(*) AS calls,
-        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage.usage_state = 'estimated' THEN 1 ELSE 0 END) AS estimated_calls,
-        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls,
-        SUM(CASE WHEN usage.usage_state = 'billing_unknown' THEN 1 ELSE 0 END) AS billing_unknown_calls
+        ${slice.sql} AS pricing_slice,
+        ${SLICE_AGG_COLUMNS},
+        MAX(usage.created_at) AS last_at
       FROM llm_usage_events usage
       INNER JOIN first_cache_requests first_cache
         ON first_cache.session_id = usage.session_id
         AND first_cache.call_site = usage.call_site
         AND first_cache.lane IS usage.lane
-      GROUP BY usage.call_site, usage.model_id
-      ORDER BY usage.call_site, usage.model_id`,
-  );
-  return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));
+      GROUP BY usage.call_site, usage.model_id, pricing_slice
+      ORDER BY usage.call_site, usage.model_id, pricing_slice`,
+    args: slice.args,
+  });
+  return result.rows.map((row) => rowToPricingSlice(row as unknown as Record<string, unknown>));
 }
 
-/** 单会话最近一次 agent 调用的 usage(F6 上下文 debug 用)。 */
+/** 单会话最近一次 agent 调用的 usage（F6 上下文 debug 用）。 */
 export async function latestAgentUsageForSession(
   sessionId: string,
 ): Promise<{ inputTokens: number; outputTokens: number; modelId: string; createdAt: string } | null> {

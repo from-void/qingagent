@@ -225,7 +225,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     const client = getDocumentsClient();
 
     const r = await runMigrations();
-    expect(allMigrationIds.at(-1)).toBe(42);
+    expect(allMigrationIds.at(-1)).toBe(43);
     expect(r.appliedIds).toEqual(allMigrationIds);
     expect(r.backupPath).toBeNull(); // 全新库不备份
     expect(await captureSchema(client)).toEqual(golden);
@@ -301,7 +301,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-cur'")).toBe(1);
   });
 
-  it("v2 旧 usage 行升级后 tokens 原值不变且不被补算峰谷价格", async () => {
+  it("v2 旧 usage 行升级后 tokens 原值不变且不保留金额快照列", async () => {
     const client = getDocumentsClient();
     await runMigrations(MIGRATIONS.slice(0, 2));
     await client.execute(
@@ -327,9 +327,9 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(row.attempt).toBeNull();
     expect(row.cache_creation_tokens).toBeNull();
     expect(row.cache_accounting_state).toBe("unknown");
-    expect(row.cost_cny).toBeNull();
-    expect(row.pricing_tier).toBeNull();
-    expect(row.pricing_multiplier).toBeNull();
+    expect(row).not.toHaveProperty("cost_cny");
+    expect(row).not.toHaveProperty("pricing_tier");
+    expect(row).not.toHaveProperty("pricing_multiplier");
   });
 
   it("v-migrated:已有账本且 baseline 已记账 → 重跑无操作,schema/探针稳定", async () => {

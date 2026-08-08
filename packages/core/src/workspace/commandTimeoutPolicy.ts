@@ -4,8 +4,8 @@ import { SANDBOX_TIMEOUT_MS } from "./sessionWorkspace.js";
 /**
  * 命令超时协议的唯一口径。
  *
- * 真机取证(0729 语雀 OAuth):模型按毫秒风格传 `timeout: 15000` / `30000`,而协议里
- * `timeout` 的单位是秒,于是被解释成 15000 秒 / 30000 秒;前台默认 120s 上限被显式入参
+ * 真机取证(0729 语雀 OAuth):模型曾按毫秒风格向秒字段传 `15000` / `30000`,于是被解释成
+ * 15000 秒 / 30000 秒;前台默认 120s 上限被显式入参
  * 直接绕过,三次命令各跑满约 130 秒直到语雀 CLI 自己 OAuth 超时退出,`timedOut` 始终为
  * false——我们的超时从未触发。这里把"字段单位""硬上限钳制""钳制事实回传"三件事收成一处,
  * 让入参永远无法越过硬上限,并且钳制后的生效值必须回传给模型。
@@ -26,15 +26,13 @@ export const FOREGROUND_TIMEOUT_LIMIT_SECONDS = Math.round(FOREGROUND_TIMEOUT_LI
 export const BACKGROUND_TIMEOUT_LIMIT_SECONDS = Math.round(BACKGROUND_TIMEOUT_LIMIT_MS / 1_000);
 
 export interface CommandTimeoutRequest {
-  /** 旧字段：单位=秒。仅为兼容保留，语义不变。 */
-  timeout?: number | null;
-  /** 新字段：单位=秒，优先级最高。 */
+  /** 单位=秒。 */
   timeoutSeconds?: number | null;
-  /** 新字段：单位=毫秒，与 timeoutSeconds 互斥。 */
+  /** 单位=毫秒，与 timeoutSeconds 互斥。 */
   timeoutMs?: number | null;
 }
 
-export type CommandTimeoutSource = "timeoutSeconds" | "timeoutMs" | "timeout";
+export type CommandTimeoutSource = "timeoutSeconds" | "timeoutMs";
 
 export interface ResolvedCommandTimeout {
   /** 实际交给沙箱的毫秒值，已按硬上限钳制。 */
@@ -56,7 +54,7 @@ function positiveFinite(value: unknown): number | undefined {
 }
 
 /**
- * 新旧字段归一：timeoutSeconds > timeoutMs > 旧 timeout(按秒解释)。
+ * 单位字段归一：timeoutSeconds > timeoutMs。
  * timeoutSeconds 与 timeoutMs 互斥由 schema 拦下，这里再兜一层取更明确的秒字段。
  */
 export function resolveCommandTimeout(
@@ -68,14 +66,11 @@ export function resolveCommandTimeout(
     : FOREGROUND_TIMEOUT_LIMIT_MS;
   const seconds = positiveFinite(request.timeoutSeconds);
   const milliseconds = positiveFinite(request.timeoutMs);
-  const legacySeconds = positiveFinite(request.timeout);
   const picked = seconds !== undefined
     ? { source: "timeoutSeconds" as const, requestedMs: seconds * 1_000, secondsValue: seconds }
     : milliseconds !== undefined
       ? { source: "timeoutMs" as const, requestedMs: milliseconds, secondsValue: undefined }
-      : legacySeconds !== undefined
-        ? { source: "timeout" as const, requestedMs: legacySeconds * 1_000, secondsValue: legacySeconds }
-        : undefined;
+      : undefined;
   if (!picked) {
     return { effectiveMs: limitMs, clamped: false, limitMs, millisecondStyle: false };
   }

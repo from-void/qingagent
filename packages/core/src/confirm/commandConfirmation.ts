@@ -25,8 +25,8 @@ const durationSchema = z.preprocess(
 );
 
 /**
- * 单位歧义是已实证的 P1：模型按毫秒风格写 `timeout: 15000`，协议却按秒解释成 15000 秒。
- * 因此三个字段的 description 都必须把单位与上限写死在模型一眼能看到的地方。
+ * 单位歧义是已实证的 P1，因此两个字段的 description 都必须把单位与上限写死在
+ * 模型一眼能看到的地方。
  */
 export const TIMEOUT_SECONDS_DESCRIPTION =
   `命令超时，单位=秒，不是毫秒。前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS} 秒，` +
@@ -36,10 +36,6 @@ export const TIMEOUT_SECONDS_DESCRIPTION =
 export const TIMEOUT_MS_DESCRIPTION =
   "命令超时，单位=毫秒。与 timeoutSeconds 互斥，只能二选一。" +
   `同样受硬上限钳制：前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS * 1_000} 毫秒。`;
-export const LEGACY_TIMEOUT_DESCRIPTION =
-  "已废弃的旧字段，单位=秒，不是毫秒。仅为兼容保留，新调用一律用 timeoutSeconds；" +
-  "与 timeoutSeconds/timeoutMs 同时给出时以新字段为准。";
-
 export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 export const MAX_EXECUTE_COMMAND_REASON_LENGTH = 80;
 
@@ -82,7 +78,6 @@ export const executeCommandInputSchema = z.object({
     .optional(),
   timeoutSeconds: durationSchema.nullish().describe(TIMEOUT_SECONDS_DESCRIPTION),
   timeoutMs: durationSchema.nullish().describe(TIMEOUT_MS_DESCRIPTION),
-  timeout: durationSchema.nullish().describe(LEGACY_TIMEOUT_DESCRIPTION),
   cwd: z.string().max(1_024).nullish(),
   tail: z.number().int().nonnegative().max(100_000).nullish(),
   background: z.boolean().optional(),
@@ -111,7 +106,7 @@ export function commandConfirmationDigest(
   sessionId: string,
   input: ExecuteCommandInput,
 ): string {
-  // 超时按归一后的毫秒入摘要：新旧字段换写法不会伪造出新摘要，也不会绕过已发放的确认。
+  // 超时按归一后的毫秒入摘要：不同单位的字段换写法不会伪造出新摘要，也不会绕过已发放的确认。
   const stable = JSON.stringify({
     command: input.command,
     timeoutMs: resolveCommandTimeout(input, { background: input.background === true }).requestedMs

@@ -11,7 +11,7 @@ description: 通过沙箱后台运行本机 codex exec 生成或修改图片，�
 
 ## 一、前置与 DOC-FIRST
 
-1. 沿用母技能刚完成的 Codex 探测结果，不得在问卷恢复后重复探测。只有子技能被独立恢复、上下文里确实没有探测结果时，才补做一次确认：POSIX 用 `command -v codex`，Windows 用 `where codex`，`timeout` 设为 5 秒。
+1. 沿用母技能刚完成的 Codex 探测结果，不得在问卷恢复后重复探测。只有子技能被独立恢复、上下文里确实没有探测结果时，才补做一次确认：POSIX 用 `command -v codex`，Windows 用 `where codex`，`timeoutSeconds` 设为 5。
    - 从零生成失败时可提议改用“内置 SVG 插画”。
    - 修改位图时，失败就停止本路线，说明本机 Codex 当前不可用、原图未被覆盖。
    - 修改 SVG 时，先用 `skill_read` 读取 `svg/SKILL.md`，再调用 `editSvgWithCodexFallback`。该工具在执行层覆盖指令写入、Codex 启动/运行、产物核验与导入；任一步骤失败最多重试一次，仍失败立即自动回落到原生 SVG 定点编辑并导入。全程不再反问，不把换路责任交给用户。
@@ -101,7 +101,7 @@ codex exec --ephemeral --skip-git-repo-check -s workspace-write -C "<工作目�
 
 执行纪律：
 
-1. 调用 `mastra_workspace_execute_command` 时必须传 `background:true`，并给出有界总超时（建议 `timeout:600` 秒）。`codex exec` 完成会自行退出；不要以前台调用长时间阻塞主链。
+1. 调用 `mastra_workspace_execute_command` 时必须传 `background:true`，并给出有界总超时（建议 `timeoutSeconds:600`）。`codex exec` 完成会自行退出；不要以前台调用长时间阻塞主链。
 2. 从启动结果取得 PID，用 `mastra_workspace_get_process_output` 携带 `pid` 和合理的 `tail` 反复轮询；省略 `wait` 或显式传 `wait:false`，避免单次工具调用长时间阻塞。
 3. 轮询到明确退出码就立即停止。退出码为 0 后仍以目标图片文件实际存在且能被后续导入为准；非 0、达到总超时、进程消失或持续无结果都视为失败。
 4. 同一张从零图片或位图最多启动一次 Codex 任务。失败时保留诚实错误摘要；从零生成可告诉用户改走 SVG，位图修改说明本机处理未成功、原图未被覆盖。禁止无上限重试、换命令盲跑或假报已有图片。

@@ -588,7 +588,7 @@ export function createGatedExecuteCommandTool({
         return cancelledCommandResult("命令已取消: 执行前请求已被取消");
       }
       // 前后台共用同一套归一+钳制：显式入参永远不可能越过硬上限(历史上前台缺这层钳制，
-      // 模型按毫秒风格传 timeout:15000 就把 120s 上限直接绕过了)。
+      // 模型按毫秒风格向秒字段传 15000 就把 120s 上限直接绕过了)。
       const isBackground = input.background === true;
       const timeoutPolicy = resolveCommandTimeout(input, { background: isBackground });
       const timeoutClampNotice = commandTimeoutClampNotice(timeoutPolicy, isBackground);

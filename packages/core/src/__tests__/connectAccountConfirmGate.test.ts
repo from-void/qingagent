@@ -184,7 +184,7 @@ describe("连接账号确认门禁", () => {
     [FEISHU_AUTH_START_TOOL, { domains: [] }],
     [WECHAT_AUTH_START_TOOL, { unexpected: true }],
     [GITHUB_AUTH_START_TOOL, null],
-  ])("%s 的脏参数 fail-closed，不生成确认请求", async (toolName, args) => {
+  ])("%s 的脏参数走 invalid_args 工具错误通道并 fail-closed，不生成确认请求", async (toolName, args) => {
     expect(parseConnectAccountAuthInput(toolName, args)).toBeNull();
     const state = createSession(`connect-invalid-${toolName}`);
     const service = new ConfirmService({
@@ -200,7 +200,11 @@ describe("连接账号确认门禁", () => {
       toolName,
       args,
       aborted: false,
-    })).resolves.toEqual({ ok: false, reason: "确认请求参数无效" });
+    })).resolves.toEqual({
+      ok: false,
+      failureKind: "invalid_args",
+      reason: "工具参数为空或格式损坏，请重新以合法 JSON 发起，注意转义",
+    });
     expect(state.pendingConfirms.size).toBe(0);
   });
 

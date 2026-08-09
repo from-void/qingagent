@@ -10,6 +10,8 @@ export function toolResultSucceededByContract(
 ): boolean {
   if (!isRecord(rawResult)) return true;
   if (rawResult.ok === false || rawResult.success === false) return false;
+  // Mastra 输入校验失败以结构化 validation result 返回给模型，不一定发 tool-error chunk。
+  if (rawResult.error === true && "validationErrors" in rawResult) return false;
 
   switch (toolName) {
     case "summarizeMaterial":

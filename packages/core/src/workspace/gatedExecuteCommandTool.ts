@@ -493,10 +493,14 @@ export function createGatedExecuteCommandTool({
       "re-issue QR codes.",
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
+      const parsed = executeCommandInputSchema.safeParse(input);
+      // 损坏参数没有任何可执行副作用，不应先挂起整轮等审批；放行到 Mastra
+      // 原生输入校验，让校验结果作为该次 tool error 回给模型并在同轮重试。
+      if (!parsed.success) return false;
       try {
-        const decision = evaluateCommandPolicy(input.command, {
+        const decision = evaluateCommandPolicy(parsed.data.command, {
           workspaceCwd: sessionWorkspaceDir(sessionId),
-          background: input.background === true,
+          background: parsed.data.background === true,
           sandboxBinDir,
         });
         // 普通副作用确认尊重“以后不用再问我”；安全边界例外始终逐次确认。

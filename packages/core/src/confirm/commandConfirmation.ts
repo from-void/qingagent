@@ -38,6 +38,8 @@ export const TIMEOUT_MS_DESCRIPTION =
   `同样受硬上限钳制：前台最长 ${FOREGROUND_TIMEOUT_LIMIT_SECONDS * 1_000} 毫秒。`;
 export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 export const MAX_EXECUTE_COMMAND_REASON_LENGTH = 80;
+export const INVALID_EXECUTE_COMMAND_ARGS_MESSAGE =
+  "命令参数为空或格式损坏，请重新以合法 JSON 发起，注意转义";
 
 function joinExplanationParts(parts: Array<string | undefined>): string {
   const uniqueParts = parts.filter(
@@ -71,7 +73,9 @@ export function insecureRememberEnvironmentAllowed(
 }
 
 export const executeCommandInputSchema = z.object({
-  command: z.string().min(1).max(MAX_EXECUTE_COMMAND_LENGTH),
+  command: z.string({ error: INVALID_EXECUTE_COMMAND_ARGS_MESSAGE })
+    .min(1, { error: INVALID_EXECUTE_COMMAND_ARGS_MESSAGE })
+    .max(MAX_EXECUTE_COMMAND_LENGTH),
   reason: z.string()
     .max(MAX_EXECUTE_COMMAND_REASON_LENGTH)
     .describe("面向用户简短说明为什么需要执行这条命令")

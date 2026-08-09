@@ -13,12 +13,13 @@ function failedApprovalSpec(
   toolCallId: string,
   toolName: string,
   reason: string,
+  retriable = false,
 ): ToolCallSpec {
   return {
     id: toolCallId || "invalid-approval",
     name: toolName || "tool",
     render: { kind: "chatInline" },
-    status: { kind: "failed", data: { retriable: false, reason } },
+    status: { kind: "failed", data: { retriable, reason } },
     body: { kind: "generic", data: { argsJson: "" } },
     result: { kind: "genericText", data: reason },
   };
@@ -65,6 +66,14 @@ export async function* handleApprovalEvent(
     return "handled";
   }
   if (!result.ok) {
+    if (result.failureKind === "invalid_args") {
+      yield* emitOrUpdateToolCall(
+        context,
+        failedApprovalSpec(toolCallId, toolName, result.reason, true),
+      );
+      context.outcome.producedVisibleFrame = true;
+      return "handled";
+    }
     const safeReason = "确认没有完成，命令没有执行。请稍后再试。";
     yield* emitOrUpdateToolCall(
       context,

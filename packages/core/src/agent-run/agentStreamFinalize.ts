@@ -358,6 +358,10 @@ export async function* finalizeAgentStream(
     context.sawAnyToolCall &&
     context.lastStepFinishReason === "tool-calls" &&
     !context.sawTextAfterLastTool;
+  const completedStepCount = Math.max(0, context.stepIndex + 1);
+  const reachedStepLimit =
+    context.lastStepFinishReason === "tool-calls" &&
+    completedStepCount >= AGENT_MAX_STEPS;
   const draftPreservedThisTurn =
     context.finalDocumentSnapshotEmitted ||
     state.docVersion > context.docVersionBeforeStream ||
@@ -394,9 +398,11 @@ export async function* finalizeAgentStream(
       ? draftPreservedThisTurn
         ? "已保留本轮生成的部分草稿，但最后一步被中断，还没收尾。回复“继续”我接着处理。"
         : "草稿生成长时间无响应并已超时，未产出可用草稿，请重试或稍后再试。"
-      : context.docGeneratedThisTurn || context.finalDocumentSnapshotEmitted
+      : reachedStepLimit && (context.docGeneratedThisTurn || context.finalDocumentSnapshotEmitted)
         ? "草稿已生成，本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。"
-        : "本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。";
+        : reachedStepLimit
+          ? "本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。"
+          : "本轮在工具调用后中断，尚未完成最后收尾，回复“继续”我接着处理。";
     const visibleText = context.accumulatedText ? `\n\n${stepNotice}` : stepNotice;
     yield appendFinalVisibleText(visibleText);
     outcome.producedVisibleFrame = true;
@@ -404,6 +410,8 @@ export async function* finalizeAgentStream(
       sessionId: state.sessionId,
       streamId,
       maxSteps: AGENT_MAX_STEPS,
+      completedStepCount,
+      reachedStepLimit,
       lastStepFinishReason: context.lastStepFinishReason,
       docGeneratedThisTurn: context.docGeneratedThisTurn,
       finalDocumentSnapshotEmitted: context.finalDocumentSnapshotEmitted,

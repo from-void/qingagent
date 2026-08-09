@@ -16,7 +16,10 @@ import { FOREGROUND_TIMEOUT_LIMIT_SECONDS } from "../workspace/commandTimeoutPol
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import { RequestContext } from "@mastra/core/request-context";
 import { createSession } from "../session/sessionState.js";
-import { commandConfirmationDigest } from "../confirm/commandConfirmation.js";
+import {
+  commandConfirmationDigest,
+  INVALID_EXECUTE_COMMAND_ARGS_MESSAGE,
+} from "../confirm/commandConfirmation.js";
 import { issueApprovalProof } from "../confirm/approvalProof.js";
 import type { SessionState } from "../session/sessionState.js";
 
@@ -268,6 +271,27 @@ describe("gated execute_command tool schema", () => {
       command: "npm install zod",
       reason: "你".repeat(81),
     }).success).toBe(false);
+  });
+
+  it("空参或损坏参数不进入审批，并返回可供模型重试的校验错误", async () => {
+    const tool = createGatedExecuteCommandTool({
+      sessionId: "schema-invalid-tool-call",
+      getWorkspace: async () => {
+        throw new Error("损坏参数不应初始化 workspace");
+      },
+    });
+    const predicate = tool.requireApproval;
+    expect(typeof predicate).toBe("function");
+    if (typeof predicate !== "function") throw new Error("requireApproval missing");
+
+    expect(await predicate({} as never)).toBe(false);
+    if (!tool.execute) throw new Error("execute missing");
+    const result = await tool.execute({} as never, toolInvocationOptions) as {
+      error?: unknown;
+      message?: unknown;
+    };
+    expect(result.error).toBe(true);
+    expect(result.message).toContain(INVALID_EXECUTE_COMMAND_ARGS_MESSAGE);
   });
 });
 

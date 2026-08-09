@@ -29,6 +29,7 @@ import {
   buildCommandConfirmSpec,
   commandConfirmationDigest,
   executeCommandInputSchema,
+  INVALID_EXECUTE_COMMAND_ARGS_MESSAGE,
 } from "./commandConfirmation.js";
 import {
   buildConnectAccountConfirmSpec,
@@ -123,7 +124,7 @@ export type RequestCommandConfirmResult =
       frame?: undefined;
       storedGrantApproval: { decisionId: string; grant: ConfirmGrant };
     }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; failureKind?: "invalid_args" };
 
 interface DecisionReceipt {
   decisionId: string;
@@ -225,7 +226,13 @@ export class ConfirmService {
     let requiresExplicitApproval = false;
     if (credentialAccess) {
       const credentialArgs = requestCredentialAccessInputSchema.safeParse(input.args);
-      if (!credentialArgs.success) return { ok: false, reason: "确认请求参数无效" };
+      if (!credentialArgs.success) {
+        return {
+          ok: false,
+          failureKind: "invalid_args",
+          reason: "工具参数为空或格式损坏，请重新以合法 JSON 发起，注意转义",
+        };
+      }
       const checked = checkRequestedCredentialAccess(
         credentialArgs.data,
         effectiveCredentialHome(),
@@ -238,10 +245,22 @@ export class ConfirmService {
       };
     } else if (connectAccount) {
       connectorAuth = parseConnectAccountAuthInput(input.toolName, input.args);
-      if (!connectorAuth) return { ok: false, reason: "确认请求参数无效" };
+      if (!connectorAuth) {
+        return {
+          ok: false,
+          failureKind: "invalid_args",
+          reason: "工具参数为空或格式损坏，请重新以合法 JSON 发起，注意转义",
+        };
+      }
     } else {
       parsed = executeCommandInputSchema.safeParse(input.args);
-      if (!parsed.success) return { ok: false, reason: "确认请求参数无效" };
+      if (!parsed.success) {
+        return {
+          ok: false,
+          failureKind: "invalid_args",
+          reason: INVALID_EXECUTE_COMMAND_ARGS_MESSAGE,
+        };
+      }
       const decision = evaluateCommandPolicy(parsed.data.command, {
         workspaceCwd: sessionWorkspaceDir(input.state.sessionId),
         background: parsed.data.background === true,

@@ -598,6 +598,36 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(existsSync(join(sessionDir, "missing-parent"))).toBe(false);
   });
 
+  it("相对路径的 read/write/stat/list 默认落到 /workspace，绝对越界路径仍拒绝", async () => {
+    const sessionId = "sess-workspace-relative-paths";
+    const sessionDir = sessionWorkspaceDir(sessionId);
+    rmSync(sessionDir, { recursive: true, force: true });
+    mkdirSync(join(sessionDir, "notes"), { recursive: true });
+    writeFileSync(join(sessionDir, "notes", "existing.txt"), "existing");
+
+    const ws = await getSessionWorkspace(sessionId, opts);
+    const fs = ws.filesystem!;
+
+    await expect(fs.readFile("notes/existing.txt", { encoding: "utf8" })).resolves.toBe(
+      await fs.readFile("/workspace/notes/existing.txt", { encoding: "utf8" }),
+    );
+    await fs.writeFile("notes/relative.txt", "relative", { recursive: false });
+    await expect(
+      fs.readFile("/workspace/notes/relative.txt", { encoding: "utf8" }),
+    ).resolves.toBe("relative");
+    await expect(fs.stat("notes/relative.txt")).resolves.toEqual(
+      await fs.stat("/workspace/notes/relative.txt"),
+    );
+    await expect(fs.readdir("notes")).resolves.toEqual(
+      await fs.readdir("/workspace/notes"),
+    );
+
+    await expect(fs.stat("/outside/not-mounted.txt")).rejects.toThrow("No mount for path");
+    await expect(
+      fs.writeFile("/outside/not-mounted.txt", "must-not-write"),
+    ).rejects.toThrow("No mount for path");
+  });
+
   it("本地文件夹资料库以 /sources 下嵌套 CompositeFilesystem 挂载且只读", async () => {
     const root = mkdtempSync(join(tmpdir(), "folder-source-"));
     const sourceDir = join(root, "library");

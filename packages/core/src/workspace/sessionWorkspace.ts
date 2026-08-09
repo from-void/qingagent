@@ -33,7 +33,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, realpath, rm } from "node:fs/promises";
-import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, isAbsolute, join, posix, relative, resolve } from "node:path";
 import {
   getSessionFolderSources,
   browserFolderSourcesEnabled,
@@ -916,19 +916,86 @@ function isSourcesVirtualPath(path: string): boolean {
 }
 
 class SessionCompositeFilesystem extends CompositeFilesystem {
+  private resolveSessionPath(path: string): string {
+    if (isAbsolute(path) || path.startsWith("/")) return path;
+    const normalized = posix.normalize(path.replaceAll("\\", "/"));
+    if (normalized === ".." || normalized.startsWith("../")) {
+      throw new Error(`Path escapes the workspace: ${path}`);
+    }
+    return normalized === "." ? "/workspace" : posix.join("/workspace", normalized);
+  }
+
+  getFilesystemForPath(path: string): WorkspaceFilesystem | undefined {
+    return super.getFilesystemForPath(this.resolveSessionPath(path));
+  }
+
+  getMountPathForPath(path: string): string | undefined {
+    return super.getMountPathForPath(this.resolveSessionPath(path));
+  }
+
+  resolveAbsolutePath(path: string): string | undefined {
+    return super.resolveAbsolutePath(this.resolveSessionPath(path));
+  }
+
+  readFile(path: string, options?: ReadOptions): Promise<string | Buffer> {
+    return super.readFile(this.resolveSessionPath(path), options);
+  }
+
   writeFile(path: string, content: FileContent, options?: WriteOptions): Promise<void> {
-    return super.writeFile(path, content, {
+    return super.writeFile(this.resolveSessionPath(path), content, {
       ...options,
       // 文件工具只负责写文件；父目录不存在时应由 mkdir 显式创建。
       recursive: options?.recursive ?? false,
     });
   }
 
+  appendFile(path: string, content: FileContent): Promise<void> {
+    return super.appendFile(this.resolveSessionPath(path), content);
+  }
+
+  deleteFile(path: string, options?: RemoveOptions): Promise<void> {
+    return super.deleteFile(this.resolveSessionPath(path), options);
+  }
+
   async copyFile(src: string, dest: string, options?: CopyOptions): Promise<void> {
-    if (isSourcesVirtualPath(src) && !isSourcesVirtualPath(dest)) {
+    const resolvedSrc = this.resolveSessionPath(src);
+    const resolvedDest = this.resolveSessionPath(dest);
+    if (isSourcesVirtualPath(resolvedSrc) && !isSourcesVirtualPath(resolvedDest)) {
       throw new Error("copyFile from /sources is not allowed; use readDocument or searchDocuments for folder sources");
     }
-    return super.copyFile(src, dest, options);
+    return super.copyFile(resolvedSrc, resolvedDest, options);
+  }
+
+  moveFile(src: string, dest: string, options?: CopyOptions): Promise<void> {
+    return super.moveFile(this.resolveSessionPath(src), this.resolveSessionPath(dest), options);
+  }
+
+  readdir(path: string, options?: ListOptions): Promise<FileEntry[]> {
+    return super.readdir(this.resolveSessionPath(path), options);
+  }
+
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+    return super.mkdir(this.resolveSessionPath(path), options);
+  }
+
+  rmdir(path: string, options?: RemoveOptions): Promise<void> {
+    return super.rmdir(this.resolveSessionPath(path), options);
+  }
+
+  exists(path: string): Promise<boolean> {
+    return super.exists(this.resolveSessionPath(path));
+  }
+
+  stat(path: string): Promise<FileStat> {
+    return super.stat(this.resolveSessionPath(path));
+  }
+
+  isFile(path: string): Promise<boolean> {
+    return super.isFile(this.resolveSessionPath(path));
+  }
+
+  isDirectory(path: string): Promise<boolean> {
+    return super.isDirectory(this.resolveSessionPath(path));
   }
 }
 

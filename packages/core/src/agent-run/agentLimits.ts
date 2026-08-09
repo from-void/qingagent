@@ -2,7 +2,8 @@
 // goto→snapshot→click→type→… 轻松十几步)很容易超;超限会静默截断 → 前端卡住。
 // 故默认提到 60 并允许 env 覆盖(浏览器链路 30 仍易超);真超限时另有
 // "步数耗尽兜底"发可见提示(见 processAgentStream)。
-export const AGENT_MAX_STEPS = Math.max(1, Number(process.env.QINGAGENT_AGENT_MAX_STEPS) || 60);
+// 260810 提到 200:本机 Codex 图生图等长链任务(探测/写指令/启动/轮询/导入)叠加重试会超 60,产品拍板放宽;跑飞保险由空闲看门狗与心跳收口兜底,不靠步数卡。
+export const AGENT_MAX_STEPS = Math.max(1, Number(process.env.QINGAGENT_AGENT_MAX_STEPS) || 200);
 
 // 主 Agent 会直接生成 editDraft / generate_derivative 的整段 QingML 参数：
 // 按最大合理长内容需求取约 2 倍余量，同时保留为复读跑飞保险丝，不吃满 v4-flash 的 393216 上限。

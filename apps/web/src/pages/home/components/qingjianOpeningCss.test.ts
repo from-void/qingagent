@@ -8,7 +8,7 @@ const css = readFileSync(
 );
 
 describe("QingjianScroll opening pointer contract", () => {
-  it("keeps the opening animation while allowing new-document clicks through", () => {
+  it("keeps the opening FAB hidden until the new-document card leaves view", () => {
     expect(css).toMatch(
       /\.qj-root\.qj-opening \.qj-scroll\s*\{[^}]*pointer-events:\s*auto;/s,
     );
@@ -16,7 +16,11 @@ describe("QingjianScroll opening pointer contract", () => {
       /\.qj-root\.qj-opening \.qj-roller\s*\{[^}]*pointer-events:\s*none;/s,
     );
     expect(css).toMatch(
-      /\.qj-root\.qj-opening \.qj-new-fab\s*\{[^}]*pointer-events:\s*auto;[^}]*animation:\s*qj-opening-ui-fade/s,
+      /\.qj-root\.qj-opening \.qj-new-fab\s*\{[^}]*pointer-events:\s*none;/s,
+    );
+    // 只有新建卡离开视野、组件加上 qj-show 后，浮钮才恢复命中并参与开卷渐入。
+    expect(css).toMatch(
+      /\.qj-root\.qj-opening \.qj-new-fab\.qj-show\s*\{[^}]*pointer-events:\s*auto;[^}]*animation:\s*qj-opening-ui-fade/s,
     );
     expect(css).toContain("@keyframes qj-opening-real-unroll");
     expect(css).toContain("@keyframes qj-opening-real-roller");

@@ -155,10 +155,12 @@
   animation: qj-opening-ui-fade 460ms ease-out 2100ms both;
 }
 .qj-root.qj-opening .qj-new-fab {
-  animation: qj-opening-ui-fade 460ms ease-out 2100ms both;
+  /* 开卷首屏的新建卡仍在视野内，浮钮保持隐藏且不参与命中。 */
+  pointer-events: none;
 }
 .qj-root.qj-opening .qj-new-fab.qj-show {
   pointer-events: auto;
+  animation: qj-opening-ui-fade 460ms ease-out 2100ms both;
 }
 @keyframes qj-opening-real-unroll {
   0% {

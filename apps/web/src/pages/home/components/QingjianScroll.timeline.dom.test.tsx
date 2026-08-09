@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +39,10 @@ const sessions: HomeSession[] = [
   makeSession("new", "新文", "最晚", 300, 200),
   makeSession("matched", "命中文章", "中间", 200, 100),
 ];
+const qingjianCss = readFileSync(
+  resolve(process.cwd(), "src/pages/home/components/qingjian.css"),
+  "utf8",
+);
 
 let host: HTMLDivElement;
 let root: Root;
@@ -174,11 +180,49 @@ describe("QingjianScroll 时间轴身份与日期", () => {
     expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 
-  it("新建卡位于首屏时浮钮仍保持可点击显示态", () => {
+  it("新建卡位于首屏时浮钮隐藏且不响应指针", () => {
     const fab = host.querySelector<HTMLButtonElement>(".qj-new-fab")!;
 
+    expect(fab.classList.contains("qj-show")).toBe(false);
+    expect(qingjianCss).toMatch(/\.qj-new-fab\s*\{[^}]*pointer-events:\s*none;/s);
+  });
+
+  it("滚离新建卡后浮钮显示且可点击", async () => {
+    const onNewSession = vi.fn();
+    await act(async () => {
+      root.render(
+        <QingjianScroll
+          sessions={sessions}
+          onOpenSession={() => undefined}
+          onNewSession={onNewSession}
+        />,
+      );
+    });
+    mockTimelineGeometry();
+    const scroller = host.querySelector<HTMLElement>(".qj-scroll")!;
+    const newSlot = host.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]')!;
+    newSlot.getBoundingClientRect = () => domRect(-400, 100, 320, 380);
+
+    await act(async () => {
+      scroller.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "End",
+        bubbles: true,
+        cancelable: true,
+      }));
+      vi.advanceTimersByTime(500);
+    });
+
+    const fab = host.querySelector<HTMLButtonElement>(".qj-new-fab")!;
     expect(fab.classList.contains("qj-show")).toBe(true);
-    expect(fab.tabIndex).toBe(0);
+    expect(qingjianCss).toMatch(/\.qj-new-fab\.qj-show\s*\{[^}]*pointer-events:\s*auto;/s);
+
+    await act(async () => {
+      fab.click();
+      vi.advanceTimersByTime(430);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 
   it("会话数据更新重建布局后保留并钳制当前长卷位置", async () => {

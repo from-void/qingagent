@@ -1666,6 +1666,18 @@ export function QingjianScroll({
       scheduleDockHide();
     }
 
+    // 产品拍板(260809):新建浮钮跟随新建卡显隐——新建卡在视野内时必须隐藏,不许改成常显。
+    //  历史教训:曾有修复线为省显隐判定改常显被打回。可点性问题修 CSS 命中区,别动这里的显隐语义。
+    function updateNewFab() {
+      if (!newFab || !scroller || !stage) return;
+      const newSlot = stage.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]');
+      if (!newSlot) return;
+      const rect = newSlot.getBoundingClientRect();
+      const scRect = scroller.getBoundingClientRect();
+      const visible = rect.right > scRect.left && rect.left < scRect.right;
+      newFab.classList.toggle("qj-show", !visible);
+    }
+
     function pollReveal() {
       if (!scroller || !stage) return;
       const scRect = scroller.getBoundingClientRect();
@@ -1733,6 +1745,7 @@ export function QingjianScroll({
       if (Math.abs(moveDelta) > 0.05) {
         pollReveal();
         showDock();
+        updateNewFab();
       }
 
       if (
@@ -1757,6 +1770,7 @@ export function QingjianScroll({
       scrollPositionRef.current = { viewX: next, targetX: next };
       inner.style.transform = `translate3d(${(-next).toFixed(2)}px,0,0)`;
       updateStageMoments();
+      updateNewFab();
       pollReveal();
     };
     settleScrollViewRef.current = settleScrollView;
@@ -2143,6 +2157,7 @@ export function QingjianScroll({
     requestFrame();
     requestAnimationFrame(() => {
       pollReveal();
+      updateNewFab();
     });
     // 兜底轮询:仍有未揭示卡片就继续揭示
     const revealInterval = setInterval(() => {
@@ -2457,7 +2472,7 @@ export function QingjianScroll({
       {/* 左下「＋」新建浮钮 */}
       <button
         type="button"
-        className="qj-new-fab qj-show"
+        className="qj-new-fab"
         ref={newFabRef}
         title="新建文档"
         aria-label="新建文档"

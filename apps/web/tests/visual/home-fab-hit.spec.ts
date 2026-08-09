@@ -16,19 +16,29 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(".qj-root")).toBeVisible();
 });
 
-test("1200px 高视口内新建浮钮完整可见且中心点可命中", async ({ page }) => {
+test("新建卡位于首屏时浮钮隐藏且不占命中", async ({ page }) => {
   const fab = page.locator(".qj-new-fab");
   await expect(fab).toBeAttached();
+  await expect(fab).not.toHaveClass(/(?:^|\s)qj-show(?:\s|$)/);
+  await expect(fab).toHaveCSS("pointer-events", "none");
+  await expect(fab).toHaveCSS("visibility", "hidden");
 
   const geometry = await inspectHitTarget(fab);
   expect(
-    geometry.insideViewport,
-    `FAB 超出视口：top=${geometry.rect.top}, bottom=${geometry.rect.bottom}, viewportHeight=${geometry.viewportHeight}, class=${geometry.className}`,
-  ).toBe(true);
-  expect(
     geometry.hit,
-    `FAB 中心命中了 ${geometry.target ?? "null"}，pointer-events=${geometry.pointerEvents}, visibility=${geometry.visibility}`,
-  ).toBe(true);
+    `隐藏 FAB 仍命中了 ${geometry.target ?? "null"}，pointer-events=${geometry.pointerEvents}, visibility=${geometry.visibility}`,
+  ).toBe(false);
+});
+
+test("滚离新建卡后浮钮完整可见且中心点可命中", async ({ page }) => {
+  const fab = page.locator(".qj-new-fab");
+  await page.locator(".qj-scroll").press("End");
+
+  await expect(fab).toHaveClass(/(?:^|\s)qj-show(?:\s|$)/);
+  await expect(fab).toHaveCSS("pointer-events", "auto");
+  await expect(fab).toHaveCSS("visibility", "visible");
+  await expect.poll(async () => (await inspectHitTarget(fab)).insideViewport).toBe(true);
+  await expect.poll(async () => (await inspectHitTarget(fab)).hit).toBe(true);
 });
 
 test("右下 dock 由视口内热点唤出后搜索按钮完整可见且可命中", async ({ page }) => {

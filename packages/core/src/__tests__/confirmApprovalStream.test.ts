@@ -265,7 +265,40 @@ describe("processAgentStream tool-call-approval", () => {
     )).toBe(true);
   });
 
-  it("malformed/未知 approval 无卡、可见失败、绝不创建 pending", async () => {
+  it("execute_command 空参审批降为可重试 tool error，不触发全局失败帧", async () => {
+    const state = createSession("approval-stream-empty-command-args");
+    const service = new ConfirmService({ persist: async () => undefined });
+    const frames = await collect(processAgentStream(
+      events({
+        type: "tool-call-approval",
+        runId: "run-confirm",
+        payload: {
+          toolCallId: "tool-empty-command-args",
+          toolName: "mastra_workspace_execute_command",
+          args: {},
+        },
+      }),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "stream-empty-command-args",
+        runId: "run-confirm",
+        confirmService: service,
+      },
+    ));
+
+    expect(state.pendingConfirms.size).toBe(0);
+    expect(frames.some((frame) => frame.kind === "confirmRequested")).toBe(false);
+    expect(frames.some(
+      (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+    )).toBe(false);
+    expect(JSON.stringify(frames)).toContain(
+      "命令参数为空或格式损坏，请重新以合法 JSON 发起，注意转义",
+    );
+    expect(JSON.stringify(frames)).not.toContain("生成失败");
+  });
+
+  it("未知 approval 无卡、可见失败、绝不创建 pending", async () => {
     const state = createSession("approval-stream-invalid");
     const service = new ConfirmService({ persist: async () => undefined });
     const frames = await collect(processAgentStream(
@@ -304,13 +337,16 @@ describe("processAgentStream tool-call-approval", () => {
       confirmService: service,
     });
 
-    await collect(handleApprovalEvent(
+    const frames = await collect(handleApprovalEvent(
       context,
       approval("tool-persist-failed", "mv draft.txt final.txt"),
     ));
 
     expect(state.pendingConfirms.has("tool-persist-failed")).toBe(false);
     expect(context.wasSuspended).toBe(false);
+    expect(frames.some(
+      (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+    )).toBe(true);
   });
 
   it.each(["pending", "resuming"] as const)(

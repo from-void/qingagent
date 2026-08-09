@@ -90,6 +90,9 @@ function genericToolFailureReason(
   toolResult: Record<string, unknown>,
   rawToolResult: unknown,
 ): string {
+  if (toolResult.error === true && typeof toolResult.message === "string") {
+    return toolResult.message.slice(0, 200);
+  }
   if (toolName === "parseFile" || toolName === "fetchArticle") {
     for (const field of ["error", "text"] as const) {
       const value = toolResult[field];

@@ -521,11 +521,14 @@ export function authCardToolCallSpec(input: AuthCardToolCallInput): ToolCallSpec
   if (!content && !imageDataUri) {
     const invalidText =
       input.invalidText ?? `${input.toolName} 缺少 content/imageDataUri,无法渲染授权卡`;
+    const invalidStatus: ToolCallSpec["status"] = input.status.kind === "done"
+      ? { kind: "failed", data: { retriable: true, reason: invalidText } }
+      : input.status;
     return {
       id: input.toolCallId,
       name: input.toolName,
       render: { kind: "chatInline" },
-      status: input.status,
+      status: invalidStatus,
       body: {
         kind: "generic",
         data: {

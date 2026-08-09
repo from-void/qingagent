@@ -46,6 +46,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
+function hasQrContent(value: Record<string, unknown>): boolean {
+  return [value.content, value.imageDataUri].some(
+    (item) => typeof item === "string" && item.trim().length > 0,
+  );
+}
+
 export async function* handleSpecialToolResult(
   input: ToolResultContext,
 ): AsyncGenerator<BridgeFrame, ToolResultHandlerResult> {
@@ -123,16 +129,15 @@ export async function* handleSpecialToolResult(
       (part) => part.kind === "toolCall" && part.data.id === toolCallId,
     );
     if (originalMessage && originalPart?.kind === "toolCall") {
+      const renderable = hasQrContent(args);
       const doneSpec: ToolCallSpec = {
         ...originalPart.data,
-        status: { kind: "done" },
-        result:
-          originalPart.data.body.kind === "generic" && originalPart.data.result == null
-            ? {
-                kind: "genericText",
-                data: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
-              }
-            : originalPart.data.result,
+        status: renderable
+          ? { kind: "done" }
+          : { kind: "failed", data: { retriable: true, reason: "二维码未能显示" } },
+        result: renderable
+          ? originalPart.data.result
+          : { kind: "genericText", data: "二维码未能显示" },
       };
       updateToolCallInChatHistory(state, originalMessage.id, toolCallId, doneSpec);
       yield toolCallUpdated(originalMessage.id, toolCallId, doneSpec);
@@ -148,7 +153,7 @@ export async function* handleSpecialToolResult(
         presentation: resolvedArgs.imageDataUri ? "scan" : "link",
         status: { kind: "done" },
         sourceArgs: resolvedArgs,
-        invalidText: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
+        invalidText: "二维码未能显示",
       });
       const seq = nextSeq(state, agentMessageId);
       const toolCallPart: MessagePart = { kind: "toolCall", data: spec };

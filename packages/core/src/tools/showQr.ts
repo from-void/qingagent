@@ -47,6 +47,7 @@ export const showQrTool = createTool({
       .describe("要编码进二维码的字符串,如 OAuth 验证 URL(图片模式传 imageDataUri 时可省略)"),
     imageDataUri: z
       .string()
+      .min(1)
       .optional()
       .describe(
         "直接展示的二维码图片(data:image/...;base64 URI)。用于码本身是一张图、无法用字符串编码的场景" +
@@ -96,6 +97,14 @@ export const showQrTool = createTool({
       .max(256)
       .optional()
       .describe("完成态文案，如「企业微信登录成功」；与 completedCardId 一起传"),
+  }).superRefine((input, ctx) => {
+    if (input.completedCardId) return;
+    if (input.content?.trim() || input.imageDataUri?.trim()) return;
+    ctx.addIssue({
+      code: "custom",
+      path: ["content"],
+      message: "首次显示二维码时，content 与 imageDataUri 至少填写一个",
+    });
   }),
   outputSchema: z.object({ ok: z.boolean(), cardId: z.string().nullable() }),
   execute: async ({ completedCardId }, context) => ({

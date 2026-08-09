@@ -429,7 +429,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         } catch {
           if (!ctrl.signal.aborted) {
             setVerifyStatus("fail");
-            setVerifyMsg("验证失败:网络错误");
+            setVerifyMsg("验证未完成，请重试");
           }
         }
       })();
@@ -542,7 +542,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     } catch {
       if (canCommit()) {
         setVerifyStatus("fail");
-        setVerifyMsg("验证失败:网络错误");
+        setVerifyMsg("验证未完成，请重试");
       }
     } finally {
       if (canCommit()) kimiVerifyControllerRef.current = null;
@@ -731,6 +731,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       customTestRevisionRef.current === revision &&
       customTestControllerRef.current === testCtrl &&
       persistRevisionRef.current === persistRevision;
+    let phase: "testing" | "saving" = "testing";
     try {
       const res = await fetch("/api/v1/settings/model/test-custom", {
         method: "POST",
@@ -773,6 +774,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         modelFlash,
         modelPro,
       };
+      phase = "saving";
       setPersisting(true);
       const savedProvider = await writeCustomProvider(provider, target);
       if (!canCommit()) return;
@@ -793,11 +795,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       setCustomBaseUrl(savedBaseUrl);
       setMessage(null);
       setView("main");
-      toast.show(
-        savedBaseUrl === rawBaseUrl
-          ? "接口测试通过,已保存并启用自定义模型"
-          : `已自动修正为标准地址 ${savedBaseUrl},接口测试通过并已保存启用`,
-      );
       if (!activeConfigured && target !== effectiveProvider) {
         void handleProviderChange(target, true);
       }
@@ -806,7 +803,9 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         setMessage(
           e instanceof DOMException && e.name === "AbortError"
             ? "测试超时:接口 25 秒无响应,请检查 API 地址是否可达"
-            : "测试失败:网络错误,请重试",
+            : phase === "saving"
+              ? "接口测试已通过，但配置保存未完成，请重试"
+              : "接口测试未完成，请重试",
         );
       }
     } finally {

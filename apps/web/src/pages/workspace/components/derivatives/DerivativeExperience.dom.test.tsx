@@ -897,14 +897,16 @@ describe("公众号稿生成体验", () => {
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-checked="true"]')).some((button) => button.textContent?.includes("深度观点文"))).toBe(true);
   });
 
-  it("新稿生成流停止且时间戳未变时退出 loading，中止空态可确认删除", async () => {
+  it("新稿生成流停止且时间戳未变时退出 loading，只显示未确认结果", async () => {
     vi.useFakeTimers();
     const stream = { getDerivativeDoc: vi.fn(async () => ({ meta: item, docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}', docVersion: 0, title: "" })), deleteDerivative: vi.fn(async () => {}) };
     const onDeleted = vi.fn();
     await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={item} stream={stream as never} streamActive={false} generatingInitially onRefresh={vi.fn(async () => {})} onDeleted={onDeleted} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
     expect(host.querySelector(".is-generating")).not.toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
-    expect(host.textContent).toContain("生成已中止");
+    expect(host.textContent).toContain("暂未确认生成结果");
+    expect(host.textContent).not.toContain("生成已中止");
+    expect(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "刷新查看")).toBe(true);
     expect(host.querySelector(".is-generating")).toBeNull();
     expect(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "删除稿件")).toBe(false);
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
@@ -917,7 +919,7 @@ describe("公众号稿生成体验", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("重新生成流停止且时间戳未变时退出 loading，并提示保留原稿", async () => {
+  it("重新生成流停止且时间戳未变时静默退出 loading 并保留原稿", async () => {
     vi.useFakeTimers();
     const generatedAt = "2026-07-15T10:00:00.000Z";
     const existingItem: DerivativeItem = { ...item, sourceVersion: 1, generatedAt };
@@ -931,7 +933,7 @@ describe("公众号稿生成体验", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
 
     expect(host.querySelector(".is-generating")).toBeNull();
-    expect(onToast).toHaveBeenCalledWith("生成已中止，保留原稿");
+    expect(onToast).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain("生成已中止");
   });
 
@@ -954,11 +956,12 @@ describe("公众号稿生成体验", () => {
     stream.getDerivativeDoc.mockResolvedValue({ ...generatedDoc, meta: item, docVersion: 0 });
     await act(async () => renderView("self-heal", item, true));
     await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
-    expect(host.textContent).toContain("生成已中止");
+    expect(host.textContent).toContain("暂未确认生成结果");
+    expect(host.textContent).not.toContain("生成已中止");
     stream.getDerivativeDoc.mockResolvedValue(generatedDoc);
     await act(async () => renderView("self-heal", generatedItem));
     await act(async () => Promise.resolve());
-    expect(host.textContent).not.toContain("生成已中止");
+    expect(host.textContent).not.toContain("暂未确认生成结果");
     expect(host.textContent).not.toContain("尚未生成");
   });
 
@@ -1452,7 +1455,8 @@ describe("公众号稿生成体验", () => {
     await act(async () => renderView(false));
     await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
     expect(host.querySelector(".is-generating")).toBeNull();
-    expect(host.textContent).toContain("翻译已中止");
+    expect(host.textContent).toContain("暂未确认翻译结果");
+    expect(host.textContent).not.toContain("翻译已中止");
     expect(onRefresh).toHaveBeenCalled();
   });
 

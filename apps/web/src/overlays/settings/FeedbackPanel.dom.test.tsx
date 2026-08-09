@@ -74,6 +74,23 @@ describe("FeedbackPanel", () => {
     expect(buttonByWf("FeedbackExportButton").textContent).toBe("导出报错记录");
   });
 
+  it("浏览器端只提示已开始下载，不断言文件已经落盘", async () => {
+    const OriginalURL = URL;
+    class TestURL extends OriginalURL {}
+    Object.assign(TestURL, {
+      createObjectURL: vi.fn(() => "blob:diagnostics"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal("URL", TestURL);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    await render(<FeedbackPanel />);
+
+    await click(buttonByWf("FeedbackExportButton"));
+
+    expect(toastNode().textContent).toContain("报错记录已开始下载");
+    expect(toastNode().textContent).not.toContain("报错记录已下载");
+  });
+
   it("首拉在途:文档列表不渲染「读取文档列表中」占位(切 tab 闪帧根治)", async () => {
     const pending = new Promise<Response>(() => {});
     vi.stubGlobal("fetch", vi.fn(() => pending));

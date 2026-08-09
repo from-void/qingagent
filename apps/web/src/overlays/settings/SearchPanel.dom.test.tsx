@@ -66,6 +66,40 @@ describe("SearchPanel", () => {
     expect(getCardInput(getProviderCard("SearXNG")).placeholder).toContain("尾号 .com");
     expect(getCardInput(getProviderCard("Tavily")).placeholder).toContain("尾号 1234");
   });
+
+  it("未配置 key 的测试响应保留 errorKind，不误报网络异常", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/settings/search/primary")) return Promise.resolve(json(primary));
+      if (url.endsWith("/settings/search") && !init?.method) {
+        return Promise.resolve(json({ providers: configuredProviders }));
+      }
+      if (url.endsWith("/settings/search/tavily/test")) {
+        return Promise.resolve(json({ ok: false, errorKind: "missing_key" }, 400));
+      }
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderPanel();
+
+    const tavilyCard = getProviderCard("Tavily");
+    const testButton = Array.from(tavilyCard.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "测试");
+    if (!testButton) throw new Error("Tavily test button not found");
+    expect(testButton.disabled).toBe(false);
+    await click(testButton);
+
+    await waitFor(() => fetchMock.mock.calls.some(
+      ([input]) => String(input).endsWith("/settings/search/tavily/test"),
+    ));
+    await waitFor(() =>
+      (host?.querySelector(".sm-message")?.textContent ?? "")
+        .includes("Tavily 测试失败:尚未配置 key")
+    );
+    expect(host?.querySelector(".sm-message")?.textContent)
+      .toContain("Tavily 测试失败:尚未配置 key");
+    expect(host?.textContent).not.toContain("网络异常");
+  });
 });
 
 const primary = {
@@ -173,9 +207,9 @@ async function flush(): Promise<void> {
   });
 }
 
-function json(body: unknown): Response {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }

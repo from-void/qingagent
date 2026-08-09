@@ -1,6 +1,5 @@
 import {
   MODEL_CONTEXT_LENGTH_EXCEEDED_MESSAGE,
-  MODEL_REQUEST_TOO_LARGE_MESSAGE,
   type AskUserQuestion,
   type BridgeFrame,
   type CancelConfirmedCommand,
@@ -147,42 +146,36 @@ class CommandRequestError extends Error {
   }
 }
 
-function streamErrorForHttpStatus(status: number, upstreamMessage = ""): StreamError {
-  if (status === 401 || status === 403) {
+const MODEL_CONTEXT_COMMANDS: ReadonlySet<Command["kind"]> = new Set([
+  "sendMessage",
+  "resumeAskUser",
+  "cancelAskUser",
+]);
+
+const WORKSPACE_STREAM_ERROR_COMMANDS: ReadonlySet<Command["kind"]> = new Set([
+  ...MODEL_CONTEXT_COMMANDS,
+]);
+
+function streamErrorForHttpStatus(
+  status: number,
+  upstreamMessage: string,
+  errorCode: string | undefined,
+  commandKind: Command["kind"],
+): StreamError {
+  if (errorCode === "COMMAND_FAILED") {
     return {
-      kind: "draftingFailed",
-      reason: "模型密钥无效或权限不足，请检查模型配置。",
+      kind: "failed",
+      reason: upstreamMessage,
       retriable: false,
       statusCode: status,
-      category: "auth",
-      userMessage: "模型密钥无效或权限不足，请检查模型配置。",
-      action: "check_model_settings",
-    };
-  }
-  if (status === 402) {
-    return {
-      kind: "draftingFailed",
-      reason: "模型余额或调用额度不足，请检查模型设置或账户余额。",
-      retriable: false,
-      statusCode: status,
-      category: "quota",
-      userMessage: "模型余额或调用额度不足，请检查模型设置或账户余额。",
-      action: "check_balance",
-    };
-  }
-  if (status === 429) {
-    return {
-      kind: "draftingFailed",
-      reason: "请求太频繁，请稍后重试。",
-      retriable: true,
-      statusCode: status,
-      category: "rate_limit",
-      userMessage: "请求太频繁，请稍后重试。",
-      action: "retry",
+      category: "unknown",
+      userMessage: upstreamMessage,
+      action: "none",
     };
   }
   if (
     status === 400 &&
+    MODEL_CONTEXT_COMMANDS.has(commandKind) &&
     [
       "maximum context length",
       "context length exceeded",
@@ -201,34 +194,26 @@ function streamErrorForHttpStatus(status: number, upstreamMessage = ""): StreamE
     };
   }
   if (status === 413) {
+    const userMessage =
+      "请求内容体量过大，请删除部分素材或内容后重试。";
     return {
-      kind: "draftingFailed",
-      reason: MODEL_REQUEST_TOO_LARGE_MESSAGE,
+      kind: "failed",
+      reason: userMessage,
       retriable: false,
       statusCode: status,
       category: "request",
-      userMessage: MODEL_REQUEST_TOO_LARGE_MESSAGE,
+      userMessage,
       action: "none",
     };
   }
-  if (status >= 500) {
-    return {
-      kind: "draftingFailed",
-      reason: "模型服务暂时不可用，请稍后重试。",
-      retriable: true,
-      statusCode: status,
-      category: "upstream",
-      userMessage: "模型服务暂时不可用，请稍后重试。",
-      action: "retry",
-    };
-  }
+  const userMessage = "操作未完成，请稍后重试。";
   return {
     kind: "failed",
-    reason: `请求失败：${status}`,
+    reason: userMessage,
     retriable: false,
     statusCode: status,
     category: "unknown",
-    userMessage: `请求失败：${status}`,
+    userMessage,
     action: "none",
   };
 }
@@ -832,20 +817,27 @@ export class ServerStream {
         const requestId = typeof body?.requestId === "string"
           ? body.requestId
           : undefined;
-        this.dispatchLocal?.({
-          kind: "streamErrorSet",
-          error: response.status === 409 || response.status === 410
-            ? {
-                kind: "failed",
-                reason: message,
-                retriable: false,
-                statusCode: response.status,
-                category: "unknown",
-                userMessage: message,
-                action: "none",
-              }
-            : streamErrorForHttpStatus(response.status, message),
-        });
+        if (WORKSPACE_STREAM_ERROR_COMMANDS.has(command.kind)) {
+          this.dispatchLocal?.({
+            kind: "streamErrorSet",
+            error: response.status === 409 || response.status === 410
+              ? {
+                  kind: "failed",
+                  reason: message,
+                  retriable: false,
+                  statusCode: response.status,
+                  category: "unknown",
+                  userMessage: message,
+                  action: "none",
+                }
+              : streamErrorForHttpStatus(
+                  response.status,
+                  message,
+                  code,
+                  command.kind,
+                ),
+          });
+        }
         throw new CommandRequestError(
           message,
           code,

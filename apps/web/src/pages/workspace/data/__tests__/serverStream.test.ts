@@ -1599,7 +1599,7 @@ describe("ServerStream", () => {
     [
       413,
       "payload too large",
-      "请求中的素材或内容体量过大，模型服务拒绝接收。请删除部分素材、改用摘要，或拆分后分段处理。",
+      "请求内容体量过大，请删除部分素材或内容后重试。",
     ],
   ])("commands HTTP %s 使用素材体量专用文案", async (status, rawError, userMessage) => {
     globalThis.fetch = commandResponse({ error: rawError }, status);
@@ -1621,7 +1621,7 @@ describe("ServerStream", () => {
     expect(localActions).toContainEqual({
       kind: "streamErrorSet",
       error: {
-        kind: "draftingFailed",
+        kind: status === 413 ? "failed" : "draftingFailed",
         reason: userMessage,
         retriable: false,
         statusCode: status,
@@ -1630,6 +1630,52 @@ describe("ServerStream", () => {
         action: "none",
       },
     });
+  });
+
+  it.each([401, 403, 402, 429, 500])(
+    "commands HTTP %s 未带稳定业务码时不冒称模型配置或上游病因",
+    async (status) => {
+      globalThis.fetch = commandResponse({ error: "internal upstream detail" }, status);
+      const localActions: WorkspaceLocalAction[] = [];
+      const stream = new ServerStream((action) => localActions.push(action));
+
+      await expect(
+        stream.sendCommand({
+          kind: "sendMessage",
+          data: {
+            sessionId: "s-1",
+            text: "继续",
+            skills: [],
+            chips: [],
+            fileIds: [],
+          },
+        }),
+      ).rejects.toThrow("internal upstream detail");
+      expect(localActions).toContainEqual({
+        kind: "streamErrorSet",
+        error: {
+          kind: "failed",
+          reason: "操作未完成，请稍后重试。",
+          retriable: false,
+          statusCode: status,
+          category: "unknown",
+          userMessage: "操作未完成，请稍后重试。",
+          action: "none",
+        },
+      });
+      expect(JSON.stringify(localActions)).not.toContain("模型");
+      expect(JSON.stringify(localActions)).not.toContain("internal upstream detail");
+    },
+  );
+
+  it("非对话命令的 HTTP 失败由调用界面处理，不重复派发全局流错误", async () => {
+    globalThis.fetch = commandResponse({ error: "unauthorized" }, 401);
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await expect(stream.renameSession("s-1", "新名称")).rejects.toThrow("unauthorized");
+
+    expect(localActions).toEqual([]);
   });
 
   it("commands 的删除领域错误直接透传服务端 message", async () => {

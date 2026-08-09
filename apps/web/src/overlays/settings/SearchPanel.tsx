@@ -33,7 +33,7 @@ function errorKindLabel(kind: string | undefined): string {
   if (kind === "auth") return "key 无效";
   if (kind === "quota") return "额度受限";
   if (kind === "missing_key") return "尚未配置 key";
-  return "网络异常";
+  return "请求未完成";
 }
 
 function primarySourceLabel(source: PrimarySearchSource): string {
@@ -202,17 +202,24 @@ export function SearchPanel() {
       const res = await fetch(`/api/v1/settings/search/${encodeURIComponent(provider.id)}/test`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as { ok?: boolean; errorKind?: string; resultCount?: number };
+      const body = await res.json().catch(() => null) as {
+        ok?: boolean;
+        errorKind?: string;
+        resultCount?: number;
+      } | null;
       if (!mountedRef.current) return;
+      if (!body) {
+        setMessage(`${provider.label} 测试请求未完成`);
+        return;
+      }
       setMessage(
-        body.ok
+        res.ok && body.ok
           ? `${provider.label} 测试通过,返回 ${body.resultCount ?? 0} 条`
           : `${provider.label} 测试失败:${errorKindLabel(body.errorKind)}`,
       );
       await load();
     } catch {
-      if (mountedRef.current) setMessage(`${provider.label} 测试失败:网络异常`);
+      if (mountedRef.current) setMessage(`${provider.label} 测试请求未完成`);
     } finally {
       if (mountedRef.current) setBusy(null);
     }

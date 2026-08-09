@@ -44,7 +44,7 @@ import {
   type ClientMessageClaimResult,
 } from "../gateway/clientMessageIdempotency";
 
-const PUBLIC_STREAM_ERROR_REASON = "模型服务暂时不可用，请稍后重试";
+const PUBLIC_STREAM_ERROR_REASON = "操作未完成，请刷新后重试";
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
 const TEXT_SECRET_HEADER_RE = /\b(authorization|x-api-key)\b(\s*[:=]\s*)(?:Bearer\s+)?[^\s"',;}\]]+/gi;
 const SK_TOKEN_RE = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/g;

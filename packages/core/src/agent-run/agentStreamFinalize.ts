@@ -449,7 +449,7 @@ export async function* finalizeAgentStream(
     state.suggestions.size === 0
   ) {
     const stepNotice = context.sawIdleTimeout
-      ? "本轮有一步工具长时间无响应被中断,还没给出最终回复。回复“继续”我接着完成,或重试。"
+      ? "本轮长时间没有新的进展，已中断，尚未给出最终回复。回复“继续”我接着完成，或重试。"
       : "做了多步操作，但还没给出最终结果。回复“继续”我接着完成，或重试。";
     yield appendFinalVisibleText(stepNotice);
     outcome.producedVisibleFrame = true;

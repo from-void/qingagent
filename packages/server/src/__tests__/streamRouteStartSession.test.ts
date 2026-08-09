@@ -372,7 +372,7 @@ describe("POST /api/v1/commands sendMessage 幂等", () => {
           kind: "draftingFailed",
           data: {
             streamId: "failed-stream",
-            reason: "模型服务暂时不可用，请稍后重试",
+            reason: "操作未能完成，请刷新页面后重试",
             retriable: true,
           },
         },

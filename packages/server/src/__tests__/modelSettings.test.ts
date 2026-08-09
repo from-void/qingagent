@@ -374,7 +374,10 @@ describe("modelSettingsRoutes", () => {
     });
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ok: false, error: "无法连接该地址" });
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      error: "接口测试失败，未能确认原因",
+    });
     expect(mockCore.modelFetch).toHaveBeenCalledWith(
       "https://public-provider.example/v1/models",
       {
@@ -479,6 +482,27 @@ describe("modelSettingsRoutes", () => {
       ok: false,
       keySource: "db",
       error: "查询超时,请稍后重试",
+    });
+  });
+
+  it("DeepSeek 已返回但余额 JSON 损坏时不误报网络连接失败", async () => {
+    const app = await loadApp();
+    await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "deepseek", apiKey: "deepseek-json-key" }),
+    });
+    mockCore.modelFetch.mockResolvedValueOnce(
+      new Response("not-json", { status: 200 }),
+    );
+
+    const res = await app.request("/api/v1/settings/model/balance");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      keySource: "db",
+      error: "查询未完成，请重试",
     });
   });
 

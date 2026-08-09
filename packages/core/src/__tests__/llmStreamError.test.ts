@@ -918,6 +918,89 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")).toBeNull();
   });
 
+  it("工具调用后无文本收尾但未耗尽步数时使用中性中断文案", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("tool-ended-without-step-limit");
+    const frames = await collectFrames(processAgentStream(
+      streamOf(
+        { type: "step-start", payload: {} },
+        { type: "text-delta", payload: { text: "已完成前置处理" } },
+        {
+          type: "tool-call",
+          payload: { toolName: "testTool", toolCallId: "tool-not-exhausted", args: {} },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "testTool",
+            toolCallId: "tool-not-exhausted",
+            args: {},
+            result: { ok: true },
+          },
+        },
+        { type: "step-finish", payload: { finishReason: "tool-calls" } },
+      ),
+      {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-tool-not-exhausted",
+        runId: "run-tool-not-exhausted",
+      },
+    ));
+    const bodies = textBodies(frames);
+
+    expect(bodies.some((body) => body.includes("步数上限"))).toBe(false);
+    expect(bodies.some((body) => body.includes(
+      "本轮在工具调用后中断，尚未完成最后收尾，回复“继续”我接着处理。",
+    ))).toBe(true);
+  });
+
+  it("工具调用后确实耗尽步数时仍提示步数上限", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { AGENT_MAX_STEPS } = await import("../agent-run/agentLimits.js");
+    const state = createSession("tool-ended-at-step-limit");
+    const chunks: unknown[] = [];
+    for (let index = 0; index < AGENT_MAX_STEPS; index += 1) {
+      chunks.push({ type: "step-start", payload: {} });
+      if (index === AGENT_MAX_STEPS - 1) {
+        chunks.push(
+          { type: "text-delta", payload: { text: "已完成前置处理" } },
+          {
+            type: "tool-call",
+            payload: { toolName: "testTool", toolCallId: "tool-exhausted", args: {} },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "testTool",
+              toolCallId: "tool-exhausted",
+              args: {},
+              result: { ok: true },
+            },
+          },
+        );
+      }
+      chunks.push({
+        type: "step-finish",
+        payload: {
+          finishReason: index === AGENT_MAX_STEPS - 1 ? "tool-calls" : "stop",
+        },
+      });
+    }
+
+    const frames = await collectFrames(processAgentStream(
+      streamOf(...chunks),
+      {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-tool-exhausted",
+        runId: "run-tool-exhausted",
+      },
+    ));
+
+    expect(textBodies(frames).some((body) => body.includes("步数上限"))).toBe(true);
+  });
+
   it("planDraft 执行中用户取消不产生 rejected 或失败卡", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("planning-abort-during-questionnaire");

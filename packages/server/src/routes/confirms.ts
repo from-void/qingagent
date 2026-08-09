@@ -35,6 +35,8 @@ import {
 const MAX_CONFIRM_BODY_BYTES = 16 * 1024;
 const CONFIRM_NOT_AVAILABLE_MESSAGE = "这张确认已处理或已失效，请查看命令结果。";
 const CONFIRM_SUBMISSION_UNKNOWN_MESSAGE = "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。";
+const CONFIRM_EXECUTION_UNKNOWN_MESSAGE =
+  "确认提交异常，命令执行状态未能确认；请先查看命令卡，不要重复提交。";
 
 async function readBoundedJson(c: Context): Promise<unknown> {
   const declared = Number(c.req.header("content-length"));
@@ -343,7 +345,7 @@ export function createConfirmRoutes(
     }
     const known = decisionError(error);
     if (known) return c.json({ error: presentDecisionError(known) }, errorStatus(known.code));
-    return c.json({ error: "确认没有完成，命令没有执行。请稍后再试。" }, 500);
+    return c.json({ error: CONFIRM_EXECUTION_UNKNOWN_MESSAGE }, 500);
   }
   });
 

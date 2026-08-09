@@ -236,6 +236,7 @@ export async function* resumeConfirmDecision(input: {
   session._abortController = abortController;
   session._activeConfirmedToolCallId = pending.toolCallId;
   let resolvedEmitted = false;
+  let approvalMayHaveStartedExecution = false;
   yield { kind: "stream", data: { kind: "start", data: { streamId } } };
 
   try {
@@ -301,9 +302,15 @@ export async function* resumeConfirmDecision(input: {
         ),
       },
     };
-    const result = input.accepted
-      ? await agent.approveToolCall(commonOptions)
-      : await agent.declineToolCall(commonOptions);
+    const result = await (() => {
+      if (input.accepted) {
+        // Mastra 会在 approveToolCall 的 Promise 返回前恢复并进入工具执行链。
+        // 一旦跨过调用边界，即使 Promise 随后抛错也不能断言命令没有执行。
+        approvalMayHaveStartedExecution = true;
+        return agent.approveToolCall(commonOptions);
+      }
+      return agent.declineToolCall(commonOptions);
+    })();
 
     if (input.emitResolvedFrame !== false) {
       yield service.resolvedFrame(pending, input.resolution);
@@ -343,10 +350,14 @@ export async function* resumeConfirmDecision(input: {
     const targetedCancellation =
       error instanceof ConfirmedCommandCancelledError ||
       abortController.signal.reason instanceof ConfirmedCommandCancelledError;
+    const executionStateUnknown =
+      approvalMayHaveStartedExecution || resolvedEmitted;
     const reason = targetedCancellation
-      ? "已中止，结果可能未知"
-      : resolvedEmitted
-        ? "确认已提交，但还没有收到命令结果。为避免重复操作，系统没有自动重试；请先查看命令输出，再决定是否重新执行。"
+      ? executionStateUnknown
+        ? "已中止，执行状态未知，请先核实命令是否已生效再重试。"
+        : "已中止，命令没有执行。"
+      : executionStateUnknown
+        ? "执行状态未知，请先核实命令是否已生效再重试。"
         : "确认没有完成，命令没有执行。请重新确认后再试。";
     const failed = failConfirmedToolCall(session, pending.toolCallId, reason, {
       terminalKind: targetedCancellation ? "aborted" : "failed",

@@ -128,12 +128,12 @@ describe("show_qr 二维码卡帧协议", () => {
   });
 
   it("show_qr schema 拒绝首次出卡缺少二维码内容", async () => {
-    const { showQrTool } = await import("../tools/showQr.js");
+    const { showQrInputSchema } = await import("../tools/showQr.js");
 
-    expect(showQrTool.inputSchema.safeParse({ title: "扫码授权" }).success).toBe(false);
-    expect(showQrTool.inputSchema.safeParse({ content: "https://example.com/auth" }).success)
+    expect(showQrInputSchema.safeParse({ title: "扫码授权" }).success).toBe(false);
+    expect(showQrInputSchema.safeParse({ content: "https://example.com/auth" }).success)
       .toBe(true);
-    expect(showQrTool.inputSchema.safeParse({ completedCardId: "qr-existing" }).success)
+    expect(showQrInputSchema.safeParse({ completedCardId: "qr-existing" }).success)
       .toBe(true);
   });
 

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  FolderSourceRecord,
+  ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { pmDocFromText } from "./pmTestUtils.js";
 
 // resetModules 只重置 bridge 会话状态；真实 core 保持文件级单例，避免每个用例
@@ -813,6 +817,54 @@ describe("handleResume askUser fresh-turn fallback", () => {
     expect(askDoneIndex).toBeGreaterThanOrEqual(0);
     expect(busyIndex).toBeGreaterThan(askDoneIndex);
     expect(writeDraftPlaceholderIndex).toBeGreaterThan(busyIndex);
+  });
+
+  it("askUserQuestion 恢复轮注入命令通道与门控文件工具", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(
+      session,
+      "run-resume-session-tools",
+      "restored:run-resume-session-tools",
+      "askUserQuestion",
+    );
+    const now = new Date().toISOString();
+    const source: FolderSourceRecord = {
+      id: "folder-resume-session-tools",
+      sessionId: session.sessionId,
+      provider: "desktop-local",
+      name: "简历资料",
+      pathLabel: "简历资料",
+      mountName: "resume_materials",
+      mountPath: "/sources/resume_materials",
+      readOnly: true,
+      fileCount: 1,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      desktopRootPath: "/tmp/qingagent-resume-session-tools",
+    };
+    session.folderSources.set(source.id, source);
+    mockState.resumeStream.mockResolvedValue({
+      runId: "run-resume-session-tools-resumed",
+      fullStream: streamOf({ type: "finish", payload: {} }),
+    });
+
+    await collectFrames(bridge.handleCommand({
+      kind: "resumeAskUser",
+      data: {
+        sessionId: session.sessionId,
+        toolCallId: "ask-1",
+        answers: { "q-one": { chosen: [], freeText: "继续处理简历" } },
+      },
+    }));
+
+    const sessionScoped = mockState.resumeStream.mock.calls[0]?.[1]?.toolsets?.sessionScoped;
+    expect(sessionScoped).toHaveProperty("mastra_workspace_execute_command");
+    expect(sessionScoped).toHaveProperty("mastra_workspace_get_process_output");
+    expect(sessionScoped).toHaveProperty("mastra_workspace_read_file");
   });
 
   it("旧终态 askUser 提交不会覆盖当前活跃问卷的 suspension 所有权", async () => {

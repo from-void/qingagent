@@ -37,6 +37,7 @@ export {
   buildAgentTracingMetadata,
   buildAskUserAnswerUserMessage,
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   buildDocumentSnapshot,
   buildTodoAwarenessContent,
   buildVisibleAskUserAnswerMessage,

@@ -18,6 +18,7 @@ import {
   bindTurnOwnershipToRequestContext,
   buildAgentTracingMetadata,
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   buildTodoAwarenessContent,
   buildVisibleAskUserAnswerMessage,
   clearStaleSuspensionIfInactive,
@@ -513,17 +514,7 @@ async function* handleResume(
                   }),
               toolsets: {
                 sessionScoped: bindToolsToAbortSignal(
-                  {
-                    readMaterial: sessionTools.readMaterial,
-                    summarizeMaterial: sessionTools.summarizeMaterial,
-                    readDraft: sessionTools.readDraftAiIr,
-                    editDraft: sessionTools.editDraft,
-                    readDiff: sessionTools.readDiff,
-                    ...(sessionTools.writeDraft ? { writeDraft: sessionTools.writeDraft } : {}),
-                    ...(sessionTools.updateWorkingMemory
-                      ? { updateWorkingMemory: sessionTools.updateWorkingMemory }
-                      : {}),
-                  },
+                  buildSessionScopedToolsInput(sessionTools),
                   abortController.signal,
                 ),
                 capabilityTools: bindToolsToAbortSignal(

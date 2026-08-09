@@ -78,6 +78,7 @@ export {
 
 export {
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   createSessionScopedTools,
 } from "../session/sessionTools.js";
 export type { SelectedSkillInput } from "../session/sessionTools.js";

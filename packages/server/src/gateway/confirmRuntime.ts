@@ -8,6 +8,7 @@ import {
   CONFIRM_RESUME_WALL_TIMEOUT_MS,
   ConfirmDecisionError,
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
   confirmService,
@@ -70,20 +71,7 @@ function buildResumeTools(session: SessionState): Promise<{
   capabilityTools: ToolsInput;
 }> {
   const sessionTools = createSessionScopedTools(session);
-  const sessionScoped: ToolsInput = {
-    readMaterial: sessionTools.readMaterial,
-    summarizeMaterial: sessionTools.summarizeMaterial,
-    readDraft: sessionTools.readDraftAiIr,
-    editDraft: sessionTools.editDraft,
-    readDiff: sessionTools.readDiff,
-  };
-  if (sessionTools.executeCommand) {
-    sessionScoped[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
-  }
-  if (sessionTools.writeDraft) sessionScoped.writeDraft = sessionTools.writeDraft;
-  if (sessionTools.updateWorkingMemory) {
-    sessionScoped.updateWorkingMemory = sessionTools.updateWorkingMemory;
-  }
+  const sessionScoped = buildSessionScopedToolsInput(sessionTools);
   return buildCapabilityTools().then((capabilityTools) => ({
     sessionScoped,
     capabilityTools,

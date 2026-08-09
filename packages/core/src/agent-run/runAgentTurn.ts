@@ -7,10 +7,7 @@ import type {
   MessagePart,
   ReviewContext,
 } from "@qingagent/contract-ts";
-import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
-import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
-import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 import { buildChipOnlyGuidance, composeInlineChipText } from "../session/chipOnlyNote.js";
 import { createSkillChipInstructionLoader } from "./skillChipInstructionLoader.js";
 import {
@@ -78,6 +75,7 @@ import {
   buildCapabilityToolSearchBridge,
   buildAttachmentContext,
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   createSessionScopedTools,
   ensureSessionToolSearchProcessor,
   resolveSelectedSkillNames,
@@ -729,49 +727,12 @@ export async function* runAgentTurn(
       scopeId: streamId,
       allowedToolAdditions: toolSearchPreloadedToolNames,
     };
-    const sessionScopedTools: ToolsInput = {
-      readMaterial: sessionTools.readMaterial,
-      summarizeMaterial: sessionTools.summarizeMaterial,
-    };
-    sessionScopedTools.readDraft = sessionTools.readDraftAiIr;
     // 菜单与 external review/run 都会携带 reviewContext，语义固定为纯批注。
     // 不把写稿工具暴露给这一轮，避免模型把“标记命中”实现成普通 underline
     // mark，造成视觉上有下划线但没有 annotation group/hover 卡。
-    if (!reviewContext) sessionScopedTools.editDraft = sessionTools.editDraft;
-    sessionScopedTools.create_annotation_groups = sessionTools.createAnnotationGroups;
-    sessionScopedTools.readDiff = sessionTools.readDiff;
-    if (sessionTools.executeCommand) {
-      sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
-    }
-    if (sessionTools.getProcessOutput) {
-      sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
-    }
-    if (sessionTools.requestCredentialAccess) {
-      sessionScopedTools[REQUEST_CREDENTIAL_ACCESS_TOOL] = sessionTools.requestCredentialAccess;
-    }
-    if (sessionTools.workspaceReadFile) {
-      sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = sessionTools.workspaceReadFile;
-    }
-    if (sessionTools.workspaceListFiles) {
-      sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES] = sessionTools.workspaceListFiles;
-    }
-    if (sessionTools.workspaceEditFile) {
-      sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE] = sessionTools.workspaceEditFile;
-    }
-    if (sessionTools.workspaceGrep) {
-      sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.GREP] = sessionTools.workspaceGrep;
-    }
-    if (sessionTools.workspaceSearch) {
-      sessionScopedTools[WORKSPACE_TOOLS.SEARCH.SEARCH] = sessionTools.workspaceSearch;
-    }
-    if (sessionTools.readDocument) sessionScopedTools.readDocument = sessionTools.readDocument;
-    if (sessionTools.searchDocuments) sessionScopedTools.searchDocuments = sessionTools.searchDocuments;
-    if (!reviewContext && sessionTools.writeDraft) {
-      sessionScopedTools.writeDraft = sessionTools.writeDraft;
-    }
-    if (sessionTools.updateWorkingMemory) {
-      sessionScopedTools.updateWorkingMemory = sessionTools.updateWorkingMemory;
-    }
+    const sessionScopedTools = buildSessionScopedToolsInput(sessionTools, {
+      allowDraftWrites: !reviewContext,
+    });
     const maxTurnRetries = TURN_RETRY_LIMIT;
     const idleTimeoutRetryLimit = Math.min(
       1,

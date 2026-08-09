@@ -7,13 +7,16 @@ import type {
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
-import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 import crypto from "node:crypto";
 import { qingagentAgent } from "../agents/qingagent.js";
 import type { ConfirmService } from "../confirm/confirmService.js";
 import { emitProjectedDocState } from "../doc-engine/docStateMachine.js";
 import type { PendingConfirm, SessionState } from "../session/sessionState.js";
-import { buildCapabilityTools, createSessionScopedTools } from "../session/sessionTools.js";
+import {
+  buildCapabilityTools,
+  buildSessionScopedToolsInput,
+  createSessionScopedTools,
+} from "../session/sessionTools.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { processAgentStream } from "./processAgentStream.js";
@@ -165,26 +168,7 @@ function buildResumeTools(session: SessionState): Promise<{
   capabilityTools: ToolsInput;
 }> {
   const sessionTools = createSessionScopedTools(session);
-  const sessionScoped: ToolsInput = {
-    readMaterial: sessionTools.readMaterial,
-    summarizeMaterial: sessionTools.summarizeMaterial,
-    readDraft: sessionTools.readDraftAiIr,
-    editDraft: sessionTools.editDraft,
-    readDiff: sessionTools.readDiff,
-  };
-  if (sessionTools.executeCommand) {
-    sessionScoped[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
-  }
-  if (sessionTools.getProcessOutput) {
-    sessionScoped[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
-  }
-  if (sessionTools.requestCredentialAccess) {
-    sessionScoped[REQUEST_CREDENTIAL_ACCESS_TOOL] = sessionTools.requestCredentialAccess;
-  }
-  if (sessionTools.writeDraft) sessionScoped.writeDraft = sessionTools.writeDraft;
-  if (sessionTools.updateWorkingMemory) {
-    sessionScoped.updateWorkingMemory = sessionTools.updateWorkingMemory;
-  }
+  const sessionScoped = buildSessionScopedToolsInput(sessionTools);
   return buildCapabilityTools().then((capabilityTools) => ({
     sessionScoped,
     capabilityTools,

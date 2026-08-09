@@ -6,7 +6,7 @@ import {
 } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
-import type { Workspace } from "@mastra/core/workspace";
+import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getQingagentSessionWorkspace } from "../agents/qingagent.js";
@@ -24,6 +24,7 @@ import {
   registerBackgroundCommandOwner,
 } from "./backgroundCommand.js";
 import { createRequestCredentialAccessTool } from "../tools/requestCredentialAccess.js";
+import { REQUEST_CREDENTIAL_ACCESS_TOOL } from "../confirm/credentialAccessConfirmation.js";
 import { createCredentialGrant } from "@qingagent/db";
 import {
   createProtectedFolderSourceEditFileTool,
@@ -1681,6 +1682,67 @@ export function createSessionScopedTools(
     updateWorkingMemory,
     ...(writeDraft ? { writeDraft } : {}),
   };
+}
+
+export interface BuildSessionScopedToolsInputOptions {
+  /** 审阅态只允许批注，不暴露正文改写工具。 */
+  allowDraftWrites?: boolean;
+}
+
+/**
+ * 将按会话创建的动态工具统一映射为 Mastra sessionScoped toolset。
+ *
+ * workspace 自带的同名文件工具不带 qingagent 的资料库边界，因此这里必须用
+ * sessionTools 中的门控实现覆盖；所有首轮和恢复轮都应只从这一处构造清单。
+ */
+export function buildSessionScopedToolsInput(
+  sessionTools: ReturnType<typeof createSessionScopedTools>,
+  options: BuildSessionScopedToolsInputOptions = {},
+): ToolsInput {
+  const allowDraftWrites = options.allowDraftWrites ?? true;
+  const tools: ToolsInput = {
+    readMaterial: sessionTools.readMaterial,
+    summarizeMaterial: sessionTools.summarizeMaterial,
+    readDraft: sessionTools.readDraftAiIr,
+    create_annotation_groups: sessionTools.createAnnotationGroups,
+    readDiff: sessionTools.readDiff,
+  };
+
+  if (allowDraftWrites) tools.editDraft = sessionTools.editDraft;
+  if (sessionTools.executeCommand) {
+    tools[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
+  }
+  if (sessionTools.getProcessOutput) {
+    tools[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
+  }
+  if (sessionTools.requestCredentialAccess) {
+    tools[REQUEST_CREDENTIAL_ACCESS_TOOL] = sessionTools.requestCredentialAccess;
+  }
+  if (sessionTools.workspaceReadFile) {
+    tools[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = sessionTools.workspaceReadFile;
+  }
+  if (sessionTools.workspaceListFiles) {
+    tools[WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES] = sessionTools.workspaceListFiles;
+  }
+  if (sessionTools.workspaceEditFile) {
+    tools[WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE] = sessionTools.workspaceEditFile;
+  }
+  if (sessionTools.workspaceGrep) {
+    tools[WORKSPACE_TOOLS.FILESYSTEM.GREP] = sessionTools.workspaceGrep;
+  }
+  if (sessionTools.workspaceSearch) {
+    tools[WORKSPACE_TOOLS.SEARCH.SEARCH] = sessionTools.workspaceSearch;
+  }
+  if (sessionTools.readDocument) tools.readDocument = sessionTools.readDocument;
+  if (sessionTools.searchDocuments) tools.searchDocuments = sessionTools.searchDocuments;
+  if (allowDraftWrites && sessionTools.writeDraft) {
+    tools.writeDraft = sessionTools.writeDraft;
+  }
+  if (sessionTools.updateWorkingMemory) {
+    tools.updateWorkingMemory = sessionTools.updateWorkingMemory;
+  }
+
+  return tools;
 }
 
 function addDuplicateBlockIdRecoveryGuidance(error: string | undefined): string | undefined {

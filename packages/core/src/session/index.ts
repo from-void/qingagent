@@ -37,6 +37,7 @@ export type {
 
 export {
   buildCapabilityTools,
+  buildSessionScopedToolsInput,
   createSessionScopedTools,
 } from "./sessionTools.js";
 

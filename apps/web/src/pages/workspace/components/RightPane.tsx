@@ -63,9 +63,6 @@ interface RightPaneProps {
   activePatchIndex: number;
   isReviewSubmitting?: boolean;
   reviewSettlementRetryPending?: boolean;
-  /** 最近一次提交仍是当前正文时，提供跨编辑器实例的精确反悔入口。 */
-  reviewCommitUndoAvailable?: boolean;
-  reviewCommitUndoBusy?: boolean;
   visiblePatchCount: number;
   unrenderablePatchCount: number;
   effectiveReview: boolean;
@@ -101,7 +98,6 @@ interface RightPaneProps {
   onRejectAll: () => void | Promise<void>;
   onAcceptAll?: () => void | Promise<void>;
   onCommit: () => void | Promise<void>;
-  onUndoReviewCommit?: () => void | Promise<void>;
   onPatchVerdict: (patchId: string, verdict: "accepted" | "rejected") => void;
   onCancelAskUser: (toolCall: ToolCallSpec) => void;
   onCloseViewingVersion: () => void;
@@ -160,8 +156,6 @@ export function RightPane({
   activePatchIndex,
   isReviewSubmitting,
   reviewSettlementRetryPending = false,
-  reviewCommitUndoAvailable = false,
-  reviewCommitUndoBusy = false,
   visiblePatchCount,
   unrenderablePatchCount,
   effectiveReview,
@@ -196,7 +190,6 @@ export function RightPane({
   onRejectAll,
   onAcceptAll,
   onCommit,
-  onUndoReviewCommit,
   onPatchVerdict,
   onCancelAskUser,
   onCloseViewingVersion,
@@ -448,29 +441,7 @@ export function RightPane({
         runId={presentationRun?.id ?? null}
       />
       {historyBanner}
-      {reviewCommitUndoAvailable && onUndoReviewCommit ? (
-        <div
-          className="wf-region ws-review-commit-undo-banner"
-          data-wf="ReviewCommitUndoBanner"
-          style={{
-            marginBottom: 10,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-          }}
-        >
-          <span>本次修改已提交</span>
-          <button
-            type="button"
-            className="wf-btn small ghost"
-            disabled={reviewCommitUndoBusy}
-            onClick={() => void onUndoReviewCommit()}
-          >
-            {reviewCommitUndoBusy ? "正在撤销…" : "撤销本次修改"}
-          </button>
-        </div>
-      ) : null}
+      {/* // 产品拍板(260809):提交即定稿,不做提交后撤销横幅——如需反悔走历史版本方案,别再把撤销入口加回来。 */}
       {/* 审批条:揭示动画一开始(patchRevealing)就出条并同体平移进来(不再等揭示跑完),
           这样"光标刚开始在正文打字"时条就立刻转移过去。 */}
       {showReviewActions && (

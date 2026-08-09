@@ -93,8 +93,6 @@ export function WorkspaceDocumentPane({
     reviewUiState,
     isReviewSubmitting,
     reviewSettlementRetryPending,
-    reviewCommitUndoAvailable,
-    reviewCommitUndoBusy,
     awaitingWholeDocReviewMaterial,
     fullpageAsk,
     submittingAskUserId,
@@ -120,7 +118,6 @@ export function WorkspaceDocumentPane({
     handleRejectAll,
     handleAcceptAll,
     handleCommit,
-    handleUndoReviewCommit,
     handlePatchVerdict,
     handleCancelAskUser,
     closeViewingVersion,
@@ -545,8 +542,6 @@ export function WorkspaceDocumentPane({
             activePatchIndex={activePatchIndex}
             isReviewSubmitting={isReviewSubmitting}
             reviewSettlementRetryPending={reviewSettlementRetryPending}
-            reviewCommitUndoAvailable={reviewCommitUndoAvailable}
-            reviewCommitUndoBusy={reviewCommitUndoBusy}
             visiblePatchCount={visiblePatchCount}
             unrenderablePatchCount={unrenderablePatchCount}
             effectiveReview={inlinePatchReview || reviewSettlementRetryPending}
@@ -584,7 +579,6 @@ export function WorkspaceDocumentPane({
             onRejectAll={handleRejectAll}
             onAcceptAll={handleAcceptAll}
             onCommit={handleCommit}
-            onUndoReviewCommit={handleUndoReviewCommit}
             onPatchVerdict={handlePatchVerdict}
             onCancelAskUser={handleCancelAskUser}
             onCloseViewingVersion={closeViewingVersion}

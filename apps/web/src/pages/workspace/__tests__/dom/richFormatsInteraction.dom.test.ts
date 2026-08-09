@@ -1078,49 +1078,6 @@ describe("richFormatsInteraction 列表缩进快捷键", () => {
   });
 });
 
-describe("richFormatsInteraction 编辑历史快捷键", () => {
-  it("物理键事件仅提供 code 时 Ctrl+Shift+Z 与 Ctrl+Y 都能重做", () => {
-    const editor = createEditor(docWithParagraph("初稿"));
-    try {
-      setTextSelection(editor, findTextPosition(editor, "初稿", "end"));
-      editor.commands.insertContent("修改");
-      expect(editor.getText()).toContain("初稿修改");
-
-      expect(editor.commands.undo()).toBe(true);
-      expect(editor.getText()).toContain("初稿");
-      expect(editor.getText()).not.toContain("修改");
-
-      expect(dispatchPhysicalKey(editor, {
-        key: "Unidentified",
-        code: "KeyZ",
-        ctrlKey: true,
-        shiftKey: true,
-      })).toBe(true);
-      expect(editor.getText()).toContain("初稿修改");
-
-      expect(editor.commands.undo()).toBe(true);
-      expect(editor.getText()).not.toContain("修改");
-
-      expect(dispatchPhysicalKey(editor, {
-        key: "Unidentified",
-        code: "KeyY",
-        ctrlKey: true,
-      })).toBe(true);
-      expect(editor.getText()).toContain("初稿修改");
-
-      expect(dispatchPhysicalKey(editor, {
-        key: "z",
-        code: "KeyZ",
-        keyCode: 90,
-        ctrlKey: true,
-      })).toBe(true);
-      expect(editor.getText()).not.toContain("修改");
-    } finally {
-      destroyEditor(editor);
-    }
-  });
-});
-
 describe("richFormatsInteraction 列表类型切换 input rule", () => {
   // 构造单条列表文档(用 JSONContent 直接喂 createEditor)
   function listDoc(listType: "bulletList" | "orderedList", text: string): JSONContent {

@@ -36,7 +36,6 @@ import type {
   AskUserAnswers,
   ReviewTarget,
   ToolCallSpec,
-  ViewDocumentSnapshot,
 } from "../data/protocol";
 import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 
@@ -139,12 +138,6 @@ export function useWorkspaceReviewActions(input: {
   setTableTypedByPatch: Dispatch<
     SetStateAction<ReviewTableTypedByPatch | null>
   >;
-  onReviewCommitSucceeded?: (input: {
-    sessionId: string;
-    before: ViewDocumentSnapshot | null;
-    frames: readonly BridgeFrame[];
-    after: ViewDocumentSnapshot | null;
-  }) => void;
 }) {
   const {
     state,
@@ -163,7 +156,6 @@ export function useWorkspaceReviewActions(input: {
     setActiveReviewTargetId,
     finalizeReviewTablePatch,
     setTableTypedByPatch,
-    onReviewCommitSucceeded,
   } = input;
   const [submittingAskUserId, setSubmittingAskUserId] = useState<string | null>(
     null,
@@ -238,7 +230,6 @@ export function useWorkspaceReviewActions(input: {
     const currentPatches = selectPatches(stateRef.current);
     const stream = streamRef.current;
     const currentSessionId = stateRef.current.sessionId;
-    const beforeCommitDoc = stateRef.current.doc;
     // "放弃全部"只作用于尚未采纳的候选:已采纳(accepted)的处保留提交,
     // 其余拒绝——否则半采纳后点放弃会把用户确认过的改动一起回滚丢失
     // (e2e-loop-0704 P1)。反馈卡口径(rejectUndecided)与提交口径同源。
@@ -301,14 +292,6 @@ export function useWorkspaceReviewActions(input: {
           );
           return;
         }
-        if (commitSucceeded && !commitNoop) {
-          onReviewCommitSucceeded?.({
-            sessionId: currentSessionId,
-            before: beforeCommitDoc,
-            frames,
-            after: stateRef.current.doc,
-          });
-        }
         // 只有服务端明确结算后才销毁本地候选与锁态；请求失败时保留完整快照，
         // 让用户仍可从审阅条重试。
         setTableTypedByPatch(null);
@@ -343,12 +326,6 @@ export function useWorkspaceReviewActions(input: {
           setTableTypedByPatch(null);
           setActiveReviewTargetId(null);
           setReviewSettlementRetryPending(false);
-          onReviewCommitSucceeded?.({
-            sessionId: currentSessionId,
-            before: beforeCommitDoc,
-            frames: [],
-            after: stateRef.current.doc,
-          });
           sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
           return;
         }
@@ -360,7 +337,6 @@ export function useWorkspaceReviewActions(input: {
   }, [
     runReviewSettlement,
     showToast,
-    onReviewCommitSucceeded,
     suppressRepeatedAutoCommitForSettlement,
     trackReviewClose,
   ]);
@@ -374,7 +350,6 @@ export function useWorkspaceReviewActions(input: {
     const currentPatches = selectPatches(stateRef.current);
     const stream = streamRef.current;
     const currentSessionId = stateRef.current.sessionId;
-    const beforeCommitDoc = stateRef.current.doc;
     if (!stream || !currentSessionId || currentPatches.length === 0) {
       showToast("没有改动可提交");
       return Promise.resolve();
@@ -417,14 +392,6 @@ export function useWorkspaceReviewActions(input: {
             );
             return;
           }
-          if (!commitNoop) {
-            onReviewCommitSucceeded?.({
-              sessionId: currentSessionId,
-              before: beforeCommitDoc,
-              frames,
-              after: stateRef.current.doc,
-            });
-          }
           if (commitNoop) {
             showToast("修改已经提交，无需重复操作");
           }
@@ -445,12 +412,6 @@ export function useWorkspaceReviewActions(input: {
             )
           ) {
             setReviewSettlementRetryPending(false);
-            onReviewCommitSucceeded?.({
-              sessionId: currentSessionId,
-              before: beforeCommitDoc,
-              frames: [],
-              after: stateRef.current.doc,
-            });
             return;
           }
           console.error("[workspace] acceptAll commitReviewGroups failed", e);
@@ -461,7 +422,6 @@ export function useWorkspaceReviewActions(input: {
   }, [
     runReviewSettlement,
     showToast,
-    onReviewCommitSucceeded,
     suppressRepeatedAutoCommitForSettlement,
     trackReviewClose,
   ]);
@@ -541,7 +501,6 @@ export function useWorkspaceReviewActions(input: {
     const stream = streamRef.current;
     if (!stream) return Promise.resolve();
     const currentSessionId = stateRef.current.sessionId;
-    const beforeCommitDoc = stateRef.current.doc;
     if (!currentSessionId) {
       showToast("会话未就绪");
       return Promise.resolve();
@@ -605,13 +564,6 @@ export function useWorkspaceReviewActions(input: {
           }
           if (commitNoop) {
             showToast("修改已经提交，无需重复操作");
-          } else {
-            onReviewCommitSucceeded?.({
-              sessionId: currentSessionId,
-              before: beforeCommitDoc,
-              frames,
-              after: stateRef.current.doc,
-            });
           }
           completedReviewCommitKeyRef.current = reviewCommitKey;
           // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
@@ -635,12 +587,6 @@ export function useWorkspaceReviewActions(input: {
             )
           ) {
             setReviewSettlementRetryPending(false);
-            onReviewCommitSucceeded?.({
-              sessionId: currentSessionId,
-              before: beforeCommitDoc,
-              frames: [],
-              after: stateRef.current.doc,
-            });
             sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
             return;
           }
@@ -654,7 +600,6 @@ export function useWorkspaceReviewActions(input: {
   }, [
     runReviewSettlement,
     showToast,
-    onReviewCommitSucceeded,
     suppressRepeatedAutoCommitForSettlement,
     trackReviewClose,
   ]);

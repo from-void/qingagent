@@ -1878,12 +1878,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   display: flex;
   gap: 2px;
 }
-/* AI 提交撤销条与纸内功能区同处纸顶：功能区宽 62px、距右 18px，合计占用
-   80px 右上热区；横幅右侧保留 96px（再留 16px 间隔），避免按钮进入其命中矩形。
-   不抬横幅层级，确保审查/导出及其菜单仍按既有层叠关系工作。 */
-#view-workspace .ws-review-commit-undo-banner {
-  padding-right: 96px;
-}
 #view-workspace .ws-docfn-btn {
   width: 30px;
   height: 30px;

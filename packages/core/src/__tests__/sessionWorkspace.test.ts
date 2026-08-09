@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceTools, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
@@ -552,6 +552,50 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(String(listOutput)).not.toContain(outsideDir);
     expect(String(listOutput)).not.toContain("ROUND17_SOURCE_SECRET");
     expect(String(listOutput)).not.toContain("ROUND17_HOST_SECRET");
+  });
+
+  it("workspace write_file 可新建和覆写文件，且仍拒绝越界 symlink", async () => {
+    const sessionId = "sess-workspace-write-new-file";
+    const sessionDir = sessionWorkspaceDir(sessionId);
+    const outsideDir = mkdtempSync(join(tmpdir(), "workspace-write-outside-"));
+    const outsideFile = join(outsideDir, "outside.txt");
+    rmSync(sessionDir, { recursive: true, force: true });
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(outsideFile, "outside-original");
+    symlinkSync(outsideFile, join(sessionDir, "outside-link.txt"));
+
+    const ws = await getSessionWorkspace(sessionId, opts);
+    const tools = await createWorkspaceTools(ws, { workspace: ws });
+    const writeTool = tools[WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE];
+    const context = { workspace: ws } as never;
+
+    await expect(writeTool?.execute?.(
+      { path: "/workspace/codex-image-prompt.txt", content: "first", overwrite: true },
+      context,
+    )).resolves.toContain("Wrote 5 bytes");
+    await expect(
+      ws.filesystem!.readFile("/workspace/codex-image-prompt.txt", { encoding: "utf8" }),
+    ).resolves.toBe("first");
+
+    await expect(writeTool?.execute?.(
+      { path: "/workspace/codex-image-prompt.txt", content: "second", overwrite: true },
+      context,
+    )).resolves.toContain("Wrote 6 bytes");
+    await expect(
+      ws.filesystem!.readFile("/workspace/codex-image-prompt.txt", { encoding: "utf8" }),
+    ).resolves.toBe("second");
+
+    await expect(writeTool?.execute?.(
+      { path: "/workspace/outside-link.txt", content: "must-not-write", overwrite: true },
+      context,
+    )).rejects.toThrow();
+    expect(readFileSync(outsideFile, "utf8")).toBe("outside-original");
+
+    await expect(writeTool?.execute?.(
+      { path: "/workspace/missing-parent/new.txt", content: "no recursive mkdir", overwrite: true },
+      context,
+    )).rejects.toThrow();
+    expect(existsSync(join(sessionDir, "missing-parent"))).toBe(false);
   });
 
   it("本地文件夹资料库以 /sources 下嵌套 CompositeFilesystem 挂载且只读", async () => {

@@ -916,6 +916,14 @@ function isSourcesVirtualPath(path: string): boolean {
 }
 
 class SessionCompositeFilesystem extends CompositeFilesystem {
+  writeFile(path: string, content: FileContent, options?: WriteOptions): Promise<void> {
+    return super.writeFile(path, content, {
+      ...options,
+      // 文件工具只负责写文件；父目录不存在时应由 mkdir 显式创建。
+      recursive: options?.recursive ?? false,
+    });
+  }
+
   async copyFile(src: string, dest: string, options?: CopyOptions): Promise<void> {
     if (isSourcesVirtualPath(src) && !isSourcesVirtualPath(dest)) {
       throw new Error("copyFile from /sources is not allowed; use readDocument or searchDocuments for folder sources");
@@ -1006,6 +1014,9 @@ class RedactedSymlinkTargetFilesystem implements WorkspaceFilesystem {
     if (!(error instanceof Error)) return new Error(this.sanitizeText(String(error)));
     const sanitized = new Error(this.sanitizeText(error.message));
     sanitized.name = error.name;
+    // Mastra 的 write tracker 依赖 instanceof FileNotFoundError 识别“新文件”。
+    // 保留错误原型，同时仍只暴露清洗后的 message，避免宿主路径泄露。
+    Object.setPrototypeOf(sanitized, Object.getPrototypeOf(error));
     return sanitized;
   }
 
@@ -1132,6 +1143,7 @@ class RedactedFolderSourceFilesystem implements WorkspaceFilesystem {
     if (!(error instanceof Error)) return new Error(this.sanitizeText(String(error)));
     const sanitized = new Error(this.sanitizeText(error.message));
     sanitized.name = error.name;
+    Object.setPrototypeOf(sanitized, Object.getPrototypeOf(error));
     return sanitized;
   }
 

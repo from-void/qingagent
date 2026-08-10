@@ -160,6 +160,7 @@ export function VisionPanel() {
       mountedRef.current &&
       testRevisionRef.current === revision &&
       testControllerRef.current === testCtrl;
+    let phase: "testing" | "saving" = "testing";
     try {
       const res = await fetch("/api/v1/settings/vision/test", {
         method: "POST",
@@ -192,6 +193,7 @@ export function VisionPanel() {
         apiKey: key,
         model: mdl,
       };
+      phase = "saving";
       setPersisting(true);
       const persisted = await writeVisionProvider(next);
       if (!canCommit()) return;
@@ -212,7 +214,9 @@ export function VisionPanel() {
         setMessage(
           e instanceof DOMException && e.name === "AbortError"
             ? "测试超时:接口 25 秒无响应,请检查 API 地址是否可达"
-            : "测试失败:网络异常",
+            : phase === "saving"
+              ? "接口测试已通过，但配置保存未完成，请重试"
+              : "接口测试未完成，请重试",
         );
     } finally {
       clearTimeout(testTimer);

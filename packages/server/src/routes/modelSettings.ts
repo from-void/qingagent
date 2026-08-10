@@ -432,7 +432,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
       keySource,
       error: isConnectionTimeout(err)
         ? "查询超时,请稍后重试"
-        : `无法连接 ${provider === "kimi" ? "Kimi" : "DeepSeek"},请检查网络`,
+        : "查询未完成，请重试",
     }, 200);
   }
 });
@@ -549,7 +549,9 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
   } catch (err) {
     return c.json({
       ok: false,
-      error: isConnectionTimeout(err) ? "连接超时(10s)" : "无法连接该地址",
+      error: isConnectionTimeout(err)
+        ? "连接超时(10s)"
+        : "接口测试失败，未能确认原因",
     });
   } finally {
     clearTimeout(timer);

@@ -576,7 +576,7 @@ describe("processAgentStream tool-call-approval", () => {
     )).toBe(true);
   });
 
-  it("卡级停止只命中当前 toolCallId，并收敛为已中止且结果可能未知", async () => {
+  it("卡级停止在批准调用前生效时明确命令没有执行", async () => {
     const state = createSession("approval-targeted-cancel");
     const pending = {
       confirmId: "confirm-targeted",
@@ -669,7 +669,7 @@ describe("processAgentStream tool-call-approval", () => {
     expect(stopped?.kind === "toolCallUpdated" ? stopped.data.spec.status : null)
       .toEqual({
         kind: "failed",
-        data: { retriable: false, reason: "已中止，结果可能未知" },
+        data: { retriable: false, reason: "已中止，命令没有执行。" },
       });
     expect(state._activeConfirmedToolCallId).toBeNull();
   });
@@ -776,13 +776,80 @@ describe("processAgentStream tool-call-approval", () => {
     expect(secondCard?.kind === "toolCall" ? secondCard.data : null).toMatchObject({
       status: {
         kind: "failed",
-        data: { reason: "已中止，结果可能未知" },
+        data: { reason: "已中止，命令没有执行。" },
       },
       body: {
         kind: "commandCard",
         data: { terminalKind: "aborted" },
       },
     });
+  });
+
+  it("approveToolCall 跨过调用边界后抛错时提示执行状态未知", async () => {
+    const state = createSession("approval-execution-unknown");
+    const pending = {
+      confirmId: "confirm-execution-unknown",
+      runId: "run-execution-unknown",
+      toolCallId: "tool-execution-unknown",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-execution-unknown",
+      spec: {
+        id: "confirm-execution-unknown",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "touch result.txt",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming" as const,
+      decisionId: "decision-execution-unknown",
+      decisionSource: "ui" as const,
+      decisionAccepted: true,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    state.chatHistory.push({
+      id: "agent-execution-unknown",
+      role: { kind: "agent" },
+      ts: new Date().toISOString(),
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: pending.toolCallId,
+          name: pending.toolName,
+          render: { kind: "chatInline" },
+          status: { kind: "pending" },
+          body: { kind: "generic", data: { argsJson: "" } },
+          result: null,
+        },
+      }],
+      chips: null,
+    });
+
+    const frames = await collect(resumeConfirmDecision({
+      session: state,
+      pending,
+      decisionId: pending.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service: new ConfirmService({ persist: async () => undefined }),
+      agent: {
+        approveToolCall: async () => {
+          throw new Error("resume transport failed after execution started");
+        },
+        declineToolCall: async () => {
+          throw new Error("must not decline");
+        },
+      } as never,
+    }));
+
+    expect(JSON.stringify(frames)).toContain(
+      "执行状态未知，请先核实命令是否已生效再重试。",
+    );
+    expect(JSON.stringify(frames)).not.toContain("命令没有执行");
   });
 
   it("确认所属消息缺失且 failDecision 持久化失败时仍补失败工具卡与 resolved", async () => {

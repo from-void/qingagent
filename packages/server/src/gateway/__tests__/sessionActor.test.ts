@@ -423,11 +423,8 @@ describe("SessionActor", () => {
     ]);
   });
 
-  // 回归(0702 review Lane A · A7):命令失败广播的 draftingFailed 文案按命令类别分流——
-  // 只有真正触发模型生成的命令(sendMessage/resumeAskUser/cancelAskUser)才用
-  // "模型服务暂时不可用";非模型命令(acceptPatch/updateDoc 等)的失败是会话状态/操作层面,
-  // 统一模型文案会误导用户。错误详情不透传(可能含内部路径/密钥)。
-  it("命令失败的广播文案按命令类别分流:模型类 vs 操作类", async () => {
+  // 未分类异常无论命令类型都只说操作未完成；命令种类不能证明故障来自模型。
+  it("命令失败的广播文案不按命令种类冒称模型故障", async () => {
     const log = new InMemoryFrameLog();
     const handleCommand: HandleCommandFn = async function* (command) {
       void command;
@@ -459,10 +456,9 @@ describe("SessionActor", () => {
         (f): f is Extract<BridgeFrame, { kind: "stream" }> => f.kind === "stream",
       )
       .map((f) => (f.data.kind === "draftingFailed" ? f.data.data.reason : null));
-    // 操作类命令失败:不再谎称模型不可用
+    // 两类命令都只陈述可以保证的操作结果。
     expect(reasons[0]).toBe("操作未能完成，请刷新页面后重试");
-    // 模型类命令失败:保留模型文案
-    expect(reasons[1]).toBe("模型服务暂时不可用，请稍后重试");
+    expect(reasons[1]).toBe("操作未能完成，请刷新页面后重试");
     // 原始 error message(含内部 id)绝不透传给订阅者
     expect(JSON.stringify(log.readFrom("s1", 0).frames)).not.toContain("p-1");
   });

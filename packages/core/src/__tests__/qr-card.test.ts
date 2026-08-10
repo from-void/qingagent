@@ -127,6 +127,16 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(completed).toEqual({ ok: true, cardId: "qr-returned-id" });
   });
 
+  it("show_qr schema 拒绝首次出卡缺少二维码内容", async () => {
+    const { showQrInputSchema } = await import("../tools/showQr.js");
+
+    expect(showQrInputSchema.safeParse({ title: "扫码授权" }).success).toBe(false);
+    expect(showQrInputSchema.safeParse({ content: "https://example.com/auth" }).success)
+      .toBe(true);
+    expect(showQrInputSchema.safeParse({ completedCardId: "qr-existing" }).success)
+      .toBe(true);
+  });
+
   it("tool-result 找不到 running part 时也 append done 二维码卡", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("qr-result-only");
@@ -186,11 +196,11 @@ describe("show_qr 二维码卡帧协议", () => {
     const specs = toolSpecs(frames, "qr2");
     expect(specs.some((spec) => spec.body.kind === "qrCard")).toBe(false);
     const final = specs.at(-1);
-    expect(final?.status.kind).toBe("done");
+    expect(final?.status.kind).toBe("failed");
     expect(final?.body.kind).toBe("generic");
     expect(final?.result).toEqual({
       kind: "genericText",
-      data: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
+      data: "二维码未能显示",
     });
   });
 

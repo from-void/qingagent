@@ -595,8 +595,8 @@ describe("上游错误脱敏", () => {
       expect(log).not.toContain("sk-live-plain-secret");
       expect(log).toContain("sk-[REDACTED]");
     }
-    expect(publicStreamErrorReason()).toBe("模型服务暂时不可用，请稍后重试");
-    expect(publicAskMoreErrorMessage()).toBe("上游模型服务暂时不可用，请稍后重试");
+    expect(publicStreamErrorReason()).toBe("操作未完成，请刷新后重试");
+    expect(publicAskMoreErrorMessage()).toBe("追加问题未完成，请重试");
   });
 });
 
@@ -747,7 +747,7 @@ describe("POST /api/v1/commands", () => {
       const body = await readSseUntil(events, controller, "draftingFailed");
       // Should contain a draftingFailed frame
       expect(body).toContain("draftingFailed");
-      expect(body).toContain("模型服务暂时不可用，请稍后重试");
+      expect(body).toContain("操作未能完成，请刷新页面后重试");
       expect(body).not.toContain("sk-live-session-secret");
       expect(body).not.toContain("Session not found");
       const logged = consoleError.mock.calls.flat().map(String).join("\n");

@@ -373,7 +373,7 @@ describe("POST /api/v1/commit", () => {
     const body = await res.json();
 
     expect(res.status).toBe(500);
-    expect(body).toEqual({ error: "模型服务暂时不可用，请稍后重试" });
+    expect(body).toEqual({ error: "操作未完成，请刷新后重试" });
     expect(JSON.stringify(body)).not.toContain("private-key");
     expect(JSON.stringify(body)).not.toContain("supersecret");
   });

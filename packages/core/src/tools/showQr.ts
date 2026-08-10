@@ -11,6 +11,74 @@ import { z } from "zod";
  *
  * 仅供非连接器的分享链接、临时扫码等泛用场景；内置连接器授权由可信流层自动出卡。
  */
+export const showQrInputSchema = z.object({
+  content: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("要编码进二维码的字符串,如 OAuth 验证 URL(图片模式传 imageDataUri 时可省略)"),
+  imageDataUri: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "直接展示的二维码图片(data:image/...;base64 URI)。用于码本身是一张图、无法用字符串编码的场景" +
+        "(如微信公众平台后台登录码);传了它就直接显示图片,不再编码 content。content 与 imageDataUri 至少给一个",
+    ),
+  title: z.string().nullable().optional().describe("标题,如 扫码授权飞书"),
+  code: z.string().nullable().optional().describe("配对码/用户码;不是每个平台都有,没有就不传"),
+  note: z
+    .string()
+    .nullable()
+    .optional()
+    .describe("说明文案(可选),支持轻量 markdown(链接 [文字](url)/粗体);把说明与可点授权链接写在一起"),
+  expiresInSec: z
+    .number()
+    .positive()
+    .optional()
+    .describe("有效期秒数,到点把码作废;用 device flow 返回的 expires_in;不传则按卡片协议默认 300 秒"),
+  refreshQuery: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("过期后点击「刷新」时发送的预设 query,如 飞书授权二维码过期了,请帮我重新生成"),
+  confirmQuery: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "点确认按钮时发送的预设 query(授权类场景传,如 我已完成飞书扫码授权,请继续收尾);" +
+        "卡片渲染 10 秒后才出现该按钮,用于触发 agent 去跑 device flow 收尾",
+    ),
+  confirmLabel: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "确认按钮的显示文案(可选,要短、贴场景,如 我已创建好 / 我已完成授权);不传则默认「我已完成授权」。" +
+        "与 confirmQuery 解耦:label 给用户看要短,confirmQuery 是点击后发送给 agent 的话术可更明确",
+    ),
+  completedCardId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("仅在已核验授权成功后传：首次 show_qr 返回的 cardId，用于把原二维码卡标成完成"),
+  completionMessage: z
+    .string()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe("完成态文案，如「企业微信登录成功」；与 completedCardId 一起传"),
+}).superRefine((input, ctx) => {
+  if (input.completedCardId) return;
+  if (input.content?.trim() || input.imageDataUri?.trim()) return;
+  ctx.addIssue({
+    code: "custom",
+    path: ["content"],
+    message: "首次显示二维码时，content 与 imageDataUri 至少填写一个",
+  });
+});
+
 export const showQrTool = createTool({
   id: "show_qr",
   description:
@@ -39,64 +107,7 @@ export const showQrTool = createTool({
     "【验证登录态】核验是否已登录,一律用工具自带的只读查询子命令(如 whoami / whoami --json)," +
     "**禁止**附加 --force 之类会重建客户端、强制重新认证的参数——那会把已完成的登录推倒重来,把人打回出码死循环。" +
     "【位置】二维码卡片展示在**对话流中、你这条回复的下方**(不在右侧文档面板);向用户说明时务必说『下方/对话中』,**绝不能说『在右侧』**。",
-  inputSchema: z.object({
-    content: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("要编码进二维码的字符串,如 OAuth 验证 URL(图片模式传 imageDataUri 时可省略)"),
-    imageDataUri: z
-      .string()
-      .optional()
-      .describe(
-        "直接展示的二维码图片(data:image/...;base64 URI)。用于码本身是一张图、无法用字符串编码的场景" +
-          "(如微信公众平台后台登录码);传了它就直接显示图片,不再编码 content。content 与 imageDataUri 至少给一个",
-      ),
-    title: z.string().nullable().optional().describe("标题,如 扫码授权飞书"),
-    code: z.string().nullable().optional().describe("配对码/用户码;不是每个平台都有,没有就不传"),
-    note: z
-      .string()
-      .nullable()
-      .optional()
-      .describe("说明文案(可选),支持轻量 markdown(链接 [文字](url)/粗体);把说明与可点授权链接写在一起"),
-    expiresInSec: z
-      .number()
-      .positive()
-      .optional()
-      .describe("有效期秒数,到点把码作废;用 device flow 返回的 expires_in;不传则按卡片协议默认 300 秒"),
-    refreshQuery: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("过期后点击「刷新」时发送的预设 query,如 飞书授权二维码过期了,请帮我重新生成"),
-    confirmQuery: z
-      .string()
-      .nullable()
-      .optional()
-      .describe(
-        "点确认按钮时发送的预设 query(授权类场景传,如 我已完成飞书扫码授权,请继续收尾);" +
-          "卡片渲染 10 秒后才出现该按钮,用于触发 agent 去跑 device flow 收尾",
-      ),
-    confirmLabel: z
-      .string()
-      .nullable()
-      .optional()
-      .describe(
-        "确认按钮的显示文案(可选,要短、贴场景,如 我已创建好 / 我已完成授权);不传则默认「我已完成授权」。" +
-          "与 confirmQuery 解耦:label 给用户看要短,confirmQuery 是点击后发送给 agent 的话术可更明确",
-      ),
-    completedCardId: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("仅在已核验授权成功后传：首次 show_qr 返回的 cardId，用于把原二维码卡标成完成"),
-    completionMessage: z
-      .string()
-      .min(1)
-      .max(256)
-      .optional()
-      .describe("完成态文案，如「企业微信登录成功」；与 completedCardId 一起传"),
-  }),
+  inputSchema: showQrInputSchema,
   outputSchema: z.object({ ok: z.boolean(), cardId: z.string().nullable() }),
   execute: async ({ completedCardId }, context) => ({
     ok: true,

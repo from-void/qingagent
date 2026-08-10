@@ -498,7 +498,7 @@ describe("Settings Track B", () => {
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("Model 自定义模型测试保存成功走全局 toast,并清掉旧 sm-message", async () => {
+  it("Model 自定义模型保存成功由卡面表达，不再重复弹成功 toast", async () => {
     await render(
       <ToastProvider>
         <ModelSettingsPanel />
@@ -512,7 +512,12 @@ describe("Settings Track B", () => {
     await click(getButtonByText("测试并保存"));
     await flush();
 
-    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("接口测试通过");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "")
+      .not.toContain("接口测试通过");
+    expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
+      .toContain("已接入自定义模型");
+    expect(host?.querySelector('[data-wf="ModelUsingDeepseek"]')?.textContent)
+      .toContain("使用中");
     expect(host?.querySelector(".sm-message")?.textContent ?? "").not.toContain("接口测试通过");
   });
 
@@ -570,7 +575,7 @@ describe("Settings Track B", () => {
   });
 
   // 缺陷回归:填完整 endpoint 时"自动处理"要做到底——存的、显示的都必须是服务端归一化后的地址。
-  it("Model 自定义保存服务端归一化地址,并回填输入框 + 明确告知已修正", async () => {
+  it("Model 自定义保存服务端归一化地址并回填输入框", async () => {
     const fallbackFetch = makeFetchMock();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
       String(input).includes("/api/v1/settings/model/test-custom")
@@ -593,8 +598,8 @@ describe("Settings Track B", () => {
     await click(getButtonByText("测试并保存"));
 
     expect(readCustomProvider("deepseek")?.baseUrl).toBe("https://api.example.com/v1");
-    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent)
-      .toContain("已自动修正为标准地址 https://api.example.com/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "")
+      .not.toContain("已自动修正为标准地址");
     // 回填:再进配置页看到的就是真正存下来的地址
     await openVendorConfig();
     expect(getInputByPlaceholder("https://your-endpoint/v1").value)
@@ -1323,6 +1328,77 @@ describe("Settings Track B", () => {
     expect(getVisitorModelKey("deepseek")).toBe(key);
   });
 
+  it("Model 验证响应损坏时使用中性文案，不误报网络错误", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/settings/model/balance")) {
+        return new Response("not-json", { status: 200 });
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+
+    await openVendorConfig();
+    setInput(getInputByWf("ModelKeyInput"), "sk-malformed-response");
+    await waitForCondition(
+      () => (host?.textContent ?? "").includes("验证未完成，请重试"),
+      "中性验证失败提示",
+    );
+
+    expect(host?.textContent).not.toContain("网络错误");
+  });
+
+  it("Model 自定义测试响应损坏时不误报网络错误", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/settings/model/test-custom")) {
+        return new Response("not-json", { status: 200 });
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+
+    await openVendorConfig();
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://proxy.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-custom");
+    await click(getButtonByText("测试并保存"));
+
+    expect(host?.querySelector(".sm-message")?.textContent)
+      .toContain("接口测试未完成，请重试");
+    expect(host?.textContent).not.toContain("网络错误");
+  });
+
+  it("Model 自定义接口测试通过但落盘失败时只提示保存失败", async () => {
+    const setCustomProvider = vi.fn(async () => false);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        isClientConfigReady: () => true,
+        getCustomProvider: () => null,
+        setCustomProvider,
+      },
+    });
+    __resetClientPersistCacheForTests();
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    await openVendorConfig();
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://proxy.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-custom");
+    await click(getButtonByText("测试并保存"));
+
+    expect(setCustomProvider).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent)
+      .toContain("未保存");
+    expect(host?.textContent).not.toContain("网络错误");
+  });
+
   it("Vision 测试保存成功走全局 toast,失败提示位置不被成功文案占用", async () => {
     await render(
       <ToastProvider>
@@ -1338,6 +1414,54 @@ describe("Settings Track B", () => {
 
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("图像识别已启用");
     expect(host?.querySelector(".sm-message")?.textContent ?? "").not.toContain("测试通过");
+  });
+
+  it("Vision 测试响应损坏时使用中性文案，不误报网络异常", async () => {
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/settings/vision/test")) {
+        return new Response("not-json", { status: 200 });
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<VisionPanel />);
+
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://vision.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-vision");
+    setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "qwen-vl-max");
+    await click(getButtonByText("测试并保存"));
+
+    expect(host?.querySelector(".sm-message")?.textContent)
+      .toContain("接口测试未完成，请重试");
+    expect(host?.textContent).not.toContain("网络异常");
+  });
+
+  it("Vision 接口测试通过但落盘失败时只提示保存失败", async () => {
+    const setVisionProvider = vi.fn(async () => false);
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: {
+        isDesktop: true,
+        isClientConfigReady: () => true,
+        getVisionProvider: () => null,
+        setVisionProvider,
+      },
+    });
+    __resetClientPersistCacheForTests();
+    await render(
+      <ToastProvider>
+        <VisionPanel />
+      </ToastProvider>,
+    );
+
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://vision.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-vision");
+    setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "qwen-vl-max");
+    await click(getButtonByText("测试并保存"));
+
+    expect(setVisionProvider).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector(".sm-message")?.textContent).toContain("未保存");
+    expect(host?.textContent).not.toContain("网络异常");
   });
 
   it("Vision 同样保存服务端归一化地址并回填输入框", async () => {

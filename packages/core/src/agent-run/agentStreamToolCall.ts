@@ -415,7 +415,7 @@ export async function* handleToolCallEvent(
             data: { progressPct: null, etaSec: null },
           },
           sourceArgs: resolvedArgs,
-          invalidText: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
+          invalidText: "二维码未能显示",
         }),
       );
       outcome.producedVisibleFrame = true;

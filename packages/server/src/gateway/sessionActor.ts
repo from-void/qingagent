@@ -328,22 +328,10 @@ function preemptionReasonForCommand(command: Command): TurnPreemptionReason {
     : "globalStop";
 }
 
-/**
- * 会真正触发模型生成的命令。只有这些命令失败时,"模型服务暂时不可用"的文案才成立;
- * 其余命令(acceptPatch / updateDoc / removeMaterial…)的失败是会话状态/操作层面的,
- * 用模型文案会误导用户(0702 review Lane A · A7)。
- */
-const MODEL_DRIVEN_COMMANDS: ReadonlySet<Command["kind"]> = new Set([
-  "sendMessage",
-  "resumeAskUser",
-  "cancelAskUser",
-]);
-
-function commandErrorFrame(commandKind: Command["kind"]): BridgeFrame {
-  // 注意:错误详情不透传原始 error message(可能含内部路径/密钥),只按命令类别分文案。
-  const reason = MODEL_DRIVEN_COMMANDS.has(commandKind)
-    ? "模型服务暂时不可用，请稍后重试"
-    : "操作未能完成，请刷新页面后重试";
+function commandErrorFrame(_commandKind: Command["kind"]): BridgeFrame {
+  // 未分类异常只证明命令没有完成，不能仅凭命令种类推断故障来自模型。
+  // 原始 error message 可能含内部路径/密钥，仍只向用户发送脱敏中性文案。
+  const reason = "操作未能完成，请刷新页面后重试";
   return {
     kind: "stream",
     data: {

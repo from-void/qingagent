@@ -1082,40 +1082,31 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(draftingFailures(frames)).toHaveLength(0);
   });
 
-  it("内部 idle timeout 仍保留工具调用后的长时间无响应收口提示", async () => {
-    const { createSession, processAgentStream } = await import("../bridge/index.js");
-    const state = createSession("err-tool-idle-timeout");
-    const abortController = new AbortController();
-
-    const frames = await collectFrames(
-      processAgentStream(
-        streamOf(
-          { type: "text-delta", payload: { text: "已完成一部分" } },
-          {
-            type: "tool-call",
-            payload: {
-              toolName: "parseFile",
-              toolCallId: "tc-idle-tool",
-              args: { filename: "a.txt" },
-            },
-          },
-          { type: "step-finish", payload: { finishReason: "tool-calls" } },
-          idleTimeoutChunk(),
-        ),
-        {
-          state,
-          agentMessageId: "agent-msg",
-          streamId: "stream-tool-idle-timeout",
-          runId: "run-tool-idle-timeout",
-          abortController,
-        },
-      ),
+  it("内部 idle timeout 只说明整轮没有新进展，不归因到某个工具", async () => {
+    const { createSession } = await import("../bridge/index.js");
+    const { createAgentStreamTurnContext } = await import(
+      "../agent-run/agentStreamTurnContext.js"
     );
+    const { finalizeAgentStream } = await import(
+      "../agent-run/agentStreamFinalize.js"
+    );
+    const state = createSession("err-tool-idle-timeout");
+    const context = await createAgentStreamTurnContext({
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-tool-idle-timeout",
+      runId: "run-tool-idle-timeout",
+    });
+    context.sawAnyToolCall = true;
+    context.sawNonUiToolCall = true;
+    context.sawIdleTimeout = true;
+
+    const frames = await collectFrames(finalizeAgentStream(context));
 
     const bodies = textBodies(frames);
     expect(draftingFailures(frames)).toHaveLength(1);
-    expect(bodies).toContain("已完成一部分");
-    expect(bodies.some((b) => b.includes("长时间无响应"))).toBe(true);
+    expect(bodies.some((b) => b.includes("长时间没有新的进展"))).toBe(true);
+    expect(bodies.some((b) => b.includes("一步工具长时间无响应"))).toBe(false);
     expect(bodies.some((b) => b.includes("没有返回任何内容"))).toBe(false);
   });
 

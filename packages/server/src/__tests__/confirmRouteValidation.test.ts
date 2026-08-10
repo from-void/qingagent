@@ -120,4 +120,31 @@ describe("confirm decision route 入站防护", () => {
       error: "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
     });
   });
+
+  it("确认调用边界后的未知异常不再断言命令没有执行", async () => {
+    const session = createSession("session-execution-unknown");
+    const unknownApp = new Hono();
+    unknownApp.route("/api/v1", createConfirmRoutes({
+      getSession: async () => session,
+      runExclusive: async () => {
+        throw new Error("unknown failure after decision submission");
+      },
+    }));
+
+    const response = await unknownApp.request("/api/v1/confirms/decision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.sessionId,
+        toolCallId: "tool-execution-unknown",
+        decisionId: "decision-execution-unknown",
+        decision: { id: "confirm-execution-unknown", accepted: true },
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "确认提交异常，命令执行状态未能确认；请先查看命令卡，不要重复提交。",
+    });
+  });
 });

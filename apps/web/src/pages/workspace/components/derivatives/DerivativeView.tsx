@@ -90,7 +90,7 @@ export function DerivativeView(props: {
   const [generating, setGenerating] = useState(Boolean(props.generatingInitially));
   const [generationBefore, setGenerationBefore] = useState<string | null>(item.generatedAt);
   const [generationComplete, setGenerationComplete] = useState(false);
-  const [abortedEmpty, setAbortedEmpty] = useState(false);
+  const [generationUnconfirmed, setGenerationUnconfirmed] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -159,7 +159,11 @@ export function DerivativeView(props: {
   ]);
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
   useEffect(() => { if (generating && generationComplete && !props.streamActive) setGenerating(false); }, [generating, generationComplete, props.streamActive]);
-  useEffect(() => { if (item.generatedAt != null || item.sourceVersion != null) setAbortedEmpty(false); }, [item.generatedAt, item.sourceVersion]);
+  useEffect(() => {
+    if (item.generatedAt != null || item.sourceVersion != null) {
+      setGenerationUnconfirmed(false);
+    }
+  }, [item.generatedAt, item.sourceVersion]);
   useEffect(() => {
     coverTemplateRequestGenerationRef.current += 1;
     setCoverTemplate(item.coverTemplate ?? "poster");
@@ -184,19 +188,23 @@ export function DerivativeView(props: {
       const next = await props.stream.getDerivativeDoc(props.sessionId, item.docId).catch(() => null);
       if (stopped) return;
       if (next?.meta.docId === item.docId && next.meta.generatedAt && next.meta.generatedAt !== generationBefore) {
-        setDocument(next); setGenerationComplete(true); setAbortedEmpty(false); await props.onRefresh();
+        setDocument(next); setGenerationComplete(true); setGenerationUnconfirmed(false); await props.onRefresh();
         if (!streamActiveRef.current) setGenerating(false);
         return;
       }
-      if (Date.now() - started > 180_000) { setGenerating(false); props.onToast("生成仍在进行，请稍后查看"); return; }
+      if (Date.now() - started > 180_000) {
+        setGenerating(false);
+        if (generationBefore == null) setGenerationUnconfirmed(true);
+        void props.onRefresh();
+        return;
+      }
       if (next === null) {
         window.setTimeout(poll, 2000);
         return;
       }
       if (next.meta.generatedAt === generationBefore && !streamActiveRef.current && (sawActiveRef.current || Date.now() - started >= 4_000)) {
         setGenerating(false);
-        if (generationBefore == null) setAbortedEmpty(true);
-        else props.onToast("生成已中止，保留原稿");
+        if (generationBefore == null) setGenerationUnconfirmed(true);
         void props.onRefresh();
         return;
       }
@@ -230,7 +238,7 @@ export function DerivativeView(props: {
       return;
     }
     const before = item.generatedAt;
-    setModalOpen(false); setAbortedEmpty(false); setGenerationComplete(false); setGenerationBefore(before); sawActiveRef.current = props.streamActive; setGenerating(true);
+    setModalOpen(false); setGenerationUnconfirmed(false); setGenerationComplete(false); setGenerationBefore(before); sawActiveRef.current = props.streamActive; setGenerating(true);
     const templateName = descriptor.templates.find((template) => template.id === params.templateId)?.name ?? params.templateId;
     const lines = item.dtype === "translate" ? [{ label: "语言", value: item.targetLang ?? "目标语言" }, { label: "风格", value: templateName }] : [{ label: "写作风格", value: templateName }];
     if (params.privatePrompt.trim()) lines.push({ label: "补充", value: params.privatePrompt.trim() });
@@ -282,10 +290,10 @@ export function DerivativeView(props: {
   const previewProps = { doc: pmDoc!, title, articleRef, coverTemplate, onCoverTemplateChange: changeCoverTemplate };
   const toolbar = <div className="ws-deriv-toolbar">
     <div className="ws-deriv-actions">
-      <div className="ws-deriv-regen-anchor">
+      {!generationUnconfirmed ? <div className="ws-deriv-regen-anchor">
         {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}>×</button></div> : null}
         <button className="ws-docfn-btn" title="重新生成" aria-label="重新生成" onClick={() => setModalOpen(true)}><RegenIcon/></button>
-      </div>
+      </div> : null}
       {pmDoc ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>
         {exportOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item" onClick={copyDraft}>复制文案</button>{descriptor.exportImageTarget ? <button className="ws-export-item" onClick={exportImage}>导出图片</button> : null}</div> : null}
       </div> : null}
@@ -297,14 +305,14 @@ export function DerivativeView(props: {
   const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
 
   if (generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
-  if (!isTranslation && (abortedEmpty || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{abortedEmpty ? "生成已中止" : "尚未生成"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>{modal}</section>;
+  if (!isTranslation && (generationUnconfirmed || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认生成结果" : "尚未生成"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "重新生成"}</button></div></div>{modal}</section>;
   if (parsedDocument.damaged) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>稿件数据损坏</strong><span>暂时无法显示这篇稿件</span></div>{modal}</section>;
   return <section ref={viewRef} className={`ws-deriv-view ws-deriv-${descriptor.dtype}${mode === "phone" ? " is-phone" : " is-desktop"}`}>
     {toolbar}
     {isTranslation && props.items?.length ? <div className="ws-deriv-mode ws-translate-segmented" aria-label="译文语言切换">{props.items.map((candidate) => {
-      return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); props.onActiveDocIdChange?.(candidate.docId); setGenerating(false); setAbortedEmpty(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span></button>;
+      return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); props.onActiveDocIdChange?.(candidate.docId); setGenerating(false); setGenerationUnconfirmed(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span></button>;
     })}</div> : null}
-    {isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>{abortedEmpty ? "翻译已中止" : "该语言还没有译文"}</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>{abortedEmpty ? "重新生成" : "生成该语言"}</button></div></div>
+    {isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认翻译结果" : "该语言还没有译文"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "生成该语言"}</button></div></div>
           : pmDoc && PlainPreview ? <PlainPreview {...previewProps}/> : pmDoc && mode === "phone" && PhonePreview ? <><div className="ws-deriv-mode"><button className="is-active" onClick={() => setMode("phone")}>手机</button><button onClick={() => setMode("desktop")}>电脑</button></div><PhonePreview {...previewProps}/></> : pmDoc && DesktopPreview ? <><div className="ws-deriv-mode"><button onClick={() => setMode("phone")}>手机</button><button className="is-active" onClick={() => setMode("desktop")}>电脑</button></div><DesktopPreview {...previewProps}/></> : null}
     {modal}
   </section>;

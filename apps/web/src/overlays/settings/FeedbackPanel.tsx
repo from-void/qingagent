@@ -93,7 +93,7 @@ export function FeedbackPanel() {
         if (!res.ok) throw new Error(`export failed: ${res.status}`);
         const blob = await res.blob();
         downloadBlob(blob, filenameFromContentDisposition(res.headers.get("content-disposition")));
-        toast.show({ message: "报错记录已下载", tone: "success" });
+        toast.show({ message: "报错记录已开始下载", tone: "success" });
       }
     } catch {
       toast.show({ message: "导出失败，未生成文件，请稍后重试", tone: "error" });

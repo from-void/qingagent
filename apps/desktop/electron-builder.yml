@@ -64,8 +64,13 @@ extraResources:
     filter:
       - "**/*"
 mac:
-  # zip 供 electron-updater 更新通道使用；dmg 是初装的标准发行载体(拖入 Applications)。
-  # 未签名包首次打开需在「隐私与安全性」放行,官网与 release notes 已注明。
+  # CI 使用 Developer ID Application 签名并完成 Apple notarization。
+  # 本地 build-mac.sh 仍保持未签名，便于快速测试；正式/Beta tag 由 GitHub Actions 处理。
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  entitlements: entitlements.mac.plist
+  entitlementsInherit: entitlements.mac.inherit.plist
   target:
     - zip
     - dmg
